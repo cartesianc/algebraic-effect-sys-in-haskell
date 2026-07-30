@@ -6,13 +6,12 @@ $generatedRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $repoRoot ".generated")
 )
 $replayRoot = [System.IO.Path]::GetFullPath(
-    (Join-Path $generatedRoot "approved-core1-replay")
+    (Join-Path $generatedRoot "approved-core2-replay")
 )
 $archivePath = [System.IO.Path]::GetFullPath(
-    (Join-Path $generatedRoot "approved-core1-replay.zip")
+    (Join-Path $generatedRoot "approved-core2-replay.zip")
 )
-$sourceDescriptorPath = Join-Path $repoRoot "trustbase\core1-source.json"
-$currentManifestPath = Join-Path $repoRoot "trustbase\core-manifest.json"
+$sourceDescriptorPath = Join-Path $repoRoot "trustbase\core2-source.json"
 
 function Assert-GeneratedTarget {
     param([string]$Path)
@@ -43,20 +42,12 @@ Assert-GeneratedTarget $archivePath
 
 $sourceDescriptor = Get-Content -LiteralPath $sourceDescriptorPath -Raw |
     ConvertFrom-Json
-$currentManifest = Get-Content -LiteralPath $currentManifestPath -Raw |
-    ConvertFrom-Json
 
 if ($sourceDescriptor.schema -ne "myframework-core-source-replay.v1") {
-    throw "unsupported core1 source replay descriptor"
+    throw "unsupported core2 source replay descriptor"
 }
-if ($sourceDescriptor.coreId -ne "core1") {
-    throw "core1 source replay descriptor has the wrong core id"
-}
-if ($currentManifest.coreId -ne $sourceDescriptor.coreId) {
-    throw "current manifest is not the replay descriptor core"
-}
-if ($currentManifest.artifactDigest -ne $sourceDescriptor.artifactDigest) {
-    throw "core1 replay descriptor is not bound to the current manifest"
+if ($sourceDescriptor.coreId -ne "core2") {
+    throw "core2 source replay descriptor has the wrong core id"
 }
 
 if (Test-Path -LiteralPath $replayRoot) {
@@ -68,7 +59,7 @@ if (Test-Path -LiteralPath $archivePath) {
 
 Push-Location $repoRoot
 try {
-    Invoke-Checked "archive approved core1 source" {
+    Invoke-Checked "archive approved core2 source" {
         git archive --format=zip -o $archivePath $sourceDescriptor.sourceCommit
     }
     Expand-Archive -LiteralPath $archivePath -DestinationPath $replayRoot
@@ -79,54 +70,54 @@ finally {
 
 Push-Location $replayRoot
 try {
-    Invoke-Checked "build approved core1 source" {
-        stack --work-dir .stack-work-core1-replay build
+    Invoke-Checked "build approved core2 source" {
+        stack --work-dir .stack-work-core2-replay build
     }
 
     $materializedLines = @(
-        stack --work-dir .stack-work-core1-replay exec self-artifact-tool -- `
-            materialize replay .generated/core1-artifact
+        stack --work-dir .stack-work-core2-replay exec self-artifact-tool -- `
+            materialize replay .generated/core2-artifact
     )
     if ($LASTEXITCODE -ne 0) {
-        throw "approved core1 artifact materialization failed"
+        throw "approved core2 artifact materialization failed"
     }
     $materialized = ($materializedLines -join "`n") | ConvertFrom-Json
     if ($materialized.payloadDigest -ne $sourceDescriptor.artifactDigest) {
-        throw "replayed core1 payload does not match the approved artifact"
+        throw "replayed core2 payload does not match the approved artifact"
     }
 
     $payloadDigestLines = @(
-        stack --work-dir .stack-work-core1-replay exec ghc -- `
+        stack --work-dir .stack-work-core2-replay exec ghc -- `
             -ignore-dot-ghci `
             -package myframework `
             -e "case MyFramework.Self.CoreModel.frameworkAsBusiness of { Left e -> print e; Right x -> putStrLn (MyFramework.TrustBase.Digest.sha256 (MyFramework.Self.CoreModel.encodeFrameworkAsBusiness x)) }"
     )
     if ($LASTEXITCODE -ne 0) {
-        throw "approved core1 framework payload replay failed"
+        throw "approved core2 framework payload replay failed"
     }
     $payloadDigest = ($payloadDigestLines -join "`n").Trim()
     if ($payloadDigest -ne $sourceDescriptor.frameworkPayloadDigest) {
-        throw "replayed core1 framework payload digest does not match"
+        throw "replayed core2 framework payload digest does not match"
     }
 
     $previousWitnessLines = @(
-        stack --work-dir .stack-work-core1-replay exec `
+        stack --work-dir .stack-work-core2-replay exec `
             core-self-interpret-witness
     )
     if ($LASTEXITCODE -ne 0) {
-        throw "approved core1 semantic witness failed"
+        throw "approved core2 semantic witness failed"
     }
     $previousWitnessText = $previousWitnessLines -join "`n"
     $previousWitness = $previousWitnessText | ConvertFrom-Json
     if ($previousWitness.result -ne "passed") {
-        throw "approved core1 semantic witness did not pass"
+        throw "approved core2 semantic witness did not pass"
     }
     if (
         -not $previousWitnessText.Contains(
             $sourceDescriptor.semanticObservationDigest
         )
     ) {
-        throw "approved core1 observation digest does not match"
+        throw "approved core2 observation digest does not match"
     }
 }
 finally {
@@ -140,26 +131,26 @@ try {
             core-self-interpret-witness
     )
     if ($LASTEXITCODE -ne 0) {
-        throw "core2 compatibility witness failed"
+        throw "facade core0 compatibility witness failed"
     }
     $candidateWitnessText = $candidateWitnessLines -join "`n"
     $candidateWitness = $candidateWitnessText | ConvertFrom-Json
     if ($candidateWitness.result -ne "passed") {
-        throw "core2 compatibility witness did not pass"
+        throw "facade core0 compatibility witness did not pass"
     }
     if (
         -not $candidateWitnessText.Contains(
             $sourceDescriptor.frameworkPayloadDigest
         )
     ) {
-        throw "core2 is not bound to the replayed core1 payload"
+        throw "facade core0 is not bound to the replayed core2 payload"
     }
     if (
         -not $candidateWitnessText.Contains(
             $sourceDescriptor.semanticObservationDigest
         )
     ) {
-        throw "core2 is not bound to the replayed core1 observation"
+        throw "facade core0 is not bound to the replayed core2 observation"
     }
 }
 finally {
@@ -167,13 +158,13 @@ finally {
 }
 
 [ordered]@{
-    schema = "myframework-core1-core2-replay.v1"
+    schema = "myframework-core2-core0-replay.v1"
     result = "passed"
     previousCore = $sourceDescriptor.coreId
     sourceCommit = $sourceDescriptor.sourceCommit
     artifactDigest = $sourceDescriptor.artifactDigest
     frameworkPayloadDigest = $sourceDescriptor.frameworkPayloadDigest
     semanticObservationDigest = $sourceDescriptor.semanticObservationDigest
-    candidateCore = "core2"
-    candidateSchema = "myframework-framework-as-business.v3"
+    candidateCore = "core0"
+    candidateSchema = "myframework-framework-as-business.v4"
 } | ConvertTo-Json -Compress

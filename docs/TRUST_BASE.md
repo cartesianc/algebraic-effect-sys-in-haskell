@@ -31,9 +31,10 @@ base and creates no fake AST node. A candidate that loads or calls its previous
 core after materialization is rejected.
 
 Genesis core0 interpreted and materialized core1. Approved core1 was then
-content-addressed and replayed to bridge the L0 core2 candidate. Core2 is now
-the approved current core; core1 and core0 remain archival/rollback material,
-not active dependencies.
+content-addressed and replayed to bridge the L0 core2 candidate. Approved
+core2 has now interpreted the L0 v2 public-façade candidate, which begins a new
+semantic epoch as core0. This façade core0 is the approved current core and
+has no active runtime dependency on core2.
 
 ## Evidence and promotion
 

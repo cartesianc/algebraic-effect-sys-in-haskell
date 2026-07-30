@@ -26,11 +26,10 @@ import Text.Read
   ( readMaybe )
 
 import MyFramework.CURDE
-  ( SchemaIdentity
-  , scalarSchema
+  ( scalarSchema
   , schemaRefIdentityOf
   )
-import MyFramework.Frontend
+import MyFramework.Facade
 import MyFramework.SDK.SourceArtifact
   ( SdkSourceInput
   , buildSdkSourceReport
@@ -76,24 +75,28 @@ selfModelSchemaV3 :: String
 selfModelSchemaV3 =
   "myframework-self-model.v3"
 
-selfAppModule, selfSourceModule, selfSinkModule :: ModuleName
-selfAppModule = ModuleName "app"
-selfSourceModule = ModuleName "source"
-selfSinkModule = ModuleName "sink"
+selfApp, selfSource, selfSink :: Name
+selfApp = name "app"
+selfSource = name "source"
+selfSink = name "sink"
 
-selfSourceKey, selfSinkKey :: LocalKey
-selfSourceKey = LocalKey "source"
-selfSinkKey = LocalKey "sink"
+selfCreateUser, selfUpdateUser, selfDeleteUser, selfEmitAudit :: Name
+selfCreateUser = name "createUser"
+selfUpdateUser = name "updateUser"
+selfDeleteUser = name "deleteUser"
+selfEmitAudit = name "emitAudit"
 
-selfCreateUserKey, selfUpdateUserKey, selfDeleteUserKey, selfEmitAuditKey :: LocalKey
-selfCreateUserKey = LocalKey "createUser"
-selfUpdateUserKey = LocalKey "updateUser"
-selfDeleteUserKey = LocalKey "deleteUser"
-selfEmitAuditKey = LocalKey "emitAudit"
+selfUserParam :: Name
+selfUserParam =
+  name "user"
 
 selfReadUserKey :: ReadKey
 selfReadUserKey =
-  ReadKey "readUser"
+  readKeyOf selfReadUser
+
+selfReadUser :: R
+selfReadUser =
+  r "readUser" selfUserSchema
 
 selfUserSchema :: SchemaIdentity
 selfUserSchema =
@@ -101,81 +104,74 @@ selfUserSchema =
 
 selfCreateUserAddress :: EffectAddress
 selfCreateUserAddress =
-  EffectAddress selfSourceModule selfCreateUserKey
+  address selfSource selfCreateUser
 
 selfUpdateUserAddress :: EffectAddress
 selfUpdateUserAddress =
-  EffectAddress selfSinkModule selfUpdateUserKey
+  address selfSink selfUpdateUser
 
 selfDeleteUserAddress :: EffectAddress
 selfDeleteUserAddress =
-  EffectAddress selfSinkModule selfDeleteUserKey
+  address selfSink selfDeleteUser
 
 selfEmitAuditAddress :: EffectAddress
 selfEmitAuditAddress =
-  EffectAddress selfSinkModule selfEmitAuditKey
+  address selfSink selfEmitAudit
 
 selfProgram :: ReferencedProgram
 selfProgram =
-  referencedProgram
-    selfAppModule
-    [ chain selfAppModule [selfSourceKey, selfSinkKey]
-    , chain selfSourceModule [selfCreateUserKey]
+  program
+    selfApp
+    [ chain selfApp [selfSource, selfSink]
+    , chain selfSource [selfCreateUser]
     , chain
-        selfSinkModule
-        [ selfUpdateUserKey
-        , selfDeleteUserKey
-        , selfEmitAuditKey
+        selfSink
+        [ selfUpdateUser
+        , selfDeleteUser
+        , selfEmitAudit
         ]
     ]
     [ effects
-        selfSourceModule
-        [ ( selfCreateUserKey
-          , EffectDecl
-              { effectDeclType = EffectC
-              , effectDeclInput = Nothing
-              , effectDeclParams = []
+        selfSource
+        [ ( selfCreateUser
+          , Effect
+              { crude = C
+              , input = none
+              , params = []
               }
           )
         ]
     , effects
-        selfSinkModule
-        [ ( selfUpdateUserKey
-          , EffectDecl
-              { effectDeclType = EffectU
-              , effectDeclInput = Nothing
-              , effectDeclParams =
-                  [ ( ParamKey "user"
-                    , ParamBinding
-                        { paramBindingSchema = selfUserSchema
-                        , paramBindingSource =
-                            ParamFromRead selfReadUserKey
-                        }
-                    )
-                  ]
+        selfSink
+        [ ( selfUpdateUser
+          , Effect
+              { crude = U
+              , input = none
+              , params =
+                  [selfUserParam .= fromR selfReadUser]
               }
           )
-        , ( selfDeleteUserKey
-          , EffectDecl
-              { effectDeclType = EffectD
-              , effectDeclInput = Just selfUpdateUserKey
-              , effectDeclParams = []
+        , ( selfDeleteUser
+          , Effect
+              { crude = D
+              , input = after selfUpdateUser
+              , params = []
               }
           )
-        , ( selfEmitAuditKey
-          , EffectDecl
-              { effectDeclType = EffectE
-              , effectDeclInput = Just selfDeleteUserKey
-              , effectDeclParams = []
+        , ( selfEmitAudit
+          , Effect
+              { crude = E
+              , input = after selfDeleteUser
+              , params = []
               }
           )
         ]
     ]
-    (readRecord [(selfReadUserKey, selfUserSchema)])
+    (readRegistry [selfReadUser])
 
 selfModel :: Either [FrontendError] SelfModel
 selfModel =
-  case validateReferencedProgram selfProgram of
+  case validate selfProgram of
     [] ->
       Right
         SelfModel
@@ -256,7 +252,7 @@ decodeSelfModelJson currentText = do
           , selfModelEffectCoverage = currentEffects
           , selfModelReadCoverage = currentReads
           }
-  case validateReferencedProgram currentProgram of
+  case validate currentProgram of
     [] ->
       Right currentModel
     currentErrors ->
@@ -339,7 +335,7 @@ decodeSelfModel currentText =
           Left "unsupported SelfModel schema"
       | not
           ( null
-              ( validateReferencedProgram
+              ( validate
                   (selfModelProgram currentModel)
               )
           ) ->

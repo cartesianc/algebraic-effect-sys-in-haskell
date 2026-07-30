@@ -41,6 +41,8 @@ import MyFramework.TrustBase.Digest
   ( sha256VectorsValid )
 import MyFramework.TrustBase.Evidence
   ( claimCatalogClaims
+  , crawlerFacadeClaimCatalog
+  , crawlerFacadeEvidenceSchemaV1
   , fixedPointDiffClaimCatalog
   , l0SemanticsClaimCatalog
   , l0SemanticsEvidenceSchemaV3
@@ -114,7 +116,7 @@ myFrameworkTrustBaseManifest =
         ]
     , trustBaseManifestFacadeModules =
         [ "MyFramework"
-        , "MyFramework.Frontend"
+        , "MyFramework.Facade"
         , "MyFramework.Frontend.Runtime"
         ]
     , trustBaseManifestSchemas = selfSchemaCatalog
@@ -156,6 +158,10 @@ selfSchemaCatalog =
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema = referencedFrontendEvidenceSchemaV1
       , schemaCatalogEntryProducer = "referenced-frontend-witness"
+      }
+  , SchemaCatalogEntry
+      { schemaCatalogEntrySchema = crawlerFacadeEvidenceSchemaV1
+      , schemaCatalogEntryProducer = "crawler-facade-witness"
       }
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema = referencedRuntimeEvidenceSchemaV1
@@ -238,6 +244,7 @@ selfClaimCatalog =
     ++ claimCatalogClaims trustBaseBindingClaimCatalog
     ++ claimCatalogClaims l0SemanticsClaimCatalog
     ++ claimCatalogClaims referencedFrontendClaimCatalog
+    ++ claimCatalogClaims crawlerFacadeClaimCatalog
     ++ claimCatalogClaims referencedRuntimeClaimCatalog
     ++ claimCatalogClaims selfInterpretClaimCatalog
     ++ claimCatalogClaims promotionClaimCatalog

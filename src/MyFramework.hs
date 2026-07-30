@@ -1,10 +1,10 @@
 module MyFramework
   ( frameworkVersion
-  , module MyFramework.Frontend
+  , module MyFramework.Facade
   , module MyFramework.Frontend.Runtime
   ) where
 
-import MyFramework.Frontend
+import MyFramework.Facade
 import MyFramework.Frontend.Runtime
 
 frameworkVersion :: String

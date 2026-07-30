@@ -3,7 +3,7 @@
 > **L0 优先：** 前台语义以
 > [`L0_REFERENCED_AST_SEMANTICS.zh.md`](L0_REFERENCED_AST_SEMANTICS.zh.md)
 > 为最高规范。本文后续出现的旧 CURDE/`AstBlueprintSeed`、core0/core1 名称
-> 仅保留为历史设计说明，不得覆盖 L0 与当前 core1→core2 证据。
+> 仅保留为历史设计说明，不得覆盖 L0 v2 与当前 core2→façade-core0 证据。
 
 ## 0. 文档状态
 
@@ -13,18 +13,18 @@ TrustBase 的自举 core”所需的设计。
 当前工作树已经实现并通过聚焦 witness：
 
 - framework 通过 L0 `ReferencedProgram` 表达为 `FrameworkAsBusiness`；
-- approved core1 由 source commit、artifact、legacy payload 和 semantic
-  observation 四重 digest 重放，并通过显式兼容 facet 解释 core2；
+- approved core2 由 source commit、artifact、facade payload 和 semantic
+  observation 四重 digest 重放，并通过显式兼容 facet 解释 façade core0；
 - candidate 接收 nullary `EmptyBusiness` 并闭合递归；
-- core1/core2 的规范化兼容契约可交换，且 core2 对 core1 零运行时回指；
+- core2/core0 的规范化兼容契约可交换，且 core0 对 core2 零运行时回指；
 - `TrustBaseRef`、闭合 `HostKernel`、PromotionRecord 与 current pointer 已实现；
 - Stage0/Stage1/Stage2 artifact fixed-point 协议保留；
 - approved-core `SdkCoreLock`、standalone `sdk-lower`、package verifier 与 beta workflows 已实现。
 
-当前工作树已经通过普通 release pre-gate 与重型 self-artifact gate，`core2`
+当前工作树已经通过普通 release pre-gate 与重型 self-artifact gate，façade `core0`
 已由显式 promotion 命令批准，仓库的 approved record 与 current pointer 已生成。
-`core1` 仅作为重放/回滚材料保留，不在 core2 的活动依赖闭包内。一个
-`0.1.0-core2` SDK 包已从 approved core2 实际物化并通过 package verify。
+`core2` 仅作为重放/回滚材料保留，不在 core0 的活动依赖闭包内。一个
+`0.1.0-core0` SDK 包已从 approved core0 实际物化并通过 package verify。
 
 ## 1. “可用”的分层定义
 
@@ -35,9 +35,9 @@ TrustBase 的自举 core”所需的设计。
 | 研究 CURDE、单 input、R/Implementation、AST 控制语义 | 已有实现与 witness | 可用作实验核心 |
 | 运行受当前 Handler/runtime 支持的业务模型 | 已有实现，但业务验收面仍需逐步扩展 | 有条件可用 |
 | 验证源码 artifact 可独立构建并复现 | Stage1/Stage2 payload 与 evidence fixed point 均通过 | 已完成 |
-| 声称 framework 已经以自身语义表达自身 | L0 `FrameworkAsBusiness` 与 semantic witness 已进入 core2 | 已完成 |
-| 将 candidate 晋升为下一轮 TrustBase core | core2 已通过 heavy gate 并显式批准 | promotion approved |
-| 由 CI/CD 生成并发布可信 SDK | approved core2 已实际物化并独立 verify | 0.1.0-core2 本地端到端复验通过 |
+| 声称 framework 已经以自身语义表达自身 | L0 v2 `FrameworkAsBusiness` 与 semantic witness 已进入 façade core0 | 已完成 |
+| 将 candidate 晋升为下一轮 TrustBase core | façade core0 已通过 heavy gate 并显式批准 | promotion approved |
+| 由 CI/CD 生成并发布可信 SDK | approved core0 已实际物化并独立 verify | 0.1.0-core0 本地端到端复验通过 |
 
 对普通 CURDE/runtime 实验而言，这些缺口不会让全部代码失去用途。对项目的最终目标
 ——可自举 framework core 与可信 SDK 源——而言，它们是核心可用性条件，而不是可选优化。

@@ -5,7 +5,7 @@
 > [`L0_REFERENCED_AST_SEMANTICS.zh.md`](L0_REFERENCED_AST_SEMANTICS.zh.md)
 > 为准。
 
-状态：legacy 边界保留；L0 runtime 已进入 approved core2
+状态：legacy 边界保留；L0 v2 runtime 已进入 approved façade core0
 适用范围：`myframework` 的 EffSys、AST、lowering、runtime 与 handler 边界
 本文件只冻结执行来源，不冻结尚未确认的 AST 控制节点语义。
 

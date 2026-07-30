@@ -8,19 +8,23 @@ part of the materialized framework source closure.
 - `promotion.approved.json` is the explicit maintainer decision bound to the
   semantic, artifact, and EmptyBusiness evidence digests.
 - `promotion.pending.json` preserves the pre-decision record.
-- `core0-manifest.json` is the previous genesis core retained for audit and
-  rollback.
-- `core1-manifest.json` is the immediately previous approved core retained for
-  audit and rollback; the active core must not depend on it.
+- `core0-manifest.json` is the selected façade-epoch core0 manifest.
+- `core1-manifest.json` is an archival pre-L0 core retained for audit.
 - `core1-source.json` binds the approved core1 payload to the exact source
   commit and legacy framework/observation digests required for core1 replay.
-- `core2-source.json` binds the current L0 core2 artifact, framework payload,
-  and semantic observation to the exact committed source used for replay.
+- `core2-source.json` binds the previous approved L0 core2 artifact, framework
+  payload, and semantic observation to the exact committed source used for
+  replay.
 - `evidence/core1/` preserves the core0 -> core1 promotion evidence.
 - `evidence/core2/` preserves the L0 core1 -> core2 replay, semantic,
   fixed-point, and promotion evidence.
+- `evidence/facade-core0/` preserves the core2 -> façade core0 replay,
+  crawler-façade execution, fixed-point, promotion, and SDK evidence.
 
-The current core is `core2`. Future rounds must use core2 as the previous core,
-produce a separately identified candidate (for example core3), pass the same
+The current core is the new semantic epoch's `core0`. The historical genesis
+core0 is distinguished by its old digest and remains recoverable from git and
+the core0 -> core1 evidence; identities are always checked as complete
+content-addressed `TrustBaseRef` values, never by the text `core0` alone.
+Future rounds must use the current core0 as their previous core, pass the same
 semantic and artifact gates, and receive a new explicit approval. Editing only
 `current.json` is not a valid promotion.

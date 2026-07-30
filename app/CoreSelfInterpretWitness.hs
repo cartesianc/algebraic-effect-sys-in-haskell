@@ -17,9 +17,9 @@ import Numeric
 import System.Exit
   ( exitFailure )
 
-import MyFramework.Frontend
-  ( resolveProgram
-  , validateReferencedProgram
+import MyFramework.Facade
+  ( resolveAll
+  , validate
   )
 import MyFramework.Frontend.Runtime
   ( FrontendExecutionStatus (..)
@@ -113,13 +113,13 @@ main =
               == Right currentFramework
           loweringReady =
             null
-              ( validateReferencedProgram
+              ( validate
                   (frameworkAsBusinessProgram currentFramework)
               )
               && either
                 (const False)
                 (const True)
-                ( resolveProgram
+                ( resolveAll
                     (frameworkAsBusinessProgram currentFramework)
                 )
           previousObservation =
@@ -143,15 +143,15 @@ main =
           facetBound =
             coreCompatibilityFacetValid currentFramework
               && compatibilityPreviousCoreId coreCompatibilityFacet
-                == "core1"
+                == "core2"
               && compatibilityPreviousSourceCommit coreCompatibilityFacet
-                == "a610ffb142b960c93f72f0b9fad72a7ecaa78c84"
+                == "78598a77bff3d3e864347b7aafcc1764395e4319"
               && compatibilityCandidateFrameworkSchema
                 coreCompatibilityFacet
                 == frameworkAsBusinessSchema currentFramework
               && compatibilityPreviousPayloadDigest
                 coreCompatibilityFacet
-                == "446e5e5b124cfcad358aa574d9e2c8385bac508964b419fb08982ce11d6b54c4"
+                == "2202c857e7834aa01007d9a270343eed25d823e695086716d39404d64c0261f7"
           independent =
             case candidateObservation of
               Right currentObservation ->
@@ -218,7 +218,7 @@ main =
               , identitiesAttached && emptyStructural
               , "core identity is attached to BootstrapEvidence only"
               )
-            , ( "core1-core2-contract-exchangeable"
+            , ( "core2-core0-contract-exchangeable"
               , exchangeable
               , renderPair previousObservation candidateObservation
               )
@@ -282,24 +282,24 @@ coreClaims =
 
 previousBytes :: String
 previousBytes =
-  "compiled-core1"
+  "compiled-core2"
 
 previousManifest :: String
 previousManifest =
-  "compiled-core1-manifest"
+  "compiled-core2-manifest"
 
 candidateBytes :: String
 candidateBytes =
-  "compiled-core2"
+  "compiled-facade-core0"
 
 candidateManifest :: String
 candidateManifest =
-  "compiled-core2-manifest"
+  "compiled-facade-core0-manifest"
 
 previousCoreRef :: TrustBaseRef
 previousCoreRef =
   TrustBaseRef
-    { trustBaseCoreId = CoreId "core1"
+    { trustBaseCoreId = CoreId "core2"
     , trustBaseArtifactDigest = Digest (sha256 previousBytes)
     , trustBaseManifestDigest = Digest (sha256 previousManifest)
     , trustBaseSchema = coreSchema
@@ -309,7 +309,7 @@ previousCoreRef =
 candidateCoreRef :: TrustBaseRef
 candidateCoreRef =
   TrustBaseRef
-    { trustBaseCoreId = CoreId "core2"
+    { trustBaseCoreId = CoreId "core0"
     , trustBaseArtifactDigest = Digest (sha256 candidateBytes)
     , trustBaseManifestDigest = Digest (sha256 candidateManifest)
     , trustBaseSchema = coreSchema
@@ -321,7 +321,7 @@ previousArtifact =
   coreArtifact
     previousBytes
     previousManifest
-    (CoreId "core1")
+    (CoreId "core2")
     coreSchema
     coreClaims
 
@@ -330,7 +330,7 @@ candidateArtifact =
   coreArtifact
     candidateBytes
     candidateManifest
-    (CoreId "core2")
+    (CoreId "core0")
     coreSchema
     coreClaims
 
@@ -397,7 +397,7 @@ interpretCompatibilityFacet currentDependencies currentFramework =
         else
           Left
             ( FrameworkCompatibilityFailed
-                "candidate does not carry the approved core1 facet"
+                "candidate does not carry the approved core2 facet"
             )
     )
 

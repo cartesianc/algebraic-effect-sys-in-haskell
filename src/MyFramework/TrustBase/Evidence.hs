@@ -4,6 +4,8 @@ module MyFramework.TrustBase.Evidence
   , claimCatalogClaims
   , claimManifestEvidence
   , completeEvidence
+  , crawlerFacadeClaimCatalog
+  , crawlerFacadeEvidenceSchemaV1
   , evidenceFor
   , fixedPointDiffClaimCatalog
   , fixedPointDiffEvidenceSchemaV1
@@ -134,6 +136,13 @@ referencedRuntimeEvidenceSchemaV1 =
     , schemaIdVersion = SchemaVersion 1
     }
 
+crawlerFacadeEvidenceSchemaV1 :: SchemaId
+crawlerFacadeEvidenceSchemaV1 =
+  SchemaId
+    { schemaIdName = SchemaName "crawler-facade-witness"
+    , schemaIdVersion = SchemaVersion 1
+    }
+
 -- | This catalog retains the stable names for the pure manifest invariants.
 -- Operational artifact, executable, gate-command, and publication claims are
 -- deliberately outside the minimal TrustBase.
@@ -231,6 +240,24 @@ referencedFrontendClaimCatalog =
         ClaimName "referenced-frontend-claim-manifest"
     }
 
+crawlerFacadeClaimCatalog :: ClaimCatalog
+crawlerFacadeClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "crawler-facade"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "crawler-facade-import-myframework-only"
+          , "crawler-facade-referenced-program-valid"
+          , "crawler-facade-chain-fallback-parallel"
+          , "crawler-facade-module-local-effects"
+          , "crawler-facade-r-separate"
+          , "crawler-facade-runtime-succeeds"
+          ]
+    , claimCatalogManifestClaim =
+        ClaimName "crawler-facade-claim-manifest"
+    }
+
 referencedRuntimeClaimCatalog :: ClaimCatalog
 referencedRuntimeClaimCatalog =
   ClaimCatalog
@@ -265,7 +292,7 @@ selfInterpretClaimCatalog =
           , "empty-business-has-no-handler"
           , "empty-business-has-no-host-io"
           , "trustbase-not-forwarded-to-terminal-business"
-          , "core1-core2-contract-exchangeable"
+          , "core2-core0-contract-exchangeable"
           , "candidate-has-no-previous-core-runtime-dependency"
           , "previous-core-back-reference-negative-rejected"
           , "semantic-fixed-point-passed"

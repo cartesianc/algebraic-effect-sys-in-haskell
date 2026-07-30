@@ -5,7 +5,7 @@
 ```text
 状态：FROZEN
 层级：L0 / 最高语义层级
-版本：v1
+版本：v2
 冻结日期：2026-07-31
 ```
 
@@ -70,6 +70,53 @@ app : chain
 
 `app`、`a`、`a1` 既是控制节点名称，也是模块名称。它们不是内联子树，
 而是对独立声明的引用。
+
+### 1.1 实际 SDK façade
+
+`import MyFramework` 是业务 authoring 的唯一正常入口。公开 authoring
+层只存在一个 `Name` 域；同一个名称进入控制声明的模块位或子引用位，
+由 resolver 再决定它是模块引用还是当前模块的 effect 引用。
+
+因此实际代码不得要求业务用户写：
+
+```haskell
+m "crawler"
+k "fetch"
+ModuleName "crawler"
+LocalKey "fetch"
+```
+
+实际代码先把 Haskell 变量绑定到名称：
+
+```haskell
+crawler, fetch, extract, persist :: Name
+crawler = name "crawler"
+fetch = name "fetch"
+extract = name "extract"
+persist = name "persist"
+```
+
+之后控制语义必须保持目标形态：
+
+```haskell
+chain crawler [fetch, extract, persist]
+```
+
+Haskell 的 `type` 是保留字，因此 effect record 在 Haskell façade 中使用
+`crude` 字段承载 L0 的 `type = C/U/D/E` 语义：
+
+```haskell
+primary .= Effect
+  { crude = E
+  , input = none
+  , params =
+      [ url .= fromR seedUrl
+      ]
+  }
+```
+
+这不是额外的 effect ID：`primary` 仍是 record key，也是完整的模块内
+effect ID。canonical schema/JSON 可以将 `crude` 编码为 `"type"`。
 
 ## 2. 引用式交互是一级语义
 
@@ -417,4 +464,3 @@ core2 promotion 已完成的证据。
 7. semantic witness 覆盖引用解析、模块隔离、参数/R 类型校验和循环拒绝。
 8. self-model 使用相同 façade 描述自身。
 9. promotion gate 另行执行并通过。
-

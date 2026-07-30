@@ -35,8 +35,8 @@ they are not re-exported by `MyFramework` and do not override L0.
 
 The implementation now contains both required fixed points:
 
-- content-addressed `core1` replay plus the L0
-  `core2 -> FrameworkAsBusiness -> EmptyBusiness` semantic bridge;
+- content-addressed approved-`core2` replay plus the L0 v2
+  `core0 -> FrameworkAsBusiness -> EmptyBusiness` semantic bridge;
 - Stage1/Stage2 source and evidence reproducibility.
 
 `TrustBaseRef`, existential `BoundTrustBase`, the closed `HostKernel`, explicit
@@ -48,13 +48,23 @@ all pass before release validation starts.
 Promotion is still deliberately separate from validation. A candidate is not
 the current core until the heavy self-artifact gate passes and a maintainer
 explicitly approves its pending promotion record. Only that approved core may
-feed the beta SDK workflow. Ordinary architecture changes, including the AST
-execution-boundary work in the current worktree, invalidate previous source
-digests and are not promoted merely because local semantic witnesses pass.
+feed the beta SDK workflow. Ordinary architecture changes invalidate previous
+source digests and are not promoted merely because local semantic witnesses
+pass.
 
-The repository current pointer selects the explicitly approved L0 `core2`
-artifact. `core1` is retained as content-addressed replay/rollback evidence and
-is not an active runtime dependency of core2.
+The repository current pointer selects the explicitly approved façade-epoch
+`core0` artifact. Approved `core2` is retained as content-addressed replay and
+rollback evidence and is not an active runtime dependency of core0.
+
+Business authoring imports only `MyFramework`. The executable crawler witness
+proves the public façade can directly write:
+
+```haskell
+chain crawler [fetch, extract, persist]
+fallback fetch [primary, mirror]
+parallel extract [links, content]
+chain persist [page, links]
+```
 
 ## Build policy
 
@@ -65,6 +75,7 @@ self-artifact promotion gates are not part of ordinary iteration.
 ```powershell
 stack --work-dir .stack-work-codex build
 stack --work-dir .stack-work-codex exec curde-semantics-witness
+stack --work-dir .stack-work-codex exec crawler-facade-witness
 stack --work-dir .stack-work-codex exec curde-runtime-witness
 .\scripts\check-ast-execution-boundary.ps1
 ```

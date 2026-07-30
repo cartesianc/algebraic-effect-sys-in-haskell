@@ -11,7 +11,7 @@ $stage2Root = Join-Path $stage1Root ".generated\stage2-framework"
 $markerPath = Join-Path $generatedRoot "self-artifact.marker"
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $previousCoreManifest = Join-Path $repoRoot "trustbase\core-manifest.json"
-$replayEvidencePath = Join-Path $EvidenceRoot "stage0-core1-core2-replay.json"
+$replayEvidencePath = Join-Path $EvidenceRoot "stage0-core2-core0-replay.json"
 
 function Assert-DirectGeneratedChild {
     param(
@@ -123,19 +123,19 @@ function Assert-FileEqual {
     }
 }
 
-function Assert-Core1ReplayEvidence {
+function Assert-Core2ReplayEvidence {
     if (-not (Test-Path -LiteralPath $replayEvidencePath)) {
-        throw "core1 -> core2 replay evidence is required before the heavy gate"
+        throw "core2 -> facade core0 replay evidence is required before the heavy gate"
     }
     $currentReplay = Get-Content -LiteralPath $replayEvidencePath -Raw |
         ConvertFrom-Json
     if (
-        $currentReplay.schema -ne "myframework-core1-core2-replay.v1" -or
+        $currentReplay.schema -ne "myframework-core2-core0-replay.v1" -or
         $currentReplay.result -ne "passed" -or
-        $currentReplay.previousCore -ne "core1" -or
-        $currentReplay.candidateCore -ne "core2"
+        $currentReplay.previousCore -ne "core2" -or
+        $currentReplay.candidateCore -ne "core0"
     ) {
-        throw "core1 -> core2 replay evidence is invalid"
+        throw "core2 -> facade core0 replay evidence is invalid"
     }
 }
 
@@ -154,7 +154,7 @@ if (Test-Path -LiteralPath $markerPath) {
     $utf8NoBom
 )
 
-Assert-Core1ReplayEvidence
+Assert-Core2ReplayEvidence
 Remove-ArtifactRoot $repoRoot $stage1Root
 
 Push-Location $repoRoot
@@ -184,6 +184,9 @@ try {
     Invoke-Captured "Stage1 referenced frontend witness" {
         stack --work-dir .stack-work-artifact exec referenced-frontend-witness
     } (Join-Path $stage1Evidence "referenced-frontend.json")
+    Invoke-Captured "Stage1 crawler facade witness" {
+        stack --work-dir .stack-work-artifact exec crawler-facade-witness
+    } (Join-Path $stage1Evidence "crawler-facade.json")
     Invoke-Captured "Stage1 referenced runtime witness" {
         stack --work-dir .stack-work-artifact exec referenced-runtime-witness
     } (Join-Path $stage1Evidence "referenced-runtime.json")
@@ -230,6 +233,9 @@ try {
     Invoke-Captured "Stage2 referenced frontend witness" {
         stack --work-dir .stack-work-artifact exec referenced-frontend-witness
     } (Join-Path $stage2Evidence "referenced-frontend.json")
+    Invoke-Captured "Stage2 crawler facade witness" {
+        stack --work-dir .stack-work-artifact exec crawler-facade-witness
+    } (Join-Path $stage2Evidence "crawler-facade.json")
     Invoke-Captured "Stage2 referenced runtime witness" {
         stack --work-dir .stack-work-artifact exec referenced-runtime-witness
     } (Join-Path $stage2Evidence "referenced-runtime.json")
@@ -278,22 +284,22 @@ try {
             (Join-Path $stage1Evidence "runtime.json") `
             $stage2Root
     } (Join-Path $EvidenceRoot "stage0-stage1-evidence-fixed-point.json")
-    Invoke-Captured "core1 -> core2 candidate promotion record" {
+    Invoke-Captured "core2 -> facade core0 candidate promotion record" {
         stack --work-dir .stack-work-codex exec core-promotion-tool -- `
             prepare `
             $previousCoreManifest `
-            core2 `
+            core0 `
             $stage1Root `
             (Join-Path $stage1Evidence "self-interpret.json") `
             (Join-Path $EvidenceRoot "stage1-stage2-artifact-fixed-point.json") `
             (Join-Path $stage1Evidence "self-interpret.json") `
-            (Join-Path $EvidenceRoot "core2-manifest.json") `
+            (Join-Path $EvidenceRoot "core0-manifest.json") `
             (Join-Path $EvidenceRoot "promotion.pending.json")
     } (Join-Path $EvidenceRoot "promotion-prepare.json")
     Invoke-Captured "Candidate promotion verification" {
         stack --work-dir .stack-work-codex exec core-promotion-tool -- `
             verify `
-            (Join-Path $EvidenceRoot "core2-manifest.json") `
+            (Join-Path $EvidenceRoot "core0-manifest.json") `
             (Join-Path $EvidenceRoot "promotion.pending.json") `
             (Join-Path $stage1Evidence "self-interpret.json") `
             (Join-Path $EvidenceRoot "stage1-stage2-artifact-fixed-point.json") `
@@ -312,6 +318,10 @@ Assert-FileEqual `
     "Stage0/Stage1 referenced frontend witness" `
     (Join-Path $EvidenceRoot "stage0-referenced-frontend.json") `
     (Join-Path $stage1Evidence "referenced-frontend.json")
+Assert-FileEqual `
+    "Stage0/Stage1 crawler facade witness" `
+    (Join-Path $EvidenceRoot "stage0-crawler-facade.json") `
+    (Join-Path $stage1Evidence "crawler-facade.json")
 Assert-FileEqual `
     "Stage0/Stage1 referenced runtime witness" `
     (Join-Path $EvidenceRoot "stage0-referenced-runtime.json") `
@@ -340,6 +350,10 @@ Assert-FileEqual `
     "Stage1/Stage2 referenced frontend witness" `
     (Join-Path $stage1Evidence "referenced-frontend.json") `
     (Join-Path $stage2Evidence "referenced-frontend.json")
+Assert-FileEqual `
+    "Stage1/Stage2 crawler facade witness" `
+    (Join-Path $stage1Evidence "crawler-facade.json") `
+    (Join-Path $stage2Evidence "crawler-facade.json")
 Assert-FileEqual `
     "Stage1/Stage2 referenced runtime witness" `
     (Join-Path $stage1Evidence "referenced-runtime.json") `

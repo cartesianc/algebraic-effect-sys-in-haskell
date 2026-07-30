@@ -33,16 +33,12 @@ import Text.Read
   ( readMaybe )
 
 import MyFramework.CURDE
-  ( FieldName (..)
-  , SchemaIdentity
-  , scalarSchema
+  ( scalarSchema
   , schemaRefIdentityOf
   )
-import MyFramework.Frontend
+import MyFramework.Facade
+import qualified MyFramework.Frontend as Frontend
 import MyFramework.Frontend.Runtime
-import MyFramework.Handler
-  ( RuntimeData (..)
-  )
 import MyFramework.TrustBase.Core
   ( CoreId )
 import MyFramework.TrustBase.Digest
@@ -65,8 +61,9 @@ data FrameworkAsBusiness = FrameworkAsBusiness
   }
   deriving (Eq, Ord, Read, Show)
 
--- | A one-way, content-addressed bridge from the approved core1 vocabulary
--- into the L0 core2 vocabulary.  It is compatibility metadata only: the
+-- | A one-way, content-addressed bridge from the approved core2 vocabulary
+-- into the facade-epoch core0 vocabulary. It is compatibility metadata only:
+-- the
 -- canonical candidate remains 'frameworkAsBusinessProgram'.
 data CoreCompatibilityFacet = CoreCompatibilityFacet
   { compatibilityFacetSchema :: String
@@ -97,28 +94,28 @@ data FrameworkSemanticObservation = FrameworkSemanticObservation
   }
   deriving (Eq, Show)
 
-frameworkCoreSchemaV3 :: String
-frameworkCoreSchemaV3 =
-  "myframework-framework-as-business.v3"
+frameworkCoreSchemaV4 :: String
+frameworkCoreSchemaV4 =
+  "myframework-framework-as-business.v4"
 
 coreCompatibilityFacet :: CoreCompatibilityFacet
 coreCompatibilityFacet =
   CoreCompatibilityFacet
     { compatibilityFacetSchema =
         "myframework-core-compatibility-facet.v1"
-    , compatibilityPreviousCoreId = "core1"
+    , compatibilityPreviousCoreId = "core2"
     , compatibilityPreviousSourceCommit =
-        "a610ffb142b960c93f72f0b9fad72a7ecaa78c84"
+        "78598a77bff3d3e864347b7aafcc1764395e4319"
     , compatibilityPreviousArtifactDigest =
-        "952e9cd0a60420e01c294a96fb1763aef4fd984c356057534ab96cea0fc61d9e"
+        "4e45128c8c133896cdf2eecf65113a7dffe017a9e3f77318b60e902003d17a0a"
     , compatibilityPreviousFrameworkSchema =
-        "myframework-framework-as-business.v1"
+        "myframework-framework-as-business.v3"
     , compatibilityPreviousPayloadDigest =
-        "446e5e5b124cfcad358aa574d9e2c8385bac508964b419fb08982ce11d6b54c4"
+        "2202c857e7834aa01007d9a270343eed25d823e695086716d39404d64c0261f7"
     , compatibilityPreviousObservationDigest =
-        "33fce4c303e89b47911cbad8827ffcd4ffa88e6adf8cd1f078acadbf71c8ded9"
+        "1dcc4c82248f9e70573262ef45cdda2d14cbd7c2a7a8612948e276fe0280a08f"
     , compatibilityCandidateFrameworkSchema =
-        frameworkCoreSchemaV3
+        frameworkCoreSchemaV4
     , compatibilityStageMap =
         [ ("validateFacade", "validateFacade")
         , ("lowerCurde", "lowerReferenced")
@@ -145,53 +142,61 @@ coreCompatibilityDigest currentFacet =
         ]
     )
 
-frameworkCoreModule :: ModuleName
+frameworkCoreModule :: Name
 frameworkCoreModule =
-  ModuleName "frameworkCore"
+  name "frameworkCore"
 
 frameworkSourceRead :: ReadKey
 frameworkSourceRead =
-  ReadKey "frameworkSource"
+  readKeyOf frameworkSource
+
+frameworkSource :: R
+frameworkSource =
+  r "frameworkSource" frameworkSourceSchema
 
 frameworkSourceSchema :: SchemaIdentity
 frameworkSourceSchema =
   schemaRefIdentityOf (scalarSchema "FrameworkSource")
 
-frameworkValidateFacadeKey :: LocalKey
+frameworkValidateFacadeKey :: Name
 frameworkValidateFacadeKey =
-  LocalKey "validateFacade"
+  name "validateFacade"
 
-frameworkLowerReferencedKey :: LocalKey
+frameworkLowerReferencedKey :: Name
 frameworkLowerReferencedKey =
-  LocalKey "lowerReferenced"
+  name "lowerReferenced"
 
-frameworkCompileCataKey :: LocalKey
+frameworkCompileCataKey :: Name
 frameworkCompileCataKey =
-  LocalKey "compileCata"
+  name "compileCata"
 
-frameworkCloseEmptyKey :: LocalKey
+frameworkCloseEmptyKey :: Name
 frameworkCloseEmptyKey =
-  LocalKey "closeEmpty"
+  name "closeEmpty"
+
+frameworkSourceParam :: Name
+frameworkSourceParam =
+  name "source"
 
 frameworkValidateFacadeAddress :: EffectAddress
 frameworkValidateFacadeAddress =
-  EffectAddress frameworkCoreModule frameworkValidateFacadeKey
+  address frameworkCoreModule frameworkValidateFacadeKey
 
 frameworkLowerReferencedAddress :: EffectAddress
 frameworkLowerReferencedAddress =
-  EffectAddress frameworkCoreModule frameworkLowerReferencedKey
+  address frameworkCoreModule frameworkLowerReferencedKey
 
 frameworkCompileCataAddress :: EffectAddress
 frameworkCompileCataAddress =
-  EffectAddress frameworkCoreModule frameworkCompileCataKey
+  address frameworkCoreModule frameworkCompileCataKey
 
 frameworkCloseEmptyAddress :: EffectAddress
 frameworkCloseEmptyAddress =
-  EffectAddress frameworkCoreModule frameworkCloseEmptyKey
+  address frameworkCoreModule frameworkCloseEmptyKey
 
 frameworkCoreProgram :: ReferencedProgram
 frameworkCoreProgram =
-  referencedProgram
+  program
     frameworkCoreModule
     [ chain
         frameworkCoreModule
@@ -204,44 +209,37 @@ frameworkCoreProgram =
     [ effects
         frameworkCoreModule
         [ ( frameworkValidateFacadeKey
-          , frameworkEffect Nothing
+          , frameworkEffect none
           )
         , ( frameworkLowerReferencedKey
-          , frameworkEffect (Just frameworkValidateFacadeKey)
+          , frameworkEffect (after frameworkValidateFacadeKey)
           )
         , ( frameworkCompileCataKey
-          , frameworkEffect (Just frameworkLowerReferencedKey)
+          , frameworkEffect (after frameworkLowerReferencedKey)
           )
         , ( frameworkCloseEmptyKey
-          , frameworkEffect (Just frameworkCompileCataKey)
+          , frameworkEffect (after frameworkCompileCataKey)
           )
         ]
     ]
-    (readRecord [(frameworkSourceRead, frameworkSourceSchema)])
+    (readRegistry [frameworkSource])
 
-frameworkEffect :: Maybe LocalKey -> EffectDecl
+frameworkEffect :: Maybe Name -> Effect
 frameworkEffect currentInput =
-  EffectDecl
-    { effectDeclType = EffectE
-    , effectDeclInput = currentInput
-    , effectDeclParams =
-        [ ( ParamKey "source"
-          , ParamBinding
-              { paramBindingSchema = frameworkSourceSchema
-              , paramBindingSource =
-                  ParamFromRead frameworkSourceRead
-              }
-          )
-        ]
+  Effect
+    { crude = E
+    , input = currentInput
+    , params =
+        [frameworkSourceParam .= fromR frameworkSource]
     }
 
 frameworkAsBusiness :: Either [FrontendError] FrameworkAsBusiness
 frameworkAsBusiness =
-  case validateReferencedProgram frameworkCoreProgram of
+  case validate frameworkCoreProgram of
     [] ->
       Right
         FrameworkAsBusiness
-          { frameworkAsBusinessSchema = frameworkCoreSchemaV3
+          { frameworkAsBusinessSchema = frameworkCoreSchemaV4
           , frameworkAsBusinessProgram = frameworkCoreProgram
           , frameworkAsBusinessEffectCoverage =
               [ frameworkValidateFacadeAddress
@@ -259,7 +257,7 @@ frameworkAsBusiness =
               , "r-separated-from-cude"
               , "resolver-driven-cata"
               , "occurrence-scoped-runtime"
-              , "core1-v1-compatibility-facet:"
+              , "core2-v3-compatibility-facet:"
                   ++ compatibilityPreviousPayloadDigest
                     coreCompatibilityFacet
               , "empty-business-terminal"
@@ -281,17 +279,17 @@ decodeFrameworkAsBusiness currentText =
       Left "invalid FrameworkAsBusiness"
     Just currentFramework
       | frameworkAsBusinessSchema currentFramework
-          /= frameworkCoreSchemaV3 ->
+          /= frameworkCoreSchemaV4 ->
           Left "unsupported FrameworkAsBusiness schema"
       | not
           ( null
-              ( validateReferencedProgram
+              ( validate
                   (frameworkAsBusinessProgram currentFramework)
               )
           ) ->
           Left "invalid referenced FrameworkAsBusiness program"
       | not (coreCompatibilityFacetValid currentFramework) ->
-          Left "invalid core1 compatibility facet"
+          Left "invalid core2 compatibility facet"
       | otherwise ->
           Right currentFramework
 
@@ -305,15 +303,18 @@ coreCompatibilityFacetValid currentFramework =
   where
     actualStages =
       case
-          [ controlDeclChildren currentControl
+          [ Frontend.controlDeclChildren currentControl
           | currentControl <-
-              referencedProgramControls
+              Frontend.referencedProgramControls
                 (frameworkAsBusinessProgram currentFramework)
-          , controlDeclModule currentControl == frameworkCoreModule
-          , controlDeclKind currentControl == ControlChain
+          , Frontend.controlDeclModule currentControl
+              == Frontend.effectAddressModule
+                frameworkValidateFacadeAddress
+          , Frontend.controlDeclKind currentControl
+              == Frontend.ControlChain
           ] of
         currentStages : _ ->
-          map localKeyText currentStages
+          map Frontend.localKeyText currentStages
         [] ->
           []
 
@@ -431,7 +432,7 @@ frameworkValidateHandler currentFramework currentArguments =
                   Left "framework source does not match candidate"
               | otherwise ->
                   case
-                      validateReferencedProgram
+                      validate
                         (frameworkAsBusinessProgram decodedFramework) of
                     [] ->
                       Right ()
@@ -454,7 +455,7 @@ frameworkLowerHandler currentFramework currentArguments =
       then Left "lowering source does not match candidate"
       else
         case
-            resolveProgram
+            resolveAll
               (frameworkAsBusinessProgram decodedFramework) of
           Left currentErrors ->
             Left ("referenced lowering failed: " ++ show currentErrors)
@@ -471,7 +472,7 @@ frameworkCompileHandler currentFramework currentArguments =
       decodeFrameworkAsBusiness currentSource
     currentRoot <-
       case
-          resolveProgram
+          resolveAll
             (frameworkAsBusinessProgram decodedFramework) of
         Left currentErrors ->
           Left ("resolver-driven cata failed: " ++ show currentErrors)

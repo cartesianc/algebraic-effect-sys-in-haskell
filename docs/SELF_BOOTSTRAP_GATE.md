@@ -7,19 +7,20 @@ for the other.
 
 ```text
 Host TCB
-  -> content-addressed replay of approved core1
-  -> compatibility facet bound to the L0 core2 declaration
-  -> FrameworkAsBusiness expressed by ReferencedProgram
+  -> content-addressed replay of approved core2
+  -> compatibility facet bound to the L0 v2 façade core0 declaration
+  -> FrameworkAsBusiness expressed through MyFramework.Facade
   -> EmptyBusiness
-  -> normalized core1/core2 compatibility observations
+  -> normalized core2/core0 compatibility observations
 ```
 
-`check-core1-replay.ps1` rebuilds the exact source commit bound to approved
-core1, reproduces its artifact digest, legacy facade payload digest, and
-semantic observation digest. `core-self-interpret-witness` binds that facet to
-the L0 core2 declaration, proves core2 runs through the normal referenced
-facade, and closes recursion at `EmptyBusiness`. The normalized core1/core2
-contract is exchangeable and core2 has no runtime dependency on core1. A
+`check-core2-replay.ps1` rebuilds the exact source commit bound to approved
+core2, reproduces its artifact digest, façade payload digest, and semantic
+observation digest. `core-self-interpret-witness` binds that facet to the L0
+v2 core0 declaration, proves core0 runs through the same public façade used by
+business programs, and closes recursion at `EmptyBusiness`. The normalized
+core2/core0 contract is exchangeable and core0 has no runtime dependency on
+core2. A
 contaminated back-reference is a required negative witness.
 
 ## Artifact fixed point
@@ -34,8 +35,8 @@ The heavy gate performs:
 5. Stage1 and Stage2 source manifests reach a byte-stable fixed point.
 6. Collected semantic/runtime evidence reaches a fixed point.
 7. Corresponding Stage0/Stage1 and Stage1/Stage2 reports are byte-equal.
-8. The promotion tool creates and verifies a core2 candidate manifest and a
-   `PromotionPending` record whose previous core is the approved core1.
+8. The promotion tool creates and verifies a core0 candidate manifest and a
+   `PromotionPending` record whose previous core is the approved core2.
 
 Only `artifactSourceFiles` enter a materialized artifact. Each is classified as
 reproduced source or an explicit trusted seed and receives a SHA-256 digest.
@@ -65,7 +66,8 @@ Validation never modifies `trustbase/current.json`. After the heavy gate, a
 maintainer reviews the generated core manifest, pending record, TrustBase
 classification, diff, and evidence. Only the explicit `core-promotion-tool
 approve` command can produce an approved record and matching current pointer.
-The current repository state has completed that explicit step for L0 core2.
+The current repository state has completed that explicit step for façade
+epoch core0.
 
 A beta SDK additionally requires those reviewed files and independently checks
 that the approved core artifact digest is the payload it packages. CI cannot
