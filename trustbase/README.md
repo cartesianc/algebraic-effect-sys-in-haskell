@@ -15,6 +15,9 @@ part of the materialized framework source closure.
 - `core2-source.json` binds the previous approved L0 core2 artifact, framework
   payload, and semantic observation to the exact committed source used for
   replay.
+- `core0-source.json` binds the selected façade core0 to commit, artifact,
+  façade payload, and semantic-observation digests for the next bootstrap
+  round.
 - `evidence/core1/` preserves the core0 -> core1 promotion evidence.
 - `evidence/core2/` preserves the L0 core1 -> core2 replay, semantic,
   fixed-point, and promotion evidence.
