@@ -16,37 +16,10 @@ import Data.List
 import Numeric
   ( showHex )
 
-import MyFramework.Ast
-  ( AstPath (..)
-  , ChoiceKey (..)
-  , MiddlewareRef (..)
-  , renderAstPath
-  )
-import MyFramework.Control
-  ( ControlNode (..)
-  , ControlPlan (..)
-  , ControlTree (..)
-  , ControlValidationError
-  , StatusPlan (..)
-  , compileControlPlan
-  )
-import MyFramework.CURDE
-  ( DemandNodeId (..)
-  , EffectSystemName (..)
-  , HandleId (..)
-  , ImplementationId (..)
-  , ValidationError
-  , renderHandleId
-  , renderImplementationId
-  )
-import MyFramework.CURDE.Lowering
-  ( LoweringResult (..)
-  , lowerCURDEDecl
-  )
+import MyFramework.Frontend
 import MyFramework.Self.Model
   ( SelfModel
-  , selfModelAstSeed
-  , selfModelEffectSystems
+  , selfModelProgram
   )
 
 newtype ControlTrace = ControlTrace
@@ -54,215 +27,110 @@ newtype ControlTrace = ControlTrace
   }
   deriving (Eq, Ord, Read, Show)
 
-data ControlTraceError
-  = ControlTraceLoweringFailed [ValidationError]
-  | ControlTraceCompilationFailed [ControlValidationError]
+newtype ControlTraceError
+  = ControlTraceResolutionFailed [FrontendError]
   deriving (Eq, Show)
 
--- | Stable constructor order for the closed AstF/ControlNode vocabulary.
 controlNodeCatalog :: [String]
 controlNodeCatalog =
-  [ "Leaf"
-  , "WithImplementation"
+  [ "Effect"
   , "Chain"
   , "Parallel"
   , "Fallback"
   , "Race"
-  , "Choice"
-  , "Wait"
-  , "Loop"
-  , "Middleware"
-  , "Callback"
-  , "Suspense"
   ]
 
 compileControlTrace :: SelfModel -> Either ControlTraceError ControlTrace
-compileControlTrace currentModel
-  | not (null currentErrors) =
-      Left (ControlTraceLoweringFailed currentErrors)
-  | otherwise =
-      case compileControlPlan (loweringCore currentLowering) of
-        Left currentControlErrors ->
-          Left
-            (ControlTraceCompilationFailed currentControlErrors)
-        Right currentPlan ->
-          Right
-            ( ControlTrace
-                (renderPlanLines currentPlan)
-            )
-  where
-    currentLowering =
-      lowerCURDEDecl
-        (selfModelEffectSystems currentModel)
-        (selfModelAstSeed currentModel)
-    currentErrors =
-      loweringErrors currentLowering
+compileControlTrace currentModel =
+  case resolveProgram (selfModelProgram currentModel) of
+    Left currentErrors ->
+      Left (ControlTraceResolutionFailed currentErrors)
+    Right currentRoot ->
+      Right (ControlTrace (renderNode currentRoot))
 
-renderPlanLines :: ControlPlan -> [String]
-renderPlanLines currentPlan =
-  renderTree (controlPlanBoot currentPlan)
-
-renderTree :: ControlTree -> [String]
-renderTree currentTree =
-  currentLine : concatMap renderTree currentChildren
+renderNode :: ResolvedNode -> [String]
+renderNode currentNode =
+  currentLine : concatMap renderNode currentChildren
   where
-    currentNode =
-      controlTreeNode currentTree
     currentLine =
       intercalate
         "|"
-        [ renderAstPath (controlTreePath currentTree)
-        , controlNodeTag currentNode
-        , controlNodePayload currentNode
+        [ renderOccurrence currentNode
+        , nodeTag currentNode
+        , nodePayload currentNode
         ]
     currentChildren =
-      controlNodeChildren currentNode
+      case currentNode of
+        ResolvedControl _ _ _ children ->
+          children
+        ResolvedEffectLeaf {} ->
+          []
 
-controlNodeTag :: ControlNode -> String
-controlNodeTag currentNode =
+renderOccurrence :: ResolvedNode -> String
+renderOccurrence currentNode =
   case currentNode of
-    ControlDemand _ -> "Leaf"
-    ControlWithImplementation _ _ -> "WithImplementation"
-    ControlSequence _ -> "Chain"
-    ControlParallel _ -> "Parallel"
-    ControlFallback _ -> "Fallback"
-    ControlRace _ -> "Race"
-    ControlChoice _ _ -> "Choice"
-    ControlWait _ _ -> "Wait"
-    ControlLoop _ -> "Loop"
-    ControlMiddleware _ _ -> "Middleware"
-    ControlCallback _ _ -> "Callback"
-    ControlSuspense _ -> "Suspense"
+    ResolvedControl currentPath _ _ _ ->
+      renderPath currentPath
+    ResolvedEffectLeaf currentPath _ _ ->
+      renderPath currentPath
 
-controlNodePayload :: ControlNode -> String
-controlNodePayload currentNode =
+renderPath :: OccurrencePath -> String
+renderPath =
+  intercalate "/" . occurrencePathSegments
+
+nodeTag :: ResolvedNode -> String
+nodeTag currentNode =
   case currentNode of
-    ControlDemand currentDemand ->
-      show currentDemand
-    ControlWithImplementation currentImplementation _ ->
-      renderImplementationId currentImplementation
-    ControlSequence currentChildren ->
-      "children=" ++ show (length currentChildren)
-    ControlParallel currentChildren ->
-      "children=" ++ show (length currentChildren)
-    ControlFallback currentChildren ->
-      "children=" ++ show (length currentChildren)
-    ControlRace currentChildren ->
-      "children=" ++ show (length currentChildren)
-    ControlChoice currentSelection currentBranches ->
-      "selected="
-        ++ choiceKeyText currentSelection
-        ++ ";keys="
-        ++ intercalate
-          ","
-          [choiceKeyText currentKey | (currentKey, _) <- currentBranches]
-    ControlWait currentStatus _ ->
-      renderStatusPlan currentStatus
-    ControlLoop _ ->
-      ""
-    ControlMiddleware currentMiddleware _ ->
-      middlewareRefText currentMiddleware
-    ControlCallback currentHandle _ ->
-      renderHandleId currentHandle
-    ControlSuspense currentHandle ->
-      renderHandleId currentHandle
+    ResolvedEffectLeaf {} ->
+      "Effect"
+    ResolvedControl _ _ currentKind _ ->
+      controlKindTag currentKind
 
-controlNodeChildren :: ControlNode -> [ControlTree]
-controlNodeChildren currentNode =
+controlKindTag :: ControlKind -> String
+controlKindTag currentKind =
+  case currentKind of
+    ControlChain -> "Chain"
+    ControlParallel -> "Parallel"
+    ControlFallback -> "Fallback"
+    ControlRace -> "Race"
+
+nodePayload :: ResolvedNode -> String
+nodePayload currentNode =
   case currentNode of
-    ControlDemand _ -> []
-    ControlWithImplementation _ currentChild -> [currentChild]
-    ControlSequence currentChildren -> currentChildren
-    ControlParallel currentChildren -> currentChildren
-    ControlFallback currentChildren -> currentChildren
-    ControlRace currentChildren -> currentChildren
-    ControlChoice _ currentBranches -> map snd currentBranches
-    ControlWait _ currentChild -> [currentChild]
-    ControlLoop currentChild -> [currentChild]
-    ControlMiddleware _ currentChild -> [currentChild]
-    ControlCallback _ currentChild -> [currentChild]
-    ControlSuspense _ -> []
+    ResolvedEffectLeaf _ currentAddress currentEffect ->
+      show currentAddress
+        ++ ";type="
+        ++ show (effectDeclType currentEffect)
+    ResolvedControl _ currentModule _ currentChildren ->
+      "module="
+        ++ moduleNameText currentModule
+        ++ ";children="
+        ++ show (length currentChildren)
 
-renderStatusPlan :: StatusPlan -> String
-renderStatusPlan currentStatus =
-  case currentStatus of
-    StatusHandle currentHandle ->
-      "status(" ++ renderHandleId currentHandle ++ ")"
-    StatusAllPlan currentStatuses ->
-      "all(" ++ intercalate "," (map renderStatusPlan currentStatuses) ++ ")"
-    StatusAnyPlan currentStatuses ->
-      "any(" ++ intercalate "," (map renderStatusPlan currentStatuses) ++ ")"
-
--- | Exercises every constructor against the total normalization functions.
--- This is independent from the framework's boot AST: it proves that extending
--- ControlNode without extending the stable trace schema cannot pass silently.
 controlTraceConstructorWitness :: Bool
 controlTraceConstructorWitness =
-  length controlTraceConstructorChecks == length controlNodeCatalog
+  map fst controlTraceConstructorChecks == controlNodeCatalog
     && all snd controlTraceConstructorChecks
 
--- | One independently named normalization check per closed ControlNode
--- constructor. The child arities are part of the stable control vocabulary;
--- evaluating the payload rejects a partial normalizer as well.
 controlTraceConstructorChecks :: [(String, Bool)]
 controlTraceConstructorChecks =
-  zipWith3
-    checkConstructor
-    controlNodeCatalog
-    controlNodeChildArities
-    controlNodeSpecimens
-  where
-    checkConstructor currentTag currentArity currentNode =
-      ( currentTag
-      , controlNodeTag currentNode == currentTag
-          && length (controlNodeChildren currentNode) == currentArity
-          && all (/= '\0') (controlNodePayload currentNode)
-      )
-
-controlNodeChildArities :: [Int]
-controlNodeChildArities =
-  [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
-
-controlNodeSpecimens :: [ControlNode]
-controlNodeSpecimens =
-  [ ControlDemand sampleDemand
-  , ControlWithImplementation sampleImplementation sampleChild
-  , ControlSequence [sampleChild]
-  , ControlParallel [sampleChild]
-  , ControlFallback [sampleChild]
-  , ControlRace [sampleChild]
-  , ControlChoice
-      (ChoiceKey "selected")
-      [(ChoiceKey "selected", sampleChild)]
-  , ControlWait (StatusHandle sampleHandle) sampleChild
-  , ControlLoop sampleChild
-  , ControlMiddleware (MiddlewareRef "middleware") sampleChild
-  , ControlCallback sampleHandle sampleChild
-  , ControlSuspense sampleHandle
+  [ ("Effect", nodeTag sampleEffect == "Effect")
+  , ("Chain", controlKindTag ControlChain == "Chain")
+  , ("Parallel", controlKindTag ControlParallel == "Parallel")
+  , ("Fallback", controlKindTag ControlFallback == "Fallback")
+  , ("Race", controlKindTag ControlRace == "Race")
   ]
 
-sampleSystem :: EffectSystemName
-sampleSystem =
-  EffectSystemName "self"
-
-sampleHandle :: HandleId
-sampleHandle =
-  HandleId sampleSystem "sample"
-
-sampleImplementation :: ImplementationId
-sampleImplementation =
-  ImplementationId sampleHandle
-
-sampleDemand :: DemandNodeId
-sampleDemand =
-  HandleNode sampleHandle
-
-sampleChild :: ControlTree
-sampleChild =
-  ControlTree
-    { controlTreePath = AstPath ["specimen", "child"]
-    , controlTreeNode = ControlDemand sampleDemand
-    }
+sampleEffect :: ResolvedNode
+sampleEffect =
+  ResolvedEffectLeaf
+    (OccurrencePath ["sample", "effect"])
+    (EffectAddress (ModuleName "sample") (LocalKey "effect"))
+    EffectDecl
+      { effectDeclType = EffectE
+      , effectDeclInput = Nothing
+      , effectDeclParams = []
+      }
 
 renderControlTraceJson :: ControlTrace -> String
 renderControlTraceJson currentTrace =

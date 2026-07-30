@@ -42,12 +42,18 @@ import MyFramework.TrustBase.Digest
 import MyFramework.TrustBase.Evidence
   ( claimCatalogClaims
   , fixedPointDiffClaimCatalog
+  , l0SemanticsClaimCatalog
+  , l0SemanticsEvidenceSchemaV3
   , promotionClaimCatalog
   , promotionEvidenceSchemaV1
+  , referencedFrontendClaimCatalog
+  , referencedFrontendEvidenceSchemaV1
+  , referencedRuntimeClaimCatalog
+  , referencedRuntimeEvidenceSchemaV1
   , sdkPackageClaimCatalog
   , sdkPackageEvidenceSchemaV1
   , selfInterpretClaimCatalog
-  , selfInterpretEvidenceSchemaV1
+  , selfInterpretEvidenceSchemaV2
   , trustBaseBindingClaimCatalog
   , trustBaseBindingEvidenceSchemaV1
   , trustBaseManifestClaimCatalog
@@ -108,9 +114,8 @@ myFrameworkTrustBaseManifest =
         ]
     , trustBaseManifestFacadeModules =
         [ "MyFramework"
-        , "MyFramework.Ast"
-        , "MyFramework.CURDE"
-        , "MyFramework.Handler"
+        , "MyFramework.Frontend"
+        , "MyFramework.Frontend.Runtime"
         ]
     , trustBaseManifestSchemas = selfSchemaCatalog
     , trustBaseManifestEvidenceClaims = selfClaimCatalog
@@ -145,7 +150,19 @@ selfSchemaCatalog =
       , schemaCatalogEntryProducer = "trustbase-binding-witness"
       }
   , SchemaCatalogEntry
-      { schemaCatalogEntrySchema = selfInterpretEvidenceSchemaV1
+      { schemaCatalogEntrySchema = l0SemanticsEvidenceSchemaV3
+      , schemaCatalogEntryProducer = "curde-semantics-witness"
+      }
+  , SchemaCatalogEntry
+      { schemaCatalogEntrySchema = referencedFrontendEvidenceSchemaV1
+      , schemaCatalogEntryProducer = "referenced-frontend-witness"
+      }
+  , SchemaCatalogEntry
+      { schemaCatalogEntrySchema = referencedRuntimeEvidenceSchemaV1
+      , schemaCatalogEntryProducer = "referenced-runtime-witness"
+      }
+  , SchemaCatalogEntry
+      { schemaCatalogEntrySchema = selfInterpretEvidenceSchemaV2
       , schemaCatalogEntryProducer = "core-self-interpret-witness"
       }
   , SchemaCatalogEntry
@@ -184,14 +201,14 @@ selfSchemaCatalog =
       { schemaCatalogEntrySchema =
           SchemaId
             (SchemaName "myframework-sdk-source-artifact")
-            (SchemaVersion 1)
+            (SchemaVersion 3)
       , schemaCatalogEntryProducer = "sdk-lower-tool"
       }
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema =
           SchemaId
             (SchemaName "myframework-sdk-source-report")
-            (SchemaVersion 1)
+            (SchemaVersion 3)
       , schemaCatalogEntryProducer = "sdk-lower-tool"
       }
   , SchemaCatalogEntry
@@ -219,6 +236,9 @@ selfClaimCatalog =
   claimCatalogClaims trustBaseManifestClaimCatalog
     ++ claimCatalogClaims fixedPointDiffClaimCatalog
     ++ claimCatalogClaims trustBaseBindingClaimCatalog
+    ++ claimCatalogClaims l0SemanticsClaimCatalog
+    ++ claimCatalogClaims referencedFrontendClaimCatalog
+    ++ claimCatalogClaims referencedRuntimeClaimCatalog
     ++ claimCatalogClaims selfInterpretClaimCatalog
     ++ claimCatalogClaims promotionClaimCatalog
     ++ claimCatalogClaims sdkPackageClaimCatalog

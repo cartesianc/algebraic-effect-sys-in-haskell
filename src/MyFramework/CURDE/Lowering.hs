@@ -57,33 +57,33 @@ handleDeclRefFor =
 
 
 -- | Typed authoring convenience. Implementations already live in the AST, so
--- the only extra action here is erasing typed effect-system declarations.
+-- the only extra action here is erasing the one typed EffSys declaration.
 lowerCURDE ::
-  [EffectSystem] ->
+  EffSys ->
   AstBlueprintSeed ->
   LoweringResult
-lowerCURDE currentSystems =
-  lowerCURDEDecl (map eraseEffectSystem currentSystems)
+lowerCURDE currentEffSys =
+  lowerCURDEDecl (eraseEffSys currentEffSys)
 
--- | The complete serialized frontend is EffectSystemDecl plus AstBlueprintSeed.
+-- | The complete serialized frontend is one EffSysDecl plus AstBlueprintSeed.
 -- Every explicit ImplementationDecl is collected from Leaf or
 -- WithImplementation nodes by the catamorphism below.
 lowerCURDEDecl ::
-  [EffectSystemDecl] ->
+  EffSysDecl ->
   AstBlueprintSeed ->
   LoweringResult
-lowerCURDEDecl currentSystems =
-  lowerCURDECore currentSystems . lowerAstBlueprintSeed
+lowerCURDEDecl currentEffSys =
+  lowerCURDECore currentEffSys . lowerAstBlueprintSeed
 
 lowerCURDECore ::
-  [EffectSystemDecl] ->
+  EffSysDecl ->
   AstBlueprint ->
   LoweringResult
-lowerCURDECore currentSystems currentBlueprint =
+lowerCURDECore currentEffSys currentBlueprint =
   LoweringResult
     { loweringCore =
         CURDECore
-          { curdeCoreEffectSystems = canonicalSystems
+          { curdeCoreEffSys = canonicalEffSys
           , curdeCoreImplementations =
               catalogDeclarations finalImplementationCatalog
           , curdeCoreAst = currentBlueprint
@@ -93,7 +93,7 @@ lowerCURDECore currentSystems currentBlueprint =
     }
   where
     currentHandles =
-      concatMap effectSystemDeclHandles canonicalSystems
+      effSysDeclHandles canonicalEffSys
     handleIndex =
       firstBy handleDeclId currentHandles
     handleRefIndex =
@@ -121,8 +121,6 @@ lowerCURDECore currentSystems currentBlueprint =
       normalizeImplicitUnitImplementations
         handleIndex
         preliminaryGraph
-    -- Canonical Unit bindings precede explicit occurrences. A matching
-    -- explicit Unit declaration deduplicates; a non-canonical one conflicts.
     allImplementations =
       implicitImplementations ++ explicitImplementations
     finalImplementationCatalog =
@@ -135,8 +133,6 @@ lowerCURDECore currentSystems currentBlueprint =
             (astSummaryRoots astSummary)
             (astSummaryImplementationOccurrences astSummary)
         )
-    systemIndex =
-      firstBy effectSystemDeclName canonicalSystems
     locatedImplementations =
       astSummaryImplementations astSummary
         ++ [ ( implicitImplementationPath currentImplementation
@@ -146,12 +142,11 @@ lowerCURDECore currentSystems currentBlueprint =
            ]
     finalErrors =
       sortValidationErrors
-        ( validateEffectSystems currentSystems
+        ( validateEffSys currentEffSys
             ++ validateImplementationCatalog allImplementations
             ++ concat
               [ validateLocatedImplementation
                   handleIndex
-                  systemIndex
                   currentPath
                   currentImplementation
               | (currentPath, currentImplementation) <-
@@ -163,13 +158,10 @@ lowerCURDECore currentSystems currentBlueprint =
               finalImplementationCatalog
               (astSummaryRoots astSummary)
             ++ validateDemandGraph finalGraph
-            ++ validateReadConsumption currentSystems finalGraph
+            ++ validateReadConsumption currentEffSys finalGraph
         )
-
-    canonicalSystems =
-      sort
-        (map canonicalEffectSystemDecl currentSystems)
-
+    canonicalEffSys =
+      canonicalEffSysDecl currentEffSys
 newtype ImplementationCatalog = ImplementationCatalog
   { catalogById :: Map.Map ImplementationId ImplementationDecl
   }
@@ -708,18 +700,15 @@ implicitImplementationPath currentImplementation =
 
 validateLocatedImplementation ::
   Map.Map HandleId HandleDecl ->
-  Map.Map EffectSystemName EffectSystemDecl ->
   AstPath ->
   ImplementationDecl ->
   [ValidationError]
 validateLocatedImplementation
-  handleIndex systemIndex currentPath currentImplementation =
+  handleIndex currentPath currentImplementation =
     validateImplementationContract
       handleIndex
-      systemIndex
       currentPath
       currentImplementation
-
 validateRootSeeds ::
   Map.Map HandleId HandleDecl ->
   ImplementationCatalog ->
@@ -863,19 +852,12 @@ isUnitHandle currentHandle =
   handleDeclArgumentSchema currentHandle
     == schemaRefIdentityOf unitSchema
 
-canonicalEffectSystemDecl :: EffectSystemDecl -> EffectSystemDecl
-canonicalEffectSystemDecl currentSystem =
-  currentSystem
-    { effectSystemDeclImports =
-        sort (effectSystemDeclImports currentSystem)
-    , effectSystemDeclHandles =
-        sort (effectSystemDeclHandles currentSystem)
-    , effectSystemDeclPrivate =
-        sort (effectSystemDeclPrivate currentSystem)
-    , effectSystemDeclExports =
-        sort (effectSystemDeclExports currentSystem)
+canonicalEffSysDecl :: EffSysDecl -> EffSysDecl
+canonicalEffSysDecl currentEffSys =
+  currentEffSys
+    { effSysDeclHandles =
+        sort (effSysDeclHandles currentEffSys)
     }
-
 firstOccurrence ::
   Ord key =>
   key ->

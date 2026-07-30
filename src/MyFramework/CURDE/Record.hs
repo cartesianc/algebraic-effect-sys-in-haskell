@@ -1,8 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -10,12 +8,11 @@
 module MyFramework.CURDE.Record
   ( RecordError (..)
   , RecordHandles (recordHandles)
-  , effectSystemFromRecord
+  , effSysFromRecord
+  , mergeEffSysDecls
   , sortRecordErrors
   ) where
 
-import Data.Proxy
-  ( Proxy (..) )
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import GHC.Generics
@@ -33,32 +30,21 @@ import GHC.Generics
   , (:*:) (..)
   , (:+:) (..)
   )
-import GHC.TypeLits
-  ( KnownSymbol
-  , symbolVal
-  )
 
 import MyFramework.CURDE.Types
 
--- | Stable errors produced while a typed record is erased into the
--- serializable effect-system declaration.
+-- | Stable errors produced while typed module records are merged into the one
+-- unified serializable EffSys declaration.
 data RecordError
-  = RecordFieldSelectorMissing String HandleId
-  | RecordFieldSymbolMismatch String String HandleId
+  = RecordFieldSelectorMissing HandleId
   | RecordFieldNotHandle String
   | RecordSumTypeUnsupported
   | RecordDuplicateHandle HandleId
-  | RecordHandleSystemMismatch EffectSystemName HandleId
-  | RecordPrivateHandleMissing HandleId
-  | RecordExportHandleMissing HandleId
-  | RecordDuplicatePrivateHandle HandleId
-  | RecordDuplicateExportHandle HandleId
-  | RecordPrivateExportOverlap HandleId
   deriving (Eq, Ord, Read, Show)
 
--- | A user record is authoring sugar only. Every field must be a typed
--- 'Handle', and its selector must exactly match the handle's type-level
--- 'Symbol'. The result is immediately existentially erased.
+-- | A user record is authoring sugar only. Every field must be a typed Handle.
+-- The record selector is a source-level module concern and does not have to be
+-- identical to the Handle's globally qualified Symbol.
 class RecordHandles record where
   recordHandles :: record -> Either [RecordError] [SomeHandleRef]
 
@@ -108,30 +94,14 @@ instance GRecordHandles (left :+: right) where
 
 instance
   {-# OVERLAPPING #-}
-  (Selector selector, KnownSymbol name) =>
+  Selector selector =>
   GRecordHandles
     (M1 S selector (K1 field (Handle name kind args result))) where
   gRecordHandles currentField@(M1 (K1 currentHandle))
-    | null selectorName =
-        Left
-          [ RecordFieldSelectorMissing
-              expectedSymbol
-              (handleId currentHandle)
-          ]
-    | selectorName /= expectedSymbol =
-        Left
-          [ RecordFieldSymbolMismatch
-              selectorName
-              expectedSymbol
-              (handleId currentHandle)
-          ]
+    | null (selName currentField) =
+        Left [RecordFieldSelectorMissing (handleId currentHandle)]
     | otherwise =
         Right [SomeHandleRef currentHandle]
-    where
-      selectorName =
-        selName currentField
-      expectedSymbol =
-        symbolVal (Proxy @name)
 
 instance
   {-# OVERLAPPABLE #-}
@@ -140,69 +110,44 @@ instance
   gRecordHandles currentField =
     Left [RecordFieldNotHandle (selName currentField)]
 
--- | Erase a typed record directly to the serializable frontend value. The
--- argument order mirrors 'effectSystem': name, imports, handles, private,
--- exports, with the record replacing the explicit handle list.
-effectSystemFromRecord ::
+-- | Erase one typed source-module record into a unified EffSys fragment.
+-- Fragments are not separate EffSys registries; mergeEffSysDecls only concatenates
+-- their Handle declarations and validates global identity uniqueness.
+effSysFromRecord ::
   RecordHandles record =>
-  EffectSystemName ->
-  [EffectSystemName] ->
   record ->
-  [HandleId] ->
-  [HandleId] ->
-  Either [RecordError] EffectSystemDecl
-effectSystemFromRecord
-  currentName
-  currentImports
-  currentRecord
-  currentPrivate
-  currentExports = do
-    currentHandles <- recordHandles currentRecord
-    let currentHandleIds =
-          map someHandleId currentHandles
-        handleIdSet =
-          Set.fromList currentHandleIds
-        privateSet =
-          Set.fromList currentPrivate
-        exportSet =
-          Set.fromList currentExports
-        currentErrors =
-          sortRecordErrors
-            ( map RecordDuplicateHandle (duplicates currentHandleIds)
-                ++
-                  [ RecordHandleSystemMismatch currentName currentId
-                  | currentId <- currentHandleIds
-                  , handleIdEffectSystem currentId /= currentName
-                  ]
-                ++
-                  [ RecordPrivateHandleMissing currentId
-                  | currentId <- currentPrivate
-                  , Set.notMember currentId handleIdSet
-                  ]
-                ++
-                  [ RecordExportHandleMissing currentId
-                  | currentId <- currentExports
-                  , Set.notMember currentId handleIdSet
-                  ]
-                ++ map RecordDuplicatePrivateHandle (duplicates currentPrivate)
-                ++ map RecordDuplicateExportHandle (duplicates currentExports)
-                ++
-                  map
-                    RecordPrivateExportOverlap
-                    (Set.toAscList (Set.intersection privateSet exportSet))
-            )
-    if null currentErrors
-      then
-        Right
-          EffectSystemDecl
-            { effectSystemDeclName = currentName
-            , effectSystemDeclImports = currentImports
-            , effectSystemDeclHandles = map eraseSomeHandle currentHandles
-            , effectSystemDeclPrivate = currentPrivate
-            , effectSystemDeclExports = currentExports
-            }
-      else
-        Left currentErrors
+  Either [RecordError] EffSysDecl
+effSysFromRecord currentRecord = do
+  currentHandles <- recordHandles currentRecord
+  effSysDeclFromHandles currentHandles
+
+mergeEffSysDecls :: [EffSysDecl] -> Either [RecordError] EffSysDecl
+mergeEffSysDecls currentDecls =
+  effSysDeclFromHandleDecls
+    (concatMap effSysDeclHandles currentDecls)
+
+effSysDeclFromHandles ::
+  [SomeHandleRef] ->
+  Either [RecordError] EffSysDecl
+effSysDeclFromHandles currentHandles =
+  effSysDeclFromHandleDecls (map eraseSomeHandle currentHandles)
+
+effSysDeclFromHandleDecls ::
+  [HandleDecl] ->
+  Either [RecordError] EffSysDecl
+effSysDeclFromHandleDecls currentHandles =
+  case currentErrors of
+    [] ->
+      Right (EffSysDecl currentHandles)
+    _ ->
+      Left currentErrors
+  where
+    currentErrors =
+      sortRecordErrors
+        ( map
+            RecordDuplicateHandle
+            (duplicates (map handleDeclId currentHandles))
+        )
 
 sortRecordErrors :: [RecordError] -> [RecordError]
 sortRecordErrors =

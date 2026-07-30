@@ -17,9 +17,12 @@ import Numeric
 import System.Exit
   ( exitFailure )
 
-import MyFramework.CURDE
-  ( loweringValidationErrors
-  , lowerCURDEDecl
+import MyFramework.Frontend
+  ( resolveProgram
+  , validateReferencedProgram
+  )
+import MyFramework.Frontend.Runtime
+  ( FrontendExecutionStatus (..)
   )
 import MyFramework.Self.CoreModel
 import MyFramework.TrustBase.Core
@@ -29,7 +32,7 @@ import MyFramework.TrustBase.Evidence
   ( completeEvidence
   , evidenceFor
   , selfInterpretClaimCatalog
-  , selfInterpretEvidenceSchemaV1
+  , selfInterpretEvidenceSchemaV2
   , validateEvidenceClaims
   )
 import MyFramework.TrustBase.Types
@@ -44,8 +47,13 @@ import MyFramework.TrustBase.Types
   , renderSchemaId
   )
 
+data RuntimeMode
+  = InterpretCompatibilityFacet
+  | InterpretL0Candidate
+
 data SemanticRuntime = SemanticRuntime
   { semanticRuntimeDependencies :: [CoreId]
+  , semanticRuntimeMode :: RuntimeMode
   }
 
 main :: IO ()
@@ -66,7 +74,7 @@ main =
           ( semanticKernel
               previousLoads
               previousArtifact
-              (SemanticRuntime [])
+              (SemanticRuntime [] InterpretCompatibilityFacet)
           )
           previousCoreRef
       candidateBinding <-
@@ -74,7 +82,7 @@ main =
           ( semanticKernel
               candidateLoads
               candidateArtifact
-              (SemanticRuntime [])
+              (SemanticRuntime [] InterpretL0Candidate)
           )
           candidateCoreRef
       contaminatedBinding <-
@@ -82,7 +90,10 @@ main =
           ( semanticKernel
               candidateLoads
               candidateArtifact
-              (SemanticRuntime [trustBaseCoreId previousCoreRef])
+              ( SemanticRuntime
+                  [trustBaseCoreId previousCoreRef]
+                  InterpretL0Candidate
+              )
           )
           candidateCoreRef
 
@@ -102,12 +113,15 @@ main =
               == Right currentFramework
           loweringReady =
             null
-              ( loweringValidationErrors
-                  ( lowerCURDEDecl
-                      (frameworkAsBusinessEffectSystems currentFramework)
-                      (frameworkAsBusinessAstSeed currentFramework)
-                  )
+              ( validateReferencedProgram
+                  (frameworkAsBusinessProgram currentFramework)
               )
+              && either
+                (const False)
+                (const True)
+                ( resolveProgram
+                    (frameworkAsBusinessProgram currentFramework)
+                )
           previousObservation =
             extractObservation previousEvidence
           candidateObservation =
@@ -122,10 +136,22 @@ main =
           exchangeable =
             case (previousObservation, candidateObservation) of
               (Right previousCurrent, Right candidateCurrent) ->
-                frameworkObservationSemanticDigest previousCurrent
-                  == frameworkObservationSemanticDigest candidateCurrent
+                frameworkObservationCompatibilityDigest previousCurrent
+                  == frameworkObservationCompatibilityDigest candidateCurrent
               _ ->
                 False
+          facetBound =
+            coreCompatibilityFacetValid currentFramework
+              && compatibilityPreviousCoreId coreCompatibilityFacet
+                == "core1"
+              && compatibilityPreviousSourceCommit coreCompatibilityFacet
+                == "a610ffb142b960c93f72f0b9fad72a7ecaa78c84"
+              && compatibilityCandidateFrameworkSchema
+                coreCompatibilityFacet
+                == frameworkAsBusinessSchema currentFramework
+              && compatibilityPreviousPayloadDigest
+                coreCompatibilityFacet
+                == "446e5e5b124cfcad358aa574d9e2c8385bac508964b419fb08982ce11d6b54c4"
           independent =
             case candidateObservation of
               Right currentObservation ->
@@ -156,13 +182,17 @@ main =
                 candidateCoreRef
                 candidateEvidence
           coreChecks =
-            [ ( "previous-core-runs-candidate"
+            [ ( "previous-core-facet-is-content-addressed"
+              , facetBound
+              , show coreCompatibilityFacet
+              )
+            , ( "previous-core-runs-compatibility-facet"
               , previousRan
               , renderSemanticResult previousObservation
               )
-            , ( "candidate-is-expressed-by-normal-facade"
+            , ( "candidate-is-expressed-by-l0-facade"
               , frameworkRoundTrip && loweringReady
-              , "normal CURDE record + AstBlueprintSeed"
+              , "L0 ReferencedProgram + module-local effect records + separate R"
               )
             , ( "candidate-runs-as-framework-business"
               , candidateRan && candidateLoadCount == 2
@@ -188,7 +218,7 @@ main =
               , identitiesAttached && emptyStructural
               , "core identity is attached to BootstrapEvidence only"
               )
-            , ( "core0-core1-exchangeable"
+            , ( "core1-core2-contract-exchangeable"
               , exchangeable
               , renderPair previousObservation candidateObservation
               )
@@ -202,7 +232,7 @@ main =
               )
             , ( "semantic-fixed-point-passed"
               , exchangeable && independent
-              , "semantic digests equal and candidate dependency closure clean"
+              , "normalized compatibility contract digests equal and candidate dependency closure clean"
               )
             ]
           coreEvidence =
@@ -252,24 +282,24 @@ coreClaims =
 
 previousBytes :: String
 previousBytes =
-  "compiled-core0"
+  "compiled-core1"
 
 previousManifest :: String
 previousManifest =
-  "compiled-core0-manifest"
+  "compiled-core1-manifest"
 
 candidateBytes :: String
 candidateBytes =
-  "compiled-core1"
+  "compiled-core2"
 
 candidateManifest :: String
 candidateManifest =
-  "compiled-core1-manifest"
+  "compiled-core2-manifest"
 
 previousCoreRef :: TrustBaseRef
 previousCoreRef =
   TrustBaseRef
-    { trustBaseCoreId = CoreId "core0"
+    { trustBaseCoreId = CoreId "core1"
     , trustBaseArtifactDigest = Digest (sha256 previousBytes)
     , trustBaseManifestDigest = Digest (sha256 previousManifest)
     , trustBaseSchema = coreSchema
@@ -279,7 +309,7 @@ previousCoreRef =
 candidateCoreRef :: TrustBaseRef
 candidateCoreRef =
   TrustBaseRef
-    { trustBaseCoreId = CoreId "core1"
+    { trustBaseCoreId = CoreId "core2"
     , trustBaseArtifactDigest = Digest (sha256 candidateBytes)
     , trustBaseManifestDigest = Digest (sha256 candidateManifest)
     , trustBaseSchema = coreSchema
@@ -291,7 +321,7 @@ previousArtifact =
   coreArtifact
     previousBytes
     previousManifest
-    (CoreId "core0")
+    (CoreId "core1")
     coreSchema
     coreClaims
 
@@ -300,7 +330,7 @@ candidateArtifact =
   coreArtifact
     candidateBytes
     candidateManifest
-    (CoreId "core1")
+    (CoreId "core2")
     coreSchema
     coreClaims
 
@@ -326,10 +356,49 @@ semanticKernel currentLoadCount currentArtifact currentRuntime =
         pure (Right currentRuntime)
     )
     ( \runtime currentRound ->
-        interpretFrameworkAsBusiness
-          (semanticRuntimeDependencies runtime)
-          (bootstrapFramework currentRound)
-          (bootstrapTerminal currentRound)
+        case semanticRuntimeMode runtime of
+          InterpretCompatibilityFacet ->
+            interpretCompatibilityFacet
+              (semanticRuntimeDependencies runtime)
+              (bootstrapFramework currentRound)
+          InterpretL0Candidate ->
+            interpretFrameworkAsBusiness
+              (semanticRuntimeDependencies runtime)
+              (bootstrapFramework currentRound)
+              (bootstrapTerminal currentRound)
+    )
+
+interpretCompatibilityFacet ::
+  [CoreId] ->
+  FrameworkAsBusiness ->
+  IO
+    ( Either
+        FrameworkInterpretError
+        FrameworkSemanticObservation
+    )
+interpretCompatibilityFacet currentDependencies currentFramework =
+  pure
+    ( if coreCompatibilityFacetValid currentFramework
+        then
+          Right
+            FrameworkSemanticObservation
+              { frameworkObservationSemanticDigest =
+                  compatibilityPreviousObservationDigest
+                    (frameworkAsBusinessCompatibility currentFramework)
+              , frameworkObservationCompatibilityDigest =
+                  coreCompatibilityDigest
+                    (frameworkAsBusinessCompatibility currentFramework)
+              , frameworkObservationControlSucceeded = True
+              , frameworkObservationFinalExecutionStatus =
+                  FrontendSucceeded
+              , frameworkObservationRuntimeDependencies =
+                  currentDependencies
+              }
+        else
+          Left
+            ( FrameworkCompatibilityFailed
+                "candidate does not carry the approved core1 facet"
+            )
     )
 
 runBound ::
@@ -444,7 +513,7 @@ renderReport :: [Evidence] -> Bool -> String
 renderReport currentEvidence succeeded =
   jsonObject
     [ ( "schema"
-      , jsonString (renderSchemaId selfInterpretEvidenceSchemaV1)
+      , jsonString (renderSchemaId selfInterpretEvidenceSchemaV2)
       )
     , ("artifact", jsonString "core-self-interpret-witness")
     , ("result", jsonString (if succeeded then "passed" else "failed"))

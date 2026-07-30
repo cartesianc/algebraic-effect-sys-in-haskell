@@ -1,7 +1,12 @@
 # AST 唯一执行入口与运行来源证明
 
-状态：已实现；本地语义门禁通过，尚未执行 core promotion gate
-适用范围：`myframework` 的 EffectSystem、AST、lowering、runtime 与 handler 边界
+> **L0 优先：** 本文记录 legacy AST runtime 的执行来源边界。公开前台、模块
+> 引用、effect record 与 R 分离语义以
+> [`L0_REFERENCED_AST_SEMANTICS.zh.md`](L0_REFERENCED_AST_SEMANTICS.zh.md)
+> 为准。
+
+状态：legacy 边界保留；L0 runtime 已进入 approved core2
+适用范围：`myframework` 的 EffSys、AST、lowering、runtime 与 handler 边界
 本文件只冻结执行来源，不冻结尚未确认的 AST 控制节点语义。
 
 ## 1. 问题
@@ -9,13 +14,13 @@
 框架前台目前只应存在两个可序列化的语义来源：
 
 ```text
-EffectSystemDecl
+EffSysDecl
 AstBlueprintSeed
 ```
 
 其中：
 
-- `EffectSystemDecl` 声明 C/U/R/D/E handle、单一 input、schema、private/export；
+- `EffSysDecl` 声明 C/U/R/D/E handle、单一 input、schema、R source 与 observation contract；
 - `AstBlueprintSeed` 声明 boot 控制结构和 `ImplementationDecl` 参数绑定；
 - handler 是 runtime-only 的操作语义实现；
 - 注册 handler 只表示“实现可供绑定”，不表示“允许执行”。
@@ -24,7 +29,7 @@ AstBlueprintSeed
 边界尚未强制这一原则：
 
 1. 根 Facade 暴露了 `invokeCude` 与 `invokeRead`，允许绕过 AST 直接调用 handler；
-2. `OperatorRef`/`PureOperatorRegistry` 在 EffectSystem 之外形成了第二条可执行
+2. `OperatorRef`/`PureOperatorRegistry` 在 EffSys 之外形成了第二条可执行
    数据变换路径；
 3. `Context` 已有 lowering/runtime 行为，但其语义尚未冻结；
 4. `hanging` 当前不会被普通 boot 自动执行，但已经参与 lowering、implementation
@@ -61,7 +66,7 @@ AstBlueprintSeed.boot
   -> cata
   -> WorkflowNode / ControlDemand
   -> DemandNode
-  -> EffectSystem input closure
+  -> EffSys input closure
   -> R / Implementation parameter binding
   -> CUDE handler invocation
 ```
@@ -69,12 +74,12 @@ AstBlueprintSeed.boot
 runtime 不得提供从 `HandleId`、handler registry 或任意用户函数直接启动 Effect
 链的公共入口。
 
-### E4：EffectSystem 是所有 Fact 求值的语义边界
+### E4：EffSys 是所有 Fact 求值的语义边界
 
 运行过程中出现的每个 R/C/U/D/E 都必须：
 
-1. 在某个 `EffectSystemDecl` 中声明；
-2. 通过 imports/private/exports 检查；
+1. 在某个 `EffSysDecl` 中声明；
+2. 通过全局 HandleId、schema 与 input/source 检查；
 3. 位于某个 AST demand 的依赖闭包；
 4. 由 runtime demand evaluator 按 input 关系到达；
 5. 在调用 handler 前携带不可伪造的 AST execution provenance。
@@ -93,7 +98,7 @@ record/product construction
 经过单独确认的纯结构 field selection
 ```
 
-任意业务数据变换必须声明为 EffectSystem 中的 R Fact，并由该 R 的 handler 实现。
+任意业务数据变换必须声明为 EffSys 中的 R Fact，并由该 R 的 handler 实现。
 
 ### E6：未冻结语义不可运行
 
@@ -112,7 +117,7 @@ record/product construction
 输入：
 
 ```text
-EffectSystemDecl
+EffSysDecl
 AstBlueprintSeed
 ```
 
@@ -122,7 +127,7 @@ lowering 必须完成：
 resolve every AST target
 resolve every Implementation target
 resolve every R reference
-validate EffectSystem visibility
+validate global EffSys identity, schema, and references
 validate input closure
 validate boot reachability
 reject every unsupported/unfrozen constructor
@@ -202,7 +207,7 @@ handler”作为框架运行路径。
 ### 4.1 OperatorRef
 
 `OperatorRef`、`applyOperator` 与 `PureOperatorRegistry` 未经语义确认，并在
-EffectSystem 之外引入了可执行函数入口。
+EffSys 之外引入了可执行函数入口。
 
 当前决定：
 
@@ -337,11 +342,11 @@ artifact/source closure fixed point 可以单独验证，但不能替代执行�
 
 ```text
 所有公开运行入口都要求 validated RuntimeProgram
-所有 RuntimeProgram 都来自 EffectSystemDecl + AstBlueprintSeed lowering
+所有 RuntimeProgram 都来自 EffSysDecl + AstBlueprintSeed lowering
 所有 handler invocation 都持有 AST execution provenance
 所有执行中的 handle 都属于 boot demand closure
 所有未冻结语义在 lowering 阶段失败
-不存在 EffectSystem 之外的可执行 operator registry
+不存在 EffSys 之外的可执行 operator registry
 负例 witness 全部通过
 ```
 

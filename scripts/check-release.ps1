@@ -74,6 +74,12 @@ try {
     Invoke-Captured "semantic witness" {
         stack --work-dir .stack-work-codex exec curde-semantics-witness
     } (Join-Path $evidenceRoot "stage0-semantics.json")
+    Invoke-Captured "referenced frontend witness" {
+        stack --work-dir .stack-work-codex exec referenced-frontend-witness
+    } (Join-Path $evidenceRoot "stage0-referenced-frontend.json")
+    Invoke-Captured "referenced runtime witness" {
+        stack --work-dir .stack-work-codex exec referenced-runtime-witness
+    } (Join-Path $evidenceRoot "stage0-referenced-runtime.json")
     Invoke-Captured "runtime witness" {
         stack --work-dir .stack-work-codex exec curde-runtime-witness
     } (Join-Path $evidenceRoot "stage0-runtime.json")
@@ -83,6 +89,9 @@ try {
     Invoke-Captured "semantic self-interpret witness" {
         stack --work-dir .stack-work-codex exec core-self-interpret-witness
     } (Join-Path $evidenceRoot "stage0-self-interpret.json")
+    Invoke-Captured "approved core1 to L0 core2 replay" {
+        & (Join-Path $PSScriptRoot "check-core1-replay.ps1")
+    } (Join-Path $evidenceRoot "stage0-core1-core2-replay.json")
     Invoke-Captured "promotion policy witness" {
         stack --work-dir .stack-work-codex exec core-promotion-witness
     } (Join-Path $evidenceRoot "stage0-promotion.json")

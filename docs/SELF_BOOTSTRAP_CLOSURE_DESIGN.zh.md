@@ -1,5 +1,10 @@
 # MyFramework 自举闭包与 TrustBase 轮换设计
 
+> **L0 优先：** 前台语义以
+> [`L0_REFERENCED_AST_SEMANTICS.zh.md`](L0_REFERENCED_AST_SEMANTICS.zh.md)
+> 为最高规范。本文后续出现的旧 CURDE/`AstBlueprintSeed`、core0/core1 名称
+> 仅保留为历史设计说明，不得覆盖 L0 与当前 core1→core2 证据。
+
 ## 0. 文档状态
 
 本文定义 `myframework` 从“自描述 fixture + 可复现 artifact”推进到“语义闭合、可轮换
@@ -7,18 +12,19 @@ TrustBase 的自举 core”所需的设计。
 
 当前工作树已经实现并通过聚焦 witness：
 
-- framework 通过正常 CURDE/AST/Handler 前台表达为 `FrameworkAsBusiness`；
-- previous compiled core 通过显式 `BoundTrustBase` 解释 candidate；
+- framework 通过 L0 `ReferencedProgram` 表达为 `FrameworkAsBusiness`；
+- approved core1 由 source commit、artifact、legacy payload 和 semantic
+  observation 四重 digest 重放，并通过显式兼容 facet 解释 core2；
 - candidate 接收 nullary `EmptyBusiness` 并闭合递归；
-- core0/core1 的规范化语义观察可交换，且 candidate 对 core0 零运行时回指；
+- core1/core2 的规范化兼容契约可交换，且 core2 对 core1 零运行时回指；
 - `TrustBaseRef`、闭合 `HostKernel`、PromotionRecord 与 current pointer 已实现；
 - Stage0/Stage1/Stage2 artifact fixed-point 协议保留；
 - approved-core `SdkCoreLock`、standalone `sdk-lower`、package verifier 与 beta workflows 已实现。
 
-当前工作树已经通过普通 release pre-gate 与重型 self-artifact gate，maintainer
-已明确批准 `core1`，仓库的 approved record 与 current pointer 已生成。`core0` 仅作为
-归档/回滚材料保留，不在 core1 的活动依赖闭包内。`0.1.0-beta.1` 已从 approved
-core1 实际物化，并通过 package verify、独立构建、SDK witness、semantic witness 与 TrustBase report。
+当前工作树已经通过普通 release pre-gate 与重型 self-artifact gate，`core2`
+已由显式 promotion 命令批准，仓库的 approved record 与 current pointer 已生成。
+`core1` 仅作为重放/回滚材料保留，不在 core2 的活动依赖闭包内。一个
+`0.1.0-core2` SDK 包已从 approved core2 实际物化并通过 package verify。
 
 ## 1. “可用”的分层定义
 
@@ -28,10 +34,10 @@ core1 实际物化，并通过 package verify、独立构建、SDK witness、sem
 |---|---|---|
 | 研究 CURDE、单 input、R/Implementation、AST 控制语义 | 已有实现与 witness | 可用作实验核心 |
 | 运行受当前 Handler/runtime 支持的业务模型 | 已有实现，但业务验收面仍需逐步扩展 | 有条件可用 |
-| 验证源码 artifact 可独立构建并复现 | 协议与历史 gate 已有；当前改动待重跑 heavy gate | 待本轮证据 |
-| 声称 framework 已经以自身语义表达自身 | `FrameworkAsBusiness` 与 semantic witness 已通过聚焦验证 | 已实现，待 release gate 固化 |
-| 将 candidate 晋升为下一轮 TrustBase core | core1 已通过 heavy gate 并由 maintainer 明确批准 | promotion approved |
-| 由 CI/CD 生成并发布可信 SDK | approved core1、sdk-lower、独立验证与 workflows 已实现 | 0.1.0-beta.1 本地端到端复验通过 |
+| 验证源码 artifact 可独立构建并复现 | Stage1/Stage2 payload 与 evidence fixed point 均通过 | 已完成 |
+| 声称 framework 已经以自身语义表达自身 | L0 `FrameworkAsBusiness` 与 semantic witness 已进入 core2 | 已完成 |
+| 将 candidate 晋升为下一轮 TrustBase core | core2 已通过 heavy gate 并显式批准 | promotion approved |
+| 由 CI/CD 生成并发布可信 SDK | approved core2 已实际物化并独立 verify | 0.1.0-core2 本地端到端复验通过 |
 
 对普通 CURDE/runtime 实验而言，这些缺口不会让全部代码失去用途。对项目的最终目标
 ——可自举 framework core 与可信 SDK 源——而言，它们是核心可用性条件，而不是可选优化。
@@ -195,7 +201,7 @@ Genesis `core0` 可以、也必须承担第一次语义化 `core1` 的解释和�
 
 业务作者仍然只使用：
 
-1. Effect System / CURDE；
+1. EffSys / CURDE；
 2. AST；
 3. Handler。
 
@@ -299,7 +305,7 @@ bindTrustBase ::
 真正的 `FrameworkAsBusiness` 必须通过正常三前台表达 framework core 的最小承诺：
 
 ```text
-Effect System / CURDE
+EffSys / CURDE
   validate facade
   validate single-input CURDE
   lower declarations
@@ -321,7 +327,7 @@ Handler
 ```haskell
 data FrameworkAsBusiness = FrameworkAsBusiness
   { frameworkCoreId          :: CoreId
-  , frameworkEffectSystems   :: [EffectSystemDecl]
+  , frameworkEffSyss   :: [EffSysDecl]
   , frameworkAst             :: AppBlueprintSeed
   , frameworkHandlerContract :: HandlerContractManifest
   , frameworkSchemaCatalog   :: SchemaCatalog
@@ -372,7 +378,7 @@ data AppSeed
 - 不 lower 为 `AstF`；
 - 不产生 `ControlNode`；
 - runtime 直接返回初始完成状态；
-- 没有 EffectSystem、CURDE handle、Implementation、Handler、artifact 或 host IO；
+- 没有 EffSys、CURDE handle、Implementation、Handler、artifact 或 host IO；
 - witness 可以产生 `EmptyBusinessClosed` evidence，但不能把它伪装成 runtime Fact。
 
 这样 `AstF` 的 13 个控制节点保持不变，空业务只是 App 的代数基例。
@@ -695,7 +701,7 @@ approved TrustBase core
 
 本设计不改变以下原则：
 
-- 用户前台仍然只有 Effect System、AST、Handler；
+- 用户前台仍然只有 EffSys、AST、Handler；
 - 业务前台不暴露 core 参数；
 - SDK 对业务用户隐式绑定 approved core，但其 artifact/lock/manifest 必须显式记录该 core；
 - maintenance/runtime 显式接收 `BoundTrustBase`；

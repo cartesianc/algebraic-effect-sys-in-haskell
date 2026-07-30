@@ -47,7 +47,7 @@ data LiteralValue
 -- | Typed, closed, serializable R expression.
 --
 -- A reference can only name an R handle. CUDE observations are therefore not
--- public expression values: the declaring effect system must first expose an
+-- public expression values: the unified EffSys must first expose an
 -- R handle whose source is that private observation.
 data RExpr value where
   RReference :: Handle name 'R () value -> RExpr value

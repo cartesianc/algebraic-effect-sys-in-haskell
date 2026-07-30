@@ -1,8 +1,11 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE KindSignatures #-}
+
 module MyFramework.CURDE
   ( CURDE (..)
   , SCURDE (..)
   , curdeValue
-  , EffectSystemName (..)
   , HandleId (..)
   , renderHandleId
   , FieldName (..)
@@ -55,12 +58,12 @@ module MyFramework.CURDE
   , someCommandHandleId
   , someCommandHandleKind
   , someCommandHandleArgumentSchemaIdentity
-  , EffectSystem (..)
-  , effectSystem
-  , effectSystemHandleIds
-  , EffectSystemDecl (..)
-  , eraseEffectSystem
-  , effectSystemDeclHandleIds
+  , EffSys (..)
+  , effSys
+  , effSysHandleIds
+  , EffSysDecl (..)
+  , eraseEffSys
+  , effSysDeclHandleIds
   , LiteralValue (..)
   , FieldExpr (..)
   , RExpr
@@ -102,14 +105,21 @@ module MyFramework.CURDE
   , ValidationError (..)
   , sortValidationErrors
   , validationPassed
-  , validateEffectSystems
+  , validateEffSys
   , validateImplementationCatalog
   , RecordError (..)
   , RecordHandles (recordHandles)
-  , effectSystemFromRecord
+  , effSysFromRecord
+  , mergeEffSysDecls
   , sortRecordErrors
+  , RunKind
+  , run
   ) where
 
+import MyFramework.Ast
+  ( AstSeed (..)
+  , AstTarget (..)
+  )
 import MyFramework.CURDE.Core
   ( DemandNodeId (..)
   , FieldPath (..)
@@ -156,16 +166,16 @@ import MyFramework.CURDE.Lowering
 import MyFramework.CURDE.Record
   ( RecordError (..)
   , RecordHandles (recordHandles)
-  , effectSystemFromRecord
+  , effSysFromRecord
+  , mergeEffSysDecls
   , sortRecordErrors
   )
 import MyFramework.CURDE.Types
   ( CURDE (..)
   , CommandKind (..)
   , CommandSpec (..)
-  , EffectSystem (..)
-  , EffectSystemDecl (..)
-  , EffectSystemName (..)
+  , EffSys (..)
+  , EffSysDecl (..)
   , FieldName (..)
   , Handle
   , HandleDecl (..)
@@ -185,10 +195,10 @@ import MyFramework.CURDE.Types
   , curdeValue
   , d
   , e
-  , effectSystem
-  , effectSystemDeclHandleIds
-  , effectSystemHandleIds
-  , eraseEffectSystem
+  , effSys
+  , effSysDeclHandleIds
+  , effSysHandleIds
+  , eraseEffSys
   , eraseHandle
   , eraseSomeHandle
   , handleArgumentSchemaRef
@@ -227,11 +237,44 @@ import MyFramework.CURDE.Validate
   ( ReferenceSite (..)
   , ValidationError (..)
   , sortValidationErrors
-  , validateEffectSystems
+  , validateEffSys
   , validateImplementationCatalog
   , validationPassed
   )
 
+class RunKind (kind :: CURDE) where
+  runImplementation ::
+    Handle name kind args observation ->
+    RExpr args ->
+    Implementation kind args observation
+
+instance RunKind 'C where
+  runImplementation = implC
+
+instance RunKind 'U where
+  runImplementation = implU
+
+instance RunKind 'D where
+  runImplementation = implD
+
+instance RunKind 'E where
+  runImplementation = implE
+
+-- | Put a complete CUDE application directly at an AST demand leaf. The
+-- serializable ImplementationDecl remains compiler IR rather than a fourth
+-- authoring surface.
+run ::
+  RunKind kind =>
+  Handle name kind args observation ->
+  RExpr args ->
+  AstSeed
+run currentHandle currentArguments =
+  SeedLeaf
+    ( ImplementationTarget
+        ( eraseImplementation
+            (runImplementation currentHandle currentArguments)
+        )
+    )
 -- | Stable public projection of lowering diagnostics. The lowered demand
 -- graph remains an internal compiler value.
 loweringValidationErrors :: LoweringResult -> [ValidationError]

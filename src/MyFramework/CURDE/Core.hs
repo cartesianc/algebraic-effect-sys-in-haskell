@@ -37,7 +37,7 @@ import MyFramework.CURDE.Expression
   , implementationDeclTargetId
   )
 import MyFramework.CURDE.Types
-  ( EffectSystemDecl
+  ( EffSysDecl
   , HandleDecl
   , HandleId
   , handleDeclId
@@ -171,7 +171,7 @@ demandClosure currentGraph =
             (Map.findWithDefault [] currentNode prerequisitesByNode ++ remaining)
 
 data CURDECore = CURDECore
-  { curdeCoreEffectSystems :: [EffectSystemDecl]
+  { curdeCoreEffSys :: EffSysDecl
   -- | Deduplicated lowered IR derived from AST declarations plus demanded
   -- implicit Unit implementations. It is not a frontend registry.
   , curdeCoreImplementations :: [ImplementationDecl]

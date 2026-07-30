@@ -1,5 +1,12 @@
 # Architecture
 
+> **L0 precedence:** The frozen highest-level semantic contract is
+> [`L0_REFERENCED_AST_SEMANTICS.zh.md`](L0_REFERENCED_AST_SEMANTICS.zh.md).
+> This file describes the current implementation. Any unified EffSys,
+> globally-qualified handle, R-input-chain, or fully nested Blueprint behavior
+> below is subordinate migration state and is non-normative when it conflicts
+> with L0.
+
 ## Semantic source
 
 This repository is the only source of CURDE semantics. The bootstrap repository
@@ -9,13 +16,21 @@ is a reference implementation. The SDK repository is a lowering product.
 
 The public model has exactly three authoring surfaces:
 
-- Effect System
+- EffSys (the unified effect-chain registry)
 - AST
 - Handler
 
-Effect System and AST declarations are records or closed data that can be
+EffSys and AST declarations are records or closed data that can be
 serialized. Runtime functions, lambdas, handles, and environment objects never
 enter serialized frontend values.
+
+## EffSys identity and module ownership
+
+The frontend contains one logical `EffSysDecl`. Every handle has one globally
+qualified `HandleId`; `r/c/u/d/e` do not accept a system argument. Generic
+records may define source-level module fragments, but those fragments are
+merged into the one EffSys and introduce no imports/private/exports execution
+semantics. Business module ownership and composition live in the AST.
 
 ## CURDE
 
@@ -27,12 +42,14 @@ or R value, or a runtime Handler environment. A serializable `RExpr` supplies
 Implementation arguments only from typed R references, literals, and closed
 records/products. Business data transformations are explicit R Facts with
 registered R handlers; there is no executable operator registry outside the
-Effect System.
+unified EffSys.
 
 Every fact has at most one explicit input. A declared input is a real semantic
 dependency and the handler must consume the input handle or state.
 
-An Implementation binds a complete serializable argument expression to a
+The public `run handle rExpr` facade puts a complete CUDE application directly
+at an AST demand leaf. Internally, an Implementation binds a complete
+serializable argument expression to a
 `C`, `U`, `D`, or `E` handle. There is no `impl R` in the first version.
 `ImplementationDecl` values occur directly in AST `Leaf` or
 `WithImplementation` nodes; lowering never accepts a separate implementation

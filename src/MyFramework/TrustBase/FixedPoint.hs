@@ -297,12 +297,19 @@ semanticWitnessValid :: String -> Bool
 semanticWitnessValid currentText =
   all
     (`isInfixOf` currentText)
-    [ "\"schema\":\"curde-semantics-evidence.v1\""
-    , "\"artifact\":\"curde-semantics-witness\""
+    [ "\"schema\":\"curde-semantics-report.v3\""
     , "\"result\":\"passed\""
-    , "\"exact21Plus1\":true"
+    , "\"name\":\"l0-referenced-program-valid\",\"passed\":true"
+    , "\"name\":\"l0-referenced-program-resolves\",\"passed\":true"
+    , "\"name\":\"l0-module-local-effect-records\",\"passed\":true"
+    , "\"name\":\"l0-r-is-separate\",\"passed\":true"
+    , "\"name\":\"l0-effect-kinds-cude-without-r\",\"passed\":true"
+    , "\"name\":\"l0-self-model-text-roundtrip\",\"passed\":true"
+    , "\"name\":\"l0-self-model-json-roundtrip\",\"passed\":true"
+    , "\"name\":\"l0-resolver-control-trace\",\"passed\":true"
     ]
-    && countSubstring "\"status\":\"established\"" currentText >= 19
+    && countSubstring "\"passed\":true" currentText == 8
+    && not ("\"passed\":false" `isInfixOf` currentText)
 
 runtimeWitnessValid :: String -> Bool
 runtimeWitnessValid currentText =
@@ -311,8 +318,11 @@ runtimeWitnessValid currentText =
     [ "\"schema\":\"curde-runtime-witness.v1\""
     , "\"artifact\":\"curde-runtime-witness\""
     , "\"result\":\"passed\""
+    , "\"name\":\"curde-runtime-observation-read-history\",\"status\":\"established\""
+    , "\"name\":\"curde-runtime-control-parity\",\"status\":\"established\""
+    , "\"name\":\"curde-runtime-ast-execution-provenance\",\"status\":\"established\""
     ]
-    && countSubstring "\"passed\":true" currentText == 48
+    && countSubstring "\"passed\":true" currentText == 56
     && not ("\"passed\":false" `isInfixOf` currentText)
 
 countSubstring :: String -> String -> Int

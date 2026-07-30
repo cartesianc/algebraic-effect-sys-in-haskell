@@ -1,9 +1,15 @@
 # Approved-core SDK source boundary
 
 The SDK generator is a maintenance and release surface, not a fourth business
-authoring surface. Business authors still provide only Effect System/CURDE,
+authoring surface. Business authors still provide only EffSys/CURDE,
 AST, and Handler declarations.
 
+## Versioned schema
+
+The unified boundary is `myframework-sdk-source-artifact.v2` /
+`myframework-sdk-source-report.v2`, with `EffSysDecl.ReadShow.v2` encoding and
+a v2 lowering-semantics digest. V1 multi-system artifacts are rejected instead
+of being interpreted under V2 semantics.
 ## Authoritative input
 
 `mkSdkSourceInput` accepts the existing serializable values:
@@ -11,7 +17,7 @@ AST, and Handler declarations.
 ```text
 approved TrustBaseRef
 SDK version
-[EffectSystemDecl]
+EffSysDecl
 AstBlueprintSeed
 Maybe erased Handler coverage
 ```
@@ -24,10 +30,10 @@ canonical SDK surface digest
 SDK lowering-semantics digest
 ```
 
-The surface digest commits the canonical SDK version, erased CURDE systems,
+The surface digest commits the canonical SDK version, the erased unified EffSys,
 AST seed, and optional Handler identities. The lock itself is excluded from
 that calculation to avoid a circular digest. `buildSdkSourceReport` blocks an
-invalid core reference, surface mismatch, lowering mismatch, duplicate system,
+invalid core reference, surface mismatch, lowering mismatch, empty/duplicate global HandleId,
 or unknown Handler identity before materialization.
 
 Handler implementations, existential registry entries, closures, codecs,
@@ -65,8 +71,8 @@ surface is rejected.
 
 ## Determinism
 
-Top-level effect systems and Handler coverage are canonicalized as sets. All
-semantically ordered fields inside an `EffectSystemDecl` and the entire AST
+The unified EffSys Handle declarations and Handler coverage are canonicalized as sets. All
+semantically ordered fields inside each `HandleDecl` and the entire AST
 seed preserve authoring order. The lowering digest is versioned explicitly.
 
 The `sdk-package-witness` proves valid materialization and verification, plus

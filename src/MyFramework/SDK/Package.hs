@@ -35,7 +35,7 @@ import Text.Read
 import MyFramework.SDK.SourceArtifact
   ( SdkGeneratedSource (..)
   , buildSdkSourceReport
-  , handlerCoverageFromIds
+  , handlerCoverageFromRefs
   , mkSdkSourceInput
   , renderGeneratedSdkSource
   , renderSdkSourceReportJson
@@ -50,9 +50,9 @@ import MyFramework.Self.Artifact
   )
 import MyFramework.Self.CoreModel
   ( frameworkAsBusiness
-  , frameworkAsBusinessAstSeed
-  , frameworkAsBusinessEffectSystems
-  , frameworkAsBusinessHandlerCoverage
+  , frameworkAsBusinessEffectCoverage
+  , frameworkAsBusinessProgram
+  , frameworkAsBusinessReadCoverage
   )
 import MyFramework.Self.Model
   ( selfModel )
@@ -177,11 +177,13 @@ materializeApprovedSdkPackage
                   mkSdkSourceInput
                     (currentCoreRef currentPointer)
                     sdkVersion
-                    (frameworkAsBusinessEffectSystems currentFramework)
-                    (frameworkAsBusinessAstSeed currentFramework)
+                    (frameworkAsBusinessProgram currentFramework)
                     ( Just
-                        ( handlerCoverageFromIds
-                            ( frameworkAsBusinessHandlerCoverage
+                        ( handlerCoverageFromRefs
+                            ( frameworkAsBusinessEffectCoverage
+                                currentFramework
+                            )
+                            ( frameworkAsBusinessReadCoverage
                                 currentFramework
                             )
                         )

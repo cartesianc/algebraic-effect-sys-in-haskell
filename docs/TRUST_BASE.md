@@ -25,14 +25,15 @@ lowering, and business operations remain outside it.
 
 ## Rotating self-bootstrap core
 
-`FrameworkAsBusiness` is the serializable core expression built from the normal
-three authoring surfaces. `EmptyBusiness` is its nullary App-level recursive
+`FrameworkAsBusiness` is the serializable core expression built from the L0
+`ReferencedProgram` facade. `EmptyBusiness` is its nullary App-level recursive
 base and creates no fake AST node. A candidate that loads or calls its previous
 core after materialization is rejected.
 
-Genesis core0 may interpret and materialize core1. Once core1 is explicitly
-approved, the next round is core1 -> core2; core0 may remain only as archival or
-rollback material, not an active dependency.
+Genesis core0 interpreted and materialized core1. Approved core1 was then
+content-addressed and replayed to bridge the L0 core2 candidate. Core2 is now
+the approved current core; core1 and core0 remain archival/rollback material,
+not active dependencies.
 
 ## Evidence and promotion
 

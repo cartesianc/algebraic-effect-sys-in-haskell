@@ -9,10 +9,16 @@ part of the materialized framework source closure.
   semantic, artifact, and EmptyBusiness evidence digests.
 - `promotion.pending.json` preserves the pre-decision record.
 - `core0-manifest.json` is the previous genesis core retained for audit and
-  rollback; the active core must not depend on it.
-- `evidence/core1/` preserves the gate reports used for this promotion.
+  rollback.
+- `core1-manifest.json` is the immediately previous approved core retained for
+  audit and rollback; the active core must not depend on it.
+- `core1-source.json` binds the approved core1 payload to the exact source
+  commit and legacy framework/observation digests required for core1 replay.
+- `evidence/core1/` preserves the core0 -> core1 promotion evidence.
+- `evidence/core2/` preserves the L0 core1 -> core2 replay, semantic,
+  fixed-point, and promotion evidence.
 
-The current core is `core1`. Future rounds must use core1 as the previous core,
-produce a separately identified candidate (for example core2), pass the same
+The current core is `core2`. Future rounds must use core2 as the previous core,
+produce a separately identified candidate (for example core3), pass the same
 semantic and artifact gates, and receive a new explicit approval. Editing only
 `current.json` is not a valid promotion.

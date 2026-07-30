@@ -25,7 +25,7 @@ import MyFramework.Runtime.Value
   )
 
 -- | Evaluation is deliberately structural. Business transformations are R
--- Facts in the EffectSystem and therefore enter through registered R handlers.
+-- Facts in the unified EffSys and therefore enter through registered R handlers.
 data RExprEvaluationError
   = LiteralSchemaMismatch SchemaIdentity LiteralValue
   | ProductSchemaMismatch SchemaIdentity

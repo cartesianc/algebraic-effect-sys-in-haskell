@@ -1,7 +1,3 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE TypeApplications #-}
-
 module MyFramework.Self.Model
   ( SelfModel
   , SelfModelUser
@@ -9,52 +5,41 @@ module MyFramework.Self.Model
   , decodeSelfModel
   , decodeSelfModelJson
   , encodeSelfModel
-  , selfAstBlueprint
-  , selfCreateUserHandle
-  , selfDeleteUserHandle
-  , selfEffectSystemDeclarations
-  , selfEmitAuditHandle
+  , selfCreateUserAddress
+  , selfDeleteUserAddress
+  , selfEmitAuditAddress
   , selfModel
-  , selfModelAstSeed
-  , selfModelEffectSystems
-  , selfModelHandlerCoverage
+  , selfModelEffectCoverage
+  , selfModelJsonRoundTrip
+  , selfModelProgram
+  , selfModelReadCoverage
   , selfModelSchema
   , selfModelSdkVersion
   , selfModelSourceInput
-  , selfModelJsonRoundTrip
   , selfModelTextRoundTrip
-  , selfReadUserHandle
-  , selfUpdateUserHandle
+  , selfProgram
+  , selfReadUserKey
+  , selfUpdateUserAddress
   ) where
 
-import GHC.Generics
-  ( Generic )
 import Text.Read
   ( readMaybe )
 
-import MyFramework.Ast
-  ( AstBlueprintSeed (..)
-  , AstSeed (..)
-  , AstTarget (..)
-  )
 import MyFramework.CURDE
+  ( SchemaIdentity
+  , scalarSchema
+  , schemaRefIdentityOf
+  )
+import MyFramework.Frontend
 import MyFramework.SDK.SourceArtifact
-  ( SdkSourceInput (..)
+  ( SdkSourceInput
   , buildSdkSourceReport
+  , handlerCoverageFromRefs
   , mkSdkSourceInput
-  , handlerCoverageFromIds
   , renderSdkSourceArtifactJson
-  , sdkSourceArtifactSchemaV1
+  , sdkSourceArtifactSchemaV3
   , sdkSourceReportArtifact
   )
-import MyFramework.TrustBase.Json
-  ( JsonValue (..)
-  , jsonArrayItems
-  , jsonObjectField
-  , jsonStringValue
-  , parseJson
-  )
-
 import MyFramework.TrustBase.Core
   ( CoreId (..)
   , Digest (..)
@@ -62,6 +47,13 @@ import MyFramework.TrustBase.Core
   )
 import MyFramework.TrustBase.Digest
   ( sha256 )
+import MyFramework.TrustBase.Json
+  ( JsonValue (..)
+  , jsonArrayItems
+  , jsonObjectField
+  , jsonStringValue
+  , parseJson
+  )
 import MyFramework.TrustBase.Types
   ( ClaimName (..)
   , SchemaId (..)
@@ -69,180 +61,149 @@ import MyFramework.TrustBase.Types
   , SchemaVersion (..)
   )
 
--- | A witness-only value type used by the framework's own CURDE declaration.
--- It is deliberately not exported from the root facade.
 data SelfModelUser
 
-data SourceHandles = SourceHandles
-  { createUser :: Handle "createUser" 'C () SelfModelUser
-  , readUser :: Handle "readUser" 'R () SelfModelUser
-  }
-  deriving (Generic)
-
-data SinkHandles = SinkHandles
-  { updateUser :: Handle "updateUser" 'U SelfModelUser NoObservation
-  , deleteUser :: Handle "deleteUser" 'D () NoObservation
-  , emitAudit :: Handle "emitAudit" 'E () NoObservation
-  }
-  deriving (Generic)
-
--- | The one serializable description consumed by semantic witnesses and
--- self-artifact generation. It reuses the normal CURDE and AST authoring
--- values; it is not a fourth facade.
 data SelfModel = SelfModel
   { selfModelSchema :: String
   , selfModelSdkVersion :: String
-  , selfModelEffectSystems :: [EffectSystemDecl]
-  , selfModelAstSeed :: AstBlueprintSeed
-  , selfModelHandlerCoverage :: [HandleId]
+  , selfModelProgram :: ReferencedProgram
+  , selfModelEffectCoverage :: [EffectAddress]
+  , selfModelReadCoverage :: [ReadKey]
   }
   deriving (Eq, Ord, Read, Show)
 
-selfModelSchemaV1 :: String
-selfModelSchemaV1 =
-  "myframework-self-model.v1"
+selfModelSchemaV3 :: String
+selfModelSchemaV3 =
+  "myframework-self-model.v3"
 
-selfSourceName :: EffectSystemName
-selfSourceName =
-  EffectSystemName "source"
+selfAppModule, selfSourceModule, selfSinkModule :: ModuleName
+selfAppModule = ModuleName "app"
+selfSourceModule = ModuleName "source"
+selfSinkModule = ModuleName "sink"
 
-selfSinkName :: EffectSystemName
-selfSinkName =
-  EffectSystemName "sink"
+selfSourceKey, selfSinkKey :: LocalKey
+selfSourceKey = LocalKey "source"
+selfSinkKey = LocalKey "sink"
 
-selfUserSchema :: SchemaRef SelfModelUser
+selfCreateUserKey, selfUpdateUserKey, selfDeleteUserKey, selfEmitAuditKey :: LocalKey
+selfCreateUserKey = LocalKey "createUser"
+selfUpdateUserKey = LocalKey "updateUser"
+selfDeleteUserKey = LocalKey "deleteUser"
+selfEmitAuditKey = LocalKey "emitAudit"
+
+selfReadUserKey :: ReadKey
+selfReadUserKey =
+  ReadKey "readUser"
+
+selfUserSchema :: SchemaIdentity
 selfUserSchema =
-  scalarSchema "User"
+  schemaRefIdentityOf (scalarSchema "User")
 
-selfCreateUserHandle :: Handle "createUser" 'C () SelfModelUser
-selfCreateUserHandle =
-  c @"createUser"
-    selfSourceName
-    CommandSpec
-      { commandArgumentSchema = unitSchema
-      , commandObservation = CaptureObservation selfUserSchema
-      , commandInput = Nothing
-      }
+selfCreateUserAddress :: EffectAddress
+selfCreateUserAddress =
+  EffectAddress selfSourceModule selfCreateUserKey
 
-selfReadUserHandle :: Handle "readUser" 'R () SelfModelUser
-selfReadUserHandle =
-  r @"readUser"
-    selfSourceName
-    ReadSpec
-      { readResultSchema = selfUserSchema
-      , readInput = Just (SomeHandleRef selfCreateUserHandle)
-      , readSource = ReadFromInputObservation
-      }
+selfUpdateUserAddress :: EffectAddress
+selfUpdateUserAddress =
+  EffectAddress selfSinkModule selfUpdateUserKey
 
-selfUpdateUserHandle ::
-  Handle "updateUser" 'U SelfModelUser NoObservation
-selfUpdateUserHandle =
-  u @"updateUser"
-    selfSinkName
-    CommandSpec
-      { commandArgumentSchema = selfUserSchema
-      , commandObservation = DiscardObservation
-      , commandInput = Just (SomeHandleRef selfCreateUserHandle)
-      }
+selfDeleteUserAddress :: EffectAddress
+selfDeleteUserAddress =
+  EffectAddress selfSinkModule selfDeleteUserKey
 
-selfDeleteUserHandle :: Handle "deleteUser" 'D () NoObservation
-selfDeleteUserHandle =
-  d @"deleteUser"
-    selfSinkName
-    CommandSpec
-      { commandArgumentSchema = unitSchema
-      , commandObservation = DiscardObservation
-      , commandInput = Just (SomeHandleRef selfUpdateUserHandle)
-      }
+selfEmitAuditAddress :: EffectAddress
+selfEmitAuditAddress =
+  EffectAddress selfSinkModule selfEmitAuditKey
 
-selfEmitAuditHandle :: Handle "emitAudit" 'E () NoObservation
-selfEmitAuditHandle =
-  e @"emitAudit"
-    selfSinkName
-    CommandSpec
-      { commandArgumentSchema = unitSchema
-      , commandObservation = DiscardObservation
-      , commandInput = Just (SomeHandleRef selfDeleteUserHandle)
-      }
-
-selfSourceHandles :: SourceHandles
-selfSourceHandles =
-  SourceHandles
-    { createUser = selfCreateUserHandle
-    , readUser = selfReadUserHandle
-    }
-
-selfSinkHandles :: SinkHandles
-selfSinkHandles =
-  SinkHandles
-    { updateUser = selfUpdateUserHandle
-    , deleteUser = selfDeleteUserHandle
-    , emitAudit = selfEmitAuditHandle
-    }
-
-selfUpdateUserImplementation :: ImplementationDecl
-selfUpdateUserImplementation =
-  eraseImplementation
-    (implU selfUpdateUserHandle (rRef selfReadUserHandle))
-
-selfEffectSystemDeclarations :: Either [RecordError] [EffectSystemDecl]
-selfEffectSystemDeclarations = do
-  sourceDeclaration <-
-    effectSystemFromRecord
-      selfSourceName
-      []
-      selfSourceHandles
-      []
-      [handleId selfCreateUserHandle, handleId selfReadUserHandle]
-  sinkDeclaration <-
-    effectSystemFromRecord
-      selfSinkName
-      [selfSourceName]
-      selfSinkHandles
-      []
-      [handleId selfEmitAuditHandle]
-  pure [sourceDeclaration, sinkDeclaration]
-
-selfAstBlueprint :: AstBlueprintSeed
-selfAstBlueprint =
-  AstBlueprintSeed
-    { astBlueprintSeedBoot =
-        SeedWithImplementation
-          selfUpdateUserImplementation
-          ( SeedLeaf
-              (HandleTarget (handleRefFor selfEmitAuditHandle))
+selfProgram :: ReferencedProgram
+selfProgram =
+  referencedProgram
+    selfAppModule
+    [ chain selfAppModule [selfSourceKey, selfSinkKey]
+    , chain selfSourceModule [selfCreateUserKey]
+    , chain
+        selfSinkModule
+        [ selfUpdateUserKey
+        , selfDeleteUserKey
+        , selfEmitAuditKey
+        ]
+    ]
+    [ effects
+        selfSourceModule
+        [ ( selfCreateUserKey
+          , EffectDecl
+              { effectDeclType = EffectC
+              , effectDeclInput = Nothing
+              , effectDeclParams = []
+              }
           )
-    , astBlueprintSeedHanging = []
-    }
+        ]
+    , effects
+        selfSinkModule
+        [ ( selfUpdateUserKey
+          , EffectDecl
+              { effectDeclType = EffectU
+              , effectDeclInput = Nothing
+              , effectDeclParams =
+                  [ ( ParamKey "user"
+                    , ParamBinding
+                        { paramBindingSchema = selfUserSchema
+                        , paramBindingSource =
+                            ParamFromRead selfReadUserKey
+                        }
+                    )
+                  ]
+              }
+          )
+        , ( selfDeleteUserKey
+          , EffectDecl
+              { effectDeclType = EffectD
+              , effectDeclInput = Just selfUpdateUserKey
+              , effectDeclParams = []
+              }
+          )
+        , ( selfEmitAuditKey
+          , EffectDecl
+              { effectDeclType = EffectE
+              , effectDeclInput = Just selfDeleteUserKey
+              , effectDeclParams = []
+              }
+          )
+        ]
+    ]
+    (readRecord [(selfReadUserKey, selfUserSchema)])
 
-selfModel :: Either [RecordError] SelfModel
-selfModel = do
-  currentSystems <- selfEffectSystemDeclarations
-  pure
-    SelfModel
-      { selfModelSchema = selfModelSchemaV1
-      , selfModelSdkVersion = "0.1.0.0"
-      , selfModelEffectSystems = currentSystems
-      , selfModelAstSeed = selfAstBlueprint
-      , selfModelHandlerCoverage =
-          [ handleId selfCreateUserHandle
-          , handleId selfReadUserHandle
-          , handleId selfUpdateUserHandle
-          , handleId selfDeleteUserHandle
-          , handleId selfEmitAuditHandle
-          ]
-      }
+selfModel :: Either [FrontendError] SelfModel
+selfModel =
+  case validateReferencedProgram selfProgram of
+    [] ->
+      Right
+        SelfModel
+          { selfModelSchema = selfModelSchemaV3
+          , selfModelSdkVersion = "0.1.0.0"
+          , selfModelProgram = selfProgram
+          , selfModelEffectCoverage =
+              [ selfCreateUserAddress
+              , selfUpdateUserAddress
+              , selfDeleteUserAddress
+              , selfEmitAuditAddress
+              ]
+          , selfModelReadCoverage =
+              [selfReadUserKey]
+          }
+    currentErrors ->
+      Left currentErrors
 
 selfModelSourceInput :: SelfModel -> SdkSourceInput
 selfModelSourceInput currentModel =
   mkSdkSourceInput
     selfModelCoreRef
     (selfModelSdkVersion currentModel)
-    (selfModelEffectSystems currentModel)
-    (selfModelAstSeed currentModel)
+    (selfModelProgram currentModel)
     ( Just
-        ( handlerCoverageFromIds
-            (selfModelHandlerCoverage currentModel)
+        ( handlerCoverageFromRefs
+            (selfModelEffectCoverage currentModel)
+            (selfModelReadCoverage currentModel)
         )
     )
 
@@ -259,7 +220,7 @@ selfModelCoreRef =
           (SchemaName "self-model-fixture")
           (SchemaVersion 1)
     , trustBaseKernelClaims =
-        [ClaimName "curde-coverage-fixture"]
+        [ClaimName "l0-referenced-frontend-fixture"]
     }
 
 canonicalSelfModelJson :: SelfModel -> String
@@ -274,33 +235,84 @@ decodeSelfModelJson currentText = do
   currentJson <- parseJson currentText
   currentSchema <-
     jsonObjectField "schema" currentJson >>= jsonStringValue
-  if currentSchema /= sdkSourceArtifactSchemaV1
+  if currentSchema /= sdkSourceArtifactSchemaV3
     then Left "unsupported SelfModel JSON schema"
     else pure ()
   currentVersion <-
     jsonObjectField "sdkVersion" currentJson >>= jsonStringValue
-  currentSystemValues <-
-    jsonObjectField "curde" currentJson >>= jsonArrayItems
-  currentSystems <- traverse decodeEffectSystem currentSystemValues
-  currentAstValue <- jsonObjectField "ast" currentJson
-  currentAstEncoding <-
-    jsonObjectField "encoding" currentAstValue >>= jsonStringValue
-  if currentAstEncoding /= "AstBlueprintSeed.ReadShow.v1"
-    then Left "unsupported AstBlueprintSeed JSON encoding"
+  currentProgramValue <-
+    jsonObjectField "program" currentJson
+  currentProgram <-
+    decodeProgram currentProgramValue
+  currentCoverageValue <-
+    jsonObjectField "handlerCoverage" currentJson
+  (currentEffects, currentReads) <-
+    decodeHandlerCoverage currentCoverageValue
+  let currentModel =
+        SelfModel
+          { selfModelSchema = selfModelSchemaV3
+          , selfModelSdkVersion = currentVersion
+          , selfModelProgram = currentProgram
+          , selfModelEffectCoverage = currentEffects
+          , selfModelReadCoverage = currentReads
+          }
+  case validateReferencedProgram currentProgram of
+    [] ->
+      Right currentModel
+    currentErrors ->
+      Left ("invalid referenced self model: " ++ show currentErrors)
+
+decodeProgram :: JsonValue -> Either String ReferencedProgram
+decodeProgram currentValue = do
+  currentEncoding <-
+    jsonObjectField "encoding" currentValue >>= jsonStringValue
+  if currentEncoding /= "ReferencedProgram.ReadShow.v1"
+    then Left "unsupported ReferencedProgram encoding"
     else pure ()
-  currentAstText <-
-    jsonObjectField "seed" currentAstValue >>= jsonStringValue
-  currentAst <- readValue "AstBlueprintSeed" currentAstText
-  currentCoverageValue <- jsonObjectField "handlerCoverage" currentJson
-  currentCoverage <- decodeHandlerCoverage currentSystems currentCoverageValue
-  pure
-    SelfModel
-      { selfModelSchema = selfModelSchemaV1
-      , selfModelSdkVersion = currentVersion
-      , selfModelEffectSystems = currentSystems
-      , selfModelAstSeed = currentAst
-      , selfModelHandlerCoverage = currentCoverage
-      }
+  currentDeclaration <-
+    jsonObjectField "declaration" currentValue >>= jsonStringValue
+  readValue "ReferencedProgram" currentDeclaration
+
+decodeHandlerCoverage ::
+  JsonValue ->
+  Either String ([EffectAddress], [ReadKey])
+decodeHandlerCoverage JsonNull =
+  Right ([], [])
+decodeHandlerCoverage currentValue = do
+  currentKind <-
+    jsonObjectField "kind" currentValue >>= jsonStringValue
+  if currentKind /= "module-local"
+    then Left "unsupported handler coverage kind"
+    else pure ()
+  currentEffectValues <-
+    jsonObjectField "effects" currentValue >>= jsonArrayItems
+  currentReadValues <-
+    jsonObjectField "reads" currentValue >>= jsonArrayItems
+  currentEffects <-
+    traverse
+      (jsonStringValue >=> readValue "EffectAddress")
+      currentEffectValues
+  currentReads <-
+    traverse
+      (jsonStringValue >=> readValue "ReadKey")
+      currentReadValues
+  pure (currentEffects, currentReads)
+
+(>=>) ::
+  (input -> Either error middle) ->
+  (middle -> Either error output) ->
+  input ->
+  Either error output
+(>=>) first second currentInput =
+  first currentInput >>= second
+
+readValue :: Read value => String -> String -> Either String value
+readValue currentName currentText =
+  case readMaybe currentText of
+    Nothing ->
+      Left ("invalid " ++ currentName)
+    Just currentValue ->
+      Right currentValue
 
 selfModelJsonRoundTrip :: SelfModel -> Bool
 selfModelJsonRoundTrip currentModel =
@@ -313,65 +325,6 @@ selfModelJsonRoundTrip currentModel =
     currentJson =
       canonicalSelfModelJson currentModel
 
-decodeEffectSystem :: JsonValue -> Either String EffectSystemDecl
-decodeEffectSystem currentValue = do
-  currentEncoding <-
-    jsonObjectField "encoding" currentValue >>= jsonStringValue
-  if currentEncoding /= "EffectSystemDecl.ReadShow.v1"
-    then Left "unsupported EffectSystemDecl JSON encoding"
-    else pure ()
-  currentIdentity <-
-    jsonObjectField "identity" currentValue >>= jsonStringValue
-  currentDeclarationText <-
-    jsonObjectField "declaration" currentValue >>= jsonStringValue
-  currentDeclaration <-
-    readValue "EffectSystemDecl" currentDeclarationText
-  if effectSystemNameText (effectSystemDeclName currentDeclaration)
-      /= currentIdentity
-    then Left "EffectSystemDecl identity mismatch"
-    else Right currentDeclaration
-
-decodeHandlerCoverage ::
-  [EffectSystemDecl] ->
-  JsonValue ->
-  Either String [HandleId]
-decodeHandlerCoverage _ JsonNull =
-  Right []
-decodeHandlerCoverage currentSystems currentValue = do
-  currentKind <-
-    jsonObjectField "kind" currentValue >>= jsonStringValue
-  if currentKind /= "identity-only"
-    then Left "unsupported handler coverage kind"
-    else pure ()
-  currentHandleValues <-
-    jsonObjectField "handles" currentValue >>= jsonArrayItems
-  currentHandleNames <- traverse jsonStringValue currentHandleValues
-  traverse (resolveHandleId declaredHandles) currentHandleNames
-  where
-    declaredHandles =
-      concatMap effectSystemDeclHandleIds currentSystems
-
-resolveHandleId :: [HandleId] -> String -> Either String HandleId
-resolveHandleId currentHandles currentName =
-  case
-      [ currentHandle
-      | currentHandle <- currentHandles
-      , renderHandleId currentHandle == currentName
-      ] of
-    [currentHandle] ->
-      Right currentHandle
-    [] ->
-      Left ("unknown handler coverage identity: " ++ currentName)
-    _ ->
-      Left ("ambiguous handler coverage identity: " ++ currentName)
-
-readValue :: Read value => String -> String -> Either String value
-readValue currentName currentText =
-  case readMaybe currentText of
-    Nothing ->
-      Left ("invalid " ++ currentName)
-    Just currentValue ->
-      Right currentValue
 encodeSelfModel :: SelfModel -> String
 encodeSelfModel =
   show
@@ -382,8 +335,15 @@ decodeSelfModel currentText =
     Nothing ->
       Left "invalid SelfModel"
     Just currentModel
-      | selfModelSchema currentModel /= selfModelSchemaV1 ->
+      | selfModelSchema currentModel /= selfModelSchemaV3 ->
           Left "unsupported SelfModel schema"
+      | not
+          ( null
+              ( validateReferencedProgram
+                  (selfModelProgram currentModel)
+              )
+          ) ->
+          Left "invalid referenced SelfModel"
       | otherwise ->
           Right currentModel
 

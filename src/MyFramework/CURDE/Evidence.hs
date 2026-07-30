@@ -5,7 +5,7 @@ module MyFramework.CURDE.Evidence
   , CURDEEvidenceStatus (..)
   , CURDESemanticsReport (..)
   , curdeSemanticsClaimCatalog
-  , curdeSemanticsEvidenceSchemaV1
+  , curdeSemanticsEvidenceSchemaV2
   , curdeSemanticsReport
   , CURDESemanticsSummary (..)
   , curdeSemanticsEvidenceSchemaString
@@ -31,6 +31,7 @@ import MyFramework.Ast
   ( AstBlueprintSeed (..)
   , AstPath (..)
   , AstSeed (..)
+  , AstTarget (..)
   )
 import MyFramework.Ast.Layout
   ( AstBlueprintLayout (..)
@@ -70,7 +71,7 @@ import MyFramework.CURDE.Lowering
   )
 import MyFramework.CURDE.Types
   ( CURDE (..)
-  , EffectSystemDecl (..)
+  , EffSysDecl (..)
   , HandleDecl (..)
   , ReadSource (..)
   )
@@ -78,7 +79,7 @@ import MyFramework.CURDE.Validate
   ( ValidationError (..)
   , sortValidationErrors
   , validateDemandGraph
-  , validateEffectSystems
+  , validateEffSys
   , validateImplementationCatalog
   , validateReadConsumption
   , validationPassed
@@ -137,11 +138,11 @@ data CURDESemanticsReport = CURDESemanticsReport
   }
   deriving (Eq, Show)
 
-curdeSemanticsEvidenceSchemaV1 :: SchemaId
-curdeSemanticsEvidenceSchemaV1 =
+curdeSemanticsEvidenceSchemaV2 :: SchemaId
+curdeSemanticsEvidenceSchemaV2 =
   SchemaId
     { schemaIdName = SchemaName "curde-semantics-evidence"
-    , schemaIdVersion = SchemaVersion 1
+    , schemaIdVersion = SchemaVersion 2
     }
 
 curdeSemanticsClaimCatalog :: ClaimCatalog
@@ -166,6 +167,8 @@ curdeSemanticsClaimCatalog =
           , "curde-control-occurrence-alignment"
           , "curde-control-root-alignment"
           , "curde-demand-closure-three-edge-kinds"
+          , "curde-unified-effsys"
+          , "curde-ast-inline-run"
           , "curde-closed-frontend-no-legacy-control"
           , "curde-generic-record-identity"
           , "curde-public-facade-boundary"
@@ -181,13 +184,13 @@ curdeSemanticsClaimCatalog =
 -- performs lowering itself, and derives every static observation from the
 -- lowered core. There is no API that accepts caller-authored claim booleans.
 curdeSemanticsReport ::
-  [EffectSystemDecl] ->
+  EffSysDecl ->
   AstBlueprintSeed ->
   CURDESemanticsReport
-curdeSemanticsReport currentSystems currentSeed =
+curdeSemanticsReport currentEffSys currentSeed =
   CURDESemanticsReport
     { curdeSemanticsReportSchema =
-        curdeSemanticsEvidenceSchemaV1
+        curdeSemanticsEvidenceSchemaV2
     , curdeSemanticsReportCatalog =
         curdeSemanticsClaimCatalog
     , curdeSemanticsReportObservation =
@@ -216,7 +219,7 @@ curdeSemanticsReport currentSystems currentSeed =
     }
   where
     currentLowering =
-      lowerCURDEDecl currentSystems currentSeed
+      lowerCURDEDecl currentEffSys currentSeed
     currentCore =
       loweringCore currentLowering
     currentGraph =
@@ -225,11 +228,11 @@ curdeSemanticsReport currentSystems currentSeed =
       loweringErrors currentLowering
     currentDirectValidationErrors =
       sortValidationErrors
-        ( validateEffectSystems currentSystems
+        ( validateEffSys currentEffSys
             ++ validateImplementationCatalog
               (curdeCoreImplementations currentCore)
             ++ validateDemandGraph currentGraph
-            ++ validateReadConsumption currentSystems currentGraph
+            ++ validateReadConsumption currentEffSys currentGraph
         )
     currentLayout =
       layoutAstBlueprint (curdeCoreAst currentCore)
@@ -285,7 +288,7 @@ curdeSemanticsReport currentSystems currentSeed =
       sort (map rootDemandPath (demandGraphRoots currentGraph))
     currentCanonicalLowering =
       lowerCURDEDecl
-        (canonicalEffectSystems currentSystems)
+        (canonicalEffSys currentEffSys)
         currentSeed
     currentCanonicalCore =
       loweringCore currentCanonicalLowering
@@ -303,7 +306,7 @@ curdeSemanticsReport currentSystems currentSeed =
         && loweringPassed currentLowering
           == validationPassed currentLoweringErrors
     currentHandles =
-      concatMap effectSystemDeclHandles currentSystems
+      effSysDeclHandles currentEffSys
     currentInputWidth =
       maximumOrZero
         [ inputWidth currentHandle
@@ -418,17 +421,17 @@ curdeSemanticsReport currentSystems currentSeed =
       map applyCurrentBlockers
         [ establishedClaim
           "curde-declaration-round-trip"
-          (roundTrip currentSystems && roundTrip currentSeed)
-          "EffectSystemDecl and AstBlueprintSeed round-trip through their closed codec"
-          ( "systems="
-              ++ show (length currentSystems)
+          (roundTrip currentEffSys && roundTrip currentSeed)
+          "EffSysDecl and AstBlueprintSeed round-trip through their closed codec"
+          ( "handles="
+              ++ show (length (effSysDeclHandles currentEffSys))
               ++ "; ast-seed-nodes="
               ++ show (astBlueprintSeedNodeCount currentSeed)
           )
       , establishedClaim
           "curde-canonical-lowering"
           currentCanonicalPassed
-          "lowering is invariant under canonical EffectSystem declaration ordering"
+          "lowering is invariant under canonical unified EffSys handle ordering"
           ( "lowering-errors="
               ++ show (length currentLoweringErrors)
               ++ "; canonical-errors="
@@ -544,17 +547,31 @@ curdeSemanticsReport currentSystems currentSeed =
               ++ show (demandGraphClosure currentGraph)
           )
       , establishedClaim
+          "curde-unified-effsys"
+          (roundTrip currentEffSys)
+          "one EffSysDecl is the complete effect-chain registry consumed by validation and lowering"
+          ( "handle-count="
+              ++ show (length (effSysDeclHandles currentEffSys))
+          )
+      , establishedClaim
+          "curde-ast-inline-run"
+          (astBlueprintHasInlineRun currentSeed)
+          "the AST frontend can carry a complete CUDE application directly as an ImplementationTarget leaf"
+          ( "inline-run-target="
+              ++ show (astBlueprintHasInlineRun currentSeed)
+          )
+      , establishedClaim
           "curde-closed-frontend-no-legacy-control"
           (closedAstBlueprintSeed currentSeed)
-          "the serializable frontend is EffectSystemDecl plus the closed AstBlueprintSeed vocabulary, with no pipeline, Boot.targets, or retry policy field"
+          "the serializable frontend is one EffSysDecl plus the closed AstBlueprintSeed vocabulary, with no pipeline, Boot.targets, or retry policy field"
           ( "ast-seed-nodes="
               ++ show (astBlueprintSeedNodeCount currentSeed)
-              ++ "; frontend-surfaces=[EffectSystemDecl,AstBlueprintSeed]"
+              ++ "; frontend-surfaces=[EffSysDecl,AstBlueprintSeed]"
           )
       , deferredClaim
           "curde-generic-record-identity"
           GenericRecordCompileTimeWitness
-          "Generic record selector/Symbol identity and typed reuse require a compile-time witness"
+          "Generic record module fragments and typed Handle reuse require a compile-time witness"
       , deferredClaim
           "curde-public-facade-boundary"
           PublicFacadeCompileTimeWitness
@@ -630,27 +647,17 @@ deferredClaim currentName currentBoundary currentExpected =
     , curdeClaimEvidenceObserved =
         "deferred to " ++ show currentBoundary
     }
-canonicalEffectSystems :: [EffectSystemDecl] -> [EffectSystemDecl]
-canonicalEffectSystems =
-  sort . map canonicalEffectSystem
-  where
-    canonicalEffectSystem currentSystem =
-      currentSystem
-        { effectSystemDeclImports =
-            sort (effectSystemDeclImports currentSystem)
-        , effectSystemDeclHandles =
-            sort (effectSystemDeclHandles currentSystem)
-        , effectSystemDeclPrivate =
-            sort (effectSystemDeclPrivate currentSystem)
-        , effectSystemDeclExports =
-            sort (effectSystemDeclExports currentSystem)
-        }
+canonicalEffSys :: EffSysDecl -> EffSysDecl
+canonicalEffSys currentEffSys =
+  currentEffSys
+    { effSysDeclHandles = sort (effSysDeclHandles currentEffSys)
+    }
 
 canonicalProjection ::
   CURDECore ->
-  ([EffectSystemDecl], [ImplementationDecl], DemandGraph)
+  (EffSysDecl, [ImplementationDecl], DemandGraph)
 canonicalProjection currentCore =
-  ( curdeCoreEffectSystems currentCore
+  ( curdeCoreEffSys currentCore
   , curdeCoreImplementations currentCore
   , curdeCoreDemandGraph currentCore
   )
@@ -796,16 +803,8 @@ demandEdgeShapeAllowed currentEdge =
 isReferenceBlocker :: ValidationError -> Bool
 isReferenceBlocker currentError =
   case currentError of
-    DuplicateEffectSystem _ -> True
-    UnknownEffectSystemImport _ _ -> True
     DuplicateHandle _ -> True
-    HandleDeclaredInWrongSystem _ _ -> True
-    PrivateHandleOutsideSystem _ _ -> True
-    ExportedHandleOutsideSystem _ _ -> True
-    PrivateExportHandleOverlap _ _ -> True
     UnknownHandleReference _ _ -> True
-    HandleInputSystemNotImported _ _ _ -> True
-    HandleInputNotExported _ _ -> True
     UnknownAstHandleReference _ _ -> True
     InvalidImplementationTarget _ _ _ -> True
     ImplementationNotInScope _ _ -> True
@@ -866,7 +865,6 @@ isObservationDagError currentError =
     ObservationInputKindMismatch _ _ _ -> True
     ObservationNotCaptured _ _ -> True
     ObservationSchemaMismatch _ _ _ _ -> True
-    PrivateObservationCrossSystem _ _ -> True
     _ -> False
 
 astBlueprintSeedNodeCount :: AstBlueprintSeed -> Int
@@ -886,6 +884,17 @@ closedAstBlueprintSeed currentSeed =
 closedAstSeed :: AstSeed -> Bool
 closedAstSeed currentSeed =
   all closedAstSeed (astSeedChildren currentSeed)
+
+astBlueprintHasInlineRun :: AstBlueprintSeed -> Bool
+astBlueprintHasInlineRun currentSeed =
+  any astSeedHasInlineRun
+    (astBlueprintSeedBoot currentSeed : astBlueprintSeedHanging currentSeed)
+
+astSeedHasInlineRun :: AstSeed -> Bool
+astSeedHasInlineRun currentSeed =
+  case currentSeed of
+    SeedLeaf (ImplementationTarget _) -> True
+    _ -> any astSeedHasInlineRun (astSeedChildren currentSeed)
 
 astSeedChildren :: AstSeed -> [AstSeed]
 astSeedChildren currentSeed =
@@ -937,7 +946,7 @@ data ClaimSlot = ClaimSlot
 
 curdeSemanticsEvidenceSchemaString :: String
 curdeSemanticsEvidenceSchemaString =
-  renderSchemaId curdeSemanticsEvidenceSchemaV1
+  renderSchemaId curdeSemanticsEvidenceSchemaV2
 
 canonicalClaimNames :: [ClaimName]
 canonicalClaimNames =
@@ -1014,7 +1023,7 @@ summarizeCURDESemanticsReport currentReport =
       map curdeClaimEvidenceName currentEvidence
     schemaExact =
       curdeSemanticsReportSchema currentReport
-        == curdeSemanticsEvidenceSchemaV1
+        == curdeSemanticsEvidenceSchemaV2
     catalogExact =
       curdeSemanticsReportCatalog currentReport
         == curdeSemanticsClaimCatalog

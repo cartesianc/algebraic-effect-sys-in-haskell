@@ -1,295 +1,146 @@
-
 module Main (main) where
 
 import Control.Monad
   ( unless )
-import Data.Char
-  ( ord )
 import Data.List
   ( intercalate )
-import Numeric
-  ( showHex )
 import System.Exit
   ( exitFailure )
-import Text.Read
-  ( readMaybe )
 
-import MyFramework.Ast
-  ( AstBlueprintSeed (..)
-  , AstSeed (..)
-  , AstTarget (..)
-  )
 import MyFramework.CURDE
-import MyFramework.CURDE.Evidence
-  ( CURDEClaimEvidence (..)
-  , CURDEEvidenceBoundary (..)
-  , CURDEEvidenceStatus (..)
-  , CURDESemanticsReport (..)
-  , curdeSemanticsReport
-  )
+  ( SchemaIdentity )
+import MyFramework.Frontend
 import MyFramework.Self.ControlTrace
   ( compileControlTrace
   , controlTraceConstructorWitness
   )
 import MyFramework.Self.Model
-  ( canonicalSelfModelJson
-  , selfEmitAuditHandle
-  , selfModel
-  , selfModelAstSeed
-  , selfModelEffectSystems
-  , selfModelJsonRoundTrip
-  , selfModelTextRoundTrip
-  , selfReadUserHandle
-  , selfUpdateUserHandle
-  )
-import MyFramework.TrustBase.Evidence
-  ( ClaimCatalog (..)
-  , claimCatalogClaims
-  )
-import MyFramework.TrustBase.Types
-  ( ClaimName (..)
-  , renderSchemaId
-  )
+
+data Check = Check
+  { checkName :: String
+  , checkPassed :: Bool
+  , checkObserved :: String
+  }
 
 main :: IO ()
 main =
   case selfModel of
     Left currentErrors -> do
       putStrLn
-        ( renderFatalJson
-            "record-lowering"
-            (show currentErrors)
+        ( renderReport
+            [ Check
+                "self-model-builds"
+                False
+                (show currentErrors)
+            ]
+            False
         )
       exitFailure
-    Right currentSelfModel -> do
-      let currentSystems =
-            selfModelEffectSystems currentSelfModel
-          currentBlueprint =
-            selfModelAstSeed currentSelfModel
-          baseReport =
-            curdeSemanticsReport currentSystems currentBlueprint
-          currentControlTrace =
-            compileControlTrace currentSelfModel
-          dischargedEvidence =
-            map dischargeCompileTimeEvidence
-              (curdeSemanticsReportEvidence baseReport)
-          currentCatalog =
-            curdeSemanticsReportCatalog baseReport
-          expectedClaims =
-            claimCatalogClaims currentCatalog
-          observedClaims =
-            map curdeClaimEvidenceName dischargedEvidence
-          exactManifest =
-            length (claimCatalogCoreClaims currentCatalog) == 21
-              && length expectedClaims == 22
-              && observedClaims == expectedClaims
-          curdeRoundTrip =
-            roundTrip ([C, U, R, D, E] :: [CURDE])
-          handleKinds =
-            map handleDeclKind
-              (concatMap effectSystemDeclHandles currentSystems)
-          handleRoundTrip =
-            all roundTrip
-              (concatMap effectSystemDeclHandles currentSystems)
-          allKindsPresent =
-            all (`elem` handleKinds) [C, U, R, D, E]
-          selfRoundTrip =
-            selfModelTextRoundTrip currentSelfModel
-              && selfModelJsonRoundTrip currentSelfModel
-          selfJsonPresent =
-            not (null (canonicalSelfModelJson currentSelfModel))
-          controlTraceReady =
-            controlTraceConstructorWitness
-              && either (const False) (const True) currentControlTrace
-          missingImplementationRejected =
-            rejectsMissingImplementation
-              currentSystems
-          staticFailures =
-            filter isBlockingEvidence dischargedEvidence
+    Right currentModel -> do
+      let currentProgram =
+            selfModelProgram currentModel
+          currentValidation =
+            validateReferencedProgram currentProgram
+          currentResolution =
+            resolveProgram currentProgram
+          currentKinds =
+            [ effectDeclType currentEffect
+            | currentModule <- referencedProgramEffects currentProgram
+            , (_, currentEffect) <-
+                effectRecordFields (effectModuleRecord currentModule)
+            ]
+          currentChecks =
+            [ Check
+                "l0-referenced-program-valid"
+                (null currentValidation)
+                (show currentValidation)
+            , Check
+                "l0-referenced-program-resolves"
+                (either (const False) (const True) currentResolution)
+                (show currentResolution)
+            , Check
+                "l0-module-local-effect-records"
+                ( map effectModuleName
+                    (referencedProgramEffects currentProgram)
+                    == [ModuleName "source", ModuleName "sink"]
+                )
+                (show (referencedProgramEffects currentProgram))
+            , Check
+                "l0-r-is-separate"
+                ( readRegistryFields
+                    (referencedProgramReads currentProgram)
+                    == [(selfReadUserKey, userSchema currentProgram)]
+                )
+                (show (referencedProgramReads currentProgram))
+            , Check
+                "l0-effect-kinds-cude-without-r"
+                (all (`elem` currentKinds) [EffectC, EffectU, EffectD, EffectE])
+                (show currentKinds)
+            , Check
+                "l0-self-model-text-roundtrip"
+                (selfModelTextRoundTrip currentModel)
+                (show (selfModelTextRoundTrip currentModel))
+            , Check
+                "l0-self-model-json-roundtrip"
+                ( selfModelJsonRoundTrip currentModel
+                    && not (null (canonicalSelfModelJson currentModel))
+                )
+                (show (selfModelJsonRoundTrip currentModel))
+            , Check
+                "l0-resolver-control-trace"
+                ( controlTraceConstructorWitness
+                    && either
+                      (const False)
+                      (const True)
+                      (compileControlTrace currentModel)
+                )
+                (show (compileControlTrace currentModel))
+            ]
           succeeded =
-            exactManifest
-              && curdeRoundTrip
-              && handleRoundTrip
-              && allKindsPresent
-              && selfRoundTrip
-              && selfJsonPresent
-              && controlTraceReady
-              && missingImplementationRejected
-              && null staticFailures
-      putStrLn
-        ( renderReportJson
-            baseReport
-            dischargedEvidence
-            exactManifest
-            curdeRoundTrip
-            handleRoundTrip
-            allKindsPresent
-            missingImplementationRejected
-            succeeded
-        )
+            all checkPassed currentChecks
+      putStrLn (renderReport currentChecks succeeded)
       unless succeeded exitFailure
 
-rejectsMissingImplementation :: [EffectSystemDecl] -> Bool
-rejectsMissingImplementation currentSystems =
-  any isExpectedFailure
-    ( loweringValidationErrors
-        ( lowerCURDEDecl
-            currentSystems
-            AstBlueprintSeed
-              { astBlueprintSeedBoot =
-                  SeedLeaf
-                    (HandleTarget (handleRefFor selfEmitAuditHandle))
-              , astBlueprintSeedHanging = []
-              }
-        )
-    )
-  where
-    isExpectedFailure currentError =
-      case currentError of
-        MissingImplementation _ currentHandle _ ->
-          currentHandle == handleId selfUpdateUserHandle
-        _ ->
-          False
+userSchema :: ReferencedProgram -> SchemaIdentity
+userSchema currentProgram =
+  case
+      [ currentSchema
+      | (currentKey, currentSchema) <-
+          readRegistryFields (referencedProgramReads currentProgram)
+      , currentKey == selfReadUserKey
+      ] of
+    currentSchema : _ ->
+      currentSchema
+    [] ->
+      error "validated self model lost readUser schema"
 
-dischargeCompileTimeEvidence ::
-  CURDEClaimEvidence ->
-  CURDEClaimEvidence
-dischargeCompileTimeEvidence currentEvidence =
-  case curdeClaimEvidenceStatus currentEvidence of
-    EvidenceDeferredTo GenericRecordCompileTimeWitness
-      | curdeClaimEvidenceName currentEvidence
-          == ClaimName "curde-generic-record-identity" ->
-          currentEvidence
-            { curdeClaimEvidenceStatus = EvidenceEstablished
-            , curdeClaimEvidenceObserved =
-                "compiled Generic records whose selectors equal their Handle Symbols; typed handles are reused by records, inputs, R expressions, implementations, and AST references"
-            }
-    EvidenceDeferredTo PublicFacadeCompileTimeWitness
-      | curdeClaimEvidenceName currentEvidence
-          == ClaimName "curde-public-facade-boundary" ->
-          currentEvidence
-            { curdeClaimEvidenceStatus = EvidenceEstablished
-            , curdeClaimEvidenceObserved =
-                "this executable compiles against MyFramework.CURDE without importing CURDE.Core, DemandGraph, or any runtime module"
-            }
-    _ ->
-      currentEvidence
-
-isBlockingEvidence :: CURDEClaimEvidence -> Bool
-isBlockingEvidence currentEvidence =
-  case curdeClaimEvidenceStatus currentEvidence of
-    EvidenceViolated -> True
-    EvidenceBlocked _ -> True
-    EvidenceEstablished -> False
-    EvidenceDeferredTo _ -> False
-
-roundTrip :: (Eq value, Read value, Show value) => value -> Bool
-roundTrip currentValue =
-  readMaybe (show currentValue) == Just currentValue
-
-renderReportJson ::
-  CURDESemanticsReport ->
-  [CURDEClaimEvidence] ->
-  Bool ->
-  Bool ->
-  Bool ->
-  Bool ->
-  Bool ->
-  Bool ->
-  String
-renderReportJson
-  currentReport
-  currentEvidence
-  exactManifest
-  curdeRoundTrip
-  handleRoundTrip
-  allKindsPresent
-  missingImplementationRejected
-  succeeded =
-    jsonObject
-      [ ("schema", jsonString (renderSchemaId (curdeSemanticsReportSchema currentReport)))
-      , ("artifact", jsonString "curde-semantics-witness")
-      , ("result", jsonString (if succeeded then "passed" else "failed"))
-      , ( "frontend"
-        , jsonObject
-            [ ("effectSystemCount", show (2 :: Int))
-            , ("handleKinds", jsonArray (map (jsonString . show) [C, U, R, D, E]))
-            , ( "astDemandLeaf"
-              , jsonString
-                  (renderHandleId (handleId selfEmitAuditHandle))
-              )
-            , ( "crossChainRead"
-              , jsonString
-                  (renderHandleId (handleId selfReadUserHandle))
-              )
-            , ( "crossChainConsumer"
-              , jsonString
-                  (renderHandleId (handleId selfUpdateUserHandle))
-              )
-            ]
-        )
-      , ( "witnessChecks"
-        , jsonObject
-            [ ("curdeReadShowRoundTrip", jsonBool curdeRoundTrip)
-            , ("handleDeclReadShowRoundTrip", jsonBool handleRoundTrip)
-            , ("allKindsPresent", jsonBool allKindsPresent)
-            , ("genericRecordCompileTime", jsonBool True)
-            , ("typedHandleReuseCompileTime", jsonBool True)
-            , ("publicFacadeCompileTime", jsonBool True)
-            , ( "missingImplementationRejected"
-              , jsonBool missingImplementationRejected
-              )
-            ]
-        )
-      , ( "claimManifest"
-        , jsonObject
-            [ ("catalog", jsonString (claimCatalogName (curdeSemanticsReportCatalog currentReport)))
-            , ("coreCount", show (length (claimCatalogCoreClaims (curdeSemanticsReportCatalog currentReport))))
-            , ("totalCount", show (length currentEvidence))
-            , ("exact21Plus1", jsonBool exactManifest)
-            ]
-        )
-      , ("claims", jsonArray (map renderEvidenceJson currentEvidence))
-      , ( "observation"
-        , jsonString (show (curdeSemanticsReportObservation currentReport))
-        )
-      ]
-
-renderEvidenceJson :: CURDEClaimEvidence -> String
-renderEvidenceJson currentEvidence =
-  jsonObject
-    [ ("name", jsonString (unClaimName (curdeClaimEvidenceName currentEvidence)))
-    , ("status", jsonString (renderEvidenceStatus (curdeClaimEvidenceStatus currentEvidence)))
-    , ("expected", jsonString (curdeClaimEvidenceExpected currentEvidence))
-    , ("observed", jsonString (curdeClaimEvidenceObserved currentEvidence))
-    ]
-
-renderEvidenceStatus :: CURDEEvidenceStatus -> String
-renderEvidenceStatus currentStatus =
-  case currentStatus of
-    EvidenceEstablished -> "established"
-    EvidenceViolated -> "violated"
-    EvidenceBlocked _ -> "blocked"
-    EvidenceDeferredTo currentBoundary ->
-      "deferred:" ++ show currentBoundary
-
-renderFatalJson :: String -> String -> String
-renderFatalJson currentStage currentObserved =
-  jsonObject
-    [ ("schema", jsonString "curde-semantics-witness.v1")
-    , ("artifact", jsonString "curde-semantics-witness")
-    , ("result", jsonString "failed")
-    , ("stage", jsonString currentStage)
-    , ("observed", jsonString currentObserved)
-    ]
-
-jsonObject :: [(String, String)] -> String
-jsonObject currentFields =
+renderReport :: [Check] -> Bool -> String
+renderReport currentChecks succeeded =
   "{"
-    ++ intercalate
-      ","
-      [jsonString currentName ++ ":" ++ currentValue | (currentName, currentValue) <- currentFields]
+    ++ jsonField "schema" (jsonString "curde-semantics-report.v3")
+    ++ ","
+    ++ jsonField "result" (jsonString (if succeeded then "passed" else "failed"))
+    ++ ","
+    ++ jsonField
+      "claims"
+      ( jsonArray
+          [ "{"
+              ++ jsonField "name" (jsonString (checkName currentCheck))
+              ++ ","
+              ++ jsonField "passed" (jsonBool (checkPassed currentCheck))
+              ++ ","
+              ++ jsonField "observed" (jsonString (checkObserved currentCheck))
+              ++ "}"
+          | currentCheck <- currentChecks
+          ]
+      )
+    ++ ","
+    ++ jsonField "claimManifest" (jsonArray (map (jsonString . checkName) currentChecks))
     ++ "}"
+
+jsonField :: String -> String -> String
+jsonField currentKey currentValue =
+  jsonString currentKey ++ ":" ++ currentValue
 
 jsonArray :: [String] -> String
 jsonArray currentValues =
@@ -300,26 +151,15 @@ jsonBool True = "true"
 jsonBool False = "false"
 
 jsonString :: String -> String
-jsonString currentValue =
-  "\"" ++ concatMap escapeJsonChar currentValue ++ "\""
+jsonString currentText =
+  "\"" ++ concatMap escapeJson currentText ++ "\""
 
-escapeJsonChar :: Char -> String
-escapeJsonChar currentChar =
-  case currentChar of
+escapeJson :: Char -> String
+escapeJson currentCharacter =
+  case currentCharacter of
     '"' -> "\\\""
     '\\' -> "\\\\"
-    '\b' -> "\\b"
-    '\f' -> "\\f"
     '\n' -> "\\n"
     '\r' -> "\\r"
     '\t' -> "\\t"
-    _
-      | ord currentChar < 0x20 ->
-          "\\u" ++ padLeft 4 '0' (showHex (ord currentChar) "")
-      | otherwise ->
-          [currentChar]
-
-padLeft :: Int -> Char -> String -> String
-padLeft currentWidth currentFill currentValue =
-  replicate (max 0 (currentWidth - length currentValue)) currentFill
-    ++ currentValue
+    _ -> [currentCharacter]

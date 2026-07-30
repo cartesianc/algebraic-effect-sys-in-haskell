@@ -33,7 +33,7 @@ import MyFramework.SDK.Package
 import MyFramework.SDK.SourceArtifact
   ( SdkSourceInput (..)
   , buildSdkSourceReport
-  , handlerCoverageFromIds
+  , handlerCoverageFromRefs
   , mkSdkSourceInput
   , sdkSourceReportReady
   )
@@ -44,9 +44,9 @@ import MyFramework.Self.Artifact
   )
 import MyFramework.Self.CoreModel
   ( frameworkAsBusiness
-  , frameworkAsBusinessAstSeed
-  , frameworkAsBusinessEffectSystems
-  , frameworkAsBusinessHandlerCoverage
+  , frameworkAsBusinessEffectCoverage
+  , frameworkAsBusinessProgram
+  , frameworkAsBusinessReadCoverage
   )
 import MyFramework.Self.Model
   ( selfModel )
@@ -140,11 +140,13 @@ runWitness sourceRoot probeRoot packageRoot =
                 mkSdkSourceInput
                   (coreManifestTrustBaseRef candidateManifest)
                   "0.1.0-beta.1"
-                  (frameworkAsBusinessEffectSystems currentFramework)
-                  (frameworkAsBusinessAstSeed currentFramework)
+                  (frameworkAsBusinessProgram currentFramework)
                   ( Just
-                      ( handlerCoverageFromIds
-                          ( frameworkAsBusinessHandlerCoverage
+                      ( handlerCoverageFromRefs
+                          ( frameworkAsBusinessEffectCoverage
+                              currentFramework
+                          )
+                          ( frameworkAsBusinessReadCoverage
                               currentFramework
                           )
                       )
@@ -279,7 +281,7 @@ coreSchema =
 
 semanticReport :: String
 semanticReport =
-  "{\"schema\":\"core-self-interpret-evidence.v1\",\"result\":\"passed\",\"claims\":[{\"name\":\"semantic-fixed-point-passed\",\"status\":\"passed\"},{\"name\":\"candidate-has-no-previous-core-runtime-dependency\",\"status\":\"passed\"},{\"name\":\"empty-business-closes-recursion\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-curde\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-handler\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-host-io\",\"status\":\"passed\"}]}"
+  "{\"schema\":\"core-self-interpret-evidence.v2\",\"result\":\"passed\",\"claims\":[{\"name\":\"semantic-fixed-point-passed\",\"status\":\"passed\"},{\"name\":\"candidate-has-no-previous-core-runtime-dependency\",\"status\":\"passed\"},{\"name\":\"empty-business-closes-recursion\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-curde\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-handler\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-host-io\",\"status\":\"passed\"}]}"
 
 artifactReport :: String
 artifactReport =

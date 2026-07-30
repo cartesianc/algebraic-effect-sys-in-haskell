@@ -9,7 +9,6 @@ module MyFramework.CURDE.Types
   ( CURDE (..)
   , SCURDE (..)
   , curdeValue
-  , EffectSystemName (..)
   , HandleId (..)
   , renderHandleId
   , FieldName (..)
@@ -62,12 +61,12 @@ module MyFramework.CURDE.Types
   , someCommandHandleId
   , someCommandHandleKind
   , someCommandHandleArgumentSchemaIdentity
-  , EffectSystem (..)
-  , effectSystem
-  , effectSystemHandleIds
-  , EffectSystemDecl (..)
-  , eraseEffectSystem
-  , effectSystemDeclHandleIds
+  , EffSys (..)
+  , effSys
+  , effSysHandleIds
+  , EffSysDecl (..)
+  , eraseEffSys
+  , effSysDeclHandleIds
   ) where
 
 import Data.Proxy
@@ -81,7 +80,7 @@ import GHC.TypeLits
 -- | The five operation classes exposed by the serializable facade.
 --
 -- C/U/D/E expose only a status channel. Their observation channel is private
--- to the declaring effect system and becomes public only through an R handle.
+-- to the producing handle and becomes public only through an R handle.
 data CURDE
   = C
   | U
@@ -110,24 +109,16 @@ curdeValue currentKind =
     SD -> D
     SE -> E
 
-newtype EffectSystemName = EffectSystemName
-  { effectSystemNameText :: String
-  }
-  deriving (Eq, Ord, Read, Show)
-
 -- | Stable facade identity. Runtime attempts must use their own identity and
 -- must never be folded into this value.
-data HandleId = HandleId
-  { handleIdEffectSystem :: EffectSystemName
-  , handleIdLocalName :: String
+newtype HandleId = HandleId
+  { handleIdQualifiedName :: String
   }
   deriving (Eq, Ord, Read, Show)
 
 renderHandleId :: HandleId -> String
 renderHandleId currentId =
-  encodeIdentitySegment
-    (effectSystemNameText (handleIdEffectSystem currentId))
-    ++ encodeIdentitySegment (handleIdLocalName currentId)
+  encodeIdentitySegment (handleIdQualifiedName currentId)
   where
     encodeIdentitySegment currentSegment =
       show (length currentSegment) ++ ":" ++ currentSegment
@@ -343,7 +334,6 @@ data HandleDecl = HandleDecl
 c ::
   forall name args observation.
   KnownSymbol name =>
-  EffectSystemName ->
   CommandSpec args observation ->
   Handle name 'C args observation
 c =
@@ -352,7 +342,6 @@ c =
 u ::
   forall name args observation.
   KnownSymbol name =>
-  EffectSystemName ->
   CommandSpec args observation ->
   Handle name 'U args observation
 u =
@@ -361,13 +350,12 @@ u =
 r ::
   forall name value.
   KnownSymbol name =>
-  EffectSystemName ->
   ReadSpec value ->
   Handle name 'R () value
-r currentSystem currentSpec =
+r currentSpec =
   Handle
     { handleKindWitness = SR
-    , handleIdentity = handleIdFor @name currentSystem
+    , handleIdentity = handleIdFor @name
     , handleArguments = unitSchema
     , handleResult = readResultSchema currentSpec
     , handleInputReference = readInput currentSpec
@@ -378,7 +366,6 @@ r currentSystem currentSpec =
 d ::
   forall name args observation.
   KnownSymbol name =>
-  EffectSystemName ->
   CommandSpec args observation ->
   Handle name 'D args observation
 d =
@@ -387,7 +374,6 @@ d =
 e ::
   forall name args observation.
   KnownSymbol name =>
-  EffectSystemName ->
   CommandSpec args observation ->
   Handle name 'E args observation
 e =
@@ -398,13 +384,12 @@ commandHandle ::
   KnownSymbol name =>
   SCURDE kind ->
   CommandKind kind ->
-  EffectSystemName ->
   CommandSpec args observation ->
   Handle name kind args observation
-commandHandle currentKind _ currentSystem currentSpec =
+commandHandle currentKind _ currentSpec =
   Handle
     { handleKindWitness = currentKind
-    , handleIdentity = handleIdFor @name currentSystem
+    , handleIdentity = handleIdFor @name
     , handleArguments = commandArgumentSchema currentSpec
     , handleResult = observationSchemaRef (commandObservation currentSpec)
     , handleInputReference = commandInput currentSpec
@@ -424,13 +409,9 @@ observationSchemaRef currentSpec =
 handleIdFor ::
   forall name.
   KnownSymbol name =>
-  EffectSystemName ->
   HandleId
-handleIdFor currentSystem =
-  HandleId
-    { handleIdEffectSystem = currentSystem
-    , handleIdLocalName = symbolVal (Proxy @name)
-    }
+handleIdFor =
+  HandleId (symbolVal (Proxy @name))
 
 handleId :: Handle name kind args result -> HandleId
 handleId =
@@ -564,60 +545,32 @@ eraseSomeHandle :: SomeHandleRef -> HandleDecl
 eraseSomeHandle (SomeHandleRef currentHandle) =
   eraseHandle currentHandle
 
-data EffectSystem = EffectSystem
-  { effectSystemName :: EffectSystemName
-  , effectSystemImports :: [EffectSystemName]
-  , effectSystemHandles :: [SomeHandleRef]
-  , effectSystemPrivate :: [SomeHandleRef]
-  , effectSystemExports :: [SomeHandleRef]
+-- | The single typed effect declaration graph. Source modules may contribute
+-- records independently, but lowering consumes exactly one unified value.
+newtype EffSys = EffSys
+  { effSysHandles :: [SomeHandleRef]
   }
   deriving (Eq, Show)
 
-effectSystem ::
-  EffectSystemName ->
-  [EffectSystemName] ->
-  [SomeHandleRef] ->
-  [SomeHandleRef] ->
-  [SomeHandleRef] ->
-  EffectSystem
-effectSystem currentName currentImports currentHandles currentPrivate currentExports =
-  EffectSystem
-    { effectSystemName = currentName
-    , effectSystemImports = currentImports
-    , effectSystemHandles = currentHandles
-    , effectSystemPrivate = currentPrivate
-    , effectSystemExports = currentExports
-    }
+effSys :: [SomeHandleRef] -> EffSys
+effSys =
+  EffSys
 
-effectSystemHandleIds :: EffectSystem -> [HandleId]
-effectSystemHandleIds =
-  map someHandleId . effectSystemHandles
+effSysHandleIds :: EffSys -> [HandleId]
+effSysHandleIds =
+  map someHandleId . effSysHandles
 
--- | Serializable effect-system facade. Private/export declarations reference
--- stable handle identities, so deserialization never reconstructs existential
--- typed values.
-data EffectSystemDecl = EffectSystemDecl
-  { effectSystemDeclName :: EffectSystemName
-  , effectSystemDeclImports :: [EffectSystemName]
-  , effectSystemDeclHandles :: [HandleDecl]
-  , effectSystemDeclPrivate :: [HandleId]
-  , effectSystemDeclExports :: [HandleId]
+-- | Serializable unified effect graph. Module visibility belongs to AST/SDK
+-- policy and is deliberately absent from runtime dependency semantics.
+newtype EffSysDecl = EffSysDecl
+  { effSysDeclHandles :: [HandleDecl]
   }
   deriving (Eq, Ord, Read, Show)
 
-eraseEffectSystem :: EffectSystem -> EffectSystemDecl
-eraseEffectSystem currentSystem =
-  EffectSystemDecl
-    { effectSystemDeclName = effectSystemName currentSystem
-    , effectSystemDeclImports = effectSystemImports currentSystem
-    , effectSystemDeclHandles =
-        map eraseSomeHandle (effectSystemHandles currentSystem)
-    , effectSystemDeclPrivate =
-        map someHandleId (effectSystemPrivate currentSystem)
-    , effectSystemDeclExports =
-        map someHandleId (effectSystemExports currentSystem)
-    }
+eraseEffSys :: EffSys -> EffSysDecl
+eraseEffSys =
+  EffSysDecl . map eraseSomeHandle . effSysHandles
 
-effectSystemDeclHandleIds :: EffectSystemDecl -> [HandleId]
-effectSystemDeclHandleIds =
-  map handleDeclId . effectSystemDeclHandles
+effSysDeclHandleIds :: EffSysDecl -> [HandleId]
+effSysDeclHandleIds =
+  map handleDeclId . effSysDeclHandles

@@ -4,7 +4,7 @@ module MyFramework.CURDE.Validate
   , sortValidationErrors
   , validationPassed
   , validateHandleReference
-  , validateEffectSystems
+  , validateEffSys
   , validateImplementationCatalog
   , validateImplementationContract
   , validateDemandGraph
@@ -28,8 +28,6 @@ import MyFramework.CURDE.Types
 
 data ReferenceSite
   = HandleInputSite HandleId
-  | EffectSystemPrivateSite EffectSystemName
-  | EffectSystemExportSite EffectSystemName
   | AstHandleSite AstPath
   | AstStatusSite AstPath
   | AstCallbackSite AstPath
@@ -41,22 +39,10 @@ data ReferenceSite
 -- | Validation errors are values rather than early exits. Lowering accumulates
 -- every independent error and returns a normalized list.
 data ValidationError
-  = EmptyEffectSystemName
-  | EmptyHandleLocalName HandleId
+  = EmptyHandleQualifiedName HandleId
   | EmptySchemaName SchemaIdentity
-  | DuplicateEffectSystem EffectSystemName
-  | UnknownEffectSystemImport EffectSystemName EffectSystemName
-  | DuplicateEffectSystemImport EffectSystemName EffectSystemName
   | DuplicateHandle HandleId
-  | HandleDeclaredInWrongSystem EffectSystemName HandleId
-  | PrivateHandleOutsideSystem EffectSystemName HandleId
-  | ExportedHandleOutsideSystem EffectSystemName HandleId
-  | PrivateExportHandleOverlap EffectSystemName HandleId
-  | DuplicatePrivateHandle EffectSystemName HandleId
-  | DuplicateExportedHandle EffectSystemName HandleId
   | UnknownHandleReference ReferenceSite HandleId
-  | HandleInputSystemNotImported HandleId EffectSystemName HandleId
-  | HandleInputNotExported HandleId HandleId
   | InputCycle [HandleId]
   | ReadArgumentSchemaNotUnit HandleId SchemaIdentity
   | CommandObservationMissing HandleId
@@ -72,13 +58,11 @@ data ValidationError
   | ObservationNotCaptured HandleId HandleId
   | ObservationSchemaMismatch HandleId HandleId SchemaIdentity SchemaIdentity
   | ValueInputSchemaMismatch HandleId HandleId SchemaIdentity SchemaIdentity
-  | PrivateObservationCrossSystem HandleId HandleId
   | CommandInputCannotBeReadValue HandleId HandleId
   | ConflictingImplementation HandleId
   | InvalidImplementationTarget AstPath HandleId CURDE
   | ImplementationKindMismatch AstPath HandleId CURDE CURDE
   | ImplementationSchemaMismatch AstPath HandleId SchemaIdentity SchemaIdentity
-  | ImplementationReadNotVisible AstPath HandleId HandleId
   | DuplicateExpressionField AstPath FieldPath FieldName
   | ExpressionReferenceSchemaMismatch
       AstPath
@@ -117,92 +101,40 @@ validateHandleReference handleIndex currentSite currentReference =
   | Map.notMember currentReference handleIndex
   ]
 
-validateEffectSystems :: [EffectSystemDecl] -> [ValidationError]
-validateEffectSystems currentSystems =
+validateEffSys :: EffSysDecl -> [ValidationError]
+validateEffSys currentEffSys =
   sortValidationErrors
     ( identityErrors
-        ++ duplicateSystemErrors
-        ++ importErrors
         ++ duplicateHandleErrors
-        ++ wrongSystemErrors
-        ++ visibilityDeclarationErrors
         ++ referenceErrors
-        ++ inputVisibilityErrors
         ++ inputCycleErrors
         ++ readSourceErrors
     )
   where
     currentHandles =
-      concatMap effectSystemDeclHandles currentSystems
+      effSysDeclHandles currentEffSys
     handleIndex =
       Map.fromList
         [ (handleDeclId currentHandle, currentHandle)
         | currentHandle <- currentHandles
         ]
-    knownSystemNames =
-      Set.fromList (map effectSystemDeclName currentSystems)
-    exportsBySystem =
-      Map.fromListWith
-        Set.union
-        [ (effectSystemDeclName currentSystem, visibleExportHandleIds currentSystem)
-        | currentSystem <- currentSystems
-        ]
     identityErrors =
-      [ EmptyEffectSystemName
-      | any (null . effectSystemNameText . effectSystemDeclName) currentSystems
+      [ EmptyHandleQualifiedName (handleDeclId currentHandle)
+      | currentHandle <- currentHandles
+      , null (handleIdQualifiedName (handleDeclId currentHandle))
       ]
-        ++ [ EmptyHandleLocalName (handleDeclId currentHandle)
-           | currentHandle <- currentHandles
-           , null (handleIdLocalName (handleDeclId currentHandle))
-           ]
         ++ concatMap handleSchemaIdentityErrors currentHandles
-    duplicateSystemErrors =
-      [ DuplicateEffectSystem currentName
-      | currentName <- duplicates (map effectSystemDeclName currentSystems)
-      ]
-    importErrors =
-      concatMap
-        (effectSystemImportErrors knownSystemNames)
-        currentSystems
     duplicateHandleErrors =
       [ DuplicateHandle currentId
       | currentId <- duplicates (map handleDeclId currentHandles)
       ]
-    wrongSystemErrors =
-      [ HandleDeclaredInWrongSystem
-          (effectSystemDeclName currentSystem)
-          (handleDeclId currentHandle)
-      | currentSystem <- currentSystems
-      , currentHandle <- effectSystemDeclHandles currentSystem
-      , handleIdEffectSystem (handleDeclId currentHandle)
-          /= effectSystemDeclName currentSystem
-      ]
-    visibilityDeclarationErrors =
-      concatMap effectSystemVisibilityDeclarationErrors currentSystems
     referenceErrors =
-      concatMap (effectSystemReferenceErrors handleIndex) currentSystems
-        ++ concatMap (handleInputReferenceErrors handleIndex) currentHandles
-    inputVisibilityErrors =
-      concatMap
-        (effectSystemInputVisibilityErrors handleIndex exportsBySystem)
-        currentSystems
+      concatMap (handleInputReferenceErrors handleIndex) currentHandles
     inputCycleErrors =
       map InputCycle (handleCycles currentHandles)
     readSourceErrors =
       concatMap handleChannelContractErrors currentHandles
         ++ concatMap (readSourceContractErrors handleIndex) currentHandles
-
-visibleExportHandleIds :: EffectSystemDecl -> Set.Set HandleId
-visibleExportHandleIds currentSystem =
-  (exportedHandleIds `Set.intersection` ownedHandleIds)
-    `Set.difference` privateHandleIds
-  where
-    ownedHandleIds =
-      Set.fromList (effectSystemDeclHandleIds currentSystem)
-    privateHandleIds =
-      Set.fromList (effectSystemDeclPrivate currentSystem)
-    exportedHandleIds =
-      Set.fromList (effectSystemDeclExports currentSystem)
 
 handleSchemaIdentityErrors :: HandleDecl -> [ValidationError]
 handleSchemaIdentityErrors currentHandle =
@@ -223,91 +155,6 @@ handleSchemaIdentityErrors currentHandle =
         _ ->
           []
 
-effectSystemImportErrors ::
-  Set.Set EffectSystemName ->
-  EffectSystemDecl ->
-  [ValidationError]
-effectSystemImportErrors knownSystemNames currentSystem =
-  unknownImportErrors ++ duplicateImportErrors
-  where
-    currentName =
-      effectSystemDeclName currentSystem
-    currentImports =
-      effectSystemDeclImports currentSystem
-    unknownImportErrors =
-      [ UnknownEffectSystemImport currentName currentImport
-      | currentImport <- currentImports
-      , currentImport `Set.notMember` knownSystemNames
-      ]
-    duplicateImportErrors =
-      [ DuplicateEffectSystemImport currentName currentImport
-      | currentImport <- duplicates currentImports
-      ]
-
-effectSystemVisibilityDeclarationErrors ::
-  EffectSystemDecl ->
-  [ValidationError]
-effectSystemVisibilityDeclarationErrors currentSystem =
-  privateOutsideErrors
-    ++ exportedOutsideErrors
-    ++ overlapErrors
-    ++ duplicatePrivateErrors
-    ++ duplicateExportErrors
-  where
-    currentName =
-      effectSystemDeclName currentSystem
-    ownedHandleIds =
-      Set.fromList (effectSystemDeclHandleIds currentSystem)
-    currentPrivateIds =
-      effectSystemDeclPrivate currentSystem
-    currentExportIds =
-      effectSystemDeclExports currentSystem
-    privateHandleIds =
-      Set.fromList currentPrivateIds
-    exportedHandleIds =
-      Set.fromList currentExportIds
-    privateOutsideErrors =
-      [ PrivateHandleOutsideSystem currentName currentId
-      | currentId <-
-          Set.toAscList (privateHandleIds `Set.difference` ownedHandleIds)
-      ]
-    exportedOutsideErrors =
-      [ ExportedHandleOutsideSystem currentName currentId
-      | currentId <-
-          Set.toAscList (exportedHandleIds `Set.difference` ownedHandleIds)
-      ]
-    overlapErrors =
-      [ PrivateExportHandleOverlap currentName currentId
-      | currentId <-
-          Set.toAscList (privateHandleIds `Set.intersection` exportedHandleIds)
-      ]
-    duplicatePrivateErrors =
-      [ DuplicatePrivateHandle currentName currentId
-      | currentId <- duplicates currentPrivateIds
-      ]
-    duplicateExportErrors =
-      [ DuplicateExportedHandle currentName currentId
-      | currentId <- duplicates currentExportIds
-      ]
-
-effectSystemReferenceErrors ::
-  Map.Map HandleId HandleDecl ->
-  EffectSystemDecl ->
-  [ValidationError]
-effectSystemReferenceErrors handleIndex currentSystem =
-  concatMap
-    ( validateHandleReference
-        handleIndex
-        (EffectSystemPrivateSite (effectSystemDeclName currentSystem))
-    )
-    (effectSystemDeclPrivate currentSystem)
-    ++ concatMap
-      ( validateHandleReference
-          handleIndex
-          (EffectSystemExportSite (effectSystemDeclName currentSystem))
-      )
-      (effectSystemDeclExports currentSystem)
-
 handleInputReferenceErrors ::
   Map.Map HandleId HandleDecl ->
   HandleDecl ->
@@ -321,50 +168,6 @@ handleInputReferenceErrors handleIndex currentHandle =
         handleIndex
         (HandleInputSite (handleDeclId currentHandle))
         currentInput
-
-effectSystemInputVisibilityErrors ::
-  Map.Map HandleId HandleDecl ->
-  Map.Map EffectSystemName (Set.Set HandleId) ->
-  EffectSystemDecl ->
-  [ValidationError]
-effectSystemInputVisibilityErrors handleIndex exportsBySystem currentSystem =
-  concatMap inputVisibilityErrors (effectSystemDeclHandles currentSystem)
-  where
-    currentSystemName =
-      effectSystemDeclName currentSystem
-    importedSystems =
-      Set.fromList (effectSystemDeclImports currentSystem)
-    inputVisibilityErrors currentHandle =
-      case handleDeclInput currentHandle of
-        Nothing ->
-          []
-        Just currentInput
-          | inputSystem == currentSystemName ->
-              []
-          | inputSystem `Set.notMember` importedSystems ->
-              [ HandleInputSystemNotImported
-                  currentHandleId
-                  inputSystem
-                  inputId
-              ]
-          | Map.notMember inputId handleIndex ->
-              []
-          | inputId
-              `Set.member` Map.findWithDefault
-                Set.empty
-                inputSystem
-                exportsBySystem ->
-              []
-          | otherwise ->
-              [HandleInputNotExported currentHandleId inputId]
-          where
-            currentHandleId =
-              handleDeclId currentHandle
-            inputId =
-              currentInput
-            inputSystem =
-              handleIdEffectSystem inputId
-
 handleChannelContractErrors :: HandleDecl -> [ValidationError]
 handleChannelContractErrors currentHandle =
   case handleDeclKind currentHandle of
@@ -451,10 +254,7 @@ validateObservationInput ::
   HandleDecl ->
   [ValidationError]
 validateObservationInput currentRead currentInput =
-  kindErrors
-    ++ privacyErrors
-    ++ captureErrors
-    ++ schemaErrors
+  kindErrors ++ captureErrors ++ schemaErrors
   where
     readId =
       handleDeclId currentRead
@@ -469,10 +269,6 @@ validateObservationInput currentRead currentInput =
     kindErrors =
       [ ObservationInputKindMismatch readId inputId inputKind
       | inputKind == R
-      ]
-    privacyErrors =
-      [ PrivateObservationCrossSystem readId inputId
-      | handleIdEffectSystem readId /= handleIdEffectSystem inputId
       ]
     captureErrors =
       [ ObservationNotCaptured readId inputId
@@ -493,7 +289,6 @@ validateObservationInput currentRead currentInput =
               ]
         _ ->
           []
-
 validateValueInput ::
   HandleDecl ->
   HandleDecl ->
@@ -549,12 +344,11 @@ validateImplementationCatalog currentImplementations =
 
 validateImplementationContract ::
   Map.Map HandleId HandleDecl ->
-  Map.Map EffectSystemName EffectSystemDecl ->
   AstPath ->
   ImplementationDecl ->
   [ValidationError]
 validateImplementationContract
-  handleIndex systemIndex currentPath currentImplementation =
+  handleIndex currentPath currentImplementation =
     sortValidationErrors
       ( targetErrors
           ++ kindErrors
@@ -607,22 +401,18 @@ validateImplementationContract
     expressionErrors =
       validateRExprDecl
         handleIndex
-        systemIndex
-        currentTargetId
         currentPath
         (FieldPath ["arguments"])
         (implementationArguments currentImplementation)
 
 validateRExprDecl ::
   Map.Map HandleId HandleDecl ->
-  Map.Map EffectSystemName EffectSystemDecl ->
-  HandleId ->
   AstPath ->
   FieldPath ->
   RExprDecl ->
   [ValidationError]
 validateRExprDecl
-  handleIndex systemIndex targetId currentPath currentFieldPath currentExpr =
+  handleIndex currentPath currentFieldPath currentExpr =
     case currentExpr of
       RReferenceDecl currentHandle declaredSchema ->
         validateReference currentHandle declaredSchema
@@ -639,8 +429,6 @@ validateRExprDecl
           ++ concat
             [ validateRExprDecl
                 handleIndex
-                systemIndex
-                targetId
                 currentPath
                 (appendFieldPath currentFieldPath (fieldNameText currentName))
                 currentValue
@@ -657,9 +445,7 @@ validateRExprDecl
               currentHandle
           ]
         Just registeredHandle ->
-          kindErrors
-            ++ schemaErrors
-            ++ visibilityErrors registeredHandle
+          kindErrors ++ schemaErrors
           where
             currentKind =
               handleDeclKind registeredHandle
@@ -684,35 +470,6 @@ validateRExprDecl
                       ]
                 _ ->
                   []
-    visibilityErrors registeredHandle
-      | referenceSystem == targetSystem =
-          []
-      | otherwise =
-          case Map.lookup targetSystem systemIndex of
-            Nothing ->
-              [ImplementationReadNotVisible currentPath targetId referenceId]
-            Just targetEffectSystem
-              | referenceSystem
-                  `notElem` effectSystemDeclImports targetEffectSystem ->
-                  [ImplementationReadNotVisible currentPath targetId referenceId]
-              | not (referenceIsExported referenceSystem referenceId) ->
-                  [ImplementationReadNotVisible currentPath targetId referenceId]
-              | otherwise ->
-                  []
-      where
-        referenceId =
-          handleDeclId registeredHandle
-        referenceSystem =
-          handleIdEffectSystem referenceId
-        targetSystem =
-          handleIdEffectSystem targetId
-    referenceIsExported referenceSystem referenceId =
-      case Map.lookup referenceSystem systemIndex of
-        Nothing ->
-          False
-        Just referenceEffectSystem ->
-          referenceId `Set.member` visibleExportHandleIds referenceEffectSystem
-
 validateDemandGraph :: DemandGraph -> [ValidationError]
 validateDemandGraph currentGraph =
   sortValidationErrors (unknownNodeErrors ++ cycleErrors)
@@ -735,10 +492,10 @@ validateDemandGraph currentGraph =
       map DemandCycle (demandCycles currentGraph)
 
 validateReadConsumption ::
-  [EffectSystemDecl] ->
+  EffSysDecl ->
   DemandGraph ->
   [ValidationError]
-validateReadConsumption currentSystems currentGraph =
+validateReadConsumption currentEffSys currentGraph =
   [ UnconsumedRead currentId
   | currentId <- registeredReads
   , currentId `Set.notMember` consumedReads
@@ -747,8 +504,7 @@ validateReadConsumption currentSystems currentGraph =
     registeredReads =
       sort
         [ handleDeclId currentHandle
-        | currentSystem <- currentSystems
-        , currentHandle <- effectSystemDeclHandles currentSystem
+        | currentHandle <- effSysDeclHandles currentEffSys
         , handleDeclKind currentHandle == R
         ]
     consumedReads =
@@ -763,7 +519,6 @@ validateReadConsumption currentSystems currentGraph =
         ArgumentUse _ -> True
         InputDependency -> True
         _ -> False
-
 
 handleCycles :: [HandleDecl] -> [[HandleId]]
 handleCycles currentHandles =

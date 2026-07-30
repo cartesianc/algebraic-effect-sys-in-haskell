@@ -28,7 +28,7 @@ The public Handler module exposes construction, registration, codecs, and
 contract validation only. `invokeCude`, `invokeRead`, `ExecutionPermit`, and
 the permit mint function are hidden package internals. The public CURDE
 language has no `OperatorRef`, `applyOperator`, or `PureOperatorRegistry`;
-business transformations are R Facts in the Effect System.
+business transformations are R Facts in the unified EffSys.
 
 Runtime hooks implement wait, suspense, middleware, callback, and loop
 behavior. There is no Context hook and no pure-operator hook. The internal

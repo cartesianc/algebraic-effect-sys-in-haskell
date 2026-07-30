@@ -20,15 +20,15 @@ import MyFramework.CURDE.Core
   , implementationIdFor
   , curdeCoreAst
   , curdeCoreDemandGraph
-  , curdeCoreEffectSystems
+  , curdeCoreEffSys
   , demandGraphOccurrences
   )
 import MyFramework.CURDE.Expression
   ( ImplementationDecl )
 import MyFramework.CURDE.Types
-  ( EffectSystemDecl
+  ( EffSysDecl
   , HandleId
-  , effectSystemDeclHandles
+  , effSysDeclHandles
   , handleDeclId
   , renderHandleId
   )
@@ -150,7 +150,7 @@ compileControlPlan currentCore
       ControlEnvironment
         { controlHandleIndex =
             catalogHandleIndex
-              (curdeCoreEffectSystems currentCore)
+              (curdeCoreEffSys currentCore)
         , controlOccurrenceIndex =
             occurrenceIndex (curdeCoreDemandGraph currentCore)
         }
@@ -680,13 +680,12 @@ resolveOccurrence
     currentMatches =
       filter matchesExpected currentCandidates
 
-catalogHandleIndex :: [EffectSystemDecl] -> HandleIndex
-catalogHandleIndex currentSystems =
+catalogHandleIndex :: EffSysDecl -> HandleIndex
+catalogHandleIndex currentEffSys =
   Map.fromListWith
     min
     [ (renderHandleId currentId, currentId)
-    | currentSystem <- currentSystems
-    , currentHandle <- effectSystemDeclHandles currentSystem
+    | currentHandle <- effSysDeclHandles currentEffSys
     , let currentId = handleDeclId currentHandle
     ]
 

@@ -174,25 +174,12 @@ runtimeFailure currentPhase currentCommit currentMessage =
     , runtimeFailureMessage = currentMessage
     }
 
-systemWith ::
-  EffectSystemName ->
-  [SomeHandleRef] ->
-  [SomeHandleRef] ->
-  EffectSystem
-systemWith currentName currentHandles currentExports =
-  effectSystem
-    currentName
-    []
-    currentHandles
-    []
-    currentExports
-
 prepareProgram ::
-  [EffectSystem] ->
+  EffSys ->
   AstBlueprintSeed ->
   Either RuntimePreparationError RuntimeProgram
-prepareProgram currentSystems currentBlueprint =
-  prepareRuntime (lowerCURDE currentSystems currentBlueprint)
+prepareProgram currentEffSys currentBlueprint =
+  prepareRuntime (lowerCURDE currentEffSys currentBlueprint)
 
 plainHooks :: RuntimeHooks
 plainHooks =
@@ -221,13 +208,10 @@ runObservationSuccess :: IO [Check]
 runObservationSuccess = do
   sourceCount <- newIORef 0
   targetArguments <- newIORef []
-  let currentName =
-        EffectSystemName "runtime-good"
-      sourceHandle =
-        c @"goodSource" currentName observedIntegerSpec
+  let sourceHandle =
+        c @"goodSource" observedIntegerSpec
       readHandle =
         r @"goodRead"
-          currentName
           ReadSpec
             { readResultSchema = integerSchema
             , readInput = Just (SomeHandleRef sourceHandle)
@@ -235,7 +219,6 @@ runObservationSuccess = do
             }
       targetHandle =
         u @"goodTarget"
-          currentName
           CommandSpec
             { commandArgumentSchema = integerSchema
             , commandObservation = DiscardObservation
@@ -244,14 +227,12 @@ runObservationSuccess = do
       currentImplementation =
         eraseImplementation
           (implU targetHandle (rRef readHandle))
-      currentSystem =
-        systemWith
-          currentName
+      currentEffSys =
+        effSys
           [ SomeHandleRef sourceHandle
           , SomeHandleRef readHandle
           , SomeHandleRef targetHandle
           ]
-          [SomeHandleRef targetHandle]
       currentBlueprint =
         AstBlueprintSeed
           { astBlueprintSeedBoot =
@@ -299,7 +280,7 @@ runObservationSuccess = do
               )
           )
           withRead
-  case (prepareProgram [currentSystem] currentBlueprint, currentRegistry) of
+  case (prepareProgram currentEffSys currentBlueprint, currentRegistry) of
     (Right currentProgram, Right handlers) -> do
       currentRun <-
         runRuntimeProgram
@@ -438,13 +419,10 @@ runObservationFailure :: IO [Check]
 runObservationFailure = do
   sourceCount <- newIORef 0
   targetCount <- newIORef 0
-  let currentName =
-        EffectSystemName "runtime-bad-observation"
-      sourceHandle =
-        c @"badSource" currentName observedIntegerSpec
+  let sourceHandle =
+        c @"badSource" observedIntegerSpec
       readHandle =
         r @"badRead"
-          currentName
           ReadSpec
             { readResultSchema = integerSchema
             , readInput = Just (SomeHandleRef sourceHandle)
@@ -452,7 +430,6 @@ runObservationFailure = do
             }
       targetHandle =
         u @"badTarget"
-          currentName
           CommandSpec
             { commandArgumentSchema = integerSchema
             , commandObservation = DiscardObservation
@@ -461,14 +438,12 @@ runObservationFailure = do
       currentImplementation =
         eraseImplementation
           (implU targetHandle (rRef readHandle))
-      currentSystem =
-        systemWith
-          currentName
+      currentEffSys =
+        effSys
           [ SomeHandleRef sourceHandle
           , SomeHandleRef readHandle
           , SomeHandleRef targetHandle
           ]
-          [SomeHandleRef targetHandle]
       currentBlueprint =
         AstBlueprintSeed
           { astBlueprintSeedBoot =
@@ -503,7 +478,7 @@ runObservationFailure = do
               )
           )
           withRead
-  case (prepareProgram [currentSystem] currentBlueprint, currentRegistry) of
+  case (prepareProgram currentEffSys currentBlueprint, currentRegistry) of
     (Right currentProgram, Right handlers) -> do
       currentRun <-
         runRuntimeProgram
@@ -595,26 +570,20 @@ runParallelSingleFlight :: IO [Check]
 runParallelSingleFlight = do
   sourceCount <- newIORef 0
   consumerUseCount <- newIORef 0
-  let currentName =
-        EffectSystemName "runtime-parallel"
-      sourceHandle =
-        c @"sharedRoot" currentName (unitCommandSpec Nothing)
+  let sourceHandle =
+        c @"sharedRoot" (unitCommandSpec Nothing)
       consumerA =
         e @"sharedConsumerA"
-          currentName
           (unitCommandSpec (Just (SomeHandleRef sourceHandle)))
       consumerB =
         e @"sharedConsumerB"
-          currentName
           (unitCommandSpec (Just (SomeHandleRef sourceHandle)))
-      currentSystem =
-        systemWith
-          currentName
+      currentEffSys =
+        effSys
           [ SomeHandleRef sourceHandle
           , SomeHandleRef consumerA
           , SomeHandleRef consumerB
           ]
-          [SomeHandleRef consumerA, SomeHandleRef consumerB]
       currentBlueprint =
         AstBlueprintSeed
           { astBlueprintSeedBoot =
@@ -656,7 +625,7 @@ runParallelSingleFlight = do
         withA <-
           registerE consumerA consumerHandler withSource
         registerE consumerB consumerHandler withA
-  case (prepareProgram [currentSystem] currentBlueprint, currentRegistry) of
+  case (prepareProgram currentEffSys currentBlueprint, currentRegistry) of
     (Right currentProgram, Right handlers) -> do
       currentRun <-
         runRuntimeProgram
@@ -706,16 +675,13 @@ runInputProofRejection =
         proofUnexpected
     ]
   where
-    currentName =
-      EffectSystemName "runtime-input-proof"
     sourceHandle =
-      c @"proofSource" currentName (unitCommandSpec Nothing)
+      c @"proofSource" (unitCommandSpec Nothing)
     dependentHandle =
       e @"proofDependent"
-        currentName
         (unitCommandSpec (Just (SomeHandleRef sourceHandle)))
     rootHandle =
-      e @"proofRoot" currentName (unitCommandSpec Nothing)
+      e @"proofRoot" (unitCommandSpec Nothing)
     prooflessHandler =
       discardingCommandHandler
         unitValueCodec
@@ -739,16 +705,12 @@ runSafeFallback :: IO [Check]
 runSafeFallback = do
   primaryCount <- newIORef 0
   fallbackCount <- newIORef 0
-  let currentName =
-        EffectSystemName "runtime-safe-fallback"
-      primaryHandle =
-        e @"safePrimary" currentName (unitCommandSpec Nothing)
+  let primaryHandle =
+        e @"safePrimary" (unitCommandSpec Nothing)
       fallbackHandle =
-        e @"safeFallback" currentName (unitCommandSpec Nothing)
-      currentSystem =
-        systemWith
-          currentName
-          [SomeHandleRef primaryHandle, SomeHandleRef fallbackHandle]
+        e @"safeFallback" (unitCommandSpec Nothing)
+      currentEffSys =
+        effSys
           [SomeHandleRef primaryHandle, SomeHandleRef fallbackHandle]
       currentBlueprint =
         AstBlueprintSeed
@@ -790,7 +752,7 @@ runSafeFallback = do
           withPrimary
   runFallbackScenario
     "fallback.safe"
-    currentSystem
+    currentEffSys
     currentBlueprint
     currentRegistry
     primaryCount
@@ -802,16 +764,12 @@ runUnsafeFallback :: IO [Check]
 runUnsafeFallback = do
   primaryCount <- newIORef 0
   fallbackCount <- newIORef 0
-  let currentName =
-        EffectSystemName "runtime-unsafe-fallback"
-      primaryHandle =
-        e @"unsafePrimary" currentName (unitCommandSpec Nothing)
+  let primaryHandle =
+        e @"unsafePrimary" (unitCommandSpec Nothing)
       fallbackHandle =
-        e @"forbiddenFallback" currentName (unitCommandSpec Nothing)
-      currentSystem =
-        systemWith
-          currentName
-          [SomeHandleRef primaryHandle, SomeHandleRef fallbackHandle]
+        e @"forbiddenFallback" (unitCommandSpec Nothing)
+      currentEffSys =
+        effSys
           [SomeHandleRef primaryHandle, SomeHandleRef fallbackHandle]
       currentBlueprint =
         AstBlueprintSeed
@@ -853,7 +811,7 @@ runUnsafeFallback = do
           withPrimary
   runFallbackScenario
     "fallback.unsafe"
-    currentSystem
+    currentEffSys
     currentBlueprint
     currentRegistry
     primaryCount
@@ -863,7 +821,7 @@ runUnsafeFallback = do
 
 runFallbackScenario ::
   String ->
-  EffectSystem ->
+  EffSys ->
   AstBlueprintSeed ->
   Either RegistryError HandlerRegistry ->
   IORef Int ->
@@ -873,14 +831,14 @@ runFallbackScenario ::
   IO [Check]
 runFallbackScenario
   currentPrefix
-  currentSystem
+  currentEffSys
   currentBlueprint
   currentRegistry
   primaryCount
   fallbackCount
   expectedSuccess
   expectedFallbackCount =
-    case (prepareProgram [currentSystem] currentBlueprint, currentRegistry) of
+    case (prepareProgram currentEffSys currentBlueprint, currentRegistry) of
       (Right currentProgram, Right handlers) -> do
         currentRun <-
           runRuntimeProgram
@@ -916,19 +874,15 @@ runControlAndUnfrozenRejection = do
   middlewareBeforeCount <- newIORef 0
   middlewareAfterCount <- newIORef 0
   callbackCount <- newIORef 0
-  let currentName =
-        EffectSystemName "runtime-control"
-      workHandle =
-        e @"controlWork" currentName (unitCommandSpec Nothing)
+  let workHandle =
+        e @"controlWork" (unitCommandSpec Nothing)
       unreachableHandle =
-        e @"registeredButUnreachable" currentName (unitCommandSpec Nothing)
+        e @"registeredButUnreachable" (unitCommandSpec Nothing)
       selectedKey =
         ChoiceKey "selected"
-      currentSystem =
-        systemWith
-          currentName
+      currentEffSys =
+        effSys
           [SomeHandleRef workHandle, SomeHandleRef unreachableHandle]
-          [SomeHandleRef workHandle]
       currentBlueprint =
         AstBlueprintSeed
           { astBlueprintSeedBoot =
@@ -1026,14 +980,14 @@ runControlAndUnfrozenRejection = do
                   }
           }
       contextRejected =
-        case prepareProgram [currentSystem] contextBlueprint of
+        case prepareProgram currentEffSys contextBlueprint of
           Left (RuntimeLoweringRejected currentErrors) ->
             UnsupportedContextNode (AstPath ["blueprint", "boot"])
               `elem` currentErrors
           _ ->
             False
       hangingRejected =
-        case prepareProgram [currentSystem] hangingBlueprint of
+        case prepareProgram currentEffSys hangingBlueprint of
           Left (RuntimeLoweringRejected currentErrors) ->
             UnsupportedHangingRoot
               (AstPath ["blueprint", "hanging", "item:0"])
@@ -1041,7 +995,7 @@ runControlAndUnfrozenRejection = do
           _ ->
             False
       unknownTargetRejected =
-        case prepareProgram [currentSystem] unknownBlueprint of
+        case prepareProgram currentEffSys unknownBlueprint of
           Left (RuntimeLoweringRejected currentErrors) ->
             UnknownAstHandleReference
               (AstPath ["blueprint", "boot"])
@@ -1049,7 +1003,7 @@ runControlAndUnfrozenRejection = do
               `elem` currentErrors
           _ ->
             False
-  case (prepareProgram [currentSystem] currentBlueprint, currentRegistry) of
+  case (prepareProgram currentEffSys currentBlueprint, currentRegistry) of
     (Right currentProgram, Right handlers) -> do
       currentRun <-
         runRuntimeProgram
@@ -1120,16 +1074,12 @@ runRaceSettlement = do
   slowBlocker <- newEmptyMVar
   slowCompleted <- newIORef 0
   fastCount <- newIORef 0
-  let currentName =
-        EffectSystemName "runtime-race"
-      slowHandle =
-        e @"slowGate" currentName (unitCommandSpec Nothing)
+  let slowHandle =
+        e @"slowGate" (unitCommandSpec Nothing)
       fastHandle =
-        e @"fastGate" currentName (unitCommandSpec Nothing)
-      currentSystem =
-        systemWith
-          currentName
-          [SomeHandleRef slowHandle, SomeHandleRef fastHandle]
+        e @"fastGate" (unitCommandSpec Nothing)
+      currentEffSys =
+        effSys
           [SomeHandleRef slowHandle, SomeHandleRef fastHandle]
       currentBlueprint =
         AstBlueprintSeed
@@ -1155,7 +1105,7 @@ runRaceSettlement = do
                     modifyIORef' fastCount (+ 1)
                     pure (RuntimeGateReady currentSnapshot)
           }
-  case prepareProgram [currentSystem] currentBlueprint of
+  case prepareProgram currentEffSys currentBlueprint of
     Right currentProgram -> do
       currentRun <-
         runRuntimeProgram

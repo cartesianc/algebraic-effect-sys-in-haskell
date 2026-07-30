@@ -1,33 +1,22 @@
 module MyFramework.SDK.SourceArtifact
-  ( SdkHandlerCoverage
+  ( SdkHandlerCoverage (..)
   , SdkSourceInput (..)
-  , SdkSourceArtifact
-  , sdkSourceArtifactSchema
-  , sdkSourceArtifactSdkVersion
-  , sdkSourceArtifactCoreLock
-  , sdkSourceArtifactEffectSystems
-  , sdkSourceArtifactAstSeed
-  , sdkSourceArtifactHandlerCoverage
+  , SdkSourceArtifact (..)
   , SdkSourceIssueSeverity (..)
   , SdkSourceIssueCode (..)
   , SdkSourceIssue (..)
-  , SdkSourceReport
-  , sdkSourceReportSchema
-  , sdkSourceReportInput
-  , sdkSourceReportArtifact
-  , sdkSourceReportIssues
+  , SdkSourceReport (..)
   , SdkGeneratedSource (..)
-  , sdkSourceArtifactSchemaV1
-  , sdkSourceReportSchemaV1
-  , handlerCoverageFromIds
-  , handlerCoverageIds
+  , sdkSourceArtifactSchemaV3
+  , sdkSourceReportSchemaV3
+  , handlerCoverageFromRefs
   , mkSdkSourceInput
   , sdkLoweringSemanticsDigest
   , canonicalizeSdkSourceInput
   , buildSdkSourceReport
   , sdkSourceReportReady
   , sdkSourceReportCanonical
-  , sdkSourcePreservesAuthoringOrder
+  , sdkSourceCanonicalizesReferencedProgram
   , renderSdkSourceArtifactJson
   , renderSdkSourceReportJson
   , renderGeneratedSdkSource
@@ -36,8 +25,7 @@ module MyFramework.SDK.SourceArtifact
 import Data.Char
   ( ord )
 import Data.List
-  ( group
-  , intercalate
+  ( intercalate
   , sort
   , sortOn
   )
@@ -45,17 +33,7 @@ import qualified Data.Set as Set
 import Numeric
   ( showHex )
 
-import MyFramework.Ast
-  ( AstBlueprintSeed
-  , encodeAstBlueprintSeed
-  )
-import MyFramework.CURDE
-  ( EffectSystemDecl (..)
-  , EffectSystemName (..)
-  , HandleId (..)
-  , effectSystemDeclHandleIds
-  , renderHandleId
-  )
+import MyFramework.Frontend
 import MyFramework.TrustBase.Core
   ( Digest (..)
   , SdkCoreLock (..)
@@ -66,34 +44,27 @@ import MyFramework.TrustBase.Core
 import MyFramework.TrustBase.Digest
   ( sha256 )
 
-
--- | Handler code and existential registry entries remain runtime-only.
--- Coverage is an optional set of erased identities and is not an authoring
--- surface, handler binding, or execution plan.
-newtype SdkHandlerCoverage = SdkHandlerCoverage
-  { handlerCoverageIds :: [HandleId]
+-- | Coverage remains metadata. Effect and R identities stay in separate
+-- namespaces and are never flattened into a global handle id.
+data SdkHandlerCoverage = SdkHandlerCoverage
+  { handlerCoverageEffects :: [EffectAddress]
+  , handlerCoverageReads :: [ReadKey]
   }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Read, Show)
 
--- | The authoritative SDK source boundary. CURDE and AST values enter through
--- their existing public erased/configuration types; no parallel syntax exists.
 data SdkSourceInput = SdkSourceInput
   { sdkSourceSdkVersion :: String
   , sdkSourceCoreLock :: SdkCoreLock
-  , sdkSourceEffectSystems :: [EffectSystemDecl]
-  , sdkSourceAstSeed :: AstBlueprintSeed
+  , sdkSourceProgram :: ReferencedProgram
   , sdkSourceHandlerCoverage :: Maybe SdkHandlerCoverage
   }
   deriving (Eq, Ord, Show)
 
--- | Canonical, typed material retained before rendering. It contains no
--- handler, closure, runtime resource, interpreter, or backend value.
 data SdkSourceArtifact = SdkSourceArtifact
   { sdkSourceArtifactSchema :: String
   , sdkSourceArtifactSdkVersion :: String
   , sdkSourceArtifactCoreLock :: SdkCoreLock
-  , sdkSourceArtifactEffectSystems :: [EffectSystemDecl]
-  , sdkSourceArtifactAstSeed :: AstBlueprintSeed
+  , sdkSourceArtifactProgram :: ReferencedProgram
   , sdkSourceArtifactHandlerCoverage :: Maybe SdkHandlerCoverage
   }
   deriving (Eq, Ord, Show)
@@ -101,18 +72,18 @@ data SdkSourceArtifact = SdkSourceArtifact
 data SdkSourceIssueSeverity
   = SdkSourceWarning
   | SdkSourceBlocker
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Read, Show)
 
 data SdkSourceIssueCode
   = EmptySdkSourceVersion
-  | EmptyEffectSystemIdentity
-  | DuplicateEffectSystemIdentity
+  | InvalidReferencedProgram
   | EmptyHandlerCoverageIdentity
   | InvalidSdkCoreLock
   | SdkSurfaceDigestMismatch
   | SdkLoweringDigestMismatch
-  | UnknownHandlerCoverageIdentity
-  deriving (Eq, Ord, Show)
+  | UnknownEffectCoverageIdentity
+  | UnknownReadCoverageIdentity
+  deriving (Eq, Ord, Read, Show)
 
 data SdkSourceIssue = SdkSourceIssue
   { sdkSourceIssueCode :: SdkSourceIssueCode
@@ -120,7 +91,7 @@ data SdkSourceIssue = SdkSourceIssue
   , sdkSourceIssueSubject :: String
   , sdkSourceIssueDetail :: String
   }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Read, Show)
 
 data SdkSourceReport = SdkSourceReport
   { sdkSourceReportSchema :: String
@@ -130,34 +101,34 @@ data SdkSourceReport = SdkSourceReport
   }
   deriving (Eq, Ord, Show)
 
--- | A pure generated-source payload. Writing it to disk belongs to external
--- SDK generation tooling, never to this boundary.
 data SdkGeneratedSource = SdkGeneratedSource
   { sdkGeneratedSourcePath :: FilePath
   , sdkGeneratedSourceLines :: [String]
   }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Read, Show)
 
-sdkSourceArtifactSchemaV1 :: String
-sdkSourceArtifactSchemaV1 =
-  "myframework-sdk-source-artifact.v1"
+sdkSourceArtifactSchemaV3 :: String
+sdkSourceArtifactSchemaV3 =
+  "myframework-sdk-source-artifact.v3"
 
-sdkSourceReportSchemaV1 :: String
-sdkSourceReportSchemaV1 =
-  "myframework-sdk-source-report.v1"
+sdkSourceReportSchemaV3 :: String
+sdkSourceReportSchemaV3 =
+  "myframework-sdk-source-report.v3"
 
 sdkLoweringSemanticsDigest :: Digest
 sdkLoweringSemanticsDigest =
-  Digest (sha256 "myframework-sdk-lowering-semantics.v1")
+  Digest
+    ( sha256
+        "myframework-sdk-lowering-semantics.l0-referenced-modules.v3"
+    )
 
 mkSdkSourceInput ::
   TrustBaseRef ->
   String ->
-  [EffectSystemDecl] ->
-  AstBlueprintSeed ->
+  ReferencedProgram ->
   Maybe SdkHandlerCoverage ->
   SdkSourceInput
-mkSdkSourceInput currentCore currentVersion currentSystems currentAst currentCoverage =
+mkSdkSourceInput currentCore currentVersion currentProgram currentCoverage =
   provisionalInput
     { sdkSourceCoreLock =
         SdkCoreLock
@@ -177,35 +148,98 @@ mkSdkSourceInput currentCore currentVersion currentSystems currentAst currentCov
               currentCore
               (Digest (replicate 64 '0'))
               sdkLoweringSemanticsDigest
-        , sdkSourceEffectSystems = currentSystems
-        , sdkSourceAstSeed = currentAst
+        , sdkSourceProgram = currentProgram
         , sdkSourceHandlerCoverage = currentCoverage
         }
 
-handlerCoverageFromIds :: [HandleId] -> SdkHandlerCoverage
-handlerCoverageFromIds =
-  SdkHandlerCoverage . uniqueSorted
+handlerCoverageFromRefs ::
+  [EffectAddress] ->
+  [ReadKey] ->
+  SdkHandlerCoverage
+handlerCoverageFromRefs currentEffects currentReads =
+  SdkHandlerCoverage
+    { handlerCoverageEffects = uniqueSorted currentEffects
+    , handlerCoverageReads = uniqueSorted currentReads
+    }
 
--- | Canonicalization treats only the top-level effect-system collection and
--- handler coverage as sets. Every sequence inside an EffectSystemDecl and the
--- complete AstBlueprintSeed are preserved exactly.
 canonicalizeSdkSourceInput :: SdkSourceInput -> SdkSourceInput
 canonicalizeSdkSourceInput currentInput =
   currentInput
-    { sdkSourceEffectSystems =
-        sortOn
-          effectSystemCanonicalKey
-          (sdkSourceEffectSystems currentInput)
+    { sdkSourceProgram =
+        canonicalizeReferencedProgram (sdkSourceProgram currentInput)
     , sdkSourceHandlerCoverage =
-        fmap
-          (handlerCoverageFromIds . handlerCoverageIds)
-          (sdkSourceHandlerCoverage currentInput)
+        fmap canonicalizeCoverage (sdkSourceHandlerCoverage currentInput)
     }
+
+canonicalizeCoverage :: SdkHandlerCoverage -> SdkHandlerCoverage
+canonicalizeCoverage currentCoverage =
+  handlerCoverageFromRefs
+    (handlerCoverageEffects currentCoverage)
+    (handlerCoverageReads currentCoverage)
+
+canonicalizeReferencedProgram :: ReferencedProgram -> ReferencedProgram
+canonicalizeReferencedProgram currentProgram =
+  currentProgram
+    { referencedProgramControls =
+        sortOn controlDeclModule
+          (referencedProgramControls currentProgram)
+    , referencedProgramEffects =
+        sortOn effectModuleName
+          ( map
+              canonicalizeEffectModule
+              (referencedProgramEffects currentProgram)
+          )
+    , referencedProgramReads =
+        ReadRegistry
+          ( sort
+              ( readRegistryFields
+                  (referencedProgramReads currentProgram)
+              )
+          )
+    }
+
+canonicalizeEffectModule :: EffectModule -> EffectModule
+canonicalizeEffectModule currentModule =
+  currentModule
+    { effectModuleRecord =
+        EffectRecord
+          ( sortOn fst
+              [ (currentKey, canonicalizeEffect currentEffect)
+              | (currentKey, currentEffect) <-
+                  effectRecordFields (effectModuleRecord currentModule)
+              ]
+          )
+    }
+
+canonicalizeEffect :: EffectDecl -> EffectDecl
+canonicalizeEffect currentEffect =
+  currentEffect
+    { effectDeclParams =
+        canonicalizeParams (effectDeclParams currentEffect)
+    }
+
+canonicalizeParams ::
+  [(ParamKey, ParamBinding)] ->
+  [(ParamKey, ParamBinding)]
+canonicalizeParams currentParams =
+  sortOn fst
+    [ ( currentKey
+      , currentBinding
+          { paramBindingSource =
+              case paramBindingSource currentBinding of
+                ParamFromRecord currentChildren ->
+                  ParamFromRecord (canonicalizeParams currentChildren)
+                currentSource ->
+                  currentSource
+          }
+      )
+    | (currentKey, currentBinding) <- currentParams
+    ]
 
 buildSdkSourceReport :: SdkSourceInput -> SdkSourceReport
 buildSdkSourceReport originalInput =
   SdkSourceReport
-    { sdkSourceReportSchema = sdkSourceReportSchemaV1
+    { sdkSourceReportSchema = sdkSourceReportSchemaV3
     , sdkSourceReportInput = canonicalInput
     , sdkSourceReportArtifact = sourceArtifactFrom canonicalInput
     , sdkSourceReportIssues = sourceIssues canonicalInput
@@ -223,12 +257,9 @@ sdkSourceReportReady currentReport =
           (sdkSourceReportIssues currentReport)
       )
 
--- | Pure witness for generated-code tooling. It proves that the report uses a
--- canonical source value, the exact deterministic artifact, and sorted unique
--- issues rebuilt from that source.
 sdkSourceReportCanonical :: SdkSourceReport -> Bool
 sdkSourceReportCanonical currentReport =
-  sdkSourceReportSchema currentReport == sdkSourceReportSchemaV1
+  sdkSourceReportSchema currentReport == sdkSourceReportSchemaV3
     && currentInput == canonicalizeSdkSourceInput currentInput
     && currentArtifact == sourceArtifactFrom currentInput
     && currentIssues == sourceIssues currentInput
@@ -241,14 +272,11 @@ sdkSourceReportCanonical currentReport =
     currentIssues =
       sdkSourceReportIssues currentReport
 
--- | Witness that canonicalization changes only top-level set order. Equality
--- with the rebuilt report preserves every declaration-internal sequence and
--- the complete AST seed from the original authoritative input.
-sdkSourcePreservesAuthoringOrder ::
+sdkSourceCanonicalizesReferencedProgram ::
   SdkSourceInput ->
   SdkSourceReport ->
   Bool
-sdkSourcePreservesAuthoringOrder originalInput currentReport =
+sdkSourceCanonicalizesReferencedProgram originalInput currentReport =
   sdkSourceReportInput currentReport
     == canonicalizeSdkSourceInput originalInput
     && currentReport == buildSdkSourceReport originalInput
@@ -266,16 +294,8 @@ renderSdkSourceArtifactJson currentArtifact =
         "coreLock"
         (renderSdkCoreLockJson (sdkSourceArtifactCoreLock currentArtifact))
     , jsonField
-        "curde"
-        ( jsonArray
-            ( map
-                renderEffectSystemDeclJson
-                (sdkSourceArtifactEffectSystems currentArtifact)
-            )
-        )
-    , jsonField
-        "ast"
-        (renderAstSeedJson (sdkSourceArtifactAstSeed currentArtifact))
+        "program"
+        (renderReferencedProgramJson (sdkSourceArtifactProgram currentArtifact))
     , jsonField
         "handlerCoverage"
         ( jsonMaybe
@@ -301,9 +321,6 @@ renderSdkSourceReportJson currentReport =
         (jsonArray (map renderSourceIssueJson (sdkSourceReportIssues currentReport)))
     ]
 
--- | Render a provenance-only module for generated SDK trees. The generated
--- module exposes JSON constants; it cannot reconstruct handlers or execute the
--- AST.
 renderGeneratedSdkSource :: SdkSourceInput -> SdkGeneratedSource
 renderGeneratedSdkSource currentInput =
   SdkGeneratedSource
@@ -335,14 +352,10 @@ renderGeneratedSdkSource currentInput =
 sourceArtifactFrom :: SdkSourceInput -> SdkSourceArtifact
 sourceArtifactFrom currentInput =
   SdkSourceArtifact
-    { sdkSourceArtifactSchema = sdkSourceArtifactSchemaV1
+    { sdkSourceArtifactSchema = sdkSourceArtifactSchemaV3
     , sdkSourceArtifactSdkVersion = sdkSourceSdkVersion currentInput
-    , sdkSourceArtifactCoreLock =
-        sdkSourceCoreLock currentInput
-    , sdkSourceArtifactEffectSystems =
-        sdkSourceEffectSystems currentInput
-    , sdkSourceArtifactAstSeed =
-        sdkSourceAstSeed currentInput
+    , sdkSourceArtifactCoreLock = sdkSourceCoreLock currentInput
+    , sdkSourceArtifactProgram = sdkSourceProgram currentInput
     , sdkSourceArtifactHandlerCoverage =
         sdkSourceHandlerCoverage currentInput
     }
@@ -351,9 +364,9 @@ sourceIssues :: SdkSourceInput -> [SdkSourceIssue]
 sourceIssues currentInput =
   uniqueSorted
     ( versionIssues
-        ++ effectSystemIssues
+        ++ programIssues
         ++ coreLockIssues
-        ++ handlerCoverageIssues
+        ++ coverageIssues
     )
   where
     versionIssues =
@@ -363,6 +376,18 @@ sourceIssues currentInput =
           "sdkVersion"
           "the generated artifact must identify its SDK semantic version"
       | null (sdkSourceSdkVersion currentInput)
+      ]
+    currentProgram =
+      sdkSourceProgram currentInput
+    currentProgramErrors =
+      validateReferencedProgram currentProgram
+    programIssues =
+      [ sourceIssue
+          SdkSourceBlocker
+          InvalidReferencedProgram
+          "program"
+          (show currentProgramErrors)
+      | not (null currentProgramErrors)
       ]
     currentCoreLock =
       sdkSourceCoreLock currentInput
@@ -402,56 +427,67 @@ sourceIssues currentInput =
            | sdkLoweringDigest currentCoreLock
                /= sdkLoweringSemanticsDigest
            ]
-    currentSystems =
-      sdkSourceEffectSystems currentInput
-    effectSystemIssues =
-      [ sourceIssue
-          SdkSourceBlocker
-          EmptyEffectSystemIdentity
-          "effect-system"
-          "an erased EffectSystemDecl has an empty stable identity"
-      | currentSystem <- currentSystems
-      , null
-          ( effectSystemNameText
-              (effectSystemDeclName currentSystem)
-          )
-      ]
-        ++
-      [ sourceIssue
-          SdkSourceBlocker
-          DuplicateEffectSystemIdentity
-          (effectSystemNameText currentName)
-          "more than one erased EffectSystemDecl uses this stable identity"
-      | currentName <-
-          duplicates (map effectSystemDeclName currentSystems)
-      ]
-    handlerCoverageIssues =
+    coverageIssues =
       case sdkSourceHandlerCoverage currentInput of
         Nothing ->
           []
         Just currentCoverage ->
           invalidCoverageIssues currentCoverage
             ++ unknownCoverageIssues currentCoverage
-    declaredIds =
-      uniqueSorted (concatMap effectSystemDeclHandleIds currentSystems)
+    declaredEffects =
+      Set.fromList
+        [ EffectAddress
+            (effectModuleName currentModule)
+            currentKey
+        | currentModule <- referencedProgramEffects currentProgram
+        , (currentKey, _) <-
+            effectRecordFields (effectModuleRecord currentModule)
+        ]
+    declaredReads =
+      Set.fromList
+        (map fst (readRegistryFields (referencedProgramReads currentProgram)))
     invalidCoverageIssues currentCoverage =
       [ sourceIssue
           SdkSourceWarning
           EmptyHandlerCoverageIdentity
-          (renderHandleId currentId)
-          "handler coverage metadata contains an empty handle identity"
-      | currentId <- handlerCoverageIds currentCoverage
-      , not (handleIdentityValid currentId)
+          "effect"
+          (show currentAddress)
+      | currentAddress <- handlerCoverageEffects currentCoverage
+      , not (validEffectAddress currentAddress)
       ]
+        ++ [ sourceIssue
+               SdkSourceWarning
+               EmptyHandlerCoverageIdentity
+               "read"
+               (show currentRead)
+           | currentRead <- handlerCoverageReads currentCoverage
+           , null (readKeyText currentRead)
+           ]
     unknownCoverageIssues currentCoverage =
       [ sourceIssue
           SdkSourceWarning
-          UnknownHandlerCoverageIdentity
-          (renderHandleId currentId)
-          "handler coverage is metadata only and does not match a declared handle"
-      | currentId <- handlerCoverageIds currentCoverage
-      , currentId `notElem` declaredIds
+          UnknownEffectCoverageIdentity
+          "effect"
+          (show currentAddress)
+      | currentAddress <- handlerCoverageEffects currentCoverage
+      , Set.notMember currentAddress declaredEffects
       ]
+        ++ [ sourceIssue
+               SdkSourceWarning
+               UnknownReadCoverageIdentity
+               "read"
+               (show currentRead)
+           | currentRead <- handlerCoverageReads currentCoverage
+           , Set.notMember currentRead declaredReads
+           ]
+
+validEffectAddress :: EffectAddress -> Bool
+validEffectAddress currentAddress =
+  not
+    ( null
+        (moduleNameText (effectAddressModule currentAddress))
+    )
+    && not (null (localKeyText (effectAddressKey currentAddress)))
 
 sourceIssue ::
   SdkSourceIssueSeverity ->
@@ -467,34 +503,13 @@ sourceIssue currentSeverity currentCode currentSubject currentDetail =
     , sdkSourceIssueDetail = currentDetail
     }
 
-handleIdentityValid :: HandleId -> Bool
-handleIdentityValid currentId =
-  not
-    ( null
-        ( effectSystemNameText
-            (handleIdEffectSystem currentId)
-        )
-    )
-    && not (null (handleIdLocalName currentId))
-
-effectSystemCanonicalKey ::
-  EffectSystemDecl ->
-  (EffectSystemName, EffectSystemDecl)
-effectSystemCanonicalKey currentSystem =
-  (effectSystemDeclName currentSystem, currentSystem)
-
 renderSdkSurfaceCommitment :: SdkSourceInput -> String
 renderSdkSurfaceCommitment currentInput =
   intercalate
     "\n"
     [ sdkSourceSdkVersion canonicalInput
-    , show (sdkSourceEffectSystems canonicalInput)
-    , encodeAstBlueprintSeed (sdkSourceAstSeed canonicalInput)
-    , show
-        ( fmap
-            handlerCoverageIds
-            (sdkSourceHandlerCoverage canonicalInput)
-        )
+    , show (sdkSourceProgram canonicalInput)
+    , show (sdkSourceHandlerCoverage canonicalInput)
     ]
   where
     canonicalInput =
@@ -509,47 +524,27 @@ renderSdkCoreLockJson currentLock =
         (jsonString (encodeSdkCoreLock currentLock))
     ]
 
-renderEffectSystemDeclJson :: EffectSystemDecl -> String
-renderEffectSystemDeclJson currentSystem =
+renderReferencedProgramJson :: ReferencedProgram -> String
+renderReferencedProgramJson currentProgram =
   jsonObject
     [ jsonField
-        "identity"
-        ( jsonString
-            ( effectSystemNameText
-                (effectSystemDeclName currentSystem)
-            )
-        )
-    , jsonField
         "encoding"
-        (jsonString "EffectSystemDecl.ReadShow.v1")
+        (jsonString "ReferencedProgram.ReadShow.v1")
     , jsonField
         "declaration"
-        (jsonString (show currentSystem))
-    ]
-
-renderAstSeedJson :: AstBlueprintSeed -> String
-renderAstSeedJson currentSeed =
-  jsonObject
-    [ jsonField
-        "encoding"
-        (jsonString "AstBlueprintSeed.ReadShow.v1")
-    , jsonField
-        "seed"
-        (jsonString (encodeAstBlueprintSeed currentSeed))
+        (jsonString (show currentProgram))
     ]
 
 renderHandlerCoverageJson :: SdkHandlerCoverage -> String
 renderHandlerCoverageJson currentCoverage =
   jsonObject
-    [ jsonField "kind" (jsonString "identity-only")
+    [ jsonField "kind" (jsonString "module-local")
     , jsonField
-        "handles"
-        ( jsonArray
-            ( map
-                (jsonString . renderHandleId)
-                (handlerCoverageIds currentCoverage)
-            )
-        )
+        "effects"
+        (jsonArray (map (jsonString . show) (handlerCoverageEffects currentCoverage)))
+    , jsonField
+        "reads"
+        (jsonArray (map (jsonString . show) (handlerCoverageReads currentCoverage)))
     ]
 
 renderSourceIssueJson :: SdkSourceIssue -> String
@@ -582,26 +577,20 @@ renderSourceIssueCode currentCode =
       "sdk-lowering-digest-mismatch"
     EmptySdkSourceVersion ->
       "empty-sdk-source-version"
-    EmptyEffectSystemIdentity ->
-      "empty-effect-system-identity"
-    DuplicateEffectSystemIdentity ->
-      "duplicate-effect-system-identity"
+    InvalidReferencedProgram ->
+      "invalid-referenced-program"
     EmptyHandlerCoverageIdentity ->
       "empty-handler-coverage-identity"
-    UnknownHandlerCoverageIdentity ->
-      "unknown-handler-coverage-identity"
+    UnknownEffectCoverageIdentity ->
+      "unknown-effect-coverage-identity"
+    UnknownReadCoverageIdentity ->
+      "unknown-read-coverage-identity"
 
 renderSourceIssueSeverity :: SdkSourceIssueSeverity -> String
 renderSourceIssueSeverity currentSeverity =
   case currentSeverity of
     SdkSourceWarning -> "warning"
     SdkSourceBlocker -> "blocker"
-
-duplicates :: Ord item => [item] -> [item]
-duplicates currentItems =
-  [ currentItem
-  | currentItem : _ : _ <- group (sort currentItems)
-  ]
 
 uniqueSorted :: Ord item => [item] -> [item]
 uniqueSorted =

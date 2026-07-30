@@ -236,7 +236,7 @@ coreClaims =
 
 semanticReport :: String
 semanticReport =
-  "{\"schema\":\"core-self-interpret-evidence.v1\",\"result\":\"passed\",\"claims\":[{\"name\":\"semantic-fixed-point-passed\",\"status\":\"passed\"},{\"name\":\"candidate-has-no-previous-core-runtime-dependency\",\"status\":\"passed\"},{\"name\":\"empty-business-closes-recursion\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-curde\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-handler\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-host-io\",\"status\":\"passed\"}]}"
+  "{\"schema\":\"core-self-interpret-evidence.v2\",\"result\":\"passed\",\"claims\":[{\"name\":\"semantic-fixed-point-passed\",\"status\":\"passed\"},{\"name\":\"candidate-has-no-previous-core-runtime-dependency\",\"status\":\"passed\"},{\"name\":\"empty-business-closes-recursion\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-curde\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-handler\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-host-io\",\"status\":\"passed\"}]}"
 
 artifactReport :: String
 artifactReport =

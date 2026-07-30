@@ -9,13 +9,19 @@ module MyFramework.TrustBase.Evidence
   , fixedPointDiffEvidenceSchemaV1
   , promotionClaimCatalog
   , promotionEvidenceSchemaV1
+  , l0SemanticsClaimCatalog
+  , l0SemanticsEvidenceSchemaV3
+  , referencedFrontendClaimCatalog
+  , referencedFrontendEvidenceSchemaV1
+  , referencedRuntimeClaimCatalog
+  , referencedRuntimeEvidenceSchemaV1
   , sdkPackageClaimCatalog
   , sdkPackageEvidenceSchemaV1
   , schemaCatalogClaimCatalog
   , schemaCatalogClaimName
   , schemaCatalogEvidenceSchemaV1
   , selfInterpretClaimCatalog
-  , selfInterpretEvidenceSchemaV1
+  , selfInterpretEvidenceSchemaV2
   , trustBaseManifestClaimCatalog
   , trustBaseManifestEvidenceSchemaV1
   , trustBaseBindingClaimCatalog
@@ -93,17 +99,38 @@ promotionEvidenceSchemaV1 =
     , schemaIdVersion = SchemaVersion 1
     }
 
-selfInterpretEvidenceSchemaV1 :: SchemaId
-selfInterpretEvidenceSchemaV1 =
+selfInterpretEvidenceSchemaV2 :: SchemaId
+selfInterpretEvidenceSchemaV2 =
   SchemaId
     { schemaIdName = SchemaName "core-self-interpret-evidence"
-    , schemaIdVersion = SchemaVersion 1
+    , schemaIdVersion = SchemaVersion 2
     }
 
 sdkPackageEvidenceSchemaV1 :: SchemaId
 sdkPackageEvidenceSchemaV1 =
   SchemaId
     { schemaIdName = SchemaName "sdk-package-evidence"
+    , schemaIdVersion = SchemaVersion 1
+    }
+
+l0SemanticsEvidenceSchemaV3 :: SchemaId
+l0SemanticsEvidenceSchemaV3 =
+  SchemaId
+    { schemaIdName = SchemaName "curde-semantics-report"
+    , schemaIdVersion = SchemaVersion 3
+    }
+
+referencedFrontendEvidenceSchemaV1 :: SchemaId
+referencedFrontendEvidenceSchemaV1 =
+  SchemaId
+    { schemaIdName = SchemaName "referenced-frontend-witness"
+    , schemaIdVersion = SchemaVersion 1
+    }
+
+referencedRuntimeEvidenceSchemaV1 :: SchemaId
+referencedRuntimeEvidenceSchemaV1 =
+  SchemaId
+    { schemaIdName = SchemaName "referenced-runtime-witness"
     , schemaIdVersion = SchemaVersion 1
     }
 
@@ -158,6 +185,70 @@ trustBaseBindingClaimCatalog =
     , claimCatalogManifestClaim =
         ClaimName "trustbase-binding-claim-manifest"
     }
+
+l0SemanticsClaimCatalog :: ClaimCatalog
+l0SemanticsClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "l0-semantics"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "l0-referenced-program-valid"
+          , "l0-referenced-program-resolves"
+          , "l0-module-local-effect-records"
+          , "l0-r-is-separate"
+          , "l0-effect-kinds-cude-without-r"
+          , "l0-self-model-text-roundtrip"
+          , "l0-self-model-json-roundtrip"
+          , "l0-resolver-control-trace"
+          ]
+    , claimCatalogManifestClaim =
+        ClaimName "l0-semantics-claim-manifest"
+    }
+
+referencedFrontendClaimCatalog :: ClaimCatalog
+referencedFrontendClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "referenced-frontend"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "referenced-frontend-valid"
+          , "root-view-resolves-direct-references-only"
+          , "nested-module-views-resolve-on-demand"
+          , "effect-occurrence-path-preserves-reference-hierarchy"
+          , "referenced-program-serializable-roundtrip"
+          , "effect-keys-are-module-local"
+          , "module-effect-key-ambiguity-rejected"
+          , "missing-child-reference-rejected"
+          , "control-reference-cycle-rejected"
+          , "cross-module-or-missing-input-rejected"
+          , "read-parameter-schema-mismatch-rejected"
+          , "duplicate-local-effect-key-rejected"
+          , "action-kind-is-cude-without-r"
+          ]
+    , claimCatalogManifestClaim =
+        ClaimName "referenced-frontend-claim-manifest"
+    }
+
+referencedRuntimeClaimCatalog :: ClaimCatalog
+referencedRuntimeClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "referenced-runtime"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "referenced-runtime-chain-parallel-succeeded"
+          , "referenced-runtime-module-input-single-flight"
+          , "referenced-runtime-r-single-flight"
+          , "referenced-runtime-occurrence-snapshot"
+          , "referenced-runtime-fallback-uses-next-reference"
+          , "referenced-runtime-invalid-r-value-rejected"
+          , "referenced-runtime-undecided-race-is-explicitly-unsupported"
+          ]
+    , claimCatalogManifestClaim =
+        ClaimName "referenced-runtime-claim-manifest"
+    }
 selfInterpretClaimCatalog :: ClaimCatalog
 selfInterpretClaimCatalog =
   ClaimCatalog
@@ -165,15 +256,16 @@ selfInterpretClaimCatalog =
     , claimCatalogCoreClaims =
         map
           ClaimName
-          [ "previous-core-runs-candidate"
-          , "candidate-is-expressed-by-normal-facade"
+          [ "previous-core-facet-is-content-addressed"
+          , "previous-core-runs-compatibility-facet"
+          , "candidate-is-expressed-by-l0-facade"
           , "candidate-runs-as-framework-business"
           , "empty-business-closes-recursion"
           , "empty-business-has-no-curde"
           , "empty-business-has-no-handler"
           , "empty-business-has-no-host-io"
           , "trustbase-not-forwarded-to-terminal-business"
-          , "core0-core1-exchangeable"
+          , "core1-core2-contract-exchangeable"
           , "candidate-has-no-previous-core-runtime-dependency"
           , "previous-core-back-reference-negative-rejected"
           , "semantic-fixed-point-passed"
