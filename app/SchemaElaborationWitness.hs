@@ -19,8 +19,8 @@ import System.Exit
   )
 
 import MyFramework.Elaboration
-import MyFramework.Frontend
 import MyFramework.Legacy.Elaboration
+import MyFramework.Legacy.Migration
 import MyFramework.Schema
 
 data Request = Request

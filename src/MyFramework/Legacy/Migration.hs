@@ -39,6 +39,8 @@ module MyFramework.Legacy.Migration
   , decodeLegacyMigrationReport
   , legacyDescriptorRoundTrip
   , legacyMigrationReportRoundTrip
+  , module MyFramework.Frontend
+  , module MyFramework.Frontend.Runtime
   ) where
 
 import Data.List
@@ -50,6 +52,9 @@ import qualified Data.Set as Set
 import Text.Read
   ( readMaybe
   )
+
+import MyFramework.Frontend
+import MyFramework.Frontend.Runtime
 
 -- This is a one-shot compatibility input, not a fourth authoring facade.
 -- It deliberately contains no handler closure, runtime state, gate, or

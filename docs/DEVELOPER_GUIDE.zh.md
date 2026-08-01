@@ -12,16 +12,14 @@ TrustBase 和 SDK lowering 的开发者。
 
 1. src/MyFramework.hs
 2. src/MyFramework/Facade.hs
-3. src/MyFramework/Frontend.hs
-4. src/MyFramework/CURDE/Types.hs
-5. src/MyFramework/Ast.hs
-6. src/MyFramework/Recursion.hs
-7. src/MyFramework/CURDE/Lowering.hs
-8. src/MyFramework/CURDE/Core.hs
-9. src/MyFramework/Control.hs
-10. src/MyFramework/Runtime.hs
-11. src/MyFramework/Runtime/Demand.hs
-12. src/MyFramework/Runtime/Diagnosis.hs
+3. src/MyFramework/Schema.hs
+4. src/MyFramework/Elaboration.hs
+5. src/MyFramework/Effect.hs
+6. src/MyFramework/Graph.hs
+7. src/MyFramework/Ast.hs
+8. src/MyFramework/Recursion.hs
+9. src/MyFramework/Runtime.hs
+10. src/MyFramework/Runtime/Diagnosis.hs
 
 ## 2. 当前实现和目标合同
 
@@ -29,18 +27,19 @@ TrustBase 和 SDK lowering 的开发者。
 
 | 层 | 当前状态 |
 |---|---|
-| v2-compatible Facade | 已运行，提供 ReferencedProgram、独立 R registry 和 params binding |
+| v2-compatible Facade | migration only，位于 MyFramework.Legacy.* |
 | typed CURDE core | 已运行，提供 GADT Handle、RExpr、Implementation 和 demand graph |
-| v5.2 L0 | 目标合同，增加 schema-free Facade、正式 MAP、Application、Scoped EffSys FCE 和 CPS witness |
+| v5.2 Stage 3 | 已运行，提供 schema-free Facade、正式 MAP、Application 和三图分离 |
+| v5.2 Stage 4+ | 待实现 Input CPS、Scoped EffSys、Hook、Callback、Loop 和 promotion |
 
 当前源码可以作为迁移基础。v5.2 设计只有在 Facade、schema elaboration、lowering、runtime、
 witness、self-artifact 和 SDK 全部闭合后才进入 current core。
 
 ## 3. 总体数据流
 
-框架有两个公开执行入口。
+框架保留 typed runtime 维护入口。默认业务 Facade 已切换到 v5.2 program pipeline。
 
-### 3.1 当前简化 Frontend
+### 3.1 Legacy Frontend
 
     ReferencedProgram
       -> validateReferencedProgram
@@ -48,7 +47,7 @@ witness、self-artifact 和 SDK 全部闭合后才进入 current core。
       -> runReferencedProgram
       -> FrontendRunResult
 
-该路径供当前业务 Facade 和 crawler witness 使用。
+该路径用于 v2 artifact migration 和基线 witness。
 
 ### 3.2 Typed core
 
@@ -935,9 +934,9 @@ SDK core lock 建立从语义源码到发布产物的可验证链。
 
 ## 17. 设计限制
 
-- v5 MAP、FCE 和 hanging 语义仍处于实现期；
-- schema-free SurfaceProgram 与 schema elaborator 尚未实现；
-- 当前 Facade 仍要求显式 SchemaIdentity；
+- FCE 和 hanging 语义仍处于实现期；
+- schema-free SurfaceProgram、elaborator、MAP 和 Application 已实现；
+- 默认 Facade 已移除显式 SchemaIdentity；
 - 当前 ScalarShape 无法严格区分 Bool、Integer、Decimal 和 Text；
 - 当前简化 Frontend runtime 未执行 Race；
 - Context 仍被 lowering 拒绝；

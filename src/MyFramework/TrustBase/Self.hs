@@ -42,9 +42,11 @@ import MyFramework.TrustBase.Digest
 import MyFramework.TrustBase.Evidence
   ( claimCatalogClaims
   , crawlerFacadeClaimCatalog
-  , crawlerFacadeEvidenceSchemaV1
+  , crawlerFacadeEvidenceSchemaV2
   , effectApplicationClaimCatalog
   , effectApplicationEvidenceSchemaV1
+  , facadeV52ClaimCatalog
+  , facadeV52EvidenceSchemaV1
   , fixedPointDiffClaimCatalog
   , l0SemanticsClaimCatalog
   , l0SemanticsEvidenceSchemaV3
@@ -59,7 +61,7 @@ import MyFramework.TrustBase.Evidence
   , sdkPackageClaimCatalog
   , sdkPackageEvidenceSchemaV1
   , selfInterpretClaimCatalog
-  , selfInterpretEvidenceSchemaV2
+  , selfInterpretEvidenceSchemaV3
   , trustBaseBindingClaimCatalog
   , trustBaseBindingEvidenceSchemaV1
   , trustBaseManifestClaimCatalog
@@ -123,8 +125,8 @@ myFrameworkTrustBaseManifest =
         , "MyFramework.Elaboration"
         , "MyFramework.Effect"
         , "MyFramework.Facade"
-        , "MyFramework.Frontend.Runtime"
         , "MyFramework.Graph"
+        , "MyFramework.Handler.Adapter"
         , "MyFramework.Schema"
         ]
     , trustBaseManifestSchemas = selfSchemaCatalog
@@ -168,7 +170,7 @@ selfSchemaCatalog =
       , schemaCatalogEntryProducer = "referenced-frontend-witness"
       }
   , SchemaCatalogEntry
-      { schemaCatalogEntrySchema = crawlerFacadeEvidenceSchemaV1
+      { schemaCatalogEntrySchema = crawlerFacadeEvidenceSchemaV2
       , schemaCatalogEntryProducer = "crawler-facade-witness"
       }
   , SchemaCatalogEntry
@@ -184,7 +186,11 @@ selfSchemaCatalog =
       , schemaCatalogEntryProducer = "effect-application-witness"
       }
   , SchemaCatalogEntry
-      { schemaCatalogEntrySchema = selfInterpretEvidenceSchemaV2
+      { schemaCatalogEntrySchema = facadeV52EvidenceSchemaV1
+      , schemaCatalogEntryProducer = "facade-v52-witness"
+      }
+  , SchemaCatalogEntry
+      { schemaCatalogEntrySchema = selfInterpretEvidenceSchemaV3
       , schemaCatalogEntryProducer = "core-self-interpret-witness"
       }
   , SchemaCatalogEntry
@@ -264,6 +270,7 @@ selfClaimCatalog =
     ++ claimCatalogClaims referencedRuntimeClaimCatalog
     ++ claimCatalogClaims schemaElaborationClaimCatalog
     ++ claimCatalogClaims effectApplicationClaimCatalog
+    ++ claimCatalogClaims facadeV52ClaimCatalog
     ++ claimCatalogClaims selfInterpretClaimCatalog
     ++ claimCatalogClaims promotionClaimCatalog
     ++ claimCatalogClaims sdkPackageClaimCatalog

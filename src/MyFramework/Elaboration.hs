@@ -47,6 +47,7 @@ data SurfaceBinding
   | SurfaceFromMap BindingKey
   | SurfaceLiteral SurfaceLiteral
   | SurfaceRecord [(String, SurfaceBinding)]
+  | SurfaceEvidence BindingKey
   | SurfaceOpaque BindingKey
   | SurfaceLegacy SchemaDefinition SurfaceBinding
   | SurfaceEffSysRef BindingKey
@@ -299,6 +300,11 @@ resolveBinding bindingIndex evidenceIndex currentStack currentKey currentBinding
         currentStack
         currentKey
         currentFields
+    SurfaceEvidence currentEvidenceKey ->
+      case resolveEvidence evidenceIndex currentEvidenceKey of
+        Left currentErrors -> Left currentErrors
+        Right Nothing -> Left [SchemaUnresolved currentEvidenceKey]
+        Right (Just currentEvidence) -> Right currentEvidence
     SurfaceOpaque currentBoundary ->
       case resolveBoundaryEvidence evidenceIndex currentBoundary of
         Left currentErrors -> Left currentErrors

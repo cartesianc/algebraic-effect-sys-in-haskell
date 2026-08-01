@@ -1,3 +1,6 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+
 module MyFramework.Self.CoreModel
   ( EmptyBusiness (..)
   , CoreCompatibilityFacet (..)
@@ -12,6 +15,7 @@ module MyFramework.Self.CoreModel
   , frameworkAsBusinessCompatibility
   , frameworkAsBusinessEffectCoverage
   , frameworkAsBusinessProgram
+  , frameworkAsBusinessV52Program
   , frameworkAsBusinessReadCoverage
   , frameworkAsBusinessSchema
   , frameworkCloseEmptyAddress
@@ -36,8 +40,11 @@ import MyFramework.CURDE
   ( scalarSchema
   , schemaRefIdentityOf
   )
-import MyFramework.Facade
-import qualified MyFramework.Frontend as Frontend
+import GHC.Generics
+  ( Generic
+  )
+import MyFramework.Legacy.Facade
+import qualified MyFramework.Facade as V52
 import MyFramework.Frontend.Runtime
 import MyFramework.TrustBase.Core
   ( CoreId )
@@ -53,6 +60,7 @@ data EmptyBusiness = EmptyBusiness
 -- No legacy EffSysDecl or AstBlueprintSeed is retained in this model.
 data FrameworkAsBusiness = FrameworkAsBusiness
   { frameworkAsBusinessSchema :: String
+  , frameworkAsBusinessV52Program :: V52.PreparedRuntime
   , frameworkAsBusinessProgram :: ReferencedProgram
   , frameworkAsBusinessEffectCoverage :: [EffectAddress]
   , frameworkAsBusinessReadCoverage :: [ReadKey]
@@ -96,7 +104,7 @@ data FrameworkSemanticObservation = FrameworkSemanticObservation
 
 frameworkCoreSchemaV4 :: String
 frameworkCoreSchemaV4 =
-  "myframework-framework-as-business.v4"
+  "myframework-framework-as-business.v5"
 
 coreCompatibilityFacet :: CoreCompatibilityFacet
 coreCompatibilityFacet =
@@ -145,6 +153,94 @@ coreCompatibilityDigest currentFacet =
 frameworkCoreModule :: Name
 frameworkCoreModule =
   name "frameworkCore"
+
+data FrameworkSourceArgs = FrameworkSourceArgs
+  { frameworkSourceValue :: String
+  }
+  deriving (Generic)
+
+instance V52.HasSchema FrameworkSourceArgs
+
+frameworkCoreV52Module :: V52.Name
+frameworkCoreV52Module = V52.name "frameworkCore"
+
+frameworkV52Source :: V52.R FrameworkSourceArgs
+frameworkV52Source = V52.r "frameworkSource"
+
+frameworkValidateV52Command ::
+  V52.EffectRef 'V52.E FrameworkSourceArgs ()
+frameworkValidateV52Command = V52.e "validateFacade" V52.none
+
+frameworkValidateV52Map ::
+  V52.EffectRef 'V52.MAP FrameworkSourceArgs FrameworkSourceArgs
+frameworkValidateV52Map = V52.mapping "validateFacadeMap"
+
+frameworkValidateV52 :: V52.Application
+frameworkValidateV52 =
+  V52.apply
+    frameworkValidateV52Command
+    frameworkValidateV52Map
+    frameworkV52Source
+
+frameworkLowerV52Command ::
+  V52.EffectRef 'V52.E FrameworkSourceArgs ()
+frameworkLowerV52Command =
+  V52.e "lowerReferenced" (V52.after frameworkValidateV52)
+
+frameworkLowerV52Map ::
+  V52.EffectRef 'V52.MAP FrameworkSourceArgs FrameworkSourceArgs
+frameworkLowerV52Map = V52.mapping "lowerReferencedMap"
+
+frameworkLowerV52 :: V52.Application
+frameworkLowerV52 =
+  V52.apply frameworkLowerV52Command frameworkLowerV52Map frameworkV52Source
+
+frameworkCompileV52Command ::
+  V52.EffectRef 'V52.E FrameworkSourceArgs ()
+frameworkCompileV52Command =
+  V52.e "compileCata" (V52.after frameworkLowerV52)
+
+frameworkCompileV52Map ::
+  V52.EffectRef 'V52.MAP FrameworkSourceArgs FrameworkSourceArgs
+frameworkCompileV52Map = V52.mapping "compileCataMap"
+
+frameworkCompileV52 :: V52.Application
+frameworkCompileV52 =
+  V52.apply frameworkCompileV52Command frameworkCompileV52Map frameworkV52Source
+
+frameworkCloseV52Command ::
+  V52.EffectRef 'V52.E FrameworkSourceArgs ()
+frameworkCloseV52Command =
+  V52.e "closeEmpty" (V52.after frameworkCompileV52)
+
+frameworkCloseV52Map ::
+  V52.EffectRef 'V52.MAP FrameworkSourceArgs FrameworkSourceArgs
+frameworkCloseV52Map = V52.mapping "closeEmptyMap"
+
+frameworkCloseV52 :: V52.Application
+frameworkCloseV52 =
+  V52.apply frameworkCloseV52Command frameworkCloseV52Map frameworkV52Source
+
+frameworkCoreV52Program :: Either [V52.ProgramError] V52.PreparedRuntime
+frameworkCoreV52Program =
+  V52.program
+    frameworkCoreV52Module
+    [ V52.chain
+        frameworkCoreV52Module
+        [ frameworkValidateV52
+        , frameworkLowerV52
+        , frameworkCompileV52
+        , frameworkCloseV52
+        ]
+    ]
+    [ V52.effects
+        frameworkCoreV52Module
+        [ frameworkValidateV52
+        , frameworkLowerV52
+        , frameworkCompileV52
+        , frameworkCloseV52
+        ]
+    ]
 
 frameworkSourceRead :: ReadKey
 frameworkSourceRead =
@@ -233,13 +329,14 @@ frameworkEffect currentInput =
         [frameworkSourceParam .= fromR frameworkSource]
     }
 
-frameworkAsBusiness :: Either [FrontendError] FrameworkAsBusiness
+frameworkAsBusiness :: Either [String] FrameworkAsBusiness
 frameworkAsBusiness =
-  case validate frameworkCoreProgram of
-    [] ->
+  case (validate frameworkCoreProgram, frameworkCoreV52Program) of
+    ([], Right currentV52Program) ->
       Right
         FrameworkAsBusiness
           { frameworkAsBusinessSchema = frameworkCoreSchemaV4
+          , frameworkAsBusinessV52Program = currentV52Program
           , frameworkAsBusinessProgram = frameworkCoreProgram
           , frameworkAsBusinessEffectCoverage =
               [ frameworkValidateFacadeAddress
@@ -252,9 +349,12 @@ frameworkAsBusiness =
           , frameworkAsBusinessCompatibility =
               coreCompatibilityFacet
           , frameworkAsBusinessClaims =
-              [ "l0-referenced-frontend"
+              [ "l0-v5.2-schema-free-facade"
+              , "command-map-r-application"
+              , "canonical-schema-catalog:"
+                  ++ V52.programSchemaDigest currentV52Program
               , "module-local-effect-record"
-              , "r-separated-from-cude"
+              , "r-in-unified-effect-registry"
               , "resolver-driven-cata"
               , "occurrence-scoped-runtime"
               , "core2-v3-compatibility-facet:"
@@ -263,8 +363,9 @@ frameworkAsBusiness =
               , "empty-business-terminal"
               ]
           }
-    currentErrors ->
-      Left currentErrors
+    (currentErrors, Left currentV52Errors) ->
+      Left (map show currentErrors ++ map show currentV52Errors)
+    (currentErrors, Right _) -> Left (map show currentErrors)
 
 encodeFrameworkAsBusiness :: FrameworkAsBusiness -> String
 encodeFrameworkAsBusiness =
@@ -281,6 +382,13 @@ decodeFrameworkAsBusiness currentText =
       | frameworkAsBusinessSchema currentFramework
           /= frameworkCoreSchemaV4 ->
           Left "unsupported FrameworkAsBusiness schema"
+      | not
+          ( null
+              ( V52.validate
+                  (frameworkAsBusinessV52Program currentFramework)
+              )
+          ) ->
+          Left "invalid v5.2 FrameworkAsBusiness program"
       | not
           ( null
               ( validate
@@ -302,21 +410,18 @@ coreCompatibilityFacetValid currentFramework =
     && actualStages == map snd (compatibilityStageMap coreCompatibilityFacet)
   where
     actualStages =
-      case
-          [ Frontend.controlDeclChildren currentControl
-          | currentControl <-
-              Frontend.referencedProgramControls
-                (frameworkAsBusinessProgram currentFramework)
-          , Frontend.controlDeclModule currentControl
-              == Frontend.effectAddressModule
-                frameworkValidateFacadeAddress
-          , Frontend.controlDeclKind currentControl
-              == Frontend.ControlChain
-          ] of
-        currentStages : _ ->
-          map Frontend.localKeyText currentStages
-        [] ->
-          []
+      case V52.resolveAll (frameworkAsBusinessV52Program currentFramework) of
+        V52.AstPlanBranch _ V52.AstChain currentStages ->
+          map v52StageName currentStages
+        _ -> []
+
+v52StageName :: V52.AstPlan -> String
+v52StageName currentStage =
+  case currentStage of
+    V52.AstPlanApplication currentKey _ ->
+      V52.astNodeKeyText currentKey
+    V52.AstPlanBranch currentKey _ _ ->
+      V52.astNodeKeyText currentKey
 
 interpretFrameworkAsBusiness ::
   [CoreId] ->
@@ -331,47 +436,56 @@ interpretFrameworkAsBusiness
   currentRuntimeDependencies
   currentFramework
   currentTerminal =
-    case frameworkHandlerRegistry currentFramework currentTerminal of
-      Left currentError ->
-        pure (Left (FrameworkHandlerRegistrationFailed currentError))
-      Right currentHandlers -> do
-        currentRun <-
-          runReferencedProgram
-            (frameworkAsBusinessProgram currentFramework)
-            currentHandlers
-        let currentStatus =
-              closeExecutionStatus currentRun
-            currentControlSucceeded =
-              frontendRunOutcome currentRun == Right ()
-            currentClosed =
-              currentControlSucceeded
-                && currentStatus == FrontendSucceeded
+    case V52.validate (frameworkAsBusinessV52Program currentFramework) of
+      currentErrors@(_ : _) ->
         pure
-          ( case frontendRunOutcome currentRun of
-              Left currentFailure ->
-                Left (FrameworkRuntimeFailed currentFailure)
-              Right ()
-                | currentClosed ->
-                    Right
-                      FrameworkSemanticObservation
-                        { frameworkObservationSemanticDigest =
-                            semanticObservationDigest
-                              currentFramework
-                              currentStatus
-                        , frameworkObservationCompatibilityDigest =
-                            coreCompatibilityDigest
-                              (frameworkAsBusinessCompatibility currentFramework)
-                        , frameworkObservationControlSucceeded =
-                            True
-                        , frameworkObservationFinalExecutionStatus =
-                            currentStatus
-                        , frameworkObservationRuntimeDependencies =
-                            currentRuntimeDependencies
-                        }
-                | otherwise ->
-                    Left
-                      (FrameworkRuntimeDidNotClose (show currentRun))
+          ( Left
+              ( FrameworkRuntimeDidNotClose
+                  ("v5.2 program invalid: " ++ show currentErrors)
+              )
           )
+      [] ->
+        case frameworkHandlerRegistry currentFramework currentTerminal of
+          Left currentError ->
+            pure (Left (FrameworkHandlerRegistrationFailed currentError))
+          Right currentHandlers -> do
+            currentRun <-
+              runReferencedProgram
+                (frameworkAsBusinessProgram currentFramework)
+                currentHandlers
+            let currentStatus =
+                  closeExecutionStatus currentRun
+                currentControlSucceeded =
+                  frontendRunOutcome currentRun == Right ()
+                currentClosed =
+                  currentControlSucceeded
+                    && currentStatus == FrontendSucceeded
+            pure
+              ( case frontendRunOutcome currentRun of
+                  Left currentFailure ->
+                    Left (FrameworkRuntimeFailed currentFailure)
+                  Right ()
+                    | currentClosed ->
+                        Right
+                          FrameworkSemanticObservation
+                            { frameworkObservationSemanticDigest =
+                                semanticObservationDigest
+                                  currentFramework
+                                  currentStatus
+                            , frameworkObservationCompatibilityDigest =
+                                coreCompatibilityDigest
+                                  (frameworkAsBusinessCompatibility currentFramework)
+                            , frameworkObservationControlSucceeded =
+                                True
+                            , frameworkObservationFinalExecutionStatus =
+                                currentStatus
+                            , frameworkObservationRuntimeDependencies =
+                                currentRuntimeDependencies
+                            }
+                    | otherwise ->
+                        Left
+                          (FrameworkRuntimeDidNotClose (show currentRun))
+              )
 
 candidateHasNoPreviousCoreDependency ::
   CoreId ->
@@ -538,6 +652,7 @@ semanticObservationDigest currentFramework currentStatus =
     ( intercalate
         "|"
         [ frameworkAsBusinessSchema currentFramework
+        , show (frameworkAsBusinessV52Program currentFramework)
         , show (frameworkAsBusinessProgram currentFramework)
         , show (frameworkAsBusinessEffectCoverage currentFramework)
         , show (frameworkAsBusinessReadCoverage currentFramework)

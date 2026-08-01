@@ -142,7 +142,8 @@ legacyCommandEffect effectKindIndex currentAddress currentEffect =
     , effectIrSpec =
         CommandEffect
           CommandSpec
-            { commandSpecParams = legacyParams currentEffect
+            { commandSpecArgumentSchema = legacyArgumentSchemaId currentEffect
+            , commandSpecParams = legacyParams currentEffect
             , commandSpecObservationSchema = unitSchemaId
             }
     }

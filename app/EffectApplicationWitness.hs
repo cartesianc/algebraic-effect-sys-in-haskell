@@ -18,7 +18,7 @@ import Text.Read
   )
 
 import MyFramework.Effect
-import MyFramework.Frontend hiding
+import MyFramework.Legacy.Migration hiding
   ( FrontendError (EffectInputCycle)
   )
 import MyFramework.Graph
@@ -109,10 +109,21 @@ main = do
   putStrLn (renderReport currentChecks succeeded)
   unless succeeded exitFailure
 
-unitId, textId, integerId :: ValueSchemaId
+unitId, textId, integerId, fetchArgsId :: ValueSchemaId
 unitId = schemaId unitDefinition
 textId = schemaId textDefinition
 integerId = schemaId integerDefinition
+fetchArgsId =
+  schemaId
+    ( SchemaDefinition
+        (Just "FetchParams")
+        (ValueSchemaVersion 1)
+        ( ValueRecordShape
+            [ ("url", textDefinition)
+            , ("limit", integerDefinition)
+            ]
+        )
+    )
 
 schemaId :: SchemaDefinition -> ValueSchemaId
 schemaId currentDefinition =
@@ -164,10 +175,10 @@ commandParams =
 validRegistry :: EffectRegistry
 validRegistry =
   EffectRegistry
-    [ commandEffect authorizeRef Nothing (CommandSpec [] unitId)
-    , commandEffect createRef Nothing (CommandSpec [] unitId)
-    , commandEffect updateRef Nothing (CommandSpec [] unitId)
-    , commandEffect deleteRef Nothing (CommandSpec [] unitId)
+    [ commandEffect authorizeRef Nothing (CommandSpec unitId [] unitId)
+    , commandEffect createRef Nothing (CommandSpec unitId [] unitId)
+    , commandEffect updateRef Nothing (CommandSpec unitId [] unitId)
+    , commandEffect deleteRef Nothing (CommandSpec unitId [] unitId)
     , readEffect
         sourceRef
         Nothing
@@ -179,7 +190,7 @@ validRegistry =
     , commandEffect
         fetchRef
         (Just (eraseEffectRef authorizeRef))
-        (CommandSpec commandParams unitId)
+        (CommandSpec fetchArgsId commandParams unitId)
     ]
 
 validTransforms :: TransformRegistry

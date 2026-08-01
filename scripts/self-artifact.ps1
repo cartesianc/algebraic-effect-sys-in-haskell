@@ -196,6 +196,9 @@ try {
     Invoke-Captured "Stage1 effect application witness" {
         stack --work-dir .stack-work-artifact exec effect-application-witness
     } (Join-Path $stage1Evidence "effect-application.json")
+    Invoke-Captured "Stage1 v5.2 facade witness" {
+        stack --work-dir .stack-work-artifact exec facade-v52-witness
+    } (Join-Path $stage1Evidence "facade-v52.json")
     Invoke-Captured "Stage1 runtime witness" {
         stack --work-dir .stack-work-artifact exec curde-runtime-witness
     } (Join-Path $stage1Evidence "runtime.json")
@@ -251,6 +254,9 @@ try {
     Invoke-Captured "Stage2 effect application witness" {
         stack --work-dir .stack-work-artifact exec effect-application-witness
     } (Join-Path $stage2Evidence "effect-application.json")
+    Invoke-Captured "Stage2 v5.2 facade witness" {
+        stack --work-dir .stack-work-artifact exec facade-v52-witness
+    } (Join-Path $stage2Evidence "facade-v52.json")
     Invoke-Captured "Stage2 runtime witness" {
         stack --work-dir .stack-work-artifact exec curde-runtime-witness
     } (Join-Path $stage2Evidence "runtime.json")

@@ -35,10 +35,6 @@ import Control.Monad
   ( foldM )
 import qualified Data.Map.Strict as Map
 
-import MyFramework.CURDE
-  ( FieldName (..)
-  , SchemaIdentity
-  )
 import MyFramework.Frontend
 import MyFramework.Handler
   ( RuntimeData (..)

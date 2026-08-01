@@ -1,603 +1,248 @@
-# myframework 使用入门
+# myframework 0.2 使用入门
 
-## 1. 这份文档给谁看
+## 1. 适用范围
 
-本文服务于使用 myframework 编写业务程序的开发者。阅读完后，你可以：
+本文面向使用 `MyFramework` 编写业务程序的开发者。当前公开 Facade 对应 L0 v5.2
+Stage 3，提供 schema elaboration、六种 Effect、Application 和三图 lowering。Input CPS
+执行将在 Stage 4 接入。
 
-- 从 MyFramework 单一入口导入 SDK；
-- 声明名称、数据源和参数绑定；
-- 声明 R 数据源；
-- 注册 C/U/D/E Effect；
-- 使用 chain、parallel、fallback 组织 AST；
-- 注册后台 Handler；
-- 验证、运行并读取结果快照；
-- 理解 v5.2 的 schema elaboration、MAP、Loop 和 Scoped EffSys 目标语法。
+框架内部结构见[开发者指南](DEVELOPER_GUIDE.zh.md)，长期语义边界见
+[L0 合同](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md)。
 
-框架内部实现、递归方案、RuntimeAction、demand graph、diagnosis 和自举机制放在
-[框架开发者指南](DEVELOPER_GUIDE.zh.md)。稳定语义合同放在
-[L0 框架规范](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md)。
+## 2. 构建
 
-## 2. 先确认版本
-
-仓库同时包含当前可运行表面和 v5.2 目标合同。
-
-| 表面 | 状态 | 用途 |
-|---|---|---|
-| v2-compatible Facade | 当前可运行 | 本文第 3 至 12 节 |
-| v5.2 Effect–MAP Facade | 目标设计 | 本文第 13 节 |
-
-当前可运行表面包含：
-
-- import MyFramework；
-- 模块化 chain、parallel、fallback、race 声明；
-- C/U/D/E Effect record；
-- 独立 R registry；
-- Effect input 句柄链；
-- Handler 注册；
-- 运行结果和状态快照。
-
-当前 Facade 尚未提供正式 MAP Effect、Scoped EffSys FCE、hanging middleware、
-callback graph patch、完整 Loop 反馈语法和 schema-free elaboration。目标示例会标记
-DESIGN TARGET。
-
-## 3. 构建并运行仓库示例
-
-需要 GHC 9.6.7 和 Stack。
-
-在仓库根目录执行：
+需要 GHC 9.6.7 和 Stack。在仓库根目录执行：
 
     stack --work-dir .stack-work-codex build
     stack --work-dir .stack-work-codex exec crawler-facade-witness
 
-crawler-facade-witness 是当前公开 Facade 的完整可执行示例。它只导入 MyFramework。
+业务入口只有：
 
-## 4. 七个核心对象
+```haskell
+import MyFramework
+```
 
-当前可运行 Facade 的装配顺序：
+## 3. 编程对象
 
-    Name
-      -> Schema
-      -> R
-      -> Effect
-      -> AST
-      -> Handler
-      -> Program
+一个程序按以下顺序装配：
+
+    Haskell data type / HasSchema
+      -> typed R、command、MAP
+      -> Application
+      -> Effect module
+      -> AST module
+      -> program
+      -> ElaboratedProgram + SchemaCatalog + three graphs
 
 | 对象 | 作用 |
 |---|---|
-| Name | 给模块、Effect 和参数建立稳定名称 |
-| SchemaIdentity | 描述运行时数据形状 |
-| R | 声明惰性数据源 |
-| Effect | 声明 command 类型、input 和参数绑定 |
-| AST | 组织模块、顺序、并行和备选分支 |
-| Handler | 提供实际 IO 实现 |
-| ReferencedProgram | 汇总 AST、Effect module 和 R registry |
+| `R value` | 声明惰性值来源，进入统一 EffectRegistry |
+| `EffectRef kind input output` | 保存稳定 Effect key 与类型合同 |
+| `Application` | 固定连接 command、MAP、R |
+| `EffectModule` | 把 Application 注册到 AST 模块 |
+| `ControlDecl` | 使用 chain、parallel、fallback、race 调度模块或叶子 |
+| `PreparedRuntime` | 保存 surface、elaborated program 和三类 graph |
 
-v5.2 业务 authoring 顺序：
+## 4. 定义业务类型
 
-    Name
-      -> R / Effect
-      -> AST
-      -> Handler adapter
-      -> SurfaceProgram
-      -> elaborate
-      -> validate / run
+record 使用 `Generic` 提供字段名和字段类型：
 
-Schema 在 elaborate 阶段生成。普通业务代码不声明 SchemaIdentity。
+```haskell
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 
-## 5. 第一个程序
+import GHC.Generics (Generic)
+import MyFramework
 
-下面按声明顺序构造一个 hello 程序。
+data FetchArgs = FetchArgs
+  { fetchHeaders :: String
+  , fetchUrl     :: String
+  }
+  deriving (Generic)
 
-### 5.1 导入
+instance HasSchema FetchArgs
+```
 
-业务文件只需要：
+`HasSchema` 默认派生会生成 record 证据。Bool、Integer、Int、Double、String 和 Unit
+已有实例。动态 JSON、FFI 和外部协议通过 versioned `Codec` 描述。
 
-    module Main (main) where
+## 5. 声明六种 Effect
 
-    import MyFramework
+command 构造函数：
 
-### 5.2 声明名称
+```haskell
+createUser = c "create-user" none
+updateUser = u "update-user" none
+deleteUser = d "delete-user" none
+emitAudit  = e "emit-audit" none
+```
 
-    app, hello, message :: Name
+R 和 MAP：
 
-    app = name "app"
-    hello = name "hello"
-    message = name "message"
+```haskell
+requestSource :: R FetchArgs
+requestSource = r "request-source"
 
-app 是 AST 模块名，hello 是模块内 Effect key，message 是参数名。
+requestMap :: EffectRef 'MAP FetchArgs FetchArgs
+requestMap = mapping "request-map"
+```
 
-### 5.3 当前兼容 API：声明 schema
+input 引用句柄前置链：
 
-    textType :: SchemaIdentity
-    textType = scalarType "Text"
+```haskell
+persistPage :: EffectRef 'C FetchArgs ()
+persistPage = c "persist-page" none
 
-常用构造器：
+emitAudit :: EffectRef 'E FetchArgs ()
+emitAudit = e "emit-audit" (after persistPage)
+```
 
-    scalarType "Url"
+input 传递执行结果状态。业务参数沿 ValueGraph 进入 MAP 和 command。
 
-    recordType "Request"
-      [ FieldName "url"     .= scalarType "Url"
-      , FieldName "headers" .= scalarType "Headers"
-      ]
+## 6. 组成 Application
 
-    unitType
+```haskell
+fetchPage :: EffectRef 'E FetchArgs ()
+fetchPage = e "fetch-page" none
 
-SchemaIdentity 参与静态检查和运行时 RuntimeData 校验。
+fetch :: Application
+fetch = apply fetchPage requestMap requestSource
+```
 
-这一小节只适用于当前 v2-compatible Facade。显式 schema 已列入迁移表面。v5.2
-Facade 会从类型、codec、literal、record 和 MAP 合同生成 SchemaCatalog。
+`apply` 的类型保证三个位置为：
 
-### 5.4 声明 R
+    command $ MAP $ R
 
-    messageR :: R
-    messageR = r "message-source" textType
+command 参数类型、MAP 输出类型和 R 值类型在 Haskell 层建立约束；lowering 继续检查
+字段、arity、schema ID 和 transform registry。
 
-R 声明一个具名、带 schema、惰性求值的数据源。真实读取函数在 Handler registry
-中注册。
+## 7. 注册模块和 AST
 
-### 5.5 声明 Effect
+```haskell
+crawler, fetchModule, parseModule :: Name
+crawler     = name "crawler"
+fetchModule = name "fetch"
+parseModule = name "parse"
 
-    appEffects :: EffectModule
-    appEffects =
-      effects app
-        [ hello
-            .= Effect
-              { crude = E
-              , input = none
-              , params =
-                  [ message .= fromR messageR
-                  ]
-              }
-        ]
+crawlerAst = chain crawler [fetchModule, parseModule]
+fetchAst   = fallback fetchModule [primary, mirror]
+parseAst   = parallel parseModule [parseLinks, parseContent]
 
-字段含义：
+fetchEffects = effects fetchModule [primary, mirror]
+parseEffects = effects parseModule [parseLinks, parseContent]
+```
 
-| 字段 | 当前 Facade 类型 | 作用 |
-|---|---|---|
-| crude | C、U、D、E | 选择 command 分类 |
-| input | Maybe Name | 引用同一模块内的上游 Effect |
-| params | [(Name, Binding)] | 声明 Handler 的输入 record |
+AST 模块名承担结构分区。Application 的 command key 是模块内叶子名。Lowering 为
+EffectRef 生成确定性 qualified identity。
 
-Effect 左侧的 hello 已经提供身份。record 内没有 id 字段。
+## 8. 构建程序
 
-### 5.6 声明 AST
-
-    appAst :: ControlDecl
-    appAst =
-      chain app [hello]
-
-AST 模块 app 通过局部 key hello 引用 Effect。
-
-### 5.7 汇总 Program
-
-    appProgram :: ReferencedProgram
-    appProgram =
-      program
-        app
-        [appAst]
-        [appEffects]
-        (readRegistry [messageR])
-
-此时已经得到完整、可检查的前台程序。
-
-### 5.8 先验证
-
-    programErrors :: [FrontendError]
-    programErrors =
-      validate appProgram
-
-    resolvedProgram :: Either [FrontendError] ResolvedNode
-    resolvedProgram =
-      resolveAll appProgram
-
-运行前应保证：
-
-    null (validate appProgram)
-
-### 5.9 注册 Handler
-
-    helloHandler ::
-      RuntimeData ->
-      IO (Either String ())
-    helloHandler currentArgs = do
-      print currentArgs
-      pure (Right ())
-
-    appHandlers ::
-      Either FrontendRegistryError FrontendHandlers
-    appHandlers = do
-      withMessage <-
-        registerFrontendRead
-          (readKeyOf messageR)
-          (pure (Right (RuntimeText "hello")))
-          emptyFrontendHandlers
-
-      registerFrontendEffect
-        (address app hello)
-        helloHandler
-        withMessage
-
-R Handler 产生 RuntimeData。Effect Handler 接收已经绑定好的 RuntimeData record。
-
-### 5.10 运行
-
-    main :: IO ()
-    main =
-      case appHandlers of
-        Left currentError ->
-          print currentError
-
-        Right currentHandlers -> do
-          currentRun <-
-            runReferencedProgram
-              appProgram
-              currentHandlers
-
-          print (frontendRunOutcome currentRun)
-          print (frontendRunSnapshot currentRun)
-
-运行结果包含：
-
-    frontendRunOutcome
-      :: Either FrontendRuntimeFailure ()
-
-    frontendRunSnapshot
-      :: FrontendRuntimeSnapshot
-
-快照记录每个 Effect occurrence 和 R 的执行状态。
-
-## 6. 参数绑定
-
-当前 Facade 使用 Binding 表达参数来源。
-
-### 6.1 从 R 读取
-
-    url .= fromR seedUrl
-
-### 6.2 字面量
-
-    limit .=
-      literal
-        (scalarType "Integer")
-        (ParamInteger 20)
-
-### 6.3 嵌套 record
-
-    request .=
-      record requestType
-        [ url     .= fromR seedUrl
-        , headers .= fromR requestHeaders
-        ]
-
-运行时会：
-
-1. 惰性求值引用的 R；
-2. 构造 RuntimeData record；
-3. 按 ParamBinding schema 校验；
-4. 把完整 record 传给 Effect Handler。
-
-## 7. Effect input
-
-input 声明同一模块内的上游 Effect：
-
-    prepare
-      .= Effect
-        { crude = E
-        , input = none
-        , params = []
-        }
-
-    execute
-      .= Effect
-        { crude = E
-        , input = after prepare
-        , params = []
-        }
-
-执行 execute 时，runtime 先运行 prepare，再运行 execute。共享 input 在同一次运行
-中使用 single-flight，多个依赖者会等待同一份完成结果。
-
-input 传递句柄状态和启动关系。业务参数继续由 params/R 绑定。
-
-## 8. AST 控制组合
-
-### 8.1 Chain
-
-    chain crawler [fetch, parse, persist]
-
-children 按顺序执行。前一个 child 失败后，后续 child 不再启动。
-
-### 8.2 Parallel
-
-    parallel parse [links, content]
-
-当前 Frontend runtime 使用 Haskell lightweight thread 并发执行 children，等待全部
-完成后汇总失败。
-
-### 8.3 Fallback
-
-    fallback fetch [primary, mirror]
-
-按声明顺序尝试。primary 失败后启动 mirror。任一 child 成功后结束。
-
-### 8.4 Race
-
-    race query [remote, local]
-
-Facade 可以声明 Race。当前简化 Frontend runtime 会返回
-FrontendControlUnsupported。完整 typed runtime 已有 worker race、取消和 drain
-基础设施。
-
-### 8.5 模块引用
-
-    chain crawler [fetch, parse, persist]
-    fallback fetch [primary, mirror]
-    parallel parse [links, content]
-
-crawler 的 children 解析为子模块；fetch 和 parse 的 children 解析为各自模块内
-Effect。AST 层级提供模块边界。
-
-## 9. C、U、R、D、E、MAP
-
-### 9.1 当前可运行类型
-
-| 类型 | 当前表示 | 运行行为 |
-|---|---|---|
-| C | Effect.crude = C | 调用注册的 command Handler |
-| U | Effect.crude = U | 调用注册的 command Handler |
-| D | Effect.crude = D | 调用注册的 command Handler |
-| E | Effect.crude = E | 调用注册的 command Handler |
-| R | 独立 R + ReadRegistry | 惰性读取 RuntimeData |
-| MAP | 尚未进入当前 Facade | 当前由 ParamBinding/record 完成值对齐 |
-
-C/U/D/E 目前是四个类型化 command tag。框架不会根据字母自动添加数据库 CRUD、
-重试、事务或幂等行为。项目可以制定自己的业务命名约定。
-
-### 9.2 R
-
-R 负责值来源：
-
-- 外部输入；
-- 配置；
-- Handler 环境；
-- 未来的 command observation；
-- 未来的 Scoped EffSys 状态查询。
-
-R 的读取是惰性的，并在一次运行内使用 single-flight。
-
-### 9.3 MAP
-
-v5 将 MAP 提升为正式 Effect。MAP 负责：
-
-- 读取一个或多个 R；
-- 执行具名 transform；
-- 产生 record；
-- 对齐 command.params。
-
-当前写法：
-
-    Effect
-      { crude = E
-      , input = none
-      , params =
-          [ url     .= fromR seedUrl
-          , headers .= fromR requestHeaders
-          ]
-      }
-
-v5 目标写法：
-
-    fetchPage $ requestMap $ requestSource
-
-两种写法表达相同的参数来源关系。v5 会把这条关系独立保存为数据赋值图。
-
-## 10. Handler 编写原则
-
-Handler 管理真实过程：
-
-- HTTP 请求；
-- 数据库访问；
-- 文件读写；
-- SDK 调用；
-- 序列化库；
-- 网络客户端；
-- 业务算法。
-
-前台 Effect record 管理：
-
-- key；
-- command type；
-- input；
-- 参数 schema；
-- 值来源；
-- AST 可达性。
-
-Handler 应返回显式失败：
-
-    pure (Left "network unavailable")
-
-同步异常会被 runtime 捕获并转换为 FrontendHandlerThrew。
-
-## 11. 查看错误与状态
-
-### 11.1 静态错误
-
-常见 FrontendError：
-
-- 根模块缺失；
-- child 引用缺失或歧义；
-- Effect input 缺失；
-- Effect input 成环；
-- R key 缺失；
-- schema 不一致；
-- 重复模块、Effect key 或参数 key。
-
-先调用：
-
-    validate appProgram
-
-需要完整解析树时调用：
-
-    resolveAll appProgram
-
-### 11.2 运行错误
-
-常见 FrontendRuntimeFailure：
-
-- Handler 未注册；
-- R Handler 未注册；
-- R 值 schema 错误；
-- Effect 参数 schema 错误；
-- Handler 返回失败；
-- Handler 抛出异常；
-- Fallback 耗尽；
-- Parallel 某些分支失败；
-- 当前 runtime 尚未支持某个 ControlKind。
-
-### 11.3 状态快照
-
-    frontendSnapshotEffects
-      (frontendRunSnapshot currentRun)
-
-    frontendSnapshotReads
-      (frontendRunSnapshot currentRun)
-
-完整 typed runtime 还提供 execution、read、validity、implementation、observation、
-event 和 diagnosis 多通道信息。详见开发者指南。
-
-## 12. 当前爬虫结构
-
-一个典型爬虫使用四个模块：
-
-    chain crawler [fetch, extract, persist]
-    fallback fetch [primary, mirror]
-    parallel extract [links, content]
-    chain persist [page, links]
-
-各模块分别注册 Effect：
-
-    effects fetch
-      [ primary .= Effect { ... }
-      , mirror  .= Effect { ... }
-      ]
-
-    effects extract
-      [ links   .= Effect { ... }
-      , content .= Effect { ... }
-      ]
-
-    effects persist
-      [ page  .= Effect { ... }
-      , links .= Effect { input = after page, ... }
-      ]
-
-完整源码位于：
-
-[CrawlerFacadeWitness.hs](../app/CrawlerFacadeWitness.hs)
-
-运行：
-
-    stack --work-dir .stack-work-codex exec crawler-facade-witness
-
-## 13. v5.2 编程模型预览
-
-本节状态为 DESIGN TARGET。当前源码不能直接编译这些声明。
-
-### 13.1 业务前台不声明 Schema
-
-    type R value = Effect 'R Unit value
-
-    seedUrl :: R Url
-    seedUrl = r "seed-url"
-
-    requestHeaders :: R Headers
-    requestHeaders = r "request-headers"
-
-    request =
-      record
-        [ url     .= fromR seedUrl
-        , headers .= fromR requestHeaders
-        ]
-
-Url、Headers 和 record 字段通过 typed declaration、Generic 或 codec catalog elaboration。
-普通业务代码不调用 scalarType、recordType 或 unitType。R 是六种 Effect 中 R kind 的
-typed facade alias。
-
-动态或外部数据在 Handler adapter 注册 versioned codec：
-
-    registerRead seedUrl urlCodec readSeedUrl
-
-codec 是序列化边界合同。readSeedUrl 的过程实现保持独立。
-
-### 13.2 六种 Effect 统一注册
-
-    Effect seedUrl =
-      { type   = R
-      , input  = crawlerInput
-      }
-
-    Effect requestMap =
-      { type   = MAP
-      , input  = seedUrl
-      , output = [url, headers]
-      }
-
-    Effect fetchPage =
-      { type   = C
-      , input  = openSession
-      , params = [url, headers]
-      }
-
-SchemaRef 在 elaborated IR 中生成，不写入上述 Source Effect record。
-
-### 13.3 Application
-
-    primary =
-      fetchPage $ requestMap $ seedUrl
-
-AST 叶子显式记录：
-
-    command
-    mapper
-    reader
-
-input 继续记录句柄启动链。
-
-### 13.4 Scoped EffSys
-
-    crawlerEffects =
-      effectsOf crawler
-
-crawlerEffects 是可序列化、带 AST 作用域的 EffSysRef。Middleware 可以查询其
-Effect pipeline 和运行状态。
-
-### 13.5 Middleware
-
-    middleware crawlerMetrics crawlerEffects
-      run (recordMetrics $ metricsMap $ crawlerScopeR)
-
-### 13.6 Callback
-
-    callback injectAuth (continuationOf fetch)
-      run (authPatch $ authPatchMap $ fetchScopeR)
-
-Callback 返回受检的 input graph patch。
-
-### 13.7 Loop
-
-    loop liveSearch
-    chain liveSearch [fetch, parse, persist]
-
-Loop 只有一个 child reference。它提供局部反馈和重新求值权。Loop 外的 Application
-按一次 boot demand 执行一次。
-
-## 14. 下一步读什么
-
-| 目标 | 文档 |
+```haskell
+crawlerProgram :: Either [ProgramError] PreparedRuntime
+crawlerProgram =
+  program
+    crawler
+    [crawlerAst, fetchAst, parseAst]
+    [fetchEffects, parseEffects]
+```
+
+`program` 完成：
+
+    SurfaceProgram
+      -> elaborateProgram
+      -> graph validation
+      -> AST/Input/Value lowering
+      -> prepareRuntime
+
+失败返回全部已发现的 `ProgramError`。此过程是纯计算，不调用 Handler。
+
+成功后可以读取：
+
+```haskell
+programSchemaCatalog currentProgram
+programSchemaDigest currentProgram
+resolveAll currentProgram
+effectRegistryOf currentProgram
+transformRegistryOf currentProgram
+graphProgramOf (preparedRuntimeProgram currentProgram)
+```
+
+## 9. Handler adapter
+
+过程函数保持普通 Haskell 函数：
+
+```haskell
+fetchHandler :: FetchArgs -> IO (Either String ())
+fetchHandler currentArgs = do
+  -- HTTP client、数据库或文件系统调用
+  pure (Right ())
+```
+
+adapter 绑定 EffectRef 和 versioned codec：
+
+```haskell
+fetchAdapter =
+  handlerAdapter
+    fetchPage
+    fetchArgsCodec
+    unitCodec
+    fetchHandler
+```
+
+`HandlerContract` 可进入验证和 artifact。函数 closure 留在 Runtime registry。函数名不
+参与 Effect identity。
+
+## 10. SchemaCatalog
+
+Schema 证据来自：
+
+- `HasSchema` 和 Generic；
+- literal 与 record；
+- MAP 输入输出；
+- Handler codec；
+- imported catalog；
+- versioned dynamic boundary。
+
+record descriptor 按字段 key canonicalize。Handler 参数列表保留 Haskell record 的声明
+顺序。catalog 使用 canonical encoding 和 SHA-256 digest。
+
+## 11. 常见错误
+
+| 错误 | 含义 |
 |---|---|
-| 继续理解内部编译和运行 | [框架开发者指南](DEVELOPER_GUIDE.zh.md) |
-| 查看长期冻结语义 | [L0 框架规范](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md) |
-| 了解当前 runtime 边界 | [Runtime](RUNTIME.md) |
-| 了解 SDK 生成 | [SDK Source Artifact](SDK_SOURCE_ARTIFACT.md) |
-| 了解 TrustBase | [TrustBase](TRUST_BASE.md) |
+| `SchemaUnresolved` | 值边缺少类型、codec 或 imported evidence |
+| `SchemaConflict` | 多个证据给出不同结构 |
+| `SchemaCodecMissing` | 动态边界没有 versioned codec |
+| `ChildReferenceMissing` | AST child 未解析为模块或本模块 Application |
+| `EffectReferenceMissing` | input、R 或 MAP 引用了未注册 Effect |
+| `EffectInputCycle` | 普通 input graph 成环 |
+| `ApplicationParamMismatch` | MAP output 与 command params 不一致 |
+| `TransformMissing` | MAP 的 TransformRef 未注册 |
+
+所有静态错误在 Handler 启动前返回。
+
+## 12. 当前阶段边界
+
+已实现：
+
+- schema-free 默认 Facade；
+- Surface/Elaborated 分层；
+- canonical SchemaCatalog；
+- C/U/R/D/E/MAP；
+- command/MAP/R Application；
+- AST、InputGraph、ValueGraph；
+- occurrence 和 AstPath provenance；
+- Handler codec adapter；
+- v2 显式 migration adapter。
+
+后续阶段：
+
+- defunctionalized Input CPS Runtime；
+- Scoped EffSys；
+- hanging Middleware；
+- Callback PipelinePatch；
+- Loop feedback；
+- v5.2 promotion 和 `0.2.0-core0` SDK。
+
+旧 artifact 通过 `MyFramework.Legacy.Migration`、`MyFramework.Legacy.Elaboration` 和
+`MyFramework.Legacy.Application` 转换。默认 `MyFramework` 不重导出旧表面。

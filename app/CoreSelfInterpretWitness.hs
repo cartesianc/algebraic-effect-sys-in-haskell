@@ -17,11 +17,8 @@ import Numeric
 import System.Exit
   ( exitFailure )
 
-import MyFramework.Facade
-  ( resolveAll
-  , validate
-  )
-import MyFramework.Frontend.Runtime
+import qualified MyFramework.Facade as V52
+import MyFramework.Legacy.Migration
   ( FrontendExecutionStatus (..)
   )
 import MyFramework.Self.CoreModel
@@ -32,7 +29,7 @@ import MyFramework.TrustBase.Evidence
   ( completeEvidence
   , evidenceFor
   , selfInterpretClaimCatalog
-  , selfInterpretEvidenceSchemaV2
+  , selfInterpretEvidenceSchemaV3
   , validateEvidenceClaims
   )
 import MyFramework.TrustBase.Types
@@ -113,15 +110,14 @@ main =
               == Right currentFramework
           loweringReady =
             null
-              ( validate
-                  (frameworkAsBusinessProgram currentFramework)
+              ( V52.validate
+                  (frameworkAsBusinessV52Program currentFramework)
               )
-              && either
-                (const False)
-                (const True)
-                ( resolveAll
-                    (frameworkAsBusinessProgram currentFramework)
-                )
+              && case
+                  V52.resolveAll
+                    (frameworkAsBusinessV52Program currentFramework) of
+                V52.AstPlanBranch {} -> True
+                V52.AstPlanApplication {} -> True
           previousObservation =
             extractObservation previousEvidence
           candidateObservation =
@@ -192,7 +188,7 @@ main =
               )
             , ( "candidate-is-expressed-by-l0-facade"
               , frameworkRoundTrip && loweringReady
-              , "L0 ReferencedProgram + module-local effect records + separate R"
+              , "L0 v5.2 Program + command/MAP/R + canonical SchemaCatalog"
               )
             , ( "candidate-runs-as-framework-business"
               , candidateRan && candidateLoadCount == 2
@@ -513,7 +509,7 @@ renderReport :: [Evidence] -> Bool -> String
 renderReport currentEvidence succeeded =
   jsonObject
     [ ( "schema"
-      , jsonString (renderSchemaId selfInterpretEvidenceSchemaV2)
+      , jsonString (renderSchemaId selfInterpretEvidenceSchemaV3)
       )
     , ("artifact", jsonString "core-self-interpret-witness")
     , ("result", jsonString (if succeeded then "passed" else "failed"))

@@ -10,11 +10,10 @@ import Text.Read
   ( readMaybe )
 
 import MyFramework.CURDE
-  ( SchemaIdentity
-  , scalarSchema
+  ( scalarSchema
   , schemaRefIdentityOf
   )
-import MyFramework.Frontend
+import MyFramework.Legacy.Migration
 
 data Check = Check
   { checkName :: String
@@ -495,4 +494,3 @@ escapeJson currentCharacter =
     '\r' -> "\\r"
     '\t' -> "\\t"
     _ -> [currentCharacter]
-

@@ -7,9 +7,7 @@ import Data.List
 import System.Exit
   ( exitFailure )
 
-import MyFramework.CURDE
-  ( SchemaIdentity )
-import MyFramework.Frontend
+import MyFramework.Legacy.Migration
 import MyFramework.Self.ControlTrace
   ( compileControlTrace
   , controlTraceConstructorWitness

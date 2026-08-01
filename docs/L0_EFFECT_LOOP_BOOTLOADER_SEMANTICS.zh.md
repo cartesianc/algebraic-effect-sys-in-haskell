@@ -768,29 +768,30 @@ SDK 只接受 approved core，并执行：
 | 语义面 | 状态 |
 |---|---|
 | MyFramework 单一业务导入 | IMPLEMENTED |
-| ReferencedProgram Facade | MIGRATION / IMPLEMENTED |
-| 独立 R registry | MIGRATION / IMPLEMENTED |
-| C/U/D/E Effect record | IMPLEMENTED |
+| ReferencedProgram Facade | MIGRATION；位于 MyFramework.Legacy.* |
+| 独立 R registry | MIGRATION；新 IR 已移除 |
+| C/U/R/D/E/MAP Effect record | IMPLEMENTED |
 | typed Handle、GADT、schema witness | IMPLEMENTED |
-| 显式 SchemaIdentity Facade | MIGRATION / IMPLEMENTED |
-| schema-free SurfaceProgram | OPEN IMPLEMENTATION |
-| deterministic schema elaborator | OPEN IMPLEMENTATION |
-| canonical SchemaCatalog 与 provenance | OPEN IMPLEMENTATION |
+| 显式 SchemaIdentity Facade | MIGRATION；默认入口不导出 |
+| schema-free SurfaceProgram | IMPLEMENTED |
+| deterministic schema elaborator | IMPLEMENTED |
+| canonical SchemaCatalog 与 provenance | IMPLEMENTED |
 | existential Handle/Handler registry | IMPLEMENTED |
 | Fix + cata | IMPLEMENTED |
 | demand graph 与 Control plan | IMPLEMENTED |
 | typed runtime、branch merge、single-flight | IMPLEMENTED |
 | runtime diagnosis | IMPLEMENTED |
 | TrustBase、fixed point、promotion、SDK | IMPLEMENTED，绑定旧 epoch |
-| 正式 MAP Effect | OPEN IMPLEMENTATION |
-| command $ MAP $ R Application | OPEN IMPLEMENTATION |
+| 正式 MAP Effect | IMPLEMENTED |
+| command $ MAP $ R Application | IMPLEMENTED |
+| AST / InputGraph / ValueGraph 分离 | IMPLEMENTED |
 | input CPS witness | OPEN IMPLEMENTATION |
 | Scoped EffSys FCE | OPEN IMPLEMENTATION |
 | hanging middleware scope | OPEN IMPLEMENTATION |
 | callback PipelinePatch | OPEN IMPLEMENTATION |
 | Loop 完整反馈语义 | OPEN |
 | ana/hylo | OPEN |
-| v5.2 self-expression 与 promotion | OPEN IMPLEMENTATION |
+| v5.2 FrameworkAsBusiness 主表达 | IMPLEMENTED；Runtime/Promotion 待后续 Stage |
 
 ## 18. v5.2 完成条件
 

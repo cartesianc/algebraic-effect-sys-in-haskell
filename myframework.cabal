@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: myframework
-version: 0.1.0.0
+version: 0.2.0.0
 synopsis: Recursive CURDE framework compiler and runtime
 description:
   Serializable CURDE authoring, recursive AST interpretation, runtime control,
@@ -24,9 +24,8 @@ library
       MyFramework.Elaboration
       MyFramework.Effect
       MyFramework.Facade
-      MyFramework.Frontend
-      MyFramework.Frontend.Runtime
       MyFramework.Handler
+      MyFramework.Handler.Adapter
       MyFramework.Graph
       MyFramework.Legacy.Application
       MyFramework.Legacy.Elaboration
@@ -51,12 +50,15 @@ library
       MyFramework.TrustBase.Types
   other-modules:
       MyFramework.Control
+      MyFramework.Frontend
+      MyFramework.Frontend.Runtime
       MyFramework.CURDE.Core
       MyFramework.CURDE.Expression
       MyFramework.CURDE.Lowering
       MyFramework.CURDE.Types
       MyFramework.CURDE.Validate
       MyFramework.Handler.Internal
+      MyFramework.Legacy.Facade
       MyFramework.Runtime.Branch
       MyFramework.Runtime.Cancellation
       MyFramework.Runtime.Concurrent
@@ -125,6 +127,23 @@ executable schema-elaboration-witness
 executable effect-application-witness
   hs-source-dirs: app
   main-is: EffectApplicationWitness.hs
+  default-language: Haskell2010
+  build-depends:
+      base >=4.18 && <5
+    , myframework
+  ghc-options:
+      -Wall
+      -Wcompat
+      -Widentities
+      -Wincomplete-record-updates
+      -Wincomplete-uni-patterns
+      -Wmissing-export-lists
+      -Wpartial-fields
+      -Wredundant-constraints
+
+executable facade-v52-witness
+  hs-source-dirs: app
+  main-is: FacadeV52Witness.hs
   default-language: Haskell2010
   build-depends:
       base >=4.18 && <5

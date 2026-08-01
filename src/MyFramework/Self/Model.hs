@@ -29,7 +29,7 @@ import MyFramework.CURDE
   ( scalarSchema
   , schemaRefIdentityOf
   )
-import MyFramework.Facade
+import MyFramework.Legacy.Facade
 import MyFramework.SDK.SourceArtifact
   ( SdkSourceInput
   , buildSdkSourceReport

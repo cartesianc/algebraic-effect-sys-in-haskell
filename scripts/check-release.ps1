@@ -89,6 +89,9 @@ try {
     Invoke-Captured "effect application witness" {
         stack --work-dir .stack-work-codex exec effect-application-witness
     } (Join-Path $evidenceRoot "stage2-effect-application.json")
+    Invoke-Captured "v5.2 facade witness" {
+        stack --work-dir .stack-work-codex exec facade-v52-witness
+    } (Join-Path $evidenceRoot "stage3-facade-v52.json")
     Invoke-Captured "runtime witness" {
         stack --work-dir .stack-work-codex exec curde-runtime-witness
     } (Join-Path $evidenceRoot "stage0-runtime.json")
@@ -115,6 +118,9 @@ try {
     } (Join-Path $evidenceRoot "stage0-trust-base.json")
     Invoke-Checked "negative boundaries" {
         & (Join-Path $PSScriptRoot "check-negative.ps1")
+    }
+    Invoke-Checked "schema-free facade boundary" {
+        & (Join-Path $PSScriptRoot "check-schema-free-facade.ps1")
     }
     Invoke-Checked "diff check" {
         git diff --check

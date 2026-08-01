@@ -21,32 +21,28 @@ myframework 是一套使用 Haskell 实现的可序列化 EDSL、Effect 编译�
 
 ## 当前状态
 
-当前可运行的 v2-compatible Facade 支持：
+当前 `0.2.0.0` 业务 Facade 支持：
 
 - import MyFramework 单一业务入口；
-- 引用式 AST 模块；
-- chain、parallel、fallback；
-- C/U/D/E Effect；
-- 独立 R registry；
-- 显式 SchemaIdentity（迁移表面）；
-- Effect input 句柄链；
-- Handler 注册；
-- 运行状态快照。
+- schema-free typed R、command 和 MAP；
+- `command $ MAP $ R` Application；
+- 模块化 chain、parallel、fallback、race；
+- C/U/R/D/E/MAP 统一 EffectRegistry；
+- SurfaceProgram 到 ElaboratedProgram 的确定性 schema 求解；
+- 独立 AST、InputGraph、ValueGraph；
+- versioned Handler codec adapter；
+- canonical SchemaCatalog 和 SHA-256 digest。
 
-L0 v5.2 目标继续实现：
+L0 v5.2 后续阶段继续实现：
 
-- schema-free 业务 Facade；
-- SurfaceProgram → ElaboratedProgram schema 求解；
-- canonical SchemaCatalog 与边界 codec；
-- 正式 MAP Effect；
-- command $ MAP $ R Application；
 - input CPS lowering；
 - Scoped EffSys first-class registry；
 - hanging middleware observation；
 - callback PipelinePatch；
 - Loop 完整状态反馈。
 
-目标合同中的语法不会自动视为当前可编译 API。状态矩阵位于 L0 第 17 节。
+旧 `ReferencedProgram` 表面位于 `MyFramework.Legacy.*`，用于 v2 artifact 的显式迁移。
+状态矩阵位于 L0 第 17 节。
 
 ## 构建
 
@@ -59,6 +55,9 @@ L0 v5.2 目标继续实现：
 运行主要局部 witness：
 
     stack --work-dir .stack-work-codex exec curde-semantics-witness
+    stack --work-dir .stack-work-codex exec schema-elaboration-witness
+    stack --work-dir .stack-work-codex exec effect-application-witness
+    stack --work-dir .stack-work-codex exec facade-v52-witness
     stack --work-dir .stack-work-codex exec curde-runtime-witness
     .\scripts\check-ast-execution-boundary.ps1
 

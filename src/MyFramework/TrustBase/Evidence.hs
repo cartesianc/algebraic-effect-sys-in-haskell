@@ -5,12 +5,14 @@ module MyFramework.TrustBase.Evidence
   , claimManifestEvidence
   , completeEvidence
   , crawlerFacadeClaimCatalog
-  , crawlerFacadeEvidenceSchemaV1
+  , crawlerFacadeEvidenceSchemaV2
   , evidenceFor
   , effectApplicationClaimCatalog
   , effectApplicationEvidenceSchemaV1
   , fixedPointDiffClaimCatalog
   , fixedPointDiffEvidenceSchemaV1
+  , facadeV52ClaimCatalog
+  , facadeV52EvidenceSchemaV1
   , promotionClaimCatalog
   , promotionEvidenceSchemaV1
   , l0SemanticsClaimCatalog
@@ -27,7 +29,7 @@ module MyFramework.TrustBase.Evidence
   , schemaElaborationClaimCatalog
   , schemaElaborationEvidenceSchemaV1
   , selfInterpretClaimCatalog
-  , selfInterpretEvidenceSchemaV2
+  , selfInterpretEvidenceSchemaV3
   , trustBaseManifestClaimCatalog
   , trustBaseManifestEvidenceSchemaV1
   , trustBaseBindingClaimCatalog
@@ -105,11 +107,11 @@ promotionEvidenceSchemaV1 =
     , schemaIdVersion = SchemaVersion 1
     }
 
-selfInterpretEvidenceSchemaV2 :: SchemaId
-selfInterpretEvidenceSchemaV2 =
+selfInterpretEvidenceSchemaV3 :: SchemaId
+selfInterpretEvidenceSchemaV3 =
   SchemaId
     { schemaIdName = SchemaName "core-self-interpret-evidence"
-    , schemaIdVersion = SchemaVersion 2
+    , schemaIdVersion = SchemaVersion 3
     }
 
 sdkPackageEvidenceSchemaV1 :: SchemaId
@@ -140,17 +142,24 @@ referencedRuntimeEvidenceSchemaV1 =
     , schemaIdVersion = SchemaVersion 1
     }
 
-crawlerFacadeEvidenceSchemaV1 :: SchemaId
-crawlerFacadeEvidenceSchemaV1 =
+crawlerFacadeEvidenceSchemaV2 :: SchemaId
+crawlerFacadeEvidenceSchemaV2 =
   SchemaId
     { schemaIdName = SchemaName "crawler-facade-witness"
-    , schemaIdVersion = SchemaVersion 1
+    , schemaIdVersion = SchemaVersion 2
     }
 
 effectApplicationEvidenceSchemaV1 :: SchemaId
 effectApplicationEvidenceSchemaV1 =
   SchemaId
     { schemaIdName = SchemaName "effect-application-witness"
+    , schemaIdVersion = SchemaVersion 1
+    }
+
+facadeV52EvidenceSchemaV1 :: SchemaId
+facadeV52EvidenceSchemaV1 =
+  SchemaId
+    { schemaIdName = SchemaName "facade-v52-witness"
     , schemaIdVersion = SchemaVersion 1
     }
 
@@ -266,11 +275,13 @@ crawlerFacadeClaimCatalog =
         map
           ClaimName
           [ "crawler-facade-import-myframework-only"
-          , "crawler-facade-referenced-program-valid"
+          , "crawler-facade-schema-free-program-valid"
           , "crawler-facade-chain-fallback-parallel"
-          , "crawler-facade-module-local-effects"
-          , "crawler-facade-r-separate"
-          , "crawler-facade-runtime-succeeds"
+          , "crawler-facade-six-effect-registry"
+          , "crawler-facade-command-map-r-applications"
+          , "crawler-facade-canonical-schema-catalog"
+          , "crawler-facade-occurrence-provenance"
+          , "crawler-facade-qualified-effect-identity"
           ]
     , claimCatalogManifestClaim =
         ClaimName "crawler-facade-claim-manifest"
@@ -328,6 +339,26 @@ effectApplicationClaimCatalog =
           ]
     , claimCatalogManifestClaim =
         ClaimName "effect-application-claim-manifest"
+    }
+
+facadeV52ClaimCatalog :: ClaimCatalog
+facadeV52ClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "facade-v52"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "facade-v52-program-pipeline-complete"
+          , "facade-v52-missing-child-rejected"
+          , "facade-v52-missing-input-rejected"
+          , "facade-v52-unresolved-schema-rejected"
+          , "facade-v52-handler-codec-conflict-rejected"
+          , "facade-v52-map-alignment-rejected"
+          , "facade-v52-handler-adapter-keeps-function-outside-ir"
+          , "facade-v52-default-surface-has-no-legacy-schema-api"
+          ]
+    , claimCatalogManifestClaim =
+        ClaimName "facade-v52-claim-manifest"
     }
 
 referencedRuntimeClaimCatalog :: ClaimCatalog

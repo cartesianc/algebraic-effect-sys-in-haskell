@@ -1,11 +1,11 @@
 module MyFramework
   ( frameworkVersion
   , module MyFramework.Facade
-  , module MyFramework.Frontend.Runtime
+  , module MyFramework.Handler.Adapter
   ) where
 
 import MyFramework.Facade
-import MyFramework.Frontend.Runtime
+import MyFramework.Handler.Adapter
 
 frameworkVersion :: String
-frameworkVersion = "0.1.0.0"
+frameworkVersion = "0.2.0.0"

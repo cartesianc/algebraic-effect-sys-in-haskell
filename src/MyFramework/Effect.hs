@@ -36,6 +36,7 @@ module MyFramework.Effect
   , eEffectRef
   , effectApplication
   , effectRefKey
+  , effectRefInput
   , eraseEffectRef
   , mapEffect
   , mapEffectRef
@@ -43,6 +44,7 @@ module MyFramework.Effect
   , readEffect
   , reflectEffectKind
   , uEffectRef
+  , withEffectInput
   ) where
 
 import Data.Proxy
@@ -70,8 +72,9 @@ newtype EffectKey = EffectKey
 
 -- | Stable typed reference.  Its phantom parameters carry the effect kind,
 -- argument, and public result types without putting Haskell closures in IR.
-newtype EffectRef (kind :: EffectKind) input output = EffectRef
+data EffectRef (kind :: EffectKind) input output = EffectRef
   { effectRefKey :: EffectKey
+  , effectRefInput :: Maybe SomeEffectRef
   }
   deriving (Eq, Ord, Read, Show)
 
@@ -114,22 +117,29 @@ eraseEffectRef currentRef =
     }
 
 cEffectRef :: EffectKey -> EffectRef 'C input output
-cEffectRef = EffectRef
+cEffectRef currentKey = EffectRef currentKey Nothing
 
 uEffectRef :: EffectKey -> EffectRef 'U input output
-uEffectRef = EffectRef
+uEffectRef currentKey = EffectRef currentKey Nothing
 
 rEffectRef :: EffectKey -> R output
-rEffectRef = EffectRef
+rEffectRef currentKey = EffectRef currentKey Nothing
 
 dEffectRef :: EffectKey -> EffectRef 'D input output
-dEffectRef = EffectRef
+dEffectRef currentKey = EffectRef currentKey Nothing
 
 eEffectRef :: EffectKey -> EffectRef 'E input output
-eEffectRef = EffectRef
+eEffectRef currentKey = EffectRef currentKey Nothing
 
 mapEffectRef :: EffectKey -> EffectRef 'MAP input output
-mapEffectRef = EffectRef
+mapEffectRef currentKey = EffectRef currentKey Nothing
+
+withEffectInput ::
+  Maybe SomeEffectRef ->
+  EffectRef kind input output ->
+  EffectRef kind input output
+withEffectInput currentInput currentRef =
+  currentRef {effectRefInput = currentInput}
 
 newtype ParamName = ParamName
   { paramNameText :: String
@@ -178,7 +188,8 @@ data ValueSourceSpec
   deriving (Eq, Ord, Read, Show)
 
 data CommandSpec = CommandSpec
-  { commandSpecParams :: [ParamSpec]
+  { commandSpecArgumentSchema :: ValueSchemaId
+  , commandSpecParams :: [ParamSpec]
   , commandSpecObservationSchema :: ValueSchemaId
   }
   deriving (Eq, Ord, Read, Show)

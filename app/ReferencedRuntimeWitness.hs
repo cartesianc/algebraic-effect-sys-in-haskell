@@ -14,15 +14,10 @@ import System.Exit
   ( exitFailure )
 
 import MyFramework.CURDE
-  ( SchemaIdentity
-  , scalarSchema
+  ( scalarSchema
   , schemaRefIdentityOf
   )
-import MyFramework.Frontend
-import MyFramework.Frontend.Runtime
-import MyFramework.Handler
-  ( RuntimeData (..)
-  )
+import MyFramework.Legacy.Migration
 
 data Check = Check
   { checkName :: String
@@ -441,4 +436,3 @@ escapeJson currentCharacter =
     '\r' -> "\\r"
     '\t' -> "\\t"
     _ -> [currentCharacter]
-
