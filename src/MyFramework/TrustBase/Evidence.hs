@@ -13,6 +13,8 @@ module MyFramework.TrustBase.Evidence
   , fixedPointDiffEvidenceSchemaV1
   , facadeV52ClaimCatalog
   , facadeV52EvidenceSchemaV1
+  , inputCpsClaimCatalog
+  , inputCpsEvidenceSchemaV1
   , promotionClaimCatalog
   , promotionEvidenceSchemaV1
   , l0SemanticsClaimCatalog
@@ -160,6 +162,13 @@ facadeV52EvidenceSchemaV1 :: SchemaId
 facadeV52EvidenceSchemaV1 =
   SchemaId
     { schemaIdName = SchemaName "facade-v52-witness"
+    , schemaIdVersion = SchemaVersion 1
+    }
+
+inputCpsEvidenceSchemaV1 :: SchemaId
+inputCpsEvidenceSchemaV1 =
+  SchemaId
+    { schemaIdName = SchemaName "input-cps-witness"
     , schemaIdVersion = SchemaVersion 1
     }
 
@@ -359,6 +368,31 @@ facadeV52ClaimCatalog =
           ]
     , claimCatalogManifestClaim =
         ClaimName "facade-v52-claim-manifest"
+    }
+
+inputCpsClaimCatalog :: ClaimCatalog
+inputCpsClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "input-cps"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "input-cps-plan-defunctionalized-roundtrip"
+          , "input-cps-continuation-carries-status-only"
+          , "input-cps-success"
+          , "input-cps-failure-short-circuit"
+          , "input-cps-cancelled"
+          , "input-cps-suspended"
+          , "input-cps-runtime-order"
+          , "input-cps-diagnosis-trace-matches-input-graph"
+          , "input-cps-single-flight-same-occurrence"
+          , "input-cps-occurrences-remain-independent"
+          , "input-cps-business-values-use-value-phases"
+          , "input-cps-typed-handler-adapter"
+          , "input-cps-preparation-errors-before-handler-io"
+          ]
+    , claimCatalogManifestClaim =
+        ClaimName "input-cps-claim-manifest"
     }
 
 referencedRuntimeClaimCatalog :: ClaimCatalog

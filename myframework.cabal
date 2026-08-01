@@ -32,6 +32,7 @@ library
       MyFramework.Legacy.Migration
       MyFramework.Runtime
       MyFramework.Runtime.Diagnosis
+      MyFramework.Runtime.V52
       MyFramework.Recursion
       MyFramework.SDK.SourceArtifact
       MyFramework.SDK.Package
@@ -144,6 +145,23 @@ executable effect-application-witness
 executable facade-v52-witness
   hs-source-dirs: app
   main-is: FacadeV52Witness.hs
+  default-language: Haskell2010
+  build-depends:
+      base >=4.18 && <5
+    , myframework
+  ghc-options:
+      -Wall
+      -Wcompat
+      -Widentities
+      -Wincomplete-record-updates
+      -Wincomplete-uni-patterns
+      -Wmissing-export-lists
+      -Wpartial-fields
+      -Wredundant-constraints
+
+executable input-cps-witness
+  hs-source-dirs: app
+  main-is: InputCpsWitness.hs
   default-language: Haskell2010
   build-depends:
       base >=4.18 && <5

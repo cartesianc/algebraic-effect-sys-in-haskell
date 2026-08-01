@@ -199,6 +199,9 @@ try {
     Invoke-Captured "Stage1 v5.2 facade witness" {
         stack --work-dir .stack-work-artifact exec facade-v52-witness
     } (Join-Path $stage1Evidence "facade-v52.json")
+    Invoke-Captured "Stage1 input CPS runtime witness" {
+        stack --work-dir .stack-work-artifact exec input-cps-witness
+    } (Join-Path $stage1Evidence "input-cps.json")
     Invoke-Captured "Stage1 runtime witness" {
         stack --work-dir .stack-work-artifact exec curde-runtime-witness
     } (Join-Path $stage1Evidence "runtime.json")
@@ -257,6 +260,9 @@ try {
     Invoke-Captured "Stage2 v5.2 facade witness" {
         stack --work-dir .stack-work-artifact exec facade-v52-witness
     } (Join-Path $stage2Evidence "facade-v52.json")
+    Invoke-Captured "Stage2 input CPS runtime witness" {
+        stack --work-dir .stack-work-artifact exec input-cps-witness
+    } (Join-Path $stage2Evidence "input-cps.json")
     Invoke-Captured "Stage2 runtime witness" {
         stack --work-dir .stack-work-artifact exec curde-runtime-witness
     } (Join-Path $stage2Evidence "runtime.json")

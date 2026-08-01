@@ -42,6 +42,7 @@ module MyFramework.Facade
   , r
   , race
   , resolveAll
+  , runPreparedRuntime
   , schemaCatalogOf
   , transformRegistryOf
   , u
@@ -76,6 +77,15 @@ import qualified MyFramework.Effect as CoreEffect
 import MyFramework.Elaboration
 import MyFramework.Graph
 import MyFramework.Schema
+import MyFramework.Runtime.V52
+  ( ContinuationPlan
+  , ContinuationPlanError
+  , RuntimeHandlerRegistry
+  , RuntimePreparationError
+  , UnifiedRuntimeRun
+  , compileContinuationPlan
+  , executeRuntime
+  )
 
 newtype Name = Name
   { nameText :: String
@@ -306,11 +316,13 @@ data Program = Program
   { programSurface :: SurfaceProgram ProgramIR
   , programElaborated :: ElaboratedProgram ProgramIR
   , graphProgramOf :: CompiledGraphs
+  , programContinuationPlan :: ContinuationPlan
   }
   deriving (Eq, Ord, Read, Show)
 
-newtype PreparedRuntime = PreparedRuntime
+data PreparedRuntime = PreparedRuntime
   { preparedRuntimeProgram :: Program
+  , preparedRuntimeContinuationPlan :: ContinuationPlan
   }
   deriving (Eq, Ord, Read, Show)
 
@@ -328,6 +340,7 @@ data ProgramError
   | SurfaceBindingConflict BindingKey
   | ProgramElaborationFailed ElaborationError
   | ProgramGraphFailed GraphError
+  | ProgramContinuationFailed ContinuationPlanError
   deriving (Eq, Ord, Read, Show)
 
 program ::
@@ -370,12 +383,17 @@ program currentRoot currentControls currentModules = do
           (programIrTransforms currentIr)
           (programIrAst currentIr)
       )
+  currentContinuationPlan <-
+    mapLeft
+      (map ProgramContinuationFailed)
+      (compileContinuationPlan currentGraphs)
   pure
     ( prepareRuntime
         Program
           { programSurface = currentSurface
           , programElaborated = currentElaborated
           , graphProgramOf = currentGraphs
+          , programContinuationPlan = currentContinuationPlan
           }
     )
 
@@ -394,7 +412,26 @@ uniqueSurfaceBindings currentBindings
       ]
 
 prepareRuntime :: Program -> PreparedRuntime
-prepareRuntime = PreparedRuntime
+prepareRuntime currentProgram =
+  PreparedRuntime
+    { preparedRuntimeProgram = currentProgram
+    , preparedRuntimeContinuationPlan = programContinuationPlan currentProgram
+    }
+
+runPreparedRuntime ::
+  RuntimeHandlerRegistry ->
+  PreparedRuntime ->
+  IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
+runPreparedRuntime currentHandlers currentPrepared =
+  executeRuntime
+    (programIrEffects currentIr)
+    (programIrAst currentIr)
+    (graphProgramOf currentProgram)
+    (preparedRuntimeContinuationPlan currentPrepared)
+    currentHandlers
+  where
+    currentProgram = preparedRuntimeProgram currentPrepared
+    currentIr = elaboratedProgramPayload (programElaborated currentProgram)
 
 validate :: PreparedRuntime -> [ProgramError]
 validate _ = []

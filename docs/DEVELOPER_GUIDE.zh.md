@@ -19,7 +19,8 @@ TrustBase 和 SDK lowering 的开发者。
 7. src/MyFramework/Ast.hs
 8. src/MyFramework/Recursion.hs
 9. src/MyFramework/Runtime.hs
-10. src/MyFramework/Runtime/Diagnosis.hs
+10. src/MyFramework/Runtime/V52.hs
+11. src/MyFramework/Runtime/Diagnosis.hs
 
 ## 2. 当前实现和目标合同
 
@@ -30,7 +31,8 @@ TrustBase 和 SDK lowering 的开发者。
 | v2-compatible Facade | migration only，位于 MyFramework.Legacy.* |
 | typed CURDE core | 已运行，提供 GADT Handle、RExpr、Implementation 和 demand graph |
 | v5.2 Stage 3 | 已运行，提供 schema-free Facade、正式 MAP、Application 和三图分离 |
-| v5.2 Stage 4+ | 待实现 Input CPS、Scoped EffSys、Hook、Callback、Loop 和 promotion |
+| v5.2 Stage 4 | 已运行，提供 defunctionalized Input CPS、统一 Runtime 和 occurrence single-flight |
+| v5.2 Stage 5+ | 待实现 Scoped EffSys、Hook、Callback、Loop 和 promotion |
 
 当前源码可以作为迁移基础。v5.2 设计只有在 Facade、schema elaboration、lowering、runtime、
 witness、self-artifact 和 SDK 全部闭合后才进入 current core。
@@ -554,13 +556,14 @@ RuntimeAction 不进入序列化 AST。它由 Runtime 在 ControlTree 已经验�
 
 ## 9. input、Free IR 与 CPS
 
-当前 input 在 HandleDecl 中保存：
+v2 compatibility core 在 HandleDecl 中保存 input：
 
     handleDeclInput :: Maybe HandleId
 
 DemandGraph 将其转换为 InputDependency edge。Runtime 从 demand root 递归求前置闭包。
 
-v5 对该结构给出 CPS 解释。设 B.input = A：
+v5.2 在 `MyFramework.Runtime.V52` 中把 `InputGraph` 编译为
+`ContinuationPlan`。设 B.input = A：
 
     compile B k =
       compile A
@@ -568,6 +571,20 @@ v5 对该结构给出 CPS 解释。设 B.input = A：
           dispatch outcome B k)
 
 业务值走 R/MAP 图，continuation 只携带控制结果。
+
+`ContinuationNode` 保存稳定 node id、occurrence、AstPath、EffectRef、前驱
+continuation id 和可解析的 application occurrence。前驱绑定到 application 后，Runtime
+执行该 application 的 R、MAP 与 command，并把 `Succeeded / Failed / Cancelled /
+Suspended` 交给后继。无 application 的裸 input effect 走 lifecycle handler，调用参数为空。
+
+运行前检查覆盖 Handler 缺失、Effect kind、输入/输出 schema、MAP 输出歧义。错误完整
+返回后 Runtime 才允许 Handler IO。执行实例身份固定为：
+
+    BootRunId + AstPath + EffectRef
+
+single-flight key 使用该身份。同一 occurrence 的重复 demand 共享结果；不同 AstPath
+分别执行。`RuntimeDiagnosis.runtimeDiagnosisInputTrace` 记录实际经过的 ContinuationId，
+可与 InputGraph edge 对照。
 
 Source IR 可以按 free-style algebra 理解：
 

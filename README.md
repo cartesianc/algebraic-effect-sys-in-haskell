@@ -31,11 +31,13 @@ myframework 是一套使用 Haskell 实现的可序列化 EDSL、Effect 编译�
 - SurfaceProgram 到 ElaboratedProgram 的确定性 schema 求解；
 - 独立 AST、InputGraph、ValueGraph；
 - versioned Handler codec adapter；
-- canonical SchemaCatalog 和 SHA-256 digest。
+- canonical SchemaCatalog 和 SHA-256 digest；
+- defunctionalized ContinuationPlan；
+- 四态 Input CPS、ValueGraph 值求解和统一 v5.2 Runtime；
+- `BootRunId + AstPath + EffectRef` execution identity 与 occurrence single-flight。
 
 L0 v5.2 后续阶段继续实现：
 
-- input CPS lowering；
 - Scoped EffSys first-class registry；
 - hanging middleware observation；
 - callback PipelinePatch；

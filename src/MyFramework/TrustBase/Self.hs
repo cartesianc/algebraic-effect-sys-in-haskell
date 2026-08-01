@@ -47,6 +47,8 @@ import MyFramework.TrustBase.Evidence
   , effectApplicationEvidenceSchemaV1
   , facadeV52ClaimCatalog
   , facadeV52EvidenceSchemaV1
+  , inputCpsClaimCatalog
+  , inputCpsEvidenceSchemaV1
   , fixedPointDiffClaimCatalog
   , l0SemanticsClaimCatalog
   , l0SemanticsEvidenceSchemaV3
@@ -127,6 +129,7 @@ myFrameworkTrustBaseManifest =
         , "MyFramework.Facade"
         , "MyFramework.Graph"
         , "MyFramework.Handler.Adapter"
+        , "MyFramework.Runtime.V52"
         , "MyFramework.Schema"
         ]
     , trustBaseManifestSchemas = selfSchemaCatalog
@@ -188,6 +191,10 @@ selfSchemaCatalog =
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema = facadeV52EvidenceSchemaV1
       , schemaCatalogEntryProducer = "facade-v52-witness"
+      }
+  , SchemaCatalogEntry
+      { schemaCatalogEntrySchema = inputCpsEvidenceSchemaV1
+      , schemaCatalogEntryProducer = "input-cps-witness"
       }
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema = selfInterpretEvidenceSchemaV3
@@ -271,6 +278,7 @@ selfClaimCatalog =
     ++ claimCatalogClaims schemaElaborationClaimCatalog
     ++ claimCatalogClaims effectApplicationClaimCatalog
     ++ claimCatalogClaims facadeV52ClaimCatalog
+    ++ claimCatalogClaims inputCpsClaimCatalog
     ++ claimCatalogClaims selfInterpretClaimCatalog
     ++ claimCatalogClaims promotionClaimCatalog
     ++ claimCatalogClaims sdkPackageClaimCatalog

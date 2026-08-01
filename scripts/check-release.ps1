@@ -92,6 +92,9 @@ try {
     Invoke-Captured "v5.2 facade witness" {
         stack --work-dir .stack-work-codex exec facade-v52-witness
     } (Join-Path $evidenceRoot "stage3-facade-v52.json")
+    Invoke-Captured "input CPS runtime witness" {
+        stack --work-dir .stack-work-codex exec input-cps-witness
+    } (Join-Path $evidenceRoot "stage4-input-cps.json")
     Invoke-Captured "runtime witness" {
         stack --work-dir .stack-work-codex exec curde-runtime-witness
     } (Join-Path $evidenceRoot "stage0-runtime.json")
