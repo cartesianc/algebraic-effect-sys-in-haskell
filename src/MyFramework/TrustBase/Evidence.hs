@@ -21,6 +21,8 @@ module MyFramework.TrustBase.Evidence
   , hangingMiddlewareEvidenceSchemaV1
   , pipelinePatchClaimCatalog
   , pipelinePatchEvidenceSchemaV1
+  , loopFeedbackClaimCatalog
+  , loopFeedbackEvidenceSchemaV1
   , promotionClaimCatalog
   , promotionEvidenceSchemaV1
   , l0SemanticsClaimCatalog
@@ -196,6 +198,13 @@ pipelinePatchEvidenceSchemaV1 :: SchemaId
 pipelinePatchEvidenceSchemaV1 =
   SchemaId
     { schemaIdName = SchemaName "pipeline-patch-witness"
+    , schemaIdVersion = SchemaVersion 1
+    }
+
+loopFeedbackEvidenceSchemaV1 :: SchemaId
+loopFeedbackEvidenceSchemaV1 =
+  SchemaId
+    { schemaIdName = SchemaName "loop-feedback-witness"
     , schemaIdVersion = SchemaVersion 1
     }
 
@@ -482,6 +491,28 @@ pipelinePatchClaimCatalog =
           , "pipeline-patch-callback-prestart-phase"
           ]
     , claimCatalogManifestClaim = ClaimName "pipeline-patch-claim-manifest"
+    }
+
+loopFeedbackClaimCatalog :: ClaimCatalog
+loopFeedbackClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "loop-feedback"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "loop-policy-versioned-roundtrip"
+          , "loop-first-iteration-and-stable-settle"
+          , "loop-value-change-replays-once"
+          , "loop-batches-updates-into-one-revision"
+          , "loop-outside-application-runs-once"
+          , "loop-iteration-limit-is-diagnosed"
+          , "loop-cleanup-is-lifo"
+          , "loop-cleanup-failure-fails-scope"
+          , "loop-nested-settles-before-parent-revision"
+          , "loop-missing-equivalence-fails-before-handler-io"
+          , "loop-does-not-authorize-input-cycle"
+          ]
+    , claimCatalogManifestClaim = ClaimName "loop-feedback-claim-manifest"
     }
 
 referencedRuntimeClaimCatalog :: ClaimCatalog

@@ -18,7 +18,7 @@ import MyFramework.Runtime.V52
   , RuntimeHandlerResult (..)
   , RuntimeInvocation (..)
   , RuntimeValue (..)
-  , runtimeHandler
+  , runtimeHandlerWithLifecycle
   )
 
 -- | Serializable portion of a Handler registration.  Function names do not
@@ -73,10 +73,12 @@ runtimeHandlerFromAdapter ::
   HandlerAdapter kind input output ->
   RuntimeHandlerRegistration
 runtimeHandlerFromAdapter currentAdapter =
-  runtimeHandler
+  runtimeHandlerWithLifecycle
     (handlerContractEffect currentContract)
     runtimeInputSchema
     (Just outputSchemaId)
+    (Just runtimeEquivalent)
+    Nothing
     invokeTyped
   where
     currentContract = handlerAdapterContract currentAdapter
@@ -88,6 +90,19 @@ runtimeHandlerFromAdapter currentAdapter =
       case someEffectRefKind (handlerContractEffect currentContract) of
         R -> Nothing
         _ -> Just inputSchemaId
+    runtimeEquivalent currentLeft currentRight =
+      runtimeValueSchema currentLeft == outputSchemaId
+        && runtimeValueSchema currentRight == outputSchemaId
+        && case
+            ( codecDecode (handlerAdapterOutputCodec currentAdapter) (runtimeValuePayload currentLeft)
+            , codecDecode (handlerAdapterOutputCodec currentAdapter) (runtimeValuePayload currentRight)
+            ) of
+          (Right currentLeftValue, Right currentRightValue) ->
+            codecEquivalent
+              (handlerAdapterOutputCodec currentAdapter)
+              currentLeftValue
+              currentRightValue
+          _ -> False
     invokeTyped currentInvocation =
       case runtimeInvocationValue currentInvocation of
         Nothing

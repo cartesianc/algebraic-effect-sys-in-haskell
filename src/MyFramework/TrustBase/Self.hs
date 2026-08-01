@@ -55,6 +55,8 @@ import MyFramework.TrustBase.Evidence
   , hangingMiddlewareEvidenceSchemaV1
   , pipelinePatchClaimCatalog
   , pipelinePatchEvidenceSchemaV1
+  , loopFeedbackClaimCatalog
+  , loopFeedbackEvidenceSchemaV1
   , fixedPointDiffClaimCatalog
   , l0SemanticsClaimCatalog
   , l0SemanticsEvidenceSchemaV3
@@ -218,6 +220,10 @@ selfSchemaCatalog =
       , schemaCatalogEntryProducer = "pipeline-patch-witness"
       }
   , SchemaCatalogEntry
+      { schemaCatalogEntrySchema = loopFeedbackEvidenceSchemaV1
+      , schemaCatalogEntryProducer = "loop-feedback-witness"
+      }
+  , SchemaCatalogEntry
       { schemaCatalogEntrySchema = selfInterpretEvidenceSchemaV3
       , schemaCatalogEntryProducer = "core-self-interpret-witness"
       }
@@ -303,6 +309,7 @@ selfClaimCatalog =
     ++ claimCatalogClaims effSysRefClaimCatalog
     ++ claimCatalogClaims hangingMiddlewareClaimCatalog
     ++ claimCatalogClaims pipelinePatchClaimCatalog
+    ++ claimCatalogClaims loopFeedbackClaimCatalog
     ++ claimCatalogClaims selfInterpretClaimCatalog
     ++ claimCatalogClaims promotionClaimCatalog
     ++ claimCatalogClaims sdkPackageClaimCatalog

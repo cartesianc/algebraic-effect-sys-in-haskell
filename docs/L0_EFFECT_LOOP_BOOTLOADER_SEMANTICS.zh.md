@@ -8,7 +8,7 @@
     日期：2026-08-01
     维护属性：LONG-LIVED / CONTINUOUSLY EVOLVED
     稳定路径：docs/L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md
-    实现状态：Stage 0—7 已实现；Stage 8—10 推进中
+    实现状态：Stage 0—8 已实现；Stage 9—10 推进中
     Promotion：本语义 epoch 尚未 promotion
 
 本文记录长期稳定的语义边界、版本状态和完成条件。
@@ -785,11 +785,11 @@ SDK 只接受 approved core，并执行：
 | 正式 MAP Effect | IMPLEMENTED |
 | command $ MAP $ R Application | IMPLEMENTED |
 | AST / InputGraph / ValueGraph 分离 | IMPLEMENTED |
-| input CPS witness | OPEN IMPLEMENTATION |
-| Scoped EffSys FCE | OPEN IMPLEMENTATION |
-| hanging middleware scope | OPEN IMPLEMENTATION |
-| callback PipelinePatch | OPEN IMPLEMENTATION |
-| Loop 完整反馈语义 | OPEN |
+| input CPS witness | IMPLEMENTED |
+| Scoped EffSys FCE | IMPLEMENTED |
+| hanging middleware scope | IMPLEMENTED |
+| callback PipelinePatch | IMPLEMENTED |
+| Loop 完整反馈语义 | IMPLEMENTED |
 | ana/hylo | OPEN |
 | v5.2 FrameworkAsBusiness 主表达 | IMPLEMENTED；Runtime/Promotion 待后续 Stage |
 

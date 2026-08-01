@@ -104,6 +104,9 @@ try {
     Invoke-Captured "pipeline patch witness" {
         stack --work-dir .stack-work-codex exec pipeline-patch-witness
     } (Join-Path $evidenceRoot "stage7-pipeline-patch.json")
+    Invoke-Captured "loop feedback witness" {
+        stack --work-dir .stack-work-codex exec loop-feedback-witness
+    } (Join-Path $evidenceRoot "stage8-loop-feedback.json")
     Invoke-Captured "runtime witness" {
         stack --work-dir .stack-work-codex exec curde-runtime-witness
     } (Join-Path $evidenceRoot "stage0-runtime.json")

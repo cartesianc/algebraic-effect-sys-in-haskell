@@ -35,6 +35,8 @@ module MyFramework.Facade
   , fallback
   , graphProgramOf
   , mapping
+  , loop
+  , loopWith
   , middleware
   , name
   , nameText
@@ -88,6 +90,7 @@ import MyFramework.Effect hiding
 import qualified MyFramework.Effect as CoreEffect
 import MyFramework.EffSys
 import MyFramework.Hook
+import MyFramework.Loop
 import MyFramework.Elaboration
 import MyFramework.Graph
 import MyFramework.Schema
@@ -100,8 +103,8 @@ import MyFramework.Runtime.V52
   , RuntimePreparationError
   , UnifiedRuntimeRun
   , compileContinuationPlan
-  , executeRuntimeWithHooks
-  , executeRuntimeWithHooksAndCallbacks
+  , executeRuntimeV52
+  , runtimeCallbackRegistry
   , runtimeMiddlewareRegistry
   )
 
@@ -323,6 +326,7 @@ data ControlDecl = ControlDecl
   { controlName :: Name
   , controlKind :: AstBranchKind
   , controlChildren :: [Name]
+  , controlLoopPolicy :: Maybe VersionedLoopPolicy
   }
   deriving (Eq, Ord, Read, Show)
 
@@ -338,12 +342,25 @@ fallback = control AstFallback
 race :: AstRef child => Name -> [child] -> ControlDecl
 race = control AstRace
 
+loop :: AstRef child => Name -> child -> ControlDecl
+loop currentName = loopWith currentName defaultLoopPolicy
+
+loopWith :: AstRef child => Name -> VersionedLoopPolicy -> child -> ControlDecl
+loopWith currentName currentPolicy currentChild =
+  ControlDecl
+    { controlName = currentName
+    , controlKind = AstLoop
+    , controlChildren = [astReferenceName currentChild]
+    , controlLoopPolicy = Just currentPolicy
+    }
+
 control :: AstRef child => AstBranchKind -> Name -> [child] -> ControlDecl
 control currentKind currentName currentChildren =
   ControlDecl
     { controlName = currentName
     , controlKind = currentKind
     , controlChildren = map astReferenceName currentChildren
+    , controlLoopPolicy = Nothing
     }
 
 data EffectModule = EffectModule
@@ -419,6 +436,7 @@ data Program = Program
   , graphProgramOf :: CompiledGraphs
   , programContinuationPlan :: ContinuationPlan
   , programHookPlan :: HookPlan
+  , programLoopPolicyRegistry :: LoopPolicyRegistry
   }
   deriving (Eq, Ord, Read, Show)
 
@@ -426,6 +444,7 @@ data PreparedRuntime = PreparedRuntime
   { preparedRuntimeProgram :: Program
   , preparedRuntimeContinuationPlan :: ContinuationPlan
   , preparedRuntimeHookPlan :: HookPlan
+  , preparedRuntimeLoopPolicyRegistry :: LoopPolicyRegistry
   }
   deriving (Eq, Ord, Read, Show)
 
@@ -446,6 +465,7 @@ data ProgramError
   | ProgramContinuationFailed ContinuationPlanError
   | ProgramEffSysFailed EffSysError
   | ProgramHookFailed HookError
+  | ProgramLoopFailed LoopError
   deriving (Eq, Ord, Read, Show)
 
 program ::
@@ -515,6 +535,16 @@ programWithHanging currentRoot currentControls currentModules currentHanging = d
     mapLeft
       (map ProgramContinuationFailed)
       (compileContinuationPlan currentGraphs)
+  currentLoopPolicies <-
+    mapLeft
+      (map ProgramLoopFailed)
+      ( compileLoopPolicyRegistry
+          [ (nameText (controlName currentControl), currentPolicy)
+          | currentControl <- currentControls
+          , Just currentPolicy <- [controlLoopPolicy currentControl]
+          ]
+          (compiledAstGraph currentGraphs)
+      )
   currentHookPlan <-
     mapLeft
       (map ProgramHookFailed)
@@ -539,6 +569,7 @@ programWithHanging currentRoot currentControls currentModules currentHanging = d
           , graphProgramOf = currentGraphs
           , programContinuationPlan = currentContinuationPlan
           , programHookPlan = currentHookPlan
+          , programLoopPolicyRegistry = currentLoopPolicies
           }
     )
   where
@@ -582,6 +613,7 @@ prepareRuntime currentProgram =
     { preparedRuntimeProgram = currentProgram
     , preparedRuntimeContinuationPlan = programContinuationPlan currentProgram
     , preparedRuntimeHookPlan = programHookPlan currentProgram
+    , preparedRuntimeLoopPolicyRegistry = programLoopPolicyRegistry currentProgram
     }
 
 runPreparedRuntime ::
@@ -600,17 +632,14 @@ runPreparedRuntimeWithMiddleware ::
   PreparedRuntime ->
   IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
 runPreparedRuntimeWithMiddleware currentHandlers currentMiddleware currentPrepared =
-  executeRuntimeWithHooks
-    (programIrEffects currentIr)
-    (programIrAst currentIr)
-    (graphProgramOf currentProgram)
-    (preparedRuntimeContinuationPlan currentPrepared)
-    (preparedRuntimeHookPlan currentPrepared)
-    currentHandlers
-    currentMiddleware
-  where
-    currentProgram = preparedRuntimeProgram currentPrepared
-    currentIr = elaboratedProgramPayload (programElaborated currentProgram)
+  case runtimeCallbackRegistry [] of
+    Left _ -> error "empty callback registry cannot fail"
+    Right currentCallbacks ->
+      runPreparedRuntimeWithHooks
+        currentHandlers
+        currentMiddleware
+        currentCallbacks
+        currentPrepared
 
 runPreparedRuntimeWithHooks ::
   RuntimeHandlerRegistry ->
@@ -619,7 +648,7 @@ runPreparedRuntimeWithHooks ::
   PreparedRuntime ->
   IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
 runPreparedRuntimeWithHooks currentHandlers currentMiddleware currentCallbacks currentPrepared =
-  executeRuntimeWithHooksAndCallbacks
+  executeRuntimeV52
     (programIrEffects currentIr)
     (programIrAst currentIr)
     (graphProgramOf currentProgram)
@@ -628,6 +657,7 @@ runPreparedRuntimeWithHooks currentHandlers currentMiddleware currentCallbacks c
     currentHandlers
     currentMiddleware
     currentCallbacks
+    (preparedRuntimeLoopPolicyRegistry currentPrepared)
   where
     currentProgram = preparedRuntimeProgram currentPrepared
     currentIr = elaboratedProgramPayload (programElaborated currentProgram)

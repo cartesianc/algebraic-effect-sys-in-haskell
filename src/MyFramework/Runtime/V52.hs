@@ -39,7 +39,9 @@ module MyFramework.Runtime.V52
   , executeRuntime
   , executeRuntimeWithHooks
   , executeRuntimeWithHooksAndCallbacks
+  , executeRuntimeV52
   , runtimeHandler
+  , runtimeHandlerWithLifecycle
   , runtimeHandlerRegistry
   , runRuntimeActionV52
   , runtimeMiddleware
@@ -90,6 +92,7 @@ import MyFramework.EffSys.Types
   )
 import MyFramework.Graph
 import MyFramework.Hook.Types
+import MyFramework.Loop
 import MyFramework.Runtime.Types
   ( BootRunId (..)
   , newBootRunId
@@ -386,6 +389,7 @@ data RuntimeHandlerPhase
   | RuntimeReadPhase
   | RuntimeMapPhase
   | RuntimeCommandPhase
+  | RuntimeLoopPhase
   deriving (Eq, Ord, Read, Show)
 
 data ExecutionInstanceId = ExecutionInstanceId
@@ -404,6 +408,7 @@ data RuntimeInvocation = RuntimeInvocation
 
 data RuntimeHandlerResult
   = HandlerSucceeded (Maybe RuntimeValue)
+  | HandlerSucceededBatch [RuntimeValue]
   | HandlerFailed String
   | HandlerCancelled String
   | HandlerSuspended String
@@ -416,6 +421,8 @@ data RuntimeHandlerRegistration = RuntimeHandlerRegistration
   , handlerRegistrationInputSchema :: Maybe ValueSchemaId
   , handlerRegistrationOutputSchema :: Maybe ValueSchemaId
   , handlerRegistrationFunction :: RuntimeHandler
+  , handlerRegistrationOutputEquivalent :: Maybe (RuntimeValue -> RuntimeValue -> Bool)
+  , handlerRegistrationCleanup :: Maybe (IO (Either String ()))
   }
 
 newtype RuntimeHandlerRegistry = RuntimeHandlerRegistry
@@ -551,11 +558,30 @@ runtimeHandler ::
   RuntimeHandler ->
   RuntimeHandlerRegistration
 runtimeHandler currentEffect currentInput currentOutput currentFunction =
+  runtimeHandlerWithLifecycle
+    currentEffect
+    currentInput
+    currentOutput
+    (Just (==))
+    Nothing
+    currentFunction
+
+runtimeHandlerWithLifecycle ::
+  SomeEffectRef ->
+  Maybe ValueSchemaId ->
+  Maybe ValueSchemaId ->
+  Maybe (RuntimeValue -> RuntimeValue -> Bool) ->
+  Maybe (IO (Either String ())) ->
+  RuntimeHandler ->
+  RuntimeHandlerRegistration
+runtimeHandlerWithLifecycle currentEffect currentInput currentOutput currentEquivalent currentCleanup currentFunction =
   RuntimeHandlerRegistration
     { handlerRegistrationEffect = currentEffect
     , handlerRegistrationInputSchema = currentInput
     , handlerRegistrationOutputSchema = currentOutput
     , handlerRegistrationFunction = currentFunction
+    , handlerRegistrationOutputEquivalent = currentEquivalent
+    , handlerRegistrationCleanup = currentCleanup
     }
 
 runtimeHandlerRegistry ::
@@ -590,6 +616,8 @@ data RuntimePreparationError
   | RuntimeCallbackMissing CallbackRef
   | RuntimeAstOccurrenceMissing AstPath
   | RuntimeContinuationNodeMissing ApplicationOccurrenceId EffectKey
+  | RuntimeLoopPolicyMissing AstPath
+  | RuntimeLoopEquivalenceMissing EffectKey
   deriving (Eq, Ord, Read, Show)
 
 data RuntimeEvent
@@ -607,12 +635,20 @@ data RuntimeEvent
   | RuntimeCallbackExited CallbackRef EffSysRef AstPath
   | RuntimePipelinePatchCommitted PipelinePatchId CallbackRef
   | RuntimePipelinePatchRejected PipelinePatchId CallbackRef [PipelinePatchError]
+  | RuntimeLoopIterationStarted AstPath Int
+  | RuntimeLoopRevisionAdvanced AstPath StateRevision
+  | RuntimeLoopSettled AstPath Int StateRevision
+  | RuntimeLoopCleanupStarted AstPath EffectKey
+  | RuntimeLoopCleanupFailed AstPath EffectKey RuntimeFault
+  | RuntimeLoopLimitExceeded AstPath Int
   deriving (Eq, Ord, Show)
 
 data RuntimeDiagnosis = RuntimeDiagnosis
   { runtimeDiagnosisInputTrace :: [ContinuationId]
   , runtimeDiagnosisFailures :: [RuntimeFault]
   , runtimeDiagnosisPipelinePatches :: [PipelinePatchRecord]
+  , runtimeDiagnosisLoopRevisions :: [(AstPath, StateRevision)]
+  , runtimeDiagnosisLoopFailures :: [RuntimeFault]
   }
   deriving (Eq, Ord, Show)
 
@@ -637,11 +673,13 @@ data MutableRuntime = MutableRuntime
   , mutableEvents :: [RuntimeEvent]
   , mutableTrace :: [ContinuationId]
   , mutablePatchRecords :: [PipelinePatchRecord]
+  , mutableLoopRevisions :: Map.Map AstPath StateRevision
+  , mutableLoopFailures :: [RuntimeFault]
   }
 
 emptyMutableRuntime :: MutableRuntime
 emptyMutableRuntime =
-  MutableRuntime Map.empty Map.empty [] [] []
+  MutableRuntime Map.empty Map.empty [] [] [] Map.empty []
 
 data RuntimeContinuationState = RuntimeContinuationState
   { runtimeContinuationOriginalPlan :: ContinuationPlan
@@ -664,6 +702,7 @@ data RuntimeEnvironment = RuntimeEnvironment
   , environmentMiddlewareRegistry :: RuntimeMiddlewareRegistry
   , environmentCallbackRegistry :: RuntimeCallbackRegistry
   , environmentCallbackLock :: MVar ()
+  , environmentLoopPolicies :: LoopPolicyRegistry
   }
 
 executeRuntime ::
@@ -714,6 +753,29 @@ executeRuntimeWithHooksAndCallbacks ::
   RuntimeCallbackRegistry ->
   IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
 executeRuntimeWithHooksAndCallbacks currentEffects currentAst baseGraphs basePlan currentHookPlan currentHandlers currentMiddleware currentCallbacks =
+  executeRuntimeV52
+    currentEffects
+    currentAst
+    baseGraphs
+    basePlan
+    currentHookPlan
+    currentHandlers
+    currentMiddleware
+    currentCallbacks
+    (LoopPolicyRegistry [])
+
+executeRuntimeV52 ::
+  EffectRegistry ->
+  AstPlan ->
+  CompiledGraphs ->
+  ContinuationPlan ->
+  HookPlan ->
+  RuntimeHandlerRegistry ->
+  RuntimeMiddlewareRegistry ->
+  RuntimeCallbackRegistry ->
+  LoopPolicyRegistry ->
+  IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
+executeRuntimeV52 currentEffects currentAst baseGraphs basePlan currentHookPlan currentHandlers currentMiddleware currentCallbacks currentLoopPolicies =
   case compileContinuationPlan (hookPlanDetachedGraphs currentHookPlan) of
     Left currentContinuationErrors ->
       pure (Left (map RuntimeHookContinuationInvalid currentContinuationErrors))
@@ -725,7 +787,8 @@ executeRuntimeWithHooksAndCallbacks currentEffects currentAst baseGraphs basePla
       case
           validateRuntimePreparation currentEffects currentGraphs currentHandlers
             ++ validateRuntimeMiddleware currentHookPlan currentMiddleware
-            ++ validateRuntimeCallbacks currentHookPlan currentCallbacks of
+            ++ validateRuntimeCallbacks currentHookPlan currentCallbacks
+            ++ validateRuntimeLoops currentGraphs currentHandlers currentLoopPolicies of
         [] -> do
           currentBootRun <- newBootRunId
           currentState <- newMVar emptyMutableRuntime
@@ -770,6 +833,7 @@ executeRuntimeWithHooksAndCallbacks currentEffects currentAst baseGraphs basePla
                   , environmentMiddlewareRegistry = currentMiddleware
                   , environmentCallbackRegistry = currentCallbacks
                   , environmentCallbackLock = currentCallbackLock
+                  , environmentLoopPolicies = currentLoopPolicies
                   }
           currentOutcome <- executeAst currentEnvironment (AstPath []) currentAst
           currentFinal <- readMVar currentState
@@ -845,6 +909,33 @@ validateRuntimeCallbacks currentPlan (RuntimeCallbackRegistry currentRegistry) =
   | currentEntry <- callbackPlanEntries currentPlan
   , Map.notMember (callbackPlanEntryRef currentEntry) currentRegistry
   ]
+
+validateRuntimeLoops ::
+  CompiledGraphs ->
+  RuntimeHandlerRegistry ->
+  LoopPolicyRegistry ->
+  [RuntimePreparationError]
+validateRuntimeLoops currentGraphs (RuntimeHandlerRegistry currentHandlers) (LoopPolicyRegistry currentPolicies) =
+  sort . nub $
+    [ RuntimeLoopPolicyMissing currentPath
+    | currentPath <- loopPaths
+    , Map.notMember currentPath policyIndex
+    ]
+      ++ [ RuntimeLoopEquivalenceMissing currentKey
+         | currentPath <- loopPaths
+         , currentNode <- valueGraphNodes (compiledValueGraph currentGraphs)
+         , astPathWithin currentPath (valueNodeScope currentNode)
+         , let currentKey = someEffectRefKey (valueNodeEffect currentNode)
+         , Just currentHandler <- [Map.lookup currentKey currentHandlers]
+         , Nothing <- [handlerRegistrationOutputEquivalent currentHandler]
+         ]
+  where
+    loopPaths =
+      [ astGraphNodePath currentNode
+      | currentNode <- astGraphNodes (compiledAstGraph currentGraphs)
+      , AstGraphBranch AstLoop <- [astGraphNodeKind currentNode]
+      ]
+    policyIndex = Map.fromList currentPolicies
 
 validateRuntimePreparation ::
   EffectRegistry ->
@@ -978,6 +1069,7 @@ executeAst currentEnvironment parentPath currentPlan =
             AstParallel -> executeParallel runChild indexedChildren
             AstFallback -> executeFallback runChild indexedChildren
             AstRace -> executeRace runChild indexedChildren
+            AstLoop -> executeLoop currentEnvironment currentPath currentChildren
             _ ->
               pure
                 ( Failed
@@ -1012,6 +1104,7 @@ executeAstAt currentEnvironment currentParent currentOrdinal currentPlan =
             AstParallel -> executeParallel runChild indexedChildren
             AstFallback -> executeFallback runChild indexedChildren
             AstRace -> executeRace runChild indexedChildren
+            AstLoop -> executeLoop currentEnvironment currentPath currentChildren
             _ ->
               pure
                 ( Failed
@@ -1023,6 +1116,213 @@ executeAstAt currentEnvironment currentParent currentOrdinal currentPlan =
                             ++ show currentKind
                       }
                 )
+
+executeLoop ::
+  RuntimeEnvironment ->
+  AstPath ->
+  [AstPlan] ->
+  IO ContinuationOutcome
+executeLoop currentEnvironment currentLoopPath currentChildren =
+  case (lookup currentLoopPath policyEntries, currentChildren) of
+    (Nothing, _) ->
+      pure
+        ( Failed
+            RuntimeFault
+              { runtimeFaultEffect = Nothing
+              , runtimeFaultPhase = RuntimeLoopPhase
+              , runtimeFaultMessage = "loop policy missing: " ++ renderAstPath currentLoopPath
+              }
+        )
+    (_, currentOtherChildren)
+      | length currentOtherChildren /= 1 ->
+          pure
+            ( Failed
+                RuntimeFault
+                  { runtimeFaultEffect = Nothing
+                  , runtimeFaultPhase = RuntimeLoopPhase
+                  , runtimeFaultMessage = "loop requires exactly one child"
+                  }
+            )
+    (Just currentVersionedPolicy, [currentChild]) ->
+      runIteration
+        currentChild
+        (childPath currentLoopPath 0 currentChild)
+        (loopPolicyMaxIterations (versionedLoopPolicyValue currentVersionedPolicy))
+        1
+    _ -> error "loop arity guard is exhaustive"
+  where
+    LoopPolicyRegistry policyEntries = environmentLoopPolicies currentEnvironment
+    runIteration currentChild currentChildPath currentMaximum currentIteration = do
+      currentStateBefore <- readMVar (environmentState currentEnvironment)
+      let currentEventOffset = length (mutableEvents currentStateBefore)
+      appendRuntimeEvent
+        currentEnvironment
+        (RuntimeLoopIterationStarted currentLoopPath currentIteration)
+      currentOutcome <- executeAstAt currentEnvironment currentLoopPath 0 currentChild
+      currentStateAfter <- readMVar (environmentState currentEnvironment)
+      let iterationEvents = drop currentEventOffset (mutableEvents currentStateAfter)
+          currentChanged = iterationHasRevision currentEnvironment currentChildPath iterationEvents
+      cleanupOutcome <- runLoopCleanup currentEnvironment currentLoopPath currentChildPath iterationEvents
+      case cleanupOutcome of
+        Just currentFailure -> pure (Failed currentFailure)
+        Nothing ->
+          case currentOutcome of
+            Succeeded
+              | currentChanged -> do
+                  currentRevision <- advanceLoopRevision currentEnvironment currentLoopPath
+                  appendRuntimeEvent
+                    currentEnvironment
+                    (RuntimeLoopRevisionAdvanced currentLoopPath currentRevision)
+                  if currentIteration >= currentMaximum
+                    then do
+                      let currentFailure =
+                            RuntimeFault
+                              { runtimeFaultEffect = Nothing
+                              , runtimeFaultPhase = RuntimeLoopPhase
+                              , runtimeFaultMessage =
+                                  "loop iteration limit exceeded: " ++ show currentMaximum
+                              }
+                      appendRuntimeEvent
+                        currentEnvironment
+                        (RuntimeLoopLimitExceeded currentLoopPath currentMaximum)
+                      recordLoopFailure currentEnvironment currentFailure
+                      pure (Failed currentFailure)
+                    else do
+                      resetLoopChild currentEnvironment currentChildPath
+                      runIteration currentChild currentChildPath currentMaximum (currentIteration + 1)
+              | otherwise -> do
+                  currentRevision <- loopRevision currentEnvironment currentLoopPath
+                  appendRuntimeEvent
+                    currentEnvironment
+                    (RuntimeLoopSettled currentLoopPath currentIteration currentRevision)
+                  pure Succeeded
+            _ -> pure currentOutcome
+
+childPath :: AstPath -> Int -> AstPlan -> AstPath
+childPath currentParent currentOrdinal currentPlan =
+  case currentPlan of
+    AstPlanApplication currentKey _ -> appendPath currentParent currentKey currentOrdinal
+    AstPlanBranch currentKey _ _ -> appendPath currentParent currentKey currentOrdinal
+
+iterationHasRevision :: RuntimeEnvironment -> AstPath -> [RuntimeEvent] -> Bool
+iterationHasRevision currentEnvironment currentChildPath currentEvents =
+  any eventChanged currentEvents
+  where
+    eventChanged currentEvent =
+      case currentEvent of
+        RuntimeHandlerFinished currentInstance _ (HandlerSucceededBatch currentValues)
+          | astPathWithin currentChildPath (executionInstanceAstPath currentInstance) ->
+              valuesChanged currentInstance currentValues
+        RuntimeLoopRevisionAdvanced currentNestedPath _ ->
+          astPathWithin currentChildPath currentNestedPath
+        _ -> False
+    valuesChanged currentInstance currentValues =
+      case
+          Map.lookup
+            (someEffectRefKey (executionInstanceEffect currentInstance))
+            (runtimeHandlerRegistryMap (environmentHandlers currentEnvironment)) of
+        Just currentHandler ->
+          case handlerRegistrationOutputEquivalent currentHandler of
+            Just currentEquivalent ->
+              any (not . uncurry currentEquivalent) (adjacentPairs currentValues)
+            Nothing -> False
+        Nothing -> False
+    adjacentPairs currentValues = zip currentValues (drop 1 currentValues)
+
+runLoopCleanup ::
+  RuntimeEnvironment ->
+  AstPath ->
+  AstPath ->
+  [RuntimeEvent] ->
+  IO (Maybe RuntimeFault)
+runLoopCleanup currentEnvironment currentLoopPath currentChildPath currentEvents =
+  cleanupAll cleanupKeys
+  where
+    cleanupKeys =
+      reverse
+        [ someEffectRefKey (executionInstanceEffect currentInstance)
+        | RuntimeHandlerStarted currentInstance _ <- currentEvents
+        , astPathWithin currentChildPath (executionInstanceAstPath currentInstance)
+        ]
+    cleanupAll [] = pure Nothing
+    cleanupAll (currentKey : remaining) =
+      case
+          Map.lookup
+            currentKey
+            (runtimeHandlerRegistryMap (environmentHandlers currentEnvironment))
+            >>= handlerRegistrationCleanup of
+        Nothing -> cleanupAll remaining
+        Just currentCleanup -> do
+          appendRuntimeEvent
+            currentEnvironment
+            (RuntimeLoopCleanupStarted currentLoopPath currentKey)
+          attempted <- try currentCleanup
+          case attempted of
+            Left (currentException :: SomeException) ->
+              failCleanup currentKey (displayException currentException)
+            Right (Left currentMessage) -> failCleanup currentKey currentMessage
+            Right (Right ()) -> cleanupAll remaining
+    failCleanup currentKey currentMessage = do
+      let currentFailure =
+            RuntimeFault
+              { runtimeFaultEffect = Nothing
+              , runtimeFaultPhase = RuntimeLoopPhase
+              , runtimeFaultMessage =
+                  "loop cleanup failed for " ++ effectKeyText currentKey ++ ": " ++ currentMessage
+              }
+      appendRuntimeEvent
+        currentEnvironment
+        (RuntimeLoopCleanupFailed currentLoopPath currentKey currentFailure)
+      recordLoopFailure currentEnvironment currentFailure
+      pure (Just currentFailure)
+
+advanceLoopRevision :: RuntimeEnvironment -> AstPath -> IO StateRevision
+advanceLoopRevision currentEnvironment currentLoopPath =
+  modifyMVar (environmentState currentEnvironment) $ \currentState -> do
+    let StateRevision currentRevision =
+          Map.findWithDefault (StateRevision 0) currentLoopPath (mutableLoopRevisions currentState)
+        nextRevision = StateRevision (currentRevision + 1)
+    pure
+      ( currentState
+          { mutableLoopRevisions =
+              Map.insert currentLoopPath nextRevision (mutableLoopRevisions currentState)
+          }
+      , nextRevision
+      )
+
+loopRevision :: RuntimeEnvironment -> AstPath -> IO StateRevision
+loopRevision currentEnvironment currentLoopPath =
+  Map.findWithDefault (StateRevision 0) currentLoopPath . mutableLoopRevisions
+    <$> readMVar (environmentState currentEnvironment)
+
+recordLoopFailure :: RuntimeEnvironment -> RuntimeFault -> IO ()
+recordLoopFailure currentEnvironment currentFailure =
+  modifyMVar_ (environmentState currentEnvironment) $ \currentState ->
+    pure
+      currentState
+        { mutableLoopFailures = mutableLoopFailures currentState ++ [currentFailure]
+        }
+
+resetLoopChild :: RuntimeEnvironment -> AstPath -> IO ()
+resetLoopChild currentEnvironment currentChildPath = do
+  modifyMVar_ (environmentFlights currentEnvironment) $ \currentFlights ->
+    pure
+      ( Map.filterWithKey
+          (\currentInstance _ -> not (astPathWithin currentChildPath (executionInstanceAstPath currentInstance)))
+          currentFlights
+      )
+  modifyMVar_ (environmentState currentEnvironment) $ \currentState ->
+    pure
+      currentState
+        { mutableStatuses =
+            Map.filterWithKey
+              (\currentInstance _ -> not (astPathWithin currentChildPath (executionInstanceAstPath currentInstance)))
+              (mutableStatuses currentState)
+        , mutableObservations =
+            Map.filterWithKey
+              (\currentInstance _ -> not (astPathWithin currentChildPath (executionInstanceAstPath currentInstance)))
+              (mutableObservations currentState)
+        }
 
 appendPath :: AstPath -> AstNodeKey -> Int -> AstPath
 appendPath (AstPath currentSegments) currentKey currentOrdinal =
@@ -2204,6 +2504,11 @@ recordHandlerResult currentEnvironment currentInstance currentPhase currentResul
             case currentResult of
               HandlerSucceeded (Just currentValue) ->
                 Map.insert currentInstance currentValue (mutableObservations currentState)
+              HandlerSucceededBatch currentValues ->
+                case reverse currentValues of
+                  currentValue : _ ->
+                    Map.insert currentInstance currentValue (mutableObservations currentState)
+                  [] -> mutableObservations currentState
               _ -> mutableObservations currentState
         , mutableEvents =
             mutableEvents currentState
@@ -2211,6 +2516,10 @@ recordHandlerResult currentEnvironment currentInstance currentPhase currentResul
               ++ case currentResult of
                 HandlerSucceeded (Just currentValue) ->
                   [RuntimeValueProduced currentInstance currentPhase (runtimeValueSchema currentValue)]
+                HandlerSucceededBatch currentValues ->
+                  [ RuntimeValueProduced currentInstance currentPhase (runtimeValueSchema currentValue)
+                  | currentValue <- currentValues
+                  ]
                 _ -> []
         }
 
@@ -2273,6 +2582,32 @@ requireValue currentRef currentPhase expectedSchema currentResult =
               , runtimeFaultMessage = "handler did not produce a required value"
               }
         )
+    HandlerSucceededBatch currentValues ->
+      case reverse currentValues of
+        currentValue : _
+          | runtimeValueSchema currentValue == expectedSchema -> Right currentValue
+          | otherwise ->
+              Left
+                ( Failed
+                    RuntimeFault
+                      { runtimeFaultEffect = Just currentRef
+                      , runtimeFaultPhase = currentPhase
+                      , runtimeFaultMessage =
+                          "handler batch value schema mismatch: expected "
+                            ++ show expectedSchema
+                            ++ ", received "
+                            ++ show (runtimeValueSchema currentValue)
+                      }
+                )
+        [] ->
+          Left
+            ( Failed
+                RuntimeFault
+                  { runtimeFaultEffect = Just currentRef
+                  , runtimeFaultPhase = currentPhase
+                  , runtimeFaultMessage = "handler produced an empty value batch"
+                  }
+            )
     _ -> Left (outcomeFromHandlerResult currentRef currentPhase currentResult)
 
 outcomeFromHandlerResult ::
@@ -2283,6 +2618,9 @@ outcomeFromHandlerResult ::
 outcomeFromHandlerResult currentRef currentPhase currentResult =
   case currentResult of
     HandlerSucceeded _ -> Succeeded
+    HandlerSucceededBatch [] ->
+      Failed (RuntimeFault (Just currentRef) currentPhase "handler produced an empty value batch")
+    HandlerSucceededBatch _ -> Succeeded
     HandlerFailed currentMessage ->
       Failed (RuntimeFault (Just currentRef) currentPhase currentMessage)
     HandlerCancelled currentMessage -> Cancelled currentMessage
@@ -2320,5 +2658,7 @@ snapshotRuntime currentState =
               | Failed currentFailure <- Map.elems (mutableStatuses currentState)
               ]
           , runtimeDiagnosisPipelinePatches = mutablePatchRecords currentState
+          , runtimeDiagnosisLoopRevisions = Map.toAscList (mutableLoopRevisions currentState)
+          , runtimeDiagnosisLoopFailures = mutableLoopFailures currentState
           }
     }

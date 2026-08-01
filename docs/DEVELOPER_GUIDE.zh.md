@@ -38,7 +38,8 @@ TrustBase 和 SDK lowering 的开发者。
 | v5.2 Stage 5 | 已运行，提供 first-class EffSysRef、scope closure、live view 和 snapshot |
 | v5.2 Stage 6 | 已运行，提供 hanging HookPlan、middleware wrapper 和 hook provenance |
 | v5.2 Stage 7 | 已运行，提供 CallbackRef、事务 PipelinePatch 和 run-local continuation |
-| v5.2 Stage 8+ | 待实现 Loop 和 promotion |
+| v5.2 Stage 8 | 已运行，提供单 child Loop、versioned policy、revision replay、嵌套传播和 LIFO cleanup |
+| v5.2 Stage 9+ | 待完成自举语义闭合和 promotion |
 
 当前源码可以作为迁移基础。v5.2 设计只有在 Facade、schema elaboration、lowering、runtime、
 witness、self-artifact 和 SDK 全部闭合后才进入 current core。
@@ -921,22 +922,27 @@ target lifecycle 和并发冲突。整批 patch 通过后更新本次 BootRun �
 任一错误保留提交前计划。`RuntimeDiagnosis` 保存 original plan、patch、CallbackRef、final
 plan 和错误列表。全局 Program、registry 与其他 BootRun 不受影响。
 
-当前实现提供运行时 action wrapper。v5 合同要求 callback 读取可序列化 continuation
-图并提交受检 PipelinePatch。两者之间需要新的 schema、validator 和 witness。
+Callback 已通过独立 witness 验证四种 patch、事务回滚、并发冲突、lifecycle gate 和
+Diagnosis provenance。
 
 ### 15.3 Loop
 
-    runtimeHookLoop ::
-      AstPath ->
-      RuntimeLoopPolicy
+    loop :: AstRef child => Name -> child -> ControlDecl
+    loopWith :: AstRef child => Name -> VersionedLoopPolicy -> child -> ControlDecl
 
-RuntimeLoopPolicy 包含：
+`Loop` 与 Chain、Parallel、Fallback、Race 同级，只接收一个 child。默认 policy 为：
 
-    iteration limit
-    previous/next snapshot stability predicate
+    VersionedLoopPolicy
+      (LoopPolicyRef "until-quiescent/default")
+      (LoopPolicyVersion 1)
+      (UntilQuiescent 1024)
 
-当前 runtime 执行 bounded fixed-point search。v5 还需要冻结 dependency、
-cleanup、嵌套 Loop 和状态传播语义。
+每次 Loop 至少运行 child 一次。Runtime 只观察该次实际 demand 的 value handler batch，
+使用 `handlerRegistrationOutputEquivalent` 判断变化；同一迭代的多次变化合并成一个
+`StateRevision`。变化触发 child scope replay，外部 occurrence 保持 single-flight。
+内层 Loop 先 settle，其 revision 再合并给外层。已启动资源按 Handler 启动顺序的逆序
+执行 cleanup；cleanup failure 进入 Loop outcome 和 Diagnosis。缺少 equivalence 的动态
+边界在 Handler IO 前被拒绝。
 
 ## 16. 框架优势
 
@@ -985,7 +991,7 @@ SDK core lock 建立从语义源码到发布产物的可验证链。
 
 ## 17. 设计限制
 
-- Loop 语义仍处于实现期；
+- Loop policy、revision replay、嵌套传播和 cleanup 已实现；
 - schema-free SurfaceProgram、elaborator、MAP 和 Application 已实现；
 - 默认 Facade 已移除显式 SchemaIdentity；
 - 当前 ScalarShape 无法严格区分 Bool、Integer、Decimal 和 Text；

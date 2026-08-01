@@ -3,8 +3,8 @@
 ## 1. 适用范围
 
 本文面向使用 `MyFramework` 编写业务程序的开发者。当前公开 Facade 对应 L0 v5.2
-Stage 7，提供 schema elaboration、六种 Effect、Application、三图 lowering、Input CPS、
-统一 Runtime、Scoped EffSys、hanging middleware 和 callback PipelinePatch。
+Stage 8，提供 schema elaboration、六种 Effect、Application、三图 lowering、Input CPS、
+统一 Runtime、Scoped EffSys、hanging middleware、callback PipelinePatch 和 Loop feedback。
 
 框架内部结构见[开发者指南](DEVELOPER_GUIDE.zh.md)，长期语义边界见
 [L0 合同](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md)。
@@ -222,6 +222,14 @@ record descriptor 按字段 key canonicalize。Handler 参数列表保留 Haskel
 
 所有静态错误在 Handler 启动前返回。
 
+Loop 使用单 child：
+
+    loop (name "poll") (name "poll-body")
+
+默认策略为 version 1 的 `UntilQuiescent 1024`。需要更小上限时使用 `loopWith`。Handler
+通过 `HandlerSucceededBatch` 报告一次迭代内的连续值；Runtime 用注册 codec 的 semantic
+equivalence 合并变化并决定是否 replay。Loop 外 Application 不参与 replay。
+
 ## 12. 当前阶段边界
 
 已实现：
@@ -235,14 +243,14 @@ record descriptor 按字段 key canonicalize。Handler 参数列表保留 Haskel
 - occurrence 和 AstPath provenance；
 - Handler codec adapter；
 - v2 显式 migration adapter。
-
-后续阶段：
-
 - defunctionalized Input CPS Runtime；
 - Scoped EffSys；
 - hanging Middleware；
 - Callback PipelinePatch；
-- Loop feedback；
+- Loop feedback、revision、嵌套传播和 cleanup。
+
+后续阶段：
+
 - v5.2 promotion 和 `0.2.0-core0` SDK。
 
 旧 artifact 通过 `MyFramework.Legacy.Migration`、`MyFramework.Legacy.Elaboration` 和
