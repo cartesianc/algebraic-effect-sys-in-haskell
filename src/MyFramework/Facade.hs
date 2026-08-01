@@ -19,6 +19,7 @@ module MyFramework.Facade
   , applicationName
   , applicationRef
   , apply
+  , applyEffSys
   , after
   , c
   , chain
@@ -26,6 +27,7 @@ module MyFramework.Facade
   , e
   , effectRegistryOf
   , effects
+  , effSys
   , fallback
   , graphProgramOf
   , mapping
@@ -44,6 +46,7 @@ module MyFramework.Facade
   , resolveAll
   , runPreparedRuntime
   , schemaCatalogOf
+  , scopedEffSys
   , transformRegistryOf
   , u
   , validate
@@ -74,6 +77,7 @@ import MyFramework.Effect hiding
   , uEffectRef
   )
 import qualified MyFramework.Effect as CoreEffect
+import MyFramework.EffSys
 import MyFramework.Elaboration
 import MyFramework.Graph
 import MyFramework.Schema
@@ -229,6 +233,43 @@ apply currentCommand currentMap currentRead =
     observationBindingKey =
       BindingKey (effectKeyText commandKey ++ "/observation")
 
+applyEffSys ::
+  forall commandKind params observation.
+  ( CommandEffectKind commandKind
+  , HasSchema params
+  , HasSchema observation
+  ) =>
+  EffectRef commandKind params observation ->
+  EffectRef 'MAP EffSysRef params ->
+  R EffSysRef ->
+  EffSysRef ->
+  Application
+applyEffSys currentCommand currentMap currentRead currentEffSysRef =
+  currentApplication
+    { applicationEffectIR =
+        map replaceReadSource (applicationEffectIR currentApplication)
+    }
+  where
+    currentApplication = apply currentCommand currentMap currentRead
+    currentReadKey = effectRefKey currentRead
+    replaceReadSource currentEffect
+      | someEffectRefKey (effectIrRef currentEffect) == currentReadKey =
+          case effectIrSpec currentEffect of
+            ReadEffect currentSpec ->
+              currentEffect
+                { effectIrSpec =
+                    ReadEffect
+                      currentSpec
+                        { readSpecSource = ValueEffSysRef currentEffSysRef
+                        }
+                }
+            _ -> currentEffect
+      | otherwise = currentEffect
+
+effSys :: Name -> Name -> EffSysRef
+effSys currentRegistry currentAstRoot =
+  declaredEffSysRef (nameText currentRegistry) (nameText currentAstRoot)
+
 evidenceBinding :: BindingKey -> (BindingKey, SurfaceBinding)
 evidenceBinding currentKey =
   (currentKey, SurfaceEvidence currentKey)
@@ -309,6 +350,7 @@ data ProgramIR = ProgramIR
   { programIrEffects :: EffectRegistry
   , programIrTransforms :: TransformRegistry
   , programIrAst :: AstPlan
+  , programIrEffSysRegistry :: EffSysRegistryId
   }
   deriving (Eq, Ord, Read, Show)
 
@@ -341,6 +383,7 @@ data ProgramError
   | ProgramElaborationFailed ElaborationError
   | ProgramGraphFailed GraphError
   | ProgramContinuationFailed ContinuationPlanError
+  | ProgramEffSysFailed EffSysError
   deriving (Eq, Ord, Read, Show)
 
 program ::
@@ -383,6 +426,14 @@ program currentRoot currentControls currentModules = do
           (programIrTransforms currentIr)
           (programIrAst currentIr)
       )
+  let currentEffSysErrors =
+        validateEffSysReferences
+          (programIrEffSysRegistry currentIr)
+          (programIrEffects currentIr)
+          currentGraphs
+  if null currentEffSysErrors
+    then pure ()
+    else Left (map ProgramEffSysFailed currentEffSysErrors)
   currentContinuationPlan <-
     mapLeft
       (map ProgramContinuationFailed)
@@ -429,6 +480,22 @@ runPreparedRuntime currentHandlers currentPrepared =
     (graphProgramOf currentProgram)
     (preparedRuntimeContinuationPlan currentPrepared)
     currentHandlers
+  where
+    currentProgram = preparedRuntimeProgram currentPrepared
+    currentIr = elaboratedProgramPayload (programElaborated currentProgram)
+
+scopedEffSys ::
+  EffSysRef ->
+  PreparedRuntime ->
+  Either [EffSysError] EffSysIR
+scopedEffSys currentRef currentPrepared =
+  buildEffSysIR
+    (programIrEffSysRegistry currentIr)
+    (programIrEffects currentIr)
+    (programIrTransforms currentIr)
+    (graphProgramOf currentProgram)
+    (preparedRuntimeContinuationPlan currentPrepared)
+    currentRef
   where
     currentProgram = preparedRuntimeProgram currentPrepared
     currentIr = elaboratedProgramPayload (programElaborated currentProgram)
@@ -481,6 +548,7 @@ buildProgramIr currentRoot currentControls currentModules
           { programIrEffects = EffectRegistry uniqueEffects
           , programIrTransforms = TransformRegistry uniqueTransforms
           , programIrAst = resolveControl [] currentRoot
+          , programIrEffSysRegistry = EffSysRegistryId (nameText currentRoot)
           }
   where
     controlIndex = Map.fromList [(controlName currentControl, currentControl) | currentControl <- currentControls]
@@ -635,6 +703,7 @@ qualifyValueSource currentModule currentSource =
     ValueRecord currentFields ->
       ValueRecord [(currentName, qualifyValueSource currentModule currentChild) | (currentName, currentChild) <- currentFields]
     ValueProduct currentItems -> ValueProduct (map (qualifyValueSource currentModule) currentItems)
+    ValueEffSysRef currentRef -> ValueEffSysRef currentRef
 
 qualifyTransform :: Name -> TransformDecl -> TransformDecl
 qualifyTransform currentModule currentTransform =

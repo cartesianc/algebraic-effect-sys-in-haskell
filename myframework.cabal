@@ -23,6 +23,7 @@ library
       MyFramework.CURDE.Record
       MyFramework.Elaboration
       MyFramework.Effect
+      MyFramework.EffSys
       MyFramework.Facade
       MyFramework.Handler
       MyFramework.Handler.Adapter
@@ -58,6 +59,7 @@ library
       MyFramework.CURDE.Lowering
       MyFramework.CURDE.Types
       MyFramework.CURDE.Validate
+      MyFramework.EffSys.Types
       MyFramework.Handler.Internal
       MyFramework.Legacy.Facade
       MyFramework.Runtime.Branch
@@ -162,6 +164,23 @@ executable facade-v52-witness
 executable input-cps-witness
   hs-source-dirs: app
   main-is: InputCpsWitness.hs
+  default-language: Haskell2010
+  build-depends:
+      base >=4.18 && <5
+    , myframework
+  ghc-options:
+      -Wall
+      -Wcompat
+      -Widentities
+      -Wincomplete-record-updates
+      -Wincomplete-uni-patterns
+      -Wmissing-export-lists
+      -Wpartial-fields
+      -Wredundant-constraints
+
+executable effsys-ref-witness
+  hs-source-dirs: app
+  main-is: EffSysRefWitness.hs
   default-language: Haskell2010
   build-depends:
       base >=4.18 && <5

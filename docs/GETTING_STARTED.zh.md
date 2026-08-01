@@ -3,8 +3,8 @@
 ## 1. 适用范围
 
 本文面向使用 `MyFramework` 编写业务程序的开发者。当前公开 Facade 对应 L0 v5.2
-Stage 4，提供 schema elaboration、六种 Effect、Application、三图 lowering、Input CPS
-和统一 Runtime。
+Stage 5，提供 schema elaboration、六种 Effect、Application、三图 lowering、Input CPS、
+统一 Runtime 和 Scoped EffSys。
 
 框架内部结构见[开发者指南](DEVELOPER_GUIDE.zh.md)，长期语义边界见
 [L0 合同](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md)。
@@ -42,6 +42,7 @@ import MyFramework
 | `EffectModule` | 把 Application 注册到 AST 模块 |
 | `ControlDecl` | 使用 chain、parallel、fallback、race 调度模块或叶子 |
 | `PreparedRuntime` | 保存 surface、elaborated program、三类 graph 和 `ContinuationPlan` |
+| `EffSysRef` | 作为普通结构化值引用一个 AST scope 及其 Effect registry |
 
 ## 4. 定义业务类型
 

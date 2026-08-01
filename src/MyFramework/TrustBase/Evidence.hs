@@ -9,6 +9,8 @@ module MyFramework.TrustBase.Evidence
   , evidenceFor
   , effectApplicationClaimCatalog
   , effectApplicationEvidenceSchemaV1
+  , effSysRefClaimCatalog
+  , effSysRefEvidenceSchemaV1
   , fixedPointDiffClaimCatalog
   , fixedPointDiffEvidenceSchemaV1
   , facadeV52ClaimCatalog
@@ -169,6 +171,13 @@ inputCpsEvidenceSchemaV1 :: SchemaId
 inputCpsEvidenceSchemaV1 =
   SchemaId
     { schemaIdName = SchemaName "input-cps-witness"
+    , schemaIdVersion = SchemaVersion 1
+    }
+
+effSysRefEvidenceSchemaV1 :: SchemaId
+effSysRefEvidenceSchemaV1 =
+  SchemaId
+    { schemaIdName = SchemaName "effsys-ref-witness"
     , schemaIdVersion = SchemaVersion 1
     }
 
@@ -393,6 +402,27 @@ inputCpsClaimCatalog =
           ]
     , claimCatalogManifestClaim =
         ClaimName "input-cps-claim-manifest"
+    }
+
+effSysRefClaimCatalog :: ClaimCatalog
+effSysRefClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "effsys-ref"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "effsys-ref-ir-roundtrip"
+          , "effsys-ref-scope-closure-three-graphs"
+          , "effsys-ref-enters-value-graph"
+          , "effsys-ref-parameter-does-not-add-demand"
+          , "effsys-ref-snapshot-roundtrip"
+          , "effsys-ref-view-and-snapshot-distinct"
+          , "effsys-ref-query-ir-pipeline-state-observation-failure-stats"
+          , "effsys-ref-query-does-not-start-handler"
+          , "effsys-ref-cross-scope-rejected"
+          , "effsys-ref-registry-mismatch-rejected"
+          ]
+    , claimCatalogManifestClaim = ClaimName "effsys-ref-claim-manifest"
     }
 
 referencedRuntimeClaimCatalog :: ClaimCatalog

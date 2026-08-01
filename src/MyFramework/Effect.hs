@@ -54,6 +54,9 @@ import Data.Proxy
 import MyFramework.Schema
   ( ValueSchemaId
   )
+import MyFramework.EffSys.Types
+  ( EffSysRef
+  )
 
 -- | The six serializable effect kinds in the v5.2 core.
 data EffectKind
@@ -185,6 +188,7 @@ data ValueSourceSpec
   | ValueFromR SomeEffectRef
   | ValueRecord [(ParamName, ValueSourceSpec)]
   | ValueProduct [ValueSourceSpec]
+  | ValueEffSysRef EffSysRef
   deriving (Eq, Ord, Read, Show)
 
 data CommandSpec = CommandSpec

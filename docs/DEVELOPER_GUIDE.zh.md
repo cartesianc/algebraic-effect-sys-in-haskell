@@ -16,11 +16,12 @@ TrustBase 和 SDK lowering 的开发者。
 4. src/MyFramework/Elaboration.hs
 5. src/MyFramework/Effect.hs
 6. src/MyFramework/Graph.hs
-7. src/MyFramework/Ast.hs
-8. src/MyFramework/Recursion.hs
-9. src/MyFramework/Runtime.hs
-10. src/MyFramework/Runtime/V52.hs
-11. src/MyFramework/Runtime/Diagnosis.hs
+7. src/MyFramework/EffSys.hs
+8. src/MyFramework/Ast.hs
+9. src/MyFramework/Recursion.hs
+10. src/MyFramework/Runtime.hs
+11. src/MyFramework/Runtime/V52.hs
+12. src/MyFramework/Runtime/Diagnosis.hs
 
 ## 2. 当前实现和目标合同
 
@@ -32,7 +33,8 @@ TrustBase 和 SDK lowering 的开发者。
 | typed CURDE core | 已运行，提供 GADT Handle、RExpr、Implementation 和 demand graph |
 | v5.2 Stage 3 | 已运行，提供 schema-free Facade、正式 MAP、Application 和三图分离 |
 | v5.2 Stage 4 | 已运行，提供 defunctionalized Input CPS、统一 Runtime 和 occurrence single-flight |
-| v5.2 Stage 5+ | 待实现 Scoped EffSys、Hook、Callback、Loop 和 promotion |
+| v5.2 Stage 5 | 已运行，提供 first-class EffSysRef、scope closure、live view 和 snapshot |
+| v5.2 Stage 6+ | 待实现 Hook、Callback、Loop 和 promotion |
 
 当前源码可以作为迁移基础。v5.2 设计只有在 Facade、schema elaboration、lowering、runtime、
 witness、self-artifact 和 SDK 全部闭合后才进入 current core。
@@ -828,11 +830,11 @@ Handler 测试、policy Effect 和 witness。
 
 ## 14. First-Class Effect
 
-v5 FCE 的载体是带 AST scope 的擦除后 EffSysRef：
+v5.2 FCE 的载体是带 AST scope 的擦除后 EffSysRef：
 
     data EffSysRef = EffSysRef
-      { astRoot  :: AstRef
-      , registry :: RegistryRef
+      { effSysRefAstRoot :: String
+      , effSysRefRegistry :: EffSysRegistryId
       }
 
 它提供：
@@ -844,6 +846,18 @@ v5 FCE 的载体是带 AST scope 的擦除后 EffSysRef：
 - scope 统计；
 - callback patch 输入；
 - Loop policy 输入。
+
+`applyEffSys command map read ref` 把引用写入 R 的 `ValueEffSysRef`。ValueGraph
+生成 `ValueEffSysRefRole -> ValueReadRole`，Runtime 将序列化引用交给 MAP。这个值不会
+增加 demand。
+
+`buildEffSysIR` 先截取 AST subtree，再沿 ContinuationPlan 纳入 input 可达 occurrence，
+最后投影 InputGraph、ValueGraph、EffectRegistry 和 TransformRegistry。`EffSysView` 从
+IORef 读取 live projection，`EffSysSnapshot` 保存可 round-trip 的历史值。查询 API 没有
+Runtime 执行入口。
+
+Facade 在 Handler 启动前验证 registry identity、scope root 唯一性和 consumer AstPath。
+scope 外引用与 registry 不匹配均进入 `ProgramEffSysFailed`。
 
 实现分工：
 
@@ -876,8 +890,8 @@ RuntimeHooks 中：
 
 Middleware 可以在 child 前后记录事件、读取快照、统计状态和运行自身 action。
 
-v5 将为它提供 Scoped EffSysRef。当前 typed runtime 已有 RuntimeAction 包装点，
-hanging scope observation 尚未闭合。
+Stage 5 已提供 Scoped EffSysRef。Stage 6 将它交给 hanging middleware，并记录 hook
+生命周期事件。
 
 ### 15.2 Callback
 
@@ -951,7 +965,7 @@ SDK core lock 建立从语义源码到发布产物的可验证链。
 
 ## 17. 设计限制
 
-- FCE 和 hanging 语义仍处于实现期；
+- hanging、callback 和 Loop 语义仍处于实现期；
 - schema-free SurfaceProgram、elaborator、MAP 和 Application 已实现；
 - 默认 Facade 已移除显式 SchemaIdentity；
 - 当前 ScalarShape 无法严格区分 Bool、Integer、Decimal 和 Text；

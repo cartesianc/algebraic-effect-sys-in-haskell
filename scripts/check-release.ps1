@@ -95,6 +95,9 @@ try {
     Invoke-Captured "input CPS runtime witness" {
         stack --work-dir .stack-work-codex exec input-cps-witness
     } (Join-Path $evidenceRoot "stage4-input-cps.json")
+    Invoke-Captured "scoped EffSys witness" {
+        stack --work-dir .stack-work-codex exec effsys-ref-witness
+    } (Join-Path $evidenceRoot "stage5-effsys-ref.json")
     Invoke-Captured "runtime witness" {
         stack --work-dir .stack-work-codex exec curde-runtime-witness
     } (Join-Path $evidenceRoot "stage0-runtime.json")

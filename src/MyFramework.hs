@@ -2,10 +2,12 @@ module MyFramework
   ( frameworkVersion
   , module MyFramework.Facade
   , module MyFramework.Handler.Adapter
+  , module MyFramework.EffSys
   , module MyFramework.Runtime.V52
   ) where
 
 import MyFramework.Facade
+import MyFramework.EffSys
 import MyFramework.Handler.Adapter
 import MyFramework.Runtime.V52
 

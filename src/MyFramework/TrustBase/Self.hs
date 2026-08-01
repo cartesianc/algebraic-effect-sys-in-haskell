@@ -45,6 +45,8 @@ import MyFramework.TrustBase.Evidence
   , crawlerFacadeEvidenceSchemaV2
   , effectApplicationClaimCatalog
   , effectApplicationEvidenceSchemaV1
+  , effSysRefClaimCatalog
+  , effSysRefEvidenceSchemaV1
   , facadeV52ClaimCatalog
   , facadeV52EvidenceSchemaV1
   , inputCpsClaimCatalog
@@ -126,6 +128,7 @@ myFrameworkTrustBaseManifest =
         [ "MyFramework"
         , "MyFramework.Elaboration"
         , "MyFramework.Effect"
+        , "MyFramework.EffSys"
         , "MyFramework.Facade"
         , "MyFramework.Graph"
         , "MyFramework.Handler.Adapter"
@@ -195,6 +198,10 @@ selfSchemaCatalog =
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema = inputCpsEvidenceSchemaV1
       , schemaCatalogEntryProducer = "input-cps-witness"
+      }
+  , SchemaCatalogEntry
+      { schemaCatalogEntrySchema = effSysRefEvidenceSchemaV1
+      , schemaCatalogEntryProducer = "effsys-ref-witness"
       }
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema = selfInterpretEvidenceSchemaV3
@@ -279,6 +286,7 @@ selfClaimCatalog =
     ++ claimCatalogClaims effectApplicationClaimCatalog
     ++ claimCatalogClaims facadeV52ClaimCatalog
     ++ claimCatalogClaims inputCpsClaimCatalog
+    ++ claimCatalogClaims effSysRefClaimCatalog
     ++ claimCatalogClaims selfInterpretClaimCatalog
     ++ claimCatalogClaims promotionClaimCatalog
     ++ claimCatalogClaims sdkPackageClaimCatalog

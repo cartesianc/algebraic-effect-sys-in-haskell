@@ -168,6 +168,7 @@ data ValueNodeRole
   | ValueMapRole
   | ValueCommandParamsRole
   | ValueObservationRole
+  | ValueEffSysRefRole
   deriving (Eq, Ord, Read, Show)
 
 data ValueNode = ValueNode
@@ -184,6 +185,7 @@ data ValueEdgeKind
   | ValueMapInput
   | ValueParamBinding
   | ValueObservation
+  | ValueEffSysDependency
   deriving (Eq, Ord, Read, Show)
 
 data ValueEdge = ValueEdge
@@ -641,10 +643,43 @@ buildValueGraph effectIndex occurrences =
             valueNodeFor currentOccurrence ValueCommandParamsRole (effectApplicationCommand currentApplication)
           currentObservationNode =
             valueNodeFor currentOccurrence ValueObservationRole (effectApplicationCommand currentApplication)
-       in currentReadNodes ++ [currentMapNode, currentParamNode, currentObservationNode]
+          currentEffSysNodes =
+            [ valueNodeFor currentOccurrence ValueEffSysRefRole (effectApplicationRead currentApplication)
+            | applicationContainsEffSysRef effectIndex currentApplication
+            ]
+       in currentReadNodes ++ currentEffSysNodes ++ [currentMapNode, currentParamNode, currentObservationNode]
     occurrenceValueEdges currentOccurrence =
       readDependencyEdges effectIndex currentOccurrence
+        ++ effSysValueEdges effectIndex currentOccurrence
         ++ applicationValueEdges currentOccurrence
+
+applicationContainsEffSysRef ::
+  Map.Map EffectKey EffectIR ->
+  EffectApplication ->
+  Bool
+applicationContainsEffSysRef effectIndex currentApplication =
+  case Map.lookup (someEffectRefKey (effectApplicationRead currentApplication)) effectIndex of
+    Just currentEffect ->
+      case effectIrSpec currentEffect of
+        ReadEffect currentRead -> valueSourceContainsEffSysRef (readSpecSource currentRead)
+        _ -> False
+    Nothing -> False
+
+effSysValueEdges ::
+  Map.Map EffectKey EffectIR ->
+  ApplicationOccurrence ->
+  [ValueEdge]
+effSysValueEdges effectIndex currentOccurrence =
+  [ ValueEdge
+      { valueEdgeFrom = valueNodeIdFor currentOccurrence ValueEffSysRefRole currentRead
+      , valueEdgeTo = valueNodeIdFor currentOccurrence ValueReadRole currentRead
+      , valueEdgeKind = ValueEffSysDependency
+      }
+  | applicationContainsEffSysRef effectIndex currentApplication
+  ]
+  where
+    currentApplication = applicationOccurrenceApplication currentOccurrence
+    currentRead = effectApplicationRead currentApplication
 
 occurrenceReadRefs ::
   Map.Map EffectKey EffectIR ->
@@ -755,6 +790,17 @@ valueSourceRefs currentSource =
     ValueRecord currentFields ->
       concatMap (valueSourceRefs . snd) currentFields
     ValueProduct currentItems -> concatMap valueSourceRefs currentItems
+    ValueEffSysRef _ -> []
+
+valueSourceContainsEffSysRef :: ValueSourceSpec -> Bool
+valueSourceContainsEffSysRef currentSource =
+  case currentSource of
+    ValueExternal _ -> False
+    ValueLiteral _ -> False
+    ValueFromR _ -> False
+    ValueRecord currentFields -> any (valueSourceContainsEffSysRef . snd) currentFields
+    ValueProduct currentItems -> any valueSourceContainsEffSysRef currentItems
+    ValueEffSysRef _ -> True
 
 inputCycles :: Map.Map EffectKey EffectIR -> [[EffectKey]]
 inputCycles effectIndex =

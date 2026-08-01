@@ -1033,6 +1033,8 @@ evaluateSource currentEnvironment currentOccurrence currentRef currentSchema cur
         ( RuntimeValue currentSchema . show . map runtimeValuePayload
             <$> sequence currentValues
         )
+    ValueEffSysRef currentEffSysRef ->
+      pure (Right (RuntimeValue currentSchema (show currentEffSysRef)))
 
 evaluateMap ::
   RuntimeEnvironment ->
