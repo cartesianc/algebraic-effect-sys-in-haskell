@@ -101,6 +101,9 @@ try {
     Invoke-Captured "hanging middleware witness" {
         stack --work-dir .stack-work-codex exec hanging-middleware-witness
     } (Join-Path $evidenceRoot "stage6-hanging-middleware.json")
+    Invoke-Captured "pipeline patch witness" {
+        stack --work-dir .stack-work-codex exec pipeline-patch-witness
+    } (Join-Path $evidenceRoot "stage7-pipeline-patch.json")
     Invoke-Captured "runtime witness" {
         stack --work-dir .stack-work-codex exec curde-runtime-witness
     } (Join-Path $evidenceRoot "stage0-runtime.json")
@@ -133,6 +136,9 @@ try {
     }
     Invoke-Checked "middleware capability boundary" {
         & (Join-Path $PSScriptRoot "check-middleware-boundary.ps1")
+    }
+    Invoke-Checked "callback capability boundary" {
+        & (Join-Path $PSScriptRoot "check-callback-boundary.ps1")
     }
     Invoke-Checked "diff check" {
         git diff --check

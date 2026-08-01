@@ -25,6 +25,12 @@ module MyFramework.Runtime.V52
   , RuntimeMiddlewareRegistration
   , RuntimeMiddlewareRegistry
   , RuntimeMiddlewareRegistryError (..)
+  , CallbackContext (..)
+  , PipelinePatchRecord (..)
+  , RuntimeCallback
+  , RuntimeCallbackRegistration
+  , RuntimeCallbackRegistry
+  , RuntimeCallbackRegistryError (..)
   , RuntimeSnapshot (..)
   , RuntimeValue (..)
   , UnifiedRuntimeRun (..)
@@ -32,11 +38,14 @@ module MyFramework.Runtime.V52
   , continuationPlanDigest
   , executeRuntime
   , executeRuntimeWithHooks
+  , executeRuntimeWithHooksAndCallbacks
   , runtimeHandler
   , runtimeHandlerRegistry
   , runRuntimeActionV52
   , runtimeMiddleware
   , runtimeMiddlewareRegistry
+  , runtimeCallback
+  , runtimeCallbackRegistry
   ) where
 
 import Control.Concurrent
@@ -51,6 +60,7 @@ import Control.Concurrent.MVar
   ( MVar
   , modifyMVar
   , modifyMVar_
+  , withMVar
   )
 import Control.Exception
   ( SomeException
@@ -74,6 +84,7 @@ import Data.Maybe
   )
 
 import MyFramework.Effect
+import MyFramework.Callback
 import MyFramework.EffSys.Types
   ( EffSysRef
   )
@@ -445,6 +456,65 @@ data RuntimeMiddlewareRegistryError
   = RuntimeMiddlewareDuplicate MiddlewareRef
   deriving (Eq, Ord, Read, Show)
 
+data PipelinePatchRecord = PipelinePatchRecord
+  { pipelinePatchRecordId :: PipelinePatchId
+  , pipelinePatchRecordSubmitter :: CallbackRef
+  , pipelinePatchRecordOriginal :: ContinuationPlan
+  , pipelinePatchRecordPatches :: [PipelinePatch]
+  , pipelinePatchRecordFinal :: ContinuationPlan
+  , pipelinePatchRecordErrors :: [PipelinePatchError]
+  }
+  deriving (Eq, Ord, Read, Show)
+
+data CallbackContext = CallbackContext
+  { callbackContextRef :: CallbackRef
+  , callbackContextScope :: EffSysRef
+  , callbackContextAstPath :: AstPath
+  , callbackContextPlanSnapshot :: IO ContinuationPlan
+  , callbackContextSubmit :: [PipelinePatch] -> IO (Either [PipelinePatchError] PipelinePatchId)
+  }
+
+type RuntimeCallback = CallbackContext -> IO ()
+
+data RuntimeCallbackRegistration = RuntimeCallbackRegistration
+  { runtimeCallbackRegistrationRef :: CallbackRef
+  , runtimeCallbackRegistrationFunction :: RuntimeCallback
+  }
+
+newtype RuntimeCallbackRegistry = RuntimeCallbackRegistry
+  { runtimeCallbackRegistryMap :: Map.Map CallbackRef RuntimeCallbackRegistration
+  }
+
+data RuntimeCallbackRegistryError
+  = RuntimeCallbackDuplicate CallbackRef
+  deriving (Eq, Ord, Read, Show)
+
+runtimeCallback :: CallbackRef -> RuntimeCallback -> RuntimeCallbackRegistration
+runtimeCallback currentRef currentFunction =
+  RuntimeCallbackRegistration
+    { runtimeCallbackRegistrationRef = currentRef
+    , runtimeCallbackRegistrationFunction = currentFunction
+    }
+
+runtimeCallbackRegistry ::
+  [RuntimeCallbackRegistration] ->
+  Either [RuntimeCallbackRegistryError] RuntimeCallbackRegistry
+runtimeCallbackRegistry currentRegistrations
+  | null currentErrors =
+      Right
+        ( RuntimeCallbackRegistry
+            ( Map.fromList
+                [ (runtimeCallbackRegistrationRef currentRegistration, currentRegistration)
+                | currentRegistration <- currentRegistrations
+                ]
+            )
+        )
+  | otherwise = Left currentErrors
+  where
+    currentErrors =
+      map RuntimeCallbackDuplicate
+        (duplicates (map runtimeCallbackRegistrationRef currentRegistrations))
+
 runtimeMiddleware ::
   MiddlewareRef ->
   RuntimeMiddleware ->
@@ -517,6 +587,7 @@ data RuntimePreparationError
   | RuntimeMapOutputSchemaAmbiguous EffectKey [ValueSchemaId]
   | RuntimeMiddlewareMissing MiddlewareRef
   | RuntimeHookContinuationInvalid ContinuationPlanError
+  | RuntimeCallbackMissing CallbackRef
   | RuntimeAstOccurrenceMissing AstPath
   | RuntimeContinuationNodeMissing ApplicationOccurrenceId EffectKey
   deriving (Eq, Ord, Read, Show)
@@ -532,11 +603,16 @@ data RuntimeEvent
   | RuntimeHookEntered MiddlewareRef EffSysRef AstPath
   | RuntimeHookExited MiddlewareRef EffSysRef AstPath ContinuationOutcome
   | RuntimeHookOwnApplicationStarted MiddlewareRef ApplicationOccurrenceId AstPath
+  | RuntimeCallbackEntered CallbackRef EffSysRef AstPath
+  | RuntimeCallbackExited CallbackRef EffSysRef AstPath
+  | RuntimePipelinePatchCommitted PipelinePatchId CallbackRef
+  | RuntimePipelinePatchRejected PipelinePatchId CallbackRef [PipelinePatchError]
   deriving (Eq, Ord, Show)
 
 data RuntimeDiagnosis = RuntimeDiagnosis
   { runtimeDiagnosisInputTrace :: [ContinuationId]
   , runtimeDiagnosisFailures :: [RuntimeFault]
+  , runtimeDiagnosisPipelinePatches :: [PipelinePatchRecord]
   }
   deriving (Eq, Ord, Show)
 
@@ -560,24 +636,34 @@ data MutableRuntime = MutableRuntime
   , mutableObservations :: Map.Map ExecutionInstanceId RuntimeValue
   , mutableEvents :: [RuntimeEvent]
   , mutableTrace :: [ContinuationId]
+  , mutablePatchRecords :: [PipelinePatchRecord]
   }
 
 emptyMutableRuntime :: MutableRuntime
 emptyMutableRuntime =
-  MutableRuntime Map.empty Map.empty [] []
+  MutableRuntime Map.empty Map.empty [] [] []
+
+data RuntimeContinuationState = RuntimeContinuationState
+  { runtimeContinuationOriginalPlan :: ContinuationPlan
+  , runtimeContinuationCurrentPlan :: ContinuationPlan
+  , runtimeContinuationLifecycle :: Map.Map InputNodeId PipelineTargetLifecycle
+  , runtimeContinuationTouched :: Map.Map InputNodeId PipelinePatchId
+  , runtimeContinuationSequence :: Int
+  }
 
 data RuntimeEnvironment = RuntimeEnvironment
   { environmentBootRun :: BootRunId
   , environmentEffects :: Map.Map EffectKey EffectIR
   , environmentHandlers :: RuntimeHandlerRegistry
-  , environmentContinuationNodes :: Map.Map InputNodeId ContinuationNode
-  , environmentContinuationLookup :: Map.Map (ApplicationOccurrenceId, EffectKey) InputNodeId
+  , environmentContinuationState :: MVar RuntimeContinuationState
   , environmentOccurrences :: Map.Map AstPath ApplicationOccurrence
   , environmentOccurrencesById :: Map.Map ApplicationOccurrenceId ApplicationOccurrence
   , environmentState :: MVar MutableRuntime
   , environmentFlights :: MVar (Map.Map ExecutionInstanceId (MVar RuntimeHandlerResult))
   , environmentHookPlan :: HookPlan
   , environmentMiddlewareRegistry :: RuntimeMiddlewareRegistry
+  , environmentCallbackRegistry :: RuntimeCallbackRegistry
+  , environmentCallbackLock :: MVar ()
   }
 
 executeRuntime ::
@@ -607,6 +693,27 @@ executeRuntimeWithHooks ::
   RuntimeMiddlewareRegistry ->
   IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
 executeRuntimeWithHooks currentEffects currentAst baseGraphs basePlan currentHookPlan currentHandlers currentMiddleware =
+  executeRuntimeWithHooksAndCallbacks
+    currentEffects
+    currentAst
+    baseGraphs
+    basePlan
+    currentHookPlan
+    currentHandlers
+    currentMiddleware
+    (RuntimeCallbackRegistry Map.empty)
+
+executeRuntimeWithHooksAndCallbacks ::
+  EffectRegistry ->
+  AstPlan ->
+  CompiledGraphs ->
+  ContinuationPlan ->
+  HookPlan ->
+  RuntimeHandlerRegistry ->
+  RuntimeMiddlewareRegistry ->
+  RuntimeCallbackRegistry ->
+  IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
+executeRuntimeWithHooksAndCallbacks currentEffects currentAst baseGraphs basePlan currentHookPlan currentHandlers currentMiddleware currentCallbacks =
   case compileContinuationPlan (hookPlanDetachedGraphs currentHookPlan) of
     Left currentContinuationErrors ->
       pure (Left (map RuntimeHookContinuationInvalid currentContinuationErrors))
@@ -617,11 +724,26 @@ executeRuntimeWithHooks currentEffects currentAst baseGraphs basePlan currentHoo
     runPrepared currentGraphs currentPlan =
       case
           validateRuntimePreparation currentEffects currentGraphs currentHandlers
-            ++ validateRuntimeMiddleware currentHookPlan currentMiddleware of
+            ++ validateRuntimeMiddleware currentHookPlan currentMiddleware
+            ++ validateRuntimeCallbacks currentHookPlan currentCallbacks of
         [] -> do
           currentBootRun <- newBootRunId
           currentState <- newMVar emptyMutableRuntime
           currentFlights <- newMVar Map.empty
+          currentContinuationState <-
+            newMVar
+              RuntimeContinuationState
+                { runtimeContinuationOriginalPlan = currentPlan
+                , runtimeContinuationCurrentPlan = currentPlan
+                , runtimeContinuationLifecycle =
+                    Map.fromList
+                      [ (continuationNodeId currentNode, PipelineTargetDormant)
+                      | currentNode <- continuationPlanNodes currentPlan
+                      ]
+                , runtimeContinuationTouched = Map.empty
+                , runtimeContinuationSequence = 0
+                }
+          currentCallbackLock <- newMVar ()
           let currentEnvironment =
                 RuntimeEnvironment
                   { environmentBootRun = currentBootRun
@@ -631,18 +753,7 @@ executeRuntimeWithHooks currentEffects currentAst baseGraphs basePlan currentHoo
                         | currentEffect <- effectRegistryEffects currentEffects
                         ]
                   , environmentHandlers = currentHandlers
-                  , environmentContinuationNodes =
-                      Map.fromList
-                        [ (continuationNodeId currentNode, currentNode)
-                        | currentNode <- continuationPlanNodes currentPlan
-                        ]
-                  , environmentContinuationLookup =
-                      Map.fromList
-                        [ ( (continuationNodeOccurrence currentNode, someEffectRefKey (continuationNodeEffect currentNode))
-                          , continuationNodeId currentNode
-                          )
-                        | currentNode <- continuationPlanNodes currentPlan
-                        ]
+                  , environmentContinuationState = currentContinuationState
                   , environmentOccurrences =
                       Map.fromList
                         [ (applicationOccurrencePath currentOccurrence, currentOccurrence)
@@ -657,6 +768,8 @@ executeRuntimeWithHooks currentEffects currentAst baseGraphs basePlan currentHoo
                   , environmentFlights = currentFlights
                   , environmentHookPlan = currentHookPlan
                   , environmentMiddlewareRegistry = currentMiddleware
+                  , environmentCallbackRegistry = currentCallbacks
+                  , environmentCallbackLock = currentCallbackLock
                   }
           currentOutcome <- executeAst currentEnvironment (AstPath []) currentAst
           currentFinal <- readMVar currentState
@@ -721,6 +834,16 @@ validateRuntimeMiddleware currentPlan (RuntimeMiddlewareRegistry currentRegistry
   [ RuntimeMiddlewareMissing (hookPlanEntryRef currentEntry)
   | currentEntry <- hookPlanEntries currentPlan
   , Map.notMember (hookPlanEntryRef currentEntry) currentRegistry
+  ]
+
+validateRuntimeCallbacks ::
+  HookPlan ->
+  RuntimeCallbackRegistry ->
+  [RuntimePreparationError]
+validateRuntimeCallbacks currentPlan (RuntimeCallbackRegistry currentRegistry) =
+  [ RuntimeCallbackMissing (callbackPlanEntryRef currentEntry)
+  | currentEntry <- callbackPlanEntries currentPlan
+  , Map.notMember (callbackPlanEntryRef currentEntry) currentRegistry
   ]
 
 validateRuntimePreparation ::
@@ -992,12 +1115,17 @@ executeApplicationAt ::
   AstPath ->
   IO ContinuationOutcome
 executeApplicationAt currentEnvironment currentPath =
-  runRuntimeActionV52
-    ( foldr
-        (wrapMiddleware currentEnvironment currentPath)
-        (RuntimeActionV52 (executeApplicationCoreAt currentEnvironment currentPath))
-        (hooksForPath currentEnvironment currentPath)
-    )
+  do
+    callbackOutcome <- runCallbacksForPath currentEnvironment currentPath
+    case callbackOutcome of
+      Succeeded ->
+        runRuntimeActionV52
+          ( foldr
+              (wrapMiddleware currentEnvironment currentPath)
+              (RuntimeActionV52 (executeApplicationCoreAt currentEnvironment currentPath))
+              (hooksForPath currentEnvironment currentPath)
+          )
+      _ -> pure callbackOutcome
 
 executeApplicationCoreAt ::
   RuntimeEnvironment ->
@@ -1015,6 +1143,10 @@ executeApplicationCoreAt currentEnvironment currentPath =
               }
         )
     Just currentOccurrence -> do
+      markOccurrenceLifecycle
+        currentEnvironment
+        (applicationOccurrenceId currentOccurrence)
+        PipelineTargetStarted
       appendRuntimeEvent
         currentEnvironment
         (RuntimeApplicationStarted (applicationOccurrenceId currentOccurrence) currentPath)
@@ -1022,7 +1154,584 @@ executeApplicationCoreAt currentEnvironment currentPath =
       appendRuntimeEvent
         currentEnvironment
         (RuntimeApplicationFinished (applicationOccurrenceId currentOccurrence) currentPath currentOutcome)
+      markOccurrenceLifecycle
+        currentEnvironment
+        (applicationOccurrenceId currentOccurrence)
+        PipelineTargetCompleted
       pure currentOutcome
+
+runCallbacksForPath ::
+  RuntimeEnvironment ->
+  AstPath ->
+  IO ContinuationOutcome
+runCallbacksForPath currentEnvironment currentPath =
+  case callbacksForPath currentEnvironment currentPath of
+    [] -> pure Succeeded
+    currentEntries ->
+      withMVar (environmentCallbackLock currentEnvironment) $ \_ -> do
+        shouldRun <- occurrenceIsDormant currentEnvironment currentPath
+        if shouldRun
+          then executeCallbacks currentEntries
+          else pure Succeeded
+  where
+    executeCallbacks [] = pure Succeeded
+    executeCallbacks (currentEntry : remaining) = do
+      currentOutcome <- executeCallback currentEnvironment currentPath currentEntry
+      case currentOutcome of
+        Succeeded -> executeCallbacks remaining
+        _ -> pure currentOutcome
+
+callbacksForPath :: RuntimeEnvironment -> AstPath -> [CallbackPlanEntry]
+callbacksForPath currentEnvironment currentPath =
+  sortOn callbackOrder
+    [ currentEntry
+    | currentEntry <- callbackPlanEntries (environmentHookPlan currentEnvironment)
+    , astPathWithin (callbackPlanEntryResolvedRoot currentEntry) currentPath
+    ]
+  where
+    callbackOrder currentEntry =
+      ( pathDepth (callbackPlanEntryResolvedRoot currentEntry)
+      , callbackPlanEntryDeclarationOrder currentEntry
+      , callbackPlanEntryRef currentEntry
+      )
+
+occurrenceIsDormant :: RuntimeEnvironment -> AstPath -> IO Bool
+occurrenceIsDormant currentEnvironment currentPath =
+  case Map.lookup currentPath (environmentOccurrences currentEnvironment) of
+    Nothing -> pure False
+    Just currentOccurrence -> do
+      currentState <- readMVar (environmentContinuationState currentEnvironment)
+      let currentOccurrenceId = applicationOccurrenceId currentOccurrence
+          currentNodes =
+            [ continuationNodeId currentNode
+            | currentNode <- continuationPlanNodes (runtimeContinuationCurrentPlan currentState)
+            , continuationNodeOccurrence currentNode == currentOccurrenceId
+            ]
+      pure
+        ( all
+            ( (== PipelineTargetDormant)
+                . (\currentNode ->
+                      Map.findWithDefault
+                        PipelineTargetDormant
+                        currentNode
+                        (runtimeContinuationLifecycle currentState)
+                  )
+            )
+            currentNodes
+        )
+
+executeCallback ::
+  RuntimeEnvironment ->
+  AstPath ->
+  CallbackPlanEntry ->
+  IO ContinuationOutcome
+executeCallback currentEnvironment currentPath currentEntry = do
+  appendRuntimeEvent
+    currentEnvironment
+    ( RuntimeCallbackEntered
+        (callbackPlanEntryRef currentEntry)
+        (callbackPlanEntryScope currentEntry)
+        currentPath
+    )
+  currentOutcome <-
+    case
+        Map.lookup
+          (callbackPlanEntryRef currentEntry)
+          (runtimeCallbackRegistryMap (environmentCallbackRegistry currentEnvironment)) of
+      Nothing ->
+        pure
+          ( Failed
+              RuntimeFault
+                { runtimeFaultEffect = Nothing
+                , runtimeFaultPhase = RuntimeInputPhase
+                , runtimeFaultMessage = "callback missing after preparation"
+                }
+          )
+      Just currentRegistration -> do
+        attempted <-
+          try
+            ( runtimeCallbackRegistrationFunction currentRegistration
+                CallbackContext
+                  { callbackContextRef = callbackPlanEntryRef currentEntry
+                  , callbackContextScope = callbackPlanEntryScope currentEntry
+                  , callbackContextAstPath = currentPath
+                  , callbackContextPlanSnapshot =
+                      runtimeContinuationCurrentPlan
+                        <$> readMVar (environmentContinuationState currentEnvironment)
+                  , callbackContextSubmit =
+                      submitPipelinePatches currentEnvironment currentEntry
+                  }
+            )
+        pure
+          ( case attempted of
+              Left (currentException :: SomeException) ->
+                Failed
+                  RuntimeFault
+                    { runtimeFaultEffect = Nothing
+                    , runtimeFaultPhase = RuntimeInputPhase
+                    , runtimeFaultMessage = displayException currentException
+                    }
+              Right () -> Succeeded
+          )
+  appendRuntimeEvent
+    currentEnvironment
+    ( RuntimeCallbackExited
+        (callbackPlanEntryRef currentEntry)
+        (callbackPlanEntryScope currentEntry)
+        currentPath
+    )
+  pure currentOutcome
+
+markOccurrenceLifecycle ::
+  RuntimeEnvironment ->
+  ApplicationOccurrenceId ->
+  PipelineTargetLifecycle ->
+  IO ()
+markOccurrenceLifecycle currentEnvironment currentOccurrence currentLifecycle =
+  modifyMVar_ (environmentContinuationState currentEnvironment) $ \currentState ->
+    pure
+      currentState
+        { runtimeContinuationLifecycle =
+            foldr
+              (\currentNode -> Map.insert (continuationNodeId currentNode) currentLifecycle)
+              (runtimeContinuationLifecycle currentState)
+              [ currentNode
+              | currentNode <- continuationPlanNodes (runtimeContinuationCurrentPlan currentState)
+              , continuationNodeOccurrence currentNode == currentOccurrence
+              ]
+        }
+
+submitPipelinePatches ::
+  RuntimeEnvironment ->
+  CallbackPlanEntry ->
+  [PipelinePatch] ->
+  IO (Either [PipelinePatchError] PipelinePatchId)
+submitPipelinePatches currentEnvironment currentEntry currentPatches = do
+  (currentResult, currentRecord) <-
+    modifyMVar (environmentContinuationState currentEnvironment) $ \currentState -> do
+      let currentPatchId =
+            PipelinePatchId
+              ( sha256
+                  ( show (environmentBootRun currentEnvironment)
+                      ++ show (callbackPlanEntryRef currentEntry)
+                      ++ show (callbackPlanEntryDeclarationOrder currentEntry)
+                      ++ show (runtimeContinuationSequence currentState)
+                      ++ show currentPatches
+                  )
+              )
+          originalPlan = runtimeContinuationCurrentPlan currentState
+          validationErrors =
+            validatePatchBatch
+              currentEnvironment
+              currentEntry
+              currentPatchId
+              currentState
+              currentPatches
+          patchedPlan =
+            applyPatchBatch
+              currentEnvironment
+              currentEntry
+              currentPatchId
+              originalPlan
+              currentPatches
+          cycleErrors =
+            case patchedPlan of
+              Just currentPlan -> map PipelinePatchCycle (planCycles currentPlan)
+              Nothing -> []
+          currentErrors = sort (nub (validationErrors ++ cycleErrors))
+          finalPlan =
+            case (currentErrors, patchedPlan) of
+              ([], Just currentPlan) -> currentPlan
+              _ -> originalPlan
+          currentRecord =
+            PipelinePatchRecord
+              { pipelinePatchRecordId = currentPatchId
+              , pipelinePatchRecordSubmitter = callbackPlanEntryRef currentEntry
+              , pipelinePatchRecordOriginal = originalPlan
+              , pipelinePatchRecordPatches = currentPatches
+              , pipelinePatchRecordFinal = finalPlan
+              , pipelinePatchRecordErrors = currentErrors
+              }
+          nextState
+            | null currentErrors =
+                currentState
+                  { runtimeContinuationCurrentPlan = finalPlan
+                  , runtimeContinuationLifecycle =
+                      foldr
+                        (\currentNode -> Map.insertWith (\_ current -> current) (continuationNodeId currentNode) PipelineTargetDormant)
+                        (runtimeContinuationLifecycle currentState)
+                        (continuationPlanNodes finalPlan)
+                  , runtimeContinuationTouched =
+                      foldr
+                        (\currentTarget -> Map.insert currentTarget currentPatchId)
+                        (runtimeContinuationTouched currentState)
+                        (concatMap patchTargets currentPatches)
+                  , runtimeContinuationSequence = runtimeContinuationSequence currentState + 1
+                  }
+            | otherwise =
+                currentState
+                  { runtimeContinuationSequence = runtimeContinuationSequence currentState + 1
+                  }
+          currentResult
+            | null currentErrors = Right currentPatchId
+            | otherwise = Left currentErrors
+      pure (nextState, (currentResult, currentRecord))
+  recordPipelinePatch currentEnvironment currentRecord
+  pure currentResult
+
+validatePatchBatch ::
+  RuntimeEnvironment ->
+  CallbackPlanEntry ->
+  PipelinePatchId ->
+  RuntimeContinuationState ->
+  [PipelinePatch] ->
+  [PipelinePatchError]
+validatePatchBatch currentEnvironment currentEntry _ currentState currentPatches =
+  concatMap validatePatch currentPatches
+  where
+    currentPlan = runtimeContinuationCurrentPlan currentState
+    nodeIndex =
+      Map.fromList
+        [ (continuationNodeId currentNode, currentNode)
+        | currentNode <- continuationPlanNodes currentPlan
+        ]
+    validatePatch currentPatch =
+      concatMap validateTarget (patchTargets currentPatch)
+        ++ validatePatchReference currentPatch
+        ++ validateRedirect currentPatch
+    validateTarget currentTarget =
+      case Map.lookup currentTarget nodeIndex of
+        Nothing -> [PipelinePatchTargetMissing currentTarget]
+        Just currentNode ->
+          [ PipelinePatchScopeViolation currentTarget (continuationNodeScope currentNode)
+          | not
+              ( astPathWithin
+                  (callbackPlanEntryResolvedRoot currentEntry)
+                  (continuationNodeScope currentNode)
+              )
+          ]
+            ++ [ PipelinePatchTargetAlreadyStarted currentTarget currentLifecycle
+               | let currentLifecycle =
+                       Map.findWithDefault
+                         PipelineTargetDormant
+                         currentTarget
+                         (runtimeContinuationLifecycle currentState)
+               , currentLifecycle /= PipelineTargetDormant
+               ]
+            ++ [ PipelinePatchConcurrentConflict currentTarget currentPatchId
+               | Just currentPatchId <-
+                   [Map.lookup currentTarget (runtimeContinuationTouched currentState)]
+               ]
+    validatePatchReference currentPatch =
+      case patchEffectRef currentPatch of
+        Nothing -> []
+        Just currentRef ->
+          let currentKey = someEffectRefKey currentRef
+           in case Map.lookup currentKey (environmentEffects currentEnvironment) of
+                Nothing -> [PipelinePatchEffectMissing currentKey]
+                Just currentEffect ->
+                  [ PipelinePatchEffectKindMismatch
+                      currentKey
+                      (someEffectRefKind currentRef)
+                      (someEffectRefKind (effectIrRef currentEffect))
+                  | someEffectRefKind currentRef /= someEffectRefKind (effectIrRef currentEffect)
+                  ]
+                    ++ [ PipelinePatchEffectOutsideScope
+                           currentKey
+                           (callbackPlanEntryResolvedRoot currentEntry)
+                       | currentKey `notElem` callbackPlanEntryScopedEffects currentEntry
+                       ]
+    validateRedirect currentPatch =
+      case currentPatch of
+        RedirectInput currentSource _ ->
+          case Map.lookup currentSource nodeIndex of
+            Just currentNode
+              | continuationNodePredecessor currentNode /= Nothing -> []
+            _ -> [PipelinePatchRedirectSourceMissing currentSource]
+        _ -> []
+
+patchTargets :: PipelinePatch -> [InputNodeId]
+patchTargets currentPatch =
+  case currentPatch of
+    InsertInput currentTarget _ -> [currentTarget]
+    ReplaceInput currentTarget _ -> [currentTarget]
+    RemoveInput currentTarget -> [currentTarget]
+    RedirectInput currentSource currentTarget -> [currentSource, currentTarget]
+
+patchEffectRef :: PipelinePatch -> Maybe SomeEffectRef
+patchEffectRef currentPatch =
+  case currentPatch of
+    InsertInput _ currentRef -> Just currentRef
+    ReplaceInput _ currentRef -> Just currentRef
+    RemoveInput _ -> Nothing
+    RedirectInput _ _ -> Nothing
+
+applyPatchBatch ::
+  RuntimeEnvironment ->
+  CallbackPlanEntry ->
+  PipelinePatchId ->
+  ContinuationPlan ->
+  [PipelinePatch] ->
+  Maybe ContinuationPlan
+applyPatchBatch currentEnvironment currentEntry currentPatchId currentPlan currentPatches =
+  Just
+    ( rebuildContinuationSegments
+        ( foldl
+            (applyOnePatch currentEnvironment currentEntry currentPatchId)
+            currentPlan
+            (zip [0 ..] currentPatches)
+        )
+    )
+
+applyOnePatch ::
+  RuntimeEnvironment ->
+  CallbackPlanEntry ->
+  PipelinePatchId ->
+  ContinuationPlan ->
+  (Int, PipelinePatch) ->
+  ContinuationPlan
+applyOnePatch currentEnvironment currentEntry currentPatchId currentPlan (currentOrdinal, currentPatch) =
+  case currentPatch of
+    InsertInput currentTarget currentRef ->
+      case lookupPlanNode currentTarget currentPlan of
+        Nothing -> currentPlan
+        Just currentTargetNode ->
+          let currentInserted =
+                insertedNode
+                  currentEnvironment
+                  currentEntry
+                  currentPatchId
+                  currentOrdinal
+                  currentTargetNode
+                  currentRef
+                  (continuationNodePredecessor currentTargetNode)
+              currentContinuation =
+                patchContinuationId currentPatchId currentOrdinal (continuationNodeId currentInserted) currentTarget
+              updatedTarget =
+                currentTargetNode
+                  { continuationNodePredecessor =
+                      Just (currentContinuation, continuationNodeId currentInserted)
+                  }
+           in putPlanNode updatedTarget (putPlanNode currentInserted currentPlan)
+    ReplaceInput currentTarget currentRef ->
+      case lookupPlanNode currentTarget currentPlan of
+        Nothing -> currentPlan
+        Just currentTargetNode ->
+          let currentReplacement =
+                case
+                    [ currentNode
+                    | currentNode <- continuationPlanNodes currentPlan
+                    , continuationNodeOccurrence currentNode
+                        == continuationNodeOccurrence currentTargetNode
+                    , continuationNodeEffect currentNode == currentRef
+                    , continuationNodeId currentNode /= currentTarget
+                    ] of
+                  currentNode : _ -> currentNode
+                  [] ->
+                    insertedNode
+                      currentEnvironment
+                      currentEntry
+                      currentPatchId
+                      currentOrdinal
+                      currentTargetNode
+                      currentRef
+                      Nothing
+              currentContinuation =
+                patchContinuationId currentPatchId currentOrdinal (continuationNodeId currentReplacement) currentTarget
+              updatedTarget =
+                currentTargetNode
+                  { continuationNodePredecessor =
+                      Just (currentContinuation, continuationNodeId currentReplacement)
+                  }
+           in putPlanNode updatedTarget (putPlanNode currentReplacement currentPlan)
+    RemoveInput currentTarget ->
+      case lookupPlanNode currentTarget currentPlan of
+        Nothing -> currentPlan
+        Just currentTargetNode ->
+          putPlanNode
+            currentTargetNode {continuationNodePredecessor = Nothing}
+            currentPlan
+    RedirectInput currentSource currentTarget ->
+      case (lookupPlanNode currentSource currentPlan, lookupPlanNode currentTarget currentPlan) of
+        (Just currentSourceNode, Just currentTargetNode) ->
+          putPlanNode
+            currentTargetNode
+              { continuationNodePredecessor = continuationNodePredecessor currentSourceNode
+              }
+            ( putPlanNode
+                currentSourceNode {continuationNodePredecessor = Nothing}
+                currentPlan
+            )
+        _ -> currentPlan
+
+insertedNode ::
+  RuntimeEnvironment ->
+  CallbackPlanEntry ->
+  PipelinePatchId ->
+  Int ->
+  ContinuationNode ->
+  SomeEffectRef ->
+  Maybe (ContinuationId, InputNodeId) ->
+  ContinuationNode
+insertedNode currentEnvironment currentEntry currentPatchId currentOrdinal currentTarget currentRef currentPredecessor =
+  ContinuationNode
+    { continuationNodeId = currentNodeId
+    , continuationNodeOccurrence = continuationNodeOccurrence currentTarget
+    , continuationNodeScope = continuationNodeScope currentTarget
+    , continuationNodeEffect = currentRef
+    , continuationNodePredecessor = currentPredecessor
+    , continuationNodeExecutionOccurrence =
+        resolvePatchExecutionOccurrence currentEnvironment currentTarget currentRef
+    }
+  where
+    currentNodeId =
+      InputNodeId
+        ( sha256
+            ( pipelinePatchIdText currentPatchId
+                ++ show currentOrdinal
+                ++ show (callbackPlanEntryRef currentEntry)
+                ++ show (continuationNodeId currentTarget)
+                ++ show currentRef
+            )
+        )
+
+resolvePatchExecutionOccurrence ::
+  RuntimeEnvironment ->
+  ContinuationNode ->
+  SomeEffectRef ->
+  Maybe ApplicationOccurrenceId
+resolvePatchExecutionOccurrence currentEnvironment currentTarget currentRef =
+  case Map.lookup (continuationNodeOccurrence currentTarget) (environmentOccurrencesById currentEnvironment) of
+    Just currentOccurrence
+      | someEffectRefKey
+          ( effectApplicationCommand
+              (applicationOccurrenceApplication currentOccurrence)
+          )
+          == someEffectRefKey currentRef -> Just (applicationOccurrenceId currentOccurrence)
+    _ ->
+      case
+          [ applicationOccurrenceId currentOccurrence
+          | currentOccurrence <- Map.elems (environmentOccurrencesById currentEnvironment)
+          , someEffectRefKey
+              ( effectApplicationCommand
+                  (applicationOccurrenceApplication currentOccurrence)
+              )
+              == someEffectRefKey currentRef
+          ] of
+        [currentOccurrence] -> Just currentOccurrence
+        _ -> Nothing
+
+patchContinuationId ::
+  PipelinePatchId ->
+  Int ->
+  InputNodeId ->
+  InputNodeId ->
+  ContinuationId
+patchContinuationId currentPatchId currentOrdinal currentFrom currentTo =
+  ContinuationId
+    ( sha256
+        ( pipelinePatchIdText currentPatchId
+            ++ show currentOrdinal
+            ++ show currentFrom
+            ++ show currentTo
+        )
+    )
+
+lookupPlanNode :: InputNodeId -> ContinuationPlan -> Maybe ContinuationNode
+lookupPlanNode currentNode currentPlan =
+  case
+      [ currentValue
+      | currentValue <- continuationPlanNodes currentPlan
+      , continuationNodeId currentValue == currentNode
+      ] of
+    currentValue : _ -> Just currentValue
+    [] -> Nothing
+
+putPlanNode :: ContinuationNode -> ContinuationPlan -> ContinuationPlan
+putPlanNode currentNode currentPlan =
+  currentPlan
+    { continuationPlanNodes =
+        sortOn continuationNodeId
+          ( currentNode
+              : filter
+                ((/= continuationNodeId currentNode) . continuationNodeId)
+                (continuationPlanNodes currentPlan)
+          )
+    }
+
+rebuildContinuationSegments :: ContinuationPlan -> ContinuationPlan
+rebuildContinuationSegments currentPlan =
+  currentPlan
+    { continuationPlanSegments =
+        map buildCurrentSegment (continuationPlanNodes currentPlan)
+    }
+  where
+    nodeIndex =
+      Map.fromList
+        [ (continuationNodeId currentNode, currentNode)
+        | currentNode <- continuationPlanNodes currentPlan
+        ]
+    buildCurrentSegment currentTarget =
+      let (currentNodes, currentEdges) = walk [] [] (continuationNodeId currentTarget)
+       in ContinuationSegment
+            { continuationSegmentTarget = continuationNodeId currentTarget
+            , continuationSegmentOrder = currentNodes
+            , continuationSegmentEdges = currentEdges
+            }
+    walk currentNodes currentEdges currentNode =
+      case Map.lookup currentNode nodeIndex of
+        Nothing -> (currentNodes, currentEdges)
+        Just currentValue ->
+          case continuationNodePredecessor currentValue of
+            Nothing -> (currentNode : currentNodes, currentEdges)
+            Just (currentContinuation, currentPredecessor) ->
+              walk
+                (currentNode : currentNodes)
+                (currentContinuation : currentEdges)
+                currentPredecessor
+
+planCycles :: ContinuationPlan -> [[InputNodeId]]
+planCycles currentPlan =
+  sort . nub . map canonicalCycle $
+    mapMaybe (walk []) (map continuationNodeId (continuationPlanNodes currentPlan))
+  where
+    nodeIndex =
+      Map.fromList
+        [ (continuationNodeId currentNode, currentNode)
+        | currentNode <- continuationPlanNodes currentPlan
+        ]
+    walk currentPath currentNode
+      | currentNode `elem` currentPath =
+          Just (dropWhile (/= currentNode) currentPath ++ [currentNode])
+      | otherwise =
+          case Map.lookup currentNode nodeIndex >>= continuationNodePredecessor of
+            Nothing -> Nothing
+            Just (_, currentPredecessor) ->
+              walk (currentPath ++ [currentNode]) currentPredecessor
+
+recordPipelinePatch ::
+  RuntimeEnvironment ->
+  PipelinePatchRecord ->
+  IO ()
+recordPipelinePatch currentEnvironment currentRecord =
+  modifyMVar_ (environmentState currentEnvironment) $ \currentState ->
+    pure
+      currentState
+        { mutablePatchRecords = mutablePatchRecords currentState ++ [currentRecord]
+        , mutableEvents =
+            mutableEvents currentState
+              ++ [ if null (pipelinePatchRecordErrors currentRecord)
+                     then
+                       RuntimePipelinePatchCommitted
+                         (pipelinePatchRecordId currentRecord)
+                         (pipelinePatchRecordSubmitter currentRecord)
+                     else
+                       RuntimePipelinePatchRejected
+                         (pipelinePatchRecordId currentRecord)
+                         (pipelinePatchRecordSubmitter currentRecord)
+                         (pipelinePatchRecordErrors currentRecord)
+                 ]
+        }
 
 hooksForPath :: RuntimeEnvironment -> AstPath -> [HookPlanEntry]
 hooksForPath currentEnvironment currentPath =
@@ -1176,15 +1885,30 @@ executeInputBefore ::
   SomeEffectRef ->
   IO ContinuationOutcome
 executeInputBefore currentEnvironment currentOccurrence currentTarget =
-  case
-      Map.lookup
-        (applicationOccurrenceId currentOccurrence, someEffectRefKey currentTarget)
-        (environmentContinuationLookup currentEnvironment) of
-    Nothing -> pure Succeeded
-    Just currentTargetNode -> walk currentTargetNode
+  do
+    currentState <- readMVar (environmentContinuationState currentEnvironment)
+    let currentNodes = continuationPlanNodes (runtimeContinuationCurrentPlan currentState)
+        currentNodeIndex =
+          Map.fromList
+            [ (continuationNodeId currentNode, currentNode)
+            | currentNode <- currentNodes
+            ]
+        currentLookup =
+          Map.fromList
+            [ ( (continuationNodeOccurrence currentNode, someEffectRefKey (continuationNodeEffect currentNode))
+              , continuationNodeId currentNode
+              )
+            | currentNode <- currentNodes
+            ]
+    case
+        Map.lookup
+          (applicationOccurrenceId currentOccurrence, someEffectRefKey currentTarget)
+          currentLookup of
+      Nothing -> pure Succeeded
+      Just currentTargetNode -> walk currentNodeIndex currentTargetNode
   where
-    walk currentNodeId =
-      case Map.lookup currentNodeId (environmentContinuationNodes currentEnvironment) of
+    walk currentNodeIndex currentNodeId =
+      case Map.lookup currentNodeId currentNodeIndex of
         Nothing ->
           pure
             ( Failed
@@ -1198,10 +1922,10 @@ executeInputBefore currentEnvironment currentOccurrence currentTarget =
           case continuationNodePredecessor currentNode of
             Nothing -> pure Succeeded
             Just (currentContinuation, currentPredecessorId) -> do
-              predecessorInput <- walk currentPredecessorId
+              predecessorInput <- walk currentNodeIndex currentPredecessorId
               case predecessorInput of
                 Succeeded ->
-                  case Map.lookup currentPredecessorId (environmentContinuationNodes currentEnvironment) of
+                  case Map.lookup currentPredecessorId currentNodeIndex of
                     Nothing -> pure predecessorInput
                     Just currentPredecessor -> do
                       currentOutcome <-
@@ -1595,5 +2319,6 @@ snapshotRuntime currentState =
               [ currentFailure
               | Failed currentFailure <- Map.elems (mutableStatuses currentState)
               ]
+          , runtimeDiagnosisPipelinePatches = mutablePatchRecords currentState
           }
     }

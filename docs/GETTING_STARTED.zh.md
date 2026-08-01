@@ -3,8 +3,8 @@
 ## 1. 适用范围
 
 本文面向使用 `MyFramework` 编写业务程序的开发者。当前公开 Facade 对应 L0 v5.2
-Stage 6，提供 schema elaboration、六种 Effect、Application、三图 lowering、Input CPS、
-统一 Runtime、Scoped EffSys 和 hanging middleware。
+Stage 7，提供 schema elaboration、六种 Effect、Application、三图 lowering、Input CPS、
+统一 Runtime、Scoped EffSys、hanging middleware 和 callback PipelinePatch。
 
 框架内部结构见[开发者指南](DEVELOPER_GUIDE.zh.md)，长期语义边界见
 [L0 合同](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md)。

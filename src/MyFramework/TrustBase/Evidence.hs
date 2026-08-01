@@ -19,6 +19,8 @@ module MyFramework.TrustBase.Evidence
   , inputCpsEvidenceSchemaV1
   , hangingMiddlewareClaimCatalog
   , hangingMiddlewareEvidenceSchemaV1
+  , pipelinePatchClaimCatalog
+  , pipelinePatchEvidenceSchemaV1
   , promotionClaimCatalog
   , promotionEvidenceSchemaV1
   , l0SemanticsClaimCatalog
@@ -187,6 +189,13 @@ hangingMiddlewareEvidenceSchemaV1 :: SchemaId
 hangingMiddlewareEvidenceSchemaV1 =
   SchemaId
     { schemaIdName = SchemaName "hanging-middleware-witness"
+    , schemaIdVersion = SchemaVersion 1
+    }
+
+pipelinePatchEvidenceSchemaV1 :: SchemaId
+pipelinePatchEvidenceSchemaV1 =
+  SchemaId
+    { schemaIdName = SchemaName "pipeline-patch-witness"
     , schemaIdVersion = SchemaVersion 1
     }
 
@@ -453,6 +462,26 @@ hangingMiddlewareClaimCatalog =
           ]
     , claimCatalogManifestClaim =
         ClaimName "hanging-middleware-claim-manifest"
+    }
+
+pipelinePatchClaimCatalog :: ClaimCatalog
+pipelinePatchClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "pipeline-patch"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "pipeline-patch-four-operations"
+          , "pipeline-patch-positive-runtime-success"
+          , "pipeline-patch-transactional-rollback"
+          , "pipeline-patch-cycle-kind-and-lifecycle-errors"
+          , "pipeline-patch-partial-submit-does-not-commit"
+          , "pipeline-patch-concurrent-conflict-deterministic"
+          , "pipeline-patch-run-local-only"
+          , "pipeline-patch-diagnosis-provenance"
+          , "pipeline-patch-callback-prestart-phase"
+          ]
+    , claimCatalogManifestClaim = ClaimName "pipeline-patch-claim-manifest"
     }
 
 referencedRuntimeClaimCatalog :: ClaimCatalog

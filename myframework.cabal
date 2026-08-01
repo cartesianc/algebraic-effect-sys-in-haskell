@@ -21,6 +21,7 @@ library
       MyFramework.CURDE
       MyFramework.CURDE.Evidence
       MyFramework.CURDE.Record
+      MyFramework.Callback
       MyFramework.Elaboration
       MyFramework.Effect
       MyFramework.EffSys
@@ -200,6 +201,23 @@ executable effsys-ref-witness
 executable hanging-middleware-witness
   hs-source-dirs: app
   main-is: HangingMiddlewareWitness.hs
+  default-language: Haskell2010
+  build-depends:
+      base >=4.18 && <5
+    , myframework
+  ghc-options:
+      -Wall
+      -Wcompat
+      -Widentities
+      -Wincomplete-record-updates
+      -Wincomplete-uni-patterns
+      -Wmissing-export-lists
+      -Wpartial-fields
+      -Wredundant-constraints
+
+executable pipeline-patch-witness
+  hs-source-dirs: app
+  main-is: PipelinePatchWitness.hs
   default-language: Haskell2010
   build-depends:
       base >=4.18 && <5

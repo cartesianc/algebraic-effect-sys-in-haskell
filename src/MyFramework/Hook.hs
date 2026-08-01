@@ -1,5 +1,8 @@
 module MyFramework.Hook
   ( HangingHookDecl (..)
+  , HangingCallbackDecl (..)
+  , CallbackPlanEntry (..)
+  , CallbackRef (..)
   , HookError (..)
   , HookPhase (..)
   , HookPlan (..)
@@ -30,7 +33,9 @@ import MyFramework.TrustBase.Digest
 
 data HookError
   = HookMiddlewareDuplicate [MiddlewareRef]
+  | HookCallbackDuplicate [CallbackRef]
   | HookScopeError MiddlewareRef EffSysError
+  | HookCallbackScopeError CallbackRef EffSysError
   | HookApplicationGraphError MiddlewareRef GraphError
   | HookContinuationError ContinuationPlanError
   deriving (Eq, Ord, Read, Show)
@@ -42,10 +47,11 @@ compileHookPlan ::
   CompiledGraphs ->
   ContinuationPlan ->
   [HangingHookDecl] ->
+  [HangingCallbackDecl] ->
   Either [HookError] HookPlan
-compileHookPlan currentRegistry currentEffects currentTransforms currentGraphs currentContinuation currentDecls
+compileHookPlan currentRegistry currentEffects currentTransforms currentGraphs currentContinuation currentDecls currentCallbacks
   | not (null duplicateErrors) = Left duplicateErrors
-  | not (null scopeErrors) = Left scopeErrors
+  | not (null allScopeErrors) = Left allScopeErrors
   | not (null graphErrors) = Left graphErrors
   | otherwise =
       case compileContinuationPlan detachedGraphs of
@@ -55,13 +61,19 @@ compileHookPlan currentRegistry currentEffects currentTransforms currentGraphs c
           Right
             HookPlan
               { hookPlanEntries = currentEntries
+              , callbackPlanEntries = currentCallbackEntries
               , hookPlanDetachedGraphs = detachedGraphs
               }
   where
     duplicateRefs = duplicates (map hangingHookRef currentDecls)
+    duplicateCallbacks = duplicates (map hangingCallbackRef currentCallbacks)
     duplicateErrors =
       [HookMiddlewareDuplicate duplicateRefs | not (null duplicateRefs)]
-    indexedDecls = zip [0 ..] currentDecls
+        ++ [HookCallbackDuplicate duplicateCallbacks | not (null duplicateCallbacks)]
+    indexedDecls =
+      [ (hangingHookDeclarationOrder currentDecl, currentDecl)
+      | currentDecl <- currentDecls
+      ]
     scopedResults =
       [ ( currentOrder
         , currentDecl
@@ -80,6 +92,24 @@ compileHookPlan currentRegistry currentEffects currentTransforms currentGraphs c
       | (_, currentDecl, Left currentErrors) <- scopedResults
       , currentError <- currentErrors
       ]
+    callbackScopeResults =
+      [ ( currentDecl
+        , buildEffSysIR
+            currentRegistry
+            currentEffects
+            currentTransforms
+            currentGraphs
+            currentContinuation
+            (hangingCallbackScope currentDecl)
+        )
+      | currentDecl <- currentCallbacks
+      ]
+    callbackScopeErrors =
+      [ HookCallbackScopeError (hangingCallbackRef currentDecl) currentError
+      | (currentDecl, Left currentErrors) <- callbackScopeResults
+      , currentError <- currentErrors
+      ]
+    allScopeErrors = scopeErrors ++ callbackScopeErrors
     compiledApplications =
       [ ( currentOrder
         , currentDecl
@@ -119,6 +149,23 @@ compileHookPlan currentRegistry currentEffects currentTransforms currentGraphs c
               applicationOccurrencePath <$> lookup currentOrder detachedIndex
           }
       | (currentOrder, currentDecl, Right currentScope) <- scopedResults
+      ]
+    currentCallbackEntries =
+      [ CallbackPlanEntry
+          { callbackPlanEntryRef = hangingCallbackRef currentDecl
+          , callbackPlanEntryScope = hangingCallbackScope currentDecl
+          , callbackPlanEntryResolvedRoot = effSysIrResolvedRoot currentScope
+          , callbackPlanEntryDeclarationOrder = hangingCallbackDeclarationOrder currentDecl
+          , callbackPlanEntryPhase = HookPreStart
+          , callbackPlanEntryContinuationIds =
+              map inputEdgeContinuation
+                (inputGraphEdges (effSysIrInputGraph currentScope))
+          , callbackPlanEntryScopedEffects =
+              map
+                (someEffectRefKey . effectIrRef)
+                (effectRegistryEffects (effSysIrEffects currentScope))
+          }
+      | (currentDecl, Right currentScope) <- callbackScopeResults
       ]
     compileDetached currentOrder currentDecl currentApplication =
       compileGraphs

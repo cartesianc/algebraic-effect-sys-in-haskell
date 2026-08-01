@@ -53,6 +53,8 @@ import MyFramework.TrustBase.Evidence
   , inputCpsEvidenceSchemaV1
   , hangingMiddlewareClaimCatalog
   , hangingMiddlewareEvidenceSchemaV1
+  , pipelinePatchClaimCatalog
+  , pipelinePatchEvidenceSchemaV1
   , fixedPointDiffClaimCatalog
   , l0SemanticsClaimCatalog
   , l0SemanticsEvidenceSchemaV3
@@ -128,6 +130,7 @@ myFrameworkTrustBaseManifest =
         ]
     , trustBaseManifestFacadeModules =
         [ "MyFramework"
+        , "MyFramework.Callback"
         , "MyFramework.Elaboration"
         , "MyFramework.Effect"
         , "MyFramework.EffSys"
@@ -209,6 +212,10 @@ selfSchemaCatalog =
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema = hangingMiddlewareEvidenceSchemaV1
       , schemaCatalogEntryProducer = "hanging-middleware-witness"
+      }
+  , SchemaCatalogEntry
+      { schemaCatalogEntrySchema = pipelinePatchEvidenceSchemaV1
+      , schemaCatalogEntryProducer = "pipeline-patch-witness"
       }
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema = selfInterpretEvidenceSchemaV3
@@ -295,6 +302,7 @@ selfClaimCatalog =
     ++ claimCatalogClaims inputCpsClaimCatalog
     ++ claimCatalogClaims effSysRefClaimCatalog
     ++ claimCatalogClaims hangingMiddlewareClaimCatalog
+    ++ claimCatalogClaims pipelinePatchClaimCatalog
     ++ claimCatalogClaims selfInterpretClaimCatalog
     ++ claimCatalogClaims promotionClaimCatalog
     ++ claimCatalogClaims sdkPackageClaimCatalog

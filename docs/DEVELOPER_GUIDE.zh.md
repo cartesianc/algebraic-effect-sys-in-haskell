@@ -18,11 +18,12 @@ TrustBase 和 SDK lowering 的开发者。
 6. src/MyFramework/Graph.hs
 7. src/MyFramework/EffSys.hs
 8. src/MyFramework/Hook.hs
-9. src/MyFramework/Ast.hs
-10. src/MyFramework/Recursion.hs
-11. src/MyFramework/Runtime.hs
-12. src/MyFramework/Runtime/V52.hs
-13. src/MyFramework/Runtime/Diagnosis.hs
+9. src/MyFramework/Callback.hs
+10. src/MyFramework/Ast.hs
+11. src/MyFramework/Recursion.hs
+12. src/MyFramework/Runtime.hs
+13. src/MyFramework/Runtime/V52.hs
+14. src/MyFramework/Runtime/Diagnosis.hs
 
 ## 2. 当前实现和目标合同
 
@@ -36,7 +37,8 @@ TrustBase 和 SDK lowering 的开发者。
 | v5.2 Stage 4 | 已运行，提供 defunctionalized Input CPS、统一 Runtime 和 occurrence single-flight |
 | v5.2 Stage 5 | 已运行，提供 first-class EffSysRef、scope closure、live view 和 snapshot |
 | v5.2 Stage 6 | 已运行，提供 hanging HookPlan、middleware wrapper 和 hook provenance |
-| v5.2 Stage 7+ | 待实现 Callback、Loop 和 promotion |
+| v5.2 Stage 7 | 已运行，提供 CallbackRef、事务 PipelinePatch 和 run-local continuation |
+| v5.2 Stage 8+ | 待实现 Loop 和 promotion |
 
 当前源码可以作为迁移基础。v5.2 设计只有在 Facade、schema elaboration、lowering、runtime、
 witness、self-artifact 和 SDK 全部闭合后才进入 current core。
@@ -906,6 +908,19 @@ capability boundary 不暴露 InputGraph、ValueGraph、ContinuationPlan 或 pat
       RuntimeAction ->
       RuntimeAction
 
+v5.2 Callback 使用独立 `CallbackRef`。`CallbackContext` 提供只读 ContinuationPlan
+snapshot 和事务 `callbackContextSubmit`。Patch 支持：
+
+    InsertInput target effect
+    ReplaceInput target effect
+    RemoveInput target
+    RedirectInput source target
+
+Runtime 在 occurrence 首次启动前验证 scope、EffectRef kind/schema identity、单前驱、cycle、
+target lifecycle 和并发冲突。整批 patch 通过后更新本次 BootRun 的 continuation 副本。
+任一错误保留提交前计划。`RuntimeDiagnosis` 保存 original plan、patch、CallbackRef、final
+plan 和错误列表。全局 Program、registry 与其他 BootRun 不受影响。
+
 当前实现提供运行时 action wrapper。v5 合同要求 callback 读取可序列化 continuation
 图并提交受检 PipelinePatch。两者之间需要新的 schema、validator 和 witness。
 
@@ -970,7 +985,7 @@ SDK core lock 建立从语义源码到发布产物的可验证链。
 
 ## 17. 设计限制
 
-- callback 和 Loop 语义仍处于实现期；
+- Loop 语义仍处于实现期；
 - schema-free SurfaceProgram、elaborator、MAP 和 Application 已实现；
 - 默认 Facade 已移除显式 SchemaIdentity；
 - 当前 ScalarShape 无法严格区分 Bool、Integer、Decimal 和 Text；

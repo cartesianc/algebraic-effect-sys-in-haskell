@@ -1,5 +1,8 @@
 module MyFramework.Hook.Types
   ( HangingHookDecl (..)
+  , HangingCallbackDecl (..)
+  , CallbackPlanEntry (..)
+  , CallbackRef (..)
   , HookPhase (..)
   , HookPlan (..)
   , HookPlanEntry (..)
@@ -16,6 +19,11 @@ newtype MiddlewareRef = MiddlewareRef
   }
   deriving (Eq, Ord, Read, Show)
 
+newtype CallbackRef = CallbackRef
+  { callbackRefText :: String
+  }
+  deriving (Eq, Ord, Read, Show)
+
 data HookPhase
   = HookPreStart
   | HookAround
@@ -25,6 +33,7 @@ data HangingHookDecl = HangingHookDecl
   { hangingHookRef :: MiddlewareRef
   , hangingHookScope :: EffSysRef
   , hangingHookApplication :: Maybe EffectApplication
+  , hangingHookDeclarationOrder :: Int
   }
   deriving (Eq, Ord, Read, Show)
 
@@ -40,8 +49,27 @@ data HookPlanEntry = HookPlanEntry
   }
   deriving (Eq, Ord, Read, Show)
 
+data HangingCallbackDecl = HangingCallbackDecl
+  { hangingCallbackRef :: CallbackRef
+  , hangingCallbackScope :: EffSysRef
+  , hangingCallbackDeclarationOrder :: Int
+  }
+  deriving (Eq, Ord, Read, Show)
+
+data CallbackPlanEntry = CallbackPlanEntry
+  { callbackPlanEntryRef :: CallbackRef
+  , callbackPlanEntryScope :: EffSysRef
+  , callbackPlanEntryResolvedRoot :: AstPath
+  , callbackPlanEntryDeclarationOrder :: Int
+  , callbackPlanEntryPhase :: HookPhase
+  , callbackPlanEntryContinuationIds :: [ContinuationId]
+  , callbackPlanEntryScopedEffects :: [EffectKey]
+  }
+  deriving (Eq, Ord, Read, Show)
+
 data HookPlan = HookPlan
   { hookPlanEntries :: [HookPlanEntry]
+  , callbackPlanEntries :: [CallbackPlanEntry]
   , hookPlanDetachedGraphs :: CompiledGraphs
   }
   deriving (Eq, Ord, Read, Show)
@@ -50,6 +78,7 @@ emptyHookPlan :: HookPlan
 emptyHookPlan =
   HookPlan
     { hookPlanEntries = []
+    , callbackPlanEntries = []
     , hookPlanDetachedGraphs =
         CompiledGraphs
           { compiledAstGraph = AstGraph (AstPath []) [] []

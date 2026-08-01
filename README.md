@@ -37,10 +37,10 @@ myframework 是一套使用 Haskell 实现的可序列化 EDSL、Effect 编译�
 - `BootRunId + AstPath + EffectRef` execution identity 与 occurrence single-flight。
 - first-class `EffSysRef`、Scoped EffSys IR/live view/deterministic snapshot 和只读查询。
 - 独立 hanging `HookPlan`、scoped middleware wrapper、own EffectApplication 和 hook provenance。
+- run-local Callback `PipelinePatch`、事务回滚、lifecycle gate 和 Diagnosis patch provenance。
 
 L0 v5.2 后续阶段继续实现：
 
-- callback PipelinePatch；
 - Loop 完整状态反馈。
 
 旧 `ReferencedProgram` 表面位于 `MyFramework.Legacy.*`，用于 v2 artifact 的显式迁移。

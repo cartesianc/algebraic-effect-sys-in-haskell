@@ -11,6 +11,7 @@ module MyFramework.Facade
   , EffectModule
   , HangingBlueprint
   , MiddlewareDecl
+  , CallbackDecl
   , Name
   , Program
   , ProgramError (..)
@@ -24,6 +25,7 @@ module MyFramework.Facade
   , applyEffSys
   , after
   , c
+  , callback
   , chain
   , d
   , e
@@ -51,6 +53,7 @@ module MyFramework.Facade
   , resolveAll
   , runPreparedRuntime
   , runPreparedRuntimeWithMiddleware
+  , runPreparedRuntimeWithHooks
   , schemaCatalogOf
   , scopedEffSys
   , transformRegistryOf
@@ -93,10 +96,12 @@ import MyFramework.Runtime.V52
   , ContinuationPlanError
   , RuntimeHandlerRegistry
   , RuntimeMiddlewareRegistry
+  , RuntimeCallbackRegistry
   , RuntimePreparationError
   , UnifiedRuntimeRun
   , compileContinuationPlan
   , executeRuntimeWithHooks
+  , executeRuntimeWithHooksAndCallbacks
   , runtimeMiddlewareRegistry
   )
 
@@ -362,22 +367,42 @@ data MiddlewareDecl = MiddlewareDecl
   }
   deriving (Eq, Ord, Read, Show)
 
-newtype HangingBlueprint = HangingBlueprint
-  { hangingBlueprintMiddleware :: [MiddlewareDecl]
+data CallbackDecl = CallbackDecl
+  { callbackDeclRef :: CallbackRef
+  , callbackDeclScope :: EffSysRef
   }
   deriving (Eq, Ord, Read, Show)
 
-middleware :: Name -> EffSysRef -> Maybe Application -> MiddlewareDecl
-middleware currentName currentScope currentApplication =
-  MiddlewareDecl
-    { middlewareDeclRef = MiddlewareRef (nameText currentName)
-    , middlewareDeclScope = currentScope
-    , middlewareDeclApplication =
-        qualifyApplication (Name (effSysRefAstRoot currentScope))
-          <$> currentApplication
-    }
+data HangingNode
+  = HangingMiddleware MiddlewareDecl
+  | HangingCallback CallbackDecl
+  deriving (Eq, Ord, Read, Show)
 
-astBlueprintHanging :: [MiddlewareDecl] -> HangingBlueprint
+newtype HangingBlueprint = HangingBlueprint
+  { hangingBlueprintNodes :: [HangingNode]
+  }
+  deriving (Eq, Ord, Read, Show)
+
+middleware :: Name -> EffSysRef -> Maybe Application -> HangingNode
+middleware currentName currentScope currentApplication =
+  HangingMiddleware
+    MiddlewareDecl
+      { middlewareDeclRef = MiddlewareRef (nameText currentName)
+      , middlewareDeclScope = currentScope
+      , middlewareDeclApplication =
+          qualifyApplication (Name (effSysRefAstRoot currentScope))
+            <$> currentApplication
+      }
+
+callback :: Name -> EffSysRef -> HangingNode
+callback currentName currentScope =
+  HangingCallback
+    CallbackDecl
+      { callbackDeclRef = CallbackRef (nameText currentName)
+      , callbackDeclScope = currentScope
+      }
+
+astBlueprintHanging :: [HangingNode] -> HangingBlueprint
 astBlueprintHanging = HangingBlueprint
 
 data ProgramIR = ProgramIR
@@ -499,7 +524,12 @@ programWithHanging currentRoot currentControls currentModules currentHanging = d
           (programIrTransforms currentIr)
           currentGraphs
           currentContinuationPlan
-          (map lowerMiddlewareDecl (hangingBlueprintMiddleware currentHanging))
+          [ lowerMiddlewareDecl currentOrder currentMiddleware
+          | (currentOrder, HangingMiddleware currentMiddleware) <- indexedHanging
+          ]
+          [ lowerCallbackDecl currentOrder currentCallback
+          | (currentOrder, HangingCallback currentCallback) <- indexedHanging
+          ]
       )
   pure
     ( prepareRuntime
@@ -514,14 +544,22 @@ programWithHanging currentRoot currentControls currentModules currentHanging = d
   where
     hangingApplications =
       [ currentApplication
-      | currentMiddleware <- hangingBlueprintMiddleware currentHanging
+      | HangingMiddleware currentMiddleware <- hangingBlueprintNodes currentHanging
       , Just currentApplication <- [middlewareDeclApplication currentMiddleware]
       ]
-    lowerMiddlewareDecl currentMiddleware =
+    indexedHanging = zip [0 ..] (hangingBlueprintNodes currentHanging)
+    lowerMiddlewareDecl currentOrder currentMiddleware =
       HangingHookDecl
         { hangingHookRef = middlewareDeclRef currentMiddleware
         , hangingHookScope = middlewareDeclScope currentMiddleware
         , hangingHookApplication = applicationIR <$> middlewareDeclApplication currentMiddleware
+        , hangingHookDeclarationOrder = currentOrder
+        }
+    lowerCallbackDecl currentOrder currentCallback =
+      HangingCallbackDecl
+        { hangingCallbackRef = callbackDeclRef currentCallback
+        , hangingCallbackScope = callbackDeclScope currentCallback
+        , hangingCallbackDeclarationOrder = currentOrder
         }
 
 uniqueSurfaceBindings ::
@@ -570,6 +608,26 @@ runPreparedRuntimeWithMiddleware currentHandlers currentMiddleware currentPrepar
     (preparedRuntimeHookPlan currentPrepared)
     currentHandlers
     currentMiddleware
+  where
+    currentProgram = preparedRuntimeProgram currentPrepared
+    currentIr = elaboratedProgramPayload (programElaborated currentProgram)
+
+runPreparedRuntimeWithHooks ::
+  RuntimeHandlerRegistry ->
+  RuntimeMiddlewareRegistry ->
+  RuntimeCallbackRegistry ->
+  PreparedRuntime ->
+  IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
+runPreparedRuntimeWithHooks currentHandlers currentMiddleware currentCallbacks currentPrepared =
+  executeRuntimeWithHooksAndCallbacks
+    (programIrEffects currentIr)
+    (programIrAst currentIr)
+    (graphProgramOf currentProgram)
+    (preparedRuntimeContinuationPlan currentPrepared)
+    (preparedRuntimeHookPlan currentPrepared)
+    currentHandlers
+    currentMiddleware
+    currentCallbacks
   where
     currentProgram = preparedRuntimeProgram currentPrepared
     currentIr = elaboratedProgramPayload (programElaborated currentProgram)
