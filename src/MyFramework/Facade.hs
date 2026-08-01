@@ -9,6 +9,8 @@ module MyFramework.Facade
   , ControlDecl
   , EffectInputRef
   , EffectModule
+  , HangingBlueprint
+  , MiddlewareDecl
   , Name
   , Program
   , ProgramError (..)
@@ -31,12 +33,15 @@ module MyFramework.Facade
   , fallback
   , graphProgramOf
   , mapping
+  , middleware
   , name
   , nameText
   , none
   , parallel
+  , astBlueprintHanging
   , prepareRuntime
   , program
+  , programWithHanging
   , programElaborated
   , programSchemaCatalog
   , programSchemaDigest
@@ -45,6 +50,7 @@ module MyFramework.Facade
   , race
   , resolveAll
   , runPreparedRuntime
+  , runPreparedRuntimeWithMiddleware
   , schemaCatalogOf
   , scopedEffSys
   , transformRegistryOf
@@ -78,6 +84,7 @@ import MyFramework.Effect hiding
   )
 import qualified MyFramework.Effect as CoreEffect
 import MyFramework.EffSys
+import MyFramework.Hook
 import MyFramework.Elaboration
 import MyFramework.Graph
 import MyFramework.Schema
@@ -85,10 +92,12 @@ import MyFramework.Runtime.V52
   ( ContinuationPlan
   , ContinuationPlanError
   , RuntimeHandlerRegistry
+  , RuntimeMiddlewareRegistry
   , RuntimePreparationError
   , UnifiedRuntimeRun
   , compileContinuationPlan
-  , executeRuntime
+  , executeRuntimeWithHooks
+  , runtimeMiddlewareRegistry
   )
 
 newtype Name = Name
@@ -346,6 +355,31 @@ effects currentModule currentApplications =
         map (qualifyApplication currentModule) currentApplications
     }
 
+data MiddlewareDecl = MiddlewareDecl
+  { middlewareDeclRef :: MiddlewareRef
+  , middlewareDeclScope :: EffSysRef
+  , middlewareDeclApplication :: Maybe Application
+  }
+  deriving (Eq, Ord, Read, Show)
+
+newtype HangingBlueprint = HangingBlueprint
+  { hangingBlueprintMiddleware :: [MiddlewareDecl]
+  }
+  deriving (Eq, Ord, Read, Show)
+
+middleware :: Name -> EffSysRef -> Maybe Application -> MiddlewareDecl
+middleware currentName currentScope currentApplication =
+  MiddlewareDecl
+    { middlewareDeclRef = MiddlewareRef (nameText currentName)
+    , middlewareDeclScope = currentScope
+    , middlewareDeclApplication =
+        qualifyApplication (Name (effSysRefAstRoot currentScope))
+          <$> currentApplication
+    }
+
+astBlueprintHanging :: [MiddlewareDecl] -> HangingBlueprint
+astBlueprintHanging = HangingBlueprint
+
 data ProgramIR = ProgramIR
   { programIrEffects :: EffectRegistry
   , programIrTransforms :: TransformRegistry
@@ -359,12 +393,14 @@ data Program = Program
   , programElaborated :: ElaboratedProgram ProgramIR
   , graphProgramOf :: CompiledGraphs
   , programContinuationPlan :: ContinuationPlan
+  , programHookPlan :: HookPlan
   }
   deriving (Eq, Ord, Read, Show)
 
 data PreparedRuntime = PreparedRuntime
   { preparedRuntimeProgram :: Program
   , preparedRuntimeContinuationPlan :: ContinuationPlan
+  , preparedRuntimeHookPlan :: HookPlan
   }
   deriving (Eq, Ord, Read, Show)
 
@@ -384,6 +420,7 @@ data ProgramError
   | ProgramGraphFailed GraphError
   | ProgramContinuationFailed ContinuationPlanError
   | ProgramEffSysFailed EffSysError
+  | ProgramHookFailed HookError
   deriving (Eq, Ord, Read, Show)
 
 program ::
@@ -392,13 +429,27 @@ program ::
   [EffectModule] ->
   Either [ProgramError] PreparedRuntime
 program currentRoot currentControls currentModules = do
-  currentIr <- buildProgramIr currentRoot currentControls currentModules
+  programWithHanging
+    currentRoot
+    currentControls
+    currentModules
+    (astBlueprintHanging [])
+
+programWithHanging ::
+  Name ->
+  [ControlDecl] ->
+  [EffectModule] ->
+  HangingBlueprint ->
+  Either [ProgramError] PreparedRuntime
+programWithHanging currentRoot currentControls currentModules currentHanging = do
+  currentIr <- buildProgramIr currentRoot currentControls currentModules hangingApplications
   currentBindings <-
     mapLeft id
       ( uniqueSurfaceBindings
           ( concatMap
-              (concatMap applicationSurfaceBindings . effectModuleApplications)
-              currentModules
+                (concatMap applicationSurfaceBindings . effectModuleApplications)
+                currentModules
+            ++ concatMap applicationSurfaceBindings hangingApplications
           )
       )
   let
@@ -406,6 +457,7 @@ program currentRoot currentControls currentModules = do
         concatMap
           (concatMap applicationSchemaEvidence . effectModuleApplications)
           currentModules
+          ++ concatMap applicationSchemaEvidence hangingApplications
       currentSurface =
         SurfaceProgram
           { surfaceProgramPayload = currentIr
@@ -438,6 +490,17 @@ program currentRoot currentControls currentModules = do
     mapLeft
       (map ProgramContinuationFailed)
       (compileContinuationPlan currentGraphs)
+  currentHookPlan <-
+    mapLeft
+      (map ProgramHookFailed)
+      ( compileHookPlan
+          (programIrEffSysRegistry currentIr)
+          (programIrEffects currentIr)
+          (programIrTransforms currentIr)
+          currentGraphs
+          currentContinuationPlan
+          (map lowerMiddlewareDecl (hangingBlueprintMiddleware currentHanging))
+      )
   pure
     ( prepareRuntime
         Program
@@ -445,8 +508,21 @@ program currentRoot currentControls currentModules = do
           , programElaborated = currentElaborated
           , graphProgramOf = currentGraphs
           , programContinuationPlan = currentContinuationPlan
+          , programHookPlan = currentHookPlan
           }
     )
+  where
+    hangingApplications =
+      [ currentApplication
+      | currentMiddleware <- hangingBlueprintMiddleware currentHanging
+      , Just currentApplication <- [middlewareDeclApplication currentMiddleware]
+      ]
+    lowerMiddlewareDecl currentMiddleware =
+      HangingHookDecl
+        { hangingHookRef = middlewareDeclRef currentMiddleware
+        , hangingHookScope = middlewareDeclScope currentMiddleware
+        , hangingHookApplication = applicationIR <$> middlewareDeclApplication currentMiddleware
+        }
 
 uniqueSurfaceBindings ::
   [(BindingKey, SurfaceBinding)] ->
@@ -467,6 +543,7 @@ prepareRuntime currentProgram =
   PreparedRuntime
     { preparedRuntimeProgram = currentProgram
     , preparedRuntimeContinuationPlan = programContinuationPlan currentProgram
+    , preparedRuntimeHookPlan = programHookPlan currentProgram
     }
 
 runPreparedRuntime ::
@@ -474,12 +551,25 @@ runPreparedRuntime ::
   PreparedRuntime ->
   IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
 runPreparedRuntime currentHandlers currentPrepared =
-  executeRuntime
+  case runtimeMiddlewareRegistry [] of
+    Left _ -> error "empty middleware registry cannot fail"
+    Right currentMiddleware ->
+      runPreparedRuntimeWithMiddleware currentHandlers currentMiddleware currentPrepared
+
+runPreparedRuntimeWithMiddleware ::
+  RuntimeHandlerRegistry ->
+  RuntimeMiddlewareRegistry ->
+  PreparedRuntime ->
+  IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
+runPreparedRuntimeWithMiddleware currentHandlers currentMiddleware currentPrepared =
+  executeRuntimeWithHooks
     (programIrEffects currentIr)
     (programIrAst currentIr)
     (graphProgramOf currentProgram)
     (preparedRuntimeContinuationPlan currentPrepared)
+    (preparedRuntimeHookPlan currentPrepared)
     currentHandlers
+    currentMiddleware
   where
     currentProgram = preparedRuntimeProgram currentPrepared
     currentIr = elaboratedProgramPayload (programElaborated currentProgram)
@@ -539,8 +629,9 @@ buildProgramIr ::
   Name ->
   [ControlDecl] ->
   [EffectModule] ->
+  [Application] ->
   Either [ProgramError] ProgramIR
-buildProgramIr currentRoot currentControls currentModules
+buildProgramIr currentRoot currentControls currentModules hangingApplications
   | not (null currentErrors) = Left currentErrors
   | otherwise =
       Right
@@ -576,12 +667,15 @@ buildProgramIr currentRoot currentControls currentModules
     childErrors = concatMap validateChildren currentControls
     controlCycleErrors = map ControlReferenceCycle (controlCycles controlIndex)
     allEffects =
-      concatMap
-        (concatMap applicationEffectIR . effectModuleApplications)
-        currentModules
+      ( concatMap
+          (concatMap applicationEffectIR . effectModuleApplications)
+          currentModules
+      )
+        ++ concatMap applicationEffectIR hangingApplications
     allTransforms =
       map applicationTransformIR
         (concatMap effectModuleApplications currentModules)
+        ++ map applicationTransformIR hangingApplications
     (effectConflictErrors, uniqueEffects) =
       uniqueDefinitions
         (someEffectRefKey . effectIrRef)

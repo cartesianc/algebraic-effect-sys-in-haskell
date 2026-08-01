@@ -205,6 +205,9 @@ try {
     Invoke-Captured "Stage1 scoped EffSys witness" {
         stack --work-dir .stack-work-artifact exec effsys-ref-witness
     } (Join-Path $stage1Evidence "effsys-ref.json")
+    Invoke-Captured "Stage1 hanging middleware witness" {
+        stack --work-dir .stack-work-artifact exec hanging-middleware-witness
+    } (Join-Path $stage1Evidence "hanging-middleware.json")
     Invoke-Captured "Stage1 runtime witness" {
         stack --work-dir .stack-work-artifact exec curde-runtime-witness
     } (Join-Path $stage1Evidence "runtime.json")
@@ -269,6 +272,9 @@ try {
     Invoke-Captured "Stage2 scoped EffSys witness" {
         stack --work-dir .stack-work-artifact exec effsys-ref-witness
     } (Join-Path $stage2Evidence "effsys-ref.json")
+    Invoke-Captured "Stage2 hanging middleware witness" {
+        stack --work-dir .stack-work-artifact exec hanging-middleware-witness
+    } (Join-Path $stage2Evidence "hanging-middleware.json")
     Invoke-Captured "Stage2 runtime witness" {
         stack --work-dir .stack-work-artifact exec curde-runtime-witness
     } (Join-Path $stage2Evidence "runtime.json")

@@ -19,14 +19,24 @@ module MyFramework.Runtime.V52
   , RuntimeHandlerResult (..)
   , RuntimeInvocation (..)
   , RuntimePreparationError (..)
+  , MiddlewareContext (..)
+  , RuntimeActionV52
+  , RuntimeMiddleware
+  , RuntimeMiddlewareRegistration
+  , RuntimeMiddlewareRegistry
+  , RuntimeMiddlewareRegistryError (..)
   , RuntimeSnapshot (..)
   , RuntimeValue (..)
   , UnifiedRuntimeRun (..)
   , compileContinuationPlan
   , continuationPlanDigest
   , executeRuntime
+  , executeRuntimeWithHooks
   , runtimeHandler
   , runtimeHandlerRegistry
+  , runRuntimeActionV52
+  , runtimeMiddleware
+  , runtimeMiddlewareRegistry
   ) where
 
 import Control.Concurrent
@@ -64,7 +74,11 @@ import Data.Maybe
   )
 
 import MyFramework.Effect
+import MyFramework.EffSys.Types
+  ( EffSysRef
+  )
 import MyFramework.Graph
+import MyFramework.Hook.Types
 import MyFramework.Runtime.Types
   ( BootRunId (..)
   , newBootRunId
@@ -401,6 +415,65 @@ data RuntimeHandlerRegistryError
   = RuntimeHandlerDuplicate EffectKey
   deriving (Eq, Ord, Read, Show)
 
+newtype RuntimeActionV52 = RuntimeActionV52
+  { runRuntimeActionV52 :: IO ContinuationOutcome
+  }
+
+data MiddlewareContext = MiddlewareContext
+  { middlewareContextRef :: MiddlewareRef
+  , middlewareContextScope :: EffSysRef
+  , middlewareContextAstPath :: AstPath
+  , middlewareContextSnapshot :: IO RuntimeSnapshot
+  , middlewareContextOwnApplication :: Maybe RuntimeActionV52
+  }
+
+type RuntimeMiddleware =
+  MiddlewareContext ->
+  RuntimeActionV52 ->
+  IO ContinuationOutcome
+
+data RuntimeMiddlewareRegistration = RuntimeMiddlewareRegistration
+  { runtimeMiddlewareRegistrationRef :: MiddlewareRef
+  , runtimeMiddlewareRegistrationFunction :: RuntimeMiddleware
+  }
+
+newtype RuntimeMiddlewareRegistry = RuntimeMiddlewareRegistry
+  { runtimeMiddlewareRegistryMap :: Map.Map MiddlewareRef RuntimeMiddlewareRegistration
+  }
+
+data RuntimeMiddlewareRegistryError
+  = RuntimeMiddlewareDuplicate MiddlewareRef
+  deriving (Eq, Ord, Read, Show)
+
+runtimeMiddleware ::
+  MiddlewareRef ->
+  RuntimeMiddleware ->
+  RuntimeMiddlewareRegistration
+runtimeMiddleware currentRef currentFunction =
+  RuntimeMiddlewareRegistration
+    { runtimeMiddlewareRegistrationRef = currentRef
+    , runtimeMiddlewareRegistrationFunction = currentFunction
+    }
+
+runtimeMiddlewareRegistry ::
+  [RuntimeMiddlewareRegistration] ->
+  Either [RuntimeMiddlewareRegistryError] RuntimeMiddlewareRegistry
+runtimeMiddlewareRegistry currentRegistrations
+  | null currentErrors =
+      Right
+        ( RuntimeMiddlewareRegistry
+            ( Map.fromList
+                [ (runtimeMiddlewareRegistrationRef currentRegistration, currentRegistration)
+                | currentRegistration <- currentRegistrations
+                ]
+            )
+        )
+  | otherwise = Left currentErrors
+  where
+    currentErrors =
+      map RuntimeMiddlewareDuplicate
+        (duplicates (map runtimeMiddlewareRegistrationRef currentRegistrations))
+
 runtimeHandler ::
   SomeEffectRef ->
   Maybe ValueSchemaId ->
@@ -442,6 +515,8 @@ data RuntimePreparationError
   | RuntimeHandlerInputSchemaMismatch EffectKey (Maybe ValueSchemaId) (Maybe ValueSchemaId)
   | RuntimeHandlerOutputSchemaMismatch EffectKey (Maybe ValueSchemaId) (Maybe ValueSchemaId)
   | RuntimeMapOutputSchemaAmbiguous EffectKey [ValueSchemaId]
+  | RuntimeMiddlewareMissing MiddlewareRef
+  | RuntimeHookContinuationInvalid ContinuationPlanError
   | RuntimeAstOccurrenceMissing AstPath
   | RuntimeContinuationNodeMissing ApplicationOccurrenceId EffectKey
   deriving (Eq, Ord, Read, Show)
@@ -454,6 +529,9 @@ data RuntimeEvent
   | RuntimeHandlerFinished ExecutionInstanceId RuntimeHandlerPhase RuntimeHandlerResult
   | RuntimeSingleFlightReused ExecutionInstanceId
   | RuntimeValueProduced ExecutionInstanceId RuntimeHandlerPhase ValueSchemaId
+  | RuntimeHookEntered MiddlewareRef EffSysRef AstPath
+  | RuntimeHookExited MiddlewareRef EffSysRef AstPath ContinuationOutcome
+  | RuntimeHookOwnApplicationStarted MiddlewareRef ApplicationOccurrenceId AstPath
   deriving (Eq, Ord, Show)
 
 data RuntimeDiagnosis = RuntimeDiagnosis
@@ -498,6 +576,8 @@ data RuntimeEnvironment = RuntimeEnvironment
   , environmentOccurrencesById :: Map.Map ApplicationOccurrenceId ApplicationOccurrence
   , environmentState :: MVar MutableRuntime
   , environmentFlights :: MVar (Map.Map ExecutionInstanceId (MVar RuntimeHandlerResult))
+  , environmentHookPlan :: HookPlan
+  , environmentMiddlewareRegistry :: RuntimeMiddlewareRegistry
   }
 
 executeRuntime ::
@@ -508,56 +588,140 @@ executeRuntime ::
   RuntimeHandlerRegistry ->
   IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
 executeRuntime currentEffects currentAst currentGraphs currentPlan currentHandlers =
-  case validateRuntimePreparation currentEffects currentGraphs currentHandlers of
-    [] -> do
-      currentBootRun <- newBootRunId
-      currentState <- newMVar emptyMutableRuntime
-      currentFlights <- newMVar Map.empty
-      let currentEnvironment =
-            RuntimeEnvironment
-              { environmentBootRun = currentBootRun
-              , environmentEffects =
-                  Map.fromList
-                    [ (someEffectRefKey (effectIrRef currentEffect), currentEffect)
-                    | currentEffect <- effectRegistryEffects currentEffects
-                    ]
-              , environmentHandlers = currentHandlers
-              , environmentContinuationNodes =
-                  Map.fromList
-                    [ (continuationNodeId currentNode, currentNode)
-                    | currentNode <- continuationPlanNodes currentPlan
-                    ]
-              , environmentContinuationLookup =
-                  Map.fromList
-                    [ ( (continuationNodeOccurrence currentNode, someEffectRefKey (continuationNodeEffect currentNode))
-                      , continuationNodeId currentNode
-                      )
-                    | currentNode <- continuationPlanNodes currentPlan
-                    ]
-              , environmentOccurrences =
-                  Map.fromList
-                    [ (applicationOccurrencePath currentOccurrence, currentOccurrence)
-                    | currentOccurrence <- compiledOccurrences currentGraphs
-                    ]
-              , environmentOccurrencesById =
-                  Map.fromList
-                    [ (applicationOccurrenceId currentOccurrence, currentOccurrence)
-                    | currentOccurrence <- compiledOccurrences currentGraphs
-                    ]
-              , environmentState = currentState
-              , environmentFlights = currentFlights
-              }
-      currentOutcome <- executeAst currentEnvironment (AstPath []) currentAst
-      currentFinal <- readMVar currentState
-      pure
-        ( Right
-            UnifiedRuntimeRun
-              { unifiedRuntimeBootRunId = currentBootRun
-              , unifiedRuntimeOutcome = currentOutcome
-              , unifiedRuntimeSnapshot = snapshotRuntime currentFinal
-              }
-        )
-    currentErrors -> pure (Left currentErrors)
+  executeRuntimeWithHooks
+    currentEffects
+    currentAst
+    currentGraphs
+    currentPlan
+    emptyHookPlan
+    currentHandlers
+    (RuntimeMiddlewareRegistry Map.empty)
+
+executeRuntimeWithHooks ::
+  EffectRegistry ->
+  AstPlan ->
+  CompiledGraphs ->
+  ContinuationPlan ->
+  HookPlan ->
+  RuntimeHandlerRegistry ->
+  RuntimeMiddlewareRegistry ->
+  IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
+executeRuntimeWithHooks currentEffects currentAst baseGraphs basePlan currentHookPlan currentHandlers currentMiddleware =
+  case compileContinuationPlan (hookPlanDetachedGraphs currentHookPlan) of
+    Left currentContinuationErrors ->
+      pure (Left (map RuntimeHookContinuationInvalid currentContinuationErrors))
+    Right detachedPlan ->
+      runPrepared mergedGraphs (mergeContinuationPlans basePlan detachedPlan)
+  where
+    mergedGraphs = mergeRuntimeGraphs baseGraphs (hookPlanDetachedGraphs currentHookPlan)
+    runPrepared currentGraphs currentPlan =
+      case
+          validateRuntimePreparation currentEffects currentGraphs currentHandlers
+            ++ validateRuntimeMiddleware currentHookPlan currentMiddleware of
+        [] -> do
+          currentBootRun <- newBootRunId
+          currentState <- newMVar emptyMutableRuntime
+          currentFlights <- newMVar Map.empty
+          let currentEnvironment =
+                RuntimeEnvironment
+                  { environmentBootRun = currentBootRun
+                  , environmentEffects =
+                      Map.fromList
+                        [ (someEffectRefKey (effectIrRef currentEffect), currentEffect)
+                        | currentEffect <- effectRegistryEffects currentEffects
+                        ]
+                  , environmentHandlers = currentHandlers
+                  , environmentContinuationNodes =
+                      Map.fromList
+                        [ (continuationNodeId currentNode, currentNode)
+                        | currentNode <- continuationPlanNodes currentPlan
+                        ]
+                  , environmentContinuationLookup =
+                      Map.fromList
+                        [ ( (continuationNodeOccurrence currentNode, someEffectRefKey (continuationNodeEffect currentNode))
+                          , continuationNodeId currentNode
+                          )
+                        | currentNode <- continuationPlanNodes currentPlan
+                        ]
+                  , environmentOccurrences =
+                      Map.fromList
+                        [ (applicationOccurrencePath currentOccurrence, currentOccurrence)
+                        | currentOccurrence <- compiledOccurrences currentGraphs
+                        ]
+                  , environmentOccurrencesById =
+                      Map.fromList
+                        [ (applicationOccurrenceId currentOccurrence, currentOccurrence)
+                        | currentOccurrence <- compiledOccurrences currentGraphs
+                        ]
+                  , environmentState = currentState
+                  , environmentFlights = currentFlights
+                  , environmentHookPlan = currentHookPlan
+                  , environmentMiddlewareRegistry = currentMiddleware
+                  }
+          currentOutcome <- executeAst currentEnvironment (AstPath []) currentAst
+          currentFinal <- readMVar currentState
+          pure
+            ( Right
+                UnifiedRuntimeRun
+                  { unifiedRuntimeBootRunId = currentBootRun
+                  , unifiedRuntimeOutcome = currentOutcome
+                  , unifiedRuntimeSnapshot = snapshotRuntime currentFinal
+                  }
+            )
+        currentErrors -> pure (Left (sort (nub currentErrors)))
+
+mergeRuntimeGraphs :: CompiledGraphs -> CompiledGraphs -> CompiledGraphs
+mergeRuntimeGraphs currentBase currentDetached =
+  CompiledGraphs
+    { compiledAstGraph = compiledAstGraph currentBase
+    , compiledInputGraph =
+        InputGraph
+          { inputGraphNodes =
+              nub
+                ( inputGraphNodes (compiledInputGraph currentBase)
+                    ++ inputGraphNodes (compiledInputGraph currentDetached)
+                )
+          , inputGraphEdges =
+              nub
+                ( inputGraphEdges (compiledInputGraph currentBase)
+                    ++ inputGraphEdges (compiledInputGraph currentDetached)
+                )
+          }
+    , compiledValueGraph =
+        ValueGraph
+          { valueGraphNodes =
+              nub
+                ( valueGraphNodes (compiledValueGraph currentBase)
+                    ++ valueGraphNodes (compiledValueGraph currentDetached)
+                )
+          , valueGraphEdges =
+              nub
+                ( valueGraphEdges (compiledValueGraph currentBase)
+                    ++ valueGraphEdges (compiledValueGraph currentDetached)
+                )
+          }
+    , compiledOccurrences =
+        nub (compiledOccurrences currentBase ++ compiledOccurrences currentDetached)
+    }
+
+mergeContinuationPlans :: ContinuationPlan -> ContinuationPlan -> ContinuationPlan
+mergeContinuationPlans currentBase currentDetached =
+  ContinuationPlan
+    { continuationPlanNodes =
+        nub (continuationPlanNodes currentBase ++ continuationPlanNodes currentDetached)
+    , continuationPlanSegments =
+        nub (continuationPlanSegments currentBase ++ continuationPlanSegments currentDetached)
+    }
+
+validateRuntimeMiddleware ::
+  HookPlan ->
+  RuntimeMiddlewareRegistry ->
+  [RuntimePreparationError]
+validateRuntimeMiddleware currentPlan (RuntimeMiddlewareRegistry currentRegistry) =
+  [ RuntimeMiddlewareMissing (hookPlanEntryRef currentEntry)
+  | currentEntry <- hookPlanEntries currentPlan
+  , Map.notMember (hookPlanEntryRef currentEntry) currentRegistry
+  ]
 
 validateRuntimePreparation ::
   EffectRegistry ->
@@ -828,6 +992,18 @@ executeApplicationAt ::
   AstPath ->
   IO ContinuationOutcome
 executeApplicationAt currentEnvironment currentPath =
+  runRuntimeActionV52
+    ( foldr
+        (wrapMiddleware currentEnvironment currentPath)
+        (RuntimeActionV52 (executeApplicationCoreAt currentEnvironment currentPath))
+        (hooksForPath currentEnvironment currentPath)
+    )
+
+executeApplicationCoreAt ::
+  RuntimeEnvironment ->
+  AstPath ->
+  IO ContinuationOutcome
+executeApplicationCoreAt currentEnvironment currentPath =
   case Map.lookup currentPath (environmentOccurrences currentEnvironment) of
     Nothing ->
       pure
@@ -847,6 +1023,116 @@ executeApplicationAt currentEnvironment currentPath =
         currentEnvironment
         (RuntimeApplicationFinished (applicationOccurrenceId currentOccurrence) currentPath currentOutcome)
       pure currentOutcome
+
+hooksForPath :: RuntimeEnvironment -> AstPath -> [HookPlanEntry]
+hooksForPath currentEnvironment currentPath =
+  sortOn hookOrder
+    [ currentEntry
+    | currentEntry <- hookPlanEntries (environmentHookPlan currentEnvironment)
+    , astPathWithin (hookPlanEntryResolvedRoot currentEntry) currentPath
+    ]
+  where
+    hookOrder currentEntry =
+      ( pathDepth (hookPlanEntryResolvedRoot currentEntry)
+      , hookPlanEntryDeclarationOrder currentEntry
+      )
+
+pathDepth :: AstPath -> Int
+pathDepth = length . astPathSegments
+
+astPathWithin :: AstPath -> AstPath -> Bool
+astPathWithin (AstPath currentRoot) (AstPath currentPath) =
+  currentRoot == take (length currentRoot) currentPath
+
+wrapMiddleware ::
+  RuntimeEnvironment ->
+  AstPath ->
+  HookPlanEntry ->
+  RuntimeActionV52 ->
+  RuntimeActionV52
+wrapMiddleware currentEnvironment currentPath currentEntry currentChild =
+  RuntimeActionV52 $ do
+    appendRuntimeEvent
+      currentEnvironment
+      ( RuntimeHookEntered
+          (hookPlanEntryRef currentEntry)
+          (hookPlanEntryScope currentEntry)
+          currentPath
+      )
+    currentOutcome <-
+      case
+          Map.lookup
+            (hookPlanEntryRef currentEntry)
+            (runtimeMiddlewareRegistryMap (environmentMiddlewareRegistry currentEnvironment)) of
+        Nothing ->
+          pure
+            ( Failed
+                RuntimeFault
+                  { runtimeFaultEffect = Nothing
+                  , runtimeFaultPhase = RuntimeInputPhase
+                  , runtimeFaultMessage =
+                      "middleware missing after preparation: "
+                        ++ middlewareRefText (hookPlanEntryRef currentEntry)
+                  }
+            )
+        Just currentRegistration -> do
+          attempted <-
+            try
+              ( runtimeMiddlewareRegistrationFunction currentRegistration
+                  MiddlewareContext
+                    { middlewareContextRef = hookPlanEntryRef currentEntry
+                    , middlewareContextScope = hookPlanEntryScope currentEntry
+                    , middlewareContextAstPath = currentPath
+                    , middlewareContextSnapshot =
+                        snapshotRuntime <$> readMVar (environmentState currentEnvironment)
+                    , middlewareContextOwnApplication =
+                        ownApplicationAction currentEnvironment currentEntry
+                    }
+                  currentChild
+              )
+          pure
+            ( case attempted of
+                Left (currentException :: SomeException) ->
+                  Failed
+                    RuntimeFault
+                      { runtimeFaultEffect = Nothing
+                      , runtimeFaultPhase = RuntimeInputPhase
+                      , runtimeFaultMessage = displayException currentException
+                      }
+                Right currentResult -> currentResult
+            )
+    appendRuntimeEvent
+      currentEnvironment
+      ( RuntimeHookExited
+          (hookPlanEntryRef currentEntry)
+          (hookPlanEntryScope currentEntry)
+          currentPath
+          currentOutcome
+      )
+    pure currentOutcome
+
+ownApplicationAction ::
+  RuntimeEnvironment ->
+  HookPlanEntry ->
+  Maybe RuntimeActionV52
+ownApplicationAction currentEnvironment currentEntry =
+  case
+      ( hookPlanEntryApplicationOccurrence currentEntry
+      , hookPlanEntryApplicationPath currentEntry
+      ) of
+    (Just currentOccurrence, Just currentPath) ->
+      Just
+        ( RuntimeActionV52 $ do
+            appendRuntimeEvent
+              currentEnvironment
+              ( RuntimeHookOwnApplicationStarted
+                  (hookPlanEntryRef currentEntry)
+                  currentOccurrence
+                  currentPath
+              )
+            executeApplicationCoreAt currentEnvironment currentPath
+        )
+    _ -> Nothing
 
 executeApplication ::
   RuntimeEnvironment ->

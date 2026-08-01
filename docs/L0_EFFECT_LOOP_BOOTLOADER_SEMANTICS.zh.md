@@ -8,7 +8,7 @@
     日期：2026-08-01
     维护属性：LONG-LIVED / CONTINUOUSLY EVOLVED
     稳定路径：docs/L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md
-    实现状态：Stage 0—5 已实现；Stage 6—10 推进中
+    实现状态：Stage 0—6 已实现；Stage 7—10 推进中
     Promotion：本语义 epoch 尚未 promotion
 
 本文记录长期稳定的语义边界、版本状态和完成条件。

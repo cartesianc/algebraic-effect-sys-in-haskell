@@ -17,6 +17,8 @@ module MyFramework.TrustBase.Evidence
   , facadeV52EvidenceSchemaV1
   , inputCpsClaimCatalog
   , inputCpsEvidenceSchemaV1
+  , hangingMiddlewareClaimCatalog
+  , hangingMiddlewareEvidenceSchemaV1
   , promotionClaimCatalog
   , promotionEvidenceSchemaV1
   , l0SemanticsClaimCatalog
@@ -178,6 +180,13 @@ effSysRefEvidenceSchemaV1 :: SchemaId
 effSysRefEvidenceSchemaV1 =
   SchemaId
     { schemaIdName = SchemaName "effsys-ref-witness"
+    , schemaIdVersion = SchemaVersion 1
+    }
+
+hangingMiddlewareEvidenceSchemaV1 :: SchemaId
+hangingMiddlewareEvidenceSchemaV1 =
+  SchemaId
+    { schemaIdName = SchemaName "hanging-middleware-witness"
     , schemaIdVersion = SchemaVersion 1
     }
 
@@ -423,6 +432,27 @@ effSysRefClaimCatalog =
           , "effsys-ref-registry-mismatch-rejected"
           ]
     , claimCatalogManifestClaim = ClaimName "effsys-ref-claim-manifest"
+    }
+
+hangingMiddlewareClaimCatalog :: ClaimCatalog
+hangingMiddlewareClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "hanging-middleware"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "hanging-middleware-hook-plan-roundtrip"
+          , "hanging-middleware-no-boot-root"
+          , "hanging-middleware-scope-and-declaration-order"
+          , "hanging-middleware-success-failure-cancelled-observed"
+          , "hanging-middleware-scoped-snapshot-and-stats"
+          , "hanging-middleware-own-effect-occurrence"
+          , "hanging-middleware-runtime-events-provenance"
+          , "hanging-middleware-missing-registry-fails-before-handler-io"
+          , "hanging-middleware-prestart-continuation-provenance"
+          ]
+    , claimCatalogManifestClaim =
+        ClaimName "hanging-middleware-claim-manifest"
     }
 
 referencedRuntimeClaimCatalog :: ClaimCatalog

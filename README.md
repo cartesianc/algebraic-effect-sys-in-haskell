@@ -36,10 +36,10 @@ myframework 是一套使用 Haskell 实现的可序列化 EDSL、Effect 编译�
 - 四态 Input CPS、ValueGraph 值求解和统一 v5.2 Runtime；
 - `BootRunId + AstPath + EffectRef` execution identity 与 occurrence single-flight。
 - first-class `EffSysRef`、Scoped EffSys IR/live view/deterministic snapshot 和只读查询。
+- 独立 hanging `HookPlan`、scoped middleware wrapper、own EffectApplication 和 hook provenance。
 
 L0 v5.2 后续阶段继续实现：
 
-- hanging middleware observation；
 - callback PipelinePatch；
 - Loop 完整状态反馈。
 

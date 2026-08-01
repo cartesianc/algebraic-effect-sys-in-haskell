@@ -17,11 +17,12 @@ TrustBase 和 SDK lowering 的开发者。
 5. src/MyFramework/Effect.hs
 6. src/MyFramework/Graph.hs
 7. src/MyFramework/EffSys.hs
-8. src/MyFramework/Ast.hs
-9. src/MyFramework/Recursion.hs
-10. src/MyFramework/Runtime.hs
-11. src/MyFramework/Runtime/V52.hs
-12. src/MyFramework/Runtime/Diagnosis.hs
+8. src/MyFramework/Hook.hs
+9. src/MyFramework/Ast.hs
+10. src/MyFramework/Recursion.hs
+11. src/MyFramework/Runtime.hs
+12. src/MyFramework/Runtime/V52.hs
+13. src/MyFramework/Runtime/Diagnosis.hs
 
 ## 2. 当前实现和目标合同
 
@@ -34,7 +35,8 @@ TrustBase 和 SDK lowering 的开发者。
 | v5.2 Stage 3 | 已运行，提供 schema-free Facade、正式 MAP、Application 和三图分离 |
 | v5.2 Stage 4 | 已运行，提供 defunctionalized Input CPS、统一 Runtime 和 occurrence single-flight |
 | v5.2 Stage 5 | 已运行，提供 first-class EffSysRef、scope closure、live view 和 snapshot |
-| v5.2 Stage 6+ | 待实现 Hook、Callback、Loop 和 promotion |
+| v5.2 Stage 6 | 已运行，提供 hanging HookPlan、middleware wrapper 和 hook provenance |
+| v5.2 Stage 7+ | 待实现 Callback、Loop 和 promotion |
 
 当前源码可以作为迁移基础。v5.2 设计只有在 Facade、schema elaboration、lowering、runtime、
 witness、self-artifact 和 SDK 全部闭合后才进入 current core。
@@ -890,8 +892,11 @@ RuntimeHooks 中：
 
 Middleware 可以在 child 前后记录事件、读取快照、统计状态和运行自身 action。
 
-Stage 5 已提供 Scoped EffSysRef。Stage 6 将它交给 hanging middleware，并记录 hook
-生命周期事件。
+Stage 6 将 Scoped EffSysRef 交给 hanging middleware，并记录 hook 生命周期事件。
+`astBlueprintHanging` 编译为独立 `HookPlan`；detached application 不进入 AST boot root。
+Runtime 按 AST scope 深度和声明顺序构造 wrapper。`MiddlewareContext` 提供 scope ref、
+AstPath、只读 snapshot、child RuntimeAction 和可选 own-application RuntimeAction。
+capability boundary 不暴露 InputGraph、ValueGraph、ContinuationPlan 或 patch API。
 
 ### 15.2 Callback
 
@@ -965,7 +970,7 @@ SDK core lock 建立从语义源码到发布产物的可验证链。
 
 ## 17. 设计限制
 
-- hanging、callback 和 Loop 语义仍处于实现期；
+- callback 和 Loop 语义仍处于实现期；
 - schema-free SurfaceProgram、elaborator、MAP 和 Application 已实现；
 - 默认 Facade 已移除显式 SchemaIdentity；
 - 当前 ScalarShape 无法严格区分 Bool、Integer、Decimal 和 Text；

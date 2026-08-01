@@ -51,6 +51,8 @@ import MyFramework.TrustBase.Evidence
   , facadeV52EvidenceSchemaV1
   , inputCpsClaimCatalog
   , inputCpsEvidenceSchemaV1
+  , hangingMiddlewareClaimCatalog
+  , hangingMiddlewareEvidenceSchemaV1
   , fixedPointDiffClaimCatalog
   , l0SemanticsClaimCatalog
   , l0SemanticsEvidenceSchemaV3
@@ -132,6 +134,7 @@ myFrameworkTrustBaseManifest =
         , "MyFramework.Facade"
         , "MyFramework.Graph"
         , "MyFramework.Handler.Adapter"
+        , "MyFramework.Hook"
         , "MyFramework.Runtime.V52"
         , "MyFramework.Schema"
         ]
@@ -202,6 +205,10 @@ selfSchemaCatalog =
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema = effSysRefEvidenceSchemaV1
       , schemaCatalogEntryProducer = "effsys-ref-witness"
+      }
+  , SchemaCatalogEntry
+      { schemaCatalogEntrySchema = hangingMiddlewareEvidenceSchemaV1
+      , schemaCatalogEntryProducer = "hanging-middleware-witness"
       }
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema = selfInterpretEvidenceSchemaV3
@@ -287,6 +294,7 @@ selfClaimCatalog =
     ++ claimCatalogClaims facadeV52ClaimCatalog
     ++ claimCatalogClaims inputCpsClaimCatalog
     ++ claimCatalogClaims effSysRefClaimCatalog
+    ++ claimCatalogClaims hangingMiddlewareClaimCatalog
     ++ claimCatalogClaims selfInterpretClaimCatalog
     ++ claimCatalogClaims promotionClaimCatalog
     ++ claimCatalogClaims sdkPackageClaimCatalog

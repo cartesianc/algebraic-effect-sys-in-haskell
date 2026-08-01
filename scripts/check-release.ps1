@@ -98,6 +98,9 @@ try {
     Invoke-Captured "scoped EffSys witness" {
         stack --work-dir .stack-work-codex exec effsys-ref-witness
     } (Join-Path $evidenceRoot "stage5-effsys-ref.json")
+    Invoke-Captured "hanging middleware witness" {
+        stack --work-dir .stack-work-codex exec hanging-middleware-witness
+    } (Join-Path $evidenceRoot "stage6-hanging-middleware.json")
     Invoke-Captured "runtime witness" {
         stack --work-dir .stack-work-codex exec curde-runtime-witness
     } (Join-Path $evidenceRoot "stage0-runtime.json")
@@ -127,6 +130,9 @@ try {
     }
     Invoke-Checked "schema-free facade boundary" {
         & (Join-Path $PSScriptRoot "check-schema-free-facade.ps1")
+    }
+    Invoke-Checked "middleware capability boundary" {
+        & (Join-Path $PSScriptRoot "check-middleware-boundary.ps1")
     }
     Invoke-Checked "diff check" {
         git diff --check
