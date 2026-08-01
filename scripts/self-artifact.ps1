@@ -190,6 +190,9 @@ try {
     Invoke-Captured "Stage1 referenced runtime witness" {
         stack --work-dir .stack-work-artifact exec referenced-runtime-witness
     } (Join-Path $stage1Evidence "referenced-runtime.json")
+    Invoke-Captured "Stage1 schema elaboration witness" {
+        stack --work-dir .stack-work-artifact exec schema-elaboration-witness
+    } (Join-Path $stage1Evidence "schema-elaboration.json")
     Invoke-Captured "Stage1 runtime witness" {
         stack --work-dir .stack-work-artifact exec curde-runtime-witness
     } (Join-Path $stage1Evidence "runtime.json")
@@ -239,6 +242,9 @@ try {
     Invoke-Captured "Stage2 referenced runtime witness" {
         stack --work-dir .stack-work-artifact exec referenced-runtime-witness
     } (Join-Path $stage2Evidence "referenced-runtime.json")
+    Invoke-Captured "Stage2 schema elaboration witness" {
+        stack --work-dir .stack-work-artifact exec schema-elaboration-witness
+    } (Join-Path $stage2Evidence "schema-elaboration.json")
     Invoke-Captured "Stage2 runtime witness" {
         stack --work-dir .stack-work-artifact exec curde-runtime-witness
     } (Join-Path $stage2Evidence "runtime.json")

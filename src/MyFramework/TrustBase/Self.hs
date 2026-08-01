@@ -52,6 +52,8 @@ import MyFramework.TrustBase.Evidence
   , referencedFrontendEvidenceSchemaV1
   , referencedRuntimeClaimCatalog
   , referencedRuntimeEvidenceSchemaV1
+  , schemaElaborationClaimCatalog
+  , schemaElaborationEvidenceSchemaV1
   , sdkPackageClaimCatalog
   , sdkPackageEvidenceSchemaV1
   , selfInterpretClaimCatalog
@@ -116,8 +118,10 @@ myFrameworkTrustBaseManifest =
         ]
     , trustBaseManifestFacadeModules =
         [ "MyFramework"
+        , "MyFramework.Elaboration"
         , "MyFramework.Facade"
         , "MyFramework.Frontend.Runtime"
+        , "MyFramework.Schema"
         ]
     , trustBaseManifestSchemas = selfSchemaCatalog
     , trustBaseManifestEvidenceClaims = selfClaimCatalog
@@ -166,6 +170,10 @@ selfSchemaCatalog =
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema = referencedRuntimeEvidenceSchemaV1
       , schemaCatalogEntryProducer = "referenced-runtime-witness"
+      }
+  , SchemaCatalogEntry
+      { schemaCatalogEntrySchema = schemaElaborationEvidenceSchemaV1
+      , schemaCatalogEntryProducer = "schema-elaboration-witness"
       }
   , SchemaCatalogEntry
       { schemaCatalogEntrySchema = selfInterpretEvidenceSchemaV2
@@ -246,6 +254,7 @@ selfClaimCatalog =
     ++ claimCatalogClaims referencedFrontendClaimCatalog
     ++ claimCatalogClaims crawlerFacadeClaimCatalog
     ++ claimCatalogClaims referencedRuntimeClaimCatalog
+    ++ claimCatalogClaims schemaElaborationClaimCatalog
     ++ claimCatalogClaims selfInterpretClaimCatalog
     ++ claimCatalogClaims promotionClaimCatalog
     ++ claimCatalogClaims sdkPackageClaimCatalog

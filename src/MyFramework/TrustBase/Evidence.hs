@@ -22,6 +22,8 @@ module MyFramework.TrustBase.Evidence
   , schemaCatalogClaimCatalog
   , schemaCatalogClaimName
   , schemaCatalogEvidenceSchemaV1
+  , schemaElaborationClaimCatalog
+  , schemaElaborationEvidenceSchemaV1
   , selfInterpretClaimCatalog
   , selfInterpretEvidenceSchemaV2
   , trustBaseManifestClaimCatalog
@@ -143,6 +145,13 @@ crawlerFacadeEvidenceSchemaV1 =
     , schemaIdVersion = SchemaVersion 1
     }
 
+schemaElaborationEvidenceSchemaV1 :: SchemaId
+schemaElaborationEvidenceSchemaV1 =
+  SchemaId
+    { schemaIdName = SchemaName "schema-elaboration-witness"
+    , schemaIdVersion = SchemaVersion 1
+    }
+
 -- | This catalog retains the stable names for the pure manifest invariants.
 -- Operational artifact, executable, gate-command, and publication claims are
 -- deliberately outside the minimal TrustBase.
@@ -256,6 +265,33 @@ crawlerFacadeClaimCatalog =
           ]
     , claimCatalogManifestClaim =
         ClaimName "crawler-facade-claim-manifest"
+    }
+
+schemaElaborationClaimCatalog :: ClaimCatalog
+schemaElaborationClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "schema-elaboration"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "schema-elaboration-deterministic"
+          , "schema-elaboration-generic-record"
+          , "schema-elaboration-codec-roundtrip-equivalence"
+          , "schema-elaboration-type-conflict-rejected"
+          , "schema-elaboration-codec-conflict-rejected"
+          , "schema-elaboration-imported-conflict-rejected"
+          , "schema-elaboration-unresolved-rejected"
+          , "schema-elaboration-cycle-rejected"
+          , "schema-elaboration-codec-required"
+          , "schema-elaboration-version-conflict-rejected"
+          , "schema-elaboration-record-shape-rejected"
+          , "schema-elaboration-nonserializable-boundary-rejected"
+          , "schema-elaboration-legacy-behavior-preserved"
+          , "schema-elaboration-no-handler-io"
+          , "schema-elaboration-canonical-sha256"
+          ]
+    , claimCatalogManifestClaim =
+        ClaimName "schema-elaboration-claim-manifest"
     }
 
 referencedRuntimeClaimCatalog :: ClaimCatalog

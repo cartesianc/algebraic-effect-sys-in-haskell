@@ -83,6 +83,9 @@ try {
     Invoke-Captured "referenced runtime witness" {
         stack --work-dir .stack-work-codex exec referenced-runtime-witness
     } (Join-Path $evidenceRoot "stage0-referenced-runtime.json")
+    Invoke-Captured "schema elaboration witness" {
+        stack --work-dir .stack-work-codex exec schema-elaboration-witness
+    } (Join-Path $evidenceRoot "stage1-schema-elaboration.json")
     Invoke-Captured "runtime witness" {
         stack --work-dir .stack-work-codex exec curde-runtime-witness
     } (Join-Path $evidenceRoot "stage0-runtime.json")
