@@ -1,11 +1,11 @@
 # AST 唯一执行入口与运行来源证明
 
 > **L0 优先：** 本文记录 legacy AST runtime 的执行来源边界。公开前台、模块
-> 引用、effect record 与 R 分离语义以
-> [`L0_REFERENCED_AST_SEMANTICS.zh.md`](L0_REFERENCED_AST_SEMANTICS.zh.md)
+> 引用、Effect–MAP 句柄启动与叶子赋值语义以
+> [`L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md`](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md)
 > 为准。
 
-状态：legacy 边界保留；L0 v2 runtime 已进入 approved façade core0
+状态：legacy 边界保留；approved façade core0 仍是 v2 兼容实现，不满足 L0 v5.2
 适用范围：`myframework` 的 EffSys、AST、lowering、runtime 与 handler 边界
 本文件只冻结执行来源，不冻结尚未确认的 AST 控制节点语义。
 

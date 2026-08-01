@@ -1,11 +1,11 @@
 # Architecture
 
 > **L0 precedence:** The frozen highest-level semantic contract is
-> [`L0_REFERENCED_AST_SEMANTICS.zh.md`](L0_REFERENCED_AST_SEMANTICS.zh.md).
-> This file describes the current implementation. Any unified EffSys,
-> globally-qualified handle, R-input-chain, or fully nested Blueprint behavior
-> below is subordinate migration state and is non-normative when it conflicts
-> with L0.
+> [`L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md`](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md).
+> This file describes the current, v2-compatible implementation. Its separate
+> R/ReadRegistry, direct `params -> R` bindings and bare Effect leaves are
+> subordinate migration state and are non-normative when they conflict with
+> L0 v5.2.
 
 ## Semantic source
 

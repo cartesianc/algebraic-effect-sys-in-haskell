@@ -1,9 +1,10 @@
 # MyFramework 自举闭包与 TrustBase 轮换设计
 
 > **L0 优先：** 前台语义以
-> [`L0_REFERENCED_AST_SEMANTICS.zh.md`](L0_REFERENCED_AST_SEMANTICS.zh.md)
+> [`L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md`](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md)
 > 为最高规范。本文后续出现的旧 CURDE/`AstBlueprintSeed`、core0/core1 名称
-> 仅保留为历史设计说明，不得覆盖 L0 v2 与当前 core2→façade-core0 证据。
+> 仅保留为历史设计说明，不得覆盖 L0 v5.2。当前 core2→façade-core0 证据只证明
+> v2 兼容实现，不证明 Effect–MAP 语义已经完成。
 
 ## 0. 文档状态
 

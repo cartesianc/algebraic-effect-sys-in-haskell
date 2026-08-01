@@ -1,93 +1,90 @@
 # myframework
 
-`myframework` is the source repository for the CURDE framework compiler and
-runtime.
+myframework 是一套使用 Haskell 实现的可序列化 EDSL、Effect 编译器和运行时。
 
-## L0 semantic authority
+## 从这里开始
 
-The frozen highest-level frontend contract is
-[`docs/L0_REFERENCED_AST_SEMANTICS.zh.md`](docs/L0_REFERENCED_AST_SEMANTICS.zh.md).
-If source code, internal IR, witnesses, examples, or another document conflicts
-with that contract, the L0 document wins and the conflict is implementation
-debt.
+按你的目标选择文档：
 
-The L0 model is a referenced hierarchy: declarations such as
-`chain app [a, b]` and `parallel a [a1, a2]` are independently addressable
-module/control nodes. Effects are registered per module, their record keys are
-their local identities, and R is a separate lazy typed data domain. UI and
-runtime resolve the hierarchy on demand instead of requiring one fully nested
-Blueprint.
+| 目标 | 文档 |
+|---|---|
+| 第一次运行项目、编写业务程序 | [使用入门](docs/GETTING_STARTED.zh.md) |
+| 开发 AST、Effect、interpreter、runtime、diagnosis | [框架开发者指南](docs/DEVELOPER_GUIDE.zh.md) |
+| 查看长期冻结的语义边界 | [L0 框架合同](docs/L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md) |
+| 查看 Runtime 专题 | [Runtime](docs/RUNTIME.md) |
+| 查看 TrustBase | [TrustBase](docs/TRUST_BASE.md) |
+| 查看 SDK 生成 | [SDK Source Artifact](docs/SDK_SOURCE_ARTIFACT.md) |
+| 查看自举 gate | [Self-bootstrap Gate](docs/SELF_BOOTSTRAP_GATE.md) |
 
-The root SDK facade, self-model, SDK source artifact, runtime resolver, and
-promoted core now use the L0 referenced-program contract. Legacy CURDE/AST
-modules remain compiled as an internal migration and compatibility surface;
-they are not re-exported by `MyFramework` and do not override L0.
+使用文档、框架内部文档和 L0 合同承担不同职责。L0 文件路径长期保持稳定，并通过
+版本号持续迭代。
 
-## Repository boundaries
+## 当前状态
 
-- `myframework` is the semantic source.
-- `dsl-bootstrap` is a migration reference and behavioral oracle.
-- `dsl-sdk` is generated output. It is never edited as a semantic source.
-- TrustBase contracts migrate as pure schema, evidence, manifest, and
-  fixed-point validation code. Release promotion is a separate operation.
+当前可运行的 v2-compatible Facade 支持：
 
-## Current self-bootstrap status
+- import MyFramework 单一业务入口；
+- 引用式 AST 模块；
+- chain、parallel、fallback；
+- C/U/D/E Effect；
+- 独立 R registry；
+- 显式 SchemaIdentity（迁移表面）；
+- Effect input 句柄链；
+- Handler 注册；
+- 运行状态快照。
 
-The implementation now contains both required fixed points:
+L0 v5.2 目标继续实现：
 
-- content-addressed approved-`core2` replay plus the L0 v2
-  `core0 -> FrameworkAsBusiness -> EmptyBusiness` semantic bridge;
-- Stage1/Stage2 source and evidence reproducibility.
+- schema-free 业务 Facade；
+- SurfaceProgram → ElaboratedProgram schema 求解；
+- canonical SchemaCatalog 与边界 codec；
+- 正式 MAP Effect；
+- command $ MAP $ R Application；
+- input CPS lowering；
+- Scoped EffSys first-class registry；
+- hanging middleware observation；
+- callback PipelinePatch；
+- Loop 完整状态反馈。
 
-`TrustBaseRef`, existential `BoundTrustBase`, the closed `HostKernel`, explicit
-promotion records, current-core pointers, approved-core SDK locks, and a
-standalone `sdk-lower` package materializer are part of the same source
-closure. Focused semantic, binding, promotion, and SDK package witnesses must
-all pass before release validation starts.
+目标合同中的语法不会自动视为当前可编译 API。状态矩阵位于 L0 第 17 节。
 
-Promotion is still deliberately separate from validation. A candidate is not
-the current core until the heavy self-artifact gate passes and a maintainer
-explicitly approves its pending promotion record. Only that approved core may
-feed the beta SDK workflow. Ordinary architecture changes invalidate previous
-source digests and are not promoted merely because local semantic witnesses
-pass.
+## 构建
 
-The repository current pointer selects the explicitly approved façade-epoch
-`core0` artifact. Approved `core2` is retained as content-addressed replay and
-rollback evidence and is not an active runtime dependency of core0.
+    stack --work-dir .stack-work-codex build
 
-Business authoring imports only `MyFramework`. The executable crawler witness
-proves the public façade can directly write:
+运行公开 Facade 爬虫示例：
 
-```haskell
-chain crawler [fetch, extract, persist]
-fallback fetch [primary, mirror]
-parallel extract [links, content]
-chain persist [page, links]
-```
+    stack --work-dir .stack-work-codex exec crawler-facade-witness
 
-## Build policy
+运行主要局部 witness：
 
-Development batches related semantic changes before compiling. Focused
-semantic evidence is added with the implementation, but expensive release and
-self-artifact promotion gates are not part of ordinary iteration.
+    stack --work-dir .stack-work-codex exec curde-semantics-witness
+    stack --work-dir .stack-work-codex exec curde-runtime-witness
+    .\scripts\check-ast-execution-boundary.ps1
 
-```powershell
-stack --work-dir .stack-work-codex build
-stack --work-dir .stack-work-codex exec curde-semantics-witness
-stack --work-dir .stack-work-codex exec crawler-facade-witness
-stack --work-dir .stack-work-codex exec curde-runtime-witness
-.\scripts\check-ast-execution-boundary.ps1
-```
+普通 release pre-gate：
 
-See `docs/L0_REFERENCED_AST_SEMANTICS.zh.md` for the frozen semantic boundary.
-`docs/ARCHITECTURE.md` maps the current implementation and is subordinate to
-the L0 contract.
+    .\scripts\check-release.ps1
 
-The approved-core SDK lowering boundary is documented in
-`docs/SDK_SOURCE_ARTIFACT.md`. Its current migration representation must
-eventually lower the L0 referenced-module surface without introducing another
-authoring facade.
+Self-artifact 和 promotion 属于候选 core 发布流程。普通开发迭代不运行 promotion。
 
-The runtime compiler/executor boundary is documented in `docs/RUNTIME.md`.
-It consumes a validated lowering result and is not another authoring facade.
+## 仓库边界
+
+- myframework：语义源码、Runtime、TrustBase 和 SDK lowering；
+- dsl-bootstrap：迁移参考和历史行为 oracle；
+- dsl-sdk：生成产物。
+
+业务代码只导入 MyFramework。Handler 实现、Runtime hooks、TrustBase 和 SDK
+materializer 使用各自维护入口。
+
+## 发布关系
+
+    current core0
+      -> FrameworkAsBusiness / core1
+      -> core2 candidate
+      -> semantic and artifact fixed points
+      -> explicit approval
+      -> next core0
+
+通过 validation 或 self-artifact gate 只会生成证据。current core 的切换需要维护者
+显式批准。
