@@ -7,6 +7,8 @@ module MyFramework.TrustBase.Evidence
   , crawlerFacadeClaimCatalog
   , crawlerFacadeEvidenceSchemaV1
   , evidenceFor
+  , effectApplicationClaimCatalog
+  , effectApplicationEvidenceSchemaV1
   , fixedPointDiffClaimCatalog
   , fixedPointDiffEvidenceSchemaV1
   , promotionClaimCatalog
@@ -142,6 +144,13 @@ crawlerFacadeEvidenceSchemaV1 :: SchemaId
 crawlerFacadeEvidenceSchemaV1 =
   SchemaId
     { schemaIdName = SchemaName "crawler-facade-witness"
+    , schemaIdVersion = SchemaVersion 1
+    }
+
+effectApplicationEvidenceSchemaV1 :: SchemaId
+effectApplicationEvidenceSchemaV1 =
+  SchemaId
+    { schemaIdName = SchemaName "effect-application-witness"
     , schemaIdVersion = SchemaVersion 1
     }
 
@@ -292,6 +301,33 @@ schemaElaborationClaimCatalog =
           ]
     , claimCatalogManifestClaim =
         ClaimName "schema-elaboration-claim-manifest"
+    }
+
+effectApplicationClaimCatalog :: ClaimCatalog
+effectApplicationClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "effect-application"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "effect-application-six-kinds-roundtrip"
+          , "effect-application-roundtrip"
+          , "effect-application-occurrences-independent"
+          , "effect-application-ast-input-value-graphs-separated"
+          , "effect-application-continuation-identity-stable"
+          , "effect-application-ast-path-provenance"
+          , "effect-application-map-missing-rejected"
+          , "effect-application-output-mismatch-rejected"
+          , "effect-application-illegal-r-reference-rejected"
+          , "effect-application-input-cycle-rejected"
+          , "effect-application-transform-registry-independent"
+          , "effect-application-r-in-effect-registry"
+          , "effect-application-state-projection-separated"
+          , "effect-application-handler-param-order-preserved"
+          , "effect-application-legacy-migration-deterministic"
+          ]
+    , claimCatalogManifestClaim =
+        ClaimName "effect-application-claim-manifest"
     }
 
 referencedRuntimeClaimCatalog :: ClaimCatalog
