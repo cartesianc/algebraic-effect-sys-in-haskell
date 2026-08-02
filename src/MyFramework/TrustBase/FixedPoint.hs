@@ -17,6 +17,7 @@ module MyFramework.TrustBase.FixedPoint
   , fixedPointReportSchemaV1
   , fixedPointSummarySchemaV1
   , renderStageEvidenceJson
+  , semanticWitnessValid
   , stageEvidenceArtifactManifestDigest
   , stageEvidenceControlPlanDigest
   , stageEvidenceFacadeLoweringDigest
@@ -299,14 +300,14 @@ semanticWitnessValid currentText =
     (`isInfixOf` currentText)
     [ "\"schema\":\"curde-semantics-report.v4\""
     , "\"result\":\"passed\""
-    , "\"name\":\"l0-referenced-program-valid\",\"passed\":true"
-    , "\"name\":\"l0-referenced-program-resolves\",\"passed\":true"
-    , "\"name\":\"l0-module-local-effect-records\",\"passed\":true"
-    , "\"name\":\"l0-r-is-separate\",\"passed\":true"
-    , "\"name\":\"l0-effect-kinds-cude-without-r\",\"passed\":true"
-    , "\"name\":\"l0-self-model-text-roundtrip\",\"passed\":true"
-    , "\"name\":\"l0-self-model-json-roundtrip\",\"passed\":true"
-    , "\"name\":\"l0-resolver-control-trace\",\"passed\":true"
+    , "\"name\":\"l0-v52-program-valid\",\"passed\":true"
+    , "\"name\":\"l0-v52-schema-free-canonical-catalog\",\"passed\":true"
+    , "\"name\":\"l0-v52-effect-kinds-in-unified-registry\",\"passed\":true"
+    , "\"name\":\"l0-v52-command-map-r-applications\",\"passed\":true"
+    , "\"name\":\"l0-v52-three-graphs-separated\",\"passed\":true"
+    , "\"name\":\"l0-v52-continuation-plan-serializable\",\"passed\":true"
+    , "\"name\":\"l0-v52-framework-encoding-has-no-legacy-program\",\"passed\":true"
+    , "\"name\":\"l0-v52-empty-business-is-zero-effect\",\"passed\":true"
     ]
     && countSubstring "\"passed\":true" currentText == 8
     && not ("\"passed\":false" `isInfixOf` currentText)

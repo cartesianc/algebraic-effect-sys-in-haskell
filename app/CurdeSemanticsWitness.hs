@@ -6,6 +6,7 @@ import System.Exit (exitFailure)
 
 import MyFramework
 import MyFramework.Self.CoreModel
+import MyFramework.TrustBase.FixedPoint (semanticWitnessValid)
 
 data Check = Check
   { checkName :: String
@@ -72,8 +73,9 @@ main =
                 (show EmptyBusiness)
             ]
           succeeded = all checkPassed checks
-      putStrLn (renderReport checks succeeded)
-      unless succeeded exitFailure
+          currentReport = renderReport checks succeeded
+      putStrLn currentReport
+      unless (succeeded && semanticWitnessValid currentReport) exitFailure
 
 applicationHasThreeEffects :: ApplicationOccurrence -> Bool
 applicationHasThreeEffects currentOccurrence =
