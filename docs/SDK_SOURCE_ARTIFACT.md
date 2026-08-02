@@ -80,6 +80,10 @@ negative cases for pending promotion and tampered surface/lowering digests. It
 runs in the ordinary release gate and is reproduced byte-for-byte by Stage1
 and Stage2 in the heavy gate.
 
+The approved `core0-v52` produced SDK version `0.2.0-core0`. The package was
+verified, built with an independent `.stack-work-sdk`, and passed the package
+witness from inside the generated root.
+
 ## CI/CD
 
 `.github/workflows/ci.yml` runs the ordinary release pre-gate on pushes and

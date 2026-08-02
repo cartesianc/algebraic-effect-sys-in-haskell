@@ -9,6 +9,9 @@ part of the materialized framework source closure.
   semantic, artifact, and EmptyBusiness evidence digests.
 - `promotion.pending.json` preserves the pre-decision record.
 - `core0-manifest.json` is the selected façade-epoch core0 manifest.
+- `core0-v52-manifest.json` is the approved L0 v5.2 core manifest.
+- `core0-v52-source.json` binds that manifest to the reviewed candidate commit,
+  worktree fingerprint, FrameworkAsBusiness payload, and semantic observation.
 - `core1-manifest.json` is an archival pre-L0 core retained for audit.
 - `core1-source.json` binds the approved core1 payload to the exact source
   commit and legacy framework/observation digests required for core1 replay.
@@ -23,11 +26,15 @@ part of the materialized framework source closure.
   fixed-point, and promotion evidence.
 - `evidence/facade-core0/` preserves the core2 -> façade core0 replay,
   crawler-façade execution, fixed-point, promotion, and SDK evidence.
+- `evidence/core0-v52/` preserves v5.2 source/evidence fixed points,
+  self-interpretation, semantic closure, promotion verification, and SDK manifest.
+- `history/facade-core0-v2/` preserves the previous approved pointer and
+  promotion records for explicit TrustBase rollback.
 
-The current core is the new semantic epoch's `core0`. The historical genesis
+The current core is `core0-v52`. The historical genesis
 core0 is distinguished by its old digest and remains recoverable from git and
 the core0 -> core1 evidence; identities are always checked as complete
 content-addressed `TrustBaseRef` values, never by the text `core0` alone.
-Future rounds must use the current core0 as their previous core, pass the same
+Future rounds must use `core0-v52` as their previous core, pass the same
 semantic and artifact gates, and receive a new explicit approval. Editing only
 `current.json` is not a valid promotion.

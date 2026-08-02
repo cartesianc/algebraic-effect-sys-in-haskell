@@ -41,7 +41,7 @@ TrustBase 和 SDK lowering 的开发者。
 | v5.2 Stage 7 | 已运行，提供 CallbackRef、事务 PipelinePatch 和 run-local continuation |
 | v5.2 Stage 8 | 已运行，提供单 child Loop、versioned policy、revision replay、嵌套传播和 LIFO cleanup |
 | v5.2 Stage 9 | 已运行，提供控制 hook、versioned Context、v5.2 FrameworkAsBusiness、EmptyBusiness 和 SDK source epoch |
-| v5.2 Stage 10 | 待执行 self-artifact、显式 promotion 和 approved SDK 独立验证 |
+| v5.2 Stage 10 | 已完成 self-artifact、`core0-v52` 显式 promotion 和 `0.2.0-core0` SDK 独立验证 |
 
 当前源码可以作为迁移基础。v5.2 设计只有在 Facade、schema elaboration、lowering、runtime、
 witness、self-artifact 和 SDK 全部闭合后才进入 current core。

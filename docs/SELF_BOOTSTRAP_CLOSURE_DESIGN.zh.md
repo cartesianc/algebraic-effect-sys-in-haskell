@@ -23,10 +23,10 @@ TrustBase 的自举 core”所需的设计。
 - Stage0/Stage1/Stage2 artifact fixed-point 协议保留；
 - approved-core `SdkCoreLock`、standalone `sdk-lower`、package verifier 与 beta workflows 已实现。
 
-此前 v2 façade core 已通过普通 release pre-gate 与重型 self-artifact gate，并由显式
-promotion 命令批准。仓库的 approved record 与 current pointer 在 v5.2 Stage 10 前保持不变。
-`core2` 仅作为重放/回滚材料保留，不在 core0 的活动依赖闭包内。一个
-`0.1.0-core0` SDK 包已从 approved core0 实际物化并通过 package verify。
+v5.2 `core0-v52` 已通过普通 release pre-gate、重型 self-artifact gate 和显式
+promotion。此前 v2 façade core 的 pointer 与 approval 保留为回滚材料。`core2` 仅作为
+重放材料保留，不在当前 core 的活动依赖闭包内。`0.2.0-core0` SDK 已从 approved
+`core0-v52` 实际物化并通过独立 build 与 package verify。
 
 ## 1. “可用”的分层定义
 
@@ -37,9 +37,9 @@ promotion 命令批准。仓库的 approved record 与 current pointer 在 v5.2 
 | 研究 CURDE、单 input、R/Implementation、AST 控制语义 | 已有实现与 witness | 可用作实验核心 |
 | 运行受当前 Handler/runtime 支持的业务模型 | 已有实现，但业务验收面仍需逐步扩展 | 有条件可用 |
 | 验证源码 artifact 可独立构建并复现 | Stage1/Stage2 payload 与 evidence fixed point 均通过 | 已完成 |
-| 声称 framework 已经以自身语义表达自身 | L0 v2 `FrameworkAsBusiness` 与 semantic witness 已进入 façade core0 | 已完成 |
-| 将 candidate 晋升为下一轮 TrustBase core | façade core0 已通过 heavy gate 并显式批准 | promotion approved |
-| 由 CI/CD 生成并发布可信 SDK | approved core0 已实际物化并独立 verify | 0.1.0-core0 本地端到端复验通过 |
+| 声称 framework 已经以自身语义表达自身 | v5.2 `FrameworkAsBusiness` 与 semantic witness 已进入 core0-v52 | 已完成 |
+| 将 candidate 晋升为下一轮 TrustBase core | core0-v52 已通过 heavy gate 并显式批准 | promotion approved |
+| 由 CI/CD 生成并发布可信 SDK | approved core0-v52 已实际物化并独立 verify | 0.2.0-core0 本地端到端复验通过 |
 
 对普通 CURDE/runtime 实验而言，这些缺口不会让全部代码失去用途。对项目的最终目标
 ——可自举 framework core 与可信 SDK 源——而言，它们是核心可用性条件，而不是可选优化。

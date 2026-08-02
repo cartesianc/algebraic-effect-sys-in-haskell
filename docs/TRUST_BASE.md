@@ -32,9 +32,9 @@ previous core after materialization is rejected.
 
 Genesis core0 interpreted and materialized core1. Approved core1 was then
 content-addressed and replayed to bridge the L0 core2 candidate. Approved
-core2 interpreted the L0 v2 public-façade core that remains the approved current
-core while the v5.2 candidate advances through Stage 9 and Stage 10. The current
-core has no active runtime dependency on core2.
+core2 interpreted the L0 v2 public-façade core. The v5.2 candidate then passed
+the source/evidence fixed points and explicit promotion as `core0-v52`.
+The current core has no active runtime dependency on core2 or the v2 core0.
 
 ## Evidence and promotion
 

@@ -283,9 +283,10 @@ scoped = context (name "scope") identityContext fetch
 - versioned Context 与 pre-runtime validation；
 - v5.2 FrameworkAsBusiness、EmptyBusiness 和 SDK source epoch。
 
-后续阶段：
+发布状态：
 
-- self-artifact、显式 promotion 和 approved `0.2.0-core0` SDK 独立验证。
+- `core0-v52` 已通过 self-artifact 并显式 promotion；
+- approved `0.2.0-core0` SDK 已完成独立构建和 package witness。
 
 旧 artifact 通过 `MyFramework.Legacy.Migration`、`MyFramework.Legacy.Elaboration` 和
 `MyFramework.Legacy.Application` 转换。默认 `MyFramework` 不重导出旧表面。

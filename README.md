@@ -44,9 +44,8 @@ myframework 是一套使用 Haskell 实现的可序列化 EDSL、Effect 编译�
 - v5.2 `FrameworkAsBusiness`、真正的零 Effect `EmptyBusiness` 和新 epoch Diagnosis/evidence；
 - v5.2 SDK source artifact 与 `0.2.0-core0` package lowering。
 
-L0 v5.2 后续阶段继续实现：
-
-- self-artifact 固定点、显式 promotion 和 approved-core SDK 独立构建。
+L0 v5.2 Stage 0—10 已完成。approved current core 为 `core0-v52`；
+`0.2.0-core0` SDK 已物化、验证并在独立 Stack work dir 中构建通过。
 
 旧 `ReferencedProgram` 表面位于 `MyFramework.Legacy.*`，用于 v2 artifact 的显式迁移。
 状态矩阵位于 L0 第 17 节。

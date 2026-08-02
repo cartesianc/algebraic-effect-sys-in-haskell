@@ -66,8 +66,8 @@ Validation never modifies `trustbase/current.json`. After the heavy gate, a
 maintainer reviews the generated core manifest, pending record, TrustBase
 classification, diff, and evidence. Only the explicit `core-promotion-tool
 approve` command can produce an approved record and matching current pointer.
-The repository contains an approved v2 current core. The v5.2 pointer remains
-unchanged until its Stage 10 heavy gate and explicit approval complete.
+The repository current pointer selects approved `core0-v52`. The previous v2
+pointer and approval are retained under `trustbase/history/facade-core0-v2/`.
 
 A beta SDK additionally requires those reviewed files and independently checks
 that the approved core artifact digest is the payload it packages. CI cannot

@@ -175,8 +175,7 @@ never receives either value.
 
 The v5.2 candidate `FrameworkAsBusiness` uses the schema-free Facade and unified
 Runtime. `EmptyBusiness` is a real empty Chain with zero Effects and zero
-Handlers. The approved v2 core remains current until explicit Stage 10
-promotion. The semantic witness compares
+Handlers. `core0-v52` is the explicitly approved current core. The semantic witness compares
 core0 and core1 normalized observations and rejects any candidate runtime
 back-reference to core0. The artifact witness independently proves the
 Stage1/Stage2 source fixed point.

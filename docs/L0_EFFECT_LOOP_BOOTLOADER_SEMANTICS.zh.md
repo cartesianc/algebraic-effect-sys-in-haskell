@@ -8,8 +8,8 @@
     日期：2026-08-02
     维护属性：LONG-LIVED / CONTINUOUSLY EVOLVED
     稳定路径：docs/L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md
-    实现状态：Stage 0—9 已实现；Stage 10 待执行
-    Promotion：候选身份 core0-v52；本语义 epoch 尚未 promotion
+    实现状态：Stage 0—10 已实现
+    Promotion：core0-v52 approved
 
 本文记录长期稳定的语义边界、版本状态和完成条件。
 
@@ -785,7 +785,7 @@ SDK 只接受 approved core，并执行：
 | demand graph 与 Control plan | IMPLEMENTED |
 | typed runtime、branch merge、single-flight | IMPLEMENTED |
 | runtime diagnosis | IMPLEMENTED |
-| TrustBase、fixed point、promotion、SDK | v2 current 已实现；v5.2 candidate 待 Stage 10 promotion |
+| TrustBase、fixed point、promotion、SDK | IMPLEMENTED；core0-v52 approved，0.2.0-core0 SDK verified |
 | 正式 MAP Effect | IMPLEMENTED |
 | command $ MAP $ R Application | IMPLEMENTED |
 | AST / InputGraph / ValueGraph 分离 | IMPLEMENTED |
@@ -797,7 +797,7 @@ SDK 只接受 approved core，并执行：
 | ana/hylo | OPEN |
 | Choice/Wait/Suspense control hook | IMPLEMENTED |
 | versioned Context validation | IMPLEMENTED |
-| v5.2 FrameworkAsBusiness 主表达 | IMPLEMENTED；promotion 待 Stage 10 |
+| v5.2 FrameworkAsBusiness 主表达 | IMPLEMENTED；已随 core0-v52 promotion |
 
 ## 18. v5.2 完成条件
 

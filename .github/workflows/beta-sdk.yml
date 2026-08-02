@@ -6,7 +6,7 @@ on:
       sdk_version:
         description: SDK prerelease version
         required: true
-        default: 0.1.0-beta.1
+        default: 0.2.0-beta.1
         type: string
       publish_release:
         description: Publish the verified archive as a GitHub prerelease
@@ -16,7 +16,7 @@ on:
       release_tag:
         description: GitHub prerelease tag used when publishing
         required: true
-        default: sdk-v0.1.0-beta.1
+        default: sdk-v0.2.0-beta.1
         type: string
 
 permissions:

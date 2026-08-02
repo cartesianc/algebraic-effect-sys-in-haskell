@@ -5,8 +5,8 @@
 > [`L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md`](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md)
 > 为准。
 
-状态：legacy 边界保留；approved current core 仍是 v2 兼容实现。v5.2 Stage 9 已在
-`MyFramework.Runtime.V52` 实现独立 HookPlan 与 versioned Context，等待 Stage 10 promotion。
+状态：legacy 边界保留；v5.2 `core0-v52` 已 approved。`MyFramework.Runtime.V52`
+实现独立 HookPlan 与 versioned Context；本文其余 legacy 限制只约束迁移 Runtime。
 适用范围：`myframework` 的 EffSys、AST、lowering、runtime 与 handler 边界
 本文件只冻结执行来源，不冻结尚未确认的 AST 控制节点语义。
 
