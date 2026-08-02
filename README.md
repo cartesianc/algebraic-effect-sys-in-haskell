@@ -39,10 +39,14 @@ myframework 是一套使用 Haskell 实现的可序列化 EDSL、Effect 编译�
 - 独立 hanging `HookPlan`、scoped middleware wrapper、own EffectApplication 和 hook provenance。
 - run-local Callback `PipelinePatch`、事务回滚、lifecycle gate 和 Diagnosis patch provenance。
 - 单 child `Loop`、versioned `UntilQuiescent` policy、semantic-equivalence revision、批量 replay、嵌套传播和 LIFO cleanup。
+- Choice、Wait、Suspense 的 versioned control policy 与 runtime-only gate hook；
+- versioned Context，未知 Context 在 Runtime 启动前失败；
+- v5.2 `FrameworkAsBusiness`、真正的零 Effect `EmptyBusiness` 和新 epoch Diagnosis/evidence；
+- v5.2 SDK source artifact 与 `0.2.0-core0` package lowering。
 
 L0 v5.2 后续阶段继续实现：
 
-- FrameworkAsBusiness 新 epoch 闭合、release pre-gate、promotion 和 `0.2.0-core0` SDK。
+- self-artifact 固定点、显式 promotion 和 approved-core SDK 独立构建。
 
 旧 `ReferencedProgram` 表面位于 `MyFramework.Legacy.*`，用于 v2 artifact 的显式迁移。
 状态矩阵位于 L0 第 17 节。
@@ -61,6 +65,7 @@ L0 v5.2 后续阶段继续实现：
     stack --work-dir .stack-work-codex exec schema-elaboration-witness
     stack --work-dir .stack-work-codex exec effect-application-witness
     stack --work-dir .stack-work-codex exec facade-v52-witness
+    stack --work-dir .stack-work-codex exec semantic-closure-witness
     stack --work-dir .stack-work-codex exec curde-runtime-witness
     .\scripts\check-ast-execution-boundary.ps1
 
@@ -81,7 +86,7 @@ materializer 使用各自维护入口。
 
 ## 发布关系
 
-    current core0
+    current approved v2 core
       -> FrameworkAsBusiness / core1
       -> core2 candidate
       -> semantic and artifact fixed points

@@ -2,10 +2,9 @@
 
 > **L0 precedence:** The frozen highest-level semantic contract is
 > [`L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md`](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md).
-> This file describes the current, v2-compatible implementation. Its separate
-> R/ReadRegistry, direct `params -> R` bindings and bare Effect leaves are
-> subordinate migration state and are non-normative when they conflict with
-> L0 v5.2.
+> Sections that mention R/ReadRegistry, direct `params -> R` bindings or bare
+> Effect leaves describe the v2 migration runtime. The default Facade and
+> candidate core use the v5.2 Effect/Application/three-graph model.
 
 ## Semantic source
 
@@ -103,10 +102,11 @@ The current recursion kernel provides `Fix` and `cata`. Serializable frontend
 records lower explicitly into the internal fixed point. Layout, path,
 dependency, and validation projections fold that fixed point.
 
-`Context` remains a versioned serializable AST constructor, but its semantics
-are not frozen: lowering and the internal Control compiler reject it. Likewise,
-`astBlueprintSeedHanging` must be empty. Hanging roots and Context never enter
-the executable Control plan, demand graph, runtime layout, or diagnosis.
+The v5.2 Facade compiles Choice, Wait, Suspense, and Context into a versioned
+`ControlPolicyRegistry`. Wait and Suspense call runtime-only control hooks with
+an immutable live snapshot. Context accepts registered versioned identities;
+an unknown identity fails before Handler IO. The v2 migration runtime retains
+its historical rejection of Context and non-empty hanging roots.
 
 Coalgebra-based unfolds and refolds such as `ana` and `hylo` are deliberately
 reserved for the later JSON-RPC boot framework.
@@ -135,6 +135,8 @@ The executable control behavior is:
   cannot prove safety.
 - Choice executes only the selected branch.
 - Wait observes an explicit predicate or status.
+- Suspense evaluates its target through the same runtime gate contract.
+- Context enters a validated versioned extension scope.
 - Loop seeks a semantic fixed point without replaying a completed CUDE handle.
 - shared HandleId evaluation uses single-flight coordination.
 
@@ -145,9 +147,10 @@ changing its successful execution status.
 
 ## SDK source artifact
 
-`MyFramework.SDK.SourceArtifact` canonically commits the existing erased Effect
-System declarations, serializable AST seed, and optional Handler identity
-coverage to an explicit `SdkCoreLock`. The surface and lowering digests are
+`MyFramework.SDK.SourceArtifact` v4 canonically commits the v5.2
+`PreparedRuntime`, schema catalog, three graphs, control policies, and optional
+Effect-key Handler coverage to an explicit `SdkCoreLock`. A legacy variant is
+kept only for explicit v2 artifact migration. The surface and lowering digests are
 validated before any files are written. Handler implementations remain
 runtime-only, and no fourth business-authoring surface is introduced.
 
@@ -170,8 +173,10 @@ runtime capability loaded only after the closed `HostKernel` verifies core,
 artifact, manifest, schema, and claim identities. The normal business facade
 never receives either value.
 
-`FrameworkAsBusiness` uses the normal CURDE/AST/Handler contracts and accepts
-`EmptyBusiness` as the nullary recursive base. The semantic witness compares
+The v5.2 candidate `FrameworkAsBusiness` uses the schema-free Facade and unified
+Runtime. `EmptyBusiness` is a real empty Chain with zero Effects and zero
+Handlers. The approved v2 core remains current until explicit Stage 10
+promotion. The semantic witness compares
 core0 and core1 normalized observations and rejects any candidate runtime
 back-reference to core0. The artifact witness independently proves the
 Stage1/Stage2 source fixed point.

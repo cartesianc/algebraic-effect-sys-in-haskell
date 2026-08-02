@@ -566,7 +566,7 @@ validSemanticReport :: String -> Bool
 validSemanticReport currentText =
   all
     (`isInfixOf` currentText)
-    [ "\"schema\":\"core-self-interpret-evidence.v2\""
+    [ "\"schema\":\"core-self-interpret-evidence.v4\""
     , "\"result\":\"passed\""
     , "\"name\":\"semantic-fixed-point-passed\",\"status\":\"passed\""
     , "\"name\":\"candidate-has-no-previous-core-runtime-dependency\",\"status\":\"passed\""
@@ -576,7 +576,7 @@ validEmptyBusinessReport :: String -> Bool
 validEmptyBusinessReport currentText =
   all
     (`isInfixOf` currentText)
-    [ "\"schema\":\"core-self-interpret-evidence.v2\""
+    [ "\"schema\":\"core-self-interpret-evidence.v4\""
     , "\"result\":\"passed\""
     , "\"name\":\"empty-business-closes-recursion\",\"status\":\"passed\""
     , "\"name\":\"empty-business-has-no-curde\",\"status\":\"passed\""

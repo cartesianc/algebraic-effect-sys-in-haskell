@@ -31,6 +31,7 @@ module MyFramework.Runtime.V52
   , RuntimeCallbackRegistration
   , RuntimeCallbackRegistry
   , RuntimeCallbackRegistryError (..)
+  , RuntimeControlHooks (..)
   , RuntimeSnapshot (..)
   , RuntimeValue (..)
   , UnifiedRuntimeRun (..)
@@ -40,6 +41,8 @@ module MyFramework.Runtime.V52
   , executeRuntimeWithHooks
   , executeRuntimeWithHooksAndCallbacks
   , executeRuntimeV52
+  , executeRuntimeV52WithControlHooks
+  , defaultRuntimeControlHooks
   , runtimeHandler
   , runtimeHandlerWithLifecycle
   , runtimeHandlerRegistry
@@ -75,7 +78,8 @@ import Control.Monad
   , forM_
   )
 import Data.List
-  ( group
+  ( findIndex
+  , group
   , nub
   , sort
   , sortOn
@@ -87,6 +91,7 @@ import Data.Maybe
 
 import MyFramework.Effect
 import MyFramework.Callback
+import MyFramework.Control.V52
 import MyFramework.EffSys.Types
   ( EffSysRef
   )
@@ -496,6 +501,32 @@ data RuntimeCallbackRegistryError
   = RuntimeCallbackDuplicate CallbackRef
   deriving (Eq, Ord, Read, Show)
 
+-- | Runtime-only interpretation of serializable wait and suspense policies.
+-- The hook receives an immutable live snapshot and cannot rewrite the AST,
+-- InputGraph, ValueGraph, or ContinuationPlan.
+data RuntimeControlHooks = RuntimeControlHooks
+  { runtimeControlHookWait ::
+      AstPath ->
+      VersionedControlGate ->
+      RuntimeSnapshot ->
+      IO ControlGate
+  , runtimeControlHookSuspense ::
+      AstPath ->
+      SomeEffectRef ->
+      VersionedControlGate ->
+      RuntimeSnapshot ->
+      IO ControlGate
+  }
+
+defaultRuntimeControlHooks :: RuntimeControlHooks
+defaultRuntimeControlHooks =
+  RuntimeControlHooks
+    { runtimeControlHookWait =
+        \_ currentGate _ -> pure (versionedControlGateValue currentGate)
+    , runtimeControlHookSuspense =
+        \_ _ currentGate _ -> pure (versionedControlGateValue currentGate)
+    }
+
 runtimeCallback :: CallbackRef -> RuntimeCallback -> RuntimeCallbackRegistration
 runtimeCallback currentRef currentFunction =
   RuntimeCallbackRegistration
@@ -618,6 +649,7 @@ data RuntimePreparationError
   | RuntimeContinuationNodeMissing ApplicationOccurrenceId EffectKey
   | RuntimeLoopPolicyMissing AstPath
   | RuntimeLoopEquivalenceMissing EffectKey
+  | RuntimeControlPolicyMissing AstPath AstBranchKind
   deriving (Eq, Ord, Read, Show)
 
 data RuntimeEvent
@@ -641,6 +673,9 @@ data RuntimeEvent
   | RuntimeLoopCleanupStarted AstPath EffectKey
   | RuntimeLoopCleanupFailed AstPath EffectKey RuntimeFault
   | RuntimeLoopLimitExceeded AstPath Int
+  | RuntimeChoiceSelected AstPath String
+  | RuntimeControlGateEvaluated AstPath AstBranchKind (Maybe SomeEffectRef) ControlGate
+  | RuntimeContextEntered AstPath VersionedContext
   deriving (Eq, Ord, Show)
 
 data RuntimeDiagnosis = RuntimeDiagnosis
@@ -703,6 +738,8 @@ data RuntimeEnvironment = RuntimeEnvironment
   , environmentCallbackRegistry :: RuntimeCallbackRegistry
   , environmentCallbackLock :: MVar ()
   , environmentLoopPolicies :: LoopPolicyRegistry
+  , environmentControlPolicies :: ControlPolicyRegistry
+  , environmentControlHooks :: RuntimeControlHooks
   }
 
 executeRuntime ::
@@ -763,6 +800,7 @@ executeRuntimeWithHooksAndCallbacks currentEffects currentAst baseGraphs basePla
     currentMiddleware
     currentCallbacks
     (LoopPolicyRegistry [])
+    (ControlPolicyRegistry [])
 
 executeRuntimeV52 ::
   EffectRegistry ->
@@ -774,8 +812,36 @@ executeRuntimeV52 ::
   RuntimeMiddlewareRegistry ->
   RuntimeCallbackRegistry ->
   LoopPolicyRegistry ->
+  ControlPolicyRegistry ->
   IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
-executeRuntimeV52 currentEffects currentAst baseGraphs basePlan currentHookPlan currentHandlers currentMiddleware currentCallbacks currentLoopPolicies =
+executeRuntimeV52 currentEffects currentAst baseGraphs basePlan currentHookPlan currentHandlers currentMiddleware currentCallbacks currentLoopPolicies currentControlPolicies =
+  executeRuntimeV52WithControlHooks
+    currentEffects
+    currentAst
+    baseGraphs
+    basePlan
+    currentHookPlan
+    currentHandlers
+    currentMiddleware
+    currentCallbacks
+    currentLoopPolicies
+    currentControlPolicies
+    defaultRuntimeControlHooks
+
+executeRuntimeV52WithControlHooks ::
+  EffectRegistry ->
+  AstPlan ->
+  CompiledGraphs ->
+  ContinuationPlan ->
+  HookPlan ->
+  RuntimeHandlerRegistry ->
+  RuntimeMiddlewareRegistry ->
+  RuntimeCallbackRegistry ->
+  LoopPolicyRegistry ->
+  ControlPolicyRegistry ->
+  RuntimeControlHooks ->
+  IO (Either [RuntimePreparationError] UnifiedRuntimeRun)
+executeRuntimeV52WithControlHooks currentEffects currentAst baseGraphs basePlan currentHookPlan currentHandlers currentMiddleware currentCallbacks currentLoopPolicies currentControlPolicies currentControlHooks =
   case compileContinuationPlan (hookPlanDetachedGraphs currentHookPlan) of
     Left currentContinuationErrors ->
       pure (Left (map RuntimeHookContinuationInvalid currentContinuationErrors))
@@ -788,7 +854,8 @@ executeRuntimeV52 currentEffects currentAst baseGraphs basePlan currentHookPlan 
           validateRuntimePreparation currentEffects currentGraphs currentHandlers
             ++ validateRuntimeMiddleware currentHookPlan currentMiddleware
             ++ validateRuntimeCallbacks currentHookPlan currentCallbacks
-            ++ validateRuntimeLoops currentGraphs currentHandlers currentLoopPolicies of
+            ++ validateRuntimeLoops currentGraphs currentHandlers currentLoopPolicies
+            ++ validateRuntimeControlPolicies currentGraphs currentControlPolicies of
         [] -> do
           currentBootRun <- newBootRunId
           currentState <- newMVar emptyMutableRuntime
@@ -834,6 +901,8 @@ executeRuntimeV52 currentEffects currentAst baseGraphs basePlan currentHookPlan 
                   , environmentCallbackRegistry = currentCallbacks
                   , environmentCallbackLock = currentCallbackLock
                   , environmentLoopPolicies = currentLoopPolicies
+                  , environmentControlPolicies = currentControlPolicies
+                  , environmentControlHooks = currentControlHooks
                   }
           currentOutcome <- executeAst currentEnvironment (AstPath []) currentAst
           currentFinal <- readMVar currentState
@@ -935,6 +1004,21 @@ validateRuntimeLoops currentGraphs (RuntimeHandlerRegistry currentHandlers) (Loo
       | currentNode <- astGraphNodes (compiledAstGraph currentGraphs)
       , AstGraphBranch AstLoop <- [astGraphNodeKind currentNode]
       ]
+    policyIndex = Map.fromList currentPolicies
+
+validateRuntimeControlPolicies ::
+  CompiledGraphs ->
+  ControlPolicyRegistry ->
+  [RuntimePreparationError]
+validateRuntimeControlPolicies currentGraphs (ControlPolicyRegistry currentPolicies) =
+  [ RuntimeControlPolicyMissing currentPath currentKind
+  | currentNode <- astGraphNodes (compiledAstGraph currentGraphs)
+  , AstGraphBranch currentKind <- [astGraphNodeKind currentNode]
+  , currentKind `elem` [AstChoice, AstWait, AstSuspense, AstContext]
+  , let currentPath = astGraphNodePath currentNode
+  , Map.notMember currentPath policyIndex
+  ]
+  where
     policyIndex = Map.fromList currentPolicies
 
 validateRuntimePreparation ::
@@ -1070,6 +1154,10 @@ executeAst currentEnvironment parentPath currentPlan =
             AstFallback -> executeFallback runChild indexedChildren
             AstRace -> executeRace runChild indexedChildren
             AstLoop -> executeLoop currentEnvironment currentPath currentChildren
+            AstChoice -> executeChoice currentEnvironment currentPath currentChildren
+            AstWait -> executeWait currentEnvironment currentPath currentChildren
+            AstSuspense -> executeSuspense currentEnvironment currentPath currentChildren
+            AstContext -> executeContext currentEnvironment currentPath currentChildren
             _ ->
               pure
                 ( Failed
@@ -1105,6 +1193,10 @@ executeAstAt currentEnvironment currentParent currentOrdinal currentPlan =
             AstFallback -> executeFallback runChild indexedChildren
             AstRace -> executeRace runChild indexedChildren
             AstLoop -> executeLoop currentEnvironment currentPath currentChildren
+            AstChoice -> executeChoice currentEnvironment currentPath currentChildren
+            AstWait -> executeWait currentEnvironment currentPath currentChildren
+            AstSuspense -> executeSuspense currentEnvironment currentPath currentChildren
+            AstContext -> executeContext currentEnvironment currentPath currentChildren
             _ ->
               pure
                 ( Failed
@@ -1116,6 +1208,131 @@ executeAstAt currentEnvironment currentParent currentOrdinal currentPlan =
                             ++ show currentKind
                       }
                 )
+
+executeChoice :: RuntimeEnvironment -> AstPath -> [AstPlan] -> IO ContinuationOutcome
+executeChoice currentEnvironment currentPath currentChildren =
+  case lookupControlPolicy currentEnvironment currentPath of
+    Just (ChoiceControl currentSelection) ->
+      case findIndex ((== currentSelection) . terminalPlanKey) currentChildren of
+        Just currentIndex -> do
+          appendRuntimeEvent
+            currentEnvironment
+            (RuntimeChoiceSelected currentPath currentSelection)
+          executeAstAt
+            currentEnvironment
+            currentPath
+            currentIndex
+            (currentChildren !! currentIndex)
+        Nothing -> policyFailure currentPath "choice selection is unavailable"
+    _ -> policyFailure currentPath "choice policy missing or invalid"
+  where
+    policyFailure currentScope currentMessage =
+      pure
+        (Failed (RuntimeFault Nothing RuntimeInputPhase (currentMessage ++ ": " ++ renderAstPath currentScope)))
+
+executeWait :: RuntimeEnvironment -> AstPath -> [AstPlan] -> IO ContinuationOutcome
+executeWait currentEnvironment currentPath currentChildren =
+  case (lookupControlPolicy currentEnvironment currentPath, currentChildren) of
+    (Just (WaitControl currentGate), [currentChild]) -> do
+      currentSnapshot <- snapshotRuntime <$> readMVar (environmentState currentEnvironment)
+      attemptedGate <-
+        try
+          ( runtimeControlHookWait
+              (environmentControlHooks currentEnvironment)
+              currentPath
+              currentGate
+              currentSnapshot
+          )
+      let currentResult =
+            case attemptedGate of
+              Left (currentException :: SomeException) ->
+                ControlGateFailed (displayException currentException)
+              Right currentGateResult -> currentGateResult
+      appendRuntimeEvent
+        currentEnvironment
+        (RuntimeControlGateEvaluated currentPath AstWait Nothing currentResult)
+      executeGate
+        currentEnvironment
+        currentPath
+        AstWait
+        currentResult
+        (Just currentChild)
+    _ -> pure (Failed (RuntimeFault Nothing RuntimeInputPhase "wait policy or child invalid"))
+
+executeSuspense :: RuntimeEnvironment -> AstPath -> [AstPlan] -> IO ContinuationOutcome
+executeSuspense currentEnvironment currentPath currentChildren =
+  case (lookupControlPolicy currentEnvironment currentPath, currentChildren) of
+    (Just (SuspenseControl currentTarget currentGate), []) -> do
+      currentSnapshot <- snapshotRuntime <$> readMVar (environmentState currentEnvironment)
+      attemptedGate <-
+        try
+          ( runtimeControlHookSuspense
+              (environmentControlHooks currentEnvironment)
+              currentPath
+              currentTarget
+              currentGate
+              currentSnapshot
+          )
+      let currentResult =
+            case attemptedGate of
+              Left (currentException :: SomeException) ->
+                ControlGateFailed (displayException currentException)
+              Right currentGateResult -> currentGateResult
+      appendRuntimeEvent
+        currentEnvironment
+        (RuntimeControlGateEvaluated currentPath AstSuspense (Just currentTarget) currentResult)
+      executeGate
+        currentEnvironment
+        currentPath
+        AstSuspense
+        currentResult
+        Nothing
+    _ -> pure (Failed (RuntimeFault Nothing RuntimeInputPhase "suspense policy or arity invalid"))
+
+executeContext :: RuntimeEnvironment -> AstPath -> [AstPlan] -> IO ContinuationOutcome
+executeContext currentEnvironment currentPath currentChildren =
+  case (lookupControlPolicy currentEnvironment currentPath, currentChildren) of
+    (Just (ContextControl currentContext), [currentChild])
+      | currentContext == identityContext -> do
+          appendRuntimeEvent currentEnvironment (RuntimeContextEntered currentPath currentContext)
+          executeAstAt currentEnvironment currentPath 0 currentChild
+    _ -> pure (Failed (RuntimeFault Nothing RuntimeInputPhase "context is unknown or malformed"))
+
+executeGate ::
+  RuntimeEnvironment ->
+  AstPath ->
+  AstBranchKind ->
+  ControlGate ->
+  Maybe AstPlan ->
+  IO ContinuationOutcome
+executeGate currentEnvironment currentPath currentKind currentGate currentChild =
+  case currentGate of
+    ControlGateReady ->
+      case currentChild of
+        Just currentPlan -> executeAstAt currentEnvironment currentPath 0 currentPlan
+        Nothing -> pure Succeeded
+    ControlGateBlocked currentMessage -> pure (Suspended currentMessage)
+    ControlGateFailed currentMessage ->
+      pure
+        ( Failed
+            RuntimeFault
+              { runtimeFaultEffect = Nothing
+              , runtimeFaultPhase = RuntimeInputPhase
+              , runtimeFaultMessage = show currentKind ++ " gate failed: " ++ currentMessage
+              }
+        )
+
+lookupControlPolicy :: RuntimeEnvironment -> AstPath -> Maybe ControlPolicy
+lookupControlPolicy currentEnvironment currentPath =
+  lookup currentPath currentEntries
+  where
+    ControlPolicyRegistry currentEntries = environmentControlPolicies currentEnvironment
+
+terminalPlanKey :: AstPlan -> String
+terminalPlanKey currentPlan =
+  case currentPlan of
+    AstPlanApplication currentKey _ -> astNodeKeyText currentKey
+    AstPlanBranch currentKey _ _ -> astNodeKeyText currentKey
 
 executeLoop ::
   RuntimeEnvironment ->

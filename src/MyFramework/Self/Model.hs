@@ -36,7 +36,7 @@ import MyFramework.SDK.SourceArtifact
   , handlerCoverageFromRefs
   , mkSdkSourceInput
   , renderSdkSourceArtifactJson
-  , sdkSourceArtifactSchemaV3
+  , sdkSourceArtifactSchemaV4
   , sdkSourceReportArtifact
   )
 import MyFramework.TrustBase.Core
@@ -231,7 +231,7 @@ decodeSelfModelJson currentText = do
   currentJson <- parseJson currentText
   currentSchema <-
     jsonObjectField "schema" currentJson >>= jsonStringValue
-  if currentSchema /= sdkSourceArtifactSchemaV3
+  if currentSchema /= sdkSourceArtifactSchemaV4
     then Left "unsupported SelfModel JSON schema"
     else pure ()
   currentVersion <-

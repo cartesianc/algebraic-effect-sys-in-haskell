@@ -1,9 +1,28 @@
 # Runtime execution boundary
 
+## v5.2 unified Runtime
+
+`MyFramework.Runtime.V52` executes an `ElaboratedProgram` through separate AST,
+InputGraph, and ValueGraph projections. It also consumes `ContinuationPlan`,
+`HookPlan`, `LoopPolicyRegistry`, and `ControlPolicyRegistry`.
+
+Choice records the selected child. Wait and Suspense call `RuntimeControlHooks`
+with an immutable live `RuntimeSnapshot`; the result is Ready, Blocked, or
+Failed. Context accepts a registered versioned identity. Unknown Context values
+fail during `program` construction, before Handler IO. Control hook closures and
+snapshots never enter the serialized program.
+
+Hanging middleware compiles into a detached HookPlan and cannot create a boot
+root. Callback patches are transactional and run-local. Loop replay is bounded
+by its versioned policy and semantic equivalence.
+
+## v2 migration Runtime
+
 `MyFramework.Runtime` is framework-author tooling over an already lowered
 application. It is not a serializable authoring surface.
 
-`prepareRuntime` accepts only a `LoweringResult`, rejects the complete error
+The following contract applies to `MyFramework.Runtime`. `prepareRuntime`
+accepts only a `LoweringResult`, rejects the complete error
 set, and returns an opaque `RuntimeProgram`. A valid program contains exactly
 one executable boot Control tree. Non-empty `hanging` and every `Context` node
 are rejected before a demand graph, Control plan, runtime layout, or diagnosis
@@ -42,7 +61,7 @@ preserving `ExecutionSucceeded`; an R failure remains a separate read channel.
 Race cancellation with no final loser snapshot is reported as settlement
 uncertainty instead of being accepted as safe success.
 
-The current Runtime does not add retry, idempotency, transaction,
+The v2 migration Runtime does not add retry, idempotency, transaction,
 compensation, `ana`, `hylo`, protocol-driven unfolding, Context, or hanging
 listener semantics.
 

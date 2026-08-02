@@ -5,7 +5,8 @@
 > [`L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md`](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md)
 > 为准。
 
-状态：legacy 边界保留；approved façade core0 仍是 v2 兼容实现，不满足 L0 v5.2
+状态：legacy 边界保留；approved current core 仍是 v2 兼容实现。v5.2 Stage 9 已在
+`MyFramework.Runtime.V52` 实现独立 HookPlan 与 versioned Context，等待 Stage 10 promotion。
 适用范围：`myframework` 的 EffSys、AST、lowering、runtime 与 handler 边界
 本文件只冻结执行来源，不冻结尚未确认的 AST 控制节点语义。
 
@@ -209,7 +210,7 @@ handler”作为框架运行路径。
 `OperatorRef`、`applyOperator` 与 `PureOperatorRegistry` 未经语义确认，并在
 EffSys 之外引入了可执行函数入口。
 
-当前决定：
+v2 migration Runtime 的决定：
 
 ```text
 OperatorRef is not part of the language.
@@ -238,6 +239,9 @@ Context nodes are rejected by lowering.
 ```
 
 在独立设计获批前，不允许 runtime 执行 `controlContextCallback`。
+
+v5.2 使用 `ControlPolicyRegistry`。已注册的 versioned Context 进入统一 Runtime；未知
+Context 在 Handler 启动前失败。它不恢复 legacy `controlContextCallback`。
 
 ### 4.3 Hanging
 
@@ -269,7 +273,7 @@ diagnosis
 | cata 产生 `ControlDemand` 后进入 demand evaluator | 保留，并且这里是唯一 permit mint 点 |
 | `invokeCude`/`invokeRead` 从根 Facade 可见 | 已移入隐藏的 `Handler.Internal`，并要求 permit |
 | `OperatorRef` 可在 implementation 参数中执行 | 已从 CURDE Facade、RExpr 和 RuntimeHooks 删除 |
-| `Context` 可 lowering 并调用 runtime callback | lowering/Control 编译器拒绝，runtime hook 已删除 |
+| legacy `Context` 可调用 runtime callback | legacy lowering 拒绝；v5.2 使用 versioned policy，无该 callback |
 | hanging 会参与 lowering、graph、control、diagnosis | 非空时立即报错，不产生 executable projection |
 | handler 注册后可被直接调用 | 公共 Handler 只保留构造、注册和 contract API |
 | invocation 没有可审计来源 | RuntimeEvent 记录 boot/path/root node/actual node/handle |

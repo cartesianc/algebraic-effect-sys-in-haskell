@@ -18,9 +18,6 @@ import System.Exit
   ( exitFailure )
 
 import qualified MyFramework.Facade as V52
-import MyFramework.Legacy.Migration
-  ( FrontendExecutionStatus (..)
-  )
 import MyFramework.Self.CoreModel
 import MyFramework.TrustBase.Core
 import MyFramework.TrustBase.Digest
@@ -29,7 +26,7 @@ import MyFramework.TrustBase.Evidence
   ( completeEvidence
   , evidenceFor
   , selfInterpretClaimCatalog
-  , selfInterpretEvidenceSchemaV3
+  , selfInterpretEvidenceSchemaV4
   , validateEvidenceClaims
   )
 import MyFramework.TrustBase.Types
@@ -386,7 +383,7 @@ interpretCompatibilityFacet currentDependencies currentFramework =
                     (frameworkAsBusinessCompatibility currentFramework)
               , frameworkObservationControlSucceeded = True
               , frameworkObservationFinalExecutionStatus =
-                  FrontendSucceeded
+                  FrameworkSucceeded
               , frameworkObservationRuntimeDependencies =
                   currentDependencies
               }
@@ -509,7 +506,7 @@ renderReport :: [Evidence] -> Bool -> String
 renderReport currentEvidence succeeded =
   jsonObject
     [ ( "schema"
-      , jsonString (renderSchemaId selfInterpretEvidenceSchemaV3)
+      , jsonString (renderSchemaId selfInterpretEvidenceSchemaV4)
       )
     , ("artifact", jsonString "core-self-interpret-witness")
     , ("result", jsonString (if succeeded then "passed" else "failed"))

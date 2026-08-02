@@ -5,6 +5,7 @@ module MyFramework.Self.CoreModel
   ( EmptyBusiness (..)
   , CoreCompatibilityFacet (..)
   , FrameworkAsBusiness
+  , FrameworkExecutionStatus (..)
   , FrameworkInterpretError (..)
   , FrameworkSemanticObservation (..)
   , candidateHasNoPreviousCoreDependency
@@ -14,38 +15,28 @@ module MyFramework.Self.CoreModel
   , frameworkAsBusinessClaims
   , frameworkAsBusinessCompatibility
   , frameworkAsBusinessEffectCoverage
-  , frameworkAsBusinessProgram
   , frameworkAsBusinessV52Program
   , frameworkAsBusinessReadCoverage
   , frameworkAsBusinessSchema
-  , frameworkCloseEmptyAddress
-  , frameworkCompileCataAddress
-  , frameworkCoreProgram
+  , emptyBusinessProgram
   , coreCompatibilityFacet
   , coreCompatibilityFacetValid
   , coreCompatibilityDigest
-  , frameworkLowerReferencedAddress
-  , frameworkValidateFacadeAddress
   , interpretFrameworkAsBusiness
   ) where
 
 import Data.List
-  ( find
-  , intercalate
+  ( intercalate
+  , isInfixOf
   )
 import Text.Read
   ( readMaybe )
 
-import MyFramework.CURDE
-  ( scalarSchema
-  , schemaRefIdentityOf
-  )
 import GHC.Generics
   ( Generic
   )
-import MyFramework.Legacy.Facade
 import qualified MyFramework.Facade as V52
-import MyFramework.Frontend.Runtime
+import qualified MyFramework.Runtime.V52 as Runtime
 import MyFramework.TrustBase.Core
   ( CoreId )
 import MyFramework.TrustBase.Digest
@@ -61,9 +52,8 @@ data EmptyBusiness = EmptyBusiness
 data FrameworkAsBusiness = FrameworkAsBusiness
   { frameworkAsBusinessSchema :: String
   , frameworkAsBusinessV52Program :: V52.PreparedRuntime
-  , frameworkAsBusinessProgram :: ReferencedProgram
-  , frameworkAsBusinessEffectCoverage :: [EffectAddress]
-  , frameworkAsBusinessReadCoverage :: [ReadKey]
+  , frameworkAsBusinessEffectCoverage :: [V52.EffectKey]
+  , frameworkAsBusinessReadCoverage :: [V52.EffectKey]
   , frameworkAsBusinessCompatibility :: CoreCompatibilityFacet
   , frameworkAsBusinessClaims :: [String]
   }
@@ -72,7 +62,7 @@ data FrameworkAsBusiness = FrameworkAsBusiness
 -- | A one-way, content-addressed bridge from the approved core2 vocabulary
 -- into the facade-epoch core0 vocabulary. It is compatibility metadata only:
 -- the
--- canonical candidate remains 'frameworkAsBusinessProgram'.
+-- canonical candidate remains 'frameworkAsBusinessV52Program'.
 data CoreCompatibilityFacet = CoreCompatibilityFacet
   { compatibilityFacetSchema :: String
   , compatibilityPreviousCoreId :: String
@@ -87,8 +77,9 @@ data CoreCompatibilityFacet = CoreCompatibilityFacet
   deriving (Eq, Ord, Read, Show)
 
 data FrameworkInterpretError
-  = FrameworkHandlerRegistrationFailed FrontendRegistryError
-  | FrameworkRuntimeFailed FrontendRuntimeFailure
+  = FrameworkHandlerRegistrationFailed [Runtime.RuntimeHandlerRegistryError]
+  | FrameworkRuntimePreparationFailed [Runtime.RuntimePreparationError]
+  | FrameworkRuntimeFailed Runtime.RuntimeFault
   | FrameworkRuntimeDidNotClose String
   | FrameworkCompatibilityFailed String
   deriving (Eq, Show)
@@ -97,14 +88,20 @@ data FrameworkSemanticObservation = FrameworkSemanticObservation
   { frameworkObservationSemanticDigest :: String
   , frameworkObservationCompatibilityDigest :: String
   , frameworkObservationControlSucceeded :: Bool
-  , frameworkObservationFinalExecutionStatus :: FrontendExecutionStatus
+  , frameworkObservationFinalExecutionStatus :: FrameworkExecutionStatus
   , frameworkObservationRuntimeDependencies :: [CoreId]
   }
   deriving (Eq, Show)
 
-frameworkCoreSchemaV4 :: String
-frameworkCoreSchemaV4 =
-  "myframework-framework-as-business.v5"
+data FrameworkExecutionStatus
+  = FrameworkPending
+  | FrameworkSucceeded
+  | FrameworkFailed
+  deriving (Eq, Ord, Read, Show)
+
+frameworkCoreSchemaV6 :: String
+frameworkCoreSchemaV6 =
+  "myframework-framework-as-business.v6"
 
 coreCompatibilityFacet :: CoreCompatibilityFacet
 coreCompatibilityFacet =
@@ -123,7 +120,7 @@ coreCompatibilityFacet =
     , compatibilityPreviousObservationDigest =
         "1dcc4c82248f9e70573262ef45cdda2d14cbd7c2a7a8612948e276fe0280a08f"
     , compatibilityCandidateFrameworkSchema =
-        frameworkCoreSchemaV4
+        frameworkCoreSchemaV6
     , compatibilityStageMap =
         [ ("validateFacade", "validateFacade")
         , ("lowerCurde", "lowerReferenced")
@@ -150,14 +147,10 @@ coreCompatibilityDigest currentFacet =
         ]
     )
 
-frameworkCoreModule :: Name
-frameworkCoreModule =
-  name "frameworkCore"
-
 data FrameworkSourceArgs = FrameworkSourceArgs
   { frameworkSourceValue :: String
   }
-  deriving (Generic)
+  deriving (Eq, Generic, Read, Show)
 
 instance V52.HasSchema FrameworkSourceArgs
 
@@ -242,110 +235,34 @@ frameworkCoreV52Program =
         ]
     ]
 
-frameworkSourceRead :: ReadKey
-frameworkSourceRead =
-  readKeyOf frameworkSource
-
-frameworkSource :: R
-frameworkSource =
-  r "frameworkSource" frameworkSourceSchema
-
-frameworkSourceSchema :: SchemaIdentity
-frameworkSourceSchema =
-  schemaRefIdentityOf (scalarSchema "FrameworkSource")
-
-frameworkValidateFacadeKey :: Name
-frameworkValidateFacadeKey =
-  name "validateFacade"
-
-frameworkLowerReferencedKey :: Name
-frameworkLowerReferencedKey =
-  name "lowerReferenced"
-
-frameworkCompileCataKey :: Name
-frameworkCompileCataKey =
-  name "compileCata"
-
-frameworkCloseEmptyKey :: Name
-frameworkCloseEmptyKey =
-  name "closeEmpty"
-
-frameworkSourceParam :: Name
-frameworkSourceParam =
-  name "source"
-
-frameworkValidateFacadeAddress :: EffectAddress
-frameworkValidateFacadeAddress =
-  address frameworkCoreModule frameworkValidateFacadeKey
-
-frameworkLowerReferencedAddress :: EffectAddress
-frameworkLowerReferencedAddress =
-  address frameworkCoreModule frameworkLowerReferencedKey
-
-frameworkCompileCataAddress :: EffectAddress
-frameworkCompileCataAddress =
-  address frameworkCoreModule frameworkCompileCataKey
-
-frameworkCloseEmptyAddress :: EffectAddress
-frameworkCloseEmptyAddress =
-  address frameworkCoreModule frameworkCloseEmptyKey
-
-frameworkCoreProgram :: ReferencedProgram
-frameworkCoreProgram =
-  program
-    frameworkCoreModule
-    [ chain
-        frameworkCoreModule
-        [ frameworkValidateFacadeKey
-        , frameworkLowerReferencedKey
-        , frameworkCompileCataKey
-        , frameworkCloseEmptyKey
-        ]
-    ]
-    [ effects
-        frameworkCoreModule
-        [ ( frameworkValidateFacadeKey
-          , frameworkEffect none
-          )
-        , ( frameworkLowerReferencedKey
-          , frameworkEffect (after frameworkValidateFacadeKey)
-          )
-        , ( frameworkCompileCataKey
-          , frameworkEffect (after frameworkLowerReferencedKey)
-          )
-        , ( frameworkCloseEmptyKey
-          , frameworkEffect (after frameworkCompileCataKey)
-          )
-        ]
-    ]
-    (readRegistry [frameworkSource])
-
-frameworkEffect :: Maybe Name -> Effect
-frameworkEffect currentInput =
-  Effect
-    { crude = E
-    , input = currentInput
-    , params =
-        [frameworkSourceParam .= fromR frameworkSource]
-    }
+emptyBusinessProgram :: Either [V52.ProgramError] V52.PreparedRuntime
+emptyBusinessProgram =
+  V52.program
+    (V52.name "emptyBusiness")
+    [V52.chain (V52.name "emptyBusiness") ([] :: [V52.Name])]
+    [V52.effects (V52.name "emptyBusiness") []]
 
 frameworkAsBusiness :: Either [String] FrameworkAsBusiness
 frameworkAsBusiness =
-  case (validate frameworkCoreProgram, frameworkCoreV52Program) of
-    ([], Right currentV52Program) ->
+  case frameworkCoreV52Program of
+    Right currentV52Program ->
       Right
         FrameworkAsBusiness
-          { frameworkAsBusinessSchema = frameworkCoreSchemaV4
+          { frameworkAsBusinessSchema = frameworkCoreSchemaV6
           , frameworkAsBusinessV52Program = currentV52Program
-          , frameworkAsBusinessProgram = frameworkCoreProgram
           , frameworkAsBusinessEffectCoverage =
-              [ frameworkValidateFacadeAddress
-              , frameworkLowerReferencedAddress
-              , frameworkCompileCataAddress
-              , frameworkCloseEmptyAddress
+              [ V52.someEffectRefKey (V52.effectIrRef currentEffect)
+              | currentEffect <-
+                  V52.effectRegistryEffects
+                    (V52.effectRegistryOf currentV52Program)
               ]
           , frameworkAsBusinessReadCoverage =
-              [frameworkSourceRead]
+              [ V52.someEffectRefKey (V52.effectIrRef currentEffect)
+              | currentEffect <-
+                  V52.effectRegistryEffects
+                    (V52.effectRegistryOf currentV52Program)
+              , V52.someEffectRefKind (V52.effectIrRef currentEffect) == V52.R
+              ]
           , frameworkAsBusinessCompatibility =
               coreCompatibilityFacet
           , frameworkAsBusinessClaims =
@@ -355,7 +272,7 @@ frameworkAsBusiness =
                   ++ V52.programSchemaDigest currentV52Program
               , "module-local-effect-record"
               , "r-in-unified-effect-registry"
-              , "resolver-driven-cata"
+              , "resolver-driven-v5.2-runtime"
               , "occurrence-scoped-runtime"
               , "core2-v3-compatibility-facet:"
                   ++ compatibilityPreviousPayloadDigest
@@ -363,9 +280,7 @@ frameworkAsBusiness =
               , "empty-business-terminal"
               ]
           }
-    (currentErrors, Left currentV52Errors) ->
-      Left (map show currentErrors ++ map show currentV52Errors)
-    (currentErrors, Right _) -> Left (map show currentErrors)
+    Left currentV52Errors -> Left (map show currentV52Errors)
 
 encodeFrameworkAsBusiness :: FrameworkAsBusiness -> String
 encodeFrameworkAsBusiness =
@@ -380,7 +295,7 @@ decodeFrameworkAsBusiness currentText =
       Left "invalid FrameworkAsBusiness"
     Just currentFramework
       | frameworkAsBusinessSchema currentFramework
-          /= frameworkCoreSchemaV4 ->
+          /= frameworkCoreSchemaV6 ->
           Left "unsupported FrameworkAsBusiness schema"
       | not
           ( null
@@ -389,13 +304,6 @@ decodeFrameworkAsBusiness currentText =
               )
           ) ->
           Left "invalid v5.2 FrameworkAsBusiness program"
-      | not
-          ( null
-              ( validate
-                  (frameworkAsBusinessProgram currentFramework)
-              )
-          ) ->
-          Left "invalid referenced FrameworkAsBusiness program"
       | not (coreCompatibilityFacetValid currentFramework) ->
           Left "invalid core2 compatibility facet"
       | otherwise ->
@@ -450,42 +358,51 @@ interpretFrameworkAsBusiness
             pure (Left (FrameworkHandlerRegistrationFailed currentError))
           Right currentHandlers -> do
             currentRun <-
-              runReferencedProgram
-                (frameworkAsBusinessProgram currentFramework)
+              V52.runPreparedRuntime
                 currentHandlers
-            let currentStatus =
-                  closeExecutionStatus currentRun
-                currentControlSucceeded =
-                  frontendRunOutcome currentRun == Right ()
-                currentClosed =
-                  currentControlSucceeded
-                    && currentStatus == FrontendSucceeded
-            pure
-              ( case frontendRunOutcome currentRun of
-                  Left currentFailure ->
-                    Left (FrameworkRuntimeFailed currentFailure)
-                  Right ()
-                    | currentClosed ->
-                        Right
-                          FrameworkSemanticObservation
-                            { frameworkObservationSemanticDigest =
-                                semanticObservationDigest
-                                  currentFramework
-                                  currentStatus
-                            , frameworkObservationCompatibilityDigest =
-                                coreCompatibilityDigest
-                                  (frameworkAsBusinessCompatibility currentFramework)
-                            , frameworkObservationControlSucceeded =
-                                True
-                            , frameworkObservationFinalExecutionStatus =
-                                currentStatus
-                            , frameworkObservationRuntimeDependencies =
-                                currentRuntimeDependencies
-                            }
+                (frameworkAsBusinessV52Program currentFramework)
+            case currentRun of
+              Left currentErrors ->
+                pure (Left (FrameworkRuntimePreparationFailed currentErrors))
+              Right currentResult ->
+                case Runtime.unifiedRuntimeOutcome currentResult of
+                  Runtime.Failed currentFailure ->
+                    pure (Left (FrameworkRuntimeFailed currentFailure))
+                  Runtime.Succeeded
+                    | closeExecuted currentResult -> do
+                        emptyClosed <- runEmptyBusiness
+                        pure
+                          ( if emptyClosed
+                              then
+                                Right
+                                  FrameworkSemanticObservation
+                                    { frameworkObservationSemanticDigest =
+                                        semanticObservationDigest
+                                          currentFramework
+                                          FrameworkSucceeded
+                                    , frameworkObservationCompatibilityDigest =
+                                        coreCompatibilityDigest
+                                          (frameworkAsBusinessCompatibility currentFramework)
+                                    , frameworkObservationControlSucceeded = True
+                                    , frameworkObservationFinalExecutionStatus = FrameworkSucceeded
+                                    , frameworkObservationRuntimeDependencies = currentRuntimeDependencies
+                                    }
+                              else
+                                Left
+                                  ( FrameworkRuntimeDidNotClose
+                                      "EmptyBusiness did not close with zero effects and zero handlers"
+                                  )
+                          )
                     | otherwise ->
-                        Left
-                          (FrameworkRuntimeDidNotClose (show currentRun))
-              )
+                        pure
+                          (Left (FrameworkRuntimeDidNotClose (show currentResult)))
+                  currentOutcome ->
+                    pure
+                      ( Left
+                          ( FrameworkRuntimeDidNotClose
+                              ("framework suspended or cancelled: " ++ show currentOutcome)
+                          )
+                      )
 
 candidateHasNoPreviousCoreDependency ::
   CoreId ->
@@ -498,154 +415,168 @@ candidateHasNoPreviousCoreDependency previousCore currentObservation =
 frameworkHandlerRegistry ::
   FrameworkAsBusiness ->
   EmptyBusiness ->
-  Either FrontendRegistryError FrontendHandlers
-frameworkHandlerRegistry currentFramework currentTerminal = do
-  withRead <-
-    registerFrontendRead
-      frameworkSourceRead
-      ( pure
-          ( Right
-              (RuntimeText (encodeFrameworkAsBusiness currentFramework))
-          )
-      )
-      emptyFrontendHandlers
-  withValidate <-
-    registerFrontendEffect
-      frameworkValidateFacadeAddress
-      (frameworkValidateHandler currentFramework)
-      withRead
-  withLower <-
-    registerFrontendEffect
-      frameworkLowerReferencedAddress
-      (frameworkLowerHandler currentFramework)
-      withValidate
-  withCompile <-
-    registerFrontendEffect
-      frameworkCompileCataAddress
-      (frameworkCompileHandler currentFramework)
-      withLower
-  registerFrontendEffect
-    frameworkCloseEmptyAddress
-    (frameworkCloseHandler currentFramework currentTerminal)
-    withCompile
+  Either [Runtime.RuntimeHandlerRegistryError] Runtime.RuntimeHandlerRegistry
+frameworkHandlerRegistry currentFramework currentTerminal =
+  Runtime.runtimeHandlerRegistry
+    [ frameworkRegistration currentFramework currentTerminal currentEffect
+    | currentEffect <-
+        V52.effectRegistryEffects
+          (V52.effectRegistryOf (frameworkAsBusinessV52Program currentFramework))
+    ]
 
-frameworkValidateHandler ::
-  FrameworkAsBusiness ->
-  FrontendEffectHandler
-frameworkValidateHandler currentFramework currentArguments =
-  case extractFrameworkSource currentArguments of
-    Left currentError ->
-      pure (Left currentError)
-    Right currentSource ->
-      pure
-        ( case decodeFrameworkAsBusiness currentSource of
-            Left currentError ->
-              Left currentError
-            Right decodedFramework
-              | decodedFramework /= currentFramework ->
-                  Left "framework source does not match candidate"
-              | otherwise ->
-                  case
-                      validate
-                        (frameworkAsBusinessProgram decodedFramework) of
-                    [] ->
-                      Right ()
-                    currentErrors ->
-                      Left
-                        ( "frontend validation failed: "
-                            ++ show currentErrors
-                        )
-        )
-
-frameworkLowerHandler ::
-  FrameworkAsBusiness ->
-  FrontendEffectHandler
-frameworkLowerHandler currentFramework currentArguments =
-  pure $ do
-    currentSource <- extractFrameworkSource currentArguments
-    decodedFramework <-
-      decodeFrameworkAsBusiness currentSource
-    if decodedFramework /= currentFramework
-      then Left "lowering source does not match candidate"
-      else
-        case
-            resolveAll
-              (frameworkAsBusinessProgram decodedFramework) of
-          Left currentErrors ->
-            Left ("referenced lowering failed: " ++ show currentErrors)
-          Right _ ->
-            Right ()
-
-frameworkCompileHandler ::
-  FrameworkAsBusiness ->
-  FrontendEffectHandler
-frameworkCompileHandler currentFramework currentArguments =
-  pure $ do
-    currentSource <- extractFrameworkSource currentArguments
-    decodedFramework <-
-      decodeFrameworkAsBusiness currentSource
-    currentRoot <-
-      case
-          resolveAll
-            (frameworkAsBusinessProgram decodedFramework) of
-        Left currentErrors ->
-          Left ("resolver-driven cata failed: " ++ show currentErrors)
-        Right currentResolved ->
-          Right currentResolved
-    if null (show currentRoot)
-      || decodedFramework /= currentFramework
-      then Left "resolved framework control is empty or mismatched"
-      else Right ()
-
-frameworkCloseHandler ::
+frameworkRegistration ::
   FrameworkAsBusiness ->
   EmptyBusiness ->
-  FrontendEffectHandler
-frameworkCloseHandler currentFramework EmptyBusiness currentArguments =
-  pure $ do
-    currentSource <- extractFrameworkSource currentArguments
-    decodedFramework <-
-      decodeFrameworkAsBusiness currentSource
-    if decodedFramework == currentFramework
-      && not (null (frameworkAsBusinessSchema currentFramework))
-      then Right ()
-      else Left "terminal close did not receive candidate framework"
+  V52.EffectIR ->
+  Runtime.RuntimeHandlerRegistration
+frameworkRegistration currentFramework currentTerminal currentEffect =
+  Runtime.runtimeHandler
+    currentRef
+    currentInputSchema
+    currentOutputSchema
+    invoke
+  where
+    currentRef = V52.effectIrRef currentEffect
+    currentKey = V52.effectKeyText (V52.someEffectRefKey currentRef)
+    (currentInputSchema, currentOutputSchema) =
+      case V52.effectIrSpec currentEffect of
+        V52.ReadEffect currentSpec ->
+          (Nothing, Just (V52.readSpecValueSchema currentSpec))
+        V52.MapEffect currentSpec ->
+          (Just (V52.mapSpecInputSchema currentSpec), Just frameworkSourceSchemaId)
+        V52.CommandEffect currentSpec ->
+          ( Just (V52.commandSpecArgumentSchema currentSpec)
+          , Just (V52.commandSpecObservationSchema currentSpec)
+          )
+    invoke currentInvocation =
+      case Runtime.runtimeInvocationPhase currentInvocation of
+        Runtime.RuntimeInputPhase -> pure (Runtime.HandlerSucceeded Nothing)
+        Runtime.RuntimeReadPhase ->
+          pure
+            ( Runtime.HandlerSucceeded
+                ( Just
+                    ( Runtime.RuntimeValue
+                        frameworkSourceSchemaId
+                        ( show
+                            ( FrameworkSourceArgs
+                                (encodeFrameworkAsBusiness currentFramework)
+                            )
+                        )
+                    )
+                )
+            )
+        Runtime.RuntimeMapPhase ->
+          pure
+            ( case Runtime.runtimeInvocationValue currentInvocation of
+                Just currentValue ->
+                  Runtime.HandlerSucceeded
+                    (Just currentValue {Runtime.runtimeValueSchema = frameworkSourceSchemaId})
+                Nothing -> Runtime.HandlerFailed "framework MAP input missing"
+            )
+        Runtime.RuntimeCommandPhase ->
+          pure
+            ( case Runtime.runtimeInvocationValue currentInvocation >>= extractFrameworkSource of
+                Nothing -> Runtime.HandlerFailed "framework command input is invalid"
+                Just currentSource ->
+                  case validateFrameworkStage currentKey currentSource of
+                    Left currentError -> Runtime.HandlerFailed currentError
+                    Right () ->
+                      Runtime.HandlerSucceeded
+                        (Just (Runtime.RuntimeValue frameworkUnitSchemaId "()"))
+            )
+        Runtime.RuntimeLoopPhase ->
+          pure (Runtime.HandlerFailed "Loop phase cannot invoke a framework handler")
+    validateFrameworkStage currentStage currentSource = do
+      decodedFramework <- decodeFrameworkAsBusiness currentSource
+      if decodedFramework /= currentFramework
+        then Left "framework source does not match candidate"
+        else
+          if "validateFacade" `isInfixOf` currentStage
+            then
+              case V52.validate (frameworkAsBusinessV52Program decodedFramework) of
+                [] -> Right ()
+                currentErrors -> Left ("v5.2 validation failed: " ++ show currentErrors)
+            else
+              if "lowerReferenced" `isInfixOf` currentStage
+                then ensureResolved decodedFramework
+                else
+                  if "compileCata" `isInfixOf` currentStage
+                    then
+                      if null (V52.programSchemaDigest (frameworkAsBusinessV52Program decodedFramework))
+                        then Left "compiled schema digest is empty"
+                        else ensureResolved decodedFramework
+                    else
+                      if "closeEmpty" `isInfixOf` currentStage
+                        && currentTerminal == EmptyBusiness
+                        && not (null (frameworkAsBusinessSchema decodedFramework))
+                        then Right ()
+                        else Left ("unknown framework command: " ++ currentStage)
+    ensureResolved currentDecoded =
+      if null (show (V52.resolveAll (frameworkAsBusinessV52Program currentDecoded)))
+        then Left "resolved v5.2 control is empty"
+        else Right ()
 
-extractFrameworkSource :: RuntimeData -> Either String String
-extractFrameworkSource currentArguments =
-  case currentArguments of
-    RuntimeRecord currentFields ->
-      case
-          [ currentValue
-          | (FieldName currentName, currentValue) <- currentFields
-          , currentName == "source"
-          ] of
-        [RuntimeText currentSource] ->
-          Right currentSource
-        [] ->
-          Left "missing framework source parameter"
-        _ ->
-          Left "invalid framework source parameter"
-    _ ->
-      Left "framework effect arguments must be a record"
+extractFrameworkSource :: Runtime.RuntimeValue -> Maybe String
+extractFrameworkSource currentValue =
+  case readMaybe (Runtime.runtimeValuePayload currentValue) of
+    Just (FrameworkSourceArgs currentSource) -> Just currentSource
+    Nothing -> Nothing
 
-closeExecutionStatus :: FrontendRunResult -> FrontendExecutionStatus
-closeExecutionStatus currentRun =
-  case
-      find
-        ( (== frameworkCloseEmptyAddress)
-            . effectOccurrenceAddress
-            . fst
+frameworkSourceSchemaId :: V52.ValueSchemaId
+frameworkSourceSchemaId =
+  V52.schemaDescriptorId
+    ( V52.descriptorFor
+        (V52.SchemaFromType "framework-as-business.v6")
+        (V52.valueSchemaDefinition (Nothing :: Maybe FrameworkSourceArgs))
+    )
+
+frameworkUnitSchemaId :: V52.ValueSchemaId
+frameworkUnitSchemaId =
+  V52.schemaDescriptorId
+    ( V52.descriptorFor
+        (V52.SchemaFromType "framework-as-business.v6")
+        (V52.valueSchemaDefinition (Nothing :: Maybe ()))
+    )
+
+closeExecuted :: Runtime.UnifiedRuntimeRun -> Bool
+closeExecuted currentRun =
+  any isCloseEvent
+    (Runtime.runtimeSnapshotEvents (Runtime.unifiedRuntimeSnapshot currentRun))
+  where
+    isCloseEvent (Runtime.RuntimeHandlerFinished currentInstance Runtime.RuntimeCommandPhase currentResult) =
+      "closeEmpty"
+        `isInfixOf` V52.effectKeyText
+          (V52.someEffectRefKey (Runtime.executionInstanceEffect currentInstance))
+        && handlerResultSucceeded currentResult
+    isCloseEvent _ = False
+
+handlerResultSucceeded :: Runtime.RuntimeHandlerResult -> Bool
+handlerResultSucceeded Runtime.HandlerSucceeded {} = True
+handlerResultSucceeded (Runtime.HandlerSucceededBatch (_ : _)) = True
+handlerResultSucceeded _ = False
+
+runEmptyBusiness :: IO Bool
+runEmptyBusiness =
+  case (emptyBusinessProgram, Runtime.runtimeHandlerRegistry []) of
+    (Right currentProgram, Right currentHandlers) -> do
+      currentRun <- V52.runPreparedRuntime currentHandlers currentProgram
+      pure
+        ( case currentRun of
+            Right currentResult ->
+              Runtime.unifiedRuntimeOutcome currentResult == Runtime.Succeeded
+                && null
+                  [ ()
+                  | Runtime.RuntimeHandlerStarted {} <-
+                      Runtime.runtimeSnapshotEvents
+                        (Runtime.unifiedRuntimeSnapshot currentResult)
+                  ]
+            Left _ -> False
         )
-        (frontendSnapshotEffects (frontendRunSnapshot currentRun)) of
-    Nothing ->
-      FrontendPending
-    Just (_, currentStatus) ->
-      currentStatus
+    _ -> pure False
 
 semanticObservationDigest ::
   FrameworkAsBusiness ->
-  FrontendExecutionStatus ->
+  FrameworkExecutionStatus ->
   String
 semanticObservationDigest currentFramework currentStatus =
   sha256
@@ -653,7 +584,6 @@ semanticObservationDigest currentFramework currentStatus =
         "|"
         [ frameworkAsBusinessSchema currentFramework
         , show (frameworkAsBusinessV52Program currentFramework)
-        , show (frameworkAsBusinessProgram currentFramework)
         , show (frameworkAsBusinessEffectCoverage currentFramework)
         , show (frameworkAsBusinessReadCoverage currentFramework)
         , show (frameworkAsBusinessCompatibility currentFramework)

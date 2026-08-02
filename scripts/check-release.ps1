@@ -107,6 +107,9 @@ try {
     Invoke-Captured "loop feedback witness" {
         stack --work-dir .stack-work-codex exec loop-feedback-witness
     } (Join-Path $evidenceRoot "stage8-loop-feedback.json")
+    Invoke-Captured "semantic closure witness" {
+        stack --work-dir .stack-work-codex exec semantic-closure-witness
+    } (Join-Path $evidenceRoot "stage9-semantic-closure.json")
     Invoke-Captured "runtime witness" {
         stack --work-dir .stack-work-codex exec curde-runtime-witness
     } (Join-Path $evidenceRoot "stage0-runtime.json")

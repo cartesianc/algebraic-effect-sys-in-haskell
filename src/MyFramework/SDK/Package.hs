@@ -35,8 +35,8 @@ import Text.Read
 import MyFramework.SDK.SourceArtifact
   ( SdkGeneratedSource (..)
   , buildSdkSourceReport
-  , handlerCoverageFromRefs
-  , mkSdkSourceInput
+  , handlerCoverageFromEffectKeys
+  , mkSdkSourceInputV52
   , renderGeneratedSdkSource
   , renderSdkSourceReportJson
   , sdkSourceCoreLock
@@ -51,7 +51,7 @@ import MyFramework.Self.Artifact
 import MyFramework.Self.CoreModel
   ( frameworkAsBusiness
   , frameworkAsBusinessEffectCoverage
-  , frameworkAsBusinessProgram
+  , frameworkAsBusinessV52Program
   , frameworkAsBusinessReadCoverage
   )
 import MyFramework.Self.Model
@@ -174,12 +174,12 @@ materializeApprovedSdkPackage
               (Left (SdkPackageSelfModelFailed (show currentErrors)))
           (Right currentFramework, Right currentSelfModel) -> do
             let currentInput =
-                  mkSdkSourceInput
+                  mkSdkSourceInputV52
                     (currentCoreRef currentPointer)
                     sdkVersion
-                    (frameworkAsBusinessProgram currentFramework)
+                    (frameworkAsBusinessV52Program currentFramework)
                     ( Just
-                        ( handlerCoverageFromRefs
+                        ( handlerCoverageFromEffectKeys
                             ( frameworkAsBusinessEffectCoverage
                                 currentFramework
                             )
@@ -203,7 +203,7 @@ materializeApprovedSdkPackage
                   materializeStageFrom
                     sourceRoot
                     outputDir
-                    "sdk-beta"
+                    "sdk-core0"
                     currentSelfModel
                 case baseResult of
                   Left currentError ->

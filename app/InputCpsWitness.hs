@@ -531,7 +531,7 @@ businessValuesStayOutOfInput currentRun =
 renderReport :: [Check] -> Bool -> String
 renderReport currentChecks succeeded =
   "{"
-    ++ jsonField "schema" (jsonString "input-cps-witness.v1")
+    ++ jsonField "schema" (jsonString "input-cps-witness.v2")
     ++ ","
     ++ jsonField
       "claims"

@@ -6,20 +6,19 @@ AST, and Handler declarations.
 
 ## Versioned schema
 
-The unified boundary is `myframework-sdk-source-artifact.v2` /
-`myframework-sdk-source-report.v2`, with `EffSysDecl.ReadShow.v2` encoding and
-a v2 lowering-semantics digest. V1 multi-system artifacts are rejected instead
-of being interpreted under V2 semantics.
+The candidate boundary is `myframework-sdk-source-artifact.v4` /
+`myframework-sdk-source-report.v4`, with a v4 lowering-semantics digest. Its
+canonical source is the v5.2 `PreparedRuntime`. Legacy ReferencedProgram input
+is accepted only by the migration constructor and retains its tagged encoding.
 ## Authoritative input
 
-`mkSdkSourceInput` accepts the existing serializable values:
+`mkSdkSourceInputV52` accepts:
 
 ```text
 approved TrustBaseRef
 SDK version
-EffSysDecl
-AstBlueprintSeed
-Maybe erased Handler coverage
+PreparedRuntime
+Maybe Effect-key Handler coverage
 ```
 
 It derives an `SdkCoreLock` containing:
@@ -30,8 +29,9 @@ canonical SDK surface digest
 SDK lowering-semantics digest
 ```
 
-The surface digest commits the canonical SDK version, the erased unified EffSys,
-AST seed, and optional Handler identities. The lock itself is excluded from
+The surface digest commits the canonical SDK version, ElaboratedProgram,
+SchemaCatalog, three graphs, ContinuationPlan, HookPlan, Loop/control policy
+registries, and optional Handler identities. The lock itself is excluded from
 that calculation to avoid a circular digest. `buildSdkSourceReport` blocks an
 invalid core reference, surface mismatch, lowering mismatch, empty/duplicate global HandleId,
 or unknown Handler identity before materialization.

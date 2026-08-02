@@ -42,7 +42,7 @@ import MyFramework.TrustBase.Digest
 import MyFramework.TrustBase.Evidence
   ( claimCatalogClaims
   , crawlerFacadeClaimCatalog
-  , crawlerFacadeEvidenceSchemaV2
+  , crawlerFacadeEvidenceSchemaV3
   , effectApplicationClaimCatalog
   , effectApplicationEvidenceSchemaV1
   , effSysRefClaimCatalog
@@ -50,16 +50,18 @@ import MyFramework.TrustBase.Evidence
   , facadeV52ClaimCatalog
   , facadeV52EvidenceSchemaV1
   , inputCpsClaimCatalog
-  , inputCpsEvidenceSchemaV1
+  , inputCpsEvidenceSchemaV2
   , hangingMiddlewareClaimCatalog
   , hangingMiddlewareEvidenceSchemaV1
   , pipelinePatchClaimCatalog
   , pipelinePatchEvidenceSchemaV1
   , loopFeedbackClaimCatalog
   , loopFeedbackEvidenceSchemaV1
+  , semanticClosureClaimCatalog
+  , semanticClosureEvidenceSchemaV1
   , fixedPointDiffClaimCatalog
   , l0SemanticsClaimCatalog
-  , l0SemanticsEvidenceSchemaV3
+  , l0SemanticsEvidenceSchemaV4
   , promotionClaimCatalog
   , promotionEvidenceSchemaV1
   , referencedFrontendClaimCatalog
@@ -69,9 +71,9 @@ import MyFramework.TrustBase.Evidence
   , schemaElaborationClaimCatalog
   , schemaElaborationEvidenceSchemaV1
   , sdkPackageClaimCatalog
-  , sdkPackageEvidenceSchemaV1
+  , sdkPackageEvidenceSchemaV2
   , selfInterpretClaimCatalog
-  , selfInterpretEvidenceSchemaV3
+  , selfInterpretEvidenceSchemaV4
   , trustBaseBindingClaimCatalog
   , trustBaseBindingEvidenceSchemaV1
   , trustBaseManifestClaimCatalog
@@ -176,7 +178,7 @@ selfSchemaCatalog =
       , schemaCatalogEntryProducer = "trustbase-binding-witness"
       }
   , SchemaCatalogEntry
-      { schemaCatalogEntrySchema = l0SemanticsEvidenceSchemaV3
+      { schemaCatalogEntrySchema = l0SemanticsEvidenceSchemaV4
       , schemaCatalogEntryProducer = "curde-semantics-witness"
       }
   , SchemaCatalogEntry
@@ -184,7 +186,7 @@ selfSchemaCatalog =
       , schemaCatalogEntryProducer = "referenced-frontend-witness"
       }
   , SchemaCatalogEntry
-      { schemaCatalogEntrySchema = crawlerFacadeEvidenceSchemaV2
+      { schemaCatalogEntrySchema = crawlerFacadeEvidenceSchemaV3
       , schemaCatalogEntryProducer = "crawler-facade-witness"
       }
   , SchemaCatalogEntry
@@ -204,7 +206,7 @@ selfSchemaCatalog =
       , schemaCatalogEntryProducer = "facade-v52-witness"
       }
   , SchemaCatalogEntry
-      { schemaCatalogEntrySchema = inputCpsEvidenceSchemaV1
+      { schemaCatalogEntrySchema = inputCpsEvidenceSchemaV2
       , schemaCatalogEntryProducer = "input-cps-witness"
       }
   , SchemaCatalogEntry
@@ -224,7 +226,11 @@ selfSchemaCatalog =
       , schemaCatalogEntryProducer = "loop-feedback-witness"
       }
   , SchemaCatalogEntry
-      { schemaCatalogEntrySchema = selfInterpretEvidenceSchemaV3
+      { schemaCatalogEntrySchema = semanticClosureEvidenceSchemaV1
+      , schemaCatalogEntryProducer = "semantic-closure-witness"
+      }
+  , SchemaCatalogEntry
+      { schemaCatalogEntrySchema = selfInterpretEvidenceSchemaV4
       , schemaCatalogEntryProducer = "core-self-interpret-witness"
       }
   , SchemaCatalogEntry
@@ -288,7 +294,7 @@ selfSchemaCatalog =
       , schemaCatalogEntryProducer = "sdk-lower-tool"
       }
   , SchemaCatalogEntry
-      { schemaCatalogEntrySchema = sdkPackageEvidenceSchemaV1
+      { schemaCatalogEntrySchema = sdkPackageEvidenceSchemaV2
       , schemaCatalogEntryProducer = "sdk-package-witness"
       }
   ]
@@ -310,6 +316,7 @@ selfClaimCatalog =
     ++ claimCatalogClaims hangingMiddlewareClaimCatalog
     ++ claimCatalogClaims pipelinePatchClaimCatalog
     ++ claimCatalogClaims loopFeedbackClaimCatalog
+    ++ claimCatalogClaims semanticClosureClaimCatalog
     ++ claimCatalogClaims selfInterpretClaimCatalog
     ++ claimCatalogClaims promotionClaimCatalog
     ++ claimCatalogClaims sdkPackageClaimCatalog

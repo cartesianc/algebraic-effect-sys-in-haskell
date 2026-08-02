@@ -25,16 +25,16 @@ lowering, and business operations remain outside it.
 
 ## Rotating self-bootstrap core
 
-`FrameworkAsBusiness` is the serializable core expression built from the L0
-`ReferencedProgram` facade. `EmptyBusiness` is its nullary App-level recursive
-base and creates no fake AST node. A candidate that loads or calls its previous
-core after materialization is rejected.
+The v5.2 candidate `FrameworkAsBusiness` is a serializable schema-free
+`PreparedRuntime` built through `MyFramework`. `EmptyBusiness` is an empty AST
+Chain with zero Effects and zero Handlers. A candidate that loads or calls its
+previous core after materialization is rejected.
 
 Genesis core0 interpreted and materialized core1. Approved core1 was then
 content-addressed and replayed to bridge the L0 core2 candidate. Approved
-core2 has now interpreted the L0 v2 public-façade candidate, which begins a new
-semantic epoch as core0. This façade core0 is the approved current core and
-has no active runtime dependency on core2.
+core2 interpreted the L0 v2 public-façade core that remains the approved current
+core while the v5.2 candidate advances through Stage 9 and Stage 10. The current
+core has no active runtime dependency on core2.
 
 ## Evidence and promotion
 

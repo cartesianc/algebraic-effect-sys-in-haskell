@@ -3,8 +3,9 @@
 ## 1. 适用范围
 
 本文面向使用 `MyFramework` 编写业务程序的开发者。当前公开 Facade 对应 L0 v5.2
-Stage 8，提供 schema elaboration、六种 Effect、Application、三图 lowering、Input CPS、
-统一 Runtime、Scoped EffSys、hanging middleware、callback PipelinePatch 和 Loop feedback。
+Stage 9，提供 schema elaboration、六种 Effect、Application、三图 lowering、Input CPS、
+统一 Runtime、Scoped EffSys、hanging middleware、callback PipelinePatch、Loop feedback、
+Choice/Wait/Suspense control hook 和 versioned Context。
 
 框架内部结构见[开发者指南](DEVELOPER_GUIDE.zh.md)，长期语义边界见
 [L0 合同](L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md)。
@@ -230,7 +231,37 @@ Loop 使用单 child：
 通过 `HandlerSucceededBatch` 报告一次迭代内的连续值；Runtime 用注册 codec 的 semantic
 equivalence 合并变化并决定是否 replay。Loop 外 Application 不参与 replay。
 
-## 12. 当前阶段边界
+## 12. Choice、Wait、Suspense 和 Context
+
+Choice 的 child 名称同时充当稳定选择键：
+
+```haskell
+route = choice (name "route") (name "mirror") [primary, mirror]
+```
+
+Wait 与 Suspense 保存可序列化、带版本的 gate policy。Runtime 执行节点时把当前
+`RuntimeSnapshot` 交给 runtime-only `RuntimeControlHooks`。默认 hook 返回 policy 中的
+gate；集成事件源时使用 `runPreparedRuntimeWithControlHooks` 提供 live 判定：
+
+```haskell
+ready  = wait (name "ready") defaultReadyGate fetch
+paused = suspense (name "paused") fetch defaultReadyGate
+```
+
+hook 返回 `ControlGateReady`、`ControlGateBlocked reason` 或
+`ControlGateFailed reason`。blocked 产生 `Suspended`，failed 进入 Diagnosis。Suspense
+hook 同时收到目标 `EffectRef`。hook closure、snapshot 和资源对象均不进入序列化 IR。
+
+Context 是 versioned extension point：
+
+```haskell
+scoped = context (name "scope") identityContext fetch
+```
+
+当前注册了 version 1 `identityContext`。未知 Context 在 `program` 阶段累积为
+`ProgramControlPolicyFailed`，不会启动 Handler。
+
+## 13. 当前阶段边界
 
 已实现：
 
@@ -248,10 +279,13 @@ equivalence 合并变化并决定是否 replay。Loop 外 Application 不参与 
 - hanging Middleware；
 - Callback PipelinePatch；
 - Loop feedback、revision、嵌套传播和 cleanup。
+- Choice、Wait、Suspense runtime gate hook；
+- versioned Context 与 pre-runtime validation；
+- v5.2 FrameworkAsBusiness、EmptyBusiness 和 SDK source epoch。
 
 后续阶段：
 
-- v5.2 promotion 和 `0.2.0-core0` SDK。
+- self-artifact、显式 promotion 和 approved `0.2.0-core0` SDK 独立验证。
 
 旧 artifact 通过 `MyFramework.Legacy.Migration`、`MyFramework.Legacy.Elaboration` 和
 `MyFramework.Legacy.Application` 转换。默认 `MyFramework` 不重导出旧表面。

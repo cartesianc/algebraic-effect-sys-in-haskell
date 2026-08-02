@@ -5,7 +5,7 @@ module MyFramework.TrustBase.Evidence
   , claimManifestEvidence
   , completeEvidence
   , crawlerFacadeClaimCatalog
-  , crawlerFacadeEvidenceSchemaV2
+  , crawlerFacadeEvidenceSchemaV3
   , evidenceFor
   , effectApplicationClaimCatalog
   , effectApplicationEvidenceSchemaV1
@@ -16,30 +16,32 @@ module MyFramework.TrustBase.Evidence
   , facadeV52ClaimCatalog
   , facadeV52EvidenceSchemaV1
   , inputCpsClaimCatalog
-  , inputCpsEvidenceSchemaV1
+  , inputCpsEvidenceSchemaV2
   , hangingMiddlewareClaimCatalog
   , hangingMiddlewareEvidenceSchemaV1
   , pipelinePatchClaimCatalog
   , pipelinePatchEvidenceSchemaV1
   , loopFeedbackClaimCatalog
   , loopFeedbackEvidenceSchemaV1
+  , semanticClosureClaimCatalog
+  , semanticClosureEvidenceSchemaV1
   , promotionClaimCatalog
   , promotionEvidenceSchemaV1
   , l0SemanticsClaimCatalog
-  , l0SemanticsEvidenceSchemaV3
+  , l0SemanticsEvidenceSchemaV4
   , referencedFrontendClaimCatalog
   , referencedFrontendEvidenceSchemaV1
   , referencedRuntimeClaimCatalog
   , referencedRuntimeEvidenceSchemaV1
   , sdkPackageClaimCatalog
-  , sdkPackageEvidenceSchemaV1
+  , sdkPackageEvidenceSchemaV2
   , schemaCatalogClaimCatalog
   , schemaCatalogClaimName
   , schemaCatalogEvidenceSchemaV1
   , schemaElaborationClaimCatalog
   , schemaElaborationEvidenceSchemaV1
   , selfInterpretClaimCatalog
-  , selfInterpretEvidenceSchemaV3
+  , selfInterpretEvidenceSchemaV4
   , trustBaseManifestClaimCatalog
   , trustBaseManifestEvidenceSchemaV1
   , trustBaseBindingClaimCatalog
@@ -117,25 +119,25 @@ promotionEvidenceSchemaV1 =
     , schemaIdVersion = SchemaVersion 1
     }
 
-selfInterpretEvidenceSchemaV3 :: SchemaId
-selfInterpretEvidenceSchemaV3 =
+selfInterpretEvidenceSchemaV4 :: SchemaId
+selfInterpretEvidenceSchemaV4 =
   SchemaId
     { schemaIdName = SchemaName "core-self-interpret-evidence"
-    , schemaIdVersion = SchemaVersion 3
+    , schemaIdVersion = SchemaVersion 4
     }
 
-sdkPackageEvidenceSchemaV1 :: SchemaId
-sdkPackageEvidenceSchemaV1 =
+sdkPackageEvidenceSchemaV2 :: SchemaId
+sdkPackageEvidenceSchemaV2 =
   SchemaId
     { schemaIdName = SchemaName "sdk-package-evidence"
-    , schemaIdVersion = SchemaVersion 1
+    , schemaIdVersion = SchemaVersion 2
     }
 
-l0SemanticsEvidenceSchemaV3 :: SchemaId
-l0SemanticsEvidenceSchemaV3 =
+l0SemanticsEvidenceSchemaV4 :: SchemaId
+l0SemanticsEvidenceSchemaV4 =
   SchemaId
     { schemaIdName = SchemaName "curde-semantics-report"
-    , schemaIdVersion = SchemaVersion 3
+    , schemaIdVersion = SchemaVersion 4
     }
 
 referencedFrontendEvidenceSchemaV1 :: SchemaId
@@ -152,11 +154,11 @@ referencedRuntimeEvidenceSchemaV1 =
     , schemaIdVersion = SchemaVersion 1
     }
 
-crawlerFacadeEvidenceSchemaV2 :: SchemaId
-crawlerFacadeEvidenceSchemaV2 =
+crawlerFacadeEvidenceSchemaV3 :: SchemaId
+crawlerFacadeEvidenceSchemaV3 =
   SchemaId
     { schemaIdName = SchemaName "crawler-facade-witness"
-    , schemaIdVersion = SchemaVersion 2
+    , schemaIdVersion = SchemaVersion 3
     }
 
 effectApplicationEvidenceSchemaV1 :: SchemaId
@@ -173,11 +175,11 @@ facadeV52EvidenceSchemaV1 =
     , schemaIdVersion = SchemaVersion 1
     }
 
-inputCpsEvidenceSchemaV1 :: SchemaId
-inputCpsEvidenceSchemaV1 =
+inputCpsEvidenceSchemaV2 :: SchemaId
+inputCpsEvidenceSchemaV2 =
   SchemaId
     { schemaIdName = SchemaName "input-cps-witness"
-    , schemaIdVersion = SchemaVersion 1
+    , schemaIdVersion = SchemaVersion 2
     }
 
 effSysRefEvidenceSchemaV1 :: SchemaId
@@ -205,6 +207,13 @@ loopFeedbackEvidenceSchemaV1 :: SchemaId
 loopFeedbackEvidenceSchemaV1 =
   SchemaId
     { schemaIdName = SchemaName "loop-feedback-witness"
+    , schemaIdVersion = SchemaVersion 1
+    }
+
+semanticClosureEvidenceSchemaV1 :: SchemaId
+semanticClosureEvidenceSchemaV1 =
+  SchemaId
+    { schemaIdName = SchemaName "semantic-closure-witness"
     , schemaIdVersion = SchemaVersion 1
     }
 
@@ -274,14 +283,14 @@ l0SemanticsClaimCatalog =
     , claimCatalogCoreClaims =
         map
           ClaimName
-          [ "l0-referenced-program-valid"
-          , "l0-referenced-program-resolves"
-          , "l0-module-local-effect-records"
-          , "l0-r-is-separate"
-          , "l0-effect-kinds-cude-without-r"
-          , "l0-self-model-text-roundtrip"
-          , "l0-self-model-json-roundtrip"
-          , "l0-resolver-control-trace"
+          [ "l0-v52-program-valid"
+          , "l0-v52-schema-free-canonical-catalog"
+          , "l0-v52-effect-kinds-in-unified-registry"
+          , "l0-v52-command-map-r-applications"
+          , "l0-v52-three-graphs-separated"
+          , "l0-v52-continuation-plan-serializable"
+          , "l0-v52-framework-encoding-has-no-legacy-program"
+          , "l0-v52-empty-business-is-zero-effect"
           ]
     , claimCatalogManifestClaim =
         ClaimName "l0-semantics-claim-manifest"
@@ -515,6 +524,29 @@ loopFeedbackClaimCatalog =
     , claimCatalogManifestClaim = ClaimName "loop-feedback-claim-manifest"
     }
 
+semanticClosureClaimCatalog :: ClaimCatalog
+semanticClosureClaimCatalog =
+  ClaimCatalog
+    { claimCatalogName = "semantic-closure"
+    , claimCatalogCoreClaims =
+        map
+          ClaimName
+          [ "semantic-closure-choice-selected-only"
+          , "semantic-closure-wait-ready-runs-child"
+          , "semantic-closure-wait-blocked-suspends"
+          , "semantic-closure-wait-failure-is-diagnosed"
+          , "semantic-closure-suspense-uses-gate-contract"
+          , "semantic-closure-context-identity-runs-child"
+          , "semantic-closure-unknown-context-fails-before-runtime"
+          , "semantic-closure-choice-selection-validates"
+          , "semantic-closure-control-policy-roundtrip"
+          , "semantic-closure-framework-as-business-v52-only"
+          , "semantic-closure-empty-business-zero-effects-handlers-io"
+          , "semantic-closure-control-events-in-diagnosis-stream"
+          ]
+    , claimCatalogManifestClaim = ClaimName "semantic-closure-claim-manifest"
+    }
+
 referencedRuntimeClaimCatalog :: ClaimCatalog
 referencedRuntimeClaimCatalog =
   ClaimCatalog
@@ -589,6 +621,7 @@ sdkPackageClaimCatalog =
         map
           ClaimName
           [ "sdk-core-lock-valid"
+          , "sdk-source-uses-v52-approved-core"
           , "sdk-surface-digest-tamper-blocked"
           , "sdk-lowering-digest-tamper-blocked"
           , "sdk-pending-core-rejected"

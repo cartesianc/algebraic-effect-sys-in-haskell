@@ -13,7 +13,8 @@ TrustBase 的自举 core”所需的设计。
 
 当前工作树已经实现并通过聚焦 witness：
 
-- framework 通过 L0 `ReferencedProgram` 表达为 `FrameworkAsBusiness`；
+- v5.2 candidate 通过 schema-free `PreparedRuntime` 表达为 `FrameworkAsBusiness`；
+- `EmptyBusiness` 是零 Effect、零 Handler 的空 Chain，并由统一 Runtime 实际执行；
 - approved core2 由 source commit、artifact、facade payload 和 semantic
   observation 四重 digest 重放，并通过显式兼容 facet 解释 façade core0；
 - candidate 接收 nullary `EmptyBusiness` 并闭合递归；
@@ -22,8 +23,8 @@ TrustBase 的自举 core”所需的设计。
 - Stage0/Stage1/Stage2 artifact fixed-point 协议保留；
 - approved-core `SdkCoreLock`、standalone `sdk-lower`、package verifier 与 beta workflows 已实现。
 
-当前工作树已经通过普通 release pre-gate 与重型 self-artifact gate，façade `core0`
-已由显式 promotion 命令批准，仓库的 approved record 与 current pointer 已生成。
+此前 v2 façade core 已通过普通 release pre-gate 与重型 self-artifact gate，并由显式
+promotion 命令批准。仓库的 approved record 与 current pointer 在 v5.2 Stage 10 前保持不变。
 `core2` 仅作为重放/回滚材料保留，不在 core0 的活动依赖闭包内。一个
 `0.1.0-core0` SDK 包已从 approved core0 实际物化并通过 package verify。
 

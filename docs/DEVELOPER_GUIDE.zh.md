@@ -16,14 +16,15 @@ TrustBase 和 SDK lowering 的开发者。
 4. src/MyFramework/Elaboration.hs
 5. src/MyFramework/Effect.hs
 6. src/MyFramework/Graph.hs
-7. src/MyFramework/EffSys.hs
-8. src/MyFramework/Hook.hs
-9. src/MyFramework/Callback.hs
-10. src/MyFramework/Ast.hs
-11. src/MyFramework/Recursion.hs
-12. src/MyFramework/Runtime.hs
-13. src/MyFramework/Runtime/V52.hs
-14. src/MyFramework/Runtime/Diagnosis.hs
+7. src/MyFramework/Control/V52.hs
+8. src/MyFramework/EffSys.hs
+9. src/MyFramework/Hook.hs
+10. src/MyFramework/Callback.hs
+11. src/MyFramework/Ast.hs
+12. src/MyFramework/Recursion.hs
+13. src/MyFramework/Runtime.hs
+14. src/MyFramework/Runtime/V52.hs
+15. src/MyFramework/Runtime/Diagnosis.hs
 
 ## 2. 当前实现和目标合同
 
@@ -39,7 +40,8 @@ TrustBase 和 SDK lowering 的开发者。
 | v5.2 Stage 6 | 已运行，提供 hanging HookPlan、middleware wrapper 和 hook provenance |
 | v5.2 Stage 7 | 已运行，提供 CallbackRef、事务 PipelinePatch 和 run-local continuation |
 | v5.2 Stage 8 | 已运行，提供单 child Loop、versioned policy、revision replay、嵌套传播和 LIFO cleanup |
-| v5.2 Stage 9+ | 待完成自举语义闭合和 promotion |
+| v5.2 Stage 9 | 已运行，提供控制 hook、versioned Context、v5.2 FrameworkAsBusiness、EmptyBusiness 和 SDK source epoch |
+| v5.2 Stage 10 | 待执行 self-artifact、显式 promotion 和 approved SDK 独立验证 |
 
 当前源码可以作为迁移基础。v5.2 设计只有在 Facade、schema elaboration、lowering、runtime、
 witness、self-artifact 和 SDK 全部闭合后才进入 current core。
@@ -944,6 +946,23 @@ Diagnosis provenance。
 执行 cleanup；cleanup failure 进入 Loop outcome 和 Diagnosis。缺少 equivalence 的动态
 边界在 Handler IO 前被拒绝。
 
+### 15.4 Choice、Wait、Suspense 和 Context
+
+Facade 把四种节点编译成按 `AstPath` 索引的 `ControlPolicyRegistry`。编译期检查
+节点 arity、Choice 选择键、Suspense EffectRef 和 Context identity。未知 Context 进入
+`ProgramControlPolicyFailed`，不会到达 Runtime。
+
+Wait 与 Suspense 的 Runtime 路径调用 `RuntimeControlHooks`：
+
+    AstPath
+      -> serialized versioned gate policy
+      -> immutable RuntimeSnapshot
+      -> IO ControlGate
+
+Suspense hook 额外收到目标 EffectRef。hook 是 runtime-only closure，只能给出 Ready、
+Blocked 或 Failed，不能修改 AST、三图或 ContinuationPlan。每次判定生成带 AstPath、
+node kind、目标引用和结果的 RuntimeEvent。Context 当前提供 version 1 identity extension。
+
 ## 16. 框架优势
 
 ### 16.1 前台可序列化
@@ -996,7 +1015,7 @@ SDK core lock 建立从语义源码到发布产物的可验证链。
 - 默认 Facade 已移除显式 SchemaIdentity；
 - 当前 ScalarShape 无法严格区分 Bool、Integer、Decimal 和 Text；
 - 当前简化 Frontend runtime 未执行 Race；
-- Context 仍被 lowering 拒绝；
+- v5.2 Context 只接受已注册的 versioned identity；未知 identity 在 Runtime 前失败；
 - ana 和 hylo 尚未进入 Recursion module；
 - 外部 IO 的事务性依赖 Handler；
 - Graph validation 不能证明业务算法正确；

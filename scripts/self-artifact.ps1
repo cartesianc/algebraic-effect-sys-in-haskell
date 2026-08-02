@@ -214,6 +214,9 @@ try {
     Invoke-Captured "Stage1 loop feedback witness" {
         stack --work-dir .stack-work-artifact exec loop-feedback-witness
     } (Join-Path $stage1Evidence "loop-feedback.json")
+    Invoke-Captured "Stage1 semantic closure witness" {
+        stack --work-dir .stack-work-artifact exec semantic-closure-witness
+    } (Join-Path $stage1Evidence "semantic-closure.json")
     Invoke-Captured "Stage1 runtime witness" {
         stack --work-dir .stack-work-artifact exec curde-runtime-witness
     } (Join-Path $stage1Evidence "runtime.json")
@@ -287,6 +290,9 @@ try {
     Invoke-Captured "Stage2 loop feedback witness" {
         stack --work-dir .stack-work-artifact exec loop-feedback-witness
     } (Join-Path $stage2Evidence "loop-feedback.json")
+    Invoke-Captured "Stage2 semantic closure witness" {
+        stack --work-dir .stack-work-artifact exec semantic-closure-witness
+    } (Join-Path $stage2Evidence "semantic-closure.json")
     Invoke-Captured "Stage2 runtime witness" {
         stack --work-dir .stack-work-artifact exec curde-runtime-witness
     } (Join-Path $stage2Evidence "runtime.json")

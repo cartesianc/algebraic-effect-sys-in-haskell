@@ -32,9 +32,10 @@ import System.IO
 import MyFramework.SDK.Package
 import MyFramework.SDK.SourceArtifact
   ( SdkSourceInput (..)
+  , SdkSourceProgram (..)
   , buildSdkSourceReport
-  , handlerCoverageFromRefs
-  , mkSdkSourceInput
+  , handlerCoverageFromEffectKeys
+  , mkSdkSourceInputV52
   , sdkSourceReportReady
   )
 import MyFramework.Self.Artifact
@@ -45,7 +46,7 @@ import MyFramework.Self.Artifact
 import MyFramework.Self.CoreModel
   ( frameworkAsBusiness
   , frameworkAsBusinessEffectCoverage
-  , frameworkAsBusinessProgram
+  , frameworkAsBusinessV52Program
   , frameworkAsBusinessReadCoverage
   )
 import MyFramework.Self.Model
@@ -60,7 +61,7 @@ import MyFramework.TrustBase.Evidence
   ( completeEvidence
   , evidenceFor
   , sdkPackageClaimCatalog
-  , sdkPackageEvidenceSchemaV1
+  , sdkPackageEvidenceSchemaV2
   , validateEvidenceClaims
   )
 import MyFramework.TrustBase.Manifest
@@ -137,12 +138,12 @@ runWitness sourceRoot probeRoot packageRoot =
                 pendingResult
                   >>= approvePromotion candidateManifest
               currentInput =
-                mkSdkSourceInput
+                mkSdkSourceInputV52
                   (coreManifestTrustBaseRef candidateManifest)
-                  "0.1.0-beta.1"
-                  (frameworkAsBusinessProgram currentFramework)
+                  "0.2.0-core0"
+                  (frameworkAsBusinessV52Program currentFramework)
                   ( Just
-                      ( handlerCoverageFromRefs
+                      ( handlerCoverageFromEffectKeys
                           ( frameworkAsBusinessEffectCoverage
                               currentFramework
                           )
@@ -192,7 +193,7 @@ runWitness sourceRoot probeRoot packageRoot =
                 materializeApprovedSdkPackage
                   sourceRoot
                   (OutputDir packageRoot)
-                  "0.1.0-beta.1"
+                  "0.2.0-core0"
                   candidateManifest
                   approvedRecord
                   currentPointer
@@ -205,6 +206,11 @@ runWitness sourceRoot probeRoot packageRoot =
           let checks =
                 [ ( "sdk-core-lock-valid"
                   , sdkSourceReportReady currentReport
+                  )
+                , ( "sdk-source-uses-v52-approved-core"
+                  , case sdkSourceProgram currentInput of
+                      SdkV52Program _ -> True
+                      SdkLegacyProgram _ -> False
                   )
                 , ( "sdk-surface-digest-tamper-blocked"
                   , not
@@ -281,7 +287,7 @@ coreSchema =
 
 semanticReport :: String
 semanticReport =
-  "{\"schema\":\"core-self-interpret-evidence.v2\",\"result\":\"passed\",\"claims\":[{\"name\":\"semantic-fixed-point-passed\",\"status\":\"passed\"},{\"name\":\"candidate-has-no-previous-core-runtime-dependency\",\"status\":\"passed\"},{\"name\":\"empty-business-closes-recursion\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-curde\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-handler\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-host-io\",\"status\":\"passed\"}]}"
+  "{\"schema\":\"core-self-interpret-evidence.v4\",\"result\":\"passed\",\"claims\":[{\"name\":\"semantic-fixed-point-passed\",\"status\":\"passed\"},{\"name\":\"candidate-has-no-previous-core-runtime-dependency\",\"status\":\"passed\"},{\"name\":\"empty-business-closes-recursion\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-curde\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-handler\",\"status\":\"passed\"},{\"name\":\"empty-business-has-no-host-io\",\"status\":\"passed\"}]}"
 
 artifactReport :: String
 artifactReport =
@@ -316,7 +322,7 @@ failWitness :: String -> String -> IO value
 failWitness currentStage currentObserved = do
   putStrLn
     ( jsonObject
-        [ ("schema", jsonString "sdk-package-witness.v1")
+        [ ("schema", jsonString "sdk-package-evidence.v2")
         , ("artifact", jsonString "sdk-package-witness")
         , ("result", jsonString "failed")
         , ("stage", jsonString currentStage)
@@ -328,7 +334,7 @@ failWitness currentStage currentObserved = do
 renderReport :: [Evidence] -> Bool -> String
 renderReport currentEvidence succeeded =
   jsonObject
-    [ ("schema", jsonString (renderSchemaId sdkPackageEvidenceSchemaV1))
+    [ ("schema", jsonString (renderSchemaId sdkPackageEvidenceSchemaV2))
     , ("artifact", jsonString "sdk-package-witness")
     , ("result", jsonString (if succeeded then "passed" else "failed"))
     , ("claims", jsonArray (map renderEvidence currentEvidence))

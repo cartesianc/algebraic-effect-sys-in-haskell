@@ -1,18 +1,11 @@
 module Main (main) where
 
-import Control.Monad
-  ( unless )
-import Data.List
-  ( intercalate )
-import System.Exit
-  ( exitFailure )
+import Control.Monad (unless)
+import Data.List (intercalate, isInfixOf, nub, sort)
+import System.Exit (exitFailure)
 
-import MyFramework.Legacy.Migration
-import MyFramework.Self.ControlTrace
-  ( compileControlTrace
-  , controlTraceConstructorWitness
-  )
-import MyFramework.Self.Model
+import MyFramework
+import MyFramework.Self.CoreModel
 
 data Check = Check
   { checkName :: String
@@ -22,100 +15,81 @@ data Check = Check
 
 main :: IO ()
 main =
-  case selfModel of
+  case frameworkAsBusiness of
     Left currentErrors -> do
-      putStrLn
-        ( renderReport
-            [ Check
-                "self-model-builds"
-                False
-                (show currentErrors)
-            ]
-            False
-        )
+      putStrLn (renderReport [Check "l0-v52-framework-builds" False (show currentErrors)] False)
       exitFailure
-    Right currentModel -> do
-      let currentProgram =
-            selfModelProgram currentModel
-          currentValidation =
-            validateReferencedProgram currentProgram
-          currentResolution =
-            resolveProgram currentProgram
-          currentKinds =
-            [ effectDeclType currentEffect
-            | currentModule <- referencedProgramEffects currentProgram
-            , (_, currentEffect) <-
-                effectRecordFields (effectModuleRecord currentModule)
-            ]
-          currentChecks =
+    Right currentFramework -> do
+      let currentProgram = frameworkAsBusinessV52Program currentFramework
+          currentEffects = effectRegistryEffects (effectRegistryOf currentProgram)
+          currentKinds = sort (nub (map (someEffectRefKind . effectIrRef) currentEffects))
+          currentGraphs = graphProgramOf (preparedRuntimeProgram currentProgram)
+          currentAstEdges = astGraphEdges (compiledAstGraph currentGraphs)
+          currentInputEdges = inputGraphEdges (compiledInputGraph currentGraphs)
+          currentValueEdges = valueGraphEdges (compiledValueGraph currentGraphs)
+          checks =
             [ Check
-                "l0-referenced-program-valid"
-                (null currentValidation)
-                (show currentValidation)
+                "l0-v52-program-valid"
+                (null (validate currentProgram))
+                (show (validate currentProgram))
             , Check
-                "l0-referenced-program-resolves"
-                (either (const False) (const True) currentResolution)
-                (show currentResolution)
-            , Check
-                "l0-module-local-effect-records"
-                ( map effectModuleName
-                    (referencedProgramEffects currentProgram)
-                    == [ModuleName "source", ModuleName "sink"]
+                "l0-v52-schema-free-canonical-catalog"
+                ( not (null (programSchemaDigest currentProgram))
+                    && not ("SchemaIdentity" `isInfixOf` show (resolveAll currentProgram))
                 )
-                (show (referencedProgramEffects currentProgram))
+                (programSchemaDigest currentProgram)
             , Check
-                "l0-r-is-separate"
-                ( readRegistryFields
-                    (referencedProgramReads currentProgram)
-                    == [(selfReadUserKey, userSchema currentProgram)]
-                )
-                (show (referencedProgramReads currentProgram))
-            , Check
-                "l0-effect-kinds-cude-without-r"
-                (all (`elem` currentKinds) [EffectC, EffectU, EffectD, EffectE])
+                "l0-v52-effect-kinds-in-unified-registry"
+                (all (`elem` [C, U, R, D, E, MAP]) currentKinds && R `elem` currentKinds && MAP `elem` currentKinds)
                 (show currentKinds)
             , Check
-                "l0-self-model-text-roundtrip"
-                (selfModelTextRoundTrip currentModel)
-                (show (selfModelTextRoundTrip currentModel))
-            , Check
-                "l0-self-model-json-roundtrip"
-                ( selfModelJsonRoundTrip currentModel
-                    && not (null (canonicalSelfModelJson currentModel))
+                "l0-v52-command-map-r-applications"
+                ( all applicationHasThreeEffects
+                    (compiledOccurrences currentGraphs)
                 )
-                (show (selfModelJsonRoundTrip currentModel))
+                (show (compiledOccurrences currentGraphs))
             , Check
-                "l0-resolver-control-trace"
-                ( controlTraceConstructorWitness
-                    && either
-                      (const False)
-                      (const True)
-                      (compileControlTrace currentModel)
+                "l0-v52-three-graphs-separated"
+                ( not (null currentAstEdges)
+                    && not (null currentValueEdges)
+                    && all (not . inputLooksLikeAst) currentInputEdges
                 )
-                (show (compileControlTrace currentModel))
+                (show (length currentAstEdges, length currentInputEdges, length currentValueEdges))
+            , Check
+                "l0-v52-continuation-plan-serializable"
+                (not (null (continuationPlanDigest (preparedRuntimeContinuationPlan currentProgram))))
+                (continuationPlanDigest (preparedRuntimeContinuationPlan currentProgram))
+            , Check
+                "l0-v52-framework-encoding-has-no-legacy-program"
+                (not ("ReferencedProgram" `isInfixOf` encodeFrameworkAsBusiness currentFramework))
+                (frameworkAsBusinessSchema currentFramework)
+            , Check
+                "l0-v52-empty-business-is-zero-effect"
+                ( case emptyBusinessProgram of
+                    Right currentEmpty -> null (effectRegistryEffects (effectRegistryOf currentEmpty))
+                    Left _ -> False
+                )
+                (show EmptyBusiness)
             ]
-          succeeded =
-            all checkPassed currentChecks
-      putStrLn (renderReport currentChecks succeeded)
+          succeeded = all checkPassed checks
+      putStrLn (renderReport checks succeeded)
       unless succeeded exitFailure
 
-userSchema :: ReferencedProgram -> SchemaIdentity
-userSchema currentProgram =
-  case
-      [ currentSchema
-      | (currentKey, currentSchema) <-
-          readRegistryFields (referencedProgramReads currentProgram)
-      , currentKey == selfReadUserKey
-      ] of
-    currentSchema : _ ->
-      currentSchema
-    [] ->
-      error "validated self model lost readUser schema"
+applicationHasThreeEffects :: ApplicationOccurrence -> Bool
+applicationHasThreeEffects currentOccurrence =
+  let currentApplication = applicationOccurrenceApplication currentOccurrence
+   in someEffectRefKind (effectApplicationCommand currentApplication) `elem` [C, U, D, E]
+        && someEffectRefKind (effectApplicationMap currentApplication) == MAP
+        && someEffectRefKind (effectApplicationRead currentApplication) == R
+
+inputLooksLikeAst :: InputEdge -> Bool
+inputLooksLikeAst currentEdge =
+  inputEdgePredecessor currentEdge == inputEdgeTarget currentEdge
 
 renderReport :: [Check] -> Bool -> String
 renderReport currentChecks succeeded =
   "{"
-    ++ jsonField "schema" (jsonString "curde-semantics-report.v3")
+    ++ jsonField "schema" (jsonString "curde-semantics-report.v4")
     ++ ","
     ++ jsonField "result" (jsonString (if succeeded then "passed" else "failed"))
     ++ ","
@@ -137,20 +111,17 @@ renderReport currentChecks succeeded =
     ++ "}"
 
 jsonField :: String -> String -> String
-jsonField currentKey currentValue =
-  jsonString currentKey ++ ":" ++ currentValue
+jsonField currentKey currentValue = jsonString currentKey ++ ":" ++ currentValue
 
 jsonArray :: [String] -> String
-jsonArray currentValues =
-  "[" ++ intercalate "," currentValues ++ "]"
+jsonArray currentValues = "[" ++ intercalate "," currentValues ++ "]"
 
 jsonBool :: Bool -> String
 jsonBool True = "true"
 jsonBool False = "false"
 
 jsonString :: String -> String
-jsonString currentText =
-  "\"" ++ concatMap escapeJson currentText ++ "\""
+jsonString currentText = "\"" ++ concatMap escapeJson currentText ++ "\""
 
 escapeJson :: Char -> String
 escapeJson currentCharacter =

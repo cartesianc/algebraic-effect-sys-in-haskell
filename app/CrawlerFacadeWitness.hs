@@ -288,7 +288,7 @@ crawlerEffectIdentitiesStable =
 renderReport :: [Check] -> Bool -> String
 renderReport currentChecks succeeded =
   "{"
-    ++ jsonField "schema" (jsonString "crawler-facade-witness.v2")
+    ++ jsonField "schema" (jsonString "crawler-facade-witness.v3")
     ++ ","
     ++ jsonField
       "claims"

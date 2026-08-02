@@ -8,17 +8,17 @@ for the other.
 ```text
 Host TCB
   -> content-addressed replay of approved core2
-  -> compatibility facet bound to the L0 v2 façade core0 declaration
-  -> FrameworkAsBusiness expressed through MyFramework.Facade
+  -> compatibility facet bound to the approved L0 v2 current core
+  -> v5.2 FrameworkAsBusiness expressed through MyFramework.Facade
   -> EmptyBusiness
   -> normalized core2/core0 compatibility observations
 ```
 
 `check-core2-replay.ps1` rebuilds the exact source commit bound to approved
 core2, reproduces its artifact digest, façade payload digest, and semantic
-observation digest. `core-self-interpret-witness` binds that facet to the L0
-v2 core0 declaration, proves core0 runs through the same public façade used by
-business programs, and closes recursion at `EmptyBusiness`. The normalized
+observation digest. `core-self-interpret-witness` binds that facet to the v5.2
+candidate, proves it runs through the same public Facade and unified Runtime
+used by business programs, and closes recursion at a zero-Effect `EmptyBusiness`. The normalized
 core2/core0 contract is exchangeable and core0 has no runtime dependency on
 core2. A
 contaminated back-reference is a required negative witness.
@@ -66,8 +66,8 @@ Validation never modifies `trustbase/current.json`. After the heavy gate, a
 maintainer reviews the generated core manifest, pending record, TrustBase
 classification, diff, and evidence. Only the explicit `core-promotion-tool
 approve` command can produce an approved record and matching current pointer.
-The current repository state has completed that explicit step for façade
-epoch core0.
+The repository contains an approved v2 current core. The v5.2 pointer remains
+unchanged until its Stage 10 heavy gate and explicit approval complete.
 
 A beta SDK additionally requires those reviewed files and independently checks
 that the approved core artifact digest is the payload it packages. CI cannot

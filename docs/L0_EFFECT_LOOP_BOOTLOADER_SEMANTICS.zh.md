@@ -5,10 +5,10 @@
     状态：FROZEN ARCHITECTURE CONTRACT
     层级：L0 / 最高语义层级
     版本：v5.2
-    日期：2026-08-01
+    日期：2026-08-02
     维护属性：LONG-LIVED / CONTINUOUSLY EVOLVED
     稳定路径：docs/L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md
-    实现状态：Stage 0—8 已实现；Stage 9—10 推进中
+    实现状态：Stage 0—9 已实现；Stage 10 待执行
     Promotion：本语义 epoch 尚未 promotion
 
 本文记录长期稳定的语义边界、版本状态和完成条件。
@@ -445,6 +445,10 @@ arity：
 - Suspense 挂起当前控制点；
 - Context 保留 versioned extension point。
 
+Wait 与 Suspense 的可序列化 policy 在 Runtime 中交给 runtime-only control hook。
+hook 接收当前不可变 RuntimeSnapshot，返回 Ready、Blocked 或 Failed。hook 无权修改
+AST、InputGraph、ValueGraph 或 ContinuationPlan。未知 Context 在 Handler 启动前失败。
+
 内部递归类型：
 
     type Ast = Fix AstF
@@ -719,13 +723,13 @@ Runtime 不执行带 validation error 的 core。
 ## 16. 自举和发布
 
     Host TCB
-      -> current core0
-      -> FrameworkAsBusiness / core1
-      -> materialized core2 candidate
+      -> current approved core_n
+      -> FrameworkAsBusiness / core_(n+1)
+      -> materialized candidate
       -> semantic fixed point
       -> artifact fixed point
       -> explicit promotion
-      -> next core0
+      -> next approved core
 
 语义 fixed point 检查：
 
@@ -781,7 +785,7 @@ SDK 只接受 approved core，并执行：
 | demand graph 与 Control plan | IMPLEMENTED |
 | typed runtime、branch merge、single-flight | IMPLEMENTED |
 | runtime diagnosis | IMPLEMENTED |
-| TrustBase、fixed point、promotion、SDK | IMPLEMENTED，绑定旧 epoch |
+| TrustBase、fixed point、promotion、SDK | v2 current 已实现；v5.2 candidate 待 Stage 10 promotion |
 | 正式 MAP Effect | IMPLEMENTED |
 | command $ MAP $ R Application | IMPLEMENTED |
 | AST / InputGraph / ValueGraph 分离 | IMPLEMENTED |
@@ -791,7 +795,9 @@ SDK 只接受 approved core，并执行：
 | callback PipelinePatch | IMPLEMENTED |
 | Loop 完整反馈语义 | IMPLEMENTED |
 | ana/hylo | OPEN |
-| v5.2 FrameworkAsBusiness 主表达 | IMPLEMENTED；Runtime/Promotion 待后续 Stage |
+| Choice/Wait/Suspense control hook | IMPLEMENTED |
+| versioned Context validation | IMPLEMENTED |
+| v5.2 FrameworkAsBusiness 主表达 | IMPLEMENTED；promotion 待 Stage 10 |
 
 ## 18. v5.2 完成条件
 
@@ -820,17 +826,12 @@ SDK 只接受 approved core，并执行：
 ## 19. OPEN 设计清单
 
 1. n 元 AST 节点的最小 child 数量；
-2. Choice、Wait、Suspense、Context 完整 schema；
-3. Middleware/Callback 最终 Facade；
-4. PipelinePatch 完整代数；
-5. EffSysRef query 和 snapshot wire format；
-6. Loop policy 与 cleanup；
-7. useState/useEffect 语法；
-8. cyclic continuation graph 扩展；
-9. row-polymorphic SDK layer；
-10. JSON-RPC ana/hylo boot protocol；
-11. row record surface 的库选择；
-12. typed record deriving 与外部 codec 的优先级细节。
+2. useState/useEffect/useCallback 语法；
+3. cyclic continuation graph 扩展；
+4. row-polymorphic SDK layer；
+5. JSON-RPC ana/hylo boot protocol；
+6. row record surface 的库选择；
+7. typed record deriving 与外部 codec 的优先级细节。
 
 OPEN 项进入公开合同需要新 L0 版本。
 

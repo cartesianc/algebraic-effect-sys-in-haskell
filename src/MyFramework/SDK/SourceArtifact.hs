@@ -1,5 +1,6 @@
 module MyFramework.SDK.SourceArtifact
   ( SdkHandlerCoverage (..)
+  , SdkSourceProgram (..)
   , SdkSourceInput (..)
   , SdkSourceArtifact (..)
   , SdkSourceIssueSeverity (..)
@@ -7,10 +8,12 @@ module MyFramework.SDK.SourceArtifact
   , SdkSourceIssue (..)
   , SdkSourceReport (..)
   , SdkGeneratedSource (..)
-  , sdkSourceArtifactSchemaV3
-  , sdkSourceReportSchemaV3
+  , sdkSourceArtifactSchemaV4
+  , sdkSourceReportSchemaV4
   , handlerCoverageFromRefs
+  , handlerCoverageFromEffectKeys
   , mkSdkSourceInput
+  , mkSdkSourceInputV52
   , sdkLoweringSemanticsDigest
   , canonicalizeSdkSourceInput
   , buildSdkSourceReport
@@ -34,6 +37,7 @@ import Numeric
   ( showHex )
 
 import MyFramework.Frontend
+import qualified MyFramework.Facade as V52
 import MyFramework.TrustBase.Core
   ( Digest (..)
   , SdkCoreLock (..)
@@ -46,16 +50,20 @@ import MyFramework.TrustBase.Digest
 
 -- | Coverage remains metadata. Effect and R identities stay in separate
 -- namespaces and are never flattened into a global handle id.
-data SdkHandlerCoverage = SdkHandlerCoverage
-  { handlerCoverageEffects :: [EffectAddress]
-  , handlerCoverageReads :: [ReadKey]
-  }
+data SdkHandlerCoverage
+  = SdkLegacyHandlerCoverage [EffectAddress] [ReadKey]
+  | SdkV52HandlerCoverage [V52.EffectKey] [V52.EffectKey]
+  deriving (Eq, Ord, Read, Show)
+
+data SdkSourceProgram
+  = SdkLegacyProgram ReferencedProgram
+  | SdkV52Program V52.PreparedRuntime
   deriving (Eq, Ord, Read, Show)
 
 data SdkSourceInput = SdkSourceInput
   { sdkSourceSdkVersion :: String
   , sdkSourceCoreLock :: SdkCoreLock
-  , sdkSourceProgram :: ReferencedProgram
+  , sdkSourceProgram :: SdkSourceProgram
   , sdkSourceHandlerCoverage :: Maybe SdkHandlerCoverage
   }
   deriving (Eq, Ord, Show)
@@ -64,7 +72,7 @@ data SdkSourceArtifact = SdkSourceArtifact
   { sdkSourceArtifactSchema :: String
   , sdkSourceArtifactSdkVersion :: String
   , sdkSourceArtifactCoreLock :: SdkCoreLock
-  , sdkSourceArtifactProgram :: ReferencedProgram
+  , sdkSourceArtifactProgram :: SdkSourceProgram
   , sdkSourceArtifactHandlerCoverage :: Maybe SdkHandlerCoverage
   }
   deriving (Eq, Ord, Show)
@@ -107,19 +115,19 @@ data SdkGeneratedSource = SdkGeneratedSource
   }
   deriving (Eq, Ord, Read, Show)
 
-sdkSourceArtifactSchemaV3 :: String
-sdkSourceArtifactSchemaV3 =
-  "myframework-sdk-source-artifact.v3"
+sdkSourceArtifactSchemaV4 :: String
+sdkSourceArtifactSchemaV4 =
+  "myframework-sdk-source-artifact.v4"
 
-sdkSourceReportSchemaV3 :: String
-sdkSourceReportSchemaV3 =
-  "myframework-sdk-source-report.v3"
+sdkSourceReportSchemaV4 :: String
+sdkSourceReportSchemaV4 =
+  "myframework-sdk-source-report.v4"
 
 sdkLoweringSemanticsDigest :: Digest
 sdkLoweringSemanticsDigest =
   Digest
     ( sha256
-        "myframework-sdk-lowering-semantics.l0-referenced-modules.v3"
+        "myframework-sdk-lowering-semantics.l0-v5.2-program.v4"
     )
 
 mkSdkSourceInput ::
@@ -129,6 +137,32 @@ mkSdkSourceInput ::
   Maybe SdkHandlerCoverage ->
   SdkSourceInput
 mkSdkSourceInput currentCore currentVersion currentProgram currentCoverage =
+  mkSdkSourceInputProgram
+    currentCore
+    currentVersion
+    (SdkLegacyProgram currentProgram)
+    currentCoverage
+
+mkSdkSourceInputV52 ::
+  TrustBaseRef ->
+  String ->
+  V52.PreparedRuntime ->
+  Maybe SdkHandlerCoverage ->
+  SdkSourceInput
+mkSdkSourceInputV52 currentCore currentVersion currentProgram currentCoverage =
+  mkSdkSourceInputProgram
+    currentCore
+    currentVersion
+    (SdkV52Program currentProgram)
+    currentCoverage
+
+mkSdkSourceInputProgram ::
+  TrustBaseRef ->
+  String ->
+  SdkSourceProgram ->
+  Maybe SdkHandlerCoverage ->
+  SdkSourceInput
+mkSdkSourceInputProgram currentCore currentVersion currentProgram currentCoverage =
   provisionalInput
     { sdkSourceCoreLock =
         SdkCoreLock
@@ -157,25 +191,42 @@ handlerCoverageFromRefs ::
   [ReadKey] ->
   SdkHandlerCoverage
 handlerCoverageFromRefs currentEffects currentReads =
+  SdkLegacyHandlerCoverage
+    (uniqueSorted currentEffects)
+    (uniqueSorted currentReads)
+
+handlerCoverageFromEffectKeys ::
+  [V52.EffectKey] ->
+  [V52.EffectKey] ->
   SdkHandlerCoverage
-    { handlerCoverageEffects = uniqueSorted currentEffects
-    , handlerCoverageReads = uniqueSorted currentReads
-    }
+handlerCoverageFromEffectKeys currentEffects currentReads =
+  SdkV52HandlerCoverage
+    (uniqueSorted currentEffects)
+    (uniqueSorted currentReads)
 
 canonicalizeSdkSourceInput :: SdkSourceInput -> SdkSourceInput
 canonicalizeSdkSourceInput currentInput =
   currentInput
     { sdkSourceProgram =
-        canonicalizeReferencedProgram (sdkSourceProgram currentInput)
+        canonicalizeProgram (sdkSourceProgram currentInput)
     , sdkSourceHandlerCoverage =
         fmap canonicalizeCoverage (sdkSourceHandlerCoverage currentInput)
     }
 
 canonicalizeCoverage :: SdkHandlerCoverage -> SdkHandlerCoverage
 canonicalizeCoverage currentCoverage =
-  handlerCoverageFromRefs
-    (handlerCoverageEffects currentCoverage)
-    (handlerCoverageReads currentCoverage)
+  case currentCoverage of
+    SdkLegacyHandlerCoverage currentEffects currentReads ->
+      handlerCoverageFromRefs currentEffects currentReads
+    SdkV52HandlerCoverage currentEffects currentReads ->
+      handlerCoverageFromEffectKeys currentEffects currentReads
+
+canonicalizeProgram :: SdkSourceProgram -> SdkSourceProgram
+canonicalizeProgram currentProgram =
+  case currentProgram of
+    SdkLegacyProgram currentLegacy ->
+      SdkLegacyProgram (canonicalizeReferencedProgram currentLegacy)
+    SdkV52Program currentV52 -> SdkV52Program currentV52
 
 canonicalizeReferencedProgram :: ReferencedProgram -> ReferencedProgram
 canonicalizeReferencedProgram currentProgram =
@@ -239,7 +290,7 @@ canonicalizeParams currentParams =
 buildSdkSourceReport :: SdkSourceInput -> SdkSourceReport
 buildSdkSourceReport originalInput =
   SdkSourceReport
-    { sdkSourceReportSchema = sdkSourceReportSchemaV3
+    { sdkSourceReportSchema = sdkSourceReportSchemaV4
     , sdkSourceReportInput = canonicalInput
     , sdkSourceReportArtifact = sourceArtifactFrom canonicalInput
     , sdkSourceReportIssues = sourceIssues canonicalInput
@@ -259,7 +310,7 @@ sdkSourceReportReady currentReport =
 
 sdkSourceReportCanonical :: SdkSourceReport -> Bool
 sdkSourceReportCanonical currentReport =
-  sdkSourceReportSchema currentReport == sdkSourceReportSchemaV3
+  sdkSourceReportSchema currentReport == sdkSourceReportSchemaV4
     && currentInput == canonicalizeSdkSourceInput currentInput
     && currentArtifact == sourceArtifactFrom currentInput
     && currentIssues == sourceIssues currentInput
@@ -295,7 +346,7 @@ renderSdkSourceArtifactJson currentArtifact =
         (renderSdkCoreLockJson (sdkSourceArtifactCoreLock currentArtifact))
     , jsonField
         "program"
-        (renderReferencedProgramJson (sdkSourceArtifactProgram currentArtifact))
+        (renderSdkProgramJson (sdkSourceArtifactProgram currentArtifact))
     , jsonField
         "handlerCoverage"
         ( jsonMaybe
@@ -352,7 +403,7 @@ renderGeneratedSdkSource currentInput =
 sourceArtifactFrom :: SdkSourceInput -> SdkSourceArtifact
 sourceArtifactFrom currentInput =
   SdkSourceArtifact
-    { sdkSourceArtifactSchema = sdkSourceArtifactSchemaV3
+    { sdkSourceArtifactSchema = sdkSourceArtifactSchemaV4
     , sdkSourceArtifactSdkVersion = sdkSourceSdkVersion currentInput
     , sdkSourceArtifactCoreLock = sdkSourceCoreLock currentInput
     , sdkSourceArtifactProgram = sdkSourceProgram currentInput
@@ -380,7 +431,9 @@ sourceIssues currentInput =
     currentProgram =
       sdkSourceProgram currentInput
     currentProgramErrors =
-      validateReferencedProgram currentProgram
+      case currentProgram of
+        SdkLegacyProgram currentLegacy -> map show (validateReferencedProgram currentLegacy)
+        SdkV52Program currentV52 -> map show (V52.validate currentV52)
     programIssues =
       [ sourceIssue
           SdkSourceBlocker
@@ -434,52 +487,70 @@ sourceIssues currentInput =
         Just currentCoverage ->
           invalidCoverageIssues currentCoverage
             ++ unknownCoverageIssues currentCoverage
-    declaredEffects =
-      Set.fromList
-        [ EffectAddress
-            (effectModuleName currentModule)
-            currentKey
-        | currentModule <- referencedProgramEffects currentProgram
-        , (currentKey, _) <-
-            effectRecordFields (effectModuleRecord currentModule)
-        ]
-    declaredReads =
-      Set.fromList
-        (map fst (readRegistryFields (referencedProgramReads currentProgram)))
     invalidCoverageIssues currentCoverage =
-      [ sourceIssue
-          SdkSourceWarning
-          EmptyHandlerCoverageIdentity
-          "effect"
-          (show currentAddress)
-      | currentAddress <- handlerCoverageEffects currentCoverage
-      , not (validEffectAddress currentAddress)
-      ]
-        ++ [ sourceIssue
-               SdkSourceWarning
-               EmptyHandlerCoverageIdentity
-               "read"
-               (show currentRead)
-           | currentRead <- handlerCoverageReads currentCoverage
-           , null (readKeyText currentRead)
-           ]
+      case currentCoverage of
+        SdkLegacyHandlerCoverage currentEffects currentReads ->
+          [ sourceIssue SdkSourceWarning EmptyHandlerCoverageIdentity "effect" (show currentAddress)
+          | currentAddress <- currentEffects
+          , not (validEffectAddress currentAddress)
+          ]
+            ++ [ sourceIssue SdkSourceWarning EmptyHandlerCoverageIdentity "read" (show currentRead)
+               | currentRead <- currentReads
+               , null (readKeyText currentRead)
+               ]
+        SdkV52HandlerCoverage currentEffects currentReads ->
+          [ sourceIssue SdkSourceWarning EmptyHandlerCoverageIdentity "effect" (show currentKey)
+          | currentKey <- currentEffects
+          , null (V52.effectKeyText currentKey)
+          ]
+            ++ [ sourceIssue SdkSourceWarning EmptyHandlerCoverageIdentity "read" (show currentKey)
+               | currentKey <- currentReads
+               , null (V52.effectKeyText currentKey)
+               ]
     unknownCoverageIssues currentCoverage =
-      [ sourceIssue
-          SdkSourceWarning
-          UnknownEffectCoverageIdentity
-          "effect"
-          (show currentAddress)
-      | currentAddress <- handlerCoverageEffects currentCoverage
-      , Set.notMember currentAddress declaredEffects
-      ]
-        ++ [ sourceIssue
-               SdkSourceWarning
-               UnknownReadCoverageIdentity
-               "read"
-               (show currentRead)
-           | currentRead <- handlerCoverageReads currentCoverage
-           , Set.notMember currentRead declaredReads
-           ]
+      case (currentProgram, currentCoverage) of
+        (SdkLegacyProgram currentLegacy, SdkLegacyHandlerCoverage currentEffects currentReads) ->
+          let declaredEffects =
+                Set.fromList
+                  [ EffectAddress (effectModuleName currentModule) currentKey
+                  | currentModule <- referencedProgramEffects currentLegacy
+                  , (currentKey, _) <- effectRecordFields (effectModuleRecord currentModule)
+                  ]
+              declaredReads =
+                Set.fromList (map fst (readRegistryFields (referencedProgramReads currentLegacy)))
+           in [ sourceIssue SdkSourceWarning UnknownEffectCoverageIdentity "effect" (show currentAddress)
+              | currentAddress <- currentEffects
+              , Set.notMember currentAddress declaredEffects
+              ]
+                ++ [ sourceIssue SdkSourceWarning UnknownReadCoverageIdentity "read" (show currentRead)
+                   | currentRead <- currentReads
+                   , Set.notMember currentRead declaredReads
+                   ]
+        (SdkV52Program currentV52, SdkV52HandlerCoverage currentEffects currentReads) ->
+          let currentRegistry = V52.effectRegistryEffects (V52.effectRegistryOf currentV52)
+              declaredEffects =
+                Set.fromList (map (V52.someEffectRefKey . V52.effectIrRef) currentRegistry)
+              declaredReads =
+                Set.fromList
+                  [ V52.someEffectRefKey (V52.effectIrRef currentEffect)
+                  | currentEffect <- currentRegistry
+                  , V52.someEffectRefKind (V52.effectIrRef currentEffect) == V52.R
+                  ]
+           in [ sourceIssue SdkSourceWarning UnknownEffectCoverageIdentity "effect" (show currentKey)
+              | currentKey <- currentEffects
+              , Set.notMember currentKey declaredEffects
+              ]
+                ++ [ sourceIssue SdkSourceWarning UnknownReadCoverageIdentity "read" (show currentKey)
+                   | currentKey <- currentReads
+                   , Set.notMember currentKey declaredReads
+                   ]
+        _ ->
+          [ sourceIssue
+              SdkSourceBlocker
+              UnknownEffectCoverageIdentity
+              "handlerCoverage"
+              "coverage epoch does not match program epoch"
+          ]
 
 validEffectAddress :: EffectAddress -> Bool
 validEffectAddress currentAddress =
@@ -524,28 +595,36 @@ renderSdkCoreLockJson currentLock =
         (jsonString (encodeSdkCoreLock currentLock))
     ]
 
-renderReferencedProgramJson :: ReferencedProgram -> String
-renderReferencedProgramJson currentProgram =
-  jsonObject
-    [ jsonField
-        "encoding"
-        (jsonString "ReferencedProgram.ReadShow.v1")
-    , jsonField
-        "declaration"
-        (jsonString (show currentProgram))
-    ]
+renderSdkProgramJson :: SdkSourceProgram -> String
+renderSdkProgramJson currentProgram =
+  case currentProgram of
+    SdkLegacyProgram currentLegacy ->
+      jsonObject
+        [ jsonField "encoding" (jsonString "ReferencedProgram.ReadShow.v1")
+        , jsonField "declaration" (jsonString (show currentLegacy))
+        ]
+    SdkV52Program currentV52 ->
+      jsonObject
+        [ jsonField "encoding" (jsonString "PreparedRuntime.v5.2.ReadShow.v1")
+        , jsonField "declaration" (jsonString (show currentV52))
+        , jsonField "schemaDigest" (jsonString (V52.programSchemaDigest currentV52))
+        ]
 
 renderHandlerCoverageJson :: SdkHandlerCoverage -> String
 renderHandlerCoverageJson currentCoverage =
-  jsonObject
-    [ jsonField "kind" (jsonString "module-local")
-    , jsonField
-        "effects"
-        (jsonArray (map (jsonString . show) (handlerCoverageEffects currentCoverage)))
-    , jsonField
-        "reads"
-        (jsonArray (map (jsonString . show) (handlerCoverageReads currentCoverage)))
-    ]
+  case currentCoverage of
+    SdkLegacyHandlerCoverage currentEffects currentReads ->
+      jsonObject
+        [ jsonField "kind" (jsonString "module-local")
+        , jsonField "effects" (jsonArray (map (jsonString . show) currentEffects))
+        , jsonField "reads" (jsonArray (map (jsonString . show) currentReads))
+        ]
+    SdkV52HandlerCoverage currentEffects currentReads ->
+      jsonObject
+        [ jsonField "kind" (jsonString "effect-key.v5.2")
+        , jsonField "effects" (jsonArray (map (jsonString . show) currentEffects))
+        , jsonField "reads" (jsonArray (map (jsonString . show) currentReads))
+        ]
 
 renderSourceIssueJson :: SdkSourceIssue -> String
 renderSourceIssueJson currentIssue =

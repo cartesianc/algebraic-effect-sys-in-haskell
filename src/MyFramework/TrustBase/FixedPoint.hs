@@ -297,7 +297,7 @@ semanticWitnessValid :: String -> Bool
 semanticWitnessValid currentText =
   all
     (`isInfixOf` currentText)
-    [ "\"schema\":\"curde-semantics-report.v3\""
+    [ "\"schema\":\"curde-semantics-report.v4\""
     , "\"result\":\"passed\""
     , "\"name\":\"l0-referenced-program-valid\",\"passed\":true"
     , "\"name\":\"l0-referenced-program-resolves\",\"passed\":true"

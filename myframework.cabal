@@ -22,6 +22,7 @@ library
       MyFramework.CURDE.Evidence
       MyFramework.CURDE.Record
       MyFramework.Callback
+      MyFramework.Control.V52
       MyFramework.Elaboration
       MyFramework.Effect
       MyFramework.EffSys
@@ -236,6 +237,23 @@ executable pipeline-patch-witness
 executable loop-feedback-witness
   hs-source-dirs: app
   main-is: LoopFeedbackWitness.hs
+  default-language: Haskell2010
+  build-depends:
+      base >=4.18 && <5
+    , myframework
+  ghc-options:
+      -Wall
+      -Wcompat
+      -Widentities
+      -Wincomplete-record-updates
+      -Wincomplete-uni-patterns
+      -Wmissing-export-lists
+      -Wpartial-fields
+      -Wredundant-constraints
+
+executable semantic-closure-witness
+  hs-source-dirs: app
+  main-is: SemanticClosureWitness.hs
   default-language: Haskell2010
   build-depends:
       base >=4.18 && <5
