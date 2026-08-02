@@ -35,7 +35,7 @@ The heavy gate performs:
 5. Stage1 and Stage2 source manifests reach a byte-stable fixed point.
 6. Collected semantic/runtime evidence reaches a fixed point.
 7. Corresponding Stage0/Stage1 and Stage1/Stage2 reports are byte-equal.
-8. The promotion tool creates and verifies a core0 candidate manifest and a
+8. The promotion tool creates and verifies a `core0-v52` candidate manifest and a
    `PromotionPending` record whose previous core is the approved core2.
 
 Only `artifactSourceFiles` enter a materialized artifact. Each is classified as

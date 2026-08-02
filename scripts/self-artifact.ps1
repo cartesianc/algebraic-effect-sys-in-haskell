@@ -12,6 +12,8 @@ $markerPath = Join-Path $generatedRoot "self-artifact.marker"
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $previousCoreManifest = Join-Path $repoRoot "trustbase\core-manifest.json"
 $replayEvidencePath = Join-Path $EvidenceRoot "stage0-core2-core0-replay.json"
+$candidateCoreId = "core0-v52"
+$candidateManifestPath = Join-Path $EvidenceRoot "$candidateCoreId-manifest.json"
 
 function Assert-DirectGeneratedChild {
     param(
@@ -139,6 +141,14 @@ function Assert-Core2ReplayEvidence {
     }
 }
 
+function Assert-CandidateIdentity {
+    $previousManifest = Get-Content -LiteralPath $previousCoreManifest -Raw |
+        ConvertFrom-Json
+    if ($previousManifest.coreId -eq $candidateCoreId) {
+        throw "candidate core identity must differ from current core: $candidateCoreId"
+    }
+}
+
 $fingerprint = Get-WorktreeFingerprint
 if (Test-Path -LiteralPath $markerPath) {
     $previousFingerprint = (
@@ -155,6 +165,7 @@ if (Test-Path -LiteralPath $markerPath) {
 )
 
 Assert-Core2ReplayEvidence
+Assert-CandidateIdentity
 Remove-ArtifactRoot $repoRoot $stage1Root
 
 Push-Location $repoRoot
@@ -338,22 +349,22 @@ try {
             (Join-Path $stage1Evidence "runtime.json") `
             $stage2Root
     } (Join-Path $EvidenceRoot "stage0-stage1-evidence-fixed-point.json")
-    Invoke-Captured "core2 -> facade core0 candidate promotion record" {
+    Invoke-Captured "current core0 -> v5.2 core0 candidate promotion record" {
         stack --work-dir .stack-work-codex exec core-promotion-tool -- `
             prepare `
             $previousCoreManifest `
-            core0 `
+            $candidateCoreId `
             $stage1Root `
             (Join-Path $stage1Evidence "self-interpret.json") `
             (Join-Path $EvidenceRoot "stage1-stage2-artifact-fixed-point.json") `
             (Join-Path $stage1Evidence "self-interpret.json") `
-            (Join-Path $EvidenceRoot "core0-manifest.json") `
+            $candidateManifestPath `
             (Join-Path $EvidenceRoot "promotion.pending.json")
     } (Join-Path $EvidenceRoot "promotion-prepare.json")
     Invoke-Captured "Candidate promotion verification" {
         stack --work-dir .stack-work-codex exec core-promotion-tool -- `
             verify `
-            (Join-Path $EvidenceRoot "core0-manifest.json") `
+            $candidateManifestPath `
             (Join-Path $EvidenceRoot "promotion.pending.json") `
             (Join-Path $stage1Evidence "self-interpret.json") `
             (Join-Path $EvidenceRoot "stage1-stage2-artifact-fixed-point.json") `

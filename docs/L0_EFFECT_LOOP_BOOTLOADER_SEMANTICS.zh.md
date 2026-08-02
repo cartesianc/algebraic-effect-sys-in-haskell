@@ -9,7 +9,7 @@
     维护属性：LONG-LIVED / CONTINUOUSLY EVOLVED
     稳定路径：docs/L0_EFFECT_LOOP_BOOTLOADER_SEMANTICS.zh.md
     实现状态：Stage 0—9 已实现；Stage 10 待执行
-    Promotion：本语义 epoch 尚未 promotion
+    Promotion：候选身份 core0-v52；本语义 epoch 尚未 promotion
 
 本文记录长期稳定的语义边界、版本状态和完成条件。
 
