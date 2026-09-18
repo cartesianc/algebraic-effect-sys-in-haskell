@@ -1,6 +1,6 @@
 # 简版：有什么功能，怎么用
 
-以下是目标 API 的伪代码。当前源码的运行命令见 [IMPLEMENTATION.md](IMPLEMENTATION.md)。
+**文档与当前发布代码不一致，请优先按本文理解最新用法。** 以下是目标 API 的伪代码，尚不能直接用于旧版代码。已发布试验版的运行命令见 [IMPLEMENTATION.md](IMPLEMENTATION.md)。
 
 ## 有什么功能
 

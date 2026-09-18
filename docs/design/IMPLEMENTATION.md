@@ -1,22 +1,28 @@
 # 实现对应与后续工作
 
-[目录](README.md)中的文件定义目标设计。本文件只说明现有源码与目标的距离，避免将设计示例当成已经可运行的接口。
+[目录](README.md)中的文件定义最新目标设计，阅读架构时以文档为准。已发布代码与文档不一致；本次只更新文档，不发布本地源码和 core 记录。
 
-## 1. 当前源码
+## 1. 区分发布代码与本地试验参考
 
-包版本为 0.2.0.0，主要代码仍是 CURDE/v5.2 试验实现。
+| 层次 | 状态 |
+|---|---|
+| 最新设计 | 本目录描述的目标架构与接口，优先阅读 |
+| 当前远端代码 | 本次文档发布基于 303ae9c，包版本为 0.1.0.0；源码保持原样 |
+| 本地试验参考 | 355d7d0，包版本为 0.2.0.0，包含 CURDE/v5.2 探索；尚未随本次文档发布 |
+
+下表记录本地试验代码可供后续复用的基础。路径用于定位该参考版本，部分文件在远端旧版中尚不存在，因此不作为当前远端源码链接。
 
 | 源码 | 可以复用的基础 | 目标差异 |
 |---|---|---|
-| [Effect.hs](../../src/MyFramework/Effect.hs) | EffectRef、EffectSpec、EffectIR | 仍是 C/U/R/D/E/MAP，尚无新分类与统一 Free 前台 |
-| [Handler/Adapter.hs](../../src/MyFramework/Handler/Adapter.hs) | 宿主函数与 codec 适配 | 当前为 input → IO (Either String output)，尚非新 Impl |
-| [Graph.hs](../../src/MyFramework/Graph.hs) | AST/Input/Value 三种关系 | 需按句柄组合重新核对 input 的解释 |
-| [Ast.hs](../../src/MyFramework/Ast.hs)、[Recursion.hs](../../src/MyFramework/Recursion.hs) | Fix、cata 与控制构造 | 当前没有 ana/hylo |
-| [Runtime/V52.hs](../../src/MyFramework/Runtime/V52.hs) | 执行身份、结果、调度、清理 | 需衔接新绑定、资源协议与模块后端 |
-| [Hook.hs](../../src/MyFramework/Hook.hs)、[Callback.hs](../../src/MyFramework/Callback.hs)、[Loop.hs](../../src/MyFramework/Loop.hs) | 事件、回调、监听策略 | 需与新 scope/once 对齐 |
-| [Schema.hs](../../src/MyFramework/Schema.hs)、[Elaboration.hs](../../src/MyFramework/Elaboration.hs) | 参数契约、解码与验证 | 可承接配置和插件装配 |
+| src/MyFramework/Effect.hs | EffectRef、EffectSpec、EffectIR | 仍是 C/U/R/D/E/MAP，尚无新分类与统一 Free 前台 |
+| src/MyFramework/Handler/Adapter.hs | 宿主函数与 codec 适配 | 该版为 input → IO (Either String output)，尚非新 Impl |
+| src/MyFramework/Graph.hs | AST/Input/Value 三种关系 | 需按句柄组合重新核对 input 的解释 |
+| src/MyFramework/Ast.hs、Recursion.hs | Fix、cata 与控制构造 | 该版没有 ana/hylo |
+| src/MyFramework/Runtime/V52.hs | 执行身份、结果、调度、清理 | 需衔接新绑定、资源协议与模块后端 |
+| src/MyFramework/Hook.hs、Callback.hs、Loop.hs | 事件、回调、监听策略 | 需与新 scope/once 对齐 |
+| src/MyFramework/Schema.hs、Elaboration.hs | 参数契约、解码与验证 | 可承接配置和插件装配 |
 
-当前源码未发现 LinearTypes / %1 资源接口。现有 cleanup 和去重不构成 once 的线性所有权保证。完整的统一注册接口及 listen/mock/stress/log/show 后端仍待落地。
+上述本地参考中未发现 LinearTypes / %1 资源接口。现有 cleanup 和去重不构成 once 的线性所有权保证。完整的统一注册接口及 listen/mock/stress/log/show 后端仍待落地。
 
 ## 2. 建议实现顺序
 
@@ -48,14 +54,15 @@
 
 内部可用 GADT、associated families 和存在封装组织能力；前台保持统一 record 与显式绑定。没有为每条注册连接增加静态身份证明的实现任务。
 
-## 4. 运行当前试验代码
+## 4. 运行已发布的旧试验代码
 
 ```powershell
 stack --work-dir .stack-work-codex build
-stack --work-dir .stack-work-codex exec crawler-facade-witness
+stack --work-dir .stack-work-codex exec curde-semantics-witness
+stack --work-dir .stack-work-codex exec curde-runtime-witness
 ```
 
-按涉及模块选择现有 witness：curde-semantics-witness、schema-elaboration-witness、effect-application-witness、facade-v52-witness、semantic-closure-witness、curde-runtime-witness。
+crawler-facade-witness、schema-elaboration-witness、effect-application-witness、facade-v52-witness 和 semantic-closure-witness 属于上述本地试验参考，不作为当前远端版本的运行命令。
 
 AST 执行边界与普通发布检查分别使用：
 
@@ -64,7 +71,7 @@ AST 执行边界与普通发布检查分别使用：
 .\scripts\check-release.ps1
 ```
 
-这些命令运行的是当前源码，不代表目标 API 已实现。仅整理文档不需要运行重型发布验证。
+这些命令运行旧试验实现，不代表目标 API 已实现。本次仅检查文档，不重新验证旧版运行结果或执行重型发布验证。
 
 ## 5. 既有产物维护边界
 
