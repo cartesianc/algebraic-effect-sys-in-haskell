@@ -2,9 +2,11 @@
 
 这是 myframework 当前目标设计的唯一入口。设计整理日期：2026-09-19。
 
+**设计状态：本目录中的设计文档均为待定方案。** 整体评审使用 [具体 sample benchmark](OVERALL_REVIEW_BENCHMARK.md)。先读 [Sample.hs](benchmark/Sample.hs) 的注册与 impl；最小库已接通该运行子集的 record lowering，正式框架集成和完整类型保证继续待实现。
+
 **请优先阅读本目录理解最新设计。** 本目录描述目标架构和接口，已发布代码保留早期试验实现。本次发布范围为文档，源码和 core 记录保持各自的版本。
 
-Effect 是可读的操作中间表示（IR）：用统一 record 声明操作和依赖，以 handler 引用具体 effect 的类型类句柄，以 bind 绑定 impl，用 AST 声明模块控制流，再由 interpreter 驱动。解释器与运行时共同提供 VM 式模块后端，使同一份声明可用于执行、监听、mock、stress 和 log/show。
+Effect 是可读的操作中间表示（IR）：用统一 record 声明操作和依赖，以 handler 引用具体 effect 的类型类句柄，以 bind 绑定 impl，用 AST 声明模块控制流。当前候选方向是将 effect 连接为可执行闭包，以 AST 和闭包外围的 middleware 承载监听、mock、stress 和 log/show。具体 sample 验证这条连接路线；各专题文档按此路线逐项评审。
 
 本文档中的接口是目标写法。已发布代码、本地试验参考与后续实现计划的区别，集中说明在 [IMPLEMENTATION.md](IMPLEMENTATION.md)。
 
@@ -21,6 +23,13 @@ docs/design/
 ├── HANGING.md         回调、等待、监听与恢复
 ├── RESOURCE.md        layer、scope、线性 once、错误范围
 ├── INTERPRETER.md     执行、模块观测、mock/stress、配置启动
+├── OVERALL_REVIEW_BENCHMARK.md  具体 DSL sample、闭包展开、评审结论
+├── benchmark/
+│   ├── Sample.hs              使用者：注册与 impl
+│   ├── FileHandles.hs         提供者：数据与类方法 instance
+│   ├── Library.hs             库：类型机制与 lowering
+│   ├── ClosureSample.hs       启动、观察与固定案例
+│   └── LOWERING.md            内部展开与实现边界
 └── IMPLEMENTATION.md  源码对应、实现顺序、尚未定稿的细节
 ```
 
@@ -36,6 +45,7 @@ docs/design/
 | [RESOURCE.md](RESOURCE.md) | 为 EFFECT、IMPL 和 HANGING 规定资源与错误边界 |
 | [INTERPRETER.md](INTERPRETER.md) | 汇合上述文件，规定统一运行及外部工具接口 |
 | [IMPLEMENTATION.md](IMPLEMENTATION.md) | 将上述目标映射到现有源码与后续工作 |
+| [OVERALL_REVIEW_BENCHMARK.md](OVERALL_REVIEW_BENCHMARK.md) | 从 [Sample.hs](benchmark/Sample.hs) 的实际写法检查声明、句柄与 impl，以库的 lowering 和固定业务结果评审整体变化 |
 
 ## 全局约定
 
