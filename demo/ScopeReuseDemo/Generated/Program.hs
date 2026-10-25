@@ -11,6 +11,19 @@ import ScopeReuseDemo.Generated.Effects
 import qualified ScopeReuseDemo.Generated.Handlers as Handlers
 import ScopeReuseDemo.Types
 
+-- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
+registeredEffects :: [EffectSpec]
+registeredEffects =
+  [ EffectSpec {name = "FileLocations", typing = Context {request = Just (Producer {handler = "getFilePaths", produces = TypeRef "FilePaths"}), require = Just "readFilePaths"}, input = "Root", context = Nothing}
+  , EffectSpec {name = "PrepareProbe", typing = Excu {handler = Just "prepareProbe"}, input = "Root", context = Just (ContextInput {request = Just (From "FileLocations" (TypeRef "FilePaths")), require = Nothing})}
+  , EffectSpec {name = "FileResource", typing = Context {request = Just (Producer {handler = "acquireFile", produces = TypeRef "OpenedFile"}), require = Just "readOpenedFile"}, input = "Root", context = Just (ContextInput {request = Just (From "FileLocations" (TypeRef "FilePaths")), require = Nothing})}
+  , EffectSpec {name = "SharedFileScope", typing = Scoped {open = Just "openSharedFile", close = Just "closeSharedFile"}, input = "Root", context = Just (ContextInput {request = Just (From "FileResource" (TypeRef "OpenedFile")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "WriteFirst", typing = Excu {handler = Just "writeFirst"}, input = "SharedFileScope", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "WriteSecond", typing = Excu {handler = Just "writeSecond"}, input = "SharedFileScope", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "WriteThird", typing = Excu {handler = Just "writeThird"}, input = "SharedFileScope", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "VerifyReuse", typing = Excu {handler = Just "verifyReuse"}, input = "SharedFileScope", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  ]
+
 
 -- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。
 data Results = PrepareProbeResult (Produce PrepareProbe) | WriteFirstResult (Produce WriteFirst) | WriteSecondResult (Produce WriteSecond) | WriteThirdResult (Produce WriteThird) | VerifyReuseResult (Produce VerifyReuse)
@@ -28,19 +41,6 @@ compiledEntries = do
     , SDK.targetApp "VerifyReuse" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (VerifyReuseResult <$> verifyReuse))
     ]
 
--- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
-registeredEffects :: [EffectSpec]
-registeredEffects =
-  [ EffectSpec {name = "FileLocations", typing = Context {request = Just (Producer {handler = "getFilePaths", produces = TypeRef "FilePaths"}), require = Just "readFilePaths"}, input = "Root", context = Nothing}
-  , EffectSpec {name = "PrepareProbe", typing = Excu {handler = Just "prepareProbe"}, input = "Root", context = Just (ContextInput {request = Just (From "FileLocations" (TypeRef "FilePaths")), require = Nothing})}
-  , EffectSpec {name = "FileResource", typing = Context {request = Just (Producer {handler = "acquireFile", produces = TypeRef "OpenedFile"}), require = Just "readOpenedFile"}, input = "Root", context = Just (ContextInput {request = Just (From "FileLocations" (TypeRef "FilePaths")), require = Nothing})}
-  , EffectSpec {name = "SharedFileScope", typing = Scoped {open = Just "openSharedFile", close = Just "closeSharedFile"}, input = "Root", context = Just (ContextInput {request = Just (From "FileResource" (TypeRef "OpenedFile")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "WriteFirst", typing = Excu {handler = Just "writeFirst"}, input = "SharedFileScope", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "WriteSecond", typing = Excu {handler = Just "writeSecond"}, input = "SharedFileScope", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "WriteThird", typing = Excu {handler = Just "writeThird"}, input = "SharedFileScope", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "VerifyReuse", typing = Excu {handler = Just "verifyReuse"}, input = "SharedFileScope", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  ]
-
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "ScopeReuseDemo" registeredEffects compiledEntries
+interpreter = SDK.interpreter "ScopeReuseDemo" registeredEffects Handlers.handlerSourceFingerprint compiledEntries

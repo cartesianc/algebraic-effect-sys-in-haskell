@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module ScopeReuseDemo.Generated.Handlers (newScopeHandlers, errorHandlers) where
+module ScopeReuseDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -202,6 +202,10 @@ readFully file = go []
       if finished
         then pure (reverse characters)
         else hGetChar file >>= \character -> go (character : characters)
+
+-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
+handlerSourceFingerprint :: Maybe String
+handlerSourceFingerprint = Just "d2de236216d85314c7c2387d8ff11ba4"
 
 
 -- SDK 内部：每份 Scoped 句柄拥有自己的状态和 MVar；创建不执行业务方法。

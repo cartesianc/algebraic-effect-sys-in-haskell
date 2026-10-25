@@ -39,14 +39,17 @@ lowerProgram namespace specifications entry = do
         , "benchmark :: Output Errors (Produce " ++ terminal ++ ")"
         , "benchmark = SDK.bootPure compiledTarget"
         , ""
+        , "registeredTarget :: String"
+        , "registeredTarget = " ++ show terminal
+        , ""
         , "-- 生成入口由 SDK 提供；业务无需另写 Codegen 模块。"
         , "runDemo :: Show value => [EffectSpec] -> String -> value -> IO ()"
-        , "runDemo = SDK.runDemo " ++ show namespace
+        , "runDemo = SDK.runDemo " ++ show namespace ++ " registeredEffects registeredTarget Handlers.handlerSourceFingerprint"
         ]
     Workflow _ -> pure []
   pure
     ( unlines (contractHeader ++ runtimeAliases ++ concat declarations ++ errorDeclaration ++ contextDeclarations)
-    , unlines (programHeader ++ singleEntry ++ astInterpreter selectedMethods)
+    , unlines (programHeader ++ registrationSnapshot ++ singleEntry ++ astInterpreter selectedMethods)
     , concatMap instanceWrappers specifications
     , scopeHandlers ++ errorHandlers
     )
@@ -121,8 +124,11 @@ lowerProgram namespace specifications entry = do
         rootWrapper = "FrameworkRoot.withErrorPath " ++ show (errorPath specification)
           ++ " . FrameworkRoot.handler @FrameworkGenerated.Root"
         wrapper method
-          -- require 的覆盖实现也进入 Root；不刷新来源或改变消费者身份。
-          | Just method == reading = "(" ++ rootWrapper ++ ")"
+          -- require 的覆盖实现同样检查来源声明，不刷新来源或改变消费者身份。
+          | Just method == reading = "(" ++ rootWrapper
+              ++ " . FrameworkRuntime.requireContext " ++ show selectedName
+              ++ " FrameworkGenerated.ContextBindingError "
+              ++ contextAccessTable "FrameworkRuntime." selectedName ++ ")"
           | otherwise = "(" ++ rootWrapper ++ " . " ++ (case typing specification of
               -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
               Scoped _ closingMethod ->
@@ -134,15 +140,18 @@ lowerProgram namespace specifications entry = do
           Context (Just _) _ ->
             "FrameworkRuntime.callContext " ++ show selectedName
               ++ " FrameworkGenerated.ContextBindingError\n"
-              ++ "  " ++ accessTable
+              ++ "  " ++ contextAccessTable "FrameworkRuntime." selectedName
               ++ "\n  " ++ observation "FrameworkRuntime." selectedName
               ++ "\n  FrameworkGenerated.bound" ++ selectedName
               ++ "\n  (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"
           _ -> "FrameworkRuntime.enterHandler " ++ show selectedName
-        accessTable = "[" ++ intercalate ", "
-          [ "(" ++ show (name consumer) ++ ", FrameworkRuntime." ++ access ++ ")"
-          | consumer <- specifications
-          , Just access <- [accessFor consumer] ] ++ "]"
+
+    -- 生产与显式读取共用声明表；读取只校验来源，不采用 request 的刷新行为。
+    contextAccessTable prefix selectedName = "[" ++ intercalate ", "
+      [ "(" ++ show (name consumer) ++ ", " ++ prefix ++ access ++ ")"
+      | consumer <- specifications
+      , Just access <- [accessFor consumer] ] ++ "]"
+      where
         accessFor consumer
           | fmap sourceName (requestInput consumer) == Just selectedName = Just "RequestValue"
           | fmap sourceName (requireInput consumer) == Just selectedName = Just "RequireValue"
@@ -276,7 +285,8 @@ lowerProgram namespace specifications entry = do
               , "  " ++ method ++ " = (FrameworkRoot.withErrorPath " ++ show (errorPath specification)
                 ++ " . FrameworkRoot.handler @Root) $"
               , "    SDK.readContext " ++ show effectName
-                ++ " ContextBindingError " ++ observation "SDK." effectName ++ " bound" ++ effectName
+                ++ " ContextBindingError " ++ contextAccessTable "SDK." effectName
+                ++ " " ++ observation "SDK." effectName ++ " bound" ++ effectName
               ]
             _ -> []
           minimalLines = case methods of
@@ -396,14 +406,18 @@ lowerProgram namespace specifications entry = do
               | (terminal, method) <- zip selected methods]
           , "    ]"
           , ""
-          , "-- 编译时注册快照；运行前核对声明，改变连接后须重新生成。"
-          , "registeredEffects :: [EffectSpec]"
-          , "registeredEffects ="
-          , "  [ " ++ intercalate "\n  , " (map show specifications)
-          , "  ]"
-          , ""
           , "-- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。"
           , "interpreter :: SDK.AST -> [EffectSpec] -> IO ()"
-          , "interpreter = SDK.interpreter " ++ show namespace ++ " registeredEffects compiledEntries"
+          , "interpreter = SDK.interpreter " ++ show namespace ++ " registeredEffects Handlers.handlerSourceFingerprint compiledEntries"
           ]
+
+    -- workflow 与纯 target 共用同一注册快照核对规则。
+    registrationSnapshot =
+      [ "-- 编译时注册快照；运行前核对声明，改变连接后须重新生成。"
+      , "registeredEffects :: [EffectSpec]"
+      , "registeredEffects ="
+      , "  [ " ++ intercalate "\n  , " (map show specifications)
+      , "  ]"
+      , ""
+      ]
 

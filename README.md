@@ -83,15 +83,19 @@ workflow 的 `node` 选择一条完整操作链的末端，`chained` 顺序执�
 | `Excu` | 执行操作 | `()` |
 | `Context` | 生产或读取跨 handler 使用的业务值 | 注册的业务 ADT |
 | `Scoped` | 在同一 instance 中实现资源的 `open`／`close` | `()` |
-| `Error` | 检测和处置故障 | 接口与执行协议尚待实现 |
+| `Error` | 在同一 instance 中实现故障的 `detect`／`resolve` | `()` |
 
 Context 的 `request` 每次重新生产，成功后保存绑定；`require` 读取已有成功绑定，不重新执行生产者，未绑定时失败。普通绑定限定在一次末端调用内，scope 开启期间的绑定可随同批运行句柄跨节点保存。
 
 纯计算示例使用的 `Pure` **执行载体**与表中的 `Pure` **effect 类别**是两个概念：示例中的数字、文本生产操作仍注册为 `Context`。业务失败通过生成的错误类型和 `raise` 传播，运行边界返回 `Succ` 或 `Failed`。
 
+Error 的 `input` 指向被检查的 Scoped，Root 在故障传播时按 scope 从上到下调用检测方法。`detect` 成功表示定位到该 scope，再调用可选的 `resolve`；检测失败则继续检查。SDK 保留原始失败及各次检测、处置结果，不自动重开资源、重放业务或恢复中断的位置。FileDemo 的 `FileRecovery` 展示了这一协议。
+
 ## 修改代码与重新生成
 
-**修改 `Handlers.hs` 后也要重新生成。** 实际运行编译的是 `Generated/Handlers.hs`；只改手写方法体再运行，可能仍然执行旧实现。
+**修改 `Handlers.hs` 后也要重新生成。** 实际运行编译的是 `Generated/Handlers.hs`。公共 workflow／target 入口在创建 scope 或执行业务前，比对当前手写源码与生成时保存的指纹；源码变化或缺失会拒绝启动，并提示重新生成。纯 target 入口还会比对传入的 effect 注册和末端名称，防止静默执行旧目标。
+
+这是运行入口检查，不会在 `cabal build` 时自动生成。运行时需从仓库根目录访问手写 `Handlers.hs`；直接求值底层 `benchmark` 不经过这项 IO 检查。`--generate` 跳过一致性检查，便于更新旧生成代码。
 
 例如修改 FileDemo 的注册、业务契约、handler 或新增 AST 末端后：
 
@@ -124,7 +128,7 @@ cabal exec -- runghc -idemo -isdk demo/RequestBenchmark/Main.hs
 | 示例 | 适合了解 | 运行方式 |
 | --- | --- | --- |
 | [RequestBenchmark](demo/RequestBenchmark) | 原生 ADT、Context 取值、纯计算链 | 见快速开始 |
-| [FileDemo](demo/FileDemo) | 文件资源的开启、读取、写入与关闭 | `cabal run file-demo` |
+| [FileDemo](demo/FileDemo) | 文件资源的开启、读写、关闭及 Error 注册 | `cabal run file-demo` |
 | [Crawler](demo/Crawler) | 并行解析与顺序打印的 workflow | `cabal run crawler-demo` |
 | [OpenFilesDemo](demo/OpenFilesDemo) | 多个文件句柄跨节点保持打开 | `cabal run open-files-demo` |
 | [ScopeInstancesDemo](demo/ScopeInstancesDemo) | 按参数区分资源实例、复用与重开 | `cabal run scope-instances-demo` |
@@ -134,9 +138,9 @@ Crawler 需要网络连接和 PATH 上的 `curl`；打印阶段会再次请求�
 
 ## 当前范围
 
-已实现四类 effect 的接口生成、原生 instance 包装、Context 的 request／require、App／IO 下的 scope 多实例复用，以及有限 workflow 的顺序和并行执行。
+已实现五类 effect 的接口生成、原生 instance 包装、Context 的 request／require、App／IO 下的 scope 多实例复用、Root 的 Error 检测与处置，以及有限 workflow 的顺序和并行执行。
 
-正在设计或尚未接入的能力包括 `Error.detect/resolve`、资源自动收尾、使用与关闭的并发协调、Generic Map、loop／Hanging 和 middleware。示例目前显式关闭资源；现有 `raise` 和错误传播不代表 Error 类别已经实现。
+正在设计或尚未接入的能力包括资源自动收尾、使用与关闭的并发协调、Generic Map、loop／Hanging、middleware 和中断位置恢复。示例目前显式关闭资源；Error 的处置成功也不把原业务失败改成成功。
 
 当前 SDK 随仓库内的 executable 编译，尚未提供独立 Cabal library。跨独立模块的运行时链接与跨 interpreter 的资源存续也未实现。完整边界见 [最新设计](docs/LATEST_DESIGN.md)。
 

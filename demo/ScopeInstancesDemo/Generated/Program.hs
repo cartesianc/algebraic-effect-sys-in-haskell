@@ -11,6 +11,17 @@ import ScopeInstancesDemo.Generated.Effects
 import qualified ScopeInstancesDemo.Generated.Handlers as Handlers
 import ScopeInstancesDemo.Types
 
+-- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
+registeredEffects :: [EffectSpec]
+registeredEffects =
+  [ EffectSpec {name = "PrepareFiles", typing = Excu {handler = Just "prepareFiles"}, input = "Root", context = Nothing}
+  , EffectSpec {name = "FileLocation", typing = Context {request = Just (Producer {handler = "getFileName", produces = TypeRef "FileName"}), require = Just "readFileName"}, input = "Root", context = Nothing}
+  , EffectSpec {name = "FileResource", typing = Context {request = Just (Producer {handler = "acquireFile", produces = TypeRef "OpenedFile"}), require = Just "readOpenedFile"}, input = "Root", context = Just (ContextInput {request = Just (From "FileLocation" (TypeRef "FileName")), require = Nothing})}
+  , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFileSession", close = Just "closeFileSession"}, input = "Root", context = Just (ContextInput {request = Just (From "FileResource" (TypeRef "OpenedFile")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "CheckIndependent", typing = Excu {handler = Just "checkIndependent"}, input = "FileSession", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "CheckReopen", typing = Excu {handler = Just "checkReopen"}, input = "FileSession", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  ]
+
 
 -- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。
 data Results = PrepareFilesResult (Produce PrepareFiles) | CheckIndependentResult (Produce CheckIndependent) | CheckReopenResult (Produce CheckReopen)
@@ -26,17 +37,6 @@ compiledEntries = do
     , SDK.targetApp "CheckReopen" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (CheckReopenResult <$> checkReopen))
     ]
 
--- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
-registeredEffects :: [EffectSpec]
-registeredEffects =
-  [ EffectSpec {name = "PrepareFiles", typing = Excu {handler = Just "prepareFiles"}, input = "Root", context = Nothing}
-  , EffectSpec {name = "FileLocation", typing = Context {request = Just (Producer {handler = "getFileName", produces = TypeRef "FileName"}), require = Just "readFileName"}, input = "Root", context = Nothing}
-  , EffectSpec {name = "FileResource", typing = Context {request = Just (Producer {handler = "acquireFile", produces = TypeRef "OpenedFile"}), require = Just "readOpenedFile"}, input = "Root", context = Just (ContextInput {request = Just (From "FileLocation" (TypeRef "FileName")), require = Nothing})}
-  , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFileSession", close = Just "closeFileSession"}, input = "Root", context = Just (ContextInput {request = Just (From "FileResource" (TypeRef "OpenedFile")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "CheckIndependent", typing = Excu {handler = Just "checkIndependent"}, input = "FileSession", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "CheckReopen", typing = Excu {handler = Just "checkReopen"}, input = "FileSession", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  ]
-
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "ScopeInstancesDemo" registeredEffects compiledEntries
+interpreter = SDK.interpreter "ScopeInstancesDemo" registeredEffects Handlers.handlerSourceFingerprint compiledEntries

@@ -2,7 +2,7 @@
 
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Effect.Context
-  ( ContextFault(..), ContextAccess(..), readContext, requestContext, callContext
+  ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext
   ) where
 
 import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeInput, Failure, failEffect)
@@ -12,9 +12,37 @@ data ContextAccess = RequestValue | RequireValue deriving (Eq, Show)
 
 readContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
+  => String -> (ContextFault -> cause) -> [(String, ContextAccess)] -> Maybe (value -> ScopeInput)
+  -> (environment -> Maybe value) -> m value
+readContext contextName wrap accesses compareValue select =
+  requireContext contextName wrap accesses (readBoundContext contextName wrap compareValue select)
+
+-- 默认和用户覆盖的读取入口都检查来源声明；不改变 caller，也不重新执行生产者。
+requireContext
+  :: (ContextStore environment m, MonadError (Failure cause) m)
+  => String -> (ContextFault -> cause) -> [(String, ContextAccess)] -> m value -> m value
+requireContext selected wrap accesses action = do
+  _ <- contextAccess selected wrap accesses
+  action
+
+contextAccess
+  :: (ContextStore environment m, MonadError (Failure cause) m)
+  => String -> (ContextFault -> cause) -> [(String, ContextAccess)] -> m (Maybe ContextAccess)
+contextAccess selected wrap accesses = do
+  caller <- currentHandler
+  case caller of
+    Nothing -> pure Nothing
+    Just consumer -> case lookup consumer accesses of
+      Just access -> pure (Just access)
+      Nothing -> failEffect selected (wrap (UndeclaredContextAccess consumer))
+        ("No context request/require from " ++ consumer ++ " to " ++ selected)
+
+-- 只由已经校验过的入口读取绑定；显式读取即使声明了 request 也不会刷新。
+readBoundContext
+  :: (ContextStore environment m, MonadError (Failure cause) m)
   => String -> (ContextFault -> cause) -> Maybe (value -> ScopeInput)
   -> (environment -> Maybe value) -> m value
-readContext contextName wrap compareValue select = do
+readBoundContext contextName wrap compareValue select = do
   resolved <- readContextBinding contextName select
   bound <- either (\problem -> failEffect contextName (wrap problem) (show problem)) pure resolved
   value <- maybe (failEffect contextName (wrap ContextNotInitialized) (show ContextNotInitialized)) pure bound
@@ -44,14 +72,10 @@ callContext
   -> (environment -> Maybe value) -> (value -> environment -> environment)
   -> m value -> m value
 callContext selected wrap accesses compareValue select synchronize produce = do
-  caller <- currentHandler
-  case caller of
-    Nothing -> refresh
-    Just consumer -> case lookup consumer accesses of
-      Just RequestValue -> refresh
-      Just RequireValue -> readContext selected wrap compareValue select
-      Nothing -> failEffect selected (wrap (UndeclaredContextAccess consumer))
-        ("No context request/require from " ++ consumer ++ " to " ++ selected)
+  access <- contextAccess selected wrap accesses
+  case access of
+    Just RequireValue -> readBoundContext selected wrap compareValue select
+    _ -> refresh
   where
     refresh = do
       value <- requestContext selected synchronize (enterContext selected produce)

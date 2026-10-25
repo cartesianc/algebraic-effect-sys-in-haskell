@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module OpenFilesDemo.Generated.Handlers (newScopeHandlers, errorHandlers) where
+module OpenFilesDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -135,6 +135,10 @@ acquireAll (path : paths) = do
     hSetEncoding file utf8
     rest <- acquireAll paths
     pure ((path, file) : rest)
+
+-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
+handlerSourceFingerprint :: Maybe String
+handlerSourceFingerprint = Just "75102d87904c00196447d602defe2018"
 
 
 -- SDK 内部：每份 Scoped 句柄拥有自己的状态和 MVar；创建不执行业务方法。

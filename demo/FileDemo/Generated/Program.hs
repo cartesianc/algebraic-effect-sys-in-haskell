@@ -11,19 +11,6 @@ import FileDemo.Generated.Effects
 import qualified FileDemo.Generated.Handlers as Handlers
 import FileDemo.Types
 
-
--- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。
-data Results = FileWorkflowResult (Produce FileWorkflow)
-  deriving Show
-
--- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。
-compiledEntries :: IO [SDK.Target IO ContextValues Errors Results]
-compiledEntries = do
-  scopes <- Handlers.newScopeHandlers
-  pure
-    [ SDK.targetApp "FileWorkflow" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FileWorkflowResult <$> runFileWorkflow))
-    ]
-
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
 registeredEffects :: [EffectSpec]
 registeredEffects =
@@ -37,6 +24,19 @@ registeredEffects =
   , EffectSpec {name = "FileWorkflow", typing = Excu {handler = Just "runFileWorkflow"}, input = "WriteFile", context = Nothing}
   ]
 
+
+-- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。
+data Results = FileWorkflowResult (Produce FileWorkflow)
+  deriving Show
+
+-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。
+compiledEntries :: IO [SDK.Target IO ContextValues Errors Results]
+compiledEntries = do
+  scopes <- Handlers.newScopeHandlers
+  pure
+    [ SDK.targetApp "FileWorkflow" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FileWorkflowResult <$> runFileWorkflow))
+    ]
+
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "FileDemo" registeredEffects compiledEntries
+interpreter = SDK.interpreter "FileDemo" registeredEffects Handlers.handlerSourceFingerprint compiledEntries

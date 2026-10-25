@@ -8,7 +8,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module ScopeInstancesDemo.Generated.Handlers (newScopeHandlers, errorHandlers) where
+module ScopeInstancesDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -169,6 +169,10 @@ journal = outputDirectory </> "events.txt"
 
 count :: Eq value => value -> [value] -> Int
 count expected = length . filter (== expected)
+
+-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
+handlerSourceFingerprint :: Maybe String
+handlerSourceFingerprint = Just "a10a526c4ca20b018022a45f992c27ed"
 
 
 -- SDK 内部：每份 Scoped 句柄拥有自己的状态和 MVar；创建不执行业务方法。

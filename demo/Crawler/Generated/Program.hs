@@ -11,6 +11,21 @@ import Crawler.Generated.Effects
 import qualified Crawler.Generated.Handlers as Handlers
 import Crawler.Types
 
+-- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
+registeredEffects :: [EffectSpec]
+registeredEffects =
+  [ EffectSpec {name = "CrawlerContext", typing = Context {request = Just (Producer {handler = "loadCrawlURLs", produces = TypeRef "CrawlURLs"}), require = Just "readCrawlURLs"}, input = "CrawlSession", context = Nothing}
+  , EffectSpec {name = "FetchPage", typing = Context {request = Just (Producer {handler = "fetchPage", produces = TypeRef "FetchedPage"}), require = Just "readFetchedPage"}, input = "CrawlSession", context = Just (ContextInput {request = Just (From "CrawlerContext" (TypeRef "CrawlURLs")), require = Just (From "SessionContext" (TypeRef "CrawlSessionInfo"))})}
+  , EffectSpec {name = "ExtractPage", typing = Context {request = Just (Producer {handler = "extractPage", produces = TypeRef "PageSummary"}), require = Just "readPageSummary"}, input = "CrawlSession", context = Just (ContextInput {request = Just (From "FetchPage" (TypeRef "FetchedPage")), require = Nothing})}
+  , EffectSpec {name = "PrintPage", typing = Excu {handler = Just "printPage"}, input = "CrawlSession", context = Just (ContextInput {request = Just (From "ExtractPage" (TypeRef "PageSummary")), require = Nothing})}
+  , EffectSpec {name = "FetchLinkedPage", typing = Context {request = Just (Producer {handler = "fetchLinkedPage", produces = TypeRef "FetchedPage"}), require = Just "readFetchedLinkedPage"}, input = "CrawlSession", context = Just (ContextInput {request = Just (From "CrawlerContext" (TypeRef "CrawlURLs")), require = Just (From "SessionContext" (TypeRef "CrawlSessionInfo"))})}
+  , EffectSpec {name = "ExtractLinkedPage", typing = Context {request = Just (Producer {handler = "extractLinkedPage", produces = TypeRef "PageSummary"}), require = Just "readLinkedPageSummary"}, input = "CrawlSession", context = Just (ContextInput {request = Just (From "FetchLinkedPage" (TypeRef "FetchedPage")), require = Nothing})}
+  , EffectSpec {name = "PrintLinkedPage", typing = Excu {handler = Just "printLinkedPage"}, input = "CrawlSession", context = Just (ContextInput {request = Just (From "ExtractLinkedPage" (TypeRef "PageSummary")), require = Nothing})}
+  , EffectSpec {name = "SessionContext", typing = Context {request = Just (Producer {handler = "createCrawlSession", produces = TypeRef "CrawlSessionInfo"}), require = Just "readCrawlSession"}, input = "Root", context = Nothing}
+  , EffectSpec {name = "CrawlSession", typing = Scoped {open = Just "openCrawlSession", close = Just "closeCrawlSession"}, input = "Root", context = Just (ContextInput {request = Just (From "SessionContext" (TypeRef "CrawlSessionInfo")), require = Just (From "SessionContext" (TypeRef "CrawlSessionInfo"))})}
+  , EffectSpec {name = "FinishCrawl", typing = Excu {handler = Just "finishCrawl"}, input = "CrawlSession", context = Nothing}
+  ]
+
 
 -- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。
 data Results = ExtractPageResult (Produce ExtractPage) | ExtractLinkedPageResult (Produce ExtractLinkedPage) | PrintPageResult (Produce PrintPage) | PrintLinkedPageResult (Produce PrintLinkedPage) | FinishCrawlResult (Produce FinishCrawl)
@@ -28,21 +43,6 @@ compiledEntries = do
     , SDK.targetApp "FinishCrawl" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FinishCrawlResult <$> finishCrawl))
     ]
 
--- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
-registeredEffects :: [EffectSpec]
-registeredEffects =
-  [ EffectSpec {name = "CrawlerContext", typing = Context {request = Just (Producer {handler = "loadCrawlURLs", produces = TypeRef "CrawlURLs"}), require = Just "readCrawlURLs"}, input = "CrawlSession", context = Nothing}
-  , EffectSpec {name = "FetchPage", typing = Context {request = Just (Producer {handler = "fetchPage", produces = TypeRef "FetchedPage"}), require = Just "readFetchedPage"}, input = "CrawlSession", context = Just (ContextInput {request = Just (From "CrawlerContext" (TypeRef "CrawlURLs")), require = Just (From "SessionContext" (TypeRef "CrawlSessionInfo"))})}
-  , EffectSpec {name = "ExtractPage", typing = Context {request = Just (Producer {handler = "extractPage", produces = TypeRef "PageSummary"}), require = Just "readPageSummary"}, input = "CrawlSession", context = Just (ContextInput {request = Just (From "FetchPage" (TypeRef "FetchedPage")), require = Nothing})}
-  , EffectSpec {name = "PrintPage", typing = Excu {handler = Just "printPage"}, input = "CrawlSession", context = Just (ContextInput {request = Just (From "ExtractPage" (TypeRef "PageSummary")), require = Nothing})}
-  , EffectSpec {name = "FetchLinkedPage", typing = Context {request = Just (Producer {handler = "fetchLinkedPage", produces = TypeRef "FetchedPage"}), require = Just "readFetchedLinkedPage"}, input = "CrawlSession", context = Just (ContextInput {request = Just (From "CrawlerContext" (TypeRef "CrawlURLs")), require = Just (From "SessionContext" (TypeRef "CrawlSessionInfo"))})}
-  , EffectSpec {name = "ExtractLinkedPage", typing = Context {request = Just (Producer {handler = "extractLinkedPage", produces = TypeRef "PageSummary"}), require = Just "readLinkedPageSummary"}, input = "CrawlSession", context = Just (ContextInput {request = Just (From "FetchLinkedPage" (TypeRef "FetchedPage")), require = Nothing})}
-  , EffectSpec {name = "PrintLinkedPage", typing = Excu {handler = Just "printLinkedPage"}, input = "CrawlSession", context = Just (ContextInput {request = Just (From "ExtractLinkedPage" (TypeRef "PageSummary")), require = Nothing})}
-  , EffectSpec {name = "SessionContext", typing = Context {request = Just (Producer {handler = "createCrawlSession", produces = TypeRef "CrawlSessionInfo"}), require = Just "readCrawlSession"}, input = "Root", context = Nothing}
-  , EffectSpec {name = "CrawlSession", typing = Scoped {open = Just "openCrawlSession", close = Just "closeCrawlSession"}, input = "Root", context = Just (ContextInput {request = Just (From "SessionContext" (TypeRef "CrawlSessionInfo")), require = Just (From "SessionContext" (TypeRef "CrawlSessionInfo"))})}
-  , EffectSpec {name = "FinishCrawl", typing = Excu {handler = Just "finishCrawl"}, input = "CrawlSession", context = Nothing}
-  ]
-
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "Crawler" registeredEffects compiledEntries
+interpreter = SDK.interpreter "Crawler" registeredEffects Handlers.handlerSourceFingerprint compiledEntries

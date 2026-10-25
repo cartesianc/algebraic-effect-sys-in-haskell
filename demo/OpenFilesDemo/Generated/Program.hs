@@ -11,6 +11,17 @@ import OpenFilesDemo.Generated.Effects
 import qualified OpenFilesDemo.Generated.Handlers as Handlers
 import OpenFilesDemo.Types
 
+-- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
+registeredEffects :: [EffectSpec]
+registeredEffects =
+  [ EffectSpec {name = "FileLocations", typing = Context {request = Just (Producer {handler = "getFileNames", produces = TypeRef "FileNames"}), require = Just "readFileNames"}, input = "Root", context = Nothing}
+  , EffectSpec {name = "FileResources", typing = Context {request = Just (Producer {handler = "acquireFiles", produces = TypeRef "OpenedFiles"}), require = Just "readOpenedFiles"}, input = "Root", context = Just (ContextInput {request = Just (From "FileLocations" (TypeRef "FileNames")), require = Nothing})}
+  , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFiles", close = Just "closeFiles"}, input = "Root", context = Just (ContextInput {request = Just (From "FileResources" (TypeRef "OpenedFiles")), require = Just (From "FileResources" (TypeRef "OpenedFiles"))})}
+  , EffectSpec {name = "HoldFiles", typing = Excu {handler = Just "holdFiles"}, input = "FileSession", context = Nothing}
+  , EffectSpec {name = "InspectFiles", typing = Excu {handler = Just "inspectFiles"}, input = "HoldFiles", context = Just (ContextInput {request = Nothing, require = Just (From "FileResources" (TypeRef "OpenedFiles"))})}
+  , EffectSpec {name = "FinishInspection", typing = Excu {handler = Just "finishInspection"}, input = "InspectFiles", context = Just (ContextInput {request = Nothing, require = Just (From "FileResources" (TypeRef "OpenedFiles"))})}
+  ]
+
 
 -- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。
 data Results = HoldFilesResult (Produce HoldFiles) | InspectFilesResult (Produce InspectFiles) | FinishInspectionResult (Produce FinishInspection)
@@ -26,17 +37,6 @@ compiledEntries = do
     , SDK.targetApp "FinishInspection" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FinishInspectionResult <$> finishInspection))
     ]
 
--- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
-registeredEffects :: [EffectSpec]
-registeredEffects =
-  [ EffectSpec {name = "FileLocations", typing = Context {request = Just (Producer {handler = "getFileNames", produces = TypeRef "FileNames"}), require = Just "readFileNames"}, input = "Root", context = Nothing}
-  , EffectSpec {name = "FileResources", typing = Context {request = Just (Producer {handler = "acquireFiles", produces = TypeRef "OpenedFiles"}), require = Just "readOpenedFiles"}, input = "Root", context = Just (ContextInput {request = Just (From "FileLocations" (TypeRef "FileNames")), require = Nothing})}
-  , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFiles", close = Just "closeFiles"}, input = "Root", context = Just (ContextInput {request = Just (From "FileResources" (TypeRef "OpenedFiles")), require = Just (From "FileResources" (TypeRef "OpenedFiles"))})}
-  , EffectSpec {name = "HoldFiles", typing = Excu {handler = Just "holdFiles"}, input = "FileSession", context = Nothing}
-  , EffectSpec {name = "InspectFiles", typing = Excu {handler = Just "inspectFiles"}, input = "HoldFiles", context = Just (ContextInput {request = Nothing, require = Just (From "FileResources" (TypeRef "OpenedFiles"))})}
-  , EffectSpec {name = "FinishInspection", typing = Excu {handler = Just "finishInspection"}, input = "InspectFiles", context = Just (ContextInput {request = Nothing, require = Just (From "FileResources" (TypeRef "OpenedFiles"))})}
-  ]
-
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "OpenFilesDemo" registeredEffects compiledEntries
+interpreter = SDK.interpreter "OpenFilesDemo" registeredEffects Handlers.handlerSourceFingerprint compiledEntries

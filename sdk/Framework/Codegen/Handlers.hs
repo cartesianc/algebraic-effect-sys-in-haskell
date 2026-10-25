@@ -10,6 +10,7 @@ import GHC.Data.StringBuffer (stringToStringBuffer)
 import GHC.Driver.Config.Parser (initParserOpts)
 import GHC.Driver.Session (parseDynamicFilePragma)
 import GHC.Hs
+import GHC.Fingerprint (fingerprintString)
 import qualified GHC.Parser as Parser
 import GHC.Parser.Annotation (getLocA)
 import GHC.Parser.Header (getOptions)
@@ -19,7 +20,7 @@ import GHC.Types.Name.Reader (rdrNameOcc)
 import GHC.Types.SrcLoc
 import System.Directory (doesFileExist)
 import System.FilePath ((</>), pathSeparator)
-import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, utf8, withFile)
+import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, hSetNewlineMode, universalNewlineMode, utf8, withFile)
 import System.Process (readProcess)
 
 -- 包装计划来自注册；原文件始终保留，只有 Generated 副本进入运行导入链。
@@ -28,24 +29,23 @@ renderHandlers namespace wrappers scopeHandlers = do
   let directory = "demo" </> map (\c -> if c == '.' then pathSeparator else c) namespace
       inputPath = directory </> "Handlers.hs"
       generatedName = namespace ++ ".Generated.Handlers"
-      extraExports = [name | name <- ["newScopeHandlers", "errorHandlers"]
+      extraExports = "handlerSourceFingerprint" : [name | name <- ["newScopeHandlers", "errorHandlers"]
         , any ((name ++ " ::") `isPrefixOf`) (lines scopeHandlers)]
   exists <- doesFileExist inputPath
-  generated <- if not exists
-    then pure $ if null extraExports
-      then "module " ++ generatedName ++ " () where\n"
-      else "module " ++ generatedName ++ " (" ++ intercalate ", " extraExports ++ ") where\n"
+  (generated, sourceFingerprint) <- if not exists
+    then pure ("module " ++ generatedName ++ " (" ++ intercalate ", " extraExports ++ ") where\n"
         ++ "import qualified Framework.SDK as FrameworkRuntime\n"
         ++ "import qualified Framework.Effect.Contract as FrameworkRoot\n"
-        ++ "import qualified " ++ namespace ++ ".Generated.Effects as FrameworkGenerated\n"
+        ++ "import qualified " ++ namespace ++ ".Generated.Effects as FrameworkGenerated\n", Nothing)
     else do
       source <- withFile inputPath ReadMode $ \handle -> do
         hSetEncoding handle utf8
+        hSetNewlineMode handle universalNewlineMode
         contents <- hGetContents handle
         _ <- evaluate (length contents)
         pure contents
       library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
-      runGhc (Just library) $ do
+      compiled <- runGhc (Just library) $ do
         initial <- getSessionDynFlags
         let buffer = stringToStringBuffer source
             (_, options) = getOptions (initParserOpts initial) buffer inputPath
@@ -56,6 +56,7 @@ renderHandlers namespace wrappers scopeHandlers = do
           PFailed _ -> liftIO (ioError (userError ("Cannot parse " ++ inputPath ++ "; check its Haskell syntax")))
           POk _ parsed -> liftIO $ either (ioError . userError) pure
             (wrapModule namespace generatedName wrappers extraExports source (unLoc parsed))
+      pure (compiled, Just (show (fingerprintString source)))
   -- 首次生成尚无业务 instance；保留契约与 scope 构造器，暂不安装业务回调。
   -- 用户填写 Handlers.hs 后重新生成，才恢复完整的 Error 方法引用。
   let extraDefinitions
@@ -64,7 +65,11 @@ renderHandlers namespace wrappers scopeHandlers = do
             ++ ["-- 尚未加载用户 instance；编写 Handlers.hs 后重新生成。", "errorHandlers = []"])
   pure ("-- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。\n"
         ++ "{-# LANGUAGE TypeApplications #-}\n"
-        ++ generated ++ if null extraDefinitions then "" else "\n\n" ++ extraDefinitions)
+        ++ generated
+        ++ "\n-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。\n"
+        ++ "handlerSourceFingerprint :: Maybe String\n"
+        ++ "handlerSourceFingerprint = " ++ show sourceFingerprint ++ "\n"
+        ++ if null extraDefinitions then "" else "\n\n" ++ extraDefinitions)
 
 wrapModule
   :: String -> String -> [(String, String, String)] -> [String] -> String -> HsModule GhcPs

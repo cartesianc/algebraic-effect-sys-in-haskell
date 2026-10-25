@@ -221,7 +221,7 @@ instance 使用原生 Haskell：在 do 中通过 `value <- contextMethod` 取得
 
 request 每次重新生产，成功后将同一个值发布为当前调用的新绑定并返回；require 只读已捕获的成功绑定，未绑定时报 ContextNotInitialized。
 刷新失败不覆盖该来源旧值，错误原样传播，其他已完成的操作不回滚。普通绑定限定在一次末端启动内；scope 开启期间生产的绑定随该运行句柄跨 Node 保存，不在独立创建的句柄之间隐式共享。
-SDK 用局部 Reader 记录当前消费者，按注册选择上游生产方法引用的 request／require 模式；未声明的业务取值报 UndeclaredContextAccess。
+SDK 用局部 Reader 记录当前消费者，按注册选择上游生产方法引用的 request／require 模式；默认及覆盖的显式读取入口同样检查该来源是否在 request 或 require 中声明，未声明时先报 UndeclaredContextAccess，不读取绑定或执行覆盖方法体。
 根入口直接生产；同一消费者对同一来源同时声明两种模式时，生产方法引用按 request 执行，显式读取方法始终 require。
 SDK 不预初始化 Context，Input 仍只提供类方法能力；未被引用的上游不执行。scope 多实例绑定见后文；普通 Context 多份调用绑定与跨入口存续另行设计。
 
@@ -376,6 +376,7 @@ FileDemo 的 FileRecovery 演示：require 原文件句柄，用 hIsClosed 检�
 它们不导入 Generated 或 Handlers；effect 标记与错误类型自动生成，无须用户手写空 data。
 首次运行 cabal run effect-codegen -- workflow Crawler 或 -- target RequestBenchmark，生成接口后填写 handler，再次生成并编译 Main。缺少 Handlers.hs 时先生成空编译模块；不加载或执行业务实现。
 编译入口只导入 Generated/Handlers，SDK 包装方法入口，保留原生取值与业务表达式；不回写手写源码或新增业务类型类。手写实现变更后须重新生成。
+生成的 Handlers 保存解析时的源码指纹；公共 workflow／target 入口在启动业务前检查当前手写源，缺失或过期则拒绝执行。两类入口均核对注册快照，纯 target 还核对末端；Main 写法不变。检查从仓库根目录读取源码，--generate 仍可修复过期副本；直接求值底层 benchmark 不提供 IO 源码检查。
 已有 Main --generate 仍要求导入链可编译，新增 effect 或缺少生成文件时使用独立 SDK 命令。
 [demo/Crawler/Main.hs](../demo/Crawler/Main.hs) 和 [demo/RequestBenchmark/Main.hs](../demo/RequestBenchmark/Main.hs) 分别演示 IO 与纯计算；
 两者的手写入口、注册、handler 与生成模块分别可 review；

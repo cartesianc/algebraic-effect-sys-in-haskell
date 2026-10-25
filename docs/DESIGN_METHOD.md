@@ -109,7 +109,7 @@ request 每次重新生产，成功后发布新绑定、替换当前调用中该
 其他调用已经捕获的旧绑定不会被原地改写；不再通过刷新 scope 的共享值表来改变它们。
 刷新失败不覆盖该来源的旧值，原始错误继续传播，其他已经完成的操作不回滚。
 普通绑定限定在一次末端启动内；scope 开启期间生产的 Context 随该运行句柄保存，可由引用同份 scope 的多条链通过 require 读取。不预初始化业务 Context，不在独立创建的运行句柄之间隐式共享。
-根调用进入生产，链内生产方法引用按当前消费者的 context 声明选择 request／require；未声明的取值报错。
+根调用进入生产，链内生产方法引用按当前消费者的 context 声明选择 request／require；默认及覆盖的显式读取入口同样校验来源声明，未声明的取值报错。
 同一消费者对同一来源同时声明两种模式时，生产方法引用选择 request，显式读取方法始终 require。
 调用身份和 scope 可见性由 SDK 的局部 Reader 传递，保存值由执行载体持有；同次 AST 的 scope 绑定已共享，更细的范围与跨入口存续另行设计。
 
@@ -224,6 +224,7 @@ Context 绑定稳定是框架内部必须实现的语义规则，不能仅由“
 Types、Effects、AST／Target 独立于 Generated 与 Handlers；effect 标记和错误类型都由 SDK 生成，无须手写空 data。
 首次生成使用 cabal run effect-codegen -- workflow Crawler 或 -- target RequestBenchmark，只编译声明；已有 Handlers.hs 由 GHC 解析模块／方法边界，不加载或执行业务。
 手写 instance 使用原生 Haskell，编译只使用 Generated/Handlers 的协议包装副本；修改实现后须重新生成。不新增业务 class，不使用 Template Haskell，codegen 不回写手写源码，也不改写方法体表达式。
+生成副本保存实际解析的手写源码指纹，公共运行入口在业务执行前比对当前 Handlers.hs；缺失或变更时拒绝启动并提示重新生成。workflow 与纯 target 都比对注册快照，纯 target 另比对所选末端。此检查要求从仓库根目录访问手写源，不替代显式生成或编译。
 已有 Main --generate 仍要求导入链能编译，不能替代独立首次生成入口。
 数字 benchmark 与爬虫都演示 instance 内沿 Input 引用类方法；爬虫再由 Node algebra lower 末端，组织并行解析与顺序打印。
 文件 demo 同样只选择末端；路径、活文件句柄与文本归 Context，校验归 Pure、写入归 Excu，Scoped 的 open／close 均为 m ()。FileRecovery 以 Error 注册，检测已捕获的文件是否意外关闭，定位后引用 closeFileSession；正常读写及显式关闭保持不变。demo 内的 catchError 清理仍不等同于 SDK 自动收尾。
