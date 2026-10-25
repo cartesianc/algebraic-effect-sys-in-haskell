@@ -150,6 +150,10 @@ node 只选择完整链的末端，分别挂载解析链和打印链；context �
 失败时停止，parallel 并发执行并等待全部子分支后汇总，成功值按声明顺序排列。
 SDK 已用 WorkflowF + Fix + cata 将这两个有限分支装配为未执行的动作；fold 不执行 handler，节点产物不自动传给后继节点。URL、抓取与解析由 Context 产值并保存；先并行解析，再顺序打印。打印仍通过 request 重新抓取、解析，返回 ()；改为消费第一阶段缓存的调用关系另行设计。
 
+workflow 以具名 branch 为模块：每个 branch 在 Workflow 下独立文件定义，顶层 AST 通过普通 import 组合业务名称，不在表达式中使用模块限定前缀。node 返回抽象 EffectNode，branch 返回抽象 AST；同一 chained／parallel 列表只接受一种子项类型，禁止裸 node 与 branch 混排，裸 node 不能作为 AST。单个 node 也先组成 branch；空列表须标注元素类型，原有空分支成功语义不变。SDK 内部保留 WorkflowF、Fix 与 cata，隐藏 AST 构造与内部子项转换。
+
+模块拆分不改变调用次数、控制顺序或 Context／scope 边界；重复引用同一模块仍是重复执行。声明采用固定构造、显式列表和直接符号引用，引用关系有限无环。分文件与具名引用是源码格式约定，不由 AST 类型证明；未来 LSP 原型需保存定义、引用及源码位置，不能从展开后的执行树反推模块身份，也不因此增加运行时 pipeline key。RequestBenchmark 没有 workflow，继续使用纯 target 入口。
+
 入口结构固定为 main = interpreter ast effects，爬虫 demo 已接入这一入口。
 Generated 模块将选定末端类方法登记为不透明 Target，保留未执行的句柄；它不是已经 lower 的 impl。
 Node algebra 取得 Target 后才提供内部载体环境并 lower；上游调用完全沿 instance 内引用发生。
@@ -219,7 +223,7 @@ Context 绑定稳定是框架内部必须实现的语义规则，不能仅由“
 ## 7. 当前样例的地位与下一步
 
 入口为 demo/RequestBenchmark/Main.hs、demo/Crawler/Main.hs 与 demo/FileDemo/Main.hs；sdk/Framework/SDK.hs 为统一 SDK 入口，内部按 Effect、Recursion、Workflow 与 Codegen 拆分。
-每个 demo 保留 Main、AST／Target、Effects、Types、Handlers；生成接口、末端登记和包装后的 instance 分为 Generated/Effects、Generated/Program 和 Generated/Handlers。
+每个 demo 保留 Main、AST／Target、Effects、Types、Handlers；workflow demo 另以 Workflow 下的独立文件定义各 branch，AST 只组合模块名称。生成接口、末端登记和包装后的 instance 分为 Generated/Effects、Generated/Program 和 Generated/Handlers。
 分离边界是手写配置 facade 与生成代码；生成逻辑属于 SDK，demo 不另设 Codegen.hs。AST 不填写 Reader。
 Types、Effects、AST／Target 独立于 Generated 与 Handlers；effect 标记和错误类型都由 SDK 生成，无须手写空 data。
 首次生成使用 cabal run effect-codegen -- workflow Crawler 或 -- target RequestBenchmark，只编译声明；已有 Handlers.hs 由 GHC 解析模块／方法边界，不加载或执行业务。

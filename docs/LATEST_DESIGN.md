@@ -24,7 +24,7 @@ withX、initializeX、链式 runX 和外部逐 effect impl 已取消。载体和
 Context 绑定已由 SDK 接通：request 成功发布新绑定、require 只读已捕获的绑定；不通过外部初始化建立业务 Context。普通绑定在一次末端启动内，scope 开启期绑定随同次 AST 的 scope 保存。
 
 原子 effect 与 effect 链分属两个层级。AST 组织完整链的启动与执行控制，不描述节点的业务状态转移；业务值依赖与状态操作由 effect system 的声明、协议及 handler 承接。
-chained、parallel、loop 是同级 branch；loop 的事件触发语义已确认，尚未实现。demo/Crawler/Main.hs 的 node 只挂载解析或打印链的末端，
+chained、parallel、loop 是同级 branch；loop 的事件触发语义已确认，尚未实现。demo/Crawler/Workflow 下的 node 只挂载所选链的末端，
 URL 由 request 来源 CrawlerContext 类方法产生；Node 只 lower 对应末端。HTTP、HTML 内容解析与
 输出留在 instance，连接由注册描述。chained 遇失败停止；parallel 等待全部子分支后汇总，
 结果按声明顺序排列，有失败时保留声明顺序中首个失败的来源与负载。整棵 AST 只封装一次
@@ -265,6 +265,23 @@ Input 与 request 共同表达依赖后，注册关系可以形成图。业务�
 
 装配结果保留与注册、调用位置和 scope 描述的关联，供 middleware 和故障追踪使用。描述与执行装配分离：声明保持可序列化，函数、类字典、线程及活资源由运行部分持有。第一版先落实有限、静态、无环的单次调用依赖；重复与反馈按下述控制和触发关系解释，不在装配阶段无限展开。
 
+## branch 模块与声明格式
+
+branch 是 workflow 的模块单位，node 是其内部挂载 effect 链的叶子。每个 branch 在 `Workflow/*.hs` 单独定义，导出有业务含义的名称；`AST.hs` 只组合这些名称。使用非限定 import，组合表达式保持 `chained [parsePages, printPages, finishCrawl]`，不写模块前缀。模块名称区别于 chained／parallel 这种控制类别。
+
+SDK 将 node 与 branch 分成两个抽象类型：
+
+```haskell
+node :: String -> EffectNode
+chained, parallel :: BranchChild child => [child] -> AST
+```
+
+BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两个实例；业务不增加 class、instance 或转换调用。同一列表只能全是 node 或全是 branch，裸 node 不能赋给 AST，原始 AST 构造器与子项转换不公开。单节点模块用 `chained [node "目标"]`，空分支需如 `chained ([] :: [AST])` 的类型标注，仍成功返回空结果。内部递归表示与 algebra 不变，通过 foldAST 使用 cata。
+
+这项类型约束不证明分支来自独立文件，也不禁止内联子分支或直接构造叶模块。独立文件、顶层只引用模块名属于声明格式：正文采用固定 branch 构造、显式列表、node 与直接模块引用，不借任意 lambda／map／条件计算隐藏结构，引用保持有限无环。未来 LSP 保存模块定义、引用和源码位置，并检查该格式；当前执行 AST 不保留源码身份，不新增运行时模块 key。
+
+分文件不建立新 interpreter、注册环境、Context 或 scope。同一模块多次挂载意味着多次执行，不去重调用；原有串行短路、并发汇合与资源共享规则保持。五个 workflow demo 已按此拆分，纯 target 的 RequestBenchmark 不引入 AST。loop 仍按下文单独确定嵌套和生命周期规则，本次模块化不扩大它的可组合范围。
+
 ## 内部控制与外部触发
 
 node 表示一整条 effect 链的可调用入口；chained、parallel、loop 是同级的 branch 组织方式。
@@ -411,7 +428,7 @@ Input 继承、instance 内引用、末端登记、Node lowering 与 Error 协�
 | Node lowering | Target 保存未运行的末端与生成 scope 引用；Node algebra 只 lower，普通 Context 仍独立；构造器与裸运行器不导出 | 自动收尾、更细范围与跨入口存续 |
 | 句柄内 DI | 两个 demo 已直接引用 superclass 类方法；已移除外部 withX／initializeX／链式 runX | 不将执行可达性误作编译器对任意方法体的强制证明 |
 | 闭包装配 | Node algebra 只 lower 所选末端，实例内引用带起上游；不要求通用图 runtime | Context／scope 存续及显式共享引用 |
-| 控制与触发 | AST 负责启动与执行控制，不维护业务状态转移；chained／parallel 已以 cata 装配；loop 与二者同级，无条件、无跨调用业务状态；Hanging 承接事件入口 | loop／Hanging 接入、监听范围、单次失败与重叠处理、停止收尾；其余 branch 构造及嵌套规则 |
+| 控制与触发 | AST 负责启动与执行控制，不维护业务状态转移；node／branch 分类型，branch 分文件组合；chained／parallel 已以 cata 装配；loop 与二者同级，无条件、无跨调用业务状态；Hanging 承接事件入口 | LSP 模块定义与引用索引；loop／Hanging 接入、监听范围、单次失败与重叠处理、停止收尾；其余 branch 构造及嵌套规则 |
 | scope 边界 | open／close 均为 m ()，SDK 生成状态检查；同批句柄按开启参数跨 Input 链共享 MVar 状态，同参有效实例复用，显式 open 可重开已关闭实例 | 使用与关闭协调、自动收尾与取消清理、跨入口存续 |
 | 诊断与处置 | Root 按 scope top-down 检测；detect Succ 后 resolve，保留原错误与各项完成报告；不自动重放或恢复 | 资源使用与诊断／关闭协调、已展开 continuation 的恢复、跨调用诊断范围 |
 | 值转换 | Generic Map 为 SDK 内置适配，不新增 adapter 配置或 Map typing；对外产值的业务纯转换注册为 Context | 原型接入注册、支持的契约结构、转换的失败输出接口 |

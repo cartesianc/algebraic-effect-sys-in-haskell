@@ -25,6 +25,9 @@ executable crawler-demo
   hs-source-dirs: demo, sdk
   other-modules:
       Crawler.AST
+      Crawler.Workflow.ParsePages
+      Crawler.Workflow.PrintPages
+      Crawler.Workflow.FinishCrawl
       Crawler.Effects
       Crawler.Types
       Crawler.Generated.Effects
@@ -58,6 +61,7 @@ executable file-demo
   hs-source-dirs: demo, sdk
   other-modules:
       FileDemo.AST
+      FileDemo.Workflow.OperateFile
       FileDemo.Effects
       FileDemo.Types
       FileDemo.Generated.Effects
@@ -89,6 +93,8 @@ executable open-files-demo
   hs-source-dirs: demo, sdk
   other-modules:
       OpenFilesDemo.AST
+      OpenFilesDemo.Workflow.HoldAndInspectFiles
+      OpenFilesDemo.Workflow.FinishInspection
       OpenFilesDemo.Effects
       OpenFilesDemo.Types
       OpenFilesDemo.Generated.Effects
@@ -121,6 +127,9 @@ executable scope-reuse-demo
   hs-source-dirs: demo, sdk
   other-modules:
       ScopeReuseDemo.AST
+      ScopeReuseDemo.Workflow.PrepareProbe
+      ScopeReuseDemo.Workflow.WriteInParallel
+      ScopeReuseDemo.Workflow.VerifyReuse
       ScopeReuseDemo.Effects
       ScopeReuseDemo.Types
       ScopeReuseDemo.Generated.Effects
@@ -153,6 +162,8 @@ executable scope-instances-demo
   hs-source-dirs: demo, sdk
   other-modules:
       ScopeInstancesDemo.AST
+      ScopeInstancesDemo.Workflow.PrepareFiles
+      ScopeInstancesDemo.Workflow.CheckInstances
       ScopeInstancesDemo.Effects
       ScopeInstancesDemo.Types
       ScopeInstancesDemo.Generated.Effects

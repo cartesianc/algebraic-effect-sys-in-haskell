@@ -1,12 +1,12 @@
 module OpenFilesDemo.AST (ast) where
 
-import Framework.SDK (AST, chained, node)
+import Framework.SDK (AST, chained)
+import OpenFilesDemo.Workflow.HoldAndInspectFiles (holdAndInspectFiles)
+import OpenFilesDemo.Workflow.FinishInspection (finishInspection)
 
--- 前两个 Node 都不 close：第二个检查第一个返回后是否仍持有十个文件。
--- 最后显式关闭作对照；这是测试收尾，不是 interpreter 自动收尾。
+-- 先观察跨 Node 的资源存续，再显式关闭作对照。
 ast :: AST
 ast = chained
-  [ node "HoldFiles"
-  , node "InspectFiles"
-  , node "FinishInspection"
+  [ holdAndInspectFiles
+  , finishInspection
   ]

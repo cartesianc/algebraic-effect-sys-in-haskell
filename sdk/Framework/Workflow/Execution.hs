@@ -4,8 +4,8 @@ module Framework.Workflow.Execution (runAST) where
 
 import Framework.Effect.Contract (Failure, Output(..))
 import Framework.Effect.Runtime (Target, targetName, lowerTarget)
-import Framework.Recursion (Algebra, cata)
-import Framework.Workflow.AST (AST, WorkflowF(..))
+import Framework.Recursion (Algebra)
+import Framework.Workflow.AST (AST, WorkflowF(..), foldAST)
 import Control.Concurrent (MVar, ThreadId, forkIOWithUnmask, killThread, newEmptyMVar, putMVar, readMVar)
 import Control.Exception (SomeException, bracket, throwIO, try)
 import Control.Monad (void)
@@ -60,5 +60,5 @@ runAST
   :: AST -> [Target IO environment cause value]
   -> IO (Output cause [value])
 runAST tree entries = do
-  action <- either (ioError . userError) pure (cata (executionAlgebra entries) tree)
+  action <- either (ioError . userError) pure (foldAST (executionAlgebra entries) tree)
   either Failed Succ <$> runExceptT action

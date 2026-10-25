@@ -58,7 +58,8 @@ cabal run file-demo
 | [Types.hs](demo/FileDemo/Types.hs) | 原生业务 ADT，例如文件名、文件句柄和文本 |
 | [Effects.hs](demo/FileDemo/Effects.hs) | effect 类别、方法名、能力依赖及 Context 取值来源 |
 | [Handlers.hs](demo/FileDemo/Handlers.hs) | `instance` 方法中的计算、模式匹配与 IO |
-| [AST.hs](demo/FileDemo/AST.hs) | 要启动的末端操作及其执行结构 |
+| [AST.hs](demo/FileDemo/AST.hs) | 引用各 branch 模块，组织整个 workflow |
+| [Workflow/OperateFile.hs](demo/FileDemo/Workflow/OperateFile.hs) | 一个具名 branch，内部选择末端 node；较大模块也可组合其他 branch |
 | [Main.hs](demo/FileDemo/Main.hs) | 调用生成的 `interpreter ast effects` |
 | `Generated/` | SDK 生成的接口、包装后的 handler 和末端登记 |
 
@@ -74,6 +75,29 @@ instance Effect MakeNumber m => AddOneEffect m where
 对应的注册声明从 `MakeNumber` 请求值；SDK 负责接入取值协议，业务方法负责计算。完整代码见 [注册](demo/RequestBenchmark/Effects.hs) 和 [实现](demo/RequestBenchmark/Handlers.hs)。
 
 workflow 的 `node` 选择一条完整操作链的末端，`chained` 顺序执行并在失败时停止，`parallel` 等待全部分支完成。链内的上游操作由 handler 显式引用；声明能力依赖本身不会自动执行操作。节点的返回值也不会自动传给下一个节点。
+
+### 按 branch 拆分 workflow
+
+每个 branch 单独一个文件，导出业务名称；顶层通过普通 import 引用名称，不在组合表达式里写限定前缀。例如 [Crawler/AST.hs](demo/Crawler/AST.hs)：
+
+```haskell
+ast :: AST
+ast = chained [parsePages, printPages, finishCrawl]
+```
+
+其中 [ParsePages.hs](demo/Crawler/Workflow/ParsePages.hs) 定义：
+
+```haskell
+parsePages :: AST
+parsePages = parallel
+  [ node "ExtractPage"
+  , node "ExtractLinkedPage"
+  ]
+```
+
+`node` 返回抽象的 `EffectNode`，完整 branch 返回抽象的 `AST`。同一次 `chained`／`parallel` 的列表只能全是 node 或全是 branch，混写会产生类型错误；裸 node 也不能作为 `ast`。单个 node 仍需包在 branch 中。空分支写作 `chained ([] :: [AST])` 或 `parallel ([] :: [EffectNode])`，执行仍成功并返回空结果。
+
+分文件不创建新 interpreter、Context 或 scope；同一模块被引用两次代表两次执行。类型系统约束节点层级，独立文件与具名引用是声明格式约定，未来由 LSP 检查；当前没有模块源码索引或运行时模块 key。五个 workflow demo 均采用这种组织方式，纯 target 示例 RequestBenchmark 保留原入口。
 
 ### Effect 类别与业务值
 
@@ -116,7 +140,7 @@ cabal exec -- runghc -idemo -isdk demo/RequestBenchmark/Main.hs
 
 ### 新增示例
 
-1. 在 `demo/MyDemo/` 下定义 `Types.hs`、`Effects.hs` 和 `AST.hs`，模块名使用 `MyDemo.*`，分别导出所需业务类型、`effects` 和 `ast`。这些模块不导入 `Generated` 或 `Handlers`，确保首次生成可独立编译声明。
+1. 在 `demo/MyDemo/` 下定义 `Types.hs`、`Effects.hs`、`AST.hs` 和 `Workflow/*.hs`；每个 branch 独立定义并导出业务名，顶层 AST 只引用这些名称。模块名使用 `MyDemo.*`，分别导出所需业务类型、`effects` 和 `ast`。这些模块不导入 `Generated` 或 `Handlers`，确保首次生成可独立编译声明。
 2. 运行 `cabal run effect-codegen -- workflow MyDemo` 生成接口。尚无 `Handlers.hs` 时，SDK 会先生成空的 handler 编译模块。
 3. 根据 `Generated/Effects.hs` 的接口编写手写 `Handlers.hs`，再运行一次生成命令，并编写调用生成入口的 `Main.hs`。
 4. 在 [Cabal 配置](algebraic-effect-sys-in-haskell.cabal) 中参考 FileDemo 增加 executable，调整模块列表、`-main-is` 和依赖，然后编译运行。handler 模块列表使用 `Generated.Handlers`。

@@ -3,12 +3,12 @@
 -- Demo 的统一入口；Effect、recursion scheme、workflow 与代码生成分别实现。
 module Framework.SDK
   ( module Framework.Effect
-  , AST, node, chained, parallel, interpreter
+  , AST, EffectNode, node, chained, parallel, interpreter
   , Generic, runDemo, runDemoIO
   ) where
 
 import Framework.Effect
-import Framework.Workflow.AST (AST, node, chained, parallel)
+import Framework.Workflow.AST (AST, EffectNode, node, chained, parallel)
 import Framework.Workflow.Execution (runAST)
 import Control.Exception (evaluate)
 import Control.Monad (unless)
