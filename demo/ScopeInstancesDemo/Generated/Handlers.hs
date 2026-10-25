@@ -8,7 +8,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module ScopeInstancesDemo.Generated.Handlers (newScopeHandlers) where
+module ScopeInstancesDemo.Generated.Handlers (newScopeHandlers, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -26,7 +26,7 @@ import System.IO.Error (tryIOError)
 
 instance PrepareFilesEffect App where
   prepareFiles =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareFiles") $
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareFiles") $
       let
         prepareFiles = liftIO $ do
           createDirectoryIfMissing True outputDirectory
@@ -37,7 +37,7 @@ instance PrepareFilesEffect App where
 -- 参数确实由 instance 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
 instance FileLocationEffect App where
   getFileName =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation" FrameworkGenerated.ContextBindingError
       [("FileResource", FrameworkRuntime.RequestValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocation"))
       FrameworkGenerated.boundFileLocation
@@ -51,7 +51,7 @@ instance FileLocationEffect App where
 
 instance FileResourceEffect App where
   acquireFile =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
       [("FileSession", FrameworkRuntime.RequestValue), ("CheckIndependent", FrameworkRuntime.RequireValue), ("CheckReopen", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundFileResource
@@ -69,14 +69,14 @@ instance FileResourceEffect App where
 -- 与原写法相同：没有参数、状态标记、key 或 SDK 消费方法。
 instance FileSessionEffect App where
   openFileSession =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         openFileSession = do
           OpenedFile path _ <- acquireFile
           liftIO (appendFile journal ("open " ++ path ++ "\n"))
       in openFileSession
   closeFileSession =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         closeFileSession = do
           OpenedFile path file <- readOpenedFile
@@ -87,7 +87,7 @@ instance FileSessionEffect App where
 
 instance CheckIndependentEffect App where
   checkIndependent =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "CheckIndependent") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "CheckIndependent") $
       let
         checkIndependent = do
           liftIO (writeFile selection firstFile)
@@ -120,7 +120,7 @@ instance CheckIndependentEffect App where
 
 instance CheckReopenEffect App where
   checkReopen =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "CheckReopen") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "CheckReopen") $
       let
         checkReopen = do
           liftIO (writeFile selection firstFile)
@@ -175,4 +175,10 @@ count expected = length . filter (== expected)
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
 newScopeHandlers = sequence
   [ FrameworkRuntime.newScopeHandler "FileSession" ["FileLocation"] (Just "FileResource")
+  ]
+
+-- Root 的异常入口，按 scope 的拓扑顺序从上向下检测。
+errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated.App)]
+errorHandlers =
+  [
   ]

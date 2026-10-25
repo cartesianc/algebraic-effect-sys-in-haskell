@@ -19,7 +19,7 @@ import Control.Monad.IO.Class (liftIO)
 import System.FilePath ((</>))
 import System.IO
   ( Handle, IOMode(ReadWriteMode), SeekMode(AbsoluteSeek, SeekFromEnd)
-  , hClose, hFlush, hGetChar, hIsEOF, hPrint, hPutStr, hSeek, hSetEncoding
+  , hClose, hFlush, hGetChar, hIsClosed, hIsEOF, hPrint, hPutStr, hSeek, hSetEncoding
   , openFile, stderr, utf8 )
 import System.IO.Error (tryIOError)
 
@@ -65,6 +65,18 @@ instance ReadFileEffect App where
       hSeek file AbsoluteSeek 0
       FileText <$> readFully file
     either (raise . ReadFileError . displayException) pure outcome
+
+instance FileRecoveryEffect App where
+  detectFileSession = do
+    OpenedFile _ file <- readOpenedFile
+    outcome <- liftIO (tryIOError (hIsClosed file))
+    closed <- either (raise . FileRecoveryError . displayException) pure outcome
+    -- 返回 () 表示已定位：文件已关闭；仍打开则不能把原故障归到此条件。
+    unless closed $
+      raise (FileRecoveryError "File handle is still open; failure not located in FileSession")
+
+  -- 沿 superclass 引用配对的关闭方法；不重放读写，也不自动重开。
+  resolveFileSession = closeFileSession
 
 instance WriteFileEffect App where
   writeFileText = do

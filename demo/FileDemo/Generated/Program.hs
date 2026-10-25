@@ -6,6 +6,7 @@ module FileDemo.Generated.Program where
 
 import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), TypeRef(..), Output)
 import qualified Framework.SDK as SDK
+import qualified Framework.Effect.Contract as FrameworkRoot
 import FileDemo.Generated.Effects
 import qualified FileDemo.Generated.Handlers as Handlers
 import FileDemo.Types
@@ -20,7 +21,7 @@ compiledEntries :: IO [SDK.Target IO ContextValues Errors Results]
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    [ SDK.targetApp "FileWorkflow" emptyContexts scopes (FileWorkflowResult <$> runFileWorkflow)
+    [ SDK.targetApp "FileWorkflow" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FileWorkflowResult <$> runFileWorkflow))
     ]
 
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
@@ -30,6 +31,7 @@ registeredEffects =
   , EffectSpec {name = "ValidateFileName", typing = Pure {handler = Just "validateFileName"}, input = "Root", context = Just (ContextInput {request = Just (From "FileLocation" (TypeRef "FileName")), require = Nothing})}
   , EffectSpec {name = "FileResource", typing = Context {request = Just (Producer {handler = "acquireFile", produces = TypeRef "OpenedFile"}), require = Just "readOpenedFile"}, input = "ValidateFileName", context = Just (ContextInput {request = Nothing, require = Just (From "FileLocation" (TypeRef "FileName"))})}
   , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFileSession", close = Just "closeFileSession"}, input = "ValidateFileName", context = Just (ContextInput {request = Just (From "FileResource" (TypeRef "OpenedFile")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "FileRecovery", typing = Error {detect = Just "detectFileSession", resolve = Just "resolveFileSession"}, input = "FileSession", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
   , EffectSpec {name = "ReadFile", typing = Context {request = Just (Producer {handler = "readFileText", produces = TypeRef "FileText"}), require = Just "readLastFileText"}, input = "FileSession", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
   , EffectSpec {name = "WriteFile", typing = Excu {handler = Just "writeFileText"}, input = "FileSession", context = Just (ContextInput {request = Just (From "ReadFile" (TypeRef "FileText")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
   , EffectSpec {name = "FileWorkflow", typing = Excu {handler = Just "runFileWorkflow"}, input = "WriteFile", context = Nothing}

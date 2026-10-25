@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module FileDemo.Generated.Handlers (newScopeHandlers) where
+module FileDemo.Generated.Handlers (newScopeHandlers, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -24,14 +24,14 @@ import Control.Monad.IO.Class (liftIO)
 import System.FilePath ((</>))
 import System.IO
   ( Handle, IOMode(ReadWriteMode), SeekMode(AbsoluteSeek, SeekFromEnd)
-  , hClose, hFlush, hGetChar, hIsEOF, hPrint, hPutStr, hSeek, hSetEncoding
+  , hClose, hFlush, hGetChar, hIsClosed, hIsEOF, hPrint, hPutStr, hSeek, hSetEncoding
   , openFile, stderr, utf8 )
 import System.IO.Error (tryIOError)
 
 instance FileLocationEffect App where
   -- 示例专用文件：首次运行创建，后续追加；在项目根目录运行。
   getFileName =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation" FrameworkGenerated.ContextBindingError
       [("ValidateFileName", FrameworkRuntime.RequestValue), ("FileResource", FrameworkRuntime.RequireValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocation"))
       FrameworkGenerated.boundFileLocation
@@ -42,7 +42,7 @@ instance FileLocationEffect App where
 
 instance ValidateFileNameEffect App where
   validateFileName =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ValidateFileName") $
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ValidateFileName") $
       let
         validateFileName = do
           FileName path <- getFileName
@@ -52,8 +52,8 @@ instance ValidateFileNameEffect App where
 
 instance FileResourceEffect App where
   acquireFile =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
-      [("FileSession", FrameworkRuntime.RequestValue), ("ReadFile", FrameworkRuntime.RequireValue), ("WriteFile", FrameworkRuntime.RequireValue)]
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
+      [("FileSession", FrameworkRuntime.RequestValue), ("FileRecovery", FrameworkRuntime.RequireValue), ("ReadFile", FrameworkRuntime.RequireValue), ("WriteFile", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundFileResource
       (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
@@ -72,7 +72,7 @@ instance FileResourceEffect App where
 instance FileSessionEffect App where
   -- 开启期间 Context 保存真实 Handle，后续 require 复用它。
   openFileSession =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         openFileSession = do
           _ <- acquireFile
@@ -80,7 +80,7 @@ instance FileSessionEffect App where
       in openFileSession
 
   closeFileSession =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         closeFileSession = do
           OpenedFile path file <- readOpenedFile
@@ -91,7 +91,7 @@ instance FileSessionEffect App where
 
 instance ReadFileEffect App where
   readFileText =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.callContext "ReadFile" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.callContext "ReadFile" FrameworkGenerated.ContextBindingError
       [("WriteFile", FrameworkRuntime.RequestValue)]
       Nothing
       FrameworkGenerated.boundReadFile
@@ -107,9 +107,29 @@ instance ReadFileEffect App where
           either (raise . ReadFileError . displayException) pure outcome
       in readFileText
 
+instance FileRecoveryEffect App where
+  detectFileSession =
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileRecovery") $
+      let
+        detectFileSession = do
+          OpenedFile _ file <- readOpenedFile
+          outcome <- liftIO (tryIOError (hIsClosed file))
+          closed <- either (raise . FileRecoveryError . displayException) pure outcome
+          -- 返回 () 表示已定位：文件已关闭；仍打开则不能把原故障归到此条件。
+          unless closed $
+            raise (FileRecoveryError "File handle is still open; failure not located in FileSession")
+      in detectFileSession
+
+  -- 沿 superclass 引用配对的关闭方法；不重放读写，也不自动重开。
+  resolveFileSession =
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileRecovery") $
+      let
+        resolveFileSession = closeFileSession
+      in resolveFileSession
+
 instance WriteFileEffect App where
   writeFileText =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "WriteFile") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "WriteFile") $
       let
         writeFileText = do
           FileText contents <- readFileText
@@ -127,7 +147,7 @@ instance WriteFileEffect App where
 
 instance FileWorkflowEffect App where
   runFileWorkflow =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileWorkflow") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileWorkflow") $
       let
         runFileWorkflow = do
           openFileSession
@@ -154,4 +174,10 @@ readFully file = go []
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
 newScopeHandlers = sequence
   [ FrameworkRuntime.newScopeHandler "FileSession" ["FileLocation"] (Just "FileResource")
+  ]
+
+-- Root 的异常入口，按 scope 的拓扑顺序从上向下检测。
+errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated.App)]
+errorHandlers =
+  [ ("FileSession", FrameworkRoot.ErrorHandler "FileRecovery" (Just detectFileSession) (Just resolveFileSession))
   ]

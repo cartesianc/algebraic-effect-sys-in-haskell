@@ -27,7 +27,7 @@ data FileLocation
 class (Effect Root m) => FileLocationEffect m where
   getFileName :: m (Produce FileLocation)
   readFileName :: m (Produce FileLocation)
-  readFileName = FrameworkRoot.handler @Root $
+  readFileName = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "FileLocation" ContextBindingError (Just (SDK.ScopeInput "FileLocation")) boundFileLocation
   {-# MINIMAL getFileName #-}
 
@@ -59,7 +59,7 @@ data FileResource
 class (Effect ValidateFileName m, Effect FileLocation m, Produce FileLocation ~ (FileName)) => FileResourceEffect m where
   acquireFile :: m (Produce FileResource)
   readOpenedFile :: m (Produce FileResource)
-  readOpenedFile = FrameworkRoot.handler @Root $
+  readOpenedFile = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "FileResource" ContextBindingError Nothing boundFileResource
   {-# MINIMAL acquireFile #-}
 
@@ -87,12 +87,27 @@ instance (Monad m, Effect ValidateFileName m, FileSessionEffect m) => Effect Fil
   raise (FileSessionError description) = SDK.failEffect "FileSession" FileSessionFailure description
   handler = FrameworkRoot.handler @Root
 
+data FileRecovery
+
+class (Effect FileSession m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => FileRecoveryEffect m where
+  detectFileSession :: m ()
+  resolveFileSession :: m ()
+  {-# MINIMAL detectFileSession, resolveFileSession #-}
+
+instance (Monad m, Effect FileSession m, FileRecoveryEffect m) => Effect FileRecovery m where
+  type Registration FileRecovery = Registered FileRecoveryEffect FileSession
+  type Typing FileRecovery = 'SDK.ErrorKind
+  type Require FileRecovery = OpenedFile
+  type Error FileRecovery = FileRecoveryError
+  raise (FileRecoveryError description) = SDK.failEffect "FileRecovery" FileRecoveryFailure description
+  handler = FrameworkRoot.handler @Root
+
 data ReadFile
 
 class (Effect FileSession m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => ReadFileEffect m where
   readFileText :: m (Produce ReadFile)
   readLastFileText :: m (Produce ReadFile)
-  readLastFileText = FrameworkRoot.handler @Root $
+  readLastFileText = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @Root) $
     SDK.readContext "ReadFile" ContextBindingError Nothing boundReadFile
   {-# MINIMAL readFileText #-}
 
@@ -150,6 +165,10 @@ newtype FileSessionError = FileSessionError String
   deriving (Eq, Show, Read)
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+newtype FileRecoveryError = FileRecoveryError String
+  deriving (Eq, Show, Read)
+
+-- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
 newtype ReadFileError = ReadFileError String
   deriving (Eq, Show, Read)
 
@@ -162,7 +181,7 @@ newtype FileWorkflowError = FileWorkflowError String
   deriving (Eq, Show, Read)
 
 -- 统一失败协议的分类标签；消息与来源由 SDK.Failure 保存。
-data Errors = FileLocationFailure | ValidateFileNameFailure | FileResourceFailure | FileSessionFailure | ReadFileFailure | WriteFileFailure | FileWorkflowFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+data Errors = FileLocationFailure | ValidateFileNameFailure | FileResourceFailure | FileSessionFailure | FileRecoveryFailure | ReadFileFailure | WriteFileFailure | FileWorkflowFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。

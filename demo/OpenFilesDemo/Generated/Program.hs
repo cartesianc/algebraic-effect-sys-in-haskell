@@ -6,6 +6,7 @@ module OpenFilesDemo.Generated.Program where
 
 import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), TypeRef(..), Output)
 import qualified Framework.SDK as SDK
+import qualified Framework.Effect.Contract as FrameworkRoot
 import OpenFilesDemo.Generated.Effects
 import qualified OpenFilesDemo.Generated.Handlers as Handlers
 import OpenFilesDemo.Types
@@ -20,9 +21,9 @@ compiledEntries :: IO [SDK.Target IO ContextValues Errors Results]
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    [ SDK.targetApp "HoldFiles" emptyContexts scopes (HoldFilesResult <$> holdFiles)
-    , SDK.targetApp "InspectFiles" emptyContexts scopes (InspectFilesResult <$> inspectFiles)
-    , SDK.targetApp "FinishInspection" emptyContexts scopes (FinishInspectionResult <$> finishInspection)
+    [ SDK.targetApp "HoldFiles" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (HoldFilesResult <$> holdFiles))
+    , SDK.targetApp "InspectFiles" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (InspectFilesResult <$> inspectFiles))
+    , SDK.targetApp "FinishInspection" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FinishInspectionResult <$> finishInspection))
     ]
 
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。

@@ -6,6 +6,7 @@ module ScopeInstancesDemo.Generated.Program where
 
 import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), TypeRef(..), Output)
 import qualified Framework.SDK as SDK
+import qualified Framework.Effect.Contract as FrameworkRoot
 import ScopeInstancesDemo.Generated.Effects
 import qualified ScopeInstancesDemo.Generated.Handlers as Handlers
 import ScopeInstancesDemo.Types
@@ -20,9 +21,9 @@ compiledEntries :: IO [SDK.Target IO ContextValues Errors Results]
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    [ SDK.targetApp "PrepareFiles" emptyContexts scopes (PrepareFilesResult <$> prepareFiles)
-    , SDK.targetApp "CheckIndependent" emptyContexts scopes (CheckIndependentResult <$> checkIndependent)
-    , SDK.targetApp "CheckReopen" emptyContexts scopes (CheckReopenResult <$> checkReopen)
+    [ SDK.targetApp "PrepareFiles" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (PrepareFilesResult <$> prepareFiles))
+    , SDK.targetApp "CheckIndependent" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (CheckIndependentResult <$> checkIndependent))
+    , SDK.targetApp "CheckReopen" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (CheckReopenResult <$> checkReopen))
     ]
 
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。

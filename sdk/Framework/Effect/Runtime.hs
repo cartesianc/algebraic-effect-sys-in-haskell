@@ -9,7 +9,7 @@ module Framework.Effect.Runtime
   , targetName, lowerTarget
   ) where
 
-import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault, Failure, Output(..))
+import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault, Failure(..), Output(..), ErrorStore(..), ErrorHandler, runErrorHandler)
 import Framework.Effect.Runtime.App (App, runApp)
 import Framework.Effect.Scope
 import Control.Monad (forM_, when)
@@ -18,24 +18,28 @@ import Control.Monad.Reader (ReaderT, ask, asks, local, runReaderT)
 import Control.Monad.State.Strict (MonadState, State, evalState, gets, modify')
 import Data.Functor.Identity (Identity(..))
 import Data.List (nub)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isJust)
 
-data Calling = Calling
+data Calling environment cause = Calling
   { caller :: Maybe String
   , dependencies :: [String]
   , ownedScopes :: [String]
+  , errorHandlers :: [(String, ErrorHandler (Pure environment cause))]
+  , errorPath :: [String]
+  , originalFailure :: Maybe (Failure cause)
+  , diagnosticScope :: Maybe String
   }
 
-emptyCalling :: Calling
-emptyCalling = Calling Nothing [] []
+emptyCalling :: Calling environment cause
+emptyCalling = Calling Nothing [] [] [] [] Nothing Nothing
 
-visibleScopes :: Calling -> [String]
+visibleScopes :: Calling environment cause -> [String]
 visibleScopes calling = nub (ownedScopes calling ++ dependencies calling)
 
-addDependencies :: [String] -> Calling -> Calling
+addDependencies :: [String] -> Calling environment cause -> Calling environment cause
 addDependencies selected calling = calling { dependencies = nub (selected ++ dependencies calling) }
 
-ownScope :: String -> Calling -> Calling
+ownScope :: String -> Calling environment cause -> Calling environment cause
 ownScope selected calling = calling { ownedScopes = selected : ownedScopes calling }
 
 data PureState environment cause = PureState
@@ -45,7 +49,7 @@ data PureState environment cause = PureState
   }
 
 newtype Pure environment cause value =
-  PureRun (ReaderT Calling (ExceptT (Failure cause) (State (PureState environment cause))) value)
+  PureRun (ReaderT (Calling environment cause) (ExceptT (Failure cause) (State (PureState environment cause))) value)
   deriving (Functor, Applicative, Monad, MonadState (PureState environment cause), MonadError (Failure cause))
 
 instance ContextStore environment (Pure environment cause) where
@@ -65,7 +69,7 @@ instance ContextStore environment (Pure environment cause) where
       readOne calling records selected = case lookup selected records of
         Nothing -> pure Nothing
         Just record -> do
-          when (selected `notElem` ownedScopes calling) $
+          when (selected `notElem` ownedScopes calling && Just selected /= diagnosticScope calling) $
             maybe (pure ()) throwError (scopeFailure (scopePhase record))
           pure (if source `elem` scopeSources record then select (scopeBindings record) else Nothing)
   publishContextBinding source update = do
@@ -85,7 +89,7 @@ instance ScopeStore cause (Pure environment cause) where
     calling <- ask
     records <- gets pureScopes
     forM_ (dependencies calling) $ \name -> case lookup name records of
-      Just record | name `notElem` ownedScopes calling ->
+      Just record | name `notElem` ownedScopes calling && Just name /= diagnosticScope calling ->
         maybe (pure ()) throwError (scopeFailure (scopePhase record))
       _ -> pure ()
     action
@@ -95,6 +99,37 @@ instance ScopeStore cause (Pure environment cause) where
     { scopePhase = case scopePhase record of
         ScopeInvalid original -> ScopeInvalid original
         _ -> ScopeInvalid failure }
+
+instance ErrorStore cause (Pure environment cause) where
+  withErrorHandlers handlers (PureRun action) = PureRun $ local
+    (\calling -> calling { errorHandlers = handlers }) action
+  withErrorPath path (PureRun action) = PureRun $ local
+    (\calling -> calling { errorPath = nub (path ++ errorPath calling) }) action
+  caughtFailure = PureRun (asks originalFailure)
+  handleFailure (PureRun action) = PureRun $ do
+    calling <- ask
+    if null (errorHandlers calling) || isJust (originalFailure calling)
+      then action
+      else action `catchError` \problem -> do
+        let traced = problem { scopeTrace = nub (scopeTrace problem ++ errorPath calling) }
+        if isJust (errorHandling problem)
+          then throwError problem
+          else if not (null (ownedScopes calling))
+            then throwError traced
+            else do
+              reports <- mapM (diagnose calling traced)
+                [(selected, callback) | (selected, callback) <- errorHandlers calling
+                                     , selected `elem` scopeTrace traced]
+              throwError traced { errorHandling = Just reports }
+    where
+      diagnose calling problem (selected, callback) = do
+        saved <- gets pureBindings
+        let PureRun action = runErrorHandler selected callback
+        report <- local (const calling
+          { caller = Nothing, ownedScopes = [], originalFailure = Just problem
+          , diagnosticScope = Just selected }) action
+        modify' (\state -> state { pureBindings = saved })
+        pure report
 
 updatePureScope :: String -> (ScopeRecord environment cause -> ScopeRecord environment cause)
                 -> Pure environment cause ()

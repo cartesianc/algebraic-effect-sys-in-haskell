@@ -18,6 +18,7 @@ data EffectTyping
   = Pure { handler :: Maybe String }
   | Excu { handler :: Maybe String }
   | Scoped { open :: Maybe String, close :: Maybe String }
+  | Error { detect :: Maybe String, resolve :: Maybe String }
   | Context { request :: Maybe Producer, require :: Maybe String }
   deriving (Eq, Show, Read)
 
@@ -31,6 +32,7 @@ effectKind :: EffectTyping -> EffectKind
 effectKind (Pure _) = PureKind
 effectKind (Excu _) = ExcuKind
 effectKind (Scoped _ _) = ScopedKind
+effectKind (Error _ _) = ErrorKind
 effectKind (Context _ _) = ContextKind
 
 -- 普通入口按角色确定，关闭方法不参与入口选择。
@@ -38,6 +40,8 @@ entryMethod :: EffectTyping -> Maybe String
 entryMethod (Pure method) = method
 entryMethod (Excu method) = method
 entryMethod (Scoped opening _) = opening
+-- Error 的两个方法由故障协议激活，不猜测一个普通 Node 入口。
+entryMethod (Error _ _) = Nothing
 entryMethod (Context producing _) = case producing of
   Just Producer { handler = method } -> Just method
   Nothing -> Nothing

@@ -6,6 +6,7 @@ module ScopeReuseDemo.Generated.Program where
 
 import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), TypeRef(..), Output)
 import qualified Framework.SDK as SDK
+import qualified Framework.Effect.Contract as FrameworkRoot
 import ScopeReuseDemo.Generated.Effects
 import qualified ScopeReuseDemo.Generated.Handlers as Handlers
 import ScopeReuseDemo.Types
@@ -20,11 +21,11 @@ compiledEntries :: IO [SDK.Target IO ContextValues Errors Results]
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    [ SDK.targetApp "PrepareProbe" emptyContexts scopes (PrepareProbeResult <$> prepareProbe)
-    , SDK.targetApp "WriteFirst" emptyContexts scopes (WriteFirstResult <$> writeFirst)
-    , SDK.targetApp "WriteSecond" emptyContexts scopes (WriteSecondResult <$> writeSecond)
-    , SDK.targetApp "WriteThird" emptyContexts scopes (WriteThirdResult <$> writeThird)
-    , SDK.targetApp "VerifyReuse" emptyContexts scopes (VerifyReuseResult <$> verifyReuse)
+    [ SDK.targetApp "PrepareProbe" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (PrepareProbeResult <$> prepareProbe))
+    , SDK.targetApp "WriteFirst" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (WriteFirstResult <$> writeFirst))
+    , SDK.targetApp "WriteSecond" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (WriteSecondResult <$> writeSecond))
+    , SDK.targetApp "WriteThird" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (WriteThirdResult <$> writeThird))
+    , SDK.targetApp "VerifyReuse" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (VerifyReuseResult <$> verifyReuse))
     ]
 
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。

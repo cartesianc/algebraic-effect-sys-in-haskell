@@ -27,7 +27,7 @@ data FileLocations
 class (Effect Root m) => FileLocationsEffect m where
   getFilePaths :: m (Produce FileLocations)
   readFilePaths :: m (Produce FileLocations)
-  readFilePaths = FrameworkRoot.handler @Root $
+  readFilePaths = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "FileLocations" ContextBindingError (Just (SDK.ScopeInput "FileLocations")) boundFileLocations
   {-# MINIMAL getFilePaths #-}
 
@@ -59,7 +59,7 @@ data FileResource
 class (Effect Root m, Effect FileLocations m, Produce FileLocations ~ (FilePaths)) => FileResourceEffect m where
   acquireFile :: m (Produce FileResource)
   readOpenedFile :: m (Produce FileResource)
-  readOpenedFile = FrameworkRoot.handler @Root $
+  readOpenedFile = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "FileResource" ContextBindingError Nothing boundFileResource
   {-# MINIMAL acquireFile #-}
 

@@ -3,7 +3,7 @@ module Framework.Codegen.Handlers (renderHandlers) where
 
 import Control.Exception (evaluate)
 import Control.Monad.IO.Class (liftIO)
-import Data.List (sortOn)
+import Data.List (intercalate, isPrefixOf, sortOn)
 import GHC (GhcPs, getSessionDynFlags, runGhc)
 import GHC.Data.FastString (mkFastString)
 import GHC.Data.StringBuffer (stringToStringBuffer)
@@ -28,12 +28,15 @@ renderHandlers namespace wrappers scopeHandlers = do
   let directory = "demo" </> map (\c -> if c == '.' then pathSeparator else c) namespace
       inputPath = directory </> "Handlers.hs"
       generatedName = namespace ++ ".Generated.Handlers"
+      extraExports = [name | name <- ["newScopeHandlers", "errorHandlers"]
+        , any ((name ++ " ::") `isPrefixOf`) (lines scopeHandlers)]
   exists <- doesFileExist inputPath
   generated <- if not exists
-    then pure $ if null scopeHandlers
+    then pure $ if null extraExports
       then "module " ++ generatedName ++ " () where\n"
-      else "module " ++ generatedName ++ " (newScopeHandlers) where\n"
+      else "module " ++ generatedName ++ " (" ++ intercalate ", " extraExports ++ ") where\n"
         ++ "import qualified Framework.SDK as FrameworkRuntime\n"
+        ++ "import qualified Framework.Effect.Contract as FrameworkRoot\n"
         ++ "import qualified " ++ namespace ++ ".Generated.Effects as FrameworkGenerated\n"
     else do
       source <- withFile inputPath ReadMode $ \handle -> do
@@ -52,21 +55,27 @@ renderHandlers namespace wrappers scopeHandlers = do
         case unP Parser.parseModule state of
           PFailed _ -> liftIO (ioError (userError ("Cannot parse " ++ inputPath ++ "; check its Haskell syntax")))
           POk _ parsed -> liftIO $ either (ioError . userError) pure
-            (wrapModule namespace generatedName wrappers (not (null scopeHandlers)) source (unLoc parsed))
+            (wrapModule namespace generatedName wrappers extraExports source (unLoc parsed))
+  -- 首次生成尚无业务 instance；保留契约与 scope 构造器，暂不安装业务回调。
+  -- 用户填写 Handlers.hs 后重新生成，才恢复完整的 Error 方法引用。
+  let extraDefinitions
+        | exists || "errorHandlers" `notElem` extraExports = scopeHandlers
+        | otherwise = unlines (takeWhile (/= "errorHandlers =") (lines scopeHandlers)
+            ++ ["-- 尚未加载用户 instance；编写 Handlers.hs 后重新生成。", "errorHandlers = []"])
   pure ("-- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。\n"
         ++ "{-# LANGUAGE TypeApplications #-}\n"
-        ++ generated ++ if null scopeHandlers then "" else "\n\n" ++ scopeHandlers)
+        ++ generated ++ if null extraDefinitions then "" else "\n\n" ++ extraDefinitions)
 
 wrapModule
-  :: String -> String -> [(String, String, String)] -> Bool -> String -> HsModule GhcPs
+  :: String -> String -> [(String, String, String)] -> [String] -> String -> HsModule GhcPs
   -> Either String String
-wrapModule namespace generatedName wrappers hasScopes source parsed = do
+wrapModule namespace generatedName wrappers extraExports source parsed = do
   moduleName <- maybe (Left "Handlers.hs must declare its module") Right (hsmodName parsed)
   rename <- replace (getLocA moduleName) generatedName
   exports <- case hsmodExports parsed of
-    Just names | hasScopes -> do
+    Just names | not (null extraExports) -> do
       (start, _) <- range (getLocA names)
-      pure [(start + 1, start + 1, "newScopeHandlers" ++ if null (unLoc names) then "" else ", ")]
+      pure [(start + 1, start + 1, intercalate ", " extraExports ++ if null (unLoc names) then "" else ", ")]
     _ -> pure []
   firstImport <- case hsmodImports parsed of
     first : _ -> Right first

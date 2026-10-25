@@ -12,12 +12,12 @@ import Framework.Effect.Scope
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, putMVar)
 import Control.Exception (Exception, SomeException, fromException, mask, throwIO, try)
 import Control.Monad (forM, forM_, when)
-import Control.Monad.Except (ExceptT, MonadError, runExceptT, throwError)
+import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Reader (ReaderT, ask, asks, local, runReaderT)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.List (nub)
-import Data.Maybe (catMaybes, fromMaybe)
+import Data.List (find, nub)
+import Data.Maybe (catMaybes, fromMaybe, isJust)
 import Data.Unique (Unique, newUnique)
 
 type Bound env cause = Binding env (String, ScopeInstance env cause)
@@ -31,6 +31,10 @@ data Environment env cause = Environment
   , contexts :: [String]
   , openings :: [Opening env cause]
   , closings :: [Closing env cause]
+  , errorHandlers :: [(String, ErrorHandler (App env cause))]
+  , errorPath :: [String]
+  , originalFailure :: Maybe (Failure cause)
+  , diagnosticOwner :: Maybe (ScopeInstance env cause)
   }
 
 data Opening env cause = Opening
@@ -80,7 +84,7 @@ inputName :: ScopeInput -> String
 inputName (ScopeInput name _) = name
 
 fault :: String -> (ScopeFault -> cause) -> ScopeFault -> Failure cause
-fault name wrap problem = Failure name (wrap problem) (show problem)
+fault name wrap problem = Failure name (wrap problem) (show problem) [] [] Nothing
 
 -- 没有业务 Context 的 scope 使用内部 unit 绑定；不是新增业务 effect 或配置 key。
 resourceSource :: ScopeHandler env cause -> String
@@ -101,6 +105,7 @@ resolveBinding environment source = do
   current <- lookup source <$> readIORef (bindings environment)
   case current of
     Just value -> pure (Right (Just value))
+    Nothing | isJust (originalFailure environment) -> pure (Right Nothing)
     Nothing -> do
       let visible = nub (ownedNames environment ++ dependencies environment)
       candidates <- fmap concat $ forM visible $ \name -> case findScope (scopes environment) name of
@@ -124,7 +129,8 @@ owns environment slot = do
 checkBinding :: Environment env cause -> Bound env cause -> App env cause ()
 checkBinding environment value = forM_ (bindingOwners value) $ \(_, slot) -> do
   owner <- rawIO (owns environment slot)
-  when (not owner) $ do
+  let diagnosing = maybe False ((== scopeRecord slot) . scopeRecord) (diagnosticOwner environment)
+  when (not owner && not diagnosing) $ do
     phase <- rawIO (withMVar (scopeGate slot) (const (scopePhase <$> readIORef (scopeRecord slot))))
     maybe (pure ()) throwError (scopeFailure phase)
 
@@ -163,7 +169,8 @@ ensureOpen environment attempt = do
                 case phase of
                   ScopeClosed _ -> putMVar (scopeGate slot) () >> acquire
                   _ -> case beginScope OpenScope name (wrapFault attempt) phase of
-                    Left problem -> putMVar (scopeGate slot) () >> pure (Left problem)
+                    Left problem -> putMVar (scopeGate slot) ()
+                      >> pure (Left (scopeFailureTarget name (Just slot) problem))
                     Right False -> do
                       reuseBindings environment slot
                       putMVar (scopeGate slot) ()
@@ -203,7 +210,8 @@ beginClose attempt value = do
         phase <- scopePhase <$> readIORef (scopeRecord slot)
         let name = scopeName (closeFamily attempt)
         case beginScope CloseScope name (closeFault attempt) phase of
-          Left problem -> putMVar (scopeGate slot) () >> pure (Left problem)
+          Left problem -> putMVar (scopeGate slot) ()
+            >> pure (Left (scopeFailureTarget name (Just slot) problem))
           Right False -> do
             putMVar (scopeGate slot) ()
             throwIO (Completed (closeToken attempt))
@@ -296,6 +304,80 @@ instance ScopeStore cause (App env cause) where
         rawIO (if owner then invalidate else withMVar (scopeGate slot) (const invalidate))
       _ -> throwError problem
 
+instance ErrorStore cause (App env cause) where
+  withErrorHandlers handlers (AppRun action) = AppRun $ local
+    (\environment -> environment { errorHandlers = handlers }) action
+  withErrorPath path (AppRun action) = AppRun $ local
+    (\environment -> environment { errorPath = nub (path ++ errorPath environment) }) action
+  caughtFailure = AppRun (asks originalFailure)
+  handleFailure (AppRun action) = AppRun $ do
+    environment <- ask
+    if null (errorHandlers environment) || isJust (originalFailure environment)
+      then action
+      else action `catchError` \problem -> do
+        let traced = problem { scopeTrace = nub (scopeTrace problem ++ errorPath environment) }
+        -- open/close 的内部调用还持有生命周期锁；退到锁外的 Root 后才诊断。
+        if isJust (errorHandling problem)
+          then throwError problem
+          else if not (null (openings environment) && null (closings environment))
+            then throwError traced
+            else do
+              reports <- forM
+                [(selected, callback) | (selected, callback) <- errorHandlers environment
+                                     , selected `elem` scopeTrace traced] $ \(selected, callback) ->
+                  liftIO (runDiagnostic environment traced selected callback)
+              throwError traced { errorHandling = Just reports }
+
+-- 检测/处置共享本次故障的绑定快照。失败的 scope 可在此受限上下文中被检查、清理；
+-- 不扫描其他实例，不修改业务调用已经捕获的值，也不重放业务 action。
+runDiagnostic :: Environment env cause -> Failure cause -> String -> ErrorHandler (App env cause)
+              -> IO (ErrorReport cause)
+runDiagnostic environment problem selected callback = do
+  captured <- readIORef (bindings environment)
+  let capturedOwner = do
+        family <- findScope (scopes environment) selected
+        value <- lookup (resourceSource family) captured
+        lookup selected (bindingOwners value)
+  owner <- case lookup selected (scopeTargets problem) of
+    Nothing -> pure capturedOwner
+    Just Nothing -> pure Nothing
+    Just (Just identity) -> do
+      registered <- case findScope (scopes environment) selected of
+        Nothing -> pure []
+        Just family -> readMVar (scopeInstances family)
+      let capturedSlots = concatMap (map snd . bindingOwners . snd) captured
+      pure (find ((== identity) . scopeIdentity) (capturedSlots ++ registered))
+  saved <- maybe (pure []) (fmap scopeBindings . readIORef . scopeRecord) owner
+  let belongsElsewhere (_, value) = case lookup selected (bindingOwners value) of
+        Nothing -> False
+        Just slot -> maybe True ((/= scopeRecord slot) . scopeRecord) owner
+      -- 开启 B 失败时，不能把 request 刷新失败后保留的 A 资源当成 B。
+      capturedHere = filter (not . belongsElsewhere) captured
+      restored = foldr (\(source, value) values -> bind source value values) capturedHere saved
+      execute = do
+        values <- newIORef restored
+        let inside = environment
+              { bindings = values, caller = Nothing, contexts = [], openings = [], closings = []
+              , originalFailure = Just problem, diagnosticOwner = owner }
+            AppRun action = runErrorHandler selected callback
+        result <- runExceptT (runReaderT action inside)
+        -- runErrorHandler 接回 detect/resolve 的 Failure；不捕获取消等原生 IO 异常。
+        case result of
+          Right report -> pure report
+          Left failure -> case callback of
+            ErrorHandler name _ _ -> pure (ErrorReport selected name (Just (Failed failure)) Nothing)
+  case owner of
+    Nothing -> execute
+    Just slot -> withMVar (scopeRecoveryGate slot) (const execute)
+
+-- 此证据只描述这次失败所涉及的实例，不参与开启参数的 Eq 匹配。
+scopeFailureTarget :: String -> Maybe (ScopeInstance env cause) -> Failure cause -> Failure cause
+scopeFailureTarget selected owner problem
+  | Nothing <- owner, isJust (lookup selected (scopeTargets problem)) = problem
+  | otherwise = problem
+      { scopeTargets = (selected, scopeIdentity <$> owner)
+          : filter ((/= selected) . fst) (scopeTargets problem) }
+
 runOpen :: String -> (ScopeFault -> cause) -> App env cause () -> App env cause ()
 runOpen name wrap (AppRun action) = AppRun $ do
   environment <- ask
@@ -324,13 +406,14 @@ runOpen name wrap (AppRun action) = AppRun $ do
           Just (Completed identity) | identity == token attempt -> pure (Right ())
           _ -> throwIO exception
       Right completed -> case acquired of
-        Nothing -> pure completed
+        Nothing -> pure (either (Left . scopeFailureTarget name Nothing) Right completed)
         Just slot -> do
           current <- scopePhase <$> readIORef (scopeRecord slot)
           let finalPhase = finishScope OpenScope name wrap current completed
           setPhase slot finalPhase
           putMVar (scopeGate slot) ()
-          pure (maybe completed Left (scopeFailure finalPhase))
+          pure (either (Left . scopeFailureTarget name (Just slot)) Right
+            (maybe completed Left (scopeFailure finalPhase)))
   either throwError pure result
 
 runClose :: String -> (ScopeFault -> cause) -> App env cause () -> App env cause ()
@@ -366,10 +449,10 @@ runClose name wrap (AppRun action) = AppRun $ do
         forM_ acquired $ \(slot, initial) -> do
           setPhase slot (finishScope CloseScope name wrap initial completed)
           putMVar (scopeGate slot) ()
-        pure completed
+        pure (either (Left . scopeFailureTarget name (fst <$> acquired)) Right completed)
   either throwError pure result
 
 runApp :: Scopes env cause -> env -> App env cause value -> IO (Either (Failure cause) value)
 runApp handlers initial (AppRun action) = do
   values <- newIORef []
-  runExceptT (runReaderT action (Environment initial values handlers Nothing [] [] [] []))
+  runExceptT (runReaderT action (Environment initial values handlers Nothing [] [] [] [] [] [] Nothing Nothing))

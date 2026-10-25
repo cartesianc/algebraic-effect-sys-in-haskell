@@ -14,7 +14,7 @@ Context 也是 effect，通过 context.request／require 引入生产链能力�
 request 引用产值 effect，前插其能力且保留原 Input 前提；实际求值由 instance 引用生产类方法触发。
 
 同一注册集合内，生成的 superclass 合并原 Input 与 Context 来源的传递能力，直接重复约束去重，共享统一 Root、载体和 scope 句柄；不重挂来源链，也不把能力去重当作执行去重。独立生成模块的环境合并尚不在此范围。
-Root 统一调用入口已接通：`Effect.handler :: m value -> m value` 当前由 Root 实现为 `id`，其他生成 Effect instance 转交 Root。生成方法自动以 `handler @Root` 包住原协议，包括 Context 默认 require 与用户覆盖的 require；用户类方法名称、签名和引用写法不变。根入口不修改 caller，不提前求值，不另行 lower 上游。open／close 的复用也经过调用入口，但不重放资源操作。
+Root 统一调用入口已接通：`Effect.handler :: m value -> m value` 转交 SDK 的 Failure 捕获协议，其他生成 Effect instance 转交 Root。生成方法自动以 `handler @Root` 包住原协议，包括 Context 默认 require 与用户覆盖的 require；用户类方法名称、签名和引用写法不变。根入口不修改 caller，不提前求值，不另行 lower 上游。open／close 的复用也经过调用入口，但不重放资源操作。Error 的诊断回调由注册生成，无需 AST catch 节点。
 Middleware 作为独立 typing、由 AST／Hanging 装卸是后续设计；计划在装配阶段合并、去重后统一接到最高 Root，不保存旧 pipeline 路线。当前未实现 middleware 注册、执行策略或 Hanging 分支；整次启动与单个方法的策略边界仍需分别定义。
 
 Generated 模块只登记 AST 所选末端句柄。Target 保存未运行的 App／Pure 句柄及内部空存储，尚不是 impl。
@@ -59,14 +59,14 @@ AST 与注册关系均采用固定结构、引用和契约描述，供第三方�
 | Pure | 无对外业务产物的纯计算／检查 | 成功类型固定为 ()，失败使用 SDK 统一协议 |
 | Excu | 执行声明的操作 | 成功类型固定为 ()，接入能力并承接失败 |
 | Scoped | 开启、关闭，均为 m () | 维护同份 scope 的状态，重复／并发 open 复用；信息来自上游 Context，自动收尾待接入 |
-| Error | detect 检测、resolve 处置 | 注入原始故障，先检测，再按结果处置；保存原始与次生失败 |
+| Error | detect 定位、resolve 处置，均为 m () | Root 按 scope 顺序检测；Succ 后调用可选 resolve，保存原始与次生失败 |
 | Context | request 产值、require 读取 | 包装 instance 入口；request 成功发布新绑定，require 只读，失败保留该来源旧值 |
 
 各类别保持统一的 effect 抽象。Input 只组合被注入的操作句柄，不承载业务值；普通 Pure／Excu 返回 () 或 raise，不手写 Succ，也不新增每 effect 的状态表。跨 handler 的业务成功产值统一由 Context 提供，request 只能引用具有生产入口的 Context。Scoped 自身不产值，open／close 在 instance 中直接引用上游 Context 方法；只有 scope 具有 SDK 管理的存续状态。
 
-### 注册构造示意（待 review）
+### 注册构造
 
-注册使用普通 ADT 的不同构造器携带各自属性，不因字段不同而引入 type family 或 data family。普通方法名绑定使用 Maybe String，包括 Scoped.open／close；只有 Context.request 使用 Maybe Producer，将方法名和业务产物类型放在一起。Nothing 表示未绑定该方法，不把 handler 返回值改成 Maybe。Pure／Excu、Scoped 和 Context 的方法声明已生成；Context 绑定和 scope 的共享状态已接通，自动收尾与 Error 接口仍待接入。
+注册使用普通 ADT 的不同构造器携带各自属性，不因字段不同而引入 type family 或 data family。普通方法名绑定使用 Maybe String，包括 Scoped.open／close 和 Error.detect／resolve；只有 Context.request 使用 Maybe Producer，将方法名和业务产物类型放在一起。Nothing 表示未绑定该方法，不把 handler 返回值改成 Maybe。五类方法声明、Context 绑定、scope 状态和 Root 的 Error 协议已接通，自动收尾仍待接入。
 
 ```haskell
 -- 普通注册也把主方法名放入 typing
@@ -96,25 +96,25 @@ typing = Context
   }
 ```
 
-typing 保存本 effect 内的方法声明，只有 Context.request 的 Producer 声明业务产物；消费方 context.request 引用其他 Context 生产者，两层通过嵌套 record 区分。Pure／Excu 以 handler 为普通入口，Scoped 以 open 为入口，Context 以 request 为产值入口；require 的类型由同一生产契约推导，缺少该契约时报错。Error 的普通入口仍待设计。
+typing 保存本 effect 内的方法声明，只有 Context.request 的 Producer 声明业务产物；消费方 context.request 引用其他 Context 生产者，两层通过嵌套 record 区分。Pure／Excu 以 handler 为普通入口，Scoped 以 open 为入口，Context 以 request 为产值入口；require 的类型由同一生产契约推导，缺少该契约时报错。Error.input 直接引用匹配的 Scoped，由 Root 的故障协议调用，不作为普通 Node target。
 
 当前 handler = Nothing 不生成本地业务方法，保留类型契约与 Input 关系；被 target 选择时报没有入口。request 只允许引用具有生产方法的 Context。SDK 不猜测方法名，也不生成默认成功操作。其余多方法类别的缺省处置随协议另定，不能从 Nothing 自动推导出省略清理、吞掉错误或重新产值。
 
-注册中的 EffectTyping 保存方法声明，关联 Typing 只保存 SDK 的 EffectKind 类别标签，不把运行时 String 搬入类型级。当前已实现 PureKind／ExcuKind／ScopedKind／ContextKind，Error 类别接口尚未加入。顶层 produces 已移除：只有 Context.request 声明业务产物，普通 Pure／Excu 与 Scoped 的成功值均为 ()。完成边界由 SDK 返回 Succ value 或 Failed failure，不含 Pending。
+注册中的 EffectTyping 保存方法声明，关联 Typing 只保存 SDK 的 EffectKind 类别标签，不把运行时 String 搬入类型级。五类标签均已加入。顶层 produces 已移除：只有 Context.request 声明业务产物，其他类别的成功值均为 ()。完成边界由 SDK 返回 Succ value 或 Failed failure，不含 Pending。
 
-target 根据 typing 唯一确定调用入口，不要求 class 只有一个方法；request 固定选择 Context 的生产入口。Error 的故障路由不通过业务 request 表达，普通 target 的入口仍待设计；选择哪个 Error effect、覆盖单次操作还是整个 scope，也须明确声明。
+target 根据 typing 唯一确定调用入口，不要求 class 只有一个方法；request 固定选择 Context 的生产入口。Error 的匹配 scope 由 input 确定，故障路由不通过业务 request 表达；它仍可声明 Context 消费以供 instance 检查或处置。
 
 Error 注册类别与关联 Error e 是不同概念：前者组织检测和处置方法；后者由 SDK 生成 EffectNameError String，类型唯一确定所属 effect。原始 Failure 保存来源、自动分类和消息，传播或次生失败不覆盖原故障；不新增逐方法的 raise 接口，也不要求用户声明错误 ADT。
 
 使用 SDK 的 effect-codegen 输出普通 Haskell 源码，保留 Generated 模块供 review，避免 Template Haskell。生成类用 MINIMAL 和 -Werror=missing-methods 要求实现业务方法。Context.require 由 SDK 默认读取本次调用的成功绑定，不加入 MINIMAL；产值方法必须实现。Nothing 不生成该角色，缺少 open／close 不代表完整 scope 协议。只做必要的普通编译，不增加测试或额外检查门槛。
 
-### 类方法契约细化草案（待 review）
+### 类方法契约
 
 根 Effect 保留 Require、Produce、Error 关联契约和统一 raise，不新增统一业务 handle。Produce 是 SDK 内部成功类型，默认 ()；只有 Context.request 覆盖为业务 ADT，不含 Output。Input 注入上游方法，instance 直接引用；一个 effect 的多个协议方法仍可有不同签名。
 
 当前普通句柄没有 SDK 注入的位置参数：Pure／Excu 返回 m ()，Context 返回 m (Produce e)。
 实例内通过原生 `<-` 取得 Context 业务值，普通 case 只匹配已取得的值；声明 Input 不隐含传值。普通操作仍直接引用 superclass 方法。
-资源、故障和检测结果的协议参数只有在明确声明后才加入，不由 typing 自动补入。
+Error 同样不增加位置参数；需要原始故障时，通过 SDK 的 caughtFailure 读取当前诊断上下文。
 
 | 类别／方法 | 当前签名或候选 | 状态 |
 | --- | --- | --- |
@@ -122,21 +122,10 @@ Error 注册类别与关联 Error e 是不同概念：前者组织检测和处�
 | Context 生产／读取 | m (Produce e) | 类型来自 Producer.produces；生产成功保存，读取不重复执行 |
 | Scoped 开启 | m () | 直接引用上游 Context 方法完成开启；SDK 保证同份有效 scope 不重复执行 |
 | Scoped 关闭 | m () | 通过上游 require 读取信息，不重放生产；成功关闭不重复执行 |
-| Error detect | Failure Errors -> m (Detection evidence) | 原始故障与检测证据契约待 review |
-| Error resolve | Failure Errors -> Detection evidence -> m resolution | 同次故障和检测结果的处置契约待 review |
+| Error detect | m () | 返回 () 定位成功，raise 表示未定位；SDK 保存 Succ／Failed |
+| Error resolve | m () | 仅在本次 detect 成功后自动调用；完成结果不覆盖原故障 |
 
-e 在同组方法内指同一个 effect。evidence 与 resolution 仍是待定协议契约的占位，不是已新增的关联类型或配置字段；Error 多方法结果需单独 review，不借用 Context 的产物契约。关闭、检测和处置的参数不来自重新执行生产者，不能用 request 重开资源或重放失败操作。
-
-Detection 的固定结论层仍为提案，具体名称待 review：
-
-```haskell
-data Detection evidence
-  = Usable evidence
-  | Invalid evidence
-  | Unknown evidence
-```
-
-Unknown 表示检查完成但证据不足，不是 Pending；检测方法自身失败仍使用所属 effect 的错误契约。以下展开业务 ADT，仅展示同一 class 内的两组方法，不表示资源和故障协议已经实现：
+e 在同组方法内指同一个 effect。detect／resolve 与 Excu 使用相同的完成协议，不新增 Bool、Detection 或处置产物 ADT。Context 仍由 instance 显式引用；SDK 不为诊断重新执行生产者。以下展示同一 class 内的配对方法：
 
 ```haskell
 -- 上游 SessionContext 产出会话信息，Scope 自身不产值。
@@ -145,12 +134,10 @@ class Effect SessionContext m => CrawlSessionEffect m where
   closeCrawlSession :: m ()
   {-# MINIMAL openCrawlSession, closeCrawlSession #-}
 
--- 以下参数表示已显式声明的依值，具体注册语法仍待 review。
+-- Report 是被检查的 Scoped；上下文消费仍在注册中声明。
 class Effect Report m => ReportFaultEffect m where
-  detectReport :: Failure Errors -> ReportHandle
-               -> m (Detection ReportEvidence)
-  resolveReport :: Failure Errors -> Detection ReportEvidence
-                -> m Resolution
+  detectReport  :: m ()
+  resolveReport :: m ()
   {-# MINIMAL detectReport, resolveReport #-}
 ```
 
@@ -181,9 +168,9 @@ raise :: Error effect -> Body effect m value
 | T5a Scoped（已落实） | 同一 class 的 open／close 均为 m ()；信息来自上游 Context |
 | T5b scope 绑定 | App／IO 已按同批 Scoped 注册及实际开启参数值共享多份状态与 Context；结束边界待定 |
 | T6 Scoped 关闭 | 成功关闭去重，旧引用停止使用，显式 open 可重开；次生失败汇总和自动收尾待落实 |
-| T7a Error | 同一注册中的 detect／resolve 方法名及各自的结果契约 |
-| T7b Error 检测 | 原始故障、可选资源参数及检测结论 |
-| T8 Error 处置 | 消费同次故障和检测证据，明确处置产物，不附带自动恢复 |
+| T7a Error（已落实） | 同一注册中的可选 detect／resolve，均为 m () |
+| T7b Error 检测（已落实） | Root 捕获、scope 匹配、top-down 检测与原始故障读取 |
+| T8 Error 处置（已落实） | detect 成功后调用 resolve，保存完成报告，不自动重放或吞掉故障 |
 
 ## 原子定义、业务注册与调用分离
 
@@ -359,36 +346,25 @@ close 不预先选择 scope，也不预执行 Context。生成包装先进入关
 
 ScopeInstancesDemo 在一次 interpreter 中验证两份文件：同参复用、异参独立、跨 Input 链复用、require／close 选择一致、关闭后重开；五次 open 取得五次参数、实际获取三次资源。ScopeReuseDemo 与 ScopeClose 检查继续覆盖同参并发开启和重复关闭。
 
-状态分配不执行业务，AST 返回也不自动 close。重新创建一批运行句柄不共享状态；跨独立 interpreter 的存续不在当前范围。生命周期锁不覆盖取出 Handle 后的任意业务使用；使用与关闭并发协调、自动收尾、异步取消清理、Error 检测接入及 Linear 凭证仍待设计。
+状态分配不执行业务，AST 返回也不自动 close。重新创建一批运行句柄不共享状态；跨独立 interpreter 的存续不在当前范围。生命周期锁不覆盖取出 Handle 后的任意业务使用；使用与关闭并发协调、自动收尾、异步取消清理及 Linear 凭证仍待设计。Error 的同实例检测／处置串行化不等同于上述使用协调。
 
-这使“同一绑定保持同一值与资源归属”成为底层表示和 ContextStore 原语的约束，而不是额外 adaptor 的约定。但架构尚未成为能静态证明所有业务公理的系统：生成包装仍提供运行时协议，GHC 不证明 instance 必须使用 DI；App 中的任意 liftIO 不因句柄描述纯而变纯，Pure typing 也尚无完整的 IO 排除约束。Error 的 detect／resolve 仍待实现，不能用它假定外部执行总是确定。此次未增加新语法或形式化验证门槛。
+这使“同一绑定保持同一值与资源归属”成为底层表示和 ContextStore 原语的约束，而不是额外 adaptor 的约定。但架构尚未成为能静态证明所有业务公理的系统：生成包装仍提供运行时协议，GHC 不证明 instance 必须使用 DI；App 中的任意 liftIO 不因句柄描述纯而变纯，Pure typing 也尚无完整的 IO 排除约束。Error 使用用户定义的定位条件，不能用它假定外部执行总是确定。
 
 ## Error 的检测、处置与失效传播
 
-detect 和 resolve 是同一个 Error effect 的两个原子 handler，生成在同一个 typeclass 内，由同一 instance 提供实现，不再各自注册一个 effect。SDK interpreter 根据明确的故障路由调用这两个方法；AST 不重复声明其内部方法角色，处理范围仍须由声明确定。
+detect 和 resolve 是同一个 Error effect 的两个原子 handler，均以 Maybe String 声明、签名为 m ()。input 必须直接引用被检查的 Scoped，提供实例内调用其方法的 superclass 能力。Error 独立注册，SDK 将回调装配到 Root，不加入正常业务调用链或 AST；注册不提前执行检测。
 
-已确认的事件顺序为：
+Root 捕获传播到生成入口的 Failure，依据 Input 与 request 生产链形成 scope 候选路径，从 Root 方向向下检查，共享祖先去重；独立路径按生成顺序排列。候选依赖不是故障归属证明，detect 的实现负责定位。每项 detect 正常完成为 Succ ()，表示定位成功，随后调用可选 resolve；raise 得到 Failed，表示未能定位。无论该项完成或失败，继续处理其余相关 scope。没有 detect 时不自动 resolve，两者均 Nothing 时没有自动操作。
 
-```text
-业务操作失败
-  → 当前失败分支停止推进
-  → 沿相关 scope 关系调用选定 Error effect 的 detect
-  → 根据检测结论判定对应 scope 的状态
-  → 失效沿依赖关系向下传播，停止受影响的业务节点
-  → 调用该 Error effect 的 resolve，并完成必要收尾
-```
+原始故障可通过 `caughtFailure :: m (Maybe (Failure cause))` 读取。SDK 把检测／处置的 Succ 或 Failed 结果保存到原 Failure.errorHandling，保留 origin、detail、message；最终仍传播原失败，不因处置成功把失败业务当作完成。scopeTrace 只保存候选路径，已处理标记防止多层 Root 重复检测，检测和处置的次生失败不递归激活自己。
 
-resolve 表示处置，不承诺恢复。最新设计采用故障后停止受影响执行的规则，不要求轮询、自动重试或自动恢复。停止下游由 SDK 根据依赖关系统一执行，resolve 方法不重新编排一次整条停止流程。
+诊断使用故障时绑定的隔离快照。普通故障按已捕获资源绑定的归属确定实例；open／close 故障优先使用本次生命周期实际选定的实例证据，并隔离其他实例的旧绑定。尚未选定实例时不猜测，也不拿最近一次成功产物代替此次失败资源。SDK 不扫描其他实例、不预执行 Context、不重新 boot；匹配实例的失败绑定可供检测和清理读取，其他绑定保留正常状态检查。
 
-业务故障、对被检查条件的检测结论，以及检测操作自身的失败，需要保留区别。建议检测结果明确表达条件成立、条件不成立和无法判断；这是待落实的结果协议，具体构造器与错误类型尚未定案。
+open／close 内部持锁时延后诊断，退到生命周期锁外再执行；同实例用独立 MVar 串行化检测和处置，生命周期锁不跨回调持有。这不保证检测与其他调用的资源使用／关闭互斥。被业务在锁内 catch 后消化、没有继续传播到安全 Root 边界的故障，不承诺进入自动诊断；任意未转换为 Failure 的 IO 异常也不由此协议捕获。
 
-显式 pipeline 提供排查范围、路径和故障归属依据。实际检测取得的证据决定可以得出多强的结论；检测当前正常不能证明原故障没有发生，也不能仅凭一次检测失败保证定位了唯一根因。原始失败保持独立，检测、处置和清理的次生结果作为后续证据保留。
+resolve 可通过 superclass 方法显式清理或重建资源，但 SDK 不自动 invalidate、close、reopen 或重放业务方法。定位成功只表示用户的检测条件成立，实际 scope 状态仍由生命周期操作决定。现有 ExceptT 的失败短路仍保留，不自动恢复已展开的 continuation，也不取消其他已经运行的并行分支。
 
-用于检测的原子操作应按检测契约执行。重复检测不默认重放有副作用的原业务操作。
-
-失效传播阻止未开始的业务调用，受影响的运行任务进入取消或停止协议。诊断、处置和释放路径必须仍可按协议完成，但不能因此使用已经释放的资源或绕过它们真正依赖的能力条件。
-
-检测正常后向上检查的规则、无法判断时影响哪一层 scope，以及检测或处置自身失败时如何收尾，仍需明确。它们决定停止范围和结果归属，不改变已经确定的故障停止原则。
+FileDemo 的 FileRecovery 演示：require 原文件句柄，用 hIsClosed 检查意外关闭；已关闭时 detect 返回 ()，否则 raise 表示未定位；resolve 直接引用 closeFileSession。正常路径不注入故障，文件读写仍由原末端执行。
 
 ## 当前实现
 
@@ -405,7 +381,7 @@ resolve 表示处置，不承诺恢复。最新设计采用故障后停止受影
 两者的手写入口、注册、handler 与生成模块分别可 review；
 仍使用的并发辅助函数已并入当前 SDK。
 
-同次 AST 的 scope 共享状态已接入；自动收尾、Error 检测处置、Generic Map 和 loop／Hanging 尚未接入，不能把已生成方法签名当作这些协议已实现。
+同次 AST 的 scope 共享状态与 Root 的 Error 检测／处置已接入；自动收尾、使用与关闭协调、Generic Map 和 loop／Hanging 尚未接入。
 
 ## 第一版实现范围
 
@@ -417,9 +393,9 @@ resolve 表示处置，不承诺恢复。最新设计采用故障后停止受影
 2. AST 挂载一个选定目标，由其注册中的 request 带入产值前置，不在 AST 复写整条链。
 3. 开启一个 scope；多次业务 request 使用同一份可用能力，不重复开启它。
 4. 接入内置结构适配和 Context 产值转换，明确一次产值的绑定，让多个消费者 require 同一份结果；另一次 request 产生新结果。
-5. 故障后调用 Error effect 的 detect，判定失效并停止依赖该 scope 的剩余业务调用，再调用同一 Error effect 的 resolve；scope 收尾调用所属 effect 的 close。
+5. 故障经 Root 触发相关 Error 的 detect，定位成功后调用同一 effect 的 resolve；若需清理，resolve 引用所属 scope 的 close。原失败及诊断结果继续传播，不重放业务。
 
-Input 继承、instance 内引用、末端登记与 Node lowering 已接入；普通 Context 按单次启动绑定，scope 开启期 Context 随同次 AST 的 scope 共享。跨入口存续、自动收尾与 Error 协议继续细化。Generic Map 尚未接入，当前读取连接要求同一业务 ADT。handler 已实现不等于应自动执行，统一入口只驱动声明可达并满足条件的调用。
+Input 继承、instance 内引用、末端登记、Node lowering 与 Error 协议已接入；普通 Context 按单次启动绑定，scope 开启期 Context 随同次 AST 的 scope 共享。跨入口存续与自动收尾继续细化。Generic Map 尚未接入，当前读取连接要求同一业务 ADT。handler 已实现不等于应自动执行，统一入口只驱动声明可达并满足条件的调用。
 
 当前只做必要的普通编译，不新增测试、负例或额外检查门槛。现有检查和 mock 不反向决定新接口。后续并发、等待和跨入口存续的实现，必须在相应语义明确后展开。
 
@@ -428,7 +404,7 @@ Input 继承、instance 内引用、末端登记与 Node lowering 已接入；�
 | 项目 | 已确定 | 仍需落实 |
 | --- | --- | --- |
 | facade 与注册 | 固定 interpreter ast effects；注册保存可调用入口和取值关系，AST 可只挂载链目标 | 注册引用的类型与 schema、入口数据绑定、异构注册集合的接口 |
-| 注册类别与方法 | 分类仅 Pure／Excu／Scoped／Error／Context；已生成 Pure／Excu／Scoped／Context 方法，Context 读取有 SDK 默认实现 | Scoped 自动收尾；Error 方法接口与执行协议 |
+| 注册类别与方法 | 分类仅 Pure／Excu／Scoped／Error／Context；五类方法均已生成，Context 读取有 SDK 默认实现 | Scoped 自动收尾 |
 | request 与输出绑定 | request 组合新的产值调用；require 读已有输出；两者不重放可用 scope | 多操作 effect 的入口选择、调用与输出引用格式、缺值和未就绪的表达 |
 | Context | 经 request／require 接入；普通绑定在 Node 内，scope 保存开启期绑定；require 读取固定快照，request 显式替换当前绑定 | 跨入口存续、多份绑定与更细的有效范围 |
 | Node lowering | Target 保存未运行的末端与生成 scope 引用；Node algebra 只 lower，普通 Context 仍独立；构造器与裸运行器不导出 | 自动收尾、更细范围与跨入口存续 |
@@ -436,7 +412,7 @@ Input 继承、instance 内引用、末端登记与 Node lowering 已接入；�
 | 闭包装配 | Node algebra 只 lower 所选末端，实例内引用带起上游；不要求通用图 runtime | Context／scope 存续及显式共享引用 |
 | 控制与触发 | AST 负责启动与执行控制，不维护业务状态转移；chained／parallel 已以 cata 装配；loop 与二者同级，无条件、无跨调用业务状态；Hanging 承接事件入口 | loop／Hanging 接入、监听范围、单次失败与重叠处理、停止收尾；其余 branch 构造及嵌套规则 |
 | scope 边界 | open／close 均为 m ()，SDK 生成状态检查；同批句柄按开启参数跨 Input 链共享 MVar 状态，同参有效实例复用，显式 open 可重开已关闭实例 | 使用与关闭协调、自动收尾与取消清理、跨入口存续 |
-| 诊断与处置 | 同一 Error effect 内 detect 在前、resolve 在后，不要求自动恢复；原错误与本 effect 自身错误分开 | 处理范围、检测证据与处置产物、排查次序、不确定结论的停止范围、次生失败与收尾 |
+| 诊断与处置 | Root 按 scope top-down 检测；detect Succ 后 resolve，保留原错误与各项完成报告；不自动重放或恢复 | 资源使用与诊断／关闭协调、已展开 continuation 的恢复、跨调用诊断范围 |
 | 值转换 | Generic Map 为 SDK 内置适配，不新增 adapter 配置或 Map typing；对外产值的业务纯转换注册为 Context | 原型接入注册、支持的契约结构、转换的失败输出接口 |
 | 序列化 | 保存结构、引用和契约，不保存执行闭包与活资源 | 固定 schema、类型引用及 SDK 协议识别方式 |
 

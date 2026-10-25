@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module ScopeReuseDemo.Generated.Handlers (newScopeHandlers) where
+module ScopeReuseDemo.Generated.Handlers (newScopeHandlers, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -33,7 +33,7 @@ import System.IO.Error (tryIOError)
 
 instance FileLocationsEffect App where
   getFilePaths =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations" FrameworkGenerated.ContextBindingError
       [("PrepareProbe", FrameworkRuntime.RequestValue), ("FileResource", FrameworkRuntime.RequestValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocations"))
       FrameworkGenerated.boundFileLocations
@@ -46,7 +46,7 @@ instance FileLocationsEffect App where
 
 instance PrepareProbeEffect App where
   prepareProbe =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareProbe") $
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareProbe") $
       let
         prepareProbe = do
           FilePaths path journal <- getFilePaths
@@ -60,7 +60,7 @@ instance PrepareProbeEffect App where
 
 instance FileResourceEffect App where
   acquireFile =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
       [("SharedFileScope", FrameworkRuntime.RequestValue), ("WriteFirst", FrameworkRuntime.RequireValue), ("WriteSecond", FrameworkRuntime.RequireValue), ("WriteThird", FrameworkRuntime.RequireValue), ("VerifyReuse", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundFileResource
@@ -80,7 +80,7 @@ instance FileResourceEffect App where
 
 instance SharedFileScopeEffect App where
   openSharedFile =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
+    (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
       let
         openSharedFile = do
           OpenedFile (FilePaths _ journal) _ _ <- acquireFile
@@ -89,7 +89,7 @@ instance SharedFileScopeEffect App where
       in openSharedFile
 
   closeSharedFile =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
+    (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
       let
         closeSharedFile = do
           OpenedFile (FilePaths _ journal) file _ <- readOpenedFile
@@ -104,7 +104,7 @@ instance SharedFileScopeEffect App where
 -- 不在业务中加打开标志或互斥锁，重复开启的保护完全来自 SDK。
 instance WriteFirstEffect App where
   writeFirst =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteFirst") $
+    (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteFirst") $
       let
         writeFirst = do
           openSharedFile
@@ -115,7 +115,7 @@ instance WriteFirstEffect App where
 
 instance WriteSecondEffect App where
   writeSecond =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteSecond") $
+    (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteSecond") $
       let
         writeSecond = do
           openSharedFile
@@ -126,7 +126,7 @@ instance WriteSecondEffect App where
 
 instance WriteThirdEffect App where
   writeThird =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteThird") $
+    (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteThird") $
       let
         writeThird = do
           openSharedFile
@@ -137,7 +137,7 @@ instance WriteThirdEffect App where
 
 instance VerifyReuseEffect App where
   verifyReuse =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "VerifyReuse") $
+    (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "VerifyReuse") $
       let
         verifyReuse = do
           OpenedFile (FilePaths _ journal) file observed <- readOpenedFile
@@ -208,4 +208,10 @@ readFully file = go []
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
 newScopeHandlers = sequence
   [ FrameworkRuntime.newScopeHandler "SharedFileScope" ["FileLocations"] (Just "FileResource")
+  ]
+
+-- Root 的异常入口，按 scope 的拓扑顺序从上向下检测。
+errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated.App)]
+errorHandlers =
+  [
   ]

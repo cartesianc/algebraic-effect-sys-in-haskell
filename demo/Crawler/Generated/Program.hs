@@ -6,6 +6,7 @@ module Crawler.Generated.Program where
 
 import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), TypeRef(..), Output)
 import qualified Framework.SDK as SDK
+import qualified Framework.Effect.Contract as FrameworkRoot
 import Crawler.Generated.Effects
 import qualified Crawler.Generated.Handlers as Handlers
 import Crawler.Types
@@ -20,11 +21,11 @@ compiledEntries :: IO [SDK.Target IO ContextValues Errors Results]
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    [ SDK.targetApp "ExtractPage" emptyContexts scopes (ExtractPageResult <$> extractPage)
-    , SDK.targetApp "ExtractLinkedPage" emptyContexts scopes (ExtractLinkedPageResult <$> extractLinkedPage)
-    , SDK.targetApp "PrintPage" emptyContexts scopes (PrintPageResult <$> printPage)
-    , SDK.targetApp "PrintLinkedPage" emptyContexts scopes (PrintLinkedPageResult <$> printLinkedPage)
-    , SDK.targetApp "FinishCrawl" emptyContexts scopes (FinishCrawlResult <$> finishCrawl)
+    [ SDK.targetApp "ExtractPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (ExtractPageResult <$> extractPage))
+    , SDK.targetApp "ExtractLinkedPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (ExtractLinkedPageResult <$> extractLinkedPage))
+    , SDK.targetApp "PrintPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (PrintPageResult <$> printPage))
+    , SDK.targetApp "PrintLinkedPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (PrintLinkedPageResult <$> printLinkedPage))
+    , SDK.targetApp "FinishCrawl" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FinishCrawlResult <$> finishCrawl))
     ]
 
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。

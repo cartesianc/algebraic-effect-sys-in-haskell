@@ -20,6 +20,7 @@ lowerProgram namespace specifications entry = do
     then Left "Root is reserved for the superclass"
     else pure ()
   mapM_ checkInput specifications
+  mapM_ checkError specifications
   mapM_ (contextNames specifications . pure . name) specifications
   if null selected
     then Left "Select at least one terminal effect for generation"
@@ -32,7 +33,8 @@ lowerProgram namespace specifications entry = do
       pure
         [ "-- 纯计算样例也只登记末端句柄，不在外部组合上游。"
         , "compiledTarget :: SDK.Target SDK.Identity ContextValues Errors (Produce " ++ terminal ++ ")"
-        , "compiledTarget = SDK.targetPure " ++ show terminal ++ " emptyContexts " ++ method
+        , "compiledTarget = SDK.targetPure " ++ show terminal ++ " emptyContexts"
+        , "  (FrameworkRoot.withErrorHandlers Handlers.errorHandlers " ++ method ++ ")"
         , ""
         , "benchmark :: Output Errors (Produce " ++ terminal ++ ")"
         , "benchmark = SDK.bootPure compiledTarget"
@@ -46,7 +48,7 @@ lowerProgram namespace specifications entry = do
     ( unlines (contractHeader ++ runtimeAliases ++ concat declarations ++ errorDeclaration ++ contextDeclarations)
     , unlines (programHeader ++ singleEntry ++ astInterpreter selectedMethods)
     , concatMap instanceWrappers specifications
-    , scopeHandlers
+    , scopeHandlers ++ errorHandlers
     )
   where
     selected = case entry of
@@ -87,9 +89,9 @@ lowerProgram namespace specifications entry = do
       , ""
       , "import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), TypeRef(..), Output)"
       , "import qualified Framework.SDK as SDK"
+      , "import qualified Framework.Effect.Contract as FrameworkRoot"
       , "import " ++ namespace ++ ".Generated.Effects"
-      , if isWorkflow then "import qualified " ++ namespace ++ ".Generated.Handlers as Handlers"
-                      else "import " ++ namespace ++ ".Generated.Handlers ()"
+      , "import qualified " ++ namespace ++ ".Generated.Handlers as Handlers"
       , "import " ++ namespace ++ ".Types"
       , ""
       ]
@@ -104,7 +106,8 @@ lowerProgram namespace specifications entry = do
     -- 注册时连接生产/读取入口；业务方法使用原生 Haskell 取值，不改写表达式。
     instanceWrappers specification =
       [ (name specification ++ "Effect", method, wrapper method)
-      | method <- maybeToList (entryMethod (typing specification)) ++ closing ++ maybeToList reading ]
+      | method <- maybeToList (entryMethod (typing specification)) ++ closing
+          ++ errorMethods specification ++ maybeToList reading ]
       where
         selectedName = name specification
         closing = case typing specification of
@@ -115,10 +118,12 @@ lowerProgram namespace specifications entry = do
           _ -> Nothing
         scopedDependencies = "FrameworkRuntime.withScopeDependencies "
           ++ show (upstreamScopes specification)
+        rootWrapper = "FrameworkRoot.withErrorPath " ++ show (errorPath specification)
+          ++ " . FrameworkRoot.handler @FrameworkGenerated.Root"
         wrapper method
           -- require 的覆盖实现也进入 Root；不刷新来源或改变消费者身份。
-          | Just method == reading = "FrameworkRoot.handler @FrameworkGenerated.Root"
-          | otherwise = "(FrameworkRoot.handler @FrameworkGenerated.Root . " ++ (case typing specification of
+          | Just method == reading = "(" ++ rootWrapper ++ ")"
+          | otherwise = "(" ++ rootWrapper ++ " . " ++ (case typing specification of
               -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
               Scoped _ closingMethod ->
                 "FrameworkRuntime." ++ (if Just method == closingMethod then "closeScope " else "openScope ")
@@ -143,14 +148,21 @@ lowerProgram namespace specifications entry = do
           | fmap sourceName (requireInput consumer) == Just selectedName = Just "RequireValue"
           | otherwise = Nothing
 
-    -- 同时保留原 Input 和 request 生产链的 scope；require 不启动生产链。
+    errorMethods specification = case typing specification of
+      Error detecting resolving -> maybeToList detecting ++ maybeToList resolving
+      _ -> []
+
+    -- 同时保留原 Input 和 request 生产链；从 Root 方向向下，先原 Input 再 request。
+    -- 共享祖先按身份去重；require 不启动生产链。
     operationInputs specification = nub (input specification : maybeToList (requestSource specification))
     upstreamScopes specification = nub (concatMap (scopeNames []) (operationInputs specification))
+    errorPath specification = nub (scopeNames [] (name specification))
+    orderedScopes = nub (concatMap errorPath specifications)
     scopeNames seen selectedName
       | selectedName `elem` seen = []
       | otherwise = concat
-          [ (case typing specification of Scoped _ _ -> [selectedName]; _ -> [])
-            ++ concatMap (scopeNames (selectedName : seen)) (operationInputs specification)
+          [ concatMap (scopeNames (selectedName : seen)) (operationInputs specification)
+            ++ (case typing specification of Scoped _ _ -> [selectedName]; _ -> [])
           | specification <- specifications, name specification == selectedName ]
 
     -- scope.request 指向资源生产者；它声明消费的 Context 值构成开启输入。
@@ -177,9 +189,11 @@ lowerProgram namespace specifications entry = do
     -- Nothing 可保留为声明，但不能被选择为可执行入口。
     findHandler effectName = do
       specification <- findEffect effectName
-      case entryMethod (typing specification) of
-        Just method -> Right method
-        Nothing -> Left ("Effect has no callable entry (handler/open/Context.request = Nothing): " ++ effectName)
+      case typing specification of
+        Error _ _ -> Left ("Error methods are activated by the Root failure protocol, not a Node target: " ++ effectName)
+        _ -> case entryMethod (typing specification) of
+          Just method -> Right method
+          Nothing -> Left ("Effect has no callable entry (handler/open/Context.request = Nothing): " ++ effectName)
 
     -- 业务取值只引用 Context；Input 仍只注入句柄，不暗含业务产物。
     findRequest effectName = do
@@ -197,6 +211,20 @@ lowerProgram namespace specifications entry = do
             Context _ _ -> Left ("Input cannot reference Context " ++ name predecessor
               ++ " in " ++ name specification ++ "; declare context.request or context.require instead")
             _ -> Right ()
+
+    -- Error 直接继承目标 Scoped；自动路由每份 scope 只安装一项策略。
+    checkError specification = case typing specification of
+      Error _ _ -> do
+        predecessor <- findEffect (input specification)
+        case typing predecessor of
+          Scoped _ _ -> pure ()
+          _ -> Left ("Error.input must reference a Scoped effect: " ++ name specification)
+        case [name candidate | candidate <- specifications
+              , effectKind (typing candidate) == ErrorKind
+              , input candidate == input specification] of
+          [_] -> pure ()
+          _ -> Left ("Multiple Error policies for scope: " ++ input specification)
+      _ -> pure ()
 
     -- 被 Input 后端复用的 scope 仍须提供完整开启／关闭协议。
     checkScope effectName = do
@@ -232,6 +260,7 @@ lowerProgram namespace specifications entry = do
                 PureKind -> "m ()"
                 ExcuKind -> "m ()"
                 ScopedKind -> "m ()"
+                ErrorKind -> "m ()"
                 _ -> "m (Produce " ++ effectName ++ ")")
             | method <- maybeToList (entryMethod (typing specification)) ]
           -- open／close 不产值；资源信息来自显式声明的上游 Context。
@@ -239,11 +268,13 @@ lowerProgram namespace specifications entry = do
             Scoped _ closing -> [(method, "m ()") | method <- maybeToList closing]
             _ -> []
           methods = ordinaryMethods ++ closingMethods
+            ++ [(method, "m ()") | method <- errorMethods specification]
           methodLines = ["  " ++ method ++ " :: " ++ signature | (method, signature) <- methods]
           readingLines = case typing specification of
             Context _ (Just method) ->
               [ "  " ++ method ++ " :: m (Produce " ++ effectName ++ ")"
-              , "  " ++ method ++ " = FrameworkRoot.handler @Root $"
+              , "  " ++ method ++ " = (FrameworkRoot.withErrorPath " ++ show (errorPath specification)
+                ++ " . FrameworkRoot.handler @Root) $"
               , "    SDK.readContext " ++ show effectName
                 ++ " ContextBindingError " ++ observation "SDK." effectName ++ " bound" ++ effectName
               ]
@@ -324,6 +355,27 @@ lowerProgram namespace specifications entry = do
           , "  ]"
           ]
 
+    -- 只保存类方法引用；安装时不检测、不处置，也不执行上游业务。
+    errorHandlers = unlines
+      [ ""
+      , "-- Root 的异常入口，按 scope 的拓扑顺序从上向下检测。"
+      , "errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated." ++ carrier ++ ")]"
+      , "errorHandlers ="
+      , "  [" ++ if null callbacks then "" else " " ++ intercalate "\n  , " callbacks
+      , "  ]"
+      ]
+      where
+        carrier = if isWorkflow then "App" else "Pure"
+        callbacks =
+          [ "(" ++ show selectedScope ++ ", FrameworkRoot.ErrorHandler " ++ show (name specification)
+              ++ " (" ++ methodReference detecting ++ ") (" ++ methodReference resolving ++ "))"
+          | selectedScope <- orderedScopes
+          , specification <- specifications
+          , input specification == selectedScope
+          , Error detecting resolving <- [typing specification] ]
+        methodReference Nothing = "Nothing"
+        methodReference (Just method) = "Just " ++ method
+
     astInterpreter methods
       | not isWorkflow = []
       | otherwise =
@@ -339,7 +391,8 @@ lowerProgram namespace specifications entry = do
           , "  scopes <- Handlers.newScopeHandlers"
           , "  pure"
           , "    [ " ++ intercalate "\n    , "
-              ["SDK.targetApp " ++ show terminal ++ " emptyContexts scopes (" ++ terminal ++ "Result <$> " ++ method ++ ")"
+              ["SDK.targetApp " ++ show terminal ++ " emptyContexts scopes"
+                ++ " (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (" ++ terminal ++ "Result <$> " ++ method ++ "))"
               | (terminal, method) <- zip selected methods]
           , "    ]"
           , ""

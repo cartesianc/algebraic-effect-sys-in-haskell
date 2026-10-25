@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module Crawler.Generated.Handlers (newScopeHandlers) where
+module Crawler.Generated.Handlers (newScopeHandlers, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -35,7 +35,7 @@ import Text.HTML.TagSoup
 -- SDK 包装编译副本：request 成功保存，require 只读；本例仍声明重新抓取。
 instance CrawlerContextEffect App where
   loadCrawlURLs =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "CrawlerContext" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "CrawlerContext" FrameworkGenerated.ContextBindingError
       [("FetchPage", FrameworkRuntime.RequestValue), ("FetchLinkedPage", FrameworkRuntime.RequestValue)]
       Nothing
       FrameworkGenerated.boundCrawlerContext
@@ -49,7 +49,7 @@ instance CrawlerContextEffect App where
 
 instance FetchPageEffect App where
   fetchPage =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "FetchPage" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "FetchPage" FrameworkGenerated.ContextBindingError
       [("ExtractPage", FrameworkRuntime.RequestValue)]
       Nothing
       FrameworkGenerated.boundFetchPage
@@ -65,7 +65,7 @@ instance FetchPageEffect App where
 
 instance FetchLinkedPageEffect App where
   fetchLinkedPage =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "FetchLinkedPage" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "FetchLinkedPage" FrameworkGenerated.ContextBindingError
       [("ExtractLinkedPage", FrameworkRuntime.RequestValue)]
       Nothing
       FrameworkGenerated.boundFetchLinkedPage
@@ -81,7 +81,7 @@ instance FetchLinkedPageEffect App where
 
 instance ExtractPageEffect App where
   extractPage =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractPage" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractPage" FrameworkGenerated.ContextBindingError
       [("PrintPage", FrameworkRuntime.RequestValue)]
       Nothing
       FrameworkGenerated.boundExtractPage
@@ -94,7 +94,7 @@ instance ExtractPageEffect App where
 
 instance ExtractLinkedPageEffect App where
   extractLinkedPage =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractLinkedPage" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractLinkedPage" FrameworkGenerated.ContextBindingError
       [("PrintLinkedPage", FrameworkRuntime.RequestValue)]
       Nothing
       FrameworkGenerated.boundExtractLinkedPage
@@ -107,7 +107,7 @@ instance ExtractLinkedPageEffect App where
 
 instance PrintPageEffect App where
   printPage =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "PrintPage") $
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "PrintPage") $
       let
         printPage = do
           page@(PageSummary url _ _ _) <- extractPage
@@ -117,7 +117,7 @@ instance PrintPageEffect App where
 
 instance PrintLinkedPageEffect App where
   printLinkedPage =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "PrintLinkedPage") $
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "PrintLinkedPage") $
       let
         printLinkedPage = do
           page@(PageSummary url _ _ _) <- extractLinkedPage
@@ -128,7 +128,7 @@ instance PrintLinkedPageEffect App where
 -- AST 汇合后的收尾节点，直接引用同一 Scoped 的关闭方法。
 instance FinishCrawlEffect App where
   finishCrawl =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FinishCrawl") $
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FinishCrawl") $
       let
         finishCrawl = closeCrawlSession
       in finishCrawl
@@ -203,7 +203,7 @@ printSummary (PageSummary url title content links) = do
 -- 会话信息由上游 Context 生产，SDK 在 scope 内保存并供各抓取链读取。
 instance SessionContextEffect App where
   createCrawlSession =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "SessionContext" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "SessionContext" FrameworkGenerated.ContextBindingError
       [("FetchPage", FrameworkRuntime.RequireValue), ("FetchLinkedPage", FrameworkRuntime.RequireValue), ("CrawlSession", FrameworkRuntime.RequestValue)]
       Nothing
       FrameworkGenerated.boundSessionContext
@@ -216,14 +216,14 @@ instance SessionContextEffect App where
 -- 本次 AST 内无论多少条链调用 open，SDK 只执行一次方法体；结束节点显式 close。
 instance CrawlSessionEffect App where
   openCrawlSession =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
       let
         openCrawlSession = do
           CrawlSessionInfo name _ <- createCrawlSession
           liftIO (putStrLn ("[scope] open " ++ name))
       in openCrawlSession
   closeCrawlSession =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
       let
         closeCrawlSession = do
           CrawlSessionInfo name _ <- readCrawlSession
@@ -235,4 +235,10 @@ instance CrawlSessionEffect App where
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
 newScopeHandlers = sequence
   [ FrameworkRuntime.newScopeHandler "CrawlSession" [] (Just "SessionContext")
+  ]
+
+-- Root 的异常入口，按 scope 的拓扑顺序从上向下检测。
+errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated.App)]
+errorHandlers =
+  [
   ]

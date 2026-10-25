@@ -6,13 +6,15 @@ module RequestBenchmark.Generated.Program where
 
 import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), TypeRef(..), Output)
 import qualified Framework.SDK as SDK
+import qualified Framework.Effect.Contract as FrameworkRoot
 import RequestBenchmark.Generated.Effects
-import RequestBenchmark.Generated.Handlers ()
+import qualified RequestBenchmark.Generated.Handlers as Handlers
 import RequestBenchmark.Types
 
 -- 纯计算样例也只登记末端句柄，不在外部组合上游。
 compiledTarget :: SDK.Target SDK.Identity ContextValues Errors (Produce RenderNumber)
-compiledTarget = SDK.targetPure "RenderNumber" emptyContexts renderNumber
+compiledTarget = SDK.targetPure "RenderNumber" emptyContexts
+  (FrameworkRoot.withErrorHandlers Handlers.errorHandlers renderNumber)
 
 benchmark :: Output Errors (Produce RenderNumber)
 benchmark = SDK.bootPure compiledTarget

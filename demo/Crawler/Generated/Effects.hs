@@ -27,7 +27,7 @@ data CrawlerContext
 class (Effect CrawlSession m) => CrawlerContextEffect m where
   loadCrawlURLs :: m (Produce CrawlerContext)
   readCrawlURLs :: m (Produce CrawlerContext)
-  readCrawlURLs = FrameworkRoot.handler @Root $
+  readCrawlURLs = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
     SDK.readContext "CrawlerContext" ContextBindingError Nothing boundCrawlerContext
   {-# MINIMAL loadCrawlURLs #-}
 
@@ -45,7 +45,7 @@ data FetchPage
 class (Effect CrawlSession m, Effect CrawlerContext m, Effect SessionContext m, Produce CrawlerContext ~ (CrawlURLs), Produce SessionContext ~ (CrawlSessionInfo)) => FetchPageEffect m where
   fetchPage :: m (Produce FetchPage)
   readFetchedPage :: m (Produce FetchPage)
-  readFetchedPage = FrameworkRoot.handler @Root $
+  readFetchedPage = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
     SDK.readContext "FetchPage" ContextBindingError Nothing boundFetchPage
   {-# MINIMAL fetchPage #-}
 
@@ -63,7 +63,7 @@ data ExtractPage
 class (Effect CrawlSession m, Effect FetchPage m, Produce FetchPage ~ (FetchedPage)) => ExtractPageEffect m where
   extractPage :: m (Produce ExtractPage)
   readPageSummary :: m (Produce ExtractPage)
-  readPageSummary = FrameworkRoot.handler @Root $
+  readPageSummary = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
     SDK.readContext "ExtractPage" ContextBindingError Nothing boundExtractPage
   {-# MINIMAL extractPage #-}
 
@@ -95,7 +95,7 @@ data FetchLinkedPage
 class (Effect CrawlSession m, Effect CrawlerContext m, Effect SessionContext m, Produce CrawlerContext ~ (CrawlURLs), Produce SessionContext ~ (CrawlSessionInfo)) => FetchLinkedPageEffect m where
   fetchLinkedPage :: m (Produce FetchLinkedPage)
   readFetchedLinkedPage :: m (Produce FetchLinkedPage)
-  readFetchedLinkedPage = FrameworkRoot.handler @Root $
+  readFetchedLinkedPage = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
     SDK.readContext "FetchLinkedPage" ContextBindingError Nothing boundFetchLinkedPage
   {-# MINIMAL fetchLinkedPage #-}
 
@@ -113,7 +113,7 @@ data ExtractLinkedPage
 class (Effect CrawlSession m, Effect FetchLinkedPage m, Produce FetchLinkedPage ~ (FetchedPage)) => ExtractLinkedPageEffect m where
   extractLinkedPage :: m (Produce ExtractLinkedPage)
   readLinkedPageSummary :: m (Produce ExtractLinkedPage)
-  readLinkedPageSummary = FrameworkRoot.handler @Root $
+  readLinkedPageSummary = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
     SDK.readContext "ExtractLinkedPage" ContextBindingError Nothing boundExtractLinkedPage
   {-# MINIMAL extractLinkedPage #-}
 
@@ -145,7 +145,7 @@ data SessionContext
 class (Effect Root m) => SessionContextEffect m where
   createCrawlSession :: m (Produce SessionContext)
   readCrawlSession :: m (Produce SessionContext)
-  readCrawlSession = FrameworkRoot.handler @Root $
+  readCrawlSession = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "SessionContext" ContextBindingError Nothing boundSessionContext
   {-# MINIMAL createCrawlSession #-}
 

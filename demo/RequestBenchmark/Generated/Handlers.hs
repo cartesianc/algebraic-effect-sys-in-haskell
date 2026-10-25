@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module RequestBenchmark.Generated.Handlers () where
+module RequestBenchmark.Generated.Handlers (errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -21,7 +21,7 @@ import RequestBenchmark.Types
 -- 2. Context 通过 request/require 接入；保存与读取由 SDK 生成的入口接管。
 instance DemoContextEffect Pure where
   loadDemoInputs =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "DemoContext" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "DemoContext" FrameworkGenerated.ContextBindingError
       [("MakeNumber", FrameworkRuntime.RequestValue), ("RenderNumber", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundDemoContext
@@ -35,7 +35,7 @@ instance DemoContextEffect Pure where
 -- 错误构造器由 SDK 按 effect 名生成；用户只填写消息，raise 自动保留来源。
 instance MakeNumberEffect Pure where
   makeNumber =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "MakeNumber" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "MakeNumber" FrameworkGenerated.ContextBindingError
       [("AddOne", FrameworkRuntime.RequestValue)]
       Nothing
       FrameworkGenerated.boundMakeNumber
@@ -50,7 +50,7 @@ instance MakeNumberEffect Pure where
 
 instance Effect MakeNumber m => AddOneEffect m where
   addOne =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "AddOne" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "AddOne" FrameworkGenerated.ContextBindingError
       [("RenderNumber", FrameworkRuntime.RequestValue)]
       Nothing
       FrameworkGenerated.boundAddOne
@@ -63,7 +63,7 @@ instance Effect MakeNumber m => AddOneEffect m where
 
 instance Effect AddOne m => RenderNumberEffect m where
   renderNumber =
-    (FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "RenderNumber" FrameworkGenerated.ContextBindingError
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "RenderNumber" FrameworkGenerated.ContextBindingError
       []
       Nothing
       FrameworkGenerated.boundRenderNumber
@@ -75,3 +75,11 @@ instance Effect AddOne m => RenderNumberEffect m where
           DemoInputs _ (Render prefix) <- loadDemoInputs
           pure (Rendered (prefix ++ show number))
       in renderNumber
+
+
+
+-- Root 的异常入口，按 scope 的拓扑顺序从上向下检测。
+errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated.Pure)]
+errorHandlers =
+  [
+  ]

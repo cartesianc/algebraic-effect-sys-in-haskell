@@ -9,7 +9,7 @@ import FileDemo.Types
 -- 注册只描述分类、方法和依赖；文件 IO 与上游方法引用在 Handlers.hs。
 -- Context：生产／读取业务值。Pure：无产值的纯检查。Excu：无产值的操作。
 -- Scoped：同一个 class 的 open／close 都是 m ()，SDK 保存生命周期状态。
--- Error typing 的 detect／resolve 尚未实现；raise 是统一失败协议，不是 Error typing。
+-- Error：继承要检查的 scope；Root 在故障时调用 detect，定位成功后调用 resolve。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
@@ -51,6 +51,16 @@ effects =
       , input = "ValidateFileName"
       , context = Just ContextInput
           { request = Just (From "FileResource" (typeRef @OpenedFile))
+          , require = Just (From "FileResource" (typeRef @OpenedFile))
+          }
+      }
+  , EffectSpec
+      { name = "FileRecovery"
+      , typing = Error
+          { detect = Just "detectFileSession", resolve = Just "resolveFileSession" }
+      , input = "FileSession"
+      , context = Just ContextInput
+          { request = Nothing
           , require = Just (From "FileResource" (typeRef @OpenedFile))
           }
       }

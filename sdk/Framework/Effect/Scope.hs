@@ -12,6 +12,7 @@ import Control.Concurrent.MVar (MVar, newMVar, modifyMVar)
 import Control.Exception (SomeException, displayException)
 import Data.IORef (IORef, newIORef, readIORef)
 import Data.List (find, sortOn)
+import Data.Unique (hashUnique, newUnique)
 
 data ScopePhase cause
   = ScopeIdle | ScopeOpening | ScopeActive | ScopeClosing
@@ -34,7 +35,7 @@ scopeFailure (ScopeClosed failure) = Just failure
 scopeFailure _ = Nothing
 
 scopeFault :: String -> (ScopeFault -> cause) -> ScopeFault -> Failure cause
-scopeFault selected wrap fault = Failure selected (wrap fault) (show fault)
+scopeFault selected wrap fault = Failure selected (wrap fault) (show fault) [] [] Nothing
 
 -- True 才执行方法体；Active 的再次 open 和 Closed 的再次 close 均直接完成。
 -- Invalid 不自动重开；关闭仍可尝试释放已经取得的资源。
@@ -79,6 +80,8 @@ type ScopeBindings environment cause = Bindings environment (String, ScopeInstan
 data ScopeInstance environment cause = ScopeInstance
   { scopeInputs :: [ScopeInput]
   , scopeGate :: MVar ()
+  , scopeRecoveryGate :: MVar ()
+  , scopeIdentity :: Int
   , scopeRecord :: IORef (ScopeRecord (ScopeBindings environment cause) cause)
   }
 
@@ -91,7 +94,7 @@ selectScopeInstance :: ScopeHandler environment cause -> [ScopeInput]
 selectScopeInstance handler inputs = modifyMVar (scopeInstances handler) $ \instances -> do
   let source (ScopeInput name _) = name
       matches slot = sortOn source inputs == sortOn source (scopeInputs slot)
-      create = ScopeInstance inputs <$> newMVar () <*> newIORef (emptyScope [])
+      create = ScopeInstance inputs <$> newMVar () <*> newMVar () <*> (hashUnique <$> newUnique) <*> newIORef (emptyScope [])
       replace = do
         slot <- create
         pure (slot : filter (not . matches) instances, slot)

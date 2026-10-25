@@ -27,7 +27,7 @@ data DemoContext
 class (Effect Root m) => DemoContextEffect m where
   loadDemoInputs :: m (Produce DemoContext)
   readDemoInputs :: m (Produce DemoContext)
-  readDemoInputs = FrameworkRoot.handler @Root $
+  readDemoInputs = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "DemoContext" ContextBindingError Nothing boundDemoContext
   {-# MINIMAL loadDemoInputs #-}
 
@@ -45,7 +45,7 @@ data MakeNumber
 class (Effect Root m, Effect DemoContext m, Produce DemoContext ~ (DemoInputs)) => MakeNumberEffect m where
   makeNumber :: m (Produce MakeNumber)
   readNumber :: m (Produce MakeNumber)
-  readNumber = FrameworkRoot.handler @Root $
+  readNumber = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "MakeNumber" ContextBindingError Nothing boundMakeNumber
   {-# MINIMAL makeNumber #-}
 
@@ -63,7 +63,7 @@ data AddOne
 class (Effect Root m, Effect MakeNumber m, Produce MakeNumber ~ (NumberValue)) => AddOneEffect m where
   addOne :: m (Produce AddOne)
   readAddedNumber :: m (Produce AddOne)
-  readAddedNumber = FrameworkRoot.handler @Root $
+  readAddedNumber = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "AddOne" ContextBindingError Nothing boundAddOne
   {-# MINIMAL addOne #-}
 
@@ -81,7 +81,7 @@ data RenderNumber
 class (Effect Root m, Effect AddOne m, Effect DemoContext m, Produce AddOne ~ (AddedValue), Produce DemoContext ~ (DemoInputs)) => RenderNumberEffect m where
   renderNumber :: m (Produce RenderNumber)
   readRenderedNumber :: m (Produce RenderNumber)
-  readRenderedNumber = FrameworkRoot.handler @Root $
+  readRenderedNumber = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "RenderNumber" ContextBindingError Nothing boundRenderNumber
   {-# MINIMAL renderNumber #-}
 
