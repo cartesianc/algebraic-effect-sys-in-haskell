@@ -1,0 +1,177 @@
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
+
+-- 自动生成；通过 SDK 的 effect-codegen 更新，手写注册与 handler 位于上级目录。
+module FileDemo.Generated.Effects where
+
+import Framework.Effect.Contract (Effect(..), Registered)
+import qualified Framework.Effect.Contract as FrameworkRoot
+import qualified Framework.SDK as SDK
+import FileDemo.Types
+
+-- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
+type Root = SDK.Root ContextValues Errors
+type App = SDK.App ContextValues Errors
+
+data FileLocation
+
+class (Effect Root m) => FileLocationEffect m where
+  getFileName :: m (Produce FileLocation)
+  readFileName :: m (Produce FileLocation)
+  readFileName = FrameworkRoot.handler @Root $
+    SDK.readContext "FileLocation" ContextBindingError (Just (SDK.ScopeInput "FileLocation")) boundFileLocation
+  {-# MINIMAL getFileName #-}
+
+instance (Monad m, Effect Root m, FileLocationEffect m) => Effect FileLocation m where
+  type Registration FileLocation = Registered FileLocationEffect Root
+  type Typing FileLocation = 'SDK.ContextKind
+  type Require FileLocation = SDK.Void
+  type Produce FileLocation = FileName
+  type Error FileLocation = FileLocationError
+  raise (FileLocationError description) = SDK.failEffect "FileLocation" FileLocationFailure description
+  handler = FrameworkRoot.handler @Root
+
+data ValidateFileName
+
+class (Effect Root m, Effect FileLocation m, Produce FileLocation ~ (FileName)) => ValidateFileNameEffect m where
+  validateFileName :: m ()
+  {-# MINIMAL validateFileName #-}
+
+instance (Monad m, Effect Root m, ValidateFileNameEffect m) => Effect ValidateFileName m where
+  type Registration ValidateFileName = Registered ValidateFileNameEffect Root
+  type Typing ValidateFileName = 'SDK.PureKind
+  type Require ValidateFileName = FileName
+  type Error ValidateFileName = ValidateFileNameError
+  raise (ValidateFileNameError description) = SDK.failEffect "ValidateFileName" ValidateFileNameFailure description
+  handler = FrameworkRoot.handler @Root
+
+data FileResource
+
+class (Effect ValidateFileName m, Effect FileLocation m, Produce FileLocation ~ (FileName)) => FileResourceEffect m where
+  acquireFile :: m (Produce FileResource)
+  readOpenedFile :: m (Produce FileResource)
+  readOpenedFile = FrameworkRoot.handler @Root $
+    SDK.readContext "FileResource" ContextBindingError Nothing boundFileResource
+  {-# MINIMAL acquireFile #-}
+
+instance (Monad m, Effect ValidateFileName m, FileResourceEffect m) => Effect FileResource m where
+  type Registration FileResource = Registered FileResourceEffect ValidateFileName
+  type Typing FileResource = 'SDK.ContextKind
+  type Require FileResource = FileName
+  type Produce FileResource = OpenedFile
+  type Error FileResource = FileResourceError
+  raise (FileResourceError description) = SDK.failEffect "FileResource" FileResourceFailure description
+  handler = FrameworkRoot.handler @Root
+
+data FileSession
+
+class (Effect ValidateFileName m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => FileSessionEffect m where
+  openFileSession :: m ()
+  closeFileSession :: m ()
+  {-# MINIMAL openFileSession, closeFileSession #-}
+
+instance (Monad m, Effect ValidateFileName m, FileSessionEffect m) => Effect FileSession m where
+  type Registration FileSession = Registered FileSessionEffect ValidateFileName
+  type Typing FileSession = 'SDK.ScopedKind
+  type Require FileSession = (OpenedFile, OpenedFile)
+  type Error FileSession = FileSessionError
+  raise (FileSessionError description) = SDK.failEffect "FileSession" FileSessionFailure description
+  handler = FrameworkRoot.handler @Root
+
+data ReadFile
+
+class (Effect FileSession m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => ReadFileEffect m where
+  readFileText :: m (Produce ReadFile)
+  readLastFileText :: m (Produce ReadFile)
+  readLastFileText = FrameworkRoot.handler @Root $
+    SDK.readContext "ReadFile" ContextBindingError Nothing boundReadFile
+  {-# MINIMAL readFileText #-}
+
+instance (Monad m, Effect FileSession m, ReadFileEffect m) => Effect ReadFile m where
+  type Registration ReadFile = Registered ReadFileEffect FileSession
+  type Typing ReadFile = 'SDK.ContextKind
+  type Require ReadFile = OpenedFile
+  type Produce ReadFile = FileText
+  type Error ReadFile = ReadFileError
+  raise (ReadFileError description) = SDK.failEffect "ReadFile" ReadFileFailure description
+  handler = FrameworkRoot.handler @Root
+
+data WriteFile
+
+class (Effect FileSession m, Effect ReadFile m, Effect FileResource m, Produce ReadFile ~ (FileText), Produce FileResource ~ (OpenedFile)) => WriteFileEffect m where
+  writeFileText :: m ()
+  {-# MINIMAL writeFileText #-}
+
+instance (Monad m, Effect FileSession m, WriteFileEffect m) => Effect WriteFile m where
+  type Registration WriteFile = Registered WriteFileEffect FileSession
+  type Typing WriteFile = 'SDK.ExcuKind
+  type Require WriteFile = (FileText, OpenedFile)
+  type Error WriteFile = WriteFileError
+  raise (WriteFileError description) = SDK.failEffect "WriteFile" WriteFileFailure description
+  handler = FrameworkRoot.handler @Root
+
+data FileWorkflow
+
+class (Effect WriteFile m) => FileWorkflowEffect m where
+  runFileWorkflow :: m ()
+  {-# MINIMAL runFileWorkflow #-}
+
+instance (Monad m, Effect WriteFile m, FileWorkflowEffect m) => Effect FileWorkflow m where
+  type Registration FileWorkflow = Registered FileWorkflowEffect WriteFile
+  type Typing FileWorkflow = 'SDK.ExcuKind
+  type Require FileWorkflow = SDK.Void
+  type Error FileWorkflow = FileWorkflowError
+  raise (FileWorkflowError description) = SDK.failEffect "FileWorkflow" FileWorkflowFailure description
+  handler = FrameworkRoot.handler @Root
+
+-- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+newtype FileLocationError = FileLocationError String
+  deriving (Eq, Show, Read)
+
+-- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+newtype ValidateFileNameError = ValidateFileNameError String
+  deriving (Eq, Show, Read)
+
+-- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+newtype FileResourceError = FileResourceError String
+  deriving (Eq, Show, Read)
+
+-- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+newtype FileSessionError = FileSessionError String
+  deriving (Eq, Show, Read)
+
+-- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+newtype ReadFileError = ReadFileError String
+  deriving (Eq, Show, Read)
+
+-- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+newtype WriteFileError = WriteFileError String
+  deriving (Eq, Show, Read)
+
+-- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+newtype FileWorkflowError = FileWorkflowError String
+  deriving (Eq, Show, Read)
+
+-- 统一失败协议的分类标签；消息与来源由 SDK.Failure 保存。
+data Errors = FileLocationFailure | ValidateFileNameFailure | FileResourceFailure | FileSessionFailure | ReadFileFailure | WriteFileFailure | FileWorkflowFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+  deriving (Eq, Show)
+
+-- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。
+data ContextValues = ContextValues
+  { boundFileLocation :: Maybe (Produce FileLocation)
+  , boundFileResource :: Maybe (Produce FileResource)
+  , boundReadFile :: Maybe (Produce ReadFile)
+  }
+
+emptyContexts :: ContextValues
+emptyContexts = ContextValues Nothing Nothing Nothing
+

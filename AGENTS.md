@@ -1,0 +1,37 @@
+# 设计工作约定
+
+当前项目为 Algebraic Effect Sys in Haskell，仓库与包名为 algebraic-effect-sys-in-haskell。根目录下的 sdk、demo 与 docs 是工作主体；旧实现和设计保存在 [archive/legacy](archive/README.md)，仅作背景参考，不默认扩展修改范围。
+
+开始本目录及其子目录的架构工作前，阅读 [DESIGN_METHOD.md](docs/DESIGN_METHOD.md)。
+其中记录用户确认的基本方法；旧专题文档与可执行样例是历史方案和实现证据，不应反向固定新设计。
+
+- 业务组合语义应能以固定结构、引用和契约描述并序列化，供第三方工具生成代码。
+- effect typing 仅有 Pure、Excu、Scoped、Error、Context 五类。旧 Request 类型已并入 Context，request／require 为其方法角色；不再增加独立 Request typing。五类设计与实现进度分开，Error 接口尚待落实。
+- Input 链只描述句柄组合与 superclass 能力注入，不隐含业务值传递。普通 Pure／Excu 和 Scoped 的成功类型固定为 ()，handler 只完成操作或通过 raise 失败；跨 handler 的业务成功产值统一归 Context。request 只能引用具有生产入口的 Context，require 读取其成功绑定；Scoped.open／close 不配置产物，直接引用上游 Context 方法取得所需信息。
+- request 每次重新生产，成功后发布并替换当前调用的来源绑定，返回同一个值；require 只读已捕获的成功绑定，未绑定报 ContextNotInitialized。刷新失败不覆盖该来源旧值，原错误继续传播，其他已完成操作不回滚。普通绑定在一次末端启动内；scope 开启期间生产的 Context 随同份运行句柄跨 Node 保存，后续 request 成功替换当前调用的来源绑定，其他已捕获绑定不被原地改写。不预初始化业务 Context，不在独立创建的句柄之间隐式共享；更细范围与跨入口存续另行设计。
+- 设计先于操作，不设置独立 impl 层。实例内引用上游类方法构成句柄组合；SDK 的 Node f-algebra 只将选定末端 lower 为具体执行函数，branch 组合这些函数。业务入口固定为 interpreter ast effects。
+- 业务注册声明可调用入口和 request／require 取值关系；AST Node 挂载选定注册，不要求在 AST 复写整条 Input 链。request 引用产值求值表达式；依赖 top-down 值的 effect 配置 require，以 ADT 契约识别可进入 handler 的已有值，读取不重新执行生产者。
+- 后端 handler 继承前端 handler 的方法可用性。实际调用发生在 instance 内，SDK 不在外部补跑前驱；遗漏引用的上游不会执行，不把这一规则误作 GHC 对方法体调用的强制证明。
+- 同一注册集合合并 Input 与 Context 生产链的传递能力，统一 Root／载体；只去重能力与共享祖先，不去重实际调用。SDK 的 Effect.handler 是生成区内部方法，Root 当前实现为 id，其他生成 Effect instance 转交 Root；普通方法、Context.request／require（默认及覆盖实现）、Scoped.open／close 的生成入口自动包装原协议。用户不写 handler／super 前缀；根入口不得修改业务 caller、预执行 Context 或另行 boot。独立 Middleware typing 与 AST／Hanging 挂载尚未实现，后续装配期合并去重并接入最高 Root，不默认保存旧 pipeline 路线或增加 runtime pipeline key。
+- 已取消生成 withX、initializeX、链式 runX 及逐 effect 的外部 impl；Generated/Program 只登记所选末端句柄。request 引用加入独立生产链能力并保留原 Input；方法不新增位置参数，instance 通过原生 `<-` 取得 Context 业务值。SDK 包装编译副本，按消费者注册选择 request／require，业务不写 consume 或存储回调。
+- 原子 effect 与 effect 链是不同层级。Node 只选完整链的末端，不填写 Reader。chained 顺序执行、失败停止；parallel 等待全部分支后汇总。爬虫先并行解析，再顺序打印，打印 instance 再次引用解析句柄并重新抓取。
+- 装配后的 impl 是完备操作，不要求额外传入启动占位参数。Require 保持关联数据契约，不成为 impl 的位置参数；取值通过 instance 内的类方法引用和 SDK 入口包装实现。
+- Target 保存尚未 lower 的末端 App／Pure 句柄、内部空存储和生成 scope 的共享引用，构造器与裸运行器不导出。Generated/Handlers 创建 ScopeHandler，Generated/Program 自动让各末端捕获同一批引用；Node algebra 只调用 SDK 内部 lowerTarget，runAST 不创建或重置 scope 状态。普通 Context 按 Node 独立，不预生产业务 Context、不在外部装配 Input 操作链。Main 仍为 IO ()，不增加 Program 载体或用户装配。无 AST 的纯计算 benchmark 也只 lower 所选末端。
+- 产值、Require 模式匹配与 IO 执行保持可分离；句柄依赖通过 superclass 字典传递。SDK 已接通 scope 的共享状态与开启期 Context，自动收尾和具体活资源管理仍待落实。
+- 手写 input 只允许 Root 或非 Context effect；Context 经 context.request／require 声明进入生成的 superclass。生产者自身仍可有 Input、消费其他 Context，也可直接作为 target。原 Input 与生产链的能力同时保留，不重挂来源注册；沿 Input 与 request 收集 scope，require 只读取绑定，不启动生产链。业务调用由 instance 引用发生，不由继承自动执行。
+- 沿 Input 满足前提不等于重放全部操作。同份 scope 已开启且未被判定失效或关闭时默认复用，不因每次 request 重启，也不主动轮询健康；失效或关闭后按声明处置，不自动重启。
+- Generic Map 是 SDK 内置结构适配，只有一种规则时不新增 adapter 配置类目；对外产值的业务纯转换注册为 Context，不另设 Map typing。Pure 保留无对外业务产物的纯操作。有限静态无环的注册关系可装配成闭包，不预设通用图 runtime。
+- Scoped 在同一 class／instance 内提供 open／close，均以 Maybe String 声明、签名为 m ()。App／IO 的 ScopeHandler 按开启参数值保存多实例，各自有 MVar、生命周期及 Context。开启参数来自 scope.request 的资源 Context 声明消费的上游 Context 及其值前提；SDK 观察 instance 实际取值，以来源、类型、原生 ADT 的 Eq 比较，不增加 key、不外部预执行。参数 ADT 需要 Eq；资源产物不需要。参数齐备后才执行资源 IO；同参有效实例复用，跳过资源获取和剩余 open 方法体。参数生产仍按 request／require 语义运行；不推断任意 IO 内隐藏参数，缺失／选定后变化时报协议错误。没有开启输入的资源按无参 scope 处理。ContextBinding 同时保存值快照及 scope 归属；已删除 selectedScopes／lookupSelected。require 优先读取本次调用已捕获的绑定；跨链首次读取只接受唯一可解析来源，多份且没有明确关联时报 AmbiguousContextBinding。close 在 instance 实际 require 时从绑定取得实例和锁，不提前选择、不重新 open；关闭期间不能切换绑定归属。open 对实际生产的资源绑定附加归属，复用时传递原绑定。开启失败／中断后失效；close 失败允许再清理，成功后重复 close 跳过，之后显式同参 open 创建新一轮，旧引用保持关闭。生成句柄批次内跨 Input 链共享，公开 interpreter 自动创建一批；不增加 Main 装配或全局单例。自动收尾、使用与关闭协调、Error 检测接入、Linear 凭证和跨独立 interpreter 存续仍待落实。纯计算 benchmark 不含 Scoped，多实例协议目前接在 App／IO。
+- effect 注册不设 dependency；SDK 沿原 Input 与 request 生产链向上推导全部 Scoped，能力由既有 superclass 链继承，不额外生成 scope 类约束。上游 Scoped 须同时声明 open／close，生成器检查链路与环；require 值引用不另行扩展 scope 列表。SDK 传递推导出的 scope 身份，通过 Context 绑定的资源归属在 open／require／close 检查状态，不因某个实例关闭就阻止整份注册入口，也不自动补跑 open／close。爬虫两个 Fetch instance 都显式调用 openCrawlSession 并 require SessionContext。普通下游失败不自动等同于 scope 失效；SDK 已有内部 invalidateScope，Error 检测协议尚未接入，不擅自恢复或重开。workflow 层的 dependency 控制流语义另行设计。
+- Error 注册在同一 effect、同一 typeclass／instance 内提供 detect 与 resolve，不再把它们注册为独立 effect／typing。Error 类别与关联 Error e 的错误负载分开；SDK 传递原始故障和同次检测结果，保留原始及次生失败。多方法的结果契约及故障处理范围仍待 review。
+- 各类别统一注册，普通方法名以 Maybe String 放入 typing；只有 Context.request 使用 Maybe Producer，Just Producer { handler, produces } 同时声明生产方法与业务产物类型，Context.require 读取类型由它推导。Pure／Excu 以 handler 为入口，Scoped 以 open 为入口、close 为协议方法。Nothing 不生成对应方法，不提供默认业务操作；缺少入口或 require 缺少生产契约时报错。MINIMAL 和 -Werror=missing-methods 要求实现业务方法；Context.require 由 SDK 提供绑定读取默认实现。名称可缺失不意味着返回值使用 Maybe。继续显式生成普通源码供 review，避免 Template Haskell。
+- 生产方 typing = Context 的 request／require 描述方法角色与生产契约。消费方统一用 context :: Maybe ContextInput，其 request／require 各为 Maybe ValueSource，以 From 来源 (typeRef @接收ADT) 声明依值。生成器形成关联 Require 并检查来源成功类型；双输入按 request、require 排为二元组。SDK 用局部 Reader 标记当前消费者，生产方法引用按该注册选择取值模式；未声明的业务取值报 UndeclaredContextAccess。根调用进入生产；同一消费者对同一来源同时声明两种模式时，生产方法引用选择 request，显式读取方法始终 require。
+- 当前探索阶段只做必要的普通编译，不自行新增测试、负例或额外检查门槛。
+- 分离边界是手写配置 facade 与生成代码；demo 保留 Main.hs、AST.hs／Target.hs、Effects.hs、Types.hs、Handlers.hs，生成接口、末端登记和包装后的 instance 分别位于 Generated/Effects.hs、Program.hs 和 Handlers.hs。生成逻辑属于 SDK，demo 不另设 Codegen.hs。Types、Effects、AST／Target 不导入 Generated 或 Handlers；effect 标记和错误类型由 SDK 生成，不手写空 data。SDK/Generate 只编译声明，以 GHC 9.12 解析器读取 Handlers.hs 模块／方法边界并添加现有协议包装；不改写方法体表达式，不解释业务逻辑或使用 Template Haskell。手写 Handlers 是原生 Haskell 生成输入，运行只编译 Generated/Handlers，修改实现后也须重新生成。首次使用 cabal run effect-codegen -- workflow Crawler 或 -- target RequestBenchmark；缺少 handler 时先生成空编译模块，实现后再生成。Main --generate 也转交统一命令，但仍要求导入链可编译。两种入口只改 Generated，不回写手写模块。SDK 位于 sdk/Framework。
+- 业务契约在各 demo 的 Types.hs 用原生 data/newtype 定义；移除 EffectSpec 顶层 produces，只有 Context.request 的 Producer 声明 produces，不配置 Output、业务错误 ADT 或 errors。Require 引用输入 ADT；SDK 内部关联 Produce 直接表示 Context 的业务成功类型，其余当前类别默认 ()，移除 SDK.Value 提取层。TypeRef 识别 Output 只为拒绝再次包装完成协议，其余业务 ADT 保持不透明。
+- target 只指定末端，方法名从 typing 角色推导；Generated/Program 登记末端类方法，不预生成其 impl。Pure／Excu 用 handler，Scoped 用 open，Context 用 request；自动 scope 调度及 Error 类别仍待接入。
+- 完成结果通过执行载体实现成功／失败短路，运行边界只封装一次 Output，不设 Pending。普通 Pure／Excu 和 Scoped 返回 ()，Context 返回业务值，均不手写完成包装。SDK 按 effect 名生成 EffectNameError String、关联 Error e、分类和 raise；用户写 raise (EffectNameError message)，自动推导来源。统一 Failure 保存 origin、detail 分类和 message，上游失败原样传播。仅 scope 有生命周期状态，不增加普通 effect 的状态表；调用记录另行设计。
+
+- Context 绑定稳定性是底层数据表示与 ContextStore 原语的职责，不交给外部 adaptor。固定绑定且没有 request 时 require 重复返回同一值；该规则不证明任意 instance 的 IO 执行纯性，也不证明必须调用上游方法。Error 接管外部故障仍未落实；不把类型类签名或样例通过当作全部公理已被静态证明。
+
+- instance 使用原生 Haskell：在 do 中通过 `value <- contextMethod` 取得业务值，普通操作直接引用 superclass 方法。可确定匹配的单构造器模式可直接写在 `<-` 左侧；多构造器值先绑定再用普通 case 显式处理，失败通过 raise，不新增 MonadFail。SDK 在注册生成的 Context 入口连接 request 生产与 require 读取；生成器只解析模块／方法边界并包装入口，不改写表达式。方法不新增位置参数、Definition、consume 或独立 booter；嵌套取值共享本次 Context 和 scope。未进入的分支不取值，生成源码和创建 Target 不执行业务 IO；不使用 unsafePerformIO／unsafeInterleaveIO。手写 Handlers 保持原生语法，运行仍编译 Generated/Handlers 的协议包装副本，修改实现后须重新生成。

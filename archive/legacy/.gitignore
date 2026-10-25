@@ -1,0 +1,10 @@
+.stack-work/
+.stack-work-codex/
+dist-newstyle/
+.ghc.environment.*
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+result/
+.generated/

@@ -1,0 +1,194 @@
+cabal-version: 3.0
+name: algebraic-effect-sys-in-haskell
+version: 0.1.0.0
+synopsis: Algebraic Effect Sys in Haskell
+license: BSD-3-Clause
+license-file: LICENSE
+build-type: Simple
+extra-source-files:
+    README.md
+    AGENTS.md
+    hie.yaml
+    docs/*.md
+    checks/*.hs
+    sdk/Framework/Codegen.hs
+    demo/*/Handlers.hs
+    demo/RequestBenchmark/*.hs
+    demo/RequestBenchmark/Generated/*.hs
+
+source-repository head
+  type: git
+  location: https://github.com/cartesianc/algebraic-effect-sys-in-haskell.git
+
+executable crawler-demo
+  main-is: Crawler/Main.hs
+  hs-source-dirs: demo, sdk
+  other-modules:
+      Crawler.AST
+      Crawler.Effects
+      Crawler.Types
+      Crawler.Generated.Effects
+      Crawler.Generated.Program
+      Crawler.Generated.Handlers
+      Framework.SDK
+      Framework.Effect
+      Framework.Effect.Contract
+      Framework.Effect.Registration
+      Framework.Effect.Context
+      Framework.Effect.Binding
+      Framework.Effect.Scope
+      Framework.Effect.Runtime
+      Framework.Effect.Runtime.App
+      Framework.Recursion
+      Framework.Workflow.AST
+      Framework.Workflow.Execution
+  ghc-options: -main-is Crawler.Main -threaded
+  build-depends:
+      base >= 4.21 && < 5
+    , mtl >= 2.3 && < 2.4
+    , directory
+    , filepath
+    , process >= 1.6 && < 1.7
+    , tagsoup >= 0.14.8 && < 0.15
+    , transformers >= 0.6 && < 0.7
+  default-language: Haskell2010
+
+executable file-demo
+  main-is: FileDemo/Main.hs
+  hs-source-dirs: demo, sdk
+  other-modules:
+      FileDemo.AST
+      FileDemo.Effects
+      FileDemo.Types
+      FileDemo.Generated.Effects
+      FileDemo.Generated.Program
+      FileDemo.Generated.Handlers
+      Framework.SDK
+      Framework.Effect
+      Framework.Effect.Contract
+      Framework.Effect.Registration
+      Framework.Effect.Context
+      Framework.Effect.Binding
+      Framework.Effect.Scope
+      Framework.Effect.Runtime
+      Framework.Effect.Runtime.App
+      Framework.Recursion
+      Framework.Workflow.AST
+      Framework.Workflow.Execution
+  ghc-options: -main-is FileDemo.Main -threaded
+  build-depends:
+      base >= 4.21 && < 5
+    , mtl >= 2.3 && < 2.4
+    , filepath
+    , process >= 1.6 && < 1.7
+    , transformers >= 0.6 && < 0.7
+  default-language: Haskell2010
+
+executable open-files-demo
+  main-is: OpenFilesDemo/Main.hs
+  hs-source-dirs: demo, sdk
+  other-modules:
+      OpenFilesDemo.AST
+      OpenFilesDemo.Effects
+      OpenFilesDemo.Types
+      OpenFilesDemo.Generated.Effects
+      OpenFilesDemo.Generated.Program
+      OpenFilesDemo.Generated.Handlers
+      Framework.SDK
+      Framework.Effect
+      Framework.Effect.Contract
+      Framework.Effect.Registration
+      Framework.Effect.Context
+      Framework.Effect.Binding
+      Framework.Effect.Scope
+      Framework.Effect.Runtime
+      Framework.Effect.Runtime.App
+      Framework.Recursion
+      Framework.Workflow.AST
+      Framework.Workflow.Execution
+  ghc-options: -main-is OpenFilesDemo.Main -threaded
+  build-depends:
+      base >= 4.21 && < 5
+    , mtl >= 2.3 && < 2.4
+    , directory
+    , filepath
+    , process >= 1.6 && < 1.7
+    , transformers >= 0.6 && < 0.7
+  default-language: Haskell2010
+
+executable scope-reuse-demo
+  main-is: ScopeReuseDemo/Main.hs
+  hs-source-dirs: demo, sdk
+  other-modules:
+      ScopeReuseDemo.AST
+      ScopeReuseDemo.Effects
+      ScopeReuseDemo.Types
+      ScopeReuseDemo.Generated.Effects
+      ScopeReuseDemo.Generated.Program
+      ScopeReuseDemo.Generated.Handlers
+      Framework.SDK
+      Framework.Effect
+      Framework.Effect.Contract
+      Framework.Effect.Registration
+      Framework.Effect.Context
+      Framework.Effect.Binding
+      Framework.Effect.Scope
+      Framework.Effect.Runtime
+      Framework.Effect.Runtime.App
+      Framework.Recursion
+      Framework.Workflow.AST
+      Framework.Workflow.Execution
+  ghc-options: -main-is ScopeReuseDemo.Main -threaded
+  build-depends:
+      base >= 4.21 && < 5
+    , mtl >= 2.3 && < 2.4
+    , directory
+    , filepath
+    , process >= 1.6 && < 1.7
+    , transformers >= 0.6 && < 0.7
+  default-language: Haskell2010
+
+executable scope-instances-demo
+  main-is: ScopeInstancesDemo/Main.hs
+  hs-source-dirs: demo, sdk
+  other-modules:
+      ScopeInstancesDemo.AST
+      ScopeInstancesDemo.Effects
+      ScopeInstancesDemo.Types
+      ScopeInstancesDemo.Generated.Effects
+      ScopeInstancesDemo.Generated.Program
+      ScopeInstancesDemo.Generated.Handlers
+      Framework.SDK
+      Framework.Effect
+      Framework.Effect.Contract
+      Framework.Effect.Registration
+      Framework.Effect.Context
+      Framework.Effect.Binding
+      Framework.Effect.Scope
+      Framework.Effect.Runtime
+      Framework.Effect.Runtime.App
+      Framework.Recursion
+      Framework.Workflow.AST
+      Framework.Workflow.Execution
+  ghc-options: -main-is ScopeInstancesDemo.Main -threaded
+  build-depends:
+      base >= 4.21 && < 5
+    , mtl >= 2.3 && < 2.4
+    , directory
+    , filepath
+    , process >= 1.6 && < 1.7
+    , transformers >= 0.6 && < 0.7
+  default-language: Haskell2010
+
+executable effect-codegen
+  main-is: Framework/Generate.hs
+  hs-source-dirs: sdk
+  other-modules: Framework.Codegen.Handlers
+  ghc-options: -main-is Framework.Generate
+  build-depends:
+      base >= 4.21 && < 5
+    , filepath
+    , process >= 1.6 && < 1.7
+    , directory
+    , ghc == 9.12.*
+  default-language: Haskell2010

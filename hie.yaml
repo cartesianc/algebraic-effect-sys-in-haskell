@@ -1,0 +1,15 @@
+# 爬虫通过 Cabal 加载 TagSoup；数字 benchmark 直接编译。
+cradle:
+  multi:
+    - path: ./demo/Crawler
+      config:
+        cradle:
+          cabal:
+            component: exe:crawler-demo
+    - path: ./
+      config:
+        cradle:
+          direct:
+            arguments:
+              - -idemo
+              - -isdk
