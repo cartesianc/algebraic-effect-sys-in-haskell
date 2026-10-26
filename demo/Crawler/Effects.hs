@@ -8,7 +8,7 @@ import Crawler.Types
 
 -- 1. Registered code：只有类型引用、分类和连接，没有 HTTP 或 HTML 实现。
 -- typing 声明生产方方法名；context 内的 request / require 声明消费来源与接收 ADT。
--- scope 沿 Input 和 request 生产链推导；instance 显式调用 open，SDK 保证同份 scope 只开启一次。
+-- instance 显式调用 open；无开启输入的 scope 在实际重叠的使用闭包之间共享。
 -- 普通 effect 成功值固定为 ()；业务产值统一由 Context 提供，失败仍用 raise。
 
 
@@ -132,11 +132,5 @@ effects =
           { request = Just (From "SessionContext" (typeRef @CrawlSessionInfo))
           , require = Just (From "SessionContext" (typeRef @CrawlSessionInfo))
           }
-      }
-  , EffectSpec
-      { name = "FinishCrawl"
-      , typing = Excu { handler = Just "finishCrawl" }
-      , input = "CrawlSession"
-      , context = Nothing
       }
   ]

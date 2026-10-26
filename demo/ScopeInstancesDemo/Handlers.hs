@@ -21,6 +21,11 @@ import System.IO.Error (tryIOError)
 
 instance PrepareFilesEffect App where
   prepareFiles = liftIO $ do
+    let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+        firstFile = outputDirectory </> "one.txt"
+        secondFile = outputDirectory </> "two.txt"
+        selection = outputDirectory </> "selected.txt"
+        journal = outputDirectory </> "events.txt"
     createDirectoryIfMissing True outputDirectory
     mapM_ (`writeFile` "") [firstFile, secondFile, journal]
     writeFile selection firstFile
@@ -28,6 +33,9 @@ instance PrepareFilesEffect App where
 -- 参数确实由 instance 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
 instance FileLocationEffect App where
   getFileName = do
+    let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+        selection = outputDirectory </> "selected.txt"
+        journal = outputDirectory </> "events.txt"
     path <- liftIO (readFile' selection)
     liftIO (appendFile journal ("argument " ++ path ++ "\n"))
     pure (FileName path)
@@ -35,6 +43,7 @@ instance FileLocationEffect App where
 instance FileResourceEffect App where
   acquireFile = do
     FileName path <- getFileName
+    let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     outcome <- liftIO $ tryIOError $
       bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
         appendFile journal ("acquire " ++ path ++ "\n")
@@ -45,16 +54,23 @@ instance FileResourceEffect App where
 instance FileSessionEffect App where
   openFileSession = do
     OpenedFile path _ <- acquireFile
+    let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     liftIO (appendFile journal ("open " ++ path ++ "\n"))
   closeFileSession = do
     OpenedFile path file <- readOpenedFile
+    let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     liftIO $ do
       hClose file
       appendFile journal ("close " ++ path ++ "\n")
 
 instance CheckIndependentEffect App where
   checkIndependent = do
+    let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+        firstFile = outputDirectory </> "one.txt"
+        secondFile = outputDirectory </> "two.txt"
+        selection = outputDirectory </> "selected.txt"
     liftIO (writeFile selection firstFile)
+    _ <- getFileName
     openFileSession
     OpenedFile pathA fileA <- readOpenedFile
     openFileSession
@@ -64,6 +80,7 @@ instance CheckIndependentEffect App where
     liftIO (putStrLn "[check] equal opening values reuse the same file Handle")
 
     liftIO (writeFile selection secondFile)
+    _ <- getFileName
     openFileSession
     OpenedFile pathB fileB <- readOpenedFile
     unless (pathB == secondFile && fileA /= fileB) $
@@ -79,22 +96,29 @@ instance CheckIndependentEffect App where
     unless (not closedA && closedB) $
       raise (CheckIndependentError "Closing the second instance affected the first")
     liftIO (putStrLn "[check] require selects the current instance; repeated close closes only file 2")
-    -- 第一份保持开启；下一个 Node 是另一条 Input 链。
+    -- 第一份在本链内仍保持开启；本链退出时由 SDK 自动关闭。
 
 instance CheckReopenEffect App where
   checkReopen = do
+    let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+        firstFile = outputDirectory </> "one.txt"
+        secondFile = outputDirectory </> "two.txt"
+        selection = outputDirectory </> "selected.txt"
+        journal = outputDirectory </> "events.txt"
     liftIO (writeFile selection firstFile)
+    _ <- getFileName
     openFileSession
     OpenedFile pathA fileA <- readOpenedFile
     events <- liftIO (lines <$> readFile' journal)
-    unless (pathA == firstFile && count ("acquire " ++ firstFile) events == 1) $
-      raise (CheckReopenError "The other Input chain reopened the still-active first file")
+    unless (pathA == firstFile && length (filter (== "acquire " ++ firstFile) events) == 2) $
+      raise (CheckReopenError "The next chain did not reopen the first file")
     closeFileSession
     closedA <- liftIO (hIsClosed fileA)
     unless closedA (raise (CheckReopenError "First file was not closed"))
-    liftIO (putStrLn "[check] another Node reuses file 1 across Input chains")
+    liftIO (putStrLn "[check] another Node explicitly reopens file 1 after the previous chain ended")
 
     liftIO (writeFile selection secondFile)
+    _ <- getFileName
     openFileSession
     OpenedFile pathB fileB <- readOpenedFile
     closedB <- liftIO (hIsClosed fileB)
@@ -104,27 +128,15 @@ instance CheckReopenEffect App where
     closeFileSession
     finalClosed <- liftIO (hIsClosed fileB)
     finalEvents <- liftIO (lines <$> readFile' journal)
-    let acquisitions = count ("acquire " ++ firstFile) finalEvents == 1
-                    && count ("acquire " ++ secondFile) finalEvents == 2
-        closes = count ("close " ++ firstFile) finalEvents == 1
-              && count ("close " ++ secondFile) finalEvents == 2
-        opens = count ("open " ++ firstFile) finalEvents == 1
-             && count ("open " ++ secondFile) finalEvents == 2
-        arguments = count ("argument " ++ firstFile) finalEvents == 3
-                 && count ("argument " ++ secondFile) finalEvents == 2
-    unless (finalClosed && acquisitions && closes && opens && arguments) $
+    let expectedEvents =
+          [ operation ++ path
+          | operation <- ["acquire ", "close ", "open ", "argument "]
+          , path <- [firstFile, secondFile]
+          ]
+        countsMatch = all (\event -> length (filter (== event) finalEvents) == 2) expectedEvents
+    unless (finalClosed && countsMatch) $
       raise (CheckReopenError ("Unexpected lifecycle or extra Context evaluation: " ++ show finalEvents))
     liftIO $ do
       putStrLn "[check] closed file 2 reopened successfully; both files now closed"
-      putStrLn "[check] actual acquisitions/closures: file 1 = 1/1; file 2 = 2/2"
-      putStrLn "[check] five open calls, five argument requests; no extra Context evaluation"
-
-outputDirectory, firstFile, secondFile, selection, journal :: FilePath
-outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
-firstFile = outputDirectory </> "one.txt"
-secondFile = outputDirectory </> "two.txt"
-selection = outputDirectory </> "selected.txt"
-journal = outputDirectory </> "events.txt"
-
-count :: Eq value => value -> [value] -> Int
-count expected = length . filter (== expected)
+      putStrLn "[check] actual acquisitions/closures: file 1 = 2/2; file 2 = 2/2"
+      putStrLn "[check] five open calls, four argument requests; require reuses stable parameters within each chain"

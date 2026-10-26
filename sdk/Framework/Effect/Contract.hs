@@ -18,7 +18,7 @@
 module Framework.Effect.Contract
   ( Effect(..), EffectKind(..), Root, Registered, Void
   , Failure(..), Output(..), failEffect, ErrorHandler(..), ErrorReport(..), ErrorStore(..), runErrorHandler
-  , ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault(..), ScopeInput(..)
+  , ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault(..), ScopeInput(..), ScopeInputAccess(..)
   ) where
 
 import Control.Monad.Except (MonadError, catchError, throwError)
@@ -59,12 +59,15 @@ class Monad m => ContextStore environment m | m -> environment where
   readContextBinding :: String -> (environment -> Maybe value)
                      -> m (Either ContextFault (Maybe value))
   publishContextBinding :: String -> (environment -> environment) -> m ()
+  -- 资源生产与绑定发布作为一次交接；纯载体无需额外保护。
+  protectContextBinding :: String -> m value -> m value
+  protectContextBinding _ = id
   currentHandler :: m (Maybe String)
   enterHandler :: String -> m value -> m value
   enterContext :: String -> m value -> m value
   enterContext = enterHandler
-  recordContextInput :: ScopeInput -> m ()
-  recordContextInput _ = pure ()
+  recordContextInput :: ScopeInputAccess -> ScopeInput -> m ()
+  recordContextInput _ _ = pure ()
 
 data ContextFault = ContextNotInitialized | UndeclaredContextAccess String
   | AmbiguousContextBinding String
@@ -74,6 +77,8 @@ data ContextFault = ContextNotInitialized | UndeclaredContextAccess String
 -- 这是 SDK 观察记录，不是用户注册的 key 字段。
 data ScopeInput = forall value. (Eq value, Typeable value) => ScopeInput String value
 
+data ScopeInputAccess = RequestedInput | RequiredInput deriving (Eq, Show)
+
 instance Eq ScopeInput where
   ScopeInput leftName left == ScopeInput rightName right =
     leftName == rightName && maybe False (left ==) (cast right)
@@ -81,6 +86,7 @@ instance Eq ScopeInput where
 -- SDK 内部生命周期能力；业务 instance 仍只实现 open／close。
 data ScopeFault = ScopeNotOpen | ScopeIsClosed | ScopeReentry | ScopeInterrupted String
   | ScopeContextMissing String | ScopeContextMismatch String | ScopeInputsMissing [String] | ScopeInputAfterOpen String
+  | ScopeCleanupInterrupted String | ScopeCleanupInProgress | ScopeInUse
   deriving (Eq, Show)
 
 class Monad m => ScopeStore cause m | m -> cause where
@@ -139,6 +145,8 @@ data Failure cause = Failure
   -- 生命周期失败保存实际实例身份；Nothing 明确表示本次尚未选出实例。
   , scopeTargets :: [(String, Maybe Int)]
   , errorHandling :: Maybe [ErrorReport cause]
+  -- 收尾故障附在原失败之后，不覆盖其来源、分类或诊断结果。
+  , cleanupFailures :: [Failure cause]
   } deriving (Eq, Show)
 
 -- 完成结果只在运行边界封装一次，不包含 Pending。
@@ -147,4 +155,4 @@ data Output cause value = Succ value | Failed (Failure cause)
 
 -- 生成的 Effect instance 统一实现 raise，绑定注册名并接入本次错误总和类型。
 failEffect :: MonadError (Failure cause) m => String -> cause -> String -> m value
-failEffect effectName cause description = throwError (Failure effectName cause description [] [] Nothing)
+failEffect effectName cause description = throwError (Failure effectName cause description [] [] Nothing [])

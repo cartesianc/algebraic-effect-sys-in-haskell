@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module Crawler.Generated.Handlers (newScopeHandlers, errorHandlers) where
+module Crawler.Generated.Handlers (newScopeHandlers, scopeCleanups, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -18,11 +18,11 @@ import Framework.SDK (Effect(..))
 import Crawler.Generated.Effects
 import Crawler.Types
 import Control.Concurrent (forkFinally, killThread, newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (bracket, displayException, evaluate, throwIO)
+import Control.Exception (bracket, displayException, throwIO)
 import Control.Monad.IO.Class (liftIO)
 import Data.List (intercalate)
 import System.Exit (ExitCode(..))
-import System.IO (hFlush, hGetContents, hSetEncoding, stdout, utf8)
+import System.IO (hFlush, hGetContents', hSetEncoding, stdout, utf8)
 import System.IO.Error (tryIOError)
 import System.Process (CreateProcess(..), StdStream(..), proc, waitForProcess, withCreateProcess)
 import Text.HTML.TagSoup
@@ -57,10 +57,32 @@ instance FetchPageEffect App where
       let
         fetchPage = do
           openCrawlSession
-          CrawlURLs page@(PageURL url) _ <- loadCrawlURLs
+          CrawlURLs (PageURL url) _ <- loadCrawlURLs
           CrawlSessionInfo _ userAgent <- readCrawlSession
-          outcome <- liftIO (fetchURL userAgent page)
-          either (\problem -> raise (FetchPageError (url ++ ": " ++ problem))) pure outcome
+          -- 参数直接传给 curl 进程，不经过 shell。
+          let arguments =
+                [ "--disable", "--silent", "--show-error", "--fail", "--location"
+                , "--max-redirs", "3", "--connect-timeout", "5", "--max-time", "15"
+                , "--proto", "=http,https", "--proto-redir", "=http,https"
+                , "--globoff", "--max-filesize", "2097152"
+                , "--user-agent", userAgent, "--url", url
+                ]
+          outcome <- liftIO $ tryIOError $
+            withCreateProcess (proc "curl" arguments)
+              { std_in = NoStream, std_out = CreatePipe, std_err = CreatePipe } $
+              \_ (Just output) (Just errors) process -> do
+                -- 网页按 UTF-8 解码；并行排空 stderr，避免管道阻塞。
+                hSetEncoding output utf8
+                completed <- newEmptyMVar
+                bracket (forkFinally (hGetContents' errors) (putMVar completed)) killThread $ \_ -> do
+                  body <- hGetContents' output
+                  diagnostic <- takeMVar completed >>= either throwIO pure
+                  status <- waitForProcess process
+                  pure (status, body, diagnostic)
+          case outcome of
+            Left problem -> raise (FetchPageError (url ++ ": " ++ displayException problem))
+            Right (ExitFailure _, _, message) -> raise (FetchPageError (url ++ ": " ++ message))
+            Right (ExitSuccess, html, _) -> pure (FetchedHTML url html)
       in fetchPage
 
 instance FetchLinkedPageEffect App where
@@ -73,10 +95,30 @@ instance FetchLinkedPageEffect App where
       let
         fetchLinkedPage = do
           openCrawlSession
-          CrawlURLs _ page@(PageURL url) <- loadCrawlURLs
+          CrawlURLs _ (PageURL url) <- loadCrawlURLs
           CrawlSessionInfo _ userAgent <- readCrawlSession
-          outcome <- liftIO (fetchURL userAgent page)
-          either (\problem -> raise (FetchLinkedPageError (url ++ ": " ++ problem))) pure outcome
+          let arguments =
+                [ "--disable", "--silent", "--show-error", "--fail", "--location"
+                , "--max-redirs", "3", "--connect-timeout", "5", "--max-time", "15"
+                , "--proto", "=http,https", "--proto-redir", "=http,https"
+                , "--globoff", "--max-filesize", "2097152"
+                , "--user-agent", userAgent, "--url", url
+                ]
+          outcome <- liftIO $ tryIOError $
+            withCreateProcess (proc "curl" arguments)
+              { std_in = NoStream, std_out = CreatePipe, std_err = CreatePipe } $
+              \_ (Just output) (Just errors) process -> do
+                hSetEncoding output utf8
+                completed <- newEmptyMVar
+                bracket (forkFinally (hGetContents' errors) (putMVar completed)) killThread $ \_ -> do
+                  body <- hGetContents' output
+                  diagnostic <- takeMVar completed >>= either throwIO pure
+                  status <- waitForProcess process
+                  pure (status, body, diagnostic)
+          case outcome of
+            Left problem -> raise (FetchLinkedPageError (url ++ ": " ++ displayException problem))
+            Right (ExitFailure _, _, message) -> raise (FetchLinkedPageError (url ++ ": " ++ message))
+            Right (ExitSuccess, html, _) -> pure (FetchedHTML url html)
       in fetchLinkedPage
 
 instance ExtractPageEffect App where
@@ -88,8 +130,20 @@ instance ExtractPageEffect App where
       (\value bindings -> bindings { FrameworkGenerated.boundExtractPage = Just value })) $
       let
         extractPage = do
-          page <- fetchPage
-          pure (parsePage page)
+          FetchedHTML url html <- fetchPage
+          let tags = canonicalizeTags (parseTags html)
+              titleTags = takeWhile (not . isTagCloseName "title")
+                        (drop 1 (dropWhile (not . isTagOpenName "title") tags))
+              title = unwords (words (innerText titleTags))
+              -- 内容契约是 p 段落文本，不模拟浏览器渲染或执行脚本。
+              paragraphs =
+                [ unwords (words (innerText (takeWhile (not . isTagCloseName "p") (drop 1 part))))
+                | part <- sections (isTagOpenName "p") tags
+                ]
+              content = intercalate "\n" (filter (not . null) paragraphs)
+              links = [href | tag <- tags, isTagOpenName "a" tag
+                            , let href = fromAttrib "href" tag, not (null href)]
+          pure (PageSummary url title content links)
       in extractPage
 
 instance ExtractLinkedPageEffect App where
@@ -101,8 +155,19 @@ instance ExtractLinkedPageEffect App where
       (\value bindings -> bindings { FrameworkGenerated.boundExtractLinkedPage = Just value })) $
       let
         extractLinkedPage = do
-          page <- fetchLinkedPage
-          pure (parsePage page)
+          FetchedHTML url html <- fetchLinkedPage
+          let tags = canonicalizeTags (parseTags html)
+              titleTags = takeWhile (not . isTagCloseName "title")
+                        (drop 1 (dropWhile (not . isTagOpenName "title") tags))
+              title = unwords (words (innerText titleTags))
+              paragraphs =
+                [ unwords (words (innerText (takeWhile (not . isTagCloseName "p") (drop 1 part))))
+                | part <- sections (isTagOpenName "p") tags
+                ]
+              content = intercalate "\n" (filter (not . null) paragraphs)
+              links = [href | tag <- tags, isTagOpenName "a" tag
+                            , let href = fromAttrib "href" tag, not (null href)]
+          pure (PageSummary url title content links)
       in extractLinkedPage
 
 instance PrintPageEffect App where
@@ -110,9 +175,16 @@ instance PrintPageEffect App where
     (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "PrintPage") $
       let
         printPage = do
-          page@(PageSummary url _ _ _) <- extractPage
-          outcome <- liftIO (printSummary page)
-          either (\problem -> raise (PrintPageError (url ++ ": " ++ problem))) pure outcome
+          PageSummary url title content links <- extractPage
+          let report = unlines
+                ([ "URL: " ++ url
+                 , "Title: " ++ title
+                 , "Content:"
+                 , if null content then "  (no paragraphs)" else content
+                 , "Links:"
+                 ] ++ (if null links then ["  (none)"] else map ("  " ++) links) ++ [""])
+          outcome <- liftIO (tryIOError (putStr report >> hFlush stdout))
+          either (\problem -> raise (PrintPageError (url ++ ": " ++ displayException problem))) pure outcome
       in printPage
 
 instance PrintLinkedPageEffect App where
@@ -120,85 +192,17 @@ instance PrintLinkedPageEffect App where
     (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "PrintLinkedPage") $
       let
         printLinkedPage = do
-          page@(PageSummary url _ _ _) <- extractLinkedPage
-          outcome <- liftIO (printSummary page)
-          either (\problem -> raise (PrintLinkedPageError (url ++ ": " ++ problem))) pure outcome
+          PageSummary url title content links <- extractLinkedPage
+          let report = unlines
+                ([ "URL: " ++ url
+                 , "Title: " ++ title
+                 , "Content:"
+                 , if null content then "  (no paragraphs)" else content
+                 , "Links:"
+                 ] ++ (if null links then ["  (none)"] else map ("  " ++) links) ++ [""])
+          outcome <- liftIO (tryIOError (putStr report >> hFlush stdout))
+          either (\problem -> raise (PrintLinkedPageError (url ++ ": " ++ displayException problem))) pure outcome
       in printLinkedPage
-
--- AST 汇合后的收尾节点，直接引用同一 Scoped 的关闭方法。
-instance FinishCrawlEffect App where
-  finishCrawl =
-    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FinishCrawl") $
-      let
-        finishCrawl = closeCrawlSession
-      in finishCrawl
-
--- 以下函数只实现原子 IO 与解析；上游句柄引用位于上面的 instance 内。
-fetchURL :: String -> PageURL -> IO (Either String FetchedPage)
-fetchURL userAgent (PageURL url) = do
-  -- 参数直接传给 curl 进程，不经过 shell。
-  let arguments =
-        [ "--disable", "--silent", "--show-error", "--fail", "--location"
-        , "--max-redirs", "3", "--connect-timeout", "5", "--max-time", "15"
-        , "--proto", "=http,https", "--proto-redir", "=http,https"
-        , "--globoff", "--max-filesize", "2097152"
-        , "--user-agent", userAgent, "--url", url
-        ]
-  outcome <- tryIOError (readCurl arguments)
-  pure $ case outcome of
-    Left problem -> Left (displayException problem)
-    Right (ExitFailure _, _, message) -> Left message
-    Right (ExitSuccess, html, _) -> Right (FetchedHTML url html)
-
--- 网页按 UTF-8 解码，避免 Windows 的 CP936 默认编码误读页面。
--- 同时排空 stderr，避免子进程因另一条管道写满而阻塞；诊断保留系统编码。
-readCurl :: [String] -> IO (ExitCode, String, String)
-readCurl arguments =
-  withCreateProcess (proc "curl" arguments)
-    { std_in = NoStream, std_out = CreatePipe, std_err = CreatePipe } $
-    \_ (Just output) (Just errors) process -> do
-      hSetEncoding output utf8
-      completed <- newEmptyMVar
-      bracket (forkFinally (readFully errors) (putMVar completed)) killThread $ \_ -> do
-        body <- readFully output
-        diagnostic <- takeMVar completed >>= either throwIO pure
-        status <- waitForProcess process
-        pure (status, body, diagnostic)
-  where
-    readFully pipe = do
-      contents <- hGetContents pipe
-      _ <- evaluate (length contents)
-      pure contents
-
-parsePage :: FetchedPage -> PageSummary
-parsePage (FetchedHTML url html) =
-  let tags = canonicalizeTags (parseTags html)
-      titleTags = takeWhile (not . isTagCloseName "title")
-                (drop 1 (dropWhile (not . isTagOpenName "title") tags))
-      title = unwords (words (innerText titleTags))
-      -- 内容契约是 p 段落文本，不模拟浏览器渲染或执行脚本。
-      paragraphs =
-        [ unwords (words (innerText (takeWhile (not . isTagCloseName "p") (drop 1 part))))
-        | part <- sections (isTagOpenName "p") tags
-        ]
-      content = intercalate "\n" (filter (not . null) paragraphs)
-      links = [href | tag <- tags, isTagOpenName "a" tag
-                    , let href = fromAttrib "href" tag, not (null href)]
-  in PageSummary url title content links
-
-printSummary :: PageSummary -> IO (Either String ())
-printSummary (PageSummary url title content links) = do
-  let report = unlines
-        ([ "URL: " ++ url
-         , "Title: " ++ title
-         , "Content:"
-         , if null content then "  (no paragraphs)" else content
-         , "Links:"
-         ] ++ (if null links then ["  (none)"] else map ("  " ++) links) ++ [""])
-  outcome <- tryIOError (putStr report >> hFlush stdout)
-  pure $ case outcome of
-    Left problem -> Left (displayException problem)
-    Right () -> Right ()
 
 -- 会话信息由上游 Context 生产，SDK 在 scope 内保存并供各抓取链读取。
 instance SessionContextEffect App where
@@ -213,7 +217,7 @@ instance SessionContextEffect App where
       in createCrawlSession
 
 -- 同一 instance 实现开启／关闭；都直接引用 superclass handler，不返回信息。
--- 本次 AST 内无论多少条链调用 open，SDK 只执行一次方法体；结束节点显式 close。
+-- 无开启输入的 scope 在实际重叠使用时共享；最后一条使用闭包退出后自动 close。
 instance CrawlSessionEffect App where
   openCrawlSession =
     (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
@@ -231,13 +235,19 @@ instance CrawlSessionEffect App where
       in closeCrawlSession
 
 
--- SDK 内部：每份 Scoped 句柄拥有自己的状态和 MVar；创建不执行业务方法。
+-- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
 newScopeHandlers = sequence
   [ FrameworkRuntime.newScopeHandler "CrawlSession" [] (Just "SessionContext")
   ]
 
--- Root 的异常入口，按 scope 的拓扑顺序从上向下检测。
+-- SDK 自动收尾入口；安装时不关闭资源。
+scopeCleanups :: [(String, FrameworkGenerated.App ())]
+scopeCleanups =
+  [ ("CrawlSession", closeCrawlSession)
+  ]
+
+-- Error 回调登记；记录 scope 对应的 detect/resolve，不在此执行检测。
 errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated.App)]
 errorHandlers =
   [

@@ -1,13 +1,14 @@
 
 -- Node 只 lower 末端句柄；branch 组合其执行函数。
-module Framework.Workflow.Execution (runAST) where
+module Framework.Workflow.Execution (runAST, runInitializedAST) where
 
 import Framework.Effect.Contract (Failure, Output(..))
-import Framework.Effect.Runtime (Target, targetName, lowerTarget)
+import Framework.Effect.Runtime (Target, targetName, lowerTarget, configureTargets)
 import Framework.Recursion (Algebra, cata)
 import Framework.Workflow.AST (AST, WorkflowF(..))
+import Framework.Workflow.Structure (ProgramStructure(..), InitializedF(..), scopeRelations)
 import Control.Concurrent (MVar, ThreadId, forkIOWithUnmask, killThread, newEmptyMVar, putMVar, readMVar)
-import Control.Exception (SomeException, bracket, throwIO, try)
+import Control.Exception (SomeException, bracket, throwIO, try, uninterruptibleMask_)
 import Control.Monad (void)
 import Control.Monad.Except (ExceptT(..), runExceptT)
 
@@ -27,7 +28,9 @@ withWorkers (action : rest) use =
       thread <- forkIOWithUnmask $ \unmask ->
         try (unmask work) >>= putMVar finished
       pure (thread, finished)
-    stop (thread, finished) = do
+    -- 取消期间再次收到取消也必须等到子线程真正退出，才能进入外层资源收尾。
+    -- 只保护 cancel/join，不屏蔽业务动作本身的取消。
+    stop (thread, finished) = uninterruptibleMask_ $ do
       killThread thread
       void (readMVar finished)
 
@@ -60,5 +63,22 @@ runAST
   :: AST -> [Target IO environment cause value]
   -> IO (Output cause [value])
 runAST tree entries = do
+  configureTargets [] entries
   action <- either (ioError . userError) pure (cata (executionAlgebra entries) tree)
   either Failed Succ <$> runExceptT action
+
+-- 第二次 fold 只装配动作；SDK 已经完整校验并求值生成结构与当前 workflow。
+-- 同一份 ScopeTree 的祖先关系同时用于实例回收和 Error 导航，不重排业务。
+runInitializedAST
+  :: Eq method => ProgramStructure method
+  -> [Target IO environment cause value]
+  -> IO (Output cause [value])
+runInitializedAST structure entries = do
+  configureTargets (scopeRelations structure) entries
+  action <- either (ioError . userError) pure
+    (cata execute (structureWorkflow structure))
+  either Failed Succ <$> runExceptT action
+  where
+    execute (InitializedNode selected _) = executionAlgebra entries (Node selected)
+    execute (InitializedChained children) = executionAlgebra entries (Chained children)
+    execute (InitializedParallel children) = executionAlgebra entries (Parallel children)

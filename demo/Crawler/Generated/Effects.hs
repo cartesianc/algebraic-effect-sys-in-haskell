@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -21,6 +22,11 @@ import Crawler.Types
 -- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
 type Root = SDK.Root ContextValues Errors
 type App = SDK.App ContextValues Errors
+
+-- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
+data MethodGen = LoadCrawlURLsGen | ReadCrawlURLsGen | FetchPageGen | ReadFetchedPageGen | ExtractPageGen | ReadPageSummaryGen | PrintPageGen | FetchLinkedPageGen | ReadFetchedLinkedPageGen | ExtractLinkedPageGen | ReadLinkedPageSummaryGen | PrintLinkedPageGen | CreateCrawlSessionGen | ReadCrawlSessionGen | OpenCrawlSessionGen | CloseCrawlSessionGen
+  deriving (Eq, Ord, Show, Read, SDK.Generic)
+instance SDK.NFData MethodGen
 
 data CrawlerContext
 
@@ -173,20 +179,6 @@ instance (Monad m, Effect Root m, CrawlSessionEffect m) => Effect CrawlSession m
   raise (CrawlSessionError description) = SDK.failEffect "CrawlSession" CrawlSessionFailure description
   handler = FrameworkRoot.handler @Root
 
-data FinishCrawl
-
-class (Effect CrawlSession m) => FinishCrawlEffect m where
-  finishCrawl :: m ()
-  {-# MINIMAL finishCrawl #-}
-
-instance (Monad m, Effect CrawlSession m, FinishCrawlEffect m) => Effect FinishCrawl m where
-  type Registration FinishCrawl = Registered FinishCrawlEffect CrawlSession
-  type Typing FinishCrawl = 'SDK.ExcuKind
-  type Require FinishCrawl = SDK.Void
-  type Error FinishCrawl = FinishCrawlError
-  raise (FinishCrawlError description) = SDK.failEffect "FinishCrawl" FinishCrawlFailure description
-  handler = FrameworkRoot.handler @Root
-
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
 newtype CrawlerContextError = CrawlerContextError String
   deriving (Eq, Show, Read)
@@ -223,12 +215,8 @@ newtype SessionContextError = SessionContextError String
 newtype CrawlSessionError = CrawlSessionError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
-newtype FinishCrawlError = FinishCrawlError String
-  deriving (Eq, Show, Read)
-
 -- 统一失败协议的分类标签；消息与来源由 SDK.Failure 保存。
-data Errors = CrawlerContextFailure | FetchPageFailure | ExtractPageFailure | PrintPageFailure | FetchLinkedPageFailure | ExtractLinkedPageFailure | PrintLinkedPageFailure | SessionContextFailure | CrawlSessionFailure | FinishCrawlFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+data Errors = CrawlerContextFailure | FetchPageFailure | ExtractPageFailure | PrintPageFailure | FetchLinkedPageFailure | ExtractLinkedPageFailure | PrintLinkedPageFailure | SessionContextFailure | CrawlSessionFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。

@@ -5,6 +5,9 @@ module Framework.Codegen (Entry(..), lowerProgram) where
 
 import Framework.Effect.Contract (EffectKind(..))
 import Framework.Effect.Registration
+import Framework.Codegen.Plan (GraphPlan(..))
+import qualified Framework.Effect.Graph as Graph
+import Data.Char (toUpper)
 import Data.List (intercalate, nub)
 import Data.Maybe (maybeToList)
 
@@ -14,7 +17,7 @@ import Data.Maybe (maybeToList)
 data Entry = SingleTarget String | Workflow [String]
 
 lowerProgram :: String -> [EffectSpec] -> Entry
-             -> Either String (String, String, [(String, String, String)], String)
+             -> Either String (String, String, [(String, String, String)], String, GraphPlan String)
 lowerProgram namespace specifications entry = do
   if any ((== "Root") . name) specifications
     then Left "Root is reserved for the superclass"
@@ -26,6 +29,10 @@ lowerProgram namespace specifications entry = do
     then Left "Select at least one terminal effect for generation"
     else pure ()
   selectedMethods <- mapM findHandler selected
+  let allMethods = concatMap registeredMethods specifications
+  if length allMethods /= length (nub (map snd allMethods))
+    then Left "Registered method names must be unique within a generated module"
+    else pure ()
   declarations <- mapM declaration specifications
   singleEntry <- case entry of
     SingleTarget terminal -> do
@@ -45,10 +52,11 @@ lowerProgram namespace specifications entry = do
         ]
     Workflow _ -> pure []
   pure
-    ( unlines (contractHeader ++ runtimeAliases ++ concat declarations ++ errorDeclaration ++ contextDeclarations)
-    , unlines (programHeader ++ singleEntry ++ astInterpreter selectedMethods)
+    ( unlines (contractHeader ++ runtimeAliases ++ methodIdentities ++ concat declarations ++ errorDeclaration ++ contextDeclarations)
+    , unlines (programHeader ++ structureDeclarations ++ singleEntry ++ astInterpreter selectedMethods)
     , concatMap instanceWrappers specifications
-    , scopeHandlers ++ errorHandlers
+    , scopeHandlers ++ scopeCleanups ++ errorHandlers
+    , graphPlan
     )
   where
     selected = case entry of
@@ -62,6 +70,7 @@ lowerProgram namespace specifications entry = do
       [ "{-# LANGUAGE ConstraintKinds #-}"
       , "{-# LANGUAGE DataKinds #-}"
       , "{-# LANGUAGE EmptyDataDecls #-}"
+      , "{-# LANGUAGE DeriveGeneric #-}"
       , "{-# LANGUAGE FlexibleContexts #-}"
       , "{-# LANGUAGE FlexibleInstances #-}"
       , "{-# LANGUAGE MultiParamTypeClasses #-}"
@@ -78,6 +87,64 @@ lowerProgram namespace specifications entry = do
       , "import qualified Framework.Effect.Contract as FrameworkRoot"
       , "import qualified Framework.SDK as SDK"
       , "import " ++ namespace ++ ".Types"
+      , ""
+      ]
+
+    -- 身份是生成的封闭 ADT；手写调用仍引用原生类方法。
+    registeredMethods specification =
+      [(specification, method) | method <- maybeToList (entryMethod (typing specification))
+        ++ (case typing specification of Scoped _ closing -> maybeToList closing; _ -> [])
+        ++ errorMethods specification
+        ++ (case typing specification of Context _ reading -> maybeToList reading; _ -> [])]
+    genName [] = "MissingMethodGen"
+    genName (first : rest) = toUpper first : rest ++ "Gen"
+    methodIdentities =
+      [ "-- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。"
+      , "data MethodGen = " ++ intercalate " | "
+          [genName method | (_, method) <- concatMap registeredMethods specifications]
+      , "  deriving (Eq, Ord, Show, Read, SDK.Generic)"
+      , "instance SDK.NFData MethodGen"
+      , ""
+      ]
+    methodRole specification method = case typing specification of
+      Scoped opening _ -> if Just method == opening then Graph.ScopeOpen else Graph.ScopeClose
+      Context producing _ -> if fmap (\Producer { handler = selectedMethod } -> selectedMethod) producing == Just method
+        then Graph.ContextRequest else Graph.ContextRequire
+      Error detecting _ -> if Just method == detecting then Graph.ErrorDetect else Graph.ErrorResolve
+      _ -> Graph.HandlerMethod
+    graphPlan = GraphPlan
+      { planDefinitions =
+          [ Graph.MethodDefinition method firstMethod (methodRole specification method) Graph.Empty
+          | (specification, method) <- concatMap registeredMethods specifications
+          , (_, firstMethod) : _ <- [registeredMethods specification] ]
+      , planRoutes =
+          [ (consumerMethod, producing, reading)
+          | (consumer, consumerMethod) <- concatMap registeredMethods specifications
+          , Just dependency <- [requireInput consumer]
+          , fmap sourceName (requestInput consumer) /= Just (sourceName dependency)
+          , producer <- specifications, name producer == sourceName dependency
+          , Context (Just Producer { handler = producing }) (Just reading) <- [typing producer] ]
+      , planScopes =
+          [ (opening, selectedScope, scopeRegistrationParents specification)
+          | selectedScope <- orderedScopes
+          , specification <- specifications, name specification == selectedScope
+          , Scoped (Just opening) _ <- [typing specification] ]
+      , planEntries = [(terminal, method) | terminal <- selected, Right method <- [findHandler terminal]]
+      }
+    structureDeclarations =
+      [ "-- 生成身份连接到已有运行 scope 名；依赖只保存在下方显式 ScopeTree 中。"
+      , "scopeNames :: [(MethodGen, String)]"
+      , "scopeNames = [" ++ intercalate ", "
+          [ "(" ++ genName opening ++ ", " ++ show scopeName ++ ")"
+          | (opening, scopeName, _) <- planScopes graphPlan ] ++ "]"
+      , ""
+      , "-- 运行只 fold 当前 workflow，并校验入口集合及生成常量；不重新构图。"
+      , "programStructure :: SDK.AST -> Either (SDK.StructureError MethodGen) (SDK.ProgramStructure MethodGen)"
+      , "programStructure = SDK.initializeGeneratedStructure"
+      , "  [" ++ intercalate ", "
+          ["(" ++ show terminal ++ ", " ++ genName method ++ ")"
+          | (terminal, method) <- planEntries graphPlan] ++ "]"
+      , "  scopeNames generatedEffectGraph generatedScopeTree"
       , ""
       ]
     programHeader =
@@ -156,13 +223,44 @@ lowerProgram namespace specifications entry = do
     -- 共享祖先按身份去重；require 不启动生产链。
     operationInputs specification = nub (input specification : maybeToList (requestSource specification))
     upstreamScopes specification = nub (concatMap (scopeNames []) (operationInputs specification))
-    errorPath specification = nub (scopeNames [] (name specification))
-    orderedScopes = nub (concatMap errorPath specifications)
+    -- App/IO 的 withErrorPath 只接收关联种子；祖先和 top-down 顺序由同一 ScopeTree 决定。
+    -- Pure 尚未安装 ScopeTree，继续保留原来的完整候选名单。
+    errorPath specification
+      | isWorkflow = nub (nearestScopeNames [] (name specification))
+      | otherwise = nub (scopeNames [] (name specification))
+    -- scope 与回调装配仍收齐全量前提，不依赖上面的最近种子集合。
+    orderedScopes = nub (concatMap (scopeNames [] . name) specifications)
+    nearestScopeNames seen selectedName
+      | selectedName `elem` seen = []
+      | otherwise = concat
+          [ case typing specification of
+              Scoped _ _ -> [selectedName]
+              _ -> concatMap (nearestScopeNames (selectedName : seen)) (operationInputs specification)
+          | specification <- specifications, name specification == selectedName ]
     scopeNames seen selectedName
       | selectedName `elem` seen = []
       | otherwise = concat
           [ concatMap (scopeNames (selectedName : seen)) (operationInputs specification)
             ++ (case typing specification of Scoped _ _ -> [selectedName]; _ -> [])
+          | specification <- specifications, name specification == selectedName ]
+
+    -- Input/request 保留现有保守前提；require 不启动来源，但可导航到该
+    -- Context 的声明资源 owner。关闭自己资源的 require 不引入自依赖，
+    -- 也不把同一资源声明的其他 scope 误当自己的关闭 owner。
+    scopeRegistrationParents specification = filter (/= name specification) $ nub
+      (upstreamScopes specification ++
+        [name owner
+        | source <- requiredSources [] (name specification)
+        , Just source /= requestSource specification
+        , owner <- specifications
+        , Scoped (Just _) _ <- [typing owner]
+        , requestSource owner == Just source])
+    requiredSources seen selectedName
+      | selectedName `elem` seen = []
+      | otherwise = nub $ concat
+          [ let required = map sourceName (maybeToList (requireInput specification))
+            in required ++ concatMap (requiredSources (selectedName : seen))
+              (operationInputs specification ++ required)
           | specification <- specifications, name specification == selectedName ]
 
     -- scope.request 指向资源生产者；它声明消费的 Context 值构成开启输入。
@@ -171,8 +269,10 @@ lowerProgram namespace specifications entry = do
     valueInputs seen selectedName
       | selectedName `elem` seen = []
       | otherwise = concat
-          [ let direct = map sourceName (maybeToList (requestInput producer) ++ maybeToList (requireInput producer))
-            in direct ++ concatMap (valueInputs (selectedName : seen)) direct
+          [ let requested = map sourceName (maybeToList (requestInput producer))
+                required = map sourceName (maybeToList (requireInput producer))
+            -- require 只观察缓存值，不要求重现其生产时的输入；request 才继续生产链。
+            in requested ++ required ++ concatMap (valueInputs (selectedName : seen)) requested
           | producer <- specifications, name producer == selectedName ]
     comparedInputs = nub (concatMap openingInputs
       [specification | specification <- specifications, effectKind (typing specification) == ScopedKind])
@@ -247,6 +347,10 @@ lowerProgram namespace specifications entry = do
       valueType <- valueContract specification
       _ <- contextNames specifications [name specification]
       mapM_ checkScope (upstreamScopes specification)
+      case typing specification of
+        Scoped (Just _) Nothing ->
+          Left ("Scoped.open needs Scoped.close for automatic cleanup: " ++ name specification)
+        _ -> pure ()
       let effectName = name specification
           typeName = "'SDK." ++ show (effectKind (typing specification))
           upstream = input specification
@@ -345,20 +449,39 @@ lowerProgram namespace specifications entry = do
     scopeHandlers
       | not isWorkflow = ""
       | otherwise = unlines
-          [ "-- SDK 内部：每份 Scoped 句柄拥有自己的状态和 MVar；创建不执行业务方法。"
+          [ "-- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。"
           , "newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]"
           , "newScopeHandlers = sequence"
           , "  [ " ++ intercalate "\n  , "
               ["FrameworkRuntime.newScopeHandler " ++ show (name specification) ++ " " ++ show (openingInputs specification)
                 ++ " (" ++ show (requestSource specification) ++ ")"
-              | specification <- specifications, effectKind (typing specification) == ScopedKind]
+              | selectedScope <- orderedScopes
+              , specification <- specifications, name specification == selectedScope]
           , "  ]"
           ]
+
+    -- 只登记已有 close 方法；本轮资源绑定由运行载体在 open 时捕获。
+    scopeCleanups
+      | not isWorkflow = ""
+      | otherwise = unlines
+          [ ""
+          , "-- SDK 自动收尾入口；安装时不关闭资源。"
+          , "scopeCleanups :: [(String, FrameworkGenerated.App ())]"
+          , "scopeCleanups ="
+          , "  [" ++ if null callbacks then "" else " " ++ intercalate "\n  , " callbacks
+          , "  ]"
+          ]
+      where
+        callbacks =
+          [ "(" ++ show selectedScope ++ ", " ++ closing ++ ")"
+          | selectedScope <- orderedScopes
+          , specification <- specifications, name specification == selectedScope
+          , Scoped _ (Just closing) <- [typing specification] ]
 
     -- 只保存类方法引用；安装时不检测、不处置，也不执行上游业务。
     errorHandlers = unlines
       [ ""
-      , "-- Root 的异常入口，按 scope 的拓扑顺序从上向下检测。"
+      , "-- Error 回调登记；记录 scope 对应的 detect/resolve，不在此执行检测。"
       , "errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated." ++ carrier ++ ")]"
       , "errorHandlers ="
       , "  [" ++ if null callbacks then "" else " " ++ intercalate "\n  , " callbacks
@@ -392,7 +515,8 @@ lowerProgram namespace specifications entry = do
           , "  pure"
           , "    [ " ++ intercalate "\n    , "
               ["SDK.targetApp " ++ show terminal ++ " emptyContexts scopes"
-                ++ " (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (" ++ terminal ++ "Result <$> " ++ method ++ "))"
+                ++ " (FrameworkRoot.withErrorHandlers Handlers.errorHandlers"
+                ++ " (SDK.withScopeCleanups Handlers.scopeCleanups (" ++ terminal ++ "Result <$> " ++ method ++ ")))"
               | (terminal, method) <- zip selected methods]
           , "    ]"
           , ""
@@ -404,6 +528,6 @@ lowerProgram namespace specifications entry = do
           , ""
           , "-- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。"
           , "interpreter :: SDK.AST -> [EffectSpec] -> IO ()"
-          , "interpreter = SDK.interpreter " ++ show namespace ++ " registeredEffects compiledEntries"
+          , "interpreter = SDK.interpreter " ++ show namespace ++ " registeredEffects programStructure compiledEntries"
           ]
 

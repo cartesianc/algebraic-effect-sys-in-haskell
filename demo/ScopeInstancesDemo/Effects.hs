@@ -33,7 +33,7 @@ effects =
           }
       , input = "Root"
       , context = Just ContextInput
-          { request = Just (From "FileLocation" (typeRef @FileName)), require = Nothing }
+          { request = Nothing, require = Just (From "FileLocation" (typeRef @FileName)) }
       }
   , EffectSpec
       { name = "FileSession"
@@ -49,13 +49,15 @@ effects =
       , typing = Excu { handler = Just "checkIndependent" }
       , input = "FileSession"
       , context = Just ContextInput
-          { request = Nothing, require = Just (From "FileResource" (typeRef @OpenedFile)) }
+          { request = Just (From "FileLocation" (typeRef @FileName))
+          , require = Just (From "FileResource" (typeRef @OpenedFile)) }
       }
   , EffectSpec
       { name = "CheckReopen"
       , typing = Excu { handler = Just "checkReopen" }
       , input = "FileSession"
       , context = Just ContextInput
-          { request = Nothing, require = Just (From "FileResource" (typeRef @OpenedFile)) }
+          { request = Just (From "FileLocation" (typeRef @FileName))
+          , require = Just (From "FileResource" (typeRef @OpenedFile)) }
       }
   ]

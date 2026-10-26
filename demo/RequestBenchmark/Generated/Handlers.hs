@@ -78,7 +78,7 @@ instance Effect AddOne m => RenderNumberEffect m where
 
 
 
--- Root 的异常入口，按 scope 的拓扑顺序从上向下检测。
+-- Error 回调登记；记录 scope 对应的 detect/resolve，不在此执行检测。
 errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated.Pure)]
 errorHandlers =
   [

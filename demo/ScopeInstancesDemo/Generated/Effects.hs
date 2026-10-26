@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -21,6 +22,11 @@ import ScopeInstancesDemo.Types
 -- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
 type Root = SDK.Root ContextValues Errors
 type App = SDK.App ContextValues Errors
+
+-- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
+data MethodGen = PrepareFilesGen | GetFileNameGen | ReadFileNameGen | AcquireFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | CheckIndependentGen | CheckReopenGen
+  deriving (Eq, Ord, Show, Read, SDK.Generic)
+instance SDK.NFData MethodGen
 
 data PrepareFiles
 
@@ -89,28 +95,28 @@ instance (Monad m, Effect Root m, FileSessionEffect m) => Effect FileSession m w
 
 data CheckIndependent
 
-class (Effect FileSession m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => CheckIndependentEffect m where
+class (Effect FileSession m, Effect FileLocation m, Effect FileResource m, Produce FileLocation ~ (FileName), Produce FileResource ~ (OpenedFile)) => CheckIndependentEffect m where
   checkIndependent :: m ()
   {-# MINIMAL checkIndependent #-}
 
 instance (Monad m, Effect FileSession m, CheckIndependentEffect m) => Effect CheckIndependent m where
   type Registration CheckIndependent = Registered CheckIndependentEffect FileSession
   type Typing CheckIndependent = 'SDK.ExcuKind
-  type Require CheckIndependent = OpenedFile
+  type Require CheckIndependent = (FileName, OpenedFile)
   type Error CheckIndependent = CheckIndependentError
   raise (CheckIndependentError description) = SDK.failEffect "CheckIndependent" CheckIndependentFailure description
   handler = FrameworkRoot.handler @Root
 
 data CheckReopen
 
-class (Effect FileSession m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => CheckReopenEffect m where
+class (Effect FileSession m, Effect FileLocation m, Effect FileResource m, Produce FileLocation ~ (FileName), Produce FileResource ~ (OpenedFile)) => CheckReopenEffect m where
   checkReopen :: m ()
   {-# MINIMAL checkReopen #-}
 
 instance (Monad m, Effect FileSession m, CheckReopenEffect m) => Effect CheckReopen m where
   type Registration CheckReopen = Registered CheckReopenEffect FileSession
   type Typing CheckReopen = 'SDK.ExcuKind
-  type Require CheckReopen = OpenedFile
+  type Require CheckReopen = (FileName, OpenedFile)
   type Error CheckReopen = CheckReopenError
   raise (CheckReopenError description) = SDK.failEffect "CheckReopen" CheckReopenFailure description
   handler = FrameworkRoot.handler @Root

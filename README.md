@@ -47,7 +47,7 @@ Succ (Rendered "number: 21")
 cabal run file-demo
 ```
 
-它会打开、读取、追加写入并显式关闭 `demo/FileDemo/output.txt`；文件不存在时创建，后续运行继续追加。日志会显示打开、读写和关闭过程。
+它会打开、读取、追加写入 `demo/FileDemo/output.txt`，在本次操作链退出时由 SDK 自动关闭；文件不存在时创建，后续运行继续追加。日志会显示打开、读写和关闭过程。
 
 ## 如何理解一个程序
 
@@ -60,7 +60,7 @@ cabal run file-demo
 | [Handlers.hs](demo/FileDemo/Handlers.hs) | `instance` 方法中的计算、模式匹配与 IO |
 | [AST.hs](demo/FileDemo/AST.hs) | 要启动的末端操作及其执行结构 |
 | [Main.hs](demo/FileDemo/Main.hs) | 调用生成的 `interpreter ast effects` |
-| `Generated/` | SDK 生成的接口、包装后的 handler 和末端登记 |
+| `Generated/` | SDK 生成的接口、包装后的 handler、纯结构与末端登记 |
 
 例如，纯计算示例的 handler 直接取得上游值并计算：
 
@@ -73,7 +73,23 @@ instance Effect MakeNumber m => AddOneEffect m where
 
 对应的注册声明从 `MakeNumber` 请求值；SDK 负责接入取值协议，业务方法负责计算。完整代码见 [注册](demo/RequestBenchmark/Effects.hs) 和 [实现](demo/RequestBenchmark/Handlers.hs)。
 
+原子业务实现直接写在注册的 `instance` 方法体内，包括解析、转换和 IO；业务复用通过已注册类方法及 Context 关系完成，不另设自定义 helper 实现层。方法内可以直接调用标准库／外部库原语并完成局部计算。详见 [instance 实现边界](docs/DESIGN_METHOD.md#3-haskell-值语义收敛到原子-handler)。
+
 workflow 的 `node` 选择一条完整操作链的末端，`chained` 顺序执行并在失败时停止，`parallel` 等待全部分支完成。链内的上游操作由 handler 显式引用；声明能力依赖本身不会自动执行操作。节点的返回值也不会自动传给下一个节点。
+
+### 查看初始化结构
+
+不用修改 Main，给现有示例传入 `--structure`：
+
+```sh
+cabal run crawler-demo -- --structure
+```
+
+它以可读格式显示 effect 方法图，以及 `ScopeTree` 的各入口路径、共享父节点、层次、双向顺序实证与未定关系；不创建运行 scope 句柄，也不执行 handler 或业务 IO。也可以直接阅读 `Generated/Program.hs` 中的 `generatedEffectGraph` 和 `generatedScopeTree`：它们是显式的 Haskell ADT 值，已在 gencode 时完成推导、补入声明前提并检查无环。`ScopeTree` 保留共享节点和多个父节点，表示 DAG；App／IO 用同一棵树导航 Error 的祖先候选，并约束子 scope 先于父 scope 释放。
+
+生成器从原生方法体读取显式 effect 引用，生成 `MethodGen` 身份和剥离业务值／IO 的结构副本，再用纯解释计算上述常量；业务执行副本的原表达式保持不变。每个 Node 的链独立分析，不把 workflow 的顺序当作 scope 依赖。普通启动由 `programStructure` 对实际 AST 做一次初始化 fold，检查入口集合与生成结构一致、树的引用及层次有效，再装配原业务 action；这一步不重新推导 scope 边。算法与边界见 [Effect graph 与 scope 初始化](docs/EFFECT_GRAPH.md)。
+
+结构提取支持显式调用、`do`、`if`／`case` 及已识别的标准组合；`catchError` 保留正文和可能提前进入 recovery 的路径。未知高阶 effect、隐藏 helper 组合、含 effect 的动态循环或递归引用会报错，不会静默省略。没有 effect 引用的原子业务代码可以使用任意 Haskell 语法。
 
 ### Effect 类别与业务值
 
@@ -83,15 +99,25 @@ workflow 的 `node` 选择一条完整操作链的末端，`chained` 顺序执�
 | `Excu` | 执行操作 | `()` |
 | `Context` | 生产或读取跨 handler 使用的业务值 | 注册的业务 ADT |
 | `Scoped` | 在同一 instance 中实现资源的 `open`／`close` | `()` |
-| `Error` | 检测和处置故障 | 接口与执行协议尚待实现 |
+| `Error` | 通过 `detect` 定位故障，通过可选 `resolve` 处置 | `()`；保留原失败及检测／处置结果 |
 
-Context 的 `request` 每次重新生产，成功后保存绑定；`require` 读取已有成功绑定，不重新执行生产者，未绑定时失败。普通绑定限定在一次末端调用内，scope 开启期间的绑定可随同批运行句柄跨节点保存。
+Context 的 `request` 每次重新生产，成功后保存绑定；`require` 读取已有成功绑定，不重新执行生产者，未绑定时失败。普通绑定限定在一次末端调用内。稳定的开启输入可以再次用于 `open`；重新开启会得到新资源绑定，旧资源绑定不会自动改指新实例。
+
+你仍在原有 `Scoped` instance 中实现 `open`／`close`，由 SDK 安排自动关闭，不需手写 layer 或修改 Main。一次末端 chain 是使用范围：实际开启或读取资源时登记使用，整条 chain 连同错误处理和结果消费结束后释放。最后一个使用者退出且依赖的子 scope 已释放时，SDK 自动执行 close；整个 interpreter 退出时还会做兜底收尾。清理失败保留原错误及清理故障，不把资源假装成已经释放。
+
+当前 core 固定使用这套 once-spare 策略，尚无 cleanup policy 配置、next-use 或延迟保留；这些策略选择不进入业务 open／close 的方法签名。
+
+scope 是否共享由它的开启输入决定：相同的稳定 `require` 输入允许并发复用一次开启；实际以 `request` 取得的开启输入默认产生独立实例，即使值相等也不合并。资源生产方法自身的 `request` 与开启参数的访问模式是不同层次。关闭之后，后续 chain 可以重新调用原来的 open；不保留旧实例只为等待尚未开始的节点。业务显式 close 仍可用，但有其他使用者或未释放子 scope 时会拒绝关闭，不等待当前调用自己退出。
+
+App／IO 的 Error 从故障关联的 scope 出发，沿同一份 `ScopeTree` 补齐祖先，在生命周期锁外从父到子调用已注册的 `detect`／`resolve`。候选路径不证明故障归属，实际实例仍由已有资源绑定和故障证据定位；处置后继续传播原失败。不增加另一份 Error graph、轮询或动态调用追踪。Pure 载体尚未安装这棵树，继续使用原有生成候选名单。
 
 纯计算示例使用的 `Pure` **执行载体**与表中的 `Pure` **effect 类别**是两个概念：示例中的数字、文本生产操作仍注册为 `Context`。业务失败通过生成的错误类型和 `raise` 传播，运行边界返回 `Succ` 或 `Failed`。
 
 ## 修改代码与重新生成
 
 **修改 `Handlers.hs` 后也要重新生成。** 实际运行编译的是 `Generated/Handlers.hs`；只改手写方法体再运行，可能仍然执行旧实现。
+
+手写 `Handlers.hs` 本身是可以由 GHC／HLS 检查的原生 Haskell，不必先生成业务包装副本才能发现类型错误。仓库的 `hie.yaml` 提供编辑器加载配置；使用与项目 GHC 9.12.2 匹配的 HLS。它导入的 `Generated/Effects.hs` 契约需要先存在且与声明同步：新项目先生成接口，再编写 handler；只改方法体时，可以先检查再重新生成。编辑手写模块，运行则导入 Generated 副本，避免在同一导入链重复引入两份 instance。这个边界已写入[核心设计](docs/DESIGN_METHOD.md#生成前仍是原生-haskell核心约束)。
 
 例如修改 FileDemo 的注册、业务契约、handler 或新增 AST 末端后：
 
@@ -110,6 +136,10 @@ cabal exec -- runghc -idemo -isdk demo/RequestBenchmark/Main.hs
 
 生成命令只更新对应示例的 `Generated/Effects.hs`、`Generated/Handlers.hs` 和 `Generated/Program.hs`，不会执行业务操作或回写手写文件。请修改手写声明与实现，再重新生成；将生成源码一并提交，便于审阅接口与协议包装。
 
+未变化的生成文件不重写，保留时间戳以减少后续重编译。每个命名空间另有不提交 Git 的 `Generated/.scope-cache`，按完整声明计划、规范化方法结构与构图／渲染算法源码精确匹配，复用纯构图结果；只改原子业务代码而不改变 effect 结构时也可命中。命令仍加载声明并解析一次 `Handlers.hs`，目前没有 watcher、运行中的热替换或按单个方法增量构图。
+
+可以在生成源码中检查或调整 scope 边，运行时只校验、不覆盖这些边；调整时应保持 `parents`／`children`、`roots` 和 `layers` 一致。App／IO 的 Error 祖先导航与自动清理都会读取调整后的树；结构校验不证明人工删边在业务上正确。重新 gencode 会按手写来源重新生成；缓存也不会保存人工改边。目前没有独立的、跨生成保留的边覆盖配置。
+
 ### 新增示例
 
 1. 在 `demo/MyDemo/` 下定义 `Types.hs`、`Effects.hs` 和 `AST.hs`，模块名使用 `MyDemo.*`，分别导出所需业务类型、`effects` 和 `ast`。这些模块不导入 `Generated` 或 `Handlers`，确保首次生成可独立编译声明。
@@ -126,7 +156,7 @@ cabal exec -- runghc -idemo -isdk demo/RequestBenchmark/Main.hs
 | [RequestBenchmark](demo/RequestBenchmark) | 原生 ADT、Context 取值、纯计算链 | 见快速开始 |
 | [FileDemo](demo/FileDemo) | 文件资源的开启、读取、写入与关闭 | `cabal run file-demo` |
 | [Crawler](demo/Crawler) | 并行解析与顺序打印的 workflow | `cabal run crawler-demo` |
-| [OpenFilesDemo](demo/OpenFilesDemo) | 多个文件句柄跨节点保持打开 | `cabal run open-files-demo` |
+| [OpenFilesDemo](demo/OpenFilesDemo) | 一次 scope 管理多个文件、调用结束后自动关闭及重开 | `cabal run open-files-demo` |
 | [ScopeInstancesDemo](demo/ScopeInstancesDemo) | 按参数区分资源实例、复用与重开 | `cabal run scope-instances-demo` |
 | [ScopeReuseDemo](demo/ScopeReuseDemo) | 并行节点复用同一个 scope | `cabal run scope-reuse-demo` |
 
@@ -134,9 +164,9 @@ Crawler 需要网络连接和 PATH 上的 `curl`；打印阶段会再次请求�
 
 ## 当前范围
 
-已实现四类 effect 的接口生成、原生 instance 包装、Context 的 request／require、App／IO 下的 scope 多实例复用，以及有限 workflow 的顺序和并行执行。
+已实现五类 effect 的接口生成、原生 instance 包装、Context 的 request／require、Root 的 Error 检测／处置、App／IO 下的 scope 多实例管理、执行闭包退出后的自动清理与 interpreter 兜底收尾，以及有限 workflow 的顺序和并行执行。
 
-正在设计或尚未接入的能力包括 `Error.detect/resolve`、资源自动收尾、使用与关闭的并发协调、Generic Map、loop／Hanging 和 middleware。示例目前显式关闭资源；现有 `raise` 和错误传播不代表 Error 类别已经实现。
+尚未接入裸 `forkIO` 自动追踪、Generic Map、loop／Hanging 和 middleware。自动清理覆盖框架管理的有限执行与已交给 SDK 的 scope 资源；任意业务 IO 内部尚未发布的部分获取，仍由该业务操作负责清理。示例中的显式关闭可以保留。
 
 当前 SDK 随仓库内的 executable 编译，尚未提供独立 Cabal library。跨独立模块的运行时链接与跨 interpreter 的资源存续也未实现。完整边界见 [最新设计](docs/LATEST_DESIGN.md)。
 
@@ -161,6 +191,7 @@ cabal exec -- ghc -idemo -isdk -fno-code demo/RequestBenchmark/Main.hs
 
 - [设计方法](docs/DESIGN_METHOD.md)：组合描述与原子值操作的边界；修改架构前先读。
 - [最新设计](docs/LATEST_DESIGN.md)：Context、scope、生成协议与待落实的能力。
+- [Effect graph 与 scope 初始化](docs/EFFECT_GRAPH.md)：方法结构、ScopeTree 构建及 `--structure` 查看入口。
 - [SDK 入口](sdk/Framework/SDK.hs)：统一 facade 和命令行入口。
 - [代码生成](sdk/Framework/Codegen.hs)：注册如何生成类型类接口与调用包装。
 - [开发约定](AGENTS.md)：当前项目的实现与验证规则。

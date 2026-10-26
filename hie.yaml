@@ -1,15 +1,5 @@
-# 爬虫通过 Cabal 加载 TagSoup；数字 benchmark 直接编译。
+# facade 共用包含全部示例依赖的 Cabal 上下文；避免与 direct 混用时共享 SDK 的归属冲突。
+# 这里只决定编辑器的编译参数，各示例仍由自己的 Main／Cabal 目标启动。
 cradle:
-  multi:
-    - path: ./demo/Crawler
-      config:
-        cradle:
-          cabal:
-            component: exe:crawler-demo
-    - path: ./
-      config:
-        cradle:
-          direct:
-            arguments:
-              - -idemo
-              - -isdk
+  cabal:
+    component: exe:crawler-demo

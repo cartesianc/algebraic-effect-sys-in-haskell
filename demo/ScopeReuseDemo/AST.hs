@@ -2,8 +2,8 @@ module ScopeReuseDemo.AST (ast) where
 
 import Framework.SDK (AST, chained, parallel, node)
 
--- 三条独立 Input 链都引用 SharedFileScope；中间不 close。
--- 检查与关闭等待三个写入分支全部完成，不要求写入顺序固定。
+-- 三条独立 Input 链使用相等的 require 参数；实际重叠时共享同一活实例。
+-- 每链完成后撤销使用；汇合后检查已有日志，不预留资源给后续 Node。
 ast :: AST
 ast = chained
   [ node "PrepareProbe"

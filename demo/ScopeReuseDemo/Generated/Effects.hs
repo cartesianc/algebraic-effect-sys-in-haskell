@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -21,6 +22,11 @@ import ScopeReuseDemo.Types
 -- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
 type Root = SDK.Root ContextValues Errors
 type App = SDK.App ContextValues Errors
+
+-- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
+data MethodGen = GetFilePathsGen | ReadFilePathsGen | PrepareProbeGen | AcquireFileGen | ReadOpenedFileGen | OpenSharedFileGen | CloseSharedFileGen | WriteFirstGen | WriteSecondGen | WriteThirdGen | VerifyReuseGen
+  deriving (Eq, Ord, Show, Read, SDK.Generic)
+instance SDK.NFData MethodGen
 
 data FileLocations
 
@@ -89,56 +95,56 @@ instance (Monad m, Effect Root m, SharedFileScopeEffect m) => Effect SharedFileS
 
 data WriteFirst
 
-class (Effect SharedFileScope m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => WriteFirstEffect m where
+class (Effect SharedFileScope m, Effect FileLocations m, Effect FileResource m, Produce FileLocations ~ (FilePaths), Produce FileResource ~ (OpenedFile)) => WriteFirstEffect m where
   writeFirst :: m ()
   {-# MINIMAL writeFirst #-}
 
 instance (Monad m, Effect SharedFileScope m, WriteFirstEffect m) => Effect WriteFirst m where
   type Registration WriteFirst = Registered WriteFirstEffect SharedFileScope
   type Typing WriteFirst = 'SDK.ExcuKind
-  type Require WriteFirst = OpenedFile
+  type Require WriteFirst = (FilePaths, OpenedFile)
   type Error WriteFirst = WriteFirstError
   raise (WriteFirstError description) = SDK.failEffect "WriteFirst" WriteFirstFailure description
   handler = FrameworkRoot.handler @Root
 
 data WriteSecond
 
-class (Effect SharedFileScope m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => WriteSecondEffect m where
+class (Effect SharedFileScope m, Effect FileLocations m, Effect FileResource m, Produce FileLocations ~ (FilePaths), Produce FileResource ~ (OpenedFile)) => WriteSecondEffect m where
   writeSecond :: m ()
   {-# MINIMAL writeSecond #-}
 
 instance (Monad m, Effect SharedFileScope m, WriteSecondEffect m) => Effect WriteSecond m where
   type Registration WriteSecond = Registered WriteSecondEffect SharedFileScope
   type Typing WriteSecond = 'SDK.ExcuKind
-  type Require WriteSecond = OpenedFile
+  type Require WriteSecond = (FilePaths, OpenedFile)
   type Error WriteSecond = WriteSecondError
   raise (WriteSecondError description) = SDK.failEffect "WriteSecond" WriteSecondFailure description
   handler = FrameworkRoot.handler @Root
 
 data WriteThird
 
-class (Effect SharedFileScope m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => WriteThirdEffect m where
+class (Effect SharedFileScope m, Effect FileLocations m, Effect FileResource m, Produce FileLocations ~ (FilePaths), Produce FileResource ~ (OpenedFile)) => WriteThirdEffect m where
   writeThird :: m ()
   {-# MINIMAL writeThird #-}
 
 instance (Monad m, Effect SharedFileScope m, WriteThirdEffect m) => Effect WriteThird m where
   type Registration WriteThird = Registered WriteThirdEffect SharedFileScope
   type Typing WriteThird = 'SDK.ExcuKind
-  type Require WriteThird = OpenedFile
+  type Require WriteThird = (FilePaths, OpenedFile)
   type Error WriteThird = WriteThirdError
   raise (WriteThirdError description) = SDK.failEffect "WriteThird" WriteThirdFailure description
   handler = FrameworkRoot.handler @Root
 
 data VerifyReuse
 
-class (Effect SharedFileScope m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => VerifyReuseEffect m where
+class (Effect Root m, Effect FileLocations m, Produce FileLocations ~ (FilePaths)) => VerifyReuseEffect m where
   verifyReuse :: m ()
   {-# MINIMAL verifyReuse #-}
 
-instance (Monad m, Effect SharedFileScope m, VerifyReuseEffect m) => Effect VerifyReuse m where
-  type Registration VerifyReuse = Registered VerifyReuseEffect SharedFileScope
+instance (Monad m, Effect Root m, VerifyReuseEffect m) => Effect VerifyReuse m where
+  type Registration VerifyReuse = Registered VerifyReuseEffect Root
   type Typing VerifyReuse = 'SDK.ExcuKind
-  type Require VerifyReuse = OpenedFile
+  type Require VerifyReuse = FilePaths
   type Error VerifyReuse = VerifyReuseError
   raise (VerifyReuseError description) = SDK.failEffect "VerifyReuse" VerifyReuseFailure description
   handler = FrameworkRoot.handler @Root

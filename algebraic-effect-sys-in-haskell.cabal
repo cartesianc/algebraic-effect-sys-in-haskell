@@ -34,6 +34,7 @@ executable crawler-demo
       Framework.Effect
       Framework.Effect.Contract
       Framework.Effect.Registration
+      Framework.Effect.Graph
       Framework.Effect.Context
       Framework.Effect.Binding
       Framework.Effect.Scope
@@ -42,9 +43,11 @@ executable crawler-demo
       Framework.Recursion
       Framework.Workflow.AST
       Framework.Workflow.Execution
+      Framework.Workflow.Structure
   ghc-options: -main-is Crawler.Main -threaded
   build-depends:
       base >= 4.21 && < 5
+    , deepseq
     , mtl >= 2.3 && < 2.4
     , directory
     , filepath
@@ -67,6 +70,7 @@ executable file-demo
       Framework.Effect
       Framework.Effect.Contract
       Framework.Effect.Registration
+      Framework.Effect.Graph
       Framework.Effect.Context
       Framework.Effect.Binding
       Framework.Effect.Scope
@@ -75,9 +79,11 @@ executable file-demo
       Framework.Recursion
       Framework.Workflow.AST
       Framework.Workflow.Execution
+      Framework.Workflow.Structure
   ghc-options: -main-is FileDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
+    , deepseq
     , mtl >= 2.3 && < 2.4
     , filepath
     , process >= 1.6 && < 1.7
@@ -98,6 +104,7 @@ executable open-files-demo
       Framework.Effect
       Framework.Effect.Contract
       Framework.Effect.Registration
+      Framework.Effect.Graph
       Framework.Effect.Context
       Framework.Effect.Binding
       Framework.Effect.Scope
@@ -106,9 +113,11 @@ executable open-files-demo
       Framework.Recursion
       Framework.Workflow.AST
       Framework.Workflow.Execution
+      Framework.Workflow.Structure
   ghc-options: -main-is OpenFilesDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
+    , deepseq
     , mtl >= 2.3 && < 2.4
     , directory
     , filepath
@@ -130,6 +139,7 @@ executable scope-reuse-demo
       Framework.Effect
       Framework.Effect.Contract
       Framework.Effect.Registration
+      Framework.Effect.Graph
       Framework.Effect.Context
       Framework.Effect.Binding
       Framework.Effect.Scope
@@ -138,9 +148,11 @@ executable scope-reuse-demo
       Framework.Recursion
       Framework.Workflow.AST
       Framework.Workflow.Execution
+      Framework.Workflow.Structure
   ghc-options: -main-is ScopeReuseDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
+    , deepseq
     , mtl >= 2.3 && < 2.4
     , directory
     , filepath
@@ -162,6 +174,7 @@ executable scope-instances-demo
       Framework.Effect
       Framework.Effect.Contract
       Framework.Effect.Registration
+      Framework.Effect.Graph
       Framework.Effect.Context
       Framework.Effect.Binding
       Framework.Effect.Scope
@@ -170,9 +183,11 @@ executable scope-instances-demo
       Framework.Recursion
       Framework.Workflow.AST
       Framework.Workflow.Execution
+      Framework.Workflow.Structure
   ghc-options: -main-is ScopeInstancesDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
+    , deepseq
     , mtl >= 2.3 && < 2.4
     , directory
     , filepath
@@ -183,10 +198,18 @@ executable scope-instances-demo
 executable effect-codegen
   main-is: Framework/Generate.hs
   hs-source-dirs: sdk
-  other-modules: Framework.Codegen.Handlers
+  other-modules:
+      Framework.Codegen.Handlers
+      Framework.Codegen.Structure
+      Framework.Codegen.Plan
+      Framework.Effect.Graph
+      Framework.Recursion
+      Framework.Workflow.AST
+      Framework.Workflow.Structure
   ghc-options: -main-is Framework.Generate
   build-depends:
       base >= 4.21 && < 5
+    , deepseq
     , filepath
     , process >= 1.6 && < 1.7
     , directory

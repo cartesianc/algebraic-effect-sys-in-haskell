@@ -6,18 +6,19 @@
 -- 句柄描述与 lower；普通 Context 按调用保存，scope 控制对象由生成句柄共享。
 module Framework.Effect.Runtime
   ( Pure, App, Target, Identity, targetPure, targetApp, bootPure
-  , targetName, lowerTarget
+  , targetName, lowerTarget, configureTargets, cleanupTargets
   ) where
 
 import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault, Failure(..), Output(..), ErrorStore(..), ErrorHandler, runErrorHandler)
-import Framework.Effect.Runtime.App (App, runApp)
+import Framework.Effect.Runtime.App (App, runAppWith)
 import Framework.Effect.Scope
+import Control.Exception (SomeException, evaluate)
 import Control.Monad (forM_, when)
 import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
 import Control.Monad.Reader (ReaderT, ask, asks, local, runReaderT)
 import Control.Monad.State.Strict (MonadState, State, evalState, gets, modify')
 import Data.Functor.Identity (Identity(..))
-import Data.List (nub)
+import Data.List (nub, nubBy)
 import Data.Maybe (catMaybes, isJust)
 
 data Calling environment cause = Calling
@@ -163,7 +164,7 @@ runPure environment (PureRun action) =
 -- 一个生成程序的 Node 共用同一存储契约；普通 Context 在每次 lower 时仍独立。
 data Target runtime environment cause value where
   PureTarget :: String -> environment -> Pure environment cause value -> Target Identity environment cause value
-  AppTarget :: String -> environment -> Scopes environment cause -> App environment cause value
+  AppTarget :: (Show cause, Show value) => String -> environment -> Scopes environment cause -> App environment cause value
             -> Target IO environment cause value
 
 targetName :: Target runtime environment cause value -> String
@@ -174,14 +175,31 @@ targetName (AppTarget selected _ _ _) = selected
 targetPure :: String -> environment -> Pure environment cause value -> Target Identity environment cause value
 targetPure = PureTarget
 
-targetApp :: String -> environment -> Scopes environment cause -> App environment cause value
+targetApp :: (Show cause, Show value) => String -> environment -> Scopes environment cause -> App environment cause value
           -> Target IO environment cause value
 targetApp = AppTarget
 
--- Node algebra 只 lower 末端；scope 引用已绑定在句柄中，解释器不创建或重置状态。
+-- Node algebra 只 lower 末端；scope 引用已绑定在句柄中。
+-- 受控结果消费在使用闭包退出前完成，惰性读取不会落在自动 close 之后。
 lowerTarget :: Target runtime environment cause value -> runtime (Either (Failure cause) value)
 lowerTarget (PureTarget _ environment action) = Identity (runPure environment action)
-lowerTarget (AppTarget _ environment scopes action) = runApp scopes environment action
+lowerTarget (AppTarget _ environment scopes action) =
+  runAppWith (\value -> evaluate (foldr seq () (show value))) scopes environment action
+
+-- 各末端通常捕获同批 scope；按控制对象身份去重，不按业务名称合并独立批次。
+scopeHandlers :: [Target IO environment cause value] -> Scopes environment cause
+scopeHandlers entries = nubBy sameHandler (concatMap targetScopes entries)
+  where
+    targetScopes :: Target IO environment cause value -> Scopes environment cause
+    targetScopes (AppTarget _ _ scopes _) = scopes
+    sameHandler left right = scopeInstances left == scopeInstances right
+
+-- 在第一次业务调用前安装同一 ScopeTree 的祖先投影，供回收协调和 Error 导航读取。
+configureTargets :: [(String, [String])] -> [Target IO environment cause value] -> IO ()
+configureTargets relations = configureScopeRelations relations . scopeHandlers
+
+cleanupTargets :: [Target IO environment cause value] -> IO [(Maybe SomeException, Failure cause)]
+cleanupTargets = cleanupScopes . scopeHandlers
 
 -- 无 AST 的纯计算 benchmark 入口，同样只 lower 所选末端。
 bootPure :: Target Identity environment cause value -> Output cause value

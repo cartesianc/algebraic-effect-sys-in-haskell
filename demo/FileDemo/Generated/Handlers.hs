@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module FileDemo.Generated.Handlers (newScopeHandlers, errorHandlers) where
+module FileDemo.Generated.Handlers (newScopeHandlers, scopeCleanups, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -19,20 +19,20 @@ import FileDemo.Generated.Effects
 import FileDemo.Types
 import Control.Exception (bracketOnError, displayException)
 import Control.Monad (unless)
-import Control.Monad.Except (catchError, throwError)
 import Control.Monad.IO.Class (liftIO)
+import Data.Function (fix)
 import System.FilePath ((</>))
 import System.IO
-  ( Handle, IOMode(ReadWriteMode), SeekMode(AbsoluteSeek, SeekFromEnd)
-  , hClose, hFlush, hGetChar, hIsClosed, hIsEOF, hPrint, hPutStr, hSeek, hSetEncoding
-  , openFile, stderr, utf8 )
+  ( IOMode(ReadWriteMode), SeekMode(AbsoluteSeek, SeekFromEnd)
+  , hClose, hFlush, hGetChar, hIsClosed, hIsEOF, hPutStr, hSeek, hSetEncoding
+  , openFile, utf8 )
 import System.IO.Error (tryIOError)
 
 instance FileLocationEffect App where
   -- 示例专用文件：首次运行创建，后续追加；在项目根目录运行。
   getFileName =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation" FrameworkGenerated.ContextBindingError
-      [("ValidateFileName", FrameworkRuntime.RequestValue), ("FileResource", FrameworkRuntime.RequireValue)]
+      [("ValidateFileName", FrameworkRuntime.RequireValue), ("FileResource", FrameworkRuntime.RequireValue), ("FileWorkflow", FrameworkRuntime.RequestValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocation"))
       FrameworkGenerated.boundFileLocation
       (\value bindings -> bindings { FrameworkGenerated.boundFileLocation = Just value })) $
@@ -103,7 +103,12 @@ instance ReadFileEffect App where
           OpenedFile _ file <- readOpenedFile
           outcome <- liftIO $ tryIOError $ do
             hSeek file AbsoluteSeek 0
-            FileText <$> readFully file
+            -- 读完仍保留当前 Handle，供同一链随后写入；不使用会关闭它的 hGetContents。
+            FileText <$> fix (\next characters -> do
+              finished <- hIsEOF file
+              if finished
+                then pure (reverse characters)
+                else hGetChar file >>= \character -> next (character : characters)) []
           either (raise . ReadFileError . displayException) pure outcome
       in readFileText
 
@@ -150,33 +155,27 @@ instance FileWorkflowEffect App where
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileWorkflow") $
       let
         runFileWorkflow = do
+          -- 本条链先取得稳定参数；校验和 scope 开启都 require 这份绑定。
+          _ <- getFileName
           openFileSession
-          -- 当前没有 SDK 自动收尾：本例显式清理已转成 Failure 的读写错误。
-          -- 清理也失败时输出次生故障，并保持原始错误向上传播。
-          writeFileText `catchError` \failure -> do
-            closeFileSession `catchError` \closingFailure -> liftIO (hPrint stderr closingFailure)
-            throwError failure
-          closeFileSession
+          writeFileText
       in runFileWorkflow
-
--- 原子 IO 辅助函数：读完仍保持 Handle 打开，供后续写入；不使用惰性 hGetContents。
-readFully :: Handle -> IO String
-readFully file = go []
-  where
-    go characters = do
-      finished <- hIsEOF file
-      if finished
-        then pure (reverse characters)
-        else hGetChar file >>= \character -> go (character : characters)
+    -- 完整链退出后由 SDK 释放本次使用并自动关闭空闲实例。
 
 
--- SDK 内部：每份 Scoped 句柄拥有自己的状态和 MVar；创建不执行业务方法。
+-- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
 newScopeHandlers = sequence
   [ FrameworkRuntime.newScopeHandler "FileSession" ["FileLocation"] (Just "FileResource")
   ]
 
--- Root 的异常入口，按 scope 的拓扑顺序从上向下检测。
+-- SDK 自动收尾入口；安装时不关闭资源。
+scopeCleanups :: [(String, FrameworkGenerated.App ())]
+scopeCleanups =
+  [ ("FileSession", closeFileSession)
+  ]
+
+-- Error 回调登记；记录 scope 对应的 detect/resolve，不在此执行检测。
 errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated.App)]
 errorHandlers =
   [ ("FileSession", FrameworkRoot.ErrorHandler "FileRecovery" (Just detectFileSession) (Just resolveFileSession))

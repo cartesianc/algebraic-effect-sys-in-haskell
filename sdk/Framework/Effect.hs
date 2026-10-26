@@ -10,7 +10,7 @@ module Framework.Effect
   , Producer(..), TypeRef(..), typeRef, EffectSpec(..), ContextInput(..), ValueSource(..), Void
   , ContextFault(..), ContextAccess(..), readContext, requestContext, callContext, enterHandler
   , ScopeInput(..), ScopeFault(..), openScope, closeScope, withScopeDependencies
-  , ScopeHandler, newScopeHandler
+  , ScopeHandler, newScopeHandler, withScopeCleanups
   ) where
 
 import Framework.Effect.Contract
@@ -22,4 +22,5 @@ import Framework.Effect.Context (ContextFault(..), ContextAccess(..), readContex
 import Framework.Effect.Registration
   ( EffectTyping(..), Producer(..), TypeRef(..), typeRef, EffectSpec(..), ContextInput(..), ValueSource(..) )
 import Framework.Effect.Runtime (Pure, App, Target, Identity, targetPure, targetApp, bootPure)
+import Framework.Effect.Runtime.App (withScopeCleanups)
 import Framework.Effect.Scope (ScopeHandler, newScopeHandler)

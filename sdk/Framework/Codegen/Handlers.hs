@@ -1,14 +1,16 @@
--- 保留原生 Haskell 方法体；只解析模块和方法边界，添加注册声明的入口包装。
-module Framework.Codegen.Handlers (renderHandlers) where
+-- 保留原生 Haskell 方法体；生成独立结构副本，并添加注册声明的运行入口包装。
+module Framework.Codegen.Handlers (prepareHandlers, HandlerShape(..)) where
 
 import Control.Exception (evaluate)
 import Control.Monad.IO.Class (liftIO)
 import Data.List (intercalate, isPrefixOf, sortOn)
+import Data.Maybe (isJust)
+import Framework.Codegen.Structure (HandlerShape(..), analyzeModule)
 import GHC (GhcPs, getSessionDynFlags, runGhc)
 import GHC.Data.FastString (mkFastString)
 import GHC.Data.StringBuffer (stringToStringBuffer)
 import GHC.Driver.Config.Parser (initParserOpts)
-import GHC.Driver.Session (parseDynamicFilePragma)
+import GHC.Driver.Session (flagSpecFlag, flagSpecName, parseDynamicFilePragma, xFlags, xopt)
 import GHC.Hs
 import qualified GHC.Parser as Parser
 import GHC.Parser.Annotation (getLocA)
@@ -22,49 +24,73 @@ import System.FilePath ((</>), pathSeparator)
 import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, utf8, withFile)
 import System.Process (readProcess)
 
+-- 分析与包装共用一次读取和解析的快照，不加载 instance 或执行业务。
 -- 包装计划来自注册；原文件始终保留，只有 Generated 副本进入运行导入链。
-renderHandlers :: String -> [(String, String, String)] -> String -> IO String
-renderHandlers namespace wrappers scopeHandlers = do
-  let directory = "demo" </> map (\c -> if c == '.' then pathSeparator else c) namespace
-      inputPath = directory </> "Handlers.hs"
+prepareHandlers :: String -> [(String, String, String)] -> String
+                -> IO (String, [((String, String), HandlerShape)])
+prepareHandlers namespace wrappers scopeHandlers = do
+  loaded <- loadHandlers namespace
+  shapes <- case loaded of
+    Nothing -> pure []
+    Just (_, parsed, implicitPrelude, rebindableSyntax) -> do
+      let methods = [(owner, method) | (owner, method, _) <- wrappers]
+      analyzed <- either (ioError . userError) pure (analyzeModule namespace methods implicitPrelude parsed)
+      if rebindableSyntax && any ((/= Empty) . snd) analyzed
+        then ioError (userError "Effect structure analysis does not support RebindableSyntax; use standard Haskell effect composition")
+        else pure analyzed
+  let exists = isJust loaded
       generatedName = namespace ++ ".Generated.Handlers"
-      extraExports = [name | name <- ["newScopeHandlers", "errorHandlers"]
+      extraExports = [name | name <- ["newScopeHandlers", "scopeCleanups", "errorHandlers"]
         , any ((name ++ " ::") `isPrefixOf`) (lines scopeHandlers)]
-  exists <- doesFileExist inputPath
-  generated <- if not exists
-    then pure $ if null extraExports
+  generated <- case loaded of
+    Nothing -> pure $ if null extraExports
       then "module " ++ generatedName ++ " () where\n"
       else "module " ++ generatedName ++ " (" ++ intercalate ", " extraExports ++ ") where\n"
         ++ "import qualified Framework.SDK as FrameworkRuntime\n"
         ++ "import qualified Framework.Effect.Contract as FrameworkRoot\n"
         ++ "import qualified " ++ namespace ++ ".Generated.Effects as FrameworkGenerated\n"
-    else do
-      source <- withFile inputPath ReadMode $ \handle -> do
-        hSetEncoding handle utf8
-        contents <- hGetContents handle
-        _ <- evaluate (length contents)
-        pure contents
-      library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
-      runGhc (Just library) $ do
-        initial <- getSessionDynFlags
-        let buffer = stringToStringBuffer source
-            (_, options) = getOptions (initParserOpts initial) buffer inputPath
-        (flags, _, _) <- parseDynamicFilePragma initial options
-        let state = initParserState (initParserOpts flags) buffer
-              (mkRealSrcLoc (mkFastString inputPath) 1 1)
-        case unP Parser.parseModule state of
-          PFailed _ -> liftIO (ioError (userError ("Cannot parse " ++ inputPath ++ "; check its Haskell syntax")))
-          POk _ parsed -> liftIO $ either (ioError . userError) pure
-            (wrapModule namespace generatedName wrappers extraExports source (unLoc parsed))
+    Just (source, parsed, _, _) -> either (ioError . userError) pure
+      (wrapModule namespace generatedName wrappers extraExports source parsed)
   -- 首次生成尚无业务 instance；保留契约与 scope 构造器，暂不安装业务回调。
-  -- 用户填写 Handlers.hs 后重新生成，才恢复完整的 Error 方法引用。
+  -- 用户填写 Handlers.hs 后重新生成，才恢复 close 与 Error 方法引用。
   let extraDefinitions
-        | exists || "errorHandlers" `notElem` extraExports = scopeHandlers
-        | otherwise = unlines (takeWhile (/= "errorHandlers =") (lines scopeHandlers)
-            ++ ["-- 尚未加载用户 instance；编写 Handlers.hs 后重新生成。", "errorHandlers = []"])
+        | exists = scopeHandlers
+        | otherwise = unlines (emptyCallbacks (lines scopeHandlers))
+      emptyCallbacks [] = []
+      emptyCallbacks (line : rest)
+        | line `elem` ["scopeCleanups =", "errorHandlers ="] =
+            "-- 尚未加载用户 instance；编写 Handlers.hs 后重新生成。"
+              : (line ++ " []")
+              : emptyCallbacks (dropWhile (\body -> null body || "  " `isPrefixOf` body) rest)
+        | otherwise = line : emptyCallbacks rest
   pure ("-- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。\n"
         ++ "{-# LANGUAGE TypeApplications #-}\n"
-        ++ generated ++ if null extraDefinitions then "" else "\n\n" ++ extraDefinitions)
+        ++ generated ++ (if null extraDefinitions then "" else "\n\n" ++ extraDefinitions), shapes)
+
+loadHandlers :: String -> IO (Maybe (String, HsModule GhcPs, Bool, Bool))
+loadHandlers namespace = do
+  let directory = "demo" </> map (\c -> if c == '.' then pathSeparator else c) namespace
+      inputPath = directory </> "Handlers.hs"
+  exists <- doesFileExist inputPath
+  if not exists then pure Nothing else do
+    source <- withFile inputPath ReadMode $ \handle -> do
+      hSetEncoding handle utf8
+      contents <- hGetContents handle
+      _ <- evaluate (length contents)
+      pure contents
+    library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
+    runGhc (Just library) $ do
+      initial <- getSessionDynFlags
+      let buffer = stringToStringBuffer source
+          (_, options) = getOptions (initParserOpts initial) buffer inputPath
+      (flags, _, _) <- parseDynamicFilePragma initial options
+      let state = initParserState (initParserOpts flags) buffer
+            (mkRealSrcLoc (mkFastString inputPath) 1 1)
+      case unP Parser.parseModule state of
+        PFailed _ -> liftIO (ioError (userError ("Cannot parse " ++ inputPath ++ "; check its Haskell syntax")))
+        POk _ parsed ->
+          let enabled name = any (\option -> flagSpecName option == name && xopt (flagSpecFlag option) flags) xFlags
+          in pure (Just (source, unLoc parsed, enabled "ImplicitPrelude", enabled "RebindableSyntax"))
 
 wrapModule
   :: String -> String -> [(String, String, String)] -> [String] -> String -> HsModule GhcPs

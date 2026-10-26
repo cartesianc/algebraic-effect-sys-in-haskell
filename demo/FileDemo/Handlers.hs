@@ -14,13 +14,13 @@ import FileDemo.Generated.Effects
 import FileDemo.Types
 import Control.Exception (bracketOnError, displayException)
 import Control.Monad (unless)
-import Control.Monad.Except (catchError, throwError)
 import Control.Monad.IO.Class (liftIO)
+import Data.Function (fix)
 import System.FilePath ((</>))
 import System.IO
-  ( Handle, IOMode(ReadWriteMode), SeekMode(AbsoluteSeek, SeekFromEnd)
-  , hClose, hFlush, hGetChar, hIsClosed, hIsEOF, hPrint, hPutStr, hSeek, hSetEncoding
-  , openFile, stderr, utf8 )
+  ( IOMode(ReadWriteMode), SeekMode(AbsoluteSeek, SeekFromEnd)
+  , hClose, hFlush, hGetChar, hIsClosed, hIsEOF, hPutStr, hSeek, hSetEncoding
+  , openFile, utf8 )
 import System.IO.Error (tryIOError)
 
 instance FileLocationEffect App where
@@ -63,7 +63,12 @@ instance ReadFileEffect App where
     OpenedFile _ file <- readOpenedFile
     outcome <- liftIO $ tryIOError $ do
       hSeek file AbsoluteSeek 0
-      FileText <$> readFully file
+      -- 读完仍保留当前 Handle，供同一链随后写入；不使用会关闭它的 hGetContents。
+      FileText <$> fix (\next characters -> do
+        finished <- hIsEOF file
+        if finished
+          then pure (reverse characters)
+          else hGetChar file >>= \character -> next (character : characters)) []
     either (raise . ReadFileError . displayException) pure outcome
 
 instance FileRecoveryEffect App where
@@ -94,20 +99,8 @@ instance WriteFileEffect App where
 
 instance FileWorkflowEffect App where
   runFileWorkflow = do
+    -- 本条链先取得稳定参数；校验和 scope 开启都 require 这份绑定。
+    _ <- getFileName
     openFileSession
-    -- 当前没有 SDK 自动收尾：本例显式清理已转成 Failure 的读写错误。
-    -- 清理也失败时输出次生故障，并保持原始错误向上传播。
-    writeFileText `catchError` \failure -> do
-      closeFileSession `catchError` \closingFailure -> liftIO (hPrint stderr closingFailure)
-      throwError failure
-    closeFileSession
-
--- 原子 IO 辅助函数：读完仍保持 Handle 打开，供后续写入；不使用惰性 hGetContents。
-readFully :: Handle -> IO String
-readFully file = go []
-  where
-    go characters = do
-      finished <- hIsEOF file
-      if finished
-        then pure (reverse characters)
-        else hGetChar file >>= \character -> go (character : characters)
+    writeFileText
+    -- 完整链退出后由 SDK 释放本次使用并自动关闭空闲实例。

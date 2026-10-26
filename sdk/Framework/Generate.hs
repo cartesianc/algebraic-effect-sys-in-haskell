@@ -1,14 +1,18 @@
 -- 首次生成只编译注册与 AST/Target；handler 源码只解析，不加载或执行业务。
 module Framework.Generate (main) where
 
+import Control.Exception (evaluate)
 import Data.Char (isAlphaNum, isUpper)
-import Framework.Codegen.Handlers (renderHandlers)
-import System.Directory (createDirectoryIfMissing)
+import Framework.Codegen.Handlers (prepareHandlers, HandlerShape(..))
+import Framework.Codegen.Plan (renderGraphPlan)
+import qualified Framework.Effect.Graph as Graph
+import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Environment (getArgs)
 import System.Exit (ExitCode(..), die, exitWith)
 import System.FilePath ((</>), pathSeparator)
 import System.Process (readProcessWithExitCode)
-import System.IO (IOMode(WriteMode), hPutStr, hSetEncoding, stderr, utf8, withFile)
+import System.IO (IOMode(ReadMode, WriteMode), hGetContents, hPutStr, hSetEncoding, stderr, utf8, withFile)
+import System.IO.Error (tryIOError)
 import Text.Read (readMaybe)
 
 main :: IO ()
@@ -35,20 +39,72 @@ main = do
             ExitSuccess -> case readMaybe output of
               Nothing -> die "Cannot read the SDK handler wrapping plan"
               Just (Left problem) -> die problem
-              Just (Right (contracts, program, wrappers, scopeHandlers)) -> do
-                handlers <- renderHandlers namespace wrappers scopeHandlers
+              Just (Right (contracts, program, wrappers, scopeHandlers, plan)) -> do
+                (handlers, shapes) <- prepareHandlers namespace wrappers scopeHandlers
                 let generated = directory </> "Generated"
-                    writeModule filename source = withFile (generated </> filename) WriteMode $ \handle -> do
-                      hSetEncoding handle utf8
-                      hPutStr handle source
-                -- 声明和手写语法都成功解析后才重写生成区。
+                    cachePath = generated </> ".scope-cache"
+                    normalized = [(method, normalizeShape shape) | ((_, method), shape) <- shapes]
+                dependencies <- mapM readUtf8 structureSources
+                let cacheKey = show (plan, normalized, dependencies)
+                cached <- tryIOError (readExisting cachePath)
+                let previous = either (const Nothing) (>>= readMaybe) cached
+                (structure, reused) <- case previous of
+                  Just (key, source) | key == cacheKey -> pure (source, True)
+                  _ -> case renderGraphPlan plan normalized of
+                    Left problem -> die problem
+                    Right source -> pure (source, False)
+                -- 完成声明、原生语法和纯结构分析后才更新生成区；未变文件保留时间戳。
+                _ <- evaluate (length structure)
                 createDirectoryIfMissing True generated
-                writeModule "Effects.hs" contracts
-                writeModule "Program.hs" program
-                writeModule "Handlers.hs" handlers
-                putStrLn ("Generated " ++ generated)
+                changed <- sequence
+                  [ writeIfChanged (generated </> "Effects.hs") contracts
+                  , writeIfChanged (generated </> "Program.hs") (program ++ structure)
+                  , writeIfChanged (generated </> "Handlers.hs") handlers
+                  ]
+                _ <- writeIfChanged cachePath (show (cacheKey, structure))
+                putStrLn ("Generated " ++ generated ++ " (" ++ show (length (filter id changed))
+                  ++ " files updated; structure " ++ (if reused then "reused" else "rebuilt") ++ ")")
             _ -> exitWith result
     _ -> die "Usage: effect-codegen (workflow|target) Namespace"
+
+-- 缓存只省略纯构图；声明仍加载，手写 Handlers 仍解析一次。
+-- 连同算法及渲染器源码精确比较，避免 SDK 改动后复用旧结构。
+structureSources :: [FilePath]
+structureSources =
+  [ "sdk/Framework/Codegen/Plan.hs"
+  , "sdk/Framework/Effect/Graph.hs"
+  , "sdk/Framework/Recursion.hs"
+  , "sdk/Framework/Workflow/AST.hs"
+  , "sdk/Framework/Workflow/Structure.hs"
+  ]
+
+normalizeShape :: HandlerShape -> Graph.MethodShape String
+normalizeShape Empty = Graph.Empty
+normalizeShape (Call method) = Graph.Call method
+normalizeShape (Sequence children) = Graph.Sequence (map normalizeShape children)
+normalizeShape (Choice children) = Graph.Choice (map normalizeShape children)
+normalizeShape (Recover body recovery) = Graph.Recover (normalizeShape body) (normalizeShape recovery)
+
+readUtf8 :: FilePath -> IO String
+readUtf8 path = withFile path ReadMode $ \handle -> do
+  hSetEncoding handle utf8
+  contents <- hGetContents handle
+  _ <- evaluate (length contents)
+  pure contents
+
+readExisting :: FilePath -> IO (Maybe String)
+readExisting path = do
+  exists <- doesFileExist path
+  if exists then Just <$> readUtf8 path else pure Nothing
+
+writeIfChanged :: FilePath -> String -> IO Bool
+writeIfChanged path source = do
+  previous <- readExisting path
+  if previous == Just source then pure False else do
+    withFile path WriteMode $ \handle -> do
+      hSetEncoding handle utf8
+      hPutStr handle source
+    pure True
 
 -- 命名空间会进入模块引用；只接受完整的 Haskell 模块名。
 validNamespace :: String -> Bool

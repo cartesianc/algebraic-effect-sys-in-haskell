@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -21,6 +22,11 @@ import FileDemo.Types
 -- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
 type Root = SDK.Root ContextValues Errors
 type App = SDK.App ContextValues Errors
+
+-- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
+data MethodGen = GetFileNameGen | ReadFileNameGen | ValidateFileNameGen | AcquireFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | DetectFileSessionGen | ResolveFileSessionGen | ReadFileTextGen | ReadLastFileTextGen | WriteFileTextGen | RunFileWorkflowGen
+  deriving (Eq, Ord, Show, Read, SDK.Generic)
+instance SDK.NFData MethodGen
 
 data FileLocation
 
@@ -136,14 +142,14 @@ instance (Monad m, Effect FileSession m, WriteFileEffect m) => Effect WriteFile 
 
 data FileWorkflow
 
-class (Effect WriteFile m) => FileWorkflowEffect m where
+class (Effect WriteFile m, Effect FileLocation m, Produce FileLocation ~ (FileName)) => FileWorkflowEffect m where
   runFileWorkflow :: m ()
   {-# MINIMAL runFileWorkflow #-}
 
 instance (Monad m, Effect WriteFile m, FileWorkflowEffect m) => Effect FileWorkflow m where
   type Registration FileWorkflow = Registered FileWorkflowEffect WriteFile
   type Typing FileWorkflow = 'SDK.ExcuKind
-  type Require FileWorkflow = SDK.Void
+  type Require FileWorkflow = FileName
   type Error FileWorkflow = FileWorkflowError
   raise (FileWorkflowError description) = SDK.failEffect "FileWorkflow" FileWorkflowFailure description
   handler = FrameworkRoot.handler @Root

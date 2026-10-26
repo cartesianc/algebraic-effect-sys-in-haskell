@@ -7,7 +7,7 @@ import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), ContextInp
 import OpenFilesDemo.Types
 
 -- Context 传递路径与资源，Scoped 管理一组文件的存续，Excu 执行观察与收尾。
--- closeFiles 是 FileSession 的类方法；FinishInspection 只引用它并检查结果。
+-- closeFiles 是 FileSession 的类方法；FinishInspection 在本链 open 后显式关闭并检查结果。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
@@ -29,8 +29,8 @@ effects =
           }
       , input = "Root"
       , context = Just ContextInput
-          { request = Just (From "FileLocations" (typeRef @FileNames))
-          , require = Nothing
+          { request = Nothing
+          , require = Just (From "FileLocations" (typeRef @FileNames))
           }
       }
   , EffectSpec
@@ -47,7 +47,10 @@ effects =
       { name = "HoldFiles"
       , typing = Excu { handler = Just "holdFiles" }
       , input = "FileSession"
-      , context = Nothing
+      , context = Just ContextInput
+          { request = Just (From "FileLocations" (typeRef @FileNames))
+          , require = Nothing
+          }
       }
   , EffectSpec
       { name = "InspectFiles"

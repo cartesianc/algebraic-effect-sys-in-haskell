@@ -8,7 +8,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module ScopeInstancesDemo.Generated.Handlers (newScopeHandlers, errorHandlers) where
+module ScopeInstancesDemo.Generated.Handlers (newScopeHandlers, scopeCleanups, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -29,6 +29,11 @@ instance PrepareFilesEffect App where
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareFiles") $
       let
         prepareFiles = liftIO $ do
+          let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+              firstFile = outputDirectory </> "one.txt"
+              secondFile = outputDirectory </> "two.txt"
+              selection = outputDirectory </> "selected.txt"
+              journal = outputDirectory </> "events.txt"
           createDirectoryIfMissing True outputDirectory
           mapM_ (`writeFile` "") [firstFile, secondFile, journal]
           writeFile selection firstFile
@@ -38,12 +43,15 @@ instance PrepareFilesEffect App where
 instance FileLocationEffect App where
   getFileName =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation" FrameworkGenerated.ContextBindingError
-      [("FileResource", FrameworkRuntime.RequestValue)]
+      [("FileResource", FrameworkRuntime.RequireValue), ("CheckIndependent", FrameworkRuntime.RequestValue), ("CheckReopen", FrameworkRuntime.RequestValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocation"))
       FrameworkGenerated.boundFileLocation
       (\value bindings -> bindings { FrameworkGenerated.boundFileLocation = Just value })) $
       let
         getFileName = do
+          let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+              selection = outputDirectory </> "selected.txt"
+              journal = outputDirectory </> "events.txt"
           path <- liftIO (readFile' selection)
           liftIO (appendFile journal ("argument " ++ path ++ "\n"))
           pure (FileName path)
@@ -59,6 +67,7 @@ instance FileResourceEffect App where
       let
         acquireFile = do
           FileName path <- getFileName
+          let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
           outcome <- liftIO $ tryIOError $
             bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
               appendFile journal ("acquire " ++ path ++ "\n")
@@ -73,6 +82,7 @@ instance FileSessionEffect App where
       let
         openFileSession = do
           OpenedFile path _ <- acquireFile
+          let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
           liftIO (appendFile journal ("open " ++ path ++ "\n"))
       in openFileSession
   closeFileSession =
@@ -80,6 +90,7 @@ instance FileSessionEffect App where
       let
         closeFileSession = do
           OpenedFile path file <- readOpenedFile
+          let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
           liftIO $ do
             hClose file
             appendFile journal ("close " ++ path ++ "\n")
@@ -90,7 +101,12 @@ instance CheckIndependentEffect App where
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "CheckIndependent") $
       let
         checkIndependent = do
+          let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+              firstFile = outputDirectory </> "one.txt"
+              secondFile = outputDirectory </> "two.txt"
+              selection = outputDirectory </> "selected.txt"
           liftIO (writeFile selection firstFile)
+          _ <- getFileName
           openFileSession
           OpenedFile pathA fileA <- readOpenedFile
           openFileSession
@@ -100,6 +116,7 @@ instance CheckIndependentEffect App where
           liftIO (putStrLn "[check] equal opening values reuse the same file Handle")
         
           liftIO (writeFile selection secondFile)
+          _ <- getFileName
           openFileSession
           OpenedFile pathB fileB <- readOpenedFile
           unless (pathB == secondFile && fileA /= fileB) $
@@ -116,25 +133,32 @@ instance CheckIndependentEffect App where
             raise (CheckIndependentError "Closing the second instance affected the first")
           liftIO (putStrLn "[check] require selects the current instance; repeated close closes only file 2")
       in checkIndependent
-    -- 第一份保持开启；下一个 Node 是另一条 Input 链。
+    -- 第一份在本链内仍保持开启；本链退出时由 SDK 自动关闭。
 
 instance CheckReopenEffect App where
   checkReopen =
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "CheckReopen") $
       let
         checkReopen = do
+          let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+              firstFile = outputDirectory </> "one.txt"
+              secondFile = outputDirectory </> "two.txt"
+              selection = outputDirectory </> "selected.txt"
+              journal = outputDirectory </> "events.txt"
           liftIO (writeFile selection firstFile)
+          _ <- getFileName
           openFileSession
           OpenedFile pathA fileA <- readOpenedFile
           events <- liftIO (lines <$> readFile' journal)
-          unless (pathA == firstFile && count ("acquire " ++ firstFile) events == 1) $
-            raise (CheckReopenError "The other Input chain reopened the still-active first file")
+          unless (pathA == firstFile && length (filter (== "acquire " ++ firstFile) events) == 2) $
+            raise (CheckReopenError "The next chain did not reopen the first file")
           closeFileSession
           closedA <- liftIO (hIsClosed fileA)
           unless closedA (raise (CheckReopenError "First file was not closed"))
-          liftIO (putStrLn "[check] another Node reuses file 1 across Input chains")
+          liftIO (putStrLn "[check] another Node explicitly reopens file 1 after the previous chain ended")
         
           liftIO (writeFile selection secondFile)
+          _ <- getFileName
           openFileSession
           OpenedFile pathB fileB <- readOpenedFile
           closedB <- liftIO (hIsClosed fileB)
@@ -144,40 +168,34 @@ instance CheckReopenEffect App where
           closeFileSession
           finalClosed <- liftIO (hIsClosed fileB)
           finalEvents <- liftIO (lines <$> readFile' journal)
-          let acquisitions = count ("acquire " ++ firstFile) finalEvents == 1
-                          && count ("acquire " ++ secondFile) finalEvents == 2
-              closes = count ("close " ++ firstFile) finalEvents == 1
-                    && count ("close " ++ secondFile) finalEvents == 2
-              opens = count ("open " ++ firstFile) finalEvents == 1
-                   && count ("open " ++ secondFile) finalEvents == 2
-              arguments = count ("argument " ++ firstFile) finalEvents == 3
-                       && count ("argument " ++ secondFile) finalEvents == 2
-          unless (finalClosed && acquisitions && closes && opens && arguments) $
+          let expectedEvents =
+                [ operation ++ path
+                | operation <- ["acquire ", "close ", "open ", "argument "]
+                , path <- [firstFile, secondFile]
+                ]
+              countsMatch = all (\event -> length (filter (== event) finalEvents) == 2) expectedEvents
+          unless (finalClosed && countsMatch) $
             raise (CheckReopenError ("Unexpected lifecycle or extra Context evaluation: " ++ show finalEvents))
           liftIO $ do
             putStrLn "[check] closed file 2 reopened successfully; both files now closed"
-            putStrLn "[check] actual acquisitions/closures: file 1 = 1/1; file 2 = 2/2"
-            putStrLn "[check] five open calls, five argument requests; no extra Context evaluation"
+            putStrLn "[check] actual acquisitions/closures: file 1 = 2/2; file 2 = 2/2"
+            putStrLn "[check] five open calls, four argument requests; require reuses stable parameters within each chain"
       in checkReopen
 
-outputDirectory, firstFile, secondFile, selection, journal :: FilePath
-outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
-firstFile = outputDirectory </> "one.txt"
-secondFile = outputDirectory </> "two.txt"
-selection = outputDirectory </> "selected.txt"
-journal = outputDirectory </> "events.txt"
 
-count :: Eq value => value -> [value] -> Int
-count expected = length . filter (== expected)
-
-
--- SDK 内部：每份 Scoped 句柄拥有自己的状态和 MVar；创建不执行业务方法。
+-- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
 newScopeHandlers = sequence
   [ FrameworkRuntime.newScopeHandler "FileSession" ["FileLocation"] (Just "FileResource")
   ]
 
--- Root 的异常入口，按 scope 的拓扑顺序从上向下检测。
+-- SDK 自动收尾入口；安装时不关闭资源。
+scopeCleanups :: [(String, FrameworkGenerated.App ())]
+scopeCleanups =
+  [ ("FileSession", closeFileSession)
+  ]
+
+-- Error 回调登记；记录 scope 对应的 detect/resolve，不在此执行检测。
 errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated.App)]
 errorHandlers =
   [

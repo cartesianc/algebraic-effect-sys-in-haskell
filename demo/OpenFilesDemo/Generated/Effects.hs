@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -21,6 +22,11 @@ import OpenFilesDemo.Types
 -- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
 type Root = SDK.Root ContextValues Errors
 type App = SDK.App ContextValues Errors
+
+-- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
+data MethodGen = GetFileNamesGen | ReadFileNamesGen | AcquireFilesGen | ReadOpenedFilesGen | OpenFilesGen | CloseFilesGen | HoldFilesGen | InspectFilesGen | FinishInspectionGen
+  deriving (Eq, Ord, Show, Read, SDK.Generic)
+instance SDK.NFData MethodGen
 
 data FileLocations
 
@@ -75,14 +81,14 @@ instance (Monad m, Effect Root m, FileSessionEffect m) => Effect FileSession m w
 
 data HoldFiles
 
-class (Effect FileSession m) => HoldFilesEffect m where
+class (Effect FileSession m, Effect FileLocations m, Produce FileLocations ~ (FileNames)) => HoldFilesEffect m where
   holdFiles :: m ()
   {-# MINIMAL holdFiles #-}
 
 instance (Monad m, Effect FileSession m, HoldFilesEffect m) => Effect HoldFiles m where
   type Registration HoldFiles = Registered HoldFilesEffect FileSession
   type Typing HoldFiles = 'SDK.ExcuKind
-  type Require HoldFiles = SDK.Void
+  type Require HoldFiles = FileNames
   type Error HoldFiles = HoldFilesError
   raise (HoldFilesError description) = SDK.failEffect "HoldFiles" HoldFilesFailure description
   handler = FrameworkRoot.handler @Root

@@ -27,8 +27,8 @@ effects =
       , typing = Pure { handler = Just "validateFileName" }
       , input = "Root"
       , context = Just ContextInput
-          { request = Just (From "FileLocation" (typeRef @FileName))
-          , require = Nothing
+          { request = Nothing
+          , require = Just (From "FileLocation" (typeRef @FileName))
           }
       }
   , EffectSpec
@@ -90,6 +90,9 @@ effects =
       { name = "FileWorkflow"
       , typing = Excu { handler = Just "runFileWorkflow" }
       , input = "WriteFile"
-      , context = Nothing
+      , context = Just ContextInput
+          { request = Just (From "FileLocation" (typeRef @FileName))
+          , require = Nothing
+          }
       }
   ]

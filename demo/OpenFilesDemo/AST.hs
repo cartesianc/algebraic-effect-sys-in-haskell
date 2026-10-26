@@ -2,8 +2,8 @@ module OpenFilesDemo.AST (ast) where
 
 import Framework.SDK (AST, chained, node)
 
--- 前两个 Node 都不 close：第二个检查第一个返回后是否仍持有十个文件。
--- 最后显式关闭作对照；这是测试收尾，不是 interpreter 自动收尾。
+-- 每个 Node 是独立使用闭包；后续节点显式 open，不预留前一节点的资源。
+-- InspectFiles 检查本链及 GC 期间的存续；最后一条链演示显式 close。
 ast :: AST
 ast = chained
   [ node "HoldFiles"

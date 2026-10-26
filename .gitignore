@@ -8,6 +8,7 @@ dist-newstyle/
 *.dyn_o
 result/
 .generated/
+/demo/**/Generated/.scope-cache
 /demo/FileDemo/output.txt
 /demo/OpenFilesDemo/output/
 /demo/ScopeReuseDemo/output/

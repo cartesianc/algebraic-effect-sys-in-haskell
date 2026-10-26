@@ -5,7 +5,7 @@ module Framework.Effect.Context
   ( ContextFault(..), ContextAccess(..), readContext, requestContext, callContext
   ) where
 
-import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeInput, Failure, failEffect)
+import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeInput, ScopeInputAccess(..), Failure, failEffect)
 import Control.Monad.Except (MonadError)
 
 data ContextAccess = RequestValue | RequireValue deriving (Eq, Show)
@@ -18,19 +18,19 @@ readContext contextName wrap compareValue select = do
   resolved <- readContextBinding contextName select
   bound <- either (\problem -> failEffect contextName (wrap problem) (show problem)) pure resolved
   value <- maybe (failEffect contextName (wrap ContextNotInitialized) (show ContextNotInitialized)) pure bound
-  observeInput compareValue value
+  observeInput RequiredInput compareValue value
   pure value
 
 -- 只观察 instance 实际取得的值，不触发任何生产动作。
-observeInput :: ContextStore environment m => Maybe (value -> ScopeInput) -> value -> m ()
-observeInput Nothing _ = pure ()
-observeInput (Just observe) value = recordContextInput (observe value)
+observeInput :: ContextStore environment m => ScopeInputAccess -> Maybe (value -> ScopeInput) -> value -> m ()
+observeInput _ Nothing _ = pure ()
+observeInput access (Just observe) value = recordContextInput access (observe value)
 
 -- 同一个成功值先交给绑定回调再返回；生产失败不会触发回调或再次执行生产。
 requestContext
   :: ContextStore environment m
   => String -> (value -> environment -> environment) -> m value -> m value
-requestContext selected synchronize produce = do
+requestContext selected synchronize produce = protectContextBinding selected $ do
   value <- produce
   publishContextBinding selected (synchronize value)
   pure value
@@ -55,5 +55,5 @@ callContext selected wrap accesses compareValue select synchronize produce = do
   where
     refresh = do
       value <- requestContext selected synchronize (enterContext selected produce)
-      observeInput compareValue value
+      observeInput RequestedInput compareValue value
       pure value

@@ -6,7 +6,7 @@ module ScopeReuseDemo.Effects (effects) where
 import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), typeRef)
 import ScopeReuseDemo.Types
 
--- Context 保存路径、活文件与观察记录；Scoped 管理开启／关闭。
+-- Context 保存路径与活文件；Scoped 管理开启／关闭，日志记录实际开闭次数。
 -- 三个 Excu 写入者是兄弟节点，input 均为同一个 SharedFileScope。
 effects :: [EffectSpec]
 effects =
@@ -38,8 +38,8 @@ effects =
           }
       , input = "Root"
       , context = Just ContextInput
-          { request = Just (From "FileLocations" (typeRef @FilePaths))
-          , require = Nothing
+          { request = Nothing
+          , require = Just (From "FileLocations" (typeRef @FilePaths))
           }
       }
   , EffectSpec
@@ -57,7 +57,7 @@ effects =
       , typing = Excu { handler = Just "writeFirst" }
       , input = "SharedFileScope"
       , context = Just ContextInput
-          { request = Nothing
+          { request = Just (From "FileLocations" (typeRef @FilePaths))
           , require = Just (From "FileResource" (typeRef @OpenedFile))
           }
       }
@@ -66,7 +66,7 @@ effects =
       , typing = Excu { handler = Just "writeSecond" }
       , input = "SharedFileScope"
       , context = Just ContextInput
-          { request = Nothing
+          { request = Just (From "FileLocations" (typeRef @FilePaths))
           , require = Just (From "FileResource" (typeRef @OpenedFile))
           }
       }
@@ -75,17 +75,17 @@ effects =
       , typing = Excu { handler = Just "writeThird" }
       , input = "SharedFileScope"
       , context = Just ContextInput
-          { request = Nothing
+          { request = Just (From "FileLocations" (typeRef @FilePaths))
           , require = Just (From "FileResource" (typeRef @OpenedFile))
           }
       }
   , EffectSpec
       { name = "VerifyReuse"
       , typing = Excu { handler = Just "verifyReuse" }
-      , input = "SharedFileScope"
+      , input = "Root"
       , context = Just ContextInput
-          { request = Nothing
-          , require = Just (From "FileResource" (typeRef @OpenedFile))
+          { request = Just (From "FileLocations" (typeRef @FilePaths))
+          , require = Nothing
           }
       }
   ]
