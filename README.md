@@ -58,7 +58,8 @@ cabal run file-demo
 | [Types.hs](demo/FileDemo/Types.hs) | 原生业务 ADT，例如文件名、文件句柄和文本 |
 | [Effects.hs](demo/FileDemo/Effects.hs) | effect 类别、方法名、能力依赖及 Context 取值来源 |
 | [Handlers.hs](demo/FileDemo/Handlers.hs) | `instance` 方法中的计算、模式匹配与 IO |
-| [AST.hs](demo/FileDemo/AST.hs) | 要启动的末端操作及其执行结构 |
+| [AST.hs](demo/FileDemo/AST.hs) | 引用各 branch 模块，组织整个 workflow |
+| [Workflow/OperateFile.hs](demo/FileDemo/Workflow/OperateFile.hs) | 一个具名 branch，内部选择末端 node；较大模块也可组合其他 branch |
 | [Main.hs](demo/FileDemo/Main.hs) | 调用生成的 `interpreter ast effects` |
 | `Generated/` | SDK 生成的接口、包装后的 handler、纯结构与末端登记 |
 
@@ -76,6 +77,29 @@ instance Effect MakeNumber m => AddOneEffect m where
 原子业务实现直接写在注册的 `instance` 方法体内，包括解析、转换和 IO；业务复用通过已注册类方法及 Context 关系完成，不另设自定义 helper 实现层。方法内可以直接调用标准库／外部库原语并完成局部计算。详见 [instance 实现边界](docs/DESIGN_METHOD.md#3-haskell-值语义收敛到原子-handler)。
 
 workflow 的 `node` 选择一条完整操作链的末端，`chained` 顺序执行并在失败时停止，`parallel` 等待全部分支完成。链内的上游操作由 handler 显式引用；声明能力依赖本身不会自动执行操作。节点的返回值也不会自动传给下一个节点。
+
+### 按 branch 拆分 workflow
+
+每个 branch 单独一个文件，导出业务名称；顶层通过普通 import 引用名称，不在组合表达式里写限定前缀。例如 [Crawler/AST.hs](demo/Crawler/AST.hs)：
+
+```haskell
+ast :: AST
+ast = chained [parsePages, printPages]
+```
+
+其中 [ParsePages.hs](demo/Crawler/Workflow/ParsePages.hs) 定义：
+
+```haskell
+parsePages :: AST
+parsePages = parallel
+  [ node "ExtractPage"
+  , node "ExtractLinkedPage"
+  ]
+```
+
+`node` 返回抽象的 `EffectNode`，完整 branch 返回抽象的 `AST`。同一次 `chained`／`parallel` 的列表只能全是 node 或全是 branch，混写会产生类型错误；裸 node 也不能作为 `ast`。单个 node 仍需包在 branch 中。空分支写作 `chained ([] :: [AST])` 或 `parallel ([] :: [EffectNode])`，执行仍成功并返回空结果。
+
+分文件不创建新 interpreter、Context 或 scope；同一模块被引用两次代表两次执行。类型系统约束节点层级，独立文件与具名引用是声明格式约定，未来由 LSP 检查；当前没有模块源码索引或运行时模块 key。五个 workflow demo 均采用这种组织方式，纯 target 示例 RequestBenchmark 保留原入口。
 
 ### 查看初始化结构
 
@@ -115,7 +139,9 @@ App／IO 的 Error 从故障关联的 scope 出发，沿同一份 `ScopeTree` �
 
 ## 修改代码与重新生成
 
-**修改 `Handlers.hs` 后也要重新生成。** 实际运行编译的是 `Generated/Handlers.hs`；只改手写方法体再运行，可能仍然执行旧实现。
+**修改 `Handlers.hs` 后也要重新生成。** 实际运行编译的是 `Generated/Handlers.hs`。公共 workflow／target 入口在创建 scope 或执行业务前，比对当前手写源码与生成时保存的指纹；源码变化或缺失会拒绝启动，并提示重新生成。纯 target 入口还会比对传入的 effect 注册和末端名称，防止静默执行旧目标。
+
+这是运行入口检查，不会在 `cabal build` 时自动生成。运行时需从仓库根目录访问手写 `Handlers.hs`；直接求值底层 `benchmark` 不经过这项 IO 检查。`--generate` 跳过一致性检查，便于更新旧生成代码。
 
 手写 `Handlers.hs` 本身是可以由 GHC／HLS 检查的原生 Haskell，不必先生成业务包装副本才能发现类型错误。仓库的 `hie.yaml` 提供编辑器加载配置；使用与项目 GHC 9.12.2 匹配的 HLS。它导入的 `Generated/Effects.hs` 契约需要先存在且与声明同步：新项目先生成接口，再编写 handler；只改方法体时，可以先检查再重新生成。编辑手写模块，运行则导入 Generated 副本，避免在同一导入链重复引入两份 instance。这个边界已写入[核心设计](docs/DESIGN_METHOD.md#生成前仍是原生-haskell核心约束)。
 
@@ -142,7 +168,7 @@ cabal exec -- runghc -idemo -isdk demo/RequestBenchmark/Main.hs
 
 ### 新增示例
 
-1. 在 `demo/MyDemo/` 下定义 `Types.hs`、`Effects.hs` 和 `AST.hs`，模块名使用 `MyDemo.*`，分别导出所需业务类型、`effects` 和 `ast`。这些模块不导入 `Generated` 或 `Handlers`，确保首次生成可独立编译声明。
+1. 在 `demo/MyDemo/` 下定义 `Types.hs`、`Effects.hs`、`AST.hs` 和 `Workflow/*.hs`；每个 branch 独立定义并导出业务名，顶层 AST 只引用这些名称。模块名使用 `MyDemo.*`，分别导出所需业务类型、`effects` 和 `ast`。这些模块不导入 `Generated` 或 `Handlers`，确保首次生成可独立编译声明。
 2. 运行 `cabal run effect-codegen -- workflow MyDemo` 生成接口。尚无 `Handlers.hs` 时，SDK 会先生成空的 handler 编译模块。
 3. 根据 `Generated/Effects.hs` 的接口编写手写 `Handlers.hs`，再运行一次生成命令，并编写调用生成入口的 `Main.hs`。
 4. 在 [Cabal 配置](algebraic-effect-sys-in-haskell.cabal) 中参考 FileDemo 增加 executable，调整模块列表、`-main-is` 和依赖，然后编译运行。handler 模块列表使用 `Generated.Handlers`。
@@ -154,7 +180,7 @@ cabal exec -- runghc -idemo -isdk demo/RequestBenchmark/Main.hs
 | 示例 | 适合了解 | 运行方式 |
 | --- | --- | --- |
 | [RequestBenchmark](demo/RequestBenchmark) | 原生 ADT、Context 取值、纯计算链 | 见快速开始 |
-| [FileDemo](demo/FileDemo) | 文件资源的开启、读取、写入与关闭 | `cabal run file-demo` |
+| [FileDemo](demo/FileDemo) | 文件资源的开启、读写、关闭及 Error 注册 | `cabal run file-demo` |
 | [Crawler](demo/Crawler) | 并行解析与顺序打印的 workflow | `cabal run crawler-demo` |
 | [OpenFilesDemo](demo/OpenFilesDemo) | 一次 scope 管理多个文件、调用结束后自动关闭及重开 | `cabal run open-files-demo` |
 | [ScopeInstancesDemo](demo/ScopeInstancesDemo) | 按参数区分资源实例、复用与重开 | `cabal run scope-instances-demo` |

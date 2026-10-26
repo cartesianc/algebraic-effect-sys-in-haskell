@@ -11,6 +11,19 @@ import FileDemo.Generated.Effects
 import qualified FileDemo.Generated.Handlers as Handlers
 import FileDemo.Types
 
+-- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
+registeredEffects :: [EffectSpec]
+registeredEffects =
+  [ EffectSpec {name = "FileLocation", typing = Context {request = Just (Producer {handler = "getFileName", produces = TypeRef "FileName"}), require = Just "readFileName"}, input = "Root", context = Nothing}
+  , EffectSpec {name = "ValidateFileName", typing = Pure {handler = Just "validateFileName"}, input = "Root", context = Just (ContextInput {request = Nothing, require = Just (From "FileLocation" (TypeRef "FileName"))})}
+  , EffectSpec {name = "FileResource", typing = Context {request = Just (Producer {handler = "acquireFile", produces = TypeRef "OpenedFile"}), require = Just "readOpenedFile"}, input = "ValidateFileName", context = Just (ContextInput {request = Nothing, require = Just (From "FileLocation" (TypeRef "FileName"))})}
+  , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFileSession", close = Just "closeFileSession"}, input = "ValidateFileName", context = Just (ContextInput {request = Just (From "FileResource" (TypeRef "OpenedFile")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "FileRecovery", typing = Error {detect = Just "detectFileSession", resolve = Just "resolveFileSession"}, input = "FileSession", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "ReadFile", typing = Context {request = Just (Producer {handler = "readFileText", produces = TypeRef "FileText"}), require = Just "readLastFileText"}, input = "FileSession", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "WriteFile", typing = Excu {handler = Just "writeFileText"}, input = "FileSession", context = Just (ContextInput {request = Just (From "ReadFile" (TypeRef "FileText")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "FileWorkflow", typing = Excu {handler = Just "runFileWorkflow"}, input = "WriteFile", context = Just (ContextInput {request = Just (From "FileLocation" (TypeRef "FileName")), require = Nothing})}
+  ]
+
 -- 生成身份连接到已有运行 scope 名；依赖只保存在下方显式 ScopeTree 中。
 scopeNames :: [(MethodGen, String)]
 scopeNames = [(OpenFileSessionGen, "FileSession")]
@@ -34,22 +47,9 @@ compiledEntries = do
     [ SDK.targetApp "FileWorkflow" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (FileWorkflowResult <$> runFileWorkflow)))
     ]
 
--- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
-registeredEffects :: [EffectSpec]
-registeredEffects =
-  [ EffectSpec {name = "FileLocation", typing = Context {request = Just (Producer {handler = "getFileName", produces = TypeRef "FileName"}), require = Just "readFileName"}, input = "Root", context = Nothing}
-  , EffectSpec {name = "ValidateFileName", typing = Pure {handler = Just "validateFileName"}, input = "Root", context = Just (ContextInput {request = Nothing, require = Just (From "FileLocation" (TypeRef "FileName"))})}
-  , EffectSpec {name = "FileResource", typing = Context {request = Just (Producer {handler = "acquireFile", produces = TypeRef "OpenedFile"}), require = Just "readOpenedFile"}, input = "ValidateFileName", context = Just (ContextInput {request = Nothing, require = Just (From "FileLocation" (TypeRef "FileName"))})}
-  , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFileSession", close = Just "closeFileSession"}, input = "ValidateFileName", context = Just (ContextInput {request = Just (From "FileResource" (TypeRef "OpenedFile")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "FileRecovery", typing = Error {detect = Just "detectFileSession", resolve = Just "resolveFileSession"}, input = "FileSession", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "ReadFile", typing = Context {request = Just (Producer {handler = "readFileText", produces = TypeRef "FileText"}), require = Just "readLastFileText"}, input = "FileSession", context = Just (ContextInput {request = Nothing, require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "WriteFile", typing = Excu {handler = Just "writeFileText"}, input = "FileSession", context = Just (ContextInput {request = Just (From "ReadFile" (TypeRef "FileText")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "FileWorkflow", typing = Excu {handler = Just "runFileWorkflow"}, input = "WriteFile", context = Just (ContextInput {request = Just (From "FileLocation" (TypeRef "FileName")), require = Nothing})}
-  ]
-
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "FileDemo" registeredEffects programStructure compiledEntries
+interpreter = SDK.interpreter "FileDemo" registeredEffects Handlers.handlerSourceFingerprint programStructure compiledEntries
 -- 生成时已完成方法展开与路径分析；运行时只读取显式 ADT 值。
 generatedEffectGraph :: SDK.EffectGraph MethodGen
 generatedEffectGraph = SDK.EffectGraph

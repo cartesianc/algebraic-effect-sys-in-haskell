@@ -34,7 +34,7 @@ class (Effect Root m) => FileLocationEffect m where
   getFileName :: m (Produce FileLocation)
   readFileName :: m (Produce FileLocation)
   readFileName = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileLocation" ContextBindingError (Just (SDK.ScopeInput "FileLocation")) boundFileLocation
+    SDK.readContext "FileLocation" ContextBindingError [("ValidateFileName", SDK.RequireValue), ("FileResource", SDK.RequireValue), ("FileWorkflow", SDK.RequestValue)] (Just (SDK.ScopeInput "FileLocation")) boundFileLocation
   {-# MINIMAL getFileName #-}
 
 instance (Monad m, Effect Root m, FileLocationEffect m) => Effect FileLocation m where
@@ -66,7 +66,7 @@ class (Effect ValidateFileName m, Effect FileLocation m, Produce FileLocation ~ 
   acquireFile :: m (Produce FileResource)
   readOpenedFile :: m (Produce FileResource)
   readOpenedFile = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileResource" ContextBindingError Nothing boundFileResource
+    SDK.readContext "FileResource" ContextBindingError [("FileSession", SDK.RequestValue), ("FileRecovery", SDK.RequireValue), ("ReadFile", SDK.RequireValue), ("WriteFile", SDK.RequireValue)] Nothing boundFileResource
   {-# MINIMAL acquireFile #-}
 
 instance (Monad m, Effect ValidateFileName m, FileResourceEffect m) => Effect FileResource m where
@@ -114,7 +114,7 @@ class (Effect FileSession m, Effect FileResource m, Produce FileResource ~ (Open
   readFileText :: m (Produce ReadFile)
   readLastFileText :: m (Produce ReadFile)
   readLastFileText = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @Root) $
-    SDK.readContext "ReadFile" ContextBindingError Nothing boundReadFile
+    SDK.readContext "ReadFile" ContextBindingError [("WriteFile", SDK.RequestValue)] Nothing boundReadFile
   {-# MINIMAL readFileText #-}
 
 instance (Monad m, Effect FileSession m, ReadFileEffect m) => Effect ReadFile m where

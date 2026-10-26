@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module ScopeReuseDemo.Generated.Handlers (newScopeHandlers, scopeCleanups, errorHandlers) where
+module ScopeReuseDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -167,6 +167,10 @@ instance VerifyReuseEffect App where
             putStrLn ("[check] actual resource opens/closes: " ++ show fileOpens ++ "/" ++ show fileCloses)
             putStrLn "[check] all writer chains released their resources; each line written exactly once"
       in verifyReuse
+
+-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
+handlerSourceFingerprint :: Maybe String
+handlerSourceFingerprint = Just "f820b58f9fd8eb407bc88384b678a9f3"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

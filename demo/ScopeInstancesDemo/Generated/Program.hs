@@ -11,6 +11,17 @@ import ScopeInstancesDemo.Generated.Effects
 import qualified ScopeInstancesDemo.Generated.Handlers as Handlers
 import ScopeInstancesDemo.Types
 
+-- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
+registeredEffects :: [EffectSpec]
+registeredEffects =
+  [ EffectSpec {name = "PrepareFiles", typing = Excu {handler = Just "prepareFiles"}, input = "Root", context = Nothing}
+  , EffectSpec {name = "FileLocation", typing = Context {request = Just (Producer {handler = "getFileName", produces = TypeRef "FileName"}), require = Just "readFileName"}, input = "Root", context = Nothing}
+  , EffectSpec {name = "FileResource", typing = Context {request = Just (Producer {handler = "acquireFile", produces = TypeRef "OpenedFile"}), require = Just "readOpenedFile"}, input = "Root", context = Just (ContextInput {request = Nothing, require = Just (From "FileLocation" (TypeRef "FileName"))})}
+  , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFileSession", close = Just "closeFileSession"}, input = "Root", context = Just (ContextInput {request = Just (From "FileResource" (TypeRef "OpenedFile")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "CheckIndependent", typing = Excu {handler = Just "checkIndependent"}, input = "FileSession", context = Just (ContextInput {request = Just (From "FileLocation" (TypeRef "FileName")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  , EffectSpec {name = "CheckReopen", typing = Excu {handler = Just "checkReopen"}, input = "FileSession", context = Just (ContextInput {request = Just (From "FileLocation" (TypeRef "FileName")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
+  ]
+
 -- 生成身份连接到已有运行 scope 名；依赖只保存在下方显式 ScopeTree 中。
 scopeNames :: [(MethodGen, String)]
 scopeNames = [(OpenFileSessionGen, "FileSession")]
@@ -36,20 +47,9 @@ compiledEntries = do
     , SDK.targetApp "CheckReopen" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (CheckReopenResult <$> checkReopen)))
     ]
 
--- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
-registeredEffects :: [EffectSpec]
-registeredEffects =
-  [ EffectSpec {name = "PrepareFiles", typing = Excu {handler = Just "prepareFiles"}, input = "Root", context = Nothing}
-  , EffectSpec {name = "FileLocation", typing = Context {request = Just (Producer {handler = "getFileName", produces = TypeRef "FileName"}), require = Just "readFileName"}, input = "Root", context = Nothing}
-  , EffectSpec {name = "FileResource", typing = Context {request = Just (Producer {handler = "acquireFile", produces = TypeRef "OpenedFile"}), require = Just "readOpenedFile"}, input = "Root", context = Just (ContextInput {request = Nothing, require = Just (From "FileLocation" (TypeRef "FileName"))})}
-  , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFileSession", close = Just "closeFileSession"}, input = "Root", context = Just (ContextInput {request = Just (From "FileResource" (TypeRef "OpenedFile")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "CheckIndependent", typing = Excu {handler = Just "checkIndependent"}, input = "FileSession", context = Just (ContextInput {request = Just (From "FileLocation" (TypeRef "FileName")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "CheckReopen", typing = Excu {handler = Just "checkReopen"}, input = "FileSession", context = Just (ContextInput {request = Just (From "FileLocation" (TypeRef "FileName")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  ]
-
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "ScopeInstancesDemo" registeredEffects programStructure compiledEntries
+interpreter = SDK.interpreter "ScopeInstancesDemo" registeredEffects Handlers.handlerSourceFingerprint programStructure compiledEntries
 -- 生成时已完成方法展开与路径分析；运行时只读取显式 ADT 值。
 generatedEffectGraph :: SDK.EffectGraph MethodGen
 generatedEffectGraph = SDK.EffectGraph

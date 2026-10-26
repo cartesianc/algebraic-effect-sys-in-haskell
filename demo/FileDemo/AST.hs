@@ -1,7 +1,8 @@
 module FileDemo.AST (ast) where
 
-import Framework.SDK (AST, node)
+import Framework.SDK (AST)
+import FileDemo.Workflow.OperateFile (operateFile)
 
--- Node 只选择末端；获取路径、开启、读写和关闭由 instance 内的引用组合。
+-- 顶层引用完整文件操作模块；进入模块查看末端 node。
 ast :: AST
-ast = node "FileWorkflow"
+ast = operateFile

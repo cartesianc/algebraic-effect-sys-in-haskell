@@ -12,6 +12,7 @@ import GHC.Data.StringBuffer (stringToStringBuffer)
 import GHC.Driver.Config.Parser (initParserOpts)
 import GHC.Driver.Session (flagSpecFlag, flagSpecName, parseDynamicFilePragma, xFlags, xopt)
 import GHC.Hs
+import GHC.Fingerprint (fingerprintString)
 import qualified GHC.Parser as Parser
 import GHC.Parser.Annotation (getLocA)
 import GHC.Parser.Header (getOptions)
@@ -21,7 +22,7 @@ import GHC.Types.Name.Reader (rdrNameOcc)
 import GHC.Types.SrcLoc
 import System.Directory (doesFileExist)
 import System.FilePath ((</>), pathSeparator)
-import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, utf8, withFile)
+import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, hSetNewlineMode, universalNewlineMode, utf8, withFile)
 import System.Process (readProcess)
 
 -- 分析与包装共用一次读取和解析的快照，不加载 instance 或执行业务。
@@ -40,7 +41,8 @@ prepareHandlers namespace wrappers scopeHandlers = do
         else pure analyzed
   let exists = isJust loaded
       generatedName = namespace ++ ".Generated.Handlers"
-      extraExports = [name | name <- ["newScopeHandlers", "scopeCleanups", "errorHandlers"]
+      sourceFingerprint = fmap (\(source, _, _, _) -> show (fingerprintString source)) loaded
+      extraExports = "handlerSourceFingerprint" : [name | name <- ["newScopeHandlers", "scopeCleanups", "errorHandlers"]
         , any ((name ++ " ::") `isPrefixOf`) (lines scopeHandlers)]
   generated <- case loaded of
     Nothing -> pure $ if null extraExports
@@ -65,7 +67,11 @@ prepareHandlers namespace wrappers scopeHandlers = do
         | otherwise = line : emptyCallbacks rest
   pure ("-- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。\n"
         ++ "{-# LANGUAGE TypeApplications #-}\n"
-        ++ generated ++ (if null extraDefinitions then "" else "\n\n" ++ extraDefinitions), shapes)
+        ++ generated
+        ++ "\n-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。\n"
+        ++ "handlerSourceFingerprint :: Maybe String\n"
+        ++ "handlerSourceFingerprint = " ++ show sourceFingerprint ++ "\n"
+        ++ (if null extraDefinitions then "" else "\n\n" ++ extraDefinitions), shapes)
 
 loadHandlers :: String -> IO (Maybe (String, HsModule GhcPs, Bool, Bool))
 loadHandlers namespace = do
@@ -75,6 +81,7 @@ loadHandlers namespace = do
   if not exists then pure Nothing else do
     source <- withFile inputPath ReadMode $ \handle -> do
       hSetEncoding handle utf8
+      hSetNewlineMode handle universalNewlineMode
       contents <- hGetContents handle
       _ <- evaluate (length contents)
       pure contents

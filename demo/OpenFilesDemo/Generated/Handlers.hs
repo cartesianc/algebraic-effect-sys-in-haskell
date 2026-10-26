@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module OpenFilesDemo.Generated.Handlers (newScopeHandlers, scopeCleanups, errorHandlers) where
+module OpenFilesDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -135,6 +135,10 @@ instance FinishInspectionEffect App where
             raise (FinishInspectionError "Not all files closed after closeFiles")
           liftIO (putStrLn "[check] after explicit close: 10/10 closed")
       in finishInspection
+
+-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
+handlerSourceFingerprint :: Maybe String
+handlerSourceFingerprint = Just "62dc22bd6b725b9835d3f28d161870f0"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

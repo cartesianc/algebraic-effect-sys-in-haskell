@@ -8,7 +8,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module ScopeInstancesDemo.Generated.Handlers (newScopeHandlers, scopeCleanups, errorHandlers) where
+module ScopeInstancesDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -181,6 +181,10 @@ instance CheckReopenEffect App where
             putStrLn "[check] actual acquisitions/closures: file 1 = 2/2; file 2 = 2/2"
             putStrLn "[check] five open calls, four argument requests; require reuses stable parameters within each chain"
       in checkReopen
+
+-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
+handlerSourceFingerprint :: Maybe String
+handlerSourceFingerprint = Just "53ecf9cf05c986909f0399280e9cfa36"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

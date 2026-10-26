@@ -5,7 +5,7 @@ module Framework.Workflow.Execution (runAST, runInitializedAST) where
 import Framework.Effect.Contract (Failure, Output(..))
 import Framework.Effect.Runtime (Target, targetName, lowerTarget, configureTargets)
 import Framework.Recursion (Algebra, cata)
-import Framework.Workflow.AST (AST, WorkflowF(..))
+import Framework.Workflow.AST (AST, WorkflowF(..), foldAST)
 import Framework.Workflow.Structure (ProgramStructure(..), InitializedF(..), scopeRelations)
 import Control.Concurrent (MVar, ThreadId, forkIOWithUnmask, killThread, newEmptyMVar, putMVar, readMVar)
 import Control.Exception (SomeException, bracket, throwIO, try, uninterruptibleMask_)
@@ -64,7 +64,7 @@ runAST
   -> IO (Output cause [value])
 runAST tree entries = do
   configureTargets [] entries
-  action <- either (ioError . userError) pure (cata (executionAlgebra entries) tree)
+  action <- either (ioError . userError) pure (foldAST (executionAlgebra entries) tree)
   either Failed Succ <$> runExceptT action
 
 -- 第二次 fold 只装配动作；SDK 已经完整校验并求值生成结构与当前 workflow。

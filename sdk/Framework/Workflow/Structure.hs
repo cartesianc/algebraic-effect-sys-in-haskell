@@ -12,7 +12,7 @@ import Data.List (intercalate, nub, sort, (\\))
 import GHC.Generics (Generic)
 import Framework.Effect.Graph
 import Framework.Recursion (Fix(..), Algebra, cata)
-import Framework.Workflow.AST (AST, WorkflowF(..))
+import Framework.Workflow.AST (AST, WorkflowF(..), foldAST)
 
 -- 保留 workflow 控制结构和每个调用位置，方法定义身份可跨位置共享。
 data InitializedF method next
@@ -111,7 +111,7 @@ initializeWorkflow
   :: [(String, method)]
   -> AST
   -> Either (StructureError method) (Fix (InitializedF method), [method])
-initializeWorkflow entries = cata (initializationAlgebra entries)
+initializeWorkflow entries = foldAST (initializationAlgebra entries)
 
 -- 校验只读取显式字段。未被当前方法图访问的声明 scope 仍可出现在生成树中。
 validateGeneratedStructure

@@ -34,7 +34,7 @@ class (Effect Root m) => DemoContextEffect m where
   loadDemoInputs :: m (Produce DemoContext)
   readDemoInputs :: m (Produce DemoContext)
   readDemoInputs = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "DemoContext" ContextBindingError Nothing boundDemoContext
+    SDK.readContext "DemoContext" ContextBindingError [("MakeNumber", SDK.RequestValue), ("RenderNumber", SDK.RequireValue)] Nothing boundDemoContext
   {-# MINIMAL loadDemoInputs #-}
 
 instance (Monad m, Effect Root m, DemoContextEffect m) => Effect DemoContext m where
@@ -52,7 +52,7 @@ class (Effect Root m, Effect DemoContext m, Produce DemoContext ~ (DemoInputs)) 
   makeNumber :: m (Produce MakeNumber)
   readNumber :: m (Produce MakeNumber)
   readNumber = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "MakeNumber" ContextBindingError Nothing boundMakeNumber
+    SDK.readContext "MakeNumber" ContextBindingError [("AddOne", SDK.RequestValue)] Nothing boundMakeNumber
   {-# MINIMAL makeNumber #-}
 
 instance (Monad m, Effect Root m, MakeNumberEffect m) => Effect MakeNumber m where
@@ -70,7 +70,7 @@ class (Effect Root m, Effect MakeNumber m, Produce MakeNumber ~ (NumberValue)) =
   addOne :: m (Produce AddOne)
   readAddedNumber :: m (Produce AddOne)
   readAddedNumber = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "AddOne" ContextBindingError Nothing boundAddOne
+    SDK.readContext "AddOne" ContextBindingError [("RenderNumber", SDK.RequestValue)] Nothing boundAddOne
   {-# MINIMAL addOne #-}
 
 instance (Monad m, Effect Root m, AddOneEffect m) => Effect AddOne m where
@@ -88,7 +88,7 @@ class (Effect Root m, Effect AddOne m, Effect DemoContext m, Produce AddOne ~ (A
   renderNumber :: m (Produce RenderNumber)
   readRenderedNumber :: m (Produce RenderNumber)
   readRenderedNumber = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "RenderNumber" ContextBindingError Nothing boundRenderNumber
+    SDK.readContext "RenderNumber" ContextBindingError [] Nothing boundRenderNumber
   {-# MINIMAL renderNumber #-}
 
 instance (Monad m, Effect Root m, RenderNumberEffect m) => Effect RenderNumber m where

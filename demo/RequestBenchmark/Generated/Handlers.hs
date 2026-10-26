@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module RequestBenchmark.Generated.Handlers (errorHandlers) where
+module RequestBenchmark.Generated.Handlers (handlerSourceFingerprint, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -75,6 +75,10 @@ instance Effect AddOne m => RenderNumberEffect m where
           DemoInputs _ (Render prefix) <- loadDemoInputs
           pure (Rendered (prefix ++ show number))
       in renderNumber
+
+-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
+handlerSourceFingerprint :: Maybe String
+handlerSourceFingerprint = Just "76a668ef3806b9f60af9ca9362e78ecb"
 
 
 

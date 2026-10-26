@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module Crawler.Generated.Handlers (newScopeHandlers, scopeCleanups, errorHandlers) where
+module Crawler.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -233,6 +233,10 @@ instance CrawlSessionEffect App where
           CrawlSessionInfo name _ <- readCrawlSession
           liftIO (putStrLn ("[scope] close " ++ name))
       in closeCrawlSession
+
+-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
+handlerSourceFingerprint :: Maybe String
+handlerSourceFingerprint = Just "3f007928b8578d27836828292255c108"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

@@ -11,6 +11,15 @@ import RequestBenchmark.Generated.Effects
 import qualified RequestBenchmark.Generated.Handlers as Handlers
 import RequestBenchmark.Types
 
+-- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
+registeredEffects :: [EffectSpec]
+registeredEffects =
+  [ EffectSpec {name = "DemoContext", typing = Context {request = Just (Producer {handler = "loadDemoInputs", produces = TypeRef "DemoInputs"}), require = Just "readDemoInputs"}, input = "Root", context = Nothing}
+  , EffectSpec {name = "MakeNumber", typing = Context {request = Just (Producer {handler = "makeNumber", produces = TypeRef "NumberValue"}), require = Just "readNumber"}, input = "Root", context = Just (ContextInput {request = Just (From "DemoContext" (TypeRef "DemoInputs")), require = Nothing})}
+  , EffectSpec {name = "AddOne", typing = Context {request = Just (Producer {handler = "addOne", produces = TypeRef "AddedValue"}), require = Just "readAddedNumber"}, input = "Root", context = Just (ContextInput {request = Just (From "MakeNumber" (TypeRef "NumberValue")), require = Nothing})}
+  , EffectSpec {name = "RenderNumber", typing = Context {request = Just (Producer {handler = "renderNumber", produces = TypeRef "RenderedValue"}), require = Just "readRenderedNumber"}, input = "Root", context = Just (ContextInput {request = Just (From "AddOne" (TypeRef "AddedValue")), require = Just (From "DemoContext" (TypeRef "DemoInputs"))})}
+  ]
+
 -- 生成身份连接到已有运行 scope 名；依赖只保存在下方显式 ScopeTree 中。
 scopeNames :: [(MethodGen, String)]
 scopeNames = []
@@ -29,9 +38,12 @@ compiledTarget = SDK.targetPure "RenderNumber" emptyContexts
 benchmark :: Output Errors (Produce RenderNumber)
 benchmark = SDK.bootPure compiledTarget
 
+registeredTarget :: String
+registeredTarget = "RenderNumber"
+
 -- 生成入口由 SDK 提供；业务无需另写 Codegen 模块。
 runDemo :: Show value => [EffectSpec] -> String -> value -> IO ()
-runDemo = SDK.runDemo "RequestBenchmark"
+runDemo = SDK.runDemo "RequestBenchmark" registeredEffects registeredTarget Handlers.handlerSourceFingerprint
 -- 生成时已完成方法展开与路径分析；运行时只读取显式 ADT 值。
 generatedEffectGraph :: SDK.EffectGraph MethodGen
 generatedEffectGraph = SDK.EffectGraph

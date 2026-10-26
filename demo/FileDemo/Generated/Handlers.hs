@@ -9,7 +9,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module FileDemo.Generated.Handlers (newScopeHandlers, scopeCleanups, errorHandlers) where
+module FileDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -161,6 +161,10 @@ instance FileWorkflowEffect App where
           writeFileText
       in runFileWorkflow
     -- 完整链退出后由 SDK 释放本次使用并自动关闭空闲实例。
+
+-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
+handlerSourceFingerprint :: Maybe String
+handlerSourceFingerprint = Just "1257c4ec3d54389ffbb80fcdc84c03d1"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
