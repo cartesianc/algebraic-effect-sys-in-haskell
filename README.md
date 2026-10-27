@@ -20,16 +20,6 @@ cabal update
 cabal build all
 ```
 
-运行纯计算示例（读取 20，加一，生成文本）：
-
-```sh
-cabal exec -- runghc -idemo -isdk demo/RequestBenchmark/Main.hs
-```
-
-```text
-Succ (RenderedValue "number: 21")
-```
-
 运行带文件资源的示例，它会打开、读取、追加写入 `demo/FileDemo/output.txt`，结束时由 SDK 自动关闭文件：
 
 ```sh
@@ -66,47 +56,72 @@ flowchart LR
 
 `Generated/` 由生成器产出，不要手改。运行时编译的是 `Generated/Handlers.hs`，即你的方法体加上 SDK 的协议包装。
 
-## 写一个 effect：以纯计算示例为例
+## 写一个 effect：以 Crawler 为例
 
-完整代码见 [demo/RequestBenchmark](demo/RequestBenchmark)。
+完整代码见 [demo/Crawler](demo/Crawler)。下面只看起始页这一条链：给出 URL，抓取网页，解析出摘要，打印。
 
-**1. 准备表示类型**（[Types.hs](demo/RequestBenchmark/Types.hs)）
-
-Types.hs 只放值的结构。这个示例里数字直接用 `Int`，不需要专门定义类型；契约类型由生成器产出（见下一步）。
-
-**2. 注册 effect**（[Effects.hs](demo/RequestBenchmark/Effects.hs)）
+**1. 准备表示类型**（[Types.hs](demo/Crawler/Types.hs)）
 
 ```haskell
-EffectSpec
-  { name = "AddOne"
-  , typing = Context { request = requester "addedValue" @Int }
-  , input = "Root"
-  , demands = [requests "NumberValue"]
-  }
+data PageURL = PageURL { pageAddress :: String }
+data PageSummary = PageSummary
+  { summaryURL :: String, summaryTitle :: String, summaryContent :: String, summaryLinks :: [String] }
 ```
 
-这条注册的意思是：`AddOne` 是一个 Context，生产方法叫 `addedValue`。生成器按 handler 名产出它的契约类型 `newtype AddedValue = AddedValue Int`，契约名就是 handler 名首字母大写。它需要契约 `NumberValue`，也就是 handler 名为 `numberValue` 的那个 Context（这里是 `MakeNumber`），生成器会自动接上。
+Types.hs 只放值的结构，契约类型由生成器产出（见下一步）。
+
+**2. 注册 effect**（[Effects.hs](demo/Crawler/Effects.hs)）
+
+```haskell
+EffectSpec { name = "StartPage", typing = Context { request = requester "startURL" @PageURL }
+           , input = "Root", demands = [] }
+EffectSpec { name = "FetchPage", typing = Excu { handler = Just "fetchStartPage" }
+           , input = "CrawlSession", demands = [requests "StartURL", requires "CrawlSessionInfo"] }
+EffectSpec { name = "ExtractPage", typing = Context { request = requester "startPageSummary" @PageSummary }
+           , input = "FetchPage", demands = [requires "StartURL"] }
+EffectSpec { name = "PrintPage", typing = Excu { handler = Just "printPage" }
+           , input = "Root", demands = [requires "StartPageSummary"] }
+```
+
+- `StartPage` 是 Context，生产方法叫 `startURL`。生成器按 handler 名产出它的契约类型 `newtype StartURL = StartURL PageURL`，契约名就是 handler 名首字母大写。
+- `FetchPage` 是 Excu，负责抓取。它需要契约 `StartURL`，生成器自动接到 `StartPage`。
+- `ExtractPage` 的 `input` 是 `FetchPage`，所以它挂在抓取句柄下，负责把抓到的正文解析成 `StartPageSummary`。
+- `PrintPage` 读取摘要并打印。
 
 **3. 生成接口**
 
 ```sh
-cabal run effect-codegen -- target RequestBenchmark
+cabal run effect-codegen -- workflow Crawler
 ```
 
-生成器在 `Generated/Effects.hs` 中产出 `AddOneEffect` 类型类和契约类型 `AddedValue`，方法 `addedValue :: m AddedValue` 已声明好。
+生成器在 `Generated/Effects.hs` 中产出每个 effect 的类型类和契约类型，例如 `fetchStartPage :: m (Maybe String)`、`startPageSummary :: m StartPageSummary`。
 
-**4. 实现方法**（[Handlers.hs](demo/RequestBenchmark/Handlers.hs)）
+**4. 实现方法**（[Handlers.hs](demo/Crawler/Handlers.hs)，节选）
 
 ```haskell
-instance MakeNumberEffect Pure where
-  numberValue = do
-    DemoInputs (InputSettings (Start number) _) <- request @DemoInputs
-    if number < 0
-      then raise (MakeNumberError ("Invalid start: " ++ show number))
-      else pure (NumberValue number)
+instance FetchPageEffect App where
+  fetchStartPage = do
+    openCrawlSession
+    StartURL (PageURL url) <- request @StartURL
+    ...                                  -- 用 curl 抓取 url，失败时 raise
+    pure (Just html)                     -- 交出网页正文
+
+instance ExtractPageEffect App where
+  startPageSummary = do
+    fetched <- fetchStartPage            -- 挂接句柄交出的正文
+    StartURL (PageURL url) <- require @StartURL
+    html <- maybe (raise (ExtractPageError (url ++ ": fetch returned no page body"))) pure fetched
+    ...                                  -- 解析标题、段落和链接
+    pure (StartPageSummary (PageSummary url title content links))
+
+instance PrintPageEffect App where
+  printPage = do
+    StartPageSummary (PageSummary url title content links) <- require @StartPageSummary
+    ...                                  -- 打印
+    pure Nothing
 ```
 
-`request @DemoInputs` 取得所需的值，`raise` 报告失败，`NumberValue number` 构造本 Context 的产出。写完再运行一次生成命令，就可以执行了。
+`request @StartURL` 取得所需的值，`raise` 报告失败，`StartPageSummary (...)` 构造本 Context 的产出。写完再运行一次生成命令，就可以执行了。
 
 ## 核心概念
 
@@ -124,16 +139,7 @@ instance MakeNumberEffect Pure where
 
 ### 挂在句柄下的 Context
 
-Context 的 `input` 指向一个 Excu 或 Scoped 时，它就挂在这个句柄下，负责把句柄交出的信息解析成业务值（节选自 [Crawler](demo/Crawler/Handlers.hs)，`ExtractPage` 的 `input = "FetchPage"`）：
-
-```haskell
-instance ExtractPageEffect App where
-  startPageSummary = do
-    fetched <- fetchStartPage        -- 抓取句柄交出的网页正文
-    ...                              -- 解析，产出 StartPageSummary
-```
-
-你不需要安排它什么时候运行：
+Context 的 `input` 指向一个 Excu 或 Scoped 时，它就挂在这个句柄下，负责把句柄交出的信息解析成业务值，例如上面 Crawler 的 `ExtractPage` 挂在 `FetchPage` 下。你不需要安排它什么时候运行：
 
 - **句柄在操作链里执行时**：句柄返回后，SDK 自动用这次的输出运行挂在下面的 Context，产出的值保存起来，不会再执行一次句柄。调用句柄的那条链照常继续，不受影响。
 - **还没执行过、但有人 `require` 这个值时**：Context 自己调用句柄，把链跑起来。
@@ -216,7 +222,7 @@ typing = Error
 ```haskell
 -- Workflow/ParsePages.hs
 parsePages :: AST
-parsePages = parallel [node "ExtractPage", node "ExtractLinkedPage"]
+parsePages = parallel [node "FetchPage", node "FetchLinkedPage"]
 
 -- AST.hs
 ast :: AST
@@ -232,8 +238,7 @@ ast = chained [parsePages, printPages]
 修改任何手写文件后（包括只改 `Handlers.hs` 的方法体），都要重新生成：
 
 ```sh
-cabal run effect-codegen -- workflow FileDemo     # 有 workflow 的示例
-cabal run effect-codegen -- target RequestBenchmark  # 纯计算示例
+cabal run effect-codegen -- workflow FileDemo
 cabal build all
 ```
 
@@ -259,6 +264,8 @@ cabal run crawler-demo -- --structure
 | 在生产方以外构造某个 Context 产物类型的值（例如在消费方写 `StartURL (...)`） | 值应由它的生产方产生；消费方用 `request`／`require` 取得，只做模式匹配 |
 | 普通顶层函数显式使用业务类型、构造器或字段 | 把这部分操作移进注册的 instance 方法；只处理 `String` 等通用类型的 helper 可以保留 |
 | 把 effect 调用藏进 helper、未知的高阶组合或循环 | 在方法体中直接调用；支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法 |
+| AST 的 node 选中了 Context | node 只挂原始句柄；Context 由它挂接的句柄执行时产出，或被 `request`／`require` 时产出 |
+| 某个 Context 从 AST 出发永远到不了：既没有 node 带起它挂接的句柄，也没有被带起的链 `request`／`require` 它 | 把带起它的链加进 AST，或删掉这个 Context |
 
 这些规则保证：组合关系总能从源码中静态读出来，不会藏在任意函数里。
 
@@ -273,7 +280,6 @@ cabal run crawler-demo -- --structure
 
 | 示例 | 演示内容 | 运行 |
 | --- | --- | --- |
-| [RequestBenchmark](demo/RequestBenchmark) | 取值、纯计算链、`raise` | 见快速开始 |
 | [FileDemo](demo/FileDemo) | 文件资源的开启、读写、自动关闭，Error 处置 | `cabal run file-demo` |
 | [Crawler](demo/Crawler) | 并行抓取、挂接的 Context 解析，顺序打印时读取解析结果；用不同契约区分同类数据 | `cabal run crawler-demo` |
 | [OpenFilesDemo](demo/OpenFilesDemo) | 一个资源持有多个文件，链结束后自动关闭与重开 | `cabal run open-files-demo` |
@@ -295,7 +301,6 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 sdk/Framework/   SDK：契约、运行时、workflow、代码生成
 demo/            示例程序及其生成代码
 docs/            设计文档
-archive/         旧版本实现与设计（不参与构建）
 ```
 
 想了解内部设计时阅读：

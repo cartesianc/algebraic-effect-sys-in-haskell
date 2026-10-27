@@ -10,7 +10,7 @@ request／require 是 Context 内的方法角色；消费者统一在 demands �
 最新设计见 [LATEST_DESIGN.md](LATEST_DESIGN.md)：固定 interpreter ast effects 入口，业务注册声明 request／require，SDK 装配执行闭包并复用已开启的可用 scope；Generic Map 作为内部结构适配，不新增 adapter 配置。对外产值的业务转换归 Context；Scoped 在同一个 effect 的 class／instance 内提供无产物的开启与关闭，信息由上游 Context 提供；Error 在同一个 effect 的 class／instance 内提供 detect 与 resolve。独立 Read 已取消。本文记录基本方法，具体语义与落实范围以上述文档为准。
 
 当前工作聚焦 Algebraic Effect Sys in Haskell；设计声明、样例与方法文档在项目根目录的 sdk、demo 与 docs 中推进。
-旧实现与设计材料保存在 [archive/legacy](../archive/README.md)，仅作背景参考，不默认同步改写历史文档。
+旧实现、设计材料与旧版 RequestBenchmark 已删除，只在 Git 历史中保留。
 
 ## 1. 设计先于操作
 
@@ -181,9 +181,7 @@ Error 的 detect／resolve 均以 Maybe String 声明并返回 m ()，handles �
 继续显式生成普通 Haskell 源码并保留 review 区，避免引入 Template Haskell。
 类型引用保存可序列化名称，不包含完整业务数据声明；第三方工具仍需提供或引用相应类型定义。Output 识别只用于拒绝嵌套完成协议。
 SDK 不在链内构造 Output，完成边界只封装一次；生成器拒绝将另一层 Output 直接作为成功类型。
-当前 benchmark 的 DemoContext 通过 request 接入，MakeNumber 用 `<-` 取得并匹配 loadDemoInputs 的产物，
-AddOne 调用 makeNumber，RenderNumber 调用 addOne。SDK 只登记并 lower renderNumber。
-RenderNumber 还声明 require DemoContext；其 loadDemoInputs 引用复用 MakeNumber 先前保存的值，不再次执行生产。
+爬虫的 FetchPage 以 request 取得起始 URL，ExtractPage 挂在 FetchPage 下解析其输出，PrintPage 以 require 读取解析出的摘要；摘要已在抓取阶段由注入产出时不再次执行生产。
 
 ## 6. 统一外部入口驱动
 
@@ -195,7 +193,7 @@ SDK 已用 WorkflowF + Fix + cata 将这两个有限分支装配为未执行的�
 
 workflow 以具名 branch 为模块：每个 branch 在 Workflow 下独立文件定义，顶层 AST 通过普通 import 组合业务名称，不在表达式中使用模块限定前缀。node 返回抽象 EffectNode，branch 返回抽象 AST；同一 chained／parallel 列表只接受一种子项类型，禁止裸 node 与 branch 混排，裸 node 不能作为 AST。单个 node 也先组成 branch；空列表须标注元素类型，原有空分支成功语义不变。SDK 内部保留 WorkflowF、Fix 与 cata，隐藏 AST 构造与内部子项转换。
 
-模块拆分不改变调用次数、控制顺序或 Context／scope 边界；重复引用同一模块仍是重复执行。声明采用固定构造、显式列表和直接符号引用，引用关系有限无环。分文件与具名引用是源码格式约定，不由 AST 类型证明；未来 LSP 原型需保存定义、引用及源码位置，不能从展开后的执行树反推模块身份，也不因此增加运行时 pipeline key。RequestBenchmark 没有 workflow，继续使用纯 target 入口。
+模块拆分不改变调用次数、控制顺序或 Context／scope 边界；重复引用同一模块仍是重复执行。声明采用固定构造、显式列表和直接符号引用，引用关系有限无环。分文件与具名引用是源码格式约定，不由 AST 类型证明；未来 LSP 原型需保存定义、引用及源码位置，不能从展开后的执行树反推模块身份，也不因此增加运行时 pipeline key。SDK 仍保留无 workflow 的纯 target 入口，目前没有 demo 使用。
 
 gencode 先进行纯结构分析：枚举选定末端的独立 effect chain，方法结构用 zygo 同次归约辅助 scope 路径与图，汇合路径、补全注册前提并校验后，发射显式 generatedEffectGraph 与 generatedScopeTree ADT。运行时校验并完整求值生成常量，随后直接对当前 AST 做一次 cata，同时解析 Node、收集入口并装配尚未执行的 action。所有分支及入口集合检查完成后才安装 scope 关系并执行业务；不创建 InitializedF 中间树，不重跑 handler 构图或推导 scope 父边。Target 创建只分配空状态，不获取业务资源。跨 Node 的 Chained 执行先后不产生 scope 依赖。
 ScopeTree 保存共享节点的 DAG，而非强制单父树。生成期的 buildScopeTree 对每个 B 求所有含 B 路径的前序集合交集 Pred(B)，再作传递约简；共同前序只用于构树，不作为另一份公开结果。ProgramStructure.structureScopes 直接保存生成的 ScopeTree，其 parents、children 和 layers 用于导航，路径、raw 候选、scopeOpposed 与 scopeUndetermined 证据也保存在其中；graphRootPaths 继续保存各入口路径来源。仅由 open 顺序不能证明覆盖全部资源前提，尤其不能遗漏 require 复用的已有资源；生成期补全清理依赖后约束 once-spare，子 scope 仍保留前提时不得关闭它。不新增 Error tracing。
@@ -284,15 +282,15 @@ Context 绑定稳定是框架内部必须实现的语义规则，不能仅由“
 
 ## 7. 当前样例的地位与下一步
 
-入口为 demo/RequestBenchmark/Main.hs、demo/Crawler/Main.hs 与 demo/FileDemo/Main.hs；sdk/Framework/SDK.hs 为统一 SDK 入口，内部按 Effect、Recursion、Workflow 与 Codegen 拆分。
+入口为 demo/Crawler/Main.hs、demo/FileDemo/Main.hs 等各 demo 的 Main.hs；sdk/Framework/SDK.hs 为统一 SDK 入口，内部按 Effect、Recursion、Workflow 与 Codegen 拆分。
 每个 demo 保留 Main、AST／Target、Effects、Types、Handlers；workflow demo 另以 Workflow 下的独立文件定义各 branch，AST 只组合模块名称。生成接口、末端登记和包装后的 instance 分为 Generated/Effects、Generated/Program 和 Generated/Handlers；Generated/Assets 单独保存静态资产目录。
 分离边界是手写配置 facade 与生成代码；生成逻辑属于 SDK，demo 不另设 Codegen.hs。AST 不填写 Reader。
 Types、Effects、AST／Target 独立于 Generated 与 Handlers；effect 标记和错误类型都由 SDK 生成，无须手写空 data。
-首次生成使用 cabal run effect-codegen -- workflow Crawler 或 -- target RequestBenchmark。先加载声明并解析 Handlers 的模块／方法边界及显式 effect 引用；资产检查再以 GHC 无代码生成模式分析手写源码和内存中的候选接口，不执行 handler。没有 Handlers 时仍可先生成契约。
+首次生成使用 cabal run effect-codegen -- workflow Crawler（纯 target 用 -- target 加命名空间）。先加载声明并解析 Handlers 的模块／方法边界及显式 effect 引用；资产检查再以 GHC 无代码生成模式分析手写源码和内存中的候选接口，不执行 handler。没有 Handlers 时仍可先生成契约。
 手写 instance 使用原生 Haskell，运行仍编译 Generated/Handlers 的协议包装副本，另有纯结构供初始化与查看；修改实现后须重新生成。不新增业务 class，不使用 Template Haskell，codegen 不回写手写源码，也不改写业务执行副本的原方法体表达式。
 生成副本保存实际解析的手写源码指纹，公共运行入口在业务执行前比对当前 Handlers.hs；缺失或变更时拒绝启动并提示重新生成。workflow 与纯 target 都比对注册快照，纯 target 另比对所选末端。此检查要求从仓库根目录访问手写源，不替代显式生成或编译。
 已有 Main --generate 仍要求导入链能编译，不能替代独立首次生成入口。
-数字 benchmark 与爬虫都演示 instance 内沿 Input 引用类方法；爬虫再由 Node algebra lower 末端，组织并行解析与顺序打印。
+各 demo 都演示 instance 内沿 Input 引用类方法；爬虫由 Node algebra lower 末端，组织并行抓取（同时注入解析）与顺序打印。生成时检查末端不是 Context，且每个 Context 都能从末端到达（经调用、require 的按需求值或挂接句柄的注入）。
 文件 demo 同样只选择末端；路径、活文件句柄与文本归 Context，校验归 Pure、写入归 Excu，Scoped 的 open／close 均为 m (Maybe String)。ReadFile 的 input 是 FileSession，因此按新规则挂在 openFileSession 下：剧本开启文件时注入读取一次，WriteFile 的 request 再读取一次；拆成读取 Excu 加挂接 Context 留待 Context 不直接做 IO 一项。FileWorkflow 在本链先 request 稳定路径，校验及开启参数 require 该绑定，链结束后自动清理；FileRecovery 仍检测已捕获的文件并显式引用 closeFileSession。
 OpenFilesDemo 改为每条链显式 open：InspectFiles 观察当前链及 GC 期间十个文件的存续，FinishInspection 开启自己的新一轮并演示显式关闭；不再要求前一 Node 的活资源自动留给后一 Node。
 ScopeInstancesDemo 在每条链先取得稳定参数，保留链内同参 require 共享、异参独立和显式关闭；后续 Node 显式开启新一轮，不读取或改写旧 owner。

@@ -5,7 +5,7 @@ import Control.Exception (evaluate)
 import Data.Char (isAlphaNum, isUpper)
 import Framework.Codegen.Handlers (prepareHandlers, HandlerShape(..))
 import Framework.Codegen.Assets (checkAssets)
-import Framework.Codegen.Plan (renderGraphPlan)
+import Framework.Codegen.Plan (checkDriven, renderGraphPlan)
 import qualified Framework.Effect.Graph as Graph
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Environment (getArgs, getExecutablePath, lookupEnv)
@@ -53,6 +53,8 @@ main = do
                 let generated = directory </> "Generated"
                     cachePath = generated </> ".scope-cache"
                     normalized = [(method, normalizeShape shape) | ((_, method), shape) <- shapes]
+                -- 驱动检查每次执行，不受 scope 缓存命中影响。
+                either die pure (checkDriven plan normalized)
                 dependencies <- mapM readUtf8 structureSources
                 let cacheKey = show (plan, normalized, dependencies)
                 cached <- tryIOError (readExisting cachePath)

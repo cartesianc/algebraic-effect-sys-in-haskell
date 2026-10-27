@@ -1,5 +1,5 @@
 -- 生成阶段的纯结构输入；方法名字仅用于连接源码，输出使用 MethodGen 构造器。
-module Framework.Codegen.Plan (GraphPlan(..), renderGraphPlan) where
+module Framework.Codegen.Plan (GraphPlan(..), renderGraphPlan, checkDriven) where
 
 import Data.Char (toUpper)
 import Data.List (intercalate, nub)
@@ -8,12 +8,46 @@ import Framework.Workflow.AST (chained, node)
 import Framework.Workflow.Structure (ProgramStructure(..), initializeStructure)
 
 -- 声明先由独立 GHCI 加载，方法结构随后由 GHC parser 提供；两者都不依赖 Generated。
+-- planAnchors：原子句柄方法 → 挂在它下面的 Context 的生产方法；只用于驱动检查，不进入 effect graph。
 data GraphPlan method = GraphPlan
   { planRoutes :: [(method, method, method)]
   , planDefinitions :: [MethodDefinition method]
   , planScopes :: [(method, String, [String])]
   , planEntries :: [(String, method)]
+  , planAnchors :: [(method, method)]
   } deriving (Eq, Show, Read)
+
+-- 手写方法使用解析出的结构；未出现在 Handlers 中的生成方法（如默认 require 读取）保留计划中的结构。
+mergedDefinitions :: GraphPlan String -> [(String, MethodShape String)] -> [MethodDefinition String]
+mergedDefinitions plan shapes =
+  [ definition {methodBody = maybe (methodBody definition) id (lookup (methodIdentity definition) shapes)}
+  | definition <- planDefinitions plan ]
+
+-- 资产必须由剧本驱动：从 AST 末端沿方法调用须能到达每个 Context 的生产方法。
+-- require 在 state 无值时求值 request（thunk），默认读取在计划中已记为可能进入生产；
+-- 挂接句柄执行后注入挂在它下面的 Context，因此句柄可达时该 Context 的生产也可达。
+checkDriven :: GraphPlan String -> [(String, MethodShape String)] -> Either String ()
+checkDriven plan shapes =
+  case [ methodIdentity definition | definition <- definitions
+       , methodRole definition == ContextRequest, methodIdentity definition `notElem` reached ] of
+    [] -> Right ()
+    undriven -> Left ("Context never driven from the AST: " ++ intercalate ", " undriven
+      ++ "; no terminal reaches its production or the handle it hangs below")
+  where
+    definitions = mergedDefinitions plan shapes
+    reached = visit [] (map snd (planEntries plan))
+    visit seen [] = seen
+    visit seen (method : rest)
+      | method `elem` seen = visit seen rest
+      | otherwise = visit (method : seen) (successors method ++ rest)
+    successors method =
+      [called | definition <- definitions, methodIdentity definition == method, called <- calls (methodBody definition)]
+        ++ [produced | (anchor, produced) <- planAnchors plan, anchor == method]
+    calls Empty = []
+    calls (Call method) = [method]
+    calls (Sequence children) = concatMap calls children
+    calls (Choice children) = concatMap calls children
+    calls (Recover body recovery) = calls body ++ calls recovery
 
 renderGraphPlan :: GraphPlan String -> [(String, MethodShape String)] -> Either String String
 renderGraphPlan plan shapes = do
@@ -25,10 +59,7 @@ renderGraphPlan plan shapes = do
   case [method | method <- supplied, method `notElem` registered] of
     method : _ -> Left ("Unregistered handler method in the structure generation plan: " ++ method)
     [] -> pure ()
-  let definitions =
-        -- 手写方法使用解析出的结构；未出现在 Handlers 中的生成方法（如默认 require 读取）保留计划中的结构。
-        [definition {methodBody = maybe (methodBody definition) id (lookup (methodIdentity definition) shapes)}
-          | definition <- planDefinitions plan]
+  let definitions = mergedDefinitions plan shapes
       -- 这里只枚举各独立入口。初始化算法不会把不同 Node 串成 scope 路径，
       -- 因而不需要载入或冻结业务 workflow 的 chained/parallel 形状。
       entries = chained [node selected | (selected, _) <- planEntries plan]

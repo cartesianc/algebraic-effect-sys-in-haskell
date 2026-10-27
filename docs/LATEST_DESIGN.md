@@ -2,7 +2,7 @@
 
 更新：2026-10-27。范围：Algebraic Effect Sys in Haskell。
 
-本文记录已确认的设计，供声明、Haskell 接口和执行样例共同遵循。基本方法见 [DESIGN_METHOD.md](DESIGN_METHOD.md)。当前实现位于 demo 与 sdk/Framework；旧根项目的实现和设计保存在 [archive/legacy](../archive/README.md)，仅作历史参考。
+本文记录已确认的设计，供声明、Haskell 接口和执行样例共同遵循。基本方法见 [DESIGN_METHOD.md](DESIGN_METHOD.md)。当前实现位于 demo 与 sdk/Framework；旧根项目的实现、设计与旧版 RequestBenchmark 已删除，只在 Git 历史中保留。
 
 本阶段已实现五类 effect 的 Haskell 接口、Context 绑定、App／IO 的有限使用闭包自动清理，以及沿同一 ScopeTree 导航的 Error 检测／处置。effect graph 与 ScopeTree 在 gencode 时生成显式 ADT。跨语言 schema、Generic Map、loop／Hanging、middleware 和热替换仍属后续设计，不能把相关关系示意当作已实现 API；普通编译也不等于所有并发和取消场景已获运行验证。
 
@@ -230,12 +230,12 @@ handler 方法是可调用句柄；部分调用产生业务值，但普通句柄
 TypeRef 通过 Typeable 识别 SDK 的 Output 构造器以拒绝嵌套完成协议；不解析显示字符串。
 其余业务类型保存显示名称，Generated 模块须能解析该类型名；它不保存完整数据定义，也不代表
 任意 Haskell 类型结构都能被第三方工具解释或被 Generic Map 自动适配。
-业务方法体与上游引用保留在用户 instance 中；DemoContext、MakeNumber、AddOne、RenderNumber 通过 request 形成产值组合，手写 input 均可为 Root。MakeNumber 引用 loadDemoInputs，AddOne 引用 makeNumber，RenderNumber 引用 addOne；
-compiledTarget 只登记 renderNumber，纯计算入口 lower 它后得到 number: 21。RenderNumber 同时 request AddOne、require DemoContext；其 loadDemoInputs 引用复用 MakeNumber 先前保存的值。
-review 面仍集中在两个 demo，SDK 提供契约、载体、末端登记与 Node lowering；不引入用户另写的 impl 层。
+业务方法体与上游引用保留在用户 instance 中；爬虫的 FetchPage request 起始 URL，ExtractPage 挂在 FetchPage 下解析其输出，PrintPage require 解析出的摘要；
+Program 只登记 FetchPage、PrintPage 等原始句柄末端，摘要在抓取阶段由注入产出，打印阶段的 require 直接读取，不再次抓取。
+review 面集中在各 demo，SDK 提供契约、载体、末端登记与 Node lowering；不引入用户另写的 impl 层。
 
-当前 benchmark 完成结果为 Succ value 或 Failed failure。SDK 自动生成 MakeNumberError String 等本地错误、
-关联 Error e、raise 实现与 Errors 分类；用户写 raise (MakeNumberError message)。统一 Failure 保存 origin、detail 分类和 message，
+当前完成结果为 Succ value 或 Failed failure。SDK 自动生成 ExtractPageError String 等本地错误、
+关联 Error e、raise 实现与 Errors 分类；用户写 raise (ExtractPageError message)。统一 Failure 保存 origin、detail 分类和 message，
 不再需要业务错误 ADT、NoError 引用或错误配置。Error 的单射约束保持来源推导；Except 使普通 do 短路，
 上游失败原样传播，lower 只解释登记的末端，最终边界只封装一次 Output。
 当前不设 Pending；调用标识、传播路径与通用 IO 异常接入均未实现。
@@ -284,7 +284,7 @@ BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两�
 
 这项类型约束不证明分支来自独立文件，也不禁止内联子分支或直接构造叶模块。独立文件、顶层只引用模块名属于声明格式：正文采用固定 branch 构造、显式列表、node 与直接模块引用，不借任意 lambda／map／条件计算隐藏结构，引用保持有限无环。未来 LSP 保存模块定义、引用和源码位置，并检查该格式；当前执行 AST 不保留源码身份，不新增运行时模块 key。
 
-分文件不建立新 interpreter、注册环境、Context 或 scope。同一模块多次挂载意味着多次执行，不去重调用；原有串行短路、并发汇合与资源共享规则保持。五个 workflow demo 已按此拆分，纯 target 的 RequestBenchmark 不引入 AST。loop 仍按下文单独确定嵌套和生命周期规则，本次模块化不扩大它的可组合范围。
+分文件不建立新 interpreter、注册环境、Context 或 scope。同一模块多次挂载意味着多次执行，不去重调用；原有串行短路、并发汇合与资源共享规则保持。五个 workflow demo 已按此拆分；SDK 保留的纯 target 入口不引入 AST，目前没有 demo 使用。loop 仍按下文单独确定嵌套和生命周期规则，本次模块化不扩大它的可组合范围。
 
 ## 内部控制与外部触发
 
@@ -294,7 +294,7 @@ chained 按前一次成功完成推进，parallel 并发启动并等待全部完
 
 “只负责启动逻辑，不负责状态转移”中的状态指业务状态。AST 不保存可变节点状态、上次产物或业务状态机，也不据此隐式传值；但完成、失败停止、并发汇合仍属于它的执行控制语义，运行记录由 SDK 持有。业务状态变化由 effect handler 执行。Context 按 request／require 引用，普通绑定与 scope 开启期绑定分别由 SDK 管理；scope 状态也属于 SDK，不引入节点业务状态机。
 
-[Hanging 的既有设计](../archive/legacy/docs/design/HANGING.md) 是主控制树之外的事件 hook 树／列表，关联事件源、触发或恢复目标、所属执行与 scope。它可承接 loop 的订阅挂载，SDK 持有回调与有效期记录；loop 每次事件启动新调用，恢复旧调用属于另行声明的等待／恢复协议。Hanging 不承载节点业务状态机，也不要求自建协程调度器；当前尚未接入。
+Hanging 的既有设计（原 archive/legacy/docs/design/HANGING.md，已删除，见 Git 历史）是主控制树之外的事件 hook 树／列表，关联事件源、触发或恢复目标、所属执行与 scope。它可承接 loop 的订阅挂载，SDK 持有回调与有效期记录；loop 每次事件启动新调用，恢复旧调用属于另行声明的等待／恢复协议。Hanging 不承载节点业务状态机，也不要求自建协程调度器；当前尚未接入。
 
 - loop 是执行方式的 transformer：将所属节点的入口装配为事件订阅与回调，不要求模块持续执行。
 - 无条件：loop 不根据本轮业务结果设置继续判定；订阅有效时由事件触发调用，无事件则等待，所属范围结束时停止。
@@ -359,7 +359,7 @@ effect 不配置 dependency。SDK 沿声明收集 Scoped，能力仍由 supercla
 
 每次显式 open 按原取值声明取得本次参数。作为 scope 匹配参数的开启输入全部实际以 require 取得时，可按 Eq 共享同参活实例，跳过资源获取及 open 的剩余方法体；任何这样的输入实际以 request 取得时，本次 open 默认 fresh，即使值相同也创建新实例，同值旧实例保留并存。这里区分的是开启参数取值，资源 producer 自身用于获取资源的 request 不一律触发 fresh；没有开启输入的 scope 仍可共享。
 
-需要共享时，业务在当前完整链先取得稳定参数，scope 内 require 该绑定。参数生产者自己的 IO 可以运行；open 范围中其他 IO 必须在参数齐备之后，否则报 ScopeInputsMissing。参数变化发生在选定之后则报 ScopeInputAfterOpen。该协议不分析任意 IO 闭包中的隐藏参数，也不将混在参数生产动作里的资源获取自动拆开。纯计算 benchmark 不含 Scoped；本轮协议限定 App／IO 下受管理的有限完整链。
+需要共享时，业务在当前完整链先取得稳定参数，scope 内 require 该绑定。参数生产者自己的 IO 可以运行；open 范围中其他 IO 必须在参数齐备之后，否则报 ScopeInputsMissing。参数变化发生在选定之后则报 ScopeInputAfterOpen。该协议不分析任意 IO 闭包中的隐藏参数，也不将混在参数生产动作里的资源获取自动拆开。Pure 载体不含 Scoped；本轮协议限定 App／IO 下受管理的有限完整链。
 
 底层 ContextBinding 保存不可变的值快照与 scope 实例引用，二者一起传递；App 已删除 selectedScopes／lookupSelected。require 首先读取本次调用已经捕获的绑定，不因另一条链发布新值而改变。显式 request 发布并替换当前调用的来源绑定；开启期间建立的绑定只在实际实例仍被使用或依赖保留时供跨链复用，其他已捕获绑定不被原地改写。普通 Context 仍按 Node 隔离。资源已关闭后，后续 Node 必须显式 open 新一轮；旧绑定不自动换 owner。
 
@@ -417,12 +417,12 @@ FileDemo 的 FileRecovery 演示：require 原文件句柄，用 hIsClosed 检�
 [Codegen.hs](../sdk/Framework/Codegen.hs) 负责源码生成。拆分不改变 boot 范围或 IO 权限，本次文件分离不改变 handler 签名或执行语义。
 [Generate.hs](../sdk/Framework/Generate.hs) 提供统一首次生成命令：先加载 Types、Effects 和 AST／Target，用 GHC 9.12 解析器读取 Handlers.hs 的模块、方法边界与显式 effect 引用，生成独立纯结构；再以 GHC 无代码生成模式解析业务名称并检查资产引用，成功后写回 Generated。候选生成模块及手写 Handlers 快照从内存加载，不执行业务。
 它们不导入 Generated 或 Handlers；effect 标记与错误类型自动生成，无须用户手写空 data。
-首次运行 cabal run effect-codegen -- workflow Crawler 或 -- target RequestBenchmark，生成接口后填写 handler，再次生成并编译 Main。缺少 Handlers.hs 时先生成空编译模块；有实现后进行完整资产检查，不执行 handler。
+首次运行 cabal run effect-codegen -- workflow Crawler（纯 target 用 -- target 加命名空间），生成接口后填写 handler，再次生成并编译 Main。缺少 Handlers.hs 时先生成空编译模块；有实现后进行完整资产检查，不执行 handler。
 业务执行仍编译 Generated/Handlers，SDK 包装方法入口，保留原生取值与业务表达式；纯初始化结构由 Generated.Program 导出，不回写手写源码或新增业务类型类。手写实现变更后须重新生成。
-生成的 Handlers 保存解析时的源码指纹；公共 workflow／target 入口在启动业务前检查当前手写源，缺失或过期则拒绝执行。两类入口均核对注册快照，纯 target 还核对末端；Main 写法不变。检查从仓库根目录读取源码，--generate 仍可修复过期副本；直接求值底层 benchmark 不提供 IO 源码检查。
+生成的 Handlers 保存解析时的源码指纹；公共 workflow／target 入口在启动业务前检查当前手写源，缺失或过期则拒绝执行。两类入口均核对注册快照，纯 target 还核对末端；Main 写法不变。检查从仓库根目录读取源码，--generate 仍可修复过期副本；直接求值纯 target 的底层结果不提供 IO 源码检查。
 已有 Main --generate 仍要求导入链可编译，新增 effect 或缺少生成文件时使用独立 SDK 命令。
-[demo/Crawler/Main.hs](../demo/Crawler/Main.hs) 和 [demo/RequestBenchmark/Main.hs](../demo/RequestBenchmark/Main.hs) 分别演示 IO 与纯计算；
-两者的手写入口、注册、handler 与生成模块分别可 review；
+[demo/Crawler/Main.hs](../demo/Crawler/Main.hs) 等 demo 演示 IO workflow；
+各 demo 的手写入口、注册、handler 与生成模块分别可 review；
 仍使用的并发辅助函数已并入当前 SDK。
 
 同次 AST 的运行表保留，本轮迁移到有限使用闭包 once-spare、require 共享／request fresh 及补全后的清理依赖，并由使用协议协调显式关闭。App／IO 的 Root Error 祖先导航使用同一 ScopeTree，实例定位、detect／resolve 与原错传播保留；Pure 维持旧候选名单，不自动恢复业务。具体实现与普通编译结果须按本轮代码核对，不由旧样例推断已验证；Generic Map 和 loop／Hanging 尚未接入。

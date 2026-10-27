@@ -25,6 +25,3 @@ jobs:
 
       - name: Build SDK and demos
         run: cabal build all
-
-      - name: Compile pure benchmark
-        run: cabal exec -- ghc -idemo -isdk -fno-code demo/RequestBenchmark/Main.hs

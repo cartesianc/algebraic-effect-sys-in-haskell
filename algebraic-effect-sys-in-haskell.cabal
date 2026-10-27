@@ -14,8 +14,6 @@ extra-source-files:
     sdk/Framework/Codegen.hs
     demo/*/Handlers.hs
     demo/*/Generated/Assets.hs
-    demo/RequestBenchmark/*.hs
-    demo/RequestBenchmark/Generated/*.hs
 
 source-repository head
   type: git

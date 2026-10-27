@@ -232,6 +232,6 @@ configureTargets relations = configureScopeRelations relations . scopeHandlers
 cleanupTargets :: [Target IO environment cause value] -> IO [(Maybe SomeException, Failure cause)]
 cleanupTargets = cleanupScopes . scopeHandlers
 
--- 无 AST 的纯计算 benchmark 入口，同样只 lower 所选末端。
+-- 无 AST 的纯 target 入口，同样只 lower 所选末端。
 bootPure :: Target Identity environment cause value -> Output cause value
 bootPure = either Failed Succ . runIdentity . lowerTarget

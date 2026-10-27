@@ -38,6 +38,7 @@ lowerProgram namespace specifications entry = do
     then Left "Select at least one terminal effect for generation"
     else pure ()
   selectedMethods <- mapM findHandler selected
+  mapM_ checkTerminal selected
   let allMethods = concatMap registeredMethods specifications
   if length allMethods /= length (nub (map snd allMethods))
     then Left "Registered method names must be unique within a generated module"
@@ -212,6 +213,7 @@ lowerProgram namespace specifications entry = do
           , specification <- specifications, name specification == selectedScope
           , Scoped (Just opening) _ <- [typing specification] ]
       , planEntries = [(terminal, method) | terminal <- selected, Right method <- [findHandler terminal]]
+      , planAnchors = [(entry, producing) | (entry, anchored) <- contextInjections, (_, producing) <- anchored]
       }
     structureDeclarations =
       [ "-- 生成身份连接到已有运行 scope 名；依赖只保存在下方显式 ScopeTree 中。"
@@ -425,6 +427,14 @@ lowerProgram namespace specifications entry = do
         _ -> case entryMethod (typing specification) of
           Just method -> Right method
           Nothing -> Left ("Effect has no callable entry (handler/open/Context.request = Nothing): " ++ effectName)
+
+    -- 启动只从 origin 链开始：末端须是原始句柄；Context 由挂接句柄注入或 request／require 驱动。
+    checkTerminal terminal = do
+      specification <- findEffect terminal
+      case typing specification of
+        Context _ -> Left ("A terminal must be an original handle, not Context " ++ terminal
+          ++ "; a Context is produced below the handle it hangs on or through request/require")
+        _ -> Right ()
 
     -- 挂在 Scoped 下的 Context 解析 open 的输出，不能同时是该 scope 经 request 取得的资源 Context。
     checkAnchor specification = case typing specification of
