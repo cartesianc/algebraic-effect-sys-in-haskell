@@ -42,26 +42,19 @@ cabal run file-demo
 
 ```mermaid
 flowchart LR
-  subgraph Main["Main.hs"]
-    Interp(["interpreter"]) --> AST["ast<br/>执行编排"]
-    AST -- 选择末端 --> Effects["effects<br/>effect 注册"]
-  end
-  Effects -- 实现 --> Handlers["Handlers.hs<br/>方法实现"]
-  Interp -- 运行 --> Generated
+  Codegen(["effect-codegen<br/>生成入口"]) -- 读取 --> Sources["手写源码<br/>Effects.hs<br/>AST.hs<br/>Handlers.hs<br/>Types.hs"]
+  Sources -- 生成 --> Generated["Generated/<br/>Effects.hs<br/>Handlers.hs<br/>Program.hs"]
 
-  subgraph Generated["Generated/"]
-    Program["Program.hs<br/>入口与结构"]
-    GenHandlers["Handlers.hs<br/>包装后的实现"]
-    GenEffects["Effects.hs<br/>类型类接口"]
-  end
-
-  Codegen(["effect-codegen"]) -- 生成 --> Generated
+  Main(["Main.hs<br/>运行入口"]) --> Interp["interpreter<br/>ast + effects"]
+  Interp --> Node["ast 的 node<br/>选择末端 effect"]
+  Node --> Terminal["末端 effect<br/>instance 方法"]
+  Terminal --> Upstream["上游 effect<br/>调用或取值"]
 ```
 
-- **入口**：`Main.hs` 就是 `main = interpreter ast effects`：interpreter 读取 `ast`，`ast` 的每个 node 选择一个 effect 注册作为末端。
-- **实现**：每个 effect 注册由 `Handlers.hs` 中的 `instance` 实现。
-- **运行**：`interpreter` 执行 `Generated/` 中的代码。
-- **生成**：修改手写源码后，由 `effect-codegen` 重新生成 `Generated/`；手写的 `Handlers.hs` 依赖生成的 `Generated/Effects.hs` 接口。
+两个入口：
+
+- **生成入口 `effect-codegen`**：读取手写源码，检查组合关系和取值规则，生成 `Generated/`：类型类接口与契约类型（`Effects.hs`）、加上协议包装的方法实现副本（`Handlers.hs`）、运行入口与调用结构（`Program.hs`）。修改任何手写源码后都要重新生成。
+- **运行入口 `Main.hs`**：写成 `main = interpreter ast effects`。`interpreter` 来自 `Generated/Program.hs`，它按 `ast` 编排执行：每个 node 选择一个末端 effect，运行它的 instance 方法；方法体里显式调用上游 effect，或用 `request` / `require` 取值，整条操作链由此展开。
 
 | 你写的文件 | 内容 |
 | --- | --- |
