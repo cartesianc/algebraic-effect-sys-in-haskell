@@ -1,4 +1,5 @@
 -- 原生 Haskell 取值；SDK 生成方法入口包装，运行编译 Generated 副本。
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -25,12 +26,12 @@ import System.IO
   , hSetEncoding, openFile, readFile', utf8 )
 import System.IO.Error (tryIOError)
 
-instance FileLocationsEffect App where
+instance FileLocationsInputs m => FileLocationsEffect m where
   filePaths = pure (FilePaths (SharedPaths
     ("demo" </> "ScopeReuseDemo" </> "output" </> "shared.txt")
     ("demo" </> "ScopeReuseDemo" </> "output" </> "events.txt")))
 
-instance PrepareProbeEffect App where
+instance PrepareProbeInputs m => PrepareProbeEffect m where
   prepareProbe = do
     FilePaths (SharedPaths path journal) <- request @FilePaths
     outcome <- liftIO $ tryIOError $ do
@@ -41,7 +42,7 @@ instance PrepareProbeEffect App where
     either (raise . PrepareProbeError . displayException) pure outcome
     pure Nothing
 
-instance FileResourceEffect App where
+instance FileResourceInputs m => FileResourceEffect m where
   openedFile = do
     FilePaths paths@(SharedPaths path journal) <- require @FilePaths
     outcome <- liftIO $ tryIOError $
@@ -52,7 +53,7 @@ instance FileResourceEffect App where
         pure (OpenedFile (SharedFile paths file))
     either (raise . FileResourceError . displayException) pure outcome
 
-instance SharedFileScopeEffect App where
+instance SharedFileScopeInputs m => SharedFileScopeEffect m where
   openSharedFile = do
     OpenedFile (SharedFile (SharedPaths _ journal) _) <- request @OpenedFile
     outcome <- liftIO (tryIOError (appendFile journal "open-body\n"))
@@ -70,7 +71,7 @@ instance SharedFileScopeEffect App where
 
 -- 每条链先 request 参数；scope 内 require 稳定参数，重叠使用时可共享实例。
 -- 不在业务中加打开标志或互斥锁，也不为尚未开始的 Node 预留资源。
-instance WriteFirstEffect App where
+instance WriteFirstInputs m => WriteFirstEffect m where
   writeFirst = do
     _ <- request @FilePaths
     openSharedFile
@@ -81,7 +82,7 @@ instance WriteFirstEffect App where
     either (raise . WriteFirstError . displayException) pure outcome
     pure Nothing
 
-instance WriteSecondEffect App where
+instance WriteSecondInputs m => WriteSecondEffect m where
   writeSecond = do
     _ <- request @FilePaths
     openSharedFile
@@ -92,7 +93,7 @@ instance WriteSecondEffect App where
     either (raise . WriteSecondError . displayException) pure outcome
     pure Nothing
 
-instance WriteThirdEffect App where
+instance WriteThirdInputs m => WriteThirdEffect m where
   writeThird = do
     _ <- request @FilePaths
     openSharedFile
@@ -103,7 +104,7 @@ instance WriteThirdEffect App where
     either (raise . WriteThirdError . displayException) pure outcome
     pure Nothing
 
-instance VerifyReuseEffect App where
+instance VerifyReuseInputs m => VerifyReuseEffect m where
   verifyReuse = do
     FilePaths (SharedPaths path journal) <- request @FilePaths
     -- parallel 已等待各链退出及自动清理；此处只读日志和文件，不 require 旧资源。

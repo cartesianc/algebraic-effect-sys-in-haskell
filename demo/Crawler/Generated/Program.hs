@@ -59,24 +59,24 @@ interpreter = SDK.interpreter "Crawler" registeredEffects Handlers.handlerSource
 generatedEffectGraph :: SDK.EffectGraph MethodGen
 generatedEffectGraph = SDK.EffectGraph
   { SDK.graphMethods =
-      [ SDK.MethodDefinition FetchStartPageGen FetchStartPageGen SDK.HandlerMethod (SDK.Sequence [SDK.Call OpenCrawlSessionGen, SDK.Call StartURLGen, SDK.Call ReadCrawlSessionInfoGen])
+      [ SDK.MethodDefinition FetchStartPageGen FetchStartPageGen SDK.HandlerMethod (SDK.Sequence [SDK.Sequence [SDK.Call OpenCrawlSessionGen, SDK.Call StartURLGen, SDK.Call ReadCrawlSessionInfoGen], SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Sequence [SDK.Empty, SDK.Call ReadStartURLGen]]]])
       , SDK.MethodDefinition OpenCrawlSessionGen OpenCrawlSessionGen SDK.ScopeOpen (SDK.Call CrawlSessionInfoGen)
       , SDK.MethodDefinition CrawlSessionInfoGen CrawlSessionInfoGen SDK.ContextRequest (SDK.Empty)
       , SDK.MethodDefinition StartURLGen StartURLGen SDK.ContextRequest (SDK.Empty)
       , SDK.MethodDefinition ReadCrawlSessionInfoGen CrawlSessionInfoGen SDK.ContextRequire (SDK.Empty)
-      , SDK.MethodDefinition FetchLinkedPageGen FetchLinkedPageGen SDK.HandlerMethod (SDK.Sequence [SDK.Call OpenCrawlSessionGen, SDK.Call LinkedURLGen, SDK.Call ReadCrawlSessionInfoGen])
+      , SDK.MethodDefinition ReadStartURLGen StartURLGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call StartURLGen])
+      , SDK.MethodDefinition FetchLinkedPageGen FetchLinkedPageGen SDK.HandlerMethod (SDK.Sequence [SDK.Sequence [SDK.Call OpenCrawlSessionGen, SDK.Call LinkedURLGen, SDK.Call ReadCrawlSessionInfoGen], SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Sequence [SDK.Empty, SDK.Call ReadLinkedURLGen]]]])
       , SDK.MethodDefinition LinkedURLGen LinkedURLGen SDK.ContextRequest (SDK.Empty)
+      , SDK.MethodDefinition ReadLinkedURLGen LinkedURLGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call LinkedURLGen])
       , SDK.MethodDefinition PrintPageGen PrintPageGen SDK.HandlerMethod (SDK.Call ReadStartPageSummaryGen)
       , SDK.MethodDefinition ReadStartPageSummaryGen StartPageSummaryGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call StartPageSummaryGen])
       , SDK.MethodDefinition StartPageSummaryGen StartPageSummaryGen SDK.ContextRequest (SDK.Sequence [SDK.Call FetchStartPageGen, SDK.Call ReadStartURLGen])
-      , SDK.MethodDefinition ReadStartURLGen StartURLGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call StartURLGen])
       , SDK.MethodDefinition PrintLinkedPageGen PrintLinkedPageGen SDK.HandlerMethod (SDK.Call ReadLinkedPageSummaryGen)
       , SDK.MethodDefinition ReadLinkedPageSummaryGen LinkedPageSummaryGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call LinkedPageSummaryGen])
       , SDK.MethodDefinition LinkedPageSummaryGen LinkedPageSummaryGen SDK.ContextRequest (SDK.Sequence [SDK.Call FetchLinkedPageGen, SDK.Call ReadLinkedURLGen])
-      , SDK.MethodDefinition ReadLinkedURLGen LinkedURLGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call LinkedURLGen])
       ]
   , SDK.graphRoots = [FetchStartPageGen, FetchLinkedPageGen, PrintPageGen, PrintLinkedPageGen]
-  , SDK.graphReferences = [(FetchStartPageGen, OpenCrawlSessionGen), (FetchStartPageGen, StartURLGen), (FetchStartPageGen, ReadCrawlSessionInfoGen), (OpenCrawlSessionGen, CrawlSessionInfoGen), (FetchLinkedPageGen, OpenCrawlSessionGen), (FetchLinkedPageGen, LinkedURLGen), (FetchLinkedPageGen, ReadCrawlSessionInfoGen), (PrintPageGen, ReadStartPageSummaryGen), (ReadStartPageSummaryGen, StartPageSummaryGen), (StartPageSummaryGen, FetchStartPageGen), (StartPageSummaryGen, ReadStartURLGen), (ReadStartURLGen, StartURLGen), (PrintLinkedPageGen, ReadLinkedPageSummaryGen), (ReadLinkedPageSummaryGen, LinkedPageSummaryGen), (LinkedPageSummaryGen, FetchLinkedPageGen), (LinkedPageSummaryGen, ReadLinkedURLGen), (ReadLinkedURLGen, LinkedURLGen)]
+  , SDK.graphReferences = [(FetchStartPageGen, OpenCrawlSessionGen), (FetchStartPageGen, StartURLGen), (FetchStartPageGen, ReadCrawlSessionInfoGen), (FetchStartPageGen, ReadStartURLGen), (OpenCrawlSessionGen, CrawlSessionInfoGen), (ReadStartURLGen, StartURLGen), (FetchLinkedPageGen, OpenCrawlSessionGen), (FetchLinkedPageGen, LinkedURLGen), (FetchLinkedPageGen, ReadCrawlSessionInfoGen), (FetchLinkedPageGen, ReadLinkedURLGen), (ReadLinkedURLGen, LinkedURLGen), (PrintPageGen, ReadStartPageSummaryGen), (ReadStartPageSummaryGen, StartPageSummaryGen), (StartPageSummaryGen, FetchStartPageGen), (StartPageSummaryGen, ReadStartURLGen), (PrintLinkedPageGen, ReadLinkedPageSummaryGen), (ReadLinkedPageSummaryGen, LinkedPageSummaryGen), (LinkedPageSummaryGen, FetchLinkedPageGen), (LinkedPageSummaryGen, ReadLinkedURLGen)]
   , SDK.graphScopes = [OpenCrawlSessionGen]
   , SDK.graphScopePaths = [[OpenCrawlSessionGen], []]
   , SDK.graphRootPaths =

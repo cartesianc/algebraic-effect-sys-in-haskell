@@ -18,6 +18,7 @@ module Crawler.Generated.Effects where
 import Framework.Effect.Contract (Effect(..), Registered)
 import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified Framework.SDK as SDK
+import Control.Monad.IO.Class (MonadIO)
 import Crawler.Types
 
 -- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
@@ -52,6 +53,9 @@ instance SDK.NFData MethodGen
 
 data StartPage
 
+type StartPageInputs m = (FrameworkRoot.Capability StartPage m, Effect Root m, MonadIO m)
+instance FrameworkRoot.Capability StartPage App
+
 class (Effect Root m) => StartPageEffect m where
   startURL :: m (Produce StartPage)
   readStartURL :: m (Produce StartPage)
@@ -69,6 +73,9 @@ instance (Monad m, Effect Root m, StartPageEffect m) => Effect StartPage m where
   handler = FrameworkRoot.handler @Root
 
 data LinkedPage
+
+type LinkedPageInputs m = (FrameworkRoot.Capability LinkedPage m, Effect Root m, MonadIO m)
+instance FrameworkRoot.Capability LinkedPage App
 
 class (Effect Root m) => LinkedPageEffect m where
   linkedURL :: m (Produce LinkedPage)
@@ -88,6 +95,9 @@ instance (Monad m, Effect Root m, LinkedPageEffect m) => Effect LinkedPage m whe
 
 data FetchPage
 
+type FetchPageInputs m = (FrameworkRoot.Capability FetchPage m, Effect CrawlSession m, Provides StartURL m, Provides CrawlSessionInfo m, CrawlSessionEffect m, MonadIO m)
+instance FrameworkRoot.Capability FetchPage App
+
 class (Effect CrawlSession m, Provides StartURL m, Provides CrawlSessionInfo m) => FetchPageEffect m where
   fetchStartPage :: m (Maybe String)
   {-# MINIMAL fetchStartPage #-}
@@ -101,6 +111,9 @@ instance (Monad m, Effect CrawlSession m, FetchPageEffect m) => Effect FetchPage
   handler = FrameworkRoot.handler @Root
 
 data ExtractPage
+
+type ExtractPageInputs m = (FrameworkRoot.Capability ExtractPage m, Effect FetchPage m, Provides StartURL m, FetchPageEffect m, CrawlSessionEffect m, MonadIO m)
+instance FrameworkRoot.Capability ExtractPage App
 
 class (Effect FetchPage m, Provides StartURL m) => ExtractPageEffect m where
   startPageSummary :: m (Produce ExtractPage)
@@ -120,6 +133,9 @@ instance (Monad m, Effect FetchPage m, ExtractPageEffect m) => Effect ExtractPag
 
 data PrintPage
 
+type PrintPageInputs m = (FrameworkRoot.Capability PrintPage m, Effect Root m, Provides StartPageSummary m, MonadIO m)
+instance FrameworkRoot.Capability PrintPage App
+
 class (Effect Root m, Provides StartPageSummary m) => PrintPageEffect m where
   printPage :: m (Maybe String)
   {-# MINIMAL printPage #-}
@@ -134,6 +150,9 @@ instance (Monad m, Effect Root m, PrintPageEffect m) => Effect PrintPage m where
 
 data FetchLinkedPage
 
+type FetchLinkedPageInputs m = (FrameworkRoot.Capability FetchLinkedPage m, Effect CrawlSession m, Provides LinkedURL m, Provides CrawlSessionInfo m, CrawlSessionEffect m, MonadIO m)
+instance FrameworkRoot.Capability FetchLinkedPage App
+
 class (Effect CrawlSession m, Provides LinkedURL m, Provides CrawlSessionInfo m) => FetchLinkedPageEffect m where
   fetchLinkedPage :: m (Maybe String)
   {-# MINIMAL fetchLinkedPage #-}
@@ -147,6 +166,9 @@ instance (Monad m, Effect CrawlSession m, FetchLinkedPageEffect m) => Effect Fet
   handler = FrameworkRoot.handler @Root
 
 data ExtractLinkedPage
+
+type ExtractLinkedPageInputs m = (FrameworkRoot.Capability ExtractLinkedPage m, Effect FetchLinkedPage m, Provides LinkedURL m, FetchLinkedPageEffect m, CrawlSessionEffect m, MonadIO m)
+instance FrameworkRoot.Capability ExtractLinkedPage App
 
 class (Effect FetchLinkedPage m, Provides LinkedURL m) => ExtractLinkedPageEffect m where
   linkedPageSummary :: m (Produce ExtractLinkedPage)
@@ -166,6 +188,9 @@ instance (Monad m, Effect FetchLinkedPage m, ExtractLinkedPageEffect m) => Effec
 
 data PrintLinkedPage
 
+type PrintLinkedPageInputs m = (FrameworkRoot.Capability PrintLinkedPage m, Effect Root m, Provides LinkedPageSummary m, MonadIO m)
+instance FrameworkRoot.Capability PrintLinkedPage App
+
 class (Effect Root m, Provides LinkedPageSummary m) => PrintLinkedPageEffect m where
   printLinkedPage :: m (Maybe String)
   {-# MINIMAL printLinkedPage #-}
@@ -179,6 +204,9 @@ instance (Monad m, Effect Root m, PrintLinkedPageEffect m) => Effect PrintLinked
   handler = FrameworkRoot.handler @Root
 
 data SessionContext
+
+type SessionContextInputs m = (FrameworkRoot.Capability SessionContext m, Effect Root m, MonadIO m)
+instance FrameworkRoot.Capability SessionContext App
 
 class (Effect Root m) => SessionContextEffect m where
   crawlSessionInfo :: m (Produce SessionContext)
@@ -197,6 +225,9 @@ instance (Monad m, Effect Root m, SessionContextEffect m) => Effect SessionConte
   handler = FrameworkRoot.handler @Root
 
 data CrawlSession
+
+type CrawlSessionInputs m = (FrameworkRoot.Capability CrawlSession m, Effect Root m, Provides CrawlSessionInfo m, MonadIO m)
+instance FrameworkRoot.Capability CrawlSession App
 
 class (Effect Root m, Provides CrawlSessionInfo m) => CrawlSessionEffect m where
   openCrawlSession :: m (Maybe String)

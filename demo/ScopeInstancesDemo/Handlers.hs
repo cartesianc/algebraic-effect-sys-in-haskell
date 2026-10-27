@@ -1,4 +1,5 @@
 -- 原生 Haskell 取值；SDK 生成方法入口包装，运行编译 Generated 副本。
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -20,7 +21,7 @@ import System.FilePath ((</>))
 import System.IO (IOMode(ReadWriteMode), hClose, hFlush, hIsClosed, hPutStrLn, openFile, readFile')
 import System.IO.Error (tryIOError)
 
-instance PrepareFilesEffect App where
+instance PrepareFilesInputs m => PrepareFilesEffect m where
   prepareFiles = do
     liftIO $ do
       let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
@@ -34,7 +35,7 @@ instance PrepareFilesEffect App where
     pure Nothing
 
 -- 参数确实由 instance 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
-instance FileLocationEffect App where
+instance FileLocationInputs m => FileLocationEffect m where
   fileName = do
     let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
         selection = outputDirectory </> "selected.txt"
@@ -43,7 +44,7 @@ instance FileLocationEffect App where
     liftIO (appendFile journal ("argument " ++ path ++ "\n"))
     pure (FileName path)
 
-instance FileResourceEffect App where
+instance FileResourceInputs m => FileResourceEffect m where
   openedFile = do
     FileName path <- require @FileName
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
@@ -54,7 +55,7 @@ instance FileResourceEffect App where
     either (raise . FileResourceError . displayException) pure outcome
 
 -- 与原写法相同：没有参数、状态标记、key 或 SDK 消费方法。
-instance FileSessionEffect App where
+instance FileSessionInputs m => FileSessionEffect m where
   openFileSession = do
     OpenedFile (FileHandle path _) <- request @OpenedFile
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
@@ -68,7 +69,7 @@ instance FileSessionEffect App where
       appendFile journal ("close " ++ path ++ "\n")
     pure Nothing
 
-instance CheckIndependentEffect App where
+instance CheckIndependentInputs m => CheckIndependentEffect m where
   checkIndependent = do
     let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
         firstFile = outputDirectory </> "one.txt"
@@ -104,7 +105,7 @@ instance CheckIndependentEffect App where
     -- 第一份在本链内仍保持开启；本链退出时由 SDK 自动关闭。
     pure Nothing
 
-instance CheckReopenEffect App where
+instance CheckReopenInputs m => CheckReopenEffect m where
   checkReopen = do
     let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
         firstFile = outputDirectory </> "one.txt"

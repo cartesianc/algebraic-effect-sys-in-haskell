@@ -6,16 +6,16 @@ import Framework.Effect.Asset (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "FileNames", assetFile = "demoOpenFilesDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "FileNames", assetFile = "demoOpenFilesDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "FileNames", assetFile = "demoOpenFilesDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 21}
+          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "FileNames", assetFile = "demoOpenFilesDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 21}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "OpenedFiles", assetFile = "demoOpenFilesDemo/Generated/Effects.hs", assetLine = 32, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "OpenedFiles", assetFile = "demoOpenFilesDemo/Generated/Effects.hs", assetLine = 33, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "OpenedFiles", assetFile = "demoOpenFilesDemo/Generated/Effects.hs", assetLine = 32, assetColumn = 23}
+          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "OpenedFiles", assetFile = "demoOpenFilesDemo/Generated/Effects.hs", assetLine = 33, assetColumn = 23}
           ]
       , assetFields = []
       }

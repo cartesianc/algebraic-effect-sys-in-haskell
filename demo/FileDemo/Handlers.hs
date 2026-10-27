@@ -1,4 +1,5 @@
 -- 原生 Haskell 取值；SDK 生成方法入口包装，运行编译 Generated 副本。
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -24,17 +25,17 @@ import System.IO
   , openFile, utf8 )
 import System.IO.Error (tryIOError)
 
-instance FileLocationEffect App where
+instance FileLocationInputs m => FileLocationEffect m where
   -- 示例专用文件：首次运行创建，后续追加；在项目根目录运行。
   fileName = pure (FileName ("demo" </> "FileDemo" </> "output.txt"))
 
-instance ValidateFileNameEffect App where
+instance ValidateFileNameInputs m => ValidateFileNameEffect m where
   validateFileName = do
     FileName path <- require @FileName
     unless (not (null path) && '\0' `notElem` path) $
       raise (ValidateFileNameError "File name must be nonempty and contain no NUL character")
 
-instance FileResourceEffect App where
+instance FileResourceInputs m => FileResourceEffect m where
   openedFile = do
     validateFileName
     FileName path <- require @FileName
@@ -45,7 +46,7 @@ instance FileResourceEffect App where
         pure (OpenedFile (FileHandle path file))
     either (raise . FileResourceError . displayException) pure outcome
 
-instance FileSessionEffect App where
+instance FileSessionInputs m => FileSessionEffect m where
   -- 开启期间 Context 保存真实 Handle，后续 require 复用它。
   openFileSession = do
     _ <- request @OpenedFile
@@ -58,7 +59,7 @@ instance FileSessionEffect App where
     liftIO (putStrLn ("[close] " ++ path))
     pure Nothing
 
-instance ReadFileEffect App where
+instance ReadFileInputs m => ReadFileEffect m where
   fileText = do
     -- 末端也会引用 open；SDK 跳过同份已开启 scope 的方法体。
     openFileSession
@@ -73,7 +74,7 @@ instance ReadFileEffect App where
           else hGetChar file >>= \character -> next (character : characters)) []
     either (raise . ReadFileError . displayException) pure outcome
 
-instance FileRecoveryEffect App where
+instance FileRecoveryInputs m => FileRecoveryEffect m where
   detectFileSession = do
     OpenedFile (FileHandle _ file) <- require @OpenedFile
     outcome <- liftIO (tryIOError (hIsClosed file))
@@ -87,7 +88,7 @@ instance FileRecoveryEffect App where
     closeFileSession
     pure ()
 
-instance WriteFileEffect App where
+instance WriteFileInputs m => WriteFileEffect m where
   writeFileText = do
     FileText contents <- request @FileText
     OpenedFile (FileHandle path file) <- require @OpenedFile
@@ -102,7 +103,7 @@ instance WriteFileEffect App where
     either (raise . WriteFileError . displayException) pure outcome
     pure Nothing
 
-instance FileWorkflowEffect App where
+instance FileWorkflowInputs m => FileWorkflowEffect m where
   runFileWorkflow = do
     -- 本条链先取得稳定参数；校验和 scope 开启都 require 这份绑定。
     _ <- request @FileName

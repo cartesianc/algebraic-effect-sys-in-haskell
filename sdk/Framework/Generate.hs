@@ -68,7 +68,7 @@ main = do
                 _ <- evaluate (length structure)
                 assets <- checkAssets namespace
                   [("Effects", contracts), ("Program", program ++ structure), ("Handlers", handlers)]
-                  assetRoots [(owner, method) | (owner, method, _) <- wrappers] owners nativeSource
+                  assetRoots [(owner, method) | (owner, method, _, _) <- wrappers] owners nativeSource
                 createDirectoryIfMissing True generated
                 changed <- sequence
                   [ writeIfChanged (generated </> "Effects.hs") contracts

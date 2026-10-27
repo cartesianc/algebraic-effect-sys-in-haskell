@@ -1,6 +1,8 @@
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 -- 原生 Haskell 取值；SDK 生成方法入口包装，运行编译 Generated 副本。
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -30,7 +32,7 @@ import System.IO
   , hSetEncoding, openFile, readFile', utf8 )
 import System.IO.Error (tryIOError)
 
-instance FileLocationsEffect App where
+instance FileLocationsInputs m => FileLocationsEffect m where
   filePaths =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations" FrameworkGenerated.ContextBindingError
       [("PrepareProbe", FrameworkRuntime.RequestValue), ("FileResource", FrameworkRuntime.RequireValue), ("WriteFirst", FrameworkRuntime.RequestValue), ("WriteSecond", FrameworkRuntime.RequestValue), ("WriteThird", FrameworkRuntime.RequestValue), ("VerifyReuse", FrameworkRuntime.RequestValue)]
@@ -38,15 +40,17 @@ instance FileLocationsEffect App where
       FrameworkGenerated.boundFileLocations
       (\value bindings -> bindings { FrameworkGenerated.boundFileLocations = Just value })) $
       let
+        filePaths :: (m) (FrameworkGenerated.FilePaths)
         filePaths = pure (FilePaths (SharedPaths
           ("demo" </> "ScopeReuseDemo" </> "output" </> "shared.txt")
           ("demo" </> "ScopeReuseDemo" </> "output" </> "events.txt")))
       in filePaths
 
-instance PrepareProbeEffect App where
+instance PrepareProbeInputs m => PrepareProbeEffect m where
   prepareProbe =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "prepareProbe" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareProbe") $
       let
+        prepareProbe :: (m) (Maybe String)
         prepareProbe = do
           FilePaths (SharedPaths path journal) <- request @FilePaths
           outcome <- liftIO $ tryIOError $ do
@@ -58,7 +62,7 @@ instance PrepareProbeEffect App where
           pure Nothing
       in prepareProbe
 
-instance FileResourceEffect App where
+instance FileResourceInputs m => FileResourceEffect m where
   openedFile =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
       [("SharedFileScope", FrameworkRuntime.RequestValue), ("WriteFirst", FrameworkRuntime.RequireValue), ("WriteSecond", FrameworkRuntime.RequireValue), ("WriteThird", FrameworkRuntime.RequireValue)]
@@ -66,6 +70,7 @@ instance FileResourceEffect App where
       FrameworkGenerated.boundFileResource
       (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
       let
+        openedFile :: (m) (FrameworkGenerated.OpenedFile)
         openedFile = do
           FilePaths paths@(SharedPaths path journal) <- require @FilePaths
           outcome <- liftIO $ tryIOError $
@@ -77,10 +82,11 @@ instance FileResourceEffect App where
           either (raise . FileResourceError . displayException) pure outcome
       in openedFile
 
-instance SharedFileScopeEffect App where
+instance SharedFileScopeInputs m => SharedFileScopeEffect m where
   openSharedFile =
     (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "openSharedFile" . FrameworkRuntime.openScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
       let
+        openSharedFile :: (m) (Maybe String)
         openSharedFile = do
           OpenedFile (SharedFile (SharedPaths _ journal) _) <- request @OpenedFile
           outcome <- liftIO (tryIOError (appendFile journal "open-body\n"))
@@ -91,6 +97,7 @@ instance SharedFileScopeEffect App where
   closeSharedFile =
     (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "closeSharedFile" . FrameworkRuntime.closeScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
       let
+        closeSharedFile :: (m) (Maybe String)
         closeSharedFile = do
           OpenedFile (SharedFile (SharedPaths _ journal) file) <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
@@ -103,10 +110,11 @@ instance SharedFileScopeEffect App where
 
 -- 每条链先 request 参数；scope 内 require 稳定参数，重叠使用时可共享实例。
 -- 不在业务中加打开标志或互斥锁，也不为尚未开始的 Node 预留资源。
-instance WriteFirstEffect App where
+instance WriteFirstInputs m => WriteFirstEffect m where
   writeFirst =
     (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "writeFirst" . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteFirst") $
       let
+        writeFirst :: (m) (Maybe String)
         writeFirst = do
           _ <- request @FilePaths
           openSharedFile
@@ -118,10 +126,11 @@ instance WriteFirstEffect App where
           pure Nothing
       in writeFirst
 
-instance WriteSecondEffect App where
+instance WriteSecondInputs m => WriteSecondEffect m where
   writeSecond =
     (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "writeSecond" . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteSecond") $
       let
+        writeSecond :: (m) (Maybe String)
         writeSecond = do
           _ <- request @FilePaths
           openSharedFile
@@ -133,10 +142,11 @@ instance WriteSecondEffect App where
           pure Nothing
       in writeSecond
 
-instance WriteThirdEffect App where
+instance WriteThirdInputs m => WriteThirdEffect m where
   writeThird =
     (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "writeThird" . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteThird") $
       let
+        writeThird :: (m) (Maybe String)
         writeThird = do
           _ <- request @FilePaths
           openSharedFile
@@ -148,10 +158,11 @@ instance WriteThirdEffect App where
           pure Nothing
       in writeThird
 
-instance VerifyReuseEffect App where
+instance VerifyReuseInputs m => VerifyReuseEffect m where
   verifyReuse =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "verifyReuse" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "VerifyReuse") $
       let
+        verifyReuse :: (m) (Maybe String)
         verifyReuse = do
           FilePaths (SharedPaths path journal) <- request @FilePaths
           -- parallel 已等待各链退出及自动清理；此处只读日志和文件，不 require 旧资源。
@@ -178,7 +189,7 @@ instance VerifyReuseEffect App where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "2e0035da9f315dea1015ec0e9c18e95e"
+handlerSourceFingerprint = Just "b69accce6e9de4b107e3760ea002973e"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

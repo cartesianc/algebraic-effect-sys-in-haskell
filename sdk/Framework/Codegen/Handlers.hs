@@ -27,7 +27,7 @@ import System.Process (readProcess)
 
 -- 分析与包装共用一次读取和解析的快照，不加载 instance 或执行业务。
 -- 包装计划来自注册；原文件始终保留，只有 Generated 副本进入运行导入链。
-prepareHandlers :: String -> [(String, String, String)] -> String
+prepareHandlers :: String -> [(String, String, String, String)] -> String
                 -> ([(String, [((String, String), String)])], [(String, String)])
                 -> IO (String, [((String, String), HandlerShape)], Maybe String)
 prepareHandlers namespace wrappers scopeHandlers routes = do
@@ -35,7 +35,7 @@ prepareHandlers namespace wrappers scopeHandlers routes = do
   shapes <- case loaded of
     Nothing -> pure []
     Just (_, parsed, implicitPrelude, rebindableSyntax) -> do
-      let methods = [(owner, method) | (owner, method, _) <- wrappers]
+      let methods = [(owner, method) | (owner, method, _, _) <- wrappers]
       analyzed <- either (ioError . userError) pure (analyzeModule namespace methods routes implicitPrelude parsed)
       if rebindableSyntax && any ((/= Empty) . snd) analyzed
         then ioError (userError "Effect structure analysis does not support RebindableSyntax; use standard Haskell effect composition")
@@ -67,6 +67,7 @@ prepareHandlers namespace wrappers scopeHandlers routes = do
               : emptyCallbacks (dropWhile (\body -> null body || "  " `isPrefixOf` body) rest)
         | otherwise = line : emptyCallbacks rest
   pure ("-- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。\n"
+        ++ "{-# LANGUAGE ScopedTypeVariables #-}\n"
         ++ "{-# LANGUAGE TypeApplications #-}\n"
         ++ generated
         ++ "\n-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。\n"
@@ -102,7 +103,7 @@ loadHandlers namespace = do
           in pure (Just (source, unLoc parsed, enabled "ImplicitPrelude", enabled "RebindableSyntax"))
 
 wrapModule
-  :: String -> String -> [(String, String, String)] -> [String] -> String -> HsModule GhcPs
+  :: String -> String -> [(String, String, String, String)] -> [String] -> String -> HsModule GhcPs
   -> Either String String
 wrapModule namespace generatedName wrappers extraExports source parsed = do
   moduleName <- maybe (Left "Handlers.hs must declare its module") Right (hsmodName parsed)
@@ -144,7 +145,9 @@ wrapModule namespace generatedName wrappers extraExports source parsed = do
             target rest
     instanceEdits (L _ (InstD _ (ClsInstD _ instanceDeclaration))) =
       case className (sig_body (unLoc (cid_poly_ty instanceDeclaration))) of
-        Just selected -> concat <$> mapM (methodEdits selected) (cid_binds instanceDeclaration)
+        Just selected -> do
+          carrier <- carrierText (sig_body (unLoc (cid_poly_ty instanceDeclaration)))
+          concat <$> mapM (methodEdits selected carrier) (cid_binds instanceDeclaration)
         Nothing -> pure []
     instanceEdits _ = pure []
     className located = case unLoc located of
@@ -154,12 +157,21 @@ wrapModule namespace generatedName wrappers extraExports source parsed = do
       HsAppTy _ function _ -> className function
       HsTyVar _ _ identifier -> Just (occNameString (rdrNameOcc (unLoc identifier)))
       _ -> Nothing
-    methodEdits :: String -> LHsBind GhcPs -> Either String [(Int, Int, String)]
-    methodEdits selected binding@(L _ FunBind { fun_id = identifier }) = do
+    -- instance 头的载体实参原文（通常是 m）；生成副本据此给局部绑定写出签名。
+    carrierText located = case unLoc located of
+      HsQualTy { hst_body = body } -> carrierText body
+      HsForAllTy { hst_body = body } -> carrierText body
+      HsParTy _ body -> carrierText body
+      HsAppTy _ _ argument -> do
+        (start, end) <- range (getLocA argument)
+        pure (take (end - start) (drop start source))
+      _ -> Left "Registered instance head must apply the effect class to its carrier"
+    methodEdits :: String -> String -> LHsBind GhcPs -> Either String [(Int, Int, String)]
+    methodEdits selected carrier binding@(L _ FunBind { fun_id = identifier }) = do
       let method = occNameString (rdrNameOcc (unLoc identifier))
-      case [wrapper | (owner, entry, wrapper) <- wrappers, owner == selected, entry == method] of
+      case [(wrapper, result) | (owner, entry, wrapper, result) <- wrappers, owner == selected, entry == method] of
         [] -> pure []
-        [wrapper] -> do
+        [(wrapper, result)] -> do
           (start, end) <- range (getLocA binding)
           let RealSrcSpan span _ = getLocA binding
               indentation = srcSpanStartCol span - 1
@@ -168,10 +180,12 @@ wrapModule namespace generatedName wrappers extraExports source parsed = do
                 [] -> []
                 first : rest -> first : map (\line -> drop (columnOffset 1 (indentation + 1) line) line) rest
               indent extra = replicate (indentation + extra) ' '
+              -- 完整签名使局部绑定按 instance 上下文检查，不被泛化后经泛型 instance 改写约束。
               wrapped = method ++ " =\n" ++ unlines [indent 2 ++ line | line <- lines (wrapper ++ " $")]
                 ++ indent 4 ++ "let\n"
+                ++ indent 6 ++ method ++ " :: (" ++ carrier ++ ") (" ++ result ++ ")\n"
                 ++ unlines [indent 6 ++ line | line <- originalLines]
                 ++ indent 4 ++ "in " ++ method
           pure [(start, end, wrapped)]
         _ -> Left ("Duplicate handler registration: " ++ selected ++ "." ++ method)
-    methodEdits _ _ = pure []
+    methodEdits _ _ _ = pure []

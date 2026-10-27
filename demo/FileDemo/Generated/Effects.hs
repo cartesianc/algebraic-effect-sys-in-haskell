@@ -18,6 +18,7 @@ module FileDemo.Generated.Effects where
 import Framework.Effect.Contract (Effect(..), Registered)
 import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified Framework.SDK as SDK
+import Control.Monad.IO.Class (MonadIO)
 import FileDemo.Types
 
 -- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
@@ -44,6 +45,9 @@ instance SDK.NFData MethodGen
 
 data FileLocation
 
+type FileLocationInputs m = (FrameworkRoot.Capability FileLocation m, Effect Root m, MonadIO m)
+instance FrameworkRoot.Capability FileLocation App
+
 class (Effect Root m) => FileLocationEffect m where
   fileName :: m (Produce FileLocation)
   readFileName :: m (Produce FileLocation)
@@ -62,6 +66,9 @@ instance (Monad m, Effect Root m, FileLocationEffect m) => Effect FileLocation m
 
 data ValidateFileName
 
+type ValidateFileNameInputs m = (FrameworkRoot.Capability ValidateFileName m, Effect Root m, Provides FileName m, MonadIO m)
+instance FrameworkRoot.Capability ValidateFileName App
+
 class (Effect Root m, Provides FileName m) => ValidateFileNameEffect m where
   validateFileName :: m ()
   {-# MINIMAL validateFileName #-}
@@ -75,6 +82,9 @@ instance (Monad m, Effect Root m, ValidateFileNameEffect m) => Effect ValidateFi
   handler = FrameworkRoot.handler @Root
 
 data FileResource
+
+type FileResourceInputs m = (FrameworkRoot.Capability FileResource m, Effect ValidateFileName m, Provides FileName m, ValidateFileNameEffect m, MonadIO m)
+instance FrameworkRoot.Capability FileResource App
 
 class (Effect ValidateFileName m, Provides FileName m) => FileResourceEffect m where
   openedFile :: m (Produce FileResource)
@@ -94,6 +104,9 @@ instance (Monad m, Effect ValidateFileName m, FileResourceEffect m) => Effect Fi
 
 data FileSession
 
+type FileSessionInputs m = (FrameworkRoot.Capability FileSession m, Effect ValidateFileName m, Provides OpenedFile m, ValidateFileNameEffect m, MonadIO m)
+instance FrameworkRoot.Capability FileSession App
+
 class (Effect ValidateFileName m, Provides OpenedFile m) => FileSessionEffect m where
   openFileSession :: m (Maybe String)
   closeFileSession :: m (Maybe String)
@@ -109,6 +122,9 @@ instance (Monad m, Effect ValidateFileName m, FileSessionEffect m) => Effect Fil
 
 data FileRecovery
 
+type FileRecoveryInputs m = (FrameworkRoot.Capability FileRecovery m, Effect FileSession m, Provides OpenedFile m, FileSessionEffect m, ValidateFileNameEffect m, MonadIO m)
+instance FrameworkRoot.Capability FileRecovery App
+
 class (Effect FileSession m, Provides OpenedFile m) => FileRecoveryEffect m where
   detectFileSession :: m ()
   resolveFileSession :: m ()
@@ -123,6 +139,9 @@ instance (Monad m, Effect FileSession m, FileRecoveryEffect m) => Effect FileRec
   handler = FrameworkRoot.handler @Root
 
 data ReadFile
+
+type ReadFileInputs m = (FrameworkRoot.Capability ReadFile m, Effect FileSession m, Provides OpenedFile m, FileSessionEffect m, ValidateFileNameEffect m, MonadIO m)
+instance FrameworkRoot.Capability ReadFile App
 
 class (Effect FileSession m, Provides OpenedFile m) => ReadFileEffect m where
   fileText :: m (Produce ReadFile)
@@ -142,6 +161,9 @@ instance (Monad m, Effect FileSession m, ReadFileEffect m) => Effect ReadFile m 
 
 data WriteFile
 
+type WriteFileInputs m = (FrameworkRoot.Capability WriteFile m, Effect FileSession m, Provides FileText m, Provides OpenedFile m, FileSessionEffect m, ValidateFileNameEffect m, MonadIO m)
+instance FrameworkRoot.Capability WriteFile App
+
 class (Effect FileSession m, Provides FileText m, Provides OpenedFile m) => WriteFileEffect m where
   writeFileText :: m (Maybe String)
   {-# MINIMAL writeFileText #-}
@@ -155,6 +177,9 @@ instance (Monad m, Effect FileSession m, WriteFileEffect m) => Effect WriteFile 
   handler = FrameworkRoot.handler @Root
 
 data FileWorkflow
+
+type FileWorkflowInputs m = (FrameworkRoot.Capability FileWorkflow m, Effect WriteFile m, Provides FileName m, WriteFileEffect m, FileSessionEffect m, ValidateFileNameEffect m, MonadIO m)
+instance FrameworkRoot.Capability FileWorkflow App
 
 class (Effect WriteFile m, Provides FileName m) => FileWorkflowEffect m where
   runFileWorkflow :: m (Maybe String)

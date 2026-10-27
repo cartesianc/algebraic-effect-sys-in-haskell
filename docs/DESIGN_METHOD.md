@@ -116,7 +116,7 @@ Context 类方法返回 m (Produce e)，instance 通过上游类方法取得产�
 根据显式声明处理。显式依赖资产的 IO 操作写在注册 instance 内；不显式依赖资产的通用
 IO helper 可以复用，但不能隐藏 effect 调用。SDK 内部执行后端不属于业务书写面。
 
-组合描述选择能力／实现引用，句柄能力通过类型类 superclass 字典传递。
+组合描述选择能力／实现引用，句柄能力通过类型类 superclass 字典传递。业务 instance 对载体 m 泛型（instance XInputs m => XEffect m），生成的 XInputs 只含自身能力标记、Input 链与 demands 给出的能力及载体能力；能力标记只在载体上成立，GHC 因此拒绝越过 Input 链的调用，Input 链即实际的依赖注入边界。
 SDK 保留 scope 状态与 Context 绑定，本轮按有限使用闭包落实 once-spare 自动收尾，interpreter 退出清理继续兜底；不预设可在运行时任意替换同一类型的全局 instance。
 
 只把 IO 写成一个类型参数不足以完成解耦。如果 Require 匹配与业务组合仍藏在同一个
@@ -130,7 +130,7 @@ SDK 保留 scope 状态与 Context 绑定，本轮按有限使用闭包落实 on
 
 Pure／Excu 只表达成功或失败，不跨 handler 返回业务产物。Pure 的成功类型固定为 ()；Excu 与 Scoped.open／close 是原子句柄，返回 Maybe String 形式的可选信息，SDK 与成败合成内部 RawOutput，只交给挂在该句柄下的 Context 解析，没有挂接时丢弃。
 
-Context 的 input 指向 Excu 或 Scoped 时挂在该句柄下，解析其入口方法（handler／open）的输出。生成器在原子句柄入口注入：句柄被原链调用并成功返回后，以根调用身份运行挂接的 Context.request，其中对该句柄的调用由本次输出回答、不重复执行，产值按 request 发布为资产；原链（A→B→Ctx→C 中的 C）不受影响，注入失败只留在注入内。尚未执行句柄而有消费方 require 时，按需求值的 request 由 Context 调用句柄驱动整条链。哪些方法可以使用原子句柄的输出属于源码写法约束，留给未来 LSP。
+Context 的 input 指向 Excu 或 Scoped 时挂在该句柄下，解析其入口方法（handler／open）的输出。生成器在原子句柄入口注入：句柄被原链调用并成功返回后，以根调用身份运行挂接的 Context.request，其中对该句柄的调用由本次输出回答、不重复执行，产值按 request 发布为资产；原链（A→B→Ctx→C 中的 C）不受影响，注入失败只留在注入内。尚未执行句柄而消费方 require 时，按需求值的 request 由 Context 调用句柄驱动整条链；Context 不会自行启动，只由依值消费方或 origin 链上的注入带起。构图时挂接句柄的结构后接一个可选分支，内容是挂接 Context 的方法体（其中对句柄的直接调用记为空），因此 effect graph 与 ScopeTree 包含注入路径。只有 Input 链在原子句柄下游的 effect 能调用它、取得输出，由生成的 XInputs 约束经 GHC 保证；是否进一步只允许挂接的 Context 绑定输出，留给未来 LSP。
 业务产值统一归 Context，即使具体计算是纯函数也不因此注册为 Pure；不另设 Map typing。成功值与错误负载都可以
 参与显式连接；转换错误负载不会自动把原操作的失败状态改为成功。
 

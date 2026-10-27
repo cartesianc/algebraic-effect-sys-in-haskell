@@ -18,6 +18,7 @@ module ScopeInstancesDemo.Generated.Effects where
 import Framework.Effect.Contract (Effect(..), Registered)
 import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified Framework.SDK as SDK
+import Control.Monad.IO.Class (MonadIO)
 import ScopeInstancesDemo.Types
 
 -- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
@@ -40,6 +41,9 @@ instance SDK.NFData MethodGen
 
 data PrepareFiles
 
+type PrepareFilesInputs m = (FrameworkRoot.Capability PrepareFiles m, Effect Root m, MonadIO m)
+instance FrameworkRoot.Capability PrepareFiles App
+
 class (Effect Root m) => PrepareFilesEffect m where
   prepareFiles :: m (Maybe String)
   {-# MINIMAL prepareFiles #-}
@@ -53,6 +57,9 @@ instance (Monad m, Effect Root m, PrepareFilesEffect m) => Effect PrepareFiles m
   handler = FrameworkRoot.handler @Root
 
 data FileLocation
+
+type FileLocationInputs m = (FrameworkRoot.Capability FileLocation m, Effect Root m, MonadIO m)
+instance FrameworkRoot.Capability FileLocation App
 
 class (Effect Root m) => FileLocationEffect m where
   fileName :: m (Produce FileLocation)
@@ -72,6 +79,9 @@ instance (Monad m, Effect Root m, FileLocationEffect m) => Effect FileLocation m
 
 data FileResource
 
+type FileResourceInputs m = (FrameworkRoot.Capability FileResource m, Effect Root m, Provides FileName m, MonadIO m)
+instance FrameworkRoot.Capability FileResource App
+
 class (Effect Root m, Provides FileName m) => FileResourceEffect m where
   openedFile :: m (Produce FileResource)
   readOpenedFile :: m (Produce FileResource)
@@ -90,6 +100,9 @@ instance (Monad m, Effect Root m, FileResourceEffect m) => Effect FileResource m
 
 data FileSession
 
+type FileSessionInputs m = (FrameworkRoot.Capability FileSession m, Effect Root m, Provides OpenedFile m, MonadIO m)
+instance FrameworkRoot.Capability FileSession App
+
 class (Effect Root m, Provides OpenedFile m) => FileSessionEffect m where
   openFileSession :: m (Maybe String)
   closeFileSession :: m (Maybe String)
@@ -105,6 +118,9 @@ instance (Monad m, Effect Root m, FileSessionEffect m) => Effect FileSession m w
 
 data CheckIndependent
 
+type CheckIndependentInputs m = (FrameworkRoot.Capability CheckIndependent m, Effect FileSession m, Provides FileName m, Provides OpenedFile m, FileSessionEffect m, MonadIO m)
+instance FrameworkRoot.Capability CheckIndependent App
+
 class (Effect FileSession m, Provides FileName m, Provides OpenedFile m) => CheckIndependentEffect m where
   checkIndependent :: m (Maybe String)
   {-# MINIMAL checkIndependent #-}
@@ -118,6 +134,9 @@ instance (Monad m, Effect FileSession m, CheckIndependentEffect m) => Effect Che
   handler = FrameworkRoot.handler @Root
 
 data CheckReopen
+
+type CheckReopenInputs m = (FrameworkRoot.Capability CheckReopen m, Effect FileSession m, Provides FileName m, Provides OpenedFile m, FileSessionEffect m, MonadIO m)
+instance FrameworkRoot.Capability CheckReopen App
 
 class (Effect FileSession m, Provides FileName m, Provides OpenedFile m) => CheckReopenEffect m where
   checkReopen :: m (Maybe String)

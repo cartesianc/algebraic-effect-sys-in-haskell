@@ -1,6 +1,8 @@
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 -- 原生 Haskell 取值；SDK 生成方法入口包装，运行编译 Generated 副本。
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -30,7 +32,7 @@ import System.IO
 import System.IO.Error (tryIOError)
 import System.Mem (performGC)
 
-instance FileLocationsEffect App where
+instance FileLocationsInputs m => FileLocationsEffect m where
   fileNames =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations" FrameworkGenerated.ContextBindingError
       [("FileResources", FrameworkRuntime.RequireValue), ("HoldFiles", FrameworkRuntime.RequestValue)]
@@ -38,13 +40,14 @@ instance FileLocationsEffect App where
       FrameworkGenerated.boundFileLocations
       (\value bindings -> bindings { FrameworkGenerated.boundFileLocations = Just value })) $
       let
+        fileNames :: (m) (FrameworkGenerated.FileNames)
         fileNames = pure (FileNames
           [ "demo" </> "OpenFilesDemo" </> "output" </> ("file-" ++ show index ++ ".txt")
           | index <- [1..10 :: Int]
           ])
       in fileNames
 
-instance FileResourcesEffect App where
+instance FileResourcesInputs m => FileResourcesEffect m where
   openedFiles =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResources" FrameworkGenerated.ContextBindingError
       [("FileSession", FrameworkRuntime.RequestValue), ("InspectFiles", FrameworkRuntime.RequireValue), ("FinishInspection", FrameworkRuntime.RequireValue)]
@@ -52,6 +55,7 @@ instance FileResourcesEffect App where
       FrameworkGenerated.boundFileResources
       (\value bindings -> bindings { FrameworkGenerated.boundFileResources = Just value })) $
       let
+        openedFiles :: (m) (FrameworkGenerated.OpenedFiles)
         openedFiles = do
           FileNames paths <- require @FileNames
           -- 整批获取是本 Context 的原子操作；中途失败释放此前已打开的文件。
@@ -65,10 +69,11 @@ instance FileResourcesEffect App where
           either (raise . FileResourcesError . displayException) pure outcome
       in openedFiles
 
-instance FileSessionEffect App where
+instance FileSessionInputs m => FileSessionEffect m where
   openFiles =
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "openFiles" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
+        openFiles :: (m) (Maybe String)
         openFiles = do
           OpenedFiles files <- request @OpenedFiles
           liftIO (putStrLn ("[open] acquired " ++ show (length files) ++ " files"))
@@ -78,6 +83,7 @@ instance FileSessionEffect App where
   closeFiles =
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "closeFiles" . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
+        closeFiles :: (m) (Maybe String)
         closeFiles = do
           OpenedFiles held <- require @OpenedFiles
           let files = [(path, file) | FileHandle path file <- held]
@@ -87,20 +93,22 @@ instance FileSessionEffect App where
           pure Nothing
       in closeFiles
 
-instance HoldFilesEffect App where
+instance HoldFilesInputs m => HoldFilesEffect m where
   holdFiles =
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "holdFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "HoldFiles") $
       let
+        holdFiles :: (m) (Maybe String)
         holdFiles = do
           _ <- request @FileNames
           openFiles
           pure Nothing
       in holdFiles
 
-instance InspectFilesEffect App where
+instance InspectFilesInputs m => InspectFilesEffect m where
   inspectFiles =
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "inspectFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "InspectFiles") $
       let
+        inspectFiles :: (m) (Maybe String)
         inspectFiles = do
           -- 前一 Node 的使用已经结束；本条链显式 open，并持有自己的资源绑定。
           holdFiles
@@ -127,10 +135,11 @@ instance InspectFilesEffect App where
           pure Nothing
       in inspectFiles
 
-instance FinishInspectionEffect App where
+instance FinishInspectionInputs m => FinishInspectionEffect m where
   finishInspection =
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "finishInspection" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FinishInspection") $
       let
+        finishInspection :: (m) (Maybe String)
         finishInspection = do
           holdFiles
           -- 在关闭前取得 Handle，随后只检查本地快照，不向已关闭 scope 再次 require。
@@ -147,7 +156,7 @@ instance FinishInspectionEffect App where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "dda863737c2c8253694917300093f9d4"
+handlerSourceFingerprint = Just "9562c69fc91f03bd3009bddb0179166c"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

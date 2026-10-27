@@ -18,6 +18,7 @@ module ScopeReuseDemo.Generated.Effects where
 import Framework.Effect.Contract (Effect(..), Registered)
 import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified Framework.SDK as SDK
+import Control.Monad.IO.Class (MonadIO)
 import ScopeReuseDemo.Types
 
 -- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
@@ -40,6 +41,9 @@ instance SDK.NFData MethodGen
 
 data FileLocations
 
+type FileLocationsInputs m = (FrameworkRoot.Capability FileLocations m, Effect Root m, MonadIO m)
+instance FrameworkRoot.Capability FileLocations App
+
 class (Effect Root m) => FileLocationsEffect m where
   filePaths :: m (Produce FileLocations)
   readFilePaths :: m (Produce FileLocations)
@@ -58,6 +62,9 @@ instance (Monad m, Effect Root m, FileLocationsEffect m) => Effect FileLocations
 
 data PrepareProbe
 
+type PrepareProbeInputs m = (FrameworkRoot.Capability PrepareProbe m, Effect Root m, Provides FilePaths m, MonadIO m)
+instance FrameworkRoot.Capability PrepareProbe App
+
 class (Effect Root m, Provides FilePaths m) => PrepareProbeEffect m where
   prepareProbe :: m (Maybe String)
   {-# MINIMAL prepareProbe #-}
@@ -71,6 +78,9 @@ instance (Monad m, Effect Root m, PrepareProbeEffect m) => Effect PrepareProbe m
   handler = FrameworkRoot.handler @Root
 
 data FileResource
+
+type FileResourceInputs m = (FrameworkRoot.Capability FileResource m, Effect Root m, Provides FilePaths m, MonadIO m)
+instance FrameworkRoot.Capability FileResource App
 
 class (Effect Root m, Provides FilePaths m) => FileResourceEffect m where
   openedFile :: m (Produce FileResource)
@@ -90,6 +100,9 @@ instance (Monad m, Effect Root m, FileResourceEffect m) => Effect FileResource m
 
 data SharedFileScope
 
+type SharedFileScopeInputs m = (FrameworkRoot.Capability SharedFileScope m, Effect Root m, Provides OpenedFile m, MonadIO m)
+instance FrameworkRoot.Capability SharedFileScope App
+
 class (Effect Root m, Provides OpenedFile m) => SharedFileScopeEffect m where
   openSharedFile :: m (Maybe String)
   closeSharedFile :: m (Maybe String)
@@ -105,6 +118,9 @@ instance (Monad m, Effect Root m, SharedFileScopeEffect m) => Effect SharedFileS
 
 data WriteFirst
 
+type WriteFirstInputs m = (FrameworkRoot.Capability WriteFirst m, Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m, SharedFileScopeEffect m, MonadIO m)
+instance FrameworkRoot.Capability WriteFirst App
+
 class (Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m) => WriteFirstEffect m where
   writeFirst :: m (Maybe String)
   {-# MINIMAL writeFirst #-}
@@ -118,6 +134,9 @@ instance (Monad m, Effect SharedFileScope m, WriteFirstEffect m) => Effect Write
   handler = FrameworkRoot.handler @Root
 
 data WriteSecond
+
+type WriteSecondInputs m = (FrameworkRoot.Capability WriteSecond m, Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m, SharedFileScopeEffect m, MonadIO m)
+instance FrameworkRoot.Capability WriteSecond App
 
 class (Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m) => WriteSecondEffect m where
   writeSecond :: m (Maybe String)
@@ -133,6 +152,9 @@ instance (Monad m, Effect SharedFileScope m, WriteSecondEffect m) => Effect Writ
 
 data WriteThird
 
+type WriteThirdInputs m = (FrameworkRoot.Capability WriteThird m, Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m, SharedFileScopeEffect m, MonadIO m)
+instance FrameworkRoot.Capability WriteThird App
+
 class (Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m) => WriteThirdEffect m where
   writeThird :: m (Maybe String)
   {-# MINIMAL writeThird #-}
@@ -146,6 +168,9 @@ instance (Monad m, Effect SharedFileScope m, WriteThirdEffect m) => Effect Write
   handler = FrameworkRoot.handler @Root
 
 data VerifyReuse
+
+type VerifyReuseInputs m = (FrameworkRoot.Capability VerifyReuse m, Effect Root m, Provides FilePaths m, MonadIO m)
+instance FrameworkRoot.Capability VerifyReuse App
 
 class (Effect Root m, Provides FilePaths m) => VerifyReuseEffect m where
   verifyReuse :: m (Maybe String)

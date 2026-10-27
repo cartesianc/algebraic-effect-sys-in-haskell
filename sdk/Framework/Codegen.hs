@@ -21,7 +21,7 @@ data Entry = SingleTarget String | Workflow [String]
 type DemandRoutes = ([(String, [((String, String), String)])], [(String, String)])
 
 lowerProgram :: String -> [EffectSpec] -> Entry
-             -> Either String (String, String, [(String, String, String)], String, GraphPlan String, [String], DemandRoutes, [(String, String, Bool)])
+             -> Either String (String, String, [(String, String, String, String)], String, GraphPlan String, [String], DemandRoutes, [(String, String, Bool)])
 lowerProgram namespace specifications entry = do
   if any ((== "Root") . name) specifications
     then Left "Root is reserved for the superclass"
@@ -165,9 +165,19 @@ lowerProgram namespace specifications entry = do
       , "import Framework.Effect.Contract (Effect(..), Registered)"
       , "import qualified Framework.Effect.Contract as FrameworkRoot"
       , "import qualified Framework.SDK as SDK"
+      , "import Control.Monad.IO.Class (MonadIO)"
       , "import " ++ namespace ++ ".Types"
       , ""
       ]
+
+    -- App 载体提供 IO；纯 target 的载体没有 IO。各类别是否收紧 IO 待 Pure 语义确定后再定。
+    carrierCapabilities = ["MonadIO m" | isWorkflow]
+
+    -- Input 链上的全部上游 effect（不含 Root），由近到远。
+    inputChain seen selectedName
+      | selectedName == "Root" || selectedName `elem` seen = []
+      | otherwise = selectedName : concat
+          [inputChain (selectedName : seen) (input specification) | specification <- specifications, name specification == selectedName]
 
     -- 身份是生成的封闭 ADT；手写调用仍引用原生类方法。
     registeredMethods specification =
@@ -296,12 +306,18 @@ lowerProgram namespace specifications entry = do
       ]
 
     -- 注册时连接生产/读取入口；业务方法使用原生 Haskell 取值，不改写表达式。
+    -- 第四项是方法结果类型，供生成副本给保留原文的局部绑定写出完整签名。
     instanceWrappers specification =
-      [ (name specification ++ "Effect", method, wrapper method)
+      [ (name specification ++ "Effect", method, wrapper method, resultType)
       | method <- maybeToList (entryMethod (typing specification)) ++ closing
           ++ errorMethods specification ++ maybeToList reading ]
       where
         selectedName = name specification
+        resultType = case typing specification of
+          Context (Just producing) -> "FrameworkGenerated." ++ contractOf producing
+          Excu _ -> "Maybe String"
+          Scoped _ _ -> "Maybe String"
+          _ -> "()"
         closing = case typing specification of
           Scoped _ method -> maybeToList method
           _ -> []
@@ -471,7 +487,7 @@ lowerProgram namespace specifications entry = do
     checkGenerated = do
       let declared = [contractType | (contractType, _, _) <- generatedDeclarations]
           reserved = ["Root", "App", "Pure", "Provides", "ContextValues", "Errors", "MethodGen", "Results"]
-            ++ concat [[name s, name s ++ "Effect", name s ++ "Error", name s ++ "Failure"] | s <- specifications]
+            ++ concat [[name s, name s ++ "Effect", name s ++ "Inputs", name s ++ "Error", name s ++ "Failure"] | s <- specifications]
       case [contractType | contractType <- nub declared, length (filter (== contractType) declared) > 1] of
         contractType : _ -> Left ("Contract " ++ contractType ++ " comes from more than one handler; rename one of them")
         [] -> pure ()
@@ -594,6 +610,15 @@ lowerProgram namespace specifications entry = do
             Context (Just _) -> ["  type Produce " ++ effectName ++ " = " ++ reference valueType]
             _ -> []
       pure ([ "data " ++ effectName
+         , ""
+         -- instance 对 m 泛型时只能使用这里给出的能力：自身能力标记、Input 链、demands 与载体能力。
+         -- 标记只在本程序载体上成立，方法体不能凭泛型 instance 构造 Input 链以外的句柄。
+         -- Input 链上游的类直接列出：经 Effect 的类型族 superclass 展开不足以让 GHC 取到上游句柄。
+         , "type " ++ effectName ++ "Inputs m = (" ++ intercalate ", "
+             (("FrameworkRoot.Capability " ++ effectName ++ " m") : superclasses
+               ++ [upstreamEffect ++ "Effect m" | upstreamEffect <- inputChain [] upstream]
+               ++ carrierCapabilities) ++ ")"
+         , "instance FrameworkRoot.Capability " ++ effectName ++ " " ++ carrierType
          , ""
          , "class (" ++ intercalate ", " superclasses ++ ") => " ++ effectName ++ "Effect m where"
          ]

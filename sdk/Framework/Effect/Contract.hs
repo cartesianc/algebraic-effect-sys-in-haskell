@@ -16,7 +16,7 @@
 
 -- Effect 契约与根能力；不包含执行载体或 workflow。
 module Framework.Effect.Contract
-  ( Effect(..), EffectKind(..), Root, Registered, Void
+  ( Effect(..), EffectKind(..), Root, Registered, Void, Capability
   , Failure(..), Output(..), failEffect, ErrorHandler(..), ErrorReport(..), ErrorStore(..), runErrorHandler
   , ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault(..), ScopeInput(..), ScopeInputAccess(..)
   , RawOutput(..)
@@ -32,6 +32,11 @@ data EffectKind = PureKind | ExcuKind | ScopedKind | ErrorKind | ContextKind der
 
 data Root environment cause
 newtype Registered (handler :: (Type -> Type) -> Constraint) parent = Registered parent
+
+-- 能力标记：只有生成区在本程序载体上给出实例。effect 的 instance 对 m 泛型，
+-- 其上下文含自身标记，因此方法体无法凭泛型 instance 现场构造其他 effect 的字典，
+-- 只能经 Input 链的 superclass 取得上游句柄。
+class Capability effect (m :: Type -> Type)
 
 type family Inherited registration (m :: Type -> Type) :: Constraint where
   Inherited (Root environment cause) m =

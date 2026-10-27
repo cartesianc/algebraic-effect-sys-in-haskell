@@ -8,7 +8,7 @@ import Framework.Workflow.AST (chained, node)
 import Framework.Workflow.Structure (ProgramStructure(..), initializeStructure)
 
 -- 声明先由独立 GHCI 加载，方法结构随后由 GHC parser 提供；两者都不依赖 Generated。
--- planAnchors：原子句柄方法 → 挂在它下面的 Context 的生产方法；只用于驱动检查，不进入 effect graph。
+-- planAnchors：原子句柄方法 → 挂在它下面的 Context 的生产方法。
 data GraphPlan method = GraphPlan
   { planRoutes :: [(method, method, method)]
   , planDefinitions :: [MethodDefinition method]
@@ -18,14 +18,49 @@ data GraphPlan method = GraphPlan
   } deriving (Eq, Show, Read)
 
 -- 手写方法使用解析出的结构；未出现在 Handlers 中的生成方法（如默认 require 读取）保留计划中的结构。
+-- 原子句柄的生成入口在方法体返回后注入挂在它下面的 Context，结构同样描述带包装的句柄：
+-- 方法体之后接一个可选分支（挂接的 Context 自己调用句柄时不注入），内容是这些 Context 的方法体。
+-- 注入期间它们对该句柄的调用由本次输出回答、不再执行，结构中记为空，因此不形成环。
 mergedDefinitions :: GraphPlan String -> [(String, MethodShape String)] -> [MethodDefinition String]
 mergedDefinitions plan shapes =
-  [ definition {methodBody = maybe (methodBody definition) id (lookup (methodIdentity definition) shapes)}
+  [ definition {methodBody = injected (methodIdentity definition) (written definition)}
   | definition <- planDefinitions plan ]
+  where
+    written definition = maybe (methodBody definition) id (lookup (methodIdentity definition) shapes)
+    bodyOf method = case [written definition | definition <- planDefinitions plan, methodIdentity definition == method] of
+      body : _ -> body
+      [] -> Empty
+    injected method body = case [replayed method (bodyOf produced) | (anchor, produced) <- planAnchors plan, anchor == method] of
+      [] -> body
+      contexts -> Sequence [body, Choice [Empty, Sequence contexts]]
+    replayed anchor shape = case shape of
+      Call method | method == anchor -> Empty
+      Sequence children -> Sequence (map (replayed anchor) children)
+      Choice children -> Choice (map (replayed anchor) children)
+      Recover body recovery -> Recover (replayed anchor body) (replayed anchor recovery)
+      other -> other
+
+-- 沿方法调用（含上面并入的注入分支）可达的方法集合。
+reachable :: [MethodDefinition String] -> [String] -> [String]
+reachable definitions = visit []
+  where
+    visit seen [] = seen
+    visit seen (method : rest)
+      | method `elem` seen = visit seen rest
+      | otherwise = visit (method : seen) (successors method ++ rest)
+    successors method =
+      [called | definition <- definitions, methodIdentity definition == method, called <- calls (methodBody definition)]
+
+calls :: MethodShape method -> [method]
+calls Empty = []
+calls (Call method) = [method]
+calls (Sequence children) = concatMap calls children
+calls (Choice children) = concatMap calls children
+calls (Recover body recovery) = calls body ++ calls recovery
 
 -- 资产必须由剧本驱动：从 AST 末端沿方法调用须能到达每个 Context 的生产方法。
 -- require 在 state 无值时求值 request（thunk），默认读取在计划中已记为可能进入生产；
--- 挂接句柄执行后注入挂在它下面的 Context，因此句柄可达时该 Context 的生产也可达。
+-- 挂接句柄的结构已并入注入分支，因此句柄可达时挂在它下面的 Context 的生产也可达。
 checkDriven :: GraphPlan String -> [(String, MethodShape String)] -> Either String ()
 checkDriven plan shapes =
   case [ methodIdentity definition | definition <- definitions
@@ -35,19 +70,7 @@ checkDriven plan shapes =
       ++ "; no terminal reaches its production or the handle it hangs below")
   where
     definitions = mergedDefinitions plan shapes
-    reached = visit [] (map snd (planEntries plan))
-    visit seen [] = seen
-    visit seen (method : rest)
-      | method `elem` seen = visit seen rest
-      | otherwise = visit (method : seen) (successors method ++ rest)
-    successors method =
-      [called | definition <- definitions, methodIdentity definition == method, called <- calls (methodBody definition)]
-        ++ [produced | (anchor, produced) <- planAnchors plan, anchor == method]
-    calls Empty = []
-    calls (Call method) = [method]
-    calls (Sequence children) = concatMap calls children
-    calls (Choice children) = concatMap calls children
-    calls (Recover body recovery) = calls body ++ calls recovery
+    reached = reachable definitions (map snd (planEntries plan))
 
 renderGraphPlan :: GraphPlan String -> [(String, MethodShape String)] -> Either String String
 renderGraphPlan plan shapes = do
@@ -63,6 +86,13 @@ renderGraphPlan plan shapes = do
       -- 这里只枚举各独立入口。初始化算法不会把不同 Node 串成 scope 路径，
       -- 因而不需要载入或冻结业务 workflow 的 chained/parallel 形状。
       entries = chained [node selected | (selected, _) <- planEntries plan]
+  -- 挂接的 Context 只能直接调用它的句柄；经其他方法回到该句柄时，带注入的结构会成环。
+  case [ (anchor, produced) | (anchor, produced) <- planAnchors plan
+       , definition <- definitions, methodIdentity definition == produced
+       , anchor `elem` reachable definitions (filter (/= anchor) (calls (methodBody definition))) ] of
+    (anchor, produced) : _ -> Left ("Context " ++ produced ++ " hangs below " ++ anchor
+      ++ " but reaches it again through another method; call " ++ anchor ++ " directly")
+    [] -> pure ()
   initialized <- either (Left . show) Right
     (initializeStructure (planRoutes plan) definitions (planScopes plan) (planEntries plan) entries)
   pure (renderEffectGraph (structureEffects initialized) ++ "\n"

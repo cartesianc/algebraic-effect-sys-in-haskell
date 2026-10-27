@@ -18,6 +18,7 @@ module OpenFilesDemo.Generated.Effects where
 import Framework.Effect.Contract (Effect(..), Registered)
 import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified Framework.SDK as SDK
+import Control.Monad.IO.Class (MonadIO)
 import OpenFilesDemo.Types
 
 -- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
@@ -40,6 +41,9 @@ instance SDK.NFData MethodGen
 
 data FileLocations
 
+type FileLocationsInputs m = (FrameworkRoot.Capability FileLocations m, Effect Root m, MonadIO m)
+instance FrameworkRoot.Capability FileLocations App
+
 class (Effect Root m) => FileLocationsEffect m where
   fileNames :: m (Produce FileLocations)
   readFileNames :: m (Produce FileLocations)
@@ -57,6 +61,9 @@ instance (Monad m, Effect Root m, FileLocationsEffect m) => Effect FileLocations
   handler = FrameworkRoot.handler @Root
 
 data FileResources
+
+type FileResourcesInputs m = (FrameworkRoot.Capability FileResources m, Effect Root m, Provides FileNames m, MonadIO m)
+instance FrameworkRoot.Capability FileResources App
 
 class (Effect Root m, Provides FileNames m) => FileResourcesEffect m where
   openedFiles :: m (Produce FileResources)
@@ -76,6 +83,9 @@ instance (Monad m, Effect Root m, FileResourcesEffect m) => Effect FileResources
 
 data FileSession
 
+type FileSessionInputs m = (FrameworkRoot.Capability FileSession m, Effect Root m, Provides OpenedFiles m, MonadIO m)
+instance FrameworkRoot.Capability FileSession App
+
 class (Effect Root m, Provides OpenedFiles m) => FileSessionEffect m where
   openFiles :: m (Maybe String)
   closeFiles :: m (Maybe String)
@@ -91,6 +101,9 @@ instance (Monad m, Effect Root m, FileSessionEffect m) => Effect FileSession m w
 
 data HoldFiles
 
+type HoldFilesInputs m = (FrameworkRoot.Capability HoldFiles m, Effect FileSession m, Provides FileNames m, FileSessionEffect m, MonadIO m)
+instance FrameworkRoot.Capability HoldFiles App
+
 class (Effect FileSession m, Provides FileNames m) => HoldFilesEffect m where
   holdFiles :: m (Maybe String)
   {-# MINIMAL holdFiles #-}
@@ -105,6 +118,9 @@ instance (Monad m, Effect FileSession m, HoldFilesEffect m) => Effect HoldFiles 
 
 data InspectFiles
 
+type InspectFilesInputs m = (FrameworkRoot.Capability InspectFiles m, Effect HoldFiles m, Provides OpenedFiles m, HoldFilesEffect m, FileSessionEffect m, MonadIO m)
+instance FrameworkRoot.Capability InspectFiles App
+
 class (Effect HoldFiles m, Provides OpenedFiles m) => InspectFilesEffect m where
   inspectFiles :: m (Maybe String)
   {-# MINIMAL inspectFiles #-}
@@ -118,6 +134,9 @@ instance (Monad m, Effect HoldFiles m, InspectFilesEffect m) => Effect InspectFi
   handler = FrameworkRoot.handler @Root
 
 data FinishInspection
+
+type FinishInspectionInputs m = (FrameworkRoot.Capability FinishInspection m, Effect InspectFiles m, Provides OpenedFiles m, InspectFilesEffect m, HoldFilesEffect m, FileSessionEffect m, MonadIO m)
+instance FrameworkRoot.Capability FinishInspection App
 
 class (Effect InspectFiles m, Provides OpenedFiles m) => FinishInspectionEffect m where
   finishInspection :: m (Maybe String)

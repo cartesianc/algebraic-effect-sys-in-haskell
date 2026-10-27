@@ -94,19 +94,21 @@ EffectSpec { name = "PrintPage", typing = Excu { handler = Just "printPage" }
 cabal run effect-codegen -- workflow Crawler
 ```
 
-生成器在 `Generated/Effects.hs` 中产出每个 effect 的类型类和契约类型，例如 `fetchStartPage :: m (Maybe String)`、`startPageSummary :: m StartPageSummary`。
+生成器在 `Generated/Effects.hs` 中产出每个 effect 的类型类和契约类型，例如 `fetchStartPage :: m (Maybe String)`、`startPageSummary :: m StartPageSummary`，以及每个 effect 可用能力的缩写 `FetchPageInputs m`、`ExtractPageInputs m` 等。
 
 **4. 实现方法**（[Handlers.hs](demo/Crawler/Handlers.hs)，节选）
 
+instance 对 `m` 泛型，上下文写生成的 `XInputs m`。它只包含这个 effect 的 `input` 链和 `demands` 给出的能力，所以方法体只能调用 Input 链上游的方法：`ExtractPage` 的 input 是 `FetchPage`，可以调用 `fetchStartPage`；`PrintPage` 如果也去调用它，GHC 直接报错。
+
 ```haskell
-instance FetchPageEffect App where
+instance FetchPageInputs m => FetchPageEffect m where
   fetchStartPage = do
     openCrawlSession
     StartURL (PageURL url) <- request @StartURL
     ...                                  -- 用 curl 抓取 url，失败时 raise
     pure (Just html)                     -- 交出网页正文
 
-instance ExtractPageEffect App where
+instance ExtractPageInputs m => ExtractPageEffect m where
   startPageSummary = do
     fetched <- fetchStartPage            -- 挂接句柄交出的正文
     StartURL (PageURL url) <- require @StartURL
@@ -114,7 +116,7 @@ instance ExtractPageEffect App where
     ...                                  -- 解析标题、段落和链接
     pure (StartPageSummary (PageSummary url title content links))
 
-instance PrintPageEffect App where
+instance PrintPageInputs m => PrintPageEffect m where
   printPage = do
     StartPageSummary (PageSummary url title content links) <- require @StartPageSummary
     ...                                  -- 打印
@@ -178,7 +180,7 @@ typing = Context { request = requester "startURL" @PageURL }
 资源的开启和关闭写在同一个 instance 里。资源本身（例如文件句柄）作为 Context 的值保存，`open` 通过 `request` 取得它，`close` 通过 `require` 读回它（节选自 [FileDemo](demo/FileDemo/Handlers.hs)）：
 
 ```haskell
-instance FileSessionEffect App where
+instance FileSessionInputs m => FileSessionEffect m where
   openFileSession = do
     _ <- request @OpenedFile
     pure Nothing
@@ -264,6 +266,7 @@ cabal run crawler-demo -- --structure
 | 在生产方以外构造某个 Context 产物类型的值（例如在消费方写 `StartURL (...)`） | 值应由它的生产方产生；消费方用 `request`／`require` 取得，只做模式匹配 |
 | 普通顶层函数显式使用业务类型、构造器或字段 | 把这部分操作移进注册的 instance 方法；只处理 `String` 等通用类型的 helper 可以保留 |
 | 把 effect 调用藏进 helper、未知的高阶组合或循环 | 在方法体中直接调用；支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法 |
+| 方法体调用了自己 `input` 链以外的 effect 方法 | GHC 报错（缺少该 effect 的能力）；把它加进 `input` 链，或改用 Context 取值 |
 | AST 的 node 选中了 Context | node 只挂原始句柄；Context 由它挂接的句柄执行时产出，或被 `request`／`require` 时产出 |
 | 某个 Context 从 AST 出发永远到不了：既没有 node 带起它挂接的句柄，也没有被带起的链 `request`／`require` 它 | 把带起它的链加进 AST，或删掉这个 Context |
 
@@ -273,7 +276,7 @@ cabal run crawler-demo -- --structure
 
 1. **手写声明**：在 `demo/MyDemo/` 下写 `Types.hs`、`Effects.hs`、`AST.hs` 和 `Workflow/*.hs`。它们不能导入 `Generated` 或 `Handlers`。
 2. **生成接口**：运行 `cabal run effect-codegen -- workflow MyDemo`。此时还没有 `Handlers.hs`，生成器会先产出可编译的空实现模块。
-3. **写实现**：根据 `Generated/Effects.hs` 中的接口编写 `Handlers.hs`，再生成一次，并写 `Main.hs`。
+3. **写实现**：根据 `Generated/Effects.hs` 中的接口编写 `Handlers.hs`（每个 instance 写成 `instance XInputs m => XEffect m`，文件需开启 `ConstraintKinds`），再生成一次，并写 `Main.hs`。
 4. **加入构建**：参考 [cabal 文件](algebraic-effect-sys-in-haskell.cabal) 中的 `file-demo` 增加一个 executable。
 
 ## 示例

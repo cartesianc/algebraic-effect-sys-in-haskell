@@ -110,7 +110,8 @@ Error 注册类别与关联 Error e 是不同概念：前者组织检测和处�
 
 根 Effect 保留 Require、Produce、Error 关联契约和统一 raise，不新增统一业务 handle。Produce 是 SDK 内部成功类型，默认 ()；只有 Context.request 覆盖为业务 ADT，不含 Output。Input 注入上游方法，instance 直接引用；一个 effect 的多个协议方法仍可有不同签名。
 
-当前普通句柄没有 SDK 注入的位置参数：Pure 返回 m ()，原子句柄（Excu、Scoped.open／close）返回 m (Maybe String)，Context 返回 m (Produce e)。原子句柄的可选信息与成败由 SDK 合成内部 RawOutput，只交给挂在该句柄下（input 指向它）的 Context 解析，没有挂接时丢弃；注入在句柄入口完成，原链不受影响。
+当前普通句柄没有 SDK 注入的位置参数：Pure 返回 m ()，原子句柄（Excu、Scoped.open／close）返回 m (Maybe String)，Context 返回 m (Produce e)。原子句柄的可选信息与成败由 SDK 合成内部 RawOutput，只交给挂在该句柄下（input 指向它）的 Context 解析，没有挂接时丢弃；注入在句柄入口完成，原链不受影响，注入路径同时记入 effect graph 与 ScopeTree。
+业务 instance 对载体 m 泛型：instance XInputs m => XEffect m。生成的 XInputs 含自身能力标记（只在载体上成立）、Input 链与 demands 给出的能力及 MonadIO，GHC 因此拒绝越过 Input 链的方法调用。
 实例内通过原生 `<-` 取得 Context 业务值，普通 case 只匹配已取得的值；声明 Input 不隐含传值。普通操作仍直接引用 superclass 方法。
 Error 同样不增加位置参数；需要原始故障时，通过 SDK 的 caughtFailure 读取当前诊断上下文。
 
