@@ -42,12 +42,10 @@ cabal run file-demo
 
 ```mermaid
 flowchart LR
-  Main["Main.hs<br/>程序入口"] --> Interp(["interpreter"])
-  Main --> AST["ast<br/>执行编排"]
-  Main --> Effects["effects<br/>effect 注册"]
-  AST -. 传入 .-> Interp
-  Effects -. 传入 .-> Interp
-  AST -- 选择末端 --> Effects
+  subgraph Main["Main.hs"]
+    Interp(["interpreter"]) --> AST["ast<br/>执行编排"]
+    AST -- 选择末端 --> Effects["effects<br/>effect 注册"]
+  end
   Effects -- 实现 --> Handlers["Handlers.hs<br/>方法实现"]
   Interp -- 运行 --> Generated
 
@@ -60,9 +58,9 @@ flowchart LR
   Codegen(["effect-codegen"]) -- 生成 --> Generated
 ```
 
-- **入口**：`Main.hs` 写成 `main = interpreter ast effects`，把 `ast` 和 `effects` 交给 `interpreter`。
-- **配置**：`ast` 的每个 node 选择一个 effect 注册作为末端；每个 effect 注册由 `Handlers.hs` 中的 `instance` 实现。
-- **运行**：`interpreter` 按 `ast` 和 `effects` 执行 `Generated/` 中的代码。
+- **入口**：`Main.hs` 就是 `main = interpreter ast effects`：interpreter 读取 `ast`，`ast` 的每个 node 选择一个 effect 注册作为末端。
+- **实现**：每个 effect 注册由 `Handlers.hs` 中的 `instance` 实现。
+- **运行**：`interpreter` 执行 `Generated/` 中的代码。
 - **生成**：修改手写源码后，由 `effect-codegen` 重新生成 `Generated/`；手写的 `Handlers.hs` 依赖生成的 `Generated/Effects.hs` 接口。
 
 | 你写的文件 | 内容 |
