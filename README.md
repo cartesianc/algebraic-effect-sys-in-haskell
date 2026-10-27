@@ -1,246 +1,289 @@
 # Algebraic Effect Sys in Haskell
 
-一个用 Haskell 描述、组合和执行 effect 的实验性 SDK。你用声明定义操作的能力与取值关系，用原生 Haskell 实现业务逻辑，再通过 workflow AST 组织顺序和并行执行。
+一个实验性的 Haskell effect SDK。业务程序分成两部分来写：
 
-SDK 生成类型类接口、Context 绑定和资源生命周期的入口包装，让业务代码保留普通 `data`、`instance` 和 `do` 写法。workflow 的启动入口是：
+- **组合关系用声明描述**：有哪些操作、谁依赖谁、需要哪些值、按什么顺序执行。这部分是固定结构，可以序列化，便于工具（例如未来的语言服务）读取和生成。
+- **具体业务用原生 Haskell 实现**：普通的 `data`、`instance` 和 `do`，GHC／HLS 可以直接检查。
 
-```haskell
-main :: IO ()
-main = interpreter ast effects
-```
+SDK 根据声明生成类型类接口和调用包装，负责取值、资源开关和失败处理；你只写声明和方法体。
 
-项目目前处于接口探索阶段，已提供可运行示例。建议从纯计算示例开始，再阅读文件资源与并行 workflow；完整的实现范围见下文。
+> 项目处于接口探索阶段，可以运行但接口仍可能变化，暂不提供独立的 Cabal library。
 
 ## 快速开始
 
-### 环境
-
-- **GHC 9.12.x**：本地与 CI 使用 9.12.2。代码生成器依赖该系列的 GHC 解析器 API。
-- **Cabal**：本地已验证版本为 3.16.0.0。
-- **Git**。
-
-可通过 [GHCup](https://www.haskell.org/ghcup/) 安装工具链。确保 `ghc`、`ghci`、`runghc` 和 `cabal` 在 PATH 中，并使用同一套 GHC 9.12.x。当前 CI 在 Windows 上执行。
-
-### 克隆、构建、运行
-
-以下命令均在仓库根目录执行：
+需要 **GHC 9.12.x**（代码生成器依赖该版本的解析器 API，本地与 CI 使用 9.12.2）和 **Cabal**（已验证 3.16）。可通过 [GHCup](https://www.haskell.org/ghcup/) 安装，确保 `ghc`、`ghci`、`runghc`、`cabal` 在 PATH 中。
 
 ```sh
 git clone https://github.com/cartesianc/algebraic-effect-sys-in-haskell.git
 cd algebraic-effect-sys-in-haskell
 cabal update
 cabal build all
-cabal exec -- runghc -idemo -isdk demo/RequestBenchmark/Main.hs
 ```
 
-纯计算示例读取初始值 `20`，加一，再生成文本。业务结果为：
+运行纯计算示例（读取 20，加一，生成文本）：
+
+```sh
+cabal exec -- runghc -idemo -isdk demo/RequestBenchmark/Main.hs
+```
 
 ```text
 Succ (Rendered "number: 21")
 ```
 
-它不访问网络或业务文件。仓库已经包含示例的 `Generated/` 源码，因此首次运行不必先生成代码。`RequestBenchmark` 没有单独的 Cabal executable，使用上面的 `runghc` 命令运行。
-
-接着可以体验带资源生命周期的示例：
+运行带文件资源的示例，它会打开、读取、追加写入 `demo/FileDemo/output.txt`，结束时由 SDK 自动关闭文件：
 
 ```sh
 cabal run file-demo
 ```
 
-它会打开、读取、追加写入 `demo/FileDemo/output.txt`，在本次操作链退出时由 SDK 自动关闭；文件不存在时创建，后续运行继续追加。日志会显示打开、读写和关闭过程。
+仓库已包含各示例生成好的代码，首次运行不需要先生成。所有命令都在仓库根目录执行。
 
-## 如何理解一个程序
+## 一个程序由什么组成
 
-业务代码分为四个部分：**数据类型、effect 注册、handler 实现、workflow**。以 [FileDemo](demo/FileDemo) 为例：
+```mermaid
+flowchart LR
+  T["Types.hs<br/>业务数据类型"] --> C
+  E["Effects.hs<br/>effect 注册"] --> C
+  A["AST.hs / Workflow<br/>执行编排"] --> C
+  H["Handlers.hs<br/>方法实现（原生 Haskell）"] --> C
+  C(["effect-codegen"]) --> GE["Generated/Effects.hs<br/>类型类接口"]
+  C --> GH["Generated/Handlers.hs<br/>包装后的实现"]
+  C --> GP["Generated/Program.hs<br/>入口与结构"]
+  GE -. 导入 .-> H
+  M["Main.hs<br/>interpreter ast effects"] --> GP
+```
 
-| 文件 | 你在这里定义什么 |
+| 你写的文件 | 内容 |
 | --- | --- |
-| [Types.hs](demo/FileDemo/Types.hs) | 原生业务 ADT，例如文件名、文件句柄和文本 |
-| [Effects.hs](demo/FileDemo/Effects.hs) | effect 类别、方法名、能力依赖及需要的 Context 契约（demands） |
-| [Handlers.hs](demo/FileDemo/Handlers.hs) | `instance` 方法中的计算、模式匹配与 IO |
-| [AST.hs](demo/FileDemo/AST.hs) | 引用各 branch 模块，组织整个 workflow |
-| [Workflow/OperateFile.hs](demo/FileDemo/Workflow/OperateFile.hs) | 一个具名 branch，内部选择末端 node；较大模块也可组合其他 branch |
-| [Main.hs](demo/FileDemo/Main.hs) | 调用生成的 `interpreter ast effects` |
-| `Generated/` | SDK 生成的接口、包装后的 handler、纯结构、资产目录与末端登记 |
+| `Types.hs` | 业务数据类型，普通 `data`／`newtype` |
+| `Effects.hs` | effect 注册：类别、方法名、能力继承、需要哪些值 |
+| `Handlers.hs` | 每个 effect 的 `instance`，写计算、模式匹配和 IO |
+| `AST.hs`、`Workflow/*.hs` | 哪些操作链按什么顺序或并行执行 |
+| `Main.hs` | 一行：`main = interpreter ast effects` |
 
-例如，纯计算示例的 handler 按契约取得上游值并计算：
+`Generated/` 由生成器产出，不要手改。运行时编译的是 `Generated/Handlers.hs`，即你的方法体加上 SDK 的协议包装。
 
-```haskell
-instance (Effect Root m, Provides NumberValue m) => AddOneEffect m where
-  addOne = do
-    Number number <- request @NumberValue
-    pure (Added (number + 1))
-```
+## 写一个 effect：以纯计算示例为例
 
-对应的注册只声明需要的契约，不指名生产方：
+完整代码见 [demo/RequestBenchmark](demo/RequestBenchmark)。
+
+**1. 定义数据类型**（[Types.hs](demo/RequestBenchmark/Types.hs)）
 
 ```haskell
-EffectSpec { name = "AddOne", ..., demands = [requests @NumberValue] }
+data NumberValue = Number Int deriving Show
+data AddedValue  = Added Int deriving Show
 ```
 
-完整代码见 [注册](demo/RequestBenchmark/Effects.hs) 和 [实现](demo/RequestBenchmark/Handlers.hs)。
+**2. 注册 effect**（[Effects.hs](demo/RequestBenchmark/Effects.hs)）
 
-### 按契约取值：demands、request 与 require
+```haskell
+EffectSpec
+  { name = "AddOne"
+  , typing = Context
+      { request = Just Producer { handler = "addOne", produces = typeRef @AddedValue }
+      , require = Just "readAddedNumber"
+      }
+  , input = "Root"
+  , demands = [requests @NumberValue]
+  }
+```
 
-消费方在 `demands` 中写 `requests @T` 或 `requires @T`，方法体对应写 `request @T`（重新生产）或 `require @T`（读取已有绑定），调用点即可看出是否会重跑生产链。声明里不写来源：生成器在注册集合中按类型找唯一的生产方，有多个就报错，不会按距离或拓扑替你选择。新增一个同类型的生产方只会让生成报错，不会悄悄改变已有接线。
+这条注册的意思是：`AddOne` 是一个产出 `AddedValue` 的 Context，生产方法叫 `addOne`；它需要一个 `NumberValue`。它没有写这个值从哪里来，生成器会在所有注册里找唯一产出 `NumberValue` 的 effect（这里是 `MakeNumber`）接上。
 
-同一表示有不同业务含义时，在 `Types.hs` 中用不同的 newtype 表达，例如 Crawler 的起始页与链接页：
+**3. 生成接口**
+
+```sh
+cabal run effect-codegen -- target RequestBenchmark
+```
+
+生成器在 `Generated/Effects.hs` 中产出 `AddOneEffect` 类型类，方法 `addOne` 已声明好。
+
+**4. 实现方法**（[Handlers.hs](demo/RequestBenchmark/Handlers.hs)）
+
+```haskell
+instance MakeNumberEffect Pure where
+  makeNumber = do
+    DemoInputs (Start number) _ <- request @DemoInputs
+    if number < 0
+      then raise (MakeNumberError ("Invalid start: " ++ show number))
+      else pure (Number number)
+```
+
+`request @DemoInputs` 取得所需的值，`raise` 报告失败。写完再运行一次生成命令，就可以执行了。
+
+## 核心概念
+
+### 五类 effect
+
+| 类别 | 用途 | 方法返回 |
+| --- | --- | --- |
+| `Context` | 生产或读取在操作之间传递的业务值 | 业务类型 |
+| `Pure` | 不产出业务值的纯检查 | `()` |
+| `Excu` | 不产出业务值的执行操作 | `()` |
+| `Scoped` | 资源的开启（`open`）与关闭（`close`） | `()` |
+| `Error` | 对指定类型的失败做诊断和处置 | `()` |
+
+除 Context 外，操作只表示"完成"或"失败"；需要在操作之间传递的值一律由 Context 产出。
+
+### 能力继承：`input`
+
+`input = "FileSession"` 表示这个 effect 的实现可以调用 `FileSession` 的方法（以及它继承来的方法），在 Haskell 里体现为 superclass。继承只提供"可以调用"的能力，不会自动执行任何东西：上游操作只在你的方法体里显式调用时才会运行。
+
+### 取值：`request` 与 `require`
+
+在注册里用 `demands` 声明需要的值，在方法体里用同名的调用取得：
+
+| 注册中 | 方法体中 | 含义 |
+| --- | --- | --- |
+| `requests @T` | `x <- request @T` | 重新生产一次，并把结果保存为当前绑定 |
+| `requires @T` | `x <- require @T` | 读取已有绑定，不重新生产；尚未生产过则失败 |
+
+从调用点就能看出是否会重跑生产链。
+
+**值从哪里来由类型决定**：每个被需要的类型，在注册集合中必须恰好有一个生产方，生成器会自动接上。如果两个 effect 产出同一个类型，生成会报错，而不会替你选一个。同一种数据有不同含义时，在 `Types.hs` 里用不同的 `newtype` 区分，例如 [Crawler](demo/Crawler/Types.hs) 里的起始页和链接页：
 
 ```haskell
 newtype StartURL  = StartURL PageURL
 newtype LinkedURL = LinkedURL PageURL
 ```
 
-生产方写 `produces = typeRef @StartURL`，消费方写 `requests @StartURL` 并在方法体中 `StartURL (PageURL url) <- request @StartURL`。两个类型混用会在类型检查时被拒绝。gencode 也会拒绝未声明的 `request @T`／`require @T`，以及直接调用其他 effect 的 Context 方法。
+这样两者在类型上就不能混用，接线也不会有歧义。
 
-Context 契约统一收集业务 ADT 资产。显式使用这些类型、构造器或字段的操作写在注册 `instance` 方法内；普通函数不得显式依赖资产，泛型函数不因接收资产值而被禁止，只处理通用类型的 helper 也允许。gencode 检查源码引用，并生成可供 review／未来 LSP 读取的 `Generated/Assets.hs`；它不参与运行时资源管理。详见 [源码资产检查](docs/ASSETS.md)。
+### 资源：`Scoped`
 
-workflow 的 `node` 选择一条完整操作链的末端，`chained` 顺序执行并在失败时停止，`parallel` 等待全部分支完成。链内的上游操作由 handler 显式引用；声明能力依赖本身不会自动执行操作。节点的返回值也不会自动传给下一个节点。
-
-### 按 branch 拆分 workflow
-
-每个 branch 单独一个文件，导出业务名称；顶层通过普通 import 引用名称，不在组合表达式里写限定前缀。例如 [Crawler/AST.hs](demo/Crawler/AST.hs)：
+资源的开启和关闭写在同一个 instance 里。资源本身（例如文件句柄）作为 Context 的值保存，`open` 通过 `request` 取得它，`close` 通过 `require` 读回它（节选自 [FileDemo](demo/FileDemo/Handlers.hs)）：
 
 ```haskell
+instance FileSessionEffect App where
+  openFileSession = do
+    _ <- request @OpenedFile
+    pure ()
+
+  closeFileSession = do
+    OpenedFile path file <- require @OpenedFile
+    liftIO (hClose file)
+```
+
+你不需要自己安排关闭：一条操作链结束（包括出错）后，SDK 会关闭这条链开启过、且没有其他链仍在使用的资源；程序退出时还会再做一次兜底清理。
+
+- **共享**：多条并行的链用相同参数开启同一类资源时，可以共享同一个实例。
+- **新建**：参数是本次重新生产的（`request` 得到的），就开启新的实例。
+- **显式关闭**：仍然可以手动调用 `close`；如果别的链还在用，关闭会被拒绝。
+
+### 失败与 Error
+
+每个 effect 自动获得一个错误类型，名字是 effect 名加 `Error`，例如 `ReadFileError "message"`，用 `raise` 抛出。失败沿调用链原样传播，记录来源和消息；程序最终返回 `Succ 结果` 或 `Failed 失败信息`。
+
+需要对失败做处置时，注册一个 Error effect，声明它处理哪些失败：
+
+```haskell
+typing = Error
+  { detect = Just "detectFileSession"
+  , resolve = Just "resolveFileSession"
+  , handles = [RaisedBy "ReadFile", RaisedBy "WriteFile"]
+  }
+```
+
+- **`handles`**：`RaisedBy "X"` 匹配 effect `X` 用 `raise` 抛出的失败；`ScopeFaultIn`／`ContextFaultIn` 匹配资源和取值的协议错误。
+- **`detect`**（可选）：进一步检查这次失败是否归它处理。
+- **`resolve`**：执行处置，例如关闭资源。
+
+处置之后，原失败仍然会继续传播，SDK 不会把失败变成成功，也不会自动重试。
+
+### 编排：workflow
+
+`node "名字"` 选择一条操作链的末端 effect；运行这个 node 就是调用它，它在方法体里调用的上游随之执行。用 `chained`（顺序，失败即停）和 `parallel`（并行，等待全部完成）组合，例如 [Crawler](demo/Crawler)：
+
+```haskell
+-- Workflow/ParsePages.hs
+parsePages :: AST
+parsePages = parallel [node "ExtractPage", node "ExtractLinkedPage"]
+
+-- AST.hs
 ast :: AST
 ast = chained [parsePages, printPages]
 ```
 
-其中 [ParsePages.hs](demo/Crawler/Workflow/ParsePages.hs) 定义：
+- **文件组织**：每个 branch 放在 `Workflow/` 下单独的文件里，顶层只组合这些名字。
+- **列表类型**：同一个列表里要么全是 node，要么全是 branch，单个 node 也要包进 `chained` 或 `parallel`。
+- **节点之间**：一个 node 的结果不会自动传给下一个 node；操作之间的值传递只通过 Context。
 
-```haskell
-parsePages :: AST
-parsePages = parallel
-  [ node "ExtractPage"
-  , node "ExtractLinkedPage"
-  ]
+## 开发流程
+
+修改任何手写文件后（包括只改 `Handlers.hs` 的方法体），都要重新生成：
+
+```sh
+cabal run effect-codegen -- workflow FileDemo     # 有 workflow 的示例
+cabal run effect-codegen -- target RequestBenchmark  # 纯计算示例
+cabal build all
 ```
 
-`node` 返回抽象的 `EffectNode`，完整 branch 返回抽象的 `AST`。同一次 `chained`／`parallel` 的列表只能全是 node 或全是 branch，混写会产生类型错误；裸 node 也不能作为 `ast`。单个 node 仍需包在 branch 中。空分支写作 `chained ([] :: [AST])` 或 `parallel ([] :: [EffectNode])`，执行仍成功并返回空结果。
-
-分文件不创建新 interpreter、Context 或 scope；同一模块被引用两次代表两次执行。类型系统约束节点层级，独立文件与具名引用是声明格式约定，未来由 LSP 检查；当前没有模块源码索引或运行时模块 key。五个 workflow demo 均采用这种组织方式，纯 target 示例 RequestBenchmark 保留原入口。
-
-### 查看初始化结构
-
-不用修改 Main，给现有示例传入 `--structure`：
+- **运行时检查**：运行时会核对 `Handlers.hs` 和注册是否与生成时一致，不一致就拒绝启动并提示重新生成，不会悄悄运行旧代码。
+- **编辑器支持**：`Handlers.hs` 是普通 Haskell，可以在编辑器里用 HLS 检查（配置见 `hie.yaml`，HLS 需匹配 GHC 9.12.2）。它依赖的 `Generated/Effects.hs` 要先生成出来。
+- **新 effect 的顺序**：先注册、生成接口，再写实现，然后再生成一次。
+- **查看结构**：查看生成器推导出的调用结构和资源依赖，不执行任何业务：
 
 ```sh
 cabal run crawler-demo -- --structure
 ```
 
-它以可读格式显示 effect 方法图，以及 `ScopeTree` 的各入口路径、共享父节点、层次、双向顺序实证与未定关系；不创建运行 scope 句柄，也不执行 handler 或业务 IO。也可以直接阅读 `Generated/Program.hs` 中的 `generatedEffectGraph` 和 `generatedScopeTree`：它们是显式的 Haskell ADT 值，已在 gencode 时完成推导、补入声明前提并检查无环。`ScopeTree` 保留共享节点和多个父节点，表示 DAG；App／IO 用同一棵树导航 Error 的祖先候选，并约束子 scope 先于父 scope 释放。
+### 生成器会检查什么
 
-生成器从原生方法体读取显式 effect 引用，生成 `MethodGen` 身份和剥离业务值／IO 的结构副本，再用纯解释计算上述常量；业务执行副本的原表达式保持不变。每个 Node 的链独立分析，不把 workflow 的顺序当作 scope 依赖。普通启动先校验并完整求值 `programStructure` 中的生成常量，再直接对实际 AST 做一次 fold，同时解析 Node、收集入口并装配尚未执行的业务 action；全部分支及入口集合通过检查后，安装 scope 关系并执行业务。不再创建初始化中间树，也不重新推导 scope 边。算法与边界见 [Effect graph 与 scope 初始化](docs/EFFECT_GRAPH.md)。
+生成器不只是生成代码，还会拒绝以下写法，并给出原因：
 
-结构提取支持显式调用、`do`、`if`／`case` 及已识别的标准组合；`catchError` 保留正文和可能提前进入 recovery 的路径。未知高阶 effect、隐藏 helper 组合、含 effect 的动态循环或递归引用会报错，不会静默省略。没有 effect 引用的原子业务代码可以使用任意 Haskell 语法。
+| 情况 | 处理方式 |
+| --- | --- |
+| 同一个类型有多个生产方 | 用不同的 `newtype` 区分含义 |
+| 方法体里 `request @T`／`require @T` 的 `T` 没有在 `demands` 中声明 | 补上声明 |
+| 直接调用其他 effect 的 Context 方法（如 `getFileName`） | 改用 `request @T`／`require @T` |
+| 普通顶层函数显式使用业务类型、构造器或字段 | 把这部分操作移进注册的 instance 方法；只处理 `String` 等通用类型的 helper 可以保留 |
+| 把 effect 调用藏进 helper、未知的高阶组合或循环 | 在方法体中直接调用；支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法 |
 
-### Effect 类别与业务值
+这些规则保证：组合关系总能从源码中静态读出来，不会藏在任意函数里。
 
-| 类别 | 用途 | 当前方法的成功值 |
+### 新建一个程序
+
+1. **手写声明**：在 `demo/MyDemo/` 下写 `Types.hs`、`Effects.hs`、`AST.hs` 和 `Workflow/*.hs`。它们不能导入 `Generated` 或 `Handlers`。
+2. **生成接口**：运行 `cabal run effect-codegen -- workflow MyDemo`。此时还没有 `Handlers.hs`，生成器会先产出可编译的空实现模块。
+3. **写实现**：根据 `Generated/Effects.hs` 中的接口编写 `Handlers.hs`，再生成一次，并写 `Main.hs`。
+4. **加入构建**：参考 [cabal 文件](algebraic-effect-sys-in-haskell.cabal) 中的 `file-demo` 增加一个 executable。
+
+## 示例
+
+| 示例 | 演示内容 | 运行 |
 | --- | --- | --- |
-| `Pure` | 无对外业务产物的纯操作 | `()` |
-| `Excu` | 执行操作 | `()` |
-| `Context` | 生产或读取跨 handler 使用的业务值 | 注册的业务 ADT |
-| `Scoped` | 在同一 instance 中实现资源的 `open`／`close` | `()` |
-| `Error` | 按 `handles` 声明的故障类型匹配，通过可选 `detect` 细化、`resolve` 处置 | `()`；保留原失败及检测／处置结果 |
-
-Context 的 `request` 每次重新生产，成功后保存绑定；`require` 读取已有成功绑定，不重新执行生产者，未绑定时失败。普通绑定限定在一次末端调用内。稳定的开启输入可以再次用于 `open`；重新开启会得到新资源绑定，旧资源绑定不会自动改指新实例。
-
-你仍在原有 `Scoped` instance 中实现 `open`／`close`，由 SDK 安排自动关闭，不需手写 layer 或修改 Main。一次末端 chain 是使用范围：实际开启或读取资源时登记使用，整条 chain 连同错误处理和结果消费结束后释放。最后一个使用者退出且依赖的子 scope 已释放时，SDK 自动执行 close；整个 interpreter 退出时还会做兜底收尾。清理失败保留原错误及清理故障，不把资源假装成已经释放。
-
-当前 core 固定使用这套 once-spare 策略，尚无 cleanup policy 配置、next-use 或延迟保留；这些策略选择不进入业务 open／close 的方法签名。
-
-scope 是否共享由它的开启输入决定：相同的稳定 `require` 输入允许并发复用一次开启；实际以 `request` 取得的开启输入默认产生独立实例，即使值相等也不合并。资源生产方法自身的 `request` 与开启参数的访问模式是不同层次。关闭之后，后续 chain 可以重新调用原来的 open；不保留旧实例只为等待尚未开始的节点。业务显式 close 仍可用，但有其他使用者或未释放子 scope 时会拒绝关闭，不等待当前调用自己退出。
-
-Error 注册以 `handles = [RaisedBy "ReadFile", ScopeFaultIn "FileSession"]` 这类写法声明处理的故障：`RaisedBy` 匹配业务 `raise`，`ScopeFaultIn`／`ContextFaultIn` 匹配 SDK 协议故障。作用的 scope 由 Input 链上最近的 Scoped 自动推导，无需手动挂接；没有写 `detect` 时匹配即调用 `resolve`。App／IO 的 Error 从故障关联的 scope 出发，沿同一份 `ScopeTree` 补齐祖先，在生命周期锁外从父到子调用匹配的 `detect`／`resolve`。候选路径不证明故障归属，实际实例仍由已有资源绑定和故障证据定位；处置后继续传播原失败。不增加另一份 Error graph、轮询或动态调用追踪。Pure 载体尚未安装这棵树，继续使用原有生成候选名单。
-
-纯计算示例使用的 `Pure` **执行载体**与表中的 `Pure` **effect 类别**是两个概念：示例中的数字、文本生产操作仍注册为 `Context`。业务失败通过生成的错误类型和 `raise` 传播，运行边界返回 `Succ` 或 `Failed`。
-
-## 修改代码与重新生成
-
-**修改 `Handlers.hs` 后也要重新生成。** 实际运行编译的是 `Generated/Handlers.hs`。公共 workflow／target 入口在创建 scope 或执行业务前，比对当前手写源码与生成时保存的指纹；源码变化或缺失会拒绝启动，并提示重新生成。纯 target 入口还会比对传入的 effect 注册和末端名称，防止静默执行旧目标。
-
-这是运行入口检查，不会在 `cabal build` 时自动生成。运行时需从仓库根目录访问手写 `Handlers.hs`；直接求值底层 `benchmark` 不经过这项 IO 检查。`--generate` 跳过一致性检查，便于更新旧生成代码。
-
-手写 `Handlers.hs` 本身是可以由 GHC／HLS 检查的原生 Haskell，不必先生成业务包装副本才能发现类型错误。仓库的 `hie.yaml` 提供编辑器加载配置；使用与项目 GHC 9.12.2 匹配的 HLS。它导入的 `Generated/Effects.hs` 契约需要先存在且与声明同步：新项目先生成接口，再编写 handler；只改方法体时，可以先检查再重新生成。编辑手写模块，运行则导入 Generated 副本，避免在同一导入链重复引入两份 instance。这个边界已写入[核心设计](docs/DESIGN_METHOD.md#生成前仍是原生-haskell核心约束)。
-
-例如修改 FileDemo 的注册、业务契约、handler 或新增 AST 末端后：
-
-```sh
-cabal run effect-codegen -- workflow FileDemo
-cabal build file-demo
-cabal run file-demo
-```
-
-纯计算示例使用 `target` 模式：
-
-```sh
-cabal run effect-codegen -- target RequestBenchmark
-cabal exec -- runghc -idemo -isdk demo/RequestBenchmark/Main.hs
-```
-
-生成命令更新对应示例的 `Generated/Effects.hs`、`Generated/Handlers.hs`、`Generated/Program.hs` 和静态资产目录 `Generated/Assets.hs`，不会执行业务操作或回写手写文件。请修改手写声明与实现，再重新生成；将生成源码一并提交，便于审阅接口、协议包装和资产集合。
-
-未变化的生成文件不重写，保留时间戳以减少后续重编译。每个命名空间另有不提交 Git 的 `Generated/.scope-cache`，按完整声明计划、规范化方法结构与构图／渲染算法源码精确匹配，复用纯构图结果；只改原子业务代码而不改变 effect 结构时也可命中。命令仍读取声明和 `Handlers.hs` 快照，并每次进行 GHC 名称解析及资产检查；缓存不跳过该检查。目前没有 watcher、运行中的热替换或按单个方法增量构图。
-
-可以在生成源码中检查或调整 scope 边，运行时只校验、不覆盖这些边；调整时应保持 `parents`／`children`、`roots` 和 `layers` 一致。App／IO 的 Error 祖先导航与自动清理都会读取调整后的树；结构校验不证明人工删边在业务上正确。重新 gencode 会按手写来源重新生成；缓存也不会保存人工改边。目前没有独立的、跨生成保留的边覆盖配置。
-
-### 新增示例
-
-1. 在 `demo/MyDemo/` 下定义 `Types.hs`、`Effects.hs`、`AST.hs` 和 `Workflow/*.hs`；每个 branch 独立定义并导出业务名，顶层 AST 只引用这些名称。模块名使用 `MyDemo.*`，分别导出所需业务类型、`effects` 和 `ast`。这些模块不导入 `Generated` 或 `Handlers`，确保首次生成可独立编译声明。
-2. 运行 `cabal run effect-codegen -- workflow MyDemo` 生成接口。尚无 `Handlers.hs` 时，SDK 会先生成空的 handler 编译模块。
-3. 根据 `Generated/Effects.hs` 的接口编写手写 `Handlers.hs`，再运行一次生成命令，并编写调用生成入口的 `Main.hs`。
-4. 在 [Cabal 配置](algebraic-effect-sys-in-haskell.cabal) 中参考 FileDemo 增加 executable，调整模块列表、`-main-is` 和依赖，然后编译运行。handler 模块列表使用 `Generated.Handlers`。
-
-没有 workflow 的纯计算示例可参考 RequestBenchmark，以 `Target.hs` 导出的 `target` 选择末端，并使用 `target` 生成模式。首次生成使用独立的 `effect-codegen` 命令；已有 Main 的 `--generate` 路径要求其导入链已能编译。
-
-## 示例导航
-
-| 示例 | 适合了解 | 运行方式 |
-| --- | --- | --- |
-| [RequestBenchmark](demo/RequestBenchmark) | 原生 ADT、Context 取值、纯计算链 | 见快速开始 |
-| [FileDemo](demo/FileDemo) | 文件资源的开启、读写、关闭及 Error 注册 | `cabal run file-demo` |
-| [Crawler](demo/Crawler) | 并行解析与顺序打印的 workflow | `cabal run crawler-demo` |
-| [OpenFilesDemo](demo/OpenFilesDemo) | 一次 scope 管理多个文件、调用结束后自动关闭及重开 | `cabal run open-files-demo` |
+| [RequestBenchmark](demo/RequestBenchmark) | 取值、纯计算链、`raise` | 见快速开始 |
+| [FileDemo](demo/FileDemo) | 文件资源的开启、读写、自动关闭，Error 处置 | `cabal run file-demo` |
+| [Crawler](demo/Crawler) | 并行抓取解析、顺序打印，用 newtype 区分同类数据 | `cabal run crawler-demo` |
+| [OpenFilesDemo](demo/OpenFilesDemo) | 一个资源持有多个文件，链结束后自动关闭与重开 | `cabal run open-files-demo` |
 | [ScopeInstancesDemo](demo/ScopeInstancesDemo) | 按参数区分资源实例、复用与重开 | `cabal run scope-instances-demo` |
-| [ScopeReuseDemo](demo/ScopeReuseDemo) | 并行节点复用同一个 scope | `cabal run scope-reuse-demo` |
+| [ScopeReuseDemo](demo/ScopeReuseDemo) | 并行的链共享同一个资源实例 | `cabal run scope-reuse-demo` |
 
-Crawler 需要网络连接和 PATH 上的 `curl`；打印阶段会再次请求并解析页面。文件类示例在各自的 `demo/` 子目录下写入输出，已加入 Git 忽略规则。
+Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各自目录下，已加入 Git 忽略。
 
-## 当前范围
+## 当前限制
 
-已实现五类 effect 的接口生成、原生 instance 包装、Context 的 request／require、Root 的 Error 检测／处置、App／IO 下的 scope 多实例管理、执行闭包退出后的自动清理与 interpreter 兜底收尾，以及有限 workflow 的顺序和并行执行。
+- **未实现的能力**：事件触发的循环（loop）、middleware、通用结构适配尚未实现。
+- **handler 复用**：同一段 handler 逻辑还不能服务多种数据类型，需要分别注册（Crawler 的两条链因此各有一份实现）。
+- **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。
+- **构建方式**：SDK 目前随仓库内的示例一起编译，不能作为独立依赖引入。
 
-尚未接入裸 `forkIO` 自动追踪、Generic Map、loop／Hanging 和 middleware。自动清理覆盖框架管理的有限执行与已交给 SDK 的 scope 资源；任意业务 IO 内部尚未发布的部分获取，仍由该业务操作负责清理。示例中的显式关闭可以保留。
-
-当前 SDK 随仓库内的 executable 编译，尚未提供独立 Cabal library。跨独立模块的运行时链接与跨 interpreter 的资源存续也未实现。完整边界见 [最新设计](docs/LATEST_DESIGN.md)。
-
-## 开发与文档
+## 目录与进一步阅读
 
 ```text
-sdk/Framework/   SDK 契约、运行载体、workflow 与代码生成
-demo/           手写示例及各自的 Generated 源码
-docs/           当前设计方法与协议说明
-checks/         已有的局部协议检查代码
-archive/        旧实现与历史设计，不参与当前根项目构建
+sdk/Framework/   SDK：契约、运行时、workflow、代码生成
+demo/            示例程序及其生成代码
+docs/            设计文档
+archive/         旧版本实现与设计（不参与构建）
 ```
 
-日常修改后执行与 CI 一致的普通编译：
+想了解内部设计时阅读：
 
-```sh
-cabal build all
-cabal exec -- ghc -idemo -isdk -fno-code demo/RequestBenchmark/Main.hs
-```
-
-深入阅读：
-
-- [设计方法](docs/DESIGN_METHOD.md)：组合描述与原子值操作的边界；修改架构前先读。
-- [最新设计](docs/LATEST_DESIGN.md)：Context、scope、生成协议与待落实的能力。
-- [Effect graph 与 scope 初始化](docs/EFFECT_GRAPH.md)：方法结构、ScopeTree 构建及 `--structure` 查看入口。
-- [SDK 入口](sdk/Framework/SDK.hs)：统一 facade 和命令行入口。
-- [代码生成](sdk/Framework/Codegen.hs)：注册如何生成类型类接口与调用包装。
-- [开发约定](AGENTS.md)：当前项目的实现与验证规则。
-- [历史归档](archive/README.md)：旧版本的代码和设计背景。
+- [设计方法](docs/DESIGN_METHOD.md)：声明与实现的分工、取值与资源的语义。
+- [最新设计](docs/LATEST_DESIGN.md)：Context、资源、生成协议的完整说明与待办。
+- [结构与资源依赖](docs/EFFECT_GRAPH.md)：生成器如何推导调用结构和资源依赖。
+- [源码资产检查](docs/ASSETS.md)：业务类型的使用约束。
+- [开发约定](AGENTS.md)：参与开发时遵守的规则。
 
 ## License
 
