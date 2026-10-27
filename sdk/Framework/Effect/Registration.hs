@@ -1,11 +1,16 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- 纯注册描述与依赖解析，不执行 handler。
 module Framework.Effect.Registration
   ( EffectTyping(..), Producer(..), Handles(..), TypeRef(..), typeRef, contractName
+  , Gen, refine, contractKey
   , EffectSpec(..), Demand(..), Access(..), requests, requires
   , ResolvedDemand(..), resolveDemands, contextNames
   , effectKind, entryMethod
@@ -16,6 +21,7 @@ import Control.Monad (unless)
 import Data.List (intercalate, nub)
 import Data.Proxy (Proxy(..))
 import Data.Typeable (Typeable, splitTyConApp, typeRep, typeRepTyCon)
+import GHC.TypeLits (KnownSymbol, Symbol, symbolVal)
 
 data EffectTyping
   = Pure { handler :: Maybe String }
@@ -61,20 +67,41 @@ entryMethod (Context producing _) = case producing of
 -- typeRef @BusinessType 检查引用的类型存在，不构造业务值，也不复制其 ADT 结构。
 -- 识别 Output 以拒绝把完成协议再次声明为业务产物；业务 ADT 仍是不透明名称。
 -- 代码生成使用类型的显示名称，该类型须在生成区所在模块中可见。
-data TypeRef = TypeRef String | OutputRef TypeRef TypeRef
+-- GenRef／RefinedRef 是由生成器产出的契约类型：前者是引用，后者是生产方的声明（名字 + 表示类型）。
+data TypeRef = TypeRef String | OutputRef TypeRef TypeRef | GenRef String | RefinedRef String TypeRef
   deriving (Eq, Show, Read)
+
+-- Gen "Name" 标记一个由生成器产出的类型名：手写声明看不到 Generated，因此以类型级字符串引用。
+-- 它只出现在 @ 之后的契约位置，没有值。
+data Gen (name :: Symbol)
 
 typeRef :: forall value. Typeable value => TypeRef
 typeRef = describe (typeRep (Proxy :: Proxy value))
   where
     outputConstructor = typeRepTyCon (typeRep (Proxy :: Proxy (Output () ())))
+    genConstructor = typeRepTyCon (typeRep (Proxy :: Proxy (Gen "")))
     describe representation = case splitTyConApp representation of
       (constructor, [cause, value]) | constructor == outputConstructor ->
         OutputRef (describe cause) (describe value)
+      (constructor, [generated]) | constructor == genConstructor ->
+        GenRef (read (show generated))
       _ -> TypeRef (show representation)
+
+-- 生产方声明生成的契约类型：refine @PageURL @(Gen "StartURL") 生成 newtype StartURL = StartURL PageURL。
+-- 第二个类型参数必须是 Gen "..."，否则 GHC 直接报类型错误。
+refine :: forall representation generated (generatedName :: Symbol).
+          (Typeable representation, generated ~ Gen generatedName, KnownSymbol generatedName) => TypeRef
+refine = RefinedRef (symbolVal (Proxy :: Proxy generatedName)) (typeRef @representation)
+
+-- 解析按契约身份比较：生产方的 refine 声明与消费方的 Gen 引用是同一个类型。
+contractKey :: TypeRef -> TypeRef
+contractKey (RefinedRef generated _) = GenRef generated
+contractKey other = other
 
 contractName :: TypeRef -> String
 contractName (TypeRef selected) = selected
+contractName (GenRef generated) = generated
+contractName (RefinedRef generated _) = generated
 contractName (OutputRef cause value) = "Output (" ++ contractName cause ++ ") (" ++ contractName value ++ ")"
 
 data EffectSpec = EffectSpec
@@ -114,7 +141,7 @@ findEffect specifications selected = case filter ((== selected) . name) specific
 
 produced :: EffectSpec -> Maybe TypeRef
 produced specification = case typing specification of
-  Context (Just Producer { produces = selected }) _ -> Just selected
+  Context (Just Producer { produces = selected }) _ -> Just (contractKey selected)
   _ -> Nothing
 
 -- 每个被需要的契约类型在注册集合中恰好有一个其他 Context 生产方，与 instance 一致性同理。
@@ -133,7 +160,7 @@ resolveDemands specifications consumer = do
         [] -> Left ("No Context produces " ++ contractName (contract demand) ++ " for " ++ name consumer)
         candidates -> Left ("Several Contexts produce " ++ contractName (contract demand) ++ " for "
           ++ name consumer ++ ": " ++ intercalate ", " (map name candidates)
-          ++ "; give each meaning its own type in Types.hs")
+          ++ "; give each meaning its own type, e.g. produces = refine @Representation @(Gen \"Name\")")
       case (access demand, typing provider) of
         (RequireAccess, Context _ Nothing) ->
           Left ("requires needs a Context with a require method: " ++ name provider)

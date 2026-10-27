@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -22,6 +23,31 @@ import Crawler.Types
 -- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
 type Root = SDK.Root ContextValues Errors
 type App = SDK.App ContextValues Errors
+
+-- 由生产方的 refine @Representation @(Gen "Name") 生成；只能由该生产方构造。
+newtype StartURL = StartURL (PageURL)
+deriving instance Eq (PageURL) => Eq StartURL
+deriving instance Show (PageURL) => Show StartURL
+
+newtype LinkedURL = LinkedURL (PageURL)
+deriving instance Eq (PageURL) => Eq LinkedURL
+deriving instance Show (PageURL) => Show LinkedURL
+
+newtype StartFetchedPage = StartFetchedPage (FetchedPage)
+deriving instance Eq (FetchedPage) => Eq StartFetchedPage
+deriving instance Show (FetchedPage) => Show StartFetchedPage
+
+newtype StartPageSummary = StartPageSummary (PageSummary)
+deriving instance Eq (PageSummary) => Eq StartPageSummary
+deriving instance Show (PageSummary) => Show StartPageSummary
+
+newtype LinkedFetchedPage = LinkedFetchedPage (FetchedPage)
+deriving instance Eq (FetchedPage) => Eq LinkedFetchedPage
+deriving instance Show (FetchedPage) => Show LinkedFetchedPage
+
+newtype LinkedPageSummary = LinkedPageSummary (PageSummary)
+deriving instance Eq (PageSummary) => Eq LinkedPageSummary
+deriving instance Show (PageSummary) => Show LinkedPageSummary
 
 -- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
 data MethodGen = LoadStartURLGen | ReadStartURLGen | LoadLinkedURLGen | ReadLinkedURLGen | FetchPageGen | ReadFetchedPageGen | ExtractPageGen | ReadPageSummaryGen | PrintPageGen | FetchLinkedPageGen | ReadFetchedLinkedPageGen | ExtractLinkedPageGen | ReadLinkedPageSummaryGen | PrintLinkedPageGen | CreateCrawlSessionGen | ReadCrawlSessionGen | OpenCrawlSessionGen | CloseCrawlSessionGen

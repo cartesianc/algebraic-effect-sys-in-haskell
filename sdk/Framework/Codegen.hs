@@ -21,7 +21,7 @@ data Entry = SingleTarget String | Workflow [String]
 type DemandRoutes = ([(String, [((String, String), String)])], [(String, String)])
 
 lowerProgram :: String -> [EffectSpec] -> Entry
-             -> Either String (String, String, [(String, String, String)], String, GraphPlan String, [String], DemandRoutes, [(String, String)])
+             -> Either String (String, String, [(String, String, String)], String, GraphPlan String, [String], DemandRoutes, [(String, String, Bool)])
 lowerProgram namespace specifications entry = do
   if any ((== "Root") . name) specifications
     then Left "Root is reserved for the superclass"
@@ -29,6 +29,7 @@ lowerProgram namespace specifications entry = do
   mapM_ checkInput specifications
   _ <- resolvedEither
   mapM_ checkDemandNames specifications
+  checkGenerated
   mapM_ checkError specifications
   checkErrorOverlap
   mapM_ (contextNames specifications . pure . name) specifications
@@ -62,15 +63,15 @@ lowerProgram namespace specifications entry = do
         ]
     Workflow _ -> pure []
   pure
-    ( unlines (contractHeader ++ runtimeAliases ++ methodIdentities ++ concat declarations
+    ( unlines (contractHeader ++ runtimeAliases ++ generatedContracts ++ methodIdentities ++ concat declarations
         ++ providerDeclarations ++ errorDeclaration ++ contextDeclarations)
     , unlines (programHeader ++ registrationSnapshot ++ structureDeclarations ++ singleEntry ++ astInterpreter selectedMethods)
     , concatMap instanceWrappers specifications
     , scopeHandlers ++ scopeCleanups ++ errorHandlers
     , graphPlan
-    , nub ([reference produced | specification <- contextSpecs
+    , nub ([assetReference produced | specification <- contextSpecs
              , Context (Just Producer { produces = produced }) _ <- [typing specification]]
-        ++ [reference (contract demand) | specification <- specifications, demand <- demands specification])
+        ++ [assetReference (contract demand) | specification <- specifications, demand <- demands specification])
     , (demandRoutes, contextMethods)
     , contractOwners
     )
@@ -102,10 +103,24 @@ lowerProgram namespace specifications entry = do
       | specification <- specifications ]
     -- 构造器归属：具名产物类型只能由其生产方的 instance 方法构造。
     contractOwners =
-      [ (typeName, name specification ++ "Effect")
+      [ (typeName, name specification ++ "Effect", generated)
       | specification <- contextSpecs
-      , Context (Just Producer { produces = TypeRef typeName }) _ <- [typing specification]
+      , Context (Just Producer { produces = produced }) _ <- [typing specification]
+      , (typeName, generated) <- case produced of
+          TypeRef typeName -> [(typeName, False)]
+          RefinedRef typeName _ -> [(typeName, True)]
+          _ -> []
       , validTypeName typeName ]
+    -- 生成的契约类型：由生产方的 refine 声明，名字唯一。
+    generatedDeclarations =
+      [ (generated, representation', name specification)
+      | specification <- contextSpecs
+      , Context (Just Producer { produces = RefinedRef generated representation' }) _ <- [typing specification] ]
+    -- 资产根只能引用 Types.hs 可见的类型；生成类型以其表示类型代入。
+    assetReference (RefinedRef _ representation') = reference representation'
+    assetReference (GenRef generated) = maybe generated reference
+      (listToMaybe [representation' | (declared, representation', _) <- generatedDeclarations, declared == generated])
+    assetReference other = reference other
     contextMethods =
       [ (name specification ++ "Effect", method)
       | specification <- contextSpecs
@@ -127,6 +142,7 @@ lowerProgram namespace specifications entry = do
       , "{-# LANGUAGE FlexibleContexts #-}"
       , "{-# LANGUAGE FlexibleInstances #-}"
       , "{-# LANGUAGE MultiParamTypeClasses #-}"
+      , "{-# LANGUAGE StandaloneDeriving #-}"
       , "{-# LANGUAGE TypeApplications #-}"
       , "{-# LANGUAGE TypeFamilies #-}"
       , "{-# LANGUAGE TypeOperators #-}"
@@ -238,6 +254,18 @@ lowerProgram namespace specifications entry = do
               ["(" ++ show consumer ++ ", " ++ method ++ ")" | (consumer, method) <- routes selectedAccess] ++ "]" ]
 
     carrierType = if isWorkflow then "App" else "Pure"
+
+    -- 生成的契约类型；不派生 Read，值只能由声明它的生产方构造。
+    -- Eq／Show 仅在表示类型具备时可用。
+    generatedContracts = case generatedDeclarations of
+      [] -> []
+      _ -> "-- 由生产方的 refine @Representation @(Gen \"Name\") 生成；只能由该生产方构造。"
+        : concat
+          [ [ "newtype " ++ generated ++ " = " ++ generated ++ " (" ++ reference representation' ++ ")"
+            , "deriving instance Eq (" ++ reference representation' ++ ") => Eq " ++ generated
+            , "deriving instance Show (" ++ reference representation' ++ ") => Show " ++ generated
+            , "" ]
+          | (generated, representation', _) <- generatedDeclarations ]
 
     runtimeAliases =
       [ "-- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。"
@@ -398,6 +426,35 @@ lowerProgram namespace specifications entry = do
           Left ("Scoped requests at most one resource Context: " ++ name specification)
         _ -> pure ()
 
+    -- Gen 名由生成器产出为 newtype：须由某个生产方以 refine 声明且只声明一次，
+    -- 不与生成区的固定名字或 effect 派生名冲突；表示类型须是普通类型。
+    checkGenerated = do
+      let declared = [generated | (generated, _, _) <- generatedDeclarations]
+          reserved = ["Root", "App", "Pure", "Provides", "ContextValues", "Errors", "MethodGen", "Results"]
+            ++ concat [[name s, name s ++ "Effect", name s ++ "Error", name s ++ "Failure"] | s <- specifications]
+      case [generated | generated <- nub declared, length (filter (== generated) declared) > 1] of
+        generated : _ -> Left ("Gen \"" ++ generated ++ "\" is declared by more than one refine; each generated type has one producer")
+        [] -> pure ()
+      mapM_ (\(generated, representation', owner) -> do
+          if not (validTypeName generated)
+            then Left ("Gen name must be a Haskell type name: " ++ generated ++ " in " ++ owner) else pure ()
+          if generated `elem` reserved
+            then Left ("Gen name collides with a generated or effect name: " ++ generated ++ " in " ++ owner) else pure ()
+          case representation' of
+            TypeRef _ -> pure ()
+            _ -> Left ("refine needs a business or library type as its representation: " ++ generated ++ " in " ++ owner))
+        generatedDeclarations
+      mapM_ (\specification -> do
+          case typing specification of
+            Context (Just Producer { produces = GenRef generated }) _ ->
+              Left ("Declare a generated type with refine @Representation @(Gen \"" ++ generated ++ "\"): " ++ name specification)
+            _ -> pure ()
+          mapM_ (\demand -> case contract demand of
+              GenRef generated | generated `notElem` declared ->
+                Left ("Gen \"" ++ generated ++ "\" demanded by " ++ name specification
+                  ++ " is not declared; its producer declares it with refine @Representation @(Gen \"" ++ generated ++ "\")")
+              _ -> pure ()) (demands specification)) specifications
+
     validTypeName selected = case selected of
       first : rest -> isUpper first && all (\character -> isAlphaNum character || character `elem` "_'") rest
       [] -> False
@@ -552,6 +609,8 @@ lowerProgram namespace specifications entry = do
          ]
 
     reference (TypeRef typeName) = typeName
+    reference (GenRef generated) = generated
+    reference (RefinedRef generated _) = generated
     reference (OutputRef cause value) =
       "SDK.Output (" ++ reference cause ++ ") (" ++ reference value ++ ")"
 

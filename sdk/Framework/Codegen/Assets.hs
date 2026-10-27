@@ -36,8 +36,9 @@ import Text.Read (readMaybe)
 
 -- 新契约及包装副本只作为内存 target；检查失败不改写 Generated。
 -- 同时加载手写与生成模块，但不在同一业务导入链混入两份 instance。
--- owners 列出 Context 产物类型及其生产方的类：这些类型只能在生产方的方法中构造。
-checkAssets :: String -> [(String, String)] -> [String] -> [(String, String)] -> [(String, String)]
+-- owners 列出 Context 产物类型、其生产方的类，以及该类型是否由生成器产出（refine @T @(Gen "X")）：
+-- 这些类型只能在生产方的方法中构造。
+checkAssets :: String -> [(String, String)] -> [String] -> [(String, String)] -> [(String, String, Bool)]
             -> Maybe String -> IO String
 checkAssets namespace generated roots methods owners native = do
   library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
@@ -58,12 +59,13 @@ checkAssets namespace generated roots methods owners native = do
         rootModule = namespace ++ ".Generated.AssetRoots"
         rootSource = unlines $
           ["{-# LANGUAGE DataKinds, TypeOperators, TypeFamilies #-}"
-          , "module " ++ rootModule ++ " where", "import " ++ namespace ++ ".Types"]
+          , "module " ++ rootModule ++ " where", "import " ++ namespace ++ ".Types"
+          , "import qualified " ++ namespace ++ ".Generated.Effects as GeneratedContracts"]
           ++ ["type AssetRoot" ++ show index ++ " = " ++ contract
                | (index, contract) <- zip [0 :: Int ..] roots]
-          ++ ["type OwnedContract" ++ show index ++ " = " ++ contract
-               | (index, contract) <- zip [0 :: Int ..] ownedTypes]
-        ownedTypes = nub (map fst owners)
+          ++ ["type OwnedContract" ++ show index ++ " = " ++ (if generated then "GeneratedContracts." else "") ++ contract
+               | (index, (contract, generated)) <- zip [0 :: Int ..] ownedTypes]
+        ownedTypes = nub [(contract, generated) | (contract, _, generated) <- owners]
         candidates = case native of
           Nothing -> filter ((== "Effects") . fst) generated
           Just _ -> generated
@@ -105,9 +107,9 @@ checkAssets namespace generated roots methods owners native = do
               | (contract, classes, selected) <- ownedTyCons, field <- tyConFieldLabels selected ]
           }
         ownedTyCons =
-          [ (contract, [owner | (produced, owner) <- owners, produced == contract], selected)
-          | (index, body) <- rootAliases "OwnedContract", contract <- take 1 (drop index ownedTypes)
-          , selected <- typeConstructors body, selected `elem` localTypes, isAlgTyCon selected ]
+          [ (contract, [owner | (produced, owner, _) <- owners, produced == contract], selected)
+          | (index, body) <- rootAliases "OwnedContract", (contract, generated) <- take 1 (drop index ownedTypes)
+          , selected <- typeConstructors body, generated || selected `elem` localTypes, isAlgTyCon selected ]
         failures = concatMap (checkModule namespace methods symbols ownership) checked
     unless (null failures) $ liftIO (ioError (userError (intercalate "\n" failures)))
     pure (renderAssets namespace (sortOn assetType (map describeAsset assets)))

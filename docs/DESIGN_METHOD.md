@@ -138,8 +138,10 @@ Context 在 typing.request 的 Producer 中声明 handler 名与 produces 业务
 写法为 requests @T／requires @T，不写来源；生成器在注册集合中按类型唯一解析，类型即装配键。
 多个生产方一律报错，不按距离、ScopeTree 或拓扑打破平局：自动装配只在唯一时成立，新增生产方只会让生成失败，不会静默改变已有接线。
 这与 Dagger／Guice 对重复绑定、Haskell 对 instance 一致性的处理相同。
-不同业务含义即使表示相同（例如当前用户与目标用户的 UserId），也在 Types.hs 中使用不同类型，必要时为 newtype；
-是否需要新类型由唯一生产方规则决定，而不是个人选择：出现第二个生产方时生成报错，修复方式固定为引入新类型，可由前端机械完成。
+不同业务含义即使表示相同（例如当前用户与目标用户的 UserId），也使用不同类型。仅为区分含义的类型不手写：
+生产方声明 produces = refine @UserId @(Gen "CurrentUser")，生成器在 Generated/Effects 中产出 newtype CurrentUser，消费方写 requests @(Gen "CurrentUser")，handler 照常写 request @CurrentUser。
+Gen 标出"此名由生成器产出"：手写声明看不到 Generated，因此以类型级字符串写在契约位置，契约仍一律写在 @ 之后；Effects.hs 为此开启 DataKinds，只影响该模块的类型书写，不改变解析与运行语义。
+是否需要新类型由唯一生产方规则决定，而不是个人选择：出现第二个生产方时生成报错，修复方式固定为把其中一个生产方改为 refine，只改 Effects.hs。生成类型不派生 Read，值只能由声明它的生产方构造。
 误用在 GHC 类型检查时即被拒绝，不依赖 handler 内的值语义。曾设计过的独立角色层（Roles.hs、roleRef）与 `from` 已取消：前者让类型定义有了第二个位置和第二种引用写法，后者让来源选择分散到每个需求。
 细化类型同时决定 scope 边界：细化后的资源、开启输入与 Scoped 是不同注册，ScopeTree 以注册为节点即可区分。一个 Scoped 注册服务多种细化类型尚无声明形式；引入时节点身份须改为（Scoped 注册，细化资源类型），运行时 scope 状态的各项记账随之改用该组合键。
 消费配置形成关联 Require（按 demands 顺序的元组）和 Provides 契约约束，不能因该 effect 自身也是 Context 就省略其消费契约。

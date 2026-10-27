@@ -204,15 +204,15 @@ Input 继续表达操作或能力的前提关系。业务值来源单独表达�
 ```haskell
 typing = Context
   { request = Just Producer
-      { handler = "extractLinkedPage", produces = typeRef @LinkedPageSummary }
+      { handler = "extractLinkedPage", produces = refine @PageSummary @(Gen "LinkedPageSummary") }
   , require = Just "readLinkedPageSummary"
   }
-demands = [requests @LinkedFetchedPage]
+demands = [requests @(Gen "LinkedFetchedPage")]
 ```
 
 typing 中是本 effect 提供的方法与生产契约；demands 中是本 effect 需要的契约与取值模式，不指名生产方的类或方法。
 requests 调用来源的生产入口，requires 读取来源的已有绑定。来源在注册集合中按类型唯一解析，多个生产方即报错。
-起始页与链接页两条链的抓取结果表示相同，含义不同，因此在 Types.hs 中分别为 StartFetchedPage／LinkedFetchedPage 等 newtype，
+起始页与链接页两条链的抓取结果表示相同，含义不同，因此各自的生产方以 refine 声明 StartFetchedPage／LinkedFetchedPage 等生成类型，
 生成器不会按距离或拓扑替用户选择来源。request 加入解析出的生产者能力，保留原 Input；不再要求生产者的祖先已经包含消费者原 Input。
 
 输入契约与 typing 共同决定方法签名。当前生成器由 demands 形成关联 Require（单输入直接使用该契约，多输入按声明顺序排为元组），

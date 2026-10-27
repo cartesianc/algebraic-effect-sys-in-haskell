@@ -140,14 +140,17 @@ instance MakeNumberEffect Pure where
 
 从调用点就能看出是否会重跑生产链。
 
-**值从哪里来由类型决定**：每个被需要的类型，在注册集合中必须恰好有一个生产方，生成器会自动接上。如果两个 effect 产出同一个类型，生成会报错，而不会替你选一个。同一种数据有不同含义时，在 `Types.hs` 里用不同的 `newtype` 区分，例如 [Crawler](demo/Crawler/Types.hs) 里的起始页和链接页：
+**值从哪里来由类型决定**：每个被需要的类型，在注册集合中必须恰好有一个生产方，生成器会自动接上。如果两个 effect 产出同一个类型，生成会报错，而不会替你选一个。同一种数据有不同含义时，让生产方声明一个由生成器产出的类型，不必手写。例如 [Crawler](demo/Crawler/Effects.hs) 里起始页和链接页的 URL 都是 `PageURL`：
 
 ```haskell
-newtype StartURL  = StartURL PageURL
-newtype LinkedURL = LinkedURL PageURL
+-- 生产方：把 PageURL 细化成生成类型 StartURL
+produces = refine @PageURL @(Gen "StartURL")
+
+-- 消费方：引用这个生成类型
+demands = [requests @(Gen "StartURL")]
 ```
 
-这样两者在类型上就不能混用，接线也不会有歧义。
+生成器在 `Generated/Effects.hs` 中产出 `newtype StartURL = StartURL PageURL`，handler 里照常写 `StartURL (PageURL url) <- request @StartURL`。`Gen "..."` 表示"这个名字由生成器产出"，因此 `Effects.hs` 需要开启 `DataKinds`。两种 URL 在类型上不能混用，接线也不会有歧义。
 
 ### 资源：`Scoped`
 
@@ -233,7 +236,7 @@ cabal run crawler-demo -- --structure
 
 | 情况 | 处理方式 |
 | --- | --- |
-| 同一个类型有多个生产方 | 用不同的 `newtype` 区分含义 |
+| 同一个类型有多个生产方 | 把其中的生产方改为 `refine @T @(Gen "名字")`，生成区分含义的类型 |
 | 方法体里 `request @T`／`require @T` 的 `T` 没有在 `demands` 中声明 | 补上声明 |
 | 直接调用其他 effect 的 Context 方法（如 `getFileName`） | 改用 `request @T`／`require @T` |
 | 在生产方以外构造某个 Context 产物类型的值（例如在消费方写 `StartURL (...)`） | 值应由它的生产方产生；消费方用 `request`／`require` 取得，只做模式匹配 |
@@ -255,7 +258,7 @@ cabal run crawler-demo -- --structure
 | --- | --- | --- |
 | [RequestBenchmark](demo/RequestBenchmark) | 取值、纯计算链、`raise` | 见快速开始 |
 | [FileDemo](demo/FileDemo) | 文件资源的开启、读写、自动关闭，Error 处置 | `cabal run file-demo` |
-| [Crawler](demo/Crawler) | 并行抓取解析、顺序打印，用 newtype 区分同类数据 | `cabal run crawler-demo` |
+| [Crawler](demo/Crawler) | 并行抓取解析、顺序打印，用生成类型区分同类数据 | `cabal run crawler-demo` |
 | [OpenFilesDemo](demo/OpenFilesDemo) | 一个资源持有多个文件，链结束后自动关闭与重开 | `cabal run open-files-demo` |
 | [ScopeInstancesDemo](demo/ScopeInstancesDemo) | 按参数区分资源实例、复用与重开 | `cabal run scope-instances-demo` |
 | [ScopeReuseDemo](demo/ScopeReuseDemo) | 并行的链共享同一个资源实例 | `cabal run scope-reuse-demo` |
