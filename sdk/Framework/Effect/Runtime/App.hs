@@ -4,12 +4,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- IO 载体：Context 绑定携带值快照和 scope 归属，生命周期操作跟随该绑定。
-module Framework.Effect.Runtime.App (App, runAppWith, withScopeCleanups) where
+module Framework.Effect.Runtime.App (App, RunStore, newRunStore, runAppWith, withScopeCleanups) where
 
 import Framework.Effect.Binding
 import Framework.Effect.Contract
 import Framework.Effect.Scope
-import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeException, fromException, mask, mask_, throwIO, try, finally)
 import Control.Monad (forM, forM_, when)
 import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
@@ -21,6 +21,23 @@ import Data.Maybe (catMaybes, fromMaybe, isJust)
 import Data.Unique (Unique, newUnique)
 
 type Bound env cause = Binding env (String, ScopeInstance env cause)
+
+-- 一次 interpreter 运行共享的资产 state。不属于任何 scope 实例的绑定在这里跨 Node 保存；
+-- scope 资源绑定仍只按实例归属解析。forcing 为每个来源提供单次求值锁。
+data RunStore env cause = RunStore
+  { runAssets :: IORef (ScopeBindings env cause)
+  , runForcing :: MVar [(String, MVar ())]
+  }
+
+newRunStore :: IO (RunStore env cause)
+newRunStore = RunStore <$> newIORef [] <*> newMVar []
+
+sourceLock :: RunStore env cause -> String -> IO (MVar ())
+sourceLock store source = modifyMVar (runForcing store) $ \locks -> case lookup source locks of
+  Just lock -> pure (locks, lock)
+  Nothing -> do
+    lock <- newMVar ()
+    pure ((source, lock) : locks, lock)
 
 data Environment env cause = Environment
   { emptyValues :: env
@@ -40,6 +57,9 @@ data Environment env cause = Environment
   , consumer :: ScopeUser env cause
   , cleanupPermit :: Maybe (Unique, ScopeInstance env cause)
   , cleanupBusy :: Maybe (Failure cause)
+  , runStore :: RunStore env cause
+  -- 当前生产由 require 按需求值触发；进入任一 handler 后复位。
+  , forcedRequire :: Bool
   }
 
 data Opening env cause = Opening
@@ -101,8 +121,11 @@ ownedNames environment = map (scopeName . family) (openings environment)
   ++ map (scopeName . closeFamily) (closings environment)
 
 rememberBinding :: Environment env cause -> String -> Bound env cause -> IO ()
-rememberBinding environment source value = atomicModifyIORef' (bindings environment) $ \current ->
-  (bind source value current, ())
+rememberBinding environment source value = do
+  atomicModifyIORef' (bindings environment) $ \current -> (bind source value current, ())
+  -- 无 scope 归属的资产同时写入运行级 state，供后续 Node 的 require 读取。
+  when (null (bindingOwners value)) $
+    atomicModifyIORef' (runAssets (runStore environment)) $ \current -> (bind source value current, ())
 
 -- 优先使用本次调用已捕获的不可变绑定。跨链首次读取只接受唯一来源绑定。
 -- 多份绑定不按时间排序、不按 scope 数量选择、不执行生产者。
@@ -126,7 +149,14 @@ resolveBinding environment source = do
                 phases <- mapM (fmap scopePhase . readIORef . scopeRecord . snd) (bindingOwners bound)
                 pure (if any closed phases then Nothing else Just bound)
       case candidates of
-        [] -> pure (Right Nothing)
+        [] -> do
+          -- scope 中没有时读取运行级 state；读到后捕获到本次调用，后续 request 不改写它。
+          asset <- lookup source <$> readIORef (runAssets (runStore environment))
+          case asset of
+            Nothing -> pure (Right Nothing)
+            Just value -> do
+              atomicModifyIORef' (bindings environment) $ \current -> (bind source value current, ())
+              pure (Right (Just value))
         [value] -> rememberBinding environment source value >> pure (Right (Just value))
         _ -> pure (Left (AmbiguousContextBinding source))
   where
@@ -353,9 +383,24 @@ instance ContextStore env (App env cause) where
         rawIO (maybe (pure ()) (\slot -> saveBinding slot source value) selected)
       _ -> pure ()
   currentHandler = AppRun (asks caller)
-  enterHandler name (AppRun action) = AppRun (local (\env -> env { caller = Just name }) action)
+  enterHandler name (AppRun action) = AppRun (local (\env -> env { caller = Just name, forcedRequire = False }) action)
   enterContext name (AppRun action) = AppRun $ local
-    (\env -> env { caller = Just name, contexts = name : contexts env }) action
+    (\env -> env { caller = Just name, contexts = name : contexts env, forcedRequire = False }) action
+  -- 诊断、收尾与 scope 资源不按需求值：资源只能经 open 取得，诊断不预执行 Context。
+  -- 同一来源的并发求值持锁串行，后到者在锁内重新读取 state。
+  forceContext source (AppRun action) = AppRun $ do
+    environment <- ask
+    let resource = any ((== Just source) . scopeContextSource) (scopes environment)
+        allowed = not resource && not (isJust (originalFailure environment))
+          && not (cleaningScopes environment) && null (closings environment)
+    if not allowed then pure Nothing else do
+      lock <- liftIO (sourceLock (runStore environment) source)
+      let inside = environment { caller = Nothing, forcedRequire = True }
+      result <- liftIO (withMVar lock (const (runExceptT (runReaderT action inside))))
+      either throwError (pure . Just) result
+  productionAccess = AppRun $ do
+    forced <- asks forcedRequire
+    pure (if forced then RequiredInput else RequestedInput)
   recordContextInput access value = do
     environment <- AppRun ask
     case openings environment of
@@ -464,7 +509,7 @@ runDiagnostic environment problem selected callback = do
         values <- newIORef restored
         let inside = environment
               { bindings = values, caller = Nothing, contexts = [], openings = [], closings = []
-              , originalFailure = Just problem, diagnosticOwner = owner }
+              , originalFailure = Just problem, diagnosticOwner = owner, forcedRequire = False }
             AppRun action = runErrorHandler selected callback
         result <- runExceptT (runReaderT action inside)
         -- runErrorHandler 接回 detect/resolve 的 Failure；不捕获取消等原生 IO 异常。
@@ -506,7 +551,7 @@ captureScopeCleanup environment attempt slot =
               let inside = environment
                     { bindings = values, caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
                     , errorPath = []
-                    , originalFailure = Nothing, diagnosticOwner = Nothing, cleaningScopes = True
+                    , originalFailure = Nothing, diagnosticOwner = Nothing, cleaningScopes = True, forcedRequire = False
                     , consumer = cleanupUser, cleanupPermit = Just (permit, slot)
                     , cleanupBusy = Just (fault name (wrapFault attempt) ScopeInUse) }
               restore (runExceptT (runReaderT close inside)) `finally` detachScopeUser cleanupUser
@@ -600,12 +645,12 @@ runClose name wrap (AppRun action) = AppRun $ do
   either throwError pure result
 
 -- consumer 覆盖整个末端调用、诊断和结果消费；嵌套方法返回不提前释放借用。
-runAppWith :: (Either (Failure cause) value -> IO ()) -> Scopes env cause -> env
+runAppWith :: (Either (Failure cause) value -> IO ()) -> RunStore env cause -> Scopes env cause -> env
            -> App env cause value -> IO (Either (Failure cause) value)
-runAppWith consume handlers initial (AppRun action) = mask $ \restore -> do
+runAppWith consume store handlers initial (AppRun action) = mask $ \restore -> do
   values <- newIORef []
   user <- newScopeUser
-  let environment = Environment initial values handlers Nothing [] [] [] [] [] [] Nothing Nothing [] False user Nothing Nothing
+  let environment = Environment initial values handlers Nothing [] [] [] [] [] [] Nothing Nothing [] False user Nothing Nothing store False
   completed <- try $ restore $ do
     outcome <- runExceptT (runReaderT action environment)
     consume outcome

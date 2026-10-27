@@ -3,7 +3,7 @@
 module Framework.Workflow.Execution (runAST, runStructuredAST) where
 
 import Framework.Effect.Contract (Failure, Output(..))
-import Framework.Effect.Runtime (Target, targetName, lowerTarget, configureTargets)
+import Framework.Effect.Runtime (Target, RunStore, newRunStore, targetName, lowerTargetIn, configureTargets)
 import Framework.Recursion (Algebra)
 import Framework.Workflow.AST (AST, WorkflowF(..), foldAST)
 import Framework.Workflow.Structure (ProgramStructure(..), StructureError(..), scopeRelations, validateWorkflowEntries)
@@ -43,15 +43,16 @@ runParalleled actions = withWorkers actions $ \workers -> do
 -- 先解析全部 Node 引用；装配失败时不执行任何业务动作。
 -- 不预先生产 Context，也不在外部补出 Input 链。
 executionAlgebra
-  :: (String -> Either problem (method, Target IO environment cause value))
+  :: RunStore environment cause
+  -> (String -> Either problem (method, Target IO environment cause value))
   -> Algebra WorkflowF (Either problem ([method], Execution cause value))
-executionAlgebra resolve (Node selected) = do
+executionAlgebra store resolve (Node selected) = do
   (method, entry) <- resolve selected
-  pure ([method], (: []) <$> ExceptT (lowerTarget entry))
-executionAlgebra _ (Chained children) = do
+  pure ([method], (: []) <$> ExceptT (lowerTargetIn store entry))
+executionAlgebra _ _ (Chained children) = do
   parts <- sequence children
   pure (concatMap fst parts, concat <$> sequence (map snd parts))
-executionAlgebra _ (Parallel children) = do
+executionAlgebra _ _ (Parallel children) = do
   parts <- sequence children
   pure (concatMap fst parts, ExceptT $ do
     outcomes <- runParalleled (map (runExceptT . snd) parts)
@@ -63,7 +64,9 @@ runAST
   :: AST -> [Target IO environment cause value]
   -> IO (Output cause [value])
 runAST tree entries = do
-  (_, action) <- either (ioError . userError) pure (foldAST (executionAlgebra resolve) tree)
+  -- 一次运行共享一份资产 state；各 Node 的 require 可读取先前 Node 产出的资产。
+  store <- newRunStore
+  (_, action) <- either (ioError . userError) pure (foldAST (executionAlgebra store resolve) tree)
   configureTargets [] entries
   either Failed Succ <$> runExceptT action
   where
@@ -81,8 +84,9 @@ runStructuredAST
   -> [Target IO environment cause value]
   -> IO (Output cause [value])
 runStructuredAST structure tree entries = do
+  store <- newRunStore
   action <- either (ioError . userError . show) pure $ do
-    (roots, prepared) <- foldAST (executionAlgebra resolve) tree
+    (roots, prepared) <- foldAST (executionAlgebra store resolve) tree
     validateWorkflowEntries structure roots
     pure prepared
   configureTargets (scopeRelations structure) entries

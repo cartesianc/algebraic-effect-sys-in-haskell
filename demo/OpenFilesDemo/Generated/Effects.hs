@@ -44,7 +44,7 @@ class (Effect Root m) => FileLocationsEffect m where
   fileNames :: m (Produce FileLocations)
   readFileNames :: m (Produce FileLocations)
   readFileNames = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileLocations" ContextBindingError [("FileResources", SDK.RequireValue), ("HoldFiles", SDK.RequestValue)] (Just (SDK.ScopeInput "FileLocations")) boundFileLocations
+    SDK.readContext "FileLocations" ContextBindingError [("FileResources", SDK.RequireValue), ("HoldFiles", SDK.RequestValue)] (Just (SDK.ScopeInput "FileLocations")) boundFileLocations fileNames
   {-# MINIMAL fileNames #-}
 
 instance (Monad m, Effect Root m, FileLocationsEffect m) => Effect FileLocations m where
@@ -62,7 +62,7 @@ class (Effect Root m, Provides FileNames m) => FileResourcesEffect m where
   openedFiles :: m (Produce FileResources)
   readOpenedFiles :: m (Produce FileResources)
   readOpenedFiles = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileResources" ContextBindingError [("FileSession", SDK.RequestValue), ("InspectFiles", SDK.RequireValue), ("FinishInspection", SDK.RequireValue)] Nothing boundFileResources
+    SDK.readContext "FileResources" ContextBindingError [("FileSession", SDK.RequestValue), ("InspectFiles", SDK.RequireValue), ("FinishInspection", SDK.RequireValue)] Nothing boundFileResources openedFiles
   {-# MINIMAL openedFiles #-}
 
 instance (Monad m, Effect Root m, FileResourcesEffect m) => Effect FileResources m where

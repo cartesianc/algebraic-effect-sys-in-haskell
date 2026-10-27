@@ -63,14 +63,14 @@ generatedEffectGraph = SDK.EffectGraph
       , SDK.MethodDefinition WriteFirstGen WriteFirstGen SDK.HandlerMethod (SDK.Sequence [SDK.Call FilePathsGen, SDK.Call OpenSharedFileGen, SDK.Call ReadOpenedFileGen])
       , SDK.MethodDefinition OpenSharedFileGen OpenSharedFileGen SDK.ScopeOpen (SDK.Call OpenedFileGen)
       , SDK.MethodDefinition OpenedFileGen OpenedFileGen SDK.ContextRequest (SDK.Call ReadFilePathsGen)
-      , SDK.MethodDefinition ReadFilePathsGen FilePathsGen SDK.ContextRequire (SDK.Empty)
+      , SDK.MethodDefinition ReadFilePathsGen FilePathsGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call FilePathsGen])
       , SDK.MethodDefinition ReadOpenedFileGen OpenedFileGen SDK.ContextRequire (SDK.Empty)
       , SDK.MethodDefinition WriteSecondGen WriteSecondGen SDK.HandlerMethod (SDK.Sequence [SDK.Call FilePathsGen, SDK.Call OpenSharedFileGen, SDK.Call ReadOpenedFileGen])
       , SDK.MethodDefinition WriteThirdGen WriteThirdGen SDK.HandlerMethod (SDK.Sequence [SDK.Call FilePathsGen, SDK.Call OpenSharedFileGen, SDK.Call ReadOpenedFileGen])
       , SDK.MethodDefinition VerifyReuseGen VerifyReuseGen SDK.HandlerMethod (SDK.Call FilePathsGen)
       ]
   , SDK.graphRoots = [PrepareProbeGen, WriteFirstGen, WriteSecondGen, WriteThirdGen, VerifyReuseGen]
-  , SDK.graphReferences = [(PrepareProbeGen, FilePathsGen), (WriteFirstGen, FilePathsGen), (WriteFirstGen, OpenSharedFileGen), (WriteFirstGen, ReadOpenedFileGen), (OpenSharedFileGen, OpenedFileGen), (OpenedFileGen, ReadFilePathsGen), (WriteSecondGen, FilePathsGen), (WriteSecondGen, OpenSharedFileGen), (WriteSecondGen, ReadOpenedFileGen), (WriteThirdGen, FilePathsGen), (WriteThirdGen, OpenSharedFileGen), (WriteThirdGen, ReadOpenedFileGen), (VerifyReuseGen, FilePathsGen)]
+  , SDK.graphReferences = [(PrepareProbeGen, FilePathsGen), (WriteFirstGen, FilePathsGen), (WriteFirstGen, OpenSharedFileGen), (WriteFirstGen, ReadOpenedFileGen), (OpenSharedFileGen, OpenedFileGen), (OpenedFileGen, ReadFilePathsGen), (ReadFilePathsGen, FilePathsGen), (WriteSecondGen, FilePathsGen), (WriteSecondGen, OpenSharedFileGen), (WriteSecondGen, ReadOpenedFileGen), (WriteThirdGen, FilePathsGen), (WriteThirdGen, OpenSharedFileGen), (WriteThirdGen, ReadOpenedFileGen), (VerifyReuseGen, FilePathsGen)]
   , SDK.graphScopes = [OpenSharedFileGen]
   , SDK.graphScopePaths = [[], [OpenSharedFileGen]]
   , SDK.graphRootPaths =

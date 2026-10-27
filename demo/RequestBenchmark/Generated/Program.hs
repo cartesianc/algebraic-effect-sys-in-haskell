@@ -52,10 +52,10 @@ generatedEffectGraph = SDK.EffectGraph
       , SDK.MethodDefinition AddedValueGen AddedValueGen SDK.ContextRequest (SDK.Call NumberValueGen)
       , SDK.MethodDefinition NumberValueGen NumberValueGen SDK.ContextRequest (SDK.Call DemoInputsGen)
       , SDK.MethodDefinition DemoInputsGen DemoInputsGen SDK.ContextRequest (SDK.Empty)
-      , SDK.MethodDefinition ReadDemoInputsGen DemoInputsGen SDK.ContextRequire (SDK.Empty)
+      , SDK.MethodDefinition ReadDemoInputsGen DemoInputsGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call DemoInputsGen])
       ]
   , SDK.graphRoots = [RenderedValueGen]
-  , SDK.graphReferences = [(RenderedValueGen, AddedValueGen), (RenderedValueGen, ReadDemoInputsGen), (AddedValueGen, NumberValueGen), (NumberValueGen, DemoInputsGen)]
+  , SDK.graphReferences = [(RenderedValueGen, AddedValueGen), (RenderedValueGen, ReadDemoInputsGen), (AddedValueGen, NumberValueGen), (NumberValueGen, DemoInputsGen), (ReadDemoInputsGen, DemoInputsGen)]
   , SDK.graphScopes = []
   , SDK.graphScopePaths = [[]]
   , SDK.graphRootPaths =

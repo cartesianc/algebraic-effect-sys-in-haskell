@@ -59,13 +59,13 @@ generatedEffectGraph = SDK.EffectGraph
       , SDK.MethodDefinition OpenFileSessionGen OpenFileSessionGen SDK.ScopeOpen (SDK.Call OpenedFileGen)
       , SDK.MethodDefinition OpenedFileGen OpenedFileGen SDK.ContextRequest (SDK.Sequence [SDK.Call ValidateFileNameGen, SDK.Call ReadFileNameGen])
       , SDK.MethodDefinition ValidateFileNameGen ValidateFileNameGen SDK.HandlerMethod (SDK.Call ReadFileNameGen)
-      , SDK.MethodDefinition ReadFileNameGen FileNameGen SDK.ContextRequire (SDK.Empty)
+      , SDK.MethodDefinition ReadFileNameGen FileNameGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call FileNameGen])
       , SDK.MethodDefinition WriteFileTextGen WriteFileTextGen SDK.HandlerMethod (SDK.Sequence [SDK.Call FileTextGen, SDK.Call ReadOpenedFileGen])
       , SDK.MethodDefinition FileTextGen FileTextGen SDK.ContextRequest (SDK.Sequence [SDK.Call OpenFileSessionGen, SDK.Call ReadOpenedFileGen])
       , SDK.MethodDefinition ReadOpenedFileGen OpenedFileGen SDK.ContextRequire (SDK.Empty)
       ]
   , SDK.graphRoots = [RunFileWorkflowGen]
-  , SDK.graphReferences = [(RunFileWorkflowGen, FileNameGen), (RunFileWorkflowGen, OpenFileSessionGen), (RunFileWorkflowGen, WriteFileTextGen), (OpenFileSessionGen, OpenedFileGen), (OpenedFileGen, ValidateFileNameGen), (OpenedFileGen, ReadFileNameGen), (ValidateFileNameGen, ReadFileNameGen), (WriteFileTextGen, FileTextGen), (WriteFileTextGen, ReadOpenedFileGen), (FileTextGen, OpenFileSessionGen), (FileTextGen, ReadOpenedFileGen)]
+  , SDK.graphReferences = [(RunFileWorkflowGen, FileNameGen), (RunFileWorkflowGen, OpenFileSessionGen), (RunFileWorkflowGen, WriteFileTextGen), (OpenFileSessionGen, OpenedFileGen), (OpenedFileGen, ValidateFileNameGen), (OpenedFileGen, ReadFileNameGen), (ValidateFileNameGen, ReadFileNameGen), (ReadFileNameGen, FileNameGen), (WriteFileTextGen, FileTextGen), (WriteFileTextGen, ReadOpenedFileGen), (FileTextGen, OpenFileSessionGen), (FileTextGen, ReadOpenedFileGen)]
   , SDK.graphScopes = [OpenFileSessionGen]
   , SDK.graphScopePaths = [[OpenFileSessionGen]]
   , SDK.graphRootPaths =

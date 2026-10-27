@@ -11,14 +11,16 @@ import Data.Maybe (fromMaybe)
 
 data ContextAccess = RequestValue | RequireValue deriving (Eq, Show)
 
+-- require 是一个表达式：值只来自 request，求得后存入 state；require 读取 state。
+-- state 中尚无值时转去求值同一个 request（传入的生产入口），结果写回 state，相当于 thunk。
 readContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
   => String -> (ContextFault -> cause) -> [(String, ContextAccess)] -> Maybe (value -> ScopeInput)
-  -> (environment -> Maybe value) -> m value
-readContext contextName wrap accesses compareValue select =
-  requireContext contextName wrap accesses (readBoundContext contextName wrap compareValue select)
+  -> (environment -> Maybe value) -> m value -> m value
+readContext contextName wrap accesses compareValue select produce =
+  requireContext contextName wrap accesses (readBoundContext contextName wrap compareValue select (Just produce))
 
--- 默认和用户覆盖的读取入口都检查来源声明；不改变 caller，也不重新执行生产者。
+-- 默认和用户覆盖的读取入口都检查来源声明；不改变 caller，state 中已有值时不重新执行生产者。
 requireContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
   => String -> (ContextFault -> cause) -> [(String, ContextAccess)] -> m value -> m value
@@ -38,17 +40,31 @@ contextAccess selected wrap accesses = do
       Nothing -> failEffect selected (wrap (UndeclaredContextAccess consumer))
         ("No context request/require from " ++ consumer ++ " to " ++ selected)
 
--- 只由已经校验过的入口读取绑定；显式读取即使声明了 request 也不会刷新。
+-- 只由已经校验过的入口读取 state；已有值时即使声明了 request 也不刷新。
+-- 尚无值时按需求值一次 request（载体负责单次求值，并在诊断、收尾或 scope 资源时拒绝）；
+-- 求值失败不写入 state，原失败继续传播，下次 require 会再次求值。
 readBoundContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
   => String -> (ContextFault -> cause) -> Maybe (value -> ScopeInput)
-  -> (environment -> Maybe value) -> m value
-readBoundContext contextName wrap compareValue select = do
-  resolved <- readContextBinding contextName select
-  bound <- either (\problem -> failEffect contextName (wrap problem) (show problem)) pure resolved
-  value <- maybe (failEffect contextName (wrap ContextNotInitialized) (show ContextNotInitialized)) pure bound
-  observeInput RequiredInput compareValue value
-  pure value
+  -> (environment -> Maybe value) -> Maybe (m value) -> m value
+readBoundContext contextName wrap compareValue select produce = do
+  bound <- lookupBound
+  case bound of
+    Just value -> observed value
+    Nothing -> case produce of
+      Nothing -> notInitialized
+      Just production -> do
+        -- 等待并发求值后再查一次 state，避免同一资产重复求值。
+        forced <- forceContext contextName (lookupBound >>= maybe production observed)
+        maybe notInitialized pure forced
+  where
+    lookupBound = do
+      resolved <- readContextBinding contextName select
+      either (\problem -> failEffect contextName (wrap problem) (show problem)) pure resolved
+    observed value = do
+      observeInput RequiredInput compareValue value
+      pure value
+    notInitialized = failEffect contextName (wrap ContextNotInitialized) (show ContextNotInitialized)
 
 -- 只观察 instance 实际取得的值，不触发任何生产动作。
 observeInput :: ContextStore environment m => ScopeInputAccess -> Maybe (value -> ScopeInput) -> value -> m ()
@@ -75,12 +91,14 @@ callContext
 callContext selected wrap accesses compareValue select synchronize produce = do
   access <- contextAccess selected wrap accesses
   case access of
-    Just RequireValue -> readBoundContext selected wrap compareValue select
+    Just RequireValue -> readBoundContext selected wrap compareValue select (Just refresh)
     _ -> refresh
   where
     refresh = do
+      -- 按需求值的 require 生产时仍按 require 被 scope 开启参数观察（同参共享）。
+      mode <- productionAccess
       value <- requestContext selected synchronize (enterContext selected produce)
-      observeInput RequestedInput compareValue value
+      observeInput mode compareValue value
       pure value
 
 -- 消费方的 request @T / require @T 按当前调用者分派到注册解析出的来源入口。

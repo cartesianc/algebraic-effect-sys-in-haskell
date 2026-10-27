@@ -141,7 +141,7 @@ typing = Context { request = requester "startURL" @PageURL }
 | 注册中 | 方法体中 | 含义 |
 | --- | --- | --- |
 | `requests "StartURL"` | `x <- request @StartURL` | 重新生产一次，并把结果保存为当前绑定 |
-| `requires "StartURL"` | `x <- require @StartURL` | 读取已有绑定，不重新生产；尚未生产过则失败 |
+| `requires "StartURL"` | `x <- require @StartURL` | 读取已有的值，不重新生产；尚未生产过时自动生产一次并记住 |
 
 从调用点就能看出是否会重跑生产链。`require` 用到的读取方法由生成器自动命名（`readStartURL`），注册里不用写。
 

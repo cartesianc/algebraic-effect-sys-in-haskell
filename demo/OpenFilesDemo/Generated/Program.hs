@@ -58,14 +58,14 @@ generatedEffectGraph = SDK.EffectGraph
       , SDK.MethodDefinition FileNamesGen FileNamesGen SDK.ContextRequest (SDK.Empty)
       , SDK.MethodDefinition OpenFilesGen OpenFilesGen SDK.ScopeOpen (SDK.Call OpenedFilesGen)
       , SDK.MethodDefinition OpenedFilesGen OpenedFilesGen SDK.ContextRequest (SDK.Call ReadFileNamesGen)
-      , SDK.MethodDefinition ReadFileNamesGen FileNamesGen SDK.ContextRequire (SDK.Empty)
+      , SDK.MethodDefinition ReadFileNamesGen FileNamesGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call FileNamesGen])
       , SDK.MethodDefinition InspectFilesGen InspectFilesGen SDK.HandlerMethod (SDK.Sequence [SDK.Call HoldFilesGen, SDK.Call ReadOpenedFilesGen])
       , SDK.MethodDefinition ReadOpenedFilesGen OpenedFilesGen SDK.ContextRequire (SDK.Empty)
       , SDK.MethodDefinition FinishInspectionGen FinishInspectionGen SDK.HandlerMethod (SDK.Sequence [SDK.Call HoldFilesGen, SDK.Call ReadOpenedFilesGen, SDK.Call CloseFilesGen])
       , SDK.MethodDefinition CloseFilesGen OpenFilesGen SDK.ScopeClose (SDK.Call ReadOpenedFilesGen)
       ]
   , SDK.graphRoots = [HoldFilesGen, InspectFilesGen, FinishInspectionGen]
-  , SDK.graphReferences = [(HoldFilesGen, FileNamesGen), (HoldFilesGen, OpenFilesGen), (OpenFilesGen, OpenedFilesGen), (OpenedFilesGen, ReadFileNamesGen), (InspectFilesGen, HoldFilesGen), (InspectFilesGen, ReadOpenedFilesGen), (FinishInspectionGen, HoldFilesGen), (FinishInspectionGen, ReadOpenedFilesGen), (FinishInspectionGen, CloseFilesGen), (CloseFilesGen, ReadOpenedFilesGen)]
+  , SDK.graphReferences = [(HoldFilesGen, FileNamesGen), (HoldFilesGen, OpenFilesGen), (OpenFilesGen, OpenedFilesGen), (OpenedFilesGen, ReadFileNamesGen), (ReadFileNamesGen, FileNamesGen), (InspectFilesGen, HoldFilesGen), (InspectFilesGen, ReadOpenedFilesGen), (FinishInspectionGen, HoldFilesGen), (FinishInspectionGen, ReadOpenedFilesGen), (FinishInspectionGen, CloseFilesGen), (CloseFilesGen, ReadOpenedFilesGen)]
   , SDK.graphScopes = [OpenFilesGen]
   , SDK.graphScopePaths = [[OpenFilesGen]]
   , SDK.graphRootPaths =

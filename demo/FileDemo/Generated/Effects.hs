@@ -48,7 +48,7 @@ class (Effect Root m) => FileLocationEffect m where
   fileName :: m (Produce FileLocation)
   readFileName :: m (Produce FileLocation)
   readFileName = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileLocation" ContextBindingError [("ValidateFileName", SDK.RequireValue), ("FileResource", SDK.RequireValue), ("FileWorkflow", SDK.RequestValue)] (Just (SDK.ScopeInput "FileLocation")) boundFileLocation
+    SDK.readContext "FileLocation" ContextBindingError [("ValidateFileName", SDK.RequireValue), ("FileResource", SDK.RequireValue), ("FileWorkflow", SDK.RequestValue)] (Just (SDK.ScopeInput "FileLocation")) boundFileLocation fileName
   {-# MINIMAL fileName #-}
 
 instance (Monad m, Effect Root m, FileLocationEffect m) => Effect FileLocation m where
@@ -80,7 +80,7 @@ class (Effect ValidateFileName m, Provides FileName m) => FileResourceEffect m w
   openedFile :: m (Produce FileResource)
   readOpenedFile :: m (Produce FileResource)
   readOpenedFile = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileResource" ContextBindingError [("FileSession", SDK.RequestValue), ("FileRecovery", SDK.RequireValue), ("ReadFile", SDK.RequireValue), ("WriteFile", SDK.RequireValue)] Nothing boundFileResource
+    SDK.readContext "FileResource" ContextBindingError [("FileSession", SDK.RequestValue), ("FileRecovery", SDK.RequireValue), ("ReadFile", SDK.RequireValue), ("WriteFile", SDK.RequireValue)] Nothing boundFileResource openedFile
   {-# MINIMAL openedFile #-}
 
 instance (Monad m, Effect ValidateFileName m, FileResourceEffect m) => Effect FileResource m where
@@ -128,7 +128,7 @@ class (Effect FileSession m, Provides OpenedFile m) => ReadFileEffect m where
   fileText :: m (Produce ReadFile)
   readFileText :: m (Produce ReadFile)
   readFileText = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @Root) $
-    SDK.readContext "ReadFile" ContextBindingError [("WriteFile", SDK.RequestValue)] Nothing boundReadFile
+    SDK.readContext "ReadFile" ContextBindingError [("WriteFile", SDK.RequestValue)] Nothing boundReadFile fileText
   {-# MINIMAL fileText #-}
 
 instance (Monad m, Effect FileSession m, ReadFileEffect m) => Effect ReadFile m where

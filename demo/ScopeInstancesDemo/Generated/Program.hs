@@ -59,13 +59,13 @@ generatedEffectGraph = SDK.EffectGraph
       , SDK.MethodDefinition FileNameGen FileNameGen SDK.ContextRequest (SDK.Empty)
       , SDK.MethodDefinition OpenFileSessionGen OpenFileSessionGen SDK.ScopeOpen (SDK.Call OpenedFileGen)
       , SDK.MethodDefinition OpenedFileGen OpenedFileGen SDK.ContextRequest (SDK.Call ReadFileNameGen)
-      , SDK.MethodDefinition ReadFileNameGen FileNameGen SDK.ContextRequire (SDK.Empty)
+      , SDK.MethodDefinition ReadFileNameGen FileNameGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call FileNameGen])
       , SDK.MethodDefinition ReadOpenedFileGen OpenedFileGen SDK.ContextRequire (SDK.Empty)
       , SDK.MethodDefinition CloseFileSessionGen OpenFileSessionGen SDK.ScopeClose (SDK.Call ReadOpenedFileGen)
       , SDK.MethodDefinition CheckReopenGen CheckReopenGen SDK.HandlerMethod (SDK.Sequence [SDK.Call FileNameGen, SDK.Call OpenFileSessionGen, SDK.Call ReadOpenedFileGen, SDK.Call CloseFileSessionGen, SDK.Call FileNameGen, SDK.Call OpenFileSessionGen, SDK.Call ReadOpenedFileGen, SDK.Call CloseFileSessionGen])
       ]
   , SDK.graphRoots = [PrepareFilesGen, CheckIndependentGen, CheckReopenGen]
-  , SDK.graphReferences = [(CheckIndependentGen, FileNameGen), (CheckIndependentGen, OpenFileSessionGen), (CheckIndependentGen, ReadOpenedFileGen), (CheckIndependentGen, CloseFileSessionGen), (OpenFileSessionGen, OpenedFileGen), (OpenedFileGen, ReadFileNameGen), (CloseFileSessionGen, ReadOpenedFileGen), (CheckReopenGen, FileNameGen), (CheckReopenGen, OpenFileSessionGen), (CheckReopenGen, ReadOpenedFileGen), (CheckReopenGen, CloseFileSessionGen)]
+  , SDK.graphReferences = [(CheckIndependentGen, FileNameGen), (CheckIndependentGen, OpenFileSessionGen), (CheckIndependentGen, ReadOpenedFileGen), (CheckIndependentGen, CloseFileSessionGen), (OpenFileSessionGen, OpenedFileGen), (OpenedFileGen, ReadFileNameGen), (ReadFileNameGen, FileNameGen), (CloseFileSessionGen, ReadOpenedFileGen), (CheckReopenGen, FileNameGen), (CheckReopenGen, OpenFileSessionGen), (CheckReopenGen, ReadOpenedFileGen), (CheckReopenGen, CloseFileSessionGen)]
   , SDK.graphScopes = [OpenFileSessionGen]
   , SDK.graphScopePaths = [[], [OpenFileSessionGen]]
   , SDK.graphRootPaths =

@@ -64,7 +64,7 @@ class (Effect CrawlSession m) => StartPageEffect m where
   startURL :: m (Produce StartPage)
   readStartURL :: m (Produce StartPage)
   readStartURL = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
-    SDK.readContext "StartPage" ContextBindingError [("FetchPage", SDK.RequestValue)] Nothing boundStartPage
+    SDK.readContext "StartPage" ContextBindingError [("FetchPage", SDK.RequestValue)] Nothing boundStartPage startURL
   {-# MINIMAL startURL #-}
 
 instance (Monad m, Effect CrawlSession m, StartPageEffect m) => Effect StartPage m where
@@ -82,7 +82,7 @@ class (Effect CrawlSession m) => LinkedPageEffect m where
   linkedURL :: m (Produce LinkedPage)
   readLinkedURL :: m (Produce LinkedPage)
   readLinkedURL = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
-    SDK.readContext "LinkedPage" ContextBindingError [("FetchLinkedPage", SDK.RequestValue)] Nothing boundLinkedPage
+    SDK.readContext "LinkedPage" ContextBindingError [("FetchLinkedPage", SDK.RequestValue)] Nothing boundLinkedPage linkedURL
   {-# MINIMAL linkedURL #-}
 
 instance (Monad m, Effect CrawlSession m, LinkedPageEffect m) => Effect LinkedPage m where
@@ -100,7 +100,7 @@ class (Effect CrawlSession m, Provides StartURL m, Provides CrawlSessionInfo m) 
   startFetchedPage :: m (Produce FetchPage)
   readStartFetchedPage :: m (Produce FetchPage)
   readStartFetchedPage = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FetchPage" ContextBindingError [("ExtractPage", SDK.RequestValue)] Nothing boundFetchPage
+    SDK.readContext "FetchPage" ContextBindingError [("ExtractPage", SDK.RequestValue)] Nothing boundFetchPage startFetchedPage
   {-# MINIMAL startFetchedPage #-}
 
 instance (Monad m, Effect CrawlSession m, FetchPageEffect m) => Effect FetchPage m where
@@ -118,7 +118,7 @@ class (Effect CrawlSession m, Provides StartFetchedPage m) => ExtractPageEffect 
   startPageSummary :: m (Produce ExtractPage)
   readStartPageSummary :: m (Produce ExtractPage)
   readStartPageSummary = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
-    SDK.readContext "ExtractPage" ContextBindingError [("PrintPage", SDK.RequestValue)] Nothing boundExtractPage
+    SDK.readContext "ExtractPage" ContextBindingError [("PrintPage", SDK.RequestValue)] Nothing boundExtractPage startPageSummary
   {-# MINIMAL startPageSummary #-}
 
 instance (Monad m, Effect CrawlSession m, ExtractPageEffect m) => Effect ExtractPage m where
@@ -150,7 +150,7 @@ class (Effect CrawlSession m, Provides LinkedURL m, Provides CrawlSessionInfo m)
   linkedFetchedPage :: m (Produce FetchLinkedPage)
   readLinkedFetchedPage :: m (Produce FetchLinkedPage)
   readLinkedFetchedPage = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FetchLinkedPage" ContextBindingError [("ExtractLinkedPage", SDK.RequestValue)] Nothing boundFetchLinkedPage
+    SDK.readContext "FetchLinkedPage" ContextBindingError [("ExtractLinkedPage", SDK.RequestValue)] Nothing boundFetchLinkedPage linkedFetchedPage
   {-# MINIMAL linkedFetchedPage #-}
 
 instance (Monad m, Effect CrawlSession m, FetchLinkedPageEffect m) => Effect FetchLinkedPage m where
@@ -168,7 +168,7 @@ class (Effect CrawlSession m, Provides LinkedFetchedPage m) => ExtractLinkedPage
   linkedPageSummary :: m (Produce ExtractLinkedPage)
   readLinkedPageSummary :: m (Produce ExtractLinkedPage)
   readLinkedPageSummary = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
-    SDK.readContext "ExtractLinkedPage" ContextBindingError [("PrintLinkedPage", SDK.RequestValue)] Nothing boundExtractLinkedPage
+    SDK.readContext "ExtractLinkedPage" ContextBindingError [("PrintLinkedPage", SDK.RequestValue)] Nothing boundExtractLinkedPage linkedPageSummary
   {-# MINIMAL linkedPageSummary #-}
 
 instance (Monad m, Effect CrawlSession m, ExtractLinkedPageEffect m) => Effect ExtractLinkedPage m where
@@ -200,7 +200,7 @@ class (Effect Root m) => SessionContextEffect m where
   crawlSessionInfo :: m (Produce SessionContext)
   readCrawlSessionInfo :: m (Produce SessionContext)
   readCrawlSessionInfo = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "SessionContext" ContextBindingError [("FetchPage", SDK.RequireValue), ("FetchLinkedPage", SDK.RequireValue), ("CrawlSession", SDK.RequestValue)] Nothing boundSessionContext
+    SDK.readContext "SessionContext" ContextBindingError [("FetchPage", SDK.RequireValue), ("FetchLinkedPage", SDK.RequireValue), ("CrawlSession", SDK.RequestValue)] Nothing boundSessionContext crawlSessionInfo
   {-# MINIMAL crawlSessionInfo #-}
 
 instance (Monad m, Effect Root m, SessionContextEffect m) => Effect SessionContext m where

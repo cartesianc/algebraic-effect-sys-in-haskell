@@ -68,6 +68,13 @@ class Monad m => ContextStore environment m | m -> environment where
   enterContext = enterHandler
   recordContextInput :: ScopeInputAccess -> ScopeInput -> m ()
   recordContextInput _ _ = pure ()
+  -- require 在 state 中取不到值时，按需求值一次 request 表达式并写回 state。
+  -- 返回 Nothing 表示当前不允许转去生产（诊断、收尾，或该来源是 scope 资源）。
+  forceContext :: String -> m value -> m (Maybe value)
+  forceContext _ _ = pure Nothing
+  -- 本次生产被 scope 开启参数观察时的取值模式；按需求值的 require 仍按 require 处理。
+  productionAccess :: m ScopeInputAccess
+  productionAccess = pure RequestedInput
 
 data ContextFault = ContextNotInitialized | UndeclaredContextAccess String
   | AmbiguousContextBinding String

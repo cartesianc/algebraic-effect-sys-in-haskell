@@ -26,7 +26,8 @@ renderGraphPlan plan shapes = do
     method : _ -> Left ("Unregistered handler method in the structure generation plan: " ++ method)
     [] -> pure ()
   let definitions =
-        [definition {methodBody = maybe Empty id (lookup (methodIdentity definition) shapes)}
+        -- 手写方法使用解析出的结构；未出现在 Handlers 中的生成方法（如默认 require 读取）保留计划中的结构。
+        [definition {methodBody = maybe (methodBody definition) id (lookup (methodIdentity definition) shapes)}
           | definition <- planDefinitions plan]
       -- 这里只枚举各独立入口。初始化算法不会把不同 Node 串成 scope 路径，
       -- 因而不需要载入或冻结业务 workflow 的 chained/parallel 形状。

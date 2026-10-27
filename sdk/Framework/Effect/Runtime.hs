@@ -6,11 +6,11 @@
 -- 句柄描述与 lower；普通 Context 按调用保存，scope 控制对象由生成句柄共享。
 module Framework.Effect.Runtime
   ( Pure, App, Target, Identity, targetPure, targetApp, bootPure
-  , targetName, lowerTarget, configureTargets, cleanupTargets
+  , targetName, lowerTarget, lowerTargetIn, RunStore, newRunStore, configureTargets, cleanupTargets
   ) where
 
-import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault, Failure(..), Output(..), ErrorStore(..), ErrorHandler(..), runErrorHandler)
-import Framework.Effect.Runtime.App (App, runAppWith)
+import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault, ScopeInputAccess(..), Failure(..), Output(..), ErrorStore(..), ErrorHandler(..), runErrorHandler)
+import Framework.Effect.Runtime.App (App, RunStore, newRunStore, runAppWith)
 import Framework.Effect.Scope
 import Control.Exception (SomeException, evaluate)
 import Control.Monad (forM_, when)
@@ -29,10 +29,12 @@ data Calling environment cause = Calling
   , errorPath :: [String]
   , originalFailure :: Maybe (Failure cause)
   , diagnosticScope :: Maybe String
+  -- 当前生产由 require 按需求值触发；进入任一 handler 后复位。
+  , forcedRequire :: Bool
   }
 
 emptyCalling :: Calling environment cause
-emptyCalling = Calling Nothing [] [] [] [] Nothing Nothing
+emptyCalling = Calling Nothing [] [] [] [] Nothing Nothing False
 
 visibleScopes :: Calling environment cause -> [String]
 visibleScopes calling = nub (ownedScopes calling ++ dependencies calling)
@@ -83,7 +85,16 @@ instance ContextStore environment (Pure environment cause) where
               , scopeSources = nub (source : scopeSources record) } else record)
           | (selected, record) <- pureScopes state ] }
   currentHandler = PureRun (asks caller)
-  enterHandler selected (PureRun action) = PureRun (local (\calling -> calling { caller = Just selected }) action)
+  enterHandler selected (PureRun action) =
+    PureRun (local (\calling -> calling { caller = Just selected, forcedRequire = False }) action)
+  -- 纯载体单线程运行，无需单次求值锁；诊断期间不按需求值。
+  forceContext _ (PureRun action) = PureRun $ do
+    calling <- ask
+    if isJust (originalFailure calling) then pure Nothing
+      else Just <$> local (const calling { caller = Nothing, forcedRequire = True }) action
+  productionAccess = PureRun $ do
+    forced <- asks forcedRequire
+    pure (if forced then RequiredInput else RequestedInput)
 
 instance ScopeStore cause (Pure environment cause) where
   withScopeDependencies selected (PureRun action) = PureRun $ local (addDependencies selected) $ do
@@ -130,7 +141,7 @@ instance ErrorStore cause (Pure environment cause) where
         let PureRun action = runErrorHandler selected callback
         report <- local (const calling
           { caller = Nothing, ownedScopes = [], originalFailure = Just problem
-          , diagnosticScope = selected }) action
+          , diagnosticScope = selected, forcedRequire = False }) action
         modify' (\state -> state { pureBindings = saved })
         pure report
 
@@ -183,10 +194,13 @@ targetApp = AppTarget
 
 -- Node algebra 只 lower 末端；scope 引用已绑定在句柄中。
 -- 受控结果消费在使用闭包退出前完成，惰性读取不会落在自动 close 之后。
-lowerTarget :: Target runtime environment cause value -> runtime (Either (Failure cause) value)
+lowerTarget :: Target Identity environment cause value -> Identity (Either (Failure cause) value)
 lowerTarget (PureTarget _ environment action) = Identity (runPure environment action)
-lowerTarget (AppTarget _ environment scopes action) =
-  runAppWith (\value -> evaluate (foldr seq () (show value))) scopes environment action
+
+-- App 末端共享同一次 interpreter 运行的资产 state，使 require 可读取先前 Node 产出的资产。
+lowerTargetIn :: RunStore environment cause -> Target IO environment cause value -> IO (Either (Failure cause) value)
+lowerTargetIn store (AppTarget _ environment scopes action) =
+  runAppWith (\value -> evaluate (foldr seq () (show value))) store scopes environment action
 
 -- 各末端通常捕获同批 scope；按控制对象身份去重，不按业务名称合并独立批次。
 scopeHandlers :: [Target IO environment cause value] -> Scopes environment cause

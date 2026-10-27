@@ -168,9 +168,18 @@ lowerProgram namespace specifications entry = do
         then Graph.ContextRequest else Graph.ContextRequire
       Error { detect = detecting } -> if Just method == detecting then Graph.ErrorDetect else Graph.ErrorResolve
       _ -> Graph.HandlerMethod
+    -- require 的默认读取在 state 无值时会求值同一个 request，因此结构上可能进入生产链；
+    -- scope 资源只经 open 取得，不按需求值，其读取保持为空。
+    resourceContexts = nub [provider | specification <- specifications
+      , Scoped _ _ <- [typing specification], Just provider <- [requestSource specification]]
+    planBody specification method
+      | Just method == contextReader (typing specification)
+      , name specification `notElem` resourceContexts
+      , Just producing <- entryMethod (typing specification) = Graph.Choice [Graph.Empty, Graph.Call producing]
+      | otherwise = Graph.Empty
     graphPlan = GraphPlan
       { planDefinitions =
-          [ Graph.MethodDefinition method firstMethod (methodRole specification method) Graph.Empty
+          [ Graph.MethodDefinition method firstMethod (methodRole specification method) (planBody specification method)
           | (specification, method) <- concatMap registeredMethods specifications
           , (_, firstMethod) : _ <- [registeredMethods specification] ]
       -- require @T 在结构分析时已直接解析为来源的读取方法，不再需要按消费者改写生产调用。
@@ -523,6 +532,7 @@ lowerProgram namespace specifications entry = do
               , "    SDK.readContext " ++ show effectName
                 ++ " ContextBindingError " ++ contextAccessTable "SDK." effectName
                 ++ " " ++ observation "SDK." effectName ++ " bound" ++ effectName
+                ++ " " ++ fromMaybe "" (entryMethod (typing specification))
               ]
             _ -> []
           minimalLines = case methods of

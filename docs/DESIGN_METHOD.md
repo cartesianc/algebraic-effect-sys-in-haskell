@@ -48,7 +48,7 @@ HLS／GHC 负责宿主语言的语法、名字、类型与方法实现检查；g
 方法身份由生成的 MethodGen 枚举表示，构造器为方法名首字母大写加 Gen；MethodDefinition.methodEffect 使用同一 effect 首个注册入口的 Gen 身份。原生业务方法不变，执行副本只加既有协议包装；纯结构副本独立记录引用和可能路径。具体定义与观察边界见 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)。
 source 结构支持显式 effect 调用、do、if／case 与已识别的标准组合。未知高阶 effect、隐藏 helper／局部 alias 组合、含 effect 的动态循环及递归 effect 引用报错，不静默形成空图；没有 effect 引用的原子业务表达式允许任意语法，在结构副本中擦除。catchError 用 Recover 保存正文正常路径及任意 scope 前缀后进入 recovery 的保守路径，不预先验证业务是否成功。
 
-Input 只表达句柄组合，不隐含业务值传递。手写 input 只允许 Root 或非 Context effect；Context 经 demands 接入，消费方类只以 Provides 契约作为 superclass，不指名生产方的类。生产者自身仍可有 Input、消费其他 Context，也可直接作为 target。原 Input 与生产链的能力同时保留，不重挂来源注册；沿 Input 与 request 收集 scope，require 只读取绑定，不启动生产链。
+Input 只表达句柄组合，不隐含业务值传递。手写 input 只允许 Root 或非 Context effect；Context 经 demands 接入，消费方类只以 Provides 契约作为 superclass，不指名生产方的类。生产者自身仍可有 Input、消费其他 Context，也可直接作为 target。原 Input 与生产链的能力同时保留，不重挂来源注册；沿 Input 与 request 收集 scope；require 在 state 无值时可能求值 request，结构分析把这条可能路径计入（scope 资源除外）。
 后端 handler 可使用前端类方法，这是 superclass 字典形式的依赖注入。
 句柄组合位于后端 instance 对 superclass handler 的引用中。SDK 不生成 withX、initializeX 或链式 runX，
 不在外部按 Input 排序补跑方法。Generated 模块只登记末端句柄，Node 的 f-algebra 才将它 lower 成具体执行函数。
@@ -146,10 +146,10 @@ Types.hs 只保留表示类型；只包一层的 newtype 由生成的契约取�
 方法保持无位置参数。instance 使用原生 Haskell：在 do 中通过 `value <- request @T` 或 `value <- require @T` 取得业务值，调用点即说明是否重新生产；普通操作直接引用 superclass 方法。可确定匹配的单构造器模式可直接写在 `<-` 左侧；多构造器值先绑定再用普通 case 显式处理，失败通过 raise，不新增 MonadFail。SDK 在注册生成的 Context 入口连接 request 生产与 require 读取；生成器解析显式 effect 方法引用以生成纯结构副本；业务执行副本仍只包装入口，不改写原方法体表达式。不新增 Definition、consume 或独立 booter；嵌套取值共享本次 Context 和 scope。未进入的分支不取值，生成源码和创建 Target 不执行业务 IO；不使用 unsafePerformIO／unsafeInterleaveIO。
 
 底层以 Context 的一次成功绑定为单位保存值快照与资源归属。固定绑定且没有 request／重新绑定时，require 重复读取同一份值；Input 组合保留这种关联。
-request 每次重新生产，成功后发布新绑定、替换当前调用中该来源的绑定并返回同一个值；require 不执行生产，未绑定报 ContextNotInitialized。
+request 每次重新生产，成功后发布新绑定、替换当前调用中该来源的绑定并返回同一个值；require 也是表达式：它读取 state，值只来自 request；state 中已有值时直接返回，不重新生产；尚无值时求值一次同一个 request 并写入 state，相当于 thunk。按需求值以来源加锁，并发 require 只求值一次；诊断、收尾期间以及 scope 资源 Context（只能经 open 取得）不按需求值，仍报 ContextNotInitialized。按需求值触发的生产对 scope 开启参数仍按 require 观察（同参共享）。
 其他调用已经捕获的旧绑定不会被原地改写；不再通过刷新 scope 的共享值表来改变它们。
 刷新失败不覆盖该来源的旧值，原始错误继续传播，其他已经完成的操作不回滚。
-普通绑定限定在一次末端启动内；scope 开启期间生产的 Context 随实际实例保存，只在该实例仍被使用或依赖保留期间供其他链 require。后续 Node 不预约前一链的活资源；旧绑定不因新一轮 open 自动换 owner。不预初始化业务 Context，不在独立创建的运行句柄之间隐式共享。
+不属于 scope 实例的资产绑定在一次 interpreter 运行内跨 Node 保存于运行级 state；scope 开启期间生产的 Context 随实际实例保存，只在该实例仍被使用或依赖保留期间供其他链 require。后续 Node 不预约前一链的活资源；旧绑定不因新一轮 open 自动换 owner。不预初始化业务 Context，不在独立创建的运行句柄之间隐式共享。
 根调用进入生产；链内 request @T／require @T 由生成的 Provides instance 按当前消费者分派到解析出的来源方法，默认及覆盖的显式读取入口同样校验来源声明，未声明的取值报错。
 gencode 在结构分析时把 request @T／require @T 解析为来源方法，拒绝未在 demands 中声明的契约，也拒绝直接调用其他 effect 的 Context 方法，接线因此只存在于声明层。
 调用身份和 scope 可见性由 SDK 的局部 Reader 传递，保存值由执行载体持有；同次 AST 的 scope 绑定已共享，更细的范围与跨入口存续另行设计。

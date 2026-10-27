@@ -44,7 +44,7 @@ class (Effect Root m) => FileLocationsEffect m where
   filePaths :: m (Produce FileLocations)
   readFilePaths :: m (Produce FileLocations)
   readFilePaths = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileLocations" ContextBindingError [("PrepareProbe", SDK.RequestValue), ("FileResource", SDK.RequireValue), ("WriteFirst", SDK.RequestValue), ("WriteSecond", SDK.RequestValue), ("WriteThird", SDK.RequestValue), ("VerifyReuse", SDK.RequestValue)] (Just (SDK.ScopeInput "FileLocations")) boundFileLocations
+    SDK.readContext "FileLocations" ContextBindingError [("PrepareProbe", SDK.RequestValue), ("FileResource", SDK.RequireValue), ("WriteFirst", SDK.RequestValue), ("WriteSecond", SDK.RequestValue), ("WriteThird", SDK.RequestValue), ("VerifyReuse", SDK.RequestValue)] (Just (SDK.ScopeInput "FileLocations")) boundFileLocations filePaths
   {-# MINIMAL filePaths #-}
 
 instance (Monad m, Effect Root m, FileLocationsEffect m) => Effect FileLocations m where
@@ -76,7 +76,7 @@ class (Effect Root m, Provides FilePaths m) => FileResourceEffect m where
   openedFile :: m (Produce FileResource)
   readOpenedFile :: m (Produce FileResource)
   readOpenedFile = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileResource" ContextBindingError [("SharedFileScope", SDK.RequestValue), ("WriteFirst", SDK.RequireValue), ("WriteSecond", SDK.RequireValue), ("WriteThird", SDK.RequireValue)] Nothing boundFileResource
+    SDK.readContext "FileResource" ContextBindingError [("SharedFileScope", SDK.RequestValue), ("WriteFirst", SDK.RequireValue), ("WriteSecond", SDK.RequireValue), ("WriteThird", SDK.RequireValue)] Nothing boundFileResource openedFile
   {-# MINIMAL openedFile #-}
 
 instance (Monad m, Effect Root m, FileResourceEffect m) => Effect FileResource m where
