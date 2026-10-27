@@ -4,8 +4,8 @@
 -- Effect SDK 的统一入口；内部存储协议和 target 执行细节不在此导出。
 -- Root.handler 只供生成区使用，避免与注册的 handler record 字段混名。
 module Framework.Effect
-  ( Effect(Registration, Typing, Require, Produce, raise), type Error, EffectTyping(..), EffectKind(..), Root, Registered, Pure, App
-  , Target, Identity, targetPure, targetApp, bootPure
+  ( Effect(Registration, Typing, Require, Produce, raise), type Error, EffectTyping(..), EffectKind(..), Root, Registered, App
+  , Target, targetApp
   , Output(..), Failure(..), ErrorReport(..), caughtFailure, failEffect
   , Requester(..), requester, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
   , requests, requires, Void
@@ -26,6 +26,6 @@ import Framework.Effect.Context
 import Framework.Effect.Registration
   ( EffectTyping(..), Requester(..), requester, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
   , requests, requires )
-import Framework.Effect.Runtime (Pure, App, Target, Identity, targetPure, targetApp, bootPure)
+import Framework.Effect.Runtime (App, Target, targetApp)
 import Framework.Effect.Runtime.App (withScopeCleanups)
 import Framework.Effect.Scope (ScopeHandler, newScopeHandler)

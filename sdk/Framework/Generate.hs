@@ -28,20 +28,18 @@ main = do
       rawSystem "cabal" (["exec", "--", executable] ++ arguments) >>= exitWith
     Just _ -> pure ()
   case arguments of
-    [mode, namespace]
-      | mode `elem` ["workflow", "target"], validNamespace namespace -> do
+    -- 程序只经 AST 启动，入口是 AST 中各 node 选中的末端。
+    ["workflow", namespace]
+      | validNamespace namespace -> do
           let modulePath = map (\character -> if character == '.' then pathSeparator else character) namespace
               directory = "demo" </> modulePath
-              entryModule = if mode == "workflow" then "AST" else "Target"
-              entry = if mode == "workflow"
-                then "Framework.Codegen.Workflow (Framework.Workflow.AST.targets " ++ namespace ++ ".AST.ast)"
-                else "Framework.Codegen.SingleTarget " ++ namespace ++ ".Target.target"
+              terminals = "Framework.Workflow.AST.targets " ++ namespace ++ ".AST.ast"
           let expression = "print (Framework.Codegen.lowerProgram " ++ show namespace
-                ++ " " ++ namespace ++ ".Effects.effects (" ++ entry ++ "))"
+                ++ " " ++ namespace ++ ".Effects.effects (" ++ terminals ++ "))"
           (result, output, diagnostics) <- readProcessWithExitCode "ghci"
             [ "-ignore-dot-ghci", "-v0", "-XHaskell2010", "-idemo", "-isdk"
             , "sdk/Framework/Codegen.hs", directory </> "Effects.hs"
-            , directory </> entryModule ++ ".hs", "-e", expression
+            , directory </> "AST.hs", "-e", expression
             ] ""
           hPutStr stderr diagnostics
           case result of
@@ -80,7 +78,7 @@ main = do
                 putStrLn ("Generated " ++ generated ++ " (" ++ show (length (filter id changed))
                   ++ " files updated; structure " ++ (if reused then "reused" else "rebuilt") ++ ")")
             _ -> exitWith result
-    _ -> die "Usage: effect-codegen (workflow|target) Namespace"
+    _ -> die "Usage: effect-codegen workflow Namespace"
 
 -- 缓存只省略纯构图；声明与 Handlers 快照仍读取，资产检查每次执行。
 -- 连同算法及渲染器源码精确比较，避免 SDK 改动后复用旧结构。

@@ -6,7 +6,7 @@ module Framework.SDK
   , module Framework.Effect.Graph
   , module Framework.Workflow.Structure
   , AST, EffectNode, node, chained, parallel, interpreter
-  , Generic, NFData, runDemo, runDemoIO
+  , Generic, NFData
   ) where
 
 import Framework.Effect
@@ -33,16 +33,16 @@ interpreter
   => String
   -> [EffectSpec] -> Maybe String
   -> Either (StructureError method) (ProgramStructure method)
-  -> IO [Target IO environment cause value] -> AST -> [EffectSpec] -> IO ()
+  -> IO [Target environment cause value] -> AST -> [EffectSpec] -> IO ()
 interpreter namespace registered sourceFingerprint initialize createEntries tree specifications = do
   hSetEncoding stdout utf8
   arguments <- getArgs
   case arguments of
     []
       | specifications /= registered ->
-          staleGenerated "workflow" namespace "Registrations changed"
+          staleGenerated namespace "Registrations changed"
       | otherwise -> do
-          verifyHandlerSource "workflow" namespace sourceFingerprint
+          verifyHandlerSource namespace sourceFingerprint
           structure <- initializeBeforeBusiness
           entries <- createEntries
           mask $ \restore -> do
@@ -64,11 +64,11 @@ interpreter namespace registered sourceFingerprint initialize createEntries tree
                     report result
                     throwIO exception
                   [] -> restore $ if null failures then putStrLn rendered else print result
-    ["--generate"] -> generate "workflow" namespace
+    ["--generate"] -> generate namespace
     ["--structure"]
       | specifications /= registered -> staleRegistrations
       | otherwise -> do
-          verifyHandlerSource "workflow" namespace sourceFingerprint
+          verifyHandlerSource namespace sourceFingerprint
           structure <- initializeBeforeBusiness
           rendered <- either (ioError . userError . show) pure (renderStructure structure tree)
           putStr rendered
@@ -95,30 +95,9 @@ tryAny = try
 report :: Show value => value -> IO ()
 report = void . tryAny . hPrint stderr
 
--- 命令行处理属于 SDK，facade 只传入自己的声明和结果。
-runDemo :: Show value => String -> [EffectSpec] -> String -> Maybe String
-        -> [EffectSpec] -> String -> value -> IO ()
-runDemo namespace registered registeredTarget sourceFingerprint specifications selected result =
-  runDemoIO namespace registered registeredTarget sourceFingerprint specifications selected (pure result)
-
--- --generate 只生成源码，不执行传入的 IO 动作。
-runDemoIO :: Show value => String -> [EffectSpec] -> String -> Maybe String
-          -> [EffectSpec] -> String -> IO value -> IO ()
-runDemoIO namespace registered registeredTarget sourceFingerprint specifications selected action = do
-  hSetEncoding stdout utf8
-  arguments <- getArgs
-  case arguments of
-    [] -> do
-      unless (specifications == registered && selected == registeredTarget) $
-        staleGenerated "target" namespace "Registrations or target changed"
-      verifyHandlerSource "target" namespace sourceFingerprint
-      action >>= print
-    ["--generate"] -> generate "target" namespace
-    _ -> ioError (userError "Usage: demo [--generate]")
-
 -- 与生成时使用相同的 UTF-8 和换行读取方式；比对源码与本编译副本保存的指纹。
-verifyHandlerSource :: String -> String -> Maybe String -> IO ()
-verifyHandlerSource mode namespace expected = do
+verifyHandlerSource :: String -> Maybe String -> IO ()
+verifyHandlerSource namespace expected = do
   let path = "demo" </> map (\character -> if character == '.' then pathSeparator else character) namespace </> "Handlers.hs"
   actual <- tryIOError $ withFile path ReadMode $ \handle -> do
     hSetEncoding handle utf8
@@ -128,13 +107,13 @@ verifyHandlerSource mode namespace expected = do
     pure (show (fingerprintString source))
   case actual of
     Right fingerprint | expected == Just fingerprint -> pure ()
-    Right _ -> staleGenerated mode namespace (path ++ " changed or has not been generated")
-    Left problem -> staleGenerated mode namespace ("Cannot verify " ++ path ++ ": " ++ show problem)
+    Right _ -> staleGenerated namespace (path ++ " changed or has not been generated")
+    Left problem -> staleGenerated namespace ("Cannot verify " ++ path ++ ": " ++ show problem)
 
-staleGenerated :: String -> String -> String -> IO value
-staleGenerated mode namespace reason = ioError (userError
-  (reason ++ "; run from the repository root: cabal run effect-codegen -- " ++ mode ++ " " ++ namespace))
+staleGenerated :: String -> String -> IO value
+staleGenerated namespace reason = ioError (userError
+  (reason ++ "; run from the repository root: cabal run effect-codegen -- workflow " ++ namespace))
 
 -- 统一经过 SDK 生成命令；业务运行载体不依赖 GHC 的源码解析 API。
-generate :: String -> String -> IO ()
-generate mode namespace = callProcess "cabal" ["run", "effect-codegen", "--", mode, namespace]
+generate :: String -> IO ()
+generate namespace = callProcess "cabal" ["run", "effect-codegen", "--", "workflow", namespace]

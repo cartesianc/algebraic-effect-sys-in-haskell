@@ -59,7 +59,7 @@ class (Monad m, Inherited (Registration effect) m) => Effect effect m where
 -- 根 superclass 没有业务失败入口；空类型只供 SDK 根约束使用。
 data NoError (effect :: Type) deriving Show
 
--- SDK 内部存储协议：Pure 保存纯状态，App 经 Reader 访问共享存储。
+-- SDK 内部存储协议：App 载体经 Reader 访问共享存储。
 -- 用户的 Context 仍只实现生产方法；读取与发布回调由生成器连接。
 class Monad m => ContextStore environment m | m -> environment where
   readContextBinding :: String -> (environment -> Maybe value)

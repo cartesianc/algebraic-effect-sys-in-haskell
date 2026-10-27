@@ -4,7 +4,7 @@
 -- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
 module OpenFilesDemo.Generated.Program where
 
-import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Requester(..), Handles(..), Demand(..), Access(..), TypeRef(..), Output)
+import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Requester(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.SDK as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
 import OpenFilesDemo.Generated.Effects hiding (request, require)
@@ -38,7 +38,7 @@ data Results = HoldFilesResult (Produce HoldFiles) | InspectFilesResult (Produce
   deriving Show
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。
-compiledEntries :: IO [SDK.Target IO ContextValues Errors Results]
+compiledEntries :: IO [SDK.Target ContextValues Errors Results]
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure

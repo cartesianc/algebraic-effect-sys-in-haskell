@@ -2,7 +2,7 @@
 
 更新：2026-10-27。范围：Algebraic Effect Sys in Haskell。
 
-本文记录已确认的设计，供声明、Haskell 接口和执行样例共同遵循。基本方法见 [DESIGN_METHOD.md](DESIGN_METHOD.md)。当前实现位于 demo 与 sdk/Framework；旧根项目的实现、设计与旧版 RequestBenchmark 已删除，只在 Git 历史中保留。
+本文记录已确认的设计，供声明、Haskell 接口和执行样例共同遵循。基本方法见 [DESIGN_METHOD.md](DESIGN_METHOD.md)。当前实现位于 demo 与 sdk/Framework。程序只有 workflow 一种入口：经 AST 启动，SDK 不提供无 AST 的单末端入口。
 
 本阶段已实现五类 effect 的 Haskell 接口、Context 绑定、App／IO 的有限使用闭包自动清理，以及沿同一 ScopeTree 导航的 Error 检测／处置。effect graph 与 ScopeTree 在 gencode 时生成显式 ADT。跨语言 schema、Generic Map、loop／Hanging、middleware 和热替换仍属后续设计，不能把相关关系示意当作已实现 API；普通编译也不等于所有并发和取消场景已获运行验证。
 
@@ -21,7 +21,7 @@ request 引用产值 effect，前插其能力且保留原 Input 前提；实际�
 Root 统一调用入口已接通：`Effect.handler :: m value -> m value` 转交 SDK 的 Failure 捕获协议，其他生成 Effect instance 转交 Root。生成方法自动以 `handler @Root` 包住原协议，包括 Context 默认 require 与用户覆盖的 require；用户类方法名称、签名和引用写法不变。根入口不修改 caller，不提前求值，不另行 lower 上游。open／close 的复用也经过调用入口，但不重放资源操作。Error 的诊断回调由注册生成，无需 AST catch 节点。
 Middleware 作为独立 typing、由 AST／Hanging 装卸是后续设计；计划在装配阶段合并、去重后统一接到最高 Root，不保存旧 pipeline 路线。当前未实现 middleware 注册、执行策略或 Hanging 分支；整次启动与单个方法的策略边界仍需分别定义。
 
-Generated 模块只登记 AST 所选末端句柄。Target 保存未运行的 App／Pure 句柄及内部空存储，尚不是 impl。
+Generated 模块只登记 AST 所选末端句柄。Target 保存未运行的 App 句柄及内部空存储，尚不是 impl。
 Node 的 f-algebra 选择末端后 lower 为具体执行函数，branch 再组合这些函数；SDK 不遍历 Input 补跑上游。
 withX、initializeX、链式 runX 和外部逐 effect impl 已取消。载体和 Target 构造器、裸运行器不导出。
 未被引用的前驱不会执行；这不等于 Haskell 编译器能静态证明任意方法体使用了所有前驱。
@@ -63,14 +63,14 @@ AST 与注册关系均采用固定结构、引用和契约描述，供第三方�
 | Pure | 无对外业务产物的纯计算／检查 | 成功类型固定为 ()，失败使用 SDK 统一协议；语义待定 |
 | Excu | 执行声明的操作（原子句柄） | 返回可选信息 Maybe String，只交给挂接的 Context；接入能力并承接失败 |
 | Scoped | 开启、关闭（原子句柄），均为 m (Maybe String) | 开启输入 require 同参共享／request fresh；完整链持有实际实例，末个使用者退出且无子 scope 保留时 once-spare |
-| Error | detect 定位、resolve 处置，均为 m () | App／IO 沿 ScopeTree 祖先顺序检测，Pure 保留旧名单；Succ 后调用可选 resolve，保存原始与次生失败 |
+| Error | detect 定位、resolve 处置，均为 m () | App／IO 沿 ScopeTree 祖先顺序检测；Succ 后调用可选 resolve，保存原始与次生失败 |
 | Context | request 产值、require 读取 | 包装 instance 入口；request 成功发布新绑定，require 读取 state、无值时按需求值，失败保留该来源旧值 |
 
 各类别保持统一的 effect 抽象。Input 只组合被注入的操作句柄，不承载业务值；Pure 返回 ()、原子句柄返回可选信息，或 raise，不手写 Succ，也不新增每 effect 的状态表。跨 handler 的业务成功产值统一由 Context 提供，request 只能引用具有生产入口的 Context。Scoped 自身不产值，open／close 在 instance 中直接引用上游 Context 方法；只有 scope 具有 SDK 管理的存续状态。
 
 ### 注册构造
 
-注册使用普通 ADT 的不同构造器携带各自属性，不因字段不同而引入 type family 或 data family。普通方法名绑定使用 Maybe String，包括 Scoped.open／close 和 Error.detect／resolve；只有 Context.request 使用 requester "方法名" @表示类型，将方法名和表示类型放在一起，契约类型按方法名生成。Nothing 表示未绑定该方法，不把 handler 返回值改成 Maybe。五类方法声明、Context 绑定、scope 状态及 Error 的检测／处置契约保留；App／IO 的 Error 祖先导航接入同一 ScopeTree，Pure 保留旧候选名单，本轮自动收尾范围改为有限使用闭包，interpreter 退出仍兜底。
+注册使用普通 ADT 的不同构造器携带各自属性，不因字段不同而引入 type family 或 data family。普通方法名绑定使用 Maybe String，包括 Scoped.open／close 和 Error.detect／resolve；只有 Context.request 使用 requester "方法名" @表示类型，将方法名和表示类型放在一起，契约类型按方法名生成。Nothing 表示未绑定该方法，不把 handler 返回值改成 Maybe。五类方法声明、Context 绑定、scope 状态及 Error 的检测／处置契约保留；App／IO 的 Error 祖先导航接入同一 ScopeTree，本轮自动收尾范围改为有限使用闭包，interpreter 退出仍兜底。
 
 ```haskell
 -- 普通注册也把主方法名放入 typing
@@ -192,7 +192,7 @@ Input 继续表达操作或能力的前提关系。业务值来源单独表达�
 
 ## Context、request 与 require
 
-手写 input 只允许 Root 或非 Context effect；Context 经 demands 接入，消费方类只以 Provides 契约作为 superclass。生产者自身仍可有 Input、消费其他 Context，也可直接作为 target。原 Input 与生产链的能力同时保留，不重挂来源注册；沿 Input 与 request 收集 scope；require 在 state 无值时可能求值 request（scope 资源除外）。input 指向 Excu 或 Scoped 的 Context 挂在该原子句柄下，由句柄入口注入解析其输出。
+手写 input 只允许 Root 或非 Context effect；Context 经 demands 接入，消费方类只以 Provides 契约作为 superclass。生产者自身仍可有 Input、消费其他 Context，但不能作为 AST node 的末端。原 Input 与生产链的能力同时保留，不重挂来源注册；沿 Input 与 request 收集 scope；require 在 state 无值时可能求值 request（scope 资源除外）。input 指向 Excu 或 Scoped 的 Context 挂在该原子句柄下，由句柄入口注入解析其输出。
 爬虫通过 request 连接 URL、抓取、解析与打印，SDK 不预先生产全局 Context。
 
 生产方与消费方分别描述，Context effect 自身也可以消费别的 Context：
@@ -258,7 +258,7 @@ source 结构支持显式 effect 调用、do、if／case 及已识别的标准�
 
 ScopeTree 保存共享节点及 parents／children／layers，实际为 DAG。路径按 scope 定义首次出现去重；生成期的 buildScopeTree 内部求 Pred(B)，即所有含 B 路径中 B 前序集合的交集，仅 A 属于 Pred(B) 时建立 A≺B，再做传递约简。该关系传递且反自反，不采用合并候选后删除整个 SCC 的办法。共同前序仅是构树的局部中间结果，不单独公开。ProgramStructure.structureScopes 直接保存生成的 ScopeTree，其内同时保留 scopePaths、scopeCandidates 原始候选、scopeOpposed 双向实证和 scopeUndetermined 未定关系；反向证据必须来自各自含有两端的单条静态路径，不能用跨路径拼接的可达性替代。仅有 open 顺序不能证明覆盖真实前提；生成期补全 require 复用的已有资源等依赖后再供清理使用，不能把缺失 open 当作无依赖。未定关系不能宣称为独立。
 
-Generated.Program 导出静态的 `programStructure :: Either (StructureError MethodGen) (ProgramStructure MethodGen)`，实现为 `initializeGeneratedStructure entries scopeNames generatedEffectGraph generatedScopeTree`，不保存 workflow 副本。现有 Main 的 `--structure` 参数对实际 AST 做纯展示 fold 并核对入口，读取同一份生成结构，以可读格式显示 ScopeTree 的父节点、层次、各入口路径、双向实证与未定关系，不重复输出内部共同前序，不调用 createEntries 或装配业务 action。补全后的 scope 依赖同时供 App／IO 的 Error 祖先导航与 once-spare 清理使用，不增加动态 error tracing；detect／resolve 与原错传播保留，Pure 继续旧候选名单。结构定义和查看方法见 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)，本轮资源存续协议以下文为准。
+Generated.Program 导出静态的 `programStructure :: Either (StructureError MethodGen) (ProgramStructure MethodGen)`，实现为 `initializeGeneratedStructure entries scopeNames generatedEffectGraph generatedScopeTree`，不保存 workflow 副本。现有 Main 的 `--structure` 参数对实际 AST 做纯展示 fold 并核对入口，读取同一份生成结构，以可读格式显示 ScopeTree 的父节点、层次、各入口路径、双向实证与未定关系，不重复输出内部共同前序，不调用 createEntries 或装配业务 action。补全后的 scope 依赖同时供 App／IO 的 Error 祖先导航与 once-spare 清理使用，不增加动态 error tracing；detect／resolve 与原错传播保留。结构定义和查看方法见 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)，本轮资源存续协议以下文为准。
 
 每次 gencode 仍加载声明并读取 Handlers 快照；纯结构分析与业务包装共用该快照，资产检查另用 GHC 名称解析同一快照，每次执行。Generated/.scope-cache 的精确 key 包含完整 GraphPlan、规范化 handler shapes，以及 Graph.hs、Recursion.hs、Workflow/AST.hs、Workflow/Structure.hs、Codegen/Plan.hs 的源码内容。命中时复用已发射的 graph／tree ADT 文本；不依赖 mtime，也不加载或执行 Generated.Program 读取缓存。原子业务 IO 变化若 shapes 不变，可复用结构而更新业务包装。各生成文件内容不变则不写回；这不是全命令 fastskip、逐方法热点生成、文件监听或热重载。
 
@@ -285,7 +285,7 @@ BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两�
 
 这项类型约束不证明分支来自独立文件，也不禁止内联子分支或直接构造叶模块。独立文件、顶层只引用模块名属于声明格式：正文采用固定 branch 构造、显式列表、node 与直接模块引用，不借任意 lambda／map／条件计算隐藏结构，引用保持有限无环。未来 LSP 保存模块定义、引用和源码位置，并检查该格式；当前执行 AST 不保留源码身份，不新增运行时模块 key。
 
-分文件不建立新 interpreter、注册环境、Context 或 scope。同一模块多次挂载意味着多次执行，不去重调用；原有串行短路、并发汇合与资源共享规则保持。五个 workflow demo 已按此拆分；SDK 保留的纯 target 入口不引入 AST，目前没有 demo 使用。loop 仍按下文单独确定嵌套和生命周期规则，本次模块化不扩大它的可组合范围。
+分文件不建立新 interpreter、注册环境、Context 或 scope。同一模块多次挂载意味着多次执行，不去重调用；原有串行短路、并发汇合与资源共享规则保持。五个 workflow demo 已按此拆分。loop 仍按下文单独确定嵌套和生命周期规则，本次模块化不扩大它的可组合范围。
 
 ## 内部控制与外部触发
 
@@ -295,7 +295,7 @@ chained 按前一次成功完成推进，parallel 并发启动并等待全部完
 
 “只负责启动逻辑，不负责状态转移”中的状态指业务状态。AST 不保存可变节点状态、上次产物或业务状态机，也不据此隐式传值；但完成、失败停止、并发汇合仍属于它的执行控制语义，运行记录由 SDK 持有。业务状态变化由 effect handler 执行。Context 按 request／require 引用，普通绑定与 scope 开启期绑定分别由 SDK 管理；scope 状态也属于 SDK，不引入节点业务状态机。
 
-Hanging 的既有设计（原 archive/legacy/docs/design/HANGING.md，已删除，见 Git 历史）是主控制树之外的事件 hook 树／列表，关联事件源、触发或恢复目标、所属执行与 scope。它可承接 loop 的订阅挂载，SDK 持有回调与有效期记录；loop 每次事件启动新调用，恢复旧调用属于另行声明的等待／恢复协议。Hanging 不承载节点业务状态机，也不要求自建协程调度器；当前尚未接入。
+Hanging 的既有设计是主控制树之外的事件 hook 树／列表，关联事件源、触发或恢复目标、所属执行与 scope。它可承接 loop 的订阅挂载，SDK 持有回调与有效期记录；loop 每次事件启动新调用，恢复旧调用属于另行声明的等待／恢复协议。Hanging 不承载节点业务状态机，也不要求自建协程调度器；当前尚未接入。
 
 - loop 是执行方式的 transformer：将所属节点的入口装配为事件订阅与回调，不要求模块持续执行。
 - 无条件：loop 不根据本轮业务结果设置继续判定；订阅有效时由事件触发调用，无事件则等待，所属范围结束时停止。
@@ -360,7 +360,7 @@ effect 不配置 dependency。SDK 沿声明收集 Scoped，能力仍由 supercla
 
 每次显式 open 按原取值声明取得本次参数。作为 scope 匹配参数的开启输入全部实际以 require 取得时，可按 Eq 共享同参活实例，跳过资源获取及 open 的剩余方法体；任何这样的输入实际以 request 取得时，本次 open 默认 fresh，即使值相同也创建新实例，同值旧实例保留并存。这里区分的是开启参数取值，资源 producer 自身用于获取资源的 request 不一律触发 fresh；没有开启输入的 scope 仍可共享。
 
-需要共享时，业务在当前完整链先取得稳定参数，scope 内 require 该绑定。参数生产者自己的 IO 可以运行；open 范围中其他 IO 必须在参数齐备之后，否则报 ScopeInputsMissing。参数变化发生在选定之后则报 ScopeInputAfterOpen。该协议不分析任意 IO 闭包中的隐藏参数，也不将混在参数生产动作里的资源获取自动拆开。Pure 载体不含 Scoped；本轮协议限定 App／IO 下受管理的有限完整链。
+需要共享时，业务在当前完整链先取得稳定参数，scope 内 require 该绑定。参数生产者自己的 IO 可以运行；open 范围中其他 IO 必须在参数齐备之后，否则报 ScopeInputsMissing。参数变化发生在选定之后则报 ScopeInputAfterOpen。该协议不分析任意 IO 闭包中的隐藏参数，也不将混在参数生产动作里的资源获取自动拆开。本轮协议限定 App／IO 下受管理的有限完整链。
 
 底层 ContextBinding 保存不可变的值快照与 scope 实例引用，二者一起传递；App 已删除 selectedScopes／lookupSelected。require 首先读取本次调用已经捕获的绑定，不因另一条链发布新值而改变。显式 request 发布并替换当前调用的来源绑定；开启期间建立的绑定只在实际实例仍被使用或依赖保留时供跨链复用，其他已捕获绑定不被原地改写。普通 Context 仍按 Node 隔离。资源已关闭后，后续 Node 必须显式 open 新一轮；旧绑定不自动换 owner。
 
@@ -416,17 +416,17 @@ FileDemo 的 FileRecovery 演示：require 原文件句柄，用 hIsClosed 检�
 分别负责契约、注册解析、存储原语和末端句柄描述／lower。[Recursion.hs](../sdk/Framework/Recursion.hs) 提供纯 Fix／cata／zygo；
 [Workflow/AST.hs](../sdk/Framework/Workflow/AST.hs) 保存结构，[Workflow/Execution.hs](../sdk/Framework/Workflow/Execution.hs) 提供执行 algebra 与并发汇合；
 [Codegen.hs](../sdk/Framework/Codegen.hs) 负责源码生成。拆分不改变 boot 范围或 IO 权限，本次文件分离不改变 handler 签名或执行语义。
-[Generate.hs](../sdk/Framework/Generate.hs) 提供统一首次生成命令：先加载 Types、Effects 和 AST／Target，用 GHC 9.12 解析器读取 Handlers.hs 的模块、方法边界与显式 effect 引用，生成独立纯结构；再以 GHC 无代码生成模式解析业务名称并检查资产引用，成功后写回 Generated。候选生成模块及手写 Handlers 快照从内存加载，不执行业务。
+[Generate.hs](../sdk/Framework/Generate.hs) 提供统一首次生成命令：先加载 Types、Effects 和 AST，用 GHC 9.12 解析器读取 Handlers.hs 的模块、方法边界与显式 effect 引用，生成独立纯结构；再以 GHC 无代码生成模式解析业务名称并检查资产引用，成功后写回 Generated。候选生成模块及手写 Handlers 快照从内存加载，不执行业务。
 它们不导入 Generated 或 Handlers；effect 标记与错误类型自动生成，无须用户手写空 data。
-首次运行 cabal run effect-codegen -- workflow Crawler（纯 target 用 -- target 加命名空间），生成接口后填写 handler，再次生成并编译 Main。缺少 Handlers.hs 时先生成空编译模块；有实现后进行完整资产检查，不执行 handler。
+首次运行 cabal run effect-codegen -- workflow Crawler，生成接口后填写 handler，再次生成并编译 Main。缺少 Handlers.hs 时先生成空编译模块；有实现后进行完整资产检查，不执行 handler。
 业务执行仍编译 Generated/Handlers，SDK 包装方法入口，保留原生取值与业务表达式；纯初始化结构由 Generated.Program 导出，不回写手写源码或新增业务类型类。手写实现变更后须重新生成。
-生成的 Handlers 保存解析时的源码指纹；公共 workflow／target 入口在启动业务前检查当前手写源，缺失或过期则拒绝执行。两类入口均核对注册快照，纯 target 还核对末端；Main 写法不变。检查从仓库根目录读取源码，--generate 仍可修复过期副本；直接求值纯 target 的底层结果不提供 IO 源码检查。
+生成的 Handlers 保存解析时的源码指纹；公共 workflow 入口在启动业务前检查当前手写源，缺失或过期则拒绝执行，并核对注册快照；Main 写法不变。检查从仓库根目录读取源码，--generate 仍可修复过期副本。
 已有 Main --generate 仍要求导入链可编译，新增 effect 或缺少生成文件时使用独立 SDK 命令。
 [demo/Crawler/Main.hs](../demo/Crawler/Main.hs) 等 demo 演示 IO workflow；
 各 demo 的手写入口、注册、handler 与生成模块分别可 review；
 仍使用的并发辅助函数已并入当前 SDK。
 
-同次 AST 的运行表保留，本轮迁移到有限使用闭包 once-spare、require 共享／request fresh 及补全后的清理依赖，并由使用协议协调显式关闭。App／IO 的 Root Error 祖先导航使用同一 ScopeTree，实例定位、detect／resolve 与原错传播保留；Pure 维持旧候选名单，不自动恢复业务。具体实现与普通编译结果须按本轮代码核对，不由旧样例推断已验证；Generic Map 和 loop／Hanging 尚未接入。
+同次 AST 的运行表保留，本轮迁移到有限使用闭包 once-spare、require 共享／request fresh 及补全后的清理依赖，并由使用协议协调显式关闭。App／IO 的 Root Error 祖先导航使用同一 ScopeTree，实例定位、detect／resolve 与原错传播保留，不自动恢复业务。具体实现与普通编译结果须按本轮代码核对，不由旧样例推断已验证；Generic Map 和 loop／Hanging 尚未接入。
 
 ## 本阶段范围与后续方向
 
@@ -458,7 +458,7 @@ Input 继承、instance 内引用、末端登记、Node lowering 与 Error 检�
 | 闭包装配 | Node algebra 只 lower 所选末端，实例内引用带起上游；有限链作为资源使用闭包 | 动态入口、跨独立 interpreter 存续 |
 | 控制与触发 | AST 负责启动与执行控制，不维护业务状态转移；node／branch 分类型，branch 分文件组合；chained／parallel 已以 cata 装配；loop 与二者同级，无条件、无跨调用业务状态；Hanging 承接事件入口 | LSP 模块定义与引用索引；loop／Hanging 接入、监听范围、单次失败与重叠处理、停止收尾；其余 branch 构造及嵌套规则 |
 | scope 边界 | open／close 均为 m (Maybe String)；开启输入 require 同参共享／request fresh，完整链持有实际实例；core 固定 once-spare，interpreter 退出兜底；显式 close 服从使用协调，重开不改旧 owner | 其他 cleanup policy、裸 forkIO 追踪、未发布的部分获取恢复、跨入口存续 |
-| 诊断与处置 | App／IO 从 scope 种子沿与清理共用的 ScopeTree 补齐祖先并 top-down 检测；Pure 保留旧候选名单；detect Succ 后 resolve，保留原错误与各项完成报告；诊断结束后才撤销完整链的使用，显式关闭服从使用协议；不自动重放或恢复 | 已展开 continuation 的恢复、跨调用诊断范围 |
+| 诊断与处置 | App／IO 从 scope 种子沿与清理共用的 ScopeTree 补齐祖先并 top-down 检测；detect Succ 后 resolve，保留原错误与各项完成报告；诊断结束后才撤销完整链的使用，显式关闭服从使用协议；不自动重放或恢复 | 已展开 continuation 的恢复、跨调用诊断范围 |
 | 值转换 | Generic Map 为 SDK 内置适配，不新增 adapter 配置或 Map typing；对外产值的业务纯转换注册为 Context | 原型接入注册、支持的契约结构、转换的失败输出接口 |
 | 序列化 | 保存结构、引用和契约，不保存执行闭包与活资源 | 固定 schema、类型引用及 SDK 协议识别方式 |
 

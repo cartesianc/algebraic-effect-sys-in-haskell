@@ -1,7 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 
 -- 将注册和选定末端 lower 为普通 Haskell 源码；不执行业务。
-module Framework.Codegen (Entry(..), lowerProgram) where
+module Framework.Codegen (lowerProgram) where
 
 import Framework.Effect.Contract (EffectKind(..))
 import Framework.Effect.Registration
@@ -14,15 +14,15 @@ import Data.Maybe (fromMaybe, listToMaybe, maybeToList)
 -- 3. 生成契约、superclass 和末端句柄登记。
 -- 不生成外部 request 流水线；上游方法由用户 instance 直接引用。
 -- Input 保存操作能力；Context 经 demands 按契约解析来源，消费方不指名生产者的类。
-data Entry = SingleTarget String | Workflow [String]
+-- 程序只经 AST 启动：入口是 AST 中各 node 选中的末端 effect。
 
 -- 结构分析使用的取值路由：消费方类 → ((request|require, 契约名), 来源方法)；
 -- 以及 Context 的生产／读取方法，供拒绝跨 effect 直接调用。
 type DemandRoutes = ([(String, [((String, String), String)])], [(String, String)])
 
-lowerProgram :: String -> [EffectSpec] -> Entry
+lowerProgram :: String -> [EffectSpec] -> [String]
              -> Either String (String, String, [(String, String, String, String)], String, GraphPlan String, [String], DemandRoutes, [(String, String, Bool)])
-lowerProgram namespace specifications entry = do
+lowerProgram namespace specifications terminals = do
   if any ((== "Root") . name) specifications
     then Left "Root is reserved for the superclass"
     else pure ()
@@ -44,31 +44,10 @@ lowerProgram namespace specifications entry = do
     then Left "Registered method names must be unique within a generated module"
     else pure ()
   declarations <- mapM declaration specifications
-  singleEntry <- case entry of
-    SingleTarget terminal -> do
-      method <- findHandler terminal
-      pure
-        [ "-- 纯计算样例也只登记末端句柄，不在外部组合上游。"
-        , "compiledTarget :: SDK.Target SDK.Identity ContextValues Errors (Produce " ++ terminal ++ ")"
-        , "compiledTarget = SDK.targetPure " ++ show terminal ++ " emptyContexts"
-        , "  (FrameworkRoot.withErrorHandlers Handlers.errorHandlers"
-        , "    (FrameworkRoot.withAnchoredContexts Handlers.contextInjections " ++ terminalAction terminal method ++ "))"
-        , ""
-        , "benchmark :: Output Errors (Produce " ++ terminal ++ ")"
-        , "benchmark = SDK.bootPure compiledTarget"
-        , ""
-        , "registeredTarget :: String"
-        , "registeredTarget = " ++ show terminal
-        , ""
-        , "-- 生成入口由 SDK 提供；业务无需另写 Codegen 模块。"
-        , "runDemo :: Show value => [EffectSpec] -> String -> value -> IO ()"
-        , "runDemo = SDK.runDemo " ++ show namespace ++ " registeredEffects registeredTarget Handlers.handlerSourceFingerprint"
-        ]
-    Workflow _ -> pure []
   pure
     ( unlines (contractHeader ++ runtimeAliases ++ generatedContracts ++ methodIdentities ++ concat declarations
         ++ providerDeclarations ++ errorDeclaration ++ contextDeclarations)
-    , unlines (programHeader ++ registrationSnapshot ++ structureDeclarations ++ singleEntry ++ astInterpreter selectedMethods)
+    , unlines (programHeader ++ registrationSnapshot ++ structureDeclarations ++ astInterpreter selectedMethods)
     , concatMap instanceWrappers specifications
     , scopeHandlers ++ scopeCleanups ++ errorHandlers ++ injectionTable
     , graphPlan
@@ -137,12 +116,7 @@ lowerProgram namespace specifications entry = do
       | any (\specification -> name specification == terminal && effectKind (typing specification) == ContextKind) specifications = method
       | otherwise = "(() <$ " ++ method ++ ")"
 
-    selected = case entry of
-      SingleTarget terminal -> [terminal]
-      Workflow terminals -> nub terminals
-    isWorkflow = case entry of
-      Workflow _ -> True
-      SingleTarget _ -> False
+    selected = nub terminals
     contextSpecs = filter ((== ContextKind) . effectKind . typing) specifications
     contractHeader =
       [ "{-# LANGUAGE ConstraintKinds #-}"
@@ -170,8 +144,8 @@ lowerProgram namespace specifications entry = do
       , ""
       ]
 
-    -- App 载体提供 IO；纯 target 的载体没有 IO。各类别是否收紧 IO 待 Pure 语义确定后再定。
-    carrierCapabilities = ["MonadIO m" | isWorkflow]
+    -- App 载体提供 IO；各类别是否收紧 IO 待 Pure 类别的语义确定后再定。
+    carrierCapabilities = ["MonadIO m"]
 
     -- Input 链上的全部上游 effect（不含 Root），由近到远。
     inputChain seen selectedName
@@ -248,7 +222,7 @@ lowerProgram namespace specifications entry = do
       , "-- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。"
       , "module " ++ namespace ++ ".Generated.Program where"
       , ""
-      , "import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Requester(..), Handles(..), Demand(..), Access(..), TypeRef(..), Output)"
+      , "import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Requester(..), Handles(..), Demand(..), Access(..), TypeRef(..))"
       , "import qualified Framework.SDK as SDK"
       , "import qualified Framework.Effect.Contract as FrameworkRoot"
       , "import " ++ namespace ++ ".Generated.Effects hiding (request, require)"
@@ -283,7 +257,7 @@ lowerProgram namespace specifications entry = do
             routeList selectedAccess = "[" ++ intercalate ", "
               ["(" ++ show consumer ++ ", " ++ method ++ ")" | (consumer, method) <- routes selectedAccess] ++ "]" ]
 
-    carrierType = if isWorkflow then "App" else "Pure"
+    carrierType = "App"
 
     -- 生成的契约类型；不派生 Read，值只能由声明它的生产方构造。
     -- Eq／Show 仅在表示类型具备时可用。
@@ -300,8 +274,7 @@ lowerProgram namespace specifications entry = do
     runtimeAliases =
       [ "-- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。"
       , "type Root = SDK.Root ContextValues Errors"
-      , if isWorkflow then "type App = SDK.App ContextValues Errors"
-                      else "type Pure = SDK.Pure ContextValues Errors"
+      , "type App = SDK.App ContextValues Errors"
       , ""
       ]
 
@@ -372,11 +345,8 @@ lowerProgram namespace specifications entry = do
     -- 共享祖先按身份去重；require 不启动生产链。
     operationInputs specification = nub (input specification : requestProviders specification)
     upstreamScopes specification = nub (concatMap (scopeNames []) (operationInputs specification))
-    -- App/IO 的 withErrorPath 只接收关联种子；祖先和 top-down 顺序由同一 ScopeTree 决定。
-    -- Pure 尚未安装 ScopeTree，继续保留原来的完整候选名单。
-    errorPath specification
-      | isWorkflow = nub (nearestScopeNames [] (name specification))
-      | otherwise = nub (scopeNames [] (name specification))
+    -- withErrorPath 只接收关联种子；祖先和 top-down 顺序由同一 ScopeTree 决定。
+    errorPath specification = nub (nearestScopeNames [] (name specification))
     -- scope 与回调装配仍收齐全量前提，不依赖上面的最近种子集合。
     orderedScopes = nub (concatMap (scopeNames [] . name) specifications)
     nearestScopeNames seen selectedName
@@ -434,7 +404,7 @@ lowerProgram namespace specifications entry = do
       [] -> Left ("Unknown effect: " ++ effectName)
       _ -> Left ("Duplicate effect: " ++ effectName)
 
-    -- target 和 request 均只引用 effect，从 typing 取得普通入口。
+    -- AST 末端和 request 均只引用 effect，从 typing 取得普通入口。
     -- Nothing 可保留为声明，但不能被选择为可执行入口。
     findHandler effectName = do
       specification <- findEffect effectName
@@ -669,9 +639,7 @@ lowerProgram namespace specifications entry = do
       "SDK.Output (" ++ reference cause ++ ") (" ++ reference value ++ ")"
 
     -- 控制对象由生成的 handler 模块创建；不同链引用同份对象，不预执行 open。
-    scopeHandlers
-      | not isWorkflow = ""
-      | otherwise = unlines
+    scopeHandlers = unlines
           [ "-- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。"
           , "newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]"
           , "newScopeHandlers = sequence"
@@ -684,9 +652,7 @@ lowerProgram namespace specifications entry = do
           ]
 
     -- 只登记已有 close 方法；本轮资源绑定由运行载体在 open 时捕获。
-    scopeCleanups
-      | not isWorkflow = ""
-      | otherwise = unlines
+    scopeCleanups = unlines
           [ ""
           , "-- SDK 自动收尾入口；安装时不关闭资源。"
           , "scopeCleanups :: [(String, FrameworkGenerated.App ())]"
@@ -726,7 +692,7 @@ lowerProgram namespace specifications entry = do
       , "  ]"
       ]
       where
-        carrier = if isWorkflow then "App" else "Pure"
+        carrier = carrierType
         callbacks =
           [ "(" ++ show (listToMaybe (errorScopes specification)) ++ ", FrameworkRoot.ErrorHandler " ++ show (name specification)
               ++ "\n      (\\failure -> case (FrameworkRoot.origin failure, FrameworkRoot.detail failure) of"
@@ -741,9 +707,7 @@ lowerProgram namespace specifications entry = do
         methodReference Nothing = "Nothing"
         methodReference (Just method) = "Just " ++ method
 
-    astInterpreter methods
-      | not isWorkflow = []
-      | otherwise =
+    astInterpreter methods =
           [ ""
           , "-- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。"
           , "data Results = " ++ intercalate " | "
@@ -751,7 +715,7 @@ lowerProgram namespace specifications entry = do
           , "  deriving Show"
           , ""
           , "-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。"
-          , "compiledEntries :: IO [SDK.Target IO ContextValues Errors Results]"
+          , "compiledEntries :: IO [SDK.Target ContextValues Errors Results]"
           , "compiledEntries = do"
           , "  scopes <- Handlers.newScopeHandlers"
           , "  pure"
@@ -768,7 +732,6 @@ lowerProgram namespace specifications entry = do
           , "interpreter = SDK.interpreter " ++ show namespace ++ " registeredEffects Handlers.handlerSourceFingerprint programStructure compiledEntries"
           ]
 
-    -- workflow 与纯 target 共用同一注册快照核对规则。
     registrationSnapshot =
       [ "-- 编译时注册快照；运行前核对声明，改变连接后须重新生成。"
       , "registeredEffects :: [EffectSpec]"

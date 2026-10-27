@@ -10,7 +10,6 @@ extra-source-files:
     AGENTS.md
     hie.yaml
     docs/*.md
-    checks/*.hs
     sdk/Framework/Codegen.hs
     demo/*/Handlers.hs
     demo/*/Generated/Assets.hs
