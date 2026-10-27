@@ -60,6 +60,10 @@ data Environment env cause = Environment
   , runStore :: RunStore env cause
   -- 当前生产由 require 按需求值触发；进入任一 handler 后复位。
   , forcedRequire :: Bool
+  -- 原子句柄方法名 → 挂在它下面的 Context 生产入口，由生成区安装。
+  , anchoredEntries :: [(String, [(String, App env cause ())])]
+  -- 注入期间各原子句柄的本次输出。
+  , replays :: [(String, RawOutput)]
   }
 
 data Opening env cause = Opening
@@ -401,6 +405,18 @@ instance ContextStore env (App env cause) where
   productionAccess = AppRun $ do
     forced <- asks forcedRequire
     pure (if forced then RequiredInput else RequestedInput)
+  withAnchoredContexts entries (AppRun action) = AppRun $ local
+    (\environment -> environment { anchoredEntries = entries }) action
+  anchoredContexts method = AppRun (asks (fromMaybe [] . lookup method . anchoredEntries))
+  replayedOutput method = AppRun (asks (lookup method . replays))
+  -- 诊断与收尾期间不注入。注入以根调用身份运行，失败只留在注入内：资产不发布，
+  -- 原链照常继续；之后 require 该资产时按需求值，故障在那里按正常协议报出。
+  injectOutput method raw (AppRun action) = AppRun $ do
+    environment <- ask
+    let allowed = not (isJust (originalFailure environment)) && not (cleaningScopes environment)
+        inside = environment { caller = Nothing, forcedRequire = False, errorHandlers = []
+                             , replays = (method, raw) : replays environment }
+    when allowed $ () <$ liftIO (runExceptT (runReaderT action inside))
   recordContextInput access value = do
     environment <- AppRun ask
     case openings environment of
@@ -509,7 +525,7 @@ runDiagnostic environment problem selected callback = do
         values <- newIORef restored
         let inside = environment
               { bindings = values, caller = Nothing, contexts = [], openings = [], closings = []
-              , originalFailure = Just problem, diagnosticOwner = owner, forcedRequire = False }
+              , originalFailure = Just problem, diagnosticOwner = owner, forcedRequire = False, replays = [] }
             AppRun action = runErrorHandler selected callback
         result <- runExceptT (runReaderT action inside)
         -- runErrorHandler 接回 detect/resolve 的 Failure；不捕获取消等原生 IO 异常。
@@ -552,6 +568,7 @@ captureScopeCleanup environment attempt slot =
                     { bindings = values, caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
                     , errorPath = []
                     , originalFailure = Nothing, diagnosticOwner = Nothing, cleaningScopes = True, forcedRequire = False
+                    , replays = []
                     , consumer = cleanupUser, cleanupPermit = Just (permit, slot)
                     , cleanupBusy = Just (fault name (wrapFault attempt) ScopeInUse) }
               restore (runExceptT (runReaderT close inside)) `finally` detachScopeUser cleanupUser
@@ -560,7 +577,7 @@ captureScopeCleanup environment attempt slot =
         writeIORef (scopeCleanup slot) (Just (ScopeCleanup interrupted cleanup))
   where name = scopeName (family attempt)
 
-runOpen :: String -> (ScopeFault -> cause) -> App env cause () -> App env cause ()
+runOpen :: String -> (ScopeFault -> cause) -> App env cause value -> App env cause (Maybe value)
 runOpen name wrap (AppRun action) = AppRun $ do
   environment <- ask
   when (cleaningScopes environment || not (null (closings environment))) $
@@ -573,13 +590,14 @@ runOpen name wrap (AppRun action) = AppRun $ do
         execute = do
           when (null (scopeInputSources handler)) $
             liftIO (ensureOpen inside attempt) >>= either throwError pure
-          runReaderT action inside
+          value <- runReaderT action inside
           liftIO (ensureOpen inside attempt) >>= either throwError pure
           selected <- liftIO (readIORef (holding attempt))
           forM_ selected $ \slot -> do
             saved <- liftIO (scopeBindings <$> readIORef (scopeRecord slot))
             when (resourceSource handler `notElem` map fst saved) $
               throwError (fault name wrap (ScopeContextMissing (resourceSource handler)))
+          pure value
     outcome <- try (restore (runExceptT execute))
     acquired <- readIORef (holding attempt)
     forM_ acquired (captureScopeCleanup environment attempt)
@@ -588,20 +606,21 @@ runOpen name wrap (AppRun action) = AppRun $ do
         forM_ acquired $ \slot ->
           setPhase slot (interruptedScope name wrap exception) >> putMVar (scopeGate slot) ()
         case fromException exception of
-          Just (Completed identity) | identity == token attempt -> pure (Right ())
+          -- 复用同参的已开启实例：剩余 open 方法体未执行，没有新的输出。
+          Just (Completed identity) | identity == token attempt -> pure (Right Nothing)
           _ -> throwIO exception
       Right completed -> case acquired of
-        Nothing -> pure (either (Left . scopeFailureTarget name Nothing) Right completed)
+        Nothing -> pure (either (Left . scopeFailureTarget name Nothing) (Right . Just) completed)
         Just slot -> do
           current <- scopePhase <$> readIORef (scopeRecord slot)
-          let finalPhase = finishScope OpenScope name wrap current completed
+          let finalPhase = finishScope OpenScope name wrap current (() <$ completed)
           setPhase slot finalPhase
           putMVar (scopeGate slot) ()
-          pure (either (Left . scopeFailureTarget name (Just slot)) Right
+          pure (either (Left . scopeFailureTarget name (Just slot)) (Right . Just)
             (maybe completed Left (scopeFailure finalPhase)))
   either throwError pure result
 
-runClose :: String -> (ScopeFault -> cause) -> App env cause () -> App env cause ()
+runClose :: String -> (ScopeFault -> cause) -> App env cause value -> App env cause (Maybe value)
 runClose name wrap (AppRun action) = AppRun $ do
   environment <- ask
   when (name `elem` ownedNames environment) (throwError (fault name wrap ScopeReentry))
@@ -615,9 +634,9 @@ runClose name wrap (AppRun action) = AppRun $ do
             case resolved of
               Right (Just value) -> liftIO (beginClose inside attempt value) >>= either throwError pure
               _ -> throwError (missingClose attempt)
-          runReaderT action inside
+          value <- runReaderT action inside
           active <- liftIO (readIORef (closeHolding attempt))
-          case active of Nothing -> throwError (missingClose attempt); Just _ -> pure ()
+          case active of Nothing -> throwError (missingClose attempt); Just _ -> pure value
         releaseReservation = do
           -- 自动收尾的预约覆盖外层 Root 诊断，由 cleanupAvailable 统一结束。
           reserved <- readIORef (closeReserved attempt)
@@ -634,13 +653,14 @@ runClose name wrap (AppRun action) = AppRun $ do
               _ -> interruptedScope name wrap exception)
             putMVar (scopeGate slot) ()
           case fromException exception of
-            Just (Completed identity) | identity == closeToken attempt -> pure (Right ())
+            -- 已成功关闭的实例跳过重复 close，没有新的输出。
+            Just (Completed identity) | identity == closeToken attempt -> pure (Right Nothing)
             _ -> throwIO exception
         Right completed -> do
           forM_ acquired $ \(slot, initial) -> do
-            setPhase slot (finishScope CloseScope name wrap initial completed)
+            setPhase slot (finishScope CloseScope name wrap initial (() <$ completed))
             putMVar (scopeGate slot) ()
-          pure (either (Left . scopeFailureTarget name (fst <$> acquired)) Right completed))
+          pure (either (Left . scopeFailureTarget name (fst <$> acquired)) (Right . Just) completed))
       `finally` releaseReservation
   either throwError pure result
 
@@ -650,7 +670,7 @@ runAppWith :: (Either (Failure cause) value -> IO ()) -> RunStore env cause -> S
 runAppWith consume store handlers initial (AppRun action) = mask $ \restore -> do
   values <- newIORef []
   user <- newScopeUser
-  let environment = Environment initial values handlers Nothing [] [] [] [] [] [] Nothing Nothing [] False user Nothing Nothing store False
+  let environment = Environment initial values handlers Nothing [] [] [] [] [] [] Nothing Nothing [] False user Nothing Nothing store False [] []
   completed <- try $ restore $ do
     outcome <- runExceptT (runReaderT action environment)
     consume outcome

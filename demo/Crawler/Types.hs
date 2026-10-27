@@ -15,11 +15,6 @@ data SessionInfo = SessionInfo
   , sessionUserAgent :: String
   } deriving (Show, Read, Generic)
 
-data FetchedPage = FetchedHTML
-  { fetchedURL :: String
-  , fetchedBody :: String
-  } deriving (Show, Read, Generic)
-
 data PageSummary = PageSummary
   { summaryURL :: String
   , summaryTitle :: String

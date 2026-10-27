@@ -128,7 +128,9 @@ SDK 保留 scope 状态与 Context 绑定，本轮按有限使用闭包落实 on
 成功／错误出口，而不是任意外部 env -> value 函数。初始配置、外部输入和常量如何进入，
 需要明确的入口声明；现阶段不因此增加一个已定案的 Source 分类。
 
-普通 Pure／Excu 只表达成功或失败，成功类型固定为 ()，不跨 handler 返回业务产物。
+Pure／Excu 只表达成功或失败，不跨 handler 返回业务产物。Pure 的成功类型固定为 ()；Excu 与 Scoped.open／close 是原子句柄，返回 Maybe String 形式的可选信息，SDK 与成败合成内部 RawOutput，只交给挂在该句柄下的 Context 解析，没有挂接时丢弃。
+
+Context 的 input 指向 Excu 或 Scoped 时挂在该句柄下，解析其入口方法（handler／open）的输出。生成器在原子句柄入口注入：句柄被原链调用并成功返回后，以根调用身份运行挂接的 Context.request，其中对该句柄的调用由本次输出回答、不重复执行，产值按 request 发布为资产；原链（A→B→Ctx→C 中的 C）不受影响，注入失败只留在注入内。尚未执行句柄而有消费方 require 时，按需求值的 request 由 Context 调用句柄驱动整条链。哪些方法可以使用原子句柄的输出属于源码写法约束，留给未来 LSP。
 业务产值统一归 Context，即使具体计算是纯函数也不因此注册为 Pure；不另设 Map typing。成功值与错误负载都可以
 参与显式连接；转换错误负载不会自动把原操作的失败状态改为成功。
 
@@ -162,7 +164,7 @@ gencode 在结构分析时把 request @T／require @T 解析为来源方法，�
 不再用 ADT/Constructor 重述字段。Require、Produce 是 Effect 中的关联 type，以原子 effect 为索引。
 移除顶层 produces 和错误契约配置；只有 Context.request 以 requester 声明表示类型。
 Require 引用原生输入类型，Produce 表示 Context 的业务产物，其余类别默认 ()，不包含 Output。
-普通 Pure／Excu 方法返回 m ()，Context 返回业务成功值；handler 不手写 Succ 包装。
+Pure 方法返回 m ()，Excu 与 Scoped.open／close 返回 m (Maybe String)，Context 返回业务成功值；handler 不手写 Succ 包装。
 SDK 按 effect 名生成本地错误类型、关联 Error e、分类和 raise，实现来源推导；用户只填写错误消息。
 生成阶段产生类型关联、方法接口与装配；业务数据定义及方法体仍由用户提供。
 各类别统一注册，所有方法名绑定放入 typing 对应的普通 ADT 构造器，包括 Pure 和 Excu，
@@ -173,7 +175,7 @@ Nothing 表示未绑定该方法，不改变业务返回值的类型；require �
 当前 Pure／Excu 已落实：Nothing 不生成本地方法，被 target 引用时报告没有可调用入口；
 不猜测名字或提供默认业务实现。request 必须引用具有产值入口的 Context，不用普通 effect 的 () 传值。
 Scoped 也已按同一 class 生成 open／close，由同一 instance 实现；
-open／close 均为 m ()，通过 instance 内的 superclass 方法引用完成开启／关闭；信息仍由上游 Context 生产与读取。
+open／close 均为 m (Maybe String)，通过 instance 内的 superclass 方法引用完成开启／关闭；资源信息仍由上游 Context 生产与读取。
 Context 的 request 由用户实现，require 默认由 SDK 读取绑定，不提供默认业务生产。
 Error 的 detect／resolve 均以 Maybe String 声明并返回 m ()，handles 声明处理的故障类型；没有 detect 时类型匹配即调用 resolve。
 继续显式生成普通 Haskell 源码并保留 review 区，避免引入 Template Haskell。
@@ -189,7 +191,7 @@ RenderNumber 还声明 require DemoContext；其 loadDemoInputs 引用复用 Mak
 末端；AST 组织链的启动与执行控制，不维护节点业务状态机，结果依赖和业务状态操作由 effect system 解决。完成、失败停止与并发汇合仍属于执行控制，不能一并排除。chained、parallel、loop 为同级 branch。当前爬虫的每个
 node 只选择完整链的末端，分别挂载解析链和打印链；context 来源放在 effect 注册中。chained 顺序执行并在
 失败时停止，parallel 并发执行并等待全部子分支后汇总，成功值按声明顺序排列。
-SDK 已用 WorkflowF + Fix + cata 将这两个有限分支装配为未执行的动作；fold 不执行 handler，节点产物不自动传给后继节点。URL、抓取与解析由 Context 产值并保存；先并行解析，再顺序打印。打印仍通过 request 重新抓取、解析，返回 ()；改为消费第一阶段缓存的调用关系另行设计。
+SDK 已用 WorkflowF + Fix + cata 将这两个有限分支装配为未执行的动作；fold 不执行 handler，节点产物不自动传给后继节点。URL 由 Context 产值；抓取是 Excu，交出网页正文，解析 Context 挂在抓取句柄下。先并行抓取（同时注入解析，摘要发布为运行级资产），再顺序打印；打印 require 摘要，不再抓取。
 
 workflow 以具名 branch 为模块：每个 branch 在 Workflow 下独立文件定义，顶层 AST 通过普通 import 组合业务名称，不在表达式中使用模块限定前缀。node 返回抽象 EffectNode，branch 返回抽象 AST；同一 chained／parallel 列表只接受一种子项类型，禁止裸 node 与 branch 混排，裸 node 不能作为 AST。单个 node 也先组成 branch；空列表须标注元素类型，原有空分支成功语义不变。SDK 内部保留 WorkflowF、Fix 与 cata，隐藏 AST 构造与内部子项转换。
 
@@ -238,7 +240,7 @@ Hanging 保留为主控制树之外的事件入口描述，可承接 loop 的订
 资源 producer 自身为了生产资源而使用 request，不因此一律 fresh；无开启输入的 scope 仍可共享。
 不要求主动健康轮询，require 不自动重开失效或关闭实例。普通业务结果的共享仍由输出绑定与 require 表达。
 
-Scope 描述存续、共享范围与结束边界；open／close 均为 m ()，不配置产物。
+Scope 描述存续、共享范围与结束边界；open／close 均为 m (Maybe String)，不配置产物。
 open 可直接引用上游 Context 的生产方法，close 可读取其保存值，Input 继承本身不传值。
 SDK 包装这两个方法，保存未开启、开启中、有效、关闭中、失效和已关闭状态；选择共享的同份有效实例不重复开启，
 共享调用等待首次开启，失败或中断后保存故障并禁止自动重开。成功关闭不重复执行，之后显式 open 可以开启新一轮。
@@ -291,7 +293,7 @@ Types、Effects、AST／Target 独立于 Generated 与 Handlers；effect 标记�
 生成副本保存实际解析的手写源码指纹，公共运行入口在业务执行前比对当前 Handlers.hs；缺失或变更时拒绝启动并提示重新生成。workflow 与纯 target 都比对注册快照，纯 target 另比对所选末端。此检查要求从仓库根目录访问手写源，不替代显式生成或编译。
 已有 Main --generate 仍要求导入链能编译，不能替代独立首次生成入口。
 数字 benchmark 与爬虫都演示 instance 内沿 Input 引用类方法；爬虫再由 Node algebra lower 末端，组织并行解析与顺序打印。
-文件 demo 同样只选择末端；路径、活文件句柄与文本归 Context，校验归 Pure、写入归 Excu，Scoped 的 open／close 均为 m ()。FileWorkflow 在本链先 request 稳定路径，校验及开启参数 require 该绑定，链结束后自动清理；FileRecovery 仍检测已捕获的文件并显式引用 closeFileSession。
+文件 demo 同样只选择末端；路径、活文件句柄与文本归 Context，校验归 Pure、写入归 Excu，Scoped 的 open／close 均为 m (Maybe String)。ReadFile 的 input 是 FileSession，因此按新规则挂在 openFileSession 下：剧本开启文件时注入读取一次，WriteFile 的 request 再读取一次；拆成读取 Excu 加挂接 Context 留待 Context 不直接做 IO 一项。FileWorkflow 在本链先 request 稳定路径，校验及开启参数 require 该绑定，链结束后自动清理；FileRecovery 仍检测已捕获的文件并显式引用 closeFileSession。
 OpenFilesDemo 改为每条链显式 open：InspectFiles 观察当前链及 GC 期间十个文件的存续，FinishInspection 开启自己的新一轮并演示显式关闭；不再要求前一 Node 的活资源自动留给后一 Node。
 ScopeInstancesDemo 在每条链先取得稳定参数，保留链内同参 require 共享、异参独立和显式关闭；后续 Node 显式开启新一轮，不读取或改写旧 owner。
 ScopeReuseDemo 的三个 writer 各自先 request 参数，scope 内 require；只有实际重叠的使用可以共享，不能固定断言整个 parallel 批次只开一次。汇合后用已有日志和输出核对获取／关闭计数匹配及三次写入，不再 require 已结束闭包的资源；追加模式保留多个开闭周期的内容。

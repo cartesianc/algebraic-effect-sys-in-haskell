@@ -21,15 +21,17 @@ import System.IO (IOMode(ReadWriteMode), hClose, hFlush, hIsClosed, hPutStrLn, o
 import System.IO.Error (tryIOError)
 
 instance PrepareFilesEffect App where
-  prepareFiles = liftIO $ do
-    let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
-        firstFile = outputDirectory </> "one.txt"
-        secondFile = outputDirectory </> "two.txt"
-        selection = outputDirectory </> "selected.txt"
-        journal = outputDirectory </> "events.txt"
-    createDirectoryIfMissing True outputDirectory
-    mapM_ (`writeFile` "") [firstFile, secondFile, journal]
-    writeFile selection firstFile
+  prepareFiles = do
+    liftIO $ do
+      let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+          firstFile = outputDirectory </> "one.txt"
+          secondFile = outputDirectory </> "two.txt"
+          selection = outputDirectory </> "selected.txt"
+          journal = outputDirectory </> "events.txt"
+      createDirectoryIfMissing True outputDirectory
+      mapM_ (`writeFile` "") [firstFile, secondFile, journal]
+      writeFile selection firstFile
+    pure Nothing
 
 -- 参数确实由 instance 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
 instance FileLocationEffect App where
@@ -57,12 +59,14 @@ instance FileSessionEffect App where
     OpenedFile (FileHandle path _) <- request @OpenedFile
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     liftIO (appendFile journal ("open " ++ path ++ "\n"))
+    pure Nothing
   closeFileSession = do
     OpenedFile (FileHandle path file) <- require @OpenedFile
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     liftIO $ do
       hClose file
       appendFile journal ("close " ++ path ++ "\n")
+    pure Nothing
 
 instance CheckIndependentEffect App where
   checkIndependent = do
@@ -98,6 +102,7 @@ instance CheckIndependentEffect App where
       raise (CheckIndependentError "Closing the second instance affected the first")
     liftIO (putStrLn "[check] require selects the current instance; repeated close closes only file 2")
     -- 第一份在本链内仍保持开启；本链退出时由 SDK 自动关闭。
+    pure Nothing
 
 instance CheckReopenEffect App where
   checkReopen = do
@@ -141,3 +146,4 @@ instance CheckReopenEffect App where
       putStrLn "[check] closed file 2 reopened successfully; both files now closed"
       putStrLn "[check] actual acquisitions/closures: file 1 = 2/2; file 2 = 2/2"
       putStrLn "[check] five open calls, four argument requests; require reuses stable parameters within each chain"
+    pure Nothing

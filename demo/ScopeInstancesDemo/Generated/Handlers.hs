@@ -9,7 +9,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module ScopeInstancesDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers) where
+module ScopeInstancesDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -27,17 +27,19 @@ import System.IO.Error (tryIOError)
 
 instance PrepareFilesEffect App where
   prepareFiles =
-    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareFiles") $
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "prepareFiles" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareFiles") $
       let
-        prepareFiles = liftIO $ do
-          let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
-              firstFile = outputDirectory </> "one.txt"
-              secondFile = outputDirectory </> "two.txt"
-              selection = outputDirectory </> "selected.txt"
-              journal = outputDirectory </> "events.txt"
-          createDirectoryIfMissing True outputDirectory
-          mapM_ (`writeFile` "") [firstFile, secondFile, journal]
-          writeFile selection firstFile
+        prepareFiles = do
+          liftIO $ do
+            let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+                firstFile = outputDirectory </> "one.txt"
+                secondFile = outputDirectory </> "two.txt"
+                selection = outputDirectory </> "selected.txt"
+                journal = outputDirectory </> "events.txt"
+            createDirectoryIfMissing True outputDirectory
+            mapM_ (`writeFile` "") [firstFile, secondFile, journal]
+            writeFile selection firstFile
+          pure Nothing
       in prepareFiles
 
 -- 参数确实由 instance 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
@@ -79,15 +81,16 @@ instance FileResourceEffect App where
 -- 与原写法相同：没有参数、状态标记、key 或 SDK 消费方法。
 instance FileSessionEffect App where
   openFileSession =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "openFileSession" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         openFileSession = do
           OpenedFile (FileHandle path _) <- request @OpenedFile
           let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
           liftIO (appendFile journal ("open " ++ path ++ "\n"))
+          pure Nothing
       in openFileSession
   closeFileSession =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "closeFileSession" . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         closeFileSession = do
           OpenedFile (FileHandle path file) <- require @OpenedFile
@@ -95,11 +98,12 @@ instance FileSessionEffect App where
           liftIO $ do
             hClose file
             appendFile journal ("close " ++ path ++ "\n")
+          pure Nothing
       in closeFileSession
 
 instance CheckIndependentEffect App where
   checkIndependent =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "CheckIndependent") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "checkIndependent" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "CheckIndependent") $
       let
         checkIndependent = do
           let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
@@ -133,12 +137,13 @@ instance CheckIndependentEffect App where
           unless (not closedA && closedB) $
             raise (CheckIndependentError "Closing the second instance affected the first")
           liftIO (putStrLn "[check] require selects the current instance; repeated close closes only file 2")
+          -- 第一份在本链内仍保持开启；本链退出时由 SDK 自动关闭。
+          pure Nothing
       in checkIndependent
-    -- 第一份在本链内仍保持开启；本链退出时由 SDK 自动关闭。
 
 instance CheckReopenEffect App where
   checkReopen =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "CheckReopen") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "checkReopen" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "CheckReopen") $
       let
         checkReopen = do
           let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
@@ -181,11 +186,12 @@ instance CheckReopenEffect App where
             putStrLn "[check] closed file 2 reopened successfully; both files now closed"
             putStrLn "[check] actual acquisitions/closures: file 1 = 2/2; file 2 = 2/2"
             putStrLn "[check] five open calls, four argument requests; require reuses stable parameters within each chain"
+          pure Nothing
       in checkReopen
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "af30a6e6bbbf80e4dfe586d84fbf9afd"
+handlerSourceFingerprint = Just "1fd81d8d8715a39c78b1403a0b8d4900"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -197,11 +203,17 @@ newScopeHandlers = sequence
 -- SDK 自动收尾入口；安装时不关闭资源。
 scopeCleanups :: [(String, FrameworkGenerated.App ())]
 scopeCleanups =
-  [ ("FileSession", closeFileSession)
+  [ ("FileSession", () <$ closeFileSession)
   ]
 
 -- Error 回调登记：按 handles 匹配故障来源与分类；关联 scope 由 Input 链推导。
 errorHandlers :: [(Maybe String, FrameworkRoot.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
 errorHandlers =
+  [
+  ]
+
+-- 挂在原子句柄下的 Context：句柄的输出交给它解析并发布为资产；没有挂接时输出被丢弃。
+contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
+contextInjections =
   [
   ]

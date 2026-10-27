@@ -19,6 +19,7 @@ module Framework.Effect.Contract
   ( Effect(..), EffectKind(..), Root, Registered, Void
   , Failure(..), Output(..), failEffect, ErrorHandler(..), ErrorReport(..), ErrorStore(..), runErrorHandler
   , ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault(..), ScopeInput(..), ScopeInputAccess(..)
+  , RawOutput(..)
   ) where
 
 import Control.Monad.Except (MonadError, catchError, throwError)
@@ -75,6 +76,24 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 本次生产被 scope 开启参数观察时的取值模式；按需求值的 require 仍按 require 处理。
   productionAccess :: m ScopeInputAccess
   productionAccess = pure RequestedInput
+  -- 生成区按原子句柄方法名安装挂在它下面的 Context 生产入口。
+  withAnchoredContexts :: [(String, [(String, m ())])] -> m value -> m value
+  withAnchoredContexts _ = id
+  anchoredContexts :: String -> m [(String, m ())]
+  anchoredContexts _ = pure []
+  -- 注入期间，挂接 Context 对该句柄的调用由本次 RawOutput 回答，不重复执行。
+  replayedOutput :: String -> m (Maybe RawOutput)
+  replayedOutput _ = pure Nothing
+  -- 以根调用身份运行一次注入；失败留在注入内，不进入原链，也不触发 Error 诊断。
+  injectOutput :: String -> RawOutput -> m () -> m ()
+  injectOutput _ _ _ = pure ()
+
+-- 原子句柄（Excu.handler、Scoped.open／close）的统一输出：是否成功，附带方法体给出的信息。
+-- 只在 SDK 内部交给挂在该句柄下的 Context；没有挂接时被丢弃，注册与 handler 签名都看不到它。
+data RawOutput = RawOutput
+  { succeeded :: Bool
+  , info :: Maybe String
+  } deriving (Eq, Show)
 
 data ContextFault = ContextNotInitialized | UndeclaredContextAccess String
   | AmbiguousContextBinding String
@@ -98,8 +117,9 @@ data ScopeFault = ScopeNotOpen | ScopeIsClosed | ScopeReentry | ScopeInterrupted
 
 class Monad m => ScopeStore cause m | m -> cause where
   withScopeDependencies :: [String] -> m value -> m value
-  openScope :: String -> (ScopeFault -> cause) -> m () -> m ()
-  closeScope :: String -> (ScopeFault -> cause) -> m () -> m ()
+  -- Nothing 表示方法体没有执行：复用了同参的已开启实例，或重复 close 被跳过。
+  openScope :: String -> (ScopeFault -> cause) -> m value -> m (Maybe value)
+  closeScope :: String -> (ScopeFault -> cause) -> m value -> m (Maybe value)
   invalidateScope :: String -> Failure cause -> m ()
 
 -- 链首提供 Monad、上下文存储与业务失败短路能力，没有全局业务 handle。

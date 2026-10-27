@@ -9,7 +9,7 @@ module Framework.Effect.Runtime
   , targetName, lowerTarget, lowerTargetIn, RunStore, newRunStore, configureTargets, cleanupTargets
   ) where
 
-import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault, ScopeInputAccess(..), Failure(..), Output(..), ErrorStore(..), ErrorHandler(..), runErrorHandler)
+import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault, ScopeInputAccess(..), Failure(..), Output(..), ErrorStore(..), ErrorHandler(..), RawOutput, runErrorHandler)
 import Framework.Effect.Runtime.App (App, RunStore, newRunStore, runAppWith)
 import Framework.Effect.Scope
 import Control.Exception (SomeException, evaluate)
@@ -19,7 +19,7 @@ import Control.Monad.Reader (ReaderT, ask, asks, local, runReaderT)
 import Control.Monad.State.Strict (MonadState, State, evalState, gets, modify')
 import Data.Functor.Identity (Identity(..))
 import Data.List (nub, nubBy)
-import Data.Maybe (catMaybes, isJust)
+import Data.Maybe (catMaybes, fromMaybe, isJust)
 
 data Calling environment cause = Calling
   { caller :: Maybe String
@@ -31,10 +31,14 @@ data Calling environment cause = Calling
   , diagnosticScope :: Maybe String
   -- 当前生产由 require 按需求值触发；进入任一 handler 后复位。
   , forcedRequire :: Bool
+  -- 原子句柄方法名 → 挂在它下面的 Context 生产入口，由生成区安装。
+  , anchoredEntries :: [(String, [(String, Pure environment cause ())])]
+  -- 注入期间各原子句柄的本次输出。
+  , replays :: [(String, RawOutput)]
   }
 
 emptyCalling :: Calling environment cause
-emptyCalling = Calling Nothing [] [] [] [] Nothing Nothing False
+emptyCalling = Calling Nothing [] [] [] [] Nothing Nothing False [] []
 
 visibleScopes :: Calling environment cause -> [String]
 visibleScopes calling = nub (ownedScopes calling ++ dependencies calling)
@@ -95,6 +99,17 @@ instance ContextStore environment (Pure environment cause) where
   productionAccess = PureRun $ do
     forced <- asks forcedRequire
     pure (if forced then RequiredInput else RequestedInput)
+  withAnchoredContexts entries (PureRun action) =
+    PureRun (local (\calling -> calling { anchoredEntries = entries }) action)
+  anchoredContexts method = PureRun (asks (fromMaybe [] . lookup method . anchoredEntries))
+  replayedOutput method = PureRun (asks (lookup method . replays))
+  -- 诊断期间不注入；注入失败只留在注入内，原链照常继续。
+  injectOutput method raw (PureRun action) = PureRun $ do
+    calling <- ask
+    if isJust (originalFailure calling) then pure () else
+      local (const calling { caller = Nothing, forcedRequire = False, errorHandlers = []
+                           , replays = (method, raw) : replays calling }) action
+        `catchError` const (pure ())
 
 instance ScopeStore cause (Pure environment cause) where
   withScopeDependencies selected (PureRun action) = PureRun $ local (addDependencies selected) $ do
@@ -152,22 +167,22 @@ updatePureScope selected update = modify' $ \state ->
   in state { pureScopes = (selected, update record) : filter ((/= selected) . fst) (pureScopes state) }
 
 runPureScope :: ScopeOperation -> String -> (ScopeFault -> cause)
-             -> Pure environment cause () -> Pure environment cause ()
+             -> Pure environment cause value -> Pure environment cause (Maybe value)
 runPureScope operation selected wrap (PureRun action) = do
   records <- gets pureScopes
   let initial = maybe ScopeIdle scopePhase (lookup selected records)
   execute <- either throwError pure (beginScope operation selected wrap initial)
-  when execute $ do
+  if not execute then pure Nothing else do
     let running = case operation of OpenScope -> ScopeOpening; CloseScope -> ScopeClosing
     updatePureScope selected (\record -> record { scopePhase = running })
     result <- (Right <$> PureRun (local (ownScope selected) action)) `catchError` (pure . Left)
     updatePureScope selected $ \record -> record
       { scopePhase = finishScope operation selected wrap
-          (case initial of ScopeInvalid _ -> initial; _ -> scopePhase record) result }
+          (case initial of ScopeInvalid _ -> initial; _ -> scopePhase record) (() <$ result) }
     completed <- gets (maybe ScopeIdle scopePhase . lookup selected . pureScopes)
     case (operation, scopeFailure completed) of
       (OpenScope, Just failure) -> throwError failure
-      _ -> either throwError pure result
+      _ -> either throwError (pure . Just) result
 
 -- 裸载体的运行器只供 lower 使用。
 runPure :: environment -> Pure environment cause value -> Either (Failure cause) value

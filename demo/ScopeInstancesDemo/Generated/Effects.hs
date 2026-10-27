@@ -41,7 +41,7 @@ instance SDK.NFData MethodGen
 data PrepareFiles
 
 class (Effect Root m) => PrepareFilesEffect m where
-  prepareFiles :: m ()
+  prepareFiles :: m (Maybe String)
   {-# MINIMAL prepareFiles #-}
 
 instance (Monad m, Effect Root m, PrepareFilesEffect m) => Effect PrepareFiles m where
@@ -91,8 +91,8 @@ instance (Monad m, Effect Root m, FileResourceEffect m) => Effect FileResource m
 data FileSession
 
 class (Effect Root m, Provides OpenedFile m) => FileSessionEffect m where
-  openFileSession :: m ()
-  closeFileSession :: m ()
+  openFileSession :: m (Maybe String)
+  closeFileSession :: m (Maybe String)
   {-# MINIMAL openFileSession, closeFileSession #-}
 
 instance (Monad m, Effect Root m, FileSessionEffect m) => Effect FileSession m where
@@ -106,7 +106,7 @@ instance (Monad m, Effect Root m, FileSessionEffect m) => Effect FileSession m w
 data CheckIndependent
 
 class (Effect FileSession m, Provides FileName m, Provides OpenedFile m) => CheckIndependentEffect m where
-  checkIndependent :: m ()
+  checkIndependent :: m (Maybe String)
   {-# MINIMAL checkIndependent #-}
 
 instance (Monad m, Effect FileSession m, CheckIndependentEffect m) => Effect CheckIndependent m where
@@ -120,7 +120,7 @@ instance (Monad m, Effect FileSession m, CheckIndependentEffect m) => Effect Che
 data CheckReopen
 
 class (Effect FileSession m, Provides FileName m, Provides OpenedFile m) => CheckReopenEffect m where
-  checkReopen :: m ()
+  checkReopen :: m (Maybe String)
   {-# MINIMAL checkReopen #-}
 
 instance (Monad m, Effect FileSession m, CheckReopenEffect m) => Effect CheckReopen m where

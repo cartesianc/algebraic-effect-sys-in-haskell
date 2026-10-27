@@ -95,8 +95,8 @@ instance (Monad m, Effect ValidateFileName m, FileResourceEffect m) => Effect Fi
 data FileSession
 
 class (Effect ValidateFileName m, Provides OpenedFile m) => FileSessionEffect m where
-  openFileSession :: m ()
-  closeFileSession :: m ()
+  openFileSession :: m (Maybe String)
+  closeFileSession :: m (Maybe String)
   {-# MINIMAL openFileSession, closeFileSession #-}
 
 instance (Monad m, Effect ValidateFileName m, FileSessionEffect m) => Effect FileSession m where
@@ -143,7 +143,7 @@ instance (Monad m, Effect FileSession m, ReadFileEffect m) => Effect ReadFile m 
 data WriteFile
 
 class (Effect FileSession m, Provides FileText m, Provides OpenedFile m) => WriteFileEffect m where
-  writeFileText :: m ()
+  writeFileText :: m (Maybe String)
   {-# MINIMAL writeFileText #-}
 
 instance (Monad m, Effect FileSession m, WriteFileEffect m) => Effect WriteFile m where
@@ -157,7 +157,7 @@ instance (Monad m, Effect FileSession m, WriteFileEffect m) => Effect WriteFile 
 data FileWorkflow
 
 class (Effect WriteFile m, Provides FileName m) => FileWorkflowEffect m where
-  runFileWorkflow :: m ()
+  runFileWorkflow :: m (Maybe String)
   {-# MINIMAL runFileWorkflow #-}
 
 instance (Monad m, Effect WriteFile m, FileWorkflowEffect m) => Effect FileWorkflow m where

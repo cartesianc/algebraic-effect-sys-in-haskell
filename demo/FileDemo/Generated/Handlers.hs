@@ -10,7 +10,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module FileDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers) where
+module FileDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -73,21 +73,22 @@ instance FileResourceEffect App where
 instance FileSessionEffect App where
   -- 开启期间 Context 保存真实 Handle，后续 require 复用它。
   openFileSession =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "openFileSession" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         openFileSession = do
           _ <- request @OpenedFile
-          pure ()
+          pure Nothing
       in openFileSession
 
   closeFileSession =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "closeFileSession" . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         closeFileSession = do
           OpenedFile (FileHandle path file) <- require @OpenedFile
           outcome <- liftIO (tryIOError (hClose file))
           either (raise . FileSessionError . displayException) pure outcome
           liftIO (putStrLn ("[close] " ++ path))
+          pure Nothing
       in closeFileSession
 
 instance ReadFileEffect App where
@@ -130,12 +131,14 @@ instance FileRecoveryEffect App where
   resolveFileSession =
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileRecovery") $
       let
-        resolveFileSession = closeFileSession
+        resolveFileSession = do
+          closeFileSession
+          pure ()
       in resolveFileSession
 
 instance WriteFileEffect App where
   writeFileText =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "WriteFile") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "writeFileText" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "WriteFile") $
       let
         writeFileText = do
           FileText contents <- request @FileText
@@ -149,23 +152,25 @@ instance WriteFileEffect App where
             hFlush file
             putStrLn ("[write] " ++ path ++ ": " ++ line)
           either (raise . WriteFileError . displayException) pure outcome
+          pure Nothing
       in writeFileText
 
 instance FileWorkflowEffect App where
   runFileWorkflow =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileWorkflow") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "runFileWorkflow" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileWorkflow") $
       let
         runFileWorkflow = do
           -- 本条链先取得稳定参数；校验和 scope 开启都 require 这份绑定。
           _ <- request @FileName
           openFileSession
           writeFileText
+          -- 完整链退出后由 SDK 释放本次使用并自动关闭空闲实例。
+          pure Nothing
       in runFileWorkflow
-    -- 完整链退出后由 SDK 释放本次使用并自动关闭空闲实例。
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "da48e355f1ec6c604aa5ede8ac50b9f5"
+handlerSourceFingerprint = Just "777242242c06da6e78d94c8ae20349aa"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -177,7 +182,7 @@ newScopeHandlers = sequence
 -- SDK 自动收尾入口；安装时不关闭资源。
 scopeCleanups :: [(String, FrameworkGenerated.App ())]
 scopeCleanups =
-  [ ("FileSession", closeFileSession)
+  [ ("FileSession", () <$ closeFileSession)
   ]
 
 -- Error 回调登记：按 handles 匹配故障来源与分类；关联 scope 由 Input 链推导。
@@ -189,4 +194,10 @@ errorHandlers =
         (_, FrameworkGenerated.WriteFileFailure) -> True
         _ -> False)
       (Just detectFileSession) (Just resolveFileSession))
+  ]
+
+-- 挂在原子句柄下的 Context：句柄的输出交给它解析并发布为资产；没有挂接时输出被丢弃。
+contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
+contextInjections =
+  [ ("openFileSession", [("ReadFile", () <$ fileText)])
   ]

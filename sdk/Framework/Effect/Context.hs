@@ -3,10 +3,13 @@
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Effect.Context
   ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext
+  , atomicHandle, atomicScope
   ) where
 
-import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeInput, ScopeInputAccess(..), Failure, failEffect)
-import Control.Monad.Except (MonadError)
+import Framework.Effect.Contract
+  (ContextStore(..), ContextFault(..), ScopeInput, ScopeInputAccess(..), Failure(..), RawOutput(..), failEffect)
+import Control.Monad (forM_, when)
+import Control.Monad.Except (MonadError, catchError, throwError)
 import Data.Maybe (fromMaybe)
 
 data ContextAccess = RequestValue | RequireValue deriving (Eq, Show)
@@ -100,6 +103,39 @@ callContext selected wrap accesses compareValue select synchronize produce = do
       value <- requestContext selected synchronize (enterContext selected produce)
       observeInput mode compareValue value
       pure value
+
+-- Excu.handler 的生成入口：方法体每次调用都执行。
+atomicHandle
+  :: (ContextStore environment m, MonadError (Failure cause) m)
+  => String -> m (Maybe String) -> m (Maybe String)
+atomicHandle method = atomicScope method . fmap Just
+
+-- 原子句柄（Excu.handler、Scoped.open／close）的统一出口。方法体给出的信息与是否成功
+-- 组成 RawOutput，只交给挂在该句柄下的 Context 解析并作为资产发布；没有挂接时直接丢弃。
+-- 组合它的上层方法照常继续，不读取这份输出，注入的成败也不影响它。
+-- 外层 Nothing 表示方法体没有执行（复用的 scope 实例、重复 close），此时没有新的输出。
+atomicScope
+  :: (ContextStore environment m, MonadError (Failure cause) m)
+  => String -> m (Maybe (Maybe String)) -> m (Maybe String)
+atomicScope method body = do
+  replayed <- replayedOutput method
+  case replayed of
+    -- 注入中的 Context 调用它挂接的句柄：回答本次输出，不重复执行。
+    Just raw -> pure (info raw)
+    Nothing -> do
+      consumer <- currentHandler
+      outcome <- (Right <$> body) `catchError` (pure . Left)
+      case outcome of
+        Right Nothing -> pure Nothing
+        Right (Just output) -> deliver consumer (RawOutput True output) >> pure output
+        Left problem -> deliver consumer (RawOutput False (Just (message problem))) >> throwError problem
+  where
+    -- 失败的输出不交给 Context，原失败照常沿原链传播。
+    -- 挂接的 Context 自己拉取该句柄时（request 或按需求值），由它自己的入口发布，不再注入。
+    deliver consumer raw = when (succeeded raw) $ do
+      anchored <- anchoredContexts method
+      when (maybe True (`notElem` map fst anchored) consumer) $
+        forM_ anchored $ \(_, produce) -> injectOutput method raw produce
 
 -- 消费方的 request @T / require @T 按当前调用者分派到注册解析出的来源入口。
 -- 路由表由生成器从 demands 解析得到；来源入口仍走原有的生产或读取包装。

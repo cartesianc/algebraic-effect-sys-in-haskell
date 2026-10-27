@@ -32,7 +32,7 @@ chained、parallel、loop 是同级 branch；loop 的事件触发语义已确认
 URL 由 request 来源 CrawlerContext 类方法产生；Node 只 lower 对应末端。HTTP、HTML 内容解析与
 输出留在 instance，连接由注册描述。chained 遇失败停止；parallel 等待全部子分支后汇总，
 结果按声明顺序排列，有失败时保留声明顺序中首个失败的来源与负载。整棵 AST 只封装一次
-Output；已完成的 IO 不回滚。SDK 已以 WorkflowF + Fix + cata 实现这两个有限分支的执行装配；爬虫先并行解析两页，再依次运行打印链。打印 instance 引用解析句柄，重新抓取、解析并消费新产物，不复用第一阶段的值。生成器按 AST 选择多个末端，分别登记末端句柄并生成结果总和 ADT；汇总产物不等于建立共享绑定。
+Output；已完成的 IO 不回滚。SDK 已以 WorkflowF + Fix + cata 实现这两个有限分支的执行装配；爬虫先并行抓取两页（挂在抓取句柄下的 Context 同时解析出摘要，作为运行级资产保存），再依次运行打印链。打印 instance require 第一阶段的摘要，不再抓取。生成器按 AST 选择多个末端，分别登记末端句柄并生成结果总和 ADT；汇总产物不等于建立共享绑定。
 
 业务入口固定为以下结构，具体类型签名由实现落实：
 
@@ -60,13 +60,13 @@ AST 与注册关系均采用固定结构、引用和契约描述，供第三方�
 
 | 注册类别 | 同一 typeclass 中的方法职责 | SDK 执行责任 |
 | --- | --- | --- |
-| Pure | 无对外业务产物的纯计算／检查 | 成功类型固定为 ()，失败使用 SDK 统一协议 |
-| Excu | 执行声明的操作 | 成功类型固定为 ()，接入能力并承接失败 |
-| Scoped | 开启、关闭，均为 m () | 开启输入 require 同参共享／request fresh；完整链持有实际实例，末个使用者退出且无子 scope 保留时 once-spare |
+| Pure | 无对外业务产物的纯计算／检查 | 成功类型固定为 ()，失败使用 SDK 统一协议；语义待定 |
+| Excu | 执行声明的操作（原子句柄） | 返回可选信息 Maybe String，只交给挂接的 Context；接入能力并承接失败 |
+| Scoped | 开启、关闭（原子句柄），均为 m (Maybe String) | 开启输入 require 同参共享／request fresh；完整链持有实际实例，末个使用者退出且无子 scope 保留时 once-spare |
 | Error | detect 定位、resolve 处置，均为 m () | App／IO 沿 ScopeTree 祖先顺序检测，Pure 保留旧名单；Succ 后调用可选 resolve，保存原始与次生失败 |
 | Context | request 产值、require 读取 | 包装 instance 入口；request 成功发布新绑定，require 读取 state、无值时按需求值，失败保留该来源旧值 |
 
-各类别保持统一的 effect 抽象。Input 只组合被注入的操作句柄，不承载业务值；普通 Pure／Excu 返回 () 或 raise，不手写 Succ，也不新增每 effect 的状态表。跨 handler 的业务成功产值统一由 Context 提供，request 只能引用具有生产入口的 Context。Scoped 自身不产值，open／close 在 instance 中直接引用上游 Context 方法；只有 scope 具有 SDK 管理的存续状态。
+各类别保持统一的 effect 抽象。Input 只组合被注入的操作句柄，不承载业务值；Pure 返回 ()、原子句柄返回可选信息，或 raise，不手写 Succ，也不新增每 effect 的状态表。跨 handler 的业务成功产值统一由 Context 提供，request 只能引用具有生产入口的 Context。Scoped 自身不产值，open／close 在 instance 中直接引用上游 Context 方法；只有 scope 具有 SDK 管理的存续状态。
 
 ### 注册构造
 
@@ -110,16 +110,17 @@ Error 注册类别与关联 Error e 是不同概念：前者组织检测和处�
 
 根 Effect 保留 Require、Produce、Error 关联契约和统一 raise，不新增统一业务 handle。Produce 是 SDK 内部成功类型，默认 ()；只有 Context.request 覆盖为业务 ADT，不含 Output。Input 注入上游方法，instance 直接引用；一个 effect 的多个协议方法仍可有不同签名。
 
-当前普通句柄没有 SDK 注入的位置参数：Pure／Excu 返回 m ()，Context 返回 m (Produce e)。
+当前普通句柄没有 SDK 注入的位置参数：Pure 返回 m ()，原子句柄（Excu、Scoped.open／close）返回 m (Maybe String)，Context 返回 m (Produce e)。原子句柄的可选信息与成败由 SDK 合成内部 RawOutput，只交给挂在该句柄下（input 指向它）的 Context 解析，没有挂接时丢弃；注入在句柄入口完成，原链不受影响。
 实例内通过原生 `<-` 取得 Context 业务值，普通 case 只匹配已取得的值；声明 Input 不隐含传值。普通操作仍直接引用 superclass 方法。
 Error 同样不增加位置参数；需要原始故障时，通过 SDK 的 caughtFailure 读取当前诊断上下文。
 
 | 类别／方法 | 当前签名或候选 | 状态 |
 | --- | --- | --- |
-| Pure／Excu 主方法 | m () | 成功无业务产物；Pure 本地 IO 限制另定 |
+| Pure 主方法 | m () | 成功无业务产物；Pure 的语义与本地 IO 限制另定 |
+| Excu 主方法 | m (Maybe String) | 原子句柄；可选信息只交给挂接的 Context |
 | Context 生产／读取 | m (Produce e) | 类型为按 handler 名生成的契约；生产成功保存，读取不重复执行 |
-| Scoped 开启 | m () | 直接引用上游 Context 方法完成开启；require 参数共享选中的有效实例，request 参数创建新实例 |
-| Scoped 关闭 | m () | 通过上游 require 读取信息，不重放生产；成功关闭不重复执行 |
+| Scoped 开启 | m (Maybe String) | 直接引用上游 Context 方法完成开启；require 参数共享选中的有效实例，request 参数创建新实例；复用实例跳过方法体时没有新输出 |
+| Scoped 关闭 | m (Maybe String) | 通过上游 require 读取信息，不重放生产；成功关闭不重复执行；没有挂接点，输出总被丢弃 |
 | Error detect | m () | 返回 () 定位成功，raise 表示未定位；SDK 保存 Succ／Failed |
 | Error resolve | m () | 仅在本次 detect 成功后自动调用；完成结果不覆盖原故障 |
 
@@ -128,8 +129,8 @@ e 在同组方法内指同一个 effect。detect／resolve 与 Excu 使用相同
 ```haskell
 -- 上游 SessionContext 产出会话信息，Scope 自身不产值。
 class Effect SessionContext m => CrawlSessionEffect m where
-  openCrawlSession  :: m ()
-  closeCrawlSession :: m ()
+  openCrawlSession  :: m (Maybe String)
+  closeCrawlSession :: m (Maybe String)
   {-# MINIMAL openCrawlSession, closeCrawlSession #-}
 
 -- Report 是被检查的 Scoped；上下文消费仍在注册中声明。
@@ -141,7 +142,7 @@ class Effect Report m => ReportFaultEffect m where
 
 资源依赖按真实需要声明，示例不要求所有 Error handler 都使用资源。类约束提供方法可用性，不证明哪一份资源仍可使用；绑定身份、失效、释放状态和收尾次序由 SDK 管理。同一 class 内的方法配对不再插入一个 Close／Detect／Resolve effect，也不构造相互继承的 Input 环。
 
-爬虫目录的 SessionContext 产出原生 CrawlSessionInfo；CrawlSession.open 引用 createCrawlSession，close 引用 readCrawlSession，均返回 ()。两个 Fetch instance 直接引用 openCrawlSession，再读取会话信息用于 HTTP User-Agent，并在方法体内完成进程 IO；解析和打印也由对应 instance 直接实现。无开启输入的会话在使用闭包实际重叠期间共享，最后使用者退出后按 once-spare 自动关闭；后续 Node 可显式开启新一轮，不新增收尾 AST 节点。
+爬虫目录的 SessionContext 产出原生 CrawlSessionInfo；CrawlSession.open request 会话信息，close require 它，均返回 Nothing。两个 Fetch 是 Excu，直接引用 openCrawlSession，再读取会话信息用于 HTTP User-Agent，在方法体内完成进程 IO 并交出网页正文；两个 Extract Context 以 input 挂在对应 Fetch 下解析正文；打印是 Excu，require 解析出的摘要。无开启输入的会话在使用闭包实际重叠期间共享，最后使用者退出后按 once-spare 自动关闭；后续 Node 可显式开启新一轮，不新增收尾 AST 节点。
 
 Pure 的统一 raise 仍有一个尚未实施的 SDK 内部候选：
 
@@ -163,7 +164,7 @@ raise :: Error effect -> Body effect m value
 | T2 Excu | 普通执行方法的参数、完成结果与能力约束 |
 | T3 Context request | Context 内的生产方法与消费者 request 引用的对应，不另设类型 |
 | T4 Context | 经 request／require 接入；普通绑定在单次启动内，scope 开启期绑定随仍被使用或依赖保留的实际实例保存 |
-| T5a Scoped（已落实） | 同一 class 的 open／close 均为 m ()；信息来自上游 Context |
+| T5a Scoped（已落实） | 同一 class 的 open／close 均为 m (Maybe String)；资源信息来自上游 Context |
 | T5b scope 绑定 | App／IO 按实际开启输入模式及值新建／共享实例；有限完整链加入实际使用，不预约未来 Node |
 | T6 Scoped 关闭 | 成功关闭去重，旧引用停止使用，显式 open 新一轮不换旧 owner；once-spare 实际回收，interpreter 退出兜底并保留原错误及清理故障 |
 | T7a Error（已落实） | 同一注册中的可选 detect／resolve，均为 m () |
@@ -190,7 +191,7 @@ Input 继续表达操作或能力的前提关系。业务值来源单独表达�
 
 ## Context、request 与 require
 
-手写 input 只允许 Root 或非 Context effect；Context 经 demands 接入，消费方类只以 Provides 契约作为 superclass。生产者自身仍可有 Input、消费其他 Context，也可直接作为 target。原 Input 与生产链的能力同时保留，不重挂来源注册；沿 Input 与 request 收集 scope，require 只读取绑定，不启动生产链。
+手写 input 只允许 Root 或非 Context effect；Context 经 demands 接入，消费方类只以 Provides 契约作为 superclass。生产者自身仍可有 Input、消费其他 Context，也可直接作为 target。原 Input 与生产链的能力同时保留，不重挂来源注册；沿 Input 与 request 收集 scope；require 在 state 无值时可能求值 request（scope 资源除外）。input 指向 Excu 或 Scoped 的 Context 挂在该原子句柄下，由句柄入口注入解析其输出。
 爬虫通过 request 连接 URL、抓取、解析与打印，SDK 不预先生产全局 Context。
 
 生产方与消费方分别描述，Context effect 自身也可以消费别的 Context：
@@ -350,7 +351,7 @@ Context 转换可以处理成功值和错误负载。转换错误负载不会自
 
 本节记录本轮定案的有限使用闭包协议；运行载体和旧样例按此迁移，不以旧版编译或运行结果宣称本轮已验证。
 
-effect 不配置 dependency。SDK 沿声明收集 Scoped，能力仍由 superclass 注入；require 只在 state 无值时按需求值 request（scope 资源除外），其已有资源前提必须纳入清理依赖。正常业务调用不因继承而补跑 open／close，二者均为 m ()，由用户 instance 引用；使用闭包撤销使用后由 SDK 按 once-spare 调用登记的 close，interpreter 退出保留兜底。
+effect 不配置 dependency。SDK 沿声明收集 Scoped，能力仍由 superclass 注入；require 只在 state 无值时按需求值 request（scope 资源除外），其已有资源前提必须纳入清理依赖。正常业务调用不因继承而补跑 open／close，二者均为 m (Maybe String)，由用户 instance 引用；使用闭包撤销使用后由 SDK 按 once-spare 调用登记的 close，interpreter 退出保留兜底。
 
 同一 interpreter 自动创建一批 ScopeHandler，由所有末端 Target 捕获。每个 Scoped 注册持有实例集合，每份实例独立保存 MVar、生命周期和开启期 Context；实际开启输入的 request／require 模式决定新建还是共享。Main、Effects 和 Handlers 保持原生方法引用，不增加 key、位置参数、用户装配或手写 layer，也没有进程全局单例。运行表可跨 Node 共享，但不预约未来 Node 的活资源。
 
@@ -455,7 +456,7 @@ Input 继承、instance 内引用、末端登记、Node lowering 与 Error 检�
 | 句柄内 DI | demo 直接引用原生类方法；已移除外部 withX／initializeX／链式 runX | 不将执行可达性误作编译器对任意方法体的强制证明 |
 | 闭包装配 | Node algebra 只 lower 所选末端，实例内引用带起上游；有限链作为资源使用闭包 | 动态入口、跨独立 interpreter 存续 |
 | 控制与触发 | AST 负责启动与执行控制，不维护业务状态转移；node／branch 分类型，branch 分文件组合；chained／parallel 已以 cata 装配；loop 与二者同级，无条件、无跨调用业务状态；Hanging 承接事件入口 | LSP 模块定义与引用索引；loop／Hanging 接入、监听范围、单次失败与重叠处理、停止收尾；其余 branch 构造及嵌套规则 |
-| scope 边界 | open／close 均为 m ()；开启输入 require 同参共享／request fresh，完整链持有实际实例；core 固定 once-spare，interpreter 退出兜底；显式 close 服从使用协调，重开不改旧 owner | 其他 cleanup policy、裸 forkIO 追踪、未发布的部分获取恢复、跨入口存续 |
+| scope 边界 | open／close 均为 m (Maybe String)；开启输入 require 同参共享／request fresh，完整链持有实际实例；core 固定 once-spare，interpreter 退出兜底；显式 close 服从使用协调，重开不改旧 owner | 其他 cleanup policy、裸 forkIO 追踪、未发布的部分获取恢复、跨入口存续 |
 | 诊断与处置 | App／IO 从 scope 种子沿与清理共用的 ScopeTree 补齐祖先并 top-down 检测；Pure 保留旧候选名单；detect Succ 后 resolve，保留原错误与各项完成报告；诊断结束后才撤销完整链的使用，显式关闭服从使用协议；不自动重放或恢复 | 已展开 continuation 的恢复、跨调用诊断范围 |
 | 值转换 | Generic Map 为 SDK 内置适配，不新增 adapter 配置或 Map typing；对外产值的业务纯转换注册为 Context | 原型接入注册、支持的契约结构、转换的失败输出接口 |
 | 序列化 | 保存结构、引用和契约，不保存执行闭包与活资源 | 固定 schema、类型引用及 SDK 协议识别方式 |

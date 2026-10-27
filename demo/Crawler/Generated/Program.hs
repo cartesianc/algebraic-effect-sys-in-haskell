@@ -14,14 +14,14 @@ import Crawler.Types
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
 registeredEffects :: [EffectSpec]
 registeredEffects =
-  [ EffectSpec {name = "StartPage", typing = Context {request = Just (Requester {handler = "startURL", representation = TypeRef "PageURL"})}, input = "CrawlSession", demands = []}
-  , EffectSpec {name = "LinkedPage", typing = Context {request = Just (Requester {handler = "linkedURL", representation = TypeRef "PageURL"})}, input = "CrawlSession", demands = []}
-  , EffectSpec {name = "FetchPage", typing = Context {request = Just (Requester {handler = "startFetchedPage", representation = TypeRef "FetchedPage"})}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "StartURL"},Demand {access = RequireAccess, contract = "CrawlSessionInfo"}]}
-  , EffectSpec {name = "ExtractPage", typing = Context {request = Just (Requester {handler = "startPageSummary", representation = TypeRef "PageSummary"})}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "StartFetchedPage"}]}
-  , EffectSpec {name = "PrintPage", typing = Excu {handler = Just "printPage"}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "StartPageSummary"}]}
-  , EffectSpec {name = "FetchLinkedPage", typing = Context {request = Just (Requester {handler = "linkedFetchedPage", representation = TypeRef "FetchedPage"})}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "LinkedURL"},Demand {access = RequireAccess, contract = "CrawlSessionInfo"}]}
-  , EffectSpec {name = "ExtractLinkedPage", typing = Context {request = Just (Requester {handler = "linkedPageSummary", representation = TypeRef "PageSummary"})}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "LinkedFetchedPage"}]}
-  , EffectSpec {name = "PrintLinkedPage", typing = Excu {handler = Just "printLinkedPage"}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "LinkedPageSummary"}]}
+  [ EffectSpec {name = "StartPage", typing = Context {request = Just (Requester {handler = "startURL", representation = TypeRef "PageURL"})}, input = "Root", demands = []}
+  , EffectSpec {name = "LinkedPage", typing = Context {request = Just (Requester {handler = "linkedURL", representation = TypeRef "PageURL"})}, input = "Root", demands = []}
+  , EffectSpec {name = "FetchPage", typing = Excu {handler = Just "fetchStartPage"}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "StartURL"},Demand {access = RequireAccess, contract = "CrawlSessionInfo"}]}
+  , EffectSpec {name = "ExtractPage", typing = Context {request = Just (Requester {handler = "startPageSummary", representation = TypeRef "PageSummary"})}, input = "FetchPage", demands = [Demand {access = RequireAccess, contract = "StartURL"}]}
+  , EffectSpec {name = "PrintPage", typing = Excu {handler = Just "printPage"}, input = "Root", demands = [Demand {access = RequireAccess, contract = "StartPageSummary"}]}
+  , EffectSpec {name = "FetchLinkedPage", typing = Excu {handler = Just "fetchLinkedPage"}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "LinkedURL"},Demand {access = RequireAccess, contract = "CrawlSessionInfo"}]}
+  , EffectSpec {name = "ExtractLinkedPage", typing = Context {request = Just (Requester {handler = "linkedPageSummary", representation = TypeRef "PageSummary"})}, input = "FetchLinkedPage", demands = [Demand {access = RequireAccess, contract = "LinkedURL"}]}
+  , EffectSpec {name = "PrintLinkedPage", typing = Excu {handler = Just "printLinkedPage"}, input = "Root", demands = [Demand {access = RequireAccess, contract = "LinkedPageSummary"}]}
   , EffectSpec {name = "SessionContext", typing = Context {request = Just (Requester {handler = "crawlSessionInfo", representation = TypeRef "SessionInfo"})}, input = "Root", demands = []}
   , EffectSpec {name = "CrawlSession", typing = Scoped {open = Just "openCrawlSession", close = Just "closeCrawlSession"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "CrawlSessionInfo"},Demand {access = RequireAccess, contract = "CrawlSessionInfo"}]}
   ]
@@ -33,12 +33,12 @@ scopeNames = [(OpenCrawlSessionGen, "CrawlSession")]
 -- 只校验生成常量；当前 workflow 在执行装配的一次 fold 中检查入口。
 programStructure :: Either (SDK.StructureError MethodGen) (SDK.ProgramStructure MethodGen)
 programStructure = SDK.initializeGeneratedStructure
-  [("ExtractPage", StartPageSummaryGen), ("ExtractLinkedPage", LinkedPageSummaryGen), ("PrintPage", PrintPageGen), ("PrintLinkedPage", PrintLinkedPageGen)]
+  [("FetchPage", FetchStartPageGen), ("FetchLinkedPage", FetchLinkedPageGen), ("PrintPage", PrintPageGen), ("PrintLinkedPage", PrintLinkedPageGen)]
   scopeNames generatedEffectGraph generatedScopeTree
 
 
 -- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。
-data Results = ExtractPageResult (Produce ExtractPage) | ExtractLinkedPageResult (Produce ExtractLinkedPage) | PrintPageResult (Produce PrintPage) | PrintLinkedPageResult (Produce PrintLinkedPage)
+data Results = FetchPageResult (Produce FetchPage) | FetchLinkedPageResult (Produce FetchLinkedPage) | PrintPageResult (Produce PrintPage) | PrintLinkedPageResult (Produce PrintLinkedPage)
   deriving Show
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。
@@ -46,10 +46,10 @@ compiledEntries :: IO [SDK.Target IO ContextValues Errors Results]
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    [ SDK.targetApp "ExtractPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (ExtractPageResult <$> startPageSummary)))
-    , SDK.targetApp "ExtractLinkedPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (ExtractLinkedPageResult <$> linkedPageSummary)))
-    , SDK.targetApp "PrintPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (PrintPageResult <$> printPage)))
-    , SDK.targetApp "PrintLinkedPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (PrintLinkedPageResult <$> printLinkedPage)))
+    [ SDK.targetApp "FetchPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (FetchPageResult <$> (() <$ fetchStartPage)))))
+    , SDK.targetApp "FetchLinkedPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (FetchLinkedPageResult <$> (() <$ fetchLinkedPage)))))
+    , SDK.targetApp "PrintPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrintPageResult <$> (() <$ printPage)))))
+    , SDK.targetApp "PrintLinkedPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrintLinkedPageResult <$> (() <$ printLinkedPage)))))
     ]
 
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
@@ -59,27 +59,31 @@ interpreter = SDK.interpreter "Crawler" registeredEffects Handlers.handlerSource
 generatedEffectGraph :: SDK.EffectGraph MethodGen
 generatedEffectGraph = SDK.EffectGraph
   { SDK.graphMethods =
-      [ SDK.MethodDefinition StartPageSummaryGen StartPageSummaryGen SDK.ContextRequest (SDK.Call StartFetchedPageGen)
-      , SDK.MethodDefinition StartFetchedPageGen StartFetchedPageGen SDK.ContextRequest (SDK.Sequence [SDK.Call OpenCrawlSessionGen, SDK.Call StartURLGen, SDK.Call ReadCrawlSessionInfoGen])
+      [ SDK.MethodDefinition FetchStartPageGen FetchStartPageGen SDK.HandlerMethod (SDK.Sequence [SDK.Call OpenCrawlSessionGen, SDK.Call StartURLGen, SDK.Call ReadCrawlSessionInfoGen])
       , SDK.MethodDefinition OpenCrawlSessionGen OpenCrawlSessionGen SDK.ScopeOpen (SDK.Call CrawlSessionInfoGen)
       , SDK.MethodDefinition CrawlSessionInfoGen CrawlSessionInfoGen SDK.ContextRequest (SDK.Empty)
       , SDK.MethodDefinition StartURLGen StartURLGen SDK.ContextRequest (SDK.Empty)
       , SDK.MethodDefinition ReadCrawlSessionInfoGen CrawlSessionInfoGen SDK.ContextRequire (SDK.Empty)
-      , SDK.MethodDefinition LinkedPageSummaryGen LinkedPageSummaryGen SDK.ContextRequest (SDK.Call LinkedFetchedPageGen)
-      , SDK.MethodDefinition LinkedFetchedPageGen LinkedFetchedPageGen SDK.ContextRequest (SDK.Sequence [SDK.Call OpenCrawlSessionGen, SDK.Call LinkedURLGen, SDK.Call ReadCrawlSessionInfoGen])
+      , SDK.MethodDefinition FetchLinkedPageGen FetchLinkedPageGen SDK.HandlerMethod (SDK.Sequence [SDK.Call OpenCrawlSessionGen, SDK.Call LinkedURLGen, SDK.Call ReadCrawlSessionInfoGen])
       , SDK.MethodDefinition LinkedURLGen LinkedURLGen SDK.ContextRequest (SDK.Empty)
-      , SDK.MethodDefinition PrintPageGen PrintPageGen SDK.HandlerMethod (SDK.Call StartPageSummaryGen)
-      , SDK.MethodDefinition PrintLinkedPageGen PrintLinkedPageGen SDK.HandlerMethod (SDK.Call LinkedPageSummaryGen)
+      , SDK.MethodDefinition PrintPageGen PrintPageGen SDK.HandlerMethod (SDK.Call ReadStartPageSummaryGen)
+      , SDK.MethodDefinition ReadStartPageSummaryGen StartPageSummaryGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call StartPageSummaryGen])
+      , SDK.MethodDefinition StartPageSummaryGen StartPageSummaryGen SDK.ContextRequest (SDK.Sequence [SDK.Call FetchStartPageGen, SDK.Call ReadStartURLGen])
+      , SDK.MethodDefinition ReadStartURLGen StartURLGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call StartURLGen])
+      , SDK.MethodDefinition PrintLinkedPageGen PrintLinkedPageGen SDK.HandlerMethod (SDK.Call ReadLinkedPageSummaryGen)
+      , SDK.MethodDefinition ReadLinkedPageSummaryGen LinkedPageSummaryGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call LinkedPageSummaryGen])
+      , SDK.MethodDefinition LinkedPageSummaryGen LinkedPageSummaryGen SDK.ContextRequest (SDK.Sequence [SDK.Call FetchLinkedPageGen, SDK.Call ReadLinkedURLGen])
+      , SDK.MethodDefinition ReadLinkedURLGen LinkedURLGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call LinkedURLGen])
       ]
-  , SDK.graphRoots = [StartPageSummaryGen, LinkedPageSummaryGen, PrintPageGen, PrintLinkedPageGen]
-  , SDK.graphReferences = [(StartPageSummaryGen, StartFetchedPageGen), (StartFetchedPageGen, OpenCrawlSessionGen), (StartFetchedPageGen, StartURLGen), (StartFetchedPageGen, ReadCrawlSessionInfoGen), (OpenCrawlSessionGen, CrawlSessionInfoGen), (LinkedPageSummaryGen, LinkedFetchedPageGen), (LinkedFetchedPageGen, OpenCrawlSessionGen), (LinkedFetchedPageGen, LinkedURLGen), (LinkedFetchedPageGen, ReadCrawlSessionInfoGen), (PrintPageGen, StartPageSummaryGen), (PrintLinkedPageGen, LinkedPageSummaryGen)]
+  , SDK.graphRoots = [FetchStartPageGen, FetchLinkedPageGen, PrintPageGen, PrintLinkedPageGen]
+  , SDK.graphReferences = [(FetchStartPageGen, OpenCrawlSessionGen), (FetchStartPageGen, StartURLGen), (FetchStartPageGen, ReadCrawlSessionInfoGen), (OpenCrawlSessionGen, CrawlSessionInfoGen), (FetchLinkedPageGen, OpenCrawlSessionGen), (FetchLinkedPageGen, LinkedURLGen), (FetchLinkedPageGen, ReadCrawlSessionInfoGen), (PrintPageGen, ReadStartPageSummaryGen), (ReadStartPageSummaryGen, StartPageSummaryGen), (StartPageSummaryGen, FetchStartPageGen), (StartPageSummaryGen, ReadStartURLGen), (ReadStartURLGen, StartURLGen), (PrintLinkedPageGen, ReadLinkedPageSummaryGen), (ReadLinkedPageSummaryGen, LinkedPageSummaryGen), (LinkedPageSummaryGen, FetchLinkedPageGen), (LinkedPageSummaryGen, ReadLinkedURLGen), (ReadLinkedURLGen, LinkedURLGen)]
   , SDK.graphScopes = [OpenCrawlSessionGen]
-  , SDK.graphScopePaths = [[OpenCrawlSessionGen]]
+  , SDK.graphScopePaths = [[OpenCrawlSessionGen], []]
   , SDK.graphRootPaths =
-      [ (StartPageSummaryGen, [[OpenCrawlSessionGen]])
-      , (LinkedPageSummaryGen, [[OpenCrawlSessionGen]])
-      , (PrintPageGen, [[OpenCrawlSessionGen]])
-      , (PrintLinkedPageGen, [[OpenCrawlSessionGen]])
+      [ (FetchStartPageGen, [[OpenCrawlSessionGen]])
+      , (FetchLinkedPageGen, [[OpenCrawlSessionGen]])
+      , (PrintPageGen, [[], [OpenCrawlSessionGen]])
+      , (PrintLinkedPageGen, [[], [OpenCrawlSessionGen]])
       ]
   , SDK.graphScopeOrder = []
   }
@@ -92,7 +96,7 @@ generatedScopeTree = SDK.ScopeTree
       [ SDK.ScopeNode { SDK.scopeIdentity = OpenCrawlSessionGen, SDK.scopeParents = [], SDK.scopeChildren = [] }
       ]
   , SDK.scopeLayers = [[OpenCrawlSessionGen]]
-  , SDK.scopePaths = [[OpenCrawlSessionGen]]
+  , SDK.scopePaths = [[OpenCrawlSessionGen], []]
   , SDK.scopeCandidates = []
   , SDK.scopeOpposed = []
   , SDK.scopeUndetermined = []

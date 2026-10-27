@@ -10,56 +10,57 @@ import Crawler.Types
 -- requester "handler名" @表示类型：handler 名首字母大写即契约名，生成器产出 newtype 契约 = 契约 表示类型。
 -- 消费方以契约名声明 requests／requires，来源由契约名唯一确定；handler 中写 request @契约名。
 -- instance 显式调用 open；无开启输入的 scope 在实际重叠的使用闭包之间共享。
--- 普通 effect 成功值固定为 ()；业务产值统一由 Context 提供，失败仍用 raise。
+-- 抓取是原子句柄（Excu），只执行 IO；解析 Context 以 input 挂在抓取句柄下，解析它的输出。
+-- 业务产值统一由 Context 提供，失败仍用 raise。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "StartPage"
       , typing = Context { request = requester "startURL" @PageURL }
-      , input = "CrawlSession"
+      , input = "Root"
       , demands = []
       }
   , EffectSpec
       { name = "LinkedPage"
       , typing = Context { request = requester "linkedURL" @PageURL }
-      , input = "CrawlSession"
+      , input = "Root"
       , demands = []
       }
   , EffectSpec
       { name = "FetchPage"
-      , typing = Context { request = requester "startFetchedPage" @FetchedPage }
+      , typing = Excu { handler = Just "fetchStartPage" }
       , input = "CrawlSession"
       , demands = [requests "StartURL", requires "CrawlSessionInfo"]
       }
   , EffectSpec
       { name = "ExtractPage"
       , typing = Context { request = requester "startPageSummary" @PageSummary }
-      , input = "CrawlSession"
-      , demands = [requests "StartFetchedPage"]
+      , input = "FetchPage"
+      , demands = [requires "StartURL"]
       }
   , EffectSpec
       { name = "PrintPage"
       , typing = Excu { handler = Just "printPage" }
-      , input = "CrawlSession"
-      , demands = [requests "StartPageSummary"]
+      , input = "Root"
+      , demands = [requires "StartPageSummary"]
       }
   , EffectSpec
       { name = "FetchLinkedPage"
-      , typing = Context { request = requester "linkedFetchedPage" @FetchedPage }
+      , typing = Excu { handler = Just "fetchLinkedPage" }
       , input = "CrawlSession"
       , demands = [requests "LinkedURL", requires "CrawlSessionInfo"]
       }
   , EffectSpec
       { name = "ExtractLinkedPage"
       , typing = Context { request = requester "linkedPageSummary" @PageSummary }
-      , input = "CrawlSession"
-      , demands = [requests "LinkedFetchedPage"]
+      , input = "FetchLinkedPage"
+      , demands = [requires "LinkedURL"]
       }
   , EffectSpec
       { name = "PrintLinkedPage"
       , typing = Excu { handler = Just "printLinkedPage" }
-      , input = "CrawlSession"
-      , demands = [requests "LinkedPageSummary"]
+      , input = "Root"
+      , demands = [requires "LinkedPageSummary"]
       }
   -- 信息由上游 Context 提供；Scope 只描述开启／关闭和持存状态。
   , EffectSpec

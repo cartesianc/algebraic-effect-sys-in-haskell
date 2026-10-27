@@ -42,9 +42,9 @@ compiledEntries :: IO [SDK.Target IO ContextValues Errors Results]
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    [ SDK.targetApp "PrepareFiles" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (PrepareFilesResult <$> prepareFiles)))
-    , SDK.targetApp "CheckIndependent" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (CheckIndependentResult <$> checkIndependent)))
-    , SDK.targetApp "CheckReopen" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (CheckReopenResult <$> checkReopen)))
+    [ SDK.targetApp "PrepareFiles" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrepareFilesResult <$> (() <$ prepareFiles)))))
+    , SDK.targetApp "CheckIndependent" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (CheckIndependentResult <$> (() <$ checkIndependent)))))
+    , SDK.targetApp "CheckReopen" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (CheckReopenResult <$> (() <$ checkReopen)))))
     ]
 
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。

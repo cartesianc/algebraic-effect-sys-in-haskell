@@ -49,13 +49,14 @@ instance FileSessionEffect App where
   -- 开启期间 Context 保存真实 Handle，后续 require 复用它。
   openFileSession = do
     _ <- request @OpenedFile
-    pure ()
+    pure Nothing
 
   closeFileSession = do
     OpenedFile (FileHandle path file) <- require @OpenedFile
     outcome <- liftIO (tryIOError (hClose file))
     either (raise . FileSessionError . displayException) pure outcome
     liftIO (putStrLn ("[close] " ++ path))
+    pure Nothing
 
 instance ReadFileEffect App where
   fileText = do
@@ -82,7 +83,9 @@ instance FileRecoveryEffect App where
       raise (FileRecoveryError "File handle is still open; failure not located in FileSession")
 
   -- 沿 superclass 引用配对的关闭方法；不重放读写，也不自动重开。
-  resolveFileSession = closeFileSession
+  resolveFileSession = do
+    closeFileSession
+    pure ()
 
 instance WriteFileEffect App where
   writeFileText = do
@@ -97,6 +100,7 @@ instance WriteFileEffect App where
       hFlush file
       putStrLn ("[write] " ++ path ++ ": " ++ line)
     either (raise . WriteFileError . displayException) pure outcome
+    pure Nothing
 
 instance FileWorkflowEffect App where
   runFileWorkflow = do
@@ -105,3 +109,4 @@ instance FileWorkflowEffect App where
     openFileSession
     writeFileText
     -- 完整链退出后由 SDK 释放本次使用并自动关闭空闲实例。
+    pure Nothing

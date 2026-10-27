@@ -43,7 +43,7 @@ prepareHandlers namespace wrappers scopeHandlers routes = do
   let exists = isJust loaded
       generatedName = namespace ++ ".Generated.Handlers"
       sourceFingerprint = fmap (\(source, _, _, _) -> show (fingerprintString source)) loaded
-      extraExports = "handlerSourceFingerprint" : [name | name <- ["newScopeHandlers", "scopeCleanups", "errorHandlers"]
+      extraExports = "handlerSourceFingerprint" : [name | name <- ["newScopeHandlers", "scopeCleanups", "errorHandlers", "contextInjections"]
         , any ((name ++ " ::") `isPrefixOf`) (lines scopeHandlers)]
   generated <- case loaded of
     Nothing -> pure $ if null extraExports
@@ -61,7 +61,7 @@ prepareHandlers namespace wrappers scopeHandlers routes = do
         | otherwise = unlines (emptyCallbacks (lines scopeHandlers))
       emptyCallbacks [] = []
       emptyCallbacks (line : rest)
-        | line `elem` ["scopeCleanups =", "errorHandlers ="] =
+        | line `elem` ["scopeCleanups =", "errorHandlers =", "contextInjections ="] =
             "-- 尚未加载用户 instance；编写 Handlers.hs 后重新生成。"
               : (line ++ " []")
               : emptyCallbacks (dropWhile (\body -> null body || "  " `isPrefixOf` body) rest)

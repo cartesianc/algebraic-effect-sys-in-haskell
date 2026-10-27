@@ -39,6 +39,7 @@ instance PrepareProbeEffect App where
       writeFile path ""
       writeFile journal ""
     either (raise . PrepareProbeError . displayException) pure outcome
+    pure Nothing
 
 instance FileResourceEffect App where
   openedFile = do
@@ -56,6 +57,7 @@ instance SharedFileScopeEffect App where
     OpenedFile (SharedFile (SharedPaths _ journal) _) <- request @OpenedFile
     outcome <- liftIO (tryIOError (appendFile journal "open-body\n"))
     either (raise . SharedFileScopeError . displayException) pure outcome
+    pure Nothing
 
   closeSharedFile = do
     OpenedFile (SharedFile (SharedPaths _ journal) file) <- require @OpenedFile
@@ -64,6 +66,7 @@ instance SharedFileScopeEffect App where
       hClose file
       appendFile journal "file-close\n"
     either (raise . SharedFileScopeError . displayException) pure outcome
+    pure Nothing
 
 -- 每条链先 request 参数；scope 内 require 稳定参数，重叠使用时可共享实例。
 -- 不在业务中加打开标志或互斥锁，也不为尚未开始的 Node 预留资源。
@@ -76,6 +79,7 @@ instance WriteFirstEffect App where
       hPutStr file "first\n"
       hFlush file
     either (raise . WriteFirstError . displayException) pure outcome
+    pure Nothing
 
 instance WriteSecondEffect App where
   writeSecond = do
@@ -86,6 +90,7 @@ instance WriteSecondEffect App where
       hPutStr file "second\n"
       hFlush file
     either (raise . WriteSecondError . displayException) pure outcome
+    pure Nothing
 
 instance WriteThirdEffect App where
   writeThird = do
@@ -96,6 +101,7 @@ instance WriteThirdEffect App where
       hPutStr file "third\n"
       hFlush file
     either (raise . WriteThirdError . displayException) pure outcome
+    pure Nothing
 
 instance VerifyReuseEffect App where
   verifyReuse = do
@@ -119,3 +125,4 @@ instance VerifyReuseEffect App where
     liftIO $ do
       putStrLn ("[check] actual resource opens/closes: " ++ show fileOpens ++ "/" ++ show fileCloses)
       putStrLn "[check] all writer chains released their resources; each line written exactly once"
+    pure Nothing

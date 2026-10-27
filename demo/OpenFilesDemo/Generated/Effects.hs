@@ -77,8 +77,8 @@ instance (Monad m, Effect Root m, FileResourcesEffect m) => Effect FileResources
 data FileSession
 
 class (Effect Root m, Provides OpenedFiles m) => FileSessionEffect m where
-  openFiles :: m ()
-  closeFiles :: m ()
+  openFiles :: m (Maybe String)
+  closeFiles :: m (Maybe String)
   {-# MINIMAL openFiles, closeFiles #-}
 
 instance (Monad m, Effect Root m, FileSessionEffect m) => Effect FileSession m where
@@ -92,7 +92,7 @@ instance (Monad m, Effect Root m, FileSessionEffect m) => Effect FileSession m w
 data HoldFiles
 
 class (Effect FileSession m, Provides FileNames m) => HoldFilesEffect m where
-  holdFiles :: m ()
+  holdFiles :: m (Maybe String)
   {-# MINIMAL holdFiles #-}
 
 instance (Monad m, Effect FileSession m, HoldFilesEffect m) => Effect HoldFiles m where
@@ -106,7 +106,7 @@ instance (Monad m, Effect FileSession m, HoldFilesEffect m) => Effect HoldFiles 
 data InspectFiles
 
 class (Effect HoldFiles m, Provides OpenedFiles m) => InspectFilesEffect m where
-  inspectFiles :: m ()
+  inspectFiles :: m (Maybe String)
   {-# MINIMAL inspectFiles #-}
 
 instance (Monad m, Effect HoldFiles m, InspectFilesEffect m) => Effect InspectFiles m where
@@ -120,7 +120,7 @@ instance (Monad m, Effect HoldFiles m, InspectFilesEffect m) => Effect InspectFi
 data FinishInspection
 
 class (Effect InspectFiles m, Provides OpenedFiles m) => FinishInspectionEffect m where
-  finishInspection :: m ()
+  finishInspection :: m (Maybe String)
   {-# MINIMAL finishInspection #-}
 
 instance (Monad m, Effect InspectFiles m, FinishInspectionEffect m) => Effect FinishInspection m where

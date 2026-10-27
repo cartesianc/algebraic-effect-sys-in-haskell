@@ -44,11 +44,11 @@ compiledEntries :: IO [SDK.Target IO ContextValues Errors Results]
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    [ SDK.targetApp "PrepareProbe" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (PrepareProbeResult <$> prepareProbe)))
-    , SDK.targetApp "WriteFirst" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (WriteFirstResult <$> writeFirst)))
-    , SDK.targetApp "WriteSecond" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (WriteSecondResult <$> writeSecond)))
-    , SDK.targetApp "WriteThird" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (WriteThirdResult <$> writeThird)))
-    , SDK.targetApp "VerifyReuse" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (SDK.withScopeCleanups Handlers.scopeCleanups (VerifyReuseResult <$> verifyReuse)))
+    [ SDK.targetApp "PrepareProbe" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrepareProbeResult <$> (() <$ prepareProbe)))))
+    , SDK.targetApp "WriteFirst" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteFirstResult <$> (() <$ writeFirst)))))
+    , SDK.targetApp "WriteSecond" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteSecondResult <$> (() <$ writeSecond)))))
+    , SDK.targetApp "WriteThird" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteThirdResult <$> (() <$ writeThird)))))
+    , SDK.targetApp "VerifyReuse" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (VerifyReuseResult <$> (() <$ verifyReuse)))))
     ]
 
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。

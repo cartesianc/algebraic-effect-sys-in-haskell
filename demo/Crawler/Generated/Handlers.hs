@@ -10,7 +10,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module Crawler.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers) where
+module Crawler.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -31,12 +31,13 @@ import Text.HTML.TagSoup
 
 
 -- 3. Handler code：instance 直接引用 superclass 类方法；SDK 不从外部补跑 Input。
--- Context 按契约取值：request @T 重新生产，require @T 读取已有绑定；来源由注册解析。
--- URL、抓取与解析均由 Context 产值；打印只完成操作，不返回业务回执。
+-- Context 按契约取值：request @T 重新生产，require @T 读取已有值；来源由注册解析。
+-- 抓取是原子句柄，只执行 IO 并交出网页正文；解析由挂在它下面的 Context 产值；
+-- 打印只完成操作，不交出输出。
 instance StartPageEffect App where
   startURL =
-    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "StartPage" FrameworkGenerated.ContextBindingError
-      [("FetchPage", FrameworkRuntime.RequestValue)]
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "StartPage" FrameworkGenerated.ContextBindingError
+      [("FetchPage", FrameworkRuntime.RequestValue), ("ExtractPage", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundStartPage
       (\value bindings -> bindings { FrameworkGenerated.boundStartPage = Just value })) $
@@ -46,8 +47,8 @@ instance StartPageEffect App where
 
 instance LinkedPageEffect App where
   linkedURL =
-    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "LinkedPage" FrameworkGenerated.ContextBindingError
-      [("FetchLinkedPage", FrameworkRuntime.RequestValue)]
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "LinkedPage" FrameworkGenerated.ContextBindingError
+      [("FetchLinkedPage", FrameworkRuntime.RequestValue), ("ExtractLinkedPage", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundLinkedPage
       (\value bindings -> bindings { FrameworkGenerated.boundLinkedPage = Just value })) $
@@ -57,14 +58,10 @@ instance LinkedPageEffect App where
 
 
 instance FetchPageEffect App where
-  startFetchedPage =
-    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "FetchPage" FrameworkGenerated.ContextBindingError
-      [("ExtractPage", FrameworkRuntime.RequestValue)]
-      Nothing
-      FrameworkGenerated.boundFetchPage
-      (\value bindings -> bindings { FrameworkGenerated.boundFetchPage = Just value })) $
+  fetchStartPage =
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "fetchStartPage" . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FetchPage") $
       let
-        startFetchedPage = do
+        fetchStartPage = do
           openCrawlSession
           StartURL (PageURL url) <- request @StartURL
           CrawlSessionInfo (SessionInfo _ userAgent) <- require @CrawlSessionInfo
@@ -91,18 +88,14 @@ instance FetchPageEffect App where
           case outcome of
             Left problem -> raise (FetchPageError (url ++ ": " ++ displayException problem))
             Right (ExitFailure _, _, message) -> raise (FetchPageError (url ++ ": " ++ message))
-            Right (ExitSuccess, html, _) -> pure (StartFetchedPage (FetchedHTML url html))
-      in startFetchedPage
+            Right (ExitSuccess, html, _) -> pure (Just html)
+      in fetchStartPage
 
 instance FetchLinkedPageEffect App where
-  linkedFetchedPage =
-    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "FetchLinkedPage" FrameworkGenerated.ContextBindingError
-      [("ExtractLinkedPage", FrameworkRuntime.RequestValue)]
-      Nothing
-      FrameworkGenerated.boundFetchLinkedPage
-      (\value bindings -> bindings { FrameworkGenerated.boundFetchLinkedPage = Just value })) $
+  fetchLinkedPage =
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "fetchLinkedPage" . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FetchLinkedPage") $
       let
-        linkedFetchedPage = do
+        fetchLinkedPage = do
           openCrawlSession
           LinkedURL (PageURL url) <- request @LinkedURL
           CrawlSessionInfo (SessionInfo _ userAgent) <- require @CrawlSessionInfo
@@ -127,19 +120,23 @@ instance FetchLinkedPageEffect App where
           case outcome of
             Left problem -> raise (FetchLinkedPageError (url ++ ": " ++ displayException problem))
             Right (ExitFailure _, _, message) -> raise (FetchLinkedPageError (url ++ ": " ++ message))
-            Right (ExitSuccess, html, _) -> pure (LinkedFetchedPage (FetchedHTML url html))
-      in linkedFetchedPage
+            Right (ExitSuccess, html, _) -> pure (Just html)
+      in fetchLinkedPage
 
+-- 挂在抓取句柄下：解析本次抓取交出的正文。剧本执行抓取时由 SDK 注入，不重新抓取；
+-- 尚未抓取时被 require，则由这里调用抓取句柄驱动整条链。
 instance ExtractPageEffect App where
   startPageSummary =
     (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractPage" FrameworkGenerated.ContextBindingError
-      [("PrintPage", FrameworkRuntime.RequestValue)]
+      [("PrintPage", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundExtractPage
       (\value bindings -> bindings { FrameworkGenerated.boundExtractPage = Just value })) $
       let
         startPageSummary = do
-          StartFetchedPage (FetchedHTML url html) <- request @StartFetchedPage
+          fetched <- fetchStartPage
+          StartURL (PageURL url) <- require @StartURL
+          html <- maybe (raise (ExtractPageError (url ++ ": fetch returned no page body"))) pure fetched
           let tags = canonicalizeTags (parseTags html)
               titleTags = takeWhile (not . isTagCloseName "title")
                         (drop 1 (dropWhile (not . isTagOpenName "title") tags))
@@ -158,13 +155,15 @@ instance ExtractPageEffect App where
 instance ExtractLinkedPageEffect App where
   linkedPageSummary =
     (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractLinkedPage" FrameworkGenerated.ContextBindingError
-      [("PrintLinkedPage", FrameworkRuntime.RequestValue)]
+      [("PrintLinkedPage", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundExtractLinkedPage
       (\value bindings -> bindings { FrameworkGenerated.boundExtractLinkedPage = Just value })) $
       let
         linkedPageSummary = do
-          LinkedFetchedPage (FetchedHTML url html) <- request @LinkedFetchedPage
+          fetched <- fetchLinkedPage
+          LinkedURL (PageURL url) <- require @LinkedURL
+          html <- maybe (raise (ExtractLinkedPageError (url ++ ": fetch returned no page body"))) pure fetched
           let tags = canonicalizeTags (parseTags html)
               titleTags = takeWhile (not . isTagCloseName "title")
                         (drop 1 (dropWhile (not . isTagOpenName "title") tags))
@@ -179,12 +178,13 @@ instance ExtractLinkedPageEffect App where
           pure (LinkedPageSummary (PageSummary url title content links))
       in linkedPageSummary
 
+-- 打印读取解析阶段产出的资产，不再抓取；尚未解析时 require 会按需驱动抓取链。
 instance PrintPageEffect App where
   printPage =
-    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "PrintPage") $
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "printPage" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrintPage") $
       let
         printPage = do
-          StartPageSummary (PageSummary url title content links) <- request @StartPageSummary
+          StartPageSummary (PageSummary url title content links) <- require @StartPageSummary
           let report = unlines
                 ([ "URL: " ++ url
                  , "Title: " ++ title
@@ -194,14 +194,15 @@ instance PrintPageEffect App where
                  ] ++ (if null links then ["  (none)"] else map ("  " ++) links) ++ [""])
           outcome <- liftIO (tryIOError (putStr report >> hFlush stdout))
           either (\problem -> raise (PrintPageError (url ++ ": " ++ displayException problem))) pure outcome
+          pure Nothing
       in printPage
 
 instance PrintLinkedPageEffect App where
   printLinkedPage =
-    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "PrintLinkedPage") $
+    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "printLinkedPage" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrintLinkedPage") $
       let
         printLinkedPage = do
-          LinkedPageSummary (PageSummary url title content links) <- request @LinkedPageSummary
+          LinkedPageSummary (PageSummary url title content links) <- require @LinkedPageSummary
           let report = unlines
                 ([ "URL: " ++ url
                  , "Title: " ++ title
@@ -211,6 +212,7 @@ instance PrintLinkedPageEffect App where
                  ] ++ (if null links then ["  (none)"] else map ("  " ++) links) ++ [""])
           outcome <- liftIO (tryIOError (putStr report >> hFlush stdout))
           either (\problem -> raise (PrintLinkedPageError (url ++ ": " ++ displayException problem))) pure outcome
+          pure Nothing
       in printLinkedPage
 
 -- 会话信息由上游 Context 生产，SDK 在 scope 内保存并供各抓取链读取。
@@ -225,27 +227,29 @@ instance SessionContextEffect App where
         crawlSessionInfo = pure (CrawlSessionInfo (SessionInfo "crawler-demo" "algebraic-effect-sys-in-haskell/1.0"))
       in crawlSessionInfo
 
--- 同一 instance 实现开启／关闭；都直接引用 superclass handler，不返回信息。
+-- 同一 instance 实现开启／关闭；都直接引用 superclass handler，不交出输出。
 -- 无开启输入的 scope 在实际重叠使用时共享；最后一条使用闭包退出后自动 close。
 instance CrawlSessionEffect App where
   openCrawlSession =
-    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "openCrawlSession" . FrameworkRuntime.openScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
       let
         openCrawlSession = do
           CrawlSessionInfo (SessionInfo name _) <- request @CrawlSessionInfo
           liftIO (putStrLn ("[scope] open " ++ name))
+          pure Nothing
       in openCrawlSession
   closeCrawlSession =
-    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
+    (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "closeCrawlSession" . FrameworkRuntime.closeScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
       let
         closeCrawlSession = do
           CrawlSessionInfo (SessionInfo name _) <- require @CrawlSessionInfo
           liftIO (putStrLn ("[scope] close " ++ name))
+          pure Nothing
       in closeCrawlSession
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "9cb93521a0378e0882d43f2c44671fae"
+handlerSourceFingerprint = Just "785791fae5a639537f63e1a72560543b"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -257,11 +261,18 @@ newScopeHandlers = sequence
 -- SDK 自动收尾入口；安装时不关闭资源。
 scopeCleanups :: [(String, FrameworkGenerated.App ())]
 scopeCleanups =
-  [ ("CrawlSession", closeCrawlSession)
+  [ ("CrawlSession", () <$ closeCrawlSession)
   ]
 
 -- Error 回调登记：按 handles 匹配故障来源与分类；关联 scope 由 Input 链推导。
 errorHandlers :: [(Maybe String, FrameworkRoot.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
 errorHandlers =
   [
+  ]
+
+-- 挂在原子句柄下的 Context：句柄的输出交给它解析并发布为资产；没有挂接时输出被丢弃。
+contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
+contextInjections =
+  [ ("fetchStartPage", [("ExtractPage", () <$ startPageSummary)])
+  , ("fetchLinkedPage", [("ExtractLinkedPage", () <$ linkedPageSummary)])
   ]

@@ -48,6 +48,7 @@ instance FileSessionEffect App where
   openFiles = do
     OpenedFiles files <- request @OpenedFiles
     liftIO (putStrLn ("[open] acquired " ++ show (length files) ++ " files"))
+    pure Nothing
 
   closeFiles = do
     OpenedFiles held <- require @OpenedFiles
@@ -55,11 +56,13 @@ instance FileSessionEffect App where
     outcome <- liftIO (tryIOError (mapM_ (hClose . snd) files))
     either (raise . FileSessionError . displayException) pure outcome
     liftIO (putStrLn ("[close] released " ++ show (length files) ++ " files"))
+    pure Nothing
 
 instance HoldFilesEffect App where
   holdFiles = do
     _ <- request @FileNames
     openFiles
+    pure Nothing
 
 instance InspectFilesEffect App where
   inspectFiles = do
@@ -85,6 +88,7 @@ instance InspectFilesEffect App where
     either (raise . InspectFilesError . displayException) pure written
     liftIO (putStrLn "[check] write and flush: 10/10 succeeded before close")
     -- 链退出后自动关闭；后续 Node 不继承这份活资源。
+    pure Nothing
 
 instance FinishInspectionEffect App where
   finishInspection = do
@@ -98,3 +102,4 @@ instance FinishInspectionEffect App where
     unless (length closed == 10 && and closed) $
       raise (FinishInspectionError "Not all files closed after closeFiles")
     liftIO (putStrLn "[check] after explicit close: 10/10 closed")
+    pure Nothing

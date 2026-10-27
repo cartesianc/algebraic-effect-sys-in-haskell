@@ -10,7 +10,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module OpenFilesDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers) where
+module OpenFilesDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -67,15 +67,16 @@ instance FileResourcesEffect App where
 
 instance FileSessionEffect App where
   openFiles =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "openFiles" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         openFiles = do
           OpenedFiles files <- request @OpenedFiles
           liftIO (putStrLn ("[open] acquired " ++ show (length files) ++ " files"))
+          pure Nothing
       in openFiles
 
   closeFiles =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "closeFiles" . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         closeFiles = do
           OpenedFiles held <- require @OpenedFiles
@@ -83,20 +84,22 @@ instance FileSessionEffect App where
           outcome <- liftIO (tryIOError (mapM_ (hClose . snd) files))
           either (raise . FileSessionError . displayException) pure outcome
           liftIO (putStrLn ("[close] released " ++ show (length files) ++ " files"))
+          pure Nothing
       in closeFiles
 
 instance HoldFilesEffect App where
   holdFiles =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "HoldFiles") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "holdFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "HoldFiles") $
       let
         holdFiles = do
           _ <- request @FileNames
           openFiles
+          pure Nothing
       in holdFiles
 
 instance InspectFilesEffect App where
   inspectFiles =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "InspectFiles") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "inspectFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "InspectFiles") $
       let
         inspectFiles = do
           -- 前一 Node 的使用已经结束；本条链显式 open，并持有自己的资源绑定。
@@ -120,12 +123,13 @@ instance InspectFilesEffect App where
             hFlush file
           either (raise . InspectFilesError . displayException) pure written
           liftIO (putStrLn "[check] write and flush: 10/10 succeeded before close")
+          -- 链退出后自动关闭；后续 Node 不继承这份活资源。
+          pure Nothing
       in inspectFiles
-    -- 链退出后自动关闭；后续 Node 不继承这份活资源。
 
 instance FinishInspectionEffect App where
   finishInspection =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FinishInspection") $
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "finishInspection" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FinishInspection") $
       let
         finishInspection = do
           holdFiles
@@ -138,11 +142,12 @@ instance FinishInspectionEffect App where
           unless (length closed == 10 && and closed) $
             raise (FinishInspectionError "Not all files closed after closeFiles")
           liftIO (putStrLn "[check] after explicit close: 10/10 closed")
+          pure Nothing
       in finishInspection
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "8a6ac99160946f0c0349a032671d98d6"
+handlerSourceFingerprint = Just "dda863737c2c8253694917300093f9d4"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -154,11 +159,17 @@ newScopeHandlers = sequence
 -- SDK 自动收尾入口；安装时不关闭资源。
 scopeCleanups :: [(String, FrameworkGenerated.App ())]
 scopeCleanups =
-  [ ("FileSession", closeFiles)
+  [ ("FileSession", () <$ closeFiles)
   ]
 
 -- Error 回调登记：按 handles 匹配故障来源与分类；关联 scope 由 Input 链推导。
 errorHandlers :: [(Maybe String, FrameworkRoot.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
 errorHandlers =
+  [
+  ]
+
+-- 挂在原子句柄下的 Context：句柄的输出交给它解析并发布为资产；没有挂接时输出被丢弃。
+contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
+contextInjections =
   [
   ]

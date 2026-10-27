@@ -27,6 +27,7 @@ lowerProgram namespace specifications entry = do
     then Left "Root is reserved for the superclass"
     else pure ()
   mapM_ checkInput specifications
+  mapM_ checkAnchor specifications
   _ <- resolvedEither
   mapM_ checkDemandNames specifications
   checkGenerated
@@ -49,7 +50,8 @@ lowerProgram namespace specifications entry = do
         [ "-- 纯计算样例也只登记末端句柄，不在外部组合上游。"
         , "compiledTarget :: SDK.Target SDK.Identity ContextValues Errors (Produce " ++ terminal ++ ")"
         , "compiledTarget = SDK.targetPure " ++ show terminal ++ " emptyContexts"
-        , "  (FrameworkRoot.withErrorHandlers Handlers.errorHandlers " ++ method ++ ")"
+        , "  (FrameworkRoot.withErrorHandlers Handlers.errorHandlers"
+        , "    (FrameworkRoot.withAnchoredContexts Handlers.contextInjections " ++ terminalAction terminal method ++ "))"
         , ""
         , "benchmark :: Output Errors (Produce " ++ terminal ++ ")"
         , "benchmark = SDK.bootPure compiledTarget"
@@ -67,7 +69,7 @@ lowerProgram namespace specifications entry = do
         ++ providerDeclarations ++ errorDeclaration ++ contextDeclarations)
     , unlines (programHeader ++ registrationSnapshot ++ structureDeclarations ++ singleEntry ++ astInterpreter selectedMethods)
     , concatMap instanceWrappers specifications
-    , scopeHandlers ++ scopeCleanups ++ errorHandlers
+    , scopeHandlers ++ scopeCleanups ++ errorHandlers ++ injectionTable
     , graphPlan
     , nub [reference representation' | (_, representation', _) <- generatedDeclarations]
     , (demandRoutes, contextMethods)
@@ -113,6 +115,26 @@ lowerProgram namespace specifications entry = do
       | specification <- contextSpecs
       , method <- maybeToList (entryMethod (typing specification))
           ++ maybeToList (contextReader (typing specification)) ]
+
+    -- 原子句柄：Excu.handler 与 Scoped.open／close，统一输出 RawOutput（SDK 内部）。
+    -- input 指向原子 effect 的 Context 挂在它下面，解析其入口方法（handler／open）的输出；
+    -- close 没有挂接点，输出总被丢弃。
+    atomicMethods specification = case typing specification of
+      Excu method -> maybeToList method
+      Scoped opening closing -> maybeToList opening ++ maybeToList closing
+      _ -> []
+    anchoredUnder specification =
+      [context | context <- contextSpecs, input context == name specification, not (null (atomicMethods specification))]
+    contextInjections =
+      [ (entry, anchored)
+      | specification <- specifications
+      , Just entry <- [entryMethod (typing specification)], entry `elem` atomicMethods specification
+      , let anchored = [ (name context, producing) | context <- anchoredUnder specification
+                       , Just producing <- [entryMethod (typing context)] ]
+      , not (null anchored) ]
+    terminalAction terminal method
+      | any (\specification -> name specification == terminal && effectKind (typing specification) == ContextKind) specifications = method
+      | otherwise = "(() <$ " ++ method ++ ")"
 
     selected = case entry of
       SingleTarget terminal -> [terminal]
@@ -294,10 +316,14 @@ lowerProgram namespace specifications entry = do
               ++ contextAccessTable "FrameworkRuntime." selectedName ++ ")"
           | otherwise = "(" ++ rootWrapper ++ " . " ++ (case typing specification of
               -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
+              -- 原子句柄的输出只交给挂在它下面的 Context，组合它的方法照常继续。
               Scoped _ closingMethod ->
-                "FrameworkRuntime." ++ (if Just method == closingMethod then "closeScope " else "openScope ")
+                "FrameworkRuntime.atomicScope " ++ show method ++ " . FrameworkRuntime."
+                  ++ (if Just method == closingMethod then "closeScope " else "openScope ")
                   ++ show selectedName ++ " FrameworkGenerated.ScopeBindingError . "
                   ++ scopedDependencies ++ " . FrameworkRuntime.enterHandler " ++ show selectedName
+              Excu _ -> "FrameworkRuntime.atomicHandle " ++ show method ++ " . "
+                  ++ scopedDependencies ++ " . " ++ operation
               _ -> scopedDependencies ++ " . " ++ operation) ++ ")"
         operation = case typing specification of
           Context (Just _) ->
@@ -399,6 +425,15 @@ lowerProgram namespace specifications entry = do
         _ -> case entryMethod (typing specification) of
           Just method -> Right method
           Nothing -> Left ("Effect has no callable entry (handler/open/Context.request = Nothing): " ++ effectName)
+
+    -- 挂在 Scoped 下的 Context 解析 open 的输出，不能同时是该 scope 经 request 取得的资源 Context。
+    checkAnchor specification = case typing specification of
+      Context _ | Right anchor <- findEffect (input specification)
+                , Scoped _ _ <- typing anchor
+                , requestSource anchor == Just (name specification) ->
+          Left ("Context " ++ name specification ++ " is the resource of " ++ name anchor
+            ++ " and cannot also hang below it; give it another input")
+      _ -> Right ()
 
     -- 此限制只针对手写 Input。生成的 superclass 仍包含声明的 Context 能力。
     checkInput specification
@@ -509,17 +544,18 @@ lowerProgram namespace specifications entry = do
           -- 依值只经 Provides 契约进入 superclass；来源由解析结果在 Provides instance 中连接。
           superclasses = nub (("Effect " ++ upstream ++ " m") :
             ["Provides " ++ contract demand ++ " m" | demand <- demands specification])
+          -- 原子句柄（Excu、Scoped.open／close）返回可选的信息；业务值只归 Context。
+          -- 这份输出只交给挂在它下面的 Context，资源信息仍来自显式声明的上游 Context。
           ordinaryMethods =
             [ (method, case effectKind (typing specification) of
                 PureKind -> "m ()"
-                ExcuKind -> "m ()"
-                ScopedKind -> "m ()"
+                ExcuKind -> "m (Maybe String)"
+                ScopedKind -> "m (Maybe String)"
                 ErrorKind -> "m ()"
                 _ -> "m (Produce " ++ effectName ++ ")")
             | method <- maybeToList (entryMethod (typing specification)) ]
-          -- open／close 不产值；资源信息来自显式声明的上游 Context。
           closingMethods = case typing specification of
-            Scoped _ closing -> [(method, "m ()") | method <- maybeToList closing]
+            Scoped _ closing -> [(method, "m (Maybe String)") | method <- maybeToList closing]
             _ -> []
           methods = ordinaryMethods ++ closingMethods
             ++ [(method, "m ()") | method <- errorMethods specification]
@@ -625,10 +661,25 @@ lowerProgram namespace specifications entry = do
           ]
       where
         callbacks =
-          [ "(" ++ show selectedScope ++ ", " ++ closing ++ ")"
+          [ "(" ++ show selectedScope ++ ", () <$ " ++ closing ++ ")"
           | selectedScope <- orderedScopes
           , specification <- specifications, name specification == selectedScope
           , Scoped _ (Just closing) <- [typing specification] ]
+
+    -- 只保存生产入口引用；安装时不注入，原子句柄实际返回后才交给挂接的 Context。
+    injectionTable = unlines
+      [ ""
+      , "-- 挂在原子句柄下的 Context：句柄的输出交给它解析并发布为资产；没有挂接时输出被丢弃。"
+      , "contextInjections :: [(String, [(String, FrameworkGenerated." ++ carrierType ++ " ())])]"
+      , "contextInjections ="
+      , "  [" ++ if null entries then "" else " " ++ intercalate "\n  , " entries
+      , "  ]"
+      ]
+      where
+        entries =
+          [ "(" ++ show entry ++ ", [" ++ intercalate ", "
+              ["(" ++ show contextName ++ ", () <$ " ++ producing ++ ")" | (contextName, producing) <- anchored] ++ "])"
+          | (entry, anchored) <- contextInjections ]
 
     -- 只保存匹配函数与类方法引用；安装时不检测、不处置，也不执行上游业务。
     errorHandlers = unlines
@@ -672,7 +723,8 @@ lowerProgram namespace specifications entry = do
           , "    [ " ++ intercalate "\n    , "
               ["SDK.targetApp " ++ show terminal ++ " emptyContexts scopes"
                 ++ " (FrameworkRoot.withErrorHandlers Handlers.errorHandlers"
-                ++ " (SDK.withScopeCleanups Handlers.scopeCleanups (" ++ terminal ++ "Result <$> " ++ method ++ ")))"
+                ++ " (FrameworkRoot.withAnchoredContexts Handlers.contextInjections"
+                ++ " (SDK.withScopeCleanups Handlers.scopeCleanups (" ++ terminal ++ "Result <$> " ++ terminalAction terminal method ++ "))))"
               | (terminal, method) <- zip selected methods]
           , "    ]"
           , ""

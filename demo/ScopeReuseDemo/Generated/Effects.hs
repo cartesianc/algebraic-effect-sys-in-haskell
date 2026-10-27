@@ -59,7 +59,7 @@ instance (Monad m, Effect Root m, FileLocationsEffect m) => Effect FileLocations
 data PrepareProbe
 
 class (Effect Root m, Provides FilePaths m) => PrepareProbeEffect m where
-  prepareProbe :: m ()
+  prepareProbe :: m (Maybe String)
   {-# MINIMAL prepareProbe #-}
 
 instance (Monad m, Effect Root m, PrepareProbeEffect m) => Effect PrepareProbe m where
@@ -91,8 +91,8 @@ instance (Monad m, Effect Root m, FileResourceEffect m) => Effect FileResource m
 data SharedFileScope
 
 class (Effect Root m, Provides OpenedFile m) => SharedFileScopeEffect m where
-  openSharedFile :: m ()
-  closeSharedFile :: m ()
+  openSharedFile :: m (Maybe String)
+  closeSharedFile :: m (Maybe String)
   {-# MINIMAL openSharedFile, closeSharedFile #-}
 
 instance (Monad m, Effect Root m, SharedFileScopeEffect m) => Effect SharedFileScope m where
@@ -106,7 +106,7 @@ instance (Monad m, Effect Root m, SharedFileScopeEffect m) => Effect SharedFileS
 data WriteFirst
 
 class (Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m) => WriteFirstEffect m where
-  writeFirst :: m ()
+  writeFirst :: m (Maybe String)
   {-# MINIMAL writeFirst #-}
 
 instance (Monad m, Effect SharedFileScope m, WriteFirstEffect m) => Effect WriteFirst m where
@@ -120,7 +120,7 @@ instance (Monad m, Effect SharedFileScope m, WriteFirstEffect m) => Effect Write
 data WriteSecond
 
 class (Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m) => WriteSecondEffect m where
-  writeSecond :: m ()
+  writeSecond :: m (Maybe String)
   {-# MINIMAL writeSecond #-}
 
 instance (Monad m, Effect SharedFileScope m, WriteSecondEffect m) => Effect WriteSecond m where
@@ -134,7 +134,7 @@ instance (Monad m, Effect SharedFileScope m, WriteSecondEffect m) => Effect Writ
 data WriteThird
 
 class (Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m) => WriteThirdEffect m where
-  writeThird :: m ()
+  writeThird :: m (Maybe String)
   {-# MINIMAL writeThird #-}
 
 instance (Monad m, Effect SharedFileScope m, WriteThirdEffect m) => Effect WriteThird m where
@@ -148,7 +148,7 @@ instance (Monad m, Effect SharedFileScope m, WriteThirdEffect m) => Effect Write
 data VerifyReuse
 
 class (Effect Root m, Provides FilePaths m) => VerifyReuseEffect m where
-  verifyReuse :: m ()
+  verifyReuse :: m (Maybe String)
   {-# MINIMAL verifyReuse #-}
 
 instance (Monad m, Effect Root m, VerifyReuseEffect m) => Effect VerifyReuse m where

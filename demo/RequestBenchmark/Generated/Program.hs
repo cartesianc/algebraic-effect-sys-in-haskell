@@ -33,7 +33,8 @@ programStructure = SDK.initializeGeneratedStructure
 -- 纯计算样例也只登记末端句柄，不在外部组合上游。
 compiledTarget :: SDK.Target SDK.Identity ContextValues Errors (Produce RenderNumber)
 compiledTarget = SDK.targetPure "RenderNumber" emptyContexts
-  (FrameworkRoot.withErrorHandlers Handlers.errorHandlers renderedValue)
+  (FrameworkRoot.withErrorHandlers Handlers.errorHandlers
+    (FrameworkRoot.withAnchoredContexts Handlers.contextInjections renderedValue))
 
 benchmark :: Output Errors (Produce RenderNumber)
 benchmark = SDK.bootPure compiledTarget

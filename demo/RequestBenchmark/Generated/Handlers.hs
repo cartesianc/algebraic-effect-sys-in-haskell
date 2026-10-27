@@ -10,7 +10,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module RequestBenchmark.Generated.Handlers (handlerSourceFingerprint, errorHandlers) where
+module RequestBenchmark.Generated.Handlers (handlerSourceFingerprint, errorHandlers, contextInjections) where
 
 import qualified Framework.SDK as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
@@ -86,5 +86,11 @@ handlerSourceFingerprint = Just "d45ae57cc89e56a56928b02fcaaefbaf"
 -- Error 回调登记：按 handles 匹配故障来源与分类；关联 scope 由 Input 链推导。
 errorHandlers :: [(Maybe String, FrameworkRoot.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.Pure)]
 errorHandlers =
+  [
+  ]
+
+-- 挂在原子句柄下的 Context：句柄的输出交给它解析并发布为资产；没有挂接时输出被丢弃。
+contextInjections :: [(String, [(String, FrameworkGenerated.Pure ())])]
+contextInjections =
   [
   ]

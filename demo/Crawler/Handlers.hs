@@ -26,8 +26,9 @@ import Text.HTML.TagSoup
 
 
 -- 3. Handler code：instance 直接引用 superclass 类方法；SDK 不从外部补跑 Input。
--- Context 按契约取值：request @T 重新生产，require @T 读取已有绑定；来源由注册解析。
--- URL、抓取与解析均由 Context 产值；打印只完成操作，不返回业务回执。
+-- Context 按契约取值：request @T 重新生产，require @T 读取已有值；来源由注册解析。
+-- 抓取是原子句柄，只执行 IO 并交出网页正文；解析由挂在它下面的 Context 产值；
+-- 打印只完成操作，不交出输出。
 instance StartPageEffect App where
   startURL = pure (StartURL (PageURL "https://www.google.com"))
 
@@ -36,7 +37,7 @@ instance LinkedPageEffect App where
 
 
 instance FetchPageEffect App where
-  startFetchedPage = do
+  fetchStartPage = do
     openCrawlSession
     StartURL (PageURL url) <- request @StartURL
     CrawlSessionInfo (SessionInfo _ userAgent) <- require @CrawlSessionInfo
@@ -63,10 +64,10 @@ instance FetchPageEffect App where
     case outcome of
       Left problem -> raise (FetchPageError (url ++ ": " ++ displayException problem))
       Right (ExitFailure _, _, message) -> raise (FetchPageError (url ++ ": " ++ message))
-      Right (ExitSuccess, html, _) -> pure (StartFetchedPage (FetchedHTML url html))
+      Right (ExitSuccess, html, _) -> pure (Just html)
 
 instance FetchLinkedPageEffect App where
-  linkedFetchedPage = do
+  fetchLinkedPage = do
     openCrawlSession
     LinkedURL (PageURL url) <- request @LinkedURL
     CrawlSessionInfo (SessionInfo _ userAgent) <- require @CrawlSessionInfo
@@ -91,11 +92,15 @@ instance FetchLinkedPageEffect App where
     case outcome of
       Left problem -> raise (FetchLinkedPageError (url ++ ": " ++ displayException problem))
       Right (ExitFailure _, _, message) -> raise (FetchLinkedPageError (url ++ ": " ++ message))
-      Right (ExitSuccess, html, _) -> pure (LinkedFetchedPage (FetchedHTML url html))
+      Right (ExitSuccess, html, _) -> pure (Just html)
 
+-- 挂在抓取句柄下：解析本次抓取交出的正文。剧本执行抓取时由 SDK 注入，不重新抓取；
+-- 尚未抓取时被 require，则由这里调用抓取句柄驱动整条链。
 instance ExtractPageEffect App where
   startPageSummary = do
-    StartFetchedPage (FetchedHTML url html) <- request @StartFetchedPage
+    fetched <- fetchStartPage
+    StartURL (PageURL url) <- require @StartURL
+    html <- maybe (raise (ExtractPageError (url ++ ": fetch returned no page body"))) pure fetched
     let tags = canonicalizeTags (parseTags html)
         titleTags = takeWhile (not . isTagCloseName "title")
                   (drop 1 (dropWhile (not . isTagOpenName "title") tags))
@@ -112,7 +117,9 @@ instance ExtractPageEffect App where
 
 instance ExtractLinkedPageEffect App where
   linkedPageSummary = do
-    LinkedFetchedPage (FetchedHTML url html) <- request @LinkedFetchedPage
+    fetched <- fetchLinkedPage
+    LinkedURL (PageURL url) <- require @LinkedURL
+    html <- maybe (raise (ExtractLinkedPageError (url ++ ": fetch returned no page body"))) pure fetched
     let tags = canonicalizeTags (parseTags html)
         titleTags = takeWhile (not . isTagCloseName "title")
                   (drop 1 (dropWhile (not . isTagOpenName "title") tags))
@@ -126,9 +133,10 @@ instance ExtractLinkedPageEffect App where
                       , let href = fromAttrib "href" tag, not (null href)]
     pure (LinkedPageSummary (PageSummary url title content links))
 
+-- 打印读取解析阶段产出的资产，不再抓取；尚未解析时 require 会按需驱动抓取链。
 instance PrintPageEffect App where
   printPage = do
-    StartPageSummary (PageSummary url title content links) <- request @StartPageSummary
+    StartPageSummary (PageSummary url title content links) <- require @StartPageSummary
     let report = unlines
           ([ "URL: " ++ url
            , "Title: " ++ title
@@ -138,10 +146,11 @@ instance PrintPageEffect App where
            ] ++ (if null links then ["  (none)"] else map ("  " ++) links) ++ [""])
     outcome <- liftIO (tryIOError (putStr report >> hFlush stdout))
     either (\problem -> raise (PrintPageError (url ++ ": " ++ displayException problem))) pure outcome
+    pure Nothing
 
 instance PrintLinkedPageEffect App where
   printLinkedPage = do
-    LinkedPageSummary (PageSummary url title content links) <- request @LinkedPageSummary
+    LinkedPageSummary (PageSummary url title content links) <- require @LinkedPageSummary
     let report = unlines
           ([ "URL: " ++ url
            , "Title: " ++ title
@@ -151,17 +160,20 @@ instance PrintLinkedPageEffect App where
            ] ++ (if null links then ["  (none)"] else map ("  " ++) links) ++ [""])
     outcome <- liftIO (tryIOError (putStr report >> hFlush stdout))
     either (\problem -> raise (PrintLinkedPageError (url ++ ": " ++ displayException problem))) pure outcome
+    pure Nothing
 
 -- 会话信息由上游 Context 生产，SDK 在 scope 内保存并供各抓取链读取。
 instance SessionContextEffect App where
   crawlSessionInfo = pure (CrawlSessionInfo (SessionInfo "crawler-demo" "algebraic-effect-sys-in-haskell/1.0"))
 
--- 同一 instance 实现开启／关闭；都直接引用 superclass handler，不返回信息。
+-- 同一 instance 实现开启／关闭；都直接引用 superclass handler，不交出输出。
 -- 无开启输入的 scope 在实际重叠使用时共享；最后一条使用闭包退出后自动 close。
 instance CrawlSessionEffect App where
   openCrawlSession = do
     CrawlSessionInfo (SessionInfo name _) <- request @CrawlSessionInfo
     liftIO (putStrLn ("[scope] open " ++ name))
+    pure Nothing
   closeCrawlSession = do
     CrawlSessionInfo (SessionInfo name _) <- require @CrawlSessionInfo
     liftIO (putStrLn ("[scope] close " ++ name))
+    pure Nothing

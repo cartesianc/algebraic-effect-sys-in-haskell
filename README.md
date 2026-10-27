@@ -116,11 +116,29 @@ instance MakeNumberEffect Pure where
 | --- | --- | --- |
 | `Context` | 生产或读取在操作之间传递的业务值 | 业务类型 |
 | `Pure` | 不产出业务值的纯检查 | `()` |
-| `Excu` | 不产出业务值的执行操作 | `()` |
-| `Scoped` | 资源的开启（`open`）与关闭（`close`） | `()` |
+| `Excu` | 执行操作（原子句柄） | `Maybe String` |
+| `Scoped` | 资源的开启（`open`）与关闭（`close`）（原子句柄） | `Maybe String` |
 | `Error` | 对指定类型的失败做诊断和处置 | `()` |
 
-除 Context 外，操作只表示"完成"或"失败"；需要在操作之间传递的值一律由 Context 产出。
+除 Context 外，操作只表示"完成"或"失败"；需要在操作之间传递的值一律由 Context 产出。Excu 和 Scoped 可以额外交出一段可选信息（`pure (Just info)`，没有就 `pure Nothing`），它只交给挂在这个句柄下面的 Context 解析，调用这个句柄的其他方法不读取它。
+
+### 挂在句柄下的 Context
+
+Context 的 `input` 指向一个 Excu 或 Scoped 时，它就挂在这个句柄下，负责把句柄交出的信息解析成业务值（节选自 [Crawler](demo/Crawler/Handlers.hs)，`ExtractPage` 的 `input = "FetchPage"`）：
+
+```haskell
+instance ExtractPageEffect App where
+  startPageSummary = do
+    fetched <- fetchStartPage        -- 抓取句柄交出的网页正文
+    ...                              -- 解析，产出 StartPageSummary
+```
+
+你不需要安排它什么时候运行：
+
+- **句柄在操作链里执行时**：句柄返回后，SDK 自动用这次的输出运行挂在下面的 Context，产出的值保存起来，不会再执行一次句柄。调用句柄的那条链照常继续，不受影响。
+- **还没执行过、但有人 `require` 这个值时**：Context 自己调用句柄，把链跑起来。
+
+所以 Crawler 先并行抓取，打印时直接 `require` 解析好的摘要，不再重新抓取。
 
 ### 能力继承：`input`
 
@@ -157,11 +175,12 @@ typing = Context { request = requester "startURL" @PageURL }
 instance FileSessionEffect App where
   openFileSession = do
     _ <- request @OpenedFile
-    pure ()
+    pure Nothing
 
   closeFileSession = do
     OpenedFile (FileHandle path file) <- require @OpenedFile
     liftIO (hClose file)
+    pure Nothing
 ```
 
 你不需要自己安排关闭：一条操作链结束（包括出错）后，SDK 会关闭这条链开启过、且没有其他链仍在使用的资源；程序退出时还会再做一次兜底清理。
@@ -256,7 +275,7 @@ cabal run crawler-demo -- --structure
 | --- | --- | --- |
 | [RequestBenchmark](demo/RequestBenchmark) | 取值、纯计算链、`raise` | 见快速开始 |
 | [FileDemo](demo/FileDemo) | 文件资源的开启、读写、自动关闭，Error 处置 | `cabal run file-demo` |
-| [Crawler](demo/Crawler) | 并行抓取解析、顺序打印，用不同契约区分同类数据 | `cabal run crawler-demo` |
+| [Crawler](demo/Crawler) | 并行抓取、挂接的 Context 解析，顺序打印时读取解析结果；用不同契约区分同类数据 | `cabal run crawler-demo` |
 | [OpenFilesDemo](demo/OpenFilesDemo) | 一个资源持有多个文件，链结束后自动关闭与重开 | `cabal run open-files-demo` |
 | [ScopeInstancesDemo](demo/ScopeInstancesDemo) | 按参数区分资源实例、复用与重开 | `cabal run scope-instances-demo` |
 | [ScopeReuseDemo](demo/ScopeReuseDemo) | 并行的链共享同一个资源实例 | `cabal run scope-reuse-demo` |
