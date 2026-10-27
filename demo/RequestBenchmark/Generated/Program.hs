@@ -14,10 +14,10 @@ import RequestBenchmark.Types
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
 registeredEffects :: [EffectSpec]
 registeredEffects =
-  [ EffectSpec {name = "DemoContext", typing = Context {request = Just (Requester {handler = "demoInputs", representation = TypeRef "InputSettings"}), require = Just "readDemoInputs"}, input = "Root", demands = []}
-  , EffectSpec {name = "MakeNumber", typing = Context {request = Just (Requester {handler = "numberValue", representation = TypeRef "Int"}), require = Just "readNumberValue"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "DemoInputs"}]}
-  , EffectSpec {name = "AddOne", typing = Context {request = Just (Requester {handler = "addedValue", representation = TypeRef "Int"}), require = Just "readAddedValue"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "NumberValue"}]}
-  , EffectSpec {name = "RenderNumber", typing = Context {request = Just (Requester {handler = "renderedValue", representation = TypeRef "[Char]"}), require = Just "readRenderedValue"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "AddedValue"},Demand {access = RequireAccess, contract = "DemoInputs"}]}
+  [ EffectSpec {name = "DemoContext", typing = Context {request = Just (Requester {handler = "demoInputs", representation = TypeRef "InputSettings"})}, input = "Root", demands = []}
+  , EffectSpec {name = "MakeNumber", typing = Context {request = Just (Requester {handler = "numberValue", representation = TypeRef "Int"})}, input = "Root", demands = [Demand {access = RequestAccess, contract = "DemoInputs"}]}
+  , EffectSpec {name = "AddOne", typing = Context {request = Just (Requester {handler = "addedValue", representation = TypeRef "Int"})}, input = "Root", demands = [Demand {access = RequestAccess, contract = "NumberValue"}]}
+  , EffectSpec {name = "RenderNumber", typing = Context {request = Just (Requester {handler = "renderedValue", representation = TypeRef "[Char]"})}, input = "Root", demands = [Demand {access = RequestAccess, contract = "AddedValue"},Demand {access = RequireAccess, contract = "DemoInputs"}]}
   ]
 
 -- 生成身份连接到已有运行 scope 名；依赖只保存在下方显式 ScopeTree 中。

@@ -7,7 +7,7 @@
 
 -- 纯注册描述与依赖解析，不执行 handler。
 module Framework.Effect.Registration
-  ( EffectTyping(..), Requester(..), requester, contractOf, Handles(..), TypeRef(..), typeRef, contractName
+  ( EffectTyping(..), Requester(..), requester, contractOf, contextReader, Handles(..), TypeRef(..), typeRef, contractName
   , EffectSpec(..), Demand(..), Access(..), requests, requires
   , ResolvedDemand(..), resolveDemands, contextNames
   , effectKind, entryMethod
@@ -26,7 +26,8 @@ data EffectTyping
   | Scoped { open :: Maybe String, close :: Maybe String }
   -- handles 按错误类型匹配；作用的 scope 由 Input 链上最近的 Scoped 推导，不手写连接。
   | Error { detect :: Maybe String, resolve :: Maybe String, handles :: [Handles] }
-  | Context { request :: Maybe Requester, require :: Maybe String }
+  -- Context 只声明生产方法；require 的读取方法由生成器按契约名自动命名。
+  | Context { request :: Maybe Requester }
   deriving (Eq, Show, Read)
 
 -- Context 的生产入口。handler 名同时决定契约类型名：首字母大写后由生成器产出
@@ -46,6 +47,11 @@ contractOf Requester { handler = method } = case method of
   first : rest -> toUpper first : rest
   [] -> []
 
+-- require 读取方法名：read 加契约名，例如 readStartURL；消费方写 require @契约名，不直接调用它。
+contextReader :: EffectTyping -> Maybe String
+contextReader (Context (Just producing)) = Just ("read" ++ contractOf producing)
+contextReader _ = Nothing
+
 -- 业务 raise 与 SDK 协议故障分开声明；名字均指注册的 effect。
 data Handles
   = RaisedBy String
@@ -58,7 +64,7 @@ effectKind (Pure _) = PureKind
 effectKind (Excu _) = ExcuKind
 effectKind (Scoped _ _) = ScopedKind
 effectKind Error {} = ErrorKind
-effectKind (Context _ _) = ContextKind
+effectKind (Context _) = ContextKind
 
 -- 普通入口按角色确定，关闭方法不参与入口选择。
 entryMethod :: EffectTyping -> Maybe String
@@ -67,7 +73,7 @@ entryMethod (Excu method) = method
 entryMethod (Scoped opening _) = opening
 -- Error 的两个方法由故障协议激活，不猜测一个普通 Node 入口。
 entryMethod Error {} = Nothing
-entryMethod (Context producing _) = case producing of
+entryMethod (Context producing) = case producing of
   Just Requester { handler = method } -> Just method
   Nothing -> Nothing
 
@@ -126,7 +132,7 @@ findEffect specifications selected = case filter ((== selected) . name) specific
 
 produced :: EffectSpec -> Maybe String
 produced specification = case typing specification of
-  Context (Just producing) _ -> Just (contractOf producing)
+  Context (Just producing) -> Just (contractOf producing)
   _ -> Nothing
 
 -- 契约名来自 handler 名，而方法名在注册集合中唯一，因此每个契约恰好对应一个生产方。
@@ -143,10 +149,6 @@ resolveDemands specifications consumer = do
         specification : _ -> pure specification
         [] -> Left ("No Context produces contract " ++ contract demand ++ " for " ++ name consumer
           ++ "; a contract is named after its producer's handler with the first letter capitalized")
-      case (access demand, typing provider) of
-        (RequireAccess, Context _ Nothing) ->
-          Left ("requires needs a Context with a require method: " ++ name provider)
-        _ -> pure ()
       pure (ResolvedDemand (access demand) (contract demand) (name provider))
 
 -- 收集声明前提所需的 Context，按依赖顺序去重；不根据业务值合并调用。

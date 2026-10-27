@@ -14,9 +14,9 @@ import ScopeReuseDemo.Types
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
 registeredEffects :: [EffectSpec]
 registeredEffects =
-  [ EffectSpec {name = "FileLocations", typing = Context {request = Just (Requester {handler = "filePaths", representation = TypeRef "SharedPaths"}), require = Just "readFilePaths"}, input = "Root", demands = []}
+  [ EffectSpec {name = "FileLocations", typing = Context {request = Just (Requester {handler = "filePaths", representation = TypeRef "SharedPaths"})}, input = "Root", demands = []}
   , EffectSpec {name = "PrepareProbe", typing = Excu {handler = Just "prepareProbe"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "FilePaths"}]}
-  , EffectSpec {name = "FileResource", typing = Context {request = Just (Requester {handler = "openedFile", representation = TypeRef "SharedFile"}), require = Just "readOpenedFile"}, input = "Root", demands = [Demand {access = RequireAccess, contract = "FilePaths"}]}
+  , EffectSpec {name = "FileResource", typing = Context {request = Just (Requester {handler = "openedFile", representation = TypeRef "SharedFile"})}, input = "Root", demands = [Demand {access = RequireAccess, contract = "FilePaths"}]}
   , EffectSpec {name = "SharedFileScope", typing = Scoped {open = Just "openSharedFile", close = Just "closeSharedFile"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "OpenedFile"},Demand {access = RequireAccess, contract = "OpenedFile"}]}
   , EffectSpec {name = "WriteFirst", typing = Excu {handler = Just "writeFirst"}, input = "SharedFileScope", demands = [Demand {access = RequestAccess, contract = "FilePaths"},Demand {access = RequireAccess, contract = "OpenedFile"}]}
   , EffectSpec {name = "WriteSecond", typing = Excu {handler = Just "writeSecond"}, input = "SharedFileScope", demands = [Demand {access = RequestAccess, contract = "FilePaths"},Demand {access = RequireAccess, contract = "OpenedFile"}]}

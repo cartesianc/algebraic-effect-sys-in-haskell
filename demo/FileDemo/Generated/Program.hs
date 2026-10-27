@@ -14,12 +14,12 @@ import FileDemo.Types
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
 registeredEffects :: [EffectSpec]
 registeredEffects =
-  [ EffectSpec {name = "FileLocation", typing = Context {request = Just (Requester {handler = "fileName", representation = TypeRef "[Char]"}), require = Just "readFileName"}, input = "Root", demands = []}
+  [ EffectSpec {name = "FileLocation", typing = Context {request = Just (Requester {handler = "fileName", representation = TypeRef "[Char]"})}, input = "Root", demands = []}
   , EffectSpec {name = "ValidateFileName", typing = Pure {handler = Just "validateFileName"}, input = "Root", demands = [Demand {access = RequireAccess, contract = "FileName"}]}
-  , EffectSpec {name = "FileResource", typing = Context {request = Just (Requester {handler = "openedFile", representation = TypeRef "FileHandle"}), require = Just "readOpenedFile"}, input = "ValidateFileName", demands = [Demand {access = RequireAccess, contract = "FileName"}]}
+  , EffectSpec {name = "FileResource", typing = Context {request = Just (Requester {handler = "openedFile", representation = TypeRef "FileHandle"})}, input = "ValidateFileName", demands = [Demand {access = RequireAccess, contract = "FileName"}]}
   , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFileSession", close = Just "closeFileSession"}, input = "ValidateFileName", demands = [Demand {access = RequestAccess, contract = "OpenedFile"},Demand {access = RequireAccess, contract = "OpenedFile"}]}
   , EffectSpec {name = "FileRecovery", typing = Error {detect = Just "detectFileSession", resolve = Just "resolveFileSession", handles = [RaisedBy "ReadFile",RaisedBy "WriteFile"]}, input = "FileSession", demands = [Demand {access = RequireAccess, contract = "OpenedFile"}]}
-  , EffectSpec {name = "ReadFile", typing = Context {request = Just (Requester {handler = "fileText", representation = TypeRef "[Char]"}), require = Just "readFileText"}, input = "FileSession", demands = [Demand {access = RequireAccess, contract = "OpenedFile"}]}
+  , EffectSpec {name = "ReadFile", typing = Context {request = Just (Requester {handler = "fileText", representation = TypeRef "[Char]"})}, input = "FileSession", demands = [Demand {access = RequireAccess, contract = "OpenedFile"}]}
   , EffectSpec {name = "WriteFile", typing = Excu {handler = Just "writeFileText"}, input = "FileSession", demands = [Demand {access = RequestAccess, contract = "FileText"},Demand {access = RequireAccess, contract = "OpenedFile"}]}
   , EffectSpec {name = "FileWorkflow", typing = Excu {handler = Just "runFileWorkflow"}, input = "WriteFile", demands = [Demand {access = RequestAccess, contract = "FileName"}]}
   ]

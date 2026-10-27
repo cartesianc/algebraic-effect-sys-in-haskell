@@ -15,8 +15,8 @@ import ScopeInstancesDemo.Types
 registeredEffects :: [EffectSpec]
 registeredEffects =
   [ EffectSpec {name = "PrepareFiles", typing = Excu {handler = Just "prepareFiles"}, input = "Root", demands = []}
-  , EffectSpec {name = "FileLocation", typing = Context {request = Just (Requester {handler = "fileName", representation = TypeRef "[Char]"}), require = Just "readFileName"}, input = "Root", demands = []}
-  , EffectSpec {name = "FileResource", typing = Context {request = Just (Requester {handler = "openedFile", representation = TypeRef "FileHandle"}), require = Just "readOpenedFile"}, input = "Root", demands = [Demand {access = RequireAccess, contract = "FileName"}]}
+  , EffectSpec {name = "FileLocation", typing = Context {request = Just (Requester {handler = "fileName", representation = TypeRef "[Char]"})}, input = "Root", demands = []}
+  , EffectSpec {name = "FileResource", typing = Context {request = Just (Requester {handler = "openedFile", representation = TypeRef "FileHandle"})}, input = "Root", demands = [Demand {access = RequireAccess, contract = "FileName"}]}
   , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFileSession", close = Just "closeFileSession"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "OpenedFile"},Demand {access = RequireAccess, contract = "OpenedFile"}]}
   , EffectSpec {name = "CheckIndependent", typing = Excu {handler = Just "checkIndependent"}, input = "FileSession", demands = [Demand {access = RequestAccess, contract = "FileName"},Demand {access = RequireAccess, contract = "OpenedFile"}]}
   , EffectSpec {name = "CheckReopen", typing = Excu {handler = Just "checkReopen"}, input = "FileSession", demands = [Demand {access = RequestAccess, contract = "FileName"},Demand {access = RequireAccess, contract = "OpenedFile"}]}

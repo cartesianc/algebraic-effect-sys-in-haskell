@@ -133,7 +133,7 @@ SDK 保留 scope 状态与 Context 绑定，本轮按有限使用闭包落实 on
 参与显式连接；转换错误负载不会自动把原操作的失败状态改为成功。
 
 Context 在 typing.request 中以 requester "handler名" @表示类型 声明生产方法，契约类型由 handler 名生成。爬虫的 URL、抓取和解析通过 request 接入，CrawlSession 经 Input 提供操作能力；SDK 不预先生产全局 Context。
-生产方的 typing = Context { request, require } 声明方法角色；require 读取同一契约。
+生产方的 typing = Context { request } 只声明生产方法；require 读取同一契约，读取方法由生成器命名为 read 加契约名，不在注册中声明。
 消费方的 demands :: [Demand] 只声明需要的契约与取值模式：requests 重新求值，requires 读取已有绑定。
 统一规则：每个 Context 的契约类型都由生成器按 handler 名产出。request = requester "currentUser" @UserId 生成 newtype CurrentUser = CurrentUser UserId；
 消费方写 requests "CurrentUser"，handler 照常写 request @CurrentUser。契约类型在手写声明中不可见，因此消费方以名字引用，名字即生产方 handler 名首字母大写。

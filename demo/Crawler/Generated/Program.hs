@@ -14,15 +14,15 @@ import Crawler.Types
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
 registeredEffects :: [EffectSpec]
 registeredEffects =
-  [ EffectSpec {name = "StartPage", typing = Context {request = Just (Requester {handler = "startURL", representation = TypeRef "PageURL"}), require = Just "readStartURL"}, input = "CrawlSession", demands = []}
-  , EffectSpec {name = "LinkedPage", typing = Context {request = Just (Requester {handler = "linkedURL", representation = TypeRef "PageURL"}), require = Just "readLinkedURL"}, input = "CrawlSession", demands = []}
-  , EffectSpec {name = "FetchPage", typing = Context {request = Just (Requester {handler = "startFetchedPage", representation = TypeRef "FetchedPage"}), require = Just "readStartFetchedPage"}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "StartURL"},Demand {access = RequireAccess, contract = "CrawlSessionInfo"}]}
-  , EffectSpec {name = "ExtractPage", typing = Context {request = Just (Requester {handler = "startPageSummary", representation = TypeRef "PageSummary"}), require = Just "readStartPageSummary"}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "StartFetchedPage"}]}
+  [ EffectSpec {name = "StartPage", typing = Context {request = Just (Requester {handler = "startURL", representation = TypeRef "PageURL"})}, input = "CrawlSession", demands = []}
+  , EffectSpec {name = "LinkedPage", typing = Context {request = Just (Requester {handler = "linkedURL", representation = TypeRef "PageURL"})}, input = "CrawlSession", demands = []}
+  , EffectSpec {name = "FetchPage", typing = Context {request = Just (Requester {handler = "startFetchedPage", representation = TypeRef "FetchedPage"})}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "StartURL"},Demand {access = RequireAccess, contract = "CrawlSessionInfo"}]}
+  , EffectSpec {name = "ExtractPage", typing = Context {request = Just (Requester {handler = "startPageSummary", representation = TypeRef "PageSummary"})}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "StartFetchedPage"}]}
   , EffectSpec {name = "PrintPage", typing = Excu {handler = Just "printPage"}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "StartPageSummary"}]}
-  , EffectSpec {name = "FetchLinkedPage", typing = Context {request = Just (Requester {handler = "linkedFetchedPage", representation = TypeRef "FetchedPage"}), require = Just "readLinkedFetchedPage"}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "LinkedURL"},Demand {access = RequireAccess, contract = "CrawlSessionInfo"}]}
-  , EffectSpec {name = "ExtractLinkedPage", typing = Context {request = Just (Requester {handler = "linkedPageSummary", representation = TypeRef "PageSummary"}), require = Just "readLinkedPageSummary"}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "LinkedFetchedPage"}]}
+  , EffectSpec {name = "FetchLinkedPage", typing = Context {request = Just (Requester {handler = "linkedFetchedPage", representation = TypeRef "FetchedPage"})}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "LinkedURL"},Demand {access = RequireAccess, contract = "CrawlSessionInfo"}]}
+  , EffectSpec {name = "ExtractLinkedPage", typing = Context {request = Just (Requester {handler = "linkedPageSummary", representation = TypeRef "PageSummary"})}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "LinkedFetchedPage"}]}
   , EffectSpec {name = "PrintLinkedPage", typing = Excu {handler = Just "printLinkedPage"}, input = "CrawlSession", demands = [Demand {access = RequestAccess, contract = "LinkedPageSummary"}]}
-  , EffectSpec {name = "SessionContext", typing = Context {request = Just (Requester {handler = "crawlSessionInfo", representation = TypeRef "SessionInfo"}), require = Just "readCrawlSession"}, input = "Root", demands = []}
+  , EffectSpec {name = "SessionContext", typing = Context {request = Just (Requester {handler = "crawlSessionInfo", representation = TypeRef "SessionInfo"})}, input = "Root", demands = []}
   , EffectSpec {name = "CrawlSession", typing = Scoped {open = Just "openCrawlSession", close = Just "closeCrawlSession"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "CrawlSessionInfo"},Demand {access = RequireAccess, contract = "CrawlSessionInfo"}]}
   ]
 
@@ -60,19 +60,19 @@ generatedEffectGraph :: SDK.EffectGraph MethodGen
 generatedEffectGraph = SDK.EffectGraph
   { SDK.graphMethods =
       [ SDK.MethodDefinition StartPageSummaryGen StartPageSummaryGen SDK.ContextRequest (SDK.Call StartFetchedPageGen)
-      , SDK.MethodDefinition StartFetchedPageGen StartFetchedPageGen SDK.ContextRequest (SDK.Sequence [SDK.Call OpenCrawlSessionGen, SDK.Call StartURLGen, SDK.Call ReadCrawlSessionGen])
+      , SDK.MethodDefinition StartFetchedPageGen StartFetchedPageGen SDK.ContextRequest (SDK.Sequence [SDK.Call OpenCrawlSessionGen, SDK.Call StartURLGen, SDK.Call ReadCrawlSessionInfoGen])
       , SDK.MethodDefinition OpenCrawlSessionGen OpenCrawlSessionGen SDK.ScopeOpen (SDK.Call CrawlSessionInfoGen)
       , SDK.MethodDefinition CrawlSessionInfoGen CrawlSessionInfoGen SDK.ContextRequest (SDK.Empty)
       , SDK.MethodDefinition StartURLGen StartURLGen SDK.ContextRequest (SDK.Empty)
-      , SDK.MethodDefinition ReadCrawlSessionGen CrawlSessionInfoGen SDK.ContextRequire (SDK.Empty)
+      , SDK.MethodDefinition ReadCrawlSessionInfoGen CrawlSessionInfoGen SDK.ContextRequire (SDK.Empty)
       , SDK.MethodDefinition LinkedPageSummaryGen LinkedPageSummaryGen SDK.ContextRequest (SDK.Call LinkedFetchedPageGen)
-      , SDK.MethodDefinition LinkedFetchedPageGen LinkedFetchedPageGen SDK.ContextRequest (SDK.Sequence [SDK.Call OpenCrawlSessionGen, SDK.Call LinkedURLGen, SDK.Call ReadCrawlSessionGen])
+      , SDK.MethodDefinition LinkedFetchedPageGen LinkedFetchedPageGen SDK.ContextRequest (SDK.Sequence [SDK.Call OpenCrawlSessionGen, SDK.Call LinkedURLGen, SDK.Call ReadCrawlSessionInfoGen])
       , SDK.MethodDefinition LinkedURLGen LinkedURLGen SDK.ContextRequest (SDK.Empty)
       , SDK.MethodDefinition PrintPageGen PrintPageGen SDK.HandlerMethod (SDK.Call StartPageSummaryGen)
       , SDK.MethodDefinition PrintLinkedPageGen PrintLinkedPageGen SDK.HandlerMethod (SDK.Call LinkedPageSummaryGen)
       ]
   , SDK.graphRoots = [StartPageSummaryGen, LinkedPageSummaryGen, PrintPageGen, PrintLinkedPageGen]
-  , SDK.graphReferences = [(StartPageSummaryGen, StartFetchedPageGen), (StartFetchedPageGen, OpenCrawlSessionGen), (StartFetchedPageGen, StartURLGen), (StartFetchedPageGen, ReadCrawlSessionGen), (OpenCrawlSessionGen, CrawlSessionInfoGen), (LinkedPageSummaryGen, LinkedFetchedPageGen), (LinkedFetchedPageGen, OpenCrawlSessionGen), (LinkedFetchedPageGen, LinkedURLGen), (LinkedFetchedPageGen, ReadCrawlSessionGen), (PrintPageGen, StartPageSummaryGen), (PrintLinkedPageGen, LinkedPageSummaryGen)]
+  , SDK.graphReferences = [(StartPageSummaryGen, StartFetchedPageGen), (StartFetchedPageGen, OpenCrawlSessionGen), (StartFetchedPageGen, StartURLGen), (StartFetchedPageGen, ReadCrawlSessionInfoGen), (OpenCrawlSessionGen, CrawlSessionInfoGen), (LinkedPageSummaryGen, LinkedFetchedPageGen), (LinkedFetchedPageGen, OpenCrawlSessionGen), (LinkedFetchedPageGen, LinkedURLGen), (LinkedFetchedPageGen, ReadCrawlSessionInfoGen), (PrintPageGen, StartPageSummaryGen), (PrintLinkedPageGen, LinkedPageSummaryGen)]
   , SDK.graphScopes = [OpenCrawlSessionGen]
   , SDK.graphScopePaths = [[OpenCrawlSessionGen]]
   , SDK.graphRootPaths =

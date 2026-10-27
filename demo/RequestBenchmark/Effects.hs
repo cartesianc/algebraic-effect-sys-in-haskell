@@ -13,25 +13,25 @@ effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "DemoContext"
-      , typing = Context { request = requester "demoInputs" @InputSettings, require = Just "readDemoInputs" }
+      , typing = Context { request = requester "demoInputs" @InputSettings }
       , input = "Root"
       , demands = []
       }
   , EffectSpec
       { name = "MakeNumber"
-      , typing = Context { request = requester "numberValue" @Int, require = Just "readNumberValue" }
+      , typing = Context { request = requester "numberValue" @Int }
       , input = "Root"
       , demands = [requests "DemoInputs"]
       }
   , EffectSpec
       { name = "AddOne"
-      , typing = Context { request = requester "addedValue" @Int, require = Just "readAddedValue" }
+      , typing = Context { request = requester "addedValue" @Int }
       , input = "Root"
       , demands = [requests "NumberValue"]
       }
   , EffectSpec
       { name = "RenderNumber"
-      , typing = Context { request = requester "renderedValue" @String, require = Just "readRenderedValue" }
+      , typing = Context { request = requester "renderedValue" @String }
       , input = "Root"
       , demands = [requests "AddedValue", requires "DemoInputs"]
       }

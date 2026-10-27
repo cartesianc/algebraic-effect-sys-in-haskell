@@ -91,10 +91,7 @@ typing = Error
   }
 
 -- 同一 Context effect 内的产值与读取类方法
-typing = Context
-  { request = requester "crawlerConfig" @ConfigSettings
-  , require = Just "readCrawlerConfig"
-  }
+typing = Context { request = requester "crawlerConfig" @ConfigSettings }
 ```
 
 typing 保存本 effect 内的方法声明，只有 Context.request 以 requester 声明产物，契约类型按 handler 名生成；消费方 demands 以 requests "契约名"／requires "契约名" 引用契约，契约名即生产方 handler 名首字母大写。Pure／Excu 以 handler 为普通入口，Scoped 以 open 为入口，Context 以 request 为产值入口；require 的类型由同一生产契约推导，缺少该契约时报错。Error 以 handles 声明处理的故障类型，关联 scope 沿 Input 推导，由 Root 的故障协议调用，不作为普通 Node target。
@@ -199,10 +196,7 @@ Input 继续表达操作或能力的前提关系。业务值来源单独表达�
 生产方与消费方分别描述，Context effect 自身也可以消费别的 Context：
 
 ```haskell
-typing = Context
-  { request = requester "linkedPageSummary" @PageSummary
-  , require = Just "readLinkedPageSummary"
-  }
+typing = Context { request = requester "linkedPageSummary" @PageSummary }
 demands = [requests "LinkedFetchedPage"]
 ```
 

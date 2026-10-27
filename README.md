@@ -79,7 +79,7 @@ Types.hs 只放值的结构。这个示例里数字直接用 `Int`，不需要�
 ```haskell
 EffectSpec
   { name = "AddOne"
-  , typing = Context { request = requester "addedValue" @Int, require = Just "readAddedValue" }
+  , typing = Context { request = requester "addedValue" @Int }
   , input = "Root"
   , demands = [requests "NumberValue"]
   }
@@ -132,7 +132,7 @@ instance MakeNumberEffect Pure where
 
 ```haskell
 -- 生产方：契约名 StartURL 来自 handler 名 startURL
-typing = Context { request = requester "startURL" @PageURL, require = Just "readStartURL" }
+typing = Context { request = requester "startURL" @PageURL }
 -- 生成：newtype StartURL = StartURL PageURL
 ```
 
@@ -143,7 +143,7 @@ typing = Context { request = requester "startURL" @PageURL, require = Just "read
 | `requests "StartURL"` | `x <- request @StartURL` | 重新生产一次，并把结果保存为当前绑定 |
 | `requires "StartURL"` | `x <- require @StartURL` | 读取已有绑定，不重新生产；尚未生产过则失败 |
 
-从调用点就能看出是否会重跑生产链。
+从调用点就能看出是否会重跑生产链。`require` 用到的读取方法由生成器自动命名（`readStartURL`），注册里不用写。
 
 **值从哪里来由契约名决定**：契约名就是生产方 handler 名首字母大写，而方法名不能重复，所以每个契约恰好有一个生产方，生成器自动接上。同一种数据有不同含义时，交给不同的 handler 产出即可。例如 [Crawler](demo/Crawler/Effects.hs) 的起始页和链接页 URL 都是 `PageURL`，分别由 `startURL` 和 `linkedURL` 产出 `StartURL` 和 `LinkedURL` 两种契约，类型上不能混用。
 

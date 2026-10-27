@@ -85,10 +85,10 @@ lowerProgram namespace specifications entry = do
     requestSource = listToMaybe . requestProviders
     producerMethod providerName = listToMaybe
       [method | specification <- specifications, name specification == providerName
-              , Context (Just Requester { handler = method }) _ <- [typing specification]]
+              , Context (Just Requester { handler = method }) <- [typing specification]]
     readerMethod providerName = listToMaybe
       [method | specification <- specifications, name specification == providerName
-              , Context _ (Just method) <- [typing specification]]
+              , Just method <- [contextReader (typing specification)]]
     sourceMethod resolved = case demandAccess resolved of
       RequestAccess -> producerMethod (demandProvider resolved)
       RequireAccess -> readerMethod (demandProvider resolved)
@@ -103,7 +103,7 @@ lowerProgram namespace specifications entry = do
     generatedDeclarations =
       [ (contractOf producing, representation producing, name specification)
       | specification <- contextSpecs
-      , Context (Just producing) _ <- [typing specification] ]
+      , Context (Just producing) <- [typing specification] ]
     -- 构造器归属：契约类型只能由其生产方的 instance 方法构造；契约均由生成器产出。
     contractOwners =
       [ (contractType, owner ++ "Effect", True)
@@ -112,7 +112,7 @@ lowerProgram namespace specifications entry = do
       [ (name specification ++ "Effect", method)
       | specification <- contextSpecs
       , method <- maybeToList (entryMethod (typing specification))
-          ++ (case typing specification of Context _ reading -> maybeToList reading; _ -> []) ]
+          ++ maybeToList (contextReader (typing specification)) ]
 
     selected = case entry of
       SingleTarget terminal -> [terminal]
@@ -151,7 +151,7 @@ lowerProgram namespace specifications entry = do
       [(specification, method) | method <- maybeToList (entryMethod (typing specification))
         ++ (case typing specification of Scoped _ closing -> maybeToList closing; _ -> [])
         ++ errorMethods specification
-        ++ (case typing specification of Context _ reading -> maybeToList reading; _ -> [])]
+        ++ maybeToList (contextReader (typing specification))]
     genName [] = "MissingMethodGen"
     genName (first : rest) = toUpper first : rest ++ "Gen"
     methodIdentities =
@@ -164,7 +164,7 @@ lowerProgram namespace specifications entry = do
       ]
     methodRole specification method = case typing specification of
       Scoped opening _ -> if Just method == opening then Graph.ScopeOpen else Graph.ScopeClose
-      Context producing _ -> if fmap (\Requester { handler = selectedMethod } -> selectedMethod) producing == Just method
+      Context producing -> if fmap (\Requester { handler = selectedMethod } -> selectedMethod) producing == Just method
         then Graph.ContextRequest else Graph.ContextRequire
       Error { detect = detecting } -> if Just method == detecting then Graph.ErrorDetect else Graph.ErrorResolve
       _ -> Graph.HandlerMethod
@@ -272,9 +272,7 @@ lowerProgram namespace specifications entry = do
         closing = case typing specification of
           Scoped _ method -> maybeToList method
           _ -> []
-        reading = case typing specification of
-          Context _ method -> method
-          _ -> Nothing
+        reading = contextReader (typing specification)
         scopedDependencies = "FrameworkRuntime.withScopeDependencies "
           ++ show (upstreamScopes specification)
         rootWrapper = "FrameworkRoot.withErrorPath " ++ show (errorPath specification)
@@ -293,7 +291,7 @@ lowerProgram namespace specifications entry = do
                   ++ scopedDependencies ++ " . FrameworkRuntime.enterHandler " ++ show selectedName
               _ -> scopedDependencies ++ " . " ++ operation) ++ ")"
         operation = case typing specification of
-          Context (Just _) _ ->
+          Context (Just _) ->
             "FrameworkRuntime.callContext " ++ show selectedName
               ++ " FrameworkGenerated.ContextBindingError\n"
               ++ "  " ++ contextAccessTable "FrameworkRuntime." selectedName
@@ -399,7 +397,7 @@ lowerProgram namespace specifications entry = do
       | otherwise = do
           predecessor <- findEffect (input specification)
           case typing predecessor of
-            Context _ _ -> Left ("Input cannot reference Context " ++ name predecessor
+            Context _ -> Left ("Input cannot reference Context " ++ name predecessor
               ++ " in " ++ name specification ++ "; declare context.request or context.require instead")
             _ -> Right ()
 
@@ -454,7 +452,7 @@ lowerProgram namespace specifications entry = do
           Scoped _ _ -> pure ()
           _ -> Left ("ScopeFaultIn must name a Scoped effect: " ++ selected)
         checkHandled (ContextFaultIn selected) = findEffect selected >>= \target -> case typing target of
-          Context _ _ -> pure ()
+          Context _ -> pure ()
           _ -> Left ("ContextFaultIn must name a Context effect: " ++ selected)
 
     errorScopes specification = nub (concatMap (nearestScopeNames [name specification]) (operationInputs specification))
@@ -483,9 +481,9 @@ lowerProgram namespace specifications entry = do
 
     -- 业务产物只归 Context；Output 仍只在运行边界统一包装。
     valueContract specification = case typing specification of
-      Context (Just producing) _ -> Right (TypeRef (contractOf producing))
-      Context Nothing (Just _) ->
-        Left ("Context.require needs a Context.request product contract: " ++ name specification)
+      Context (Just producing) -> Right (TypeRef (contractOf producing))
+      Context Nothing ->
+        Left ("Context needs request = requester \"handler\" @Representation: " ++ name specification)
       _ -> Right (TypeRef "()")
 
     declaration specification = do
@@ -517,8 +515,8 @@ lowerProgram namespace specifications entry = do
           methods = ordinaryMethods ++ closingMethods
             ++ [(method, "m ()") | method <- errorMethods specification]
           methodLines = ["  " ++ method ++ " :: " ++ signature | (method, signature) <- methods]
-          readingLines = case typing specification of
-            Context _ (Just method) ->
+          readingLines = case contextReader (typing specification) of
+            Just method ->
               [ "  " ++ method ++ " :: m (Produce " ++ effectName ++ ")"
               , "  " ++ method ++ " = (FrameworkRoot.withErrorPath " ++ show (errorPath specification)
                 ++ " . FrameworkRoot.handler @Root) $"
@@ -537,7 +535,7 @@ lowerProgram namespace specifications entry = do
             [contract] -> contract
             contracts -> "(" ++ intercalate ", " contracts ++ ")"
           produceLines = case typing specification of
-            Context (Just _) _ -> ["  type Produce " ++ effectName ++ " = " ++ reference valueType]
+            Context (Just _) -> ["  type Produce " ++ effectName ++ " = " ++ reference valueType]
             _ -> []
       pure ([ "data " ++ effectName
          , ""

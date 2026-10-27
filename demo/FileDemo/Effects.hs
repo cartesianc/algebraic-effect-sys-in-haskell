@@ -15,10 +15,7 @@ effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "FileLocation"
-      , typing = Context
-          { request = requester "fileName" @FilePath
-          , require = Just "readFileName"
-          }
+      , typing = Context { request = requester "fileName" @FilePath }
       , input = "Root"
       , demands = []
       }
@@ -30,10 +27,7 @@ effects =
       }
   , EffectSpec
       { name = "FileResource"
-      , typing = Context
-          { request = requester "openedFile" @FileHandle
-          , require = Just "readOpenedFile"
-          }
+      , typing = Context { request = requester "openedFile" @FileHandle }
       , input = "ValidateFileName"
       , demands = [requires "FileName"]
       }
@@ -55,10 +49,7 @@ effects =
       }
   , EffectSpec
       { name = "ReadFile"
-      , typing = Context
-          { request = requester "fileText" @String
-          , require = Just "readFileText"
-          }
+      , typing = Context { request = requester "fileText" @String }
       , input = "FileSession"
       , demands = [requires "OpenedFile"]
       }

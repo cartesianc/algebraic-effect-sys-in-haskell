@@ -12,10 +12,7 @@ effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "FileLocations"
-      , typing = Context
-          { request = requester "filePaths" @SharedPaths
-          , require = Just "readFilePaths"
-          }
+      , typing = Context { request = requester "filePaths" @SharedPaths }
       , input = "Root"
       , demands = []
       }
@@ -27,10 +24,7 @@ effects =
       }
   , EffectSpec
       { name = "FileResource"
-      , typing = Context
-          { request = requester "openedFile" @SharedFile
-          , require = Just "readOpenedFile"
-          }
+      , typing = Context { request = requester "openedFile" @SharedFile }
       , input = "Root"
       , demands = [requires "FilePaths"]
       }

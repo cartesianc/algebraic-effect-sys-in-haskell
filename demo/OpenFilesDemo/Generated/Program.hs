@@ -14,8 +14,8 @@ import OpenFilesDemo.Types
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
 registeredEffects :: [EffectSpec]
 registeredEffects =
-  [ EffectSpec {name = "FileLocations", typing = Context {request = Just (Requester {handler = "fileNames", representation = TypeRef "[[Char]]"}), require = Just "readFileNames"}, input = "Root", demands = []}
-  , EffectSpec {name = "FileResources", typing = Context {request = Just (Requester {handler = "openedFiles", representation = TypeRef "[FileHandle]"}), require = Just "readOpenedFiles"}, input = "Root", demands = [Demand {access = RequireAccess, contract = "FileNames"}]}
+  [ EffectSpec {name = "FileLocations", typing = Context {request = Just (Requester {handler = "fileNames", representation = TypeRef "[[Char]]"})}, input = "Root", demands = []}
+  , EffectSpec {name = "FileResources", typing = Context {request = Just (Requester {handler = "openedFiles", representation = TypeRef "[FileHandle]"})}, input = "Root", demands = [Demand {access = RequireAccess, contract = "FileNames"}]}
   , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFiles", close = Just "closeFiles"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "OpenedFiles"},Demand {access = RequireAccess, contract = "OpenedFiles"}]}
   , EffectSpec {name = "HoldFiles", typing = Excu {handler = Just "holdFiles"}, input = "FileSession", demands = [Demand {access = RequestAccess, contract = "FileNames"}]}
   , EffectSpec {name = "InspectFiles", typing = Excu {handler = Just "inspectFiles"}, input = "HoldFiles", demands = [Demand {access = RequireAccess, contract = "OpenedFiles"}]}

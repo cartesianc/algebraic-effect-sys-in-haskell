@@ -12,19 +12,13 @@ effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "FileLocations"
-      , typing = Context
-          { request = requester "fileNames" @[FilePath]
-          , require = Just "readFileNames"
-          }
+      , typing = Context { request = requester "fileNames" @[FilePath] }
       , input = "Root"
       , demands = []
       }
   , EffectSpec
       { name = "FileResources"
-      , typing = Context
-          { request = requester "openedFiles" @[FileHandle]
-          , require = Just "readOpenedFiles"
-          }
+      , typing = Context { request = requester "openedFiles" @[FileHandle] }
       , input = "Root"
       , demands = [requires "FileNames"]
       }

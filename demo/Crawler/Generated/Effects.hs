@@ -54,7 +54,7 @@ deriving instance Eq (SessionInfo) => Eq CrawlSessionInfo
 deriving instance Show (SessionInfo) => Show CrawlSessionInfo
 
 -- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = StartURLGen | ReadStartURLGen | LinkedURLGen | ReadLinkedURLGen | StartFetchedPageGen | ReadStartFetchedPageGen | StartPageSummaryGen | ReadStartPageSummaryGen | PrintPageGen | LinkedFetchedPageGen | ReadLinkedFetchedPageGen | LinkedPageSummaryGen | ReadLinkedPageSummaryGen | PrintLinkedPageGen | CrawlSessionInfoGen | ReadCrawlSessionGen | OpenCrawlSessionGen | CloseCrawlSessionGen
+data MethodGen = StartURLGen | ReadStartURLGen | LinkedURLGen | ReadLinkedURLGen | StartFetchedPageGen | ReadStartFetchedPageGen | StartPageSummaryGen | ReadStartPageSummaryGen | PrintPageGen | LinkedFetchedPageGen | ReadLinkedFetchedPageGen | LinkedPageSummaryGen | ReadLinkedPageSummaryGen | PrintLinkedPageGen | CrawlSessionInfoGen | ReadCrawlSessionInfoGen | OpenCrawlSessionGen | CloseCrawlSessionGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
@@ -198,8 +198,8 @@ data SessionContext
 
 class (Effect Root m) => SessionContextEffect m where
   crawlSessionInfo :: m (Produce SessionContext)
-  readCrawlSession :: m (Produce SessionContext)
-  readCrawlSession = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
+  readCrawlSessionInfo :: m (Produce SessionContext)
+  readCrawlSessionInfo = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "SessionContext" ContextBindingError [("FetchPage", SDK.RequireValue), ("FetchLinkedPage", SDK.RequireValue), ("CrawlSession", SDK.RequestValue)] Nothing boundSessionContext
   {-# MINIMAL crawlSessionInfo #-}
 
@@ -238,7 +238,7 @@ instance (StartPageEffect App) => Provides StartURL App where
 
 instance (SessionContextEffect App) => Provides CrawlSessionInfo App where
   request = SDK.provideContext "CrawlSessionInfo" ContextBindingError [("CrawlSession", crawlSessionInfo)]
-  require = SDK.provideContext "CrawlSessionInfo" ContextBindingError [("FetchPage", readCrawlSession), ("FetchLinkedPage", readCrawlSession), ("CrawlSession", readCrawlSession)]
+  require = SDK.provideContext "CrawlSessionInfo" ContextBindingError [("FetchPage", readCrawlSessionInfo), ("FetchLinkedPage", readCrawlSessionInfo), ("CrawlSession", readCrawlSessionInfo)]
 
 instance (FetchPageEffect App) => Provides StartFetchedPage App where
   request = SDK.provideContext "StartFetchedPage" ContextBindingError [("ExtractPage", startFetchedPage)]

@@ -15,25 +15,25 @@ effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "StartPage"
-      , typing = Context { request = requester "startURL" @PageURL, require = Just "readStartURL" }
+      , typing = Context { request = requester "startURL" @PageURL }
       , input = "CrawlSession"
       , demands = []
       }
   , EffectSpec
       { name = "LinkedPage"
-      , typing = Context { request = requester "linkedURL" @PageURL, require = Just "readLinkedURL" }
+      , typing = Context { request = requester "linkedURL" @PageURL }
       , input = "CrawlSession"
       , demands = []
       }
   , EffectSpec
       { name = "FetchPage"
-      , typing = Context { request = requester "startFetchedPage" @FetchedPage, require = Just "readStartFetchedPage" }
+      , typing = Context { request = requester "startFetchedPage" @FetchedPage }
       , input = "CrawlSession"
       , demands = [requests "StartURL", requires "CrawlSessionInfo"]
       }
   , EffectSpec
       { name = "ExtractPage"
-      , typing = Context { request = requester "startPageSummary" @PageSummary, require = Just "readStartPageSummary" }
+      , typing = Context { request = requester "startPageSummary" @PageSummary }
       , input = "CrawlSession"
       , demands = [requests "StartFetchedPage"]
       }
@@ -45,13 +45,13 @@ effects =
       }
   , EffectSpec
       { name = "FetchLinkedPage"
-      , typing = Context { request = requester "linkedFetchedPage" @FetchedPage, require = Just "readLinkedFetchedPage" }
+      , typing = Context { request = requester "linkedFetchedPage" @FetchedPage }
       , input = "CrawlSession"
       , demands = [requests "LinkedURL", requires "CrawlSessionInfo"]
       }
   , EffectSpec
       { name = "ExtractLinkedPage"
-      , typing = Context { request = requester "linkedPageSummary" @PageSummary, require = Just "readLinkedPageSummary" }
+      , typing = Context { request = requester "linkedPageSummary" @PageSummary }
       , input = "CrawlSession"
       , demands = [requests "LinkedFetchedPage"]
       }
@@ -64,7 +64,7 @@ effects =
   -- 信息由上游 Context 提供；Scope 只描述开启／关闭和持存状态。
   , EffectSpec
       { name = "SessionContext"
-      , typing = Context { request = requester "crawlSessionInfo" @SessionInfo, require = Just "readCrawlSession" }
+      , typing = Context { request = requester "crawlSessionInfo" @SessionInfo }
       , input = "Root"
       , demands = []
       }

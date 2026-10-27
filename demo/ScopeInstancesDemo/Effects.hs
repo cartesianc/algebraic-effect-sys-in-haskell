@@ -17,19 +17,13 @@ effects =
       }
   , EffectSpec
       { name = "FileLocation"
-      , typing = Context
-          { request = requester "fileName" @FilePath
-          , require = Just "readFileName"
-          }
+      , typing = Context { request = requester "fileName" @FilePath }
       , input = "Root"
       , demands = []
       }
   , EffectSpec
       { name = "FileResource"
-      , typing = Context
-          { request = requester "openedFile" @FileHandle
-          , require = Just "readOpenedFile"
-          }
+      , typing = Context { request = requester "openedFile" @FileHandle }
       , input = "Root"
       , demands = [requires "FileName"]
       }
