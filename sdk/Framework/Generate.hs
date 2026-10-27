@@ -1,16 +1,17 @@
--- 首次生成只编译注册与 AST/Target；handler 源码只解析，不加载或执行业务。
+-- 先构造契约和结构，再用 GHC 源码分析检查资产；不执行 handler 业务。
 module Framework.Generate (main) where
 
 import Control.Exception (evaluate)
 import Data.Char (isAlphaNum, isUpper)
 import Framework.Codegen.Handlers (prepareHandlers, HandlerShape(..))
+import Framework.Codegen.Assets (checkAssets)
 import Framework.Codegen.Plan (renderGraphPlan)
 import qualified Framework.Effect.Graph as Graph
 import System.Directory (createDirectoryIfMissing, doesFileExist)
-import System.Environment (getArgs)
+import System.Environment (getArgs, getExecutablePath, lookupEnv)
 import System.Exit (ExitCode(..), die, exitWith)
 import System.FilePath ((</>), pathSeparator)
-import System.Process (readProcessWithExitCode)
+import System.Process (rawSystem, readProcessWithExitCode)
 import System.IO (IOMode(ReadMode, WriteMode), hGetContents, hPutStr, hSetEncoding, stderr, utf8, withFile)
 import System.IO.Error (tryIOError)
 import Text.Read (readMaybe)
@@ -18,6 +19,14 @@ import Text.Read (readMaybe)
 main :: IO ()
 main = do
   arguments <- getArgs
+  -- GHC API 也需要 Cabal 的依赖可见性；复用项目 package environment，
+  -- 不硬编码业务库白名单或本机 package-db 路径。
+  packageEnvironment <- lookupEnv "GHC_ENVIRONMENT"
+  case packageEnvironment of
+    Nothing -> do
+      executable <- getExecutablePath
+      rawSystem "cabal" (["exec", "--", executable] ++ arguments) >>= exitWith
+    Just _ -> pure ()
   case arguments of
     [mode, namespace]
       | mode `elem` ["workflow", "target"], validNamespace namespace -> do
@@ -39,8 +48,8 @@ main = do
             ExitSuccess -> case readMaybe output of
               Nothing -> die "Cannot read the SDK handler wrapping plan"
               Just (Left problem) -> die problem
-              Just (Right (contracts, program, wrappers, scopeHandlers, plan)) -> do
-                (handlers, shapes) <- prepareHandlers namespace wrappers scopeHandlers
+              Just (Right (contracts, program, wrappers, scopeHandlers, plan, assetRoots)) -> do
+                (handlers, shapes, nativeSource) <- prepareHandlers namespace wrappers scopeHandlers
                 let generated = directory </> "Generated"
                     cachePath = generated </> ".scope-cache"
                     normalized = [(method, normalizeShape shape) | ((_, method), shape) <- shapes]
@@ -55,11 +64,15 @@ main = do
                     Right source -> pure (source, False)
                 -- 完成声明、原生语法和纯结构分析后才更新生成区；未变文件保留时间戳。
                 _ <- evaluate (length structure)
+                assets <- checkAssets namespace
+                  [("Effects", contracts), ("Program", program ++ structure), ("Handlers", handlers)]
+                  assetRoots [(owner, method) | (owner, method, _) <- wrappers] nativeSource
                 createDirectoryIfMissing True generated
                 changed <- sequence
                   [ writeIfChanged (generated </> "Effects.hs") contracts
                   , writeIfChanged (generated </> "Program.hs") (program ++ structure)
                   , writeIfChanged (generated </> "Handlers.hs") handlers
+                  , writeIfChanged (generated </> "Assets.hs") assets
                   ]
                 _ <- writeIfChanged cachePath (show (cacheKey, structure))
                 putStrLn ("Generated " ++ generated ++ " (" ++ show (length (filter id changed))
@@ -67,7 +80,7 @@ main = do
             _ -> exitWith result
     _ -> die "Usage: effect-codegen (workflow|target) Namespace"
 
--- 缓存只省略纯构图；声明仍加载，手写 Handlers 仍解析一次。
+-- 缓存只省略纯构图；声明与 Handlers 快照仍读取，资产检查每次执行。
 -- 连同算法及渲染器源码精确比较，避免 SDK 改动后复用旧结构。
 structureSources :: [FilePath]
 structureSources =

@@ -67,19 +67,29 @@ GADT、类型族或 Haskell 实现。当前已有显式 Haskell 源码生成；�
 
 ## 3. Haskell 值语义收敛到原子 handler
 
-ADT 构造、Require 模式匹配、字段提取、计算、解析与转换等具体值操作，收敛到足够细的
-原子 handler 实现，必须直接写在对应的注册 instance 方法体内。instance 方法本身就是原子
-业务操作的实现边界，不能只留下转调，再把实现放进未注册的顶层函数、其他业务模块或
-局部 helper。这个约束同时适用于纯解析、转换和 IO，不因函数没有引用 effect 而豁免。
+Context 的产物及 request／require 接收契约共同导出一个 asset 集合，同一业务 ADT 只记一次，
+不携带 Context 来源归属。递归收集契约内嵌的业务 ADT，并补全指向资产的类型别名；
+库类型不会因成为字段而进入集合，例如 CrawlURLs 包含 PageURL，但 String、Handle 仍是通用类型。
 
-业务操作的复用通过注册的 handler 类方法完成，输入由声明的 Context 关系提供，不能用
-额外位置参数或自定义业务函数绕过契约。已有注册已经表达该操作时，直接在该 instance
-实现；需要独立组合、复用的操作才增加对应注册，不要求每次拆字段、局部数据绑定或
-标准库调用都成为 effect。方法内可直接使用标准库／外部库原语、lambda、模式匹配和
-局部计算完成原子实现；SDK 自身的 fold、协议和后端实现仍可使用普通函数。
+普通函数不能在源码中显式使用这些资产，涵盖签名、类型应用、构造器引用、模式匹配和
+字段访问／更新。禁止的依据是资产引用，不是出现了函数定义：泛型函数定义未显式依赖
+资产，调用时即使接收该 ADT 也不拦截；只处理通用类型的 readCurl 等 helper 可以存在。
+类型别名、qualified import 和局部遮蔽按真实名称解析判断，不做字符串匹配或值来源传播。
 
-生成器擦除原子表达式只说明其结构分析边界，不构成允许业务实现游离于 instance 的理由。
-GHC／HLS 的类型检查也不代替这项架构约束。业务组合层引用这些操作的注册契约。
+显式资产操作由注册的 instance 方法承载，方法不增加位置参数；业务复用通过注册类方法与
+Context 契约完成。顶层值同样不能把资产构造移出方法；方法内的局部具名函数也检查显式
+资产引用，包括 point-free 函数。匿名 lambda、局部数据绑定、计算与标准／外部库调用仍属于
+方法实现，不要求每个表达式注册。data/newtype/type 声明与 deriving 是合法契约定义。
+SDK 内部实现不在业务约束内。此规则取代“所有纯解析、转换和 IO 都不得抽成普通函数”的旧约定。
+
+gencode 使用 GHC 的 renamed source 检查显式引用；类型检查只辅助名称解析和区分局部函数／
+数据绑定，不以泛型调用推导出的实参类型认定违规。不解释函数的业务意义，不追踪投影后的
+String，也不证明 handler 粒度足够细。effect 调用另受结构提取约束，不能藏入 helper。
+GHC／HLS 单独通过不等于资产约束通过；详见 [源码资产检查](ASSETS.md)。
+
+Generated/Assets.hs 显式导出 generatedAssets，包含类型、构造器、字段及定义位置，供源码审查
+和未来 LSP 使用。它与检查器在本次生成内使用同一个集合，不是手写权威，不进入执行器、
+ScopeTree 或 ContextStore；无需为尚无用途的运行时访问增加状态。
 
 一个局部模式匹配可以决定原子操作如何处理输入。如果匹配结果决定下一步调用哪些 effect，
 应把选择结果交回组合描述，由可观察的分支关系决定调用，而不是在 handler 内隐藏业务流程。
@@ -103,8 +113,8 @@ Context 类方法返回 m (Produce e)，instance 通过上游类方法取得产�
 
 需要文件、网络等外部能力的操作，通过明确的能力接口取得实现。业务数据的解释与外部
 操作的执行在代码组织和类型接口上保持可分离；IO 的调度、资源获取释放与取消由执行层
-根据显式声明处理。业务 IO 原语直接写在注册 instance 的原子实现内，不另设业务适配器
-来承载被抽出的操作；SDK 内部的执行后端不属于业务书写面。
+根据显式声明处理。显式依赖资产的 IO 操作写在注册 instance 内；不显式依赖资产的通用
+IO helper 可以复用，但不能隐藏 effect 调用。SDK 内部执行后端不属于业务书写面。
 
 组合描述选择能力／实现引用，句柄能力通过类型类 superclass 字典传递。
 SDK 保留 scope 状态与 Context 绑定，本轮按有限使用闭包落实 once-spare 自动收尾，interpreter 退出清理继续兜底；不预设可在运行时任意替换同一类型的全局 instance。
@@ -183,7 +193,7 @@ gencode 先进行纯结构分析：枚举选定末端的独立 effect chain，�
 ScopeTree 保存共享节点的 DAG，而非强制单父树。生成期的 buildScopeTree 对每个 B 求所有含 B 路径的前序集合交集 Pred(B)，再作传递约简；共同前序只用于构树，不作为另一份公开结果。ProgramStructure.structureScopes 直接保存生成的 ScopeTree，其 parents、children 和 layers 用于导航，路径、raw 候选、scopeOpposed 与 scopeUndetermined 证据也保存在其中；graphRootPaths 继续保存各入口路径来源。仅由 open 顺序不能证明覆盖全部资源前提，尤其不能遗漏 require 复用的已有资源；生成期补全清理依赖后约束 once-spare，子 scope 仍保留前提时不得关闭它。不新增 Error tracing。
 Generated.Program 的纯 programStructure 调用 initializeGeneratedStructure entries scopeNames generatedEffectGraph generatedScopeTree；现有 Main 的 --structure 分支读取并以可读格式打印同一份结构，不调用 createEntries 或业务方法。初始化和执行仍使用同一手写入口，不增加 layer 或用户装配。
 
-生成命令每次仍加载声明，并读取、解析一次 Handlers，分析和业务包装共用该快照。结构缓存 Generated/.scope-cache 精确比较完整 GraphPlan、规范化 handler shapes 及 Graph.hs、Recursion.hs、Workflow/AST.hs、Workflow/Structure.hs、Codegen/Plan.hs 的源码内容；key 相同才复用已发射的纯 graph／tree ADT，不依赖 mtime 或执行 Generated 模块。业务原子 IO 改动而 shapes 不变时可复用结构。各生成文件内容相同则不写回，但不宣称跳过整条命令、逐方法热点生成或热重载。运行校验只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。Generated 是派生产物，手改树在下一次 gencode 按源声明恢复；缓存不以手改文件为权威，不新增 edge override 层。
+生成命令每次仍加载声明并读取 Handlers 快照，分析和业务包装共用该快照；资产检查另用 GHC 名称解析同一快照，每次执行。结构缓存 Generated/.scope-cache 精确比较完整 GraphPlan、规范化 handler shapes 及 Graph.hs、Recursion.hs、Workflow/AST.hs、Workflow/Structure.hs、Codegen/Plan.hs 的源码内容；key 相同才复用已发射的纯 graph／tree ADT，不依赖 mtime 或执行 Generated 模块。业务原子 IO 改动而 shapes 不变时可复用结构。各生成文件内容相同则不写回，但不宣称跳过整条命令、逐方法热点生成或热重载。运行校验只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。Generated 是派生产物，手改树在下一次 gencode 按源声明恢复；缓存不以手改文件为权威，不新增 edge override 层。
 
 入口结构固定为 main = interpreter ast effects，爬虫 demo 已接入这一入口。
 Generated 模块将选定末端类方法登记为不透明 Target，保留未执行的句柄；它不是已经 lower 的 impl。
@@ -265,10 +275,10 @@ Context 绑定稳定是框架内部必须实现的语义规则，不能仅由“
 ## 7. 当前样例的地位与下一步
 
 入口为 demo/RequestBenchmark/Main.hs、demo/Crawler/Main.hs 与 demo/FileDemo/Main.hs；sdk/Framework/SDK.hs 为统一 SDK 入口，内部按 Effect、Recursion、Workflow 与 Codegen 拆分。
-每个 demo 保留 Main、AST／Target、Effects、Types、Handlers；workflow demo 另以 Workflow 下的独立文件定义各 branch，AST 只组合模块名称。生成接口、末端登记和包装后的 instance 分为 Generated/Effects、Generated/Program 和 Generated/Handlers。
+每个 demo 保留 Main、AST／Target、Effects、Types、Handlers；workflow demo 另以 Workflow 下的独立文件定义各 branch，AST 只组合模块名称。生成接口、末端登记和包装后的 instance 分为 Generated/Effects、Generated/Program 和 Generated/Handlers；Generated/Assets 单独保存静态资产目录。
 分离边界是手写配置 facade 与生成代码；生成逻辑属于 SDK，demo 不另设 Codegen.hs。AST 不填写 Reader。
 Types、Effects、AST／Target 独立于 Generated 与 Handlers；effect 标记和错误类型都由 SDK 生成，无须手写空 data。
-首次生成使用 cabal run effect-codegen -- workflow Crawler 或 -- target RequestBenchmark，只编译声明；已有 Handlers.hs 由 GHC 解析模块／方法边界及显式 effect 引用，不加载或执行业务。
+首次生成使用 cabal run effect-codegen -- workflow Crawler 或 -- target RequestBenchmark。先加载声明并解析 Handlers 的模块／方法边界及显式 effect 引用；资产检查再以 GHC 无代码生成模式分析手写源码和内存中的候选接口，不执行 handler。没有 Handlers 时仍可先生成契约。
 手写 instance 使用原生 Haskell，运行仍编译 Generated/Handlers 的协议包装副本，另有纯结构供初始化与查看；修改实现后须重新生成。不新增业务 class，不使用 Template Haskell，codegen 不回写手写源码，也不改写业务执行副本的原方法体表达式。
 生成副本保存实际解析的手写源码指纹，公共运行入口在业务执行前比对当前 Handlers.hs；缺失或变更时拒绝启动并提示重新生成。workflow 与纯 target 都比对注册快照，纯 target 另比对所选末端。此检查要求从仓库根目录访问手写源，不替代显式生成或编译。
 已有 Main --generate 仍要求导入链能编译，不能替代独立首次生成入口。

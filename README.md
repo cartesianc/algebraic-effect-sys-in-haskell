@@ -61,7 +61,7 @@ cabal run file-demo
 | [AST.hs](demo/FileDemo/AST.hs) | 引用各 branch 模块，组织整个 workflow |
 | [Workflow/OperateFile.hs](demo/FileDemo/Workflow/OperateFile.hs) | 一个具名 branch，内部选择末端 node；较大模块也可组合其他 branch |
 | [Main.hs](demo/FileDemo/Main.hs) | 调用生成的 `interpreter ast effects` |
-| `Generated/` | SDK 生成的接口、包装后的 handler、纯结构与末端登记 |
+| `Generated/` | SDK 生成的接口、包装后的 handler、纯结构、资产目录与末端登记 |
 
 例如，纯计算示例的 handler 直接取得上游值并计算：
 
@@ -74,7 +74,7 @@ instance Effect MakeNumber m => AddOneEffect m where
 
 对应的注册声明从 `MakeNumber` 请求值；SDK 负责接入取值协议，业务方法负责计算。完整代码见 [注册](demo/RequestBenchmark/Effects.hs) 和 [实现](demo/RequestBenchmark/Handlers.hs)。
 
-原子业务实现直接写在注册的 `instance` 方法体内，包括解析、转换和 IO；业务复用通过已注册类方法及 Context 关系完成，不另设自定义 helper 实现层。方法内可以直接调用标准库／外部库原语并完成局部计算。详见 [instance 实现边界](docs/DESIGN_METHOD.md#3-haskell-值语义收敛到原子-handler)。
+Context 契约统一收集业务 ADT 资产。显式使用这些类型、构造器或字段的操作写在注册 `instance` 方法内；普通函数不得显式依赖资产，泛型函数不因接收资产值而被禁止，只处理通用类型的 helper 也允许。gencode 检查源码引用，并生成可供 review／未来 LSP 读取的 `Generated/Assets.hs`；它不参与运行时资源管理。详见 [源码资产检查](docs/ASSETS.md)。
 
 workflow 的 `node` 选择一条完整操作链的末端，`chained` 顺序执行并在失败时停止，`parallel` 等待全部分支完成。链内的上游操作由 handler 显式引用；声明能力依赖本身不会自动执行操作。节点的返回值也不会自动传给下一个节点。
 
@@ -160,9 +160,9 @@ cabal run effect-codegen -- target RequestBenchmark
 cabal exec -- runghc -idemo -isdk demo/RequestBenchmark/Main.hs
 ```
 
-生成命令只更新对应示例的 `Generated/Effects.hs`、`Generated/Handlers.hs` 和 `Generated/Program.hs`，不会执行业务操作或回写手写文件。请修改手写声明与实现，再重新生成；将生成源码一并提交，便于审阅接口与协议包装。
+生成命令更新对应示例的 `Generated/Effects.hs`、`Generated/Handlers.hs`、`Generated/Program.hs` 和静态资产目录 `Generated/Assets.hs`，不会执行业务操作或回写手写文件。请修改手写声明与实现，再重新生成；将生成源码一并提交，便于审阅接口、协议包装和资产集合。
 
-未变化的生成文件不重写，保留时间戳以减少后续重编译。每个命名空间另有不提交 Git 的 `Generated/.scope-cache`，按完整声明计划、规范化方法结构与构图／渲染算法源码精确匹配，复用纯构图结果；只改原子业务代码而不改变 effect 结构时也可命中。命令仍加载声明并解析一次 `Handlers.hs`，目前没有 watcher、运行中的热替换或按单个方法增量构图。
+未变化的生成文件不重写，保留时间戳以减少后续重编译。每个命名空间另有不提交 Git 的 `Generated/.scope-cache`，按完整声明计划、规范化方法结构与构图／渲染算法源码精确匹配，复用纯构图结果；只改原子业务代码而不改变 effect 结构时也可命中。命令仍读取声明和 `Handlers.hs` 快照，并每次进行 GHC 名称解析及资产检查；缓存不跳过该检查。目前没有 watcher、运行中的热替换或按单个方法增量构图。
 
 可以在生成源码中检查或调整 scope 边，运行时只校验、不覆盖这些边；调整时应保持 `parents`／`children`、`roots` 和 `layers` 一致。App／IO 的 Error 祖先导航与自动清理都会读取调整后的树；结构校验不证明人工删边在业务上正确。重新 gencode 会按手写来源重新生成；缓存也不会保存人工改边。目前没有独立的、跨生成保留的边覆盖配置。
 

@@ -39,7 +39,7 @@ analyzeModule namespace methods implicitPrelude parsed = do
   unless (length (nub (map snd methods)) == length methods) $
     Left "Structure analysis needs distinct registered method names"
   -- 检查隐藏的 effect 引用，不猜测 helper 的执行语义。
-  -- 此检查不替代设计约束：业务原子实现必须直接位于注册的 instance 方法体内。
+  -- 资产显式引用由 Assets 另行检查；泛型 helper 不因接收业务 ADT 而违规。
   mapM_ (rejectReferences environment "effect references in a top-level helper") topBindings
   concat <$> mapM instanceShapes (hsmodDecls parsed)
   where

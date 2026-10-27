@@ -8,7 +8,7 @@
 
 ## 已确认的架构边界
 
-注册的 instance 方法本身承载原子业务实现。纯解析、计算、转换与 IO 都直接写在方法体内，业务操作的复用通过已注册类方法及 Context 契约完成；不另设自定义 helper 实现层，也不把它搬到局部定义或其他业务模块。标准库／外部库原语及方法内局部计算可以直接使用。没有 effect 引用只意味着结构副本擦除该表达式，不豁免 instance 边界；详见 [原子 handler 约束](DESIGN_METHOD.md#3-haskell-值语义收敛到原子-handler)。
+Context 契约统一导出 asset 集合，不携带来源归属。普通函数不得显式使用资产类型、构造器、模式或字段，显式资产操作由注册 instance 方法承载；泛型调用与只处理通用类型的 helper 允许，方法内匿名 lambda 和局部数据计算不要求另行注册。这取代全面禁止 helper 的旧约定。gencode 用 GHC 名称解析后的源码检查资产引用，生成独立 Generated/Assets.hs 静态目录；目录不接入 runtime 或 scope 关闭归属。effect 组合仍不能隐藏在 helper 中。详见 [源码资产检查](ASSETS.md) 和 [原子 handler 约束](DESIGN_METHOD.md#3-haskell-值语义收敛到原子-handler)。
 
 生成前的手写代码必须保持原生 Haskell，能由 GHC／HLS 检查；handler 调用使用原生类方法，业务契约使用原生 ADT，不依赖生成器修复语法或类型。Handlers 所导入的 Generated/Effects 契约需先存在且与声明同步；语言检查不依赖 Generated/Handlers 执行包装。手写与包装副本分别加载，避免重复 instance。此项属于[核心设计约束](DESIGN_METHOD.md#生成前仍是原生-haskell核心约束)，不只是编辑器便利。
 
@@ -271,7 +271,7 @@ ScopeTree 保存共享节点及 parents／children／layers，实际为 DAG。�
 
 Generated.Program 导出 `programStructure :: AST -> Either (StructureError MethodGen) (ProgramStructure MethodGen)`，实现为 `initializeGeneratedStructure entries scopeNames generatedEffectGraph generatedScopeTree`。现有 Main 的 `--structure` 参数读取同一份生成结构，以可读格式显示 ScopeTree 的父节点、层次、各入口路径、双向实证与未定关系，不重复输出内部共同前序，不调用 createEntries 或业务方法。补全后的 scope 依赖同时供 App／IO 的 Error 祖先导航与 once-spare 清理使用，不增加动态 error tracing；detect／resolve 与原错传播保留，Pure 继续旧候选名单。结构定义和查看方法见 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)，本轮资源存续协议以下文为准。
 
-每次 gencode 仍加载声明，并读取、解析一次 Handlers；纯结构分析与业务包装共用同一快照。Generated/.scope-cache 的精确 key 包含完整 GraphPlan、规范化 handler shapes，以及 Graph.hs、Recursion.hs、Workflow/AST.hs、Workflow/Structure.hs、Codegen/Plan.hs 的源码内容。命中时复用已发射的 graph／tree ADT 文本；不依赖 mtime，也不加载或执行 Generated.Program 读取缓存。原子业务 IO 变化若 shapes 不变，可复用结构而更新业务包装。各生成文件内容不变则不写回；这不是全命令 fastskip、逐方法热点生成、文件监听或热重载。
+每次 gencode 仍加载声明并读取 Handlers 快照；纯结构分析与业务包装共用该快照，资产检查另用 GHC 名称解析同一快照，每次执行。Generated/.scope-cache 的精确 key 包含完整 GraphPlan、规范化 handler shapes，以及 Graph.hs、Recursion.hs、Workflow/AST.hs、Workflow/Structure.hs、Codegen/Plan.hs 的源码内容。命中时复用已发射的 graph／tree ADT 文本；不依赖 mtime，也不加载或执行 Generated.Program 读取缓存。原子业务 IO 变化若 shapes 不变，可复用结构而更新业务包装。各生成文件内容不变则不写回；这不是全命令 fastskip、逐方法热点生成、文件监听或热重载。
 
 生成源码是 review 面和运行依据；手改 generatedScopeTree 时运行校验显式字段，不自动重推父边。校验只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。它仍属于派生产物，下次 gencode 会按源声明及方法结构恢复生成结果，缓存不以手改文件为权威。本轮不增加手工 edge override 层。
 
@@ -427,9 +427,9 @@ FileDemo 的 FileRecovery 演示：require 原文件句柄，用 hIsClosed 检�
 分别负责契约、注册解析、存储原语和末端句柄描述／lower。[Recursion.hs](../sdk/Framework/Recursion.hs) 提供纯 Fix／cata／zygo；
 [Workflow/AST.hs](../sdk/Framework/Workflow/AST.hs) 保存结构，[Workflow/Execution.hs](../sdk/Framework/Workflow/Execution.hs) 提供执行 algebra 与并发汇合；
 [Codegen.hs](../sdk/Framework/Codegen.hs) 负责源码生成。拆分不改变 boot 范围或 IO 权限，本次文件分离不改变 handler 签名或执行语义。
-[Generate.hs](../sdk/Framework/Generate.hs) 提供统一首次生成命令，只编译 Types、Effects 和 AST／Target；用 GHC 9.12 解析器读取 Handlers.hs 的模块、方法边界与显式 effect 引用，生成独立纯结构。
+[Generate.hs](../sdk/Framework/Generate.hs) 提供统一首次生成命令：先加载 Types、Effects 和 AST／Target，用 GHC 9.12 解析器读取 Handlers.hs 的模块、方法边界与显式 effect 引用，生成独立纯结构；再以 GHC 无代码生成模式解析业务名称并检查资产引用，成功后写回 Generated。候选生成模块及手写 Handlers 快照从内存加载，不执行业务。
 它们不导入 Generated 或 Handlers；effect 标记与错误类型自动生成，无须用户手写空 data。
-首次运行 cabal run effect-codegen -- workflow Crawler 或 -- target RequestBenchmark，生成接口后填写 handler，再次生成并编译 Main。缺少 Handlers.hs 时先生成空编译模块；不加载或执行业务实现。
+首次运行 cabal run effect-codegen -- workflow Crawler 或 -- target RequestBenchmark，生成接口后填写 handler，再次生成并编译 Main。缺少 Handlers.hs 时先生成空编译模块；有实现后进行完整资产检查，不执行 handler。
 业务执行仍编译 Generated/Handlers，SDK 包装方法入口，保留原生取值与业务表达式；纯初始化结构由 Generated.Program 导出，不回写手写源码或新增业务类型类。手写实现变更后须重新生成。
 生成的 Handlers 保存解析时的源码指纹；公共 workflow／target 入口在启动业务前检查当前手写源，缺失或过期则拒绝执行。两类入口均核对注册快照，纯 target 还核对末端；Main 写法不变。检查从仓库根目录读取源码，--generate 仍可修复过期副本；直接求值底层 benchmark 不提供 IO 源码检查。
 已有 Main --generate 仍要求导入链可编译，新增 effect 或缺少生成文件时使用独立 SDK 命令。

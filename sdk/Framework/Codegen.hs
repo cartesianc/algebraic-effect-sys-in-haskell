@@ -17,7 +17,7 @@ import Data.Maybe (maybeToList)
 data Entry = SingleTarget String | Workflow [String]
 
 lowerProgram :: String -> [EffectSpec] -> Entry
-             -> Either String (String, String, [(String, String, String)], String, GraphPlan String)
+             -> Either String (String, String, [(String, String, String)], String, GraphPlan String, [String])
 lowerProgram namespace specifications entry = do
   if any ((== "Root") . name) specifications
     then Left "Root is reserved for the superclass"
@@ -60,6 +60,10 @@ lowerProgram namespace specifications entry = do
     , concatMap instanceWrappers specifications
     , scopeHandlers ++ scopeCleanups ++ errorHandlers
     , graphPlan
+    , nub ([reference contract | specification <- contextSpecs
+             , Context (Just Producer { produces = contract }) _ <- [typing specification]]
+        ++ [reference (sourceType source) | specification <- specifications
+             , source <- maybeToList (requestInput specification) ++ maybeToList (requireInput specification)])
     )
   where
     selected = case entry of

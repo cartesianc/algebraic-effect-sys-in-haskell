@@ -16,7 +16,7 @@
 
 业务执行副本仍只添加既有入口包装，原方法体表达式保持不变。这里不再使用“生成器完全不查看方法体”的限制；新的边界是读取显式引用并生成独立结构，不解释任意业务值语义、不改写业务表达式、不要求用户补写 layer 或另一份调用声明。结构提取也不证明任意 Haskell 函数的行为、动态调用次数或物理资源依赖。
 
-当前 source 结构支持显式 effect 调用、原生 `do`、`if`／`case` 和已识别的标准组合，包括顺序／绑定运算、`when`／`unless`、`either`／`maybe` 及 `catchError`。条件和待匹配的值本身不能隐藏 effect 调用。未知高阶 effect 组合、把 effect 藏入 helper 或局部 alias、含 effect 的循环组合（如 `forM_`／`replicateM_`）以及递归 effect 引用会报告错误，不静默生成空图。没有 effect 引用的原子业务表达式可在 instance 方法体内使用原生 Haskell 语法，结构副本将其擦除；方法内直接以标准组合完成 IO 迭代或数据计算，不受上述 effect 组合限制。业务实现仍须遵守 [instance 实现边界](DESIGN_METHOD.md#3-haskell-值语义收敛到原子-handler)，不能从结构擦除推导出允许未注册业务 helper；结构分析不提供这项约束的完整自动证明。
+当前 source 结构支持显式 effect 调用、原生 `do`、`if`／`case` 和已识别的标准组合，包括顺序／绑定运算、`when`／`unless`、`either`／`maybe` 及 `catchError`。条件和待匹配的值本身不能隐藏 effect 调用。未知高阶 effect 组合、把 effect 藏入 helper 或局部 alias、含 effect 的循环组合（如 `forM_`／`replicateM_`）以及递归 effect 引用会报告错误，不静默生成空图。没有 effect 引用的原子业务表达式可在 instance 方法体内使用原生 Haskell 语法，结构副本将其擦除；方法内直接以标准组合完成 IO 迭代或数据计算，不受上述 effect 组合限制。[源码资产检查](ASSETS.md) 另行约束普通函数对业务 ADT 的显式使用，泛型或仅处理通用类型的 helper 允许；资产检查与 effect 图提取是两个不同边界。
 
 `catchError body recovery` 使用独立的 `Recover` 结构。scope 分析保留正文的正常路径，并为每条正文路径的任意 scope 前缀接入 recovery 路径；前缀包括空前缀和完整前缀，不假定正文一定全部执行后才进入 recovery。这是保守的静态路径集合，不执行业务来验证成功条件，也不证明某个 scope 已成功获取资源。
 
@@ -27,7 +27,7 @@
 1. 加载注册与选定末端，形成 `GraphPlan`；同一次读取和 GHC 解析的 Handlers 快照提供方法纯结构及业务包装副本。
 2. `initializeStructure` 枚举各独立入口，方法结构使用 `zygo`：辅助 algebra 汇总 scope 路径，主 algebra 利用子结构的辅助结果与图结果完成 effect graph 汇总。
 3. 汇合各条独立 chain 的路径证据，把保守的注册前提补入同一份 `ScopeTree`，校验身份、引用与无环性。
-4. 将结果作为 `generatedEffectGraph` 与 `generatedScopeTree` 的显式 ADT 写入 `Generated.Program`。生成失败不发布新的结构。
+4. 在内存中的候选接口上完成源码资产检查，再将 `generatedEffectGraph` 与 `generatedScopeTree` 的显式 ADT 写入 `Generated.Program`，同时写入独立 `Generated/Assets.hs` 目录。生成失败不发布新的结构。
 
 运行时的 `programStructure` 调用 `initializeGeneratedStructure entries scopeNames generatedEffectGraph generatedScopeTree`。第一次 `cata` 只初始化当前 workflow 的 Node 位置和控制结构；SDK 检查 AST 的入口集合与生成 graph 一致，并校验生成结构的身份、引用、父子关系、层次与无环性。它不重新展开方法、不执行 `zygo`、不推导或修正 scope 父边。结构合法且严格完成后，第二次 `cata` 才装配原业务 action，随后沿既有 handler、Context、scope 和 Error 协议执行。新增或移除末端入口须重新生成。
 
@@ -117,7 +117,7 @@ cabal run crawler-demo -- --structure
 
 ## 内容缓存与重跑边界
 
-每次 gencode 仍加载声明，并读取、解析一次 Handlers；结构分析和业务包装共用该快照。命名空间的 `Generated/.scope-cache` 保存结构阶段的内容缓存，key 精确比较完整 `GraphPlan`、规范化后的 handler shapes，以及 `Effect/Graph.hs`、`Recursion.hs`、`Workflow/AST.hs`、`Workflow/Structure.hs`、`Codegen/Plan.hs` 的源码内容。不用 mtime 判断命中，也不通过加载或执行 `Generated.Program` 读取缓存。
+每次 gencode 仍加载声明并读取 Handlers 快照；结构分析和业务包装共用该快照，资产检查另用 GHC 名称解析同一快照，每次执行。命名空间的 `Generated/.scope-cache` 保存结构阶段的内容缓存，key 精确比较完整 `GraphPlan`、规范化后的 handler shapes，以及 `Effect/Graph.hs`、`Recursion.hs`、`Workflow/AST.hs`、`Workflow/Structure.hs`、`Codegen/Plan.hs` 的源码内容。不用 mtime 判断命中，也不通过加载或执行 `Generated.Program` 读取缓存。
 
 key 未变时复用已经发射的纯 graph／tree ADT 文本。原子业务 IO 的修改若不改变 shapes，可复用结构结果，同时更新业务包装副本。每份生成文件都先比较完整内容，内容相同就不写回；这减少结构重算和无变化文件写入，不等于跳过整条生成命令，也不是逐方法热点生成、文件监听或运行中热重载。
 

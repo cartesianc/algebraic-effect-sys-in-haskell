@@ -28,7 +28,7 @@ import System.Process (readProcess)
 -- 分析与包装共用一次读取和解析的快照，不加载 instance 或执行业务。
 -- 包装计划来自注册；原文件始终保留，只有 Generated 副本进入运行导入链。
 prepareHandlers :: String -> [(String, String, String)] -> String
-                -> IO (String, [((String, String), HandlerShape)])
+                -> IO (String, [((String, String), HandlerShape)], Maybe String)
 prepareHandlers namespace wrappers scopeHandlers = do
   loaded <- loadHandlers namespace
   shapes <- case loaded of
@@ -71,7 +71,8 @@ prepareHandlers namespace wrappers scopeHandlers = do
         ++ "\n-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。\n"
         ++ "handlerSourceFingerprint :: Maybe String\n"
         ++ "handlerSourceFingerprint = " ++ show sourceFingerprint ++ "\n"
-        ++ (if null extraDefinitions then "" else "\n\n" ++ extraDefinitions), shapes)
+        ++ (if null extraDefinitions then "" else "\n\n" ++ extraDefinitions), shapes,
+        fmap (\(source, _, _, _) -> source) loaded)
 
 loadHandlers :: String -> IO (Maybe (String, HsModule GhcPs, Bool, Bool))
 loadHandlers namespace = do
