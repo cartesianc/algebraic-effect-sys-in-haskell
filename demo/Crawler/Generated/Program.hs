@@ -29,8 +29,8 @@ registeredEffects =
 scopeNames :: [(MethodGen, String)]
 scopeNames = [(OpenCrawlSessionGen, "CrawlSession")]
 
--- 运行只 fold 当前 workflow，并校验入口集合及生成常量；不重新构图。
-programStructure :: SDK.AST -> Either (SDK.StructureError MethodGen) (SDK.ProgramStructure MethodGen)
+-- 只校验生成常量；当前 workflow 在执行装配的一次 fold 中检查入口。
+programStructure :: Either (SDK.StructureError MethodGen) (SDK.ProgramStructure MethodGen)
 programStructure = SDK.initializeGeneratedStructure
   [("ExtractPage", ExtractPageGen), ("ExtractLinkedPage", ExtractLinkedPageGen), ("PrintPage", PrintPageGen), ("PrintLinkedPage", PrintLinkedPageGen)]
   scopeNames generatedEffectGraph generatedScopeTree

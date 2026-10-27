@@ -13,7 +13,7 @@ import Framework.Effect
 import Framework.Effect.Graph
 import Framework.Effect.Runtime (cleanupTargets)
 import Framework.Workflow.AST (AST, EffectNode, node, chained, parallel)
-import Framework.Workflow.Execution (runInitializedAST)
+import Framework.Workflow.Execution (runStructuredAST)
 import Framework.Workflow.Structure
 import Control.DeepSeq (NFData, force)
 import Control.Exception (SomeException, evaluate, mask, throwIO, try)
@@ -29,10 +29,10 @@ import System.Process (callProcess)
 -- 生成的 facade 绑定编译期注册与末端方法，用户只传 ast 和 effects。
 -- Node 只登记末端句柄；algebra lower 后才具备具体执行入口。
 interpreter
-  :: (Show cause, Show value, Show method, Eq method, NFData method)
+  :: (Show cause, Show value, Show method, Ord method, NFData method)
   => String
   -> [EffectSpec] -> Maybe String
-  -> (AST -> Either (StructureError method) (ProgramStructure method))
+  -> Either (StructureError method) (ProgramStructure method)
   -> IO [Target IO environment cause value] -> AST -> [EffectSpec] -> IO ()
 interpreter namespace registered sourceFingerprint initialize createEntries tree specifications = do
   hSetEncoding stdout utf8
@@ -47,7 +47,7 @@ interpreter namespace registered sourceFingerprint initialize createEntries tree
           entries <- createEntries
           mask $ \restore -> do
             completed <- tryAny $ restore $ do
-              output <- runInitializedAST structure entries
+              output <- runStructuredAST structure tree entries
               let rendered = show output
               -- 各 Node 已在释放使用前消费自己的结果；这里完成汇总错误的显示。
               evaluate (foldr seq () rendered)
@@ -69,13 +69,15 @@ interpreter namespace registered sourceFingerprint initialize createEntries tree
       | specifications /= registered -> staleRegistrations
       | otherwise -> do
           verifyHandlerSource "workflow" namespace sourceFingerprint
-          initializeBeforeBusiness >>= putStr . renderStructure
+          structure <- initializeBeforeBusiness
+          rendered <- either (ioError . userError . show) pure (renderStructure structure tree)
+          putStr rendered
     _ -> ioError (userError "Usage: demo [--generate|--structure]")
   where
     staleRegistrations = ioError (userError
       ("Registrations changed; run: cabal run effect-codegen -- workflow " ++ namespace))
     initializeBeforeBusiness = do
-      result <- evaluate (force (initialize tree))
+      result <- evaluate (force initialize)
       either (ioError . userError . ("Cannot initialize effect structure: " ++) . show) pure result
 
 -- 保留原始业务故障；主执行成功时，首个清理故障成为完成失败。

@@ -261,7 +261,7 @@ Input 与 request 共同表达依赖后，注册关系可以形成图。业务�
 
 对于有限、静态、无环的依赖，SDK 可以在装配阶段解析注册引用和调用关系，再生成执行闭包。AST 的 fold 可在 Node 的 algebra 中装配所挂载的注册，branch 组合子节点的执行闭包。continuation 提供组合手段；调用次序、结果共享及 scope 归属仍按声明和 SDK 契约确定。
 
-当前 SDK 在 gencode 阶段枚举独立末端入口。方法结构使用 zygo，以辅助 algebra 汇总 scope 路径，主 algebra 利用辅助结果与子图形成 effect graph；汇合路径、补全注册前提并校验后，将 generatedEffectGraph 与 generatedScopeTree 发射为显式 ADT。运行时先以 init cata 初始化当前 AST 的调用位置及控制结构，校验其入口集合和生成结构合法性，不重新展开方法、构图或推导 scope 父边。严格完成结构后，第二次 cata 才装配原业务 action。后者组合封闭 target 的启动动作，返回尚未执行的 ExceptT / IO：chained 顺序运行，parallel 并发运行；fold 本身不绑定 Reader 或执行 handler。空分支成功并返回空结果，有限的 chained／parallel 可组合；节点结果仅在完成边界汇总，不自动成为下一节点的输入。
+当前 SDK 在 gencode 阶段枚举独立末端入口。方法结构使用 zygo，以辅助 algebra 汇总 scope 路径，主 algebra 利用辅助结果与子图形成 effect graph；汇合路径、补全注册前提并校验后，将 generatedEffectGraph 与 generatedScopeTree 发射为显式 ADT。运行时先校验并完整求值生成常量，再直接对当前 AST 做一次 cata，同时解析 Node、收集入口并装配尚未执行的 ExceptT / IO 动作。所有分支及入口集合检查完成后才安装 scope 关系并执行业务；不创建 InitializedF 中间树，不重新展开方法、构图或推导父边。Target 创建只分配空状态，不打开资源。chained 顺序运行，parallel 并发运行；fold 本身不绑定 Reader 或执行 handler。空分支成功并返回空结果，有限的 chained／parallel 可组合；节点结果仅在完成边界汇总，不自动成为下一节点的输入。
 
 方法以生成的 MethodGen 枚举识别，构造器为方法名首字母大写加 Gen；MethodDefinition.methodEffect 使用同一 effect 首个注册入口的 Gen 身份。纯结构副本剥离业务值和 IO，业务执行副本仍只包装入口、不改写原表达式。每个 Node 的 chain 独立提供路径证据，graphRootPaths 保留各入口的 scope 路径来源，不从跨 Node 的 Chained 执行顺序推导 scope 依赖。
 
@@ -269,7 +269,7 @@ source 结构支持显式 effect 调用、do、if／case 及已识别的标准�
 
 ScopeTree 保存共享节点及 parents／children／layers，实际为 DAG。路径按 scope 定义首次出现去重；生成期的 buildScopeTree 内部求 Pred(B)，即所有含 B 路径中 B 前序集合的交集，仅 A 属于 Pred(B) 时建立 A≺B，再做传递约简。该关系传递且反自反，不采用合并候选后删除整个 SCC 的办法。共同前序仅是构树的局部中间结果，不单独公开。ProgramStructure.structureScopes 直接保存生成的 ScopeTree，其内同时保留 scopePaths、scopeCandidates 原始候选、scopeOpposed 双向实证和 scopeUndetermined 未定关系；反向证据必须来自各自含有两端的单条静态路径，不能用跨路径拼接的可达性替代。仅有 open 顺序不能证明覆盖真实前提；生成期补全 require 复用的已有资源等依赖后再供清理使用，不能把缺失 open 当作无依赖。未定关系不能宣称为独立。
 
-Generated.Program 导出 `programStructure :: AST -> Either (StructureError MethodGen) (ProgramStructure MethodGen)`，实现为 `initializeGeneratedStructure entries scopeNames generatedEffectGraph generatedScopeTree`。现有 Main 的 `--structure` 参数读取同一份生成结构，以可读格式显示 ScopeTree 的父节点、层次、各入口路径、双向实证与未定关系，不重复输出内部共同前序，不调用 createEntries 或业务方法。补全后的 scope 依赖同时供 App／IO 的 Error 祖先导航与 once-spare 清理使用，不增加动态 error tracing；detect／resolve 与原错传播保留，Pure 继续旧候选名单。结构定义和查看方法见 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)，本轮资源存续协议以下文为准。
+Generated.Program 导出静态的 `programStructure :: Either (StructureError MethodGen) (ProgramStructure MethodGen)`，实现为 `initializeGeneratedStructure entries scopeNames generatedEffectGraph generatedScopeTree`，不保存 workflow 副本。现有 Main 的 `--structure` 参数对实际 AST 做纯展示 fold 并核对入口，读取同一份生成结构，以可读格式显示 ScopeTree 的父节点、层次、各入口路径、双向实证与未定关系，不重复输出内部共同前序，不调用 createEntries 或装配业务 action。补全后的 scope 依赖同时供 App／IO 的 Error 祖先导航与 once-spare 清理使用，不增加动态 error tracing；detect／resolve 与原错传播保留，Pure 继续旧候选名单。结构定义和查看方法见 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)，本轮资源存续协议以下文为准。
 
 每次 gencode 仍加载声明并读取 Handlers 快照；纯结构分析与业务包装共用该快照，资产检查另用 GHC 名称解析同一快照，每次执行。Generated/.scope-cache 的精确 key 包含完整 GraphPlan、规范化 handler shapes，以及 Graph.hs、Recursion.hs、Workflow/AST.hs、Workflow/Structure.hs、Codegen/Plan.hs 的源码内容。命中时复用已发射的 graph／tree ADT 文本；不依赖 mtime，也不加载或执行 Generated.Program 读取缓存。原子业务 IO 变化若 shapes 不变，可复用结构而更新业务包装。各生成文件内容不变则不写回；这不是全命令 fastskip、逐方法热点生成、文件监听或热重载。
 

@@ -29,7 +29,9 @@
 3. 汇合各条独立 chain 的路径证据，把保守的注册前提补入同一份 `ScopeTree`，校验身份、引用与无环性。
 4. 在内存中的候选接口上完成源码资产检查，再将 `generatedEffectGraph` 与 `generatedScopeTree` 的显式 ADT 写入 `Generated.Program`，同时写入独立 `Generated/Assets.hs` 目录。生成失败不发布新的结构。
 
-运行时的 `programStructure` 调用 `initializeGeneratedStructure entries scopeNames generatedEffectGraph generatedScopeTree`。第一次 `cata` 只初始化当前 workflow 的 Node 位置和控制结构；SDK 检查 AST 的入口集合与生成 graph 一致，并校验生成结构的身份、引用、父子关系、层次与无环性。它不重新展开方法、不执行 `zygo`、不推导或修正 scope 父边。结构合法且严格完成后，第二次 `cata` 才装配原业务 action，随后沿既有 handler、Context、scope 和 Error 协议执行。新增或移除末端入口须重新生成。
+运行时的 `programStructure` 调用 `initializeGeneratedStructure entries scopeNames generatedEffectGraph generatedScopeTree`，得到只保存入口映射、effect graph、scope tree 与 scope 名字映射的静态值，不接收或复制当前 AST。SDK 先校验生成结构的身份、引用、父子关系、层次、无环性及入口映射，并完整求值这些常量；随后直接对当前 AST 做一次 `cata`，同时解析全部 Node、收集入口并装配尚未执行的 action。入口集合与生成 graph 一致后，才安装 scope 关系并执行业务。没有独立 init cata 或 InitializedF 中间树，不重新展开方法、不执行运行时 `zygo`、不推导或修正父边。新增或移除末端入口须重新生成。
+
+执行 fold 的结果为 `Either`，其中携带已收集的入口及尚未执行的 `ExceptT / IO` 动作。顺序和并行分支均先检查全部子分支，完成入口集合比较后才运行 action；不会靠执行业务来强制结构求值。创建 Target 仅分配空的运行状态，不打开资源，scope 实例、使用计数和锁仍按已有运行协议管理。
 
 `Chained` 和 `Parallel` 可以汇总 Node 的结构，但不把不同 Node 的链拼成一条 scope 启动路径。尤其不能从 AST 中“Node A 先执行、Node B 后执行”推导其 scope 存在依赖。方法结构中的路径与 workflow 的节点调度是不同层级。
 
@@ -99,12 +101,11 @@ App／IO 的生成入口沿原有 Input／request 关系查找最近的 scope，
 
 ## 查看初始化结果
 
-生成的 `Generated.Program` 导出纯函数：
+生成的 `Generated.Program` 导出静态的纯值：
 
 ```haskell
 programStructure
-  :: AST
-  -> Either (StructureError MethodGen) (ProgramStructure MethodGen)
+  :: Either (StructureError MethodGen) (ProgramStructure MethodGen)
 ```
 
 现有 Main 无需修改，给 SDK 入口传 `--structure` 即可查看，例如：
@@ -113,7 +114,7 @@ programStructure
 cabal run crawler-demo -- --structure
 ```
 
-该分支以可读格式显示 workflow、方法及其 effect 归属、方法引用、scope 层次与共享父节点、各入口路径，以及双向实证和未定关系，不重复输出内部共同前序。它读取同一份生成结构，不调用 `createEntries`，不创建运行 scope 句柄，不执行 handler 或业务 IO。普通启动使用同一份运行校验规则，完成结构后再装配执行动作。修改注册或手写 handler 后仍须重新生成，生成源码继续作为 review 面。
+该分支对当前 AST 做纯展示 fold，同时核对 Node 和入口集合，以可读格式显示 workflow、方法及其 effect 归属、方法引用、scope 层次与共享父节点、各入口路径，以及双向实证和未定关系，不重复输出内部共同前序。它读取同一份生成结构，不调用 `createEntries`，不创建运行 scope 句柄，不装配或执行 handler 动作。普通启动在自己的单次执行装配 fold 中核对相同入口规则。修改注册或手写 handler 后仍须重新生成，生成源码继续作为 review 面。
 
 ## 内容缓存与重跑边界
 

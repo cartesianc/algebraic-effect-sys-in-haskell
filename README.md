@@ -111,7 +111,7 @@ cabal run crawler-demo -- --structure
 
 它以可读格式显示 effect 方法图，以及 `ScopeTree` 的各入口路径、共享父节点、层次、双向顺序实证与未定关系；不创建运行 scope 句柄，也不执行 handler 或业务 IO。也可以直接阅读 `Generated/Program.hs` 中的 `generatedEffectGraph` 和 `generatedScopeTree`：它们是显式的 Haskell ADT 值，已在 gencode 时完成推导、补入声明前提并检查无环。`ScopeTree` 保留共享节点和多个父节点，表示 DAG；App／IO 用同一棵树导航 Error 的祖先候选，并约束子 scope 先于父 scope 释放。
 
-生成器从原生方法体读取显式 effect 引用，生成 `MethodGen` 身份和剥离业务值／IO 的结构副本，再用纯解释计算上述常量；业务执行副本的原表达式保持不变。每个 Node 的链独立分析，不把 workflow 的顺序当作 scope 依赖。普通启动由 `programStructure` 对实际 AST 做一次初始化 fold，检查入口集合与生成结构一致、树的引用及层次有效，再装配原业务 action；这一步不重新推导 scope 边。算法与边界见 [Effect graph 与 scope 初始化](docs/EFFECT_GRAPH.md)。
+生成器从原生方法体读取显式 effect 引用，生成 `MethodGen` 身份和剥离业务值／IO 的结构副本，再用纯解释计算上述常量；业务执行副本的原表达式保持不变。每个 Node 的链独立分析，不把 workflow 的顺序当作 scope 依赖。普通启动先校验并完整求值 `programStructure` 中的生成常量，再直接对实际 AST 做一次 fold，同时解析 Node、收集入口并装配尚未执行的业务 action；全部分支及入口集合通过检查后，安装 scope 关系并执行业务。不再创建初始化中间树，也不重新推导 scope 边。算法与边界见 [Effect graph 与 scope 初始化](docs/EFFECT_GRAPH.md)。
 
 结构提取支持显式调用、`do`、`if`／`case` 及已识别的标准组合；`catchError` 保留正文和可能提前进入 recovery 的路径。未知高阶 effect、隐藏 helper 组合、含 effect 的动态循环或递归引用会报错，不会静默省略。没有 effect 引用的原子业务代码可以使用任意 Haskell 语法。
 
