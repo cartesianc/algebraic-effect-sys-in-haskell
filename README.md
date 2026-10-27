@@ -42,16 +42,24 @@ cabal run file-demo
 
 ```mermaid
 flowchart LR
-  T["Types.hs<br/>业务数据类型"] --> C
-  E["Effects.hs<br/>effect 注册"] --> C
-  A["AST.hs / Workflow<br/>执行编排"] --> C
-  H["Handlers.hs<br/>方法实现（原生 Haskell）"] --> C
-  C(["effect-codegen"]) --> GE["Generated/Effects.hs<br/>类型类接口"]
-  C --> GH["Generated/Handlers.hs<br/>包装后的实现"]
-  C --> GP["Generated/Program.hs<br/>入口与结构"]
-  GE -. 导入 .-> H
-  M["Main.hs<br/>interpreter ast effects"] --> GP
+  Main["Main.hs<br/>程序入口"] --> Interp(["interpreter"])
+  AST["AST.hs<br/>执行编排"] -. 配置 .-> Interp
+  Effects["Effects.hs<br/>effect 注册"] -. 配置 .-> Interp
+  Interp -- 运行 --> Generated
+
+  subgraph Generated["Generated/"]
+    direction TB
+    Program["Program.hs<br/>入口与结构"]
+    GenHandlers["Handlers.hs<br/>包装后的实现"]
+    GenEffects["Effects.hs<br/>类型类接口"]
+  end
+
+  Sources["手写源码<br/>Types · Effects<br/>AST · Handlers"] --> Codegen(["effect-codegen"])
+  Codegen -- 生成 --> Generated
 ```
+
+- **运行**：`Main.hs` 是程序入口，调用 `interpreter ast effects`。`ast`（执行编排）和 `effects`（effect 注册）是交给 interpreter 的配置，interpreter 据此执行 `Generated/` 里的代码。
+- **生成**：修改手写源码后，由 `effect-codegen` 读取它们并重新生成 `Generated/`。手写的 `Handlers.hs` 依赖生成的 `Generated/Effects.hs` 接口。
 
 | 你写的文件 | 内容 |
 | --- | --- |
