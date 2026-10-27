@@ -7,23 +7,30 @@ import Framework.Effect.Contract (EffectKind(..))
 import Framework.Effect.Registration
 import Framework.Codegen.Plan (GraphPlan(..))
 import qualified Framework.Effect.Graph as Graph
-import Data.Char (toUpper)
-import Data.List (intercalate, nub)
-import Data.Maybe (maybeToList)
+import Data.Char (isAlphaNum, isUpper, toUpper)
+import Data.List (intercalate, intersect, nub)
+import Data.Maybe (fromMaybe, listToMaybe, maybeToList)
 
 -- 3. 生成契约、superclass 和末端句柄登记。
 -- 不生成外部 request 流水线；上游方法由用户 instance 直接引用。
--- Input 保存操作能力；Context 经 request/require 接入，不重挂生产者的注册。
+-- Input 保存操作能力；Context 经 demands 按契约解析来源，消费方不指名生产者的类。
 data Entry = SingleTarget String | Workflow [String]
 
+-- 结构分析使用的取值路由：消费方类 → ((request|require, 契约名), 来源方法)；
+-- 以及 Context 的生产／读取方法，供拒绝跨 effect 直接调用。
+type DemandRoutes = ([(String, [((String, String), String)])], [(String, String)])
+
 lowerProgram :: String -> [EffectSpec] -> Entry
-             -> Either String (String, String, [(String, String, String)], String, GraphPlan String, [String])
+             -> Either String (String, String, [(String, String, String)], String, GraphPlan String, [String], DemandRoutes)
 lowerProgram namespace specifications entry = do
   if any ((== "Root") . name) specifications
     then Left "Root is reserved for the superclass"
     else pure ()
   mapM_ checkInput specifications
+  _ <- resolvedEither
+  mapM_ checkDemandNames specifications
   mapM_ checkError specifications
+  checkErrorOverlap
   mapM_ (contextNames specifications . pure . name) specifications
   if null selected
     then Left "Select at least one terminal effect for generation"
@@ -55,17 +62,49 @@ lowerProgram namespace specifications entry = do
         ]
     Workflow _ -> pure []
   pure
-    ( unlines (contractHeader ++ runtimeAliases ++ methodIdentities ++ concat declarations ++ errorDeclaration ++ contextDeclarations)
+    ( unlines (contractHeader ++ runtimeAliases ++ methodIdentities ++ concat declarations
+        ++ providerDeclarations ++ errorDeclaration ++ contextDeclarations)
     , unlines (programHeader ++ registrationSnapshot ++ structureDeclarations ++ singleEntry ++ astInterpreter selectedMethods)
     , concatMap instanceWrappers specifications
     , scopeHandlers ++ scopeCleanups ++ errorHandlers
     , graphPlan
-    , nub ([reference contract | specification <- contextSpecs
-             , Context (Just Producer { produces = contract }) _ <- [typing specification]]
-        ++ [reference (sourceType source) | specification <- specifications
-             , source <- maybeToList (requestInput specification) ++ maybeToList (requireInput specification)])
+    , nub ([reference produced | specification <- contextSpecs
+             , Context (Just Producer { produces = produced }) _ <- [typing specification]]
+        ++ [reference (contract demand) | specification <- specifications, demand <- demands specification])
+    , (demandRoutes, contextMethods)
     )
   where
+    resolvedEither = mapM (\specification -> (,) (name specification) <$> resolveDemands specifications specification) specifications
+    resolvedTable = either (const []) id resolvedEither
+    resolvedOf selectedName = fromMaybe [] (lookup selectedName resolvedTable)
+    requestProviders specification =
+      nub [demandProvider resolved | resolved <- resolvedOf (name specification), demandAccess resolved == RequestAccess]
+    requireProviders specification =
+      nub [demandProvider resolved | resolved <- resolvedOf (name specification), demandAccess resolved == RequireAccess]
+    -- Scoped 至多 request 一个资源 Context；它就是该 scope 的资源来源。
+    requestSource = listToMaybe . requestProviders
+    producerMethod providerName = listToMaybe
+      [method | specification <- specifications, name specification == providerName
+              , Context (Just Producer { handler = method }) _ <- [typing specification]]
+    readerMethod providerName = listToMaybe
+      [method | specification <- specifications, name specification == providerName
+              , Context _ (Just method) <- [typing specification]]
+    sourceMethod resolved = case demandAccess resolved of
+      RequestAccess -> producerMethod (demandProvider resolved)
+      RequireAccess -> readerMethod (demandProvider resolved)
+    accessWord RequestAccess = "request"
+    accessWord RequireAccess = "require"
+    demandRoutes =
+      [ (name specification ++ "Effect",
+          [ ((accessWord (demandAccess resolved), contractName (demandContract resolved)), method)
+          | resolved <- resolvedOf (name specification), Just method <- [sourceMethod resolved] ])
+      | specification <- specifications ]
+    contextMethods =
+      [ (name specification ++ "Effect", method)
+      | specification <- contextSpecs
+      , method <- maybeToList (entryMethod (typing specification))
+          ++ (case typing specification of Context _ reading -> maybeToList reading; _ -> []) ]
+
     selected = case entry of
       SingleTarget terminal -> [terminal]
       Workflow terminals -> nub terminals
@@ -117,20 +156,15 @@ lowerProgram namespace specifications entry = do
       Scoped opening _ -> if Just method == opening then Graph.ScopeOpen else Graph.ScopeClose
       Context producing _ -> if fmap (\Producer { handler = selectedMethod } -> selectedMethod) producing == Just method
         then Graph.ContextRequest else Graph.ContextRequire
-      Error detecting _ -> if Just method == detecting then Graph.ErrorDetect else Graph.ErrorResolve
+      Error { detect = detecting } -> if Just method == detecting then Graph.ErrorDetect else Graph.ErrorResolve
       _ -> Graph.HandlerMethod
     graphPlan = GraphPlan
       { planDefinitions =
           [ Graph.MethodDefinition method firstMethod (methodRole specification method) Graph.Empty
           | (specification, method) <- concatMap registeredMethods specifications
           , (_, firstMethod) : _ <- [registeredMethods specification] ]
-      , planRoutes =
-          [ (consumerMethod, producing, reading)
-          | (consumer, consumerMethod) <- concatMap registeredMethods specifications
-          , Just dependency <- [requireInput consumer]
-          , fmap sourceName (requestInput consumer) /= Just (sourceName dependency)
-          , producer <- specifications, name producer == sourceName dependency
-          , Context (Just Producer { handler = producing }) (Just reading) <- [typing producer] ]
+      -- require @T 在结构分析时已直接解析为来源的读取方法，不再需要按消费者改写生产调用。
+      , planRoutes = []
       , planScopes =
           [ (opening, selectedScope, scopeRegistrationParents specification)
           | selectedScope <- orderedScopes
@@ -161,14 +195,43 @@ lowerProgram namespace specifications entry = do
       , "-- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。"
       , "module " ++ namespace ++ ".Generated.Program where"
       , ""
-      , "import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), TypeRef(..), Output)"
+      , "import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), Handles(..), Demand(..), Access(..), TypeRef(..), Output)"
       , "import qualified Framework.SDK as SDK"
       , "import qualified Framework.Effect.Contract as FrameworkRoot"
-      , "import " ++ namespace ++ ".Generated.Effects"
+      , "import " ++ namespace ++ ".Generated.Effects hiding (request, require)"
       , "import qualified " ++ namespace ++ ".Generated.Handlers as Handlers"
       , "import " ++ namespace ++ ".Types"
       , ""
       ]
+    -- 消费方以契约取值；生成的 instance 按当前消费者分派到 demands 解析出的来源方法。
+    providerDeclarations =
+      [ "-- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。"
+      , "class Provides contract m where"
+      , "  request :: m contract"
+      , "  require :: m contract"
+      , ""
+      ] ++ concat
+      -- instance 固定在本程序的载体上：泛型 handler 的推导约束不会被化简成具体生产方的类。
+      -- 生产方类的 instance 位于 Handlers，因此以无变量上下文延迟到使用处求解。
+      [ [ "instance (" ++ intercalate ", " [provider ++ "Effect " ++ carrierType | provider <- providers] ++ ") => Provides "
+            ++ contractType ++ " " ++ carrierType ++ " where"
+        , "  request = SDK.provideContext " ++ show contractType ++ " ContextBindingError " ++ routeList RequestAccess
+        , "  require = SDK.provideContext " ++ show contractType ++ " ContextBindingError " ++ routeList RequireAccess
+        , "" ]
+      | demanded <- nub [demandContract resolved | (_, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands]
+      , let contractType = reference demanded
+            routes selectedAccess =
+              [ (consumer, method)
+              | (consumer, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands
+              , demandContract resolved == demanded, demandAccess resolved == selectedAccess
+              , Just method <- [sourceMethod resolved] ]
+            providers = nub [demandProvider resolved | (_, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands
+              , demandContract resolved == demanded]
+            routeList selectedAccess = "[" ++ intercalate ", "
+              ["(" ++ show consumer ++ ", " ++ method ++ ")" | (consumer, method) <- routes selectedAccess] ++ "]" ]
+
+    carrierType = if isWorkflow then "App" else "Pure"
+
     runtimeAliases =
       [ "-- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。"
       , "type Root = SDK.Root ContextValues Errors"
@@ -224,17 +287,17 @@ lowerProgram namespace specifications entry = do
       , Just access <- [accessFor consumer] ] ++ "]"
       where
         accessFor consumer
-          | fmap sourceName (requestInput consumer) == Just selectedName = Just "RequestValue"
-          | fmap sourceName (requireInput consumer) == Just selectedName = Just "RequireValue"
+          | selectedName `elem` requestProviders consumer = Just "RequestValue"
+          | selectedName `elem` requireProviders consumer = Just "RequireValue"
           | otherwise = Nothing
 
     errorMethods specification = case typing specification of
-      Error detecting resolving -> maybeToList detecting ++ maybeToList resolving
+      Error { detect = detecting, resolve = resolving } -> maybeToList detecting ++ maybeToList resolving
       _ -> []
 
     -- 同时保留原 Input 和 request 生产链；从 Root 方向向下，先原 Input 再 request。
     -- 共享祖先按身份去重；require 不启动生产链。
-    operationInputs specification = nub (input specification : maybeToList (requestSource specification))
+    operationInputs specification = nub (input specification : requestProviders specification)
     upstreamScopes specification = nub (concatMap (scopeNames []) (operationInputs specification))
     -- App/IO 的 withErrorPath 只接收关联种子；祖先和 top-down 顺序由同一 ScopeTree 决定。
     -- Pure 尚未安装 ScopeTree，继续保留原来的完整候选名单。
@@ -264,14 +327,14 @@ lowerProgram namespace specifications entry = do
       (upstreamScopes specification ++
         [name owner
         | source <- requiredSources [] (name specification)
-        , Just source /= requestSource specification
+        , source `notElem` requestProviders specification
         , owner <- specifications
         , Scoped (Just _) _ <- [typing owner]
         , requestSource owner == Just source])
     requiredSources seen selectedName
       | selectedName `elem` seen = []
       | otherwise = nub $ concat
-          [ let required = map sourceName (maybeToList (requireInput specification))
+          [ let required = requireProviders specification
             in required ++ concatMap (requiredSources (selectedName : seen))
               (operationInputs specification ++ required)
           | specification <- specifications, name specification == selectedName ]
@@ -282,8 +345,8 @@ lowerProgram namespace specifications entry = do
     valueInputs seen selectedName
       | selectedName `elem` seen = []
       | otherwise = concat
-          [ let requested = map sourceName (maybeToList (requestInput producer))
-                required = map sourceName (maybeToList (requireInput producer))
+          [ let requested = requestProviders producer
+                required = requireProviders producer
             -- require 只观察缓存值，不要求重现其生产时的输入；request 才继续生产链。
             in requested ++ required ++ concatMap (valueInputs (selectedName : seen)) requested
           | producer <- specifications, name producer == selectedName ]
@@ -303,17 +366,10 @@ lowerProgram namespace specifications entry = do
     findHandler effectName = do
       specification <- findEffect effectName
       case typing specification of
-        Error _ _ -> Left ("Error methods are activated by the Root failure protocol, not a Node target: " ++ effectName)
+        Error {} -> Left ("Error methods are activated by the Root failure protocol, not a Node target: " ++ effectName)
         _ -> case entryMethod (typing specification) of
           Just method -> Right method
           Nothing -> Left ("Effect has no callable entry (handler/open/Context.request = Nothing): " ++ effectName)
-
-    -- 业务取值只引用 Context；Input 仍只注入句柄，不暗含业务产物。
-    findRequest effectName = do
-      specification <- findEffect effectName
-      case typing specification of
-        Context _ _ -> findHandler effectName
-        _ -> Left ("request must reference a Context effect: " ++ effectName)
 
     -- 此限制只针对手写 Input。生成的 superclass 仍包含声明的 Context 能力。
     checkInput specification
@@ -325,19 +381,55 @@ lowerProgram namespace specifications entry = do
               ++ " in " ++ name specification ++ "; declare context.request or context.require instead")
             _ -> Right ()
 
-    -- Error 直接继承目标 Scoped；自动路由每份 scope 只安装一项策略。
+    -- 调用点写作 request @T / require @T；契约须是可直接书写的类型名。
+    checkDemandNames specification = do
+      mapM_ (\demand -> if validTypeName (contractName (contract demand)) then Right ()
+          else Left ("Demanded contract must be a named type (use a newtype or a role): "
+            ++ contractName (contract demand) ++ " in " ++ name specification)) (demands specification)
+      case typing specification of
+        Scoped _ _ | length (requestProviders specification) > 1 ->
+          Left ("Scoped requests at most one resource Context: " ++ name specification)
+        _ -> pure ()
+
+    validTypeName selected = case selected of
+      first : rest -> isUpper first && all (\character -> isAlphaNum character || character `elem` "_'") rest
+      [] -> False
+
+    -- Error 按 handles 匹配故障；关联 scope 沿 Input/request 推导，至多一个。
     checkError specification = case typing specification of
-      Error _ _ -> do
-        predecessor <- findEffect (input specification)
-        case typing predecessor of
-          Scoped _ _ -> pure ()
-          _ -> Left ("Error.input must reference a Scoped effect: " ++ name specification)
-        case [name candidate | candidate <- specifications
-              , effectKind (typing candidate) == ErrorKind
-              , input candidate == input specification] of
-          [_] -> pure ()
-          _ -> Left ("Multiple Error policies for scope: " ++ input specification)
+      Error { handles = matched } -> do
+        if null matched
+          then Left ("Error must declare the failures it handles: " ++ name specification) else pure ()
+        mapM_ checkHandled matched
+        case errorScopes specification of
+          (_ : _ : _) -> Left ("Error capability reaches several nearest scopes; narrow its input: " ++ name specification)
+          _ -> pure ()
       _ -> pure ()
+      where
+        checkHandled (RaisedBy selected) = findEffect selected >> pure ()
+        checkHandled (ScopeFaultIn selected) = findEffect selected >>= \target -> case typing target of
+          Scoped _ _ -> pure ()
+          _ -> Left ("ScopeFaultIn must name a Scoped effect: " ++ selected)
+        checkHandled (ContextFaultIn selected) = findEffect selected >>= \target -> case typing target of
+          Context _ _ -> pure ()
+          _ -> Left ("ContextFaultIn must name a Context effect: " ++ selected)
+
+    errorScopes specification = nub (concatMap (nearestScopeNames [name specification]) (operationInputs specification))
+
+    -- 同一 scope（或同为全局）下，同一故障类型只能有一个处置，避免多个 resolve 互相冲突。
+    checkErrorOverlap =
+      case [ (name left, name right)
+           | (index, left) <- zip [0 :: Int ..] errorSpecs, right <- drop (index + 1) errorSpecs
+           , errorScopes left == errorScopes right
+           , not (null (handledBy left `intersect` handledBy right)) ] of
+        [] -> Right ()
+        (left, right) : _ -> Left ("Error policies " ++ left ++ " and " ++ right ++ " handle the same failure for the same scope")
+      where
+        errorSpecs = [specification | specification <- specifications, effectKind (typing specification) == ErrorKind]
+
+    handledBy specification = case typing specification of
+      Error { handles = matched } -> matched
+      _ -> []
 
     -- 被 Input 后端复用的 scope 仍须提供完整开启／关闭协议。
     checkScope effectName = do
@@ -356,7 +448,6 @@ lowerProgram namespace specifications entry = do
       _ -> Right (TypeRef "()")
 
     declaration specification = do
-      mapM_ findRequest (requestSource specification)
       valueType <- valueContract specification
       _ <- contextNames specifications [name specification]
       mapM_ checkScope (upstreamScopes specification)
@@ -367,11 +458,9 @@ lowerProgram namespace specifications entry = do
       let effectName = name specification
           typeName = "'SDK." ++ show (effectKind (typing specification))
           upstream = input specification
-          dependencies = maybeToList (requestInput specification) ++ maybeToList (requireInput specification)
+          -- 依值只经 Provides 契约进入 superclass；来源由解析结果在 Provides instance 中连接。
           superclasses = nub (("Effect " ++ upstream ++ " m") :
-            ["Effect " ++ sourceName dependency ++ " m" | dependency <- dependencies] ++
-            ["Produce " ++ sourceName dependency ++ " ~ ("
-              ++ reference (sourceType dependency) ++ ")" | dependency <- dependencies])
+            ["Provides " ++ reference (contract demand) ++ " m" | demand <- demands specification])
           ordinaryMethods =
             [ (method, case effectKind (typing specification) of
                 PureKind -> "m ()"
@@ -400,9 +489,9 @@ lowerProgram namespace specifications entry = do
           minimalLines = case methods of
             [] -> []
             _ -> ["  {-# MINIMAL " ++ intercalate ", " (map fst methods) ++ " #-}"]
-          -- 消费契约由 context 的两种取值声明组成；双输入按 request、require 排列。
+          -- 消费契约按 demands 的声明顺序组成；多个输入排为元组。
           -- 原生 <- 在方法体内取得声明的输入；不向业务方法增加位置参数。
-          requireType = case map (reference . sourceType) dependencies of
+          requireType = case nub (map (reference . contract) (demands specification)) of
             [] -> "SDK.Void"
             [contract] -> contract
             contracts -> "(" ++ intercalate ", " contracts ++ ")"
@@ -492,11 +581,11 @@ lowerProgram namespace specifications entry = do
           , specification <- specifications, name specification == selectedScope
           , Scoped _ (Just closing) <- [typing specification] ]
 
-    -- 只保存类方法引用；安装时不检测、不处置，也不执行上游业务。
+    -- 只保存匹配函数与类方法引用；安装时不检测、不处置，也不执行上游业务。
     errorHandlers = unlines
       [ ""
-      , "-- Error 回调登记；记录 scope 对应的 detect/resolve，不在此执行检测。"
-      , "errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated." ++ carrier ++ ")]"
+      , "-- Error 回调登记：按 handles 匹配故障来源与分类；关联 scope 由 Input 链推导。"
+      , "errorHandlers :: [(Maybe String, FrameworkRoot.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated." ++ carrier ++ ")]"
       , "errorHandlers ="
       , "  [" ++ if null callbacks then "" else " " ++ intercalate "\n  , " callbacks
       , "  ]"
@@ -504,12 +593,16 @@ lowerProgram namespace specifications entry = do
       where
         carrier = if isWorkflow then "App" else "Pure"
         callbacks =
-          [ "(" ++ show selectedScope ++ ", FrameworkRoot.ErrorHandler " ++ show (name specification)
-              ++ " (" ++ methodReference detecting ++ ") (" ++ methodReference resolving ++ "))"
-          | selectedScope <- orderedScopes
-          , specification <- specifications
-          , input specification == selectedScope
-          , Error detecting resolving <- [typing specification] ]
+          [ "(" ++ show (listToMaybe (errorScopes specification)) ++ ", FrameworkRoot.ErrorHandler " ++ show (name specification)
+              ++ "\n      (\\failure -> case (FrameworkRoot.origin failure, FrameworkRoot.detail failure) of"
+              ++ concatMap (("\n        " ++) . matchCase) (nub matched)
+              ++ "\n        _ -> False)"
+              ++ "\n      (" ++ methodReference detecting ++ ") (" ++ methodReference resolving ++ "))"
+          | specification <- specifications
+          , Error { detect = detecting, resolve = resolving, handles = matched } <- [typing specification] ]
+        matchCase (RaisedBy selected) = "(_, FrameworkGenerated." ++ selected ++ "Failure) -> True"
+        matchCase (ScopeFaultIn selected) = "(" ++ show selected ++ ", FrameworkGenerated.ScopeBindingError _) -> True"
+        matchCase (ContextFaultIn selected) = "(" ++ show selected ++ ", FrameworkGenerated.ContextBindingError _) -> True"
         methodReference Nothing = "Nothing"
         methodReference (Just method) = "Just " ++ method
 

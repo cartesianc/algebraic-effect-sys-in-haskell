@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Werror=missing-methods #-}
@@ -66,7 +67,7 @@ instance FileResourceEffect App where
       (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
       let
         acquireFile = do
-          FileName path <- getFileName
+          FileName path <- require @FileName
           let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
           outcome <- liftIO $ tryIOError $
             bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
@@ -81,7 +82,7 @@ instance FileSessionEffect App where
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         openFileSession = do
-          OpenedFile path _ <- acquireFile
+          OpenedFile path _ <- request @OpenedFile
           let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
           liftIO (appendFile journal ("open " ++ path ++ "\n"))
       in openFileSession
@@ -89,7 +90,7 @@ instance FileSessionEffect App where
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         closeFileSession = do
-          OpenedFile path file <- readOpenedFile
+          OpenedFile path file <- require @OpenedFile
           let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
           liftIO $ do
             hClose file
@@ -106,19 +107,19 @@ instance CheckIndependentEffect App where
               secondFile = outputDirectory </> "two.txt"
               selection = outputDirectory </> "selected.txt"
           liftIO (writeFile selection firstFile)
-          _ <- getFileName
+          _ <- request @FileName
           openFileSession
-          OpenedFile pathA fileA <- readOpenedFile
+          OpenedFile pathA fileA <- require @OpenedFile
           openFileSession
-          OpenedFile pathA' fileA' <- readOpenedFile
+          OpenedFile pathA' fileA' <- require @OpenedFile
           unless (pathA == firstFile && pathA' == firstFile && fileA == fileA') $
             raise (CheckIndependentError "Equal arguments did not reuse the same Handle")
           liftIO (putStrLn "[check] equal opening values reuse the same file Handle")
         
           liftIO (writeFile selection secondFile)
-          _ <- getFileName
+          _ <- request @FileName
           openFileSession
-          OpenedFile pathB fileB <- readOpenedFile
+          OpenedFile pathB fileB <- require @OpenedFile
           unless (pathB == secondFile && fileA /= fileB) $
             raise (CheckIndependentError "Different opening values did not select independent files")
           liftIO $ do
@@ -146,9 +147,9 @@ instance CheckReopenEffect App where
               selection = outputDirectory </> "selected.txt"
               journal = outputDirectory </> "events.txt"
           liftIO (writeFile selection firstFile)
-          _ <- getFileName
+          _ <- request @FileName
           openFileSession
-          OpenedFile pathA fileA <- readOpenedFile
+          OpenedFile pathA fileA <- require @OpenedFile
           events <- liftIO (lines <$> readFile' journal)
           unless (pathA == firstFile && length (filter (== "acquire " ++ firstFile) events) == 2) $
             raise (CheckReopenError "The next chain did not reopen the first file")
@@ -158,9 +159,9 @@ instance CheckReopenEffect App where
           liftIO (putStrLn "[check] another Node explicitly reopens file 1 after the previous chain ended")
         
           liftIO (writeFile selection secondFile)
-          _ <- getFileName
+          _ <- request @FileName
           openFileSession
-          OpenedFile pathB fileB <- readOpenedFile
+          OpenedFile pathB fileB <- require @OpenedFile
           closedB <- liftIO (hIsClosed fileB)
           unless (pathB == secondFile && not closedB) $
             raise (CheckReopenError "Opening a closed instance did not obtain a live file")
@@ -184,7 +185,7 @@ instance CheckReopenEffect App where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "53ecf9cf05c986909f0399280e9cfa36"
+handlerSourceFingerprint = Just "b673bdb8d17c7c8d415ea00255ee3ba1"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -199,8 +200,8 @@ scopeCleanups =
   [ ("FileSession", closeFileSession)
   ]
 
--- Error 回调登记；记录 scope 对应的 detect/resolve，不在此执行检测。
-errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated.App)]
+-- Error 回调登记：按 handles 匹配故障来源与分类；关联 scope 由 Input 链推导。
+errorHandlers :: [(Maybe String, FrameworkRoot.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
 errorHandlers =
   [
   ]

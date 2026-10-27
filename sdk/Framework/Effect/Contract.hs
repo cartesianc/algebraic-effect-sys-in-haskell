@@ -108,28 +108,32 @@ instance (Monad m, ContextStore environment m, ScopeStore cause m, ErrorStore ca
   handler = handleFailure
 
 -- 回调由生成区装配；不让 Root 的 superclass 反向依赖业务 Error 类。
-data ErrorHandler m = ErrorHandler String (Maybe (m ())) (Maybe (m ()))
+-- 匹配函数由注册的 handles 生成，只读取 Failure 的来源与分类，不解释业务消息。
+data ErrorHandler cause m = ErrorHandler String (Failure cause -> Bool) (Maybe (m ())) (Maybe (m ()))
 
+-- 回调表的键是推导出的关联 scope；Nothing 表示不定位 scope 实例的全局处置。
 class Monad m => ErrorStore cause m | m -> cause where
-  withErrorHandlers :: [(String, ErrorHandler m)] -> m value -> m value
+  withErrorHandlers :: [(Maybe String, ErrorHandler cause m)] -> m value -> m value
   withErrorPath :: [String] -> m value -> m value
   handleFailure :: m value -> m value
   caughtFailure :: m (Maybe (Failure cause))
 
 data ErrorReport cause = ErrorReport
-  { reportScope :: String
+  { reportScope :: Maybe String
   , reportEffect :: String
   , detectResult :: Maybe (Output cause ())
   , resolveResult :: Maybe (Output cause ())
   } deriving (Eq, Show)
 
--- detect 与 Excu 使用相同的完成协议：Succ 确认归属，Failed 未能确认。
+-- 类型匹配已完成粗定位；detect 只作可选的值级细化：未注册 detect 时直接 resolve，
+-- detect 返回 Succ 才 resolve，Failed 表示不归此处。
 -- 每次检测/处置的失败只进入报告，不能覆盖原始故障或递归激活自身。
 runErrorHandler :: MonadError (Failure cause) m
-                => String -> ErrorHandler m -> m (ErrorReport cause)
-runErrorHandler selected (ErrorHandler name detecting resolving) = do
+                => Maybe String -> ErrorHandler cause m -> m (ErrorReport cause)
+runErrorHandler selected (ErrorHandler name _ detecting resolving) = do
   detection <- traverse attempt detecting
   resolution <- case detection of
+    Nothing -> traverse attempt resolving
     Just (Succ ()) -> traverse attempt resolving
     _ -> pure Nothing
   pure (ErrorReport selected name detection resolution)

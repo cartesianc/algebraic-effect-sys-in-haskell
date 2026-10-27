@@ -31,7 +31,7 @@ data Environment env cause = Environment
   , contexts :: [String]
   , openings :: [Opening env cause]
   , closings :: [Closing env cause]
-  , errorHandlers :: [(String, ErrorHandler (App env cause))]
+  , errorHandlers :: [(Maybe String, ErrorHandler cause (App env cause))]
   , errorPath :: [String]
   , originalFailure :: Maybe (Failure cause)
   , diagnosticOwner :: Maybe (ScopeInstance env cause)
@@ -413,40 +413,50 @@ instance ErrorStore cause (App env cause) where
             else do
               path <- liftIO (scopeErrorPath (scopes environment) seeds)
               let traced = problem { scopeTrace = path }
-              reports <- forM
-                [(selected, callback) | selected <- path
-                                     , (associated, callback) <- errorHandlers environment
-                                     , associated == selected] $ \(selected, callback) ->
-                  liftIO (runDiagnostic environment traced selected callback)
+                  matching (ErrorHandler _ matches _ _) = matches traced
+                  -- 先按 handles 匹配故障类型；关联 scope 须在候选路径上，按父到子排序。
+                  -- 无关联 scope 的处置随后执行，不定位任何实例。
+                  located = [(Just selected, callback) | selected <- path
+                    , (Just associated, callback) <- errorHandlers environment
+                    , associated == selected, matching callback]
+                  unlocated = [(Nothing, callback) | (Nothing, callback) <- errorHandlers environment
+                    , matching callback]
+              reports <- forM (located ++ unlocated) $ \(selected, callback) ->
+                liftIO (runDiagnostic environment traced selected callback)
               throwError traced { errorHandling = Just reports }
 
 -- 检测/处置共享本次故障的绑定快照。失败的 scope 可在此受限上下文中被检查、清理；
 -- 不扫描其他实例，不修改业务调用已经捕获的值，也不重放业务 action。
-runDiagnostic :: Environment env cause -> Failure cause -> String -> ErrorHandler (App env cause)
+runDiagnostic :: Environment env cause -> Failure cause -> Maybe String -> ErrorHandler cause (App env cause)
               -> IO (ErrorReport cause)
 runDiagnostic environment problem selected callback = do
   captured <- readIORef (bindings environment)
-  let selectedFamily = findScope (scopes environment) selected
+  let selectedFamily = selected >>= findScope (scopes environment)
       capturedOwner = do
+        scopeLabel <- selected
         family <- selectedFamily
         value <- lookup (resourceSource family) captured
-        lookup selected (bindingOwners value)
-  owner <- case lookup selected (scopeTargets problem) of
-    Nothing -> pure capturedOwner
-    Just Nothing -> pure Nothing
-    Just (Just identity) -> do
-      registered <- case findScope (scopes environment) selected of
-        Nothing -> pure []
-        Just family -> readMVar (scopeInstances family)
-      let capturedSlots = concatMap (map snd . bindingOwners . snd) captured
-      pure (find ((== identity) . scopeIdentity) (capturedSlots ++ registered))
+        lookup scopeLabel (bindingOwners value)
+  owner <- case selected of
+    Nothing -> pure Nothing
+    Just scopeLabel -> case lookup scopeLabel (scopeTargets problem) of
+      Nothing -> pure capturedOwner
+      Just Nothing -> pure Nothing
+      Just (Just identity) -> do
+        registered <- case selectedFamily of
+          Nothing -> pure []
+          Just family -> readMVar (scopeInstances family)
+        let capturedSlots = concatMap (map snd . bindingOwners . snd) captured
+        pure (find ((== identity) . scopeIdentity) (capturedSlots ++ registered))
   saved <- maybe (pure []) (fmap scopeBindings . readIORef . scopeRecord) owner
-  let belongsElsewhere (source, value)
-        | Just source == (resourceSource <$> selectedFamily) =
-            not (maybe False (\slot -> belongsToScope selected slot value) owner)
-        | otherwise = case lookup selected (bindingOwners value) of
-            Nothing -> False
-            Just slot -> maybe True ((/= scopeRecord slot) . scopeRecord) owner
+  let belongsElsewhere (source, value) = case selected of
+        Nothing -> False
+        Just scopeLabel
+          | Just source == (resourceSource <$> selectedFamily) ->
+              not (maybe False (\slot -> belongsToScope scopeLabel slot value) owner)
+          | otherwise -> case lookup scopeLabel (bindingOwners value) of
+              Nothing -> False
+              Just slot -> maybe True ((/= scopeRecord slot) . scopeRecord) owner
       -- 开启 B 失败时，不能把其他 scope 或其他参数实例的旧资源当成 B。
       capturedHere = filter (not . belongsElsewhere) captured
       restored = foldr (\(source, value) values -> bind source value values) capturedHere saved
@@ -461,7 +471,7 @@ runDiagnostic environment problem selected callback = do
         case result of
           Right report -> pure report
           Left failure -> case callback of
-            ErrorHandler name _ _ -> pure (ErrorReport selected name (Just (Failed failure)) Nothing)
+            ErrorHandler name _ _ _ -> pure (ErrorReport selected name (Just (Failed failure)) Nothing)
   case owner of
     Nothing -> execute
     Just slot -> withMVar (scopeRecoveryGate slot) (const execute)

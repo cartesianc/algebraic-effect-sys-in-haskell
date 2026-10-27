@@ -48,7 +48,7 @@ instance (Monad m, Effect Root m, FileLocationEffect m) => Effect FileLocation m
 
 data ValidateFileName
 
-class (Effect Root m, Effect FileLocation m, Produce FileLocation ~ (FileName)) => ValidateFileNameEffect m where
+class (Effect Root m, Provides FileName m) => ValidateFileNameEffect m where
   validateFileName :: m ()
   {-# MINIMAL validateFileName #-}
 
@@ -62,7 +62,7 @@ instance (Monad m, Effect Root m, ValidateFileNameEffect m) => Effect ValidateFi
 
 data FileResource
 
-class (Effect ValidateFileName m, Effect FileLocation m, Produce FileLocation ~ (FileName)) => FileResourceEffect m where
+class (Effect ValidateFileName m, Provides FileName m) => FileResourceEffect m where
   acquireFile :: m (Produce FileResource)
   readOpenedFile :: m (Produce FileResource)
   readOpenedFile = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
@@ -80,7 +80,7 @@ instance (Monad m, Effect ValidateFileName m, FileResourceEffect m) => Effect Fi
 
 data FileSession
 
-class (Effect ValidateFileName m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => FileSessionEffect m where
+class (Effect ValidateFileName m, Provides OpenedFile m) => FileSessionEffect m where
   openFileSession :: m ()
   closeFileSession :: m ()
   {-# MINIMAL openFileSession, closeFileSession #-}
@@ -88,14 +88,14 @@ class (Effect ValidateFileName m, Effect FileResource m, Produce FileResource ~ 
 instance (Monad m, Effect ValidateFileName m, FileSessionEffect m) => Effect FileSession m where
   type Registration FileSession = Registered FileSessionEffect ValidateFileName
   type Typing FileSession = 'SDK.ScopedKind
-  type Require FileSession = (OpenedFile, OpenedFile)
+  type Require FileSession = OpenedFile
   type Error FileSession = FileSessionError
   raise (FileSessionError description) = SDK.failEffect "FileSession" FileSessionFailure description
   handler = FrameworkRoot.handler @Root
 
 data FileRecovery
 
-class (Effect FileSession m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => FileRecoveryEffect m where
+class (Effect FileSession m, Provides OpenedFile m) => FileRecoveryEffect m where
   detectFileSession :: m ()
   resolveFileSession :: m ()
   {-# MINIMAL detectFileSession, resolveFileSession #-}
@@ -110,7 +110,7 @@ instance (Monad m, Effect FileSession m, FileRecoveryEffect m) => Effect FileRec
 
 data ReadFile
 
-class (Effect FileSession m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => ReadFileEffect m where
+class (Effect FileSession m, Provides OpenedFile m) => ReadFileEffect m where
   readFileText :: m (Produce ReadFile)
   readLastFileText :: m (Produce ReadFile)
   readLastFileText = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @Root) $
@@ -128,7 +128,7 @@ instance (Monad m, Effect FileSession m, ReadFileEffect m) => Effect ReadFile m 
 
 data WriteFile
 
-class (Effect FileSession m, Effect ReadFile m, Effect FileResource m, Produce ReadFile ~ (FileText), Produce FileResource ~ (OpenedFile)) => WriteFileEffect m where
+class (Effect FileSession m, Provides FileText m, Provides OpenedFile m) => WriteFileEffect m where
   writeFileText :: m ()
   {-# MINIMAL writeFileText #-}
 
@@ -142,7 +142,7 @@ instance (Monad m, Effect FileSession m, WriteFileEffect m) => Effect WriteFile 
 
 data FileWorkflow
 
-class (Effect WriteFile m, Effect FileLocation m, Produce FileLocation ~ (FileName)) => FileWorkflowEffect m where
+class (Effect WriteFile m, Provides FileName m) => FileWorkflowEffect m where
   runFileWorkflow :: m ()
   {-# MINIMAL runFileWorkflow #-}
 
@@ -153,6 +153,23 @@ instance (Monad m, Effect WriteFile m, FileWorkflowEffect m) => Effect FileWorkf
   type Error FileWorkflow = FileWorkflowError
   raise (FileWorkflowError description) = SDK.failEffect "FileWorkflow" FileWorkflowFailure description
   handler = FrameworkRoot.handler @Root
+
+-- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。
+class Provides contract m where
+  request :: m contract
+  require :: m contract
+
+instance (FileLocationEffect App) => Provides FileName App where
+  request = SDK.provideContext "FileName" ContextBindingError [("FileWorkflow", getFileName)]
+  require = SDK.provideContext "FileName" ContextBindingError [("ValidateFileName", readFileName), ("FileResource", readFileName)]
+
+instance (FileResourceEffect App) => Provides OpenedFile App where
+  request = SDK.provideContext "OpenedFile" ContextBindingError [("FileSession", acquireFile)]
+  require = SDK.provideContext "OpenedFile" ContextBindingError [("FileSession", readOpenedFile), ("FileRecovery", readOpenedFile), ("ReadFile", readOpenedFile), ("WriteFile", readOpenedFile)]
+
+instance (ReadFileEffect App) => Provides FileText App where
+  request = SDK.provideContext "FileText" ContextBindingError [("WriteFile", readFileText)]
+  require = SDK.provideContext "FileText" ContextBindingError []
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
 newtype FileLocationError = FileLocationError String

@@ -3,110 +3,100 @@
 
 module Crawler.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), typeRef)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), requests, requires, typeRef)
 import Crawler.Types
 
 -- 1. Registered code：只有类型引用、分类和连接，没有 HTTP 或 HTML 实现。
--- typing 声明生产方方法名；context 内的 request / require 声明消费来源与接收 ADT。
+-- typing 声明生产方方法名；demands 声明需要的契约与取值模式，来源省略时唯一解析。
+-- 来源按类型唯一解析：起始页与链接页两条链的 URL、抓取结果和摘要
+-- 各用 Types.hs 中不同的 newtype，因此无需指名生产方。
 -- instance 显式调用 open；无开启输入的 scope 在实际重叠的使用闭包之间共享。
 -- 普通 effect 成功值固定为 ()；业务产值统一由 Context 提供，失败仍用 raise。
-
-
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
-      { name = "CrawlerContext"
+      { name = "StartPage"
       , typing = Context
           { request = Just Producer
-              { handler = "loadCrawlURLs"
-              , produces = typeRef @CrawlURLs
+              { handler = "loadStartURL"
+              , produces = typeRef @StartURL
               }
-          , require = Just "readCrawlURLs"
+          , require = Just "readStartURL"
           }
       , input = "CrawlSession"
-      , context = Nothing
+      , demands = []
       }
-
-
-
+  , EffectSpec
+      { name = "LinkedPage"
+      , typing = Context
+          { request = Just Producer
+              { handler = "loadLinkedURL"
+              , produces = typeRef @LinkedURL
+              }
+          , require = Just "readLinkedURL"
+          }
+      , input = "CrawlSession"
+      , demands = []
+      }
   , EffectSpec
       { name = "FetchPage"
       , typing = Context
           { request = Just Producer
               { handler = "fetchPage"
-              , produces = typeRef @FetchedPage
+              , produces = typeRef @StartFetchedPage
               }
           , require = Just "readFetchedPage"
           }
       , input = "CrawlSession"
-      , context = Just ContextInput
-          { request = Just (From "CrawlerContext" (typeRef @CrawlURLs))
-          , require = Just (From "SessionContext" (typeRef @CrawlSessionInfo))
-          }
+      , demands = [requests @StartURL, requires @CrawlSessionInfo]
       }
-
   , EffectSpec
       { name = "ExtractPage"
       , typing = Context
           { request = Just Producer
               { handler = "extractPage"
-              , produces = typeRef @PageSummary
+              , produces = typeRef @StartPageSummary
               }
           , require = Just "readPageSummary"
           }
       , input = "CrawlSession"
-      , context = Just ContextInput
-          { request = Just (From "FetchPage" (typeRef @FetchedPage))
-          , require = Nothing
-          }
+      , demands = [requests @StartFetchedPage]
       }
   , EffectSpec
       { name = "PrintPage"
       , typing = Excu { handler = Just "printPage" }
       , input = "CrawlSession"
-      , context = Just ContextInput
-          { request = Just (From "ExtractPage" (typeRef @PageSummary))
-          , require = Nothing
-          }
+      , demands = [requests @StartPageSummary]
       }
   , EffectSpec
       { name = "FetchLinkedPage"
       , typing = Context
           { request = Just Producer
               { handler = "fetchLinkedPage"
-              , produces = typeRef @FetchedPage
+              , produces = typeRef @LinkedFetchedPage
               }
           , require = Just "readFetchedLinkedPage"
           }
       , input = "CrawlSession"
-      , context = Just ContextInput
-          { request = Just (From "CrawlerContext" (typeRef @CrawlURLs))
-          , require = Just (From "SessionContext" (typeRef @CrawlSessionInfo))
-          }
+      , demands = [requests @LinkedURL, requires @CrawlSessionInfo]
       }
   , EffectSpec
       { name = "ExtractLinkedPage"
       , typing = Context
           { request = Just Producer
               { handler = "extractLinkedPage"
-              , produces = typeRef @PageSummary
+              , produces = typeRef @LinkedPageSummary
               }
           , require = Just "readLinkedPageSummary"
           }
       , input = "CrawlSession"
-      , context = Just ContextInput
-          { request = Just (From "FetchLinkedPage" (typeRef @FetchedPage))
-          , require = Nothing
-          }
+      , demands = [requests @LinkedFetchedPage]
       }
   , EffectSpec
       { name = "PrintLinkedPage"
       , typing = Excu { handler = Just "printLinkedPage" }
       , input = "CrawlSession"
-      , context = Just ContextInput
-          { request = Just (From "ExtractLinkedPage" (typeRef @PageSummary))
-          , require = Nothing
-          }
+      , demands = [requests @LinkedPageSummary]
       }
   -- 信息由上游 Context 提供；Scope 只描述开启／关闭和持存状态。
   , EffectSpec
@@ -119,7 +109,7 @@ effects =
           , require = Just "readCrawlSession"
           }
       , input = "Root"
-      , context = Nothing
+      , demands = []
       }
   , EffectSpec
       { name = "CrawlSession"
@@ -128,9 +118,6 @@ effects =
           , close = Just "closeCrawlSession"
           }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Just (From "SessionContext" (typeRef @CrawlSessionInfo))
-          , require = Just (From "SessionContext" (typeRef @CrawlSessionInfo))
-          }
+      , demands = [requests @CrawlSessionInfo, requires @CrawlSessionInfo]
       }
   ]

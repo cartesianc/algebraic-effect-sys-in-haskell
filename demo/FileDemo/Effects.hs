@@ -3,13 +3,14 @@
 
 module FileDemo.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), typeRef)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), Handles(..), requests, requires, typeRef)
 import FileDemo.Types
 
 -- 注册只描述分类、方法和依赖；文件 IO 与上游方法引用在 Handlers.hs。
 -- Context：生产／读取业务值。Pure：无产值的纯检查。Excu：无产值的操作。
 -- Scoped：同一个 class 的 open／close 都是 m ()，SDK 保存生命周期状态。
--- Error：继承要检查的 scope；Root 在故障时调用 detect，定位成功后调用 resolve。
+-- demands 只写需要的契约；每个契约只有一个生产方，来源由生成器唯一解析。
+-- Error：handles 声明处理的故障类型；作用的 scope 由 Input 链上最近的 Scoped 推导。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
@@ -20,16 +21,13 @@ effects =
           , require = Just "readFileName"
           }
       , input = "Root"
-      , context = Nothing
+      , demands = []
       }
   , EffectSpec
       { name = "ValidateFileName"
       , typing = Pure { handler = Just "validateFileName" }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Nothing
-          , require = Just (From "FileLocation" (typeRef @FileName))
-          }
+      , demands = [requires @FileName]
       }
   , EffectSpec
       { name = "FileResource"
@@ -39,30 +37,23 @@ effects =
           , require = Just "readOpenedFile"
           }
       , input = "ValidateFileName"
-      , context = Just ContextInput
-          { request = Nothing
-          , require = Just (From "FileLocation" (typeRef @FileName))
-          }
+      , demands = [requires @FileName]
       }
   , EffectSpec
       { name = "FileSession"
       , typing = Scoped
           { open = Just "openFileSession", close = Just "closeFileSession" }
       , input = "ValidateFileName"
-      , context = Just ContextInput
-          { request = Just (From "FileResource" (typeRef @OpenedFile))
-          , require = Just (From "FileResource" (typeRef @OpenedFile))
-          }
+      , demands = [requests @OpenedFile, requires @OpenedFile]
       }
   , EffectSpec
       { name = "FileRecovery"
       , typing = Error
-          { detect = Just "detectFileSession", resolve = Just "resolveFileSession" }
-      , input = "FileSession"
-      , context = Just ContextInput
-          { request = Nothing
-          , require = Just (From "FileResource" (typeRef @OpenedFile))
+          { detect = Just "detectFileSession", resolve = Just "resolveFileSession"
+          , handles = [RaisedBy "ReadFile", RaisedBy "WriteFile"]
           }
+      , input = "FileSession"
+      , demands = [requires @OpenedFile]
       }
   , EffectSpec
       { name = "ReadFile"
@@ -72,27 +63,18 @@ effects =
           , require = Just "readLastFileText"
           }
       , input = "FileSession"
-      , context = Just ContextInput
-          { request = Nothing
-          , require = Just (From "FileResource" (typeRef @OpenedFile))
-          }
+      , demands = [requires @OpenedFile]
       }
   , EffectSpec
       { name = "WriteFile"
       , typing = Excu { handler = Just "writeFileText" }
       , input = "FileSession"
-      , context = Just ContextInput
-          { request = Just (From "ReadFile" (typeRef @FileText))
-          , require = Just (From "FileResource" (typeRef @OpenedFile))
-          }
+      , demands = [requests @FileText, requires @OpenedFile]
       }
   , EffectSpec
       { name = "FileWorkflow"
       , typing = Excu { handler = Just "runFileWorkflow" }
       , input = "WriteFile"
-      , context = Just ContextInput
-          { request = Just (From "FileLocation" (typeRef @FileName))
-          , require = Nothing
-          }
+      , demands = [requests @FileName]
       }
   ]

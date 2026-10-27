@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -45,7 +46,7 @@ instance ValidateFileNameEffect App where
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ValidateFileName") $
       let
         validateFileName = do
-          FileName path <- getFileName
+          FileName path <- require @FileName
           unless (not (null path) && '\0' `notElem` path) $
             raise (ValidateFileNameError "File name must be nonempty and contain no NUL character")
       in validateFileName
@@ -60,7 +61,7 @@ instance FileResourceEffect App where
       let
         acquireFile = do
           validateFileName
-          FileName path <- readFileName
+          FileName path <- require @FileName
           outcome <- liftIO $ tryIOError $
             bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
               hSetEncoding file utf8
@@ -75,7 +76,7 @@ instance FileSessionEffect App where
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         openFileSession = do
-          _ <- acquireFile
+          _ <- request @OpenedFile
           pure ()
       in openFileSession
 
@@ -83,7 +84,7 @@ instance FileSessionEffect App where
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         closeFileSession = do
-          OpenedFile path file <- readOpenedFile
+          OpenedFile path file <- require @OpenedFile
           outcome <- liftIO (tryIOError (hClose file))
           either (raise . FileSessionError . displayException) pure outcome
           liftIO (putStrLn ("[close] " ++ path))
@@ -100,7 +101,7 @@ instance ReadFileEffect App where
         readFileText = do
           -- 末端也会引用 open；SDK 跳过同份已开启 scope 的方法体。
           openFileSession
-          OpenedFile _ file <- readOpenedFile
+          OpenedFile _ file <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
             hSeek file AbsoluteSeek 0
             -- 读完仍保留当前 Handle，供同一链随后写入；不使用会关闭它的 hGetContents。
@@ -117,10 +118,10 @@ instance FileRecoveryEffect App where
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileRecovery") $
       let
         detectFileSession = do
-          OpenedFile _ file <- readOpenedFile
+          OpenedFile _ file <- require @OpenedFile
           outcome <- liftIO (tryIOError (hIsClosed file))
           closed <- either (raise . FileRecoveryError . displayException) pure outcome
-          -- 返回 () 表示已定位：文件已关闭；仍打开则不能把原故障归到此条件。
+          -- handles 已按故障类型粗定位；detect 只做值级细化：文件已关闭才归此处。
           unless closed $
             raise (FileRecoveryError "File handle is still open; failure not located in FileSession")
       in detectFileSession
@@ -137,8 +138,8 @@ instance WriteFileEffect App where
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "WriteFile") $
       let
         writeFileText = do
-          FileText contents <- readFileText
-          OpenedFile path file <- readOpenedFile
+          FileText contents <- request @FileText
+          OpenedFile path file <- require @OpenedFile
           -- 明确消费刚读出的文本；只追加，不截断已有内容。
           let line = "file-demo: read " ++ show (length contents) ++ " characters before this append.\n"
           outcome <- liftIO $ tryIOError $ do
@@ -156,7 +157,7 @@ instance FileWorkflowEffect App where
       let
         runFileWorkflow = do
           -- 本条链先取得稳定参数；校验和 scope 开启都 require 这份绑定。
-          _ <- getFileName
+          _ <- request @FileName
           openFileSession
           writeFileText
       in runFileWorkflow
@@ -164,7 +165,7 @@ instance FileWorkflowEffect App where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "1257c4ec3d54389ffbb80fcdc84c03d1"
+handlerSourceFingerprint = Just "8ad7e97306f79a0626f3a2705830eb39"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -179,8 +180,13 @@ scopeCleanups =
   [ ("FileSession", closeFileSession)
   ]
 
--- Error 回调登记；记录 scope 对应的 detect/resolve，不在此执行检测。
-errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated.App)]
+-- Error 回调登记：按 handles 匹配故障来源与分类；关联 scope 由 Input 链推导。
+errorHandlers :: [(Maybe String, FrameworkRoot.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
 errorHandlers =
-  [ ("FileSession", FrameworkRoot.ErrorHandler "FileRecovery" (Just detectFileSession) (Just resolveFileSession))
+  [ (Just "FileSession", FrameworkRoot.ErrorHandler "FileRecovery"
+      (\failure -> case (FrameworkRoot.origin failure, FrameworkRoot.detail failure) of
+        (_, FrameworkGenerated.ReadFileFailure) -> True
+        (_, FrameworkGenerated.WriteFileFailure) -> True
+        _ -> False)
+      (Just detectFileSession) (Just resolveFileSession))
   ]

@@ -36,7 +36,7 @@ main = do
               entry = if mode == "workflow"
                 then "Framework.Codegen.Workflow (Framework.Workflow.AST.targets " ++ namespace ++ ".AST.ast)"
                 else "Framework.Codegen.SingleTarget " ++ namespace ++ ".Target.target"
-              expression = "print (Framework.Codegen.lowerProgram " ++ show namespace
+          let expression = "print (Framework.Codegen.lowerProgram " ++ show namespace
                 ++ " " ++ namespace ++ ".Effects.effects (" ++ entry ++ "))"
           (result, output, diagnostics) <- readProcessWithExitCode "ghci"
             [ "-ignore-dot-ghci", "-v0", "-XHaskell2010", "-idemo", "-isdk"
@@ -48,8 +48,8 @@ main = do
             ExitSuccess -> case readMaybe output of
               Nothing -> die "Cannot read the SDK handler wrapping plan"
               Just (Left problem) -> die problem
-              Just (Right (contracts, program, wrappers, scopeHandlers, plan, assetRoots)) -> do
-                (handlers, shapes, nativeSource) <- prepareHandlers namespace wrappers scopeHandlers
+              Just (Right (contracts, program, wrappers, scopeHandlers, plan, assetRoots, routes)) -> do
+                (handlers, shapes, nativeSource) <- prepareHandlers namespace wrappers scopeHandlers routes
                 let generated = directory </> "Generated"
                     cachePath = generated </> ".scope-cache"
                     normalized = [(method, normalizeShape shape) | ((_, method), shape) <- shapes]

@@ -48,7 +48,7 @@ instance (Monad m, Effect Root m, FileLocationsEffect m) => Effect FileLocations
 
 data FileResources
 
-class (Effect Root m, Effect FileLocations m, Produce FileLocations ~ (FileNames)) => FileResourcesEffect m where
+class (Effect Root m, Provides FileNames m) => FileResourcesEffect m where
   acquireFiles :: m (Produce FileResources)
   readOpenedFiles :: m (Produce FileResources)
   readOpenedFiles = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
@@ -66,7 +66,7 @@ instance (Monad m, Effect Root m, FileResourcesEffect m) => Effect FileResources
 
 data FileSession
 
-class (Effect Root m, Effect FileResources m, Produce FileResources ~ (OpenedFiles)) => FileSessionEffect m where
+class (Effect Root m, Provides OpenedFiles m) => FileSessionEffect m where
   openFiles :: m ()
   closeFiles :: m ()
   {-# MINIMAL openFiles, closeFiles #-}
@@ -74,14 +74,14 @@ class (Effect Root m, Effect FileResources m, Produce FileResources ~ (OpenedFil
 instance (Monad m, Effect Root m, FileSessionEffect m) => Effect FileSession m where
   type Registration FileSession = Registered FileSessionEffect Root
   type Typing FileSession = 'SDK.ScopedKind
-  type Require FileSession = (OpenedFiles, OpenedFiles)
+  type Require FileSession = OpenedFiles
   type Error FileSession = FileSessionError
   raise (FileSessionError description) = SDK.failEffect "FileSession" FileSessionFailure description
   handler = FrameworkRoot.handler @Root
 
 data HoldFiles
 
-class (Effect FileSession m, Effect FileLocations m, Produce FileLocations ~ (FileNames)) => HoldFilesEffect m where
+class (Effect FileSession m, Provides FileNames m) => HoldFilesEffect m where
   holdFiles :: m ()
   {-# MINIMAL holdFiles #-}
 
@@ -95,7 +95,7 @@ instance (Monad m, Effect FileSession m, HoldFilesEffect m) => Effect HoldFiles 
 
 data InspectFiles
 
-class (Effect HoldFiles m, Effect FileResources m, Produce FileResources ~ (OpenedFiles)) => InspectFilesEffect m where
+class (Effect HoldFiles m, Provides OpenedFiles m) => InspectFilesEffect m where
   inspectFiles :: m ()
   {-# MINIMAL inspectFiles #-}
 
@@ -109,7 +109,7 @@ instance (Monad m, Effect HoldFiles m, InspectFilesEffect m) => Effect InspectFi
 
 data FinishInspection
 
-class (Effect InspectFiles m, Effect FileResources m, Produce FileResources ~ (OpenedFiles)) => FinishInspectionEffect m where
+class (Effect InspectFiles m, Provides OpenedFiles m) => FinishInspectionEffect m where
   finishInspection :: m ()
   {-# MINIMAL finishInspection #-}
 
@@ -120,6 +120,19 @@ instance (Monad m, Effect InspectFiles m, FinishInspectionEffect m) => Effect Fi
   type Error FinishInspection = FinishInspectionError
   raise (FinishInspectionError description) = SDK.failEffect "FinishInspection" FinishInspectionFailure description
   handler = FrameworkRoot.handler @Root
+
+-- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。
+class Provides contract m where
+  request :: m contract
+  require :: m contract
+
+instance (FileLocationsEffect App) => Provides FileNames App where
+  request = SDK.provideContext "FileNames" ContextBindingError [("HoldFiles", getFileNames)]
+  require = SDK.provideContext "FileNames" ContextBindingError [("FileResources", readFileNames)]
+
+instance (FileResourcesEffect App) => Provides OpenedFiles App where
+  request = SDK.provideContext "OpenedFiles" ContextBindingError [("FileSession", acquireFiles)]
+  require = SDK.provideContext "OpenedFiles" ContextBindingError [("FileSession", readOpenedFiles), ("InspectFiles", readOpenedFiles), ("FinishInspection", readOpenedFiles)]
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
 newtype FileLocationsError = FileLocationsError String

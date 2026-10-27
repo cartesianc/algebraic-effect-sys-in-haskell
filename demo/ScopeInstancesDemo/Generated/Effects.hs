@@ -62,7 +62,7 @@ instance (Monad m, Effect Root m, FileLocationEffect m) => Effect FileLocation m
 
 data FileResource
 
-class (Effect Root m, Effect FileLocation m, Produce FileLocation ~ (FileName)) => FileResourceEffect m where
+class (Effect Root m, Provides FileName m) => FileResourceEffect m where
   acquireFile :: m (Produce FileResource)
   readOpenedFile :: m (Produce FileResource)
   readOpenedFile = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
@@ -80,7 +80,7 @@ instance (Monad m, Effect Root m, FileResourceEffect m) => Effect FileResource m
 
 data FileSession
 
-class (Effect Root m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => FileSessionEffect m where
+class (Effect Root m, Provides OpenedFile m) => FileSessionEffect m where
   openFileSession :: m ()
   closeFileSession :: m ()
   {-# MINIMAL openFileSession, closeFileSession #-}
@@ -88,14 +88,14 @@ class (Effect Root m, Effect FileResource m, Produce FileResource ~ (OpenedFile)
 instance (Monad m, Effect Root m, FileSessionEffect m) => Effect FileSession m where
   type Registration FileSession = Registered FileSessionEffect Root
   type Typing FileSession = 'SDK.ScopedKind
-  type Require FileSession = (OpenedFile, OpenedFile)
+  type Require FileSession = OpenedFile
   type Error FileSession = FileSessionError
   raise (FileSessionError description) = SDK.failEffect "FileSession" FileSessionFailure description
   handler = FrameworkRoot.handler @Root
 
 data CheckIndependent
 
-class (Effect FileSession m, Effect FileLocation m, Effect FileResource m, Produce FileLocation ~ (FileName), Produce FileResource ~ (OpenedFile)) => CheckIndependentEffect m where
+class (Effect FileSession m, Provides FileName m, Provides OpenedFile m) => CheckIndependentEffect m where
   checkIndependent :: m ()
   {-# MINIMAL checkIndependent #-}
 
@@ -109,7 +109,7 @@ instance (Monad m, Effect FileSession m, CheckIndependentEffect m) => Effect Che
 
 data CheckReopen
 
-class (Effect FileSession m, Effect FileLocation m, Effect FileResource m, Produce FileLocation ~ (FileName), Produce FileResource ~ (OpenedFile)) => CheckReopenEffect m where
+class (Effect FileSession m, Provides FileName m, Provides OpenedFile m) => CheckReopenEffect m where
   checkReopen :: m ()
   {-# MINIMAL checkReopen #-}
 
@@ -120,6 +120,19 @@ instance (Monad m, Effect FileSession m, CheckReopenEffect m) => Effect CheckReo
   type Error CheckReopen = CheckReopenError
   raise (CheckReopenError description) = SDK.failEffect "CheckReopen" CheckReopenFailure description
   handler = FrameworkRoot.handler @Root
+
+-- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。
+class Provides contract m where
+  request :: m contract
+  require :: m contract
+
+instance (FileLocationEffect App) => Provides FileName App where
+  request = SDK.provideContext "FileName" ContextBindingError [("CheckIndependent", getFileName), ("CheckReopen", getFileName)]
+  require = SDK.provideContext "FileName" ContextBindingError [("FileResource", readFileName)]
+
+instance (FileResourceEffect App) => Provides OpenedFile App where
+  request = SDK.provideContext "OpenedFile" ContextBindingError [("FileSession", acquireFile)]
+  require = SDK.provideContext "OpenedFile" ContextBindingError [("FileSession", readOpenedFile), ("CheckIndependent", readOpenedFile), ("CheckReopen", readOpenedFile)]
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
 newtype PrepareFilesError = PrepareFilesError String

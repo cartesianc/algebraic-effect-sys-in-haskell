@@ -4,17 +4,17 @@
 module ScopeInstancesDemo.Effects (effects) where
 
 import Framework.SDK
-  (EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), typeRef)
+  (EffectSpec(..), EffectTyping(..), Producer(..), requests, requires, typeRef)
 import ScopeInstancesDemo.Types
 
--- 注册形状没有变化；路径来源是 Context，scope 没有 key 或产值字段。
+-- 路径来源是 Context，scope 没有 key 或产值字段；demands 只声明契约，来源唯一解析。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "PrepareFiles"
       , typing = Excu { handler = Just "prepareFiles" }
       , input = "Root"
-      , context = Nothing
+      , demands = []
       }
   , EffectSpec
       { name = "FileLocation"
@@ -23,7 +23,7 @@ effects =
           , require = Just "readFileName"
           }
       , input = "Root"
-      , context = Nothing
+      , demands = []
       }
   , EffectSpec
       { name = "FileResource"
@@ -32,32 +32,24 @@ effects =
           , require = Just "readOpenedFile"
           }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Nothing, require = Just (From "FileLocation" (typeRef @FileName)) }
+      , demands = [requires @FileName]
       }
   , EffectSpec
       { name = "FileSession"
       , typing = Scoped { open = Just "openFileSession", close = Just "closeFileSession" }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Just (From "FileResource" (typeRef @OpenedFile))
-          , require = Just (From "FileResource" (typeRef @OpenedFile))
-          }
+      , demands = [requests @OpenedFile, requires @OpenedFile]
       }
   , EffectSpec
       { name = "CheckIndependent"
       , typing = Excu { handler = Just "checkIndependent" }
       , input = "FileSession"
-      , context = Just ContextInput
-          { request = Just (From "FileLocation" (typeRef @FileName))
-          , require = Just (From "FileResource" (typeRef @OpenedFile)) }
+      , demands = [requests @FileName, requires @OpenedFile]
       }
   , EffectSpec
       { name = "CheckReopen"
       , typing = Excu { handler = Just "checkReopen" }
       , input = "FileSession"
-      , context = Just ContextInput
-          { request = Just (From "FileLocation" (typeRef @FileName))
-          , require = Just (From "FileResource" (typeRef @OpenedFile)) }
+      , demands = [requests @FileName, requires @OpenedFile]
       }
   ]

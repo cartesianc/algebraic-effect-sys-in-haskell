@@ -28,14 +28,15 @@ import System.Process (readProcess)
 -- 分析与包装共用一次读取和解析的快照，不加载 instance 或执行业务。
 -- 包装计划来自注册；原文件始终保留，只有 Generated 副本进入运行导入链。
 prepareHandlers :: String -> [(String, String, String)] -> String
+                -> ([(String, [((String, String), String)])], [(String, String)])
                 -> IO (String, [((String, String), HandlerShape)], Maybe String)
-prepareHandlers namespace wrappers scopeHandlers = do
+prepareHandlers namespace wrappers scopeHandlers routes = do
   loaded <- loadHandlers namespace
   shapes <- case loaded of
     Nothing -> pure []
     Just (_, parsed, implicitPrelude, rebindableSyntax) -> do
       let methods = [(owner, method) | (owner, method, _) <- wrappers]
-      analyzed <- either (ioError . userError) pure (analyzeModule namespace methods implicitPrelude parsed)
+      analyzed <- either (ioError . userError) pure (analyzeModule namespace methods routes implicitPrelude parsed)
       if rebindableSyntax && any ((/= Empty) . snd) analyzed
         then ioError (userError "Effect structure analysis does not support RebindableSyntax; use standard Haskell effect composition")
         else pure analyzed

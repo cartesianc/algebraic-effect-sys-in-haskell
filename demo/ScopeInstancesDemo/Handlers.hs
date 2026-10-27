@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Werror=missing-methods #-}
@@ -42,7 +43,7 @@ instance FileLocationEffect App where
 
 instance FileResourceEffect App where
   acquireFile = do
-    FileName path <- getFileName
+    FileName path <- require @FileName
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     outcome <- liftIO $ tryIOError $
       bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
@@ -53,11 +54,11 @@ instance FileResourceEffect App where
 -- 与原写法相同：没有参数、状态标记、key 或 SDK 消费方法。
 instance FileSessionEffect App where
   openFileSession = do
-    OpenedFile path _ <- acquireFile
+    OpenedFile path _ <- request @OpenedFile
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     liftIO (appendFile journal ("open " ++ path ++ "\n"))
   closeFileSession = do
-    OpenedFile path file <- readOpenedFile
+    OpenedFile path file <- require @OpenedFile
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     liftIO $ do
       hClose file
@@ -70,19 +71,19 @@ instance CheckIndependentEffect App where
         secondFile = outputDirectory </> "two.txt"
         selection = outputDirectory </> "selected.txt"
     liftIO (writeFile selection firstFile)
-    _ <- getFileName
+    _ <- request @FileName
     openFileSession
-    OpenedFile pathA fileA <- readOpenedFile
+    OpenedFile pathA fileA <- require @OpenedFile
     openFileSession
-    OpenedFile pathA' fileA' <- readOpenedFile
+    OpenedFile pathA' fileA' <- require @OpenedFile
     unless (pathA == firstFile && pathA' == firstFile && fileA == fileA') $
       raise (CheckIndependentError "Equal arguments did not reuse the same Handle")
     liftIO (putStrLn "[check] equal opening values reuse the same file Handle")
 
     liftIO (writeFile selection secondFile)
-    _ <- getFileName
+    _ <- request @FileName
     openFileSession
-    OpenedFile pathB fileB <- readOpenedFile
+    OpenedFile pathB fileB <- require @OpenedFile
     unless (pathB == secondFile && fileA /= fileB) $
       raise (CheckIndependentError "Different opening values did not select independent files")
     liftIO $ do
@@ -106,9 +107,9 @@ instance CheckReopenEffect App where
         selection = outputDirectory </> "selected.txt"
         journal = outputDirectory </> "events.txt"
     liftIO (writeFile selection firstFile)
-    _ <- getFileName
+    _ <- request @FileName
     openFileSession
-    OpenedFile pathA fileA <- readOpenedFile
+    OpenedFile pathA fileA <- require @OpenedFile
     events <- liftIO (lines <$> readFile' journal)
     unless (pathA == firstFile && length (filter (== "acquire " ++ firstFile) events) == 2) $
       raise (CheckReopenError "The next chain did not reopen the first file")
@@ -118,9 +119,9 @@ instance CheckReopenEffect App where
     liftIO (putStrLn "[check] another Node explicitly reopens file 1 after the previous chain ended")
 
     liftIO (writeFile selection secondFile)
-    _ <- getFileName
+    _ <- request @FileName
     openFileSession
-    OpenedFile pathB fileB <- readOpenedFile
+    OpenedFile pathB fileB <- require @OpenedFile
     closedB <- liftIO (hIsClosed fileB)
     unless (pathB == secondFile && not closedB) $
       raise (CheckReopenError "Opening a closed instance did not obtain a live file")

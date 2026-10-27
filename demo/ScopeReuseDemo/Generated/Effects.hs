@@ -48,7 +48,7 @@ instance (Monad m, Effect Root m, FileLocationsEffect m) => Effect FileLocations
 
 data PrepareProbe
 
-class (Effect Root m, Effect FileLocations m, Produce FileLocations ~ (FilePaths)) => PrepareProbeEffect m where
+class (Effect Root m, Provides FilePaths m) => PrepareProbeEffect m where
   prepareProbe :: m ()
   {-# MINIMAL prepareProbe #-}
 
@@ -62,7 +62,7 @@ instance (Monad m, Effect Root m, PrepareProbeEffect m) => Effect PrepareProbe m
 
 data FileResource
 
-class (Effect Root m, Effect FileLocations m, Produce FileLocations ~ (FilePaths)) => FileResourceEffect m where
+class (Effect Root m, Provides FilePaths m) => FileResourceEffect m where
   acquireFile :: m (Produce FileResource)
   readOpenedFile :: m (Produce FileResource)
   readOpenedFile = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
@@ -80,7 +80,7 @@ instance (Monad m, Effect Root m, FileResourceEffect m) => Effect FileResource m
 
 data SharedFileScope
 
-class (Effect Root m, Effect FileResource m, Produce FileResource ~ (OpenedFile)) => SharedFileScopeEffect m where
+class (Effect Root m, Provides OpenedFile m) => SharedFileScopeEffect m where
   openSharedFile :: m ()
   closeSharedFile :: m ()
   {-# MINIMAL openSharedFile, closeSharedFile #-}
@@ -88,14 +88,14 @@ class (Effect Root m, Effect FileResource m, Produce FileResource ~ (OpenedFile)
 instance (Monad m, Effect Root m, SharedFileScopeEffect m) => Effect SharedFileScope m where
   type Registration SharedFileScope = Registered SharedFileScopeEffect Root
   type Typing SharedFileScope = 'SDK.ScopedKind
-  type Require SharedFileScope = (OpenedFile, OpenedFile)
+  type Require SharedFileScope = OpenedFile
   type Error SharedFileScope = SharedFileScopeError
   raise (SharedFileScopeError description) = SDK.failEffect "SharedFileScope" SharedFileScopeFailure description
   handler = FrameworkRoot.handler @Root
 
 data WriteFirst
 
-class (Effect SharedFileScope m, Effect FileLocations m, Effect FileResource m, Produce FileLocations ~ (FilePaths), Produce FileResource ~ (OpenedFile)) => WriteFirstEffect m where
+class (Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m) => WriteFirstEffect m where
   writeFirst :: m ()
   {-# MINIMAL writeFirst #-}
 
@@ -109,7 +109,7 @@ instance (Monad m, Effect SharedFileScope m, WriteFirstEffect m) => Effect Write
 
 data WriteSecond
 
-class (Effect SharedFileScope m, Effect FileLocations m, Effect FileResource m, Produce FileLocations ~ (FilePaths), Produce FileResource ~ (OpenedFile)) => WriteSecondEffect m where
+class (Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m) => WriteSecondEffect m where
   writeSecond :: m ()
   {-# MINIMAL writeSecond #-}
 
@@ -123,7 +123,7 @@ instance (Monad m, Effect SharedFileScope m, WriteSecondEffect m) => Effect Writ
 
 data WriteThird
 
-class (Effect SharedFileScope m, Effect FileLocations m, Effect FileResource m, Produce FileLocations ~ (FilePaths), Produce FileResource ~ (OpenedFile)) => WriteThirdEffect m where
+class (Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m) => WriteThirdEffect m where
   writeThird :: m ()
   {-# MINIMAL writeThird #-}
 
@@ -137,7 +137,7 @@ instance (Monad m, Effect SharedFileScope m, WriteThirdEffect m) => Effect Write
 
 data VerifyReuse
 
-class (Effect Root m, Effect FileLocations m, Produce FileLocations ~ (FilePaths)) => VerifyReuseEffect m where
+class (Effect Root m, Provides FilePaths m) => VerifyReuseEffect m where
   verifyReuse :: m ()
   {-# MINIMAL verifyReuse #-}
 
@@ -148,6 +148,19 @@ instance (Monad m, Effect Root m, VerifyReuseEffect m) => Effect VerifyReuse m w
   type Error VerifyReuse = VerifyReuseError
   raise (VerifyReuseError description) = SDK.failEffect "VerifyReuse" VerifyReuseFailure description
   handler = FrameworkRoot.handler @Root
+
+-- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。
+class Provides contract m where
+  request :: m contract
+  require :: m contract
+
+instance (FileLocationsEffect App) => Provides FilePaths App where
+  request = SDK.provideContext "FilePaths" ContextBindingError [("PrepareProbe", getFilePaths), ("WriteFirst", getFilePaths), ("WriteSecond", getFilePaths), ("WriteThird", getFilePaths), ("VerifyReuse", getFilePaths)]
+  require = SDK.provideContext "FilePaths" ContextBindingError [("FileResource", readFilePaths)]
+
+instance (FileResourceEffect App) => Provides OpenedFile App where
+  request = SDK.provideContext "OpenedFile" ContextBindingError [("SharedFileScope", acquireFile)]
+  require = SDK.provideContext "OpenedFile" ContextBindingError [("SharedFileScope", readOpenedFile), ("WriteFirst", readOpenedFile), ("WriteSecond", readOpenedFile), ("WriteThird", readOpenedFile)]
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
 newtype FileLocationsError = FileLocationsError String

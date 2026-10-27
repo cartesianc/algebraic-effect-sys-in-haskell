@@ -56,23 +56,42 @@ cabal run file-demo
 | 文件 | 你在这里定义什么 |
 | --- | --- |
 | [Types.hs](demo/FileDemo/Types.hs) | 原生业务 ADT，例如文件名、文件句柄和文本 |
-| [Effects.hs](demo/FileDemo/Effects.hs) | effect 类别、方法名、能力依赖及 Context 取值来源 |
+| [Effects.hs](demo/FileDemo/Effects.hs) | effect 类别、方法名、能力依赖及需要的 Context 契约（demands） |
 | [Handlers.hs](demo/FileDemo/Handlers.hs) | `instance` 方法中的计算、模式匹配与 IO |
 | [AST.hs](demo/FileDemo/AST.hs) | 引用各 branch 模块，组织整个 workflow |
 | [Workflow/OperateFile.hs](demo/FileDemo/Workflow/OperateFile.hs) | 一个具名 branch，内部选择末端 node；较大模块也可组合其他 branch |
 | [Main.hs](demo/FileDemo/Main.hs) | 调用生成的 `interpreter ast effects` |
 | `Generated/` | SDK 生成的接口、包装后的 handler、纯结构、资产目录与末端登记 |
 
-例如，纯计算示例的 handler 直接取得上游值并计算：
+例如，纯计算示例的 handler 按契约取得上游值并计算：
 
 ```haskell
-instance Effect MakeNumber m => AddOneEffect m where
+instance (Effect Root m, Provides NumberValue m) => AddOneEffect m where
   addOne = do
-    Number number <- makeNumber
+    Number number <- request @NumberValue
     pure (Added (number + 1))
 ```
 
-对应的注册声明从 `MakeNumber` 请求值；SDK 负责接入取值协议，业务方法负责计算。完整代码见 [注册](demo/RequestBenchmark/Effects.hs) 和 [实现](demo/RequestBenchmark/Handlers.hs)。
+对应的注册只声明需要的契约，不指名生产方：
+
+```haskell
+EffectSpec { name = "AddOne", ..., demands = [requests @NumberValue] }
+```
+
+完整代码见 [注册](demo/RequestBenchmark/Effects.hs) 和 [实现](demo/RequestBenchmark/Handlers.hs)。
+
+### 按契约取值：demands、request 与 require
+
+消费方在 `demands` 中写 `requests @T` 或 `requires @T`，方法体对应写 `request @T`（重新生产）或 `require @T`（读取已有绑定），调用点即可看出是否会重跑生产链。声明里不写来源：生成器在注册集合中按类型找唯一的生产方，有多个就报错，不会按距离或拓扑替你选择。新增一个同类型的生产方只会让生成报错，不会悄悄改变已有接线。
+
+同一表示有不同业务含义时，在 `Types.hs` 中用不同的 newtype 表达，例如 Crawler 的起始页与链接页：
+
+```haskell
+newtype StartURL  = StartURL PageURL
+newtype LinkedURL = LinkedURL PageURL
+```
+
+生产方写 `produces = typeRef @StartURL`，消费方写 `requests @StartURL` 并在方法体中 `StartURL (PageURL url) <- request @StartURL`。两个类型混用会在类型检查时被拒绝。gencode 也会拒绝未声明的 `request @T`／`require @T`，以及直接调用其他 effect 的 Context 方法。
 
 Context 契约统一收集业务 ADT 资产。显式使用这些类型、构造器或字段的操作写在注册 `instance` 方法内；普通函数不得显式依赖资产，泛型函数不因接收资产值而被禁止，只处理通用类型的 helper 也允许。gencode 检查源码引用，并生成可供 review／未来 LSP 读取的 `Generated/Assets.hs`；它不参与运行时资源管理。详见 [源码资产检查](docs/ASSETS.md)。
 
@@ -123,7 +142,7 @@ cabal run crawler-demo -- --structure
 | `Excu` | 执行操作 | `()` |
 | `Context` | 生产或读取跨 handler 使用的业务值 | 注册的业务 ADT |
 | `Scoped` | 在同一 instance 中实现资源的 `open`／`close` | `()` |
-| `Error` | 通过 `detect` 定位故障，通过可选 `resolve` 处置 | `()`；保留原失败及检测／处置结果 |
+| `Error` | 按 `handles` 声明的故障类型匹配，通过可选 `detect` 细化、`resolve` 处置 | `()`；保留原失败及检测／处置结果 |
 
 Context 的 `request` 每次重新生产，成功后保存绑定；`require` 读取已有成功绑定，不重新执行生产者，未绑定时失败。普通绑定限定在一次末端调用内。稳定的开启输入可以再次用于 `open`；重新开启会得到新资源绑定，旧资源绑定不会自动改指新实例。
 
@@ -133,7 +152,7 @@ Context 的 `request` 每次重新生产，成功后保存绑定；`require` 读
 
 scope 是否共享由它的开启输入决定：相同的稳定 `require` 输入允许并发复用一次开启；实际以 `request` 取得的开启输入默认产生独立实例，即使值相等也不合并。资源生产方法自身的 `request` 与开启参数的访问模式是不同层次。关闭之后，后续 chain 可以重新调用原来的 open；不保留旧实例只为等待尚未开始的节点。业务显式 close 仍可用，但有其他使用者或未释放子 scope 时会拒绝关闭，不等待当前调用自己退出。
 
-App／IO 的 Error 从故障关联的 scope 出发，沿同一份 `ScopeTree` 补齐祖先，在生命周期锁外从父到子调用已注册的 `detect`／`resolve`。候选路径不证明故障归属，实际实例仍由已有资源绑定和故障证据定位；处置后继续传播原失败。不增加另一份 Error graph、轮询或动态调用追踪。Pure 载体尚未安装这棵树，继续使用原有生成候选名单。
+Error 注册以 `handles = [RaisedBy "ReadFile", ScopeFaultIn "FileSession"]` 这类写法声明处理的故障：`RaisedBy` 匹配业务 `raise`，`ScopeFaultIn`／`ContextFaultIn` 匹配 SDK 协议故障。作用的 scope 由 Input 链上最近的 Scoped 自动推导，无需手动挂接；没有写 `detect` 时匹配即调用 `resolve`。App／IO 的 Error 从故障关联的 scope 出发，沿同一份 `ScopeTree` 补齐祖先，在生命周期锁外从父到子调用匹配的 `detect`／`resolve`。候选路径不证明故障归属，实际实例仍由已有资源绑定和故障证据定位；处置后继续传播原失败。不增加另一份 Error graph、轮询或动态调用追踪。Pure 载体尚未安装这棵树，继续使用原有生成候选名单。
 
 纯计算示例使用的 `Pure` **执行载体**与表中的 `Pure` **effect 类别**是两个概念：示例中的数字、文本生产操作仍注册为 `Context`。业务失败通过生成的错误类型和 `raise` 传播，运行边界返回 `Succ` 或 `Failed`。
 

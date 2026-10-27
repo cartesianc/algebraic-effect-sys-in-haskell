@@ -9,7 +9,7 @@ module Framework.Effect.Runtime
   , targetName, lowerTarget, configureTargets, cleanupTargets
   ) where
 
-import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault, Failure(..), Output(..), ErrorStore(..), ErrorHandler, runErrorHandler)
+import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault, Failure(..), Output(..), ErrorStore(..), ErrorHandler(..), runErrorHandler)
 import Framework.Effect.Runtime.App (App, runAppWith)
 import Framework.Effect.Scope
 import Control.Exception (SomeException, evaluate)
@@ -25,7 +25,7 @@ data Calling environment cause = Calling
   { caller :: Maybe String
   , dependencies :: [String]
   , ownedScopes :: [String]
-  , errorHandlers :: [(String, ErrorHandler (Pure environment cause))]
+  , errorHandlers :: [(Maybe String, ErrorHandler cause (Pure environment cause))]
   , errorPath :: [String]
   , originalFailure :: Maybe (Failure cause)
   , diagnosticScope :: Maybe String
@@ -118,9 +118,11 @@ instance ErrorStore cause (Pure environment cause) where
           else if not (null (ownedScopes calling))
             then throwError traced
             else do
+              -- 按 handles 匹配故障类型；有关联 scope 时还须位于候选路径上，不猜测其他实例。
               reports <- mapM (diagnose calling traced)
-                [(selected, callback) | (selected, callback) <- errorHandlers calling
-                                     , selected `elem` scopeTrace traced]
+                [(selected, callback) | (selected, callback@(ErrorHandler _ matches _ _)) <- errorHandlers calling
+                                     , matches traced
+                                     , maybe True (`elem` scopeTrace traced) selected]
               throwError traced { errorHandling = Just reports }
     where
       diagnose calling problem (selected, callback) = do
@@ -128,7 +130,7 @@ instance ErrorStore cause (Pure environment cause) where
         let PureRun action = runErrorHandler selected callback
         report <- local (const calling
           { caller = Nothing, ownedScopes = [], originalFailure = Just problem
-          , diagnosticScope = Just selected }) action
+          , diagnosticScope = selected }) action
         modify' (\state -> state { pureBindings = saved })
         pure report
 

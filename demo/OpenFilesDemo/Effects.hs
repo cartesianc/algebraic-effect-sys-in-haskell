@@ -3,7 +3,7 @@
 
 module OpenFilesDemo.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), typeRef)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), requests, requires, typeRef)
 import OpenFilesDemo.Types
 
 -- Context 传递路径与资源，Scoped 管理一组文件的存续，Excu 执行观察与收尾。
@@ -18,7 +18,7 @@ effects =
           , require = Just "readFileNames"
           }
       , input = "Root"
-      , context = Nothing
+      , demands = []
       }
   , EffectSpec
       { name = "FileResources"
@@ -28,46 +28,31 @@ effects =
           , require = Just "readOpenedFiles"
           }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Nothing
-          , require = Just (From "FileLocations" (typeRef @FileNames))
-          }
+      , demands = [requires @FileNames]
       }
   , EffectSpec
       { name = "FileSession"
       , typing = Scoped
           { open = Just "openFiles", close = Just "closeFiles" }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Just (From "FileResources" (typeRef @OpenedFiles))
-          , require = Just (From "FileResources" (typeRef @OpenedFiles))
-          }
+      , demands = [requests @OpenedFiles, requires @OpenedFiles]
       }
   , EffectSpec
       { name = "HoldFiles"
       , typing = Excu { handler = Just "holdFiles" }
       , input = "FileSession"
-      , context = Just ContextInput
-          { request = Just (From "FileLocations" (typeRef @FileNames))
-          , require = Nothing
-          }
+      , demands = [requests @FileNames]
       }
   , EffectSpec
       { name = "InspectFiles"
       , typing = Excu { handler = Just "inspectFiles" }
       , input = "HoldFiles"
-      , context = Just ContextInput
-          { request = Nothing
-          , require = Just (From "FileResources" (typeRef @OpenedFiles))
-          }
+      , demands = [requires @OpenedFiles]
       }
   , EffectSpec
       { name = "FinishInspection"
       , typing = Excu { handler = Just "finishInspection" }
       , input = "InspectFiles"
-      , context = Just ContextInput
-          { request = Nothing
-          , require = Just (From "FileResources" (typeRef @OpenedFiles))
-          }
+      , demands = [requires @OpenedFiles]
       }
   ]

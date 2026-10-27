@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -47,7 +48,7 @@ instance PrepareProbeEffect App where
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareProbe") $
       let
         prepareProbe = do
-          FilePaths path journal <- getFilePaths
+          FilePaths path journal <- request @FilePaths
           outcome <- liftIO $ tryIOError $ do
             createDirectoryIfMissing True (takeDirectory path)
             -- 仅重置本 demo 的两份产物，在三个分支启动前完成。
@@ -65,7 +66,7 @@ instance FileResourceEffect App where
       (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
       let
         acquireFile = do
-          paths@(FilePaths path journal) <- getFilePaths
+          paths@(FilePaths path journal) <- require @FilePaths
           outcome <- liftIO $ tryIOError $
             bracketOnError (openFile path AppendMode) hClose $ \file -> do
               hSetEncoding file utf8
@@ -80,7 +81,7 @@ instance SharedFileScopeEffect App where
     (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
       let
         openSharedFile = do
-          OpenedFile (FilePaths _ journal) _ <- acquireFile
+          OpenedFile (FilePaths _ journal) _ <- request @OpenedFile
           outcome <- liftIO (tryIOError (appendFile journal "open-body\n"))
           either (raise . SharedFileScopeError . displayException) pure outcome
       in openSharedFile
@@ -89,7 +90,7 @@ instance SharedFileScopeEffect App where
     (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
       let
         closeSharedFile = do
-          OpenedFile (FilePaths _ journal) file <- readOpenedFile
+          OpenedFile (FilePaths _ journal) file <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
             appendFile journal "close-body\n"
             hClose file
@@ -104,9 +105,9 @@ instance WriteFirstEffect App where
     (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteFirst") $
       let
         writeFirst = do
-          _ <- getFilePaths
+          _ <- request @FilePaths
           openSharedFile
-          OpenedFile _ file <- readOpenedFile
+          OpenedFile _ file <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
             hPutStr file "first\n"
             hFlush file
@@ -118,9 +119,9 @@ instance WriteSecondEffect App where
     (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteSecond") $
       let
         writeSecond = do
-          _ <- getFilePaths
+          _ <- request @FilePaths
           openSharedFile
-          OpenedFile _ file <- readOpenedFile
+          OpenedFile _ file <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
             hPutStr file "second\n"
             hFlush file
@@ -132,9 +133,9 @@ instance WriteThirdEffect App where
     (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteThird") $
       let
         writeThird = do
-          _ <- getFilePaths
+          _ <- request @FilePaths
           openSharedFile
-          OpenedFile _ file <- readOpenedFile
+          OpenedFile _ file <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
             hPutStr file "third\n"
             hFlush file
@@ -146,7 +147,7 @@ instance VerifyReuseEffect App where
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "VerifyReuse") $
       let
         verifyReuse = do
-          FilePaths path journal <- getFilePaths
+          FilePaths path journal <- request @FilePaths
           -- parallel 已等待各链退出及自动清理；此处只读日志和文件，不 require 旧资源。
           outcome <- liftIO $ tryIOError $ do
             events <- readFile' journal
@@ -170,7 +171,7 @@ instance VerifyReuseEffect App where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "f820b58f9fd8eb407bc88384b678a9f3"
+handlerSourceFingerprint = Just "36174394c9969429807a79ba73a31f3f"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -185,8 +186,8 @@ scopeCleanups =
   [ ("SharedFileScope", closeSharedFile)
   ]
 
--- Error 回调登记；记录 scope 对应的 detect/resolve，不在此执行检测。
-errorHandlers :: [(String, FrameworkRoot.ErrorHandler FrameworkGenerated.App)]
+-- Error 回调登记：按 handles 匹配故障来源与分类；关联 scope 由 Input 链推导。
+errorHandlers :: [(Maybe String, FrameworkRoot.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
 errorHandlers =
   [
   ]

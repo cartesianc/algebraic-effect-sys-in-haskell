@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -32,7 +33,7 @@ instance FileLocationsEffect App where
 
 instance FileResourcesEffect App where
   acquireFiles = do
-    FileNames paths <- getFileNames
+    FileNames paths <- require @FileNames
     -- 整批获取是本 Context 的原子操作；中途失败释放此前已打开的文件。
     outcome <- liftIO $ tryIOError $ fmap OpenedFiles $
       foldr (\path acquireRest -> do
@@ -45,25 +46,25 @@ instance FileResourcesEffect App where
 
 instance FileSessionEffect App where
   openFiles = do
-    OpenedFiles files <- acquireFiles
+    OpenedFiles files <- request @OpenedFiles
     liftIO (putStrLn ("[open] acquired " ++ show (length files) ++ " files"))
 
   closeFiles = do
-    OpenedFiles files <- readOpenedFiles
+    OpenedFiles files <- require @OpenedFiles
     outcome <- liftIO (tryIOError (mapM_ (hClose . snd) files))
     either (raise . FileSessionError . displayException) pure outcome
     liftIO (putStrLn ("[close] released " ++ show (length files) ++ " files"))
 
 instance HoldFilesEffect App where
   holdFiles = do
-    _ <- getFileNames
+    _ <- request @FileNames
     openFiles
 
 instance InspectFilesEffect App where
   inspectFiles = do
     -- 前一 Node 的使用已经结束；本条链显式 open，并持有自己的资源绑定。
     holdFiles
-    OpenedFiles files <- readOpenedFiles
+    OpenedFiles files <- require @OpenedFiles
     unless (length files == 10 && length (nub (map fst files)) == 10) $
       raise (InspectFilesError "Expected ten distinct files")
     outcome <- liftIO $ tryIOError $ do
@@ -87,7 +88,7 @@ instance FinishInspectionEffect App where
   finishInspection = do
     holdFiles
     -- 在关闭前取得 Handle，随后只检查本地快照，不向已关闭 scope 再次 require。
-    OpenedFiles files <- readOpenedFiles
+    OpenedFiles files <- require @OpenedFiles
     closeFiles
     outcome <- liftIO (tryIOError (mapM (hIsClosed . snd) files))
     closed <- either (raise . FinishInspectionError . displayException) pure outcome

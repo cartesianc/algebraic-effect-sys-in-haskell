@@ -2,11 +2,12 @@
 
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Effect.Context
-  ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext
+  ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext
   ) where
 
 import Framework.Effect.Contract (ContextStore(..), ContextFault(..), ScopeInput, ScopeInputAccess(..), Failure, failEffect)
 import Control.Monad.Except (MonadError)
+import Data.Maybe (fromMaybe)
 
 data ContextAccess = RequestValue | RequireValue deriving (Eq, Show)
 
@@ -81,3 +82,16 @@ callContext selected wrap accesses compareValue select synchronize produce = do
       value <- requestContext selected synchronize (enterContext selected produce)
       observeInput RequestedInput compareValue value
       pure value
+
+-- 消费方的 request @T / require @T 按当前调用者分派到注册解析出的来源入口。
+-- 路由表由生成器从 demands 解析得到；来源入口仍走原有的生产或读取包装。
+provideContext
+  :: (ContextStore environment m, MonadError (Failure cause) m)
+  => String -> (ContextFault -> cause) -> [(String, m value)] -> m value
+provideContext contract wrap routes = do
+  caller <- currentHandler
+  case caller >>= (`lookup` routes) of
+    Just action -> action
+    Nothing -> failEffect contract (wrap (UndeclaredContextAccess consumer))
+      ("No declared demand for " ++ contract ++ " from " ++ consumer)
+      where consumer = fromMaybe "the root call" caller

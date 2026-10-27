@@ -14,7 +14,7 @@ Context 契约统一导出 asset 集合，不携带来源归属。普通函数�
 
 effect 声明自身契约与上游句柄依赖；Input 落实为 superclass，提供上游类方法。
 业务组合发生在 instance 内的类方法引用中，不由 SDK 在外部生成另一份操作流水线。
-Context 也是 effect，通过 context.request／require 引入生产链能力，手写 Input 不直接指向 Context，也不预设从 SDK 注入全局。
+Context 也是 effect，消费方通过 demands 声明需要的契约，来源由生成器唯一解析后引入生产链能力；手写 Input 不直接指向 Context，也不预设从 SDK 注入全局。
 request 引用产值 effect，前插其能力且保留原 Input 前提；实际求值由 instance 引用生产类方法触发。
 
 同一注册集合内，生成的 superclass 合并原 Input 与 Context 来源的传递能力，直接重复约束去重，共享统一 Root、载体和 scope 句柄；不重挂来源链，也不把能力去重当作执行去重。独立生成模块的环境合并尚不在此范围。
@@ -100,7 +100,7 @@ typing = Context
   }
 ```
 
-typing 保存本 effect 内的方法声明，只有 Context.request 的 Producer 声明业务产物；消费方 context.request 引用其他 Context 生产者，两层通过嵌套 record 区分。Pure／Excu 以 handler 为普通入口，Scoped 以 open 为入口，Context 以 request 为产值入口；require 的类型由同一生产契约推导，缺少该契约时报错。Error.input 直接引用匹配的 Scoped，由 Root 的故障协议调用，不作为普通 Node target。
+typing 保存本 effect 内的方法声明，只有 Context.request 的 Producer 声明业务产物；消费方 demands 只以 requests @T／requires @T 引用契约类型，来源按类型唯一解析。Pure／Excu 以 handler 为普通入口，Scoped 以 open 为入口，Context 以 request 为产值入口；require 的类型由同一生产契约推导，缺少该契约时报错。Error 以 handles 声明处理的故障类型，关联 scope 沿 Input 推导，由 Root 的故障协议调用，不作为普通 Node target。
 
 当前 handler = Nothing 不生成本地业务方法，保留类型契约与 Input 关系；被 target 选择时报没有入口。request 只允许引用具有生产方法的 Context。SDK 不猜测方法名，也不生成默认成功操作。其余多方法类别的缺省处置随协议另定，不能从 Nothing 自动推导出省略清理、吞掉错误或重新产值。
 
@@ -196,7 +196,7 @@ Input 继续表达操作或能力的前提关系。业务值来源单独表达�
 
 ## Context、request 与 require
 
-手写 input 只允许 Root 或非 Context effect；Context 经 context.request／require 声明进入生成的 superclass。生产者自身仍可有 Input、消费其他 Context，也可直接作为 target。原 Input 与生产链的能力同时保留，不重挂来源注册；沿 Input 与 request 收集 scope，require 只读取绑定，不启动生产链。
+手写 input 只允许 Root 或非 Context effect；Context 经 demands 接入，消费方类只以 Provides 契约作为 superclass。生产者自身仍可有 Input、消费其他 Context，也可直接作为 target。原 Input 与生产链的能力同时保留，不重挂来源注册；沿 Input 与 request 收集 scope，require 只读取绑定，不启动生产链。
 爬虫通过 request 连接 URL、抓取、解析与打印，SDK 不预先生产全局 Context。
 
 生产方与消费方分别描述，Context effect 自身也可以消费别的 Context：
@@ -204,29 +204,26 @@ Input 继续表达操作或能力的前提关系。业务值来源单独表达�
 ```haskell
 typing = Context
   { request = Just Producer
-      { handler = "extractLinkedPage", produces = typeRef @PageSummary }
+      { handler = "extractLinkedPage", produces = typeRef @LinkedPageSummary }
   , require = Just "readLinkedPageSummary"
   }
-context = Just ContextInput
-  { request = Just (From "FetchLinkedPage" (typeRef @FetchedPage))
-  , require = Nothing
-  }
+demands = [requests @LinkedFetchedPage]
 ```
 
-typing 中是本 effect 提供的方法与生产契约；context 中是本 effect 消费的来源与接收 ADT。
-context 为 Maybe ContextInput，其中 request／require 各为 Maybe ValueSource；From 保存来源 effect 与类型引用，
-移除外层 requires／request。request 调用来源的生产入口，require 读取来源的已有绑定；两者不配置生产方的方法名。
-Nothing 表示不声明对应输入，不表示业务值使用 Maybe。request 加入生产者能力，保留原 Input；不再要求生产者的祖先已经包含消费者原 Input。
+typing 中是本 effect 提供的方法与生产契约；demands 中是本 effect 需要的契约与取值模式，不指名生产方的类或方法。
+requests 调用来源的生产入口，requires 读取来源的已有绑定。来源在注册集合中按类型唯一解析，多个生产方即报错。
+起始页与链接页两条链的抓取结果表示相同，含义不同，因此在 Types.hs 中分别为 StartFetchedPage／LinkedFetchedPage 等 newtype，
+生成器不会按距离或拓扑替用户选择来源。request 加入解析出的生产者能力，保留原 Input；不再要求生产者的祖先已经包含消费者原 Input。
 
-输入契约与 typing 共同决定方法签名。当前生成器由 context 形成关联 Require，并在 superclass 中加入来源成功类型
-与接收 ADT 的相等约束；单输入直接使用该 ADT，双输入按 request、require 排为二元组。
-FetchedPage 是类型，FetchedHTML 是 instance 可匹配的构造器；typeRef 不描述某个构造器的子集。
-instance 使用原生 Haskell：在 do 中通过 `value <- contextMethod` 取得业务值，普通操作直接引用 superclass 方法。可确定匹配的单构造器模式可直接写在 `<-` 左侧；多构造器值先绑定再用普通 case 显式处理，失败通过 raise，不新增 MonadFail。SDK 在注册生成的 Context 入口连接 request 生产与 require 读取；生成器解析显式 effect 方法引用以生成纯结构副本；业务执行副本仍只包装入口，不改写原方法体表达式。方法不新增位置参数、Definition、consume 或独立 booter；嵌套取值共享本次 Context 和 scope。未进入的分支不取值，生成源码和创建 Target 不执行业务 IO；不使用 unsafePerformIO／unsafeInterleaveIO。手写 Handlers 保持原生语法，运行仍编译 Generated/Handlers 的协议包装副本，修改实现后须重新生成。
+输入契约与 typing 共同决定方法签名。当前生成器由 demands 形成关联 Require（单输入直接使用该契约，多输入按声明顺序排为元组），
+并为每个被需要的契约在本程序载体上生成 Provides instance，按当前消费者分派到解析出的来源方法。
+LinkedFetchedPage 包装 FetchedPage，FetchedHTML 是 instance 可匹配的构造器；类型引用不描述某个构造器的子集。
+instance 使用原生 Haskell：在 do 中通过 `value <- request @T` 或 `value <- require @T` 取得业务值，普通操作直接引用 superclass 方法。可确定匹配的单构造器模式可直接写在 `<-` 左侧；多构造器值先绑定再用普通 case 显式处理，失败通过 raise，不新增 MonadFail。SDK 在注册生成的 Context 入口连接 request 生产与 require 读取；生成器解析显式 effect 方法引用以生成纯结构副本；业务执行副本仍只包装入口，不改写原方法体表达式。方法不新增位置参数、Definition、consume 或独立 booter；嵌套取值共享本次 Context 和 scope。未进入的分支不取值，生成源码和创建 Target 不执行业务 IO；不使用 unsafePerformIO／unsafeInterleaveIO。手写 Handlers 保持原生语法，运行仍编译 Generated/Handlers 的协议包装副本，修改实现后须重新生成。
 
 request 每次重新生产，成功后将同一个值发布为当前调用的新绑定并返回；require 只读已捕获的成功绑定，未绑定时报 ContextNotInitialized。
 刷新失败不覆盖该来源旧值，错误原样传播，其他已完成的操作不回滚。普通绑定限定在一次末端启动内；scope 开启期间生产的绑定随仍被使用或依赖保留的实际实例保存，不承诺留给未来 Node，也不在独立创建的句柄之间隐式共享。
-SDK 用局部 Reader 记录当前消费者，按注册选择上游生产方法引用的 request／require 模式；默认及覆盖的显式读取入口同样检查该来源是否在 request 或 require 中声明，未声明时先报 UndeclaredContextAccess，不读取绑定或执行覆盖方法体。
-根入口直接生产；同一消费者对同一来源同时声明两种模式时，生产方法引用按 request 执行，显式读取方法始终 require。
+SDK 用局部 Reader 记录当前消费者，Provides instance 据此分派到解析出的来源；调用点的 request／require 决定是否重新生产。默认及覆盖的显式读取入口同样检查该来源是否在 demands 中声明，未声明时先报 UndeclaredContextAccess，不读取绑定或执行覆盖方法体。
+根入口直接生产。gencode 拒绝未声明的 request @T／require @T，也拒绝直接调用其他 effect 的 Context 方法。
 SDK 不预初始化 Context，Input 仍只提供类方法能力；未被引用的上游不执行。scope 多实例绑定见后文；普通 Context 多份调用绑定与跨入口存续另行设计。
 
 AST 仍只决定链的启动次序。parallel 先解析两页，chained 再打印；打印方法重新引用解析、抓取句柄，
@@ -403,11 +400,11 @@ once-spare 当前是 core 固定策略，不提供 policy 配置，也未实现 
 
 ## Error 的检测、处置与失效传播
 
-detect 和 resolve 是同一个 Error effect 的两个原子 handler，均以 Maybe String 声明、签名为 m ()。input 必须直接引用被检查的 Scoped，提供实例内调用其方法的 superclass 能力。Error 独立注册，SDK 将回调装配到 Root，不加入正常业务调用链或 AST；注册不提前执行检测。
+detect 和 resolve 是同一个 Error effect 的两个原子 handler，均以 Maybe String 声明、签名为 m ()；handles 声明处理的故障类型（RaisedBy、ScopeFaultIn、ContextFaultIn）。input 只提供 resolve 调用 scope 方法所需的 superclass 能力；关联 scope 由生成器沿 Input／request 推导最近的 Scoped，至多一个，没有则为不定位实例的全局处置。Error 独立注册，SDK 将回调装配到 Root，不加入正常业务调用链或 AST；注册不提前执行检测。
 
-App／IO 的生成入口沿 Input／request 找最近的 scope，遇到 Scoped 停止，只提供关联种子。Root 捕获传播到生成入口的 Failure 时，合并 scopeTrace、当前 errorPath 和 scopeTargets 中的 scope 名字；生命周期持锁期间只保留种子，退到锁外再由 scopeErrorPath 读取 ScopeHandler.scopeParentNames。这是自动清理也使用的同一棵 ScopeTree 的全部祖先投影：补齐祖先、按父到子的层次去重，同层沿 ScopeHandler 名单顺序，再依路径匹配 Error 回调表；同一 scope 的多个回调沿注册顺序。
+App／IO 的生成入口沿 Input／request 找最近的 scope，遇到 Scoped 停止，只提供关联种子。Root 捕获传播到生成入口的 Failure 时，合并 scopeTrace、当前 errorPath 和 scopeTargets 中的 scope 名字；生命周期持锁期间只保留种子，退到锁外再由 scopeErrorPath 读取 ScopeHandler.scopeParentNames。这是自动清理也使用的同一棵 ScopeTree 的全部祖先投影：补齐祖先、按父到子的层次去重，同层沿 ScopeHandler 名单顺序，再按 handles 匹配故障，有关联 scope 的回调须位于该路径上；同一 scope 的多个回调沿注册顺序，全局回调随后执行。
 
-完成路径写入 Failure.scopeTrace。候选依赖不是故障归属证明，detect 的实现负责定位。每项 detect 正常完成为 Succ ()，表示定位成功，随后调用可选 resolve；raise 得到 Failed，表示未能定位。无论该项完成或失败，继续处理其余相关 scope。没有 detect 时不自动 resolve，两者均 Nothing 时没有自动操作。
+完成路径写入 Failure.scopeTrace。候选依赖不是故障归属证明；类型匹配完成粗定位，detect 是可选的值级细化。未注册 detect 时直接调用 resolve；detect 正常完成为 Succ ()，随后调用 resolve；raise 得到 Failed，表示不归此处。无论该项完成或失败，继续处理其余相关 scope。
 
 App／IO 的祖先导航与清理共用生成树，不另存 Error graph，不读取新的 schema 或用户 key，不增加轮询或动态调用 tracing。人工调整生成树父边会同时影响两者；运行校验只检查结构自洽，不证明删边在业务上正确。App／IO 未安装树时仅使用显式种子；Pure 没有 ScopeTree 安装路径，本轮保留旧的完整候选名单协议。
 

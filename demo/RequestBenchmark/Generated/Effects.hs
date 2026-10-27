@@ -48,7 +48,7 @@ instance (Monad m, Effect Root m, DemoContextEffect m) => Effect DemoContext m w
 
 data MakeNumber
 
-class (Effect Root m, Effect DemoContext m, Produce DemoContext ~ (DemoInputs)) => MakeNumberEffect m where
+class (Effect Root m, Provides DemoInputs m) => MakeNumberEffect m where
   makeNumber :: m (Produce MakeNumber)
   readNumber :: m (Produce MakeNumber)
   readNumber = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
@@ -66,7 +66,7 @@ instance (Monad m, Effect Root m, MakeNumberEffect m) => Effect MakeNumber m whe
 
 data AddOne
 
-class (Effect Root m, Effect MakeNumber m, Produce MakeNumber ~ (NumberValue)) => AddOneEffect m where
+class (Effect Root m, Provides NumberValue m) => AddOneEffect m where
   addOne :: m (Produce AddOne)
   readAddedNumber :: m (Produce AddOne)
   readAddedNumber = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
@@ -84,7 +84,7 @@ instance (Monad m, Effect Root m, AddOneEffect m) => Effect AddOne m where
 
 data RenderNumber
 
-class (Effect Root m, Effect AddOne m, Effect DemoContext m, Produce AddOne ~ (AddedValue), Produce DemoContext ~ (DemoInputs)) => RenderNumberEffect m where
+class (Effect Root m, Provides AddedValue m, Provides DemoInputs m) => RenderNumberEffect m where
   renderNumber :: m (Produce RenderNumber)
   readRenderedNumber :: m (Produce RenderNumber)
   readRenderedNumber = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
@@ -99,6 +99,23 @@ instance (Monad m, Effect Root m, RenderNumberEffect m) => Effect RenderNumber m
   type Error RenderNumber = RenderNumberError
   raise (RenderNumberError description) = SDK.failEffect "RenderNumber" RenderNumberFailure description
   handler = FrameworkRoot.handler @Root
+
+-- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。
+class Provides contract m where
+  request :: m contract
+  require :: m contract
+
+instance (DemoContextEffect Pure) => Provides DemoInputs Pure where
+  request = SDK.provideContext "DemoInputs" ContextBindingError [("MakeNumber", loadDemoInputs)]
+  require = SDK.provideContext "DemoInputs" ContextBindingError [("RenderNumber", readDemoInputs)]
+
+instance (MakeNumberEffect Pure) => Provides NumberValue Pure where
+  request = SDK.provideContext "NumberValue" ContextBindingError [("AddOne", makeNumber)]
+  require = SDK.provideContext "NumberValue" ContextBindingError []
+
+instance (AddOneEffect Pure) => Provides AddedValue Pure where
+  request = SDK.provideContext "AddedValue" ContextBindingError [("RenderNumber", addOne)]
+  require = SDK.provideContext "AddedValue" ContextBindingError []
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
 newtype DemoContextError = DemoContextError String

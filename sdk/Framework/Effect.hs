@@ -7,8 +7,9 @@ module Framework.Effect
   ( Effect(Registration, Typing, Require, Produce, raise), type Error, EffectTyping(..), EffectKind(..), Root, Registered, Pure, App
   , Target, Identity, targetPure, targetApp, bootPure
   , Output(..), Failure(..), ErrorReport(..), caughtFailure, failEffect
-  , Producer(..), TypeRef(..), typeRef, EffectSpec(..), ContextInput(..), ValueSource(..), Void
-  , ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, enterHandler
+  , Producer(..), Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
+  , requests, requires, Void
+  , ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, enterHandler
   , ScopeInput(..), ScopeFault(..), openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, withScopeCleanups
   ) where
@@ -18,9 +19,10 @@ import Framework.Effect.Contract
   , Output(..), Failure(..), ErrorReport(..), ErrorStore(caughtFailure), failEffect, ContextStore(enterHandler)
   , ScopeInput(..), ScopeFault(..), ScopeStore(openScope, closeScope, withScopeDependencies)
   )
-import Framework.Effect.Context (ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext)
+import Framework.Effect.Context (ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext)
 import Framework.Effect.Registration
-  ( EffectTyping(..), Producer(..), TypeRef(..), typeRef, EffectSpec(..), ContextInput(..), ValueSource(..) )
+  ( EffectTyping(..), Producer(..), Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
+  , requests, requires )
 import Framework.Effect.Runtime (Pure, App, Target, Identity, targetPure, targetApp, bootPure)
 import Framework.Effect.Runtime.App (withScopeCleanups)
 import Framework.Effect.Scope (ScopeHandler, newScopeHandler)

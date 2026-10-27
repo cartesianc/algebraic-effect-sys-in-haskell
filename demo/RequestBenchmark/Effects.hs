@@ -3,14 +3,13 @@
 
 module RequestBenchmark.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), typeRef)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), requests, requires, typeRef)
 import RequestBenchmark.Types
 
--- 1. Registered code（手写）：Input 注入句柄；context 声明消费方的取值来源与 ADT。
+-- 1. Registered code（手写）：Input 注入句柄；demands 只声明需要的契约与取值模式。
+-- 来源由生成器在注册集合中按类型唯一解析；不同含义使用不同类型。
 -- 三个数值生产操作都是 Context；Pure 执行载体表示本例不需要 IO，不等于 Pure typing。
--- 方法名绑定在 typing 内；handler = Nothing 表示不声明本地调用入口。
--- 只有 typing.Context.request 声明业务产物；错误及最终 Output 由 SDK 提供。
--- context = Nothing 表示不声明业务值输入；typing 内的方法名属于生产方。
+-- 方法名绑定在 typing 内；只有 typing.Context.request 声明业务产物。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
@@ -23,7 +22,7 @@ effects =
           , require = Just "readDemoInputs"
           }
       , input = "Root"
-      , context = Nothing
+      , demands = []
       }
   , EffectSpec
       { name = "MakeNumber"
@@ -35,10 +34,7 @@ effects =
           , require = Just "readNumber"
           }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Just (From "DemoContext" (typeRef @DemoInputs))
-          , require = Nothing
-          }
+      , demands = [requests @DemoInputs]
       }
   , EffectSpec
       { name = "AddOne"
@@ -50,10 +46,7 @@ effects =
           , require = Just "readAddedNumber"
           }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Just (From "MakeNumber" (typeRef @NumberValue))
-          , require = Nothing
-          }
+      , demands = [requests @NumberValue]
       }
   , EffectSpec
       { name = "RenderNumber"
@@ -65,9 +58,6 @@ effects =
           , require = Just "readRenderedNumber"
           }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Just (From "AddOne" (typeRef @AddedValue))
-          , require = Just (From "DemoContext" (typeRef @DemoInputs))
-          }
+      , demands = [requests @AddedValue, requires @DemoInputs]
       }
   ]

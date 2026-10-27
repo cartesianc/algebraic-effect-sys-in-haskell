@@ -3,7 +3,7 @@
 
 module ScopeReuseDemo.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), typeRef)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), requests, requires, typeRef)
 import ScopeReuseDemo.Types
 
 -- Context 保存路径与活文件；Scoped 管理开启／关闭，日志记录实际开闭次数。
@@ -18,16 +18,13 @@ effects =
           , require = Just "readFilePaths"
           }
       , input = "Root"
-      , context = Nothing
+      , demands = []
       }
   , EffectSpec
       { name = "PrepareProbe"
       , typing = Excu { handler = Just "prepareProbe" }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Just (From "FileLocations" (typeRef @FilePaths))
-          , require = Nothing
-          }
+      , demands = [requests @FilePaths]
       }
   , EffectSpec
       { name = "FileResource"
@@ -37,55 +34,37 @@ effects =
           , require = Just "readOpenedFile"
           }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Nothing
-          , require = Just (From "FileLocations" (typeRef @FilePaths))
-          }
+      , demands = [requires @FilePaths]
       }
   , EffectSpec
       { name = "SharedFileScope"
       , typing = Scoped
           { open = Just "openSharedFile", close = Just "closeSharedFile" }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Just (From "FileResource" (typeRef @OpenedFile))
-          , require = Just (From "FileResource" (typeRef @OpenedFile))
-          }
+      , demands = [requests @OpenedFile, requires @OpenedFile]
       }
   , EffectSpec
       { name = "WriteFirst"
       , typing = Excu { handler = Just "writeFirst" }
       , input = "SharedFileScope"
-      , context = Just ContextInput
-          { request = Just (From "FileLocations" (typeRef @FilePaths))
-          , require = Just (From "FileResource" (typeRef @OpenedFile))
-          }
+      , demands = [requests @FilePaths, requires @OpenedFile]
       }
   , EffectSpec
       { name = "WriteSecond"
       , typing = Excu { handler = Just "writeSecond" }
       , input = "SharedFileScope"
-      , context = Just ContextInput
-          { request = Just (From "FileLocations" (typeRef @FilePaths))
-          , require = Just (From "FileResource" (typeRef @OpenedFile))
-          }
+      , demands = [requests @FilePaths, requires @OpenedFile]
       }
   , EffectSpec
       { name = "WriteThird"
       , typing = Excu { handler = Just "writeThird" }
       , input = "SharedFileScope"
-      , context = Just ContextInput
-          { request = Just (From "FileLocations" (typeRef @FilePaths))
-          , require = Just (From "FileResource" (typeRef @OpenedFile))
-          }
+      , demands = [requests @FilePaths, requires @OpenedFile]
       }
   , EffectSpec
       { name = "VerifyReuse"
       , typing = Excu { handler = Just "verifyReuse" }
       , input = "Root"
-      , context = Just ContextInput
-          { request = Just (From "FileLocations" (typeRef @FilePaths))
-          , require = Nothing
-          }
+      , demands = [requests @FilePaths]
       }
   ]

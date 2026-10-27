@@ -4,24 +4,24 @@
 -- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
 module ScopeReuseDemo.Generated.Program where
 
-import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), ContextInput(..), ValueSource(..), TypeRef(..), Output)
+import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), Handles(..), Demand(..), Access(..), TypeRef(..), Output)
 import qualified Framework.SDK as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
-import ScopeReuseDemo.Generated.Effects
+import ScopeReuseDemo.Generated.Effects hiding (request, require)
 import qualified ScopeReuseDemo.Generated.Handlers as Handlers
 import ScopeReuseDemo.Types
 
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
 registeredEffects :: [EffectSpec]
 registeredEffects =
-  [ EffectSpec {name = "FileLocations", typing = Context {request = Just (Producer {handler = "getFilePaths", produces = TypeRef "FilePaths"}), require = Just "readFilePaths"}, input = "Root", context = Nothing}
-  , EffectSpec {name = "PrepareProbe", typing = Excu {handler = Just "prepareProbe"}, input = "Root", context = Just (ContextInput {request = Just (From "FileLocations" (TypeRef "FilePaths")), require = Nothing})}
-  , EffectSpec {name = "FileResource", typing = Context {request = Just (Producer {handler = "acquireFile", produces = TypeRef "OpenedFile"}), require = Just "readOpenedFile"}, input = "Root", context = Just (ContextInput {request = Nothing, require = Just (From "FileLocations" (TypeRef "FilePaths"))})}
-  , EffectSpec {name = "SharedFileScope", typing = Scoped {open = Just "openSharedFile", close = Just "closeSharedFile"}, input = "Root", context = Just (ContextInput {request = Just (From "FileResource" (TypeRef "OpenedFile")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "WriteFirst", typing = Excu {handler = Just "writeFirst"}, input = "SharedFileScope", context = Just (ContextInput {request = Just (From "FileLocations" (TypeRef "FilePaths")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "WriteSecond", typing = Excu {handler = Just "writeSecond"}, input = "SharedFileScope", context = Just (ContextInput {request = Just (From "FileLocations" (TypeRef "FilePaths")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "WriteThird", typing = Excu {handler = Just "writeThird"}, input = "SharedFileScope", context = Just (ContextInput {request = Just (From "FileLocations" (TypeRef "FilePaths")), require = Just (From "FileResource" (TypeRef "OpenedFile"))})}
-  , EffectSpec {name = "VerifyReuse", typing = Excu {handler = Just "verifyReuse"}, input = "Root", context = Just (ContextInput {request = Just (From "FileLocations" (TypeRef "FilePaths")), require = Nothing})}
+  [ EffectSpec {name = "FileLocations", typing = Context {request = Just (Producer {handler = "getFilePaths", produces = TypeRef "FilePaths"}), require = Just "readFilePaths"}, input = "Root", demands = []}
+  , EffectSpec {name = "PrepareProbe", typing = Excu {handler = Just "prepareProbe"}, input = "Root", demands = [Demand {access = RequestAccess, contract = TypeRef "FilePaths"}]}
+  , EffectSpec {name = "FileResource", typing = Context {request = Just (Producer {handler = "acquireFile", produces = TypeRef "OpenedFile"}), require = Just "readOpenedFile"}, input = "Root", demands = [Demand {access = RequireAccess, contract = TypeRef "FilePaths"}]}
+  , EffectSpec {name = "SharedFileScope", typing = Scoped {open = Just "openSharedFile", close = Just "closeSharedFile"}, input = "Root", demands = [Demand {access = RequestAccess, contract = TypeRef "OpenedFile"},Demand {access = RequireAccess, contract = TypeRef "OpenedFile"}]}
+  , EffectSpec {name = "WriteFirst", typing = Excu {handler = Just "writeFirst"}, input = "SharedFileScope", demands = [Demand {access = RequestAccess, contract = TypeRef "FilePaths"},Demand {access = RequireAccess, contract = TypeRef "OpenedFile"}]}
+  , EffectSpec {name = "WriteSecond", typing = Excu {handler = Just "writeSecond"}, input = "SharedFileScope", demands = [Demand {access = RequestAccess, contract = TypeRef "FilePaths"},Demand {access = RequireAccess, contract = TypeRef "OpenedFile"}]}
+  , EffectSpec {name = "WriteThird", typing = Excu {handler = Just "writeThird"}, input = "SharedFileScope", demands = [Demand {access = RequestAccess, contract = TypeRef "FilePaths"},Demand {access = RequireAccess, contract = TypeRef "OpenedFile"}]}
+  , EffectSpec {name = "VerifyReuse", typing = Excu {handler = Just "verifyReuse"}, input = "Root", demands = [Demand {access = RequestAccess, contract = TypeRef "FilePaths"}]}
   ]
 
 -- 生成身份连接到已有运行 scope 名；依赖只保存在下方显式 ScopeTree 中。
@@ -62,7 +62,7 @@ generatedEffectGraph = SDK.EffectGraph
       , SDK.MethodDefinition GetFilePathsGen GetFilePathsGen SDK.ContextRequest (SDK.Empty)
       , SDK.MethodDefinition WriteFirstGen WriteFirstGen SDK.HandlerMethod (SDK.Sequence [SDK.Call GetFilePathsGen, SDK.Call OpenSharedFileGen, SDK.Call ReadOpenedFileGen])
       , SDK.MethodDefinition OpenSharedFileGen OpenSharedFileGen SDK.ScopeOpen (SDK.Call AcquireFileGen)
-      , SDK.MethodDefinition AcquireFileGen AcquireFileGen SDK.ContextRequest (SDK.Call GetFilePathsGen)
+      , SDK.MethodDefinition AcquireFileGen AcquireFileGen SDK.ContextRequest (SDK.Call ReadFilePathsGen)
       , SDK.MethodDefinition ReadFilePathsGen GetFilePathsGen SDK.ContextRequire (SDK.Empty)
       , SDK.MethodDefinition ReadOpenedFileGen AcquireFileGen SDK.ContextRequire (SDK.Empty)
       , SDK.MethodDefinition WriteSecondGen WriteSecondGen SDK.HandlerMethod (SDK.Sequence [SDK.Call GetFilePathsGen, SDK.Call OpenSharedFileGen, SDK.Call ReadOpenedFileGen])
