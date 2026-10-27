@@ -24,7 +24,7 @@ import Crawler.Types
 type Root = SDK.Root ContextValues Errors
 type App = SDK.App ContextValues Errors
 
--- 由生产方的 refine @Representation @(Gen "Name") 生成；只能由该生产方构造。
+-- 每个 Context 的契约类型：名字来自 handler 名，包装其表示类型；只能由该生产方构造。
 newtype StartURL = StartURL (PageURL)
 deriving instance Eq (PageURL) => Eq StartURL
 deriving instance Show (PageURL) => Show StartURL
@@ -49,19 +49,23 @@ newtype LinkedPageSummary = LinkedPageSummary (PageSummary)
 deriving instance Eq (PageSummary) => Eq LinkedPageSummary
 deriving instance Show (PageSummary) => Show LinkedPageSummary
 
+newtype CrawlSessionInfo = CrawlSessionInfo (SessionInfo)
+deriving instance Eq (SessionInfo) => Eq CrawlSessionInfo
+deriving instance Show (SessionInfo) => Show CrawlSessionInfo
+
 -- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = LoadStartURLGen | ReadStartURLGen | LoadLinkedURLGen | ReadLinkedURLGen | FetchPageGen | ReadFetchedPageGen | ExtractPageGen | ReadPageSummaryGen | PrintPageGen | FetchLinkedPageGen | ReadFetchedLinkedPageGen | ExtractLinkedPageGen | ReadLinkedPageSummaryGen | PrintLinkedPageGen | CreateCrawlSessionGen | ReadCrawlSessionGen | OpenCrawlSessionGen | CloseCrawlSessionGen
+data MethodGen = StartURLGen | ReadStartURLGen | LinkedURLGen | ReadLinkedURLGen | StartFetchedPageGen | ReadStartFetchedPageGen | StartPageSummaryGen | ReadStartPageSummaryGen | PrintPageGen | LinkedFetchedPageGen | ReadLinkedFetchedPageGen | LinkedPageSummaryGen | ReadLinkedPageSummaryGen | PrintLinkedPageGen | CrawlSessionInfoGen | ReadCrawlSessionGen | OpenCrawlSessionGen | CloseCrawlSessionGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
 data StartPage
 
 class (Effect CrawlSession m) => StartPageEffect m where
-  loadStartURL :: m (Produce StartPage)
+  startURL :: m (Produce StartPage)
   readStartURL :: m (Produce StartPage)
   readStartURL = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
     SDK.readContext "StartPage" ContextBindingError [("FetchPage", SDK.RequestValue)] Nothing boundStartPage
-  {-# MINIMAL loadStartURL #-}
+  {-# MINIMAL startURL #-}
 
 instance (Monad m, Effect CrawlSession m, StartPageEffect m) => Effect StartPage m where
   type Registration StartPage = Registered StartPageEffect CrawlSession
@@ -75,11 +79,11 @@ instance (Monad m, Effect CrawlSession m, StartPageEffect m) => Effect StartPage
 data LinkedPage
 
 class (Effect CrawlSession m) => LinkedPageEffect m where
-  loadLinkedURL :: m (Produce LinkedPage)
+  linkedURL :: m (Produce LinkedPage)
   readLinkedURL :: m (Produce LinkedPage)
   readLinkedURL = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
     SDK.readContext "LinkedPage" ContextBindingError [("FetchLinkedPage", SDK.RequestValue)] Nothing boundLinkedPage
-  {-# MINIMAL loadLinkedURL #-}
+  {-# MINIMAL linkedURL #-}
 
 instance (Monad m, Effect CrawlSession m, LinkedPageEffect m) => Effect LinkedPage m where
   type Registration LinkedPage = Registered LinkedPageEffect CrawlSession
@@ -93,11 +97,11 @@ instance (Monad m, Effect CrawlSession m, LinkedPageEffect m) => Effect LinkedPa
 data FetchPage
 
 class (Effect CrawlSession m, Provides StartURL m, Provides CrawlSessionInfo m) => FetchPageEffect m where
-  fetchPage :: m (Produce FetchPage)
-  readFetchedPage :: m (Produce FetchPage)
-  readFetchedPage = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
+  startFetchedPage :: m (Produce FetchPage)
+  readStartFetchedPage :: m (Produce FetchPage)
+  readStartFetchedPage = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
     SDK.readContext "FetchPage" ContextBindingError [("ExtractPage", SDK.RequestValue)] Nothing boundFetchPage
-  {-# MINIMAL fetchPage #-}
+  {-# MINIMAL startFetchedPage #-}
 
 instance (Monad m, Effect CrawlSession m, FetchPageEffect m) => Effect FetchPage m where
   type Registration FetchPage = Registered FetchPageEffect CrawlSession
@@ -111,11 +115,11 @@ instance (Monad m, Effect CrawlSession m, FetchPageEffect m) => Effect FetchPage
 data ExtractPage
 
 class (Effect CrawlSession m, Provides StartFetchedPage m) => ExtractPageEffect m where
-  extractPage :: m (Produce ExtractPage)
-  readPageSummary :: m (Produce ExtractPage)
-  readPageSummary = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
+  startPageSummary :: m (Produce ExtractPage)
+  readStartPageSummary :: m (Produce ExtractPage)
+  readStartPageSummary = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
     SDK.readContext "ExtractPage" ContextBindingError [("PrintPage", SDK.RequestValue)] Nothing boundExtractPage
-  {-# MINIMAL extractPage #-}
+  {-# MINIMAL startPageSummary #-}
 
 instance (Monad m, Effect CrawlSession m, ExtractPageEffect m) => Effect ExtractPage m where
   type Registration ExtractPage = Registered ExtractPageEffect CrawlSession
@@ -143,11 +147,11 @@ instance (Monad m, Effect CrawlSession m, PrintPageEffect m) => Effect PrintPage
 data FetchLinkedPage
 
 class (Effect CrawlSession m, Provides LinkedURL m, Provides CrawlSessionInfo m) => FetchLinkedPageEffect m where
-  fetchLinkedPage :: m (Produce FetchLinkedPage)
-  readFetchedLinkedPage :: m (Produce FetchLinkedPage)
-  readFetchedLinkedPage = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
+  linkedFetchedPage :: m (Produce FetchLinkedPage)
+  readLinkedFetchedPage :: m (Produce FetchLinkedPage)
+  readLinkedFetchedPage = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
     SDK.readContext "FetchLinkedPage" ContextBindingError [("ExtractLinkedPage", SDK.RequestValue)] Nothing boundFetchLinkedPage
-  {-# MINIMAL fetchLinkedPage #-}
+  {-# MINIMAL linkedFetchedPage #-}
 
 instance (Monad m, Effect CrawlSession m, FetchLinkedPageEffect m) => Effect FetchLinkedPage m where
   type Registration FetchLinkedPage = Registered FetchLinkedPageEffect CrawlSession
@@ -161,11 +165,11 @@ instance (Monad m, Effect CrawlSession m, FetchLinkedPageEffect m) => Effect Fet
 data ExtractLinkedPage
 
 class (Effect CrawlSession m, Provides LinkedFetchedPage m) => ExtractLinkedPageEffect m where
-  extractLinkedPage :: m (Produce ExtractLinkedPage)
+  linkedPageSummary :: m (Produce ExtractLinkedPage)
   readLinkedPageSummary :: m (Produce ExtractLinkedPage)
   readLinkedPageSummary = (FrameworkRoot.withErrorPath ["CrawlSession"] . FrameworkRoot.handler @Root) $
     SDK.readContext "ExtractLinkedPage" ContextBindingError [("PrintLinkedPage", SDK.RequestValue)] Nothing boundExtractLinkedPage
-  {-# MINIMAL extractLinkedPage #-}
+  {-# MINIMAL linkedPageSummary #-}
 
 instance (Monad m, Effect CrawlSession m, ExtractLinkedPageEffect m) => Effect ExtractLinkedPage m where
   type Registration ExtractLinkedPage = Registered ExtractLinkedPageEffect CrawlSession
@@ -193,11 +197,11 @@ instance (Monad m, Effect CrawlSession m, PrintLinkedPageEffect m) => Effect Pri
 data SessionContext
 
 class (Effect Root m) => SessionContextEffect m where
-  createCrawlSession :: m (Produce SessionContext)
+  crawlSessionInfo :: m (Produce SessionContext)
   readCrawlSession :: m (Produce SessionContext)
   readCrawlSession = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "SessionContext" ContextBindingError [("FetchPage", SDK.RequireValue), ("FetchLinkedPage", SDK.RequireValue), ("CrawlSession", SDK.RequestValue)] Nothing boundSessionContext
-  {-# MINIMAL createCrawlSession #-}
+  {-# MINIMAL crawlSessionInfo #-}
 
 instance (Monad m, Effect Root m, SessionContextEffect m) => Effect SessionContext m where
   type Registration SessionContext = Registered SessionContextEffect Root
@@ -229,31 +233,31 @@ class Provides contract m where
   require :: m contract
 
 instance (StartPageEffect App) => Provides StartURL App where
-  request = SDK.provideContext "StartURL" ContextBindingError [("FetchPage", loadStartURL)]
+  request = SDK.provideContext "StartURL" ContextBindingError [("FetchPage", startURL)]
   require = SDK.provideContext "StartURL" ContextBindingError []
 
 instance (SessionContextEffect App) => Provides CrawlSessionInfo App where
-  request = SDK.provideContext "CrawlSessionInfo" ContextBindingError [("CrawlSession", createCrawlSession)]
+  request = SDK.provideContext "CrawlSessionInfo" ContextBindingError [("CrawlSession", crawlSessionInfo)]
   require = SDK.provideContext "CrawlSessionInfo" ContextBindingError [("FetchPage", readCrawlSession), ("FetchLinkedPage", readCrawlSession), ("CrawlSession", readCrawlSession)]
 
 instance (FetchPageEffect App) => Provides StartFetchedPage App where
-  request = SDK.provideContext "StartFetchedPage" ContextBindingError [("ExtractPage", fetchPage)]
+  request = SDK.provideContext "StartFetchedPage" ContextBindingError [("ExtractPage", startFetchedPage)]
   require = SDK.provideContext "StartFetchedPage" ContextBindingError []
 
 instance (ExtractPageEffect App) => Provides StartPageSummary App where
-  request = SDK.provideContext "StartPageSummary" ContextBindingError [("PrintPage", extractPage)]
+  request = SDK.provideContext "StartPageSummary" ContextBindingError [("PrintPage", startPageSummary)]
   require = SDK.provideContext "StartPageSummary" ContextBindingError []
 
 instance (LinkedPageEffect App) => Provides LinkedURL App where
-  request = SDK.provideContext "LinkedURL" ContextBindingError [("FetchLinkedPage", loadLinkedURL)]
+  request = SDK.provideContext "LinkedURL" ContextBindingError [("FetchLinkedPage", linkedURL)]
   require = SDK.provideContext "LinkedURL" ContextBindingError []
 
 instance (FetchLinkedPageEffect App) => Provides LinkedFetchedPage App where
-  request = SDK.provideContext "LinkedFetchedPage" ContextBindingError [("ExtractLinkedPage", fetchLinkedPage)]
+  request = SDK.provideContext "LinkedFetchedPage" ContextBindingError [("ExtractLinkedPage", linkedFetchedPage)]
   require = SDK.provideContext "LinkedFetchedPage" ContextBindingError []
 
 instance (ExtractLinkedPageEffect App) => Provides LinkedPageSummary App where
-  request = SDK.provideContext "LinkedPageSummary" ContextBindingError [("PrintLinkedPage", extractLinkedPage)]
+  request = SDK.provideContext "LinkedPageSummary" ContextBindingError [("PrintLinkedPage", linkedPageSummary)]
   require = SDK.provideContext "LinkedPageSummary" ContextBindingError []
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。

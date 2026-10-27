@@ -1,13 +1,8 @@
-module FileDemo.Types (FileName(..), OpenedFile(..), FileText(..)) where
+module FileDemo.Types (FileHandle(..)) where
 
 import System.IO (Handle)
 
-newtype FileName = FileName FilePath
-  deriving (Eq, Show)
-
--- 活资源也是 Context 的业务值；Scoped 本身不返回 Handle。
-data OpenedFile = OpenedFile FilePath Handle
-  deriving Show
-
-newtype FileText = FileText String
+-- 活资源的表示：路径与真实 Handle。Context 契约 OpenedFile 由生成器按 handler 名包装它；
+-- 文件名、文本等单值契约直接包装 FilePath／String，不再手写一层 newtype。
+data FileHandle = FileHandle FilePath Handle
   deriving Show

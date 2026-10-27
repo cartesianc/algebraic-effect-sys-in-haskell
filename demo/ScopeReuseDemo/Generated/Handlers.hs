@@ -31,24 +31,24 @@ import System.IO
 import System.IO.Error (tryIOError)
 
 instance FileLocationsEffect App where
-  getFilePaths =
+  filePaths =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations" FrameworkGenerated.ContextBindingError
       [("PrepareProbe", FrameworkRuntime.RequestValue), ("FileResource", FrameworkRuntime.RequireValue), ("WriteFirst", FrameworkRuntime.RequestValue), ("WriteSecond", FrameworkRuntime.RequestValue), ("WriteThird", FrameworkRuntime.RequestValue), ("VerifyReuse", FrameworkRuntime.RequestValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocations"))
       FrameworkGenerated.boundFileLocations
       (\value bindings -> bindings { FrameworkGenerated.boundFileLocations = Just value })) $
       let
-        getFilePaths = pure (FilePaths
+        filePaths = pure (FilePaths (SharedPaths
           ("demo" </> "ScopeReuseDemo" </> "output" </> "shared.txt")
-          ("demo" </> "ScopeReuseDemo" </> "output" </> "events.txt"))
-      in getFilePaths
+          ("demo" </> "ScopeReuseDemo" </> "output" </> "events.txt")))
+      in filePaths
 
 instance PrepareProbeEffect App where
   prepareProbe =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareProbe") $
       let
         prepareProbe = do
-          FilePaths path journal <- request @FilePaths
+          FilePaths (SharedPaths path journal) <- request @FilePaths
           outcome <- liftIO $ tryIOError $ do
             createDirectoryIfMissing True (takeDirectory path)
             -- 仅重置本 demo 的两份产物，在三个分支启动前完成。
@@ -58,30 +58,30 @@ instance PrepareProbeEffect App where
       in prepareProbe
 
 instance FileResourceEffect App where
-  acquireFile =
+  openedFile =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
       [("SharedFileScope", FrameworkRuntime.RequestValue), ("WriteFirst", FrameworkRuntime.RequireValue), ("WriteSecond", FrameworkRuntime.RequireValue), ("WriteThird", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundFileResource
       (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
       let
-        acquireFile = do
-          paths@(FilePaths path journal) <- require @FilePaths
+        openedFile = do
+          FilePaths paths@(SharedPaths path journal) <- require @FilePaths
           outcome <- liftIO $ tryIOError $
             bracketOnError (openFile path AppendMode) hClose $ \file -> do
               hSetEncoding file utf8
               -- 记录真实资源获取；日志独立于 Context，重新产值不会清零它。
               appendFile journal "file-open\n"
-              pure (OpenedFile paths file)
+              pure (OpenedFile (SharedFile paths file))
           either (raise . FileResourceError . displayException) pure outcome
-      in acquireFile
+      in openedFile
 
 instance SharedFileScopeEffect App where
   openSharedFile =
     (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
       let
         openSharedFile = do
-          OpenedFile (FilePaths _ journal) _ <- request @OpenedFile
+          OpenedFile (SharedFile (SharedPaths _ journal) _) <- request @OpenedFile
           outcome <- liftIO (tryIOError (appendFile journal "open-body\n"))
           either (raise . SharedFileScopeError . displayException) pure outcome
       in openSharedFile
@@ -90,7 +90,7 @@ instance SharedFileScopeEffect App where
     (FrameworkRoot.withErrorPath ["SharedFileScope"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
       let
         closeSharedFile = do
-          OpenedFile (FilePaths _ journal) file <- require @OpenedFile
+          OpenedFile (SharedFile (SharedPaths _ journal) file) <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
             appendFile journal "close-body\n"
             hClose file
@@ -107,7 +107,7 @@ instance WriteFirstEffect App where
         writeFirst = do
           _ <- request @FilePaths
           openSharedFile
-          OpenedFile _ file <- require @OpenedFile
+          OpenedFile (SharedFile _ file) <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
             hPutStr file "first\n"
             hFlush file
@@ -121,7 +121,7 @@ instance WriteSecondEffect App where
         writeSecond = do
           _ <- request @FilePaths
           openSharedFile
-          OpenedFile _ file <- require @OpenedFile
+          OpenedFile (SharedFile _ file) <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
             hPutStr file "second\n"
             hFlush file
@@ -135,7 +135,7 @@ instance WriteThirdEffect App where
         writeThird = do
           _ <- request @FilePaths
           openSharedFile
-          OpenedFile _ file <- require @OpenedFile
+          OpenedFile (SharedFile _ file) <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
             hPutStr file "third\n"
             hFlush file
@@ -147,7 +147,7 @@ instance VerifyReuseEffect App where
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "VerifyReuse") $
       let
         verifyReuse = do
-          FilePaths path journal <- request @FilePaths
+          FilePaths (SharedPaths path journal) <- request @FilePaths
           -- parallel 已等待各链退出及自动清理；此处只读日志和文件，不 require 旧资源。
           outcome <- liftIO $ tryIOError $ do
             events <- readFile' journal
@@ -171,7 +171,7 @@ instance VerifyReuseEffect App where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "36174394c9969429807a79ba73a31f3f"
+handlerSourceFingerprint = Just "828c2ca8c33ce4f24ef5a04d815748e5"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

@@ -1,124 +1,77 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Crawler.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), Gen, refine, requests, requires, typeRef)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), requester, requests, requires)
 import Crawler.Types
 
 -- 1. Registered code：只有类型引用、分类和连接，没有 HTTP 或 HTML 实现。
--- typing 声明生产方方法名；demands 声明需要的契约与取值模式，来源省略时唯一解析。
--- 来源按类型唯一解析：起始页与链接页两条链的 URL、抓取结果和摘要表示相同、含义不同，
--- 由各自生产方以 refine @表示类型 @(Gen "名字") 声明生成类型，消费方以 @(Gen "名字") 引用。
+-- requester "handler名" @表示类型：handler 名首字母大写即契约名，生成器产出 newtype 契约 = 契约 表示类型。
+-- 消费方以契约名声明 requests／requires，来源由契约名唯一确定；handler 中写 request @契约名。
 -- instance 显式调用 open；无开启输入的 scope 在实际重叠的使用闭包之间共享。
 -- 普通 effect 成功值固定为 ()；业务产值统一由 Context 提供，失败仍用 raise。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "StartPage"
-      , typing = Context
-          { request = Just Producer
-              { handler = "loadStartURL"
-              , produces = refine @PageURL @(Gen "StartURL")
-              }
-          , require = Just "readStartURL"
-          }
+      , typing = Context { request = requester "startURL" @PageURL, require = Just "readStartURL" }
       , input = "CrawlSession"
       , demands = []
       }
   , EffectSpec
       { name = "LinkedPage"
-      , typing = Context
-          { request = Just Producer
-              { handler = "loadLinkedURL"
-              , produces = refine @PageURL @(Gen "LinkedURL")
-              }
-          , require = Just "readLinkedURL"
-          }
+      , typing = Context { request = requester "linkedURL" @PageURL, require = Just "readLinkedURL" }
       , input = "CrawlSession"
       , demands = []
       }
   , EffectSpec
       { name = "FetchPage"
-      , typing = Context
-          { request = Just Producer
-              { handler = "fetchPage"
-              , produces = refine @FetchedPage @(Gen "StartFetchedPage")
-              }
-          , require = Just "readFetchedPage"
-          }
+      , typing = Context { request = requester "startFetchedPage" @FetchedPage, require = Just "readStartFetchedPage" }
       , input = "CrawlSession"
-      , demands = [requests @(Gen "StartURL"), requires @CrawlSessionInfo]
+      , demands = [requests "StartURL", requires "CrawlSessionInfo"]
       }
   , EffectSpec
       { name = "ExtractPage"
-      , typing = Context
-          { request = Just Producer
-              { handler = "extractPage"
-              , produces = refine @PageSummary @(Gen "StartPageSummary")
-              }
-          , require = Just "readPageSummary"
-          }
+      , typing = Context { request = requester "startPageSummary" @PageSummary, require = Just "readStartPageSummary" }
       , input = "CrawlSession"
-      , demands = [requests @(Gen "StartFetchedPage")]
+      , demands = [requests "StartFetchedPage"]
       }
   , EffectSpec
       { name = "PrintPage"
       , typing = Excu { handler = Just "printPage" }
       , input = "CrawlSession"
-      , demands = [requests @(Gen "StartPageSummary")]
+      , demands = [requests "StartPageSummary"]
       }
   , EffectSpec
       { name = "FetchLinkedPage"
-      , typing = Context
-          { request = Just Producer
-              { handler = "fetchLinkedPage"
-              , produces = refine @FetchedPage @(Gen "LinkedFetchedPage")
-              }
-          , require = Just "readFetchedLinkedPage"
-          }
+      , typing = Context { request = requester "linkedFetchedPage" @FetchedPage, require = Just "readLinkedFetchedPage" }
       , input = "CrawlSession"
-      , demands = [requests @(Gen "LinkedURL"), requires @CrawlSessionInfo]
+      , demands = [requests "LinkedURL", requires "CrawlSessionInfo"]
       }
   , EffectSpec
       { name = "ExtractLinkedPage"
-      , typing = Context
-          { request = Just Producer
-              { handler = "extractLinkedPage"
-              , produces = refine @PageSummary @(Gen "LinkedPageSummary")
-              }
-          , require = Just "readLinkedPageSummary"
-          }
+      , typing = Context { request = requester "linkedPageSummary" @PageSummary, require = Just "readLinkedPageSummary" }
       , input = "CrawlSession"
-      , demands = [requests @(Gen "LinkedFetchedPage")]
+      , demands = [requests "LinkedFetchedPage"]
       }
   , EffectSpec
       { name = "PrintLinkedPage"
       , typing = Excu { handler = Just "printLinkedPage" }
       , input = "CrawlSession"
-      , demands = [requests @(Gen "LinkedPageSummary")]
+      , demands = [requests "LinkedPageSummary"]
       }
   -- 信息由上游 Context 提供；Scope 只描述开启／关闭和持存状态。
   , EffectSpec
       { name = "SessionContext"
-      , typing = Context
-          { request = Just Producer
-              { handler = "createCrawlSession"
-              , produces = typeRef @CrawlSessionInfo
-              }
-          , require = Just "readCrawlSession"
-          }
+      , typing = Context { request = requester "crawlSessionInfo" @SessionInfo, require = Just "readCrawlSession" }
       , input = "Root"
       , demands = []
       }
   , EffectSpec
       { name = "CrawlSession"
-      , typing = Scoped
-          { open = Just "openCrawlSession"
-          , close = Just "closeCrawlSession"
-          }
+      , typing = Scoped { open = Just "openCrawlSession", close = Just "closeCrawlSession" }
       , input = "Root"
-      , demands = [requests @CrawlSessionInfo, requires @CrawlSessionInfo]
+      , demands = [requests "CrawlSessionInfo", requires "CrawlSessionInfo"]
       }
   ]

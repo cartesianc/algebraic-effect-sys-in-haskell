@@ -6,23 +6,30 @@ import Framework.Effect.Asset (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileName", assetFile = "demo/FileDemo/Types.hs", assetLine = 5, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileName", assetFile = "demoFileDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileName", assetFile = "demo/FileDemo/Types.hs", assetLine = 5, assetColumn = 20}
+          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileName", assetFile = "demoFileDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 20}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileText", assetFile = "demo/FileDemo/Types.hs", assetLine = 12, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileText", assetFile = "demoFileDemo/Generated/Effects.hs", assetLine = 36, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileText", assetFile = "demo/FileDemo/Types.hs", assetLine = 12, assetColumn = 20}
+          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileText", assetFile = "demoFileDemo/Generated/Effects.hs", assetLine = 36, assetColumn = 20}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "OpenedFile", assetFile = "demo/FileDemo/Types.hs", assetLine = 9, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demoFileDemo/Generated/Effects.hs", assetLine = 32, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "OpenedFile", assetFile = "demo/FileDemo/Types.hs", assetLine = 9, assetColumn = 19}
+          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demoFileDemo/Generated/Effects.hs", assetLine = 32, assetColumn = 22}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileHandle", assetFile = "demo/FileDemo/Types.hs", assetLine = 7, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileHandle", assetFile = "demo/FileDemo/Types.hs", assetLine = 7, assetColumn = 19}
           ]
       , assetFields = []
       }

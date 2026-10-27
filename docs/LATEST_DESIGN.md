@@ -70,7 +70,7 @@ AST 与注册关系均采用固定结构、引用和契约描述，供第三方�
 
 ### 注册构造
 
-注册使用普通 ADT 的不同构造器携带各自属性，不因字段不同而引入 type family 或 data family。普通方法名绑定使用 Maybe String，包括 Scoped.open／close 和 Error.detect／resolve；只有 Context.request 使用 Maybe Producer，将方法名和业务产物类型放在一起。Nothing 表示未绑定该方法，不把 handler 返回值改成 Maybe。五类方法声明、Context 绑定、scope 状态及 Error 的检测／处置契约保留；App／IO 的 Error 祖先导航接入同一 ScopeTree，Pure 保留旧候选名单，本轮自动收尾范围改为有限使用闭包，interpreter 退出仍兜底。
+注册使用普通 ADT 的不同构造器携带各自属性，不因字段不同而引入 type family 或 data family。普通方法名绑定使用 Maybe String，包括 Scoped.open／close 和 Error.detect／resolve；只有 Context.request 使用 requester "方法名" @表示类型，将方法名和表示类型放在一起，契约类型按方法名生成。Nothing 表示未绑定该方法，不把 handler 返回值改成 Maybe。五类方法声明、Context 绑定、scope 状态及 Error 的检测／处置契约保留；App／IO 的 Error 祖先导航接入同一 ScopeTree，Pure 保留旧候选名单，本轮自动收尾范围改为有限使用闭包，interpreter 退出仍兜底。
 
 ```haskell
 -- 普通注册也把主方法名放入 typing
@@ -92,15 +92,12 @@ typing = Error
 
 -- 同一 Context effect 内的产值与读取类方法
 typing = Context
-  { request = Just Producer
-      { handler = "loadCrawlerConfig"
-      , produces = typeRef @CrawlerConfig
-      }
+  { request = requester "crawlerConfig" @ConfigSettings
   , require = Just "readCrawlerConfig"
   }
 ```
 
-typing 保存本 effect 内的方法声明，只有 Context.request 的 Producer 声明业务产物；消费方 demands 只以 requests @T／requires @T 引用契约类型，来源按类型唯一解析。Pure／Excu 以 handler 为普通入口，Scoped 以 open 为入口，Context 以 request 为产值入口；require 的类型由同一生产契约推导，缺少该契约时报错。Error 以 handles 声明处理的故障类型，关联 scope 沿 Input 推导，由 Root 的故障协议调用，不作为普通 Node target。
+typing 保存本 effect 内的方法声明，只有 Context.request 以 requester 声明产物，契约类型按 handler 名生成；消费方 demands 以 requests "契约名"／requires "契约名" 引用契约，契约名即生产方 handler 名首字母大写。Pure／Excu 以 handler 为普通入口，Scoped 以 open 为入口，Context 以 request 为产值入口；require 的类型由同一生产契约推导，缺少该契约时报错。Error 以 handles 声明处理的故障类型，关联 scope 沿 Input 推导，由 Root 的故障协议调用，不作为普通 Node target。
 
 当前 handler = Nothing 不生成本地业务方法，保留类型契约与 Input 关系；被 target 选择时报没有入口。request 只允许引用具有生产方法的 Context。SDK 不猜测方法名，也不生成默认成功操作。其余多方法类别的缺省处置随协议另定，不能从 Nothing 自动推导出省略清理、吞掉错误或重新产值。
 
@@ -123,7 +120,7 @@ Error 同样不增加位置参数；需要原始故障时，通过 SDK 的 caugh
 | 类别／方法 | 当前签名或候选 | 状态 |
 | --- | --- | --- |
 | Pure／Excu 主方法 | m () | 成功无业务产物；Pure 本地 IO 限制另定 |
-| Context 生产／读取 | m (Produce e) | 类型来自 Producer.produces；生产成功保存，读取不重复执行 |
+| Context 生产／读取 | m (Produce e) | 类型为按 handler 名生成的契约；生产成功保存，读取不重复执行 |
 | Scoped 开启 | m () | 直接引用上游 Context 方法完成开启；require 参数共享选中的有效实例，request 参数创建新实例 |
 | Scoped 关闭 | m () | 通过上游 require 读取信息，不重放生产；成功关闭不重复执行 |
 | Error detect | m () | 返回 () 定位成功，raise 表示未定位；SDK 保存 Succ／Failed |
@@ -203,16 +200,15 @@ Input 继续表达操作或能力的前提关系。业务值来源单独表达�
 
 ```haskell
 typing = Context
-  { request = Just Producer
-      { handler = "extractLinkedPage", produces = refine @PageSummary @(Gen "LinkedPageSummary") }
+  { request = requester "linkedPageSummary" @PageSummary
   , require = Just "readLinkedPageSummary"
   }
-demands = [requests @(Gen "LinkedFetchedPage")]
+demands = [requests "LinkedFetchedPage"]
 ```
 
 typing 中是本 effect 提供的方法与生产契约；demands 中是本 effect 需要的契约与取值模式，不指名生产方的类或方法。
 requests 调用来源的生产入口，requires 读取来源的已有绑定。来源在注册集合中按类型唯一解析，多个生产方即报错。
-起始页与链接页两条链的抓取结果表示相同，含义不同，因此各自的生产方以 refine 声明 StartFetchedPage／LinkedFetchedPage 等生成类型，
+起始页与链接页两条链的抓取结果表示相同，含义不同；契约类型由各自 handler 名生成，例如 linkedFetchedPage 产出 LinkedFetchedPage，
 生成器不会按距离或拓扑替用户选择来源。request 加入解析出的生产者能力，保留原 Input；不再要求生产者的祖先已经包含消费者原 Input。
 
 输入契约与 typing 共同决定方法签名。当前生成器由 demands 形成关联 Require（单输入直接使用该契约，多输入按声明顺序排为元组），
@@ -230,8 +226,8 @@ AST 仍只决定链的启动次序。parallel 先解析两页，chained 再打�
 不读取第一阶段缓存。具体调用输出引用、跨节点共享与 Generic Map 仍待设计。
 
 `Require e` 是 context 中 request／require 声明的 ADT 接收契约；`Produce e` 直接表示成功类型。
-业务 ADT 在 Types.hs 用原生 data/newtype 单独定义，注册通过 typeRef 引用；Require、Produce 是 Effect 中的关联 type。
-只有 Context 的 Produce 来自 Producer.produces，其余当前类别默认 ()；Error e 由 SDK 按 effect 名生成，不从产物提取。
+业务表示类型在 Types.hs 用原生 data/newtype 单独定义，注册以 requester 的类型参数引用，契约类型按 handler 名生成；Require、Produce 是 Effect 中的关联 type。
+只有 Context 的 Produce 是按 handler 名生成的契约类型，其余当前类别默认 ()；Error e 由 SDK 按 effect 名生成，不从产物提取。
 它们以原子 effect 为索引，不要求另设契约类，也不因执行载体 m 改变而改变 ADT。
 handler 方法是可调用句柄；部分调用产生业务值，但普通句柄组合不要求传递 Produce。
 生成器不再定义业务构造器或解释 ADT/Constructor 字段语言，只生成类型关联、方法与装配。

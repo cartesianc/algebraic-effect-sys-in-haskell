@@ -27,7 +27,7 @@ cabal exec -- runghc -idemo -isdk demo/RequestBenchmark/Main.hs
 ```
 
 ```text
-Succ (Rendered "number: 21")
+Succ (RenderedValue "number: 21")
 ```
 
 运行带文件资源的示例，它会打开、读取、追加写入 `demo/FileDemo/output.txt`，结束时由 SDK 自动关闭文件：
@@ -70,28 +70,22 @@ flowchart LR
 
 完整代码见 [demo/RequestBenchmark](demo/RequestBenchmark)。
 
-**1. 定义数据类型**（[Types.hs](demo/RequestBenchmark/Types.hs)）
+**1. 准备表示类型**（[Types.hs](demo/RequestBenchmark/Types.hs)）
 
-```haskell
-data NumberValue = Number Int deriving Show
-data AddedValue  = Added Int deriving Show
-```
+Types.hs 只放值的结构。这个示例里数字直接用 `Int`，不需要专门定义类型；契约类型由生成器产出（见下一步）。
 
 **2. 注册 effect**（[Effects.hs](demo/RequestBenchmark/Effects.hs)）
 
 ```haskell
 EffectSpec
   { name = "AddOne"
-  , typing = Context
-      { request = Just Producer { handler = "addOne", produces = typeRef @AddedValue }
-      , require = Just "readAddedNumber"
-      }
+  , typing = Context { request = requester "addedValue" @Int, require = Just "readAddedValue" }
   , input = "Root"
-  , demands = [requests @NumberValue]
+  , demands = [requests "NumberValue"]
   }
 ```
 
-这条注册的意思是：`AddOne` 是一个产出 `AddedValue` 的 Context，生产方法叫 `addOne`；它需要一个 `NumberValue`。它没有写这个值从哪里来，生成器会在所有注册里找唯一产出 `NumberValue` 的 effect（这里是 `MakeNumber`）接上。
+这条注册的意思是：`AddOne` 是一个 Context，生产方法叫 `addedValue`。生成器按 handler 名产出它的契约类型 `newtype AddedValue = AddedValue Int`，契约名就是 handler 名首字母大写。它需要契约 `NumberValue`，也就是 handler 名为 `numberValue` 的那个 Context（这里是 `MakeNumber`），生成器会自动接上。
 
 **3. 生成接口**
 
@@ -99,20 +93,20 @@ EffectSpec
 cabal run effect-codegen -- target RequestBenchmark
 ```
 
-生成器在 `Generated/Effects.hs` 中产出 `AddOneEffect` 类型类，方法 `addOne` 已声明好。
+生成器在 `Generated/Effects.hs` 中产出 `AddOneEffect` 类型类和契约类型 `AddedValue`，方法 `addedValue :: m AddedValue` 已声明好。
 
 **4. 实现方法**（[Handlers.hs](demo/RequestBenchmark/Handlers.hs)）
 
 ```haskell
 instance MakeNumberEffect Pure where
-  makeNumber = do
-    DemoInputs (Start number) _ <- request @DemoInputs
+  numberValue = do
+    DemoInputs (InputSettings (Start number) _) <- request @DemoInputs
     if number < 0
       then raise (MakeNumberError ("Invalid start: " ++ show number))
-      else pure (Number number)
+      else pure (NumberValue number)
 ```
 
-`request @DemoInputs` 取得所需的值，`raise` 报告失败。写完再运行一次生成命令，就可以执行了。
+`request @DemoInputs` 取得所需的值，`raise` 报告失败，`NumberValue number` 构造本 Context 的产出。写完再运行一次生成命令，就可以执行了。
 
 ## 核心概念
 
@@ -134,26 +128,26 @@ instance MakeNumberEffect Pure where
 
 ### 取值：`request` 与 `require`
 
-在注册里用 `demands` 声明需要的值，在方法体里用同名的调用取得：
+每个 Context 用 `requester "handler名" @表示类型` 声明生产方法，生成器按 handler 名产出它的契约类型：
+
+```haskell
+-- 生产方：契约名 StartURL 来自 handler 名 startURL
+typing = Context { request = requester "startURL" @PageURL, require = Just "readStartURL" }
+-- 生成：newtype StartURL = StartURL PageURL
+```
+
+消费方在 `demands` 里用契约名声明需要的值，在方法体里用同名的调用取得：
 
 | 注册中 | 方法体中 | 含义 |
 | --- | --- | --- |
-| `requests @T` | `x <- request @T` | 重新生产一次，并把结果保存为当前绑定 |
-| `requires @T` | `x <- require @T` | 读取已有绑定，不重新生产；尚未生产过则失败 |
+| `requests "StartURL"` | `x <- request @StartURL` | 重新生产一次，并把结果保存为当前绑定 |
+| `requires "StartURL"` | `x <- require @StartURL` | 读取已有绑定，不重新生产；尚未生产过则失败 |
 
 从调用点就能看出是否会重跑生产链。
 
-**值从哪里来由类型决定**：每个被需要的类型，在注册集合中必须恰好有一个生产方，生成器会自动接上。如果两个 effect 产出同一个类型，生成会报错，而不会替你选一个。同一种数据有不同含义时，让生产方声明一个由生成器产出的类型，不必手写。例如 [Crawler](demo/Crawler/Effects.hs) 里起始页和链接页的 URL 都是 `PageURL`：
+**值从哪里来由契约名决定**：契约名就是生产方 handler 名首字母大写，而方法名不能重复，所以每个契约恰好有一个生产方，生成器自动接上。同一种数据有不同含义时，交给不同的 handler 产出即可。例如 [Crawler](demo/Crawler/Effects.hs) 的起始页和链接页 URL 都是 `PageURL`，分别由 `startURL` 和 `linkedURL` 产出 `StartURL` 和 `LinkedURL` 两种契约，类型上不能混用。
 
-```haskell
--- 生产方：把 PageURL 细化成生成类型 StartURL
-produces = refine @PageURL @(Gen "StartURL")
-
--- 消费方：引用这个生成类型
-demands = [requests @(Gen "StartURL")]
-```
-
-生成器在 `Generated/Effects.hs` 中产出 `newtype StartURL = StartURL PageURL`，handler 里照常写 `StartURL (PageURL url) <- request @StartURL`。`Gen "..."` 表示"这个名字由生成器产出"，因此 `Effects.hs` 需要开启 `DataKinds`。两种 URL 在类型上不能混用，接线也不会有歧义。
+因此 **handler 名同时决定契约名**，要按业务含义起名（`startURL`，而不是 `loadStartURL`），也不能和 effect 名或 Types.hs 里的类型重名。契约在 Effects.hs 中看不到，所以消费方用名字字符串引用；Handlers.hs 能看到生成的类型，照常写 `request @StartURL`。
 
 ### 资源：`Scoped`
 
@@ -166,7 +160,7 @@ instance FileSessionEffect App where
     pure ()
 
   closeFileSession = do
-    OpenedFile path file <- require @OpenedFile
+    OpenedFile (FileHandle path file) <- require @OpenedFile
     liftIO (hClose file)
 ```
 
@@ -239,7 +233,8 @@ cabal run crawler-demo -- --structure
 
 | 情况 | 处理方式 |
 | --- | --- |
-| 同一个类型有多个生产方 | 把其中的生产方改为 `refine @T @(Gen "名字")`，生成区分含义的类型 |
+| handler 名推出的契约名与 effect 名、生成区名字重名 | 换一个按业务含义起的 handler 名 |
+| `demands` 里的契约名没有对应的生产方 | 检查名字：契约名 = 生产方 handler 名首字母大写 |
 | 方法体里 `request @T`／`require @T` 的 `T` 没有在 `demands` 中声明 | 补上声明 |
 | 直接调用其他 effect 的 Context 方法（如 `getFileName`） | 改用 `request @T`／`require @T` |
 | 在生产方以外构造某个 Context 产物类型的值（例如在消费方写 `StartURL (...)`） | 值应由它的生产方产生；消费方用 `request`／`require` 取得，只做模式匹配 |
@@ -261,7 +256,7 @@ cabal run crawler-demo -- --structure
 | --- | --- | --- |
 | [RequestBenchmark](demo/RequestBenchmark) | 取值、纯计算链、`raise` | 见快速开始 |
 | [FileDemo](demo/FileDemo) | 文件资源的开启、读写、自动关闭，Error 处置 | `cabal run file-demo` |
-| [Crawler](demo/Crawler) | 并行抓取解析、顺序打印，用生成类型区分同类数据 | `cabal run crawler-demo` |
+| [Crawler](demo/Crawler) | 并行抓取解析、顺序打印，用不同契约区分同类数据 | `cabal run crawler-demo` |
 | [OpenFilesDemo](demo/OpenFilesDemo) | 一个资源持有多个文件，链结束后自动关闭与重开 | `cabal run open-files-demo` |
 | [ScopeInstancesDemo](demo/ScopeInstancesDemo) | 按参数区分资源实例、复用与重开 | `cabal run scope-instances-demo` |
 | [ScopeReuseDemo](demo/ScopeReuseDemo) | 并行的链共享同一个资源实例 | `cabal run scope-reuse-demo` |

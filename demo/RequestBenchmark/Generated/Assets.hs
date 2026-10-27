@@ -6,16 +6,37 @@ import Framework.Effect.Asset (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "AddedValue", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 10, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "RequestBenchmark.Generated.Effects", assetName = "AddedValue", assetFile = "demoRequestBenchmark/Generated/Effects.hs", assetLine = 36, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "Added", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 10, assetColumn = 19}
+          [ AssetSymbol {assetModule = "RequestBenchmark.Generated.Effects", assetName = "AddedValue", assetFile = "demoRequestBenchmark/Generated/Effects.hs", assetLine = 36, assetColumn = 22}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "DemoInputs", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 13, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "RequestBenchmark.Generated.Effects", assetName = "DemoInputs", assetFile = "demoRequestBenchmark/Generated/Effects.hs", assetLine = 28, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "DemoInputs", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 13, assetColumn = 19}
+          [ AssetSymbol {assetModule = "RequestBenchmark.Generated.Effects", assetName = "DemoInputs", assetFile = "demoRequestBenchmark/Generated/Effects.hs", assetLine = 28, assetColumn = 22}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "RequestBenchmark.Generated.Effects", assetName = "NumberValue", assetFile = "demoRequestBenchmark/Generated/Effects.hs", assetLine = 32, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "RequestBenchmark.Generated.Effects", assetName = "NumberValue", assetFile = "demoRequestBenchmark/Generated/Effects.hs", assetLine = 32, assetColumn = 23}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "RequestBenchmark.Generated.Effects", assetName = "RenderedValue", assetFile = "demoRequestBenchmark/Generated/Effects.hs", assetLine = 40, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "RequestBenchmark.Generated.Effects", assetName = "RenderedValue", assetFile = "demoRequestBenchmark/Generated/Effects.hs", assetLine = 40, assetColumn = 25}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "InputSettings", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 10, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "InputSettings", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 10, assetColumn = 22}
           ]
       , assetFields = []
       }
@@ -27,23 +48,9 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "NumberValue", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 9, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "RenderOptions", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 9, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "Number", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 9, assetColumn = 20}
-          ]
-      , assetFields = []
-      }
-  , Asset
-      { assetType = AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "RenderOptions", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 11, assetColumn = 1}
-      , assetConstructors =
-          [ AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "Render", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 11, assetColumn = 22}
-          ]
-      , assetFields = []
-      }
-  , Asset
-      { assetType = AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "RenderedValue", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 12, assetColumn = 1}
-      , assetConstructors =
-          [ AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "Rendered", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 12, assetColumn = 22}
+          [ AssetSymbol {assetModule = "RequestBenchmark.Types", assetName = "Render", assetFile = "demo/RequestBenchmark/Types.hs", assetLine = 9, assetColumn = 22}
           ]
       , assetFields = []
       }

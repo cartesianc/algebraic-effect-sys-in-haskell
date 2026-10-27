@@ -24,19 +24,36 @@ import RequestBenchmark.Types
 type Root = SDK.Root ContextValues Errors
 type Pure = SDK.Pure ContextValues Errors
 
+-- 每个 Context 的契约类型：名字来自 handler 名，包装其表示类型；只能由该生产方构造。
+newtype DemoInputs = DemoInputs (InputSettings)
+deriving instance Eq (InputSettings) => Eq DemoInputs
+deriving instance Show (InputSettings) => Show DemoInputs
+
+newtype NumberValue = NumberValue (Int)
+deriving instance Eq (Int) => Eq NumberValue
+deriving instance Show (Int) => Show NumberValue
+
+newtype AddedValue = AddedValue (Int)
+deriving instance Eq (Int) => Eq AddedValue
+deriving instance Show (Int) => Show AddedValue
+
+newtype RenderedValue = RenderedValue ([Char])
+deriving instance Eq ([Char]) => Eq RenderedValue
+deriving instance Show ([Char]) => Show RenderedValue
+
 -- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = LoadDemoInputsGen | ReadDemoInputsGen | MakeNumberGen | ReadNumberGen | AddOneGen | ReadAddedNumberGen | RenderNumberGen | ReadRenderedNumberGen
+data MethodGen = DemoInputsGen | ReadDemoInputsGen | NumberValueGen | ReadNumberValueGen | AddedValueGen | ReadAddedValueGen | RenderedValueGen | ReadRenderedValueGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
 data DemoContext
 
 class (Effect Root m) => DemoContextEffect m where
-  loadDemoInputs :: m (Produce DemoContext)
+  demoInputs :: m (Produce DemoContext)
   readDemoInputs :: m (Produce DemoContext)
   readDemoInputs = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "DemoContext" ContextBindingError [("MakeNumber", SDK.RequestValue), ("RenderNumber", SDK.RequireValue)] Nothing boundDemoContext
-  {-# MINIMAL loadDemoInputs #-}
+  {-# MINIMAL demoInputs #-}
 
 instance (Monad m, Effect Root m, DemoContextEffect m) => Effect DemoContext m where
   type Registration DemoContext = Registered DemoContextEffect Root
@@ -50,11 +67,11 @@ instance (Monad m, Effect Root m, DemoContextEffect m) => Effect DemoContext m w
 data MakeNumber
 
 class (Effect Root m, Provides DemoInputs m) => MakeNumberEffect m where
-  makeNumber :: m (Produce MakeNumber)
-  readNumber :: m (Produce MakeNumber)
-  readNumber = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
+  numberValue :: m (Produce MakeNumber)
+  readNumberValue :: m (Produce MakeNumber)
+  readNumberValue = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "MakeNumber" ContextBindingError [("AddOne", SDK.RequestValue)] Nothing boundMakeNumber
-  {-# MINIMAL makeNumber #-}
+  {-# MINIMAL numberValue #-}
 
 instance (Monad m, Effect Root m, MakeNumberEffect m) => Effect MakeNumber m where
   type Registration MakeNumber = Registered MakeNumberEffect Root
@@ -68,11 +85,11 @@ instance (Monad m, Effect Root m, MakeNumberEffect m) => Effect MakeNumber m whe
 data AddOne
 
 class (Effect Root m, Provides NumberValue m) => AddOneEffect m where
-  addOne :: m (Produce AddOne)
-  readAddedNumber :: m (Produce AddOne)
-  readAddedNumber = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
+  addedValue :: m (Produce AddOne)
+  readAddedValue :: m (Produce AddOne)
+  readAddedValue = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "AddOne" ContextBindingError [("RenderNumber", SDK.RequestValue)] Nothing boundAddOne
-  {-# MINIMAL addOne #-}
+  {-# MINIMAL addedValue #-}
 
 instance (Monad m, Effect Root m, AddOneEffect m) => Effect AddOne m where
   type Registration AddOne = Registered AddOneEffect Root
@@ -86,11 +103,11 @@ instance (Monad m, Effect Root m, AddOneEffect m) => Effect AddOne m where
 data RenderNumber
 
 class (Effect Root m, Provides AddedValue m, Provides DemoInputs m) => RenderNumberEffect m where
-  renderNumber :: m (Produce RenderNumber)
-  readRenderedNumber :: m (Produce RenderNumber)
-  readRenderedNumber = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
+  renderedValue :: m (Produce RenderNumber)
+  readRenderedValue :: m (Produce RenderNumber)
+  readRenderedValue = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "RenderNumber" ContextBindingError [] Nothing boundRenderNumber
-  {-# MINIMAL renderNumber #-}
+  {-# MINIMAL renderedValue #-}
 
 instance (Monad m, Effect Root m, RenderNumberEffect m) => Effect RenderNumber m where
   type Registration RenderNumber = Registered RenderNumberEffect Root
@@ -107,15 +124,15 @@ class Provides contract m where
   require :: m contract
 
 instance (DemoContextEffect Pure) => Provides DemoInputs Pure where
-  request = SDK.provideContext "DemoInputs" ContextBindingError [("MakeNumber", loadDemoInputs)]
+  request = SDK.provideContext "DemoInputs" ContextBindingError [("MakeNumber", demoInputs)]
   require = SDK.provideContext "DemoInputs" ContextBindingError [("RenderNumber", readDemoInputs)]
 
 instance (MakeNumberEffect Pure) => Provides NumberValue Pure where
-  request = SDK.provideContext "NumberValue" ContextBindingError [("AddOne", makeNumber)]
+  request = SDK.provideContext "NumberValue" ContextBindingError [("AddOne", numberValue)]
   require = SDK.provideContext "NumberValue" ContextBindingError []
 
 instance (AddOneEffect Pure) => Provides AddedValue Pure where
-  request = SDK.provideContext "AddedValue" ContextBindingError [("RenderNumber", addOne)]
+  request = SDK.provideContext "AddedValue" ContextBindingError [("RenderNumber", addedValue)]
   require = SDK.provideContext "AddedValue" ContextBindingError []
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。

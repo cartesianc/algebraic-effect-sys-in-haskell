@@ -3,8 +3,7 @@
 
 module ScopeInstancesDemo.Effects (effects) where
 
-import Framework.SDK
-  (EffectSpec(..), EffectTyping(..), Producer(..), requests, requires, typeRef)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), requester, requests, requires)
 import ScopeInstancesDemo.Types
 
 -- 路径来源是 Context，scope 没有 key 或产值字段；demands 只声明契约，来源唯一解析。
@@ -19,7 +18,7 @@ effects =
   , EffectSpec
       { name = "FileLocation"
       , typing = Context
-          { request = Just Producer { handler = "getFileName", produces = typeRef @FileName }
+          { request = requester "fileName" @FilePath
           , require = Just "readFileName"
           }
       , input = "Root"
@@ -28,28 +27,28 @@ effects =
   , EffectSpec
       { name = "FileResource"
       , typing = Context
-          { request = Just Producer { handler = "acquireFile", produces = typeRef @OpenedFile }
+          { request = requester "openedFile" @FileHandle
           , require = Just "readOpenedFile"
           }
       , input = "Root"
-      , demands = [requires @FileName]
+      , demands = [requires "FileName"]
       }
   , EffectSpec
       { name = "FileSession"
       , typing = Scoped { open = Just "openFileSession", close = Just "closeFileSession" }
       , input = "Root"
-      , demands = [requests @OpenedFile, requires @OpenedFile]
+      , demands = [requests "OpenedFile", requires "OpenedFile"]
       }
   , EffectSpec
       { name = "CheckIndependent"
       , typing = Excu { handler = Just "checkIndependent" }
       , input = "FileSession"
-      , demands = [requests @FileName, requires @OpenedFile]
+      , demands = [requests "FileName", requires "OpenedFile"]
       }
   , EffectSpec
       { name = "CheckReopen"
       , typing = Excu { handler = Just "checkReopen" }
       , input = "FileSession"
-      , demands = [requests @FileName, requires @OpenedFile]
+      , demands = [requests "FileName", requires "OpenedFile"]
       }
   ]

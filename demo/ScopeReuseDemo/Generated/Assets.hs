@@ -6,16 +6,30 @@ import Framework.Effect.Asset (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "FilePaths", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 5, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Generated.Effects", assetName = "FilePaths", assetFile = "demoScopeReuseDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "FilePaths", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 5, assetColumn = 18}
+          [ AssetSymbol {assetModule = "ScopeReuseDemo.Generated.Effects", assetName = "FilePaths", assetFile = "demoScopeReuseDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 21}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "OpenedFile", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 9, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demoScopeReuseDemo/Generated/Effects.hs", assetLine = 32, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "OpenedFile", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 9, assetColumn = 19}
+          [ AssetSymbol {assetModule = "ScopeReuseDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demoScopeReuseDemo/Generated/Effects.hs", assetLine = 32, assetColumn = 22}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "SharedFile", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 10, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "SharedFile", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 10, assetColumn = 19}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "SharedPaths", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 6, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "SharedPaths", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 6, assetColumn = 20}
           ]
       , assetFields = []
       }

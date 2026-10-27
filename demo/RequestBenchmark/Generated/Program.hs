@@ -4,7 +4,7 @@
 -- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
 module RequestBenchmark.Generated.Program where
 
-import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), Handles(..), Demand(..), Access(..), TypeRef(..), Output)
+import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Requester(..), Handles(..), Demand(..), Access(..), TypeRef(..), Output)
 import qualified Framework.SDK as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
 import RequestBenchmark.Generated.Effects hiding (request, require)
@@ -14,10 +14,10 @@ import RequestBenchmark.Types
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
 registeredEffects :: [EffectSpec]
 registeredEffects =
-  [ EffectSpec {name = "DemoContext", typing = Context {request = Just (Producer {handler = "loadDemoInputs", produces = TypeRef "DemoInputs"}), require = Just "readDemoInputs"}, input = "Root", demands = []}
-  , EffectSpec {name = "MakeNumber", typing = Context {request = Just (Producer {handler = "makeNumber", produces = TypeRef "NumberValue"}), require = Just "readNumber"}, input = "Root", demands = [Demand {access = RequestAccess, contract = TypeRef "DemoInputs"}]}
-  , EffectSpec {name = "AddOne", typing = Context {request = Just (Producer {handler = "addOne", produces = TypeRef "AddedValue"}), require = Just "readAddedNumber"}, input = "Root", demands = [Demand {access = RequestAccess, contract = TypeRef "NumberValue"}]}
-  , EffectSpec {name = "RenderNumber", typing = Context {request = Just (Producer {handler = "renderNumber", produces = TypeRef "RenderedValue"}), require = Just "readRenderedNumber"}, input = "Root", demands = [Demand {access = RequestAccess, contract = TypeRef "AddedValue"},Demand {access = RequireAccess, contract = TypeRef "DemoInputs"}]}
+  [ EffectSpec {name = "DemoContext", typing = Context {request = Just (Requester {handler = "demoInputs", representation = TypeRef "InputSettings"}), require = Just "readDemoInputs"}, input = "Root", demands = []}
+  , EffectSpec {name = "MakeNumber", typing = Context {request = Just (Requester {handler = "numberValue", representation = TypeRef "Int"}), require = Just "readNumberValue"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "DemoInputs"}]}
+  , EffectSpec {name = "AddOne", typing = Context {request = Just (Requester {handler = "addedValue", representation = TypeRef "Int"}), require = Just "readAddedValue"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "NumberValue"}]}
+  , EffectSpec {name = "RenderNumber", typing = Context {request = Just (Requester {handler = "renderedValue", representation = TypeRef "[Char]"}), require = Just "readRenderedValue"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "AddedValue"},Demand {access = RequireAccess, contract = "DemoInputs"}]}
   ]
 
 -- 生成身份连接到已有运行 scope 名；依赖只保存在下方显式 ScopeTree 中。
@@ -27,13 +27,13 @@ scopeNames = []
 -- 只校验生成常量；当前 workflow 在执行装配的一次 fold 中检查入口。
 programStructure :: Either (SDK.StructureError MethodGen) (SDK.ProgramStructure MethodGen)
 programStructure = SDK.initializeGeneratedStructure
-  [("RenderNumber", RenderNumberGen)]
+  [("RenderNumber", RenderedValueGen)]
   scopeNames generatedEffectGraph generatedScopeTree
 
 -- 纯计算样例也只登记末端句柄，不在外部组合上游。
 compiledTarget :: SDK.Target SDK.Identity ContextValues Errors (Produce RenderNumber)
 compiledTarget = SDK.targetPure "RenderNumber" emptyContexts
-  (FrameworkRoot.withErrorHandlers Handlers.errorHandlers renderNumber)
+  (FrameworkRoot.withErrorHandlers Handlers.errorHandlers renderedValue)
 
 benchmark :: Output Errors (Produce RenderNumber)
 benchmark = SDK.bootPure compiledTarget
@@ -48,18 +48,18 @@ runDemo = SDK.runDemo "RequestBenchmark" registeredEffects registeredTarget Hand
 generatedEffectGraph :: SDK.EffectGraph MethodGen
 generatedEffectGraph = SDK.EffectGraph
   { SDK.graphMethods =
-      [ SDK.MethodDefinition RenderNumberGen RenderNumberGen SDK.ContextRequest (SDK.Sequence [SDK.Call AddOneGen, SDK.Call ReadDemoInputsGen])
-      , SDK.MethodDefinition AddOneGen AddOneGen SDK.ContextRequest (SDK.Call MakeNumberGen)
-      , SDK.MethodDefinition MakeNumberGen MakeNumberGen SDK.ContextRequest (SDK.Call LoadDemoInputsGen)
-      , SDK.MethodDefinition LoadDemoInputsGen LoadDemoInputsGen SDK.ContextRequest (SDK.Empty)
-      , SDK.MethodDefinition ReadDemoInputsGen LoadDemoInputsGen SDK.ContextRequire (SDK.Empty)
+      [ SDK.MethodDefinition RenderedValueGen RenderedValueGen SDK.ContextRequest (SDK.Sequence [SDK.Call AddedValueGen, SDK.Call ReadDemoInputsGen])
+      , SDK.MethodDefinition AddedValueGen AddedValueGen SDK.ContextRequest (SDK.Call NumberValueGen)
+      , SDK.MethodDefinition NumberValueGen NumberValueGen SDK.ContextRequest (SDK.Call DemoInputsGen)
+      , SDK.MethodDefinition DemoInputsGen DemoInputsGen SDK.ContextRequest (SDK.Empty)
+      , SDK.MethodDefinition ReadDemoInputsGen DemoInputsGen SDK.ContextRequire (SDK.Empty)
       ]
-  , SDK.graphRoots = [RenderNumberGen]
-  , SDK.graphReferences = [(RenderNumberGen, AddOneGen), (RenderNumberGen, ReadDemoInputsGen), (AddOneGen, MakeNumberGen), (MakeNumberGen, LoadDemoInputsGen)]
+  , SDK.graphRoots = [RenderedValueGen]
+  , SDK.graphReferences = [(RenderedValueGen, AddedValueGen), (RenderedValueGen, ReadDemoInputsGen), (AddedValueGen, NumberValueGen), (NumberValueGen, DemoInputsGen)]
   , SDK.graphScopes = []
   , SDK.graphScopePaths = [[]]
   , SDK.graphRootPaths =
-      [ (RenderNumberGen, [[]])
+      [ (RenderedValueGen, [[]])
       ]
   , SDK.graphScopeOrder = []
   }

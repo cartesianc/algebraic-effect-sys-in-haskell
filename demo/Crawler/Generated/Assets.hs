@@ -6,14 +6,53 @@ import Framework.Effect.Asset (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "Crawler.Types", assetName = "CrawlSessionInfo", assetFile = "demo/Crawler/Types.hs", assetLine = 13, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "CrawlSessionInfo", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 52, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "Crawler.Types", assetName = "CrawlSessionInfo", assetFile = "demo/Crawler/Types.hs", assetLine = 13, assetColumn = 25}
+          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "CrawlSessionInfo", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 52, assetColumn = 28}
           ]
-      , assetFields =
-          [ AssetSymbol {assetModule = "Crawler.Types", assetName = "sessionName", assetFile = "demo/Crawler/Types.hs", assetLine = 14, assetColumn = 5}
-          , AssetSymbol {assetModule = "Crawler.Types", assetName = "sessionUserAgent", assetFile = "demo/Crawler/Types.hs", assetLine = 15, assetColumn = 5}
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedFetchedPage", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 44, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedFetchedPage", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 44, assetColumn = 29}
           ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedPageSummary", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 48, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedPageSummary", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 48, assetColumn = 29}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedURL", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 32, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedURL", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 32, assetColumn = 21}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartFetchedPage", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 36, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartFetchedPage", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 36, assetColumn = 28}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartPageSummary", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 40, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartPageSummary", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 40, assetColumn = 28}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartURL", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 28, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartURL", assetFile = "demoCrawler/Generated/Effects.hs", assetLine = 28, assetColumn = 20}
+          ]
+      , assetFields = []
       }
   , Asset
       { assetType = AssetSymbol {assetModule = "Crawler.Types", assetName = "FetchedPage", assetFile = "demo/Crawler/Types.hs", assetLine = 18, assetColumn = 1}
@@ -44,6 +83,16 @@ generatedAssets =
           ]
       , assetFields =
           [ AssetSymbol {assetModule = "Crawler.Types", assetName = "pageAddress", assetFile = "demo/Crawler/Types.hs", assetLine = 9, assetColumn = 5}
+          ]
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "Crawler.Types", assetName = "SessionInfo", assetFile = "demo/Crawler/Types.hs", assetLine = 13, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "Crawler.Types", assetName = "SessionInfo", assetFile = "demo/Crawler/Types.hs", assetLine = 13, assetColumn = 20}
+          ]
+      , assetFields =
+          [ AssetSymbol {assetModule = "Crawler.Types", assetName = "sessionName", assetFile = "demo/Crawler/Types.hs", assetLine = 14, assetColumn = 5}
+          , AssetSymbol {assetModule = "Crawler.Types", assetName = "sessionUserAgent", assetFile = "demo/Crawler/Types.hs", assetLine = 15, assetColumn = 5}
           ]
       }
   ]

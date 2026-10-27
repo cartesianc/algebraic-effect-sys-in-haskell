@@ -1,16 +1,13 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 
 -- 纯注册描述与依赖解析，不执行 handler。
 module Framework.Effect.Registration
-  ( EffectTyping(..), Producer(..), Handles(..), TypeRef(..), typeRef, contractName
-  , Gen, refine, contractKey
+  ( EffectTyping(..), Requester(..), requester, contractOf, Handles(..), TypeRef(..), typeRef, contractName
   , EffectSpec(..), Demand(..), Access(..), requests, requires
   , ResolvedDemand(..), resolveDemands, contextNames
   , effectKind, entryMethod
@@ -18,10 +15,10 @@ module Framework.Effect.Registration
 
 import Framework.Effect.Contract (EffectKind(..), Output)
 import Control.Monad (unless)
-import Data.List (intercalate, nub)
+import Data.Char (toUpper)
+import Data.List (nub)
 import Data.Proxy (Proxy(..))
 import Data.Typeable (Typeable, splitTyConApp, typeRep, typeRepTyCon)
-import GHC.TypeLits (KnownSymbol, Symbol, symbolVal)
 
 data EffectTyping
   = Pure { handler :: Maybe String }
@@ -29,14 +26,25 @@ data EffectTyping
   | Scoped { open :: Maybe String, close :: Maybe String }
   -- handles 按错误类型匹配；作用的 scope 由 Input 链上最近的 Scoped 推导，不手写连接。
   | Error { detect :: Maybe String, resolve :: Maybe String, handles :: [Handles] }
-  | Context { request :: Maybe Producer, require :: Maybe String }
+  | Context { request :: Maybe Requester, require :: Maybe String }
   deriving (Eq, Show, Read)
 
--- Context.request 声明业务产物；完成和失败协议由 SDK 提供。
-data Producer = Producer
+-- Context 的生产入口。handler 名同时决定契约类型名：首字母大写后由生成器产出
+-- newtype 契约 = 契约 表示类型，例如 handler "startURL" 与 PageURL 产出 newtype StartURL = StartURL PageURL。
+data Requester = Requester
   { handler :: String
-  , produces :: TypeRef
+  , representation :: TypeRef
   } deriving (Eq, Show, Read)
+
+-- 写作 requester "startURL" @PageURL：先 handler 名，后被包装的表示类型。
+requester :: String -> forall value. Typeable value => Maybe Requester
+requester method @value = Just (Requester method (typeRef @value))
+
+-- 契约类型名由 handler 名推导，是生产方与消费方共享的唯一键。
+contractOf :: Requester -> String
+contractOf Requester { handler = method } = case method of
+  first : rest -> toUpper first : rest
+  [] -> []
 
 -- 业务 raise 与 SDK 协议故障分开声明；名字均指注册的 effect。
 data Handles
@@ -60,48 +68,25 @@ entryMethod (Scoped opening _) = opening
 -- Error 的两个方法由故障协议激活，不猜测一个普通 Node 入口。
 entryMethod Error {} = Nothing
 entryMethod (Context producing _) = case producing of
-  Just Producer { handler = method } -> Just method
+  Just Requester { handler = method } -> Just method
   Nothing -> Nothing
 
--- 2. 注册只保存类型引用；data/newtype 定义与 deriving 由业务作者直接书写。
--- typeRef @BusinessType 检查引用的类型存在，不构造业务值，也不复制其 ADT 结构。
--- 识别 Output 以拒绝把完成协议再次声明为业务产物；业务 ADT 仍是不透明名称。
--- 代码生成使用类型的显示名称，该类型须在生成区所在模块中可见。
--- GenRef／RefinedRef 是由生成器产出的契约类型：前者是引用，后者是生产方的声明（名字 + 表示类型）。
-data TypeRef = TypeRef String | OutputRef TypeRef TypeRef | GenRef String | RefinedRef String TypeRef
+-- 表示类型引用 Types.hs 中的原生类型；不复制其 ADT 结构。
+-- 识别 Output 以拒绝把完成协议声明为业务产物；业务 ADT 仍是不透明名称。
+data TypeRef = TypeRef String | OutputRef TypeRef TypeRef
   deriving (Eq, Show, Read)
-
--- Gen "Name" 标记一个由生成器产出的类型名：手写声明看不到 Generated，因此以类型级字符串引用。
--- 它只出现在 @ 之后的契约位置，没有值。
-data Gen (name :: Symbol)
 
 typeRef :: forall value. Typeable value => TypeRef
 typeRef = describe (typeRep (Proxy :: Proxy value))
   where
     outputConstructor = typeRepTyCon (typeRep (Proxy :: Proxy (Output () ())))
-    genConstructor = typeRepTyCon (typeRep (Proxy :: Proxy (Gen "")))
-    describe representation = case splitTyConApp representation of
+    describe representation' = case splitTyConApp representation' of
       (constructor, [cause, value]) | constructor == outputConstructor ->
         OutputRef (describe cause) (describe value)
-      (constructor, [generated]) | constructor == genConstructor ->
-        GenRef (read (show generated))
-      _ -> TypeRef (show representation)
-
--- 生产方声明生成的契约类型：refine @PageURL @(Gen "StartURL") 生成 newtype StartURL = StartURL PageURL。
--- 第二个类型参数必须是 Gen "..."，否则 GHC 直接报类型错误。
-refine :: forall representation generated (generatedName :: Symbol).
-          (Typeable representation, generated ~ Gen generatedName, KnownSymbol generatedName) => TypeRef
-refine = RefinedRef (symbolVal (Proxy :: Proxy generatedName)) (typeRef @representation)
-
--- 解析按契约身份比较：生产方的 refine 声明与消费方的 Gen 引用是同一个类型。
-contractKey :: TypeRef -> TypeRef
-contractKey (RefinedRef generated _) = GenRef generated
-contractKey other = other
+      _ -> TypeRef (show representation')
 
 contractName :: TypeRef -> String
 contractName (TypeRef selected) = selected
-contractName (GenRef generated) = generated
-contractName (RefinedRef generated _) = generated
 contractName (OutputRef cause value) = "Output (" ++ contractName cause ++ ") (" ++ contractName value ++ ")"
 
 data EffectSpec = EffectSpec
@@ -111,25 +96,25 @@ data EffectSpec = EffectSpec
   , demands :: [Demand]
   } deriving (Eq, Show, Read)
 
--- 消费方只声明需要的契约类型与取值模式，不指名生产方；来源由生成器在注册集合中唯一解析。
--- 不同业务含义用 Types.hs 中不同的类型（必要时为 newtype）表达，类型即装配键。
+-- 消费方以契约名声明需要的值与取值模式；契约名即生产方 handler 名首字母大写。
+-- 契约类型由生成器产出，手写声明看不到它，因此以名字引用。
 data Access = RequestAccess | RequireAccess
   deriving (Eq, Show, Read)
 
 data Demand = Demand
   { access :: Access
-  , contract :: TypeRef
+  , contract :: String
   } deriving (Eq, Show, Read)
 
-requests :: forall value. Typeable value => Demand
-requests = Demand RequestAccess (typeRef @value)
+requests :: String -> Demand
+requests = Demand RequestAccess
 
-requires :: forall value. Typeable value => Demand
-requires = Demand RequireAccess (typeRef @value)
+requires :: String -> Demand
+requires = Demand RequireAccess
 
 data ResolvedDemand = ResolvedDemand
   { demandAccess :: Access
-  , demandContract :: TypeRef
+  , demandContract :: String
   , demandProvider :: String
   } deriving (Eq, Show, Read)
 
@@ -139,13 +124,12 @@ findEffect specifications selected = case filter ((== selected) . name) specific
   [] -> Left ("Unknown effect: " ++ selected)
   _ -> Left ("Duplicate effect: " ++ selected)
 
-produced :: EffectSpec -> Maybe TypeRef
+produced :: EffectSpec -> Maybe String
 produced specification = case typing specification of
-  Context (Just Producer { produces = selected }) _ -> Just (contractKey selected)
+  Context (Just producing) _ -> Just (contractOf producing)
   _ -> Nothing
 
--- 每个被需要的契约类型在注册集合中恰好有一个其他 Context 生产方，与 instance 一致性同理。
--- 多个候选一律报错并列出，不按距离、ScopeTree 或拓扑选择；新增生产方不会静默改变已有接线。
+-- 契约名来自 handler 名，而方法名在注册集合中唯一，因此每个契约恰好对应一个生产方。
 resolveDemands :: [EffectSpec] -> EffectSpec -> Either String [ResolvedDemand]
 resolveDemands specifications consumer = do
   let keys = [(access demand, contract demand) | demand <- demands consumer]
@@ -156,11 +140,9 @@ resolveDemands specifications consumer = do
     resolveOne demand = do
       provider <- case [specification | specification <- specifications
             , name specification /= name consumer, produced specification == Just (contract demand)] of
-        [specification] -> pure specification
-        [] -> Left ("No Context produces " ++ contractName (contract demand) ++ " for " ++ name consumer)
-        candidates -> Left ("Several Contexts produce " ++ contractName (contract demand) ++ " for "
-          ++ name consumer ++ ": " ++ intercalate ", " (map name candidates)
-          ++ "; give each meaning its own type, e.g. produces = refine @Representation @(Gen \"Name\")")
+        specification : _ -> pure specification
+        [] -> Left ("No Context produces contract " ++ contract demand ++ " for " ++ name consumer
+          ++ "; a contract is named after its producer's handler with the first letter capitalized")
       case (access demand, typing provider) of
         (RequireAccess, Context _ Nothing) ->
           Left ("requires needs a Context with a require method: " ++ name provider)

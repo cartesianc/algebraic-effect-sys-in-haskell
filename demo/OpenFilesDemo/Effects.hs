@@ -3,7 +3,7 @@
 
 module OpenFilesDemo.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), Producer(..), requests, requires, typeRef)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), requester, requests, requires)
 import OpenFilesDemo.Types
 
 -- Context 传递路径与资源，Scoped 管理一组文件的存续，Excu 执行观察与收尾。
@@ -13,8 +13,7 @@ effects =
   [ EffectSpec
       { name = "FileLocations"
       , typing = Context
-          { request = Just Producer
-              { handler = "getFileNames", produces = typeRef @FileNames }
+          { request = requester "fileNames" @[FilePath]
           , require = Just "readFileNames"
           }
       , input = "Root"
@@ -23,36 +22,35 @@ effects =
   , EffectSpec
       { name = "FileResources"
       , typing = Context
-          { request = Just Producer
-              { handler = "acquireFiles", produces = typeRef @OpenedFiles }
+          { request = requester "openedFiles" @[FileHandle]
           , require = Just "readOpenedFiles"
           }
       , input = "Root"
-      , demands = [requires @FileNames]
+      , demands = [requires "FileNames"]
       }
   , EffectSpec
       { name = "FileSession"
       , typing = Scoped
           { open = Just "openFiles", close = Just "closeFiles" }
       , input = "Root"
-      , demands = [requests @OpenedFiles, requires @OpenedFiles]
+      , demands = [requests "OpenedFiles", requires "OpenedFiles"]
       }
   , EffectSpec
       { name = "HoldFiles"
       , typing = Excu { handler = Just "holdFiles" }
       , input = "FileSession"
-      , demands = [requests @FileNames]
+      , demands = [requests "FileNames"]
       }
   , EffectSpec
       { name = "InspectFiles"
       , typing = Excu { handler = Just "inspectFiles" }
       , input = "HoldFiles"
-      , demands = [requires @OpenedFiles]
+      , demands = [requires "OpenedFiles"]
       }
   , EffectSpec
       { name = "FinishInspection"
       , typing = Excu { handler = Just "finishInspection" }
       , input = "InspectFiles"
-      , demands = [requires @OpenedFiles]
+      , demands = [requires "OpenedFiles"]
       }
   ]

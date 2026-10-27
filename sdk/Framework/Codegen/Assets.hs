@@ -95,7 +95,9 @@ checkAssets namespace generated roots methods owners native = do
           , Just index <- [stripPrefix prefix (occNameString (nameOccName (tyConName alias))) >>= readMaybe]
           , Just body <- [synTyConRhs_maybe alias]]
         rootTypes = [constructor | (_ :: Int, body) <- rootAliases "AssetRoot", constructor <- typeConstructors body]
-        assets = assetClosure localTypes rootTypes
+        -- 生成的契约类型也是资产：普通函数不得显式使用；它们不在业务模块中，单独并入。
+        assets = nub (assetClosure localTypes rootTypes
+          ++ [selected | (_, _, selected) <- ownedTyCons, selected `notElem` localTypes])
         symbols = nub (concatMap assetNames assets)
         -- 只约束业务模块中定义的代数类型；库类型没有可归属的业务构造器。
         ownership = Ownership

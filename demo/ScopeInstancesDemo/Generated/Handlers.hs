@@ -42,39 +42,39 @@ instance PrepareFilesEffect App where
 
 -- 参数确实由 instance 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
 instance FileLocationEffect App where
-  getFileName =
+  fileName =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation" FrameworkGenerated.ContextBindingError
       [("FileResource", FrameworkRuntime.RequireValue), ("CheckIndependent", FrameworkRuntime.RequestValue), ("CheckReopen", FrameworkRuntime.RequestValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocation"))
       FrameworkGenerated.boundFileLocation
       (\value bindings -> bindings { FrameworkGenerated.boundFileLocation = Just value })) $
       let
-        getFileName = do
+        fileName = do
           let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
               selection = outputDirectory </> "selected.txt"
               journal = outputDirectory </> "events.txt"
           path <- liftIO (readFile' selection)
           liftIO (appendFile journal ("argument " ++ path ++ "\n"))
           pure (FileName path)
-      in getFileName
+      in fileName
 
 instance FileResourceEffect App where
-  acquireFile =
+  openedFile =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
       [("FileSession", FrameworkRuntime.RequestValue), ("CheckIndependent", FrameworkRuntime.RequireValue), ("CheckReopen", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundFileResource
       (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
       let
-        acquireFile = do
+        openedFile = do
           FileName path <- require @FileName
           let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
           outcome <- liftIO $ tryIOError $
             bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
               appendFile journal ("acquire " ++ path ++ "\n")
-              pure (OpenedFile path file)
+              pure (OpenedFile (FileHandle path file))
           either (raise . FileResourceError . displayException) pure outcome
-      in acquireFile
+      in openedFile
 
 -- 与原写法相同：没有参数、状态标记、key 或 SDK 消费方法。
 instance FileSessionEffect App where
@@ -82,7 +82,7 @@ instance FileSessionEffect App where
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         openFileSession = do
-          OpenedFile path _ <- request @OpenedFile
+          OpenedFile (FileHandle path _) <- request @OpenedFile
           let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
           liftIO (appendFile journal ("open " ++ path ++ "\n"))
       in openFileSession
@@ -90,7 +90,7 @@ instance FileSessionEffect App where
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         closeFileSession = do
-          OpenedFile path file <- require @OpenedFile
+          OpenedFile (FileHandle path file) <- require @OpenedFile
           let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
           liftIO $ do
             hClose file
@@ -109,9 +109,9 @@ instance CheckIndependentEffect App where
           liftIO (writeFile selection firstFile)
           _ <- request @FileName
           openFileSession
-          OpenedFile pathA fileA <- require @OpenedFile
+          OpenedFile (FileHandle pathA fileA) <- require @OpenedFile
           openFileSession
-          OpenedFile pathA' fileA' <- require @OpenedFile
+          OpenedFile (FileHandle pathA' fileA') <- require @OpenedFile
           unless (pathA == firstFile && pathA' == firstFile && fileA == fileA') $
             raise (CheckIndependentError "Equal arguments did not reuse the same Handle")
           liftIO (putStrLn "[check] equal opening values reuse the same file Handle")
@@ -119,7 +119,7 @@ instance CheckIndependentEffect App where
           liftIO (writeFile selection secondFile)
           _ <- request @FileName
           openFileSession
-          OpenedFile pathB fileB <- require @OpenedFile
+          OpenedFile (FileHandle pathB fileB) <- require @OpenedFile
           unless (pathB == secondFile && fileA /= fileB) $
             raise (CheckIndependentError "Different opening values did not select independent files")
           liftIO $ do
@@ -149,7 +149,7 @@ instance CheckReopenEffect App where
           liftIO (writeFile selection firstFile)
           _ <- request @FileName
           openFileSession
-          OpenedFile pathA fileA <- require @OpenedFile
+          OpenedFile (FileHandle pathA fileA) <- require @OpenedFile
           events <- liftIO (lines <$> readFile' journal)
           unless (pathA == firstFile && length (filter (== "acquire " ++ firstFile) events) == 2) $
             raise (CheckReopenError "The next chain did not reopen the first file")
@@ -161,7 +161,7 @@ instance CheckReopenEffect App where
           liftIO (writeFile selection secondFile)
           _ <- request @FileName
           openFileSession
-          OpenedFile pathB fileB <- require @OpenedFile
+          OpenedFile (FileHandle pathB fileB) <- require @OpenedFile
           closedB <- liftIO (hIsClosed fileB)
           unless (pathB == secondFile && not closedB) $
             raise (CheckReopenError "Opening a closed instance did not obtain a live file")
@@ -185,7 +185,7 @@ instance CheckReopenEffect App where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "b673bdb8d17c7c8d415ea00255ee3ba1"
+handlerSourceFingerprint = Just "af30a6e6bbbf80e4dfe586d84fbf9afd"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

@@ -69,9 +69,7 @@ lowerProgram namespace specifications entry = do
     , concatMap instanceWrappers specifications
     , scopeHandlers ++ scopeCleanups ++ errorHandlers
     , graphPlan
-    , nub ([assetReference produced | specification <- contextSpecs
-             , Context (Just Producer { produces = produced }) _ <- [typing specification]]
-        ++ [assetReference (contract demand) | specification <- specifications, demand <- demands specification])
+    , nub [reference representation' | (_, representation', _) <- generatedDeclarations]
     , (demandRoutes, contextMethods)
     , contractOwners
     )
@@ -87,7 +85,7 @@ lowerProgram namespace specifications entry = do
     requestSource = listToMaybe . requestProviders
     producerMethod providerName = listToMaybe
       [method | specification <- specifications, name specification == providerName
-              , Context (Just Producer { handler = method }) _ <- [typing specification]]
+              , Context (Just Requester { handler = method }) _ <- [typing specification]]
     readerMethod providerName = listToMaybe
       [method | specification <- specifications, name specification == providerName
               , Context _ (Just method) <- [typing specification]]
@@ -98,29 +96,18 @@ lowerProgram namespace specifications entry = do
     accessWord RequireAccess = "require"
     demandRoutes =
       [ (name specification ++ "Effect",
-          [ ((accessWord (demandAccess resolved), contractName (demandContract resolved)), method)
+          [ ((accessWord (demandAccess resolved), demandContract resolved), method)
           | resolved <- resolvedOf (name specification), Just method <- [sourceMethod resolved] ])
       | specification <- specifications ]
-    -- 构造器归属：具名产物类型只能由其生产方的 instance 方法构造。
-    contractOwners =
-      [ (typeName, name specification ++ "Effect", generated)
-      | specification <- contextSpecs
-      , Context (Just Producer { produces = produced }) _ <- [typing specification]
-      , (typeName, generated) <- case produced of
-          TypeRef typeName -> [(typeName, False)]
-          RefinedRef typeName _ -> [(typeName, True)]
-          _ -> []
-      , validTypeName typeName ]
-    -- 生成的契约类型：由生产方的 refine 声明，名字唯一。
+    -- 每个 Context 的契约类型由 handler 名生成：(契约名, 表示类型, 生产方)。
     generatedDeclarations =
-      [ (generated, representation', name specification)
+      [ (contractOf producing, representation producing, name specification)
       | specification <- contextSpecs
-      , Context (Just Producer { produces = RefinedRef generated representation' }) _ <- [typing specification] ]
-    -- 资产根只能引用 Types.hs 可见的类型；生成类型以其表示类型代入。
-    assetReference (RefinedRef _ representation') = reference representation'
-    assetReference (GenRef generated) = maybe generated reference
-      (listToMaybe [representation' | (declared, representation', _) <- generatedDeclarations, declared == generated])
-    assetReference other = reference other
+      , Context (Just producing) _ <- [typing specification] ]
+    -- 构造器归属：契约类型只能由其生产方的 instance 方法构造；契约均由生成器产出。
+    contractOwners =
+      [ (contractType, owner ++ "Effect", True)
+      | (contractType, _, owner) <- generatedDeclarations, validTypeName contractType ]
     contextMethods =
       [ (name specification ++ "Effect", method)
       | specification <- contextSpecs
@@ -177,7 +164,7 @@ lowerProgram namespace specifications entry = do
       ]
     methodRole specification method = case typing specification of
       Scoped opening _ -> if Just method == opening then Graph.ScopeOpen else Graph.ScopeClose
-      Context producing _ -> if fmap (\Producer { handler = selectedMethod } -> selectedMethod) producing == Just method
+      Context producing _ -> if fmap (\Requester { handler = selectedMethod } -> selectedMethod) producing == Just method
         then Graph.ContextRequest else Graph.ContextRequire
       Error { detect = detecting } -> if Just method == detecting then Graph.ErrorDetect else Graph.ErrorResolve
       _ -> Graph.HandlerMethod
@@ -218,7 +205,7 @@ lowerProgram namespace specifications entry = do
       , "-- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。"
       , "module " ++ namespace ++ ".Generated.Program where"
       , ""
-      , "import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), Handles(..), Demand(..), Access(..), TypeRef(..), Output)"
+      , "import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Requester(..), Handles(..), Demand(..), Access(..), TypeRef(..), Output)"
       , "import qualified Framework.SDK as SDK"
       , "import qualified Framework.Effect.Contract as FrameworkRoot"
       , "import " ++ namespace ++ ".Generated.Effects hiding (request, require)"
@@ -242,7 +229,7 @@ lowerProgram namespace specifications entry = do
         , "  require = SDK.provideContext " ++ show contractType ++ " ContextBindingError " ++ routeList RequireAccess
         , "" ]
       | demanded <- nub [demandContract resolved | (_, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands]
-      , let contractType = reference demanded
+      , let contractType = demanded
             routes selectedAccess =
               [ (consumer, method)
               | (consumer, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands
@@ -259,7 +246,7 @@ lowerProgram namespace specifications entry = do
     -- Eq／Show 仅在表示类型具备时可用。
     generatedContracts = case generatedDeclarations of
       [] -> []
-      _ -> "-- 由生产方的 refine @Representation @(Gen \"Name\") 生成；只能由该生产方构造。"
+      _ -> "-- 每个 Context 的契约类型：名字来自 handler 名，包装其表示类型；只能由该生产方构造。"
         : concat
           [ [ "newtype " ++ generated ++ " = " ++ generated ++ " (" ++ reference representation' ++ ")"
             , "deriving instance Eq (" ++ reference representation' ++ ") => Eq " ++ generated
@@ -416,44 +403,36 @@ lowerProgram namespace specifications entry = do
               ++ " in " ++ name specification ++ "; declare context.request or context.require instead")
             _ -> Right ()
 
-    -- 调用点写作 request @T / require @T；契约须是可直接书写的类型名。
+    -- 消费方以契约名引用；handler 中写作 request @契约名 / require @契约名。
     checkDemandNames specification = do
-      mapM_ (\demand -> if validTypeName (contractName (contract demand)) then Right ()
-          else Left ("Demanded contract must be a named type (use a newtype or a role): "
-            ++ contractName (contract demand) ++ " in " ++ name specification)) (demands specification)
+      mapM_ (\demand -> if validTypeName (contract demand) then Right ()
+          else Left ("Demanded contract must be a contract name such as \"StartURL\": "
+            ++ contract demand ++ " in " ++ name specification)) (demands specification)
       case typing specification of
         Scoped _ _ | length (requestProviders specification) > 1 ->
           Left ("Scoped requests at most one resource Context: " ++ name specification)
         _ -> pure ()
 
-    -- Gen 名由生成器产出为 newtype：须由某个生产方以 refine 声明且只声明一次，
-    -- 不与生成区的固定名字或 effect 派生名冲突；表示类型须是普通类型。
+    -- 契约名由 handler 名推导：须是合法类型名，不与生成区固定名或 effect 派生名冲突；
+    -- handler 名因此同时决定资产名，应按业务含义起名（例如 startURL，而不是 loadStartURL）。
+    -- 与 Types.hs 中的类型重名会在 GHC 名称解析时报歧义。表示类型须是普通业务或库类型。
     checkGenerated = do
-      let declared = [generated | (generated, _, _) <- generatedDeclarations]
+      let declared = [contractType | (contractType, _, _) <- generatedDeclarations]
           reserved = ["Root", "App", "Pure", "Provides", "ContextValues", "Errors", "MethodGen", "Results"]
             ++ concat [[name s, name s ++ "Effect", name s ++ "Error", name s ++ "Failure"] | s <- specifications]
-      case [generated | generated <- nub declared, length (filter (== generated) declared) > 1] of
-        generated : _ -> Left ("Gen \"" ++ generated ++ "\" is declared by more than one refine; each generated type has one producer")
+      case [contractType | contractType <- nub declared, length (filter (== contractType) declared) > 1] of
+        contractType : _ -> Left ("Contract " ++ contractType ++ " comes from more than one handler; rename one of them")
         [] -> pure ()
-      mapM_ (\(generated, representation', owner) -> do
-          if not (validTypeName generated)
-            then Left ("Gen name must be a Haskell type name: " ++ generated ++ " in " ++ owner) else pure ()
-          if generated `elem` reserved
-            then Left ("Gen name collides with a generated or effect name: " ++ generated ++ " in " ++ owner) else pure ()
+      mapM_ (\(contractType, representation', owner) -> do
+          if not (validTypeName contractType)
+            then Left ("Handler name must start with a letter to name contract " ++ contractType ++ " in " ++ owner) else pure ()
+          if contractType `elem` reserved
+            then Left ("Contract " ++ contractType ++ " (from the handler of " ++ owner
+              ++ ") collides with a generated or effect name; rename the handler") else pure ()
           case representation' of
             TypeRef _ -> pure ()
-            _ -> Left ("refine needs a business or library type as its representation: " ++ generated ++ " in " ++ owner))
+            _ -> Left ("Context.request must wrap a business value, not Output: " ++ owner))
         generatedDeclarations
-      mapM_ (\specification -> do
-          case typing specification of
-            Context (Just Producer { produces = GenRef generated }) _ ->
-              Left ("Declare a generated type with refine @Representation @(Gen \"" ++ generated ++ "\"): " ++ name specification)
-            _ -> pure ()
-          mapM_ (\demand -> case contract demand of
-              GenRef generated | generated `notElem` declared ->
-                Left ("Gen \"" ++ generated ++ "\" demanded by " ++ name specification
-                  ++ " is not declared; its producer declares it with refine @Representation @(Gen \"" ++ generated ++ "\")")
-              _ -> pure ()) (demands specification)) specifications
 
     validTypeName selected = case selected of
       first : rest -> isUpper first && all (\character -> isAlphaNum character || character `elem` "_'") rest
@@ -504,9 +483,7 @@ lowerProgram namespace specifications entry = do
 
     -- 业务产物只归 Context；Output 仍只在运行边界统一包装。
     valueContract specification = case typing specification of
-      Context (Just Producer { produces = OutputRef _ _ }) _ ->
-        Left ("Context.request must produce a business value, not Output: " ++ name specification)
-      Context (Just Producer { produces = contract }) _ -> Right contract
+      Context (Just producing) _ -> Right (TypeRef (contractOf producing))
       Context Nothing (Just _) ->
         Left ("Context.require needs a Context.request product contract: " ++ name specification)
       _ -> Right (TypeRef "()")
@@ -524,7 +501,7 @@ lowerProgram namespace specifications entry = do
           upstream = input specification
           -- 依值只经 Provides 契约进入 superclass；来源由解析结果在 Provides instance 中连接。
           superclasses = nub (("Effect " ++ upstream ++ " m") :
-            ["Provides " ++ reference (contract demand) ++ " m" | demand <- demands specification])
+            ["Provides " ++ contract demand ++ " m" | demand <- demands specification])
           ordinaryMethods =
             [ (method, case effectKind (typing specification) of
                 PureKind -> "m ()"
@@ -555,7 +532,7 @@ lowerProgram namespace specifications entry = do
             _ -> ["  {-# MINIMAL " ++ intercalate ", " (map fst methods) ++ " #-}"]
           -- 消费契约按 demands 的声明顺序组成；多个输入排为元组。
           -- 原生 <- 在方法体内取得声明的输入；不向业务方法增加位置参数。
-          requireType = case nub (map (reference . contract) (demands specification)) of
+          requireType = case nub (map contract (demands specification)) of
             [] -> "SDK.Void"
             [contract] -> contract
             contracts -> "(" ++ intercalate ", " contracts ++ ")"
@@ -609,8 +586,6 @@ lowerProgram namespace specifications entry = do
          ]
 
     reference (TypeRef typeName) = typeName
-    reference (GenRef generated) = generated
-    reference (RefinedRef generated _) = generated
     reference (OutputRef cause value) =
       "SDK.Output (" ++ reference cause ++ ") (" ++ reference value ++ ")"
 

@@ -26,13 +26,13 @@ import System.IO.Error (tryIOError)
 import System.Mem (performGC)
 
 instance FileLocationsEffect App where
-  getFileNames = pure (FileNames
+  fileNames = pure (FileNames
     [ "demo" </> "OpenFilesDemo" </> "output" </> ("file-" ++ show index ++ ".txt")
     | index <- [1..10 :: Int]
     ])
 
 instance FileResourcesEffect App where
-  acquireFiles = do
+  openedFiles = do
     FileNames paths <- require @FileNames
     -- 整批获取是本 Context 的原子操作；中途失败释放此前已打开的文件。
     outcome <- liftIO $ tryIOError $ fmap OpenedFiles $
@@ -41,7 +41,7 @@ instance FileResourcesEffect App where
         bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
           hSetEncoding file utf8
           rest <- acquireRest
-          pure ((path, file) : rest)) (pure []) paths
+          pure (FileHandle path file : rest)) (pure []) paths
     either (raise . FileResourcesError . displayException) pure outcome
 
 instance FileSessionEffect App where
@@ -50,7 +50,8 @@ instance FileSessionEffect App where
     liftIO (putStrLn ("[open] acquired " ++ show (length files) ++ " files"))
 
   closeFiles = do
-    OpenedFiles files <- require @OpenedFiles
+    OpenedFiles held <- require @OpenedFiles
+    let files = [(path, file) | FileHandle path file <- held]
     outcome <- liftIO (tryIOError (mapM_ (hClose . snd) files))
     either (raise . FileSessionError . displayException) pure outcome
     liftIO (putStrLn ("[close] released " ++ show (length files) ++ " files"))
@@ -64,7 +65,8 @@ instance InspectFilesEffect App where
   inspectFiles = do
     -- 前一 Node 的使用已经结束；本条链显式 open，并持有自己的资源绑定。
     holdFiles
-    OpenedFiles files <- require @OpenedFiles
+    OpenedFiles held <- require @OpenedFiles
+    let files = [(path, file) | FileHandle path file <- held]
     unless (length files == 10 && length (nub (map fst files)) == 10) $
       raise (InspectFilesError "Expected ten distinct files")
     outcome <- liftIO $ tryIOError $ do
@@ -88,7 +90,8 @@ instance FinishInspectionEffect App where
   finishInspection = do
     holdFiles
     -- 在关闭前取得 Handle，随后只检查本地快照，不向已关闭 scope 再次 require。
-    OpenedFiles files <- require @OpenedFiles
+    OpenedFiles held <- require @OpenedFiles
+    let files = [(path, file) | FileHandle path file <- held]
     closeFiles
     outcome <- liftIO (tryIOError (mapM (hIsClosed . snd) files))
     closed <- either (raise . FinishInspectionError . displayException) pure outcome

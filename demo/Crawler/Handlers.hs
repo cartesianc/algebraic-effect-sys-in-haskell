@@ -29,17 +29,17 @@ import Text.HTML.TagSoup
 -- Context 按契约取值：request @T 重新生产，require @T 读取已有绑定；来源由注册解析。
 -- URL、抓取与解析均由 Context 产值；打印只完成操作，不返回业务回执。
 instance StartPageEffect App where
-  loadStartURL = pure (StartURL (PageURL "https://www.google.com"))
+  startURL = pure (StartURL (PageURL "https://www.google.com"))
 
 instance LinkedPageEffect App where
-  loadLinkedURL = pure (LinkedURL (PageURL "https://www.baidu.com"))
+  linkedURL = pure (LinkedURL (PageURL "https://www.baidu.com"))
 
 
 instance FetchPageEffect App where
-  fetchPage = do
+  startFetchedPage = do
     openCrawlSession
     StartURL (PageURL url) <- request @StartURL
-    CrawlSessionInfo _ userAgent <- require @CrawlSessionInfo
+    CrawlSessionInfo (SessionInfo _ userAgent) <- require @CrawlSessionInfo
     -- 参数直接传给 curl 进程，不经过 shell。
     let arguments =
           [ "--disable", "--silent", "--show-error", "--fail", "--location"
@@ -66,10 +66,10 @@ instance FetchPageEffect App where
       Right (ExitSuccess, html, _) -> pure (StartFetchedPage (FetchedHTML url html))
 
 instance FetchLinkedPageEffect App where
-  fetchLinkedPage = do
+  linkedFetchedPage = do
     openCrawlSession
     LinkedURL (PageURL url) <- request @LinkedURL
-    CrawlSessionInfo _ userAgent <- require @CrawlSessionInfo
+    CrawlSessionInfo (SessionInfo _ userAgent) <- require @CrawlSessionInfo
     let arguments =
           [ "--disable", "--silent", "--show-error", "--fail", "--location"
           , "--max-redirs", "3", "--connect-timeout", "5", "--max-time", "15"
@@ -94,7 +94,7 @@ instance FetchLinkedPageEffect App where
       Right (ExitSuccess, html, _) -> pure (LinkedFetchedPage (FetchedHTML url html))
 
 instance ExtractPageEffect App where
-  extractPage = do
+  startPageSummary = do
     StartFetchedPage (FetchedHTML url html) <- request @StartFetchedPage
     let tags = canonicalizeTags (parseTags html)
         titleTags = takeWhile (not . isTagCloseName "title")
@@ -111,7 +111,7 @@ instance ExtractPageEffect App where
     pure (StartPageSummary (PageSummary url title content links))
 
 instance ExtractLinkedPageEffect App where
-  extractLinkedPage = do
+  linkedPageSummary = do
     LinkedFetchedPage (FetchedHTML url html) <- request @LinkedFetchedPage
     let tags = canonicalizeTags (parseTags html)
         titleTags = takeWhile (not . isTagCloseName "title")
@@ -154,14 +154,14 @@ instance PrintLinkedPageEffect App where
 
 -- 会话信息由上游 Context 生产，SDK 在 scope 内保存并供各抓取链读取。
 instance SessionContextEffect App where
-  createCrawlSession = pure (CrawlSessionInfo "crawler-demo" "algebraic-effect-sys-in-haskell/1.0")
+  crawlSessionInfo = pure (CrawlSessionInfo (SessionInfo "crawler-demo" "algebraic-effect-sys-in-haskell/1.0"))
 
 -- 同一 instance 实现开启／关闭；都直接引用 superclass handler，不返回信息。
 -- 无开启输入的 scope 在实际重叠使用时共享；最后一条使用闭包退出后自动 close。
 instance CrawlSessionEffect App where
   openCrawlSession = do
-    CrawlSessionInfo name _ <- request @CrawlSessionInfo
+    CrawlSessionInfo (SessionInfo name _) <- request @CrawlSessionInfo
     liftIO (putStrLn ("[scope] open " ++ name))
   closeCrawlSession = do
-    CrawlSessionInfo name _ <- require @CrawlSessionInfo
+    CrawlSessionInfo (SessionInfo name _) <- require @CrawlSessionInfo
     liftIO (putStrLn ("[scope] close " ++ name))

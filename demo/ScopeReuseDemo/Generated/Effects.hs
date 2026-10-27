@@ -24,19 +24,28 @@ import ScopeReuseDemo.Types
 type Root = SDK.Root ContextValues Errors
 type App = SDK.App ContextValues Errors
 
+-- 每个 Context 的契约类型：名字来自 handler 名，包装其表示类型；只能由该生产方构造。
+newtype FilePaths = FilePaths (SharedPaths)
+deriving instance Eq (SharedPaths) => Eq FilePaths
+deriving instance Show (SharedPaths) => Show FilePaths
+
+newtype OpenedFile = OpenedFile (SharedFile)
+deriving instance Eq (SharedFile) => Eq OpenedFile
+deriving instance Show (SharedFile) => Show OpenedFile
+
 -- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = GetFilePathsGen | ReadFilePathsGen | PrepareProbeGen | AcquireFileGen | ReadOpenedFileGen | OpenSharedFileGen | CloseSharedFileGen | WriteFirstGen | WriteSecondGen | WriteThirdGen | VerifyReuseGen
+data MethodGen = FilePathsGen | ReadFilePathsGen | PrepareProbeGen | OpenedFileGen | ReadOpenedFileGen | OpenSharedFileGen | CloseSharedFileGen | WriteFirstGen | WriteSecondGen | WriteThirdGen | VerifyReuseGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
 data FileLocations
 
 class (Effect Root m) => FileLocationsEffect m where
-  getFilePaths :: m (Produce FileLocations)
+  filePaths :: m (Produce FileLocations)
   readFilePaths :: m (Produce FileLocations)
   readFilePaths = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "FileLocations" ContextBindingError [("PrepareProbe", SDK.RequestValue), ("FileResource", SDK.RequireValue), ("WriteFirst", SDK.RequestValue), ("WriteSecond", SDK.RequestValue), ("WriteThird", SDK.RequestValue), ("VerifyReuse", SDK.RequestValue)] (Just (SDK.ScopeInput "FileLocations")) boundFileLocations
-  {-# MINIMAL getFilePaths #-}
+  {-# MINIMAL filePaths #-}
 
 instance (Monad m, Effect Root m, FileLocationsEffect m) => Effect FileLocations m where
   type Registration FileLocations = Registered FileLocationsEffect Root
@@ -64,11 +73,11 @@ instance (Monad m, Effect Root m, PrepareProbeEffect m) => Effect PrepareProbe m
 data FileResource
 
 class (Effect Root m, Provides FilePaths m) => FileResourceEffect m where
-  acquireFile :: m (Produce FileResource)
+  openedFile :: m (Produce FileResource)
   readOpenedFile :: m (Produce FileResource)
   readOpenedFile = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
     SDK.readContext "FileResource" ContextBindingError [("SharedFileScope", SDK.RequestValue), ("WriteFirst", SDK.RequireValue), ("WriteSecond", SDK.RequireValue), ("WriteThird", SDK.RequireValue)] Nothing boundFileResource
-  {-# MINIMAL acquireFile #-}
+  {-# MINIMAL openedFile #-}
 
 instance (Monad m, Effect Root m, FileResourceEffect m) => Effect FileResource m where
   type Registration FileResource = Registered FileResourceEffect Root
@@ -156,11 +165,11 @@ class Provides contract m where
   require :: m contract
 
 instance (FileLocationsEffect App) => Provides FilePaths App where
-  request = SDK.provideContext "FilePaths" ContextBindingError [("PrepareProbe", getFilePaths), ("WriteFirst", getFilePaths), ("WriteSecond", getFilePaths), ("WriteThird", getFilePaths), ("VerifyReuse", getFilePaths)]
+  request = SDK.provideContext "FilePaths" ContextBindingError [("PrepareProbe", filePaths), ("WriteFirst", filePaths), ("WriteSecond", filePaths), ("WriteThird", filePaths), ("VerifyReuse", filePaths)]
   require = SDK.provideContext "FilePaths" ContextBindingError [("FileResource", readFilePaths)]
 
 instance (FileResourceEffect App) => Provides OpenedFile App where
-  request = SDK.provideContext "OpenedFile" ContextBindingError [("SharedFileScope", acquireFile)]
+  request = SDK.provideContext "OpenedFile" ContextBindingError [("SharedFileScope", openedFile)]
   require = SDK.provideContext "OpenedFile" ContextBindingError [("SharedFileScope", readOpenedFile), ("WriteFirst", readOpenedFile), ("WriteSecond", readOpenedFile), ("WriteThird", readOpenedFile)]
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。

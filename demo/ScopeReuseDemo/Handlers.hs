@@ -26,13 +26,13 @@ import System.IO
 import System.IO.Error (tryIOError)
 
 instance FileLocationsEffect App where
-  getFilePaths = pure (FilePaths
+  filePaths = pure (FilePaths (SharedPaths
     ("demo" </> "ScopeReuseDemo" </> "output" </> "shared.txt")
-    ("demo" </> "ScopeReuseDemo" </> "output" </> "events.txt"))
+    ("demo" </> "ScopeReuseDemo" </> "output" </> "events.txt")))
 
 instance PrepareProbeEffect App where
   prepareProbe = do
-    FilePaths path journal <- request @FilePaths
+    FilePaths (SharedPaths path journal) <- request @FilePaths
     outcome <- liftIO $ tryIOError $ do
       createDirectoryIfMissing True (takeDirectory path)
       -- 仅重置本 demo 的两份产物，在三个分支启动前完成。
@@ -41,24 +41,24 @@ instance PrepareProbeEffect App where
     either (raise . PrepareProbeError . displayException) pure outcome
 
 instance FileResourceEffect App where
-  acquireFile = do
-    paths@(FilePaths path journal) <- require @FilePaths
+  openedFile = do
+    FilePaths paths@(SharedPaths path journal) <- require @FilePaths
     outcome <- liftIO $ tryIOError $
       bracketOnError (openFile path AppendMode) hClose $ \file -> do
         hSetEncoding file utf8
         -- 记录真实资源获取；日志独立于 Context，重新产值不会清零它。
         appendFile journal "file-open\n"
-        pure (OpenedFile paths file)
+        pure (OpenedFile (SharedFile paths file))
     either (raise . FileResourceError . displayException) pure outcome
 
 instance SharedFileScopeEffect App where
   openSharedFile = do
-    OpenedFile (FilePaths _ journal) _ <- request @OpenedFile
+    OpenedFile (SharedFile (SharedPaths _ journal) _) <- request @OpenedFile
     outcome <- liftIO (tryIOError (appendFile journal "open-body\n"))
     either (raise . SharedFileScopeError . displayException) pure outcome
 
   closeSharedFile = do
-    OpenedFile (FilePaths _ journal) file <- require @OpenedFile
+    OpenedFile (SharedFile (SharedPaths _ journal) file) <- require @OpenedFile
     outcome <- liftIO $ tryIOError $ do
       appendFile journal "close-body\n"
       hClose file
@@ -71,7 +71,7 @@ instance WriteFirstEffect App where
   writeFirst = do
     _ <- request @FilePaths
     openSharedFile
-    OpenedFile _ file <- require @OpenedFile
+    OpenedFile (SharedFile _ file) <- require @OpenedFile
     outcome <- liftIO $ tryIOError $ do
       hPutStr file "first\n"
       hFlush file
@@ -81,7 +81,7 @@ instance WriteSecondEffect App where
   writeSecond = do
     _ <- request @FilePaths
     openSharedFile
-    OpenedFile _ file <- require @OpenedFile
+    OpenedFile (SharedFile _ file) <- require @OpenedFile
     outcome <- liftIO $ tryIOError $ do
       hPutStr file "second\n"
       hFlush file
@@ -91,7 +91,7 @@ instance WriteThirdEffect App where
   writeThird = do
     _ <- request @FilePaths
     openSharedFile
-    OpenedFile _ file <- require @OpenedFile
+    OpenedFile (SharedFile _ file) <- require @OpenedFile
     outcome <- liftIO $ tryIOError $ do
       hPutStr file "third\n"
       hFlush file
@@ -99,7 +99,7 @@ instance WriteThirdEffect App where
 
 instance VerifyReuseEffect App where
   verifyReuse = do
-    FilePaths path journal <- request @FilePaths
+    FilePaths (SharedPaths path journal) <- request @FilePaths
     -- parallel 已等待各链退出及自动清理；此处只读日志和文件，不 require 旧资源。
     outcome <- liftIO $ tryIOError $ do
       events <- readFile' journal

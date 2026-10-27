@@ -31,28 +31,28 @@ import System.IO.Error (tryIOError)
 import System.Mem (performGC)
 
 instance FileLocationsEffect App where
-  getFileNames =
+  fileNames =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations" FrameworkGenerated.ContextBindingError
       [("FileResources", FrameworkRuntime.RequireValue), ("HoldFiles", FrameworkRuntime.RequestValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocations"))
       FrameworkGenerated.boundFileLocations
       (\value bindings -> bindings { FrameworkGenerated.boundFileLocations = Just value })) $
       let
-        getFileNames = pure (FileNames
+        fileNames = pure (FileNames
           [ "demo" </> "OpenFilesDemo" </> "output" </> ("file-" ++ show index ++ ".txt")
           | index <- [1..10 :: Int]
           ])
-      in getFileNames
+      in fileNames
 
 instance FileResourcesEffect App where
-  acquireFiles =
+  openedFiles =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResources" FrameworkGenerated.ContextBindingError
       [("FileSession", FrameworkRuntime.RequestValue), ("InspectFiles", FrameworkRuntime.RequireValue), ("FinishInspection", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundFileResources
       (\value bindings -> bindings { FrameworkGenerated.boundFileResources = Just value })) $
       let
-        acquireFiles = do
+        openedFiles = do
           FileNames paths <- require @FileNames
           -- 整批获取是本 Context 的原子操作；中途失败释放此前已打开的文件。
           outcome <- liftIO $ tryIOError $ fmap OpenedFiles $
@@ -61,9 +61,9 @@ instance FileResourcesEffect App where
               bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
                 hSetEncoding file utf8
                 rest <- acquireRest
-                pure ((path, file) : rest)) (pure []) paths
+                pure (FileHandle path file : rest)) (pure []) paths
           either (raise . FileResourcesError . displayException) pure outcome
-      in acquireFiles
+      in openedFiles
 
 instance FileSessionEffect App where
   openFiles =
@@ -78,7 +78,8 @@ instance FileSessionEffect App where
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
       let
         closeFiles = do
-          OpenedFiles files <- require @OpenedFiles
+          OpenedFiles held <- require @OpenedFiles
+          let files = [(path, file) | FileHandle path file <- held]
           outcome <- liftIO (tryIOError (mapM_ (hClose . snd) files))
           either (raise . FileSessionError . displayException) pure outcome
           liftIO (putStrLn ("[close] released " ++ show (length files) ++ " files"))
@@ -100,7 +101,8 @@ instance InspectFilesEffect App where
         inspectFiles = do
           -- 前一 Node 的使用已经结束；本条链显式 open，并持有自己的资源绑定。
           holdFiles
-          OpenedFiles files <- require @OpenedFiles
+          OpenedFiles held <- require @OpenedFiles
+          let files = [(path, file) | FileHandle path file <- held]
           unless (length files == 10 && length (nub (map fst files)) == 10) $
             raise (InspectFilesError "Expected ten distinct files")
           outcome <- liftIO $ tryIOError $ do
@@ -128,7 +130,8 @@ instance FinishInspectionEffect App where
         finishInspection = do
           holdFiles
           -- 在关闭前取得 Handle，随后只检查本地快照，不向已关闭 scope 再次 require。
-          OpenedFiles files <- require @OpenedFiles
+          OpenedFiles held <- require @OpenedFiles
+          let files = [(path, file) | FileHandle path file <- held]
           closeFiles
           outcome <- liftIO (tryIOError (mapM (hIsClosed . snd) files))
           closed <- either (raise . FinishInspectionError . displayException) pure outcome
@@ -139,7 +142,7 @@ instance FinishInspectionEffect App where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "2aba3ca8befbd67108e4aeede369a938"
+handlerSourceFingerprint = Just "8a6ac99160946f0c0349a032671d98d6"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

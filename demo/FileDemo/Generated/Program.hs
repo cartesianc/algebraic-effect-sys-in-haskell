@@ -4,7 +4,7 @@
 -- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
 module FileDemo.Generated.Program where
 
-import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), Handles(..), Demand(..), Access(..), TypeRef(..), Output)
+import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Requester(..), Handles(..), Demand(..), Access(..), TypeRef(..), Output)
 import qualified Framework.SDK as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
 import FileDemo.Generated.Effects hiding (request, require)
@@ -14,14 +14,14 @@ import FileDemo.Types
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
 registeredEffects :: [EffectSpec]
 registeredEffects =
-  [ EffectSpec {name = "FileLocation", typing = Context {request = Just (Producer {handler = "getFileName", produces = TypeRef "FileName"}), require = Just "readFileName"}, input = "Root", demands = []}
-  , EffectSpec {name = "ValidateFileName", typing = Pure {handler = Just "validateFileName"}, input = "Root", demands = [Demand {access = RequireAccess, contract = TypeRef "FileName"}]}
-  , EffectSpec {name = "FileResource", typing = Context {request = Just (Producer {handler = "acquireFile", produces = TypeRef "OpenedFile"}), require = Just "readOpenedFile"}, input = "ValidateFileName", demands = [Demand {access = RequireAccess, contract = TypeRef "FileName"}]}
-  , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFileSession", close = Just "closeFileSession"}, input = "ValidateFileName", demands = [Demand {access = RequestAccess, contract = TypeRef "OpenedFile"},Demand {access = RequireAccess, contract = TypeRef "OpenedFile"}]}
-  , EffectSpec {name = "FileRecovery", typing = Error {detect = Just "detectFileSession", resolve = Just "resolveFileSession", handles = [RaisedBy "ReadFile",RaisedBy "WriteFile"]}, input = "FileSession", demands = [Demand {access = RequireAccess, contract = TypeRef "OpenedFile"}]}
-  , EffectSpec {name = "ReadFile", typing = Context {request = Just (Producer {handler = "readFileText", produces = TypeRef "FileText"}), require = Just "readLastFileText"}, input = "FileSession", demands = [Demand {access = RequireAccess, contract = TypeRef "OpenedFile"}]}
-  , EffectSpec {name = "WriteFile", typing = Excu {handler = Just "writeFileText"}, input = "FileSession", demands = [Demand {access = RequestAccess, contract = TypeRef "FileText"},Demand {access = RequireAccess, contract = TypeRef "OpenedFile"}]}
-  , EffectSpec {name = "FileWorkflow", typing = Excu {handler = Just "runFileWorkflow"}, input = "WriteFile", demands = [Demand {access = RequestAccess, contract = TypeRef "FileName"}]}
+  [ EffectSpec {name = "FileLocation", typing = Context {request = Just (Requester {handler = "fileName", representation = TypeRef "[Char]"}), require = Just "readFileName"}, input = "Root", demands = []}
+  , EffectSpec {name = "ValidateFileName", typing = Pure {handler = Just "validateFileName"}, input = "Root", demands = [Demand {access = RequireAccess, contract = "FileName"}]}
+  , EffectSpec {name = "FileResource", typing = Context {request = Just (Requester {handler = "openedFile", representation = TypeRef "FileHandle"}), require = Just "readOpenedFile"}, input = "ValidateFileName", demands = [Demand {access = RequireAccess, contract = "FileName"}]}
+  , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFileSession", close = Just "closeFileSession"}, input = "ValidateFileName", demands = [Demand {access = RequestAccess, contract = "OpenedFile"},Demand {access = RequireAccess, contract = "OpenedFile"}]}
+  , EffectSpec {name = "FileRecovery", typing = Error {detect = Just "detectFileSession", resolve = Just "resolveFileSession", handles = [RaisedBy "ReadFile",RaisedBy "WriteFile"]}, input = "FileSession", demands = [Demand {access = RequireAccess, contract = "OpenedFile"}]}
+  , EffectSpec {name = "ReadFile", typing = Context {request = Just (Requester {handler = "fileText", representation = TypeRef "[Char]"}), require = Just "readFileText"}, input = "FileSession", demands = [Demand {access = RequireAccess, contract = "OpenedFile"}]}
+  , EffectSpec {name = "WriteFile", typing = Excu {handler = Just "writeFileText"}, input = "FileSession", demands = [Demand {access = RequestAccess, contract = "FileText"},Demand {access = RequireAccess, contract = "OpenedFile"}]}
+  , EffectSpec {name = "FileWorkflow", typing = Excu {handler = Just "runFileWorkflow"}, input = "WriteFile", demands = [Demand {access = RequestAccess, contract = "FileName"}]}
   ]
 
 -- 生成身份连接到已有运行 scope 名；依赖只保存在下方显式 ScopeTree 中。
@@ -54,18 +54,18 @@ interpreter = SDK.interpreter "FileDemo" registeredEffects Handlers.handlerSourc
 generatedEffectGraph :: SDK.EffectGraph MethodGen
 generatedEffectGraph = SDK.EffectGraph
   { SDK.graphMethods =
-      [ SDK.MethodDefinition RunFileWorkflowGen RunFileWorkflowGen SDK.HandlerMethod (SDK.Sequence [SDK.Call GetFileNameGen, SDK.Call OpenFileSessionGen, SDK.Call WriteFileTextGen])
-      , SDK.MethodDefinition GetFileNameGen GetFileNameGen SDK.ContextRequest (SDK.Empty)
-      , SDK.MethodDefinition OpenFileSessionGen OpenFileSessionGen SDK.ScopeOpen (SDK.Call AcquireFileGen)
-      , SDK.MethodDefinition AcquireFileGen AcquireFileGen SDK.ContextRequest (SDK.Sequence [SDK.Call ValidateFileNameGen, SDK.Call ReadFileNameGen])
+      [ SDK.MethodDefinition RunFileWorkflowGen RunFileWorkflowGen SDK.HandlerMethod (SDK.Sequence [SDK.Call FileNameGen, SDK.Call OpenFileSessionGen, SDK.Call WriteFileTextGen])
+      , SDK.MethodDefinition FileNameGen FileNameGen SDK.ContextRequest (SDK.Empty)
+      , SDK.MethodDefinition OpenFileSessionGen OpenFileSessionGen SDK.ScopeOpen (SDK.Call OpenedFileGen)
+      , SDK.MethodDefinition OpenedFileGen OpenedFileGen SDK.ContextRequest (SDK.Sequence [SDK.Call ValidateFileNameGen, SDK.Call ReadFileNameGen])
       , SDK.MethodDefinition ValidateFileNameGen ValidateFileNameGen SDK.HandlerMethod (SDK.Call ReadFileNameGen)
-      , SDK.MethodDefinition ReadFileNameGen GetFileNameGen SDK.ContextRequire (SDK.Empty)
-      , SDK.MethodDefinition WriteFileTextGen WriteFileTextGen SDK.HandlerMethod (SDK.Sequence [SDK.Call ReadFileTextGen, SDK.Call ReadOpenedFileGen])
-      , SDK.MethodDefinition ReadFileTextGen ReadFileTextGen SDK.ContextRequest (SDK.Sequence [SDK.Call OpenFileSessionGen, SDK.Call ReadOpenedFileGen])
-      , SDK.MethodDefinition ReadOpenedFileGen AcquireFileGen SDK.ContextRequire (SDK.Empty)
+      , SDK.MethodDefinition ReadFileNameGen FileNameGen SDK.ContextRequire (SDK.Empty)
+      , SDK.MethodDefinition WriteFileTextGen WriteFileTextGen SDK.HandlerMethod (SDK.Sequence [SDK.Call FileTextGen, SDK.Call ReadOpenedFileGen])
+      , SDK.MethodDefinition FileTextGen FileTextGen SDK.ContextRequest (SDK.Sequence [SDK.Call OpenFileSessionGen, SDK.Call ReadOpenedFileGen])
+      , SDK.MethodDefinition ReadOpenedFileGen OpenedFileGen SDK.ContextRequire (SDK.Empty)
       ]
   , SDK.graphRoots = [RunFileWorkflowGen]
-  , SDK.graphReferences = [(RunFileWorkflowGen, GetFileNameGen), (RunFileWorkflowGen, OpenFileSessionGen), (RunFileWorkflowGen, WriteFileTextGen), (OpenFileSessionGen, AcquireFileGen), (AcquireFileGen, ValidateFileNameGen), (AcquireFileGen, ReadFileNameGen), (ValidateFileNameGen, ReadFileNameGen), (WriteFileTextGen, ReadFileTextGen), (WriteFileTextGen, ReadOpenedFileGen), (ReadFileTextGen, OpenFileSessionGen), (ReadFileTextGen, ReadOpenedFileGen)]
+  , SDK.graphReferences = [(RunFileWorkflowGen, FileNameGen), (RunFileWorkflowGen, OpenFileSessionGen), (RunFileWorkflowGen, WriteFileTextGen), (OpenFileSessionGen, OpenedFileGen), (OpenedFileGen, ValidateFileNameGen), (OpenedFileGen, ReadFileNameGen), (ValidateFileNameGen, ReadFileNameGen), (WriteFileTextGen, FileTextGen), (WriteFileTextGen, ReadOpenedFileGen), (FileTextGen, OpenFileSessionGen), (FileTextGen, ReadOpenedFileGen)]
   , SDK.graphScopes = [OpenFileSessionGen]
   , SDK.graphScopePaths = [[OpenFileSessionGen]]
   , SDK.graphRootPaths =

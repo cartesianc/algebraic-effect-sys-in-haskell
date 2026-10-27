@@ -4,7 +4,7 @@
 -- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
 module OpenFilesDemo.Generated.Program where
 
-import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Producer(..), Handles(..), Demand(..), Access(..), TypeRef(..), Output)
+import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Requester(..), Handles(..), Demand(..), Access(..), TypeRef(..), Output)
 import qualified Framework.SDK as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
 import OpenFilesDemo.Generated.Effects hiding (request, require)
@@ -14,12 +14,12 @@ import OpenFilesDemo.Types
 -- 编译时注册快照；运行前核对声明，改变连接后须重新生成。
 registeredEffects :: [EffectSpec]
 registeredEffects =
-  [ EffectSpec {name = "FileLocations", typing = Context {request = Just (Producer {handler = "getFileNames", produces = TypeRef "FileNames"}), require = Just "readFileNames"}, input = "Root", demands = []}
-  , EffectSpec {name = "FileResources", typing = Context {request = Just (Producer {handler = "acquireFiles", produces = TypeRef "OpenedFiles"}), require = Just "readOpenedFiles"}, input = "Root", demands = [Demand {access = RequireAccess, contract = TypeRef "FileNames"}]}
-  , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFiles", close = Just "closeFiles"}, input = "Root", demands = [Demand {access = RequestAccess, contract = TypeRef "OpenedFiles"},Demand {access = RequireAccess, contract = TypeRef "OpenedFiles"}]}
-  , EffectSpec {name = "HoldFiles", typing = Excu {handler = Just "holdFiles"}, input = "FileSession", demands = [Demand {access = RequestAccess, contract = TypeRef "FileNames"}]}
-  , EffectSpec {name = "InspectFiles", typing = Excu {handler = Just "inspectFiles"}, input = "HoldFiles", demands = [Demand {access = RequireAccess, contract = TypeRef "OpenedFiles"}]}
-  , EffectSpec {name = "FinishInspection", typing = Excu {handler = Just "finishInspection"}, input = "InspectFiles", demands = [Demand {access = RequireAccess, contract = TypeRef "OpenedFiles"}]}
+  [ EffectSpec {name = "FileLocations", typing = Context {request = Just (Requester {handler = "fileNames", representation = TypeRef "[[Char]]"}), require = Just "readFileNames"}, input = "Root", demands = []}
+  , EffectSpec {name = "FileResources", typing = Context {request = Just (Requester {handler = "openedFiles", representation = TypeRef "[FileHandle]"}), require = Just "readOpenedFiles"}, input = "Root", demands = [Demand {access = RequireAccess, contract = "FileNames"}]}
+  , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFiles", close = Just "closeFiles"}, input = "Root", demands = [Demand {access = RequestAccess, contract = "OpenedFiles"},Demand {access = RequireAccess, contract = "OpenedFiles"}]}
+  , EffectSpec {name = "HoldFiles", typing = Excu {handler = Just "holdFiles"}, input = "FileSession", demands = [Demand {access = RequestAccess, contract = "FileNames"}]}
+  , EffectSpec {name = "InspectFiles", typing = Excu {handler = Just "inspectFiles"}, input = "HoldFiles", demands = [Demand {access = RequireAccess, contract = "OpenedFiles"}]}
+  , EffectSpec {name = "FinishInspection", typing = Excu {handler = Just "finishInspection"}, input = "InspectFiles", demands = [Demand {access = RequireAccess, contract = "OpenedFiles"}]}
   ]
 
 -- 生成身份连接到已有运行 scope 名；依赖只保存在下方显式 ScopeTree 中。
@@ -54,18 +54,18 @@ interpreter = SDK.interpreter "OpenFilesDemo" registeredEffects Handlers.handler
 generatedEffectGraph :: SDK.EffectGraph MethodGen
 generatedEffectGraph = SDK.EffectGraph
   { SDK.graphMethods =
-      [ SDK.MethodDefinition HoldFilesGen HoldFilesGen SDK.HandlerMethod (SDK.Sequence [SDK.Call GetFileNamesGen, SDK.Call OpenFilesGen])
-      , SDK.MethodDefinition GetFileNamesGen GetFileNamesGen SDK.ContextRequest (SDK.Empty)
-      , SDK.MethodDefinition OpenFilesGen OpenFilesGen SDK.ScopeOpen (SDK.Call AcquireFilesGen)
-      , SDK.MethodDefinition AcquireFilesGen AcquireFilesGen SDK.ContextRequest (SDK.Call ReadFileNamesGen)
-      , SDK.MethodDefinition ReadFileNamesGen GetFileNamesGen SDK.ContextRequire (SDK.Empty)
+      [ SDK.MethodDefinition HoldFilesGen HoldFilesGen SDK.HandlerMethod (SDK.Sequence [SDK.Call FileNamesGen, SDK.Call OpenFilesGen])
+      , SDK.MethodDefinition FileNamesGen FileNamesGen SDK.ContextRequest (SDK.Empty)
+      , SDK.MethodDefinition OpenFilesGen OpenFilesGen SDK.ScopeOpen (SDK.Call OpenedFilesGen)
+      , SDK.MethodDefinition OpenedFilesGen OpenedFilesGen SDK.ContextRequest (SDK.Call ReadFileNamesGen)
+      , SDK.MethodDefinition ReadFileNamesGen FileNamesGen SDK.ContextRequire (SDK.Empty)
       , SDK.MethodDefinition InspectFilesGen InspectFilesGen SDK.HandlerMethod (SDK.Sequence [SDK.Call HoldFilesGen, SDK.Call ReadOpenedFilesGen])
-      , SDK.MethodDefinition ReadOpenedFilesGen AcquireFilesGen SDK.ContextRequire (SDK.Empty)
+      , SDK.MethodDefinition ReadOpenedFilesGen OpenedFilesGen SDK.ContextRequire (SDK.Empty)
       , SDK.MethodDefinition FinishInspectionGen FinishInspectionGen SDK.HandlerMethod (SDK.Sequence [SDK.Call HoldFilesGen, SDK.Call ReadOpenedFilesGen, SDK.Call CloseFilesGen])
       , SDK.MethodDefinition CloseFilesGen OpenFilesGen SDK.ScopeClose (SDK.Call ReadOpenedFilesGen)
       ]
   , SDK.graphRoots = [HoldFilesGen, InspectFilesGen, FinishInspectionGen]
-  , SDK.graphReferences = [(HoldFilesGen, GetFileNamesGen), (HoldFilesGen, OpenFilesGen), (OpenFilesGen, AcquireFilesGen), (AcquireFilesGen, ReadFileNamesGen), (InspectFilesGen, HoldFilesGen), (InspectFilesGen, ReadOpenedFilesGen), (FinishInspectionGen, HoldFilesGen), (FinishInspectionGen, ReadOpenedFilesGen), (FinishInspectionGen, CloseFilesGen), (CloseFilesGen, ReadOpenedFilesGen)]
+  , SDK.graphReferences = [(HoldFilesGen, FileNamesGen), (HoldFilesGen, OpenFilesGen), (OpenFilesGen, OpenedFilesGen), (OpenedFilesGen, ReadFileNamesGen), (InspectFilesGen, HoldFilesGen), (InspectFilesGen, ReadOpenedFilesGen), (FinishInspectionGen, HoldFilesGen), (FinishInspectionGen, ReadOpenedFilesGen), (FinishInspectionGen, CloseFilesGen), (CloseFilesGen, ReadOpenedFilesGen)]
   , SDK.graphScopes = [OpenFilesGen]
   , SDK.graphScopePaths = [[OpenFilesGen]]
   , SDK.graphRootPaths =

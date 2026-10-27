@@ -132,17 +132,15 @@ SDK 保留 scope 状态与 Context 绑定，本轮按有限使用闭包落实 on
 业务产值统一归 Context，即使具体计算是纯函数也不因此注册为 Pure；不另设 Map typing。成功值与错误负载都可以
 参与显式连接；转换错误负载不会自动把原操作的失败状态改为成功。
 
-Context 在 typing.request 的 Producer 中声明 handler 名与 produces 业务类型。爬虫的 URL、抓取和解析通过 request 接入，CrawlSession 经 Input 提供操作能力；SDK 不预先生产全局 Context。
-生产方的 typing = Context { request, require } 声明方法角色；request = Just Producer { handler, produces }，require 从同一生产契约取得读取类型。
+Context 在 typing.request 中以 requester "handler名" @表示类型 声明生产方法，契约类型由 handler 名生成。爬虫的 URL、抓取和解析通过 request 接入，CrawlSession 经 Input 提供操作能力；SDK 不预先生产全局 Context。
+生产方的 typing = Context { request, require } 声明方法角色；require 读取同一契约。
 消费方的 demands :: [Demand] 只声明需要的契约与取值模式：requests 重新求值，requires 读取已有绑定。
-写法为 requests @T／requires @T，不写来源；生成器在注册集合中按类型唯一解析，类型即装配键。
-多个生产方一律报错，不按距离、ScopeTree 或拓扑打破平局：自动装配只在唯一时成立，新增生产方只会让生成失败，不会静默改变已有接线。
-这与 Dagger／Guice 对重复绑定、Haskell 对 instance 一致性的处理相同。
-不同业务含义即使表示相同（例如当前用户与目标用户的 UserId），也使用不同类型。仅为区分含义的类型不手写：
-生产方声明 produces = refine @UserId @(Gen "CurrentUser")，生成器在 Generated/Effects 中产出 newtype CurrentUser，消费方写 requests @(Gen "CurrentUser")，handler 照常写 request @CurrentUser。
-Gen 标出"此名由生成器产出"：手写声明看不到 Generated，因此以类型级字符串写在契约位置，契约仍一律写在 @ 之后；Effects.hs 为此开启 DataKinds，只影响该模块的类型书写，不改变解析与运行语义。
-是否需要新类型由唯一生产方规则决定，而不是个人选择：出现第二个生产方时生成报错，修复方式固定为把其中一个生产方改为 refine，只改 Effects.hs。生成类型不派生 Read，值只能由声明它的生产方构造。
-误用在 GHC 类型检查时即被拒绝，不依赖 handler 内的值语义。曾设计过的独立角色层（Roles.hs、roleRef）与 `from` 已取消：前者让类型定义有了第二个位置和第二种引用写法，后者让来源选择分散到每个需求。
+统一规则：每个 Context 的契约类型都由生成器按 handler 名产出。request = requester "currentUser" @UserId 生成 newtype CurrentUser = CurrentUser UserId；
+消费方写 requests "CurrentUser"，handler 照常写 request @CurrentUser。契约类型在手写声明中不可见，因此消费方以名字引用，名字即生产方 handler 名首字母大写。
+不同业务含义即使表示相同（例如当前用户与目标用户的 UserId），也由不同的 handler 产出不同的契约类型，不需要手写 newtype、额外标记或来源选择。
+方法名在注册集合中唯一，每个契约恰好对应一个生产方；handler 名同时决定资产名，应按业务含义起名，不与 effect 名、生成区固定名或 Types.hs 中的类型重名。
+Types.hs 只保留表示类型；只包一层的 newtype 由生成的契约取代，含 Handle 等需导入的库类型时定义为记录。生成的契约不派生 Read，值只能由其生产方构造。
+误用在 GHC 类型检查时即被拒绝，不依赖 handler 内的值语义。曾设计过的独立角色层（Roles.hs、roleRef）、`from`、Gen 标记与 refine 均已取消，由按 handler 名生成契约的统一规则取代。
 细化类型同时决定 scope 边界：细化后的资源、开启输入与 Scoped 是不同注册，ScopeTree 以注册为节点即可区分。一个 Scoped 注册服务多种细化类型尚无声明形式；引入时节点身份须改为（Scoped 注册，细化资源类型），运行时 scope 状态的各项记账随之改用该组合键。
 消费配置形成关联 Require（按 demands 顺序的元组）和 Provides 契约约束，不能因该 effect 自身也是 Context 就省略其消费契约。
 方法保持无位置参数。instance 使用原生 Haskell：在 do 中通过 `value <- request @T` 或 `value <- require @T` 取得业务值，调用点即说明是否重新生产；普通操作直接引用 superclass 方法。可确定匹配的单构造器模式可直接写在 `<-` 左侧；多构造器值先绑定再用普通 case 显式处理，失败通过 raise，不新增 MonadFail。SDK 在注册生成的 Context 入口连接 request 生产与 require 读取；生成器解析显式 effect 方法引用以生成纯结构副本；业务执行副本仍只包装入口，不改写原方法体表达式。不新增 Definition、consume 或独立 booter；嵌套取值共享本次 Context 和 scope。未进入的分支不取值，生成源码和创建 Target 不执行业务 IO；不使用 unsafePerformIO／unsafeInterleaveIO。
@@ -160,9 +158,9 @@ gencode 在结构分析时把 request @T／require @T 解析为来源方法，�
 目前只有一种固定规则，不新增 adapter 类目或 adapt 配置，也不要求用户为每对类型
 手写转换证据或机械转换注册。有业务含义且对外产值的纯转换使用显式注册的 Context effect。
 
-业务 ADT 在 Types.hs 用原生 data/newtype 单独定义，注册用 typeRef @BusinessType 引用，
+业务表示类型在 Types.hs 用原生 data/newtype 单独定义，注册以 requester 的类型参数引用，
 不再用 ADT/Constructor 重述字段。Require、Produce 是 Effect 中的关联 type，以原子 effect 为索引。
-移除顶层 produces 和错误契约配置；只有 Context.request 在 Producer 中声明产物类型。
+移除顶层 produces 和错误契约配置；只有 Context.request 以 requester 声明表示类型。
 Require 引用原生输入类型，Produce 表示 Context 的业务产物，其余类别默认 ()，不包含 Output。
 普通 Pure／Excu 方法返回 m ()，Context 返回业务成功值；handler 不手写 Succ 包装。
 SDK 按 effect 名生成本地错误类型、关联 Error e、分类和 raise，实现来源推导；用户只填写错误消息。
@@ -170,7 +168,7 @@ SDK 按 effect 名生成本地错误类型、关联 Error e、分类和 raise，
 各类别统一注册，所有方法名绑定放入 typing 对应的普通 ADT 构造器，包括 Pure 和 Excu，
 不再另设顶层 handlers 重复声明。同一 effect 可以有多个不同签名的类方法。
 普通调用需能唯一确定入口，不要求 class 只有一个方法。多方法的输出契约与注册字段仍待设计。
-普通方法名绑定采用 Maybe String，包括 Scoped.open／close；只有 Context.request 使用 Maybe Producer，Just 同时提供方法名和产物类型。
+普通方法名绑定采用 Maybe String，包括 Scoped.open／close；只有 Context.request 使用 requester "方法名" @表示类型，同时提供方法名与契约。
 Nothing 表示未绑定该方法，不改变业务返回值的类型；require 缺少生产契约时无法推导读取类型，生成器明确报错。
 当前 Pure／Excu 已落实：Nothing 不生成本地方法，被 target 引用时报告没有可调用入口；
 不猜测名字或提供默认业务实现。request 必须引用具有产值入口的 Context，不用普通 effect 的 () 传值。

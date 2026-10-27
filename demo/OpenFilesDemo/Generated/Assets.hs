@@ -6,16 +6,23 @@ import Framework.Effect.Asset (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Types", assetName = "FileNames", assetFile = "demo/OpenFilesDemo/Types.hs", assetLine = 5, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "FileNames", assetFile = "demoOpenFilesDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "OpenFilesDemo.Types", assetName = "FileNames", assetFile = "demo/OpenFilesDemo/Types.hs", assetLine = 5, assetColumn = 21}
+          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "FileNames", assetFile = "demoOpenFilesDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 21}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Types", assetName = "OpenedFiles", assetFile = "demo/OpenFilesDemo/Types.hs", assetLine = 9, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "OpenedFiles", assetFile = "demoOpenFilesDemo/Generated/Effects.hs", assetLine = 32, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "OpenFilesDemo.Types", assetName = "OpenedFiles", assetFile = "demo/OpenFilesDemo/Types.hs", assetLine = 9, assetColumn = 23}
+          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "OpenedFiles", assetFile = "demoOpenFilesDemo/Generated/Effects.hs", assetLine = 32, assetColumn = 23}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Types", assetName = "FileHandle", assetFile = "demo/OpenFilesDemo/Types.hs", assetLine = 7, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "OpenFilesDemo.Types", assetName = "FileHandle", assetFile = "demo/OpenFilesDemo/Types.hs", assetLine = 7, assetColumn = 19}
           ]
       , assetFields = []
       }

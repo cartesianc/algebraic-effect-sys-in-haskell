@@ -6,16 +6,23 @@ import Framework.Effect.Asset (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "ScopeInstancesDemo.Types", assetName = "FileName", assetFile = "demo/ScopeInstancesDemo/Types.hs", assetLine = 6, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "ScopeInstancesDemo.Generated.Effects", assetName = "FileName", assetFile = "demoScopeInstancesDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "ScopeInstancesDemo.Types", assetName = "FileName", assetFile = "demo/ScopeInstancesDemo/Types.hs", assetLine = 6, assetColumn = 20}
+          [ AssetSymbol {assetModule = "ScopeInstancesDemo.Generated.Effects", assetName = "FileName", assetFile = "demoScopeInstancesDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 20}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "ScopeInstancesDemo.Types", assetName = "OpenedFile", assetFile = "demo/ScopeInstancesDemo/Types.hs", assetLine = 7, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "ScopeInstancesDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demoScopeInstancesDemo/Generated/Effects.hs", assetLine = 32, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "ScopeInstancesDemo.Types", assetName = "OpenedFile", assetFile = "demo/ScopeInstancesDemo/Types.hs", assetLine = 7, assetColumn = 19}
+          [ AssetSymbol {assetModule = "ScopeInstancesDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demoScopeInstancesDemo/Generated/Effects.hs", assetLine = 32, assetColumn = 22}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "ScopeInstancesDemo.Types", assetName = "FileHandle", assetFile = "demo/ScopeInstancesDemo/Types.hs", assetLine = 6, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "ScopeInstancesDemo.Types", assetName = "FileHandle", assetFile = "demo/ScopeInstancesDemo/Types.hs", assetLine = 6, assetColumn = 19}
           ]
       , assetFields = []
       }

@@ -26,7 +26,7 @@ import System.IO.Error (tryIOError)
 
 instance FileLocationEffect App where
   -- 示例专用文件：首次运行创建，后续追加；在项目根目录运行。
-  getFileName = pure (FileName ("demo" </> "FileDemo" </> "output.txt"))
+  fileName = pure (FileName ("demo" </> "FileDemo" </> "output.txt"))
 
 instance ValidateFileNameEffect App where
   validateFileName = do
@@ -35,14 +35,14 @@ instance ValidateFileNameEffect App where
       raise (ValidateFileNameError "File name must be nonempty and contain no NUL character")
 
 instance FileResourceEffect App where
-  acquireFile = do
+  openedFile = do
     validateFileName
     FileName path <- require @FileName
     outcome <- liftIO $ tryIOError $
       bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
         hSetEncoding file utf8
         putStrLn ("[open] " ++ path)
-        pure (OpenedFile path file)
+        pure (OpenedFile (FileHandle path file))
     either (raise . FileResourceError . displayException) pure outcome
 
 instance FileSessionEffect App where
@@ -52,16 +52,16 @@ instance FileSessionEffect App where
     pure ()
 
   closeFileSession = do
-    OpenedFile path file <- require @OpenedFile
+    OpenedFile (FileHandle path file) <- require @OpenedFile
     outcome <- liftIO (tryIOError (hClose file))
     either (raise . FileSessionError . displayException) pure outcome
     liftIO (putStrLn ("[close] " ++ path))
 
 instance ReadFileEffect App where
-  readFileText = do
+  fileText = do
     -- 末端也会引用 open；SDK 跳过同份已开启 scope 的方法体。
     openFileSession
-    OpenedFile _ file <- require @OpenedFile
+    OpenedFile (FileHandle _ file) <- require @OpenedFile
     outcome <- liftIO $ tryIOError $ do
       hSeek file AbsoluteSeek 0
       -- 读完仍保留当前 Handle，供同一链随后写入；不使用会关闭它的 hGetContents。
@@ -74,7 +74,7 @@ instance ReadFileEffect App where
 
 instance FileRecoveryEffect App where
   detectFileSession = do
-    OpenedFile _ file <- require @OpenedFile
+    OpenedFile (FileHandle _ file) <- require @OpenedFile
     outcome <- liftIO (tryIOError (hIsClosed file))
     closed <- either (raise . FileRecoveryError . displayException) pure outcome
     -- handles 已按故障类型粗定位；detect 只做值级细化：文件已关闭才归此处。
@@ -87,7 +87,7 @@ instance FileRecoveryEffect App where
 instance WriteFileEffect App where
   writeFileText = do
     FileText contents <- request @FileText
-    OpenedFile path file <- require @OpenedFile
+    OpenedFile (FileHandle path file) <- require @OpenedFile
     -- 明确消费刚读出的文本；只追加，不截断已有内容。
     let line = "file-demo: read " ++ show (length contents) ++ " characters before this append.\n"
     outcome <- liftIO $ tryIOError $ do

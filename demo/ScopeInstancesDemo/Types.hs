@@ -1,7 +1,6 @@
-module ScopeInstancesDemo.Types (FileName(..), OpenedFile(..)) where
+module ScopeInstancesDemo.Types (FileHandle(..)) where
 
 import System.IO (Handle)
 
--- 比较开启参数的实际值；不比较活 Handle，也不另配 key。
-newtype FileName = FileName FilePath deriving (Eq, Show)
-data OpenedFile = OpenedFile FilePath Handle deriving Show
+-- 活资源的表示；开启参数是契约 FileName（包装 FilePath），按值比较，不比较活 Handle，也不另配 key。
+data FileHandle = FileHandle FilePath Handle deriving Show
