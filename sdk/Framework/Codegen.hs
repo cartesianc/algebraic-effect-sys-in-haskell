@@ -21,7 +21,7 @@ data Entry = SingleTarget String | Workflow [String]
 type DemandRoutes = ([(String, [((String, String), String)])], [(String, String)])
 
 lowerProgram :: String -> [EffectSpec] -> Entry
-             -> Either String (String, String, [(String, String, String)], String, GraphPlan String, [String], DemandRoutes)
+             -> Either String (String, String, [(String, String, String)], String, GraphPlan String, [String], DemandRoutes, [(String, String)])
 lowerProgram namespace specifications entry = do
   if any ((== "Root") . name) specifications
     then Left "Root is reserved for the superclass"
@@ -72,6 +72,7 @@ lowerProgram namespace specifications entry = do
              , Context (Just Producer { produces = produced }) _ <- [typing specification]]
         ++ [reference (contract demand) | specification <- specifications, demand <- demands specification])
     , (demandRoutes, contextMethods)
+    , contractOwners
     )
   where
     resolvedEither = mapM (\specification -> (,) (name specification) <$> resolveDemands specifications specification) specifications
@@ -99,6 +100,12 @@ lowerProgram namespace specifications entry = do
           [ ((accessWord (demandAccess resolved), contractName (demandContract resolved)), method)
           | resolved <- resolvedOf (name specification), Just method <- [sourceMethod resolved] ])
       | specification <- specifications ]
+    -- 构造器归属：具名产物类型只能由其生产方的 instance 方法构造。
+    contractOwners =
+      [ (typeName, name specification ++ "Effect")
+      | specification <- contextSpecs
+      , Context (Just Producer { produces = TypeRef typeName }) _ <- [typing specification]
+      , validTypeName typeName ]
     contextMethods =
       [ (name specification ++ "Effect", method)
       | specification <- contextSpecs

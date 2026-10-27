@@ -6,7 +6,7 @@ module Framework.Codegen.Assets (checkAssets) where
 import Control.Monad (forM, unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.Data (Data, cast, gmapQ)
-import Data.List (intercalate, isInfixOf, isPrefixOf, nub, sortOn)
+import Data.List (intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sortOn, stripPrefix)
 import Data.Time.Clock (getCurrentTime)
 import Framework.Effect.Asset
 import GHC
@@ -32,12 +32,14 @@ import GHC.Utils.Outputable (ppr, showSDocUnsafe)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.FilePath ((</>), normalise, takeExtension, takeFileName)
 import System.Process (readProcess)
+import Text.Read (readMaybe)
 
 -- 新契约及包装副本只作为内存 target；检查失败不改写 Generated。
 -- 同时加载手写与生成模块，但不在同一业务导入链混入两份 instance。
-checkAssets :: String -> [(String, String)] -> [String] -> [(String, String)]
+-- owners 列出 Context 产物类型及其生产方的类：这些类型只能在生产方的方法中构造。
+checkAssets :: String -> [(String, String)] -> [String] -> [(String, String)] -> [(String, String)]
             -> Maybe String -> IO String
-checkAssets namespace generated roots methods native = do
+checkAssets namespace generated roots methods owners native = do
   library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
   files <- sourceFiles (modulePath namespace)
   now <- getCurrentTime
@@ -59,6 +61,9 @@ checkAssets namespace generated roots methods native = do
           , "module " ++ rootModule ++ " where", "import " ++ namespace ++ ".Types"]
           ++ ["type AssetRoot" ++ show index ++ " = " ++ contract
                | (index, contract) <- zip [0 :: Int ..] roots]
+          ++ ["type OwnedContract" ++ show index ++ " = " ++ contract
+               | (index, contract) <- zip [0 :: Int ..] ownedTypes]
+        ownedTypes = nub (map fst owners)
         candidates = case native of
           Nothing -> filter ((== "Effects") . fst) generated
           Just _ -> generated
@@ -84,11 +89,26 @@ checkAssets namespace generated roots methods native = do
     rootInfo <- getModuleInfo (ms_mod rootSummary)
     let localTypes = [constructor | checkedModule <- checked
           , ATyCon constructor <- modInfoTyThings (tm_checked_module_info checkedModule)]
-        rootTypes = [constructor | Just info <- [rootInfo], ATyCon alias <- modInfoTyThings info
-          , Just body <- [synTyConRhs_maybe alias], constructor <- typeConstructors body]
+        rootAliases prefix = [(index, body) | Just info <- [rootInfo], ATyCon alias <- modInfoTyThings info
+          , Just index <- [stripPrefix prefix (occNameString (nameOccName (tyConName alias))) >>= readMaybe]
+          , Just body <- [synTyConRhs_maybe alias]]
+        rootTypes = [constructor | (_ :: Int, body) <- rootAliases "AssetRoot", constructor <- typeConstructors body]
         assets = assetClosure localTypes rootTypes
         symbols = nub (concatMap assetNames assets)
-        failures = concatMap (checkModule namespace methods symbols) checked
+        -- 只约束业务模块中定义的代数类型；库类型没有可归属的业务构造器。
+        ownership = Ownership
+          { ownedConstructors =
+              [ (dataConName constructor, (contract, classes))
+              | (contract, classes, selected) <- ownedTyCons, constructor <- tyConDataCons selected ]
+          , ownedFields =
+              [ (flSelector field, (contract, classes))
+              | (contract, classes, selected) <- ownedTyCons, field <- tyConFieldLabels selected ]
+          }
+        ownedTyCons =
+          [ (contract, [owner | (produced, owner) <- owners, produced == contract], selected)
+          | (index, body) <- rootAliases "OwnedContract", contract <- take 1 (drop index ownedTypes)
+          , selected <- typeConstructors body, selected `elem` localTypes, isAlgTyCon selected ]
+        failures = concatMap (checkModule namespace methods symbols ownership) checked
     unless (null failures) $ liftIO (ioError (userError (intercalate "\n" failures)))
     pure (renderAssets namespace (sortOn assetType (map describeAsset assets)))
 
@@ -165,8 +185,44 @@ functionBindings value
   | Just (_ :: Type) <- cast value = []
   | otherwise = concat (gmapQ functionBindings value)
 
-checkModule :: String -> [(String, String)] -> [Name] -> TypecheckedModule -> [String]
-checkModule namespace methods assets checked = case tm_renamed_source checked of
+-- 产物类型的构造器与字段 → (类型名, 允许构造它的生产方类)。
+data Ownership = Ownership
+  { ownedConstructors :: [(Name, (String, [String]))]
+  , ownedFields :: [(Name, (String, [String]))]
+  }
+
+-- 表达式位置出现的名字。模式中的构造器只是解构，不算构造；视图模式的表达式部分仍计入。
+expressionNames :: Data value => value -> [Name]
+expressionNames value
+  | Just name <- cast value = [name]
+  | Just (pattern' :: Pat GhcRn) <- cast value = patternExpressionNames pattern'
+  | otherwise = concat (gmapQ expressionNames value)
+
+patternExpressionNames :: Pat GhcRn -> [Name]
+patternExpressionNames (ViewPat _ expression inner) =
+  expressionNames expression ++ patternExpressionNames (unLoc inner)
+patternExpressionNames pattern' = concat (gmapQ nestedPatterns pattern')
+  where
+    nestedPatterns :: Data value => value -> [Name]
+    nestedPatterns value
+      | Just (nested :: Pat GhcRn) <- cast value = patternExpressionNames nested
+      | otherwise = concat (gmapQ nestedPatterns value)
+
+-- 记录更新也会产生该类型的新值；只取被更新的字段名，不取右侧表达式。
+updatedFields :: Data value => value -> [Name]
+updatedFields value
+  | Just (expression :: HsExpr GhcRn) <- cast value, RecordUpd {rupd_flds = fields} <- expression =
+      labelNames fields ++ concat (gmapQ updatedFields value)
+  | otherwise = concat (gmapQ updatedFields value)
+  where
+    labelNames :: Data value => value -> [Name]
+    labelNames nested
+      | Just name <- cast nested = [name]
+      | Just (_ :: HsExpr GhcRn) <- cast nested = []
+      | otherwise = concat (gmapQ labelNames nested)
+
+checkModule :: String -> [(String, String)] -> [Name] -> Ownership -> TypecheckedModule -> [String]
+checkModule namespace methods assets ownership checked = case tm_renamed_source checked of
   Nothing -> ["Asset checking requires renamed source"]
   Just (group, _, _, _, _) -> checkTop group
   where
@@ -199,7 +255,8 @@ checkModule namespace methods assets checked = case tm_renamed_source checked of
         Just owner | any ((== occNameString (nameOccName owner)) . fst) methods
           , fmap (moduleNameString . moduleName) (nameModule_maybe owner) == Just (namespace ++ ".Generated.Effects") ->
             concatMap (\binding -> case unLoc binding of
-              FunBind {fun_id = identifier} | isMethod owner (unLoc identifier) -> localFunctions (unLoc binding)
+              FunBind {fun_id = identifier} | isMethod owner (unLoc identifier) ->
+                localFunctions (unLoc binding) ++ constructedElsewhere owner (unLoc binding)
               other -> checkBinding False other) (cid_binds declaration)
         _ -> reject (locA location) (cid_poly_ty declaration)
           ++ concatMap (reject (locA location)) (cid_sigs declaration)
@@ -225,6 +282,27 @@ checkModule namespace methods assets checked = case tm_renamed_source checked of
       | not local || any (`elem` functions) (collectHsBindBinders CollNoDictBinders binding) =
           reject (bindingLocation binding) binding
       | otherwise = localFunctions binding
+    -- 构造器归属：Context 产物只能由其生产方的方法构造或通过记录更新产生；
+    -- 其他 instance 只能模式匹配取用。只看显式引用，不追踪 coerce 或值流向。
+    constructedElsewhere :: Name -> HsBind GhcRn -> [String]
+    constructedElsewhere owner binding =
+      [ showSDocUnsafe (ppr (bindingLocation binding)) ++ ": " ++ occNameString (nameOccName owner)
+          ++ " " ++ how ++ " " ++ occNameString (nameOccName symbol) ++ " of Context product " ++ contract
+          ++ "; only " ++ intercalate ", " (map effectName classes)
+          ++ " may produce it (other instances may pattern match it)"
+      | (how, symbol, (contract, classes)) <- nub (constructed ++ updated)
+      , occNameString (nameOccName owner) `notElem` classes ]
+      where
+        updated = [("updates field", symbol, entry) | symbol <- updatedFields binding
+          , Just entry <- [lookup symbol (ownedFields ownership)]]
+        -- GHC 在名称解析时把记录更新展开为重建构造器的表达式；同一类型已按记录更新报告时不再重复。
+        updatedContracts = [contract | (_, _, (contract, _)) <- updated]
+        constructed = [("constructs", symbol, entry) | symbol <- expressionNames binding
+          , Just entry@(contract, _) <- [lookup symbol (ownedConstructors ownership)]
+          , contract `notElem` updatedContracts]
+    effectName className
+      | "Effect" `isSuffixOf` className = take (length className - length "Effect") className
+      | otherwise = className
     bindingLocation :: HsBind GhcRn -> SrcSpan
     bindingLocation FunBind {fun_id = identifier} = getLocA identifier
     bindingLocation PatBind {pat_lhs = pattern'} = getLocA pattern'

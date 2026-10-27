@@ -48,7 +48,7 @@ main = do
             ExitSuccess -> case readMaybe output of
               Nothing -> die "Cannot read the SDK handler wrapping plan"
               Just (Left problem) -> die problem
-              Just (Right (contracts, program, wrappers, scopeHandlers, plan, assetRoots, routes)) -> do
+              Just (Right (contracts, program, wrappers, scopeHandlers, plan, assetRoots, routes, owners)) -> do
                 (handlers, shapes, nativeSource) <- prepareHandlers namespace wrappers scopeHandlers routes
                 let generated = directory </> "Generated"
                     cachePath = generated </> ".scope-cache"
@@ -66,7 +66,7 @@ main = do
                 _ <- evaluate (length structure)
                 assets <- checkAssets namespace
                   [("Effects", contracts), ("Program", program ++ structure), ("Handlers", handlers)]
-                  assetRoots [(owner, method) | (owner, method, _) <- wrappers] nativeSource
+                  assetRoots [(owner, method) | (owner, method, _) <- wrappers] owners nativeSource
                 createDirectoryIfMissing True generated
                 changed <- sequence
                   [ writeIfChanged (generated </> "Effects.hs") contracts

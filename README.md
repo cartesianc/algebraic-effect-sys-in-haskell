@@ -236,6 +236,7 @@ cabal run crawler-demo -- --structure
 | 同一个类型有多个生产方 | 用不同的 `newtype` 区分含义 |
 | 方法体里 `request @T`／`require @T` 的 `T` 没有在 `demands` 中声明 | 补上声明 |
 | 直接调用其他 effect 的 Context 方法（如 `getFileName`） | 改用 `request @T`／`require @T` |
+| 在生产方以外构造某个 Context 产物类型的值（例如在消费方写 `StartURL (...)`） | 值应由它的生产方产生；消费方用 `request`／`require` 取得，只做模式匹配 |
 | 普通顶层函数显式使用业务类型、构造器或字段 | 把这部分操作移进注册的 instance 方法；只处理 `String` 等通用类型的 helper 可以保留 |
 | 把 effect 调用藏进 helper、未知的高阶组合或循环 | 在方法体中直接调用；支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法 |
 
