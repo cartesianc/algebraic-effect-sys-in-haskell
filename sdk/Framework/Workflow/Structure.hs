@@ -248,8 +248,13 @@ renderStructure structure cases constructorTable workflowAST = do
       ++ ["  " ++ show entry ++ ": " ++ intercalate " -> " (map show path)
          | (entry, paths) <- graphRootPaths graph, path <- paths]
       ++ ["", "Opposed order evidence"] ++ map edge (scopeOpposed tree)
+      ++ ["", "Observed order reversed by registered prerequisites"]
+      ++ map edge [(before, after) | (before, after) <- scopeCandidates tree, after `elem` ancestors before]
       ++ ["", "Order-undetermined observed pairs"]
       ++ ["  " ++ show left ++ " / " ++ show right | (left, right) <- scopeUndetermined tree]
     graph = structureEffects structure
     tree = structureScopes structure
+    ancestors selected = case [scopeParents node | node <- scopeNodes tree, scopeIdentity node == selected] of
+      direct : _ -> nub (direct ++ concatMap ancestors direct)
+      [] -> []
     edge (before, after) = "  " ++ show before ++ " -> " ++ show after

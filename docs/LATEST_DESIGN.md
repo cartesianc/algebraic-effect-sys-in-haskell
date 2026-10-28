@@ -256,7 +256,7 @@ Input 与 request 共同表达依赖后，注册关系可以形成图。业务�
 
 source 结构支持显式 effect 调用、do、if／case 及已识别的标准组合；未知高阶 effect、隐藏 helper／局部 alias 组合、含 effect 的动态循环和递归 effect 引用会报错，不静默生成空图。无 effect 引用的原子业务表达式可以使用任意语法，在结构副本中擦除。catchError 使用 Recover，scope 分析保留正文正常路径，以及正文任意 scope 前缀（包括空前缀）接入 recovery 的保守路径；不执行业务验证成功，也不假定整个正文执行后才发生故障。
 
-ScopeTree 保存共享节点及 parents／children／layers，实际为 DAG。路径按 scope 定义首次出现去重；生成期的 buildScopeTree 内部求 Pred(B)，即所有含 B 路径中 B 前序集合的交集，仅 A 属于 Pred(B) 时建立 A≺B，再做传递约简。该关系传递且反自反，不采用合并候选后删除整个 SCC 的办法。共同前序仅是构树的局部中间结果，不单独公开。ProgramStructure.structureScopes 直接保存生成的 ScopeTree，其内同时保留 scopePaths、scopeCandidates 原始候选、scopeOpposed 双向实证和 scopeUndetermined 未定关系；反向证据必须来自各自含有两端的单条静态路径，不能用跨路径拼接的可达性替代。仅有 open 顺序不能证明覆盖真实前提；生成期补全 require 复用的已有资源等依赖后再供清理使用，不能把缺失 open 当作无依赖。未定关系不能宣称为独立。
+ScopeTree 保存共享节点及 parents／children／layers，实际为 DAG。scope 记在其 open 方法体之后（开启完成的位置），嵌套 open 时内层排在外层之前；路径按 scope 定义首次完成去重；生成期的 buildScopeTree 内部求 Pred(B)，即所有含 B 路径中 B 前序集合的交集，仅 A 属于 Pred(B) 时建立 A≺B，再做传递约简。该关系传递且反自反，不采用合并候选后删除整个 SCC 的办法。共同前序仅是构树的局部中间结果，不单独公开。ProgramStructure.structureScopes 直接保存生成的 ScopeTree，其内同时保留 scopePaths、scopeCandidates 原始候选、scopeOpposed 双向实证和 scopeUndetermined 未定关系；反向证据必须来自各自含有两端的单条静态路径，不能用跨路径拼接的可达性替代。仅有 open 顺序不能证明覆盖真实前提；生成期补全 require 复用的已有资源等依赖后再供清理使用，不能把缺失 open 当作无依赖。注册前提是依赖、开启顺序是证据：补全时与注册前提相反的观察顺序不作为父边，仍留在 scopeCandidates 并由 --structure 单列显示。未定关系不能宣称为独立。
 
 Generated.Program 导出静态的 `programStructure :: Either (StructureError MethodGen) (ProgramStructure MethodGen)`，实现为 `initializeGeneratedStructure entries scopeNames generatedEffectGraph generatedScopeTree`，不保存 workflow 副本。现有 Main 的 `--structure` 参数对实际 AST 做纯展示 fold 并核对入口，读取同一份生成结构，以可读格式显示 ScopeTree 的父节点、层次、各入口路径、双向实证与未定关系，不重复输出内部共同前序，不调用 createEntries 或装配业务 action。补全后的 scope 依赖同时供 App／IO 的 Error 祖先导航与 once-spare 清理使用，不增加动态 error tracing；detect／resolve 与原错传播保留。结构定义和查看方法见 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)，本轮资源存续协议以下文为准。
 
@@ -356,7 +356,7 @@ Context 转换可以处理成功值和错误负载。转换错误负载不会自
 
 effect 不配置 dependency。SDK 沿声明收集 Scoped，能力仍由 superclass 注入；require 只在 state 无值时按需求值 request（scope 资源除外），其已有资源前提必须纳入清理依赖。正常业务调用不因继承而补跑 open／close，二者均为 m (Maybe String)，由用户 instance 引用；使用闭包撤销使用后由 SDK 按 once-spare 调用登记的 close，interpreter 退出保留兜底。
 
-同一 interpreter 自动创建一批 ScopeHandler，由所有末端 Target 捕获。每个 Scoped 注册持有实例集合，每份实例独立保存 MVar、生命周期和开启期 Context；实际开启输入的 request／require 模式决定新建还是共享。Main、Effects 和 Handlers 保持原生方法引用，不增加 key、位置参数、用户装配或手写 layer，也没有进程全局单例。运行表可跨 Node 共享，但不预约未来 Node 的活资源。
+同一 interpreter 自动创建一批 ScopeHandler，由所有末端 Target 捕获。每个 Scoped 注册持有实例集合，每份实例独立保存 MVar、生命周期和开启期 Context；实际开启输入的 request／require 模式决定新建还是共享。Main、Effects 和 Handlers 保持原生方法引用，不增加 key、位置参数、用户装配或手写 layer，也没有进程全局单例。运行表可跨 Node 共享，但不预约未来 Node 的活资源。运行表只保留还可能被选中或等待清理的实例：已关闭的实例，以及没有使用者、没有登记清理的非共享实例移出运行表；旧绑定直接持有实例引用，旧引用仍报已关闭；同参共享的失效实例保留，同参 open 继续报原失败，显式 close 后移出。
 
 当前 App／IO 协议采用已有文件链的结构：Scoped.request 引用资源 Context（如 FileResource），该资源 Context 声明消费的上游 Context（如 FileLocation）及其值前提构成开启参数。SDK 生成观察器，在 instance 真正引用这些方法并取得结果时记录原生 ADT 值，按来源、类型和 Eq 比较；参数 ADT 需要 Eq，资源产物不需要 Eq。参数在本次开启中必须保持一致。SDK 不在外部提前执行 Context，不从文件路径字符串、Show 或 Handle 身份猜测参数。
 

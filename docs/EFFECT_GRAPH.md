@@ -41,7 +41,7 @@
 
 ## ScopeTree 的内部构树规则
 
-保留每条静态 scope 路径及其来源；`EffectGraph.graphRootPaths` 记录每个入口及其 scope 路径，`graphScopePaths` 提供汇总路径。路径可以包含不同的 scope 集合；每条路径按 scope 定义首次出现去重，仅用于定义层的导航，不据此推断多实例数量、重复 open 的效果或关闭后重开。
+保留每条静态 scope 路径及其来源；`EffectGraph.graphRootPaths` 记录每个入口及其 scope 路径，`graphScopePaths` 提供汇总路径。路径可以包含不同的 scope 集合；scope 记在其 open 方法体之后，即开启完成的位置，因此 open 内部开启的 scope 排在外层之前，嵌套 open 的方向与注册前提一致；每条路径按 scope 定义首次完成去重，仅用于定义层的导航，不据此推断多实例数量、重复 open 的效果或关闭后重开。
 
 对所有路径中出现的 scope 定义 B，取所有包含 B 的路径，把各自位于 B 之前的 scope 集合求交：
 
@@ -85,7 +85,7 @@ Pred 与由它得到的 `precedes` 只用于 `buildScopeTree` 的内部计算，
 
 生成期的 `GraphPlan.planScopes` 为每个可开启 scope 提供其 open 方法身份、现有运行 scope 名字及保守前提。前提包括原有 `Input`／`request` 链上的 scope，以及声明的 `require` 来源可导航到的资源 Context owner 候选。`require` 仍只读取绑定，不因此执行来源生产者或打开 owner；关闭本 scope 自己声明的资源不会形成自依赖。实际实例归属仍由 Context 绑定中的 owner 决定，静态声明不替代该检查。
 
-生成期合并的是上述前提和 `buildScopeTree` 得到的共同前序父边，不使用 `scopeCandidates` 的并集。所有可开启注册 scope 都进入最终树，包括本次结构没有出现 open 的注册；它们没有被执行就不会产生待清理资源。重复身份或名字、缺失映射、未知前提及合并形成的环均在生成时报告错误，不通过删除冲突边继续运行。
+生成期合并的是上述前提和 `buildScopeTree` 得到的共同前序，不使用 `scopeCandidates` 的并集。注册前提是依赖：上游 scope 必须比下游活得久，下游的 close 也可能调用上游。观察到的开启顺序是证据：共同前序按完整传递关系逐条补入，与注册前提及已补入的边构成相反方向的不作为父边，例如 handler 先开启 B、后开启 B 的 Input 上游 A 时以 A 为 B 的父节点。被推翻的顺序仍保留在 `scopeCandidates`，`--structure` 单列显示。所有可开启注册 scope 都进入最终树，包括本次结构没有出现 open 的注册；它们没有被执行就不会产生待清理资源。重复身份或名字、缺失映射、未知前提及注册前提自身的环均在生成时报告错误。
 
 最终依赖只保存在 `ScopeTree` 的 `parents`／`children`／`layers` 中；`scopePaths`、`scopeCandidates`、`scopeOpposed` 与 `scopeUndetermined` 保留原路径证据，不能误读为新增的注册前提也已由路径证明。`ProgramStructure.structureScopeNames` 仅连接生成身份和现有运行名字；`scopeRelations structure` 临时投影同一棵树的全部祖先可达关系为运行配置，不另存第二份依赖结构。这样即使 `A → B → C` 中 B 尚无活实例，C 仍会保留 A 的清理前提。
 

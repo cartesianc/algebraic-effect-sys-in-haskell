@@ -86,7 +86,8 @@ data ExpandedF method next
 
 -- 只展开表中显式引用。require 没有隐含的 producer 边，也不启动生产。
 -- Choice 保留各分支路径，Sequence 组合路径；有限分支的路径数可能呈指数增长。
--- 同一 scope 在一条路径中只保留首次 open 入口；这不是资源获取完成顺序。
+-- scope 记在其 open 方法体之后，即开启完成的位置：open 内部开启的 scope 排在它前面，
+-- 嵌套 open 的方向与注册前提一致。同一 scope 在一条路径中只保留首次完成。
 buildEffectGraph
   :: Ord method
   => [(method, method, method)]
@@ -137,7 +138,7 @@ buildEffectGraph routes definitions shape = do
 scopeAlgebra :: Eq method => Algebra (ExpandedF method) [[method]]
 scopeAlgebra EmptyLayer = [[]]
 scopeAlgebra (MethodLayer definition body)
-  | methodRole definition == ScopeOpen = paths (map (methodIdentity definition :) body)
+  | methodRole definition == ScopeOpen = paths (map (++ [methodIdentity definition]) body)
   | otherwise = body
 scopeAlgebra (SequenceLayer children) = paths (foldr combine [[]] children)
   where combine before after = [left ++ right | left <- before, right <- after]
@@ -221,8 +222,9 @@ buildScopeTree graph = ScopeTree
     layers remaining = ready : layers (remaining \\ ready)
       where ready = [selected | selected <- remaining, all (`notElem` remaining) (parents selected)]
 
--- 注册前提补入同一份树。路径、候选与反向证据仍保持原观察结果；
--- 不把路径候选的并集当依赖，也不为了通过初始化而删除冲突关系。
+-- 注册前提补入同一份树。注册前提是依赖：上游 scope 必须比下游活得久，下游的 close 也可能调用上游。
+-- 观察到的开启顺序是证据：逐条补入，与注册前提及已补入的边构成相反方向的不作为父边。
+-- 路径、候选与反向证据仍保持原观察结果，被推翻的顺序仍在 scopeCandidates 中；不把路径候选的并集当依赖。
 -- 声明顺序保留给独立 scope；运行清理使用最终父边的逆拓扑顺序。
 completeScopeTree
   :: Ord method
@@ -249,9 +251,24 @@ completeScopeTree declared tree = do
     }
   where
     nodes = nub (map fst declared ++ map scopeIdentity (scopeNodes tree))
-    relationships = nub
-      ([(parent, selected) | (selected, parents') <- declared, parent <- parents']
-        ++ [(parent, scopeIdentity node) | node <- scopeNodes tree, parent <- scopeParents node])
+    -- 观察关系取完整前序（父边的传递闭包），被推翻的边不会经由其他观察边间接保留。
+    observedParents selected = concat [scopeParents node | node <- scopeNodes tree, scopeIdentity node == selected]
+    observedAncestors selected = nub
+      (observedParents selected ++ concatMap observedAncestors (observedParents selected))
+    observed = sort [(before, scopeIdentity node) | node <- scopeNodes tree
+                    , before <- observedAncestors (scopeIdentity node)]
+    relationships = foldl admit
+      (nub [(parent, selected) | (selected, parents') <- declared, parent <- parents']) observed
+    admit accepted edge@(parent, child)
+      | edge `elem` accepted || reaches accepted child parent = accepted
+      | otherwise = accepted ++ [edge]
+    reaches edges from target = search [from] []
+      where
+        search [] _ = False
+        search (current : rest) seen
+          | current == target = True
+          | current `elem` seen = search rest seen
+          | otherwise = search ([next | (previous, next) <- edges, previous == current] ++ rest) (current : seen)
     parents selected = [parent | (parent, child) <- relationships, child == selected]
     checkParent parent
       | parent `elem` nodes = Right ()

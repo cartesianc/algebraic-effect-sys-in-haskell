@@ -10,7 +10,7 @@ module Framework.Effect.Scope
 
 import Framework.Effect.Binding (Bindings)
 import Framework.Effect.Contract (Failure(..), ScopeFault(..), ScopeInput(..), ScopeInputAccess(..))
-import Control.Concurrent.MVar (MVar, newMVar, newEmptyMVar, modifyMVar, readMVar, withMVar, putMVar)
+import Control.Concurrent.MVar (MVar, newMVar, newEmptyMVar, modifyMVar, modifyMVar_, readMVar, withMVar, putMVar)
 import Control.Exception (SomeException, displayException, mask_, try, finally, uninterruptibleMask_)
 import Control.Monad (forM, forM_, when)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef')
@@ -256,7 +256,23 @@ finishScopeClose ticket slot = uninterruptibleMask_ $ coordinated (scopeFamily s
     Just (owner, finished) | owner == ticket -> do
       writeIORef (scopeRetiring slot) Nothing
       putMVar finished ()
+      pruneInstance slot
     _ -> pure ()
+
+-- 运行表只保留还可能被选中或等待清理的实例；调用方持有协调锁。
+-- 移出：已关闭的实例，以及没有使用者、没有登记清理的非共享实例（request 开启的实例不会再被选中）。
+-- 旧绑定直接持有实例引用，不经运行表，旧引用仍报已关闭；同参共享的失效实例保留，同参 open 继续报原失败。
+pruneInstance :: ScopeInstance environment cause -> IO ()
+pruneInstance slot = do
+  phase <- scopePhase <$> readIORef (scopeRecord slot)
+  users <- readIORef (scopeUsers slot)
+  cleanup <- readIORef (scopeCleanup slot)
+  retiring <- readIORef (scopeRetiring slot)
+  let closed = case phase of ScopeClosed _ -> True; _ -> False
+      unreachable = not (scopeShared slot) && null users && not (isJust cleanup)
+  when (not (isJust retiring) && (closed || unreachable)) $
+    modifyMVar_ (scopeInstances (scopeFamily slot))
+      (pure . filter ((/= scopeRecord slot) . scopeRecord))
 
 releaseScopeUser :: ScopeUser environment cause -> Scopes environment cause
                  -> IO [(Maybe SomeException, Failure cause)]
@@ -268,8 +284,9 @@ releaseScopeUser user handlers = do
 detachScopeUser :: ScopeUser environment cause -> IO ()
 detachScopeUser user = do
   slots <- readIORef (scopeUserInstances user)
-  forM_ slots $ \slot -> uninterruptibleMask_ $ coordinated (scopeFamily slot) $
+  forM_ slots $ \slot -> uninterruptibleMask_ $ coordinated (scopeFamily slot) $ do
     atomicModifyIORef' (scopeUsers slot) (\users -> (filter (/= scopeUserIdentity user) users, ()))
+    pruneInstance slot
   writeIORef (scopeUserInstances user) []
 
 saveCleanupFailures :: Scopes environment cause -> [(Maybe SomeException, Failure cause)] -> IO ()
