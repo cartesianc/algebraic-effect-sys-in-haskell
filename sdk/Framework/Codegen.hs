@@ -43,7 +43,7 @@ lowerProgram namespace specifications terminals groups sumTypes = do
     else pure ()
   selectedMethods <- mapM findHandler selected
   mapM_ checkTerminal selected
-  alternativeCases <- concat <$> mapM checkAlternative groups
+  alternativeCases <- alternativeEither
   let allMethods = concatMap registeredMethods specifications
   if length allMethods /= length (nub (map snd allMethods))
     then Left "Registered method names must be unique within a generated module"
@@ -119,6 +119,11 @@ lowerProgram namespace specifications terminals groups sumTypes = do
     inputOf terminal = case [input specification | specification <- specifications, name specification == terminal] of
       upstream : _ -> upstream
       [] -> "Root"
+    alternativeEither = concat <$> mapM checkAlternative groups
+    selectorContracts = nub [contractType | Right cases <- [alternativeEither], (_, (contractType, _)) <- cases]
+    readerOfContract contractType =
+      [ reader | (declared, _, owner) <- generatedDeclarations, declared == contractType
+      , Just reader <- [readerMethod owner] ]
     checkAlternative candidates = do
       cases <- mapM candidateCase candidates
       selectorContract <- case nub (map fst cases) of
@@ -246,7 +251,10 @@ lowerProgram namespace specifications terminals groups sumTypes = do
           | selectedScope <- orderedScopes
           , specification <- specifications, name specification == selectedScope
           , Scoped (Just opening) _ <- [typing specification] ]
+      -- 选择阶段是独立的使用闭包，转折契约的读取末端以契约名登记为额外入口参与构图，
+      -- 其 scope 路径进入 ScopeTree 的共同前序计算。契约名不会与 effect 名重复。
       , planEntries = [(terminal, method) | terminal <- selected, Right method <- [findHandler terminal]]
+          ++ [(contractType, reader) | contractType <- selectorContracts, reader <- readerOfContract contractType]
       , planAnchors = [(entry, producing) | (entry, anchored) <- contextInjections, (_, producing) <- anchored]
       }
     structureDeclarations =
@@ -292,17 +300,17 @@ lowerProgram namespace specifications terminals groups sumTypes = do
       -- 生产方类的 instance 位于 Handlers，因此以无变量上下文延迟到使用处求解。
       [ [ "instance (" ++ intercalate ", " [provider ++ "Effect " ++ carrierType | provider <- providers] ++ ") => Provides "
             ++ contractType ++ " " ++ carrierType ++ " where"
-        , "  request = SDK.provideContext " ++ show contractType ++ " ContextBindingError " ++ routeList RequestAccess
+        , "  request = SDK.provideContext " ++ show producerName ++ " " ++ show contractType ++ " ContextBindingError " ++ routeList RequestAccess
         ] ++ (case lookup contractType branchContracts of
           -- 分支契约：读取基础契约，资产当前是该构造器时取出字段。
           Just (base, constructor, field, _) ->
-            [ "  require = SDK.projectContext " ++ show contractType ++ " ContextBindingError " ++ routeList RequireAccess
+            [ "  require = SDK.projectContext " ++ show producerName ++ " " ++ show contractType ++ " ContextBindingError " ++ routeList RequireAccess
             , "    (\\(" ++ base ++ " value) -> case value of"
             , "      " ++ constructor ++ (if field == Nothing then " -> Just (" ++ contractType ++ " ())"
                                               else " field -> Just (" ++ contractType ++ " field)")
             , "      _ -> Nothing)" ]
           Nothing ->
-            [ "  require = SDK.provideContext " ++ show contractType ++ " ContextBindingError " ++ routeList RequireAccess ])
+            [ "  require = SDK.provideContext " ++ show producerName ++ " " ++ show contractType ++ " ContextBindingError " ++ routeList RequireAccess ])
         ++ [ "" ]
       | demanded <- nub [demandContract resolved | (_, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands]
       , let contractType = demanded
@@ -311,6 +319,7 @@ lowerProgram namespace specifications terminals groups sumTypes = do
               | (consumer, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands
               , demandContract resolved == demanded, demandAccess resolved == selectedAccess
               , Just method <- [sourceMethod resolved] ]
+            producerName = concat (take 1 providers)
             providers = nub [demandProvider resolved | (_, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands
               , demandContract resolved == demanded]
             routeList selectedAccess = "[" ++ intercalate ", "
@@ -794,6 +803,12 @@ lowerProgram namespace specifications terminals groups sumTypes = do
           , "alternativeCases :: [(String, (String, String))]"
           , "alternativeCases = " ++ show alternativeCases
           , ""
+          , "-- 各转折契约的全部构造器；运行时据此重新核对当前 AST 的分组，过期配置不执行。"
+          , "alternativeConstructors :: [(String, [String])]"
+          , "alternativeConstructors = " ++ show
+              [ (contractType, [constructor | (_, (base, constructor, _, _)) <- branchContracts, base == contractType])
+              | contractType <- selectorContracts ]
+          , ""
           , "-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。"
           , "-- 第二个列表是各转折契约的读取末端：按 require 取得资产，返回它当前的构造器名。"
           , "compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String])"
@@ -805,7 +820,7 @@ lowerProgram namespace specifications terminals groups sumTypes = do
               | (terminal, method) <- zip selected methods ]
           , "    , " ++ renderList "      "
               [ wrapTarget contractType ("caseOf" ++ contractType ++ " <$> " ++ reader)
-              | contractType <- selectorContracts, reader <- readerOf contractType ]
+              | contractType <- selectorContracts, reader <- readerOfContract contractType ]
           , "    )"
           , ""
           ] ++ concat
@@ -818,13 +833,9 @@ lowerProgram namespace specifications terminals groups sumTypes = do
           [ "-- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。"
           , "interpreter :: SDK.AST -> [EffectSpec] -> IO ()"
           , "interpreter = SDK.interpreter " ++ show namespace
-              ++ " registeredEffects Handlers.handlerSourceFingerprint programStructure alternativeCases compiledEntries"
+              ++ " registeredEffects Handlers.handlerSourceFingerprint programStructure alternativeCases alternativeConstructors compiledEntries"
           ]
       where
-        selectorContracts = nub [contractType | (_, (contractType, _)) <- alternativeCases]
-        readerOf contractType =
-          [ reader | (declared, _, owner) <- generatedDeclarations, declared == contractType
-          , Just reader <- [readerMethod owner] ]
         wrapTarget label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
           ++ " (FrameworkRoot.withErrorHandlers Handlers.errorHandlers"
           ++ " (FrameworkRoot.withAnchoredContexts Handlers.contextInjections"

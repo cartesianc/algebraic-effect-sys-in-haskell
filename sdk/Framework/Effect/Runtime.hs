@@ -3,7 +3,7 @@
 -- 末端句柄描述与 lower；scope 控制对象由生成句柄共享。程序只经 AST 启动，末端都在 App 载体上。
 module Framework.Effect.Runtime
   ( App, Target, targetApp
-  , targetName, lowerTarget, RunStore, newRunStore, configureTargets, cleanupTargets
+  , targetName, lowerTarget, Handoff, noHandoff, RunStore, newRunStore, configureTargets, cleanupTargets
   ) where
 
 import Framework.Effect.Contract (Failure)
@@ -25,12 +25,21 @@ targetApp :: (Show cause, Show value) => String -> environment -> Scopes environ
           -> Target environment cause value
 targetApp = AppTarget
 
+-- 交给下一段调用的已捕获绑定（只含无 scope 归属的资产）；内容不对外公开。
+-- alternative 用它把选择时读到的资产交给候选，使两段读同一份值。
+newtype Handoff environment cause = Handoff (ScopeBindings environment cause)
+
+noHandoff :: Handoff environment cause
+noHandoff = Handoff []
+
 -- Node algebra 只 lower 末端；scope 引用已绑定在句柄中。
 -- 受控结果消费在使用闭包退出前完成，惰性读取不会落在自动 close 之后。
 -- 末端共享同一次 interpreter 运行的资产 state，使 require 可读取先前 Node 产出的资产。
-lowerTarget :: RunStore environment cause -> Target environment cause value -> IO (Either (Failure cause) value)
-lowerTarget store (AppTarget _ environment scopes action) =
-  runAppWith (\value -> evaluate (foldr seq () (show value))) store scopes environment action
+lowerTarget :: RunStore environment cause -> Handoff environment cause -> Target environment cause value
+            -> IO (Either (Failure cause) value, Handoff environment cause)
+lowerTarget store (Handoff given) (AppTarget _ environment scopes action) = do
+  (outcome, captured) <- runAppWith (\value -> evaluate (foldr seq () (show value))) store given scopes environment action
+  pure (outcome, Handoff captured)
 
 -- 各末端通常捕获同批 scope；按控制对象身份去重，不按业务名称合并独立批次。
 scopeHandlers :: [Target environment cause value] -> Scopes environment cause

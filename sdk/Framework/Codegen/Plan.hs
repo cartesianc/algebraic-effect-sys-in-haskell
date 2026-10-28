@@ -70,7 +70,13 @@ checkDriven plan shapes =
       ++ "; no terminal reaches its production or the handle it hangs below")
   where
     definitions = mergedDefinitions plan shapes
-    reached = reachable definitions (map snd (planEntries plan))
+    -- 结构中内联的是挂接 Context 的方法体，生产方法本身的身份不在其中；
+    -- 驱动检查另补"挂接句柄 → 生产方法"的边，只靠注入产出的 Context 也算被驱动。
+    withProducers =
+      [ definition { methodBody = Sequence (methodBody definition
+          : [Call produced | (anchor, produced) <- planAnchors plan, anchor == methodIdentity definition]) }
+      | definition <- definitions ]
+    reached = reachable withProducers (map snd (planEntries plan))
 
 renderGraphPlan :: GraphPlan String -> [(String, MethodShape String)] -> Either String String
 renderGraphPlan plan shapes = do

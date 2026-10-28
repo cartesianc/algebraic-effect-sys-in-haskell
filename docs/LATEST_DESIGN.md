@@ -292,7 +292,7 @@ BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两�
 node 表示一整条 effect 链的可调用入口；chained、parallel、alternative、loop 是同级的 branch 组织方式。
 chained 按前一次成功完成推进，parallel 并发启动并等待全部完成，alternative 按和类型资产的当前构造器启动一个候选，loop 按事件触发启动。
 
-alternative 只列候选、不写条件，不把业务状态暴露进 AST。Context 的表示类型是和类型时，生成器为每个构造器产出分支契约（契约名加构造器名），它是基础资产的投影，只能 require；候选经注册（末端及其 Input 链上游的 requires）依赖一个分支契约，gencode 推出"候选末端 → (转折契约, 构造器)"的静态表并要求覆盖全部构造器。运行时两段启动：先 require 转折资产（state 中已有值直接用，否则按需求值一次），再启动对应候选，未选中的候选不执行。effect chain 运行时已消解为闭包，选择只发生在 Node 边界，不保存 chain 原型、不在链中间打断或重组，也不需要 call/cc 式的 continuation。
+alternative 只列候选、不写条件，不把业务状态暴露进 AST。Context 的表示类型是和类型时，生成器为每个构造器产出分支契约（契约名加构造器名），它是基础资产的投影，只能 require；候选经注册（末端及其 Input 链上游的 requires）依赖一个分支契约，gencode 推出"候选末端 → (转折契约, 构造器)"的静态表并要求覆盖全部构造器。运行时两段启动：先 require 转折资产（state 中已有值直接用，否则按需求值一次），再启动对应候选，未选中的候选不执行；选择阶段捕获的绑定交给候选，两段读同一份值。转折读取末端以契约名登记为结构入口，参与构图与 ScopeTree；运行时按生成的构造器表重新核对分组，过期配置报 InvalidAlternative。effect chain 运行时已消解为闭包，选择只发生在 Node 边界，不保存 chain 原型、不在链中间打断或重组，也不需要 call/cc 式的 continuation。
 不把 loop 当作 chained 中等待完成的普通执行项；涉及 loop 及其他新增 branch 的嵌套规则另定。
 
 “只负责启动逻辑，不负责状态转移”中的状态指业务状态。AST 不保存可变节点状态、上次产物或业务状态机，也不据此隐式传值；但完成、失败停止、并发汇合仍属于它的执行控制语义，运行记录由 SDK 持有。业务状态变化由 effect handler 执行。Context 按 request／require 引用，普通绑定与 scope 开启期绑定分别由 SDK 管理；scope 状态也属于 SDK，不引入节点业务状态机。

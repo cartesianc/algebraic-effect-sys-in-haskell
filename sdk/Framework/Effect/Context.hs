@@ -106,12 +106,13 @@ callContext selected wrap accesses compareValue select synchronize produce = do
 
 -- 和类型资产的分支契约是基础契约的投影：按消费者分派到基础契约的读取入口，
 -- 资产当前是该构造器时取出其字段，否则报 CaseNotSelected。不新增状态，也不单独生产。
+-- 故障来源是生产方的注册名，与 ContextFaultIn 的匹配一致。
 projectContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> (ContextFault -> cause) -> [(String, m base)] -> (base -> Maybe branch) -> m branch
-projectContext contract wrap routes project = do
-  base <- provideContext contract wrap routes
-  maybe (failEffect contract (wrap (CaseNotSelected contract)) (show (CaseNotSelected contract))) pure (project base)
+  => String -> String -> (ContextFault -> cause) -> [(String, m base)] -> (base -> Maybe branch) -> m branch
+projectContext producer contract wrap routes project = do
+  base <- provideContext producer contract wrap routes
+  maybe (failEffect producer (wrap (CaseNotSelected contract)) (show (CaseNotSelected contract))) pure (project base)
 
 -- Excu.handler 的生成入口：方法体每次调用都执行。
 atomicHandle
@@ -150,11 +151,12 @@ atomicScope method body = do
 -- 路由表由生成器从 demands 解析得到；来源入口仍走原有的生产或读取包装。
 provideContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> (ContextFault -> cause) -> [(String, m value)] -> m value
-provideContext contract wrap routes = do
+  => String -> String -> (ContextFault -> cause) -> [(String, m value)] -> m value
+provideContext producer contract wrap routes = do
   caller <- currentHandler
   case caller >>= (`lookup` routes) of
     Just action -> action
-    Nothing -> failEffect contract (wrap (UndeclaredContextAccess consumer))
+    -- 故障来源是生产方的注册名，与 ContextFaultIn 的匹配一致。
+    Nothing -> failEffect producer (wrap (UndeclaredContextAccess consumer))
       ("No declared demand for " ++ contract ++ " from " ++ consumer)
       where consumer = fromMaybe "the root call" caller

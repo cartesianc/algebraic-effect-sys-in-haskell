@@ -3,17 +3,18 @@
 module Framework.Workflow.Execution (runStructuredAST) where
 
 import Framework.Effect.Contract (Failure, Output(..))
-import Framework.Effect.Runtime (Target, RunStore, newRunStore, targetName, lowerTarget, configureTargets)
+import Framework.Effect.Runtime (Target, Handoff, noHandoff, RunStore, newRunStore, targetName, lowerTarget, configureTargets)
 import Framework.Recursion (Algebra)
 import Framework.Workflow.AST (AST, WorkflowF(..), foldAST)
 import Framework.Workflow.Structure (ProgramStructure(..), StructureError(..), scopeRelations, validateWorkflowEntries)
 import Control.Concurrent (MVar, ThreadId, forkIOWithUnmask, killThread, newEmptyMVar, putMVar, readMVar)
 import Control.Exception (SomeException, bracket, throwIO, try, uninterruptibleMask_)
-import Control.Monad (void)
+import Control.Monad (unless, void)
 import Control.Monad.Except (ExceptT(..), runExceptT)
-import Data.List (nub)
+import Data.List (nub, sort)
 
-type Execution cause value = ExceptT (Failure cause) IO [value]
+-- 尚未执行的动作；Handoff 是上一段交下来的已捕获绑定（只有 alternative 的候选会收到非空的）。
+type Execution environment cause value = Handoff environment cause -> ExceptT (Failure cause) IO [value]
 
 type Worker value = (ThreadId, MVar (Either SomeException value))
 
@@ -40,8 +41,16 @@ runParalleled actions = withWorkers actions $ \workers -> do
   outcomes <- mapM (readMVar . snd) workers
   either throwIO pure (sequence outcomes)
 
--- 装配结果：子树中的 Node 名、入口方法身份与尚未执行的动作。
-data Prepared method cause value = Prepared [String] [method] (Execution cause value)
+-- 装配结果：子树中的 Node 名、入口方法身份（含 alternative 的选择入口）与尚未执行的动作。
+data Prepared method environment cause value = Prepared [String] [method] (Execution environment cause value)
+
+-- alternative 的静态描述（由生成表提供）：候选末端 → (转折契约, 构造器)、转折契约 → 全部构造器，
+-- 以及转折契约的读取末端与它在结构中的入口身份。
+data Alternatives method environment cause = Alternatives
+  { caseOf :: String -> Maybe (String, String)
+  , constructorsOf :: String -> Maybe [String]
+  , selectorOf :: String -> Maybe (method, Target environment cause String)
+  }
 
 -- fold 得到尚未执行的动作，父分支控制何时启动子动作。
 -- 先解析全部 Node 引用；装配失败时不执行任何业务动作。
@@ -49,45 +58,54 @@ data Prepared method cause value = Prepared [String] [method] (Execution cause v
 -- 只在已装配的闭包之间按 Haskell 逻辑选择启动哪一个。
 executionAlgebra
   :: RunStore environment cause
-  -> (String -> Either problem (method, Target environment cause value))
-  -> ([String] -> Either problem (Target environment cause String, String))
-  -> Algebra WorkflowF (Either problem (Prepared method cause value))
+  -> (String -> Either (StructureError method) (method, Target environment cause value))
+  -> Alternatives method environment cause
+  -> Algebra WorkflowF (Either (StructureError method) (Prepared method environment cause value))
 executionAlgebra store resolve _ (Node selected) = do
   (method, entry) <- resolve selected
-  pure (Prepared [selected] [method] ((: []) <$> ExceptT (lowerTarget store entry)))
+  pure (Prepared [selected] [method] (\handoff -> (: []) <$> ExceptT (fst <$> lowerTarget store handoff entry)))
 executionAlgebra _ _ _ (Chained children) = do
   parts <- sequence children
-  pure (Prepared (concatMap names parts) (concatMap methods parts) (concat <$> sequence (map action parts)))
+  pure (Prepared (concatMap names parts) (concatMap methods parts)
+    (\handoff -> concat <$> sequence [action part handoff | part <- parts]))
 executionAlgebra _ _ _ (Parallel children) = do
   parts <- sequence children
-  pure (Prepared (concatMap names parts) (concatMap methods parts) $ ExceptT $ do
-    outcomes <- runParalleled (map (runExceptT . action) parts)
+  pure (Prepared (concatMap names parts) (concatMap methods parts) $ \handoff -> ExceptT $ do
+    outcomes <- runParalleled [runExceptT (action part handoff) | part <- parts]
     pure (concat <$> sequence outcomes))
 -- 两段启动：先运行转折资产的读取末端（require：state 中已有值直接用，否则按需求值一次），
--- 得到它当前的构造器；再启动对应的候选。未选中的候选不执行，也不出现在结果中。
-executionAlgebra store _ caseOf (Alternative children) = do
+-- 得到它当前的构造器；再启动对应候选，并把选择时捕获的绑定交给候选，两段读同一份值。
+-- 未选中的候选不执行，也不出现在结果中。整组候选在装配时按生成表重新核对，过期配置不执行。
+executionAlgebra store _ alternatives (Alternative children) = do
   parts <- sequence children
-  cases <- mapM (caseOf . names) parts
-  let candidates = [(constructor, action part) | ((_, constructor), part) <- zip cases parts]
-  selector <- case cases of
-    (target, _) : _ -> pure target
-    [] -> fst <$> caseOf []
-  pure (Prepared (concatMap names parts) (concatMap methods parts) $ ExceptT $ do
-    selected <- lowerTarget store selector
+  let candidateNames = concatMap names parts
+  cases <- mapM (\part -> case nub (map (caseOf alternatives) (names part)) of
+    [Just found] -> Right found
+    _ -> (invalidAlternative candidateNames)) parts
+  contract <- case nub (map fst cases) of
+    [selected] -> Right selected
+    _ -> (invalidAlternative candidateNames)
+  let constructors = map snd cases
+  declared <- maybe (invalidAlternative candidateNames) Right (constructorsOf alternatives contract)
+  unless (length constructors == length (nub constructors) && sort constructors == sort declared) (invalidAlternative candidateNames)
+  (selectorMethod, selector) <- maybe (invalidAlternative candidateNames) Right (selectorOf alternatives contract)
+  let candidates = zip constructors (map action parts)
+  pure (Prepared candidateNames (selectorMethod : concatMap methods parts) $ \handoff -> ExceptT $ do
+    (selected, captured) <- lowerTarget store handoff selector
     case selected of
       Left problem -> pure (Left problem)
       Right constructor -> case lookup constructor candidates of
-        Just chosen -> runExceptT chosen
+        Just chosen -> runExceptT (chosen captured)
         Nothing -> ioError (userError ("No alternative candidate for case " ++ constructor
           ++ "; regenerate with the SDK effect-codegen command")))
 
-names :: Prepared method cause value -> [String]
+names :: Prepared method environment cause value -> [String]
 names (Prepared selected _ _) = selected
 
-methods :: Prepared method cause value -> [method]
+methods :: Prepared method environment cause value -> [method]
 methods (Prepared _ selected _) = selected
 
-action :: Prepared method cause value -> Execution cause value
+action :: Prepared method environment cause value -> Execution environment cause value
 action (Prepared _ _ prepared) = prepared
 
 -- 末端内部与 AST 均传播原始 Failure，只有最终边界包装 Output。
@@ -96,31 +114,38 @@ action (Prepared _ _ prepared) = prepared
 -- 一次 AST fold 同时解析 Node、收集入口和装配动作，不创建初始化中间树。
 -- Either 在进入 IO action 前检查全部分支及入口集合；闭包中的业务值保持惰性。
 -- 同一份 ScopeTree 的祖先关系同时用于实例回收和 Error 导航，不重排业务。
--- alternativeCases 是 gencode 写定的静态表：候选末端 → (转折契约, 构造器)；
--- selectors 是各转折契约的读取末端，返回资产当前的构造器名。
+-- alternativeCases 与 alternativeConstructors 是 gencode 写定的静态表；selectors 是各转折契约的读取末端，
+-- 它们以契约名登记在结构入口中，与 Node 一起构成方法图的根。
 runStructuredAST
   :: (Ord method, Show method) => ProgramStructure method
   -> [(String, (String, String))]
+  -> [(String, [String])]
   -> AST
   -> [Target environment cause value]
   -> [Target environment cause String]
   -> IO (Output cause [value])
-runStructuredAST structure alternativeCases tree entries selectors = do
+runStructuredAST structure alternativeCases alternativeConstructors tree entries selectors = do
   store <- newRunStore
   prepared <- either (ioError . userError . show) pure $ do
-    Prepared _ roots prepared <- foldAST (executionAlgebra store resolve caseOf) tree
+    Prepared _ roots prepared <- foldAST (executionAlgebra store resolve alternatives) tree
     validateWorkflowEntries structure roots
     pure prepared
   configureTargets (scopeRelations structure) entries
-  either Failed Succ <$> runExceptT prepared
+  either Failed Succ <$> runExceptT (prepared noHandoff)
   where
     compiled = [(targetName entry, entry) | entry <- entries]
     resolve selected = case (lookup selected (structureEntries structure), lookup selected compiled) of
       (Just method, Just entry) -> Right (method, entry)
       _ -> Left (UnknownStructureTarget selected)
-    -- 一个候选的全部末端须登记同一分支；gencode 已检查，这里只拒绝过期的生成结果。
-    caseOf selected = case nub [lookup terminal alternativeCases | terminal <- selected] of
-      [Just (contract, constructor)] -> case [target | target <- selectors, targetName target == contract] of
-        target : _ -> Right (target, constructor)
-        [] -> Left (InvalidAlternative selected)
-      _ -> Left (InvalidAlternative selected)
+    alternatives = Alternatives
+      { caseOf = (`lookup` alternativeCases)
+      , constructorsOf = (`lookup` alternativeConstructors)
+      , selectorOf = \contract -> case (lookup contract (structureEntries structure)
+          , [target | target <- selectors, targetName target == contract]) of
+          (Just method, target : _) -> Just (method, target)
+          _ -> Nothing
+      }
+
+-- alternative 的生成表与当前 AST 分组不一致：生成结果已过期。
+invalidAlternative :: [String] -> Either (StructureError method) value
+invalidAlternative = Left . InvalidAlternative

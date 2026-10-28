@@ -124,10 +124,16 @@ ownedNames :: Environment env cause -> [String]
 ownedNames environment = map (scopeName . family) (openings environment)
   ++ map (scopeName . closeFamily) (closings environment)
 
-rememberBinding :: Environment env cause -> String -> Bound env cause -> IO ()
-rememberBinding environment source value = do
+-- 捕获：只写入本次调用；用于读取已有绑定、恢复 scope 快照和认领归属，不改写运行级 state。
+captureBinding :: Environment env cause -> String -> Bound env cause -> IO ()
+captureBinding environment source value =
   atomicModifyIORef' (bindings environment) $ \current -> (bind source value current, ())
-  -- 无 scope 归属的资产同时写入运行级 state，供后续 Node 的 require 读取。
+
+-- 发布：新生产的值写入本次调用；无 scope 归属时同时写入运行级 state，供后续 Node 的 require 读取。
+-- 只有实际生产才发布，复用或读取旧绑定不会把旧值写回全局。
+publishBinding :: Environment env cause -> String -> Bound env cause -> IO ()
+publishBinding environment source value = do
+  captureBinding environment source value
   when (null (bindingOwners value)) $
     atomicModifyIORef' (runAssets (runStore environment)) $ \current -> (bind source value current, ())
 
@@ -159,9 +165,9 @@ resolveBinding environment source = do
           case asset of
             Nothing -> pure (Right Nothing)
             Just value -> do
-              atomicModifyIORef' (bindings environment) $ \current -> (bind source value current, ())
+              captureBinding environment source value
               pure (Right (Just value))
-        [value] -> rememberBinding environment source value >> pure (Right (Just value))
+        [value] -> captureBinding environment source value >> pure (Right (Just value))
         _ -> pure (Left (AmbiguousContextBinding source))
   where
     closed (ScopeClosed _) = True
@@ -234,7 +240,7 @@ saveBinding slot source value = atomicModifyIORef' (scopeRecord slot) $ \record 
 reuseBindings :: Environment env cause -> ScopeInstance env cause -> IO ()
 reuseBindings environment slot = do
   saved <- scopeBindings <$> readIORef (scopeRecord slot)
-  forM_ saved $ \(source, value) -> rememberBinding environment source value
+  forM_ saved $ \(source, value) -> captureBinding environment source value
 
 ensureOpen :: Environment env cause -> Opening env cause -> IO (Either (Failure cause) ())
 ensureOpen environment attempt = do
@@ -275,7 +281,7 @@ ensureOpen environment attempt = do
                             let source = resourceSource handler
                                 value = Binding (emptyValues environment) [(name, slot)]
                             saveBinding slot source value
-                            rememberBinding environment source value
+                            publishBinding environment source value
                           pure (Right ())
           acquire
 
@@ -368,7 +374,7 @@ instance ContextStore env (App env cause) where
           let bound = if null (bindingOwners value)
                 then value { bindingOwners = [(scopeName (family attempt), slot)] }
                 else value
-          rawIO (saveBinding slot source bound >> rememberBinding environment source bound)
+          rawIO (saveBinding slot source bound >> captureBinding environment source bound)
         pure (Right (select (bindingValues value)))
   publishContextBinding source update = do
     environment <- AppRun ask
@@ -379,7 +385,7 @@ instance ContextStore env (App env cause) where
         pure [(scopeName (family attempt), slot) | Just slot <- [selected]]
       _ -> pure []
     let value = Binding (update (emptyValues environment)) owner
-    rawIO (rememberBinding environment source value)
+    rawIO (publishBinding environment source value)
     case openings environment of
       attempt : _ -> do
         rawIO (atomicModifyIORef' (produced attempt) (\values -> (bind source value values, ())))
@@ -665,10 +671,20 @@ runClose name wrap (AppRun action) = AppRun $ do
   either throwError pure result
 
 -- consumer 覆盖整个末端调用、诊断和结果消费；嵌套方法返回不提前释放借用。
-runAppWith :: (Either (Failure cause) value -> IO ()) -> RunStore env cause -> Scopes env cause -> env
-           -> App env cause value -> IO (Either (Failure cause) value)
-runAppWith consume store handlers initial (AppRun action) = mask $ \restore -> do
-  values <- newIORef []
+-- handoff 是交给本次调用的已捕获绑定（alternative 把选择时读到的资产交给候选）；
+-- 返回值另带本次调用结束时捕获的无归属绑定，scope 资源绑定随实例收尾，不向外交出。
+runAppWith :: (Either (Failure cause) value -> IO ()) -> RunStore env cause -> ScopeBindings env cause
+           -> Scopes env cause -> env -> App env cause value
+           -> IO (Either (Failure cause) value, ScopeBindings env cause)
+runAppWith consume store handoff handlers initial action = do
+  values <- newIORef handoff
+  outcome <- runAppIn consume store values handlers initial action
+  captured <- readIORef values
+  pure (outcome, filter (null . bindingOwners . snd) captured)
+
+runAppIn :: (Either (Failure cause) value -> IO ()) -> RunStore env cause -> IORef (ScopeBindings env cause)
+         -> Scopes env cause -> env -> App env cause value -> IO (Either (Failure cause) value)
+runAppIn consume store values handlers initial (AppRun action) = mask $ \restore -> do
   user <- newScopeUser
   let environment = Environment initial values handlers Nothing [] [] [] [] [] [] Nothing Nothing [] False user Nothing Nothing store False [] []
   completed <- try $ restore $ do

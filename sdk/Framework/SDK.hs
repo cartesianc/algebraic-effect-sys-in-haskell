@@ -33,9 +33,9 @@ interpreter
   => String
   -> [EffectSpec] -> Maybe String
   -> Either (StructureError method) (ProgramStructure method)
-  -> [(String, (String, String))]
+  -> [(String, (String, String))] -> [(String, [String])]
   -> IO ([Target environment cause value], [Target environment cause String]) -> AST -> [EffectSpec] -> IO ()
-interpreter namespace registered sourceFingerprint initialize alternativeCases createEntries tree specifications = do
+interpreter namespace registered sourceFingerprint initialize alternativeCases alternativeConstructors createEntries tree specifications = do
   hSetEncoding stdout utf8
   arguments <- getArgs
   case arguments of
@@ -48,7 +48,7 @@ interpreter namespace registered sourceFingerprint initialize alternativeCases c
           (entries, selectors) <- createEntries
           mask $ \restore -> do
             completed <- tryAny $ restore $ do
-              output <- runStructuredAST structure alternativeCases tree entries selectors
+              output <- runStructuredAST structure alternativeCases alternativeConstructors tree entries selectors
               let rendered = show output
               -- 各 Node 已在释放使用前消费自己的结果；这里完成汇总错误的显示。
               evaluate (foldr seq () rendered)
@@ -71,7 +71,7 @@ interpreter namespace registered sourceFingerprint initialize alternativeCases c
       | otherwise -> do
           verifyHandlerSource namespace sourceFingerprint
           structure <- initializeBeforeBusiness
-          rendered <- either (ioError . userError . show) pure (renderStructure structure tree)
+          rendered <- either (ioError . userError . show) pure (renderStructure structure (map fst alternativeConstructors) tree)
           putStr rendered
     _ -> ioError (userError "Usage: demo [--generate|--structure]")
   where

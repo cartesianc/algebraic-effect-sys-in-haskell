@@ -248,24 +248,24 @@ class Provides contract m where
   require :: m contract
 
 instance (StartPageEffect App) => Provides StartURL App where
-  request = SDK.provideContext "StartURL" ContextBindingError [("FetchPage", startURL)]
-  require = SDK.provideContext "StartURL" ContextBindingError [("ExtractPage", readStartURL)]
+  request = SDK.provideContext "StartPage" "StartURL" ContextBindingError [("FetchPage", startURL)]
+  require = SDK.provideContext "StartPage" "StartURL" ContextBindingError [("ExtractPage", readStartURL)]
 
 instance (SessionContextEffect App) => Provides CrawlSessionInfo App where
-  request = SDK.provideContext "CrawlSessionInfo" ContextBindingError [("CrawlSession", crawlSessionInfo)]
-  require = SDK.provideContext "CrawlSessionInfo" ContextBindingError [("FetchPage", readCrawlSessionInfo), ("FetchLinkedPage", readCrawlSessionInfo), ("CrawlSession", readCrawlSessionInfo)]
+  request = SDK.provideContext "SessionContext" "CrawlSessionInfo" ContextBindingError [("CrawlSession", crawlSessionInfo)]
+  require = SDK.provideContext "SessionContext" "CrawlSessionInfo" ContextBindingError [("FetchPage", readCrawlSessionInfo), ("FetchLinkedPage", readCrawlSessionInfo), ("CrawlSession", readCrawlSessionInfo)]
 
 instance (ExtractPageEffect App) => Provides StartPageSummary App where
-  request = SDK.provideContext "StartPageSummary" ContextBindingError []
-  require = SDK.provideContext "StartPageSummary" ContextBindingError [("PrintPage", readStartPageSummary)]
+  request = SDK.provideContext "ExtractPage" "StartPageSummary" ContextBindingError []
+  require = SDK.provideContext "ExtractPage" "StartPageSummary" ContextBindingError [("PrintPage", readStartPageSummary)]
 
 instance (LinkedPageEffect App) => Provides LinkedURL App where
-  request = SDK.provideContext "LinkedURL" ContextBindingError [("FetchLinkedPage", linkedURL)]
-  require = SDK.provideContext "LinkedURL" ContextBindingError [("ExtractLinkedPage", readLinkedURL)]
+  request = SDK.provideContext "LinkedPage" "LinkedURL" ContextBindingError [("FetchLinkedPage", linkedURL)]
+  require = SDK.provideContext "LinkedPage" "LinkedURL" ContextBindingError [("ExtractLinkedPage", readLinkedURL)]
 
 instance (ExtractLinkedPageEffect App) => Provides LinkedPageSummary App where
-  request = SDK.provideContext "LinkedPageSummary" ContextBindingError []
-  require = SDK.provideContext "LinkedPageSummary" ContextBindingError [("PrintLinkedPage", readLinkedPageSummary)]
+  request = SDK.provideContext "ExtractLinkedPage" "LinkedPageSummary" ContextBindingError []
+  require = SDK.provideContext "ExtractLinkedPage" "LinkedPageSummary" ContextBindingError [("PrintLinkedPage", readLinkedPageSummary)]
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
 newtype StartPageError = StartPageError String

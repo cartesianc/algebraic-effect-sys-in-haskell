@@ -32,7 +32,7 @@ scopeNames = [(OpenFileSessionGen, "FileSession")]
 -- 只校验生成常量；当前 workflow 在执行装配的一次 fold 中检查入口。
 programStructure :: Either (SDK.StructureError MethodGen) (SDK.ProgramStructure MethodGen)
 programStructure = SDK.initializeGeneratedStructure
-  [("WriteFirstLine", WriteFirstLineGen), ("AppendLine", AppendLineGen)]
+  [("WriteFirstLine", WriteFirstLineGen), ("AppendLine", AppendLineGen), ("FileText", ReadFileTextGen)]
   scopeNames generatedEffectGraph generatedScopeTree
 
 
@@ -44,6 +44,10 @@ data Results = WriteFirstLineResult (Produce WriteFirstLine) | AppendLineResult 
 -- 运行时只据此在已装配的闭包之间选择，不保存或重组 effect chain。
 alternativeCases :: [(String, (String, String))]
 alternativeCases = [("WriteFirstLine",("FileText","Blank")),("AppendLine",("FileText","Written"))]
+
+-- 各转折契约的全部构造器；运行时据此重新核对当前 AST 的分组，过期配置不执行。
+alternativeConstructors :: [(String, [String])]
+alternativeConstructors = [("FileText",["Blank","Written"])]
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。
 -- 第二个列表是各转折契约的读取末端：按 require 取得资产，返回它当前的构造器名。
@@ -65,7 +69,7 @@ caseOfFileText (FileText value) = case value of
 
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "FileDemo" registeredEffects Handlers.handlerSourceFingerprint programStructure alternativeCases compiledEntries
+interpreter = SDK.interpreter "FileDemo" registeredEffects Handlers.handlerSourceFingerprint programStructure alternativeCases alternativeConstructors compiledEntries
 -- 生成时已完成方法展开与路径分析；运行时只读取显式 ADT 值。
 generatedEffectGraph :: SDK.EffectGraph MethodGen
 generatedEffectGraph = SDK.EffectGraph
@@ -82,13 +86,14 @@ generatedEffectGraph = SDK.EffectGraph
       , SDK.MethodDefinition ReadOpenedFileGen OpenedFileGen SDK.ContextRequire (SDK.Empty)
       , SDK.MethodDefinition AppendLineGen AppendLineGen SDK.HandlerMethod (SDK.Sequence [SDK.Call OpenFileSessionGen, SDK.Call ReadFileTextGen, SDK.Call ReadOpenedFileGen])
       ]
-  , SDK.graphRoots = [WriteFirstLineGen, AppendLineGen]
+  , SDK.graphRoots = [WriteFirstLineGen, AppendLineGen, ReadFileTextGen]
   , SDK.graphReferences = [(WriteFirstLineGen, OpenFileSessionGen), (WriteFirstLineGen, ReadFileTextGen), (WriteFirstLineGen, ReadOpenedFileGen), (OpenFileSessionGen, OpenedFileGen), (OpenedFileGen, ValidateFileNameGen), (OpenedFileGen, ReadFileNameGen), (ValidateFileNameGen, ReadFileNameGen), (ReadFileNameGen, FileNameGen), (ReadFileTextGen, FileTextGen), (FileTextGen, ReadFileContentGen), (ReadFileContentGen, OpenFileSessionGen), (ReadFileContentGen, ReadOpenedFileGen), (AppendLineGen, OpenFileSessionGen), (AppendLineGen, ReadFileTextGen), (AppendLineGen, ReadOpenedFileGen)]
   , SDK.graphScopes = [OpenFileSessionGen]
-  , SDK.graphScopePaths = [[OpenFileSessionGen]]
+  , SDK.graphScopePaths = [[OpenFileSessionGen], []]
   , SDK.graphRootPaths =
       [ (WriteFirstLineGen, [[OpenFileSessionGen]])
       , (AppendLineGen, [[OpenFileSessionGen]])
+      , (ReadFileTextGen, [[], [OpenFileSessionGen]])
       ]
   , SDK.graphScopeOrder = []
   }
@@ -101,7 +106,7 @@ generatedScopeTree = SDK.ScopeTree
       [ SDK.ScopeNode { SDK.scopeIdentity = OpenFileSessionGen, SDK.scopeParents = [], SDK.scopeChildren = [] }
       ]
   , SDK.scopeLayers = [[OpenFileSessionGen]]
-  , SDK.scopePaths = [[OpenFileSessionGen]]
+  , SDK.scopePaths = [[OpenFileSessionGen], []]
   , SDK.scopeCandidates = []
   , SDK.scopeOpposed = []
   , SDK.scopeUndetermined = []

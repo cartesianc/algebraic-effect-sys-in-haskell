@@ -156,12 +156,12 @@ class Provides contract m where
   require :: m contract
 
 instance (FileLocationsEffect App) => Provides FileNames App where
-  request = SDK.provideContext "FileNames" ContextBindingError [("HoldFiles", fileNames)]
-  require = SDK.provideContext "FileNames" ContextBindingError [("FileResources", readFileNames)]
+  request = SDK.provideContext "FileLocations" "FileNames" ContextBindingError [("HoldFiles", fileNames)]
+  require = SDK.provideContext "FileLocations" "FileNames" ContextBindingError [("FileResources", readFileNames)]
 
 instance (FileResourcesEffect App) => Provides OpenedFiles App where
-  request = SDK.provideContext "OpenedFiles" ContextBindingError [("FileSession", openedFiles)]
-  require = SDK.provideContext "OpenedFiles" ContextBindingError [("FileSession", readOpenedFiles), ("InspectFiles", readOpenedFiles), ("FinishInspection", readOpenedFiles)]
+  request = SDK.provideContext "FileResources" "OpenedFiles" ContextBindingError [("FileSession", openedFiles)]
+  require = SDK.provideContext "FileResources" "OpenedFiles" ContextBindingError [("FileSession", readOpenedFiles), ("InspectFiles", readOpenedFiles), ("FinishInspection", readOpenedFiles)]
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
 newtype FileLocationsError = FileLocationsError String

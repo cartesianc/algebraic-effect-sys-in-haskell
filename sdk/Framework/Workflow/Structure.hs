@@ -184,10 +184,12 @@ scopeRelations structure =
       Just direct -> nub (direct ++ concatMap ancestors direct)
 
 -- --structure 仅 fold 出展示文本与入口，不创建 Target 或装配业务动作。
-renderStructure :: (Ord method, Show method) => ProgramStructure method -> AST -> Either (StructureError method) String
-renderStructure structure workflowAST = do
+-- selectors：alternative 的转折契约名；它们的读取末端以契约名登记为结构入口，同样是方法图的根。
+renderStructure :: (Ord method, Show method) => ProgramStructure method -> [String] -> AST -> Either (StructureError method) String
+renderStructure structure selectors workflowAST = do
   (roots, workflow) <- foldAST describe workflowAST
-  validateWorkflowEntries structure roots
+  validateWorkflowEntries structure
+    (roots ++ [method | (selected, method) <- structureEntries structure, selected `elem` selectors])
   pure (unlines (render workflow))
   where
     describe (Node selected) = do

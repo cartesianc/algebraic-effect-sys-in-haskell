@@ -190,12 +190,12 @@ class Provides contract m where
   require :: m contract
 
 instance (FileLocationsEffect App) => Provides FilePaths App where
-  request = SDK.provideContext "FilePaths" ContextBindingError [("PrepareProbe", filePaths), ("WriteFirst", filePaths), ("WriteSecond", filePaths), ("WriteThird", filePaths), ("VerifyReuse", filePaths)]
-  require = SDK.provideContext "FilePaths" ContextBindingError [("FileResource", readFilePaths)]
+  request = SDK.provideContext "FileLocations" "FilePaths" ContextBindingError [("PrepareProbe", filePaths), ("WriteFirst", filePaths), ("WriteSecond", filePaths), ("WriteThird", filePaths), ("VerifyReuse", filePaths)]
+  require = SDK.provideContext "FileLocations" "FilePaths" ContextBindingError [("FileResource", readFilePaths)]
 
 instance (FileResourceEffect App) => Provides OpenedFile App where
-  request = SDK.provideContext "OpenedFile" ContextBindingError [("SharedFileScope", openedFile)]
-  require = SDK.provideContext "OpenedFile" ContextBindingError [("SharedFileScope", readOpenedFile), ("WriteFirst", readOpenedFile), ("WriteSecond", readOpenedFile), ("WriteThird", readOpenedFile)]
+  request = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("SharedFileScope", openedFile)]
+  require = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("SharedFileScope", readOpenedFile), ("WriteFirst", readOpenedFile), ("WriteSecond", readOpenedFile), ("WriteThird", readOpenedFile)]
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
 newtype FileLocationsError = FileLocationsError String

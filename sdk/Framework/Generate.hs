@@ -54,8 +54,11 @@ main = do
                 let generated = directory </> "Generated"
                     cachePath = generated </> ".scope-cache"
                     normalized = [(method, normalizeShape shape) | ((_, method), shape) <- shapes]
-                -- 驱动检查每次执行，不受 scope 缓存命中影响。
-                either die pure (checkDriven plan normalized)
+                -- 驱动检查每次执行，不受 scope 缓存命中影响；首次生成尚无 Handlers.hs、没有方法结构，
+                -- 先生成契约供编写 handler，有实现后再检查。
+                case nativeSource of
+                  Just _ -> either die pure (checkDriven plan normalized)
+                  Nothing -> pure ()
                 dependencies <- mapM readUtf8 structureSources
                 let cacheKey = show (plan, normalized, dependencies)
                 cached <- tryIOError (readExisting cachePath)

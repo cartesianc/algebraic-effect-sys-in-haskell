@@ -42,6 +42,10 @@ data Results = PrepareFilesResult (Produce PrepareFiles) | CheckIndependentResul
 alternativeCases :: [(String, (String, String))]
 alternativeCases = []
 
+-- 各转折契约的全部构造器；运行时据此重新核对当前 AST 的分组，过期配置不执行。
+alternativeConstructors :: [(String, [String])]
+alternativeConstructors = []
+
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。
 -- 第二个列表是各转折契约的读取末端：按 require 取得资产，返回它当前的构造器名。
 compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String])
@@ -57,7 +61,7 @@ compiledEntries = do
 
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "ScopeInstancesDemo" registeredEffects Handlers.handlerSourceFingerprint programStructure alternativeCases compiledEntries
+interpreter = SDK.interpreter "ScopeInstancesDemo" registeredEffects Handlers.handlerSourceFingerprint programStructure alternativeCases alternativeConstructors compiledEntries
 -- 生成时已完成方法展开与路径分析；运行时只读取显式 ADT 值。
 generatedEffectGraph :: SDK.EffectGraph MethodGen
 generatedEffectGraph = SDK.EffectGraph

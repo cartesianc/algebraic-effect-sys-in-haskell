@@ -117,13 +117,14 @@ checkAssets namespace generated roots methods owners native = do
     pure (renderAssets namespace (sortOn assetType (map describeAsset assets)))
 
 modulePath :: String -> FilePath
-modulePath selected = "demo" </> map (\c -> if c == '.' then '/' else c) selected
+-- 统一用正斜杠：Windows 下 </> 插入的反斜杠会在 GHC 记录文件名时丢失，资产目录的路径因此出错。
+modulePath selected = "demo/" ++ map (\c -> if c == '.' then '/' else c) selected
 
 sourceFiles :: FilePath -> IO [FilePath]
 sourceFiles directory = do
   names <- sortOn id <$> listDirectory directory
   concat <$> forM names (\name -> do
-    let path = directory </> name
+    let path = directory ++ "/" ++ name
     nested <- doesDirectoryExist path
     if nested then if name == "Generated" then pure [] else sourceFiles path
       else pure [path | takeExtension path == ".hs"])
