@@ -292,7 +292,7 @@ BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两�
 node 表示一整条 effect 链的可调用入口；chained、parallel、alternative、loop 是同级的 branch 组织方式。
 chained 按前一次成功完成推进，parallel 并发启动并等待全部完成，alternative 按和类型资产的当前构造器启动一个候选，loop 按事件触发启动。
 
-alternative 只列候选、不写条件，不把业务状态暴露进 AST。Context 的表示类型是和类型时，生成器为每个构造器产出分支契约（契约名加构造器名），它是基础资产的投影，只能 require；候选经注册（末端及其 Input 链上游的 requires）依赖一个分支契约，gencode 推出"候选末端 → (转折契约, 构造器)"的静态表并要求覆盖全部构造器。运行时两段启动：先 require 转折资产（state 中已有值直接用，否则按需求值一次），再启动对应候选，未选中的候选不执行；选择阶段捕获的绑定交给候选，两段读同一份值。转折读取末端以契约名登记为结构入口，参与构图与 ScopeTree；运行时按生成的构造器表重新核对分组，过期配置报 InvalidAlternative。effect chain 运行时已消解为闭包，选择只发生在 Node 边界，不保存 chain 原型、不在链中间打断或重组，也不需要 call/cc 式的 continuation。
+alternative 只列候选、不写条件，不把业务状态暴露进 AST。Context 的表示类型是和类型时，生成器为每个构造器产出分支契约（契约名加构造器名），它是基础资产的投影，只能 require；候选经注册（末端及其 Input 链上游的 requires）依赖一个分支契约，gencode 推出"候选末端 → (转折契约, 构造器)"的静态表并要求覆盖全部构造器。运行时两段启动：先 require 转折资产（state 中已有值直接用，否则按需求值一次），再启动对应候选，未选中的候选不执行；选择阶段捕获的绑定交给候选，两段读同一份值。转折读取末端以契约名登记为结构入口，参与构图与 ScopeTree；执行装配与 --structure 共用同一纯校验（同一转折契约、构造器不重复且覆盖全部、读取末端已登记为入口），按生成表核对分组，两个入口对同一 AST 判断一致，过期配置均报 InvalidAlternative。effect chain 运行时已消解为闭包，选择只发生在 Node 边界，不保存 chain 原型、不在链中间打断或重组，也不需要 call/cc 式的 continuation。
 不把 loop 当作 chained 中等待完成的普通执行项；涉及 loop 及其他新增 branch 的嵌套规则另定。
 
 “只负责启动逻辑，不负责状态转移”中的状态指业务状态。AST 不保存可变节点状态、上次产物或业务状态机，也不据此隐式传值；但完成、失败停止、并发汇合仍属于它的执行控制语义，运行记录由 SDK 持有。业务状态变化由 effect handler 执行。Context 按 request／require 引用，普通绑定与 scope 开启期绑定分别由 SDK 管理；scope 状态也属于 SDK，不引入节点业务状态机。
@@ -364,7 +364,7 @@ effect 不配置 dependency。SDK 沿声明收集 Scoped，能力仍由 supercla
 
 需要共享时，业务在当前完整链先取得稳定参数，scope 内 require 该绑定。参数生产者自己的 IO 可以运行；open 范围中其他 IO 必须在参数齐备之后，否则报 ScopeInputsMissing。参数变化发生在选定之后则报 ScopeInputAfterOpen。该协议不分析任意 IO 闭包中的隐藏参数，也不将混在参数生产动作里的资源获取自动拆开。本轮协议限定 App／IO 下受管理的有限完整链。
 
-底层 ContextBinding 保存不可变的值快照与 scope 实例引用，二者一起传递；App 已删除 selectedScopes／lookupSelected。require 首先读取本次调用已经捕获的绑定，不因另一条链发布新值而改变。显式 request 发布并替换当前调用的来源绑定；开启期间建立的绑定只在实际实例仍被使用或依赖保留时供跨链复用，其他已捕获绑定不被原地改写。普通 Context 仍按 Node 隔离。资源已关闭后，后续 Node 必须显式 open 新一轮；旧绑定不自动换 owner。
+底层 ContextBinding 保存不可变的值快照与 scope 实例引用，二者一起传递；App 已删除 selectedScopes／lookupSelected。require 首先读取本次调用已经捕获的绑定，不因另一条链发布新值而改变。显式 request 发布并替换当前调用的来源绑定；开启期间建立的绑定只在实际实例仍被使用或依赖保留时供跨链复用，其他已捕获绑定不被原地改写；实例关闭或失效后，其中没有资源归属的值不再作为跨链读取候选。复用实例时，带归属的资源绑定照常写入本次调用，无归属的值只补入本次调用尚未捕获的来源，不覆盖已捕获的值（例如 alternative 交给候选的资产）。普通 Context 仍按 Node 隔离。资源已关闭后，后续 Node 必须显式 open 新一轮；旧绑定不自动换 owner。
 
 close 不预先选择 scope，也不预执行 Context。生成包装先进入关闭协议，用户 instance 原有的 require 引用取得 ContextBinding 后，SDK 从该绑定的归属取得生命周期锁，再继续关闭方法体。找不到绑定／归属即失败；关闭期间不能改用另一份归属。重新开启产生新实例，旧绑定仍指向旧的已关闭实例，不会误关新资源。
 

@@ -17,7 +17,7 @@ import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Reader (ReaderT, ask, asks, local, runReaderT)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (find, nub)
-import Data.Maybe (catMaybes, fromMaybe, isJust)
+import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
 import Data.Unique (Unique, newUnique)
 
 type Bound env cause = Binding env (String, ScopeInstance env cause)
@@ -157,7 +157,10 @@ resolveBinding environment source = do
               Nothing -> pure Nothing
               Just bound -> do
                 phases <- mapM (fmap scopePhase . readIORef . scopeRecord . snd) (bindingOwners bound)
-                pure (if any closed phases then Nothing else Just bound)
+                -- 没有归属的辅助值随保存它的实例存续：实例已关闭或失效时，快照里的旧值不再是候选。
+                own <- scopePhase <$> readIORef (scopeRecord slot)
+                let retiredHolder = null (bindingOwners bound) && retired own
+                pure (if any closed phases || retiredHolder then Nothing else Just bound)
       case candidates of
         [] -> do
           -- scope 中没有时读取运行级 state；读到后捕获到本次调用，后续 request 不改写它。
@@ -172,6 +175,9 @@ resolveBinding environment source = do
   where
     closed (ScopeClosed _) = True
     closed _ = False
+    retired (ScopeClosed _) = True
+    retired (ScopeInvalid _) = True
+    retired _ = False
 
 owns :: Environment env cause -> ScopeInstance env cause -> IO Bool
 owns environment slot = do
@@ -237,10 +243,15 @@ saveBinding slot source value = atomicModifyIORef' (scopeRecord slot) $ \record 
           , scopeSources = nub (source : scopeSources record) }, ())
 
 -- scope 只保留已经建立的绑定；复用时传递原绑定，绝不另设“当前 scope”指针。
+-- 带归属的资源绑定照常写入本次调用（服从 open 协议）；没有归属的辅助值只补入本次调用尚未捕获的来源，
+-- 不覆盖已捕获的值（例如 alternative 交给候选的资产）。复用本就要求开启参数同值，不改变共享判断。
 reuseBindings :: Environment env cause -> ScopeInstance env cause -> IO ()
 reuseBindings environment slot = do
   saved <- scopeBindings <$> readIORef (scopeRecord slot)
-  forM_ saved $ \(source, value) -> captureBinding environment source value
+  current <- readIORef (bindings environment)
+  forM_ saved $ \(source, value) ->
+    when (not (null (bindingOwners value)) || isNothing (lookup source current)) $
+      captureBinding environment source value
 
 ensureOpen :: Environment env cause -> Opening env cause -> IO (Either (Failure cause) ())
 ensureOpen environment attempt = do

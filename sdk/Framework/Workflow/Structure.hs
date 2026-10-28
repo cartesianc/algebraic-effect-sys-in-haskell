@@ -3,10 +3,11 @@
 -- gencode 生成的只读结构；运行时校验常量，不复制 workflow 或执行 handler。
 module Framework.Workflow.Structure
   ( ProgramStructure(..), StructureError(..)
-  , initializeStructure, initializeGeneratedStructure, validateWorkflowEntries, scopeRelations, renderStructure
+  , initializeStructure, initializeGeneratedStructure, validateWorkflowEntries, checkAlternative, scopeRelations, renderStructure
   ) where
 
 import Control.DeepSeq (NFData(..))
+import Control.Monad (unless)
 import Data.List (intercalate, nub, sort, (\\))
 import GHC.Generics (Generic)
 import Framework.Effect.Graph
@@ -89,6 +90,28 @@ initializeGeneratedStructure entries names graph scopes = do
 
 resolveEntry :: [(String, method)] -> String -> Either (StructureError method) method
 resolveEntry entries selected = maybe (Left (UnknownStructureTarget selected)) Right (lookup selected entries)
+
+-- 按生成表核对一组 alternative 候选（各候选的 Node 名）：共用同一转折契约，构造器不重复且覆盖全部。
+-- 返回转折契约、各候选对应的构造器，以及转折读取末端在结构中的入口身份（该 alternative 的额外根）。
+-- 执行装配与 --structure 共用这一纯校验，两个入口对同一 AST 给出一致判断。
+checkAlternative
+  :: ProgramStructure method -> [(String, (String, String))] -> [(String, [String])]
+  -> [[String]] -> Either (StructureError method) (String, [String], method)
+checkAlternative structure cases constructorTable candidates = do
+  found <- mapM (\selected -> case nub (map (`lookup` cases) selected) of
+    [Just pair] -> Right pair
+    _ -> invalid) candidates
+  contract <- case nub (map fst found) of
+    [selected] -> Right selected
+    _ -> invalid
+  let constructors = map snd found
+  declared <- maybe invalid Right (lookup contract constructorTable)
+  unless (length constructors == length (nub constructors) && sort constructors == sort declared) invalid
+  method <- maybe invalid Right (lookup contract (structureEntries structure))
+  pure (contract, constructors, method)
+  where
+    invalid :: Either (StructureError method) value
+    invalid = Left (InvalidAlternative (concat candidates))
 
 -- roots 由执行装配的同一次 AST fold 提供，不为检查入口再遍历 AST。
 validateWorkflowEntries :: Ord method => ProgramStructure method -> [method] -> Either (StructureError method) ()
@@ -184,23 +207,31 @@ scopeRelations structure =
       Just direct -> nub (direct ++ concatMap ancestors direct)
 
 -- --structure 仅 fold 出展示文本与入口，不创建 Target 或装配业务动作。
--- selectors：alternative 的转折契约名；它们的读取末端以契约名登记为结构入口，同样是方法图的根。
-renderStructure :: (Ord method, Show method) => ProgramStructure method -> [String] -> AST -> Either (StructureError method) String
-renderStructure structure selectors workflowAST = do
-  (roots, workflow) <- foldAST describe workflowAST
-  validateWorkflowEntries structure
-    (roots ++ [method | (selected, method) <- structureEntries structure, selected `elem` selectors])
+-- alternative 按与执行相同的 checkAlternative 核对，并把转折读取末端记为根。
+renderStructure
+  :: (Ord method, Show method) => ProgramStructure method
+  -> [(String, (String, String))] -> [(String, [String])] -> AST -> Either (StructureError method) String
+renderStructure structure cases constructorTable workflowAST = do
+  (_, roots, workflow) <- foldAST describe workflowAST
+  validateWorkflowEntries structure roots
   pure (unlines (render workflow))
   where
     describe (Node selected) = do
       method <- resolveEntry (structureEntries structure) selected
-      pure ([method], "Node " ++ show selected ++ " (" ++ show method ++ ")")
+      pure ([selected], [method], "Node " ++ show selected ++ " (" ++ show method ++ ")")
     describe (Chained children) = branch "Chained" children
     describe (Parallel children) = branch "Parallel" children
-    describe (Alternative children) = branch "Alternative" children
+    describe (Alternative children) = do
+      parts <- sequence children
+      (contract, _, method) <- checkAlternative structure cases constructorTable [selected | (selected, _, _) <- parts]
+      pure ( concat [selected | (selected, _, _) <- parts]
+           , method : concat [entries | (_, entries, _) <- parts]
+           , "Alternative on " ++ contract ++ " [" ++ intercalate ", " [text | (_, _, text) <- parts] ++ "]" )
     branch name children = do
       parts <- sequence children
-      pure (concatMap fst parts, name ++ " [" ++ intercalate ", " (map snd parts) ++ "]")
+      pure ( concat [selected | (selected, _, _) <- parts]
+           , concat [entries | (_, entries, _) <- parts]
+           , name ++ " [" ++ intercalate ", " [text | (_, _, text) <- parts] ++ "]" )
     render workflow =
       ["Workflow", "  " ++ workflow, "", "Effect methods"]
       ++ ["  " ++ show (methodIdentity method) ++ " [" ++ show (methodRole method)

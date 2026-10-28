@@ -6,12 +6,11 @@ import Framework.Effect.Contract (Failure, Output(..))
 import Framework.Effect.Runtime (Target, Handoff, noHandoff, RunStore, newRunStore, targetName, lowerTarget, configureTargets)
 import Framework.Recursion (Algebra)
 import Framework.Workflow.AST (AST, WorkflowF(..), foldAST)
-import Framework.Workflow.Structure (ProgramStructure(..), StructureError(..), scopeRelations, validateWorkflowEntries)
+import Framework.Workflow.Structure (ProgramStructure(..), StructureError(..), checkAlternative, scopeRelations, validateWorkflowEntries)
 import Control.Concurrent (MVar, ThreadId, forkIOWithUnmask, killThread, newEmptyMVar, putMVar, readMVar)
 import Control.Exception (SomeException, bracket, throwIO, try, uninterruptibleMask_)
-import Control.Monad (unless, void)
+import Control.Monad (void)
 import Control.Monad.Except (ExceptT(..), runExceptT)
-import Data.List (nub, sort)
 
 -- 尚未执行的动作；Handoff 是上一段交下来的已捕获绑定（只有 alternative 的候选会收到非空的）。
 type Execution environment cause value = Handoff environment cause -> ExceptT (Failure cause) IO [value]
@@ -44,12 +43,11 @@ runParalleled actions = withWorkers actions $ \workers -> do
 -- 装配结果：子树中的 Node 名、入口方法身份（含 alternative 的选择入口）与尚未执行的动作。
 data Prepared method environment cause value = Prepared [String] [method] (Execution environment cause value)
 
--- alternative 的静态描述（由生成表提供）：候选末端 → (转折契约, 构造器)、转折契约 → 全部构造器，
--- 以及转折契约的读取末端与它在结构中的入口身份。
+-- alternative 的静态描述：checkGroup 是与 --structure 共用的纯校验（按生成表核对一组候选），
+-- selectorTarget 取转折契约的读取末端。
 data Alternatives method environment cause = Alternatives
-  { caseOf :: String -> Maybe (String, String)
-  , constructorsOf :: String -> Maybe [String]
-  , selectorOf :: String -> Maybe (method, Target environment cause String)
+  { checkGroup :: [[String]] -> Either (StructureError method) (String, [String], method)
+  , selectorTarget :: String -> Maybe (Target environment cause String)
   }
 
 -- fold 得到尚未执行的动作，父分支控制何时启动子动作。
@@ -79,16 +77,8 @@ executionAlgebra _ _ _ (Parallel children) = do
 executionAlgebra store _ alternatives (Alternative children) = do
   parts <- sequence children
   let candidateNames = concatMap names parts
-  cases <- mapM (\part -> case nub (map (caseOf alternatives) (names part)) of
-    [Just found] -> Right found
-    _ -> (invalidAlternative candidateNames)) parts
-  contract <- case nub (map fst cases) of
-    [selected] -> Right selected
-    _ -> (invalidAlternative candidateNames)
-  let constructors = map snd cases
-  declared <- maybe (invalidAlternative candidateNames) Right (constructorsOf alternatives contract)
-  unless (length constructors == length (nub constructors) && sort constructors == sort declared) (invalidAlternative candidateNames)
-  (selectorMethod, selector) <- maybe (invalidAlternative candidateNames) Right (selectorOf alternatives contract)
+  (contract, constructors, selectorMethod) <- checkGroup alternatives (map names parts)
+  selector <- maybe (Left (InvalidAlternative candidateNames)) Right (selectorTarget alternatives contract)
   let candidates = zip constructors (map action parts)
   pure (Prepared candidateNames (selectorMethod : concatMap methods parts) $ \handoff -> ExceptT $ do
     (selected, captured) <- lowerTarget store handoff selector
@@ -138,14 +128,8 @@ runStructuredAST structure alternativeCases alternativeConstructors tree entries
       (Just method, Just entry) -> Right (method, entry)
       _ -> Left (UnknownStructureTarget selected)
     alternatives = Alternatives
-      { caseOf = (`lookup` alternativeCases)
-      , constructorsOf = (`lookup` alternativeConstructors)
-      , selectorOf = \contract -> case (lookup contract (structureEntries structure)
-          , [target | target <- selectors, targetName target == contract]) of
-          (Just method, target : _) -> Just (method, target)
-          _ -> Nothing
+      { checkGroup = checkAlternative structure alternativeCases alternativeConstructors
+      , selectorTarget = \contract -> case [target | target <- selectors, targetName target == contract] of
+          target : _ -> Just target
+          [] -> Nothing
       }
-
--- alternative 的生成表与当前 AST 分组不一致：生成结果已过期。
-invalidAlternative :: [String] -> Either (StructureError method) value
-invalidAlternative = Left . InvalidAlternative

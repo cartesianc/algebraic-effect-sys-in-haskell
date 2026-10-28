@@ -71,7 +71,7 @@ interpreter namespace registered sourceFingerprint initialize alternativeCases a
       | otherwise -> do
           verifyHandlerSource namespace sourceFingerprint
           structure <- initializeBeforeBusiness
-          rendered <- either (ioError . userError . show) pure (renderStructure structure (map fst alternativeConstructors) tree)
+          rendered <- either (ioError . userError . show) pure (renderStructure structure alternativeCases alternativeConstructors tree)
           putStr rendered
     _ -> ioError (userError "Usage: demo [--generate|--structure]")
   where
