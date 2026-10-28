@@ -59,20 +59,28 @@ instance FileSessionInputs m => FileSessionEffect m where
     liftIO (putStrLn ("[close] " ++ path))
     pure Nothing
 
+-- 读取是原子句柄：只执行 IO，把读到的文本交出；FileText 由挂在它下面的 ExtractFileText 产出。
 instance ReadFileInputs m => ReadFileEffect m where
-  fileText = do
+  readFileContent = do
     -- 末端也会引用 open；SDK 跳过同份已开启 scope 的方法体。
     openFileSession
     OpenedFile (FileHandle _ file) <- require @OpenedFile
     outcome <- liftIO $ tryIOError $ do
       hSeek file AbsoluteSeek 0
       -- 读完仍保留当前 Handle，供同一链随后写入；不使用会关闭它的 hGetContents。
-      FileText <$> fix (\next characters -> do
+      fix (\next characters -> do
         finished <- hIsEOF file
         if finished
           then pure (reverse characters)
           else hGetChar file >>= \character -> next (character : characters)) []
-    either (raise . ReadFileError . displayException) pure outcome
+    contents <- either (raise . ReadFileError . displayException) pure outcome
+    pure (Just contents)
+
+-- 挂在读取句柄下：读取在剧本中执行时由 SDK 注入，用这次读到的文本产出 FileText，不再读一次文件。
+instance ExtractFileTextInputs m => ExtractFileTextEffect m where
+  fileText = do
+    contents <- readFileContent
+    maybe (raise (ExtractFileTextError "File read returned no text")) (pure . FileText) contents
 
 instance FileRecoveryInputs m => FileRecoveryEffect m where
   detectFileSession = do
@@ -90,7 +98,9 @@ instance FileRecoveryInputs m => FileRecoveryEffect m where
 
 instance WriteFileInputs m => WriteFileEffect m where
   writeFileText = do
-    FileText contents <- request @FileText
+    -- 组合读取句柄：读取执行后，挂接的 ExtractFileText 产出 FileText，这里 require 取用。
+    readFileContent
+    FileText contents <- require @FileText
     OpenedFile (FileHandle path file) <- require @OpenedFile
     -- 明确消费刚读出的文本；只追加，不截断已有内容。
     let line = "file-demo: read " ++ show (length contents) ++ " characters before this append.\n"

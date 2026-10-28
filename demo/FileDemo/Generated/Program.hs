@@ -19,8 +19,9 @@ registeredEffects =
   , EffectSpec {name = "FileResource", typing = Context {request = Just (Requester {handler = "openedFile", representation = TypeRef "FileHandle"})}, input = "ValidateFileName", demands = [Demand {access = RequireAccess, contract = "FileName"}]}
   , EffectSpec {name = "FileSession", typing = Scoped {open = Just "openFileSession", close = Just "closeFileSession"}, input = "ValidateFileName", demands = [Demand {access = RequestAccess, contract = "OpenedFile"},Demand {access = RequireAccess, contract = "OpenedFile"}]}
   , EffectSpec {name = "FileRecovery", typing = Error {detect = Just "detectFileSession", resolve = Just "resolveFileSession", handles = [RaisedBy "ReadFile",RaisedBy "WriteFile"]}, input = "FileSession", demands = [Demand {access = RequireAccess, contract = "OpenedFile"}]}
-  , EffectSpec {name = "ReadFile", typing = Context {request = Just (Requester {handler = "fileText", representation = TypeRef "[Char]"})}, input = "FileSession", demands = [Demand {access = RequireAccess, contract = "OpenedFile"}]}
-  , EffectSpec {name = "WriteFile", typing = Excu {handler = Just "writeFileText"}, input = "FileSession", demands = [Demand {access = RequestAccess, contract = "FileText"},Demand {access = RequireAccess, contract = "OpenedFile"}]}
+  , EffectSpec {name = "ReadFile", typing = Excu {handler = Just "readFileContent"}, input = "FileSession", demands = [Demand {access = RequireAccess, contract = "OpenedFile"}]}
+  , EffectSpec {name = "ExtractFileText", typing = Context {request = Just (Requester {handler = "fileText", representation = TypeRef "[Char]"})}, input = "ReadFile", demands = []}
+  , EffectSpec {name = "WriteFile", typing = Excu {handler = Just "writeFileText"}, input = "ReadFile", demands = [Demand {access = RequireAccess, contract = "FileText"},Demand {access = RequireAccess, contract = "OpenedFile"}]}
   , EffectSpec {name = "FileWorkflow", typing = Excu {handler = Just "runFileWorkflow"}, input = "WriteFile", demands = [Demand {access = RequestAccess, contract = "FileName"}]}
   ]
 
@@ -56,16 +57,18 @@ generatedEffectGraph = SDK.EffectGraph
   { SDK.graphMethods =
       [ SDK.MethodDefinition RunFileWorkflowGen RunFileWorkflowGen SDK.HandlerMethod (SDK.Sequence [SDK.Call FileNameGen, SDK.Call OpenFileSessionGen, SDK.Call WriteFileTextGen])
       , SDK.MethodDefinition FileNameGen FileNameGen SDK.ContextRequest (SDK.Empty)
-      , SDK.MethodDefinition OpenFileSessionGen OpenFileSessionGen SDK.ScopeOpen (SDK.Sequence [SDK.Call OpenedFileGen, SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Sequence [SDK.Empty, SDK.Call ReadOpenedFileGen]]]])
+      , SDK.MethodDefinition OpenFileSessionGen OpenFileSessionGen SDK.ScopeOpen (SDK.Call OpenedFileGen)
       , SDK.MethodDefinition OpenedFileGen OpenedFileGen SDK.ContextRequest (SDK.Sequence [SDK.Call ValidateFileNameGen, SDK.Call ReadFileNameGen])
       , SDK.MethodDefinition ValidateFileNameGen ValidateFileNameGen SDK.HandlerMethod (SDK.Call ReadFileNameGen)
       , SDK.MethodDefinition ReadFileNameGen FileNameGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call FileNameGen])
+      , SDK.MethodDefinition WriteFileTextGen WriteFileTextGen SDK.HandlerMethod (SDK.Sequence [SDK.Call ReadFileContentGen, SDK.Call ReadFileTextGen, SDK.Call ReadOpenedFileGen])
+      , SDK.MethodDefinition ReadFileContentGen ReadFileContentGen SDK.HandlerMethod (SDK.Sequence [SDK.Sequence [SDK.Call OpenFileSessionGen, SDK.Call ReadOpenedFileGen], SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]])
       , SDK.MethodDefinition ReadOpenedFileGen OpenedFileGen SDK.ContextRequire (SDK.Empty)
-      , SDK.MethodDefinition WriteFileTextGen WriteFileTextGen SDK.HandlerMethod (SDK.Sequence [SDK.Call FileTextGen, SDK.Call ReadOpenedFileGen])
-      , SDK.MethodDefinition FileTextGen FileTextGen SDK.ContextRequest (SDK.Sequence [SDK.Call OpenFileSessionGen, SDK.Call ReadOpenedFileGen])
+      , SDK.MethodDefinition ReadFileTextGen FileTextGen SDK.ContextRequire (SDK.Choice [SDK.Empty, SDK.Call FileTextGen])
+      , SDK.MethodDefinition FileTextGen FileTextGen SDK.ContextRequest (SDK.Call ReadFileContentGen)
       ]
   , SDK.graphRoots = [RunFileWorkflowGen]
-  , SDK.graphReferences = [(RunFileWorkflowGen, FileNameGen), (RunFileWorkflowGen, OpenFileSessionGen), (RunFileWorkflowGen, WriteFileTextGen), (OpenFileSessionGen, OpenedFileGen), (OpenFileSessionGen, ReadOpenedFileGen), (OpenedFileGen, ValidateFileNameGen), (OpenedFileGen, ReadFileNameGen), (ValidateFileNameGen, ReadFileNameGen), (ReadFileNameGen, FileNameGen), (WriteFileTextGen, FileTextGen), (WriteFileTextGen, ReadOpenedFileGen), (FileTextGen, OpenFileSessionGen), (FileTextGen, ReadOpenedFileGen)]
+  , SDK.graphReferences = [(RunFileWorkflowGen, FileNameGen), (RunFileWorkflowGen, OpenFileSessionGen), (RunFileWorkflowGen, WriteFileTextGen), (OpenFileSessionGen, OpenedFileGen), (OpenedFileGen, ValidateFileNameGen), (OpenedFileGen, ReadFileNameGen), (ValidateFileNameGen, ReadFileNameGen), (ReadFileNameGen, FileNameGen), (WriteFileTextGen, ReadFileContentGen), (WriteFileTextGen, ReadFileTextGen), (WriteFileTextGen, ReadOpenedFileGen), (ReadFileContentGen, OpenFileSessionGen), (ReadFileContentGen, ReadOpenedFileGen), (ReadFileTextGen, FileTextGen), (FileTextGen, ReadFileContentGen)]
   , SDK.graphScopes = [OpenFileSessionGen]
   , SDK.graphScopePaths = [[OpenFileSessionGen]]
   , SDK.graphRootPaths =

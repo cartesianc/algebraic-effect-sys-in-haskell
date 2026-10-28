@@ -39,7 +39,7 @@ deriving instance Eq ([Char]) => Eq FileText
 deriving instance Show ([Char]) => Show FileText
 
 -- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = FileNameGen | ReadFileNameGen | ValidateFileNameGen | OpenedFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | DetectFileSessionGen | ResolveFileSessionGen | FileTextGen | ReadFileTextGen | WriteFileTextGen | RunFileWorkflowGen
+data MethodGen = FileNameGen | ReadFileNameGen | ValidateFileNameGen | OpenedFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | DetectFileSessionGen | ResolveFileSessionGen | ReadFileContentGen | FileTextGen | ReadFileTextGen | WriteFileTextGen | RunFileWorkflowGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
@@ -144,32 +144,49 @@ type ReadFileInputs m = (FrameworkRoot.Capability ReadFile m, Effect FileSession
 instance FrameworkRoot.Capability ReadFile App
 
 class (Effect FileSession m, Provides OpenedFile m) => ReadFileEffect m where
-  fileText :: m (Produce ReadFile)
-  readFileText :: m (Produce ReadFile)
-  readFileText = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @Root) $
-    SDK.readContext "ReadFile" ContextBindingError [("WriteFile", SDK.RequestValue)] Nothing boundReadFile fileText
-  {-# MINIMAL fileText #-}
+  readFileContent :: m (Maybe String)
+  {-# MINIMAL readFileContent #-}
 
 instance (Monad m, Effect FileSession m, ReadFileEffect m) => Effect ReadFile m where
   type Registration ReadFile = Registered ReadFileEffect FileSession
-  type Typing ReadFile = 'SDK.ContextKind
+  type Typing ReadFile = 'SDK.ExcuKind
   type Require ReadFile = OpenedFile
-  type Produce ReadFile = FileText
   type Error ReadFile = ReadFileError
   raise (ReadFileError description) = SDK.failEffect "ReadFile" ReadFileFailure description
   handler = FrameworkRoot.handler @Root
 
+data ExtractFileText
+
+type ExtractFileTextInputs m = (FrameworkRoot.Capability ExtractFileText m, Effect ReadFile m, ReadFileEffect m, FileSessionEffect m, ValidateFileNameEffect m, MonadIO m)
+instance FrameworkRoot.Capability ExtractFileText App
+
+class (Effect ReadFile m) => ExtractFileTextEffect m where
+  fileText :: m (Produce ExtractFileText)
+  readFileText :: m (Produce ExtractFileText)
+  readFileText = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @Root) $
+    SDK.readContext "ExtractFileText" ContextBindingError [("WriteFile", SDK.RequireValue)] Nothing boundExtractFileText fileText
+  {-# MINIMAL fileText #-}
+
+instance (Monad m, Effect ReadFile m, ExtractFileTextEffect m) => Effect ExtractFileText m where
+  type Registration ExtractFileText = Registered ExtractFileTextEffect ReadFile
+  type Typing ExtractFileText = 'SDK.ContextKind
+  type Require ExtractFileText = SDK.Void
+  type Produce ExtractFileText = FileText
+  type Error ExtractFileText = ExtractFileTextError
+  raise (ExtractFileTextError description) = SDK.failEffect "ExtractFileText" ExtractFileTextFailure description
+  handler = FrameworkRoot.handler @Root
+
 data WriteFile
 
-type WriteFileInputs m = (FrameworkRoot.Capability WriteFile m, Effect FileSession m, Provides FileText m, Provides OpenedFile m, FileSessionEffect m, ValidateFileNameEffect m, MonadIO m)
+type WriteFileInputs m = (FrameworkRoot.Capability WriteFile m, Effect ReadFile m, Provides FileText m, Provides OpenedFile m, ReadFileEffect m, FileSessionEffect m, ValidateFileNameEffect m, MonadIO m)
 instance FrameworkRoot.Capability WriteFile App
 
-class (Effect FileSession m, Provides FileText m, Provides OpenedFile m) => WriteFileEffect m where
+class (Effect ReadFile m, Provides FileText m, Provides OpenedFile m) => WriteFileEffect m where
   writeFileText :: m (Maybe String)
   {-# MINIMAL writeFileText #-}
 
-instance (Monad m, Effect FileSession m, WriteFileEffect m) => Effect WriteFile m where
-  type Registration WriteFile = Registered WriteFileEffect FileSession
+instance (Monad m, Effect ReadFile m, WriteFileEffect m) => Effect WriteFile m where
+  type Registration WriteFile = Registered WriteFileEffect ReadFile
   type Typing WriteFile = 'SDK.ExcuKind
   type Require WriteFile = (FileText, OpenedFile)
   type Error WriteFile = WriteFileError
@@ -178,7 +195,7 @@ instance (Monad m, Effect FileSession m, WriteFileEffect m) => Effect WriteFile 
 
 data FileWorkflow
 
-type FileWorkflowInputs m = (FrameworkRoot.Capability FileWorkflow m, Effect WriteFile m, Provides FileName m, WriteFileEffect m, FileSessionEffect m, ValidateFileNameEffect m, MonadIO m)
+type FileWorkflowInputs m = (FrameworkRoot.Capability FileWorkflow m, Effect WriteFile m, Provides FileName m, WriteFileEffect m, ReadFileEffect m, FileSessionEffect m, ValidateFileNameEffect m, MonadIO m)
 instance FrameworkRoot.Capability FileWorkflow App
 
 class (Effect WriteFile m, Provides FileName m) => FileWorkflowEffect m where
@@ -206,9 +223,9 @@ instance (FileResourceEffect App) => Provides OpenedFile App where
   request = SDK.provideContext "OpenedFile" ContextBindingError [("FileSession", openedFile)]
   require = SDK.provideContext "OpenedFile" ContextBindingError [("FileSession", readOpenedFile), ("FileRecovery", readOpenedFile), ("ReadFile", readOpenedFile), ("WriteFile", readOpenedFile)]
 
-instance (ReadFileEffect App) => Provides FileText App where
-  request = SDK.provideContext "FileText" ContextBindingError [("WriteFile", fileText)]
-  require = SDK.provideContext "FileText" ContextBindingError []
+instance (ExtractFileTextEffect App) => Provides FileText App where
+  request = SDK.provideContext "FileText" ContextBindingError []
+  require = SDK.provideContext "FileText" ContextBindingError [("WriteFile", readFileText)]
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
 newtype FileLocationError = FileLocationError String
@@ -235,6 +252,10 @@ newtype ReadFileError = ReadFileError String
   deriving (Eq, Show, Read)
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+newtype ExtractFileTextError = ExtractFileTextError String
+  deriving (Eq, Show, Read)
+
+-- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
 newtype WriteFileError = WriteFileError String
   deriving (Eq, Show, Read)
 
@@ -243,14 +264,14 @@ newtype FileWorkflowError = FileWorkflowError String
   deriving (Eq, Show, Read)
 
 -- 统一失败协议的分类标签；消息与来源由 SDK.Failure 保存。
-data Errors = FileLocationFailure | ValidateFileNameFailure | FileResourceFailure | FileSessionFailure | FileRecoveryFailure | ReadFileFailure | WriteFileFailure | FileWorkflowFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+data Errors = FileLocationFailure | ValidateFileNameFailure | FileResourceFailure | FileSessionFailure | FileRecoveryFailure | ReadFileFailure | ExtractFileTextFailure | WriteFileFailure | FileWorkflowFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。
 data ContextValues = ContextValues
   { boundFileLocation :: Maybe (Produce FileLocation)
   , boundFileResource :: Maybe (Produce FileResource)
-  , boundReadFile :: Maybe (Produce ReadFile)
+  , boundExtractFileText :: Maybe (Produce ExtractFileText)
   }
 
 emptyContexts :: ContextValues

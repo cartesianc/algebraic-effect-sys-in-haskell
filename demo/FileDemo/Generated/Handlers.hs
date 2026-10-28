@@ -98,28 +98,41 @@ instance FileSessionInputs m => FileSessionEffect m where
           pure Nothing
       in closeFileSession
 
+-- 读取是原子句柄：只执行 IO，把读到的文本交出；FileText 由挂在它下面的 ExtractFileText 产出。
 instance ReadFileInputs m => ReadFileEffect m where
-  fileText =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.callContext "ReadFile" FrameworkGenerated.ContextBindingError
-      [("WriteFile", FrameworkRuntime.RequestValue)]
-      Nothing
-      FrameworkGenerated.boundReadFile
-      (\value bindings -> bindings { FrameworkGenerated.boundReadFile = Just value })) $
+  readFileContent =
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "readFileContent" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "ReadFile") $
       let
-        fileText :: (m) (FrameworkGenerated.FileText)
-        fileText = do
+        readFileContent :: (m) (Maybe String)
+        readFileContent = do
           -- 末端也会引用 open；SDK 跳过同份已开启 scope 的方法体。
           openFileSession
           OpenedFile (FileHandle _ file) <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
             hSeek file AbsoluteSeek 0
             -- 读完仍保留当前 Handle，供同一链随后写入；不使用会关闭它的 hGetContents。
-            FileText <$> fix (\next characters -> do
+            fix (\next characters -> do
               finished <- hIsEOF file
               if finished
                 then pure (reverse characters)
                 else hGetChar file >>= \character -> next (character : characters)) []
-          either (raise . ReadFileError . displayException) pure outcome
+          contents <- either (raise . ReadFileError . displayException) pure outcome
+          pure (Just contents)
+      in readFileContent
+
+-- 挂在读取句柄下：读取在剧本中执行时由 SDK 注入，用这次读到的文本产出 FileText，不再读一次文件。
+instance ExtractFileTextInputs m => ExtractFileTextEffect m where
+  fileText =
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.callContext "ExtractFileText" FrameworkGenerated.ContextBindingError
+      [("WriteFile", FrameworkRuntime.RequireValue)]
+      Nothing
+      FrameworkGenerated.boundExtractFileText
+      (\value bindings -> bindings { FrameworkGenerated.boundExtractFileText = Just value })) $
+      let
+        fileText :: (m) (FrameworkGenerated.FileText)
+        fileText = do
+          contents <- readFileContent
+          maybe (raise (ExtractFileTextError "File read returned no text")) (pure . FileText) contents
       in fileText
 
 instance FileRecoveryInputs m => FileRecoveryEffect m where
@@ -152,7 +165,9 @@ instance WriteFileInputs m => WriteFileEffect m where
       let
         writeFileText :: (m) (Maybe String)
         writeFileText = do
-          FileText contents <- request @FileText
+          -- 组合读取句柄：读取执行后，挂接的 ExtractFileText 产出 FileText，这里 require 取用。
+          readFileContent
+          FileText contents <- require @FileText
           OpenedFile (FileHandle path file) <- require @OpenedFile
           -- 明确消费刚读出的文本；只追加，不截断已有内容。
           let line = "file-demo: read " ++ show (length contents) ++ " characters before this append.\n"
@@ -182,7 +197,7 @@ instance FileWorkflowInputs m => FileWorkflowEffect m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "8a518abe794e459a2788c0db60f69d87"
+handlerSourceFingerprint = Just "cb8d1f0413031e0f81a99785a025939d"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -211,5 +226,5 @@ errorHandlers =
 -- 挂在原子句柄下的 Context：句柄的输出交给它解析并发布为资产；没有挂接时输出被丢弃。
 contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
 contextInjections =
-  [ ("openFileSession", [("ReadFile", () <$ fileText)])
+  [ ("readFileContent", [("ExtractFileText", () <$ fileText)])
   ]
