@@ -1,8 +1,9 @@
 -- 保留原生 Haskell 方法体；生成独立结构副本，并添加注册声明的运行入口包装。
-module Framework.Codegen.Handlers (prepareHandlers, HandlerShape(..)) where
+module Framework.Codegen.Handlers (prepareHandlers, loadSumTypes, HandlerShape(..)) where
 
 import Control.Exception (evaluate)
 import Control.Monad.IO.Class (liftIO)
+import Data.Foldable (toList)
 import Data.List (intercalate, isPrefixOf, sortOn)
 import Data.Maybe (isJust)
 import Framework.Codegen.Structure (HandlerShape(..), analyzeModule)
@@ -78,29 +79,79 @@ prepareHandlers namespace wrappers scopeHandlers routes = do
 
 loadHandlers :: String -> IO (Maybe (String, HsModule GhcPs, Bool, Bool))
 loadHandlers namespace = do
-  let directory = "demo" </> map (\c -> if c == '.' then pathSeparator else c) namespace
-      inputPath = directory </> "Handlers.hs"
+  let inputPath = namespaceDirectory namespace </> "Handlers.hs"
   exists <- doesFileExist inputPath
-  if not exists then pure Nothing else do
-    source <- withFile inputPath ReadMode $ \handle -> do
-      hSetEncoding handle utf8
-      hSetNewlineMode handle universalNewlineMode
-      contents <- hGetContents handle
-      _ <- evaluate (length contents)
-      pure contents
-    library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
-    runGhc (Just library) $ do
-      initial <- getSessionDynFlags
-      let buffer = stringToStringBuffer source
-          (_, options) = getOptions (initParserOpts initial) buffer inputPath
-      (flags, _, _) <- parseDynamicFilePragma initial options
-      let state = initParserState (initParserOpts flags) buffer
-            (mkRealSrcLoc (mkFastString inputPath) 1 1)
-      case unP Parser.parseModule state of
-        PFailed _ -> liftIO (ioError (userError ("Cannot parse " ++ inputPath ++ "; check its Haskell syntax")))
-        POk _ parsed ->
-          let enabled name = any (\option -> flagSpecName option == name && xopt (flagSpecFlag option) flags) xFlags
-          in pure (Just (source, unLoc parsed, enabled "ImplicitPrelude", enabled "RebindableSyntax"))
+  if not exists then pure Nothing else Just <$> parseSourceFile inputPath
+
+namespaceDirectory :: String -> FilePath
+namespaceDirectory namespace = "demo" </> map (\c -> if c == '.' then pathSeparator else c) namespace
+
+-- 以文件自身的语言扩展解析源码；只读取语法树，不加载或执行模块。
+parseSourceFile :: FilePath -> IO (String, HsModule GhcPs, Bool, Bool)
+parseSourceFile inputPath = do
+  source <- withFile inputPath ReadMode $ \handle -> do
+    hSetEncoding handle utf8
+    hSetNewlineMode handle universalNewlineMode
+    contents <- hGetContents handle
+    _ <- evaluate (length contents)
+    pure contents
+  library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
+  runGhc (Just library) $ do
+    initial <- getSessionDynFlags
+    let buffer = stringToStringBuffer source
+        (_, options) = getOptions (initParserOpts initial) buffer inputPath
+    (flags, _, _) <- parseDynamicFilePragma initial options
+    let state = initParserState (initParserOpts flags) buffer
+          (mkRealSrcLoc (mkFastString inputPath) 1 1)
+    case unP Parser.parseModule state of
+      PFailed _ -> liftIO (ioError (userError ("Cannot parse " ++ inputPath ++ "; check its Haskell syntax")))
+      POk _ parsed ->
+        let enabled name = any (\option -> flagSpecName option == name && xopt (flagSpecFlag option) flags) xFlags
+        in pure (source, unLoc parsed, enabled "ImplicitPrelude", enabled "RebindableSyntax")
+
+-- Types.hs 中的和类型：至少两个构造器、每个构造器至多一个字段；字段类型取源码原文。
+-- 有构造器带多个字段的类型不算和类型资产，不生成分支契约。
+loadSumTypes :: String -> IO [(String, [(String, Maybe String)])]
+loadSumTypes namespace = do
+  let inputPath = namespaceDirectory namespace </> "Types.hs"
+  exists <- doesFileExist inputPath
+  if not exists then pure [] else do
+    (source, parsed, _, _) <- parseSourceFile inputPath
+    let text located = case getLocA located of
+          RealSrcSpan span _ ->
+            let start = sourceOffset source (srcSpanStartLine span) (srcSpanStartCol span)
+                end = sourceOffset source (srcSpanEndLine span) (srcSpanEndCol span)
+            in Just (dropWhile (`elem` "!~ ") (take (end - start) (drop start source)))
+          _ -> Nothing
+        fields declaration = case unLoc declaration of
+          ConDeclH98 { con_name = constructor, con_args = arguments } ->
+            let named = occNameString (rdrNameOcc (unLoc constructor))
+            in case arguments of
+              PrefixCon _ [] -> Just (named, Nothing)
+              PrefixCon _ [HsScaled _ argument] -> (\found -> (named, Just found)) <$> text argument
+              RecCon (L _ [L _ ConDeclField { cd_fld_names = [_], cd_fld_type = argument }]) ->
+                (\found -> (named, Just found)) <$> text argument
+              _ -> Nothing
+          _ -> Nothing
+    pure
+      [ (occNameString (rdrNameOcc typeName), constructors)
+      | L _ (TyClD _ DataDecl { tcdLName = L _ typeName, tcdDataDefn = HsDataDefn { dd_cons = declared } }) <- hsmodDecls parsed
+      , let candidates = map fields (toList declared)
+      , length candidates > 1, all (/= Nothing) candidates
+      , let constructors = [found | Just found <- candidates] ]
+
+-- 行列号（列按 GHC 的制表位规则）换算为源码字符偏移。
+sourceOffset :: String -> Int -> Int -> Int
+sourceOffset source line column =
+  sum (map ((+ 1) . length) (take (line - 1) (lines source)))
+  + columnOffset 1 (lines source !! (line - 1))
+  where
+    columnOffset current remaining
+      | current >= column = 0
+      | otherwise = case remaining of
+          [] -> 0
+          character : rest -> 1 + columnOffset
+            (if character == '\t' then current + 8 - (current - 1) `mod` 8 else current + 1) rest
 
 wrapModule
   :: String -> String -> [(String, String, String, String)] -> [String] -> String -> HsModule GhcPs

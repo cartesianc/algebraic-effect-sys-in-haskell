@@ -136,31 +136,33 @@ produced specification = case typing specification of
   _ -> Nothing
 
 -- 契约名来自 handler 名，而方法名在注册集合中唯一，因此每个契约恰好对应一个生产方。
-resolveDemands :: [EffectSpec] -> EffectSpec -> Either String [ResolvedDemand]
-resolveDemands specifications consumer = do
+-- branches：和类型资产的分支契约 → 基础契约；分支契约由基础契约的生产方提供（投影）。
+resolveDemands :: [(String, String)] -> [EffectSpec] -> EffectSpec -> Either String [ResolvedDemand]
+resolveDemands branches specifications consumer = do
   let keys = [(access demand, contract demand) | demand <- demands consumer]
   unless (length keys == length (nub keys)) $
     Left ("Duplicate demand in " ++ name consumer ++ "; each contract may be requested and required once")
   mapM resolveOne (demands consumer)
   where
     resolveOne demand = do
+      let producedContract = maybe (contract demand) id (lookup (contract demand) branches)
       provider <- case [specification | specification <- specifications
-            , name specification /= name consumer, produced specification == Just (contract demand)] of
+            , name specification /= name consumer, produced specification == Just producedContract] of
         specification : _ -> pure specification
         [] -> Left ("No Context produces contract " ++ contract demand ++ " for " ++ name consumer
           ++ "; a contract is named after its producer's handler with the first letter capitalized")
       pure (ResolvedDemand (access demand) (contract demand) (name provider))
 
 -- 收集声明前提所需的 Context，按依赖顺序去重；不根据业务值合并调用。
-contextNames :: [EffectSpec] -> [String] -> Either String [String]
-contextNames specifications selected = nub . concat <$> mapM (visit []) selected
+contextNames :: [(String, String)] -> [EffectSpec] -> [String] -> Either String [String]
+contextNames branches specifications selected = nub . concat <$> mapM (visit []) selected
   where
     visit _ "Root" = Right []
     visit seen selectedName
       | selectedName `elem` seen = Left ("Cyclic input/demand: " ++ selectedName)
       | otherwise = do
           specification <- findEffect specifications selectedName
-          resolved <- resolveDemands specifications specification
+          resolved <- resolveDemands branches specifications specification
           let providers = nub (map demandProvider resolved)
           upstream <- concat <$> mapM (visit (selectedName : seen)) (nub (input specification : providers))
           pure (upstream ++ providers)

@@ -9,7 +9,7 @@ module Framework.Effect
   , Output(..), Failure(..), ErrorReport(..), caughtFailure, failEffect
   , Requester(..), requester, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
   , requests, requires, Void
-  , ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, enterHandler
+  , ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, projectContext, enterHandler
   , atomicHandle, atomicScope
   , ScopeInput(..), ScopeFault(..), openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, withScopeCleanups
@@ -21,7 +21,7 @@ import Framework.Effect.Contract
   , ScopeInput(..), ScopeFault(..), ScopeStore(openScope, closeScope, withScopeDependencies)
   )
 import Framework.Effect.Context
-  ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext
+  ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, projectContext
   , atomicHandle, atomicScope )
 import Framework.Effect.Registration
   ( EffectTyping(..), Requester(..), requester, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)

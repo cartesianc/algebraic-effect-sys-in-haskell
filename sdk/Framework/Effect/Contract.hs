@@ -100,8 +100,9 @@ data RawOutput = RawOutput
   , info :: Maybe String
   } deriving (Eq, Show)
 
+-- CaseNotSelected：读取和类型资产的某个分支契约，而资产当前是另一个构造器。
 data ContextFault = ContextNotInitialized | UndeclaredContextAccess String
-  | AmbiguousContextBinding String
+  | AmbiguousContextBinding String | CaseNotSelected String
   deriving (Eq, Show)
 
 -- 开启参数保留真实 ADT 值；类型相同且 Eq 相等才是同一输入。

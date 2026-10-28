@@ -232,8 +232,27 @@ ast = chained [parsePages, printPages]
 ```
 
 - **文件组织**：每个 branch 放在 `Workflow/` 下单独的文件里，顶层只组合这些名字。
-- **列表类型**：同一个列表里要么全是 node，要么全是 branch，单个 node 也要包进 `chained` 或 `parallel`。
+- **列表类型**：同一个列表里要么全是 node，要么全是 branch，单个 node 也要包进 `chained`、`parallel` 或 `alternative`。
 - **节点之间**：一个 node 的结果不会自动传给下一个 node；操作之间的值传递只通过 Context。
+
+### 按状态选择：`alternative`
+
+`alternative` 只列出候选，不写条件，选哪一个由一个和类型资产自动决定（节选自 [FileDemo](demo/FileDemo)）：
+
+```haskell
+-- Types.hs：文件状态是和类型
+data TextState = Blank | Written String
+
+-- Effects.hs：Context 产出这个和类型
+typing = Context { request = requester "fileText" @TextState }
+
+-- Workflow/OperateFile.hs：AST 里只有候选
+operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
+```
+
+- **分支契约**：Context 的表示类型是和类型时，生成器为每个构造器产出一个分支契约，名字是契约名加构造器名，例如 `FileTextBlank`、`FileTextWritten`。资产当前是哪个构造器，对应的分支契约才能取到值，所以分支契约只能 `require`。
+- **候选怎么对应**：每个候选在 `demands` 里 `requires` 一个分支契约（`WriteFirstLine` 依赖 `FileTextBlank`，`AppendLine` 依赖 `FileTextWritten`），生成器据此知道它对应哪个构造器，并要求候选覆盖全部构造器。
+- **运行时**：先 `require` 这个资产（已有值就直接用，没有就按需生产一次），再启动对应的候选；没被选中的候选不执行。
 
 ## 开发流程
 
@@ -267,6 +286,7 @@ cabal run crawler-demo -- --structure
 | 普通顶层函数显式使用业务类型、构造器或字段 | 把这部分操作移进注册的 instance 方法；只处理 `String` 等通用类型的 helper 可以保留 |
 | 把 effect 调用藏进 helper、未知的高阶组合或循环 | 在方法体中直接调用；支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法 |
 | 方法体调用了自己 `input` 链以外的 effect 方法 | GHC 报错（缺少该 effect 的能力）；把它加进 `input` 链，或改用 Context 取值 |
+| `alternative` 的候选没有依赖分支契约、依赖了多个，或候选没覆盖和类型的全部构造器；分支契约被写成 `requests` | 每个候选 `requires` 恰好一个分支契约，候选覆盖全部构造器；分支契约只能 `requires` |
 | AST 的 node 选中了 Context | node 只挂原始句柄；Context 由它挂接的句柄执行时产出，或被 `request`／`require` 时产出 |
 | 某个 Context 从 AST 出发永远到不了：既没有 node 带起它挂接的句柄，也没有被带起的链 `request`／`require` 它 | 把带起它的链加进 AST，或删掉这个 Context |
 
@@ -283,7 +303,7 @@ cabal run crawler-demo -- --structure
 
 | 示例 | 演示内容 | 运行 |
 | --- | --- | --- |
-| [FileDemo](demo/FileDemo) | 文件资源的开启、读写、自动关闭，Error 处置 | `cabal run file-demo` |
+| [FileDemo](demo/FileDemo) | 文件资源的开启、读写、自动关闭，Error 处置；按文件状态用 `alternative` 选择写首行或追加 | `cabal run file-demo` |
 | [Crawler](demo/Crawler) | 并行抓取、挂接的 Context 解析，顺序打印时读取解析结果；用不同契约区分同类数据 | `cabal run crawler-demo` |
 | [OpenFilesDemo](demo/OpenFilesDemo) | 一个资源持有多个文件，链结束后自动关闭与重开 | `cabal run open-files-demo` |
 | [ScopeInstancesDemo](demo/ScopeInstancesDemo) | 按参数区分资源实例、复用与重开 | `cabal run scope-instances-demo` |

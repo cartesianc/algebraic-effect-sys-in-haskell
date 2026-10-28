@@ -43,7 +43,7 @@ effects =
       { name = "FileRecovery"
       , typing = Error
           { detect = Just "detectFileSession", resolve = Just "resolveFileSession"
-          , handles = [RaisedBy "ReadFile", RaisedBy "WriteFile"]
+          , handles = [RaisedBy "ReadFile", RaisedBy "WriteFirstLine", RaisedBy "AppendLine"]
           }
       , input = "FileSession"
       , demands = [requires "OpenedFile"]
@@ -54,22 +54,24 @@ effects =
       , input = "FileSession"
       , demands = [requires "OpenedFile"]
       }
+  -- 文件状态是和类型资产：生成器另为构造器产出分支契约 FileTextBlank、FileTextWritten。
   , EffectSpec
       { name = "ExtractFileText"
-      , typing = Context { request = requester "fileText" @String }
+      , typing = Context { request = requester "fileText" @TextState }
       , input = "ReadFile"
       , demands = []
       }
+  -- alternative 的两个候选：各自 require 一个分支契约，由此对应文件状态的一个构造器。
   , EffectSpec
-      { name = "WriteFile"
-      , typing = Excu { handler = Just "writeFileText" }
-      , input = "ReadFile"
-      , demands = [requires "FileText", requires "OpenedFile"]
+      { name = "WriteFirstLine"
+      , typing = Excu { handler = Just "writeFirstLine" }
+      , input = "FileSession"
+      , demands = [requires "FileTextBlank", requires "OpenedFile"]
       }
   , EffectSpec
-      { name = "FileWorkflow"
-      , typing = Excu { handler = Just "runFileWorkflow" }
-      , input = "WriteFile"
-      , demands = [requests "FileName"]
+      { name = "AppendLine"
+      , typing = Excu { handler = Just "appendLine" }
+      , input = "FileSession"
+      , demands = [requires "FileTextWritten", requires "OpenedFile"]
       }
   ]

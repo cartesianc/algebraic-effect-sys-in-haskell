@@ -317,7 +317,9 @@ Types、Effects、AST 独立于 Generated 与 Handlers；effect 标记和错误�
 生成副本保存实际解析的手写源码指纹，公共运行入口在业务执行前比对当前 Handlers.hs；缺失或变更时拒绝启动并提示重新生成，同时比对注册快照。此检查要求从仓库根目录访问手写源，不替代显式生成或编译。
 已有 Main --generate 仍要求导入链能编译，不能替代独立首次生成入口。
 各 demo 都演示 instance 内沿 Input 引用类方法；爬虫由 Node algebra lower 末端，组织并行抓取（同时注入解析）与顺序打印。生成时检查末端不是 Context，且每个 Context 都能从末端到达（经调用、require 的按需求值或挂接句柄的注入）。
-文件 demo 同样只选择末端；路径、活文件句柄与文本归 Context，校验归 Pure，读取与写入归 Excu，Scoped 的 open／close 均为 m (Maybe String)。读取 ReadFile 是原子句柄，交出读到的文本；ExtractFileText 以 input 挂在它下面，产出 FileText。WriteFile 的 input 是 ReadFile，方法体先调用读取句柄，再 require FileText，因此一次运行只读一次文件。FileWorkflow 在本链先 request 稳定路径，校验及开启参数 require 该绑定，链结束后自动清理；FileRecovery 仍检测已捕获的文件并显式引用 closeFileSession。
+文件 demo 同样只选择末端；路径、活文件句柄与文件状态归 Context，校验归 Pure，读取与写入归 Excu，Scoped 的 open／close 均为 m (Maybe String)。读取 ReadFile 是原子句柄，交出读到的文本；ExtractFileText 以 input 挂在它下面，产出和类型资产 FileText（Blank 或 Written）。AST 是 alternative [WriteFirstLine, AppendLine]：两个候选分别 require 分支契约 FileTextBlank 与 FileTextWritten，运行时先 require FileText（尚无值时驱动读取），再按构造器启动写入首行或追加。每个候选自行开启文件，链结束后自动清理；FileRecovery 仍检测已捕获的文件并显式引用 closeFileSession。
+
+alternative 是按状态选择的控制流，放在 AST 而不是 handler 中；AST 只列候选、不写条件，不把业务状态暴露进控制流。选择依据来自和类型资产：每个构造器对应一个分支契约，候选经 requires 依赖其中一个，gencode 据此推出对应关系并要求覆盖全部构造器。effect chain 是无时序的操作组合，运行时已经消解为闭包，不能在链中间打断或重组；选择因此放在 Node 边界、分两段启动：先 require 转折资产，再启动对应候选。运行时不保存 effect chain 的原型，只在已装配的闭包之间选择。
 OpenFilesDemo 改为每条链显式 open：InspectFiles 观察当前链及 GC 期间十个文件的存续，FinishInspection 开启自己的新一轮并演示显式关闭；不再要求前一 Node 的活资源自动留给后一 Node。
 ScopeInstancesDemo 在每条链先取得稳定参数，保留链内同参 require 共享、异参独立和显式关闭；后续 Node 显式开启新一轮，不读取或改写旧 owner。
 ScopeReuseDemo 的三个 writer 各自先 request 参数，scope 内 require；只有实际重叠的使用可以共享，不能固定断言整个 parallel 批次只开一次。汇合后用已有日志和输出核对获取／关闭计数匹配及三次写入，不再 require 已结束闭包的资源；追加模式保留多个开闭周期的内容。

@@ -28,7 +28,7 @@ withX、initializeX、链式 runX 和外部逐 effect impl 已取消。载体和
 Context 绑定已由 SDK 接通：request 成功发布新绑定，require 读取 state、无值时按需求值一次 request；不通过外部初始化建立业务 Context。资产绑定在一次 interpreter 运行内跨 Node 保存，scope 开启期绑定随实际实例保存，仅在该实例仍被使用或依赖保留时跨链共享，不为未来 Node 保留活资源。
 
 原子 effect 与 effect 链分属两个层级。AST 组织完整链的启动与执行控制，不描述节点的业务状态转移；业务值依赖与状态操作由 effect system 的声明、协议及 handler 承接。
-chained、parallel、loop 是同级 branch；loop 的事件触发语义已确认，尚未实现。demo/Crawler/Workflow 下的 node 只挂载所选链的末端，
+chained、parallel、alternative、loop 是同级 branch；alternative 已实现，loop 的事件触发语义已确认，尚未实现。demo/Crawler/Workflow 下的 node 只挂载所选链的末端，
 URL 由 request 来源 CrawlerContext 类方法产生；Node 只 lower 对应末端。HTTP、HTML 内容解析与
 输出留在 instance，连接由注册描述。chained 遇失败停止；parallel 等待全部子分支后汇总，
 结果按声明顺序排列，有失败时保留声明顺序中首个失败的来源与负载。整棵 AST 只封装一次
@@ -289,8 +289,10 @@ BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两�
 
 ## 内部控制与外部触发
 
-node 表示一整条 effect 链的可调用入口；chained、parallel、loop 是同级的 branch 组织方式。
-chained 按前一次成功完成推进，parallel 并发启动并等待全部完成，loop 按事件触发启动。
+node 表示一整条 effect 链的可调用入口；chained、parallel、alternative、loop 是同级的 branch 组织方式。
+chained 按前一次成功完成推进，parallel 并发启动并等待全部完成，alternative 按和类型资产的当前构造器启动一个候选，loop 按事件触发启动。
+
+alternative 只列候选、不写条件，不把业务状态暴露进 AST。Context 的表示类型是和类型时，生成器为每个构造器产出分支契约（契约名加构造器名），它是基础资产的投影，只能 require；候选经注册（末端及其 Input 链上游的 requires）依赖一个分支契约，gencode 推出"候选末端 → (转折契约, 构造器)"的静态表并要求覆盖全部构造器。运行时两段启动：先 require 转折资产（state 中已有值直接用，否则按需求值一次），再启动对应候选，未选中的候选不执行。effect chain 运行时已消解为闭包，选择只发生在 Node 边界，不保存 chain 原型、不在链中间打断或重组，也不需要 call/cc 式的 continuation。
 不把 loop 当作 chained 中等待完成的普通执行项；涉及 loop 及其他新增 branch 的嵌套规则另定。
 
 “只负责启动逻辑，不负责状态转移”中的状态指业务状态。AST 不保存可变节点状态、上次产物或业务状态机，也不据此隐式传值；但完成、失败停止、并发汇合仍属于它的执行控制语义，运行记录由 SDK 持有。业务状态变化由 effect handler 执行。Context 按 request／require 引用，普通绑定与 scope 开启期绑定分别由 SDK 管理；scope 状态也属于 SDK，不引入节点业务状态机。
@@ -311,7 +313,7 @@ loop 拟沿用 recursion scheme 的 algebra lower 为执行闭包：建立订阅
 | 内部控制 | 根据调用完成或判断结果选择后续启动；跨次业务值依赖由 effect system 声明 | 校验不通过后触发调整，再次校验 |
 | 外部触发 | 声明事件来源或持续状态、变化条件与处理目标，激发新调用或恢复等待中的调用 | 新修改稿到达后再次审核 |
 
-Alternative、race、resume 仍为待定构造；useState／useEffect 只作为触发与快照的类比，loop 不隐式修改 Context。loop 每次触发启动一次调用，不隐含恢复旧调用。node 无状态不妨碍观察本次完成／失败；loop 不设继续条件，也不意味着 AST 无法表达其他条件控制。
+race、resume 仍为待定构造（alternative 已按上文实现）；useState／useEffect 只作为触发与快照的类比，loop 不隐式修改 Context。loop 每次触发启动一次调用，不隐含恢复旧调用。node 无状态不妨碍观察本次完成／失败；loop 不设继续条件，也不意味着 AST 无法表达其他条件控制。
 
 静态无环约束针对单次调用的能力与取值依赖；固定声明可动态产生多次调用并形成反馈，如 A₀ → B₀ → A₁。A₀ 与 B₀ 相互等待尚未产生的输出仍不构成可执行流程。Input、request／require 不隐含订阅或重放；require 读取 state 中的值（无值时按需求值一次 request 后即固定），普通 Pure 的成功／失败也可参与执行控制。
 
@@ -456,7 +458,7 @@ Input 继承、instance 内引用、末端登记、Node lowering 与 Error 检�
 | Node lowering | Target 保存未运行的末端与生成 scope 引用；Node algebra 只 lower，普通 Context 仍独立；构造器与裸运行器不导出 | 更细范围与跨入口存续 |
 | 句柄内 DI | demo 直接引用原生类方法；已移除外部 withX／initializeX／链式 runX | 不将执行可达性误作编译器对任意方法体的强制证明 |
 | 闭包装配 | Node algebra 只 lower 所选末端，实例内引用带起上游；有限链作为资源使用闭包 | 动态入口、跨独立 interpreter 存续 |
-| 控制与触发 | AST 负责启动与执行控制，不维护业务状态转移；node／branch 分类型，branch 分文件组合；chained／parallel 已以 cata 装配；loop 与二者同级，无条件、无跨调用业务状态；Hanging 承接事件入口 | LSP 模块定义与引用索引；loop／Hanging 接入、监听范围、单次失败与重叠处理、停止收尾；其余 branch 构造及嵌套规则 |
+| 控制与触发 | AST 负责启动与执行控制，不维护业务状态转移；node／branch 分类型，branch 分文件组合；chained／parallel／alternative 已以 cata 装配，alternative 按和类型资产的分支契约两段启动；loop 与它们同级，无条件、无跨调用业务状态；Hanging 承接事件入口 | LSP 模块定义与引用索引；loop／Hanging 接入、监听范围、单次失败与重叠处理、停止收尾；其余 branch 构造及嵌套规则 |
 | scope 边界 | open／close 均为 m (Maybe String)；开启输入 require 同参共享／request fresh，完整链持有实际实例；core 固定 once-spare，interpreter 退出兜底；显式 close 服从使用协调，重开不改旧 owner | 其他 cleanup policy、裸 forkIO 追踪、未发布的部分获取恢复、跨入口存续 |
 | 诊断与处置 | App／IO 从 scope 种子沿与清理共用的 ScopeTree 补齐祖先并 top-down 检测；detect Succ 后 resolve，保留原错误与各项完成报告；诊断结束后才撤销完整链的使用，显式关闭服从使用协议；不自动重放或恢复 | 已展开 continuation 的恢复、跨调用诊断范围 |
 | 值转换 | Generic Map 为 SDK 内置适配，不新增 adapter 配置或 Map typing；对外产值的业务纯转换注册为 Context | 原型接入注册、支持的契约结构、转换的失败输出接口 |

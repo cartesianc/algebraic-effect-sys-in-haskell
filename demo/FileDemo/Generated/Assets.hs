@@ -20,6 +20,20 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
+      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileTextBlank", assetFile = "demoFileDemo/Generated/Effects.hs", assetLine = 42, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileTextBlank", assetFile = "demoFileDemo/Generated/Effects.hs", assetLine = 42, assetColumn = 25}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileTextWritten", assetFile = "demoFileDemo/Generated/Effects.hs", assetLine = 47, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileTextWritten", assetFile = "demoFileDemo/Generated/Effects.hs", assetLine = 47, assetColumn = 27}
+          ]
+      , assetFields = []
+      }
+  , Asset
       { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demoFileDemo/Generated/Effects.hs", assetLine = 33, assetColumn = 1}
       , assetConstructors =
           [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demoFileDemo/Generated/Effects.hs", assetLine = 33, assetColumn = 22}
@@ -30,6 +44,14 @@ generatedAssets =
       { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileHandle", assetFile = "demo/FileDemo/Types.hs", assetLine = 7, assetColumn = 1}
       , assetConstructors =
           [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileHandle", assetFile = "demo/FileDemo/Types.hs", assetLine = 7, assetColumn = 19}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "TextState", assetFile = "demo/FileDemo/Types.hs", assetLine = 12, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "Blank", assetFile = "demo/FileDemo/Types.hs", assetLine = 12, assetColumn = 18}
+          , AssetSymbol {assetModule = "FileDemo.Types", assetName = "Written", assetFile = "demo/FileDemo/Types.hs", assetLine = 12, assetColumn = 26}
           ]
       , assetFields = []
       }

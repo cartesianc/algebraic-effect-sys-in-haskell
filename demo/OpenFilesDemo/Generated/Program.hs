@@ -37,19 +37,27 @@ programStructure = SDK.initializeGeneratedStructure
 data Results = HoldFilesResult (Produce HoldFiles) | InspectFilesResult (Produce InspectFiles) | FinishInspectionResult (Produce FinishInspection)
   deriving Show
 
+-- alternative 的候选：末端 → (转折契约, 构造器)。由 gencode 从注册推出；
+-- 运行时只据此在已装配的闭包之间选择，不保存或重组 effect chain。
+alternativeCases :: [(String, (String, String))]
+alternativeCases = []
+
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。
-compiledEntries :: IO [SDK.Target ContextValues Errors Results]
+-- 第二个列表是各转折契约的读取末端：按 require 取得资产，返回它当前的构造器名。
+compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    [ SDK.targetApp "HoldFiles" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (HoldFilesResult <$> (() <$ holdFiles)))))
-    , SDK.targetApp "InspectFiles" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (InspectFilesResult <$> (() <$ inspectFiles)))))
-    , SDK.targetApp "FinishInspection" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (FinishInspectionResult <$> (() <$ finishInspection)))))
-    ]
+    ( [ SDK.targetApp "HoldFiles" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (HoldFilesResult <$> (() <$ holdFiles)))))
+      , SDK.targetApp "InspectFiles" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (InspectFilesResult <$> (() <$ inspectFiles)))))
+      , SDK.targetApp "FinishInspection" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (FinishInspectionResult <$> (() <$ finishInspection)))))
+      ]
+    , []
+    )
 
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "OpenFilesDemo" registeredEffects Handlers.handlerSourceFingerprint programStructure compiledEntries
+interpreter = SDK.interpreter "OpenFilesDemo" registeredEffects Handlers.handlerSourceFingerprint programStructure alternativeCases compiledEntries
 -- 生成时已完成方法展开与路径分析；运行时只读取显式 ADT 值。
 generatedEffectGraph :: SDK.EffectGraph MethodGen
 generatedEffectGraph = SDK.EffectGraph

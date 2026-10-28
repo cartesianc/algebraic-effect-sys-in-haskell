@@ -35,7 +35,7 @@ instance FileLocationInputs m => FileLocationEffect m where
   -- 示例专用文件：首次运行创建，后续追加；在项目根目录运行。
   fileName =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation" FrameworkGenerated.ContextBindingError
-      [("ValidateFileName", FrameworkRuntime.RequireValue), ("FileResource", FrameworkRuntime.RequireValue), ("FileWorkflow", FrameworkRuntime.RequestValue)]
+      [("ValidateFileName", FrameworkRuntime.RequireValue), ("FileResource", FrameworkRuntime.RequireValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocation"))
       FrameworkGenerated.boundFileLocation
       (\value bindings -> bindings { FrameworkGenerated.boundFileLocation = Just value })) $
@@ -58,7 +58,7 @@ instance ValidateFileNameInputs m => ValidateFileNameEffect m where
 instance FileResourceInputs m => FileResourceEffect m where
   openedFile =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
-      [("FileSession", FrameworkRuntime.RequestValue), ("FileRecovery", FrameworkRuntime.RequireValue), ("ReadFile", FrameworkRuntime.RequireValue), ("WriteFile", FrameworkRuntime.RequireValue)]
+      [("FileSession", FrameworkRuntime.RequestValue), ("FileRecovery", FrameworkRuntime.RequireValue), ("ReadFile", FrameworkRuntime.RequireValue), ("WriteFirstLine", FrameworkRuntime.RequireValue), ("AppendLine", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundFileResource
       (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
@@ -120,11 +120,12 @@ instance ReadFileInputs m => ReadFileEffect m where
           pure (Just contents)
       in readFileContent
 
--- 挂在读取句柄下：读取在剧本中执行时由 SDK 注入，用这次读到的文本产出 FileText，不再读一次文件。
+-- 挂在读取句柄下，把读到的文本解析成文件状态（和类型）。alternative 启动时按 require 求值它：
+-- state 中尚无值，便驱动读取句柄读一次文件。
 instance ExtractFileTextInputs m => ExtractFileTextEffect m where
   fileText =
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.callContext "ExtractFileText" FrameworkGenerated.ContextBindingError
-      [("WriteFile", FrameworkRuntime.RequireValue)]
+      [("WriteFirstLine", FrameworkRuntime.RequireValue), ("AppendLine", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundExtractFileText
       (\value bindings -> bindings { FrameworkGenerated.boundExtractFileText = Just value })) $
@@ -132,7 +133,8 @@ instance ExtractFileTextInputs m => ExtractFileTextEffect m where
         fileText :: (m) (FrameworkGenerated.FileText)
         fileText = do
           contents <- readFileContent
-          maybe (raise (ExtractFileTextError "File read returned no text")) (pure . FileText) contents
+          text <- maybe (raise (ExtractFileTextError "File read returned no text")) pure contents
+          pure (FileText (if null text then Blank else Written text))
       in fileText
 
 instance FileRecoveryInputs m => FileRecoveryEffect m where
@@ -159,45 +161,52 @@ instance FileRecoveryInputs m => FileRecoveryEffect m where
           pure ()
       in resolveFileSession
 
-instance WriteFileInputs m => WriteFileEffect m where
-  writeFileText =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "writeFileText" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "WriteFile") $
+-- 两个候选都是完整的写入链：各自开启文件，按分支契约取得文件状态后写入。
+-- 选择在 AST 的 alternative 中自动完成，候选本身不判断条件；链退出后自动关闭文件。
+instance WriteFirstLineInputs m => WriteFirstLineEffect m where
+  writeFirstLine =
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "writeFirstLine" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "WriteFirstLine") $
       let
-        writeFileText :: (m) (Maybe String)
-        writeFileText = do
-          -- 组合读取句柄：读取执行后，挂接的 ExtractFileText 产出 FileText，这里 require 取用。
-          readFileContent
-          FileText contents <- require @FileText
+        writeFirstLine :: (m) (Maybe String)
+        writeFirstLine = do
+          openFileSession
+          _ <- require @FileTextBlank
           OpenedFile (FileHandle path file) <- require @OpenedFile
-          -- 明确消费刚读出的文本；只追加，不截断已有内容。
-          let line = "file-demo: read " ++ show (length contents) ++ " characters before this append.\n"
+          let line = "file-demo: the file was empty; this is the first line.\n"
           outcome <- liftIO $ tryIOError $ do
-            putStrLn ("[read] " ++ if null contents then "(empty file)" else contents)
+            putStrLn "[read] (empty file)"
             hSeek file SeekFromEnd 0
             hPutStr file line
             hFlush file
             putStrLn ("[write] " ++ path ++ ": " ++ line)
-          either (raise . WriteFileError . displayException) pure outcome
+          either (raise . WriteFirstLineError . displayException) pure outcome
           pure Nothing
-      in writeFileText
+      in writeFirstLine
 
-instance FileWorkflowInputs m => FileWorkflowEffect m where
-  runFileWorkflow =
-    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "runFileWorkflow" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileWorkflow") $
+instance AppendLineInputs m => AppendLineEffect m where
+  appendLine =
+    (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "appendLine" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "AppendLine") $
       let
-        runFileWorkflow :: (m) (Maybe String)
-        runFileWorkflow = do
-          -- 本条链先取得稳定参数；校验和 scope 开启都 require 这份绑定。
-          _ <- request @FileName
+        appendLine :: (m) (Maybe String)
+        appendLine = do
           openFileSession
-          writeFileText
-          -- 完整链退出后由 SDK 释放本次使用并自动关闭空闲实例。
+          FileTextWritten contents <- require @FileTextWritten
+          OpenedFile (FileHandle path file) <- require @OpenedFile
+          -- 明确消费读出的文本；只追加，不截断已有内容。
+          let line = "file-demo: read " ++ show (length contents) ++ " characters before this append.\n"
+          outcome <- liftIO $ tryIOError $ do
+            putStrLn ("[read] " ++ contents)
+            hSeek file SeekFromEnd 0
+            hPutStr file line
+            hFlush file
+            putStrLn ("[write] " ++ path ++ ": " ++ line)
+          either (raise . AppendLineError . displayException) pure outcome
           pure Nothing
-      in runFileWorkflow
+      in appendLine
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "cb8d1f0413031e0f81a99785a025939d"
+handlerSourceFingerprint = Just "1a81ce82019af319b6c911c4899e647c"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -218,7 +227,8 @@ errorHandlers =
   [ (Just "FileSession", FrameworkRoot.ErrorHandler "FileRecovery"
       (\failure -> case (FrameworkRoot.origin failure, FrameworkRoot.detail failure) of
         (_, FrameworkGenerated.ReadFileFailure) -> True
-        (_, FrameworkGenerated.WriteFileFailure) -> True
+        (_, FrameworkGenerated.WriteFirstLineFailure) -> True
+        (_, FrameworkGenerated.AppendLineFailure) -> True
         _ -> False)
       (Just detectFileSession) (Just resolveFileSession))
   ]

@@ -76,11 +76,13 @@ instance ReadFileInputs m => ReadFileEffect m where
     contents <- either (raise . ReadFileError . displayException) pure outcome
     pure (Just contents)
 
--- 挂在读取句柄下：读取在剧本中执行时由 SDK 注入，用这次读到的文本产出 FileText，不再读一次文件。
+-- 挂在读取句柄下，把读到的文本解析成文件状态（和类型）。alternative 启动时按 require 求值它：
+-- state 中尚无值，便驱动读取句柄读一次文件。
 instance ExtractFileTextInputs m => ExtractFileTextEffect m where
   fileText = do
     contents <- readFileContent
-    maybe (raise (ExtractFileTextError "File read returned no text")) (pure . FileText) contents
+    text <- maybe (raise (ExtractFileTextError "File read returned no text")) pure contents
+    pure (FileText (if null text then Blank else Written text))
 
 instance FileRecoveryInputs m => FileRecoveryEffect m where
   detectFileSession = do
@@ -96,28 +98,35 @@ instance FileRecoveryInputs m => FileRecoveryEffect m where
     closeFileSession
     pure ()
 
-instance WriteFileInputs m => WriteFileEffect m where
-  writeFileText = do
-    -- 组合读取句柄：读取执行后，挂接的 ExtractFileText 产出 FileText，这里 require 取用。
-    readFileContent
-    FileText contents <- require @FileText
+-- 两个候选都是完整的写入链：各自开启文件，按分支契约取得文件状态后写入。
+-- 选择在 AST 的 alternative 中自动完成，候选本身不判断条件；链退出后自动关闭文件。
+instance WriteFirstLineInputs m => WriteFirstLineEffect m where
+  writeFirstLine = do
+    openFileSession
+    _ <- require @FileTextBlank
     OpenedFile (FileHandle path file) <- require @OpenedFile
-    -- 明确消费刚读出的文本；只追加，不截断已有内容。
-    let line = "file-demo: read " ++ show (length contents) ++ " characters before this append.\n"
+    let line = "file-demo: the file was empty; this is the first line.\n"
     outcome <- liftIO $ tryIOError $ do
-      putStrLn ("[read] " ++ if null contents then "(empty file)" else contents)
+      putStrLn "[read] (empty file)"
       hSeek file SeekFromEnd 0
       hPutStr file line
       hFlush file
       putStrLn ("[write] " ++ path ++ ": " ++ line)
-    either (raise . WriteFileError . displayException) pure outcome
+    either (raise . WriteFirstLineError . displayException) pure outcome
     pure Nothing
 
-instance FileWorkflowInputs m => FileWorkflowEffect m where
-  runFileWorkflow = do
-    -- 本条链先取得稳定参数；校验和 scope 开启都 require 这份绑定。
-    _ <- request @FileName
+instance AppendLineInputs m => AppendLineEffect m where
+  appendLine = do
     openFileSession
-    writeFileText
-    -- 完整链退出后由 SDK 释放本次使用并自动关闭空闲实例。
+    FileTextWritten contents <- require @FileTextWritten
+    OpenedFile (FileHandle path file) <- require @OpenedFile
+    -- 明确消费读出的文本；只追加，不截断已有内容。
+    let line = "file-demo: read " ++ show (length contents) ++ " characters before this append.\n"
+    outcome <- liftIO $ tryIOError $ do
+      putStrLn ("[read] " ++ contents)
+      hSeek file SeekFromEnd 0
+      hPutStr file line
+      hFlush file
+      putStrLn ("[write] " ++ path ++ ": " ++ line)
+    either (raise . AppendLineError . displayException) pure outcome
     pure Nothing

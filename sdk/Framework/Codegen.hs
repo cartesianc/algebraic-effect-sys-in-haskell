@@ -20,9 +20,13 @@ import Data.Maybe (fromMaybe, listToMaybe, maybeToList)
 -- 以及 Context 的生产／读取方法，供拒绝跨 effect 直接调用。
 type DemandRoutes = ([(String, [((String, String), String)])], [(String, String)])
 
-lowerProgram :: String -> [EffectSpec] -> [String]
+-- Types.hs 中的和类型：类型名 → [(构造器名, 唯一字段的类型原文)]；由 SDK 解析 Types.hs 得到。
+type SumTypes = [(String, [(String, Maybe String)])]
+
+-- terminals：AST 选中的全部末端；groups：每个 alternative 的候选及各自的末端。
+lowerProgram :: String -> [EffectSpec] -> [String] -> [[[String]]] -> SumTypes
              -> Either String (String, String, [(String, String, String, String)], String, GraphPlan String, [String], DemandRoutes, [(String, String, Bool)])
-lowerProgram namespace specifications terminals = do
+lowerProgram namespace specifications terminals groups sumTypes = do
   if any ((== "Root") . name) specifications
     then Left "Root is reserved for the superclass"
     else pure ()
@@ -33,12 +37,13 @@ lowerProgram namespace specifications terminals = do
   checkGenerated
   mapM_ checkError specifications
   checkErrorOverlap
-  mapM_ (contextNames specifications . pure . name) specifications
+  mapM_ (contextNames branchTable specifications . pure . name) specifications
   if null selected
     then Left "Select at least one terminal effect for generation"
     else pure ()
   selectedMethods <- mapM findHandler selected
   mapM_ checkTerminal selected
+  alternativeCases <- concat <$> mapM checkAlternative groups
   let allMethods = concatMap registeredMethods specifications
   if length allMethods /= length (nub (map snd allMethods))
     then Left "Registered method names must be unique within a generated module"
@@ -47,7 +52,7 @@ lowerProgram namespace specifications terminals = do
   pure
     ( unlines (contractHeader ++ runtimeAliases ++ generatedContracts ++ methodIdentities ++ concat declarations
         ++ providerDeclarations ++ errorDeclaration ++ contextDeclarations)
-    , unlines (programHeader ++ registrationSnapshot ++ structureDeclarations ++ astInterpreter selectedMethods)
+    , unlines (programHeader ++ registrationSnapshot ++ structureDeclarations ++ astInterpreter selectedMethods alternativeCases)
     , concatMap instanceWrappers specifications
     , scopeHandlers ++ scopeCleanups ++ errorHandlers ++ injectionTable
     , graphPlan
@@ -56,7 +61,7 @@ lowerProgram namespace specifications terminals = do
     , contractOwners
     )
   where
-    resolvedEither = mapM (\specification -> (,) (name specification) <$> resolveDemands specifications specification) specifications
+    resolvedEither = mapM (\specification -> (,) (name specification) <$> resolveDemands branchTable specifications specification) specifications
     resolvedTable = either (const []) id resolvedEither
     resolvedOf selectedName = fromMaybe [] (lookup selectedName resolvedTable)
     requestProviders specification =
@@ -86,10 +91,55 @@ lowerProgram namespace specifications terminals = do
       [ (contractOf producing, representation producing, name specification)
       | specification <- contextSpecs
       , Context (Just producing) <- [typing specification] ]
+    -- 表示类型是和类型（至少两个构造器）时，每个构造器另有分支契约：契约名加构造器名。
+    -- 分支契约是基础契约的投影，由基础契约的生产方提供，只能 require：
+    -- (分支契约, (基础契约, 构造器, 字段类型, 生产方))。
+    branchContracts =
+      [ (base ++ constructor, (base, constructor, field, owner))
+      | (base, TypeRef typeName, owner) <- generatedDeclarations
+      , Just constructors <- [lookup typeName sumTypes], length constructors > 1
+      , (constructor, field) <- constructors ]
+    branchTable = [(branch, base) | (branch, (base, _, _, _)) <- branchContracts]
     -- 构造器归属：契约类型只能由其生产方的 instance 方法构造；契约均由生成器产出。
+    -- 分支契约由生成的投影构造，归属其基础契约的生产方，消费方只能模式匹配。
     contractOwners =
       [ (contractType, owner ++ "Effect", True)
       | (contractType, _, owner) <- generatedDeclarations, validTypeName contractType ]
+      ++ [ (branch, owner ++ "Effect", True) | (branch, (_, _, _, owner)) <- branchContracts ]
+
+    -- alternative 的每个候选经注册依赖同一和类型资产的一个分支契约，以此对应一个构造器：
+    -- 候选末端自身及其 Input 链上游声明的 requires 分支契约。候选须覆盖该和类型的全部构造器。
+    -- 结果为静态表：候选末端 → (转折契约, 构造器)；运行时只据此在已装配的闭包间选择。
+    terminalCases terminal = nub
+      [ (base, constructor)
+      | effectName <- terminal : inputChain [] (inputOf terminal)
+      , specification <- specifications, name specification == effectName
+      , demand <- demands specification
+      , Just (base, constructor, _, _) <- [lookup (contract demand) branchContracts] ]
+    inputOf terminal = case [input specification | specification <- specifications, name specification == terminal] of
+      upstream : _ -> upstream
+      [] -> "Root"
+    checkAlternative candidates = do
+      cases <- mapM candidateCase candidates
+      selectorContract <- case nub (map fst cases) of
+        [contractType] -> Right contractType
+        found -> Left ("Alternative candidates must branch on one sum-type contract, found: " ++ show found)
+      let constructors = map snd cases
+          declared = [constructor | (_, (base, constructor, _, _)) <- branchContracts, base == selectorContract]
+      if length constructors /= length (nub constructors)
+        then Left ("Alternative candidates repeat a case of " ++ selectorContract ++ ": " ++ show constructors)
+        else pure ()
+      case filter (`notElem` constructors) declared of
+        [] -> pure ()
+        missing -> Left ("Alternative over " ++ selectorContract ++ " has no candidate for " ++ intercalate ", " missing)
+      pure [ (terminal, (selectorContract, constructor))
+           | (candidate, (_, constructor)) <- zip candidates cases, terminal <- candidate ]
+    candidateCase candidate = case nub (map terminalCases candidate) of
+      [[found]] -> Right found
+      [[]] -> Left ("Alternative candidate " ++ intercalate ", " candidate
+        ++ " requires no branch contract; require one such as <Contract><Constructor>")
+      [_] -> Left ("Alternative candidate " ++ intercalate ", " candidate ++ " requires several branch contracts")
+      _ -> Left ("Terminals in alternative candidate " ++ intercalate ", " candidate ++ " require different branch contracts")
     contextMethods =
       [ (name specification ++ "Effect", method)
       | specification <- contextSpecs
@@ -243,8 +293,17 @@ lowerProgram namespace specifications terminals = do
       [ [ "instance (" ++ intercalate ", " [provider ++ "Effect " ++ carrierType | provider <- providers] ++ ") => Provides "
             ++ contractType ++ " " ++ carrierType ++ " where"
         , "  request = SDK.provideContext " ++ show contractType ++ " ContextBindingError " ++ routeList RequestAccess
-        , "  require = SDK.provideContext " ++ show contractType ++ " ContextBindingError " ++ routeList RequireAccess
-        , "" ]
+        ] ++ (case lookup contractType branchContracts of
+          -- 分支契约：读取基础契约，资产当前是该构造器时取出字段。
+          Just (base, constructor, field, _) ->
+            [ "  require = SDK.projectContext " ++ show contractType ++ " ContextBindingError " ++ routeList RequireAccess
+            , "    (\\(" ++ base ++ " value) -> case value of"
+            , "      " ++ constructor ++ (if field == Nothing then " -> Just (" ++ contractType ++ " ())"
+                                              else " field -> Just (" ++ contractType ++ " field)")
+            , "      _ -> Nothing)" ]
+          Nothing ->
+            [ "  require = SDK.provideContext " ++ show contractType ++ " ContextBindingError " ++ routeList RequireAccess ])
+        ++ [ "" ]
       | demanded <- nub [demandContract resolved | (_, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands]
       , let contractType = demanded
             routes selectedAccess =
@@ -270,6 +329,14 @@ lowerProgram namespace specifications terminals = do
             , "deriving instance Show (" ++ reference representation' ++ ") => Show " ++ generated
             , "" ]
           | (generated, representation', _) <- generatedDeclarations ]
+        ++ concat
+          [ [ "-- " ++ base ++ " 的分支契约：资产当前是 " ++ constructor ++ " 时可经 require 取得。"
+            , "newtype " ++ branch ++ " = " ++ branch ++ " (" ++ payload ++ ")"
+            , "deriving instance Eq (" ++ payload ++ ") => Eq " ++ branch
+            , "deriving instance Show (" ++ payload ++ ") => Show " ++ branch
+            , "" ]
+          | (branch, (base, constructor, field, _)) <- branchContracts
+          , let payload = maybe "()" id field ]
 
     runtimeAliases =
       [ "-- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。"
@@ -450,16 +517,24 @@ lowerProgram namespace specifications terminals = do
         Scoped _ _ | length (requestProviders specification) > 1 ->
           Left ("Scoped requests at most one resource Context: " ++ name specification)
         _ -> pure ()
+      -- 分支契约是基础资产的投影，不单独生产，只能 require。
+      case [contract demand | demand <- demands specification, access demand == RequestAccess
+           , Just _ <- [lookup (contract demand) branchContracts]] of
+        branch : _ -> Left ("Branch contract " ++ branch ++ " can only be required, not requested, in " ++ name specification)
+        [] -> pure ()
 
     -- 契约名由 handler 名推导：须是合法类型名，不与生成区固定名或 effect 派生名冲突；
     -- handler 名因此同时决定资产名，应按业务含义起名（例如 startURL，而不是 loadStartURL）。
     -- 与 Types.hs 中的类型重名会在 GHC 名称解析时报歧义。表示类型须是普通业务或库类型。
     checkGenerated = do
-      let declared = [contractType | (contractType, _, _) <- generatedDeclarations]
+      let declared = [contractType | (contractType, _, _) <- generatedDeclarations] ++ map fst branchContracts
           reserved = ["Root", "App", "Pure", "Provides", "ContextValues", "Errors", "MethodGen", "Results"]
             ++ concat [[name s, name s ++ "Effect", name s ++ "Inputs", name s ++ "Error", name s ++ "Failure"] | s <- specifications]
       case [contractType | contractType <- nub declared, length (filter (== contractType) declared) > 1] of
-        contractType : _ -> Left ("Contract " ++ contractType ++ " comes from more than one handler; rename one of them")
+        contractType : _ -> Left ("Contract " ++ contractType ++ " comes from more than one handler or branch; rename one of them")
+        [] -> pure ()
+      case [branch | (branch, _) <- branchContracts, branch `elem` reserved] of
+        branch : _ -> Left ("Branch contract " ++ branch ++ " collides with a generated or effect name; rename the handler or constructor")
         [] -> pure ()
       mapM_ (\(contractType, representation', owner) -> do
           if not (validTypeName contractType)
@@ -528,7 +603,7 @@ lowerProgram namespace specifications terminals = do
 
     declaration specification = do
       valueType <- valueContract specification
-      _ <- contextNames specifications [name specification]
+      _ <- contextNames branchTable specifications [name specification]
       mapM_ checkScope (upstreamScopes specification)
       case typing specification of
         Scoped (Just _) Nothing ->
@@ -707,30 +782,55 @@ lowerProgram namespace specifications terminals = do
         methodReference Nothing = "Nothing"
         methodReference (Just method) = "Just " ++ method
 
-    astInterpreter methods =
+    astInterpreter methods alternativeCases =
           [ ""
           , "-- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。"
           , "data Results = " ++ intercalate " | "
               [terminal ++ "Result (Produce " ++ terminal ++ ")" | terminal <- selected]
           , "  deriving Show"
           , ""
+          , "-- alternative 的候选：末端 → (转折契约, 构造器)。由 gencode 从注册推出；"
+          , "-- 运行时只据此在已装配的闭包之间选择，不保存或重组 effect chain。"
+          , "alternativeCases :: [(String, (String, String))]"
+          , "alternativeCases = " ++ show alternativeCases
+          , ""
           , "-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。"
-          , "compiledEntries :: IO [SDK.Target ContextValues Errors Results]"
+          , "-- 第二个列表是各转折契约的读取末端：按 require 取得资产，返回它当前的构造器名。"
+          , "compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String])"
           , "compiledEntries = do"
           , "  scopes <- Handlers.newScopeHandlers"
           , "  pure"
-          , "    [ " ++ intercalate "\n    , "
-              ["SDK.targetApp " ++ show terminal ++ " emptyContexts scopes"
-                ++ " (FrameworkRoot.withErrorHandlers Handlers.errorHandlers"
-                ++ " (FrameworkRoot.withAnchoredContexts Handlers.contextInjections"
-                ++ " (SDK.withScopeCleanups Handlers.scopeCleanups (" ++ terminal ++ "Result <$> " ++ terminalAction terminal method ++ "))))"
-              | (terminal, method) <- zip selected methods]
-          , "    ]"
+          , "    ( " ++ renderList "      "
+              [ wrapTarget terminal (terminal ++ "Result <$> " ++ terminalAction terminal method)
+              | (terminal, method) <- zip selected methods ]
+          , "    , " ++ renderList "      "
+              [ wrapTarget contractType ("caseOf" ++ contractType ++ " <$> " ++ reader)
+              | contractType <- selectorContracts, reader <- readerOf contractType ]
+          , "    )"
           , ""
-          , "-- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。"
+          ] ++ concat
+          [ [ "caseOf" ++ contractType ++ " :: " ++ contractType ++ " -> String"
+            , "caseOf" ++ contractType ++ " (" ++ contractType ++ " value) = case value of" ]
+            ++ [ "  " ++ constructor ++ " {} -> " ++ show constructor
+               | (_, (base, constructor, _, _)) <- branchContracts, base == contractType ]
+            ++ [ "" ]
+          | contractType <- selectorContracts ] ++
+          [ "-- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。"
           , "interpreter :: SDK.AST -> [EffectSpec] -> IO ()"
-          , "interpreter = SDK.interpreter " ++ show namespace ++ " registeredEffects Handlers.handlerSourceFingerprint programStructure compiledEntries"
+          , "interpreter = SDK.interpreter " ++ show namespace
+              ++ " registeredEffects Handlers.handlerSourceFingerprint programStructure alternativeCases compiledEntries"
           ]
+      where
+        selectorContracts = nub [contractType | (_, (contractType, _)) <- alternativeCases]
+        readerOf contractType =
+          [ reader | (declared, _, owner) <- generatedDeclarations, declared == contractType
+          , Just reader <- [readerMethod owner] ]
+        wrapTarget label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
+          ++ " (FrameworkRoot.withErrorHandlers Handlers.errorHandlers"
+          ++ " (FrameworkRoot.withAnchoredContexts Handlers.contextInjections"
+          ++ " (SDK.withScopeCleanups Handlers.scopeCleanups (" ++ action ++ "))))"
+        renderList _ [] = "[]"
+        renderList indent items = "[ " ++ intercalate ("\n" ++ indent ++ ", ") items ++ "\n" ++ indent ++ "]"
 
     registrationSnapshot =
       [ "-- 编译时注册快照；运行前核对声明，改变连接后须重新生成。"

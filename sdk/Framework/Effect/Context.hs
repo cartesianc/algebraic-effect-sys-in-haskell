@@ -3,7 +3,7 @@
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Effect.Context
   ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext
-  , atomicHandle, atomicScope
+  , projectContext, atomicHandle, atomicScope
   ) where
 
 import Framework.Effect.Contract
@@ -103,6 +103,15 @@ callContext selected wrap accesses compareValue select synchronize produce = do
       value <- requestContext selected synchronize (enterContext selected produce)
       observeInput mode compareValue value
       pure value
+
+-- 和类型资产的分支契约是基础契约的投影：按消费者分派到基础契约的读取入口，
+-- 资产当前是该构造器时取出其字段，否则报 CaseNotSelected。不新增状态，也不单独生产。
+projectContext
+  :: (ContextStore environment m, MonadError (Failure cause) m)
+  => String -> (ContextFault -> cause) -> [(String, m base)] -> (base -> Maybe branch) -> m branch
+projectContext contract wrap routes project = do
+  base <- provideContext contract wrap routes
+  maybe (failEffect contract (wrap (CaseNotSelected contract)) (show (CaseNotSelected contract))) pure (project base)
 
 -- Excu.handler 的生成入口：方法体每次调用都执行。
 atomicHandle

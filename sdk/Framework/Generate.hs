@@ -3,7 +3,7 @@ module Framework.Generate (main) where
 
 import Control.Exception (evaluate)
 import Data.Char (isAlphaNum, isUpper)
-import Framework.Codegen.Handlers (prepareHandlers, HandlerShape(..))
+import Framework.Codegen.Handlers (prepareHandlers, loadSumTypes, HandlerShape(..))
 import Framework.Codegen.Assets (checkAssets)
 import Framework.Codegen.Plan (checkDriven, renderGraphPlan)
 import qualified Framework.Effect.Graph as Graph
@@ -33,9 +33,12 @@ main = do
       | validNamespace namespace -> do
           let modulePath = map (\character -> if character == '.' then pathSeparator else character) namespace
               directory = "demo" </> modulePath
-              terminals = "Framework.Workflow.AST.targets " ++ namespace ++ ".AST.ast"
+              ast = namespace ++ ".AST.ast"
+          -- 和类型的构造器信息由解析 Types.hs 得到，以字面量传给声明加载进程。
+          sumTypes <- loadSumTypes namespace
           let expression = "print (Framework.Codegen.lowerProgram " ++ show namespace
-                ++ " " ++ namespace ++ ".Effects.effects (" ++ terminals ++ "))"
+                ++ " " ++ namespace ++ ".Effects.effects (Framework.Workflow.AST.targets " ++ ast
+                ++ ") (Framework.Workflow.AST.alternativeGroups " ++ ast ++ ") " ++ show sumTypes ++ ")"
           (result, output, diagnostics) <- readProcessWithExitCode "ghci"
             [ "-ignore-dot-ghci", "-v0", "-XHaskell2010", "-idemo", "-isdk"
             , "sdk/Framework/Codegen.hs", directory </> "Effects.hs"

@@ -5,14 +5,14 @@ module Framework.SDK
   ( module Framework.Effect
   , module Framework.Effect.Graph
   , module Framework.Workflow.Structure
-  , AST, EffectNode, node, chained, parallel, interpreter
+  , AST, EffectNode, node, chained, parallel, alternative, interpreter
   , Generic, NFData
   ) where
 
 import Framework.Effect
 import Framework.Effect.Graph
 import Framework.Effect.Runtime (cleanupTargets)
-import Framework.Workflow.AST (AST, EffectNode, node, chained, parallel)
+import Framework.Workflow.AST (AST, EffectNode, node, chained, parallel, alternative)
 import Framework.Workflow.Execution (runStructuredAST)
 import Framework.Workflow.Structure
 import Control.DeepSeq (NFData, force)
@@ -33,8 +33,9 @@ interpreter
   => String
   -> [EffectSpec] -> Maybe String
   -> Either (StructureError method) (ProgramStructure method)
-  -> IO [Target environment cause value] -> AST -> [EffectSpec] -> IO ()
-interpreter namespace registered sourceFingerprint initialize createEntries tree specifications = do
+  -> [(String, (String, String))]
+  -> IO ([Target environment cause value], [Target environment cause String]) -> AST -> [EffectSpec] -> IO ()
+interpreter namespace registered sourceFingerprint initialize alternativeCases createEntries tree specifications = do
   hSetEncoding stdout utf8
   arguments <- getArgs
   case arguments of
@@ -44,10 +45,10 @@ interpreter namespace registered sourceFingerprint initialize createEntries tree
       | otherwise -> do
           verifyHandlerSource namespace sourceFingerprint
           structure <- initializeBeforeBusiness
-          entries <- createEntries
+          (entries, selectors) <- createEntries
           mask $ \restore -> do
             completed <- tryAny $ restore $ do
-              output <- runStructuredAST structure tree entries
+              output <- runStructuredAST structure alternativeCases tree entries selectors
               let rendered = show output
               -- 各 Node 已在释放使用前消费自己的结果；这里完成汇总错误的显示。
               evaluate (foldr seq () rendered)

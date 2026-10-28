@@ -22,6 +22,8 @@ data StructureError method
   | UnknownScopeParent String String
   | InvalidGeneratedStructure String
   | GeneratedEntriesMismatch [method] [method]
+  -- alternative 的候选末端没有登记分支，或候选不共用同一转折资产。
+  | InvalidAlternative [String]
   deriving (Eq, Show, Read, Generic)
 
 instance NFData method => NFData (StructureError method)
@@ -193,6 +195,7 @@ renderStructure structure workflowAST = do
       pure ([method], "Node " ++ show selected ++ " (" ++ show method ++ ")")
     describe (Chained children) = branch "Chained" children
     describe (Parallel children) = branch "Parallel" children
+    describe (Alternative children) = branch "Alternative" children
     branch name children = do
       parts <- sequence children
       pure (concatMap fst parts, name ++ " [" ++ intercalate ", " (map snd parts) ++ "]")
