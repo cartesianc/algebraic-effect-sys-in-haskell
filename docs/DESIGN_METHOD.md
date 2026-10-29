@@ -37,7 +37,7 @@ request／require 是 Context 内的方法角色；消费者统一在 demands �
 - **Pure 的语义与 IO。** Pure 的语义尚未确定。若按上面的方向，Pure 是能枚举全部情况的内部操作，就不应执行 IO；目前 App 程序为所有类别的 XInputs 都给出 MonadIO，是否收紧随 Pure 语义一起确定。
 - **剧本的纯与执行的重复。** 剧本的纯指代码文本不随外部条件改变；成功执行过的 Excu 在被拉取时是否重新执行，属于运行时调用记录的问题，仍待设计。
 - **约束链边界的落实。** "handler 只能使用约束链注入的方法"要求 instance 对载体泛型：写在具体载体上的 instance 会按全局实例解析，等于越过约束链。现已改为 instance XInputs m => XEffect m，并以能力标记封住泛型 instance 的现场构造。
-- **方法体层的剩余缺口。** 只处理库类型的普通 helper 按设计允许，方法体仍可能借它们藏起本应原子化的逻辑；这部分由未来语言服务按模板生成方法体来收敛，不在 gencode 中追踪值来源。
+- **方法体层的剩余缺口。** 只处理库类型的普通函数按设计允许，方法体仍可能借它们藏起本应原子化的逻辑；这部分由未来语言服务按模板生成方法体来收敛，不在 gencode 中追踪值来源。
 
 ## 1. 设计先于操作
 
@@ -73,7 +73,7 @@ HLS／GHC 负责宿主语言的语法、名字、类型与方法实现检查；g
 实现函数、类字典、线程和活资源由执行装配持有；描述通过约定的标识与接口关联它们。
 
 方法身份由生成的 MethodGen 枚举表示，构造器为方法名首字母大写加 Gen；MethodDefinition.methodEffect 使用同一 effect 首个注册入口的 Gen 身份。原生业务方法不变，执行副本只加既有协议包装；纯结构副本独立记录引用和可能路径。具体定义与观察边界见 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)。
-source 结构支持显式 effect 调用、do、if／case 与已识别的标准组合。未知高阶 effect、隐藏 helper／局部 alias 组合、含 effect 的动态循环及递归 effect 引用报错，不静默形成空图；没有 effect 引用的原子业务表达式允许任意语法，在结构副本中擦除。catchError 用 Recover 保存正文正常路径及任意 scope 前缀后进入 recovery 的保守路径，不预先验证业务是否成功。
+source 结构支持显式 effect 调用、do、if／case 与已识别的标准组合。未知高阶 effect、经普通函数或局部别名间接组合、含 effect 的动态循环及递归 effect 引用报错，不静默形成空图；没有 effect 引用的原子业务表达式允许任意语法，在结构副本中擦除。catchError 用 Recover 保存正文正常路径及任意 scope 前缀后进入 recovery 的保守路径，不预先验证业务是否成功。
 
 Input 只表达句柄组合，不隐含业务值传递。手写 input 只允许 Root 或非 Context effect；Context 经 demands 接入，消费方类只以 Provides 契约作为 superclass，不指名生产方的类。生产者自身仍可有 Input、消费其他 Context，但不能作为 AST node 的末端。原 Input 与生产链的能力同时保留，不重挂来源注册；沿 Input 与 request 收集 scope；require 在 state 无值时可能求值 request，结构分析把这条可能路径计入（scope 资源除外）。
 后端 handler 可使用前端类方法，这是 superclass 字典形式的依赖注入。
@@ -100,7 +100,7 @@ Context 的产物及 request／require 接收契约共同导出一个 asset 集�
 
 普通函数不能在源码中显式使用这些资产，涵盖签名、类型应用、构造器引用、模式匹配和
 字段访问／更新。禁止的依据是资产引用，不是出现了函数定义：泛型函数定义未显式依赖
-资产，调用时即使接收该 ADT 也不拦截；只处理通用类型的 readCurl 等 helper 可以存在。
+资产，调用时即使接收该 ADT 也不拦截；只处理通用类型的 readCurl 等普通函数可以存在。
 类型别名、qualified import 和局部遮蔽按真实名称解析判断，不做字符串匹配或值来源传播。
 
 显式资产操作由注册的 instance 方法承载，方法不增加位置参数；业务复用通过注册类方法与
@@ -111,7 +111,7 @@ SDK 内部实现不在业务约束内。此规则取代“所有纯解析、转�
 
 gencode 使用 GHC 的 renamed source 检查显式引用；类型检查只辅助名称解析和区分局部函数／
 数据绑定，不以泛型调用推导出的实参类型认定违规。不解释函数的业务意义，不追踪投影后的
-String，也不证明 handler 粒度足够细。effect 调用另受结构提取约束，不能藏入 helper。
+String，也不证明 handler 粒度足够细。effect 调用另受结构提取约束，只能直接写在注册方法体中。
 GHC／HLS 单独通过不等于资产约束通过；详见 [源码资产检查](ASSETS.md)。
 
 Generated/Assets.hs 显式导出 generatedAssets，包含类型、构造器、字段及定义位置，供源码审查
@@ -141,7 +141,7 @@ Context 类方法返回 m (Produce e)，instance 通过上游类方法取得产�
 需要文件、网络等外部能力的操作，通过明确的能力接口取得实现。业务数据的解释与外部
 操作的执行在代码组织和类型接口上保持可分离；IO 的调度、资源获取释放与取消由执行层
 根据显式声明处理。显式依赖资产的 IO 操作写在注册 instance 内；不显式依赖资产的通用
-IO helper 可以复用，但不能隐藏 effect 调用。SDK 内部执行后端不属于业务书写面。
+IO 普通函数可以复用，但不能含 effect 调用。SDK 内部执行后端不属于业务书写面。
 
 组合描述选择能力／实现引用，句柄能力通过类型类 superclass 字典传递。业务 instance 对载体 m 泛型（instance XInputs m => XEffect m），生成的 XInputs 只含自身能力标记、Input 链与 demands 给出的能力及载体能力；能力标记只在载体上成立，GHC 因此拒绝越过 Input 链的调用，Input 链即实际的依赖注入边界。
 SDK 保留 scope 状态与 Context 绑定，本轮按有限使用闭包落实 once-spare 自动收尾，interpreter 退出清理继续兜底；不预设可在运行时任意替换同一类型的全局 instance。

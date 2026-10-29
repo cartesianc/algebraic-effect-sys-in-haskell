@@ -45,9 +45,9 @@ analyzeModule
 analyzeModule namespace methods (routes, contextual) implicitPrelude parsed = do
   unless (length (nub (map snd methods)) == length methods) $
     Left "Structure analysis needs distinct registered method names"
-  -- 检查隐藏的 effect 引用，不猜测 helper 的执行语义。
-  -- 资产显式引用由 Assets 另行检查；泛型 helper 不因接收业务 ADT 而违规。
-  mapM_ (rejectReferences environment "effect references in a top-level helper") topBindings
+  -- effect 调用只能直接写在注册方法体中；不猜测普通函数的执行语义。
+  -- 资产显式引用由 Assets 另行检查；泛型函数不因接收业务 ADT 而违规。
+  mapM_ (rejectReferences environment "effect references in a top-level function") topBindings
   concat <$> mapM instanceShapes (hsmodDecls parsed)
   where
     topBindings = [binding | L _ (ValD _ binding) <- hsmodDecls parsed]
@@ -408,4 +408,4 @@ shapeContinuation environment expression
   | otherwise = case unLoc expression of
       HsLam _ _ matches -> shapeMatches environment matches
       HsPar _ body -> shapeContinuation environment body
-      _ -> Left "effect continuation must be an explicit lambda/case; do not hide it in a higher-order helper"
+      _ -> Left "effect continuation must be an explicit lambda/case; do not pass it through a higher-order function"

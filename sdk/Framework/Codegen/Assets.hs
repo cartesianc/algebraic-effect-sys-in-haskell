@@ -282,7 +282,7 @@ checkModule namespace methods assets ownership checked = case tm_renamed_source 
     checkBinding :: Bool -> HsBind GhcRn -> [String]
     checkBinding False binding@FunBind {fun_id = identifier}
       | sourceModule == namespace ++ ".Effects", occNameString (nameOccName (unLoc identifier)) == "effects" =
-          localFunctions binding -- 唯一注册声明允许 typeRef @Asset；不豁免其余 helper。
+          localFunctions binding -- 唯一注册声明允许 typeRef @Asset；不豁免其余普通函数。
     checkBinding local binding
       | not local || any (`elem` functions) (collectHsBindBinders CollNoDictBinders binding) =
           reject (bindingLocation binding) binding

@@ -37,7 +37,7 @@
 - **语法为工具而定**：
   - 声明里的名字一律用字符串（effect 名、方法名、契约名），类型只出现在 `requester` 的 `@` 之后；方法体里则直接写生成的类型和方法，例如 `request @StartURL`；
   - 声明是有限、静态、无环的结构；
-  - effect 调用必须在方法体里显式写出，不能藏进 helper。
+  - effect 调用和资产操作只能写在注册方法中，其余代码只做不涉及资产的普通计算。
 
   这些规则保证架构不运行也能被读懂，后续的 LSP 可以据此提供诊断、跳转和生成。
 
@@ -421,7 +421,7 @@ instance FileRecoveryInputs m => FileRecoveryEffect m where
 生成器要从方法体中静态读出调用结构，所以：
 
 - **effect 调用直接写在方法体里**：支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法。
-- **不能隐藏调用**：不能把 effect 调用藏进 helper、局部别名、未知的高阶组合或含 effect 的循环，也不能递归调用 effect。
+- **不能间接调用**：不能经普通函数、局部别名、未知的高阶组合或含 effect 的循环间接调用 effect，也不能递归调用 effect。
 - **普通计算不受限**：不含 effect 调用的表达式可以任意写。
 - **不直接调用 Context 方法**：例如不能直接调用 `fileName`，改用 `request`／`require`。
 
@@ -475,7 +475,7 @@ newtype StartURL = StartURL PageURL
 
 - **只在 instance 方法里操作资产**：普通顶层函数、顶层值和方法内的具名局部函数，不能在签名、构造、模式匹配、字段访问／更新中显式使用资产。匿名 lambda 和局部数据计算属于方法体，允许。
 - **只有生产方能构造**：Context 产物类型的构造器只能在它的生产方方法里出现在表达式位置，记录更新也一样；其他 instance 只能模式匹配取用，例如 `StartURL (PageURL url) <- request @StartURL`。
-- **允许的情况**：`data`／`newtype` 声明与 deriving；泛型函数（`map`、`show` 等）不因实参是资产而违规；只处理 `String`、`Handle` 等库类型的 helper 允许。
+- **允许的情况**：`data`／`newtype` 声明与 deriving；泛型函数（`map`、`show` 等）不因实参是资产而违规；只处理 `String`、`Handle` 等库类型的普通函数允许。
 - **检查范围**：只看源码里显式写出的引用，不追踪值流向；`coerce`、泛型函数或派生 `read` 等不显式写出构造器的方式不会被拦下。
 - **资产目录**：生成的 `Generated/Assets.hs` 列出资产的类型、构造器、字段及定义位置，供 review 和编辑器使用，运行时不加载。
 
@@ -566,8 +566,8 @@ cabal run crawler-demo -- --structure
 | 方法体里 `request @T`／`require @T` 的 `T` 没有在 `demands` 中声明 | 补上声明 |
 | 直接调用其他 effect 的 Context 方法（如 `getFileName`） | 改用 `request @T`／`require @T` |
 | 在生产方以外构造某个 Context 产物类型的值（例如在消费方写 `StartURL (...)`） | 值应由它的生产方产生；消费方用 `request`／`require` 取得，只做模式匹配 |
-| 普通顶层函数显式使用业务类型、构造器或字段 | 把这部分操作移进注册的 instance 方法；只处理 `String` 等通用类型的 helper 可以保留 |
-| 把 effect 调用藏进 helper、未知的高阶组合或循环 | 在方法体中直接调用；支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法 |
+| 普通顶层函数显式使用业务类型、构造器或字段 | 把这部分操作移进注册的 instance 方法；只处理 `String` 等通用类型的普通函数可以保留 |
+| 经普通函数、未知的高阶组合或循环间接调用 effect | 在方法体中直接调用；支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法 |
 | 方法体调用了自己 `input` 链以外的 effect 方法 | GHC 报错（缺少该 effect 的能力）；把它加进 `input` 链，或改用 Context 取值 |
 | `alternative` 的候选没有依赖分支契约、依赖了多个，或候选没覆盖和类型的全部构造器；分支契约被写成 `requests` | 每个候选 `requires` 恰好一个分支契约，候选覆盖全部构造器；分支契约只能 `requires` |
 | AST 的 node 选中了 Context 或 Error | node 只挂原始句柄；Context 由它挂接的句柄执行时产出，或被 `request`／`require` 时产出；Error 由失败协议调用 |

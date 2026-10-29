@@ -18,7 +18,7 @@
 
 业务执行副本仍只添加既有入口包装，原方法体表达式保持不变。这里不再使用“生成器完全不查看方法体”的限制；新的边界是读取显式引用并生成独立结构，不解释任意业务值语义、不改写业务表达式、不要求用户补写 layer 或另一份调用声明。结构提取也不证明任意 Haskell 函数的行为、动态调用次数或物理资源依赖。
 
-当前 source 结构支持显式 effect 调用、原生 `do`、`if`／`case` 和已识别的标准组合，包括顺序／绑定运算、`when`／`unless`、`either`／`maybe` 及 `catchError`。条件和待匹配的值本身不能隐藏 effect 调用。未知高阶 effect 组合、把 effect 藏入 helper 或局部 alias、含 effect 的循环组合（如 `forM_`／`replicateM_`）以及递归 effect 引用会报告错误，不静默生成空图。没有 effect 引用的原子业务表达式可在 instance 方法体内使用原生 Haskell 语法，结构副本将其擦除；方法内直接以标准组合完成 IO 迭代或数据计算，不受上述 effect 组合限制。[源码资产检查](ASSETS.md) 另行约束普通函数对业务 ADT 的显式使用，泛型或仅处理通用类型的 helper 允许；资产检查与 effect 图提取是两个不同边界。
+当前 source 结构支持显式 effect 调用、原生 `do`、`if`／`case` 和已识别的标准组合，包括顺序／绑定运算、`when`／`unless`、`either`／`maybe` 及 `catchError`。条件和待匹配的值本身不能隐藏 effect 调用。未知高阶 effect 组合、经普通函数或局部别名间接调用 effect、含 effect 的循环组合（如 `forM_`／`replicateM_`）以及递归 effect 引用会报告错误，不静默生成空图。没有 effect 引用的原子业务表达式可在 instance 方法体内使用原生 Haskell 语法，结构副本将其擦除；方法内直接以标准组合完成 IO 迭代或数据计算，不受上述 effect 组合限制。[源码资产检查](ASSETS.md) 另行约束普通函数对业务 ADT 的显式使用，泛型函数或仅处理通用类型的普通函数允许；资产检查与 effect 图提取是两个不同边界。
 
 `catchError body recovery` 使用独立的 `Recover` 结构。scope 分析保留正文的正常路径，并为每条正文路径的任意 scope 前缀接入 recovery 路径；前缀包括空前缀和完整前缀，不假定正文一定全部执行后才进入 recovery。这是保守的静态路径集合，不执行业务来验证成功条件，也不证明某个 scope 已成功获取资源。
 

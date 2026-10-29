@@ -8,7 +8,7 @@
 
 ## 已确认的架构边界
 
-Context 契约统一导出 asset 集合，不携带来源归属。普通函数不得显式使用资产类型、构造器、模式或字段，显式资产操作由注册 instance 方法承载；泛型调用与只处理通用类型的 helper 允许，方法内匿名 lambda 和局部数据计算不要求另行注册。这取代全面禁止 helper 的旧约定。gencode 用 GHC 名称解析后的源码检查资产引用，生成独立 Generated/Assets.hs 静态目录；目录不接入 runtime 或 scope 关闭归属。effect 组合仍不能隐藏在 helper 中。详见 [源码资产检查](ASSETS.md) 和 [原子 handler 约束](DESIGN_METHOD.md#3-haskell-值语义收敛到原子-handler)。
+Context 契约统一导出 asset 集合，不携带来源归属。普通函数不得显式使用资产类型、构造器、模式或字段，显式资产操作由注册 instance 方法承载；泛型调用与只处理通用类型的普通函数允许，方法内匿名 lambda 和局部数据计算不要求另行注册。这取代全面禁止普通函数的旧约定。gencode 用 GHC 名称解析后的源码检查资产引用，生成独立 Generated/Assets.hs 静态目录；目录不接入 runtime 或 scope 关闭归属。effect 组合仍只能直接写在注册方法体中。详见 [源码资产检查](ASSETS.md) 和 [原子 handler 约束](DESIGN_METHOD.md#3-haskell-值语义收敛到原子-handler)。
 
 生成前的手写代码必须保持原生 Haskell，能由 GHC／HLS 检查；handler 调用使用原生类方法，业务契约使用原生 ADT，不依赖生成器修复语法或类型。Handlers 所导入的 Generated/Effects 契约需先存在且与声明同步；语言检查不依赖 Generated/Handlers 执行包装。手写与包装副本分别加载，避免重复 instance。此项属于[核心设计约束](DESIGN_METHOD.md#生成前仍是原生-haskell核心约束)，不只是编辑器便利。
 
@@ -254,7 +254,7 @@ Input 与 request 共同表达依赖后，注册关系可以形成图。业务�
 
 方法以生成的 MethodGen 枚举识别，构造器为方法名首字母大写加 Gen；MethodDefinition.methodEffect 使用同一 effect 首个注册入口的 Gen 身份。纯结构副本剥离业务值和 IO，业务执行副本仍只包装入口、不改写原表达式。每个 Node 的 chain 独立提供路径证据，graphRootPaths 保留各入口的 scope 路径来源，不从跨 Node 的 Chained 执行顺序推导 scope 依赖。
 
-source 结构支持显式 effect 调用、do、if／case 及已识别的标准组合；未知高阶 effect、隐藏 helper／局部 alias 组合、含 effect 的动态循环和递归 effect 引用会报错，不静默生成空图。无 effect 引用的原子业务表达式可以使用任意语法，在结构副本中擦除。catchError 使用 Recover，scope 分析保留正文正常路径，以及正文任意 scope 前缀（包括空前缀）接入 recovery 的保守路径；不执行业务验证成功，也不假定整个正文执行后才发生故障。
+source 结构支持显式 effect 调用、do、if／case 及已识别的标准组合；未知高阶 effect、经普通函数或局部别名间接组合、含 effect 的动态循环和递归 effect 引用会报错，不静默生成空图。无 effect 引用的原子业务表达式可以使用任意语法，在结构副本中擦除。catchError 使用 Recover，scope 分析保留正文正常路径，以及正文任意 scope 前缀（包括空前缀）接入 recovery 的保守路径；不执行业务验证成功，也不假定整个正文执行后才发生故障。
 
 ScopeTree 保存共享节点及 parents／children／layers，实际为 DAG。scope 记在其 open 方法体之后（开启完成的位置），嵌套 open 时内层排在外层之前；路径按 scope 定义首次完成去重；生成期的 buildScopeTree 内部求 Pred(B)，即所有含 B 路径中 B 前序集合的交集，仅 A 属于 Pred(B) 时建立 A≺B，再做传递约简。该关系传递且反自反，不采用合并候选后删除整个 SCC 的办法。共同前序仅是构树的局部中间结果，不单独公开。ProgramStructure.structureScopes 直接保存生成的 ScopeTree，其内同时保留 scopePaths、scopeCandidates 原始候选、scopeOpposed 双向实证和 scopeUndetermined 未定关系；反向证据必须来自各自含有两端的单条静态路径，不能用跨路径拼接的可达性替代。仅有 open 顺序不能证明覆盖真实前提；生成期补全 require 复用的已有资源等依赖后再供清理使用，不能把缺失 open 当作无依赖。注册前提是依赖、开启顺序是证据：补全时与注册前提相反的观察顺序不作为父边，仍留在 scopeCandidates 并由 --structure 单列显示。未定关系不能宣称为独立。
 
