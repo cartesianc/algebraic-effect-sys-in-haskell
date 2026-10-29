@@ -1,11 +1,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- 原生方法的纯结构副本；只保留显式 effect 引用，不求值业务数据或 IO。
-module Framework.Codegen.Structure (HandlerShape(..), analyzeModule) where
+module Framework.Codegen.Structure (analyzeModule) where
 
 import Control.Monad (unless)
 import Data.Data (Data, cast, gmapQ)
 import Data.List (nub)
+import Framework.Effect.Graph (MethodShape(..))
 import GHC (GhcPs)
 import GHC.Hs
 import GHC.Hs.Utils (CollectFlag(..), collectLocalBinders, collectPatBinders)
@@ -13,16 +14,6 @@ import GHC.Types.Name.Occurrence (occNameString)
 import GHC.Types.Name.Reader (RdrName(..), rdrNameOcc)
 import GHC.Types.SrcLoc (GenLocated(..), unLoc)
 import GHC.Unit.Module (moduleNameString)
-
--- String 只用于生成阶段连接注册方法；生成出的图使用 MethodGen 构造器。
--- Choice 保存全部可能分支，不根据业务值选择，也不声称各分支都会执行。
-data HandlerShape
-  = Empty
-  | Call String
-  | Sequence [HandlerShape]
-  | Choice [HandlerShape]
-  | Recover HandlerShape HandlerShape
-  deriving (Eq, Show, Read)
 
 data Environment = Environment
   { contractsModule :: String
@@ -41,7 +32,7 @@ data Environment = Environment
 analyzeModule
   :: String -> [(String, String)] -> ([(String, [((String, String), String)])], [(String, String)])
   -> Bool -> HsModule GhcPs
-  -> Either String [((String, String), HandlerShape)]
+  -> Either String [((String, String), MethodShape String)]
 analyzeModule namespace methods (routes, contextual) implicitPrelude parsed = do
   unless (length (nub (map snd methods)) == length methods) $
     Left "Structure analysis needs distinct registered method names"
@@ -124,7 +115,7 @@ methodReference environment identifier
       _ -> Nothing
 
 -- 取值标记与类型实参一起解析为来源方法；未在 demands 中声明的契约在生成前报错。
-demandCall :: Environment -> String -> LHsWcType GhcPs -> Either String HandlerShape
+demandCall :: Environment -> String -> LHsWcType GhcPs -> Either String (MethodShape String)
 demandCall environment word argument = do
   owner <- maybe (Left (word ++ " @T is only supported inside registered instance methods")) Right
     (ownerClass environment)
@@ -140,7 +131,7 @@ demandCall environment word argument = do
       _ -> Left (word ++ " needs a named contract type, e.g. " ++ word ++ " @PageURL")
 
 -- 同一 effect 内部可使用自己的方法；跨 effect 的 Context 值只经 request／require 取得。
-directCall :: Environment -> String -> Either String HandlerShape
+directCall :: Environment -> String -> Either String (MethodShape String)
 directCall environment method
   | (word : _) <- [drop 1 method | take 1 method == "@"] =
       Left (word ++ " needs an explicit contract type application, e.g. " ++ word ++ " @PageURL")
@@ -240,41 +231,41 @@ rejectReferences environment description value =
   unless (null (references environment value)) $
     Left (description ++ "; keep effect composition in explicit registered method calls")
 
-sequenceShape :: [HandlerShape] -> HandlerShape
+sequenceShape :: [MethodShape String] -> MethodShape String
 sequenceShape shapes = case concatMap flatten shapes of
   [] -> Empty
   [shape] -> shape
   remaining -> Sequence remaining
   where flatten Empty = []; flatten (Sequence children) = children; flatten shape = [shape]
 
-choiceShape :: [HandlerShape] -> HandlerShape
+choiceShape :: [MethodShape String] -> MethodShape String
 choiceShape [] = Empty
 choiceShape [shape] = shape
 choiceShape shapes | all (== Empty) shapes = Empty
 choiceShape shapes = Choice shapes
 
-shapeMatches :: Environment -> MatchGroup GhcPs (LHsExpr GhcPs) -> Either String HandlerShape
+shapeMatches :: Environment -> MatchGroup GhcPs (LHsExpr GhcPs) -> Either String (MethodShape String)
 shapeMatches environment MG {mg_alts = alternatives} =
   choiceShape <$> mapM (shapeMatch environment . unLoc) (unLoc alternatives)
 
-shapeMatch :: Environment -> Match GhcPs (LHsExpr GhcPs) -> Either String HandlerShape
+shapeMatch :: Environment -> Match GhcPs (LHsExpr GhcPs) -> Either String (MethodShape String)
 shapeMatch environment Match {m_pats = patterns, m_grhss = rhss} = do
   rejectReferences environment "effect reference in a pattern" (unLoc patterns)
   shapeRhss (shadow (concatMap patternNames (unLoc patterns)) environment) rhss
 
-shapeRhss :: Environment -> GRHSs GhcPs (LHsExpr GhcPs) -> Either String HandlerShape
+shapeRhss :: Environment -> GRHSs GhcPs (LHsExpr GhcPs) -> Either String (MethodShape String)
 shapeRhss environment GRHSs {grhssGRHSs = rhss, grhssLocalBinds = bindings} = do
   let nested = localEnvironment environment bindings
   rejectReferences nested "effect reference in a where binding" bindings
   choiceShape <$> mapM (shapeGuarded nested . unLoc) rhss
 
-shapeGuarded :: Environment -> GRHS GhcPs (LHsExpr GhcPs) -> Either String HandlerShape
+shapeGuarded :: Environment -> GRHS GhcPs (LHsExpr GhcPs) -> Either String (MethodShape String)
 shapeGuarded environment (GRHS _ guards body) = do
   unless (null (statementReferences environment guards)) $
     Left "effect reference in a guard; bind the Context before the branch"
   shapeExpression (afterStatements environment guards) body
 
-shapeStatements :: Environment -> [ExprLStmt GhcPs] -> Either String HandlerShape
+shapeStatements :: Environment -> [ExprLStmt GhcPs] -> Either String (MethodShape String)
 shapeStatements _ [] = pure Empty
 shapeStatements environment (statement : rest) = do
   let next = afterStatements environment [statement]
@@ -291,7 +282,7 @@ shapeStatements environment (statement : rest) = do
   following <- shapeStatements next rest
   pure (sequenceShape [current, following])
 
-shapeExpression :: Environment -> LHsExpr GhcPs -> Either String HandlerShape
+shapeExpression :: Environment -> LHsExpr GhcPs -> Either String (MethodShape String)
 shapeExpression environment located
   | null (references environment located) = pure Empty
   | otherwise = case unLoc located of
@@ -367,7 +358,7 @@ known environment expected expression = case unLoc expression of
       | expected `elem` ["<$>", "<$"] = (["Prelude", "Data.Functor"], Just "Functor")
       | otherwise = (["Prelude", "Data.Either", "Data.Maybe"], Nothing)
 
-shapeApplication :: Environment -> LHsExpr GhcPs -> [LHsExpr GhcPs] -> Either String HandlerShape
+shapeApplication :: Environment -> LHsExpr GhcPs -> [LHsExpr GhcPs] -> Either String (MethodShape String)
 shapeApplication environment function arguments = case arguments of
   [left, right] | is ">>" || is "*>" || is "<*" || is "<*>" -> serial [left, right]
   [action, continuation] | is ">>=" -> combine action continuation
@@ -402,7 +393,7 @@ shapeApplication environment function arguments = case arguments of
       next <- shapeContinuation environment continuation
       pure (sequenceShape [first, next])
 
-shapeContinuation :: Environment -> LHsExpr GhcPs -> Either String HandlerShape
+shapeContinuation :: Environment -> LHsExpr GhcPs -> Either String (MethodShape String)
 shapeContinuation environment expression
   | null (references environment expression) = pure Empty
   | otherwise = case unLoc expression of

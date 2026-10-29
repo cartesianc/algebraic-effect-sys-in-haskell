@@ -3,10 +3,9 @@ module Framework.Generate (main) where
 
 import Control.Exception (evaluate)
 import Data.Char (isAlphaNum, isUpper)
-import Framework.Codegen.Handlers (prepareHandlers, loadSumTypes, HandlerShape(..))
+import Framework.Codegen.Handlers (prepareHandlers, loadSumTypes)
 import Framework.Codegen.Assets (checkAssets)
 import Framework.Codegen.Plan (checkDriven, renderGraphPlan)
-import qualified Framework.Effect.Graph as Graph
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Environment (getArgs, getExecutablePath, lookupEnv)
 import System.Exit (ExitCode(..), die, exitWith)
@@ -53,19 +52,19 @@ main = do
                 (handlers, shapes, nativeSource) <- prepareHandlers namespace wrappers scopeHandlers routes
                 let generated = directory </> "Generated"
                     cachePath = generated </> ".scope-cache"
-                    normalized = [(method, normalizeShape shape) | ((_, method), shape) <- shapes]
+                    methods = [(method, shape) | ((_, method), shape) <- shapes]
                 -- 驱动检查每次执行，不受 scope 缓存命中影响；首次生成尚无 Handlers.hs、没有方法结构，
                 -- 先生成契约供编写 handler，有实现后再检查。
                 case nativeSource of
-                  Just _ -> either die pure (checkDriven plan normalized)
+                  Just _ -> either die pure (checkDriven plan methods)
                   Nothing -> pure ()
                 dependencies <- mapM readUtf8 structureSources
-                let cacheKey = show (plan, normalized, dependencies)
+                let cacheKey = show (plan, methods, dependencies)
                 cached <- tryIOError (readExisting cachePath)
                 let previous = either (const Nothing) (>>= readMaybe) cached
                 (structure, reused) <- case previous of
                   Just (key, source) | key == cacheKey -> pure (source, True)
-                  _ -> case renderGraphPlan plan normalized of
+                  _ -> case renderGraphPlan plan methods of
                     Left problem -> die problem
                     Right source -> pure (source, False)
                 -- 完成声明、原生语法和纯结构分析后才更新生成区；未变文件保留时间戳。
@@ -96,13 +95,6 @@ structureSources =
   , "sdk/Framework/Workflow/AST.hs"
   , "sdk/Framework/Workflow/Structure.hs"
   ]
-
-normalizeShape :: HandlerShape -> Graph.MethodShape String
-normalizeShape Empty = Graph.Empty
-normalizeShape (Call method) = Graph.Call method
-normalizeShape (Sequence children) = Graph.Sequence (map normalizeShape children)
-normalizeShape (Choice children) = Graph.Choice (map normalizeShape children)
-normalizeShape (Recover body recovery) = Graph.Recover (normalizeShape body) (normalizeShape recovery)
 
 readUtf8 :: FilePath -> IO String
 readUtf8 path = withFile path ReadMode $ \handle -> do

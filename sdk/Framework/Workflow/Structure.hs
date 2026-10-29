@@ -11,7 +11,7 @@ import Control.Monad (unless)
 import Data.List (intercalate, nub, sort, (\\))
 import GHC.Generics (Generic)
 import Framework.Effect.Graph
-import Framework.Workflow.AST (AST, WorkflowF(..), foldAST, targets)
+import Framework.Workflow.AST (AST, WorkflowF(..), foldAST)
 
 data StructureError method
   = UnknownStructureTarget String
@@ -39,18 +39,16 @@ data ProgramStructure method = ProgramStructure
 
 instance NFData method => NFData (ProgramStructure method)
 
+-- 生成期直接枚举各独立入口，不把不同 Node 串成 scope 路径。
 initializeStructure
   :: Ord method
-  => [(method, method, method)]
-  -> [MethodDefinition method]
+  => [MethodDefinition method]
   -> [(method, String, [String])]
   -> [(String, method)]
-  -> AST
   -> Either (StructureError method) (ProgramStructure method)
-initializeStructure routes definitions scopeDeclarations entries tree = do
-  roots <- mapM (resolveEntry entries) (targets tree)
+initializeStructure definitions scopeDeclarations entries = do
   graph <- either (Left . InvalidEffectGraph) Right
-    (buildEffectGraph routes definitions (Choice (map Call roots)))
+    (buildEffectGraph definitions (Choice (map (Call . snd) entries)))
   validateNames [] [] scopeDeclarations
   mapM_ requireIdentity (graphScopes graph)
   declared <- mapM scopeParentsByIdentity scopeDeclarations

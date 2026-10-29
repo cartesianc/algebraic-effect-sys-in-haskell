@@ -134,7 +134,7 @@ captureBinding environment source value =
 publishBinding :: Environment env cause -> String -> Bound env cause -> IO ()
 publishBinding environment source value = do
   captureBinding environment source value
-  when (null (bindingOwners value)) $
+  when (isNothing (bindingOwner value)) $
     atomicModifyIORef' (runAssets (runStore environment)) $ \current -> (bind source value current, ())
 
 -- 优先使用本次调用已捕获的不可变绑定。跨链首次读取只接受唯一来源绑定。
@@ -156,11 +156,11 @@ resolveBinding environment source = do
             case value of
               Nothing -> pure Nothing
               Just bound -> do
-                phases <- mapM (fmap scopePhase . readIORef . scopeRecord . snd) (bindingOwners bound)
+                phase <- traverse (fmap scopePhase . readIORef . scopeRecord . snd) (bindingOwner bound)
                 -- 没有归属的辅助值随保存它的实例存续：实例已关闭或失效时，快照里的旧值不再是候选。
                 own <- scopePhase <$> readIORef (scopeRecord slot)
-                let retiredHolder = null (bindingOwners bound) && retired own
-                pure (if any closed phases || retiredHolder then Nothing else Just bound)
+                let retiredHolder = isNothing (bindingOwner bound) && retired own
+                pure (if maybe False closed phase || retiredHolder then Nothing else Just bound)
       case candidates of
         [] -> do
           -- scope 中没有时读取运行级 state；读到后捕获到本次调用，后续 request 不改写它。
@@ -188,12 +188,12 @@ owns environment slot = do
 
 -- 一个绑定只由一个具体实例负责关闭；名称相同不代表同一轮资源。
 belongsToScope :: String -> ScopeInstance env cause -> Bound env cause -> Bool
-belongsToScope name slot value = case bindingOwners value of
-  [(ownerName, original)] -> ownerName == name && scopeRecord original == scopeRecord slot
+belongsToScope name slot value = case bindingOwner value of
+  Just (ownerName, original) -> ownerName == name && scopeRecord original == scopeRecord slot
   _ -> False
 
 checkBinding :: Environment env cause -> Bound env cause -> App env cause ()
-checkBinding environment value = forM_ (bindingOwners value) $ \(_, slot) -> do
+checkBinding environment value = forM_ (bindingOwner value) $ \(_, slot) -> do
   owner <- rawIO (owns environment slot)
   busy <- rawIO (busyFailure environment)
   let diagnosing = maybe False ((== scopeRecord slot) . scopeRecord) (diagnosticOwner environment)
@@ -239,8 +239,7 @@ setPhase slot phase = atomicModifyIORef' (scopeRecord slot) $ \record ->
 
 saveBinding :: ScopeInstance env cause -> String -> Bound env cause -> IO ()
 saveBinding slot source value = atomicModifyIORef' (scopeRecord slot) $ \record ->
-  (record { scopeBindings = bind source value (scopeBindings record)
-          , scopeSources = nub (source : scopeSources record) }, ())
+  (record { scopeBindings = bind source value (scopeBindings record) }, ())
 
 -- scope 只保留已经建立的绑定；复用时传递原绑定，绝不另设“当前 scope”指针。
 -- 带归属的资源绑定照常写入本次调用（服从 open 协议）；没有归属的辅助值只补入本次调用尚未捕获的来源，
@@ -250,7 +249,7 @@ reuseBindings environment slot = do
   saved <- scopeBindings <$> readIORef (scopeRecord slot)
   current <- readIORef (bindings environment)
   forM_ saved $ \(source, value) ->
-    when (not (null (bindingOwners value)) || isNothing (lookup source current)) $
+    when (isJust (bindingOwner value) || isNothing (lookup source current)) $
       captureBinding environment source value
 
 ensureOpen :: Environment env cause -> Opening env cause -> IO (Either (Failure cause) ())
@@ -286,11 +285,10 @@ ensureOpen environment attempt = do
                           writeIORef (holding attempt) (Just slot)
                           values <- readIORef (produced attempt)
                           atomicModifyIORef' (scopeRecord slot) $ \record ->
-                            (record { scopePhase = ScopeOpening, scopeBindings = values
-                                    , scopeSources = map fst values }, ())
+                            (record { scopePhase = ScopeOpening, scopeBindings = values }, ())
                           when (scopeContextSource handler == Nothing) $ do
                             let source = resourceSource handler
-                                value = Binding (emptyValues environment) [(name, slot)]
+                                value = Binding (emptyValues environment) (Just (name, slot))
                             saveBinding slot source value
                             publishBinding environment source value
                           pure (Right ())
@@ -310,12 +308,15 @@ permitFor environment slot = case cleanupPermit environment of
 beginClose :: Environment env cause -> Closing env cause -> Bound env cause -> IO (Either (Failure cause) ())
 beginClose environment attempt value = do
   active <- readIORef (closeHolding attempt)
+  let owner = case bindingOwner value of
+        Just (name, slot) | name == scopeName (closeFamily attempt) -> Just slot
+        _ -> Nothing
   case active of
-    Just (slot, _) -> case lookup (scopeName (closeFamily attempt)) (bindingOwners value) of
-      Just owner | scopeRecord owner == scopeRecord slot -> pure (Right ())
+    Just (slot, _) -> case owner of
+      Just selected | scopeRecord selected == scopeRecord slot -> pure (Right ())
       _ -> pure (Left (fault (scopeName (closeFamily attempt)) (closeFault attempt)
             (ScopeContextMismatch (resourceSource (closeFamily attempt)))))
-    Nothing -> case lookup (scopeName (closeFamily attempt)) (bindingOwners value) of
+    Nothing -> case owner of
       Nothing -> pure (Left (missingClose attempt))
       Just slot -> mask $ \_ -> do
         let name = scopeName (closeFamily attempt)
@@ -367,9 +368,9 @@ instance ContextStore env (App env cause) where
           attempt : _ | resourceSource (family attempt) == source -> do
             selected <- rawIO (readIORef (holding attempt))
             let name = scopeName (family attempt)
-            case bindingOwners value of
-              [] -> pure ()
-              [(ownerName, _)]
+            case bindingOwner value of
+              Nothing -> pure ()
+              Just (ownerName, _)
                 | ownerName == name
                 , maybe True (\slot -> belongsToScope name slot value) selected -> pure ()
               _ -> throwError (fault name (wrapFault attempt) (ScopeContextMismatch source))
@@ -382,8 +383,8 @@ instance ContextStore env (App env cause) where
         checkBinding environment value
         -- 仅无归属绑定可首次认领；同一实例直接保留原绑定，不覆盖已有归属。
         forM_ claim $ \(attempt, slot) -> do
-          let bound = if null (bindingOwners value)
-                then value { bindingOwners = [(scopeName (family attempt), slot)] }
+          let bound = if isNothing (bindingOwner value)
+                then value { bindingOwner = Just (scopeName (family attempt), slot) }
                 else value
           rawIO (saveBinding slot source bound >> captureBinding environment source bound)
         pure (Right (select (bindingValues value)))
@@ -393,8 +394,8 @@ instance ContextStore env (App env cause) where
       attempt : _ | resourceSource (family attempt) == source -> do
         rawIO (ensureOpen environment attempt) >>= either throwError pure
         selected <- rawIO (readIORef (holding attempt))
-        pure [(scopeName (family attempt), slot) | Just slot <- [selected]]
-      _ -> pure []
+        pure (fmap (\slot -> (scopeName (family attempt), slot)) selected)
+      _ -> pure Nothing
     let value = Binding (update (emptyValues environment)) owner
     rawIO (publishBinding environment source value)
     case openings environment of
@@ -462,7 +463,7 @@ instance ScopeStore cause (App env cause) where
     handler <- rawIO (getScope (scopes environment) name)
     resolved <- rawIO (resolveBinding environment (resourceSource handler))
     case resolved of
-      Right (Just value) | Just slot <- lookup name (bindingOwners value) -> do
+      Right (Just value) | Just (ownerName, slot) <- bindingOwner value, ownerName == name -> do
         let invalidate = atomicModifyIORef' (scopeRecord slot) $ \record ->
               (record { scopePhase = case scopePhase record of
                   ScopeInvalid original -> ScopeInvalid original
@@ -514,7 +515,8 @@ runDiagnostic environment problem selected callback = do
         scopeLabel <- selected
         family <- selectedFamily
         value <- lookup (resourceSource family) captured
-        lookup scopeLabel (bindingOwners value)
+        (ownerName, slot) <- bindingOwner value
+        if ownerName == scopeLabel then Just slot else Nothing
   owner <- case selected of
     Nothing -> pure Nothing
     Just scopeLabel -> case lookup scopeLabel (scopeTargets problem) of
@@ -524,7 +526,7 @@ runDiagnostic environment problem selected callback = do
         registered <- case selectedFamily of
           Nothing -> pure []
           Just family -> readMVar (scopeInstances family)
-        let capturedSlots = concatMap (map snd . bindingOwners . snd) captured
+        let capturedSlots = [slot | (_, value) <- captured, Just (_, slot) <- [bindingOwner value]]
         pure (find ((== identity) . scopeIdentity) (capturedSlots ++ registered))
   saved <- maybe (pure []) (fmap scopeBindings . readIORef . scopeRecord) owner
   let belongsElsewhere (source, value) = case selected of
@@ -532,9 +534,9 @@ runDiagnostic environment problem selected callback = do
         Just scopeLabel
           | Just source == (resourceSource <$> selectedFamily) ->
               not (maybe False (\slot -> belongsToScope scopeLabel slot value) owner)
-          | otherwise -> case lookup scopeLabel (bindingOwners value) of
-              Nothing -> False
-              Just slot -> maybe True ((/= scopeRecord slot) . scopeRecord) owner
+          | otherwise -> case bindingOwner value of
+              Just (ownerName, slot) | ownerName == scopeLabel -> maybe True ((/= scopeRecord slot) . scopeRecord) owner
+              _ -> False
       -- 开启 B 失败时，不能把其他 scope 或其他参数实例的旧资源当成 B。
       capturedHere = filter (not . belongsElsewhere) captured
       restored = foldr (\(source, value) values -> bind source value values) capturedHere saved
@@ -691,7 +693,7 @@ runAppWith consume store handoff handlers initial action = do
   values <- newIORef handoff
   outcome <- runAppIn consume store values handlers initial action
   captured <- readIORef values
-  pure (outcome, filter (null . bindingOwners . snd) captured)
+  pure (outcome, filter (isNothing . bindingOwner . snd) captured)
 
 runAppIn :: (Either (Failure cause) value -> IO ()) -> RunStore env cause -> IORef (ScopeBindings env cause)
          -> Scopes env cause -> env -> App env cause value -> IO (Either (Failure cause) value)

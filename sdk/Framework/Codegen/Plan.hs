@@ -4,14 +4,12 @@ module Framework.Codegen.Plan (GraphPlan(..), renderGraphPlan, checkDriven) wher
 import Data.Char (toUpper)
 import Data.List (intercalate, nub)
 import Framework.Effect.Graph
-import Framework.Workflow.AST (chained, node)
 import Framework.Workflow.Structure (ProgramStructure(..), initializeStructure)
 
 -- 声明先由独立 GHCI 加载，方法结构随后由 GHC parser 提供；两者都不依赖 Generated。
 -- planAnchors：原子句柄方法 → 挂在它下面的 Context 的生产方法。
 data GraphPlan method = GraphPlan
-  { planRoutes :: [(method, method, method)]
-  , planDefinitions :: [MethodDefinition method]
+  { planDefinitions :: [MethodDefinition method]
   , planScopes :: [(method, String, [String])]
   , planEntries :: [(String, method)]
   , planAnchors :: [(method, method)]
@@ -89,9 +87,6 @@ renderGraphPlan plan shapes = do
     method : _ -> Left ("Unregistered handler method in the structure generation plan: " ++ method)
     [] -> pure ()
   let definitions = mergedDefinitions plan shapes
-      -- 这里只枚举各独立入口。初始化算法不会把不同 Node 串成 scope 路径，
-      -- 因而不需要载入或冻结业务 workflow 的 chained/parallel 形状。
-      entries = chained [node selected | (selected, _) <- planEntries plan]
   -- 挂接的 Context 只能直接调用它的句柄；经其他方法回到该句柄时，带注入的结构会成环。
   case [ (anchor, produced) | (anchor, produced) <- planAnchors plan
        , definition <- definitions, methodIdentity definition == produced
@@ -100,7 +95,7 @@ renderGraphPlan plan shapes = do
       ++ " but reaches it again through another method; call " ++ anchor ++ " directly")
     [] -> pure ()
   initialized <- either (Left . show) Right
-    (initializeStructure (planRoutes plan) definitions (planScopes plan) (planEntries plan) entries)
+    (initializeStructure definitions (planScopes plan) (planEntries plan))
   pure (renderEffectGraph (structureEffects initialized) ++ "\n"
     ++ renderScopeTree (structureScopes initialized))
 

@@ -25,13 +25,12 @@ data ScopePhase cause
 data ScopeRecord environment cause = ScopeRecord
   { scopePhase :: ScopePhase cause
   , scopeBindings :: environment
-  , scopeSources :: [String]
   }
 
 data ScopeOperation = OpenScope | CloseScope
 
 emptyScope :: environment -> ScopeRecord environment cause
-emptyScope environment = ScopeRecord ScopeIdle environment []
+emptyScope environment = ScopeRecord ScopeIdle environment
 
 scopeFailure :: ScopePhase cause -> Maybe (Failure cause)
 scopeFailure (ScopeInvalid failure) = Just failure

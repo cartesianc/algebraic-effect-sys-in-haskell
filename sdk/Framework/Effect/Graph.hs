@@ -84,19 +84,18 @@ data ExpandedF method next
   | RecoverLayer next next
   deriving Functor
 
--- 只展开表中显式引用。require 没有隐含的 producer 边，也不启动生产。
+-- 只展开表中已解析到来源的方法引用；require 的按需求值路径由生成计划表达，不启动生产。
 -- Choice 保留各分支路径，Sequence 组合路径；有限分支的路径数可能呈指数增长。
 -- scope 记在其 open 方法体之后，即开启完成的位置：open 内部开启的 scope 排在它前面，
 -- 嵌套 open 的方向与注册前提一致。同一 scope 在一条路径中只保留首次完成。
 buildEffectGraph
   :: Ord method
-  => [(method, method, method)]
-  -> [MethodDefinition method]
+  => [MethodDefinition method]
   -> MethodShape method
   -> Either (GraphError method) (EffectGraph method)
-buildEffectGraph routes definitions shape = do
+buildEffectGraph definitions shape = do
   uniqueDefinitions [] definitions
-  expanded <- expand [] Nothing shape
+  expanded <- expand [] shape
   pure (zygo scopeAlgebra graphAlgebra expanded)
   where
     uniqueDefinitions _ [] = Right ()
@@ -105,35 +104,21 @@ buildEffectGraph routes definitions shape = do
       | otherwise = uniqueDefinitions (selected : seen) rest
       where selected = methodIdentity definition
 
-    expand _ _ Empty = Right (Fix EmptyLayer)
-    expand active consumer (Call lexical) =
-      let (selected, routedRead) = route consumer lexical
-      in case lookup selected [(methodIdentity entry, entry) | entry <- definitions] of
+    expand _ Empty = Right (Fix EmptyLayer)
+    expand active (Call selected) =
+      case lookup selected [(methodIdentity entry, entry) | entry <- definitions] of
         Nothing -> Left (UnknownMethod selected)
-        Just entry ->
-          let current = if routedRead || methodRole entry == ContextRequire then consumer else Just selected
-              activation = (selected, current)
-          -- 生产方法的 require 路由直接读绑定，不调用显式 require 的覆盖方法体。
-          -- 仍保留原定义供查看；只有显式调用 require 才展开该定义。
-          in if routedRead
-            then pure (Fix (MethodLayer entry (Fix EmptyLayer)))
-            else if activation `elem` active
-              then Left (RecursiveMethod selected)
-              else do
-                body <- expand (activation : active) current (methodBody entry)
-                pure (Fix (MethodLayer entry body))
-    expand active consumer (Sequence children) = Fix . SequenceLayer <$> mapM (expand active consumer) children
-    expand active consumer (Choice children) = Fix . ChoiceLayer <$> mapM (expand active consumer) children
-    expand active consumer (Recover body recovery) = do
-      before <- expand active consumer body
-      after <- expand active consumer recovery
+        Just entry
+          | selected `elem` active -> Left (RecursiveMethod selected)
+          | otherwise -> do
+              body <- expand (selected : active) (methodBody entry)
+              pure (Fix (MethodLayer entry body))
+    expand active (Sequence children) = Fix . SequenceLayer <$> mapM (expand active) children
+    expand active (Choice children) = Fix . ChoiceLayer <$> mapM (expand active) children
+    expand active (Recover body recovery) = do
+      before <- expand active body
+      after <- expand active recovery
       pure (Fix (RecoverLayer before after))
-
-    route Nothing selected = (selected, False)
-    route (Just consumer) selected = case lookup (consumer, selected)
-        [((caller, producer), replacement) | (caller, producer, replacement) <- routes] of
-      Nothing -> (selected, False)
-      Just replacement -> (replacement, True)
 
 scopeAlgebra :: Eq method => Algebra (ExpandedF method) [[method]]
 scopeAlgebra EmptyLayer = [[]]

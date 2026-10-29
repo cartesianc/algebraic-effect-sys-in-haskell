@@ -1,12 +1,13 @@
 -- 保留原生 Haskell 方法体；生成独立结构副本，并添加注册声明的运行入口包装。
-module Framework.Codegen.Handlers (prepareHandlers, loadSumTypes, HandlerShape(..)) where
+module Framework.Codegen.Handlers (prepareHandlers, loadSumTypes) where
 
 import Control.Exception (evaluate)
 import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (toList)
 import Data.List (intercalate, isPrefixOf, sortOn)
 import Data.Maybe (isJust)
-import Framework.Codegen.Structure (HandlerShape(..), analyzeModule)
+import Framework.Codegen.Structure (analyzeModule)
+import Framework.Effect.Graph (MethodShape(..))
 import GHC (GhcPs, getSessionDynFlags, runGhc)
 import GHC.Data.FastString (mkFastString)
 import GHC.Data.StringBuffer (stringToStringBuffer)
@@ -30,7 +31,7 @@ import System.Process (readProcess)
 -- 包装计划来自注册；原文件始终保留，只有 Generated 副本进入运行导入链。
 prepareHandlers :: String -> [(String, String, String, String)] -> String
                 -> ([(String, [((String, String), String)])], [(String, String)])
-                -> IO (String, [((String, String), HandlerShape)], Maybe String)
+                -> IO (String, [((String, String), MethodShape String)], Maybe String)
 prepareHandlers namespace wrappers scopeHandlers routes = do
   loaded <- loadHandlers namespace
   shapes <- case loaded of

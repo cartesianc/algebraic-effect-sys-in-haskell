@@ -244,8 +244,6 @@ lowerProgram namespace specifications terminals groups sumTypes = do
           [ Graph.MethodDefinition method firstMethod (methodRole specification method) (planBody specification method)
           | (specification, method) <- concatMap registeredMethods specifications
           , (_, firstMethod) : _ <- [registeredMethods specification] ]
-      -- require @T 在结构分析时已直接解析为来源的读取方法，不再需要按消费者改写生产调用。
-      , planRoutes = []
       , planScopes =
           [ (opening, selectedScope, scopeRegistrationParents specification)
           | selectedScope <- orderedScopes

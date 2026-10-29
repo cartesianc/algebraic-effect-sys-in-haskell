@@ -4,7 +4,7 @@ module Framework.Effect.Binding (Binding(..), Bindings, bind) where
 
 data Binding environment owner = Binding
   { bindingValues :: environment
-  , bindingOwners :: [owner]
+  , bindingOwner :: Maybe owner
   }
 
 type Bindings environment owner = [(String, Binding environment owner)]
