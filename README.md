@@ -43,33 +43,16 @@
 
 ## 总体架构
 
-```mermaid
-flowchart LR
-  subgraph Syntax["架构语法（手写）"]
-    Types["Types.hs<br/>资产"]
-    Effects["Effects.hs<br/>effect 注册"]
-    AST["AST.hs、Workflow<br/>编排 AST"]
-    Handlers["Handlers.hs<br/>原生 instance"]
-  end
-  subgraph Front["前端 effect-codegen"]
-    Parse["解析<br/>声明与 handler 源码"]
-    Analyze["静态分析<br/>取值来源、可达性<br/>调用图、ScopeTree、资产约束"]
-  end
-  Generated["生成区 Generated/<br/>接口与契约、包装副本<br/>入口与结构常量"]
-  Interp["解释器<br/>interpreter ast effects<br/>AST 折叠 + 运行时协议"]
-  Tools["外部工具、LSP（计划中）"]
+一句话：**用户用 SDK 规定的 EDSL 语法配置四个手写模块和一行 `Main.hs`；其余都由 SDK 提供：前端 `effect-codegen` 把这些模块解析、检查并生成 `Generated/`，解释器 `interpreter` 再按生成的结构执行 AST。**
 
-  Syntax --> Parse --> Analyze --> Generated --> Interp
-  Syntax -. 固定语法 .-> Tools
-```
-
-| 层 | 组成 | 职责 |
-| --- | --- | --- |
-| 语法 | `Types.hs`、`Effects.hs`、`AST.hs`／`Workflow/`、`Handlers.hs` | 用 EDSL 写出架构，方法体用原生 Haskell |
-| 前端（parser） | `effect-codegen` | 读入声明与 handler 源码，检查组合规则，推导调用图与资源依赖，产出生成区 |
-| 中间表示（AST） | workflow AST、注册计划、方法纯结构、生成的调用图和 ScopeTree | 都是显式的 Haskell 数据，可以比较、缓存和展示 |
-| 解释器 | `interpreter` 与运行载体 `App` | 校验生成的结构，对 AST 做一次折叠装配执行闭包，按协议运行 |
-| 工具接口 | 固定语法、`--structure`、`Generated/Assets.hs` | 供 review、编辑器和后续 LSP 使用 |
+| 层 | 提供方 | 组成 | 职责 |
+| --- | --- | --- | --- |
+| 语法 | 用户配置 | `Types.hs`、`Effects.hs`、`AST.hs`／`Workflow/`、`Handlers.hs`、`Main.hs` | 用 EDSL 写出架构，方法体用原生 Haskell |
+| 前端（parser） | SDK | `effect-codegen` | 读入声明与 handler 源码，检查组合规则，推导调用图与资源依赖，产出生成区 |
+| 中间表示（AST） | SDK | workflow AST、注册计划、方法纯结构、生成的调用图和 ScopeTree | 都是显式的 Haskell 数据，可以比较、缓存和展示 |
+| 生成区 | SDK 生成 | `Generated/` | 接口与契约、包装副本、入口与结构常量；不要手改 |
+| 解释器 | SDK | `interpreter` 与运行载体 `App` | 校验生成的结构，对 AST 做一次折叠装配执行闭包，按协议运行 |
+| 工具接口 | SDK | 固定语法、`--structure`、`Generated/Assets.hs` | 供 review、编辑器和后续 LSP 使用 |
 
 前端和解释器的具体做法见「SDK 如何处理这门 DSL」，放在四个模块之后。
 
