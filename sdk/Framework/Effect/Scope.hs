@@ -2,13 +2,14 @@
 module Framework.Effect.Scope
   ( ScopePhase(..), ScopeRecord(..), ScopeOperation(..)
   , emptyScope, scopeFailure, beginScope, finishScope, interruptedScope
-  , Scopes, ScopeBindings, ScopeHandler(..), ScopeInstance(..), ScopeInput(..)
+  , Scopes, ScopeBinding, ScopeBindings, ScopeHandler(..), ScopeInstance(..), ScopeInput(..)
   , ScopeCleanup(..), cleanupScopes, newScopeHandler, findScope, getScope, selectScopeInstance
   , ScopeUser(..), newScopeUser, useScope, detachScopeUser, releaseScopeUser, saveCleanupFailures
+  , rememberUnownedBinding, claimBindingOwner
   , configureScopeRelations, scopeErrorPath, reserveScopeClose, finishScopeClose
   ) where
 
-import Framework.Effect.Binding (Bindings)
+import Framework.Effect.Binding (Binding(..), BindingOwnership(..), Bindings)
 import Framework.Effect.Contract (Failure(..), ScopeFault(..), ScopeInput(..), ScopeInputAccess(..))
 import Framework.Effect.Runtime.Identity (Execution)
 import Control.Concurrent.MVar (MVar, newMVar, newEmptyMVar, modifyMVar, modifyMVar_, readMVar, withMVar, putMVar)
@@ -83,7 +84,14 @@ data ScopeHandler environment cause = ScopeHandler
   , scopePendingFailures :: IORef [(Maybe SomeException, Failure cause)]
   }
 
-type ScopeBindings environment cause = Bindings environment (String, ScopeInstance environment cause)
+type ScopeBinding environment cause =
+  Binding environment (String, ScopeInstance environment cause) (ScopeUser environment cause)
+
+type ScopeBindings environment cause =
+  Bindings environment (String, ScopeInstance environment cause) (ScopeUser environment cause)
+
+type ScopeOwnership environment cause =
+  BindingOwnership (String, ScopeInstance environment cause) (ScopeUser environment cause)
 
 data ScopeInstance environment cause = ScopeInstance
   { scopeInputs :: [ScopeInput]
@@ -102,11 +110,17 @@ data ScopeUser environment cause = ScopeUser
   { scopeUserIdentity :: Unique
   , scopeUserExecution :: Execution
   , scopeUserInstances :: IORef [ScopeInstance environment cause]
+  , scopeUserBindings :: IORef [IORef (ScopeOwnership environment cause)]
+  , scopeUserCoordinator :: MVar ()
   }
 
 -- 一次入口的实际使用登记；Context request 继承同一登记，不改变 ScopeTree。
-newScopeUser :: Execution -> IO (ScopeUser environment cause)
-newScopeUser execution = ScopeUser <$> newUnique <*> pure execution <*> newIORef []
+newScopeUser :: Scopes environment cause -> Execution -> IO (ScopeUser environment cause)
+newScopeUser handlers execution = do
+  coordinator <- case handlers of
+    first : _ -> readIORef (scopeCoordinator first)
+    [] -> newMVar ()
+  ScopeUser <$> newUnique <*> pure execution <*> newIORef [] <*> newIORef [] <*> pure coordinator
 
 -- 捕获一次实际开启的实例和绑定；业务仍只实现原来的 close 方法。
 data ScopeCleanup cause = ScopeCleanup
@@ -151,6 +165,42 @@ coordinated :: ScopeHandler environment cause -> IO value -> IO value
 coordinated handler action = uninterruptibleMask_ $ do
   coordinator <- readIORef (scopeCoordinator handler)
   withMVar coordinator (const action)
+
+coordinatedUser :: ScopeUser environment cause -> IO value -> IO value
+coordinatedUser user action = uninterruptibleMask_ $
+  withMVar (scopeUserCoordinator user) (const action)
+
+-- 使用尚未认领的绑定也须登记，避免另一条链认领后关闭仍被本入口使用的资源。
+-- 已有 owner 只交回调用方，由原有 useScope / 生命周期检查处理。
+rememberUnownedBinding
+  :: ScopeUser environment cause -> ScopeBinding environment cause
+  -> IO (Maybe (String, ScopeInstance environment cause))
+rememberUnownedBinding user value = coordinatedUser user $ do
+  let ownership = bindingOwnership value
+  state <- readIORef ownership
+  case bindingOwner state of
+    Just owner -> pure (Just owner)
+    Nothing -> do
+      when (scopeUserIdentity user `notElem` map scopeUserIdentity (bindingUsers state)) $ do
+        writeIORef ownership state { bindingUsers = user : bindingUsers state }
+        pending <- readIORef (scopeUserBindings user)
+        when (ownership `notElem` pending) $
+          writeIORef (scopeUserBindings user) (ownership : pending)
+      pure Nothing
+
+-- 首次认领同时接入所有尚未退出的使用者；只有同一个实例可重复认领。
+-- 调用方已选定并持有开启实例；锁内不等待生命周期 gate，也不执行 handler。
+claimBindingOwner :: ScopeBinding environment cause -> String -> ScopeInstance environment cause -> IO Bool
+claimBindingOwner value name slot = coordinated (scopeFamily slot) $ do
+  let ownership = bindingOwnership value
+  state <- readIORef ownership
+  case bindingOwner state of
+    Just (originalName, original) ->
+      pure (originalName == name && scopeRecord original == scopeRecord slot)
+    Nothing -> do
+      forM_ (bindingUsers state) $ \user -> rememberUse user slot
+      writeIORef ownership (BindingOwnership (Just (name, slot)) [])
+      pure True
 
 rememberUse :: ScopeUser environment cause -> ScopeInstance environment cause -> IO ()
 rememberUse user slot = do
@@ -284,9 +334,18 @@ releaseScopeUser user handlers = do
 
 -- 清理动作也可临时借用别的资源；退出只撤销这些借用，由外层 sweep 收尾。
 detachScopeUser :: ScopeUser environment cause -> IO ()
-detachScopeUser user = do
+detachScopeUser user = coordinatedUser user $ do
+  pending <- readIORef (scopeUserBindings user)
+  forM_ pending $ \ownership -> do
+    state <- readIORef ownership
+    let owner = bindingOwner state
+        remaining = filter ((/= scopeUserIdentity user) . scopeUserIdentity) (bindingUsers state)
+    owner `seq` length remaining `seq` writeIORef ownership (BindingOwnership owner remaining)
+  writeIORef (scopeUserBindings user) []
+  -- 与认领共用一次协调事务：先撤销未认领使用，再读取已经接入的全部实例。
+  -- 认领不可能在读出 instances 后另行追加而逃过本次撤销。
   slots <- readIORef (scopeUserInstances user)
-  forM_ slots $ \slot -> uninterruptibleMask_ $ coordinated (scopeFamily slot) $ do
+  forM_ slots $ \slot -> do
     atomicModifyIORef' (scopeUsers slot) (\users -> (filter ((/= scopeUserIdentity user) . fst) users, ()))
     pruneInstance slot
   writeIORef (scopeUserInstances user) []

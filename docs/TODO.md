@@ -125,7 +125,7 @@ data Source = FromOwnChain | FromChains [NodeId]
 - 两种启动：AST 启动选定末端；Context request 启动一次生产链。
 - Context 启动覆盖生产、成功发布和返回，继承当前 origin 和入口使用登记；嵌套生产返回不触发入口 cleanup。
 - “入口使用登记”明确原有使用闭包的资源边界；完整 AST 入口收尾后撤销使用，once-spare 和 Error 协议保留。
-- `Origin` 为 NodeId 加本次执行序号；`ActivationId` 独立识别活动 chain。`Execution` 区分 `BusinessExecution Origin` 与 `CleanupExecution Origin scopeName instanceId`。绑定以 `bindingOrigin` 保存执行出身，资源关闭归属仍在 `bindingOwner`；ScopeUser 保留 Unique 协调身份并携带 Execution。
+- `Origin` 为 NodeId 加本次执行序号；`ActivationId` 独立识别活动 chain。`Execution` 区分 `BusinessExecution Origin` 与 `CleanupExecution Origin scopeName instanceId`。绑定以 `bindingOrigin` 保存执行出身，资源关闭归属由共享的 `bindingOwnership` 单元保存；ScopeUser 保留 Unique 协调身份并携带 Execution。
 - 运行图用存在类型引用实际 Prototype 和 ChainDefinition，不复制字符串图；scope 表引用原控制对象，运行级资产及求值锁迁入同一运行图。Context 记录在生产、发布、返回后 finally 移除，根记录覆盖诊断、结果消费及使用撤销收尾；cleanup 使用独立登记，不复活结束的父 activation。
 - ScopeTree 保持独立构树、注册前提补全和无环检测，仍负责资源依赖及 Error 祖先导航；活动调用关系不替代 scope 父边。
 - 业务 handler、facade 和生成语法不变。记录绑定出身不启用 Stage 2 可见性路由，也不改变来源求值锁。
@@ -185,7 +185,7 @@ data Source = FromOwnChain | FromChains [NodeId]
 - 五个 demo 的 `--structure` 均退出 0；Crawler 两个打印入口的来源表分别指向 `[0,0]` 和 `[0,1]`。FileDemo 候选优先读取 selector 经 `Handoff` 交付的快照，来源表仅描述缺值路径，允许为 `FromOwnChain`。
 - 最终算法下重新生成五个 demo，均报告 `0 files updated; structure rebuilt`；随后 FileDemo 重复生成退出 0，报告 `0 files updated; structure reused`，缓存复用通过。
 - 手写 Handlers 与 facade 无差异，生成区仅五个 `Generated/Program.hs` 更新原型内容；`git diff --check` 通过。
-- 本轮使用普通编译和已有 demo，未新增测试。上述结果不包含 2.7 的外部穷举模型验证；Scope 归属共享遗留项继续保留为后续待办。
+- 本轮使用普通编译和已有 demo，未新增测试。上述结果不包含 2.7 的外部穷举模型验证；后续 Scope 归属修复单独记录如下。
 
 ### 已知不覆盖
 
@@ -196,9 +196,24 @@ data Source = FromOwnChain | FromChains [NodeId]
 | 外部事件触发的生产 | Hanging 未接入 | 事件入口 |
 | 跨轮次状态 | 一律细化下无法为每轮命名契约 | Stage 3 |
 
-### Scope 归属后续
+### Scope 共享归属修复（已实现）
 
-- [ ] 明确资源 Context 在 open 外先被显式 request 时的绑定归属共享协议：这次生产可先得到无 owner 绑定；后续 open 目前只对本地捕获副本认领 owner，其他已捕获副本和权威表副本仍可能没有 owner。该行为沿用既有协议，本轮不新增绑定 ID 或禁止规则，也不据此宣称所有 owner 复制场景已获保证。现有 demo 的标准路径在 open 内生产资源，不受这个遗留问题影响。
+目标是修复资源 Context 在 open 外先被 request、被多个入口捕获后，首次认领仅改变本地副本的问题。
+
+- [x] 每次 request 分配独立 Binding 及共享 ownership IORef；值和 Execution 出身不变，捕获、权威表、scope 快照及 Handoff 共用归属单元。首次认领无 owner → 唯一实例，同实例幂等、不同实例拒绝。
+- [x] 无 owner 资源在发布／require 返回前登记 ScopeUser；claim 在现有 scopeCoordinator 内将仍活跃的持有者接入实例，detach 在同锁内撤销待认领登记与实例使用。普通资产不登记待认领使用者，正常 open 内已有 owner 的生产路径保持原协议。
+- [x] claim 先于等待实例生命周期锁，claim 到保存资源绑定保持 masked；不删除 publication、不修改 origin、不重新发布，保留 Stage 2 的单调发布事实。runtimeAssets 只接收发布时无 owner 的绑定，后续 claim 保留该 publication 引用；open 内一开始就有 owner 的产物仍只留在 scope／局部快照。
+- [x] 资源重复快照按共享归属单元去重，独立 request 不合并；同步设计说明并完成既有编译／demo 验收。
+
+本项不增加用户 key、handler 语法或 ScopeTree 算法，不追踪独立 request 是否私下包装了同一个底层 Handle。Stage 2 的外部穷举模型仍未完成，stream 尚未实现。
+
+常规回归验收（2026-10-31）：
+
+- `cabal build all` 退出 0；`file-demo`、`open-files-demo`、`scope-reuse-demo`、`scope-instances-demo`、`crawler-demo` 均退出 0 并返回 `Succ`。
+- OpenFilesDemo 的 10/10 个文件在链内及 GC 后可用，write／flush 通过，显式 close 后 10/10 关闭。
+- ScopeReuseDemo 实际开启／关闭次数为 `1/1`，三行各写入一次；ScopeInstancesDemo 的 file1、file2 开启／关闭次数各为 `2/2`。
+- FileDemo gencode 退出 0，报告 `0 files updated; structure reused`；`git diff --check` 通过。手写 Handlers、facade 和全部 Generated 文件无差异，本轮仅修改四个 runtime 源码文件与六份文档。
+- 验收使用既有 demo，未新增测试；这些结果不代表新增的并发认领／持有者交接路径已有专项执行覆盖，也不包含并发交错穷举。
 
 ## Stage 3：stream（依赖 Stage 2）
 
