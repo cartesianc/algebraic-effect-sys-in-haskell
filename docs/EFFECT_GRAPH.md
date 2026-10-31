@@ -36,7 +36,7 @@ data Execution
 
 `Origin` 区分一次 AST 入口执行，`ActivationId` 区分运行图中的一次活动 chain。`RequestBoot` 的字符串是现有 Context effect 注册名；`CleanupExecution` 保存原业务 origin、scope 注册名及现有实例编号，不新增业务 key。Context 的嵌套生产有新的 activation，但普通生产沿用外层业务 origin。
 
-`RuntimeGraph` 用存在类型包装保存实际的 `Prototype MethodGen` 和 `ChainDefinition MethodGen`，不把图转换为字符串副本。`runtimeScopes` 引用原有 scope 控制对象；`runtimeAssets` 保存按 origin 区分的无 owner 权威绑定，`runtimeForcing` 按 origin 和 Context 来源分配求值锁。活动表中的每条 `Activation` 保存父 activation、启动方式、`Execution`、静态链定义、当前绑定 `IORef` 和 `ScopeUser`；执行器和活动表共享这些运行引用。
+`RuntimeGraph` 用存在类型包装保存实际的 `Prototype MethodGen` 和 `ChainDefinition MethodGen`，不把图转换为字符串副本。`runtimeScopes` 引用原有 scope 控制对象；`runtimeAssets` 按 origin 保存发布时无 owner 的业务绑定，后续 claim 保留该 publication 引用；open 内一开始就有 owner 的产物仍只保存在 scope／局部快照。`runtimeForcing` 按 origin 和 Context 来源分配求值锁。活动表中的每条 `Activation` 保存父 activation、启动方式、`Execution`、静态链定义、当前绑定 `IORef` 和 `ScopeUser`；执行器和活动表共享这些运行引用。
 
 链有两种启动边界：
 
@@ -47,7 +47,9 @@ data Execution
 
 Context 的生产记录在生产、发布及返回结束后通过 `finally` 删除，失败或中断也撤销活动记录。AST 根活动记录覆盖业务、诊断、受控结果消费、入口使用撤销及其收尾；撤销使用后仍按 once-spare 决定关闭。清理使用独立的 `ScopeUser` 和 `CleanupExecution`，保留原始业务来源但不冒充一次新的业务入口；不会为后续清理复活已经结束的父 activation。活动表只保留当前记录，绑定和资源需要的来源身份可独立保存。
 
-`Binding.bindingOrigin :: Execution` 与 `bindingOwner` 分别表达执行出身和资源关闭归属。读取旧值、捕获快照和交接绑定保留它原来的出身；资源的具体 owner 仍是实际实例引用。业务出身用于无 owner 值的保存及读取路由；诊断和自动 cleanup 中的生产只更新局部快照，不写入业务 origin 的权威表。
+`Binding.bindingOrigin :: Execution` 保存不变的执行出身，`bindingOwnership` 是一次成功 request 独有的共享 `IORef`，保存可选 owner 与待认领的使用者。当前捕获、权威表、scope 快照和 Handoff 都共享该单元；owner 是实际实例引用。首次认领在 `scopeCoordinator` 内从无 owner 变为唯一实例，同实例重复认领幂等，其他实例拒绝；认领先于等待实例生命周期锁。值、origin 和既有 publication 不因认领改变，不删除来源或重发布。诊断和自动 cleanup 中的生产只更新局部快照，不写入业务 origin 的权威表。
+
+无 owner 的资源绑定在发布／require 返回前登记当前 `ScopeUser`；认领把仍活跃的持有者接入实例，入口退出则撤销待认领登记与实例使用，三者共用 `scopeCoordinator`。普通资产不加入待认领集合，open 内正常生产已有 owner 的路径保持原协议。认领到保存绑定保持 masked，确保这段交接不会漏掉 cleanup。资源快照按共享归属单元去重，独立 request 不合并；两次生产包装同一物理 Handle 的别名不在此协议内。
 
 ScopeTree 仍是独立的静态构树结果，保留路径分析、注册前提补全和无环检测。运行图关联实际 scope 实例与使用者，不从 ctx 调用嵌套关系重建 scope 父边；Error 导航和清理继续使用同一份补全后的 ScopeTree。静态定义、活动调用与资源依赖各有身份，不能用其中一层的边代替另一层。
 

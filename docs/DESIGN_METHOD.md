@@ -178,7 +178,7 @@ Types.hs 只保留表示类型；只包一层的 newtype 由生成的契约取�
 request 每次重新生产，成功后以当前业务 origin 保存新绑定、替换本次调用中的来源绑定并返回同一个值。require 先读本次捕获，再按 protoSources 查实际已发布的唯一可见来源；仍无值时在当前 origin 求值同一个 request 并发布，相当于 thunk。按需求值以（origin，Context 来源）加锁，不同 origin 不因契约相同而合并生产；显式 request 不自动合并。fallback 是普通业务 request，产物可被 AST 可见后继复用。诊断、自动 cleanup 及 scope 资源 Context 缺值不按需求值；诊断和 cleanup 的显式生产只更新局部快照，不写业务权威表。按需求值触发的 scope 开启参数仍按 require 观察（同参共享）。
 其他调用已经捕获的旧绑定不会被原地改写；不再通过刷新 scope 的共享值表来改变它们。
 刷新失败不覆盖该来源的旧值，原始错误继续传播，其他已经完成的操作不回滚。
-没有 owner 的资产绑定在一次 interpreter 内按 origin 保存在权威表，跨 Node 读取须符合原型的因果可见性。资源 owner 绑定随实际实例共享；scope 快照中的无 owner 辅助值不得经资源复用绕过权威来源表。后续 Node 不预约前一链的活资源；旧绑定不因新一轮 open 自动换 owner。不预初始化业务 Context，不在独立创建的运行句柄之间隐式共享。
+发布时没有 owner 的资产绑定在一次 interpreter 内按 origin 保存在权威表，后续认领保留该 publication 引用；open 内一开始就有 owner 的产物只留在 scope／局部快照。跨 Node 读取须符合原型的因果可见性。资源 owner 绑定随实际实例共享；scope 快照中的无 owner 辅助值不得经资源复用绕过权威来源表。后续 Node 不预约前一链的活资源；旧绑定不因新一轮 open 自动换 owner。不预初始化业务 Context，不在独立创建的运行句柄之间隐式共享。
 
 生成期利用未注入的方法体与默认读取集合计算 chainDrives、chainReads 和 protoSources，中间方法数据不额外发射到 runtime。已经捕获值的路径直接继续，只有缺值路径要求唯一可见来源；部分路径已捕获是合法的。多个候选只需在需要跨链解析的缺值路径上证明同时可见的实际来源至多一个；已捕获路径允许它们共同发布，读取仍由已有快照决定。分析包括 alternative 和缺值才生产的 fallback 条件；不能仅按距离或先后挑一个来源。Source 保存 FromOwnChain 或 FromChains [NodeId] 的候选集合，运行不重跑证明，只按表核对本次实际唯一。parallel 兄弟互不可见，AST 保证完成的前驱才可提供跨链值；fallback 发布同样纳入后继分析。现有 App bind 在取得值后继续，无需新增 call/cc、订阅调度器或 handler 语法。
 根调用进入生产；链内 request @T／require @T 由生成的 Provides instance 按当前消费者分派到解析出的来源方法，默认及覆盖的显式读取入口同样校验来源声明，未声明的取值报错。
@@ -232,7 +232,7 @@ gencode 通过 Framework.Prototype 统一解析注册、方法、workflow、orig
 
 运行有两类链启动边界：TargetedBoot 由 AST 的 NodeId 定位末端，建立本次 Origin 和入口使用登记；RequestBoot 使用既有 Context 注册名定位生产链，建立子 activation，包住生产、成功发布和返回。Context 嵌套启动继承当前 Execution 和 ScopeUser，新增活动记录不等于新增资源清理边界。Origin 由 NodeId 与本次执行序号组成，ActivationId 独立识别活动 chain；活动记录在 finally 中移除，根记录覆盖业务、诊断、结果消费和使用撤销收尾。
 
-运行图以存在类型持有同一份 Prototype 和 ChainDefinition，不转换为字符串图；runtimeScopes 引用现有控制对象，runtimeAssets 按 origin 保存无 owner 权威绑定，runtimeForcing 按 origin 与 Context 来源分配求值锁。Binding.bindingOrigin 保存 Execution，bindingOwner 仍保存资源关闭归属。ScopeUser 的 Unique 使用协调保留，新增 scopeUserExecution；scopeUsers 同时保留身份与出身。自动清理用独立使用登记和 CleanupExecution（原 origin、scope 名、实例编号），不复活已结束的父 activation。普通生产为 BusinessExecution；读取与交接保留绑定原出身。Stage 2 用这些身份路由读取；诊断与自动 cleanup 的新产物只更新局部快照，资源 owner 绑定继续按实际实例定位。
+运行图以存在类型持有同一份 Prototype 和 ChainDefinition，不转换为字符串图；runtimeScopes 引用现有控制对象，runtimeAssets 按 origin 保存发布时无 owner 的业务绑定，后补 owner 保留该 publication 引用；open 内一开始就有 owner 的产物只留在 scope／局部快照。runtimeForcing 按 origin 与 Context 来源分配求值锁。Binding.bindingOrigin 保存不变的 Execution，bindingOwnership IORef 共享资源关闭归属与待认领使用者；捕获、权威表、scope 快照及 Handoff 不复制归属状态。ScopeUser 的 Unique 使用协调保留，新增 scopeUserExecution；scopeUsers 同时保留身份与出身。自动清理用独立使用登记和 CleanupExecution（原 origin、scope 名、实例编号），不复活已结束的父 activation。普通生产为 BusinessExecution；读取与交接保留绑定原出身。Stage 2 用这些身份路由读取；诊断与自动 cleanup 的新产物只更新局部快照，资源 owner 绑定继续按实际实例定位。
 
 ScopeTree 保存共享节点的 DAG，而非强制单父树。生成期的 buildScopeTree 对每个 B 求所有含 B 路径的前序集合交集 Pred(B)，再作传递约简；共同前序只用于构树，不作为另一份公开结果。protoScopes 直接保存生成的 ScopeTree，其 parents、children 和 layers 用于导航，路径、raw 候选、scopeOpposed 与 scopeUndetermined 证据也保存在其中；graphRootPaths 继续保存各入口路径来源。仅由 open 顺序不能证明覆盖全部资源前提，尤其不能遗漏 require 复用的已有资源；生成期补全清理依赖后约束 once-spare，子 scope 仍保留前提时不得关闭它。路径中的 scope 记在 open 完成的位置，嵌套 open 时内层在前；注册前提是依赖、开启顺序是证据，二者相反时以注册前提为准，相反的顺序仍作为证据保留。不新增 Error tracing。
 
@@ -282,10 +282,11 @@ SDK 包装这两个方法，保存未开启、开启中、有效、关闭中、�
 共享调用等待首次开启，失败或中断后保存故障并禁止自动重开。成功关闭不重复执行，之后显式 open 可以开启新一轮。
 生成的 Handlers 为每个 Scoped 注册创建 ScopeHandler；App／IO 保存多份实例，各有 MVar、状态及开启期 Context，实际开启输入模式决定新建还是共享。
 参数由 instance 内的原有方法引用取得，require 输入按原生 ADT 的 Eq 比较；不新增 key 或外部预执行。资源 IO 在参数齐备后执行，共享时跳过资源获取及剩余 open 方法体；request 输入的新实例与同值旧实例可并存。
-Context 绑定把值与所属 scope 实例一同保存，SDK 不设置“最近选中”的 scope 指针。close 在 instance 实际 require 到这份绑定时才取得目标和锁；重复关闭读取同一归属并跳过操作，不需先 open 来选择。
-一个资源绑定只有唯一关闭归属，普通 require 只读、不转移归属。open 可以首次认领无归属绑定；已有同一实例归属时保持原绑定，另一个 scope 或同注册的不同实例认领它则报 ScopeContextMismatch。拒绝发生在等待原 owner 生命周期锁之前，不覆盖原绑定，也不为冲突实例登记该资源的 cleanup。
-此检查约束已有归属，不为不同调用对同一无归属值的首次认领提供全局仲裁；也不证明不同绑定的业务值没有共享外部资源。
-该规则约束绑定身份，不分析任意业务 ADT 是否私下含有同一个 Handle；不增加 layer、位置参数或借用／转移协议。
+每次 request 成功产生一份新 Binding：值快照与 Execution 出身不变，资源归属保存在共享的 bindingOwnership IORef 中。当前捕获、按 origin 保存的权威表、scope 快照及 Handoff 都持有同一归属单元；SDK 不设置“最近选中”的 scope 指针。close 在 instance 实际 require 到这份绑定时才取得目标和锁；重复关闭读取同一归属并跳过操作，不需先 open 来选择。
+一个资源绑定只有唯一关闭归属，普通 require 只读、不转移归属。open 首次将共享单元的 owner 从无归属认领为实际实例；同一实例重复认领幂等，另一个 scope 或同注册的不同实例认领则报 ScopeContextMismatch。认领在本次运行的 scopeCoordinator 内串行化，先于等待实例生命周期锁；冲突不覆盖 owner，也不为冲突实例登记该资源的 cleanup。所有已捕获副本随即观察同一归属，跨调用首次认领不能分裂成不同 owner。
+资源 Context 在 open 外先行生产或被读取时，SDK 在发布／require 返回前为无归属绑定登记当前 ScopeUser。首次认领在同一个 scopeCoordinator 内把仍活跃的持有者接入实际实例；入口撤销使用时也在该锁内同时撤销待认领登记与已选实例使用，避免认领遗漏并发持有者或重新接入已结束入口。普通资产不登记待认领使用；open 内正常生产已有 owner 的路径沿用原实例使用协议。
+认领与保存资源绑定采用 masked 交接，避免 owner 已确定却未纳入 cleanup 的中断窗口。认领不删除既有 publication、不改变 origin、不重新发布，Stage 2 的已发布事实继续保留；资源重复快照按共享归属单元去重，独立 request 始终产生独立绑定。
+该规则约束一次成功生产的绑定身份，不判断两次 request 是否把同一个底层 Handle 包装进不同业务值；物理资源别名仍不追踪。不增加用户 key、layer、位置参数或借用／转移协议，handler 写法和 ScopeTree 算法不变。
 require 优先复用本次调用已捕获的绑定。owner 资源绑定按实际实例定位；无 owner 绑定只接受 protoSources 许可的唯一实际来源，多份且无明确关联时报 AmbiguousContextBinding，不按时间猜测。复用 scope 不将其无 owner 辅助快照补入当前调用；这些值仍按 origin 权威表读取。显式 request 可替换当前调用的绑定，旧资源绑定仍指向旧实例。
 这项保证属于 ContextStore 与执行载体，不增加 adaptor、key、Method 注册或用户位置参数；具体观察边界见 LATEST_DESIGN.md。
 Generated/Program 自动让各末端捕获同一批 scope 引用；Node algebra 只 lower 末端，AST 执行入口 runStructuredAST 不创建或重置 scope。

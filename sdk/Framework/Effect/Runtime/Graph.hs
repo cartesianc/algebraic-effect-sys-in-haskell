@@ -13,12 +13,11 @@ import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar)
 import Control.Exception (evaluate, uninterruptibleMask_)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Maybe (fromMaybe)
-import Framework.Effect.Binding (Binding)
 import Framework.Effect.Contract (ContextFault(..))
 import Framework.Effect.Graph (MethodRole(..))
 import Framework.Effect.Runtime.Identity
 import Framework.Effect.Scope
-  ( Scopes, ScopeBindings, ScopeInstance, ScopeUser(..), configureScopeRelations )
+  ( Scopes, ScopeBinding, ScopeBindings, ScopeUser(..), configureScopeRelations )
 import Framework.Prototype
 import Framework.Workflow.Structure (scopeRelations)
 
@@ -45,8 +44,9 @@ data Activation environment cause = Activation
 data RuntimeGraph environment cause = RuntimeGraph
   { runtimePrototype :: PrototypeReference
   , runtimeScopes :: Scopes environment cause
-  -- 普通资产按实际生产入口的 Origin 分组；同一来源内只替换该入口自己的最新绑定。
-  , runtimeAssets :: IORef [((Origin, String), Binding environment (String, ScopeInstance environment cause))]
+  -- 发布时无归属的资产按 Origin 分组；后续认领保留同一引用，读取再检查共享 owner。
+  -- 同一来源内只替换该入口自己的最新绑定，旧引用不会指向后来的 request 产物。
+  , runtimeAssets :: IORef [((Origin, String), ScopeBinding environment cause)]
   , runtimeForcing :: MVar [((Origin, String), MVar ())]
   -- 有限 AST 每个挂载只启动一次；完成后只保留身份，供后继读取，不保留其 activation。
   , runtimeOrigins :: IORef [(NodeId, Origin)]
@@ -134,7 +134,7 @@ finishOrigin graph origin = uninterruptibleMask_ $
     pure remaining
 
 publishAsset :: RuntimeGraph environment cause -> Origin -> String
-             -> Binding environment (String, ScopeInstance environment cause) -> IO ()
+             -> ScopeBinding environment cause -> IO ()
 publishAsset graph origin source value = atomicModifyIORef' (runtimeAssets graph) $ \assets ->
   let key = (origin, source)
       updated = (key, value) : filter ((/= key) . fst) assets
@@ -143,7 +143,7 @@ publishAsset graph origin source value = atomicModifyIORef' (runtimeAssets graph
 -- 先按生成表定位来源入口，再读取本次实际发布；不按完成时序或全局最新值挑选。
 -- 缺少发布只返回空值，由当前调用继续执行普通 request thunk。
 readVisibleAsset :: RuntimeGraph environment cause -> Origin -> String
-                 -> IO (Either ContextFault (Maybe (Binding environment (String, ScopeInstance environment cause))))
+                 -> IO (Either ContextFault (Maybe (ScopeBinding environment cause)))
 readVisibleAsset graph origin source = do
   origins <- readIORef (runtimeOrigins graph)
   assets <- readIORef (runtimeAssets graph)
