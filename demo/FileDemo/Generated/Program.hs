@@ -37,7 +37,7 @@ caseOfFileText (FileText value) = case value of
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
 interpreter = SDK.interpreter "FileDemo" Handlers.handlerSourceFingerprint generatedPrototype compiledEntries
--- 生成时完成注册、方法、origin/ctx 链、Workflow 和 scope 的统一分析。
+-- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
 -- NodeId 只在这份 AST 快照中有效；运行时校验后装配闭包。
 generatedPrototype :: SDK.Prototype MethodGen
 generatedPrototype =
@@ -390,8 +390,8 @@ generatedPrototype =
                 , ReadFileContentGen
                 , ReadOpenedFileGen
                 ]
-            , SDK.chainDrives = []
-            , SDK.chainReads = []
+            , SDK.chainDrives = ["FileName"]
+            , SDK.chainReads = ["FileName"]
             , SDK.chainScopePaths = [[OpenFileSessionGen]]
             }
         , SDK.ChainProto
@@ -411,8 +411,8 @@ generatedPrototype =
                 , ReadFileContentGen
                 , ReadOpenedFileGen
                 ]
-            , SDK.chainDrives = []
-            , SDK.chainReads = []
+            , SDK.chainDrives = ["FileName"]
+            , SDK.chainReads = ["FileName"]
             , SDK.chainScopePaths = [[OpenFileSessionGen]]
             }
         , SDK.ChainProto
@@ -431,8 +431,8 @@ generatedPrototype =
                 , FileNameGen
                 , ReadOpenedFileGen
                 ]
-            , SDK.chainDrives = []
-            , SDK.chainReads = []
+            , SDK.chainDrives = ["FileName","FileText"]
+            , SDK.chainReads = ["FileName","FileText"]
             , SDK.chainScopePaths = [[], [OpenFileSessionGen]]
             }
         ]
@@ -663,5 +663,10 @@ generatedPrototype =
           , SDK.scopeUndetermined = []
           }
     , SDK.protoScopeNames = [(OpenFileSessionGen, "FileSession")]
-    , SDK.protoSources = []
+    , SDK.protoSources =
+        [ (SDK.ReadPoint ([1]) ("FileName"), SDK.FromOwnChain)
+        , (SDK.ReadPoint ([0]) ("FileName"), SDK.FromOwnChain)
+        , (SDK.ReadPoint ([-1]) ("FileName"), SDK.FromOwnChain)
+        , (SDK.ReadPoint ([-1]) ("FileText"), SDK.FromOwnChain)
+        ]
     }

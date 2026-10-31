@@ -9,7 +9,7 @@ import qualified Framework.Prototype as P
 
 renderPrototype :: P.Prototype String -> String
 renderPrototype prototype = unlines
-  [ "-- 生成时完成注册、方法、origin/ctx 链、Workflow 和 scope 的统一分析。"
+  [ "-- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。"
   , "-- NodeId 只在这份 AST 快照中有效；运行时校验后装配闭包。"
   , "generatedPrototype :: SDK.Prototype MethodGen"
   , "generatedPrototype ="
@@ -225,5 +225,5 @@ renderReadPoint :: P.ReadPoint -> String
 renderReadPoint point = constructor "ReadPoint" [show (P.readNode point), show (P.readContract point)]
 
 renderSource :: P.Source -> String
-renderSource (P.FromChain node) = constructor "FromChain" [show node]
+renderSource (P.FromChains nodes) = constructor "FromChains" [list show nodes]
 renderSource P.FromOwnChain = "SDK.FromOwnChain"

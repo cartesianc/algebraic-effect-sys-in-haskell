@@ -19,7 +19,7 @@
 
 `NodeId = [Int]` 是当前原型快照内的 AST 下标路径：根为 `[]`，普通子项从零编号；alternative 的选择读取链使用该分支路径加 `[-1]`。同一个 origin 末端挂载两次会有两个 `NodeId`，共享方法定义。Context 链经 demand 或挂接进入，定义本身没有虚构的 AST 位置。编辑 AST 后重新生成编号；这些路径不充当跨快照稳定 key 或运行调用序号。
 
-链事实和标准查询由 `Framework.Prototype` 统一提供。Codegen 读取这些事实生成接口与包装，Execution 读取挂载关系装配闭包，运行图共享这份原型并保存活动实例关系。运行图不累计完整方法调用历史。`protoSources`、`chainDrives` 和 `chainReads` 的静态来源解析及可见性规则留到 Stage 2，当前记录 Context 出身不改变 state、request／require、求值锁、清理或 Error 语义。SDK 当前采用 Haskell ADT，不增加 JSON 或外部 LSP 协议。
+链事实和标准查询由 `Framework.Prototype` 统一提供。Codegen 读取这些事实生成接口与包装，Execution 读取挂载关系装配闭包，运行图共享这份原型并保存活动实例关系。运行图不累计完整方法调用历史。Stage 2 由 `chainDrives`、`chainReads` 和 `protoSources` 保存可能生产、缺值读取与可见来源候选；runtime 按 origin 读取和加锁。清理与 Error 边界保留。SDK 当前采用 Haskell ADT，不增加 JSON 或外部 LSP 协议。
 
 ## 运行图与两种链启动
 
@@ -36,7 +36,7 @@ data Execution
 
 `Origin` 区分一次 AST 入口执行，`ActivationId` 区分运行图中的一次活动 chain。`RequestBoot` 的字符串是现有 Context effect 注册名；`CleanupExecution` 保存原业务 origin、scope 注册名及现有实例编号，不新增业务 key。Context 的嵌套生产有新的 activation，但普通生产沿用外层业务 origin。
 
-`RuntimeGraph` 用存在类型包装保存实际的 `Prototype MethodGen` 和 `ChainDefinition MethodGen`，不把图转换为字符串副本。`runtimeScopes` 引用原有 scope 控制对象；原来的运行级资产与来源求值锁迁入 `runtimeAssets`、`runtimeForcing`，存储位置改变，取值和锁语义保留。活动表中的每条 `Activation` 保存父 activation、启动方式、`Execution`、静态链定义、当前绑定 `IORef` 和 `ScopeUser`；执行器和活动表共享这些运行引用。
+`RuntimeGraph` 用存在类型包装保存实际的 `Prototype MethodGen` 和 `ChainDefinition MethodGen`，不把图转换为字符串副本。`runtimeScopes` 引用原有 scope 控制对象；`runtimeAssets` 保存按 origin 区分的无 owner 权威绑定，`runtimeForcing` 按 origin 和 Context 来源分配求值锁。活动表中的每条 `Activation` 保存父 activation、启动方式、`Execution`、静态链定义、当前绑定 `IORef` 和 `ScopeUser`；执行器和活动表共享这些运行引用。
 
 链有两种启动边界：
 
@@ -47,9 +47,27 @@ data Execution
 
 Context 的生产记录在生产、发布及返回结束后通过 `finally` 删除，失败或中断也撤销活动记录。AST 根活动记录覆盖业务、诊断、受控结果消费、入口使用撤销及其收尾；撤销使用后仍按 once-spare 决定关闭。清理使用独立的 `ScopeUser` 和 `CleanupExecution`，保留原始业务来源但不冒充一次新的业务入口；不会为后续清理复活已经结束的父 activation。活动表只保留当前记录，绑定和资源需要的来源身份可独立保存。
 
-`Binding.bindingOrigin :: Execution` 与 `bindingOwner` 分别表达执行出身和资源关闭归属。读取旧值、捕获快照和交接绑定保留它原来的出身；资源的具体 owner 仍是实际实例引用。本轮只接通这些身份，业务出身不用于重新选择读取来源或重新划分求值锁，清理产物也明确标为 cleanup 执行。
+`Binding.bindingOrigin :: Execution` 与 `bindingOwner` 分别表达执行出身和资源关闭归属。读取旧值、捕获快照和交接绑定保留它原来的出身；资源的具体 owner 仍是实际实例引用。业务出身用于无 owner 值的保存及读取路由；诊断和自动 cleanup 中的生产只更新局部快照，不写入业务 origin 的权威表。
 
 ScopeTree 仍是独立的静态构树结果，保留路径分析、注册前提补全和无环检测。运行图关联实际 scope 实例与使用者，不从 ctx 调用嵌套关系重建 scope 父边；Error 导航和清理继续使用同一份补全后的 ScopeTree。静态定义、活动调用与资源依赖各有身份，不能用其中一层的边代替另一层。
+
+## 资产来源与缺值路径
+
+注册中的唯一 Context 生产方与运行中的唯一来源是两个层次：一个生产方法可能被多个 AST 入口调用，产物因此具有不同 origin。运行级保存按 origin 与 Context 来源区分，同一来源在不同入口中的值不再全局互相覆盖。
+
+来源分析在生成期使用规范化、尚未并入挂接注入的方法体，以及未被手写覆盖的默认 require 集合，区分显式生产、挂接注入和缺值时的条件生产；这些是构建过程中的局部数据，不额外发射到 runtime。沿有限方法及 workflow 路径计算每链的 `chainDrives`、`chainReads`，为 `ReadPoint NodeId 基础契约` 保存：
+
+```haskell
+data Source = FromOwnChain | FromChains [NodeId]
+```
+
+`FromOwnChain` 表示缺值时按既有规则由当前入口生产；`FromChains` 保存许可的可见前驱候选。前驱必须由 AST 保证先于当前入口完成，alternative 选择读取先于其候选；parallel 兄弟互不可见。候选可有多个，生成期只要求在需要跨链解析的缺值路径上，同时可见的实际来源至多一个。已捕获绑定的其他路径上，这些节点可以共同发布，由当前快照确定读取值。证明考虑 alternative 和“上游没有发布才触发 fallback”的条件关系；不能以最后完成、距离最近或最后写入替代唯一性。
+
+方法已经捕获绑定的路径不需要跨链解析；某些路径已捕获、其他路径尚未捕获是合法的。只对后者检查唯一来源。`Recover` 保留可能失败前缀，不假定正文生产全部完成。`Source` 只保存最终候选集合，不把路径证明伪装成已保存的数据；运行校验检查引用和可见性等字段自洽，不重跑来源分析，runtime 再核对本次实际已发布来源的唯一性。
+
+无 owner 资产运行时依次查当前捕获、静态许可的实际发布、当前 origin 的按需求值。候选本次没有值且既有协议允许生产时，fallback 是一次普通 request：生产、按当前 origin 发布、返回，后续 AST 可见的读取能复用它。因而 fallback 也必须进入后继的来源分析，不能只固定最初候选而禁止后来合法生产的值传播。资源契约即使保留读取点，也仍由 owner 协议定位，缺值时不因来源表为空而自动生产；诊断和自动 cleanup 的缺值例外同样保留。按需求值锁按当前 origin 与 Context 来源分配；显式 request 每次执行，不参与自动合并。
+
+scope 的例外只覆盖具有 owner 的绑定，资源仍经实际实例定位和共享。实例快照中的无 owner 辅助值只从按 origin 保存的权威表取用，不通过资源复用绕过可见性。诊断及自动 cleanup 的新产物仅局部可见。现有 App 的 bind 在取得值后继续方法体，handler 写法、AST 语法和 ScopeTree 算法均不因此改变。
 
 ## 生成方法身份与纯结构副本
 

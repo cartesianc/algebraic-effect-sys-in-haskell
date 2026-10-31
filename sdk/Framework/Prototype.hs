@@ -10,6 +10,7 @@ module Framework.Prototype
   , ChainKind(..), ChainDefinition(..), ReadPoint(..), Source(..), PrototypeError(..)
   , buildEffectProtos, preparePrototype, buildPreparedPrototype, buildPrototype
   , validatePrototype, validateWorkflow, matchWorkflowLayer, checkDriven
+  , driveSet, readPoints, resolveSources
   , expandChain, reachableMethods, calledMethods
   , lookupChain, lookupWorkflow, workflowNode, workflowChildren
   , workflowTerminals, workflowSelectors, precedes, exclusive, visibleFrom
@@ -17,6 +18,7 @@ module Framework.Prototype
 
 import Control.DeepSeq (NFData)
 import Control.Monad (unless)
+import Control.Monad.State.Strict (StateT, execStateT, lift, modify')
 import Data.Char (isAlphaNum, isUpper)
 import Data.List (intercalate, intersect, isPrefixOf, nub, sort, (\\))
 import Data.Maybe (listToMaybe, maybeToList)
@@ -112,7 +114,7 @@ data ChainDefinition method = ChainDefinition
 data ReadPoint = ReadPoint { readNode :: NodeId, readContract :: String }
   deriving (Eq, Show, Read, Generic, NFData)
 
-data Source = FromChain NodeId | FromOwnChain
+data Source = FromChains [NodeId] | FromOwnChain
   deriving (Eq, Show, Read, Generic, NFData)
 
 data PrototypeError method
@@ -414,10 +416,15 @@ buildPreparedPrototype plan shapes = do
             ContextRequest -> Just ContextChain
             ContextRequire -> Just ContextChain
             _ -> Nothing]]
-      result = Prototype (plannedRegistrations plan) effects definitions workflow (map makeChain mounts)
-        chainDefinitions graph scopes names []
-  validatePrototype result
-  pure result
+      written = [definition { methodBody = maybe (methodBody definition) id
+          (lookup (methodIdentity definition) shapes) } | definition <- defaults]
+      defaultReaders = [methodIdentity definition | definition <- defaults
+        , methodRole definition == ContextRequire, methodIdentity definition `notElem` map fst shapes]
+      result = Prototype (plannedRegistrations plan) effects definitions workflow
+        (map makeChain mounts) chainDefinitions graph scopes names []
+  analyzed <- resolveSources written defaultReaders result
+  validatePrototype analyzed
+  pure analyzed
   where
     effects = plannedEffects plan
     workflow = plannedWorkflow plan
@@ -576,6 +583,232 @@ visibleFrom :: WorkflowTree -> NodeId -> NodeId -> Bool
 visibleFrom tree source target = source == target && knownWorkflowPosition tree source
   || precedes tree source target
 
+driveSet :: Prototype method -> NodeId -> Either (PrototypeError method) [String]
+driveSet prototype selected = chainDrives <$> lookupChain prototype selected
+
+readPoints :: Prototype method -> [ReadPoint]
+readPoints = map fst . protoSources
+
+-- 生成期只跟踪“已经发布／捕获了哪个 origin”，不求值业务值。
+-- Nothing 是 scope 资源归属；它可在本次调用使用，但不成为普通资产的跨链来源。
+data AssetState = AssetState
+  { assetPublications :: [(NodeId, String)]
+  , assetCaptures :: [(String, Maybe NodeId)]
+  } deriving (Eq, Show)
+
+data AssetExit = AssetExit Bool AssetState deriving (Eq, Show)
+
+data AssetFacts = AssetFacts
+  { assetDrives :: [(NodeId, String)]
+  , assetReads :: [(ReadPoint, [NodeId])]
+  }
+
+data AssetCall = AssetCall
+  { assetRoot :: NodeId
+  , assetCaller :: Maybe String
+  , assetOpenings :: [String]
+  , assetReplays :: [String]
+  , assetActiveMethods :: [String]
+  , assetClosing :: Bool
+  }
+
+type AssetAnalysis = StateT AssetFacts (Either (PrototypeError String))
+
+-- 可选生产保留为状态分支：A 未发布时 B 的 require 才能补产，故 A/B 不会被
+-- 简单的 may-set 误报为共存来源。parallel 从相同输入独立分析，随后合并发布，
+-- 因而两个旁支的缺值补产仍能同时出现。状态按有限事实去重，不展开任何业务 IO。
+resolveSources :: [MethodDefinition String] -> [String] -> Prototype String
+               -> Either (PrototypeError String) (Prototype String)
+resolveSources definitions defaultReaders prototype = do
+  facts <- execStateT (workflow (protoWorkflow prototype) [] []) (AssetFacts [] [])
+  let reads = [(point, if null sources then FromOwnChain else FromChains (sort (nub sources)))
+        | (point, sources) <- assetReads facts]
+      annotate chain = chain
+        { chainDrives = sort (nub [contractType | (node', contractType) <- assetDrives facts, node' == chainNode chain])
+        , chainReads = sort (nub [readContract point | (point, _) <- reads, readNode point == chainNode chain])
+        }
+  pure prototype { protoChains = map annotate (protoChains prototype), protoSources = reads }
+  where
+    effects = protoEffects prototype
+    resources = [source | effect <- effects, Just source <- [effectResource effect]]
+    effectFor :: String -> AssetAnalysis (EffectProto String)
+    effectFor method = case [effect | effect <- effects, method `elem` map snd (effectMethods effect)] of
+      [effect] -> pure effect
+      _ -> lift (Left (InvalidPrototype ("Asset analysis has no effect for method " ++ method)))
+    definitionFor :: String -> AssetAnalysis (MethodDefinition String)
+    definitionFor method = case [definition | definition <- definitions, methodIdentity definition == method] of
+      [definition] -> pure definition
+      _ -> lift (Left (InvalidPrototype ("Asset analysis has no body for method " ++ method)))
+    capture :: String -> Maybe NodeId -> AssetState -> AssetState
+    capture contractType origin state = state
+      { assetCaptures = sort ((contractType, origin) : filter ((/= contractType) . fst) (assetCaptures state)) }
+    recordRead :: NodeId -> String -> [NodeId] -> AssetAnalysis ()
+    recordRead node' contractType sources = modify' $ \facts ->
+      let point = ReadPoint node' contractType
+          previous = maybe [] id (lookup point (assetReads facts))
+          updated = (point, nub (previous ++ sources))
+      in facts { assetReads = updated : filter ((/= point) . fst) (assetReads facts) }
+    recordDrive :: NodeId -> String -> AssetAnalysis ()
+    recordDrive node' contractType = modify' $ \facts -> facts
+      { assetDrives = nub ((node', contractType) : assetDrives facts) }
+    -- 在已经捕获的路径上不查询外部来源；所有缺值路径使用同一静态候选表。
+    readAsset :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis [AssetExit]
+    readAsset call effect state = case effectProduces effect of
+      Nothing -> lift (Left (InvalidPrototype "Context reader has no contract"))
+      Just contractType -> case lookup contractType (assetCaptures state) of
+        Just _ -> pure [AssetExit True state, AssetExit False state]
+        Nothing -> do
+          let sources = nub [node' | (node', produced) <- assetPublications state, produced == contractType
+                , visibleFrom (protoWorkflow prototype) node' (assetRoot call)]
+              external = filter (/= assetRoot call) sources
+          recordRead (assetRoot call) contractType external
+          case sources of
+            [] | effectName effect `elem` resources ->
+              -- 资源可由仍活着的实例提供；缺失时失败，绝不按需求值。
+              pure [AssetExit True (capture contractType Nothing state), AssetExit False state]
+            [] | assetClosing call -> pure [AssetExit False state]
+            [] -> case lookup ContextRequest (effectMethods effect) of
+              Just producing -> method (call { assetCaller = Nothing }) producing state
+              Nothing -> pure [AssetExit False state]
+            [source] -> pure [AssetExit True (capture contractType (Just source) state), AssetExit False state]
+            _ -> lift (Left (InvalidPrototype ("Asset " ++ contractType ++ " read at " ++ show (assetRoot call)
+              ++ " has several visible sources " ++ show sources ++ "; refine the contract or the workflow")))
+    publish :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis AssetState
+    publish call effect state = case effectProduces effect of
+      Nothing -> lift (Left (InvalidPrototype "Context production has no contract"))
+      Just contractType -> do
+        let owned = case assetOpenings call of
+              current : _ -> any (\scope -> effectName scope == current
+                && effectResource scope == Just (effectName effect)) effects
+              [] -> False
+            captured = capture contractType (if owned then Nothing else Just (assetRoot call)) state
+        if owned then pure captured else do
+          recordDrive (assetRoot call) contractType
+          pure captured { assetPublications = sort (nub ((assetRoot call, contractType) : assetPublications state)) }
+    successes :: (AssetState -> AssetAnalysis [AssetExit]) -> [AssetExit] -> AssetAnalysis [AssetExit]
+    successes action exits = nub . concat <$> mapM (\exit@(AssetExit succeeded state) ->
+      if succeeded then action state else pure [exit]) exits
+    -- 每个不透明原子方法都可能失败；失败保留此前已捕获和已发布的事实。
+    -- 这些失败前缀只会在 Recover 或吞错注入继续，正常 Sequence 仍失败停止。
+    withFailures :: AssetState -> [AssetExit] -> [AssetExit]
+    withFailures state exits = nub (AssetExit False state : exits
+      ++ [AssetExit False after | AssetExit True after <- exits])
+    shape :: AssetCall -> MethodShape String -> AssetState -> AssetAnalysis [AssetExit]
+    shape _ Empty state = pure [AssetExit True state, AssetExit False state]
+    shape call (Call selected) state = method call selected state
+    shape call (Sequence parts) state = sequential (shape call) parts [AssetExit True state]
+    shape call (Choice parts) state = case parts of
+      [] -> pure [AssetExit True state]
+      _ -> nub . concat <$> mapM (\part -> shape call part state) parts
+    shape call (Recover body recovery) state = do
+      before <- shape call body state
+      nub . concat <$> mapM (\exit@(AssetExit succeeded after) ->
+        if succeeded then pure [exit] else shape call recovery after) before
+    sequential :: (part -> AssetState -> AssetAnalysis [AssetExit]) -> [part] -> [AssetExit] -> AssetAnalysis [AssetExit]
+    sequential _ [] exits = pure (nub exits)
+    sequential action (part : rest) exits = do
+      next <- successes (action part) exits
+      sequential action rest next
+    method :: AssetCall -> String -> AssetState -> AssetAnalysis [AssetExit]
+    method call selected state
+      | selected `elem` assetReplays call = pure [AssetExit True state]
+      | selected `elem` assetActiveMethods call =
+          lift (Left (InvalidEffectGraph (RecursiveMethod selected)))
+      | otherwise = do
+          effect <- effectFor selected
+          definition <- definitionFor selected
+          let entered = call { assetCaller = if methodRole definition == ContextRequire
+                  then assetCaller call else Just (effectName effect)
+                , assetActiveMethods = selected : assetActiveMethods call }
+              role = methodRole definition
+              access = case assetCaller call of
+                Nothing -> Just RequestAccess
+                Just consumer ->
+                  let modes = [demandAccess demand | candidate <- effects, effectName candidate == consumer
+                        , demand <- effectDemands candidate, demandProvider demand == effectName effect]
+                  in if RequestAccess `elem` modes then Just RequestAccess
+                     else if RequireAccess `elem` modes then Just RequireAccess else Nothing
+          exits <- case role of
+            ContextRequire | access == Nothing -> pure [AssetExit False state]
+            ContextRequire | selected `elem` defaultReaders ->
+              readAsset entered effect state
+            ContextRequest -> case access of
+              Nothing -> pure [AssetExit False state]
+              Just RequireAccess -> readAsset call effect state
+              Just RequestAccess -> do
+                body <- shape entered (methodBody definition) state
+                successes (\after -> do
+                  published <- publish call effect after
+                  pure [AssetExit True published]) body
+            ScopeOpen | assetClosing call -> pure [AssetExit False state]
+            ScopeOpen -> do
+              let inside = entered { assetOpenings = effectName effect : assetOpenings entered }
+              body <- shape inside (methodBody definition) state
+              fresh <- inject call selected body
+              let restoreResource after = foldr (\contractType -> capture contractType Nothing) after
+                    [contractType | producer <- effects, effectResource effect == Just (effectName producer)
+                      , Just contractType <- [effectProduces producer]]
+                  -- 无输入 scope 在进入方法体前选择复用；有输入时可在取得参数后
+                  -- 跳过余下方法体，保守保留失败前缀中的已完成输入操作。
+                  reused = if null (effectOpeningInputs effect) then [state]
+                    else nub (state : [after | AssetExit _ after <- body])
+              pure (fresh ++ [AssetExit True (restoreResource after) | after <- reused])
+            ScopeClose -> do
+              body <- shape (entered { assetClosing = True }) (methodBody definition) state
+              -- 重复 close 可在取得资源绑定时跳过余下方法体并成功返回；不触发注入。
+              pure (body ++ [AssetExit True after | after <- nub (state : [part | AssetExit _ part <- body])])
+            _ -> shape entered (methodBody definition) state >>= inject call selected
+          pure (withFailures state exits)
+    inject :: AssetCall -> String -> [AssetExit] -> AssetAnalysis [AssetExit]
+    inject call anchor exits = do
+      let producing = [(effectName effect, method') | effect <- effects
+            , Just anchorName <- [effectAnchor effect]
+            , owner <- effects, effectName owner == anchorName
+            , (role, anchoredMethod) <- effectMethods owner
+            , role `elem` [HandlerMethod, ScopeOpen], anchoredMethod == anchor
+            , Just method' <- [lookup ContextRequest (effectMethods effect)]]
+      if maybe False (`elem` map fst producing) (assetCaller call)
+        then pure exits
+        else successes (\state -> do
+          let injectOne (_, produced) before = do
+                results <- method (call { assetCaller = Nothing
+                  , assetReplays = anchor : assetReplays call }) produced before
+                -- 每个 parser 的失败都留在注入内，先前成功发布不会回滚。
+                pure (nub [AssetExit True after | AssetExit _ after <- results])
+          sequential injectOne producing [AssetExit True state]) exits
+    root :: NodeId -> [(String, Maybe NodeId)] -> [(NodeId, String)] -> AssetAnalysis [AssetExit]
+    root node' handoff publications = do
+      chain <- lift (lookupChain prototype node')
+      method (AssetCall node' Nothing [] [] [] False) (chainEntry chain)
+        (AssetState publications handoff)
+    workflow :: WorkflowTree -> [(NodeId, String)] -> [(String, Maybe NodeId)]
+             -> AssetAnalysis [(Bool, [(NodeId, String)])]
+    workflow tree publications handoff = case tree of
+      NodeAt node' _ -> do
+        exits <- root node' handoff publications
+        pure (nub [(succeeded, assetPublications state) | AssetExit succeeded state <- exits])
+      ChainedAt _ children -> workflowSequence children [(True, publications)] handoff
+      ParallelAt _ children -> do
+        parts <- mapM (\child -> workflow child publications handoff) children
+        pure (foldl combine [(True, publications)] parts)
+      AlternativeAt _ choice children -> do
+        selected <- root (alternativeSelector choice) handoff publications
+        nub . concat <$> mapM (\(AssetExit succeeded state) -> if not succeeded
+          then pure [(False, assetPublications state)]
+          else nub . concat <$> mapM (\child -> workflow child (assetPublications state)
+              [(contractType, origin) | (contractType, Just origin') <- assetCaptures state
+                , let origin = Just origin']) children) selected
+    workflowSequence :: [WorkflowTree] -> [(Bool, [(NodeId, String)])] -> [(String, Maybe NodeId)]
+                     -> AssetAnalysis [(Bool, [(NodeId, String)])]
+    workflowSequence [] states _ = pure (nub states)
+    workflowSequence (child : rest) states handoff = do
+      next <- nub . concat <$> mapM (\outcome@(succeeded, publications) -> if succeeded
+        then workflow child publications handoff else pure [outcome]) states
+      workflowSequence rest next handoff
+    combine :: [(Bool, [(NodeId, String)])] -> [(Bool, [(NodeId, String)])] -> [(Bool, [(NodeId, String)])]
+    combine before after = nub [(leftOK && rightOK, sort (nub (left ++ right)))
+      | (leftOK, left) <- before, (rightOK, right) <- after]
+
 -- 只核对显式字段的自洽性，不展开 methodBody、不重构图或修正手调 scope 父边。
 validatePrototype :: (Ord method, Show method) => Prototype method -> Either (PrototypeError method) ()
 validatePrototype prototype = do
@@ -637,8 +870,13 @@ validatePrototype prototype = do
       , role `elem` [HandlerMethod, ScopeOpen, ContextRequest, ContextRequire]])
     "Chain definitions do not cover the registered entries"
   mapM_ validateDefinition chainDefinitions
-  valid (null (protoSources prototype) && all (\chain -> null (chainDrives chain) && null (chainReads chain)) chains)
-    "Asset visibility annotations are reserved for the next stage"
+  valid (unique (map fst (protoSources prototype))) "Duplicate asset read point"
+  mapM_ validateSource (protoSources prototype)
+  mapM_ (\chain -> do
+    valid (unique (chainDrives chain) && all (`elem` contracts) (chainDrives chain)) "Invalid driven asset contracts"
+    valid (unique (chainReads chain) && sameSet (chainReads chain)
+      [readContract point | (point, _) <- protoSources prototype, readNode point == chainNode chain])
+      "Chain reads differ from the source table") chains
   where
     registrations = protoRegistrations prototype
     effects = protoEffects prototype
@@ -649,6 +887,19 @@ validatePrototype prototype = do
     names = protoScopeNames prototype
     chains = protoChains prototype
     chainDefinitions = protoChainDefinitions prototype
+    contracts = [contractType | effect <- effects, Just contractType <- [effectProduces effect]]
+    validateSource (point, source) = do
+      _ <- lookupChain prototype (readNode point)
+      valid (readContract point `elem` contracts) "Read point has no base Context contract"
+      case source of
+        FromOwnChain -> pure ()
+        FromChains selected -> do
+          valid (not (null selected) && unique selected) "Invalid asset source alternatives"
+          mapM_ (\node' -> do
+            chain <- lookupChain prototype node'
+            valid (node' /= readNode point && precedes (protoWorkflow prototype) node' (readNode point))
+              "Asset source is not a completed visible chain"
+            valid (readContract point `elem` chainDrives chain) "Asset source has no matching production") selected
     methodIds = map methodIdentity (graphMethods graph)
     observedScopes = graphScopes graph
     nodeIds = map scopeIdentity (scopeNodes tree)

@@ -34,7 +34,7 @@ compiledEntries = do
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
 interpreter = SDK.interpreter "ScopeReuseDemo" Handlers.handlerSourceFingerprint generatedPrototype compiledEntries
--- 生成时完成注册、方法、origin/ctx 链、Workflow 和 scope 的统一分析。
+-- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
 -- NodeId 只在这份 AST 快照中有效；运行时校验后装配闭包。
 generatedPrototype :: SDK.Prototype MethodGen
 generatedPrototype =
@@ -330,7 +330,7 @@ generatedPrototype =
             , SDK.chainTerminal = "PrepareProbe"
             , SDK.chainEntry = PrepareProbeGen
             , SDK.chainReaches = [PrepareProbeGen, FilePathsGen]
-            , SDK.chainDrives = []
+            , SDK.chainDrives = ["FilePaths"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
             }
@@ -341,7 +341,7 @@ generatedPrototype =
             , SDK.chainEntry = WriteFirstGen
             , SDK.chainReaches =
                 [WriteFirstGen, FilePathsGen, OpenSharedFileGen, OpenedFileGen, ReadFilePathsGen, ReadOpenedFileGen]
-            , SDK.chainDrives = []
+            , SDK.chainDrives = ["FilePaths"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenSharedFileGen]]
             }
@@ -358,7 +358,7 @@ generatedPrototype =
                 , ReadFilePathsGen
                 , ReadOpenedFileGen
                 ]
-            , SDK.chainDrives = []
+            , SDK.chainDrives = ["FilePaths"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenSharedFileGen]]
             }
@@ -369,7 +369,7 @@ generatedPrototype =
             , SDK.chainEntry = WriteThirdGen
             , SDK.chainReaches =
                 [WriteThirdGen, FilePathsGen, OpenSharedFileGen, OpenedFileGen, ReadFilePathsGen, ReadOpenedFileGen]
-            , SDK.chainDrives = []
+            , SDK.chainDrives = ["FilePaths"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenSharedFileGen]]
             }
@@ -379,7 +379,7 @@ generatedPrototype =
             , SDK.chainTerminal = "VerifyReuse"
             , SDK.chainEntry = VerifyReuseGen
             , SDK.chainReaches = [VerifyReuseGen, FilePathsGen]
-            , SDK.chainDrives = []
+            , SDK.chainDrives = ["FilePaths"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
             }

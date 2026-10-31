@@ -6,7 +6,7 @@
 
 **目标**：把散落在 Codegen、Registration、Plan、Graph、Workflow/Structure、Workflow/AST、Workflow/Execution 中各自推导的链结构，收拢成一份运行前的静态数据。gencode 构建一次，生成区发射一个常量，运行时只读。
 
-**进度**：Stage 1 实现及本轮验收已完成（2026-10-31）。Stage 2、Stage 3 尚未开始。
+**进度**：Stage 1 实现及本轮验收已完成（2026-10-31）。Stage 2 进度见后文，Stage 3 尚未开始。
 
 ### 已定规则
 
@@ -36,7 +36,7 @@ data Prototype method = Prototype
   , protoGraph         :: EffectGraph method
   , protoScopes        :: ScopeTree method
   , protoScopeNames    :: [(method, String)]
-  , protoSources       :: [(ReadPoint, Source)]      -- Stage 2 填充
+  , protoSources       :: [(ReadPoint, Source)]      -- 缺值读取路径的许可来源
   }
 
 data EffectProto method = EffectProto
@@ -73,8 +73,8 @@ data ChainProto method = ChainProto
   , chainTerminal   :: String       -- 末端 effect；选择读取链为转折契约
   , chainEntry      :: method
   , chainReaches    :: [method]     -- 可能到达的方法
-  , chainDrives     :: [String]     -- Stage 2 填充
-  , chainReads      :: [String]     -- Stage 2 填充
+  , chainDrives     :: [String]     -- 可能生产的基础契约
+  , chainReads      :: [String]     -- 存在缺值读取路径的基础契约
   , chainScopePaths :: [[method]] }
 
 data ChainKind = OriginChain | ContextChain
@@ -83,7 +83,7 @@ data ChainDefinition method = ChainDefinition
   , definitionEntry :: method, definitionReaches :: [method] }
 
 data ReadPoint = ReadPoint { readNode :: NodeId, readContract :: String }
-data Source = FromChain NodeId | FromOwnChain
+data Source = FromOwnChain | FromChains [NodeId]
 ```
 
 ### 任务（实现状态）
@@ -116,7 +116,7 @@ data Source = FromChain NodeId | FromOwnChain
 
 ## Stage 1 补充：runtime graph
 
-**进度**：实现及本轮验收已完成（2026-10-31），Stage 2 语义仍未启用。
+**进度**：实现及该次验收已完成（2026-10-31）；该次验收尚未启用 Stage 2，后续来源路由进度见下。
 
 **目标**：以一份共享 Prototype 为静态依据，接通活动 chain、scope 实例、入口使用登记与 Context 绑定出身。模块为 `Framework.Effect.Runtime.Identity` 和 `Framework.Effect.Runtime.Graph`；不累计完整方法执行历史。
 
@@ -148,38 +148,44 @@ data Source = FromChain NodeId | FromOwnChain
 
 ## Stage 2：资产可见性（依赖 Stage 1）
 
-**目标**：基于运行图已记录的绑定出身，改变保存与读取路由，由 AST 位置静态决定可见来源，取代运行级 state 的"后写覆盖"。当前出身只是记录：`runtimeAssets` 每个来源仍只存一份、后写覆盖先写；单次求值锁仍按来源名分配（`sourceLock`）。因此并行兄弟读到哪一份仍取决于时序，不同上游值的生产也仍会被同一把锁合并。
+**目标**：基于运行图已记录的绑定出身，改变保存与读取路由，由 AST 位置静态决定可见来源，取代运行级 state 的全局"后写覆盖"。同一契约在不同 origin 下独立保存，按需求值锁也按 origin 与 Context 来源区分。
+
+**进度**：2.1–2.6 已实现，普通编译、五个现有 demo 及结构展示通过本轮验收；2.7 的外部穷举模型尚未实施。
 
 ### 已定规则
 
 1. **出身**：复用运行图记录的实际生产与 origin 身份，将没有 scope 归属的绑定按 origin 调用（`NodeId` 加执行序号）区分保存。
 2. **可见**：链 Y 能看到链 X 的产出，当且仅当 X 在每次执行中都先于 Y 完成（X 位于 Y 某个 `chained` 祖先中排在前面的子项），或者 X 就是 Y。`parallel` 的兄弟互不可见。
-3. **驱动者**：对契约 T，下列链是驱动者：`request` T；调用 T 挂接的句柄；`require` T 且没有可见来源（按需求值）。
-4. **读取点**：链中没有被本链自己对 T 的生产先行覆盖的 `require @T`。`Sequence` 中前面的子项先于后面的；`Choice` 取各分支的交集；`Recover` 的恢复分支不以正文中的生产为先行。部分路径覆盖、部分没有时报错。
-5. **一律细化**：读取点的可见驱动者中，可能在同一次执行里共存的超过一个就报错，不论有无先后。同一 alternative 的不同候选互斥，计为一个来源。修复方式：细化（换 handler 名得到新契约），或调整 AST。
-6. **来源解析**：本次调用已捕获的绑定 → 唯一的可见来源 → 本链按需求值。静态来源本次没有发布时，退回按需求值。
-7. **例外**：scope 资源实例按开启参数的 `Eq` 共享，资源 Context 的绑定随实例归属。
+3. **驱动者**：对契约 T，下列链可能生产：显式 `request` T；调用 T 挂接的句柄；`require` T 的缺值路径触发生产。缺值生产的成立条件也纳入分析，不能把它当作每次必然发生的生产。
+4. **读取点**：只有当前调用尚未捕获 T 的路径需要解析跨链来源。允许某些路径已捕获、另一些路径缺值；前者直接用已有绑定，后者须各自满足来源唯一。`Sequence` 按顺序传递捕获；`Choice` 和 `Recover` 保留可能路径，不假定故障前已经完成全部生产。
+5. **缺值路径唯一**：在需要跨链解析的缺值路径上，同时可见的实际来源至多一个；否则报歧义，不按先后或距离挑选。候选可包含多个节点，证明覆盖 alternative 及缺值才生产的条件关系。已捕获路径可以有多个节点共同发布，读取仍由已有快照决定，不要求这些节点在所有执行路径上互斥。
+6. **来源解析与 fallback**：本次调用已捕获的绑定 → 静态许可且本次实际已发布的唯一可见来源 → 本链按需求值。fallback 是一次普通 request：以当前 origin 成功发布并返回，之后可被 AST 可见的后继复用；不设"只有最初指定节点的产物才能传播"的限制。来源分析必须将这条条件生产路径纳入后继的唯一性检查。
+7. **scope 例外只覆盖 owner 绑定**：资源实例仍按开启参数的 `Eq` 共享，已有 owner 的资源绑定随实际实例定位。scope 快照里没有 owner 的辅助值仍走按 origin 保存的权威表，不借资源复用绕过可见性。
 8. **alternative**：选择读取链先于全部候选，选择阶段捕获的绑定经 `Handoff` 交给候选（已实现）。
-9. **单次求值锁**：key 改为（出身，契约名）。
+9. **单次求值锁**：按（当前 origin，Context 来源）分配；并发的不同 origin 不因契约相同而合并生产，显式 request 仍每次执行。
+10. **隔离**：诊断与自动 cleanup 中产生的值只进入其局部快照，不能覆盖业务 origin 的权威绑定或成为后继的业务来源。
+11. **执行方式**：现有 App 的 bind 在取得值后继续方法体；新增来源分析和存储路由，不增加 call/cc、订阅调度器或 handler 语法。
 
 ### 任务
 
-- [ ] 2.1 在原型模块实现 `driveSet`、`readPoints`、`resolveSources`，按 AST 执行顺序一次遍历；结果填入 `chainDrives`、`chainReads`、`protoSources`。
-- [ ] 2.2 gencode 检查：唯一来源，报错示例 `Asset StartPageSummary read by PrintPage has several sources FetchA, FetchB; refine one handler or reorder the AST`；部分路径先行。
-- [ ] 2.3 运行时：绑定按出身保存，读取按 `protoSources` 查询，删除"后写覆盖"的回退。
-- [ ] 2.4 `sourceLock` 改用（出身，契约名）。
-- [ ] 2.5 `--structure` 展示每个读取点的来源。
-- [ ] 2.6 实现后把规则写进 LATEST_DESIGN 与 README。
-- [ ] 2.7 验证：在 LSP 仓库写一个运行时语义的可执行模型，枚举 5 个节点以内的 AST 及全部执行交错，检查"读取来源唯一且与静态表一致"。本仓库在探索阶段不新增测试。
+- [x] 2.1 在原型模块实现 `driveSet`、`readPoints`、`resolveSources`，沿 AST 控制结构传播有限抽象状态；结果填入 `chainDrives`、`chainReads`、`protoSources`。
+- [x] 2.2 gencode 检查需要跨链解析的缺值路径上同时可见来源至多一个；条件 fallback 纳入证明，部分路径已捕获允许。
+- [x] 2.3 运行时：绑定按出身保存，读取按 `protoSources` 查询，删除全局"后写覆盖"的回退。
+- [x] 2.4 `sourceLock` 按 origin 与 Context 来源分配；诊断／cleanup 发布保持局部隔离，scope 例外只作用于 owner 绑定。
+- [x] 2.5 `--structure` 展示每个读取点的来源。
+- [x] 2.6 将规则同步到 LATEST_DESIGN、README、DESIGN_METHOD、EFFECT_GRAPH 与 AGENTS。
+- [ ] 2.7 后续验证：在 LSP 仓库写运行时语义的可执行模型，枚举 5 个节点以内的 AST 及全部执行交错，检查"读取来源唯一且与静态表一致"。该外部模型本轮未实施，本仓库也未完成这种穷举验证；当前只使用普通编译和既有 demo，不新增测试。
 
-### 验收
+### 本轮验收（2026-10-31）
 
-5 个 demo 不需要修改即可通过检查，运行结果不变：
-
-- Crawler：PrintPage 读 StartPageSummary 的唯一来源是 FetchPage；
-- ScopeReuseDemo：各链对 FilePaths 的读取被本链的 `request` 先行覆盖，不是读取点；共享的 OpenedFile 属于规则 7；
-- FileDemo：候选读 FileName 和分支契约，来源都是选择读取链；
-- ScopeInstancesDemo、OpenFilesDemo：全部 `chained`，按顺序可见。
+- `cabal build all` 退出码为 0；`file-demo`、`open-files-demo`、`scope-reuse-demo`、`scope-instances-demo`、`crawler-demo` 均退出 0 并返回 `Succ`。
+- OpenFilesDemo 的 10/10 个文件在链内及 GC 后可用，写入通过，显式 close 后 10/10 关闭。
+- ScopeReuseDemo 本次实际开启／关闭次数为 `1/1`，三行内容各写入一次；各链已由自身 request 捕获 FilePaths，共享的 OpenedFile 继续按 owner 协议处理。
+- ScopeInstancesDemo 的 file1、file2 开启／关闭次数各为 `2/2`。
+- 五个 demo 的 `--structure` 均退出 0；Crawler 两个打印入口的来源表分别指向 `[0,0]` 和 `[0,1]`。FileDemo 候选优先读取 selector 经 `Handoff` 交付的快照，来源表仅描述缺值路径，允许为 `FromOwnChain`。
+- 最终算法下重新生成五个 demo，均报告 `0 files updated; structure rebuilt`；随后 FileDemo 重复生成退出 0，报告 `0 files updated; structure reused`，缓存复用通过。
+- 手写 Handlers 与 facade 无差异，生成区仅五个 `Generated/Program.hs` 更新原型内容；`git diff --check` 通过。
+- 本轮使用普通编译和已有 demo，未新增测试。上述结果不包含 2.7 的外部穷举模型验证；Scope 归属共享遗留项继续保留为后续待办。
 
 ### 已知不覆盖
 
@@ -189,6 +195,10 @@ data Source = FromChain NodeId | FromOwnChain
 | 运行时才知道数量的扇出 | 当前 DSL 无法表达 | 集合资产或带索引的出身 |
 | 外部事件触发的生产 | Hanging 未接入 | 事件入口 |
 | 跨轮次状态 | 一律细化下无法为每轮命名契约 | Stage 3 |
+
+### Scope 归属后续
+
+- [ ] 明确资源 Context 在 open 外先被显式 request 时的绑定归属共享协议：这次生产可先得到无 owner 绑定；后续 open 目前只对本地捕获副本认领 owner，其他已捕获副本和权威表副本仍可能没有 owner。该行为沿用既有协议，本轮不新增绑定 ID 或禁止规则，也不据此宣称所有 owner 复制场景已获保证。现有 demo 的标准路径在 open 内生产资源，不受这个遗留问题影响。
 
 ## Stage 3：stream（依赖 Stage 2）
 
