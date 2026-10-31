@@ -5,16 +5,20 @@
 module Framework.Effect.Runtime.Graph
   ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..)
   , newRuntimeGraph, configureRuntimeScopes, newOrigin
-  , beginActivation, endActivation, sourceLock
+  , beginActivation, endActivation, sourceLock, finishOrigin
+  , publishAsset, readVisibleAsset
   ) where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar)
 import Control.Exception (evaluate, uninterruptibleMask_)
-import Data.IORef (IORef, atomicModifyIORef', newIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.Maybe (fromMaybe)
+import Framework.Effect.Binding (Binding)
+import Framework.Effect.Contract (ContextFault(..))
 import Framework.Effect.Graph (MethodRole(..))
 import Framework.Effect.Runtime.Identity
 import Framework.Effect.Scope
-  ( Scopes, ScopeBindings, ScopeUser(..), configureScopeRelations )
+  ( Scopes, ScopeBindings, ScopeInstance, ScopeUser(..), configureScopeRelations )
 import Framework.Prototype
 import Framework.Workflow.Structure (scopeRelations)
 
@@ -41,10 +45,11 @@ data Activation environment cause = Activation
 data RuntimeGraph environment cause = RuntimeGraph
   { runtimePrototype :: PrototypeReference
   , runtimeScopes :: Scopes environment cause
-  -- 本轮只统一存储位置。来源仍按现有注册名读取，求值锁仍按现有来源分配。
-  -- Origin 与 activation 登记为后续来源路由提供身份，不提前启用 Stage 2。
-  , runtimeAssets :: IORef (ScopeBindings environment cause)
-  , runtimeForcing :: MVar [(String, MVar ())]
+  -- 普通资产按实际生产入口的 Origin 分组；同一来源内只替换该入口自己的最新绑定。
+  , runtimeAssets :: IORef [((Origin, String), Binding environment (String, ScopeInstance environment cause))]
+  , runtimeForcing :: MVar [((Origin, String), MVar ())]
+  -- 有限 AST 每个挂载只启动一次；完成后只保留身份，供后继读取，不保留其 activation。
+  , runtimeOrigins :: IORef [(NodeId, Origin)]
   , runtimeActivations :: MVar [(ActivationId, Activation environment cause)]
   , runtimeOriginSequence :: IORef Integer
   , runtimeActivationSequence :: IORef Integer
@@ -54,7 +59,7 @@ newRuntimeGraph
   :: (Eq method, Show method)
   => Prototype method -> Scopes environment cause -> IO (RuntimeGraph environment cause)
 newRuntimeGraph prototype scopes = RuntimeGraph (PrototypeReference prototype) scopes
-  <$> newIORef [] <*> newMVar [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
+  <$> newIORef [] <*> newMVar [] <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
 
 -- ScopeTree 的独立构建与校验仍在 Prototype；这里只把同一树的关系装入现有控制对象。
 configureRuntimeScopes :: RuntimeGraph environment cause -> IO ()
@@ -65,7 +70,12 @@ nextSequence :: IORef Integer -> IO Integer
 nextSequence counter = atomicModifyIORef' counter (\previous -> (previous + 1, previous))
 
 newOrigin :: RuntimeGraph environment cause -> NodeId -> IO Origin
-newOrigin graph node = Origin node <$> nextSequence (runtimeOriginSequence graph)
+newOrigin graph node = do
+  origin <- Origin node <$> nextSequence (runtimeOriginSequence graph)
+  atomicModifyIORef' (runtimeOrigins graph) $ \origins ->
+    let updated = (node, origin) : filter ((/= node) . fst) origins
+    in length updated `seq` (updated, ())
+  pure origin
 
 -- 活动记录与 App 共享同一个绑定 IORef 和入口使用登记；ctx 不另建 scope 使用者。
 -- parent 只表达启动关系，不参与 ScopeTree 父边或资产可见性推导。
@@ -106,10 +116,49 @@ resolveDefinition (PrototypeReference prototype) boot = do
     [definition] -> Right (ChainReference definition)
     _ -> Left "Runtime activation has no unique static chain definition"
 
--- 保留来源级单次求值锁的现有行为。本轮不按 Origin 分组，不合并显式 request。
-sourceLock :: RuntimeGraph environment cause -> String -> IO (MVar ())
-sourceLock graph source = modifyMVar (runtimeForcing graph) $ \locks -> case lookup source locks of
+-- 只对本入口的缺值求值串行化；显式 request 不经此锁，不合并其他入口的生产。
+sourceLock :: RuntimeGraph environment cause -> Origin -> String -> IO (MVar ())
+sourceLock graph origin source = modifyMVar (runtimeForcing graph) $ \locks -> case lookup key locks of
   Just lock -> pure (locks, lock)
   Nothing -> do
     lock <- newMVar ()
-    pure ((source, lock) : locks, lock)
+    pure ((key, lock) : locks, lock)
+  where key = (origin, source)
+
+-- 入口、诊断及收尾均已退出；保留产物和轻量 Origin 索引，撤销不再使用的求值锁。
+finishOrigin :: RuntimeGraph environment cause -> Origin -> IO ()
+finishOrigin graph origin = uninterruptibleMask_ $
+  modifyMVar_ (runtimeForcing graph) $ \locks -> do
+    let remaining = filter ((/= origin) . fst . fst) locks
+    _ <- evaluate (length remaining)
+    pure remaining
+
+publishAsset :: RuntimeGraph environment cause -> Origin -> String
+             -> Binding environment (String, ScopeInstance environment cause) -> IO ()
+publishAsset graph origin source value = atomicModifyIORef' (runtimeAssets graph) $ \assets ->
+  let key = (origin, source)
+      updated = (key, value) : filter ((/= key) . fst) assets
+  in length updated `seq` (updated, ())
+
+-- 先按生成表定位来源入口，再读取本次实际发布；不按完成时序或全局最新值挑选。
+-- 缺少发布只返回空值，由当前调用继续执行普通 request thunk。
+readVisibleAsset :: RuntimeGraph environment cause -> Origin -> String
+                 -> IO (Either ContextFault (Maybe (Binding environment (String, ScopeInstance environment cause))))
+readVisibleAsset graph origin source = do
+  origins <- readIORef (runtimeOrigins graph)
+  assets <- readIORef (runtimeAssets graph)
+  let selected = case sourcePlan (runtimePrototype graph) (originNode origin) source of
+        FromOwnChain -> [origin]
+        FromChains nodes -> [produced | node <- nodes, Just produced <- [lookup node origins]]
+      candidates = [value | produced <- selected, Just value <- [lookup (produced, source) assets]]
+  pure $ case candidates of
+    [] -> Right Nothing
+    [value] -> Right (Just value)
+    _ -> Left (AmbiguousContextBinding source)
+
+sourcePlan :: PrototypeReference -> NodeId -> String -> Source
+sourcePlan (PrototypeReference prototype) node source = case
+  [contract | effect <- protoEffects prototype, effectName effect == source
+    , Just contract <- [effectProduces effect]] of
+  [contract] -> fromMaybe FromOwnChain (lookup (ReadPoint node contract) (protoSources prototype))
+  _ -> FromOwnChain

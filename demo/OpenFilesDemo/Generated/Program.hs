@@ -32,7 +32,7 @@ compiledEntries = do
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
 interpreter = SDK.interpreter "OpenFilesDemo" Handlers.handlerSourceFingerprint generatedPrototype compiledEntries
--- 生成时完成注册、方法、origin/ctx 链、Workflow 和 scope 的统一分析。
+-- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
 -- NodeId 只在这份 AST 快照中有效；运行时校验后装配闭包。
 generatedPrototype :: SDK.Prototype MethodGen
 generatedPrototype =
@@ -247,7 +247,7 @@ generatedPrototype =
             , SDK.chainTerminal = "HoldFiles"
             , SDK.chainEntry = HoldFilesGen
             , SDK.chainReaches = [HoldFilesGen, FileNamesGen, OpenFilesGen, OpenedFilesGen, ReadFileNamesGen]
-            , SDK.chainDrives = []
+            , SDK.chainDrives = ["FileNames"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenFilesGen]]
             }
@@ -265,7 +265,7 @@ generatedPrototype =
                 , ReadFileNamesGen
                 , ReadOpenedFilesGen
                 ]
-            , SDK.chainDrives = []
+            , SDK.chainDrives = ["FileNames"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenFilesGen]]
             }
@@ -284,7 +284,7 @@ generatedPrototype =
                 , ReadOpenedFilesGen
                 , CloseFilesGen
                 ]
-            , SDK.chainDrives = []
+            , SDK.chainDrives = ["FileNames"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenFilesGen]]
             }

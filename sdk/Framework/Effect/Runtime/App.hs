@@ -117,16 +117,19 @@ captureBinding :: Environment env cause -> String -> Bound env cause -> IO ()
 captureBinding environment source value =
   atomicModifyIORef' (bindings environment) $ \current -> (bind source value current, ())
 
--- 发布：新生产的值写入本次调用；无 scope 归属时同时写入运行级 state，供后续 Node 的 require 读取。
--- 只有实际生产才发布，复用或读取旧绑定不会把旧值写回全局。
+-- 发布：普通业务的新产物按实际 Origin 保存；诊断与自动收尾只更新隔离的本次快照。
+-- 资源绑定仍归具体 scope 实例；捕获、复用和认领归属不向业务资产表重新发布旧值。
 publishBinding :: Environment env cause -> String -> Bound env cause -> IO ()
 publishBinding environment source value = do
   captureBinding environment source value
-  when (isNothing (bindingOwner value)) $
-    atomicModifyIORef' (runtimeAssets (runtimeGraph environment)) $ \current -> (bind source value current, ())
+  case execution environment of
+    BusinessExecution origin
+      | isNothing (bindingOwner value), isNothing (originalFailure environment)
+      , not (cleaningScopes environment) -> publishAsset (runtimeGraph environment) origin source value
+    _ -> pure ()
 
--- 优先使用本次调用已捕获的不可变绑定。跨链首次读取只接受唯一来源绑定。
--- 多份绑定不按时间排序、不按 scope 数量选择、不执行生产者。
+-- 已合法捕获的绑定保持快照。资源按实例归属解析，普通值只读静态来源指定的 Origin。
+-- scope 保存的无 owner 辅助值不能绕过来源表，也不能盖过同一 Origin 后来的 request。
 resolveBinding :: Environment env cause -> String -> IO (Either ContextFault (Maybe (Bound env cause)))
 resolveBinding environment source = do
   current <- lookup source <$> readIORef (bindings environment)
@@ -143,19 +146,19 @@ resolveBinding environment source = do
             value <- lookup source . scopeBindings <$> readIORef (scopeRecord slot)
             case value of
               Nothing -> pure Nothing
-              Just bound -> do
-                phase <- traverse (fmap scopePhase . readIORef . scopeRecord . snd) (bindingOwner bound)
-                -- 没有归属的辅助值随保存它的实例存续：实例已关闭或失效时，快照里的旧值不再是候选。
-                own <- scopePhase <$> readIORef (scopeRecord slot)
-                let retiredHolder = isNothing (bindingOwner bound) && retired own
-                pure (if maybe False closed phase || retiredHolder then Nothing else Just bound)
+              Just bound -> case bindingOwner bound of
+                Nothing -> pure Nothing
+                Just (_, owner) -> do
+                  phase <- scopePhase <$> readIORef (scopeRecord owner)
+                  pure (if closed phase then Nothing else Just bound)
       case candidates of
+        [] | cleaningScopes environment -> pure (Right Nothing)
         [] -> do
-          -- scope 中没有时读取运行级 state；读到后捕获到本次调用，后续 request 不改写它。
-          asset <- lookup source <$> readIORef (runtimeAssets (runtimeGraph environment))
+          asset <- readVisibleAsset (runtimeGraph environment) (executionOrigin (execution environment)) source
           case asset of
-            Nothing -> pure (Right Nothing)
-            Just value -> do
+            Left problem -> pure (Left problem)
+            Right Nothing -> pure (Right Nothing)
+            Right (Just value) -> do
               captureBinding environment source value
               pure (Right (Just value))
         [value] -> captureBinding environment source value >> pure (Right (Just value))
@@ -163,9 +166,6 @@ resolveBinding environment source = do
   where
     closed (ScopeClosed _) = True
     closed _ = False
-    retired (ScopeClosed _) = True
-    retired (ScopeInvalid _) = True
-    retired _ = False
 
 owns :: Environment env cause -> ScopeInstance env cause -> IO Bool
 owns environment slot = do
@@ -229,15 +229,13 @@ saveBinding :: ScopeInstance env cause -> String -> Bound env cause -> IO ()
 saveBinding slot source value = atomicModifyIORef' (scopeRecord slot) $ \record ->
   (record { scopeBindings = bind source value (scopeBindings record) }, ())
 
--- scope 只保留已经建立的绑定；复用时传递原绑定，绝不另设“当前 scope”指针。
--- 带归属的资源绑定照常写入本次调用（服从 open 协议）；没有归属的辅助值只补入本次调用尚未捕获的来源，
--- 不覆盖已捕获的值（例如 alternative 交给候选的资产）。复用本就要求开启参数同值，不改变共享判断。
+-- 复用只交接带实例归属的资源绑定。普通值在实际 require 时按 Origin 查询权威资产表，
+-- 不从 scope 的旧快照预先捕获；开启参数同值的共享规则保持不变。
 reuseBindings :: Environment env cause -> ScopeInstance env cause -> IO ()
 reuseBindings environment slot = do
   saved <- scopeBindings <$> readIORef (scopeRecord slot)
-  current <- readIORef (bindings environment)
   forM_ saved $ \(source, value) ->
-    when (isJust (bindingOwner value) || isNothing (lookup source current)) $
+    when (isJust (bindingOwner value)) $
       captureBinding environment source value
 
 ensureOpen :: Environment env cause -> Opening env cause -> IO (Either (Failure cause) ())
@@ -412,14 +410,14 @@ instance ContextStore env (App env cause) where
   enterContext name (AppRun action) = AppRun $ local
     (\env -> env { caller = Just name, contexts = name : contexts env, forcedRequire = False }) action
   -- 诊断、收尾与 scope 资源不按需求值：资源只能经 open 取得，诊断不预执行 Context。
-  -- 同一来源的并发求值持锁串行，后到者在锁内重新读取 state。
+  -- 当前 Origin 的同一来源持锁串行；锁内重新读取，不合并平行入口各自的补产。
   forceContext source (AppRun action) = AppRun $ do
     environment <- ask
     let resource = any ((== Just source) . scopeContextSource) (scopes environment)
         allowed = not resource && not (isJust (originalFailure environment))
           && not (cleaningScopes environment) && null (closings environment)
     if not allowed then pure Nothing else do
-      lock <- liftIO (sourceLock (runtimeGraph environment) source)
+      lock <- liftIO (sourceLock (runtimeGraph environment) (executionOrigin (execution environment)) source)
       let inside = environment { caller = Nothing, forcedRequire = True }
       result <- liftIO (withMVar lock (const (runExceptT (runReaderT action inside))))
       either throwError (pure . Just) result
@@ -737,4 +735,4 @@ runAppIn consume graph node values initial (AppRun action) = mask $ \restore -> 
             (Left original, problems) -> Left original { cleanupFailures = cleanupFailures original ++ problems }
             (Right _, first : rest) -> Left first { cleanupFailures = cleanupFailures first ++ rest }
             (Right value, []) -> Right value)
-    `finally` endActivation graph (activationId activation)
+    `finally` (endActivation graph (activationId activation) `finally` finishOrigin graph origin)

@@ -174,14 +174,16 @@ Types.hs 只保留表示类型；只包一层的 newtype 由生成的契约取�
 消费配置形成关联 Require（按 demands 顺序的元组）和 Provides 契约约束，不能因该 effect 自身也是 Context 就省略其消费契约。
 方法保持无位置参数。instance 使用原生 Haskell：在 do 中通过 `value <- request @T` 或 `value <- require @T` 取得业务值，调用点即说明是否重新生产；普通操作直接引用 superclass 方法。可确定匹配的单构造器模式可直接写在 `<-` 左侧；多构造器值先绑定再用普通 case 显式处理，失败通过 raise，不新增 MonadFail。SDK 在注册生成的 Context 入口连接 request 生产与 require 读取；生成器解析显式 effect 方法引用以生成纯结构副本；业务执行副本仍只包装入口，不改写原方法体表达式。不新增 Definition、consume 或独立 booter；嵌套取值共享本次 Context 和 scope。未进入的分支不取值，生成源码和创建 Target 不执行业务 IO；不使用 unsafePerformIO／unsafeInterleaveIO。
 
-底层以 Context 的一次成功绑定为单位保存值快照与资源归属。固定绑定且没有 request／重新绑定时，require 重复读取同一份值；Input 组合保留这种关联。
-request 每次重新生产，成功后发布新绑定、替换当前调用中该来源的绑定并返回同一个值；require 也是表达式：它读取 state，值只来自 request；state 中已有值时直接返回，不重新生产；尚无值时求值一次同一个 request 并写入 state，相当于 thunk。按需求值以来源加锁，并发 require 只求值一次；诊断、收尾期间以及 scope 资源 Context（只能经 open 取得）不按需求值，仍报 ContextNotInitialized。按需求值触发的生产对 scope 开启参数仍按 require 观察（同参共享）。
+底层以 Context 的一次成功绑定为单位保存值快照、执行出身与资源归属。固定绑定且没有 request／重新绑定时，require 重复读取同一份值；Input 组合保留这种关联。
+request 每次重新生产，成功后以当前业务 origin 保存新绑定、替换本次调用中的来源绑定并返回同一个值。require 先读本次捕获，再按 protoSources 查实际已发布的唯一可见来源；仍无值时在当前 origin 求值同一个 request 并发布，相当于 thunk。按需求值以（origin，Context 来源）加锁，不同 origin 不因契约相同而合并生产；显式 request 不自动合并。fallback 是普通业务 request，产物可被 AST 可见后继复用。诊断、自动 cleanup 及 scope 资源 Context 缺值不按需求值；诊断和 cleanup 的显式生产只更新局部快照，不写业务权威表。按需求值触发的 scope 开启参数仍按 require 观察（同参共享）。
 其他调用已经捕获的旧绑定不会被原地改写；不再通过刷新 scope 的共享值表来改变它们。
 刷新失败不覆盖该来源的旧值，原始错误继续传播，其他已经完成的操作不回滚。
-不属于 scope 实例的资产绑定在一次 interpreter 运行内跨 Node 保存于运行级 state；scope 开启期间生产的 Context 随实际实例保存，只在该实例仍被使用或依赖保留期间供其他链 require。后续 Node 不预约前一链的活资源；旧绑定不因新一轮 open 自动换 owner。不预初始化业务 Context，不在独立创建的运行句柄之间隐式共享。
+没有 owner 的资产绑定在一次 interpreter 内按 origin 保存在权威表，跨 Node 读取须符合原型的因果可见性。资源 owner 绑定随实际实例共享；scope 快照中的无 owner 辅助值不得经资源复用绕过权威来源表。后续 Node 不预约前一链的活资源；旧绑定不因新一轮 open 自动换 owner。不预初始化业务 Context，不在独立创建的运行句柄之间隐式共享。
+
+生成期利用未注入的方法体与默认读取集合计算 chainDrives、chainReads 和 protoSources，中间方法数据不额外发射到 runtime。已经捕获值的路径直接继续，只有缺值路径要求唯一可见来源；部分路径已捕获是合法的。多个候选只需在需要跨链解析的缺值路径上证明同时可见的实际来源至多一个；已捕获路径允许它们共同发布，读取仍由已有快照决定。分析包括 alternative 和缺值才生产的 fallback 条件；不能仅按距离或先后挑一个来源。Source 保存 FromOwnChain 或 FromChains [NodeId] 的候选集合，运行不重跑证明，只按表核对本次实际唯一。parallel 兄弟互不可见，AST 保证完成的前驱才可提供跨链值；fallback 发布同样纳入后继分析。现有 App bind 在取得值后继续，无需新增 call/cc、订阅调度器或 handler 语法。
 根调用进入生产；链内 request @T／require @T 由生成的 Provides instance 按当前消费者分派到解析出的来源方法，默认及覆盖的显式读取入口同样校验来源声明，未声明的取值报错。
 gencode 在结构分析时把 request @T／require @T 解析为来源方法，拒绝未在 demands 中声明的契约，也拒绝直接调用其他 effect 的 Context 方法，接线因此只存在于声明层。
-调用身份和 scope 可见性由 SDK 的局部 Reader 传递，保存值由执行载体持有；同次 AST 的 scope 绑定已共享，更细的范围与跨入口存续另行设计。
+调用身份和当前绑定由 SDK 的局部 Reader 传递，保存值由运行图持有；同一次 interpreter 内的跨入口来源由静态表与实际 origin 决定，scope owner 绑定沿资源协议共享。跨独立 interpreter 存续仍另行设计。
 
 在受支持的 ADT 范围内，连接两端确定后由 SDK 内置 Generic Map 完成结构适配。
 目前只有一种固定规则，不新增 adapter 类目或 adapt 配置，也不要求用户为每对类型
@@ -230,11 +232,11 @@ gencode 通过 Framework.Prototype 统一解析注册、方法、workflow、orig
 
 运行有两类链启动边界：TargetedBoot 由 AST 的 NodeId 定位末端，建立本次 Origin 和入口使用登记；RequestBoot 使用既有 Context 注册名定位生产链，建立子 activation，包住生产、成功发布和返回。Context 嵌套启动继承当前 Execution 和 ScopeUser，新增活动记录不等于新增资源清理边界。Origin 由 NodeId 与本次执行序号组成，ActivationId 独立识别活动 chain；活动记录在 finally 中移除，根记录覆盖业务、诊断、结果消费和使用撤销收尾。
 
-运行图以存在类型持有同一份 Prototype 和 ChainDefinition，不转换为字符串图；runtimeScopes 引用现有控制对象，运行级绑定与来源求值锁迁入 runtimeAssets／runtimeForcing。Binding.bindingOrigin 保存 Execution，bindingOwner 仍保存资源关闭归属。ScopeUser 的 Unique 使用协调保留，新增 scopeUserExecution；scopeUsers 同时保留身份与出身。自动清理用独立使用登记和 CleanupExecution（原 origin、scope 名、实例编号），不复活已结束的父 activation。普通生产为 BusinessExecution；读取与交接保留绑定原出身。本轮只记录关联，读取可见性和求值锁仍遵循原协议。
+运行图以存在类型持有同一份 Prototype 和 ChainDefinition，不转换为字符串图；runtimeScopes 引用现有控制对象，runtimeAssets 按 origin 保存无 owner 权威绑定，runtimeForcing 按 origin 与 Context 来源分配求值锁。Binding.bindingOrigin 保存 Execution，bindingOwner 仍保存资源关闭归属。ScopeUser 的 Unique 使用协调保留，新增 scopeUserExecution；scopeUsers 同时保留身份与出身。自动清理用独立使用登记和 CleanupExecution（原 origin、scope 名、实例编号），不复活已结束的父 activation。普通生产为 BusinessExecution；读取与交接保留绑定原出身。Stage 2 用这些身份路由读取；诊断与自动 cleanup 的新产物只更新局部快照，资源 owner 绑定继续按实际实例定位。
 
 ScopeTree 保存共享节点的 DAG，而非强制单父树。生成期的 buildScopeTree 对每个 B 求所有含 B 路径的前序集合交集 Pred(B)，再作传递约简；共同前序只用于构树，不作为另一份公开结果。protoScopes 直接保存生成的 ScopeTree，其 parents、children 和 layers 用于导航，路径、raw 候选、scopeOpposed 与 scopeUndetermined 证据也保存在其中；graphRootPaths 继续保存各入口路径来源。仅由 open 顺序不能证明覆盖全部资源前提，尤其不能遗漏 require 复用的已有资源；生成期补全清理依赖后约束 once-spare，子 scope 仍保留前提时不得关闭它。路径中的 scope 记在 open 完成的位置，嵌套 open 时内层在前；注册前提是依赖、开启顺序是证据，二者相反时以注册前提为准，相反的顺序仍作为证据保留。不新增 Error tracing。
 
-ProgramStructure 和旧分散结构常量已删除。Generated.Program 导出完整 generatedPrototype Haskell ADT，包含注册快照、WorkflowTree、链定义与挂载、图、ScopeTree 和名字映射。现有 Main 的 --structure 分支核对当前 AST 后展示同一原型，不调用 createEntries 或业务方法。SDK 当前不增加 JSON／aeson 或外部 LSP 协议；业务仍写 interpreter ast effects，不增加 layer 或用户装配。此次统一原型不改变 request／require、运行级 state、once-spare 与 Error 语义，当前接通绑定出身；按出身确定可见来源及变更求值锁留待 Stage 2。
+ProgramStructure 和旧分散结构常量已删除。Generated.Program 导出完整 generatedPrototype Haskell ADT，包含注册快照、WorkflowTree、链定义与挂载、图、ScopeTree 和名字映射。现有 Main 的 --structure 分支核对当前 AST 后展示同一原型，不调用 createEntries 或业务方法。SDK 当前不增加 JSON／aeson 或外部 LSP 协议；业务仍写 interpreter ast effects，不增加 layer 或用户装配。Stage 2 在同一原型中确定缺值读取路径的可见来源，并按 origin 保存绑定和分配求值锁；once-spare、Error 与入口使用登记边界保留。
 
 生成命令每次仍加载声明并读取 Handlers 快照，分析和业务包装共用该快照；资产检查另用 GHC 名称解析同一快照，每次执行。Generated/.scope-cache 保存输入 key、纯 Prototype 和渲染文本；key 精确比较完整 PrototypePlan、规范化方法结构及注册解析、原型构建、图、AST 和渲染算法源码（清单见 EFFECT_GRAPH.md）。命中仍运行 validatePrototype、checkDriven 和源码资产检查，不依赖 mtime 或执行 Generated 模块。业务原子 IO 改动而方法结构不变时可复用原型，同时更新包装及源码指纹。各生成文件内容相同则不写回，但不宣称跳过整条命令、逐方法热点生成或热重载。运行校验只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。Generated 是派生产物，手改 protoScopes 在下一次 gencode 按源声明恢复；缓存不以手改文件为权威，不新增 edge override 层。
 
@@ -284,11 +286,11 @@ Context 绑定把值与所属 scope 实例一同保存，SDK 不设置“最近�
 一个资源绑定只有唯一关闭归属，普通 require 只读、不转移归属。open 可以首次认领无归属绑定；已有同一实例归属时保持原绑定，另一个 scope 或同注册的不同实例认领它则报 ScopeContextMismatch。拒绝发生在等待原 owner 生命周期锁之前，不覆盖原绑定，也不为冲突实例登记该资源的 cleanup。
 此检查约束已有归属，不为不同调用对同一无归属值的首次认领提供全局仲裁；也不证明不同绑定的业务值没有共享外部资源。
 该规则约束绑定身份，不分析任意业务 ADT 是否私下含有同一个 Handle；不增加 layer、位置参数或借用／转移协议。
-require 优先复用本次调用已捕获的绑定，跨链首次读取只接受唯一可解析的来源绑定；多份来源且没有绑定关联时报 AmbiguousContextBinding，不按时间猜测。显式 request 可以替换当前调用的绑定，旧绑定仍指向旧实例。
+require 优先复用本次调用已捕获的绑定。owner 资源绑定按实际实例定位；无 owner 绑定只接受 protoSources 许可的唯一实际来源，多份且无明确关联时报 AmbiguousContextBinding，不按时间猜测。复用 scope 不将其无 owner 辅助快照补入当前调用；这些值仍按 origin 权威表读取。显式 request 可替换当前调用的绑定，旧资源绑定仍指向旧实例。
 这项保证属于 ContextStore 与执行载体，不增加 adaptor、key、Method 注册或用户位置参数；具体观察边界见 LATEST_DESIGN.md。
 Generated/Program 自动让各末端捕获同一批 scope 引用；Node algebra 只 lower 末端，AST 执行入口 runStructuredAST 不创建或重置 scope。
 同批运行句柄跨 Input 链和 Node 共享运行表，但不预约未来 Node 的资源存续，重新创建一批则独立。Main 仍为 IO ()，
-不增加 Program 载体、用户装配、手写 layer 或全局单例。普通业务 Context 按 Node 隔离，自动跨独立入口存续另行设计。
+不增加 Program 载体、用户装配、手写 layer 或全局单例。普通业务 Context 按 origin 区分保存，并依据 AST 可见性跨入口读取；跨独立 interpreter 存续仍未实现。
 自动收尾的有限使用闭包具体表现为入口使用登记：每个 Node lower 的末端完整 chain 建立一份登记，实际 open／require 选中实例时加入使用，包括等待 opening 的调用；同一闭包对同一实例只加入一次。
 完整 chain 返回并完成诊断及 SDK 受控的结果消费后撤销使用。最后使用者离开且子 scope 不再保留时，once-spare 调用已有 close 实际清理；不等待未来 Node。后续 Node 要继续使用时显式 open 新一轮，旧绑定仍指向旧 owner。不同参数或 fresh 同参实例可同时被当前闭包持有，request 切换绑定本身不关闭仍被持有的旧实例。
 

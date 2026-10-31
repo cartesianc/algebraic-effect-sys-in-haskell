@@ -33,7 +33,7 @@ compiledEntries = do
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
 interpreter = SDK.interpreter "Crawler" Handlers.handlerSourceFingerprint generatedPrototype compiledEntries
--- 生成时完成注册、方法、origin/ctx 链、Workflow 和 scope 的统一分析。
+-- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
 -- NodeId 只在这份 AST 快照中有效；运行时校验后装配闭包。
 generatedPrototype :: SDK.Prototype MethodGen
 generatedPrototype =
@@ -426,7 +426,7 @@ generatedPrototype =
                 , ReadStartURLGen
                 , StartPageSummaryGen
                 ]
-            , SDK.chainDrives = []
+            , SDK.chainDrives = ["StartPageSummary","StartURL"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenCrawlSessionGen]]
             }
@@ -444,7 +444,7 @@ generatedPrototype =
                 , ReadLinkedURLGen
                 , LinkedPageSummaryGen
                 ]
-            , SDK.chainDrives = []
+            , SDK.chainDrives = ["LinkedPageSummary","LinkedURL"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenCrawlSessionGen]]
             }
@@ -464,8 +464,8 @@ generatedPrototype =
                 , ReadCrawlSessionInfoGen
                 , ReadStartURLGen
                 ]
-            , SDK.chainDrives = []
-            , SDK.chainReads = []
+            , SDK.chainDrives = ["StartPageSummary","StartURL"]
+            , SDK.chainReads = ["StartPageSummary"]
             , SDK.chainScopePaths = [[], [OpenCrawlSessionGen]]
             }
         , SDK.ChainProto
@@ -484,8 +484,8 @@ generatedPrototype =
                 , ReadCrawlSessionInfoGen
                 , ReadLinkedURLGen
                 ]
-            , SDK.chainDrives = []
-            , SDK.chainReads = []
+            , SDK.chainDrives = ["LinkedPageSummary","LinkedURL"]
+            , SDK.chainReads = ["LinkedPageSummary"]
             , SDK.chainScopePaths = [[], [OpenCrawlSessionGen]]
             }
         ]
@@ -783,5 +783,8 @@ generatedPrototype =
           , SDK.scopeUndetermined = []
           }
     , SDK.protoScopeNames = [(OpenCrawlSessionGen, "CrawlSession")]
-    , SDK.protoSources = []
+    , SDK.protoSources =
+        [ (SDK.ReadPoint ([1,1]) ("LinkedPageSummary"), SDK.FromChains ([[0,1]]))
+        , (SDK.ReadPoint ([1,0]) ("StartPageSummary"), SDK.FromChains ([[0,0]]))
+        ]
     }

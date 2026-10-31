@@ -42,9 +42,16 @@ renderStructure prototype workflowAST = do
       ++ concat
          [ ["  " ++ show (chainNode chain) ++ " " ++ show (chainRole chain)
               ++ " " ++ chainTerminal chain ++ " (" ++ show (chainEntry chain) ++ ")"
-           ,"    reaches " ++ show (chainReaches chain)]
+           ,"    reaches " ++ show (chainReaches chain)
+           ,"    drives " ++ show (chainDrives chain)
+           ,"    reads " ++ show (chainReads chain)]
            ++ ["    scopes " ++ intercalate " -> " (map show path) | path <- chainScopePaths chain]
          | chain <- protoChains prototype]
+      ++ ["", "Asset sources (for paths without a captured binding)"]
+      ++ ["  " ++ show (readNode point) ++ " " ++ readContract point ++ " <- " ++ sourceDescription source
+         | (point, source) <- protoSources prototype]
+      ++ ["  Unowned assets follow the missing-value request rule; resource, diagnostic and cleanup exceptions remain."
+         ,"  Where cross-chain lookup is needed, generation proves at most one visible source; runtime checks actual uniqueness."]
       ++ ["", "Effect methods"]
       ++ ["  " ++ show (methodIdentity method) ++ " [" ++ show (methodRole method)
            ++ ", effect=" ++ show (methodEffect method) ++ "]"
@@ -69,6 +76,11 @@ renderStructure prototype workflowAST = do
       direct : _ -> nub (direct ++ concatMap ancestors direct)
       [] -> []
     edge (before, after) = "  " ++ show before ++ " -> " ++ show after
+    sourceDescription FromOwnChain = "own chain (request when missing)"
+    sourceDescription (FromChains nodes) = "visible candidates " ++ intercalate ", " (map describeNode nodes)
+    describeNode node = case lookupChain prototype node of
+      Right chain -> show node ++ " " ++ chainTerminal chain
+      Left _ -> show node
     renderWorkflow depth workflow =
       let prefix = replicate (depth * 2) ' '
           branch node label children =

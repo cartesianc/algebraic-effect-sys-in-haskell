@@ -259,7 +259,7 @@ AST 描述"哪些操作链、按什么方式执行"。`AST.hs` 导出 `ast :: AS
 
 - **只选原始句柄**：选中的 effect 必须是 Pure、Excu 或 Scoped，不能是 Context 或 Error。
 - **运行即调用入口方法**：Pure／Excu 调用 `handler`，Scoped 调用 `open`。方法体里调用的上游随之执行，Input 链不需要在 AST 里重写。
-- **node 之间不传值**：一个 node 的结果不会交给下一个 node，值的传递只经 Context。同一次运行内，前面 node 发布的值，后面 node 的 `require` 可以直接读到。
+- **node 结果不隐式传值**：一个 node 的结果不会交给下一个 node，值的传递只经 Context。后继 `require` 可读取 AST 因果顺序中唯一可见的发布来源；并行兄弟之间不按谁先完成决定读谁的值。
 
 ### branch 的三种类型
 
@@ -485,9 +485,11 @@ newtype StartURL = StartURL PageURL
 
 ### 取值：`request` 与 `require`
 
-- **`request`**：每次重新生产，成功后发布并替换当前调用的绑定，返回同一个值；生产失败时不覆盖旧值，原失败继续传播。
-- **`require`**：已有值就直接返回，不重新生产；还没有值时生产一次并记住，并发的 `require` 只生产一次。同一次调用第一次读到某个值后就固定下来，其他调用之后的 `request` 不会改变它。
-- **跨 node 保存**：一次运行内，不属于资源实例的值跨 node 保存，后面 node 的 `require` 可以直接读到。
+- **`request`**：每次重新生产，成功后以当前入口的 origin 保存并替换该 origin 的绑定，返回同一个值；生产失败时不覆盖旧值，原失败继续传播。
+- **`require`**：先读当前调用已捕获的绑定，再查原型许可的唯一可见来源；仍无值时在当前 origin 生产一次并发布。同一 origin、同一来源的并发按需求值共用锁，不同 origin 独立。第一次读取后绑定固定，其他调用的发布不原地改写它。
+- **跨 node 保存**：无资源 owner 的值按 origin 保存。一个来源在 AST 中保证先于当前节点完成，或属于当前入口时才可见；并行兄弟互不可见。需要跨链解析的缺值路径若有多个同时可见来源，就需细化契约或调整编排，生成器不会选“最后写入”的那个。
+- **缺值生产也能传递**：fallback 是普通 request，其结果可被 AST 可见后继复用。若前驱 A 没发布，B 的 `require` 生产了值，后继 C 可读取 B 的结果；生成器将这条条件生产路径纳入来源唯一性检查。
+- **部分路径已取值合法**：已经捕获值的分支直接使用该绑定，只有缺值路径需要解析唯一来源。alternative 或缺值生产条件可证明这些路径的来源唯一；已捕获路径上允许多个节点共同发布，由已有快照确定读取值。
 - 因此从调用点就能看出是否会重跑生产链。
 
 ### 挂在句柄下的 Context
@@ -504,6 +506,8 @@ newtype StartURL = StartURL PageURL
 - **自动关闭**：SDK 为一次 AST 入口调用登记资源使用；整条操作链结束（包括出错）并完成诊断和结果消费后撤销这份登记，关闭没有其他入口在用、也没有子资源依赖的实例。嵌套 Context 生产继承同一份使用登记，生产方法返回不会提前关闭资源；程序退出时仍兜底清理。
 - **显式关闭**：仍然可以手动调用 `close`；如果别的链还在用，关闭以 `ScopeInUse` 拒绝。
 - SDK 不主动检查资源健康，也不自动重开已关闭或失效的实例。
+
+资源共享例外只覆盖带 owner 的绑定。scope 快照中的无 owner 辅助值仍按 origin 来源表读取，不因复用资源而绕过可见性。诊断和自动 cleanup 中产生的新值只留在其局部快照，不发布成后续业务的来源。
 
 ### 失败与 Error 处置
 
@@ -539,7 +543,7 @@ newtype StartURL = StartURL PageURL
 
 活动记录在调用收尾后移除；绑定保留产生值时的执行出身，资源绑定另保留原有关闭归属。自动清理有独立的使用登记和 cleanup 出身，不把清理阶段的生产记作新的业务入口。
 
-当前记录出身用于明确运行关联，`request`／`require` 的读取规则、运行级 state、once-spare 和 Error 语义保留。按出身选择可见来源、变更求值锁以及 stream／lifelong 仍是后续阶段，见 [TODO](docs/TODO.md)。
+Stage 2 使用出身完成来源路由：生成器保存每链的可能生产、缺值读取及来源候选，runtime 按原型读取按 origin 保存的权威绑定。once-spare 和 Error 处置边界保留；现有 App 的 bind 取得值后继续执行，不增加 call/cc 或订阅调度器。stream／lifelong 仍是后续阶段，见 [TODO](docs/TODO.md)。
 
 ### 与 HLS、LSP 的分工
 
@@ -582,6 +586,7 @@ cabal run crawler-demo -- --structure
 | `alternative` 的候选没有依赖分支契约、依赖了多个，或候选没覆盖和类型的全部构造器；分支契约被写成 `requests` | 每个候选 `requires` 恰好一个分支契约，候选覆盖全部构造器；分支契约只能 `requires` |
 | AST 的 node 选中了 Context 或 Error | node 只挂原始句柄；Context 由它挂接的句柄执行时产出，或被 `request`／`require` 时产出；Error 由失败协议调用 |
 | 某个 Context 从 AST 出发永远到不了：既没有 node 带起它挂接的句柄，也没有被带起的链 `request`／`require` 它 | 把带起它的链加进 AST，或删掉这个 Context |
+| 缺值读取路径上，同一契约有多个可能同时发布的可见来源 | 细化契约或调整 AST；alternative 和条件 fallback 可证明互斥时允许多个候选 |
 
 这些规则保证：组合关系总能从源码中静态读出来，不会藏在任意函数里。
 
