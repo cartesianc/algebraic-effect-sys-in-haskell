@@ -1,4 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -15,6 +17,8 @@ module Framework.Effect.Registration
 
 import Framework.Effect.Contract (EffectKind(..), Output)
 import Control.Monad (unless)
+import Control.DeepSeq (NFData)
+import GHC.Generics (Generic)
 import Data.Char (toUpper)
 import Data.List (nub)
 import Data.Proxy (Proxy(..))
@@ -28,14 +32,14 @@ data EffectTyping
   | Error { detect :: Maybe String, resolve :: Maybe String, handles :: [Handles] }
   -- Context 只声明生产方法；require 的读取方法由生成器按契约名自动命名。
   | Context { request :: Maybe Requester }
-  deriving (Eq, Show, Read)
+  deriving (Eq, Show, Read, Generic, NFData)
 
 -- Context 的生产入口。handler 名同时决定契约类型名：首字母大写后由生成器产出
 -- newtype 契约 = 契约 表示类型，例如 handler "startURL" 与 PageURL 产出 newtype StartURL = StartURL PageURL。
 data Requester = Requester
   { handler :: String
   , representation :: TypeRef
-  } deriving (Eq, Show, Read)
+  } deriving (Eq, Show, Read, Generic, NFData)
 
 -- 写作 requester "startURL" @PageURL：先 handler 名，后被包装的表示类型。
 requester :: String -> forall value. Typeable value => Maybe Requester
@@ -57,7 +61,7 @@ data Handles
   = RaisedBy String
   | ScopeFaultIn String
   | ContextFaultIn String
-  deriving (Eq, Show, Read)
+  deriving (Eq, Show, Read, Generic, NFData)
 
 effectKind :: EffectTyping -> EffectKind
 effectKind (Pure _) = PureKind
@@ -80,7 +84,7 @@ entryMethod (Context producing) = case producing of
 -- 表示类型引用 Types.hs 中的原生类型；不复制其 ADT 结构。
 -- 识别 Output 以拒绝把完成协议声明为业务产物；业务 ADT 仍是不透明名称。
 data TypeRef = TypeRef String | OutputRef TypeRef TypeRef
-  deriving (Eq, Show, Read)
+  deriving (Eq, Show, Read, Generic, NFData)
 
 typeRef :: forall value. Typeable value => TypeRef
 typeRef = describe (typeRep (Proxy :: Proxy value))
@@ -100,17 +104,17 @@ data EffectSpec = EffectSpec
   , typing :: EffectTyping
   , input :: String
   , demands :: [Demand]
-  } deriving (Eq, Show, Read)
+  } deriving (Eq, Show, Read, Generic, NFData)
 
 -- 消费方以契约名声明需要的值与取值模式；契约名即生产方 handler 名首字母大写。
 -- 契约类型由生成器产出，手写声明看不到它，因此以名字引用。
 data Access = RequestAccess | RequireAccess
-  deriving (Eq, Show, Read)
+  deriving (Eq, Show, Read, Generic, NFData)
 
 data Demand = Demand
   { access :: Access
   , contract :: String
-  } deriving (Eq, Show, Read)
+  } deriving (Eq, Show, Read, Generic, NFData)
 
 requests :: String -> Demand
 requests = Demand RequestAccess
@@ -122,7 +126,7 @@ data ResolvedDemand = ResolvedDemand
   { demandAccess :: Access
   , demandContract :: String
   , demandProvider :: String
-  } deriving (Eq, Show, Read)
+  } deriving (Eq, Show, Read, Generic, NFData)
 
 findEffect :: [EffectSpec] -> String -> Either String EffectSpec
 findEffect specifications selected = case filter ((== selected) . name) specifications of

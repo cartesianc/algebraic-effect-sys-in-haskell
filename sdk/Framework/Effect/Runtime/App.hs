@@ -4,12 +4,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- IO 载体：Context 绑定携带值快照和 scope 归属，生命周期操作跟随该绑定。
-module Framework.Effect.Runtime.App (App, RunStore, newRunStore, runAppWith, withScopeCleanups) where
+module Framework.Effect.Runtime.App (App, runAppWith, withScopeCleanups) where
 
 import Framework.Effect.Binding
 import Framework.Effect.Contract
 import Framework.Effect.Scope
-import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
+import Framework.Effect.Runtime.Graph
+import Framework.Effect.Runtime.Identity
+import Framework.Prototype (NodeId)
+import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeException, fromException, mask, mask_, throwIO, try, finally)
 import Control.Monad (forM, forM_, when)
 import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
@@ -21,23 +24,6 @@ import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
 import Data.Unique (Unique, newUnique)
 
 type Bound env cause = Binding env (String, ScopeInstance env cause)
-
--- 一次 interpreter 运行共享的资产 state。不属于任何 scope 实例的绑定在这里跨 Node 保存；
--- scope 资源绑定仍只按实例归属解析。forcing 为每个来源提供单次求值锁。
-data RunStore env cause = RunStore
-  { runAssets :: IORef (ScopeBindings env cause)
-  , runForcing :: MVar [(String, MVar ())]
-  }
-
-newRunStore :: IO (RunStore env cause)
-newRunStore = RunStore <$> newIORef [] <*> newMVar []
-
-sourceLock :: RunStore env cause -> String -> IO (MVar ())
-sourceLock store source = modifyMVar (runForcing store) $ \locks -> case lookup source locks of
-  Just lock -> pure (locks, lock)
-  Nothing -> do
-    lock <- newMVar ()
-    pure ((source, lock) : locks, lock)
 
 data Environment env cause = Environment
   { emptyValues :: env
@@ -57,7 +43,9 @@ data Environment env cause = Environment
   , consumer :: ScopeUser env cause
   , cleanupPermit :: Maybe (Unique, ScopeInstance env cause)
   , cleanupBusy :: Maybe (Failure cause)
-  , runStore :: RunStore env cause
+  , runtimeGraph :: RuntimeGraph env cause
+  , activeActivation :: Maybe ActivationId
+  , execution :: Execution
   -- 当前生产由 require 按需求值触发；进入任一 handler 后复位。
   , forcedRequire :: Bool
   -- 原子句柄方法名 → 挂在它下面的 Context 生产入口，由生成区安装。
@@ -135,7 +123,7 @@ publishBinding :: Environment env cause -> String -> Bound env cause -> IO ()
 publishBinding environment source value = do
   captureBinding environment source value
   when (isNothing (bindingOwner value)) $
-    atomicModifyIORef' (runAssets (runStore environment)) $ \current -> (bind source value current, ())
+    atomicModifyIORef' (runtimeAssets (runtimeGraph environment)) $ \current -> (bind source value current, ())
 
 -- 优先使用本次调用已捕获的不可变绑定。跨链首次读取只接受唯一来源绑定。
 -- 多份绑定不按时间排序、不按 scope 数量选择、不执行生产者。
@@ -164,7 +152,7 @@ resolveBinding environment source = do
       case candidates of
         [] -> do
           -- scope 中没有时读取运行级 state；读到后捕获到本次调用，后续 request 不改写它。
-          asset <- lookup source <$> readIORef (runAssets (runStore environment))
+          asset <- lookup source <$> readIORef (runtimeAssets (runtimeGraph environment))
           case asset of
             Nothing -> pure (Right Nothing)
             Just value -> do
@@ -288,7 +276,10 @@ ensureOpen environment attempt = do
                             (record { scopePhase = ScopeOpening, scopeBindings = values }, ())
                           when (scopeContextSource handler == Nothing) $ do
                             let source = resourceSource handler
-                                value = Binding (emptyValues environment) (Just (name, slot))
+                                value = Binding
+                                  { bindingValues = emptyValues environment
+                                  , bindingOrigin = execution environment
+                                  , bindingOwner = Just (name, slot) }
                             saveBinding slot source value
                             publishBinding environment source value
                           pure (Right ())
@@ -348,6 +339,16 @@ beginClose environment attempt value = do
                 pure (Right ())
 
 instance ContextStore env (App env cause) where
+  enterRequest source (AppRun action) = AppRun $ do
+    environment <- ask
+    result <- liftIO $ mask $ \restore -> do
+      let graph = runtimeGraph environment
+      activation <- beginActivation graph (activeActivation environment) (execution environment)
+        (RequestBoot source) (bindings environment) (consumer environment)
+      let inside = environment { activeActivation = Just (activationId activation) }
+      restore (runExceptT (runReaderT action inside))
+        `finally` endActivation graph (activationId activation)
+    either throwError pure result
   protectContextBinding source (AppRun action) = AppRun $ do
     environment <- ask
     case openings environment of
@@ -396,7 +397,9 @@ instance ContextStore env (App env cause) where
         selected <- rawIO (readIORef (holding attempt))
         pure (fmap (\slot -> (scopeName (family attempt), slot)) selected)
       _ -> pure Nothing
-    let value = Binding (update (emptyValues environment)) owner
+    let value = Binding
+          { bindingValues = update (emptyValues environment)
+          , bindingOrigin = execution environment, bindingOwner = owner }
     rawIO (publishBinding environment source value)
     case openings environment of
       attempt : _ -> do
@@ -416,7 +419,7 @@ instance ContextStore env (App env cause) where
         allowed = not resource && not (isJust (originalFailure environment))
           && not (cleaningScopes environment) && null (closings environment)
     if not allowed then pure Nothing else do
-      lock <- liftIO (sourceLock (runStore environment) source)
+      lock <- liftIO (sourceLock (runtimeGraph environment) source)
       let inside = environment { caller = Nothing, forcedRequire = True }
       result <- liftIO (withMVar lock (const (runExceptT (runReaderT action inside))))
       either throwError (pure . Just) result
@@ -582,13 +585,15 @@ captureScopeCleanup environment attempt slot =
         let snapshot = foldr (\(source, value) values -> bind source value values) captured saved
             cleanup permit = mask $ \restore -> do
               values <- newIORef snapshot
-              cleanupUser <- newScopeUser
+              let cleanupExecution = CleanupExecution (executionOrigin (execution environment)) name (scopeIdentity slot)
+              cleanupUser <- newScopeUser cleanupExecution
               let inside = environment
                     { bindings = values, caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
                     , errorPath = []
                     , originalFailure = Nothing, diagnosticOwner = Nothing, cleaningScopes = True, forcedRequire = False
                     , replays = []
                     , consumer = cleanupUser, cleanupPermit = Just (permit, slot)
+                    , activeActivation = Nothing, execution = cleanupExecution
                     , cleanupBusy = Just (fault name (wrapFault attempt) ScopeInUse) }
               restore (runExceptT (runReaderT close inside)) `finally` detachScopeUser cleanupUser
             interrupted description = scopeFailureTarget name (Just slot)
@@ -686,37 +691,50 @@ runClose name wrap (AppRun action) = AppRun $ do
 -- consumer 覆盖整个末端调用、诊断和结果消费；嵌套方法返回不提前释放借用。
 -- handoff 是交给本次调用的已捕获绑定（alternative 把选择时读到的资产交给候选）；
 -- 返回值另带本次调用结束时捕获的无归属绑定，scope 资源绑定随实例收尾，不向外交出。
-runAppWith :: (Either (Failure cause) value -> IO ()) -> RunStore env cause -> ScopeBindings env cause
-           -> Scopes env cause -> env -> App env cause value
+runAppWith :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> NodeId -> ScopeBindings env cause
+           -> env -> App env cause value
            -> IO (Either (Failure cause) value, ScopeBindings env cause)
-runAppWith consume store handoff handlers initial action = do
+runAppWith consume graph node handoff initial action = do
   values <- newIORef handoff
-  outcome <- runAppIn consume store values handlers initial action
+  outcome <- runAppIn consume graph node values initial action
   captured <- readIORef values
   pure (outcome, filter (isNothing . bindingOwner . snd) captured)
 
-runAppIn :: (Either (Failure cause) value -> IO ()) -> RunStore env cause -> IORef (ScopeBindings env cause)
-         -> Scopes env cause -> env -> App env cause value -> IO (Either (Failure cause) value)
-runAppIn consume store values handlers initial (AppRun action) = mask $ \restore -> do
-  user <- newScopeUser
-  let environment = Environment initial values handlers Nothing [] [] [] [] [] [] Nothing Nothing [] False user Nothing Nothing store False [] []
-  completed <- try $ restore $ do
-    outcome <- runExceptT (runReaderT action environment)
-    consume outcome
-    pure outcome
-  failures <- releaseScopeUser user handlers
-  case completed of
-    Left (exception :: SomeException) -> do
-      saveCleanupFailures handlers failures
-      throwIO exception
-    Right outcome -> case [exception | (Just exception, _) <- failures] of
-      exception : _ -> do
-        let preserved = case outcome of
-              Left original -> [(Just exception, original { cleanupFailures = cleanupFailures original ++ map snd failures })]
-              Right _ -> failures
-        saveCleanupFailures handlers preserved
-        throwIO exception
-      [] -> pure $ case (outcome, map snd failures) of
-        (Left original, problems) -> Left original { cleanupFailures = cleanupFailures original ++ problems }
-        (Right _, first : rest) -> Left first { cleanupFailures = cleanupFailures first ++ rest }
-        (Right value, []) -> Right value
+runAppIn :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> NodeId -> IORef (ScopeBindings env cause)
+         -> env -> App env cause value -> IO (Either (Failure cause) value)
+runAppIn consume graph node values initial (AppRun action) = mask $ \restore -> do
+  origin <- newOrigin graph node
+  let currentExecution = BusinessExecution origin
+      handlers = runtimeScopes graph
+  user <- newScopeUser currentExecution
+  activation <- beginActivation graph Nothing currentExecution (TargetedBoot node) values user
+  let environment = Environment
+        { emptyValues = initial, bindings = values, scopes = handlers
+        , caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
+        , errorHandlers = [], errorPath = [], originalFailure = Nothing, diagnosticOwner = Nothing
+        , scopeCleanups = [], cleaningScopes = False, consumer = user
+        , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
+        , activeActivation = Just (activationId activation), execution = currentExecution
+        , forcedRequire = False, anchoredEntries = [], replays = [] }
+  (do
+      completed <- try $ restore $ do
+        outcome <- runExceptT (runReaderT action environment)
+        consume outcome
+        pure outcome
+      failures <- releaseScopeUser user handlers
+      case completed of
+        Left (exception :: SomeException) -> do
+          saveCleanupFailures handlers failures
+          throwIO exception
+        Right outcome -> case [exception | (Just exception, _) <- failures] of
+          exception : _ -> do
+            let preserved = case outcome of
+                  Left original -> [(Just exception, original { cleanupFailures = cleanupFailures original ++ map snd failures })]
+                  Right _ -> failures
+            saveCleanupFailures handlers preserved
+            throwIO exception
+          [] -> pure $ case (outcome, map snd failures) of
+            (Left original, problems) -> Left original { cleanupFailures = cleanupFailures original ++ problems }
+            (Right _, first : rest) -> Left first { cleanupFailures = cleanupFailures first ++ rest }
+            (Right value, []) -> Right value)
+    `finally` endActivation graph (activationId activation)

@@ -6,6 +6,7 @@
 module Framework.Effect.Graph
   ( MethodRole(..), MethodShape(..), MethodDefinition(..)
   , GraphError(..), EffectGraph(..), buildEffectGraph
+  , ExpandedF(..), expandChain
   , ScopeNode(..), ScopeTree(..), buildScopeTree, completeScopeTree
   ) where
 
@@ -31,7 +32,7 @@ data MethodShape method
   | Sequence [MethodShape method]
   | Choice [MethodShape method]
   | Recover (MethodShape method) (MethodShape method)
-  deriving (Eq, Show, Read, Generic, NFData)
+  deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 data MethodDefinition method = MethodDefinition
   { methodIdentity :: method
@@ -39,7 +40,7 @@ data MethodDefinition method = MethodDefinition
   , methodEffect :: method
   , methodRole :: MethodRole
   , methodBody :: MethodShape method
-  } deriving (Eq, Show, Read, Generic, NFData)
+  } deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 data GraphError method
   = DuplicateMethod method
@@ -47,7 +48,7 @@ data GraphError method
   | RecursiveMethod method
   | UnknownScope method
   | CyclicScopeRelations [method]
-  deriving (Eq, Show, Read, Generic, NFData)
+  deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 data EffectGraph method = EffectGraph
   { graphMethods :: [MethodDefinition method]
@@ -57,14 +58,14 @@ data EffectGraph method = EffectGraph
   , graphScopePaths :: [[method]]
   , graphRootPaths :: [(method, [[method]])]
   , graphScopeOrder :: [(method, method)]
-  } deriving (Eq, Show, Read, Generic, NFData)
+  } deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 -- scope 的静态身份就是对应 open 方法的身份；共享节点只保存引用。
 data ScopeNode method = ScopeNode
   { scopeIdentity :: method
   , scopeParents :: [method]
   , scopeChildren :: [method]
-  } deriving (Eq, Show, Read, Generic, NFData)
+  } deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 data ScopeTree method = ScopeTree
   { scopeRoots :: [method]
@@ -74,7 +75,7 @@ data ScopeTree method = ScopeTree
   , scopeCandidates :: [(method, method)]
   , scopeOpposed :: [(method, method)]
   , scopeUndetermined :: [(method, method)]
-  } deriving (Eq, Show, Read, Generic, NFData)
+  } deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 data ExpandedF method next
   = EmptyLayer
@@ -94,9 +95,18 @@ buildEffectGraph
   -> MethodShape method
   -> Either (GraphError method) (EffectGraph method)
 buildEffectGraph definitions shape = do
-  uniqueDefinitions [] definitions
-  expanded <- expand [] shape
+  expanded <- expandChain definitions shape
   pure (zygo scopeAlgebra graphAlgebra expanded)
+
+-- 所有静态链分析共用这一展开器；调用次数与分支结构原样保留。
+expandChain
+  :: Eq method
+  => [MethodDefinition method]
+  -> MethodShape method
+  -> Either (GraphError method) (Fix (ExpandedF method))
+expandChain definitions shape = do
+  uniqueDefinitions [] definitions
+  expand [] shape
   where
     uniqueDefinitions _ [] = Right ()
     uniqueDefinitions seen (definition : rest)

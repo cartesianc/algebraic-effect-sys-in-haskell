@@ -1,164 +1,229 @@
--- 生成阶段的纯结构输入；方法名字仅用于连接源码，输出使用 MethodGen 构造器。
-module Framework.Codegen.Plan (GraphPlan(..), renderGraphPlan, checkDriven) where
+-- 原型的源码出口；所有结构事实由 Framework.Prototype 构建，本模块只渲染数据。
+module Framework.Codegen.Plan (renderPrototype) where
 
 import Data.Char (toUpper)
-import Data.List (intercalate, nub)
-import Framework.Effect.Graph
-import Framework.Workflow.Structure (ProgramStructure(..), initializeStructure)
+import Data.List (intercalate)
+import qualified Framework.Effect.Graph as G
+import qualified Framework.Effect.Registration as R
+import qualified Framework.Prototype as P
 
--- 声明先由独立 GHCI 加载，方法结构随后由 GHC parser 提供；两者都不依赖 Generated。
--- planAnchors：原子句柄方法 → 挂在它下面的 Context 的生产方法。
-data GraphPlan method = GraphPlan
-  { planDefinitions :: [MethodDefinition method]
-  , planScopes :: [(method, String, [String])]
-  , planEntries :: [(String, method)]
-  , planAnchors :: [(method, method)]
-  } deriving (Eq, Show, Read)
-
--- 手写方法使用解析出的结构；未出现在 Handlers 中的生成方法（如默认 require 读取）保留计划中的结构。
--- 原子句柄的生成入口在方法体返回后注入挂在它下面的 Context，结构同样描述带包装的句柄：
--- 方法体之后接一个可选分支（挂接的 Context 自己调用句柄时不注入），内容是这些 Context 的方法体。
--- 注入期间它们对该句柄的调用由本次输出回答、不再执行，结构中记为空，因此不形成环。
-mergedDefinitions :: GraphPlan String -> [(String, MethodShape String)] -> [MethodDefinition String]
-mergedDefinitions plan shapes =
-  [ definition {methodBody = injected (methodIdentity definition) (written definition)}
-  | definition <- planDefinitions plan ]
-  where
-    written definition = maybe (methodBody definition) id (lookup (methodIdentity definition) shapes)
-    bodyOf method = case [written definition | definition <- planDefinitions plan, methodIdentity definition == method] of
-      body : _ -> body
-      [] -> Empty
-    injected method body = case [replayed method (bodyOf produced) | (anchor, produced) <- planAnchors plan, anchor == method] of
-      [] -> body
-      contexts -> Sequence [body, Choice [Empty, Sequence contexts]]
-    replayed anchor shape = case shape of
-      Call method | method == anchor -> Empty
-      Sequence children -> Sequence (map (replayed anchor) children)
-      Choice children -> Choice (map (replayed anchor) children)
-      Recover body recovery -> Recover (replayed anchor body) (replayed anchor recovery)
-      other -> other
-
--- 沿方法调用（含上面并入的注入分支）可达的方法集合。
-reachable :: [MethodDefinition String] -> [String] -> [String]
-reachable definitions = visit []
-  where
-    visit seen [] = seen
-    visit seen (method : rest)
-      | method `elem` seen = visit seen rest
-      | otherwise = visit (method : seen) (successors method ++ rest)
-    successors method =
-      [called | definition <- definitions, methodIdentity definition == method, called <- calls (methodBody definition)]
-
-calls :: MethodShape method -> [method]
-calls Empty = []
-calls (Call method) = [method]
-calls (Sequence children) = concatMap calls children
-calls (Choice children) = concatMap calls children
-calls (Recover body recovery) = calls body ++ calls recovery
-
--- 资产必须由剧本驱动：从 AST 末端沿方法调用须能到达每个 Context 的生产方法。
--- require 在 state 无值时求值 request（thunk），默认读取在计划中已记为可能进入生产；
--- 挂接句柄的结构已并入注入分支，因此句柄可达时挂在它下面的 Context 的生产也可达。
-checkDriven :: GraphPlan String -> [(String, MethodShape String)] -> Either String ()
-checkDriven plan shapes =
-  case [ methodIdentity definition | definition <- definitions
-       , methodRole definition == ContextRequest, methodIdentity definition `notElem` reached ] of
-    [] -> Right ()
-    undriven -> Left ("Context never driven from the AST: " ++ intercalate ", " undriven
-      ++ "; no terminal reaches its production or the handle it hangs below")
-  where
-    definitions = mergedDefinitions plan shapes
-    -- 结构中内联的是挂接 Context 的方法体，生产方法本身的身份不在其中；
-    -- 驱动检查另补"挂接句柄 → 生产方法"的边，只靠注入产出的 Context 也算被驱动。
-    withProducers =
-      [ definition { methodBody = Sequence (methodBody definition
-          : [Call produced | (anchor, produced) <- planAnchors plan, anchor == methodIdentity definition]) }
-      | definition <- definitions ]
-    reached = reachable withProducers (map snd (planEntries plan))
-
-renderGraphPlan :: GraphPlan String -> [(String, MethodShape String)] -> Either String String
-renderGraphPlan plan shapes = do
-  let supplied = map fst shapes
-      registered = map methodIdentity (planDefinitions plan)
-  if length supplied /= length (nub supplied)
-    then Left "Duplicate handler method in the structure generation plan"
-    else pure ()
-  case [method | method <- supplied, method `notElem` registered] of
-    method : _ -> Left ("Unregistered handler method in the structure generation plan: " ++ method)
-    [] -> pure ()
-  let definitions = mergedDefinitions plan shapes
-  -- 挂接的 Context 只能直接调用它的句柄；经其他方法回到该句柄时，带注入的结构会成环。
-  case [ (anchor, produced) | (anchor, produced) <- planAnchors plan
-       , definition <- definitions, methodIdentity definition == produced
-       , anchor `elem` reachable definitions (filter (/= anchor) (calls (methodBody definition))) ] of
-    (anchor, produced) : _ -> Left ("Context " ++ produced ++ " hangs below " ++ anchor
-      ++ " but reaches it again through another method; call " ++ anchor ++ " directly")
-    [] -> pure ()
-  initialized <- either (Left . show) Right
-    (initializeStructure definitions (planScopes plan) (planEntries plan))
-  pure (renderEffectGraph (structureEffects initialized) ++ "\n"
-    ++ renderScopeTree (structureScopes initialized))
+renderPrototype :: P.Prototype String -> String
+renderPrototype prototype = unlines
+  [ "-- 生成时完成注册、方法、origin/ctx 链、Workflow 和 scope 的统一分析。"
+  , "-- NodeId 只在这份 AST 快照中有效；运行时校验后装配闭包。"
+  , "generatedPrototype :: SDK.Prototype MethodGen"
+  , "generatedPrototype ="
+  ] ++ indent 2 (record "Prototype"
+  [ ("protoRegistrations", list renderSpec (P.protoRegistrations prototype))
+  , ("protoEffects", list renderEffect (P.protoEffects prototype))
+  , ("protoMethods", list renderMethod (P.protoMethods prototype))
+  , ("protoWorkflow", renderWorkflow (P.protoWorkflow prototype))
+  , ("protoChains", list renderChain (P.protoChains prototype))
+  , ("protoChainDefinitions", list renderChainDefinition (P.protoChainDefinitions prototype))
+  , ("protoGraph", renderGraph (P.protoGraph prototype))
+  , ("protoScopes", renderScopes (P.protoScopes prototype))
+  , ("protoScopeNames", list (pair genName show) (P.protoScopeNames prototype))
+  , ("protoSources", list (pair renderReadPoint renderSource) (P.protoSources prototype))
+  ]) ++ "\n"
 
 genName :: String -> String
-genName [] = error "Empty method identity in the generation plan"
+genName [] = error "Empty method identity in the prototype"
 genName (first : rest) = toUpper first : rest ++ "Gen"
 
 list :: (value -> String) -> [value] -> String
-list render values = "[" ++ intercalate ", " (map render values) ++ "]"
+list render values
+  | fits compact = compact
+  | otherwise = blockList render values
+  where compact = "[" ++ intercalate ", " (map render values) ++ "]"
 
-pair :: (value -> String) -> (value, value) -> String
-pair render (left, right) = "(" ++ render left ++ ", " ++ render right ++ ")"
+blockList :: (value -> String) -> [value] -> String
+blockList _ [] = "[]"
+blockList render (first : rest) = intercalate "\n"
+  (prefixed "[ " (render first) : map (prefixed ", " . render) rest ++ ["]"])
 
-rows :: (value -> String) -> [value] -> [String]
-rows _ [] = ["      []"]
-rows render values = ["      [ " ++ intercalate "\n      , " (map render values), "      ]"]
+-- Prefix only the first line, keeping the remainder aligned with the value.
+prefixed :: String -> String -> String
+prefixed prefix value = case lines value of
+  [] -> prefix
+  first : rest -> intercalate "\n" ((prefix ++ first) : map (replicate (length prefix) ' ' ++) rest)
 
-renderShape :: MethodShape String -> String
-renderShape Empty = "SDK.Empty"
-renderShape (Call method) = "SDK.Call " ++ genName method
-renderShape (Sequence children) = "SDK.Sequence " ++ list renderShape children
-renderShape (Choice children) = "SDK.Choice " ++ list renderShape children
-renderShape (Recover body recovery) = "SDK.Recover (" ++ renderShape body ++ ") (" ++ renderShape recovery ++ ")"
+indent :: Int -> String -> String
+indent width = intercalate "\n" . map (replicate width ' ' ++) . lines
 
-renderDefinition :: MethodDefinition String -> String
-renderDefinition definition = "SDK.MethodDefinition "
-  ++ genName (methodIdentity definition) ++ " " ++ genName (methodEffect definition)
-  ++ " SDK." ++ show (methodRole definition) ++ " (" ++ renderShape (methodBody definition) ++ ")"
+fits :: String -> Bool
+fits value = '\n' `notElem` value && length value <= 100
 
-renderEffectGraph :: EffectGraph String -> String
-renderEffectGraph graph = unlines $
-  [ "-- 生成时已完成方法展开与路径分析；运行时只读取显式 ADT 值。"
-  , "generatedEffectGraph :: SDK.EffectGraph MethodGen"
-  , "generatedEffectGraph = SDK.EffectGraph"
-  , "  { SDK.graphMethods ="
-  ] ++ rows renderDefinition (graphMethods graph) ++
-  [ "  , SDK.graphRoots = " ++ list genName (graphRoots graph)
-  , "  , SDK.graphReferences = " ++ list (pair genName) (graphReferences graph)
-  , "  , SDK.graphScopes = " ++ list genName (graphScopes graph)
-  , "  , SDK.graphScopePaths = " ++ list (list genName) (graphScopePaths graph)
-  , "  , SDK.graphRootPaths ="
-  ] ++ rows (\(method, paths) -> "(" ++ genName method ++ ", " ++ list (list genName) paths ++ ")")
-       (graphRootPaths graph) ++
-  [ "  , SDK.graphScopeOrder = " ++ list (pair genName) (graphScopeOrder graph)
-  , "  }"
-  ]
+pair :: (left -> String) -> (right -> String) -> (left, right) -> String
+pair renderLeft renderRight (left, right) =
+  "(" ++ renderLeft left ++ ", " ++ renderRight right ++ ")"
 
-renderScopeTree :: ScopeTree String -> String
-renderScopeTree tree = unlines $
-  [ "-- 唯一的 ScopeTree：共同前序与注册前提已合并、检查环并约简。"
-  , "generatedScopeTree :: SDK.ScopeTree MethodGen"
-  , "generatedScopeTree = SDK.ScopeTree"
-  , "  { SDK.scopeRoots = " ++ list genName (scopeRoots tree)
-  , "  , SDK.scopeNodes ="
-  ] ++ rows renderNode (scopeNodes tree) ++
-  [ "  , SDK.scopeLayers = " ++ list (list genName) (scopeLayers tree)
-  , "  , SDK.scopePaths = " ++ list (list genName) (scopePaths tree)
-  , "  , SDK.scopeCandidates = " ++ list (pair genName) (scopeCandidates tree)
-  , "  , SDK.scopeOpposed = " ++ list (pair genName) (scopeOpposed tree)
-  , "  , SDK.scopeUndetermined = " ++ list (pair genName) (scopeUndetermined tree)
-  , "  }"
-  ]
+maybeValue :: (value -> String) -> Maybe value -> String
+maybeValue _ Nothing = "Nothing"
+maybeValue render (Just value) = "Just (" ++ render value ++ ")"
+
+constructor :: String -> [String] -> String
+constructor name values
+  | fits compact = compact
+  | otherwise = blockConstructor name values
+  where compact = unwords (("SDK." ++ name) : map (\value -> "(" ++ value ++ ")") values)
+
+blockConstructor :: String -> [String] -> String
+blockConstructor name values = intercalate "\n"
+  (("SDK." ++ name) : map (indent 2 . argument) values)
   where
-    renderNode selected = "SDK.ScopeNode { SDK.scopeIdentity = " ++ genName (scopeIdentity selected)
-      ++ ", SDK.scopeParents = " ++ list genName (scopeParents selected)
-      ++ ", SDK.scopeChildren = " ++ list genName (scopeChildren selected) ++ " }"
+    argument value
+      | '\n' `notElem` value = "(" ++ value ++ ")"
+      | otherwise = "(\n" ++ indent 2 value ++ "\n)"
+
+record :: String -> [(String, String)] -> String
+record name [] = "SDK." ++ name ++ " {}"
+record name (first : rest) = intercalate "\n"
+  (("SDK." ++ name) : field "  { " first : map (field "  , ") rest ++ ["  }"])
+  where
+    field prefix (selected, value)
+      | fits complete = complete
+      | otherwise = prefix ++ "SDK." ++ selected ++ " =\n" ++ indent 6 value
+      where complete = prefix ++ "SDK." ++ selected ++ " = " ++ value
+
+tag :: Show value => value -> String
+tag value = "SDK." ++ show value
+
+renderSpec :: R.EffectSpec -> String
+renderSpec specification = record "EffectSpec"
+  [ ("name", show (R.name specification))
+  , ("typing", renderTyping (R.typing specification))
+  , ("input", show (R.input specification))
+  , ("demands", list renderDemand (R.demands specification))
+  ]
+
+renderTyping :: R.EffectTyping -> String
+renderTyping (R.Pure method) = constructor "Pure" [show method]
+renderTyping (R.Excu method) = constructor "Excu" [show method]
+renderTyping (R.Scoped opening closing) = constructor "Scoped" [show opening, show closing]
+renderTyping (R.Error detecting resolving handled) =
+  constructor "Error" [show detecting, show resolving, list renderHandles handled]
+renderTyping (R.Context producing) = constructor "Context" [maybeValue renderRequester producing]
+
+renderRequester :: R.Requester -> String
+renderRequester (R.Requester method representation) = constructor "Requester" [show method, renderType representation]
+
+renderType :: R.TypeRef -> String
+renderType (R.TypeRef selected) = constructor "TypeRef" [show selected]
+renderType (R.OutputRef cause value) = constructor "OutputRef" [renderType cause, renderType value]
+
+renderHandles :: R.Handles -> String
+renderHandles (R.RaisedBy selected) = constructor "RaisedBy" [show selected]
+renderHandles (R.ScopeFaultIn selected) = constructor "ScopeFaultIn" [show selected]
+renderHandles (R.ContextFaultIn selected) = constructor "ContextFaultIn" [show selected]
+
+renderDemand :: R.Demand -> String
+renderDemand (R.Demand access contract) = constructor "Demand" [tag access, show contract]
+
+renderResolved :: R.ResolvedDemand -> String
+renderResolved (R.ResolvedDemand access contract provider) =
+  constructor "ResolvedDemand" [tag access, show contract, show provider]
+
+renderEffect :: P.EffectProto String -> String
+renderEffect effect = record "EffectProto"
+  [ ("effectName", show (P.effectName effect))
+  , ("effectKind", tag (P.effectKind effect))
+  , ("effectInput", show (P.effectInput effect))
+  , ("effectMethods", list (pair tag genName) (P.effectMethods effect))
+  , ("effectDemands", list renderResolved (P.effectDemands effect))
+  , ("effectProduces", show (P.effectProduces effect))
+  , ("effectBranches", show (P.effectBranches effect))
+  , ("effectAnchor", show (P.effectAnchor effect))
+  , ("effectScopes", show (P.effectScopes effect))
+  , ("effectErrorScope", show (P.effectErrorScope effect))
+  , ("effectInputChain", show (P.effectInputChain effect))
+  , ("effectScopeParents", show (P.effectScopeParents effect))
+  , ("effectOpeningInputs", show (P.effectOpeningInputs effect))
+  , ("effectNearestScopes", show (P.effectNearestScopes effect))
+  , ("effectResource", show (P.effectResource effect))
+  , ("effectContextDependencies", show (P.effectContextDependencies effect))
+  ]
+
+renderMethod :: G.MethodDefinition String -> String
+renderMethod definition = constructor "MethodDefinition"
+  [ genName (G.methodIdentity definition)
+  , genName (G.methodEffect definition)
+  , tag (G.methodRole definition)
+  , renderShape (G.methodBody definition)
+  ]
+
+renderShape :: G.MethodShape String -> String
+renderShape G.Empty = "SDK.Empty"
+renderShape (G.Call method) = constructor "Call" [genName method]
+renderShape (G.Sequence children) = constructor "Sequence" [list renderShape children]
+renderShape (G.Choice children) = constructor "Choice" [list renderShape children]
+renderShape (G.Recover body recovery) = constructor "Recover" [renderShape body, renderShape recovery]
+
+renderWorkflow :: P.WorkflowTree -> String
+renderWorkflow (P.NodeAt node selected) = constructor "NodeAt" [show node, show selected]
+renderWorkflow (P.ChainedAt node children) = blockConstructor "ChainedAt" [show node, blockList renderWorkflow children]
+renderWorkflow (P.ParallelAt node children) = blockConstructor "ParallelAt" [show node, blockList renderWorkflow children]
+renderWorkflow (P.AlternativeAt node alternative children) =
+  blockConstructor "AlternativeAt" [show node, renderAlternative alternative, blockList renderWorkflow children]
+
+renderAlternative :: P.AlternativeProto -> String
+renderAlternative alternative = record "AlternativeProto"
+  [ ("alternativeContract", show (P.alternativeContract alternative))
+  , ("alternativeSelector", show (P.alternativeSelector alternative))
+  , ("alternativeCases", show (P.alternativeCases alternative))
+  ]
+
+renderChain :: P.ChainProto String -> String
+renderChain chain = record "ChainProto"
+  [ ("chainNode", show (P.chainNode chain))
+  , ("chainRole", tag (P.chainRole chain))
+  , ("chainTerminal", show (P.chainTerminal chain))
+  , ("chainEntry", genName (P.chainEntry chain))
+  , ("chainReaches", list genName (P.chainReaches chain))
+  , ("chainDrives", show (P.chainDrives chain))
+  , ("chainReads", show (P.chainReads chain))
+  , ("chainScopePaths", list (list genName) (P.chainScopePaths chain))
+  ]
+
+renderChainDefinition :: P.ChainDefinition String -> String
+renderChainDefinition definition = record "ChainDefinition"
+  [ ("definitionKind", tag (P.definitionKind definition))
+  , ("definitionEffect", show (P.definitionEffect definition))
+  , ("definitionEntry", genName (P.definitionEntry definition))
+  , ("definitionReaches", list genName (P.definitionReaches definition))
+  ]
+
+renderGraph :: G.EffectGraph String -> String
+renderGraph graph = record "EffectGraph"
+  [ ("graphMethods", list renderMethod (G.graphMethods graph))
+  , ("graphRoots", list genName (G.graphRoots graph))
+  , ("graphReferences", list (pair genName genName) (G.graphReferences graph))
+  , ("graphScopes", list genName (G.graphScopes graph))
+  , ("graphScopePaths", list (list genName) (G.graphScopePaths graph))
+  , ("graphRootPaths", list (pair genName (list (list genName))) (G.graphRootPaths graph))
+  , ("graphScopeOrder", list (pair genName genName) (G.graphScopeOrder graph))
+  ]
+
+renderScopes :: G.ScopeTree String -> String
+renderScopes tree = record "ScopeTree"
+  [ ("scopeRoots", list genName (G.scopeRoots tree))
+  , ("scopeNodes", list renderScopeNode (G.scopeNodes tree))
+  , ("scopeLayers", list (list genName) (G.scopeLayers tree))
+  , ("scopePaths", list (list genName) (G.scopePaths tree))
+  , ("scopeCandidates", list (pair genName genName) (G.scopeCandidates tree))
+  , ("scopeOpposed", list (pair genName genName) (G.scopeOpposed tree))
+  , ("scopeUndetermined", list (pair genName genName) (G.scopeUndetermined tree))
+  ]
+
+renderScopeNode :: G.ScopeNode String -> String
+renderScopeNode node = record "ScopeNode"
+  [ ("scopeIdentity", genName (G.scopeIdentity node))
+  , ("scopeParents", list genName (G.scopeParents node))
+  , ("scopeChildren", list genName (G.scopeChildren node))
+  ]
+
+renderReadPoint :: P.ReadPoint -> String
+renderReadPoint point = constructor "ReadPoint" [show (P.readNode point), show (P.readContract point)]
+
+renderSource :: P.Source -> String
+renderSource (P.FromChain node) = constructor "FromChain" [show node]
+renderSource P.FromOwnChain = "SDK.FromOwnChain"

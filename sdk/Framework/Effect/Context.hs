@@ -78,10 +78,11 @@ observeInput access (Just observe) value = recordContextInput access (observe va
 requestContext
   :: ContextStore environment m
   => String -> (value -> environment -> environment) -> m value -> m value
-requestContext selected synchronize produce = protectContextBinding selected $ do
-  value <- produce
-  publishContextBinding selected (synchronize value)
-  pure value
+requestContext selected synchronize produce = enterRequest selected $
+  protectContextBinding selected $ do
+    value <- produce
+    publishContextBinding selected (synchronize value)
+    pure value
 
 -- 生成的 instance 包装调用此入口；业务 instance 仍直接引用上游类方法。
 -- 根调用执行生产；链内根据当前消费者的注册选择刷新或只读。

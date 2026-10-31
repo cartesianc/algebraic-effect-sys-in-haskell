@@ -2,7 +2,7 @@
 
 -- Workflow 的可序列化结构与引用收集；不启动节点。
 module Framework.Workflow.AST
-  ( WorkflowF(..), AST, EffectNode, node, chained, parallel, alternative, targets, alternativeGroups, foldAST
+  ( WorkflowF(..), AST, EffectNode, node, chained, parallel, alternative, foldAST, toWorkflowF
   ) where
 
 import Framework.Recursion (Fix(..), Algebra, cata)
@@ -15,7 +15,7 @@ data WorkflowF next
   | Chained [next]
   | Parallel [next]
   | Alternative [next]
-  deriving (Functor, Show, Read)
+  deriving (Eq, Functor, Show, Read)
 
 -- 对外区分原子节点与完整 branch，不导出构造器或原始树转换。
 newtype EffectNode = EffectNode String
@@ -47,19 +47,6 @@ alternative children = AST (Fix (Alternative (map childTree children)))
 foldAST :: Algebra WorkflowF value -> AST -> value
 foldAST algebra (AST tree) = cata algebra tree
 
-targets :: AST -> [String]
-targets = foldAST references
-  where
-    references (Node selected) = [selected]
-    references (Chained children) = concat children
-    references (Parallel children) = concat children
-    references (Alternative children) = concat children
-
--- 每个 alternative 的候选及各自的末端，供 gencode 推出候选对应的分支。
-alternativeGroups :: AST -> [[[String]]]
-alternativeGroups = snd . foldAST groups
-  where
-    groups (Node selected) = ([selected], [])
-    groups (Chained children) = (concatMap fst children, concatMap snd children)
-    groups (Parallel children) = (concatMap fst children, concatMap snd children)
-    groups (Alternative children) = (concatMap fst children, map fst children : concatMap snd children)
+-- SDK 的原型构建器读取有限 AST；业务仍只通过 node/branch 构造。
+toWorkflowF :: AST -> Fix WorkflowF
+toWorkflowF (AST tree) = tree

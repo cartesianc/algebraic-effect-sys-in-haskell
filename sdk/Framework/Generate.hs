@@ -5,7 +5,8 @@ import Control.Exception (evaluate)
 import Data.Char (isAlphaNum, isUpper)
 import Framework.Codegen.Handlers (prepareHandlers, loadSumTypes)
 import Framework.Codegen.Assets (checkAssets)
-import Framework.Codegen.Plan (checkDriven, renderGraphPlan)
+import Framework.Codegen.Plan (renderPrototype)
+import Framework.Prototype (buildPreparedPrototype, checkDriven, validatePrototype)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Environment (getArgs, getExecutablePath, lookupEnv)
 import System.Exit (ExitCode(..), die, exitWith)
@@ -36,8 +37,8 @@ main = do
           -- 和类型的构造器信息由解析 Types.hs 得到，以字面量传给声明加载进程。
           sumTypes <- loadSumTypes namespace
           let expression = "print (Framework.Codegen.lowerProgram " ++ show namespace
-                ++ " " ++ namespace ++ ".Effects.effects (Framework.Workflow.AST.targets " ++ ast
-                ++ ") (Framework.Workflow.AST.alternativeGroups " ++ ast ++ ") " ++ show sumTypes ++ ")"
+                ++ " " ++ namespace ++ ".Effects.effects (Framework.Workflow.AST.toWorkflowF " ++ ast
+                ++ ") " ++ show sumTypes ++ ")"
           (result, output, diagnostics) <- readProcessWithExitCode "ghci"
             [ "-ignore-dot-ghci", "-v0", "-XHaskell2010", "-idemo", "-isdk"
             , "sdk/Framework/Codegen.hs", directory </> "Effects.hs"
@@ -53,20 +54,21 @@ main = do
                 let generated = directory </> "Generated"
                     cachePath = generated </> ".scope-cache"
                     methods = [(method, shape) | ((_, method), shape) <- shapes]
-                -- 驱动检查每次执行，不受 scope 缓存命中影响；首次生成尚无 Handlers.hs、没有方法结构，
-                -- 先生成契约供编写 handler，有实现后再检查。
-                case nativeSource of
-                  Just _ -> either die pure (checkDriven plan methods)
-                  Nothing -> pure ()
                 dependencies <- mapM readUtf8 structureSources
                 let cacheKey = show (plan, methods, dependencies)
                 cached <- tryIOError (readExisting cachePath)
                 let previous = either (const Nothing) (>>= readMaybe) cached
-                (structure, reused) <- case previous of
-                  Just (key, source) | key == cacheKey -> pure (source, True)
-                  _ -> case renderGraphPlan plan methods of
-                    Left problem -> die problem
-                    Right source -> pure (source, False)
+                (prototype, structure, reused) <- case previous of
+                  Just (key, value, source) | key == cacheKey -> do
+                    either (die . show) pure (validatePrototype value)
+                    pure (value, source, True)
+                  _ -> case buildPreparedPrototype plan methods of
+                    Left problem -> die (show problem)
+                    Right value -> pure (value, renderPrototype value, False)
+                -- 驱动检查每次执行，不受缓存命中影响；首次尚无 Handlers 时先生成契约。
+                case nativeSource of
+                  Just _ -> either (die . show) pure (checkDriven prototype)
+                  Nothing -> pure ()
                 -- 完成声明、原生语法和纯结构分析后才更新生成区；未变文件保留时间戳。
                 _ <- evaluate (length structure)
                 assets <- checkAssets namespace
@@ -79,7 +81,7 @@ main = do
                   , writeIfChanged (generated </> "Handlers.hs") handlers
                   , writeIfChanged (generated </> "Assets.hs") assets
                   ]
-                _ <- writeIfChanged cachePath (show (cacheKey, structure))
+                _ <- writeIfChanged cachePath (show (cacheKey, prototype, structure))
                 putStrLn ("Generated " ++ generated ++ " (" ++ show (length (filter id changed))
                   ++ " files updated; structure " ++ (if reused then "reused" else "rebuilt") ++ ")")
             _ -> exitWith result
@@ -89,7 +91,11 @@ main = do
 -- 连同算法及渲染器源码精确比较，避免 SDK 改动后复用旧结构。
 structureSources :: [FilePath]
 structureSources =
-  [ "sdk/Framework/Codegen/Plan.hs"
+  [ "sdk/Framework/Prototype.hs"
+  , "sdk/Framework/Codegen.hs"
+  , "sdk/Framework/Codegen/Plan.hs"
+  , "sdk/Framework/Effect/Registration.hs"
+  , "sdk/Framework/Effect/Contract.hs"
   , "sdk/Framework/Effect/Graph.hs"
   , "sdk/Framework/Recursion.hs"
   , "sdk/Framework/Workflow/AST.hs"
