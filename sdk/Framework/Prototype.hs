@@ -610,6 +610,7 @@ data AssetCall = AssetCall
   , assetReplays :: [String]
   , assetActiveMethods :: [String]
   , assetClosing :: Bool
+  , assetRelevant :: [String]
   }
 
 type AssetAnalysis = StateT AssetFacts (Either (PrototypeError String))
@@ -617,10 +618,12 @@ type AssetAnalysis = StateT AssetFacts (Either (PrototypeError String))
 -- 可选生产保留为状态分支：A 未发布时 B 的 require 才能补产，故 A/B 不会被
 -- 简单的 may-set 误报为共存来源。parallel 从相同输入独立分析，随后合并发布，
 -- 因而两个旁支的缺值补产仍能同时出现。状态按有限事实去重，不展开任何业务 IO。
+-- 只保留本链或后续 workflow 可能读取的契约；在方法出口就裁剪，避免无关注入
+-- 的成功／失败组合先指数展开。仍保留活跃契约之间的相关性，不退化为 may-set。
 resolveSources :: [MethodDefinition String] -> [String] -> Prototype String
                -> Either (PrototypeError String) (Prototype String)
 resolveSources definitions defaultReaders prototype = do
-  facts <- execStateT (workflow (protoWorkflow prototype) [] []) (AssetFacts [] [])
+  facts <- execStateT (workflow (protoWorkflow prototype) [] [] []) (AssetFacts [] [])
   let reads = [(point, if null sources then FromOwnChain else FromChains (sort (nub sources)))
         | (point, sources) <- assetReads facts]
       annotate chain = chain
@@ -631,6 +634,33 @@ resolveSources definitions defaultReaders prototype = do
   where
     effects = protoEffects prototype
     resources = [source | effect <- effects, Just source <- [effectResource effect]]
+    -- 复用已完成的可达性分析，保守包含 native reader，以及 caller 的 require 声明
+    -- 将直接 producer 方法调用路由成读取的情况；不依赖尚未算出的 chainReads。
+    possibleReads = [(chainNode chain, nub
+      [contractType | effect <- effects, Just contractType <- [effectProduces effect]
+        , let reached role = maybe False (`elem` chainReaches chain) (lookup role (effectMethods effect))
+        , reached ContextRequire || reached ContextRequest && any
+            (\consumer -> any ((`elem` chainReaches chain) . snd) (effectMethods consumer)
+              && any (\demand -> demandProvider demand == effectName effect
+                && demandAccess demand == RequireAccess) (effectDemands consumer)) effects])
+      | chain <- protoChains prototype]
+    readsAt node' = maybe [] id (lookup node' possibleReads)
+    readsIn tree = nub (localReads ++ concatMap readsIn (workflowChildren tree))
+      where
+        localReads = case tree of
+          NodeAt node' _ -> readsAt node'
+          AlternativeAt _ selected _ -> readsAt (alternativeSelector selected)
+          _ -> []
+    retainPublications relevant = filter ((`elem` relevant) . snd)
+    retainState relevant state = state
+      { assetPublications = retainPublications relevant (assetPublications state)
+      , assetCaptures = filter ((`elem` relevant) . fst) (assetCaptures state)
+      }
+    retainExit relevant (AssetExit succeeded state) = AssetExit succeeded (retainState relevant state)
+    -- Workflow 失败后没有恢复分支；读取／生产事实已单独记录，失败产物不再传给后继。
+    -- 方法层的失败仍保留相关状态，供 Recover 和吞错注入继续分析。
+    retainOutcome relevant (succeeded, publications) =
+      (succeeded, if succeeded then retainPublications relevant publications else [])
     effectFor :: String -> AssetAnalysis (EffectProto String)
     effectFor method = case [effect | effect <- effects, method `elem` map snd (effectMethods effect)] of
       [effect] -> pure effect
@@ -691,8 +721,8 @@ resolveSources definitions defaultReaders prototype = do
     -- 每个不透明原子方法都可能失败；失败保留此前已捕获和已发布的事实。
     -- 这些失败前缀只会在 Recover 或吞错注入继续，正常 Sequence 仍失败停止。
     withFailures :: AssetState -> [AssetExit] -> [AssetExit]
-    withFailures state exits = nub (AssetExit False state : exits
-      ++ [AssetExit False after | AssetExit True after <- exits])
+    withFailures state exits = AssetExit False state : exits
+      ++ [AssetExit False after | AssetExit True after <- exits]
     shape :: AssetCall -> MethodShape String -> AssetState -> AssetAnalysis [AssetExit]
     shape _ Empty state = pure [AssetExit True state, AssetExit False state]
     shape call (Call selected) state = method call selected state
@@ -711,7 +741,7 @@ resolveSources definitions defaultReaders prototype = do
       sequential action rest next
     method :: AssetCall -> String -> AssetState -> AssetAnalysis [AssetExit]
     method call selected state
-      | selected `elem` assetReplays call = pure [AssetExit True state]
+      | selected `elem` assetReplays call = pure [AssetExit True (retainState (assetRelevant call) state)]
       | selected `elem` assetActiveMethods call =
           lift (Left (InvalidEffectGraph (RecursiveMethod selected)))
       | otherwise = do
@@ -758,7 +788,7 @@ resolveSources definitions defaultReaders prototype = do
               -- 重复 close 可在取得资源绑定时跳过余下方法体并成功返回；不触发注入。
               pure (body ++ [AssetExit True after | after <- nub (state : [part | AssetExit _ part <- body])])
             _ -> shape entered (methodBody definition) state >>= inject call selected
-          pure (withFailures state exits)
+          pure (nub (map (retainExit (assetRelevant call)) (withFailures state exits)))
     inject :: AssetCall -> String -> [AssetExit] -> AssetAnalysis [AssetExit]
     inject call anchor exits = do
       let producing = [(effectName effect, method') | effect <- effects
@@ -776,37 +806,42 @@ resolveSources definitions defaultReaders prototype = do
                 -- 每个 parser 的失败都留在注入内，先前成功发布不会回滚。
                 pure (nub [AssetExit True after | AssetExit _ after <- results])
           sequential injectOne producing [AssetExit True state]) exits
-    root :: NodeId -> [(String, Maybe NodeId)] -> [(NodeId, String)] -> AssetAnalysis [AssetExit]
-    root node' handoff publications = do
+    root :: NodeId -> [String] -> [(String, Maybe NodeId)] -> [(NodeId, String)] -> AssetAnalysis [AssetExit]
+    root node' future handoff publications = do
       chain <- lift (lookupChain prototype node')
-      method (AssetCall node' Nothing [] [] [] False) (chainEntry chain)
-        (AssetState publications handoff)
-    workflow :: WorkflowTree -> [(NodeId, String)] -> [(String, Maybe NodeId)]
+      let relevant = nub (readsAt node' ++ future)
+      method (AssetCall node' Nothing [] [] [] False relevant) (chainEntry chain)
+        (retainState relevant (AssetState publications handoff))
+    workflow :: WorkflowTree -> [String] -> [(NodeId, String)] -> [(String, Maybe NodeId)]
              -> AssetAnalysis [(Bool, [(NodeId, String)])]
-    workflow tree publications handoff = case tree of
+    workflow tree future publications handoff = case tree of
       NodeAt node' _ -> do
-        exits <- root node' handoff publications
-        pure (nub [(succeeded, assetPublications state) | AssetExit succeeded state <- exits])
-      ChainedAt _ children -> workflowSequence children [(True, publications)] handoff
+        exits <- root node' future handoff publications
+        pure (nub [retainOutcome future (succeeded, assetPublications state) | AssetExit succeeded state <- exits])
+      ChainedAt _ children -> workflowSequence children future [(True, publications)] handoff
       ParallelAt _ children -> do
-        parts <- mapM (\child -> workflow child publications handoff) children
-        pure (foldl combine [(True, publications)] parts)
+        -- 兄弟各读同一份前置状态；只把外层后继仍需要的产物交给组合，避免无关笛卡尔积。
+        parts <- mapM (\child -> workflow child future publications handoff) children
+        pure (foldl (combine future) [(True, retainPublications future publications)] parts)
       AlternativeAt _ choice children -> do
-        selected <- root (alternativeSelector choice) handoff publications
+        selected <- root (alternativeSelector choice) (nub (concatMap readsIn children ++ future)) handoff publications
         nub . concat <$> mapM (\(AssetExit succeeded state) -> if not succeeded
-          then pure [(False, assetPublications state)]
-          else nub . concat <$> mapM (\child -> workflow child (assetPublications state)
+          then pure [(False, [])]
+          else nub . concat <$> mapM (\child -> workflow child future (assetPublications state)
               [(contractType, origin) | (contractType, Just origin') <- assetCaptures state
                 , let origin = Just origin']) children) selected
-    workflowSequence :: [WorkflowTree] -> [(Bool, [(NodeId, String)])] -> [(String, Maybe NodeId)]
+    workflowSequence :: [WorkflowTree] -> [String] -> [(Bool, [(NodeId, String)])] -> [(String, Maybe NodeId)]
                      -> AssetAnalysis [(Bool, [(NodeId, String)])]
-    workflowSequence [] states _ = pure (nub states)
-    workflowSequence (child : rest) states handoff = do
-      next <- nub . concat <$> mapM (\outcome@(succeeded, publications) -> if succeeded
-        then workflow child publications handoff else pure [outcome]) states
-      workflowSequence rest next handoff
-    combine :: [(Bool, [(NodeId, String)])] -> [(Bool, [(NodeId, String)])] -> [(Bool, [(NodeId, String)])]
-    combine before after = nub [(leftOK && rightOK, sort (nub (left ++ right)))
+    workflowSequence children future states handoff = go positioned states
+      where
+        positioned = zip children (drop 1 (scanr (\child later -> nub (readsIn child ++ later)) future children))
+        go [] outcomes = pure (nub (map (retainOutcome future) outcomes))
+        go ((child, later) : rest) outcomes = do
+          next <- nub . concat <$> mapM (\outcome@(succeeded, publications) -> if succeeded
+            then workflow child later publications handoff else pure [outcome]) outcomes
+          go rest next
+    combine :: [String] -> [(Bool, [(NodeId, String)])] -> [(Bool, [(NodeId, String)])] -> [(Bool, [(NodeId, String)])]
+    combine future before after = nub [retainOutcome future (leftOK && rightOK, sort (nub (left ++ right)))
       | (leftOK, left) <- before, (rightOK, right) <- after]
 
 -- 只核对显式字段的自洽性，不展开 methodBody、不重构图或修正手调 scope 父边。
