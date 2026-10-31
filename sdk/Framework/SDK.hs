@@ -4,14 +4,18 @@
 module Framework.SDK
   ( module Framework.Effect
   , module Framework.Effect.Graph
+  , module Framework.Prototype
   , module Framework.Workflow.Structure
+  , ResolvedDemand(..)
   , AST, EffectNode, node, chained, parallel, alternative, interpreter
   , Generic, NFData
   ) where
 
 import Framework.Effect
 import Framework.Effect.Graph
+import Framework.Effect.Registration (ResolvedDemand(..))
 import Framework.Effect.Runtime (cleanupTargets)
+import Framework.Prototype
 import Framework.Workflow.AST (AST, EffectNode, node, chained, parallel, alternative)
 import Framework.Workflow.Execution (runStructuredAST)
 import Framework.Workflow.Structure
@@ -31,16 +35,14 @@ import System.Process (callProcess)
 interpreter
   :: (Show cause, Show value, Show method, Ord method, NFData method)
   => String
-  -> [EffectSpec] -> Maybe String
-  -> Either (StructureError method) (ProgramStructure method)
-  -> [(String, (String, String))] -> [(String, [String])]
+  -> Maybe String -> Prototype method
   -> IO ([Target environment cause value], [Target environment cause String]) -> AST -> [EffectSpec] -> IO ()
-interpreter namespace registered sourceFingerprint initialize alternativeCases alternativeConstructors createEntries tree specifications = do
+interpreter namespace sourceFingerprint generatedPrototype createEntries tree specifications = do
   hSetEncoding stdout utf8
   arguments <- getArgs
   case arguments of
     []
-      | specifications /= registered ->
+      | specifications /= protoRegistrations generatedPrototype ->
           staleGenerated namespace "Registrations changed"
       | otherwise -> do
           verifyHandlerSource namespace sourceFingerprint
@@ -48,7 +50,7 @@ interpreter namespace registered sourceFingerprint initialize alternativeCases a
           (entries, selectors) <- createEntries
           mask $ \restore -> do
             completed <- tryAny $ restore $ do
-              output <- runStructuredAST structure alternativeCases alternativeConstructors tree entries selectors
+              output <- runStructuredAST structure tree entries selectors
               let rendered = show output
               -- 各 Node 已在释放使用前消费自己的结果；这里完成汇总错误的显示。
               evaluate (foldr seq () rendered)
@@ -67,19 +69,21 @@ interpreter namespace registered sourceFingerprint initialize alternativeCases a
                   [] -> restore $ if null failures then putStrLn rendered else print result
     ["--generate"] -> generate namespace
     ["--structure"]
-      | specifications /= registered -> staleRegistrations
+      | specifications /= protoRegistrations generatedPrototype -> staleRegistrations
       | otherwise -> do
           verifyHandlerSource namespace sourceFingerprint
           structure <- initializeBeforeBusiness
-          rendered <- either (ioError . userError . show) pure (renderStructure structure alternativeCases alternativeConstructors tree)
+          rendered <- either (ioError . userError . show) pure (renderStructure structure tree)
           putStr rendered
     _ -> ioError (userError "Usage: demo [--generate|--structure]")
   where
     staleRegistrations = ioError (userError
       ("Registrations changed; run: cabal run effect-codegen -- workflow " ++ namespace))
     initializeBeforeBusiness = do
-      result <- evaluate (force initialize)
-      either (ioError . userError . ("Cannot initialize effect structure: " ++) . show) pure result
+      prototype <- evaluate (force generatedPrototype)
+      either (ioError . userError . ("Cannot initialize effect prototype: " ++) . show) pure
+        (validatePrototype prototype)
+      pure prototype
 
 -- 保留原始业务故障；主执行成功时，首个清理故障成为完成失败。
 appendCleanup :: [Failure cause] -> Output cause value -> Output cause value

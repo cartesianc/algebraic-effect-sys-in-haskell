@@ -1,6 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE EmptyDataDecls #-}
@@ -23,12 +24,16 @@ module Framework.Effect.Contract
   ) where
 
 import Control.Monad.Except (MonadError, catchError, throwError)
+import Control.DeepSeq (NFData)
+import GHC.Generics (Generic)
 import Data.Kind (Constraint, Type)
 import Data.Void (Void)
 import Data.Typeable (Typeable, cast)
 
 -- 关联 Typing 只保留类别；方法名由注册描述。
-data EffectKind = PureKind | ExcuKind | ScopedKind | ErrorKind | ContextKind deriving (Eq, Show)
+data EffectKind = PureKind | ExcuKind | ScopedKind | ErrorKind | ContextKind deriving (Eq, Show, Read, Generic)
+
+instance NFData EffectKind
 
 data Root environment cause
 newtype Registered (handler :: (Type -> Type) -> Constraint) parent = Registered parent
@@ -68,6 +73,9 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 资源生产与绑定发布作为一次交接；纯载体无需额外保护。
   protectContextBinding :: String -> m value -> m value
   protectContextBinding _ = id
+  -- 一次 Context request 的激活覆盖生产、成功发布和返回；不改变调用者或资源使用者。
+  enterRequest :: String -> m value -> m value
+  enterRequest _ = id
   currentHandler :: m (Maybe String)
   enterHandler :: String -> m value -> m value
   enterContext :: String -> m value -> m value

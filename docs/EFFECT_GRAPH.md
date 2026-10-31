@@ -1,10 +1,55 @@
-# Effect graph 与 scope 初始化结构
+# 静态 Prototype、运行图与 ScopeTree
 
-业务入口仍为 `main = interpreter ast effects`，手写 handler 仍使用原生 Haskell 的 `instance`、`do`、模式匹配和方法引用。SDK 在 gencode 阶段计算 effect graph 与 ScopeTree，将结果写成可查看的显式 ADT；运行时校验并使用这些生成值。这份结构不替代原业务方法，也不预执行 Context 或资源 IO。
+业务入口仍为 `main = interpreter ast effects`，手写 handler 仍使用原生 Haskell 的 `instance`、`do`、模式匹配和方法引用。`Framework.Prototype` 在 gencode 阶段统一构建注册、方法、workflow、链定义与挂载、effect graph 和 ScopeTree，发射唯一的 `generatedPrototype :: SDK.Prototype MethodGen` 显式 ADT 常量。运行时校验并直接使用这份原型，不预执行 Context 或资源 IO。
 
 生成前可由 GHC／HLS 检查手写模块是[核心设计约束](DESIGN_METHOD.md#生成前仍是原生-haskell核心约束)。已有契约接口提供类方法与 ADT 类型关系；生成器从合法 Haskell 中提取支持的结构，不要求先把业务源码转换成另一种语法。宿主语言类型正确与静态 effect 结构可提取需要分别满足。
 
 初始化后的 `ScopeTree` 在 App／IO 中同时提供 Error 的祖先候选导航与有限执行自动收尾的保守清理前提。运行层仍按实际 scope 实例及使用登记判断能否关闭；静态图不判断故障归属或某份资源已经无人使用，也不新增 Error 的动态调用 tracing。
+
+## 定义、挂载与运行实例
+
+`Prototype` 只保存纯数据，不包含执行函数、类字典或活资源。它派生 `Eq`、`Show`、`Read`、`Generic` 并提供 `NFData`；方法身份在生成器中为 `String`，发射后为 `MethodGen`。
+
+| 层次 | 原型字段／运行对象 | 身份与作用 |
+| --- | --- | --- |
+| 注册与方法 | `protoEffects`、`protoMethods` | 集中保存能力、取值路由、挂接和显式方法结构 |
+| 链定义 | `protoChainDefinitions` | 用 `OriginChain` 与 `ContextChain` 区分原始操作链和 Context 生产／读取链；按入口方法识别 |
+| AST 挂载 | `protoWorkflow`、`protoChains` | 每个 node 和 alternative 选择读取各一条挂载记录，按 `NodeId` 识别 |
+| 运行实例 | 活动 chain、Context 绑定出身、scope 实例与入口使用登记 | 运行图共享静态原型，根据实际调用更新；不反向修改定义 |
+
+`NodeId = [Int]` 是当前原型快照内的 AST 下标路径：根为 `[]`，普通子项从零编号；alternative 的选择读取链使用该分支路径加 `[-1]`。同一个 origin 末端挂载两次会有两个 `NodeId`，共享方法定义。Context 链经 demand 或挂接进入，定义本身没有虚构的 AST 位置。编辑 AST 后重新生成编号；这些路径不充当跨快照稳定 key 或运行调用序号。
+
+链事实和标准查询由 `Framework.Prototype` 统一提供。Codegen 读取这些事实生成接口与包装，Execution 读取挂载关系装配闭包，运行图共享这份原型并保存活动实例关系。运行图不累计完整方法调用历史。`protoSources`、`chainDrives` 和 `chainReads` 的静态来源解析及可见性规则留到 Stage 2，当前记录 Context 出身不改变 state、request／require、求值锁、清理或 Error 语义。SDK 当前采用 Haskell ADT，不增加 JSON 或外部 LSP 协议。
+
+## 运行图与两种链启动
+
+运行身份由 `Framework.Effect.Runtime.Identity` 定义，活动关系由 `Framework.Effect.Runtime.Graph` 管理。一次 interpreter 运行共享静态 Prototype 引用及运行图；活动 chain 引用其静态链定义，scope 实例引用其 Scoped 定义，Context 绑定保存产生它时的 `Execution`。
+
+```haskell
+data Origin = Origin { originNode :: NodeId, originSequence :: Integer }
+newtype ActivationId = ActivationId Integer
+data Boot = TargetedBoot NodeId | RequestBoot String
+data Execution
+  = BusinessExecution Origin
+  | CleanupExecution Origin String Int
+```
+
+`Origin` 区分一次 AST 入口执行，`ActivationId` 区分运行图中的一次活动 chain。`RequestBoot` 的字符串是现有 Context effect 注册名；`CleanupExecution` 保存原业务 origin、scope 注册名及现有实例编号，不新增业务 key。Context 的嵌套生产有新的 activation，但普通生产沿用外层业务 origin。
+
+`RuntimeGraph` 用存在类型包装保存实际的 `Prototype MethodGen` 和 `ChainDefinition MethodGen`，不把图转换为字符串副本。`runtimeScopes` 引用原有 scope 控制对象；原来的运行级资产与来源求值锁迁入 `runtimeAssets`、`runtimeForcing`，存储位置改变，取值和锁语义保留。活动表中的每条 `Activation` 保存父 activation、启动方式、`Execution`、静态链定义、当前绑定 `IORef` 和 `ScopeUser`；执行器和活动表共享这些运行引用。
+
+链有两种启动边界：
+
+1. **AST 启动**：Node 或 alternative 的选择读取启动选定入口，建立本次 origin 及入口使用登记。
+2. **Context 启动**：实际 `request` 生产建立 ctx chain 记录，包住生产、成功发布和返回。嵌套 ctx 启动继承外层 origin 和入口使用登记；返回只结束本次生产记录，不撤销整个入口对 scope 的使用。读取已有绑定的 `require` 没有新 activation；缺值求值和挂接注入实际生产时经过同一启动边界。
+
+这里的“入口使用登记”是原有有限使用闭包的资源含义：一次 AST 入口内，实际 open／require 选中的 scope 计入同一份使用。`ScopeUser` 保留原有 `Unique` 协调身份，并新增 `scopeUserExecution`；同一入口的 ctx chain 使用同一个 `ScopeUser`。`scopeUsers` 同时携带使用者身份与 `Execution`，不以 AST 位置替代并发使用协调。
+
+Context 的生产记录在生产、发布及返回结束后通过 `finally` 删除，失败或中断也撤销活动记录。AST 根活动记录覆盖业务、诊断、受控结果消费、入口使用撤销及其收尾；撤销使用后仍按 once-spare 决定关闭。清理使用独立的 `ScopeUser` 和 `CleanupExecution`，保留原始业务来源但不冒充一次新的业务入口；不会为后续清理复活已经结束的父 activation。活动表只保留当前记录，绑定和资源需要的来源身份可独立保存。
+
+`Binding.bindingOrigin :: Execution` 与 `bindingOwner` 分别表达执行出身和资源关闭归属。读取旧值、捕获快照和交接绑定保留它原来的出身；资源的具体 owner 仍是实际实例引用。本轮只接通这些身份，业务出身不用于重新选择读取来源或重新划分求值锁，清理产物也明确标为 cleanup 执行。
+
+ScopeTree 仍是独立的静态构树结果，保留路径分析、注册前提补全和无环检测。运行图关联实际 scope 实例与使用者，不从 ctx 调用嵌套关系重建 scope 父边；Error 导航和清理继续使用同一份补全后的 ScopeTree。静态定义、活动调用与资源依赖各有身份，不能用其中一层的边代替另一层。
 
 ## 生成方法身份与纯结构副本
 
@@ -26,12 +71,12 @@
 
 生成阶段按以下顺序推进：
 
-1. 加载注册与选定末端，形成 `GraphPlan`；同一次读取和 GHC 解析的 Handlers 快照提供方法纯结构及业务包装副本。
-2. `initializeStructure` 枚举各独立入口，方法结构使用 `zygo`：辅助 algebra 汇总 scope 路径，主 algebra 利用子结构的辅助结果与图结果完成 effect graph 汇总。
-3. 汇合各条独立 chain 的路径证据，把保守的注册前提补入同一份 `ScopeTree`，校验身份、引用与无环性。
-4. 在内存中的候选接口上完成源码资产检查，再将 `generatedEffectGraph` 与 `generatedScopeTree` 的显式 ADT 写入 `Generated.Program`，同时写入独立 `Generated/Assets.hs` 目录。生成失败不发布新的结构。
+1. 加载注册、表示类型的和类型信息与完整 AST，由 `preparePrototype` 形成 `PrototypePlan`，集中解析声明关系并为 workflow 编号；同一次 Handlers 快照提供方法纯结构及业务包装副本。
+2. `buildPreparedPrototype` 合并显式方法、默认读取和挂接注入，构建 origin／ctx 链定义及 AST 挂载。方法展开使用共享的 `expandChain`，图与 scope 路径通过 `zygo` 汇总。
+3. 汇合独立入口的路径证据，把保守注册前提补入同一份 `ScopeTree`，完成原型自洽校验、Context 驱动检查和 alternative 覆盖检查。
+4. 在内存中的候选接口上完成源码资产检查，再把整个 `generatedPrototype` 写入 `Generated.Program`；`Generated/Assets.hs` 仍是独立的源码资产目录。生成失败不发布新的结构。
 
-运行时的 `programStructure` 调用 `initializeGeneratedStructure entries scopeNames generatedEffectGraph generatedScopeTree`，得到只保存入口映射、effect graph、scope tree 与 scope 名字映射的静态值，不接收或复制当前 AST。SDK 先校验生成结构的身份、引用、父子关系、层次、无环性及入口映射，并完整求值这些常量；随后直接对当前 AST 做一次 `cata`，同时解析全部 Node、收集入口并装配尚未执行的 action。入口集合与生成 graph 一致后，才安装 scope 关系并执行业务。没有独立 init cata 或 InitializedF 中间树，不重新展开方法、不执行运行时 `zygo`、不推导或修正父边。新增或移除末端入口须重新生成。
+运行时先核对注册与源码快照，执行 `evaluate (force generatedPrototype)` 和 `validatePrototype`，检查身份、引用、挂载、父子关系、层次与无环性；随后对当前 AST 做一次 `cata`，逐位置匹配 `protoWorkflow`，按 `NodeId` 读取入口和 alternative 对应关系，并装配尚未执行的 action。所有分支及挂载核对通过后，才安装 scope 关系并执行业务。`ProgramStructure`、`initializeGeneratedStructure` 和旧的分散结构常量已删除。运行时不重新展开方法、运行 `zygo` 或推导父边；AST 的位置或结构变化也须重新生成。
 
 执行 fold 的结果为 `Either`，其中携带已收集的入口及尚未执行的 `ExceptT / IO` 动作。顺序和并行分支均先检查全部子分支，完成入口集合比较后才运行 action；不会靠执行业务来强制结构求值。创建 Target 仅分配空的运行状态，不打开资源，scope 实例、使用计数和锁仍按已有运行协议管理。
 
@@ -77,17 +122,17 @@ Pred 与由它得到的 `precedes` 只用于 `buildScopeTree` 的内部计算，
 
 对共同必经前序做传递约简，保留相同的可达关系，得到无冗余边的 DAG。`ScopeTree` 以共享节点、`parents`、`children` 和 `layers` 表达它，不强迫每个 scope 只有一个父节点。
 
-生成期的 `buildScopeTree` 形成路径观察结果，`completeScopeTree` 把注册前提补入同一份树并再次传递约简。结果发射为 `generatedScopeTree`；运行时 `ProgramStructure.structureScopes` 直接保存这份 `ScopeTree`，不增加另一份 scope 计划或持久化依赖图。
+生成期的 `buildScopeTree` 形成路径观察结果，`completeScopeTree` 把注册前提补入同一份树并再次传递约简。结果保存在 `generatedPrototype` 的 `protoScopes` 字段；运行时直接读取，不增加另一份 scope 计划或持久化依赖图。
 
 多条路径引用同一定义时，共享该节点；各路径证据仍分别保留。最终父边和 `layers` 表达采用的保守清理偏序，不因同层而断言资源使用互不影响，也不据此重排业务方法或提前执行 open。
 
 ## 注册前提与运行清理
 
-生成期的 `GraphPlan.planScopes` 为每个可开启 scope 提供其 open 方法身份、现有运行 scope 名字及保守前提。前提包括原有 `Input`／`request` 链上的 scope，以及声明的 `require` 来源可导航到的资源 Context owner 候选。`require` 仍只读取绑定，不因此执行来源生产者或打开 owner；关闭本 scope 自己声明的资源不会形成自依赖。实际实例归属仍由 Context 绑定中的 owner 决定，静态声明不替代该检查。
+生成期从 `EffectProto` 的方法、名字与 `effectScopeParents` 取得每个可开启 scope 的 open 方法身份、运行名字及保守前提。前提包括原有 `Input`／`request` 链上的 scope，以及声明的 `require` 来源可导航到的资源 Context owner 候选。这种结构补全不预执行来源生产者或打开 owner；运行时的 `require` 保留已有值直接读取、缺值按 thunk 求值以及资源 Context 禁止按需求值的原协议。关闭本 scope 自己声明的资源不会形成自依赖。实际实例归属仍由 Context 绑定中的 owner 决定。
 
 生成期合并的是上述前提和 `buildScopeTree` 得到的共同前序，不使用 `scopeCandidates` 的并集。注册前提是依赖：上游 scope 必须比下游活得久，下游的 close 也可能调用上游。观察到的开启顺序是证据：共同前序按完整传递关系逐条补入，与注册前提及已补入的边构成相反方向的不作为父边，例如 handler 先开启 B、后开启 B 的 Input 上游 A 时以 A 为 B 的父节点。被推翻的顺序仍保留在 `scopeCandidates`，`--structure` 单列显示。所有可开启注册 scope 都进入最终树，包括本次结构没有出现 open 的注册；它们没有被执行就不会产生待清理资源。重复身份或名字、缺失映射、未知前提及注册前提自身的环均在生成时报告错误。
 
-最终依赖只保存在 `ScopeTree` 的 `parents`／`children`／`layers` 中；`scopePaths`、`scopeCandidates`、`scopeOpposed` 与 `scopeUndetermined` 保留原路径证据，不能误读为新增的注册前提也已由路径证明。`ProgramStructure.structureScopeNames` 仅连接生成身份和现有运行名字；`scopeRelations structure` 临时投影同一棵树的全部祖先可达关系为运行配置，不另存第二份依赖结构。这样即使 `A → B → C` 中 B 尚无活实例，C 仍会保留 A 的清理前提。
+最终依赖只保存在 `ScopeTree` 的 `parents`／`children`／`layers` 中；`scopePaths`、`scopeCandidates`、`scopeOpposed` 与 `scopeUndetermined` 保留原路径证据，不能误读为新增的注册前提也已由路径证明。`protoScopeNames` 连接生成身份和运行名字；`scopeRelations prototype` 临时投影同一棵树的全部祖先可达关系为运行配置，不另存第二份依赖结构。这样即使 `A → B → C` 中 B 尚无活实例，C 仍会保留 A 的清理前提。
 
 运行层按最终父边先清理子 scope，再清理其前提；独立项延续现有句柄顺序的逆序。是否已经满足清理条件仍由实际实例和受管理使用者决定。`scopePaths` 只包含 open，读已有资源的 require-only chain 可以没有 open；重复 open 在路径中也已去重，因此不能把路径长度或出现次数直接当作使用者引用计数。
 
@@ -106,8 +151,7 @@ App／IO 的生成入口沿原有 Input／request 关系查找最近的 scope，
 生成的 `Generated.Program` 导出静态的纯值：
 
 ```haskell
-programStructure
-  :: Either (StructureError MethodGen) (ProgramStructure MethodGen)
+generatedPrototype :: SDK.Prototype MethodGen
 ```
 
 现有 Main 无需修改，给 SDK 入口传 `--structure` 即可查看，例如：
@@ -116,14 +160,14 @@ programStructure
 cabal run crawler-demo -- --structure
 ```
 
-该分支对当前 AST 做纯展示 fold，同时核对 Node 和入口集合，以可读格式显示 workflow、方法及其 effect 归属、方法引用、scope 层次与共享父节点、各入口路径，以及双向实证和未定关系，不重复输出内部共同前序。它读取同一份生成结构，不调用 `createEntries`，不创建运行 scope 句柄，不装配或执行 handler 动作。普通启动在自己的单次执行装配 fold 中核对相同入口规则。修改注册或手写 handler 后仍须重新生成，生成源码继续作为 review 面。
+该分支通过纯校验核对当前 AST 与原型快照，以可读格式显示带 `NodeId` 的 workflow、origin／ctx 链定义、链挂载、方法及其 effect 归属、方法引用、scope 层次与共享父节点、各入口路径，以及双向实证和未定关系。它读取同一份原型，不调用 `createEntries`，不创建运行 scope 句柄，也不装配或执行 handler。普通启动在自己的单次执行装配 fold 中核对相同挂载规则。修改注册、AST 或手写 handler 后须重新生成。
 
 ## 内容缓存与重跑边界
 
-每次 gencode 仍加载声明并读取 Handlers 快照；结构分析和业务包装共用该快照，资产检查另用 GHC 名称解析同一快照，每次执行。命名空间的 `Generated/.scope-cache` 保存结构阶段的内容缓存，key 精确比较完整 `GraphPlan`、规范化后的 handler shapes，以及 `Effect/Graph.hs`、`Recursion.hs`、`Workflow/AST.hs`、`Workflow/Structure.hs`、`Codegen/Plan.hs` 的源码内容。不用 mtime 判断命中，也不通过加载或执行 `Generated.Program` 读取缓存。
+每次 gencode 仍加载声明并读取 Handlers 快照；结构分析和业务包装共用该快照，资产检查另用 GHC 名称解析同一快照，每次执行。`Generated/.scope-cache` 保存三项：输入 key、纯 `Prototype String`、已经渲染的 Haskell 源码。key 精确比较完整 `PrototypePlan`、规范化方法结构及算法源码：`Prototype.hs`、`Codegen.hs`、`Codegen/Plan.hs`、`Effect/Registration.hs`、`Effect/Contract.hs`、`Effect/Graph.hs`、`Recursion.hs`、`Workflow/AST.hs` 和 `Workflow/Structure.hs`。不用 mtime 判断命中，也不加载或执行 `Generated.Program` 读取缓存。
 
-key 未变时复用已经发射的纯 graph／tree ADT 文本。原子业务 IO 的修改若不改变 shapes，可复用结构结果，同时更新业务包装副本。每份生成文件都先比较完整内容，内容相同就不写回；这减少结构重算和无变化文件写入，不等于跳过整条生成命令，也不是逐方法热点生成、文件监听或运行中热重载。
+key 未变时复用纯原型和渲染文本，仍运行 `validatePrototype`、`checkDriven` 及源码资产检查；首次没有 Handlers 时仍按原协议跳过驱动检查、先提供契约。原子业务 IO 的修改若不改变方法结构，可复用原型，同时更新业务包装副本及源码指纹。每份生成文件都先比较完整内容，内容相同就不写回；这减少结构重算和无变化文件写入，不等于跳过整条生成命令，也不是逐方法热点生成、文件监听或运行中热重载。
 
-`Generated.Program` 仍是派生产物。手改 `generatedScopeTree` 后，运行校验读取这些显式字段，不会重新推导父边；它只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。下一次 gencode 会按源声明和方法结构恢复生成结果，缓存不把手改文件当作权威。不增加手工 edge override 层，也不承诺保留生成文件中的手改。
+`Generated.Program` 仍是派生产物。手改 `generatedPrototype` 中的 `protoScopes` 后，运行校验读取这些显式字段，不会重新推导父边；它只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。下一次 gencode 会按源声明和方法结构恢复生成结果，缓存不把手改文件当作权威。不增加手工 edge override 层，也不承诺保留生成文件中的手改。
 
 本轮沿用项目的普通编译要求，不新增测试、负例或检查门槛。

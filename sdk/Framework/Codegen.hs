@@ -5,10 +5,12 @@ module Framework.Codegen (lowerProgram) where
 
 import Framework.Effect.Contract (EffectKind(..))
 import Framework.Effect.Registration
-import Framework.Codegen.Plan (GraphPlan(..))
+import qualified Framework.Prototype as Prototype
+import Framework.Workflow.AST (WorkflowF)
+import Framework.Recursion (Fix)
 import qualified Framework.Effect.Graph as Graph
 import Data.Char (isAlphaNum, isUpper, toUpper)
-import Data.List (intercalate, intersect, nub)
+import Data.List (intercalate, nub)
 import Data.Maybe (fromMaybe, listToMaybe, maybeToList)
 
 -- 3. 生成契约、superclass 和末端句柄登记。
@@ -23,53 +25,49 @@ type DemandRoutes = ([(String, [((String, String), String)])], [(String, String)
 -- Types.hs 中的和类型：类型名 → [(构造器名, 唯一字段的类型原文)]；由 SDK 解析 Types.hs 得到。
 type SumTypes = [(String, [(String, Maybe String)])]
 
--- terminals：AST 选中的全部末端；groups：每个 alternative 的候选及各自的末端。
-lowerProgram :: String -> [EffectSpec] -> [String] -> [[[String]]] -> SumTypes
-             -> Either String (String, String, [(String, String, String, String)], String, GraphPlan String, [String], DemandRoutes, [(String, String, Bool)])
-lowerProgram namespace specifications terminals groups sumTypes = do
-  if any ((== "Root") . name) specifications
-    then Left "Root is reserved for the superclass"
-    else pure ()
-  mapM_ checkInput specifications
-  mapM_ checkAnchor specifications
-  _ <- resolvedEither
-  mapM_ checkDemandNames specifications
+-- 完整 AST 先交给 Prototype 编号和解析；渲染只读取其中的声明事实。
+lowerProgram :: String -> [EffectSpec] -> Fix WorkflowF -> SumTypes
+             -> Either String (String, String, [(String, String, String, String)], String, Prototype.PrototypePlan, [String], DemandRoutes, [(String, String, Bool)])
+lowerProgram namespace specifications tree sumTypes = do
+  plan <- either (Left . show) Right (Prototype.preparePrototype specifications sumTypes tree)
+  renderProgram namespace plan sumTypes
+
+-- 接口和运行包装只读取统一原型准备阶段的事实；方法体随后由生成器补入。
+renderProgram :: String -> Prototype.PrototypePlan -> SumTypes
+              -> Either String (String, String, [(String, String, String, String)], String, Prototype.PrototypePlan, [String], DemandRoutes, [(String, String, Bool)])
+renderProgram namespace prepared sumTypes = do
   checkGenerated
-  mapM_ checkError specifications
-  checkErrorOverlap
-  mapM_ (contextNames branchTable specifications . pure . name) specifications
   if null selected
     then Left "Select at least one terminal effect for generation"
     else pure ()
   selectedMethods <- mapM findHandler selected
-  mapM_ checkTerminal selected
-  alternativeCases <- alternativeEither
-  let allMethods = concatMap registeredMethods specifications
-  if length allMethods /= length (nub (map snd allMethods))
-    then Left "Registered method names must be unique within a generated module"
-    else pure ()
   declarations <- mapM declaration specifications
   pure
     ( unlines (contractHeader ++ runtimeAliases ++ generatedContracts ++ methodIdentities ++ concat declarations
         ++ providerDeclarations ++ errorDeclaration ++ contextDeclarations)
-    , unlines (programHeader ++ registrationSnapshot ++ structureDeclarations ++ astInterpreter selectedMethods alternativeCases)
+    , unlines (programHeader ++ astInterpreter selectedMethods)
     , concatMap instanceWrappers specifications
     , scopeHandlers ++ scopeCleanups ++ errorHandlers ++ injectionTable
-    , graphPlan
+    , prepared
     , nub [reference representation' | (_, representation', _) <- generatedDeclarations]
     , (demandRoutes, contextMethods)
     , contractOwners
     )
   where
-    resolvedEither = mapM (\specification -> (,) (name specification) <$> resolveDemands branchTable specifications specification) specifications
-    resolvedTable = either (const []) id resolvedEither
+    specifications = Prototype.plannedRegistrations prepared
+    effectPrototypes = Prototype.plannedEffects prepared
+    workflow = Prototype.plannedWorkflow prepared
+    protoOf selectedName = case [effect | effect <- effectPrototypes, Prototype.effectName effect == selectedName] of
+      effect : _ -> effect
+      [] -> error ("Validated prototype has no effect: " ++ selectedName)
+    resolvedTable = [(Prototype.effectName effect, Prototype.effectDemands effect) | effect <- effectPrototypes]
     resolvedOf selectedName = fromMaybe [] (lookup selectedName resolvedTable)
     requestProviders specification =
       nub [demandProvider resolved | resolved <- resolvedOf (name specification), demandAccess resolved == RequestAccess]
     requireProviders specification =
       nub [demandProvider resolved | resolved <- resolvedOf (name specification), demandAccess resolved == RequireAccess]
     -- Scoped 至多 request 一个资源 Context；它就是该 scope 的资源来源。
-    requestSource = listToMaybe . requestProviders
+    requestSource = Prototype.effectResource . protoOf . name
     producerMethod providerName = listToMaybe
       [method | specification <- specifications, name specification == providerName
               , Context (Just Requester { handler = method }) <- [typing specification]]
@@ -97,9 +95,10 @@ lowerProgram namespace specifications terminals groups sumTypes = do
     branchContracts =
       [ (base ++ constructor, (base, constructor, field, owner))
       | (base, TypeRef typeName, owner) <- generatedDeclarations
-      , Just constructors <- [lookup typeName sumTypes], length constructors > 1
-      , (constructor, field) <- constructors ]
-    branchTable = [(branch, base) | (branch, (base, _, _, _)) <- branchContracts]
+      , (branch, constructor) <- Prototype.effectBranches (protoOf owner)
+      , Just constructors <- [lookup typeName sumTypes]
+      , Just field <- [lookup constructor constructors]
+      , branch == base ++ constructor ]
     -- 构造器归属：契约类型只能由其生产方的 instance 方法构造；契约均由生成器产出。
     -- 分支契约由生成的投影构造，归属其基础契约的生产方，消费方只能模式匹配。
     contractOwners =
@@ -107,44 +106,11 @@ lowerProgram namespace specifications terminals groups sumTypes = do
       | (contractType, _, owner) <- generatedDeclarations, validTypeName contractType ]
       ++ [ (branch, owner ++ "Effect", True) | (branch, (_, _, _, owner)) <- branchContracts ]
 
-    -- alternative 的每个候选经注册依赖同一和类型资产的一个分支契约，以此对应一个构造器：
-    -- 候选末端自身及其 Input 链上游声明的 requires 分支契约。候选须覆盖该和类型的全部构造器。
-    -- 结果为静态表：候选末端 → (转折契约, 构造器)；运行时只据此在已装配的闭包间选择。
-    terminalCases terminal = nub
-      [ (base, constructor)
-      | effectName <- terminal : inputChain [] (inputOf terminal)
-      , specification <- specifications, name specification == effectName
-      , demand <- demands specification
-      , Just (base, constructor, _, _) <- [lookup (contract demand) branchContracts] ]
-    inputOf terminal = case [input specification | specification <- specifications, name specification == terminal] of
-      upstream : _ -> upstream
-      [] -> "Root"
-    alternativeEither = concat <$> mapM checkAlternative groups
-    selectorContracts = nub [contractType | Right cases <- [alternativeEither], (_, (contractType, _)) <- cases]
+    -- alternative 的转折与覆盖已由 Prototype 统一解析；这里只渲染选择读取闭包。
+    selectorContracts = nub (Prototype.workflowSelectors workflow)
     readerOfContract contractType =
       [ reader | (declared, _, owner) <- generatedDeclarations, declared == contractType
       , Just reader <- [readerMethod owner] ]
-    checkAlternative candidates = do
-      cases <- mapM candidateCase candidates
-      selectorContract <- case nub (map fst cases) of
-        [contractType] -> Right contractType
-        found -> Left ("Alternative candidates must branch on one sum-type contract, found: " ++ show found)
-      let constructors = map snd cases
-          declared = [constructor | (_, (base, constructor, _, _)) <- branchContracts, base == selectorContract]
-      if length constructors /= length (nub constructors)
-        then Left ("Alternative candidates repeat a case of " ++ selectorContract ++ ": " ++ show constructors)
-        else pure ()
-      case filter (`notElem` constructors) declared of
-        [] -> pure ()
-        missing -> Left ("Alternative over " ++ selectorContract ++ " has no candidate for " ++ intercalate ", " missing)
-      pure [ (terminal, (selectorContract, constructor))
-           | (candidate, (_, constructor)) <- zip candidates cases, terminal <- candidate ]
-    candidateCase candidate = case nub (map terminalCases candidate) of
-      [[found]] -> Right found
-      [[]] -> Left ("Alternative candidate " ++ intercalate ", " candidate
-        ++ " requires no branch contract; require one such as <Contract><Constructor>")
-      [_] -> Left ("Alternative candidate " ++ intercalate ", " candidate ++ " requires several branch contracts")
-      _ -> Left ("Terminals in alternative candidate " ++ intercalate ", " candidate ++ " require different branch contracts")
     contextMethods =
       [ (name specification ++ "Effect", method)
       | specification <- contextSpecs
@@ -154,24 +120,21 @@ lowerProgram namespace specifications terminals groups sumTypes = do
     -- 原子句柄：Excu.handler 与 Scoped.open／close，统一输出 RawOutput（SDK 内部）。
     -- input 指向原子 effect 的 Context 挂在它下面，解析其入口方法（handler／open）的输出；
     -- close 没有挂接点，输出总被丢弃。
-    atomicMethods specification = case typing specification of
-      Excu method -> maybeToList method
-      Scoped opening closing -> maybeToList opening ++ maybeToList closing
-      _ -> []
-    anchoredUnder specification =
-      [context | context <- contextSpecs, input context == name specification, not (null (atomicMethods specification))]
     contextInjections =
       [ (entry, anchored)
       | specification <- specifications
-      , Just entry <- [entryMethod (typing specification)], entry `elem` atomicMethods specification
-      , let anchored = [ (name context, producing) | context <- anchoredUnder specification
-                       , Just producing <- [entryMethod (typing context)] ]
+      , Just entry <- [entryMethod (typing specification)]
+      , let anchored =
+              [ (Prototype.effectName context, producing)
+              | context <- effectPrototypes
+              , Prototype.effectAnchor context == Just (name specification)
+              , (Graph.ContextRequest, producing) <- Prototype.effectMethods context ]
       , not (null anchored) ]
     terminalAction terminal method
       | any (\specification -> name specification == terminal && effectKind (typing specification) == ContextKind) specifications = method
       | otherwise = "(() <$ " ++ method ++ ")"
 
-    selected = nub terminals
+    selected = nub (Prototype.workflowTerminals workflow)
     contextSpecs = filter ((== ContextKind) . effectKind . typing) specifications
     contractHeader =
       [ "{-# LANGUAGE ConstraintKinds #-}"
@@ -202,18 +165,9 @@ lowerProgram namespace specifications terminals groups sumTypes = do
     -- App 载体提供 IO；各类别是否收紧 IO 待 Pure 类别的语义确定后再定。
     carrierCapabilities = ["MonadIO m"]
 
-    -- Input 链上的全部上游 effect（不含 Root），由近到远。
-    inputChain seen selectedName
-      | selectedName == "Root" || selectedName `elem` seen = []
-      | otherwise = selectedName : concat
-          [inputChain (selectedName : seen) (input specification) | specification <- specifications, name specification == selectedName]
-
-    -- 身份是生成的封闭 ADT；手写调用仍引用原生类方法。
+    -- 祖先能力与注册方法均来自同一份原型准备结果。
     registeredMethods specification =
-      [(specification, method) | method <- maybeToList (entryMethod (typing specification))
-        ++ (case typing specification of Scoped _ closing -> maybeToList closing; _ -> [])
-        ++ errorMethods specification
-        ++ maybeToList (contextReader (typing specification))]
+      [(specification, method) | (_, method) <- Prototype.effectMethods (protoOf (name specification))]
     genName [] = "MissingMethodGen"
     genName (first : rest) = toUpper first : rest ++ "Gen"
     methodIdentities =
@@ -222,53 +176,6 @@ lowerProgram namespace specifications terminals groups sumTypes = do
           [genName method | (_, method) <- concatMap registeredMethods specifications]
       , "  deriving (Eq, Ord, Show, Read, SDK.Generic)"
       , "instance SDK.NFData MethodGen"
-      , ""
-      ]
-    methodRole specification method = case typing specification of
-      Scoped opening _ -> if Just method == opening then Graph.ScopeOpen else Graph.ScopeClose
-      Context producing -> if fmap (\Requester { handler = selectedMethod } -> selectedMethod) producing == Just method
-        then Graph.ContextRequest else Graph.ContextRequire
-      Error { detect = detecting } -> if Just method == detecting then Graph.ErrorDetect else Graph.ErrorResolve
-      _ -> Graph.HandlerMethod
-    -- require 的默认读取在 state 无值时会求值同一个 request，因此结构上可能进入生产链；
-    -- scope 资源只经 open 取得，不按需求值，其读取保持为空。
-    resourceContexts = nub [provider | specification <- specifications
-      , Scoped _ _ <- [typing specification], Just provider <- [requestSource specification]]
-    planBody specification method
-      | Just method == contextReader (typing specification)
-      , name specification `notElem` resourceContexts
-      , Just producing <- entryMethod (typing specification) = Graph.Choice [Graph.Empty, Graph.Call producing]
-      | otherwise = Graph.Empty
-    graphPlan = GraphPlan
-      { planDefinitions =
-          [ Graph.MethodDefinition method firstMethod (methodRole specification method) (planBody specification method)
-          | (specification, method) <- concatMap registeredMethods specifications
-          , (_, firstMethod) : _ <- [registeredMethods specification] ]
-      , planScopes =
-          [ (opening, selectedScope, scopeRegistrationParents specification)
-          | selectedScope <- orderedScopes
-          , specification <- specifications, name specification == selectedScope
-          , Scoped (Just opening) _ <- [typing specification] ]
-      -- 选择阶段是独立的使用闭包，转折契约的读取末端以契约名登记为额外入口参与构图，
-      -- 其 scope 路径进入 ScopeTree 的共同前序计算。契约名不会与 effect 名重复。
-      , planEntries = [(terminal, method) | terminal <- selected, Right method <- [findHandler terminal]]
-          ++ [(contractType, reader) | contractType <- selectorContracts, reader <- readerOfContract contractType]
-      , planAnchors = [(entry, producing) | (entry, anchored) <- contextInjections, (_, producing) <- anchored]
-      }
-    structureDeclarations =
-      [ "-- 生成身份连接到已有运行 scope 名；依赖只保存在下方显式 ScopeTree 中。"
-      , "scopeNames :: [(MethodGen, String)]"
-      , "scopeNames = [" ++ intercalate ", "
-          [ "(" ++ genName opening ++ ", " ++ show scopeName ++ ")"
-          | (opening, scopeName, _) <- planScopes graphPlan ] ++ "]"
-      , ""
-      , "-- 只校验生成常量；当前 workflow 在执行装配的一次 fold 中检查入口。"
-      , "programStructure :: Either (SDK.StructureError MethodGen) (SDK.ProgramStructure MethodGen)"
-      , "programStructure = SDK.initializeGeneratedStructure"
-      , "  [" ++ intercalate ", "
-          ["(" ++ show terminal ++ ", " ++ genName method ++ ")"
-          | (terminal, method) <- planEntries graphPlan] ++ "]"
-      , "  scopeNames generatedEffectGraph generatedScopeTree"
       , ""
       ]
     programHeader =
@@ -415,120 +322,25 @@ lowerProgram namespace specifications terminals groups sumTypes = do
       Error { detect = detecting, resolve = resolving } -> maybeToList detecting ++ maybeToList resolving
       _ -> []
 
-    -- 同时保留原 Input 和 request 生产链；从 Root 方向向下，先原 Input 再 request。
-    -- 共享祖先按身份去重；require 不启动生产链。
-    operationInputs specification = nub (input specification : requestProviders specification)
-    upstreamScopes specification = nub (concatMap (scopeNames []) (operationInputs specification))
-    -- withErrorPath 只接收关联种子；祖先和 top-down 顺序由同一 ScopeTree 决定。
-    errorPath specification = nub (nearestScopeNames [] (name specification))
-    -- scope 与回调装配仍收齐全量前提，不依赖上面的最近种子集合。
-    orderedScopes = nub (concatMap (scopeNames [] . name) specifications)
-    nearestScopeNames seen selectedName
-      | selectedName `elem` seen = []
-      | otherwise = concat
-          [ case typing specification of
-              Scoped _ _ -> [selectedName]
-              _ -> concatMap (nearestScopeNames (selectedName : seen)) (operationInputs specification)
-          | specification <- specifications, name specification == selectedName ]
-    scopeNames seen selectedName
-      | selectedName `elem` seen = []
-      | otherwise = concat
-          [ concatMap (scopeNames (selectedName : seen)) (operationInputs specification)
-            ++ (case typing specification of Scoped _ _ -> [selectedName]; _ -> [])
-          | specification <- specifications, name specification == selectedName ]
-
-    -- Input/request 保留现有保守前提；require 不启动来源，但可导航到该
-    -- Context 的声明资源 owner。关闭自己资源的 require 不引入自依赖，
-    -- 也不把同一资源声明的其他 scope 误当自己的关闭 owner。
-    scopeRegistrationParents specification = filter (/= name specification) $ nub
-      (upstreamScopes specification ++
-        [name owner
-        | source <- requiredSources [] (name specification)
-        , source `notElem` requestProviders specification
-        , owner <- specifications
-        , Scoped (Just _) _ <- [typing owner]
-        , requestSource owner == Just source])
-    requiredSources seen selectedName
-      | selectedName `elem` seen = []
-      | otherwise = nub $ concat
-          [ let required = requireProviders specification
-            in required ++ concatMap (requiredSources (selectedName : seen))
-              (operationInputs specification ++ required)
-          | specification <- specifications, name specification == selectedName ]
-
-    -- scope.request 指向资源生产者；它声明消费的 Context 值构成开启输入。
-    -- 这里只生成观察协议，不调用生产者，不读取用户方法体。
-    openingInputs specification = nub (concatMap (valueInputs []) (maybeToList (requestSource specification)))
-    valueInputs seen selectedName
-      | selectedName `elem` seen = []
-      | otherwise = concat
-          [ let requested = requestProviders producer
-                required = requireProviders producer
-            -- require 只观察缓存值，不要求重现其生产时的输入；request 才继续生产链。
-            in requested ++ required ++ concatMap (valueInputs (selectedName : seen)) requested
-          | producer <- specifications, name producer == selectedName ]
+    upstreamScopes = Prototype.effectScopes . protoOf . name
+    errorPath = Prototype.effectNearestScopes . protoOf . name
+    orderedScopes = nub (concat
+      [ Prototype.effectScopes effect
+          ++ [Prototype.effectName effect | Prototype.effectKind effect == ScopedKind]
+      | effect <- effectPrototypes ])
+    openingInputs = Prototype.effectOpeningInputs . protoOf . name
     comparedInputs = nub (concatMap openingInputs
       [specification | specification <- specifications, effectKind (typing specification) == ScopedKind])
     observation prefix selectedName
       | selectedName `elem` comparedInputs = "(Just (" ++ prefix ++ "ScopeInput " ++ show selectedName ++ "))"
       | otherwise = "Nothing"
 
-    findEffect effectName = case filter ((== effectName) . name) specifications of
-      [specification] -> Right specification
-      [] -> Left ("Unknown effect: " ++ effectName)
-      _ -> Left ("Duplicate effect: " ++ effectName)
-
-    -- AST 末端和 request 均只引用 effect，从 typing 取得普通入口。
-    -- Nothing 可保留为声明，但不能被选择为可执行入口。
-    findHandler effectName = do
-      specification <- findEffect effectName
-      case typing specification of
-        Error {} -> Left ("Error methods are activated by the Root failure protocol, not a Node target: " ++ effectName)
-        _ -> case entryMethod (typing specification) of
-          Just method -> Right method
-          Nothing -> Left ("Effect has no callable entry (handler/open/Context.request = Nothing): " ++ effectName)
-
-    -- 启动只从 origin 链开始：末端须是原始句柄；Context 由挂接句柄注入或 request／require 驱动。
-    checkTerminal terminal = do
-      specification <- findEffect terminal
-      case typing specification of
-        Context _ -> Left ("A terminal must be an original handle, not Context " ++ terminal
-          ++ "; a Context is produced below the handle it hangs on or through request/require")
-        _ -> Right ()
-
-    -- 挂在 Scoped 下的 Context 解析 open 的输出，不能同时是该 scope 经 request 取得的资源 Context。
-    checkAnchor specification = case typing specification of
-      Context _ | Right anchor <- findEffect (input specification)
-                , Scoped _ _ <- typing anchor
-                , requestSource anchor == Just (name specification) ->
-          Left ("Context " ++ name specification ++ " is the resource of " ++ name anchor
-            ++ " and cannot also hang below it; give it another input")
-      _ -> Right ()
-
-    -- 此限制只针对手写 Input。生成的 superclass 仍包含声明的 Context 能力。
-    checkInput specification
-      | input specification == "Root" = Right ()
-      | otherwise = do
-          predecessor <- findEffect (input specification)
-          case typing predecessor of
-            Context _ -> Left ("Input cannot reference Context " ++ name predecessor
-              ++ " in " ++ name specification ++ "; declare context.request or context.require instead")
-            _ -> Right ()
-
-    -- 消费方以契约名引用；handler 中写作 request @契约名 / require @契约名。
-    checkDemandNames specification = do
-      mapM_ (\demand -> if validTypeName (contract demand) then Right ()
-          else Left ("Demanded contract must be a contract name such as \"StartURL\": "
-            ++ contract demand ++ " in " ++ name specification)) (demands specification)
-      case typing specification of
-        Scoped _ _ | length (requestProviders specification) > 1 ->
-          Left ("Scoped requests at most one resource Context: " ++ name specification)
-        _ -> pure ()
-      -- 分支契约是基础资产的投影，不单独生产，只能 require。
-      case [contract demand | demand <- demands specification, access demand == RequestAccess
-           , Just _ <- [lookup (contract demand) branchContracts]] of
-        branch : _ -> Left ("Branch contract " ++ branch ++ " can only be required, not requested, in " ++ name specification)
-        [] -> pure ()
+    -- preparePrototype 已验证挂载；渲染只读取原型指定的原始入口。
+    findHandler selectedName = case
+      [method | (role, method) <- Prototype.effectMethods (protoOf selectedName)
+              , role `elem` [Graph.HandlerMethod, Graph.ScopeOpen]] of
+      [method] -> Right method
+      _ -> Left ("Prototype has no origin entry: " ++ selectedName)
 
     -- 契约名由 handler 名推导：须是合法类型名，不与生成区固定名或 effect 派生名冲突；
     -- handler 名因此同时决定资产名，应按业务含义起名（例如 startURL，而不是 loadStartURL）。
@@ -558,49 +370,7 @@ lowerProgram namespace specifications terminals groups sumTypes = do
       first : rest -> isUpper first && all (\character -> isAlphaNum character || character `elem` "_'") rest
       [] -> False
 
-    -- Error 按 handles 匹配故障；关联 scope 沿 Input/request 推导，至多一个。
-    checkError specification = case typing specification of
-      Error { handles = matched } -> do
-        if null matched
-          then Left ("Error must declare the failures it handles: " ++ name specification) else pure ()
-        mapM_ checkHandled matched
-        case errorScopes specification of
-          (_ : _ : _) -> Left ("Error capability reaches several nearest scopes; narrow its input: " ++ name specification)
-          _ -> pure ()
-      _ -> pure ()
-      where
-        checkHandled (RaisedBy selected) = findEffect selected >> pure ()
-        checkHandled (ScopeFaultIn selected) = findEffect selected >>= \target -> case typing target of
-          Scoped _ _ -> pure ()
-          _ -> Left ("ScopeFaultIn must name a Scoped effect: " ++ selected)
-        checkHandled (ContextFaultIn selected) = findEffect selected >>= \target -> case typing target of
-          Context _ -> pure ()
-          _ -> Left ("ContextFaultIn must name a Context effect: " ++ selected)
-
-    errorScopes specification = nub (concatMap (nearestScopeNames [name specification]) (operationInputs specification))
-
-    -- 同一 scope（或同为全局）下，同一故障类型只能有一个处置，避免多个 resolve 互相冲突。
-    checkErrorOverlap =
-      case [ (name left, name right)
-           | (index, left) <- zip [0 :: Int ..] errorSpecs, right <- drop (index + 1) errorSpecs
-           , errorScopes left == errorScopes right
-           , not (null (handledBy left `intersect` handledBy right)) ] of
-        [] -> Right ()
-        (left, right) : _ -> Left ("Error policies " ++ left ++ " and " ++ right ++ " handle the same failure for the same scope")
-      where
-        errorSpecs = [specification | specification <- specifications, effectKind (typing specification) == ErrorKind]
-
-    handledBy specification = case typing specification of
-      Error { handles = matched } -> matched
-      _ -> []
-
-    -- 被 Input 后端复用的 scope 仍须提供完整开启／关闭协议。
-    checkScope effectName = do
-      specification <- findEffect effectName
-      case typing specification of
-        Scoped (Just _) (Just _) -> Right ()
-        _ -> Left ("Input scope needs Scoped.open and Scoped.close: " ++ effectName)
-
+    errorScopes = maybeToList . Prototype.effectErrorScope . protoOf . name
     -- 业务产物只归 Context；Output 仍只在运行边界统一包装。
     valueContract specification = case typing specification of
       Context (Just producing) -> Right (TypeRef (contractOf producing))
@@ -610,12 +380,6 @@ lowerProgram namespace specifications terminals groups sumTypes = do
 
     declaration specification = do
       valueType <- valueContract specification
-      _ <- contextNames branchTable specifications [name specification]
-      mapM_ checkScope (upstreamScopes specification)
-      case typing specification of
-        Scoped (Just _) Nothing ->
-          Left ("Scoped.open needs Scoped.close for automatic cleanup: " ++ name specification)
-        _ -> pure ()
       let effectName = name specification
           typeName = "'SDK." ++ show (effectKind (typing specification))
           upstream = input specification
@@ -668,7 +432,7 @@ lowerProgram namespace specifications terminals groups sumTypes = do
          -- Input 链上游的类直接列出：经 Effect 的类型族 superclass 展开不足以让 GHC 取到上游句柄。
          , "type " ++ effectName ++ "Inputs m = (" ++ intercalate ", "
              (("FrameworkRoot.Capability " ++ effectName ++ " m") : superclasses
-               ++ [upstreamEffect ++ "Effect m" | upstreamEffect <- inputChain [] upstream]
+               ++ [upstreamEffect ++ "Effect m" | upstreamEffect <- Prototype.effectInputChain (protoOf effectName)]
                ++ carrierCapabilities) ++ ")"
          , "instance FrameworkRoot.Capability " ++ effectName ++ " " ++ carrierType
          , ""
@@ -789,23 +553,12 @@ lowerProgram namespace specifications terminals groups sumTypes = do
         methodReference Nothing = "Nothing"
         methodReference (Just method) = "Just " ++ method
 
-    astInterpreter methods alternativeCases =
+    astInterpreter methods =
           [ ""
           , "-- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。"
           , "data Results = " ++ intercalate " | "
               [terminal ++ "Result (Produce " ++ terminal ++ ")" | terminal <- selected]
           , "  deriving Show"
-          , ""
-          , "-- alternative 的候选：末端 → (转折契约, 构造器)。由 gencode 从注册推出；"
-          , "-- 运行时只据此在已装配的闭包之间选择，不保存或重组 effect chain。"
-          , "alternativeCases :: [(String, (String, String))]"
-          , "alternativeCases = " ++ show alternativeCases
-          , ""
-          , "-- 各转折契约的全部构造器；运行时据此重新核对当前 AST 的分组，过期配置不执行。"
-          , "alternativeConstructors :: [(String, [String])]"
-          , "alternativeConstructors = " ++ show
-              [ (contractType, [constructor | (_, (base, constructor, _, _)) <- branchContracts, base == contractType])
-              | contractType <- selectorContracts ]
           , ""
           , "-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。"
           , "-- 第二个列表是各转折契约的读取末端：按 require 取得资产，返回它当前的构造器名。"
@@ -831,7 +584,7 @@ lowerProgram namespace specifications terminals groups sumTypes = do
           [ "-- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。"
           , "interpreter :: SDK.AST -> [EffectSpec] -> IO ()"
           , "interpreter = SDK.interpreter " ++ show namespace
-              ++ " registeredEffects Handlers.handlerSourceFingerprint programStructure alternativeCases alternativeConstructors compiledEntries"
+              ++ " Handlers.handlerSourceFingerprint generatedPrototype compiledEntries"
           ]
       where
         wrapTarget label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
@@ -840,13 +593,4 @@ lowerProgram namespace specifications terminals groups sumTypes = do
           ++ " (SDK.withScopeCleanups Handlers.scopeCleanups (" ++ action ++ "))))"
         renderList _ [] = "[]"
         renderList indent items = "[ " ++ intercalate ("\n" ++ indent ++ ", ") items ++ "\n" ++ indent ++ "]"
-
-    registrationSnapshot =
-      [ "-- 编译时注册快照；运行前核对声明，改变连接后须重新生成。"
-      , "registeredEffects :: [EffectSpec]"
-      , "registeredEffects ="
-      , "  [ " ++ intercalate "\n  , " (map show specifications)
-      , "  ]"
-      , ""
-      ]
 

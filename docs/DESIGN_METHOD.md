@@ -222,11 +222,21 @@ workflow 以具名 branch 为模块：每个 branch 在 Workflow 下独立文件
 
 模块拆分不改变调用次数、控制顺序或 Context／scope 边界；重复引用同一模块仍是重复执行。声明采用固定构造、显式列表和直接符号引用，引用关系有限无环。分文件与具名引用是源码格式约定，不由 AST 类型证明；未来 LSP 原型需保存定义、引用及源码位置，不能从展开后的执行树反推模块身份，也不因此增加运行时 pipeline key。
 
-gencode 先进行纯结构分析：枚举选定末端的独立 effect chain，方法结构用 zygo 同次归约辅助 scope 路径与图，汇合路径、补全注册前提并校验后，发射显式 generatedEffectGraph 与 generatedScopeTree ADT。运行时校验并完整求值生成常量，随后直接对当前 AST 做一次 cata，同时解析 Node、收集入口并装配尚未执行的 action。所有分支及入口集合检查完成后才安装 scope 关系并执行业务；不创建 InitializedF 中间树，不重跑 handler 构图或推导 scope 父边。Target 创建只分配空状态，不获取业务资源。跨 Node 的 Chained 执行先后不产生 scope 依赖。
-ScopeTree 保存共享节点的 DAG，而非强制单父树。生成期的 buildScopeTree 对每个 B 求所有含 B 路径的前序集合交集 Pred(B)，再作传递约简；共同前序只用于构树，不作为另一份公开结果。ProgramStructure.structureScopes 直接保存生成的 ScopeTree，其 parents、children 和 layers 用于导航，路径、raw 候选、scopeOpposed 与 scopeUndetermined 证据也保存在其中；graphRootPaths 继续保存各入口路径来源。仅由 open 顺序不能证明覆盖全部资源前提，尤其不能遗漏 require 复用的已有资源；生成期补全清理依赖后约束 once-spare，子 scope 仍保留前提时不得关闭它。路径中的 scope 记在 open 完成的位置，嵌套 open 时内层在前；注册前提是依赖、开启顺序是证据，二者相反时以注册前提为准，相反的顺序仍作为证据保留。不新增 Error tracing。
-Generated.Program 的 programStructure 是不接收 AST 的静态 Either 值，调用 initializeGeneratedStructure entries scopeNames generatedEffectGraph generatedScopeTree；ProgramStructure 保存入口映射、图与 scope tree，不持有 workflow 副本。现有 Main 的 --structure 分支对当前 AST 做纯展示 fold 并核对入口，打印同一份生成结构，不调用 createEntries 或业务方法。业务启动仍使用同一手写入口，不增加 layer 或用户装配。
+gencode 通过 Framework.Prototype 统一解析注册、方法、workflow、origin／ctx 链定义及挂载。preparePrototype 形成声明与 AST 的 PrototypePlan，buildPreparedPrototype 接入 Handlers 的纯方法结构，使用共享 expandChain 与 zygo 汇总 scope 路径及 effect graph，补全注册前提后发射唯一的显式 generatedPrototype :: SDK.Prototype MethodGen。Codegen 的接口、包装和装配读取同一模型，不自行维护另一套链事实。
 
-生成命令每次仍加载声明并读取 Handlers 快照，分析和业务包装共用该快照；资产检查另用 GHC 名称解析同一快照，每次执行。结构缓存 Generated/.scope-cache 精确比较完整 GraphPlan、规范化 handler shapes 及 Graph.hs、Recursion.hs、Workflow/AST.hs、Workflow/Structure.hs、Codegen/Plan.hs 的源码内容；key 相同才复用已发射的纯 graph／tree ADT，不依赖 mtime 或执行 Generated 模块。业务原子 IO 改动而 shapes 不变时可复用结构。各生成文件内容相同则不写回，但不宣称跳过整条命令、逐方法热点生成或热重载。运行校验只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。Generated 是派生产物，手改树在下一次 gencode 按源声明恢复；缓存不以手改文件为权威，不新增 edge override 层。
+链定义与 AST 挂载分开：protoChainDefinitions 用 OriginChain／ContextChain 区分原始操作链和 Context 生产／读取链，以方法身份引用；protoChains 为每个 node 及 alternative 选择读取保存一条挂载。NodeId = [Int] 是当前快照中的 AST 下标路径，根为 []，子项从零编号；选择读取链使用 alternative 路径加 [-1]。相同末端重复挂载有不同路径，Context 链定义没有虚构的 AST 位置。修改结构后重新编号，不把 NodeId 当作运行调用序号或跨快照稳定 key。
+
+运行时完整求值并校验 generatedPrototype、核对注册与源码，再对当前 AST 做一次 cata；装配时逐位置匹配 protoWorkflow，按 NodeId 取入口和 alternative 对应关系。全部分支核对完成后才安装 scope 关系并执行业务。运行图共享静态原型，保存活动 chain、绑定出身、scope 实例和入口使用登记；闭包仍负责执行，不重跑 handler 构图或推导父边，也不累计完整方法调用历史。Target 创建只分配空状态，不获取业务资源。跨 Node 的 Chained 执行先后不产生 scope 依赖。
+
+运行有两类链启动边界：TargetedBoot 由 AST 的 NodeId 定位末端，建立本次 Origin 和入口使用登记；RequestBoot 使用既有 Context 注册名定位生产链，建立子 activation，包住生产、成功发布和返回。Context 嵌套启动继承当前 Execution 和 ScopeUser，新增活动记录不等于新增资源清理边界。Origin 由 NodeId 与本次执行序号组成，ActivationId 独立识别活动 chain；活动记录在 finally 中移除，根记录覆盖业务、诊断、结果消费和使用撤销收尾。
+
+运行图以存在类型持有同一份 Prototype 和 ChainDefinition，不转换为字符串图；runtimeScopes 引用现有控制对象，运行级绑定与来源求值锁迁入 runtimeAssets／runtimeForcing。Binding.bindingOrigin 保存 Execution，bindingOwner 仍保存资源关闭归属。ScopeUser 的 Unique 使用协调保留，新增 scopeUserExecution；scopeUsers 同时保留身份与出身。自动清理用独立使用登记和 CleanupExecution（原 origin、scope 名、实例编号），不复活已结束的父 activation。普通生产为 BusinessExecution；读取与交接保留绑定原出身。本轮只记录关联，读取可见性和求值锁仍遵循原协议。
+
+ScopeTree 保存共享节点的 DAG，而非强制单父树。生成期的 buildScopeTree 对每个 B 求所有含 B 路径的前序集合交集 Pred(B)，再作传递约简；共同前序只用于构树，不作为另一份公开结果。protoScopes 直接保存生成的 ScopeTree，其 parents、children 和 layers 用于导航，路径、raw 候选、scopeOpposed 与 scopeUndetermined 证据也保存在其中；graphRootPaths 继续保存各入口路径来源。仅由 open 顺序不能证明覆盖全部资源前提，尤其不能遗漏 require 复用的已有资源；生成期补全清理依赖后约束 once-spare，子 scope 仍保留前提时不得关闭它。路径中的 scope 记在 open 完成的位置，嵌套 open 时内层在前；注册前提是依赖、开启顺序是证据，二者相反时以注册前提为准，相反的顺序仍作为证据保留。不新增 Error tracing。
+
+ProgramStructure 和旧分散结构常量已删除。Generated.Program 导出完整 generatedPrototype Haskell ADT，包含注册快照、WorkflowTree、链定义与挂载、图、ScopeTree 和名字映射。现有 Main 的 --structure 分支核对当前 AST 后展示同一原型，不调用 createEntries 或业务方法。SDK 当前不增加 JSON／aeson 或外部 LSP 协议；业务仍写 interpreter ast effects，不增加 layer 或用户装配。此次统一原型不改变 request／require、运行级 state、once-spare 与 Error 语义，当前接通绑定出身；按出身确定可见来源及变更求值锁留待 Stage 2。
+
+生成命令每次仍加载声明并读取 Handlers 快照，分析和业务包装共用该快照；资产检查另用 GHC 名称解析同一快照，每次执行。Generated/.scope-cache 保存输入 key、纯 Prototype 和渲染文本；key 精确比较完整 PrototypePlan、规范化方法结构及注册解析、原型构建、图、AST 和渲染算法源码（清单见 EFFECT_GRAPH.md）。命中仍运行 validatePrototype、checkDriven 和源码资产检查，不依赖 mtime 或执行 Generated 模块。业务原子 IO 改动而方法结构不变时可复用原型，同时更新包装及源码指纹。各生成文件内容相同则不写回，但不宣称跳过整条命令、逐方法热点生成或热重载。运行校验只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。Generated 是派生产物，手改 protoScopes 在下一次 gencode 按源声明恢复；缓存不以手改文件为权威，不新增 edge override 层。
 
 入口结构固定为 main = interpreter ast effects，爬虫 demo 已接入这一入口。
 Generated 模块将选定末端类方法登记为不透明 Target，保留未执行的句柄；它不是已经 lower 的 impl。
@@ -254,7 +264,7 @@ loop 是事件触发的执行方式 transformer，不作为 chained 中等待完
 无条件指不按本轮业务结果判断是否继续：订阅有效时事件到达即触发调用，无事件等待，范围结束停止。
 无状态指 loop 与 node 不保存跨调用业务产物、不自动改写 Reader；取值与绑定由 effect system 负责，
 订阅与运行中调用的管理状态归 SDK。每次触发启动一次调用，不隐含恢复旧调用。
-AST 的 recursion scheme／algebra 可将其 lower 为订阅与回调闭包，不要求另建协程调度器或通用图 runtime。
+AST 的 recursion scheme／algebra 可将其 lower 为订阅与回调闭包，不要求另建协程调度器；活动关系由统一运行图管理，不记录完整方法历史。
 无环约束仍针对单次依赖；内部反馈与外部触发不自动改写依赖图。loop 尚未实现，
 事件源引用、监听范围、失败与重叠事件处置及收尾协议待设计，详见 LATEST_DESIGN.md。
 Hanging 保留为主控制树之外的事件入口描述，可承接 loop 的订阅及 scope 归属；启动新调用与恢复旧调用分开声明。回调和有效期记录由 SDK 持有，不作为节点业务状态；当前尚未接入。
@@ -279,7 +289,7 @@ require 优先复用本次调用已捕获的绑定，跨链首次读取只接受
 Generated/Program 自动让各末端捕获同一批 scope 引用；Node algebra 只 lower 末端，AST 执行入口 runStructuredAST 不创建或重置 scope。
 同批运行句柄跨 Input 链和 Node 共享运行表，但不预约未来 Node 的资源存续，重新创建一批则独立。Main 仍为 IO ()，
 不增加 Program 载体、用户装配、手写 layer 或全局单例。普通业务 Context 按 Node 隔离，自动跨独立入口存续另行设计。
-本轮自动收尾以有限使用闭包为边界：每个 Node lower 的末端完整 chain 是一个闭包，实际 open／require 选中实例时加入使用，包括等待 opening 的调用；同一闭包对同一实例只加入一次。
+自动收尾的有限使用闭包具体表现为入口使用登记：每个 Node lower 的末端完整 chain 建立一份登记，实际 open／require 选中实例时加入使用，包括等待 opening 的调用；同一闭包对同一实例只加入一次。
 完整 chain 返回并完成诊断及 SDK 受控的结果消费后撤销使用。最后使用者离开且子 scope 不再保留时，once-spare 调用已有 close 实际清理；不等待未来 Node。后续 Node 要继续使用时显式 open 新一轮，旧绑定仍指向旧 owner。不同参数或 fresh 同参实例可同时被当前闭包持有，request 切换绑定本身不关闭仍被持有的旧实例。
 
 当前 core 固定采用 once-spare，尚无可切换的 cleanup policy、next-use 或延迟保留策略。这是 SDK 生命周期协调层的选择，handler 仍只定义原生 open／close；后续策略变化应保留这层业务接口。interpreter 退出清理是兜底，不是另一种可选保留策略。
@@ -319,7 +329,7 @@ Types、Effects、AST 独立于 Generated 与 Handlers；effect 标记和错误�
 各 demo 都演示 instance 内沿 Input 引用类方法；爬虫由 Node algebra lower 末端，组织并行抓取（同时注入解析）与顺序打印。生成时检查末端不是 Context，且每个 Context 都能从末端到达（经调用、require 的按需求值或挂接句柄的注入）。
 文件 demo 同样只选择末端；路径、活文件句柄与文件状态归 Context，校验归 Pure，读取与写入归 Excu，Scoped 的 open／close 均为 m (Maybe String)。读取 ReadFile 是原子句柄，交出读到的文本；ExtractFileText 以 input 挂在它下面，产出和类型资产 FileText（Blank 或 Written）。AST 是 alternative [WriteFirstLine, AppendLine]：两个候选分别 require 分支契约 FileTextBlank 与 FileTextWritten，运行时先 require FileText（尚无值时驱动读取），再按构造器启动写入首行或追加。每个候选自行开启文件，链结束后自动清理；FileRecovery 仍检测已捕获的文件并显式引用 closeFileSession。
 
-alternative 是按状态选择的控制流，放在 AST 而不是 handler 中；AST 只列候选、不写条件，不把业务状态暴露进控制流。选择依据来自和类型资产：每个构造器对应一个分支契约，候选经 requires 依赖其中一个，gencode 据此推出对应关系并要求覆盖全部构造器。effect chain 是无时序的操作组合，运行时已经消解为闭包，不能在链中间打断或重组；选择因此放在 Node 边界、分两段启动：先 require 转折资产，再启动对应候选。运行时不保存 effect chain 的原型，只在已装配的闭包之间选择。
+alternative 是按状态选择的控制流，放在 AST 而不是 handler 中；AST 只列候选、不写条件，不把业务状态暴露进控制流。选择依据来自和类型资产：每个构造器对应一个分支契约，候选经 requires 依赖其中一个，gencode 据此推出对应关系并要求覆盖全部构造器，保存为 WorkflowTree 中的 AlternativeProto。链的静态定义和挂载保存在只读 Prototype，执行仍通过装配后的闭包；选择放在 Node 边界，分两段启动：先 require 转折资产，再启动对应候选。不在链中间打断或重组执行。
 OpenFilesDemo 改为每条链显式 open：InspectFiles 观察当前链及 GC 期间十个文件的存续，FinishInspection 开启自己的新一轮并演示显式关闭；不再要求前一 Node 的活资源自动留给后一 Node。
 ScopeInstancesDemo 在每条链先取得稳定参数，保留链内同参 require 共享、异参独立和显式关闭；后续 Node 显式开启新一轮，不读取或改写旧 owner。
 ScopeReuseDemo 的三个 writer 各自先 request 参数，scope 内 require；只有实际重叠的使用可以共享，不能固定断言整个 parallel 批次只开一次。汇合后用已有日志和输出核对获取／关闭计数匹配及三次写入，不再 require 已结束闭包的资源；追加模式保留多个开闭周期的内容。

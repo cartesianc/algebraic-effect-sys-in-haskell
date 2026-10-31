@@ -1,9 +1,12 @@
--- Context 的一次成功绑定：值快照和资源归属一起传递。
+-- Context 的一次成功绑定：值快照、执行出身和资源归属一起传递。
 -- 替换一个来源的绑定不会改写已经被其他调用捕获的旧绑定。
 module Framework.Effect.Binding (Binding(..), Bindings, bind) where
 
+import Framework.Effect.Runtime.Identity (Execution)
+
 data Binding environment owner = Binding
   { bindingValues :: environment
+  , bindingOrigin :: Execution
   , bindingOwner :: Maybe owner
   }
 

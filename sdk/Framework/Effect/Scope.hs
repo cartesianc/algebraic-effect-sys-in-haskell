@@ -10,6 +10,7 @@ module Framework.Effect.Scope
 
 import Framework.Effect.Binding (Bindings)
 import Framework.Effect.Contract (Failure(..), ScopeFault(..), ScopeInput(..), ScopeInputAccess(..))
+import Framework.Effect.Runtime.Identity (Execution)
 import Control.Concurrent.MVar (MVar, newMVar, newEmptyMVar, modifyMVar, modifyMVar_, readMVar, withMVar, putMVar)
 import Control.Exception (SomeException, displayException, mask_, try, finally, uninterruptibleMask_)
 import Control.Monad (forM, forM_, when)
@@ -93,17 +94,19 @@ data ScopeInstance environment cause = ScopeInstance
   , scopeIdentity :: Int
   , scopeRecord :: IORef (ScopeRecord (ScopeBindings environment cause) cause)
   , scopeCleanup :: IORef (Maybe (ScopeCleanup cause))
-  , scopeUsers :: IORef [Unique]
+  , scopeUsers :: IORef [(Unique, Execution)]
   , scopeRetiring :: IORef (Maybe (Unique, MVar ()))
   }
 
 data ScopeUser environment cause = ScopeUser
   { scopeUserIdentity :: Unique
+  , scopeUserExecution :: Execution
   , scopeUserInstances :: IORef [ScopeInstance environment cause]
   }
 
-newScopeUser :: IO (ScopeUser environment cause)
-newScopeUser = ScopeUser <$> newUnique <*> newIORef []
+-- 一次入口的实际使用登记；Context request 继承同一登记，不改变 ScopeTree。
+newScopeUser :: Execution -> IO (ScopeUser environment cause)
+newScopeUser execution = ScopeUser <$> newUnique <*> pure execution <*> newIORef []
 
 -- 捕获一次实际开启的实例和绑定；业务仍只实现原来的 close 方法。
 data ScopeCleanup cause = ScopeCleanup
@@ -152,8 +155,8 @@ coordinated handler action = uninterruptibleMask_ $ do
 rememberUse :: ScopeUser environment cause -> ScopeInstance environment cause -> IO ()
 rememberUse user slot = do
   users <- readIORef (scopeUsers slot)
-  when (scopeUserIdentity user `notElem` users) $ do
-    writeIORef (scopeUsers slot) (scopeUserIdentity user : users)
+  when (scopeUserIdentity user `notElem` map fst users) $ do
+    writeIORef (scopeUsers slot) ((scopeUserIdentity user, scopeUserExecution user) : users)
     atomicModifyIORef' (scopeUserInstances user) $ \slots ->
       (if any ((== scopeRecord slot) . scopeRecord) slots then slots else slot : slots, ())
 
@@ -241,7 +244,7 @@ reserveScopeClose consumer permit ticket slot = coordinated (scopeFamily slot) $
       users <- readIORef (scopeUsers slot)
       children <- hasLiveChildren slot
       let closed = case phase of ScopeClosed _ -> True; _ -> False
-      if not closed && (any (\user -> Just user /= consumer) users || children)
+      if not closed && (any (\(user, _) -> Just user /= consumer) users || children)
         then pure False
         else do
           finished <- newEmptyMVar
@@ -284,7 +287,7 @@ detachScopeUser :: ScopeUser environment cause -> IO ()
 detachScopeUser user = do
   slots <- readIORef (scopeUserInstances user)
   forM_ slots $ \slot -> uninterruptibleMask_ $ coordinated (scopeFamily slot) $ do
-    atomicModifyIORef' (scopeUsers slot) (\users -> (filter (/= scopeUserIdentity user) users, ()))
+    atomicModifyIORef' (scopeUsers slot) (\users -> (filter ((/= scopeUserIdentity user) . fst) users, ()))
     pruneInstance slot
   writeIORef (scopeUserInstances user) []
 

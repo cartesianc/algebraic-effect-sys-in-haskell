@@ -49,7 +49,7 @@
 | --- | --- | --- | --- |
 | 语法 | 用户配置 | `Types.hs`、`Effects.hs`、`AST.hs`／`Workflow/`、`Handlers.hs`、`Main.hs` | 用 EDSL 写出架构，方法体用原生 Haskell |
 | 前端（parser） | SDK | `effect-codegen` | 读入声明与 handler 源码，检查组合规则，推导调用图与资源依赖，产出生成区 |
-| 中间表示（AST） | SDK | workflow AST、注册计划、方法纯结构、生成的调用图和 ScopeTree | 都是显式的 Haskell 数据，可以比较、缓存和展示 |
+| 静态原型 | SDK | `Framework.Prototype`：注册、方法、workflow、链定义与挂载、调用图和 ScopeTree | 统一的纯数据模型，由生成器构建，运行时直接复用 |
 | 生成区 | SDK 生成 | `Generated/` | 接口与契约、包装副本、入口与结构常量；不要手改 |
 | 解释器 | SDK | `interpreter` 与运行载体 `App` | 校验生成的结构，对 AST 做一次折叠装配执行闭包，按协议运行 |
 | 工具接口 | SDK | 固定语法、`--structure`、`Generated/Assets.hs` | 供 review、编辑器和后续 LSP 使用 |
@@ -501,7 +501,7 @@ newtype StartURL = StartURL PageURL
 
 - **共享**：开启参数以 `require` 取得、值相等（`Eq`）时，复用同一个仍然有效的实例；没有开启参数的资源也共享。
 - **新建**：开启参数是以 `request` 重新生产的，本次开启新的实例。
-- **自动关闭**：一个 node 的整条操作链结束（包括出错）后，SDK 关闭没有其他链在用、也没有子资源依赖的实例；程序退出时还会兜底清理一次。
+- **自动关闭**：SDK 为一次 AST 入口调用登记资源使用；整条操作链结束（包括出错）并完成诊断和结果消费后撤销这份登记，关闭没有其他入口在用、也没有子资源依赖的实例。嵌套 Context 生产继承同一份使用登记，生产方法返回不会提前关闭资源；程序退出时仍兜底清理。
 - **显式关闭**：仍然可以手动调用 `close`；如果别的链还在用，关闭以 `ScopeInUse` 拒绝。
 - SDK 不主动检查资源健康，也不自动重开已关闭或失效的实例。
 
@@ -515,21 +515,31 @@ newtype StartURL = StartURL PageURL
 
 ### 前端 `effect-codegen`
 
-- **读声明**：`Effects.hs`、`AST.hs` 由 GHC 编译求值。注册类型派生 `Show`／`Read`，`Generated/Program.hs` 以字面量保存一份注册快照，供运行时核对。
+- **读声明**：`Effects.hs`、`AST.hs` 由 GHC 编译求值。注册和 AST 快照进入同一份 `Prototype`，供运行时核对。
 - **读源码**：用 GHC 9.12 解析器读出 `Handlers.hs` 的方法边界和显式 effect 引用，得到不含业务值与 IO 的纯结构，方法体不执行。`Types.hs` 同样经 GHC 解析取得和类型的构造器；资产约束在名称解析后的源码上检查。
-- **分析与产出**：解析取值来源、检查组合规则、计算调用图和 ScopeTree，然后生成 `Generated/` 下的四个文件：
+- **分析与产出**：`Framework.Prototype` 统一解析取值来源、链定义与 AST 挂载，计算调用图和 ScopeTree。生成器读取这份原型，产出 `Generated/` 下的四个文件：
   - `Effects.hs`：接口与契约；
   - `Handlers.hs`：加上协议包装的方法副本；
-  - `Program.hs`：运行入口与结构常量；
+  - `Program.hs`：运行入口与唯一的显式结构常量 `generatedPrototype :: SDK.Prototype MethodGen`；
   - `Assets.hs`：资产目录。
 
   生成的类型类也是 DSL 的类型签名，越过 `input` 的调用由 GHC 拒绝。
 
+原型区分两种链定义：origin/excu 链由 AST 末端启动，ctx 链通过 Context 取值或挂接进入。定义身份使用方法名生成的 `MethodGen`；AST 中一次挂载另有 `NodeId`，即从根 `[]` 开始、子项从零编号的下标路径。重复挂载同一末端有不同路径；`alternative` 的选择读取链使用该分支路径加 `[-1]`。Context 链定义本身没有虚构的 AST 挂载位置。
+
+结构缓存保存完整生成输入、纯原型及渲染文本，命中后仍校验原型、检查 Context 驱动和源码资产约束。生成文件内容相同就不写回。原型采用 Haskell ADT，SDK 当前不增加 JSON 导出或外部 LSP 协议。
+
 ### 解释器 `interpreter`
 
-- **启动前检查**：核对源码指纹和注册快照，校验生成的结构常量，过期或不一致就拒绝启动。
-- **一次折叠**：对 AST 做一次 `cata`，解析 node、装配动作；全部检查通过后才执行业务。
-- **按协议执行**：运行载体提供取值、注入、资源和失败协议（见「运行时行为」）。`--structure` 是同一份 AST 的另一种折叠，只展示不执行。
+- **启动前检查**：核对源码指纹和注册快照，完整求值并校验 `generatedPrototype`，在装配中核对当前 AST 的位置、分支和末端；过期或不一致就拒绝启动。
+- **一次折叠**：对 AST 做一次 `cata`，按 `NodeId` 读取原型中的链挂载与选择关系，装配动作；全部分支检查通过后才执行业务。
+- **按协议执行**：运行图共享静态原型，记录活动 chain、scope 实例、入口使用登记和 Context 绑定出身，提供既有取值、注入、资源和失败协议。它不重跑 handler 构图，也不累计完整方法调用历史。`--structure` 核对当前 AST 后展示静态原型，不执行业务。
+
+运行有两种链启动边界：AST 启动选定末端；Context 的 `request` 启动一次生产链，覆盖生产、成功发布到返回的全过程。后者记录本次启动及所属 origin，继承外层入口使用登记，不成为另一次独立清理边界。读取已有值的 `require` 不启动生产；缺值求值和挂接注入实际生产时使用同一生产协议。业务 handler 的写法不变。
+
+活动记录在调用收尾后移除；绑定保留产生值时的执行出身，资源绑定另保留原有关闭归属。自动清理有独立的使用登记和 cleanup 出身，不把清理阶段的生产记作新的业务入口。
+
+当前记录出身用于明确运行关联，`request`／`require` 的读取规则、运行级 state、once-spare 和 Error 语义保留。按出身选择可见来源、变更求值锁以及 stream／lifelong 仍是后续阶段，见 [TODO](docs/TODO.md)。
 
 ### 与 HLS、LSP 的分工
 
