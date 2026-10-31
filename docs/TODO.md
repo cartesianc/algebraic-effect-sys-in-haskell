@@ -215,6 +215,16 @@ data Source = FromOwnChain | FromChains [NodeId]
 - FileDemo gencode 退出 0，报告 `0 files updated; structure reused`；`git diff --check` 通过。手写 Handlers、facade 和全部 Generated 文件无差异，本轮仅修改四个 runtime 源码文件与六份文档。
 - 验收使用既有 demo，未新增测试；这些结果不代表新增的并发认领／持有者交接路径已有专项执行覆盖，也不包含并发交错穷举。
 
+### 后续收敛：来源分析的无关状态（2026-10-31）
+
+- [x] 复用 `chainReaches` 推导每个挂载可能读取的基础契约，再按 workflow 计算后续读取集合；方法出口先裁剪发布／捕获状态再去重，避免无关注入的成功／失败组合持续累积。
+- [x] 顺序节点只向后传递后续需要的发布；parallel 兄弟仍从同一前置状态分析，投影后再组合。读取、生产与来源事实单独保存，fallback 条件关系和方法失败恢复路径保留。
+- [x] 同步 `EFFECT_GRAPH.md`。handler、facade、运行时绑定保存及 ScopeTree 均未修改。
+
+本项消除无人读取的独立可选发布带来的指数子集；同时相关的契约仍可能具有指数状态数。未新增测试或性能基准，不据此声称实测加速或整体线性复杂度。
+
+验证：`cabal build all --offline` 退出 0；五个现有 demo 重新生成均报告 `0 files updated; structure rebuilt`，生成文本保持一致。未执行 demo 业务。
+
 ## Stage 3：stream（依赖 Stage 2）
 
 **目标**：持续获取新输入。每次成功发布都是一个增量，值相等也算两次。
