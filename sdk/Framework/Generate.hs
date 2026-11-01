@@ -11,8 +11,9 @@ import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Environment (getArgs, getExecutablePath, lookupEnv)
 import System.Exit (ExitCode(..), die, exitWith)
 import System.FilePath ((</>), pathSeparator)
-import System.Process (rawSystem, readProcessWithExitCode)
-import System.IO (IOMode(ReadMode, WriteMode), hGetContents, hPutStr, hSetEncoding, stderr, utf8, withFile)
+import System.Process
+  (CreateProcess(..), StdStream(..), proc, rawSystem, waitForProcess, withCreateProcess)
+import System.IO (IOMode(ReadMode, WriteMode), hGetContents, hPutStr, hSetEncoding, utf8, withFile)
 import System.IO.Error (tryIOError)
 import Text.Read (readMaybe)
 
@@ -39,12 +40,21 @@ main = do
           let expression = "print (Framework.Codegen.lowerProgram " ++ show namespace
                 ++ " " ++ namespace ++ ".Effects.effects (Framework.Workflow.AST.toWorkflowF " ++ ast
                 ++ ") " ++ show sumTypes ++ ")"
-          (result, output, diagnostics) <- readProcessWithExitCode "ghci"
-            [ "-ignore-dot-ghci", "-v0", "-XHaskell2010", "-idemo", "-isdk"
-            , "sdk/Framework/Codegen.hs", directory </> "Effects.hs"
-            , directory </> "AST.hs", "-e", expression
-            ] ""
-          hPutStr stderr diagnostics
+          -- GHC 的诊断直接写到本进程的 stderr，不经管道读回：GHC 按自己的区域编码输出，
+          -- 读回时的解码可能与之不一致（中文 Windows 上 chcp 65001 后即如此），会把诊断本身变成解码异常。
+          -- 只读回打印的结果，它经 show 转义，只含 ASCII。
+          let loader = (proc "ghci"
+                [ "-ignore-dot-ghci", "-v0", "-XHaskell2010", "-idemo", "-isdk"
+                , "sdk/Framework/Codegen.hs", directory </> "Effects.hs"
+                , directory </> "AST.hs", "-e", expression
+                ]) { std_in = NoStream, std_out = CreatePipe, std_err = Inherit }
+          (result, output) <- withCreateProcess loader $ \_ printed _ process -> case printed of
+            Just handle -> do
+              output <- hGetContents handle
+              _ <- evaluate (length output)
+              result <- waitForProcess process
+              pure (result, output)
+            Nothing -> die "Cannot read the SDK handler wrapping plan"
           case result of
             ExitSuccess -> case readMaybe output of
               Nothing -> die "Cannot read the SDK handler wrapping plan"
