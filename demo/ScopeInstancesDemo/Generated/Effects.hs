@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyDataDecls #-}
@@ -151,15 +152,19 @@ instance (Monad m, Effect FileSession m, CheckReopenEffect m) => Effect CheckReo
   handler = FrameworkRoot.handler @Root
 
 -- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。
+-- Reading 是 require 的结果：持续资产为 History，其余为契约本身；只由资产自己的声明决定。
 class Provides contract m where
+  type Reading contract
   request :: m contract
-  require :: m contract
+  require :: m (Reading contract)
 
 instance (FileLocationEffect App) => Provides FileName App where
+  type Reading FileName = FileName
   request = SDK.provideContext "FileLocation" "FileName" ContextBindingError [("CheckIndependent", getFileName), ("CheckReopen", getFileName)]
   require = SDK.provideContext "FileLocation" "FileName" ContextBindingError [("FileResource", readFileName)]
 
 instance (FileResourceEffect App) => Provides OpenedFile App where
+  type Reading OpenedFile = OpenedFile
   request = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("FileSession", getOpenedFile)]
   require = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("FileSession", readOpenedFile), ("CheckIndependent", readOpenedFile), ("CheckReopen", readOpenedFile)]
 

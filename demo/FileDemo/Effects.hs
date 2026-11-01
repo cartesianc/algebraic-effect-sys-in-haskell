@@ -16,7 +16,7 @@ effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "FileLocation"
-      , typing = Context { asset = namedAsset "FileName" @FilePath, request = Just (), require = Just () }
+      , typing = Context { asset = namedAsset "FileName" @FilePath, request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = []
       }
@@ -28,7 +28,7 @@ effects =
       }
   , EffectSpec
       { name = "FileResource"
-      , typing = Context { asset = namedAsset "OpenedFile" @FileHandle, request = Just (), require = Just () }
+      , typing = Context { asset = namedAsset "OpenedFile" @FileHandle, request = Just (), require = Just (), stream = Nothing }
       , input = "ValidateFileName"
       , demands = [requires "FileName"]
       }
@@ -57,7 +57,7 @@ effects =
   -- 文件状态是和类型资产：生成器另为构造器产出分支契约 FileTextBlank、FileTextWritten。
   , EffectSpec
       { name = "ExtractFileText"
-      , typing = Context { asset = namedAsset "FileText" @TextState, request = Just (), require = Just () }
+      , typing = Context { asset = namedAsset "FileText" @TextState, request = Just (), require = Just (), stream = Nothing }
       , input = "ReadFile"
       , demands = []
       }

@@ -43,7 +43,11 @@ generatedPrototype =
         [ SDK.EffectSpec
             { SDK.name = "FileLocations"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("FilePaths") (SDK.TypeRef ("SharedPaths"))) (Just ()) (Just ())
+                SDK.Context
+                  (SDK.AssetDecl ("FilePaths") (SDK.TypeRef ("SharedPaths")))
+                  (Just ())
+                  (Just ())
+                  (Nothing)
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -56,7 +60,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "FileResource"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("OpenedFile") (SDK.TypeRef ("SharedFile"))) (Just ()) (Just ())
+                SDK.Context
+                  (SDK.AssetDecl ("OpenedFile") (SDK.TypeRef ("SharedFile")))
+                  (Just ())
+                  (Just ())
+                  (Nothing)
             , SDK.input = "Root"
             , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("FilePaths")]
             }

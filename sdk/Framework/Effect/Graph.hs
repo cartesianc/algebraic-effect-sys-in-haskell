@@ -24,6 +24,10 @@ data MethodRole
   | ScopeClose
   | ErrorDetect
   | ErrorResolve
+  -- Stream 的单步取得原始输入；Context.stream 解析当前输入；Context.input 读取当前输入（SDK 默认实现）。
+  | StreamHandler
+  | ContextStream
+  | ContextInput
   deriving (Eq, Ord, Show, Read, Generic, NFData)
 
 data MethodShape method

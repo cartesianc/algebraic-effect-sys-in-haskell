@@ -247,8 +247,19 @@ buildEffectProtos specifications sumTypes = do
           Scoped opening closing -> do
             valid (length (requested specification) <= 1) ("Scoped requests at most one resource Context: " ++ name specification)
             valid (opening == Nothing || closing /= Nothing) ("Scoped.open needs Scoped.close for automatic cleanup: " ++ name specification)
-          Context { request = Nothing } -> Left (InvalidPrototype ("Context needs a production role, request = Just (): " ++ name specification))
-          Context { asset = declared } -> do
+          Context { asset = declared, request = requesting, stream = streaming } -> do
+            -- 生产方式只看本注册：挂在 Stream 下由解析器生产，否则由 request 生产（持续资产即反复 request）。
+            let streamInput = [name source | source <- specifications, name source == input specification
+                  , Stream {} <- [typing source]]
+            case (streamInput, requesting, streaming) of
+              (source : _, Just (), _) -> Left (InvalidPrototype ("Context " ++ name specification ++ " hangs below Stream "
+                ++ source ++ " and must not declare request; its stream parser produces the asset"))
+              (source : _, Nothing, Nothing) -> Left (InvalidPrototype ("Context " ++ name specification ++ " hangs below Stream "
+                ++ source ++ " and needs stream = Just () to parse its input"))
+              ([], Nothing, Just ()) -> Left (InvalidPrototype ("Context " ++ name specification
+                ++ " declares stream = Just () without a Stream input; hang it below a Stream, or declare request = Just () to repeat request"))
+              ([], Nothing, Nothing) -> Left (InvalidPrototype ("Context needs a production role, request = Just (): " ++ name specification))
+              _ -> pure ()
             valid (validContractName (contractOf declared))
               ("Asset name must be a type name such as StartURL: " ++ contractOf declared ++ " in " ++ name specification)
             case representation declared of
@@ -257,6 +268,15 @@ buildEffectProtos specifications sumTypes = do
             valid (null [() | anchor <- specifications, name anchor == input specification,
               Scoped {} <- [typing anchor], requestSource anchor == Just (name specification)])
               ("Context " ++ name specification ++ " cannot hang below the scope that requests it as its resource")
+          Stream method -> do
+            valid (method /= Nothing) ("Stream needs a handler method: " ++ name specification)
+            -- 只有解析器 Context 能以 Stream 为 input，否则其他方法可以绕过会话直接取原始输入。
+            let below = [typing consumer | consumer <- specifications, input consumer == name specification]
+                isContext selected = case selected of Context {} -> True; _ -> False
+            valid (all isContext below)
+              ("Only the parser Context may take Stream " ++ name specification ++ " as its input")
+            valid (length below == 1)
+              ("Stream " ++ name specification ++ " needs exactly one Context hanging below it as its parser")
           Error { handles = matched } -> do
             valid (not (null matched)) ("Error must declare the failures it handles: " ++ name specification)
             mapM_ checkHandled matched
@@ -295,6 +315,9 @@ registeredMethods specification = case typing specification of
     ++ [(ErrorResolve, selected) | selected <- maybeToList resolving]
   selected@Context {} -> [(ContextRequest, method) | method <- maybeToList (contextProducer selected)]
     ++ [(ContextRequire, method) | method <- maybeToList (contextReader selected)]
+    ++ [(ContextStream, method) | method <- maybeToList (contextParser selected)]
+    ++ [(ContextInput, method) | method <- maybeToList (contextInput selected)]
+  Stream method -> [(StreamHandler, selected) | selected <- maybeToList method]
 
 workflowNode :: WorkflowTree -> NodeId
 workflowNode (NodeAt identifier _) = identifier
@@ -328,7 +351,7 @@ numberWorkflow effects tree = cata number tree []
   where
     number (Node selected) path = do
       effect <- findEffectProto effects selected
-      valid (effectKind effect `notElem` [ContextKind, ErrorKind])
+      valid (effectKind effect `notElem` [ContextKind, ErrorKind, StreamKind])
         ("AST terminal must be an original callable handle: " ++ selected)
       _ <- ordinaryEntry effect
       pure (NodeAt path selected)
@@ -415,6 +438,8 @@ buildPreparedPrototype plan shapes = do
             ScopeOpen -> Just OriginChain
             ContextRequest -> Just ContextChain
             ContextRequire -> Just ContextChain
+            ContextStream -> Just ContextChain
+            StreamHandler -> Just ContextChain
             _ -> Nothing]]
       written = [definition { methodBody = maybe (methodBody definition) id
           (lookup (methodIdentity definition) shapes) } | definition <- defaults]
@@ -756,20 +781,22 @@ resolveSources definitions defaultReaders prototype = do
                 Just consumer ->
                   let modes = [demandAccess demand | candidate <- effects, effectName candidate == consumer
                         , demand <- effectDemands candidate, demandProvider demand == effectName effect]
+                  -- streams 同时授予读取交付视图，按 require 处理。
                   in if RequestAccess `elem` modes then Just RequestAccess
-                     else if RequireAccess `elem` modes then Just RequireAccess else Nothing
+                     else if any (`elem` modes) [RequireAccess, StreamAccess] then Just RequireAccess else Nothing
           exits <- case role of
             ContextRequire | access == Nothing -> pure [AssetExit False state]
             ContextRequire | selected `elem` defaultReaders ->
               readAsset entered effect state
             ContextRequest -> case access of
               Nothing -> pure [AssetExit False state]
-              Just RequireAccess -> readAsset call effect state
               Just RequestAccess -> do
                 body <- shape entered (methodBody definition) state
                 successes (\after -> do
                   published <- publish call effect after
                   pure [AssetExit True published]) body
+              -- require 与 streams 都只读取，不进入生产。
+              Just _ -> readAsset call effect state
             ScopeOpen | assetClosing call -> pure [AssetExit False state]
             ScopeOpen -> do
               let inside = entered { assetOpenings = effectName effect : assetOpenings entered }
@@ -902,7 +929,7 @@ validatePrototype prototype = do
   valid (unique (map definitionEntry chainDefinitions)) "Duplicate chain definition"
   valid (sameSet (map definitionEntry chainDefinitions)
     [method | effect <- effects, (role, method) <- effectMethods effect
-      , role `elem` [HandlerMethod, ScopeOpen, ContextRequest, ContextRequire]])
+      , role `elem` [HandlerMethod, ScopeOpen, ContextRequest, ContextRequire, ContextStream, StreamHandler]])
     "Chain definitions do not cover the registered entries"
   mapM_ validateDefinition chainDefinitions
   valid (unique (map fst (protoSources prototype))) "Duplicate asset read point"
@@ -961,7 +988,7 @@ validatePrototype prototype = do
       case selected of
         NodeAt _ terminal -> do
           effect <- findEffectProto effects terminal
-          valid (effectKind effect `notElem` [ContextKind, ErrorKind]) "Workflow node is not an origin chain"
+          valid (effectKind effect `notElem` [ContextKind, ErrorKind, StreamKind]) "Workflow node is not an origin chain"
         AlternativeAt identifier choice children -> do
           valid (alternativeSelector choice == identifier ++ [-1]) "Alternative selector has an invalid NodeId"
           valid (map fst (alternativeCases choice) == map workflowNode children) "Alternative case paths differ from children"
@@ -1001,7 +1028,7 @@ validatePrototype prototype = do
       let roles = [role | (role, method) <- effectMethods effect, method == definitionEntry definition]
           expectedRoles = case definitionKind definition of
             OriginChain -> [HandlerMethod, ScopeOpen]
-            ContextChain -> [ContextRequest, ContextRequire]
+            ContextChain -> [ContextRequest, ContextRequire, ContextStream, StreamHandler]
       valid (not (null roles) && all (`elem` expectedRoles) roles) "Chain kind differs from its method role"
       valid (unique (definitionReaches definition) && all (`elem` allMethodIds) (definitionReaches definition)
         && definitionEntry definition `elem` definitionReaches definition) "Invalid chain definition reachability"

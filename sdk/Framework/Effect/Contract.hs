@@ -31,7 +31,7 @@ import Data.Void (Void)
 import Data.Typeable (Typeable, cast)
 
 -- 关联 Typing 只保留类别；方法名由注册描述。
-data EffectKind = PureKind | ExcuKind | ScopedKind | ErrorKind | ContextKind deriving (Eq, Show, Read, Generic)
+data EffectKind = PureKind | ExcuKind | ScopedKind | ErrorKind | ContextKind | StreamKind deriving (Eq, Show, Read, Generic)
 
 instance NFData EffectKind
 

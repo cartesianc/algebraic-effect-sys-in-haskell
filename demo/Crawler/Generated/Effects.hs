@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyDataDecls #-}
@@ -243,27 +244,34 @@ instance (Monad m, Effect Root m, CrawlSessionEffect m) => Effect CrawlSession m
   handler = FrameworkRoot.handler @Root
 
 -- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。
+-- Reading 是 require 的结果：持续资产为 History，其余为契约本身；只由资产自己的声明决定。
 class Provides contract m where
+  type Reading contract
   request :: m contract
-  require :: m contract
+  require :: m (Reading contract)
 
 instance (StartPageEffect App) => Provides StartURL App where
+  type Reading StartURL = StartURL
   request = SDK.provideContext "StartPage" "StartURL" ContextBindingError [("FetchPage", getStartURL)]
   require = SDK.provideContext "StartPage" "StartURL" ContextBindingError [("ExtractPage", readStartURL)]
 
 instance (SessionContextEffect App) => Provides CrawlSessionInfo App where
+  type Reading CrawlSessionInfo = CrawlSessionInfo
   request = SDK.provideContext "SessionContext" "CrawlSessionInfo" ContextBindingError [("CrawlSession", getCrawlSessionInfo)]
   require = SDK.provideContext "SessionContext" "CrawlSessionInfo" ContextBindingError [("FetchPage", readCrawlSessionInfo), ("FetchLinkedPage", readCrawlSessionInfo), ("CrawlSession", readCrawlSessionInfo)]
 
 instance (ExtractPageEffect App) => Provides StartPageSummary App where
+  type Reading StartPageSummary = StartPageSummary
   request = SDK.provideContext "ExtractPage" "StartPageSummary" ContextBindingError []
   require = SDK.provideContext "ExtractPage" "StartPageSummary" ContextBindingError [("PrintPage", readStartPageSummary)]
 
 instance (LinkedPageEffect App) => Provides LinkedURL App where
+  type Reading LinkedURL = LinkedURL
   request = SDK.provideContext "LinkedPage" "LinkedURL" ContextBindingError [("FetchLinkedPage", getLinkedURL)]
   require = SDK.provideContext "LinkedPage" "LinkedURL" ContextBindingError [("ExtractLinkedPage", readLinkedURL)]
 
 instance (ExtractLinkedPageEffect App) => Provides LinkedPageSummary App where
+  type Reading LinkedPageSummary = LinkedPageSummary
   request = SDK.provideContext "ExtractLinkedPage" "LinkedPageSummary" ContextBindingError []
   require = SDK.provideContext "ExtractLinkedPage" "LinkedPageSummary" ContextBindingError [("PrintLinkedPage", readLinkedPageSummary)]
 

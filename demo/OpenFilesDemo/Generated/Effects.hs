@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyDataDecls #-}
@@ -151,15 +152,19 @@ instance (Monad m, Effect InspectFiles m, FinishInspectionEffect m) => Effect Fi
   handler = FrameworkRoot.handler @Root
 
 -- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。
+-- Reading 是 require 的结果：持续资产为 History，其余为契约本身；只由资产自己的声明决定。
 class Provides contract m where
+  type Reading contract
   request :: m contract
-  require :: m contract
+  require :: m (Reading contract)
 
 instance (FileLocationsEffect App) => Provides FileNames App where
+  type Reading FileNames = FileNames
   request = SDK.provideContext "FileLocations" "FileNames" ContextBindingError [("HoldFiles", getFileNames)]
   require = SDK.provideContext "FileLocations" "FileNames" ContextBindingError [("FileResources", readFileNames)]
 
 instance (FileResourcesEffect App) => Provides OpenedFiles App where
+  type Reading OpenedFiles = OpenedFiles
   request = SDK.provideContext "FileResources" "OpenedFiles" ContextBindingError [("FileSession", getOpenedFiles)]
   require = SDK.provideContext "FileResources" "OpenedFiles" ContextBindingError [("FileSession", readOpenedFiles), ("InspectFiles", readOpenedFiles), ("FinishInspection", readOpenedFiles)]
 

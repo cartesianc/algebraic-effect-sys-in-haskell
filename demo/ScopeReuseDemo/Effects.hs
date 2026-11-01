@@ -12,7 +12,7 @@ effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "FileLocations"
-      , typing = Context { asset = namedAsset "FilePaths" @SharedPaths, request = Just (), require = Just () }
+      , typing = Context { asset = namedAsset "FilePaths" @SharedPaths, request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = []
       }
@@ -24,7 +24,7 @@ effects =
       }
   , EffectSpec
       { name = "FileResource"
-      , typing = Context { asset = namedAsset "OpenedFile" @SharedFile, request = Just (), require = Just () }
+      , typing = Context { asset = namedAsset "OpenedFile" @SharedFile, request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = [requires "FilePaths"]
       }

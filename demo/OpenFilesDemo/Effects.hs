@@ -12,13 +12,13 @@ effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "FileLocations"
-      , typing = Context { asset = namedAsset "FileNames" @[FilePath], request = Just (), require = Just () }
+      , typing = Context { asset = namedAsset "FileNames" @[FilePath], request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = []
       }
   , EffectSpec
       { name = "FileResources"
-      , typing = Context { asset = namedAsset "OpenedFiles" @[FileHandle], request = Just (), require = Just () }
+      , typing = Context { asset = namedAsset "OpenedFiles" @[FileHandle], request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = [requires "FileNames"]
       }

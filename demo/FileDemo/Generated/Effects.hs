@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyDataDecls #-}
@@ -221,19 +222,24 @@ instance (Monad m, Effect FileSession m, AppendLineEffect m) => Effect AppendLin
   handler = FrameworkRoot.handler @Root
 
 -- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。
+-- Reading 是 require 的结果：持续资产为 History，其余为契约本身；只由资产自己的声明决定。
 class Provides contract m where
+  type Reading contract
   request :: m contract
-  require :: m contract
+  require :: m (Reading contract)
 
 instance (FileLocationEffect App) => Provides FileName App where
+  type Reading FileName = FileName
   request = SDK.provideContext "FileLocation" "FileName" ContextBindingError []
   require = SDK.provideContext "FileLocation" "FileName" ContextBindingError [("ValidateFileName", readFileName), ("FileResource", readFileName)]
 
 instance (FileResourceEffect App) => Provides OpenedFile App where
+  type Reading OpenedFile = OpenedFile
   request = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("FileSession", getOpenedFile)]
   require = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("FileSession", readOpenedFile), ("FileRecovery", readOpenedFile), ("ReadFile", readOpenedFile), ("WriteFirstLine", readOpenedFile), ("AppendLine", readOpenedFile)]
 
 instance (ExtractFileTextEffect App) => Provides FileTextBlank App where
+  type Reading FileTextBlank = FileTextBlank
   request = SDK.provideContext "ExtractFileText" "FileTextBlank" ContextBindingError []
   require = SDK.projectContext "ExtractFileText" "FileTextBlank" ContextBindingError [("WriteFirstLine", readFileText)]
     (\(FileText value) -> case value of
@@ -241,6 +247,7 @@ instance (ExtractFileTextEffect App) => Provides FileTextBlank App where
       _ -> Nothing)
 
 instance (ExtractFileTextEffect App) => Provides FileTextWritten App where
+  type Reading FileTextWritten = FileTextWritten
   request = SDK.provideContext "ExtractFileText" "FileTextWritten" ContextBindingError []
   require = SDK.projectContext "ExtractFileText" "FileTextWritten" ContextBindingError [("AppendLine", readFileText)]
     (\(FileText value) -> case value of

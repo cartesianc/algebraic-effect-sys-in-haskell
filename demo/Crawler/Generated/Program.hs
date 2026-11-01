@@ -42,14 +42,14 @@ generatedPrototype =
         [ SDK.EffectSpec
             { SDK.name = "StartPage"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("StartURL") (SDK.TypeRef ("PageURL"))) (Just ()) (Just ())
+                SDK.Context (SDK.AssetDecl ("StartURL") (SDK.TypeRef ("PageURL"))) (Just ()) (Just ()) (Nothing)
             , SDK.input = "Root"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "LinkedPage"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("LinkedURL") (SDK.TypeRef ("PageURL"))) (Just ()) (Just ())
+                SDK.Context (SDK.AssetDecl ("LinkedURL") (SDK.TypeRef ("PageURL"))) (Just ()) (Just ()) (Nothing)
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -63,7 +63,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "ExtractPage"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("StartPageSummary") (SDK.TypeRef ("PageSummary"))) (Just ()) (Just ())
+                SDK.Context
+                  (SDK.AssetDecl ("StartPageSummary") (SDK.TypeRef ("PageSummary")))
+                  (Just ())
+                  (Just ())
+                  (Nothing)
             , SDK.input = "FetchPage"
             , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("StartURL")]
             }
@@ -83,7 +87,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "ExtractLinkedPage"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("LinkedPageSummary") (SDK.TypeRef ("PageSummary"))) (Just ()) (Just ())
+                SDK.Context
+                  (SDK.AssetDecl ("LinkedPageSummary") (SDK.TypeRef ("PageSummary")))
+                  (Just ())
+                  (Just ())
+                  (Nothing)
             , SDK.input = "FetchLinkedPage"
             , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("LinkedURL")]
             }
@@ -96,7 +104,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "SessionContext"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("CrawlSessionInfo") (SDK.TypeRef ("SessionInfo"))) (Just ()) (Just ())
+                SDK.Context
+                  (SDK.AssetDecl ("CrawlSessionInfo") (SDK.TypeRef ("SessionInfo")))
+                  (Just ())
+                  (Just ())
+                  (Nothing)
             , SDK.input = "Root"
             , SDK.demands = []
             }

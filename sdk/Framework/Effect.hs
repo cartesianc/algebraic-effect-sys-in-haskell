@@ -8,9 +8,10 @@ module Framework.Effect
   , Target, targetApp
   , Output(..), Failure(..), ErrorReport(..), caughtFailure, failEffect
   , AssetDecl(..), namedAsset, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
-  , requests, requires, Void
+  , requests, requires, streams, Void
   , ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, projectContext, enterHandler
-  , atomicHandle, atomicScope
+  , atomicHandle, atomicScope, streamNotStarted, streamInput
+  , History, historyEntries, latest, historySize, currentHistory
   , ScopeInput(..), ScopeFault(..), openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, withScopeCleanups
   ) where
@@ -22,10 +23,11 @@ import Framework.Effect.Contract
   )
 import Framework.Effect.Context
   ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, projectContext
-  , atomicHandle, atomicScope )
+  , atomicHandle, atomicScope, streamNotStarted, streamInput )
 import Framework.Effect.Registration
   ( EffectTyping(..), AssetDecl(..), namedAsset, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
-  , requests, requires )
+  , requests, requires, streams )
+import Framework.Effect.History (History, historyEntries, latest, historySize, currentHistory)
 import Framework.Effect.Runtime (App, Target, targetApp)
 import Framework.Effect.Runtime.App (withScopeCleanups)
 import Framework.Effect.Scope (ScopeHandler, newScopeHandler)

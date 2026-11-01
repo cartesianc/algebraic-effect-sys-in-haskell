@@ -33,6 +33,7 @@ executable crawler-demo
       Framework.SDK
       Framework.Effect
       Framework.Effect.Contract
+      Framework.Effect.History
       Framework.Effect.Registration
       Framework.Effect.Graph
       Framework.Effect.Context
@@ -50,6 +51,7 @@ executable crawler-demo
   ghc-options: -main-is Crawler.Main -threaded
   build-depends:
       base >= 4.21 && < 5
+    , containers
     , deepseq
     , mtl >= 2.3 && < 2.4
     , directory
@@ -73,6 +75,7 @@ executable file-demo
       Framework.SDK
       Framework.Effect
       Framework.Effect.Contract
+      Framework.Effect.History
       Framework.Effect.Registration
       Framework.Effect.Graph
       Framework.Effect.Context
@@ -90,6 +93,7 @@ executable file-demo
   ghc-options: -main-is FileDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
+    , containers
     , deepseq
     , mtl >= 2.3 && < 2.4
     , filepath
@@ -112,6 +116,7 @@ executable open-files-demo
       Framework.SDK
       Framework.Effect
       Framework.Effect.Contract
+      Framework.Effect.History
       Framework.Effect.Registration
       Framework.Effect.Graph
       Framework.Effect.Context
@@ -129,6 +134,7 @@ executable open-files-demo
   ghc-options: -main-is OpenFilesDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
+    , containers
     , deepseq
     , mtl >= 2.3 && < 2.4
     , directory
@@ -153,6 +159,7 @@ executable scope-reuse-demo
       Framework.SDK
       Framework.Effect
       Framework.Effect.Contract
+      Framework.Effect.History
       Framework.Effect.Registration
       Framework.Effect.Graph
       Framework.Effect.Context
@@ -170,6 +177,7 @@ executable scope-reuse-demo
   ghc-options: -main-is ScopeReuseDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
+    , containers
     , deepseq
     , mtl >= 2.3 && < 2.4
     , directory
@@ -193,6 +201,7 @@ executable scope-instances-demo
       Framework.SDK
       Framework.Effect
       Framework.Effect.Contract
+      Framework.Effect.History
       Framework.Effect.Registration
       Framework.Effect.Graph
       Framework.Effect.Context
@@ -210,6 +219,7 @@ executable scope-instances-demo
   ghc-options: -main-is ScopeInstancesDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
+    , containers
     , deepseq
     , mtl >= 2.3 && < 2.4
     , directory

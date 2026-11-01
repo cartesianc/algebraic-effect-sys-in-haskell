@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyDataDecls #-}
@@ -185,15 +186,19 @@ instance (Monad m, Effect Root m, VerifyReuseEffect m) => Effect VerifyReuse m w
   handler = FrameworkRoot.handler @Root
 
 -- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。
+-- Reading 是 require 的结果：持续资产为 History，其余为契约本身；只由资产自己的声明决定。
 class Provides contract m where
+  type Reading contract
   request :: m contract
-  require :: m contract
+  require :: m (Reading contract)
 
 instance (FileLocationsEffect App) => Provides FilePaths App where
+  type Reading FilePaths = FilePaths
   request = SDK.provideContext "FileLocations" "FilePaths" ContextBindingError [("PrepareProbe", getFilePaths), ("WriteFirst", getFilePaths), ("WriteSecond", getFilePaths), ("WriteThird", getFilePaths), ("VerifyReuse", getFilePaths)]
   require = SDK.provideContext "FileLocations" "FilePaths" ContextBindingError [("FileResource", readFilePaths)]
 
 instance (FileResourceEffect App) => Provides OpenedFile App where
+  type Reading OpenedFile = OpenedFile
   request = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("SharedFileScope", getOpenedFile)]
   require = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("SharedFileScope", readOpenedFile), ("WriteFirst", readOpenedFile), ("WriteSecond", readOpenedFile), ("WriteThird", readOpenedFile)]
 

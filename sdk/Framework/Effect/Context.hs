@@ -3,7 +3,7 @@
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Effect.Context
   ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext
-  , projectContext, atomicHandle, atomicScope
+  , projectContext, atomicHandle, atomicScope, streamNotStarted, streamInput
   ) where
 
 import Framework.Effect.Contract
@@ -114,6 +114,16 @@ projectContext
 projectContext producer contract wrap routes project = do
   base <- provideContext producer contract wrap routes
   maybe (failEffect producer (wrap (CaseNotSelected contract)) (show (CaseNotSelected contract))) pure (project base)
+
+-- 第 2 批暂行：Stream 会话尚未接入。读取还没有交付的 Stream 来源，按未初始化报出。
+streamNotStarted :: MonadError (Failure cause) m => String -> (ContextFault -> cause) -> m value
+streamNotStarted contextName wrap = failEffect contextName (wrap ContextNotInitialized)
+  (contextName ++ ": the stream session is not available yet")
+
+-- 解析器读取本次原始输入；只有 SDK 在会话中调用解析器时才安装输入（会话在后续批次接入）。
+streamInput :: MonadError (Failure cause) m => String -> (ContextFault -> cause) -> m String
+streamInput contextName wrap = failEffect contextName (wrap ContextNotInitialized)
+  (contextName ++ ": no stream input is installed outside a stream parser call")
 
 -- Excu.handler 的生成入口：方法体每次调用都执行。
 atomicHandle

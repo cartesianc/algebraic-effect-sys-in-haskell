@@ -16,13 +16,13 @@ effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "StartPage"
-      , typing = Context { asset = namedAsset "StartURL" @PageURL, request = Just (), require = Just () }
+      , typing = Context { asset = namedAsset "StartURL" @PageURL, request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = []
       }
   , EffectSpec
       { name = "LinkedPage"
-      , typing = Context { asset = namedAsset "LinkedURL" @PageURL, request = Just (), require = Just () }
+      , typing = Context { asset = namedAsset "LinkedURL" @PageURL, request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = []
       }
@@ -34,7 +34,7 @@ effects =
       }
   , EffectSpec
       { name = "ExtractPage"
-      , typing = Context { asset = namedAsset "StartPageSummary" @PageSummary, request = Just (), require = Just () }
+      , typing = Context { asset = namedAsset "StartPageSummary" @PageSummary, request = Just (), require = Just (), stream = Nothing }
       , input = "FetchPage"
       , demands = [requires "StartURL"]
       }
@@ -52,7 +52,7 @@ effects =
       }
   , EffectSpec
       { name = "ExtractLinkedPage"
-      , typing = Context { asset = namedAsset "LinkedPageSummary" @PageSummary, request = Just (), require = Just () }
+      , typing = Context { asset = namedAsset "LinkedPageSummary" @PageSummary, request = Just (), require = Just (), stream = Nothing }
       , input = "FetchLinkedPage"
       , demands = [requires "LinkedURL"]
       }
@@ -65,7 +65,7 @@ effects =
   -- 信息由上游 Context 提供；Scope 只描述开启／关闭和持存状态。
   , EffectSpec
       { name = "SessionContext"
-      , typing = Context { asset = namedAsset "CrawlSessionInfo" @SessionInfo, request = Just (), require = Just () }
+      , typing = Context { asset = namedAsset "CrawlSessionInfo" @SessionInfo, request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = []
       }

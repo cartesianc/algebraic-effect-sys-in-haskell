@@ -46,7 +46,7 @@ generatedPrototype =
         [ SDK.EffectSpec
             { SDK.name = "FileLocation"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("FileName") (SDK.TypeRef ("[Char]"))) (Just ()) (Just ())
+                SDK.Context (SDK.AssetDecl ("FileName") (SDK.TypeRef ("[Char]"))) (Just ()) (Just ()) (Nothing)
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -59,7 +59,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "FileResource"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("OpenedFile") (SDK.TypeRef ("FileHandle"))) (Just ()) (Just ())
+                SDK.Context
+                  (SDK.AssetDecl ("OpenedFile") (SDK.TypeRef ("FileHandle")))
+                  (Just ())
+                  (Just ())
+                  (Nothing)
             , SDK.input = "ValidateFileName"
             , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("FileName")]
             }
@@ -89,7 +93,7 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "ExtractFileText"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("FileText") (SDK.TypeRef ("TextState"))) (Just ()) (Just ())
+                SDK.Context (SDK.AssetDecl ("FileText") (SDK.TypeRef ("TextState"))) (Just ()) (Just ()) (Nothing)
             , SDK.input = "ReadFile"
             , SDK.demands = []
             }

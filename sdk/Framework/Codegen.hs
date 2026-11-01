@@ -64,8 +64,14 @@ renderProgram namespace prepared sumTypes = do
     resolvedOf selectedName = fromMaybe [] (lookup selectedName resolvedTable)
     requestProviders specification =
       nub [demandProvider resolved | resolved <- resolvedOf (name specification), demandAccess resolved == RequestAccess]
+    -- streams 同时授予读取交付视图，在读取路由、访问表和 scope 前提中与 require 相同。
     requireProviders specification =
-      nub [demandProvider resolved | resolved <- resolvedOf (name specification), demandAccess resolved == RequireAccess]
+      nub [demandProvider resolved | resolved <- resolvedOf (name specification), readsAccess (demandAccess resolved)]
+    readsAccess selectedAccess = selectedAccess `elem` [RequireAccess, StreamAccess]
+    -- 持续资产：require 返回 History；分支契约仍返回当前交付的投影。
+    continuousContract contractType = or
+      [ isContinuous (typing specification) | specification <- contextSpecs
+      , Just declared <- [contextAsset (typing specification)], contractOf declared == contractType ]
     -- Scoped 至多 request 一个资源 Context；它就是该 scope 的资源来源。
     requestSource = Prototype.effectResource . protoOf . name
     producerMethod providerName = listToMaybe
@@ -76,9 +82,9 @@ renderProgram namespace prepared sumTypes = do
               , Just method <- [contextReader (typing specification)]]
     sourceMethod resolved = case demandAccess resolved of
       RequestAccess -> producerMethod (demandProvider resolved)
-      RequireAccess -> readerMethod (demandProvider resolved)
+      _ -> readerMethod (demandProvider resolved)
     accessWord RequestAccess = "request"
-    accessWord RequireAccess = "require"
+    accessWord _ = "require"
     demandRoutes =
       [ (name specification ++ "Effect",
           [ ((accessWord (demandAccess resolved), demandContract resolved), method)
@@ -115,7 +121,8 @@ renderProgram namespace prepared sumTypes = do
       [ (name specification ++ "Effect", method)
       | specification <- contextSpecs
       , method <- maybeToList (entryMethod (typing specification))
-          ++ maybeToList (contextReader (typing specification)) ]
+          ++ maybeToList (contextReader (typing specification))
+          ++ maybeToList (contextParser (typing specification)) ]
 
     -- 原子句柄：Excu.handler 与 Scoped.open／close，统一输出 RawOutput（SDK 内部）。
     -- input 指向原子 effect 的 Context 挂在它下面，解析其入口方法（handler／open）的输出；
@@ -137,7 +144,8 @@ renderProgram namespace prepared sumTypes = do
     selected = nub (Prototype.workflowTerminals workflow)
     contextSpecs = filter ((== ContextKind) . effectKind . typing) specifications
     contractHeader =
-      [ "{-# LANGUAGE ConstraintKinds #-}"
+      [ "{-# LANGUAGE AllowAmbiguousTypes #-}"
+      , "{-# LANGUAGE ConstraintKinds #-}"
       , "{-# LANGUAGE DataKinds #-}"
       , "{-# LANGUAGE EmptyDataDecls #-}"
       , "{-# LANGUAGE DeriveGeneric #-}"
@@ -196,39 +204,56 @@ renderProgram namespace prepared sumTypes = do
     -- 消费方以契约取值；生成的 instance 按当前消费者分派到 demands 解析出的来源方法。
     providerDeclarations =
       [ "-- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。"
+      , "-- Reading 是 require 的结果：持续资产为 History，其余为契约本身；只由资产自己的声明决定。"
       , "class Provides contract m where"
+      , "  type Reading contract"
       , "  request :: m contract"
-      , "  require :: m contract"
+      , "  require :: m (Reading contract)"
       , ""
       ] ++ concat
       -- instance 固定在本程序的载体上：泛型 handler 的推导约束不会被化简成具体生产方的类。
       -- 生产方类的 instance 位于 Handlers，因此以无变量上下文延迟到使用处求解。
       [ [ "instance (" ++ intercalate ", " [provider ++ "Effect " ++ carrierType | provider <- providers] ++ ") => Provides "
             ++ contractType ++ " " ++ carrierType ++ " where"
-        , "  request = SDK.provideContext " ++ show producerName ++ " " ++ show contractType ++ " ContextBindingError " ++ routeList RequestAccess
+        , "  type Reading " ++ contractType ++ " = " ++ readingType
+        , "  request = SDK.provideContext " ++ show producerName ++ " " ++ show contractType ++ " ContextBindingError "
+            ++ routeList (== RequestAccess)
         ] ++ (case lookup contractType branchContracts of
-          -- 分支契约：读取基础契约，资产当前是该构造器时取出字段。
+          -- 分支契约：读取基础契约，资产当前是该构造器时取出字段；持续资产看本次交付位置的最新条目。
           Just (base, constructor, field, _) ->
-            [ "  require = SDK.projectContext " ++ show producerName ++ " " ++ show contractType ++ " ContextBindingError " ++ routeList RequireAccess
-            , "    (\\(" ++ base ++ " value) -> case value of"
-            , "      " ++ constructor ++ (if field == Nothing then " -> Just (" ++ contractType ++ " ())"
-                                              else " field -> Just (" ++ contractType ++ " field)")
-            , "      _ -> Nothing)" ]
+            [ "  require = SDK.projectContext " ++ show producerName ++ " " ++ show contractType ++ " ContextBindingError "
+                ++ routeList readsAccess ]
+            ++ (if continuousContract base
+                then [ "    (\\history -> case SDK.latest history of"
+                     , "      Just (" ++ base ++ " value) -> case value of"
+                     , "        " ++ constructor ++ projected field
+                     , "        _ -> Nothing"
+                     , "      Nothing -> Nothing)" ]
+                else [ "    (\\(" ++ base ++ " value) -> case value of"
+                     , "      " ++ constructor ++ projected field
+                     , "      _ -> Nothing)" ])
           Nothing ->
-            [ "  require = SDK.provideContext " ++ show producerName ++ " " ++ show contractType ++ " ContextBindingError " ++ routeList RequireAccess ])
+            [ "  require = SDK.provideContext " ++ show producerName ++ " " ++ show contractType ++ " ContextBindingError "
+                ++ routeList readsAccess ])
         ++ [ "" ]
       | demanded <- nub [demandContract resolved | (_, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands]
       , let contractType = demanded
-            routes selectedAccess =
+            readingType
+              | Just _ <- lookup contractType branchContracts = contractType
+              | continuousContract contractType = "SDK.History " ++ contractType
+              | otherwise = contractType
+            projected field = if field == Nothing then " -> Just (" ++ contractType ++ " ())"
+                              else " field -> Just (" ++ contractType ++ " field)"
+            routes selected =
               [ (consumer, method)
               | (consumer, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands
-              , demandContract resolved == demanded, demandAccess resolved == selectedAccess
+              , demandContract resolved == demanded, selected (demandAccess resolved)
               , Just method <- [sourceMethod resolved] ]
             producerName = concat (take 1 providers)
             providers = nub [demandProvider resolved | (_, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands
               , demandContract resolved == demanded]
-            routeList selectedAccess = "[" ++ intercalate ", "
-              ["(" ++ show consumer ++ ", " ++ method ++ ")" | (consumer, method) <- routes selectedAccess] ++ "]" ]
+            routeList selected = "[" ++ intercalate ", "
+              ["(" ++ show consumer ++ ", " ++ method ++ ")" | (consumer, method) <- nub (routes selected)] ++ "]" ]
 
     carrierType = "App"
 
@@ -262,15 +287,20 @@ renderProgram namespace prepared sumTypes = do
     -- 注册时连接生产/读取入口；业务方法使用原生 Haskell 取值，不改写表达式。
     -- 第四项是方法结果类型，供生成副本给保留原文的局部绑定写出完整签名。
     instanceWrappers specification =
-      [ (name specification ++ "Effect", method, wrapper method, resultType)
+      [ (name specification ++ "Effect", method, wrapper method, resultType method)
       | method <- maybeToList (entryMethod (typing specification)) ++ closing
+          ++ maybeToList (contextParser (typing specification))
           ++ errorMethods specification ++ maybeToList reading ]
       where
         selectedName = name specification
-        resultType = case typing specification of
-          Context { asset = declared } -> "FrameworkGenerated." ++ contractOf declared
+        resultType method = case typing specification of
+          Context { asset = declared }
+            | Just method == reading && isContinuous (typing specification) ->
+                "FrameworkRuntime.History FrameworkGenerated." ++ contractOf declared
+            | otherwise -> "FrameworkGenerated." ++ contractOf declared
           Excu _ -> "Maybe String"
           Scoped _ _ -> "Maybe String"
+          Stream _ -> "String"
           _ -> "()"
         closing = case typing specification of
           Scoped _ method -> maybeToList method
@@ -373,8 +403,7 @@ renderProgram namespace prepared sumTypes = do
     errorScopes = maybeToList . Prototype.effectErrorScope . protoOf . name
     -- 业务产物只归 Context；Output 仍只在运行边界统一包装。
     valueContract specification = case typing specification of
-      Context { request = Nothing } ->
-        Left ("Context needs a production role, request = Just (): " ++ name specification)
+      -- 生产角色的合法性已由 Prototype 按生产方式匹配表检查。
       Context { asset = declared } -> Right (TypeRef (contractOf declared))
       _ -> Right (TypeRef "()")
 
@@ -394,23 +423,42 @@ renderProgram namespace prepared sumTypes = do
                 ExcuKind -> "m (Maybe String)"
                 ScopedKind -> "m (Maybe String)"
                 ErrorKind -> "m ()"
+                -- Stream 每次取得一份原始输入，交给挂在它下面的解析器。
+                StreamKind -> "m String"
                 _ -> "m (Produce " ++ effectName ++ ")")
             | method <- maybeToList (entryMethod (typing specification)) ]
           closingMethods = case typing specification of
             Scoped _ closing -> [(method, "m (Maybe String)") | method <- maybeToList closing]
             _ -> []
-          methods = ordinaryMethods ++ closingMethods
+          -- 解析器由业务实现：读取本次原始输入，返回一个资产，由 SDK 发布。
+          parserMethods = [(method, "m (Produce " ++ effectName ++ ")") | method <- maybeToList (contextParser (typing specification))]
+          methods = ordinaryMethods ++ closingMethods ++ parserMethods
             ++ [(method, "m ()") | method <- errorMethods specification]
           methodLines = ["  " ++ method ++ " :: " ++ signature | (method, signature) <- methods]
+          continuous = isContinuous (typing specification)
+          -- 缺值时的 thunk：有 request 时求值一次 request；Stream 来源没有 request，由会话交付首值。
+          -- （第 2 批暂行：会话尚未接入，读取未交付的 Stream 来源报 ContextNotInitialized。）
+          missingValue = case entryMethod (typing specification) of
+            Just method -> method
+            Nothing -> "(SDK.streamNotStarted " ++ show effectName ++ " ContextBindingError)"
           readingLines = case contextReader (typing specification) of
             Just method ->
-              [ "  " ++ method ++ " :: m (Produce " ++ effectName ++ ")"
-              , "  " ++ method ++ " = (FrameworkRoot.withErrorPath " ++ show (errorPath specification)
+              [ "  " ++ method ++ " :: m " ++ (if continuous then "(SDK.History (Produce " ++ effectName ++ "))"
+                                                 else "(Produce " ++ effectName ++ ")")
+              , "  " ++ method ++ " = " ++ (if continuous then "fmap SDK.currentHistory . " else "")
+                ++ "(FrameworkRoot.withErrorPath " ++ show (errorPath specification)
                 ++ " . FrameworkRoot.handler @Root) $"
               , "    SDK.readContext " ++ show effectName
                 ++ " ContextBindingError " ++ contextAccessTable "SDK." effectName
                 ++ " " ++ observation "SDK." effectName ++ " bound" ++ effectName
-                ++ " " ++ fromMaybe "" (entryMethod (typing specification))
+                ++ " " ++ missingValue
+              ]
+            _ -> []
+          -- 解析器读取本次原始输入的能力只生成在这个 Context 的类中，其他 handler 无法调用。
+          inputLines = case contextInput (typing specification) of
+            Just method ->
+              [ "  " ++ method ++ " :: m String"
+              , "  " ++ method ++ " = SDK.streamInput " ++ show effectName ++ " ContextBindingError"
               ]
             _ -> []
           minimalLines = case methods of
@@ -438,7 +486,7 @@ renderProgram namespace prepared sumTypes = do
          , ""
          , "class (" ++ intercalate ", " superclasses ++ ") => " ++ effectName ++ "Effect m where"
          ]
-         ++ methodLines ++ readingLines ++ minimalLines
+         ++ methodLines ++ readingLines ++ inputLines ++ minimalLines
          ++ [ ""
             , "instance (Monad m, Effect " ++ upstream ++ " m, " ++ effectName
               ++ "Effect m) => Effect " ++ effectName ++ " m where"
