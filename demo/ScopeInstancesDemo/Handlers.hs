@@ -36,7 +36,7 @@ instance PrepareFilesInputs m => PrepareFilesEffect m where
 
 -- 参数确实由 instance 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
 instance FileLocationInputs m => FileLocationEffect m where
-  fileName = do
+  getFileName = do
     let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
         selection = outputDirectory </> "selected.txt"
         journal = outputDirectory </> "events.txt"
@@ -45,7 +45,7 @@ instance FileLocationInputs m => FileLocationEffect m where
     pure (FileName path)
 
 instance FileResourceInputs m => FileResourceEffect m where
-  openedFile = do
+  getOpenedFile = do
     FileName path <- require @FileName
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     outcome <- liftIO $ tryIOError $

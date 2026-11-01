@@ -2,7 +2,7 @@
 
 -- Workflow 的可序列化结构与引用收集；不启动节点。
 module Framework.Workflow.AST
-  ( WorkflowF(..), AST, EffectNode, node, chained, parallel, alternative, foldAST, toWorkflowF
+  ( WorkflowF(..), AST, EffectNode, node, chained, parallel, alternative, lifelong, foldAST, toWorkflowF
   ) where
 
 import Framework.Recursion (Fix(..), Algebra, cata)
@@ -15,6 +15,9 @@ data WorkflowF next
   | Chained [next]
   | Parallel [next]
   | Alternative [next]
+  -- Lifelong 订阅持续资产：每个消费单元在新增量交付后执行一次，再等待下一条；本身没有正常结束。
+  -- 直接子项各为一个单元，直接子项是 parallel 时拆这一层；其余子树作为有限单元整体重复。
+  | Lifelong [next]
   deriving (Eq, Functor, Show, Read)
 
 -- 对外区分原子节点与完整 branch，不导出构造器或原始树转换。
@@ -42,6 +45,9 @@ parallel children = AST (Fix (Parallel (map childTree children)))
 
 alternative :: BranchChild child => [child] -> AST
 alternative children = AST (Fix (Alternative (map childTree children)))
+
+lifelong :: BranchChild child => [child] -> AST
+lifelong children = AST (Fix (Lifelong (map childTree children)))
 
 -- 解释器只折叠已经构造好的 branch，不能据此把裸 node 提升为 AST。
 foldAST :: Algebra WorkflowF value -> AST -> value

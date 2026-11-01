@@ -33,18 +33,18 @@ import System.IO
 import System.IO.Error (tryIOError)
 
 instance FileLocationsInputs m => FileLocationsEffect m where
-  filePaths =
+  getFilePaths =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations" FrameworkGenerated.ContextBindingError
       [("PrepareProbe", FrameworkRuntime.RequestValue), ("FileResource", FrameworkRuntime.RequireValue), ("WriteFirst", FrameworkRuntime.RequestValue), ("WriteSecond", FrameworkRuntime.RequestValue), ("WriteThird", FrameworkRuntime.RequestValue), ("VerifyReuse", FrameworkRuntime.RequestValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocations"))
       FrameworkGenerated.boundFileLocations
       (\value bindings -> bindings { FrameworkGenerated.boundFileLocations = Just value })) $
       let
-        filePaths :: (m) (FrameworkGenerated.FilePaths)
-        filePaths = pure (FilePaths (SharedPaths
+        getFilePaths :: (m) (FrameworkGenerated.FilePaths)
+        getFilePaths = pure (FilePaths (SharedPaths
           ("demo" </> "ScopeReuseDemo" </> "output" </> "shared.txt")
           ("demo" </> "ScopeReuseDemo" </> "output" </> "events.txt")))
-      in filePaths
+      in getFilePaths
 
 instance PrepareProbeInputs m => PrepareProbeEffect m where
   prepareProbe =
@@ -63,15 +63,15 @@ instance PrepareProbeInputs m => PrepareProbeEffect m where
       in prepareProbe
 
 instance FileResourceInputs m => FileResourceEffect m where
-  openedFile =
+  getOpenedFile =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
       [("SharedFileScope", FrameworkRuntime.RequestValue), ("WriteFirst", FrameworkRuntime.RequireValue), ("WriteSecond", FrameworkRuntime.RequireValue), ("WriteThird", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundFileResource
       (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
       let
-        openedFile :: (m) (FrameworkGenerated.OpenedFile)
-        openedFile = do
+        getOpenedFile :: (m) (FrameworkGenerated.OpenedFile)
+        getOpenedFile = do
           FilePaths paths@(SharedPaths path journal) <- require @FilePaths
           outcome <- liftIO $ tryIOError $
             bracketOnError (openFile path AppendMode) hClose $ \file -> do
@@ -80,7 +80,7 @@ instance FileResourceInputs m => FileResourceEffect m where
               appendFile journal "file-open\n"
               pure (OpenedFile (SharedFile paths file))
           either (raise . FileResourceError . displayException) pure outcome
-      in openedFile
+      in getOpenedFile
 
 instance SharedFileScopeInputs m => SharedFileScopeEffect m where
   openSharedFile =
@@ -189,7 +189,7 @@ instance VerifyReuseInputs m => VerifyReuseEffect m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "b69accce6e9de4b107e3760ea002973e"
+handlerSourceFingerprint = Just "05f281d548048cc609c8a46eef1cd8d8"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

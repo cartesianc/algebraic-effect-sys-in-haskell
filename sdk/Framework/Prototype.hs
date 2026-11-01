@@ -6,19 +6,21 @@
 -- 注册、方法定义与 AST 挂载的唯一静态原型；不包含闭包或运行中的资源。
 module Framework.Prototype
   ( NodeId, SumTypes, Prototype(..), PrototypePlan(..), EffectProto(..)
-  , WorkflowTree(..), AlternativeProto(..), ChainRole(..), ChainProto(..)
+  , WorkflowTree(..), AlternativeProto(..), LifelongProto(..), SessionProto(..), BootPlan(..)
+  , ChainRole(..), ChainProto(..)
   , ChainKind(..), ChainDefinition(..), ReadPoint(..), Source(..), PrototypeError(..)
   , buildEffectProtos, preparePrototype, buildPreparedPrototype, buildPrototype
   , validatePrototype, validateWorkflow, matchWorkflowLayer, checkDriven
   , driveSet, readPoints, resolveSources
   , expandChain, reachableMethods, calledMethods
   , lookupChain, lookupWorkflow, workflowNode, workflowChildren
-  , workflowTerminals, workflowSelectors, precedes, exclusive, visibleFrom
+  , workflowTerminals, workflowSelectors, workflowLifelongs, precedes, exclusive, visibleFrom
+  , bootPlan, sessionSteps, finiteSessions
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad (unless)
-import Control.Monad.State.Strict (StateT, execStateT, lift, modify')
+import Control.Monad (unless, when)
+import Control.Monad.State.Strict (StateT, execStateT, gets, lift, modify')
 import Data.Char (isAlphaNum, isUpper)
 import Data.List (intercalate, intersect, isPrefixOf, nub, sort, (\\))
 import Data.Maybe (listToMaybe, maybeToList)
@@ -38,6 +40,8 @@ data Prototype method = Prototype
   , protoEffects :: [EffectProto method]
   , protoMethods :: [MethodDefinition method]
   , protoWorkflow :: WorkflowTree
+  -- lifelong 外的有限 require 读取 Receive 资产时由 interpreter 托管的会话；按注册确定，惰性启动。
+  , protoSessions :: [SessionProto]
   , protoChains :: [ChainProto method]
   , protoChainDefinitions :: [ChainDefinition method]
   , protoGraph :: EffectGraph method
@@ -70,6 +74,8 @@ data EffectProto method = EffectProto
   , effectNearestScopes :: [String]
   , effectResource :: Maybe String
   , effectContextDependencies :: [String]
+  -- 持续资产（stream = Just ()）：require 返回 History，可被 streams 订阅。
+  , effectContinuous :: Bool
   } deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 data WorkflowTree
@@ -77,6 +83,7 @@ data WorkflowTree
   | ChainedAt NodeId [WorkflowTree]
   | ParallelAt NodeId [WorkflowTree]
   | AlternativeAt NodeId AlternativeProto [WorkflowTree]
+  | LifelongAt NodeId LifelongProto [WorkflowTree]
   deriving (Eq, Show, Read, Generic, NFData)
 
 data AlternativeProto = AlternativeProto
@@ -85,7 +92,26 @@ data AlternativeProto = AlternativeProto
   , alternativeCases :: [(NodeId, String)]
   } deriving (Eq, Show, Read, Generic, NFData)
 
-data ChainRole = NodeChain | SelectorChain
+-- lifelong 的静态装配：消费单元、每个挂载 target 的驱动资产，以及按资产共享的生产会话。
+-- 会话以 lifelong 边界为出身，挂载路径为 lifelong 路径加 [-1, 会话序号, 步骤序号]，先于全部单元。
+data LifelongProto = LifelongProto
+  { lifelongUnits :: [NodeId]
+  , lifelongSubscriptions :: [(NodeId, String)]
+  , lifelongSessions :: [SessionProto]
+  } deriving (Eq, Show, Read, Generic, NFData)
+
+data SessionProto = SessionProto
+  { sessionAsset :: String
+  , sessionPlan :: BootPlan
+  , sessionMounts :: [NodeId]
+  } deriving (Eq, Show, Read, Generic, NFData)
+
+-- 生产方式只由资产自己的注册决定：挂在 Stream 下由解析器接收生产；否则反复执行 request。
+-- Receive 的两步挂载依次为 Stream 单步与解析器；RepeatRequest 只有 request 一步。
+data BootPlan = Receive String | RepeatRequest
+  deriving (Eq, Show, Read, Generic, NFData)
+
+data ChainRole = NodeChain | SelectorChain | SessionChain
   deriving (Eq, Show, Read, Generic, NFData)
 
 data ChainProto method = ChainProto
@@ -114,7 +140,8 @@ data ChainDefinition method = ChainDefinition
 data ReadPoint = ReadPoint { readNode :: NodeId, readContract :: String }
   deriving (Eq, Show, Read, Generic, NFData)
 
-data Source = FromChains [NodeId] | FromOwnChain
+-- FromSession：Receive 资产在没有本次交付时，由 interpreter 托管的会话交付当前历史。
+data Source = FromChains [NodeId] | FromOwnChain | FromSession
   deriving (Eq, Show, Read, Generic, NFData)
 
 data PrototypeError method
@@ -122,6 +149,7 @@ data PrototypeError method
   | InvalidEffectGraph (GraphError method)
   | UnknownPrototypeTarget String
   | InvalidAlternative NodeId String
+  | InvalidLifelong NodeId String
   | PrototypeWorkflowMismatch
   deriving (Eq, Show, Read, Functor, Generic, NFData)
 
@@ -142,8 +170,8 @@ buildEffectProtos :: [EffectSpec] -> SumTypes -> Either (PrototypeError String) 
 buildEffectProtos specifications sumTypes = do
   valid (unique (map name specifications)) "Duplicate effect name"
   valid (all ((/= "Root") . name) specifications) "Root is reserved"
-  valid (unique [contractOf producing | specification <- specifications,
-    Context (Just producing) <- [typing specification]]) "Duplicate Context contract"
+  valid (unique [contractOf declared | specification <- specifications,
+    Just declared <- [contextAsset (typing specification)]]) "Duplicate Context contract"
   mapM_ (\specification -> mapM_ (\demand -> valid (validContractName (contract demand))
       ("Demanded contract must be a contract name such as StartURL: " ++ contract demand
         ++ " in " ++ name specification)) (demands specification)) specifications
@@ -200,9 +228,7 @@ buildEffectProtos specifications sumTypes = do
         , effectInput = input specification
         , effectMethods = registeredMethods specification
         , effectDemands = resolvedOf (name specification)
-        , effectProduces = case typing specification of
-            Context (Just producing) -> Just (contractOf producing)
-            _ -> Nothing
+        , effectProduces = contractOf <$> contextAsset (typing specification)
         , effectBranches = branchesOf specification
         , effectAnchor = case typing specification of
             Context {} -> listToMaybe
@@ -222,6 +248,7 @@ buildEffectProtos specifications sumTypes = do
         , effectNearestScopes = nub (nearest [] (name specification))
         , effectResource = case typing specification of Scoped {} -> requestSource specification; _ -> Nothing
         , effectContextDependencies = contextDependencies
+        , effectContinuous = isContinuous (typing specification)
         }
       prototypes = zipWith make specifications dependencies
       findSpec selected = case filter ((== selected) . name) specifications of
@@ -249,14 +276,36 @@ buildEffectProtos specifications sumTypes = do
           Scoped opening closing -> do
             valid (length (requested specification) <= 1) ("Scoped requests at most one resource Context: " ++ name specification)
             valid (opening == Nothing || closing /= Nothing) ("Scoped.open needs Scoped.close for automatic cleanup: " ++ name specification)
-          Context Nothing -> Left (InvalidPrototype ("Context needs request = requester \"handler\" @Representation: " ++ name specification))
-          Context (Just producing) -> do
-            case representation producing of
+          Context { asset = declared, request = requesting, stream = streaming } -> do
+            -- 生产方式只看本注册：挂在 Stream 下由解析器生产，否则由 request 生产（持续资产即反复 request）。
+            let streamInput = [name source | source <- specifications, name source == input specification
+                  , Stream {} <- [typing source]]
+            case (streamInput, requesting, streaming) of
+              (source : _, Just (), _) -> Left (InvalidPrototype ("Context " ++ name specification ++ " hangs below Stream "
+                ++ source ++ " and must not declare request; its stream parser produces the asset"))
+              (source : _, Nothing, Nothing) -> Left (InvalidPrototype ("Context " ++ name specification ++ " hangs below Stream "
+                ++ source ++ " and needs stream = Just () to parse its input"))
+              ([], Nothing, Just ()) -> Left (InvalidPrototype ("Context " ++ name specification
+                ++ " declares stream = Just () without a Stream input; hang it below a Stream, or declare request = Just () to repeat request"))
+              ([], Nothing, Nothing) -> Left (InvalidPrototype ("Context needs a production role, request = Just (): " ++ name specification))
+              _ -> pure ()
+            valid (validContractName (contractOf declared))
+              ("Asset name must be a type name such as StartURL: " ++ contractOf declared ++ " in " ++ name specification)
+            case representation declared of
               TypeRef _ -> pure ()
               _ -> Left (InvalidPrototype ("Context.request must wrap a business value, not Output: " ++ name specification))
             valid (null [() | anchor <- specifications, name anchor == input specification,
               Scoped {} <- [typing anchor], requestSource anchor == Just (name specification)])
               ("Context " ++ name specification ++ " cannot hang below the scope that requests it as its resource")
+          Stream method -> do
+            valid (method /= Nothing) ("Stream needs a handler method: " ++ name specification)
+            -- 只有解析器 Context 能以 Stream 为 input，否则其他方法可以绕过会话直接取原始输入。
+            let below = [typing consumer | consumer <- specifications, input consumer == name specification]
+                isContext selected = case selected of Context {} -> True; _ -> False
+            valid (all isContext below)
+              ("Only the parser Context may take Stream " ++ name specification ++ " as its input")
+            valid (length below == 1)
+              ("Stream " ++ name specification ++ " needs exactly one Context hanging below it as its parser")
           Error { handles = matched } -> do
             valid (not (null matched)) ("Error must declare the failures it handles: " ++ name specification)
             mapM_ checkHandled matched
@@ -264,6 +313,9 @@ buildEffectProtos specifications sumTypes = do
           _ -> pure ()
         valid (null [demand | demand <- demands specification, access demand == RequestAccess,
           contract demand `elem` map fst branchTable]) ("Branch contracts can only be required: " ++ name specification)
+        valid (null [() | demand <- demands specification, access demand == StreamAccess]
+          || Registration.effectKind (typing specification) `elem` [PureKind, ExcuKind, ScopedKind])
+          ("Only original-chain effects may subscribe with streams: " ++ name specification)
       handled specification = case typing specification of Error { handles = matched } -> matched; _ -> []
   mapM_ check specifications
   valid (unique (concatMap (map snd . effectMethods) prototypes)) "Registered method names must be unique"
@@ -277,12 +329,12 @@ buildEffectProtos specifications sumTypes = do
       first : rest -> isUpper first && all (\character -> isAlphaNum character || character `elem` "_'") rest
       [] -> False
     branchesOf specification = case typing specification of
-      Context (Just producing) | TypeRef typeName <- representation producing
+      Context { asset = declared } | TypeRef typeName <- representation declared
         , Just constructors <- lookup typeName sumTypes, length constructors > 1 ->
-          [(contractOf producing ++ constructor, constructor) | (constructor, _) <- constructors]
+          [(contractOf declared ++ constructor, constructor) | (constructor, _) <- constructors]
       _ -> []
-    branchTable = [(branch, contractOf producing)
-      | specification <- specifications, Context (Just producing) <- [typing specification]
+    branchTable = [(branch, contractOf declared)
+      | specification <- specifications, Just declared <- [contextAsset (typing specification)]
       , (branch, _) <- branchesOf specification]
 
 registeredMethods :: EffectSpec -> [(MethodRole, String)]
@@ -293,24 +345,32 @@ registeredMethods specification = case typing specification of
     ++ [(ScopeClose, selected) | selected <- maybeToList closing]
   Error detecting resolving _ -> [(ErrorDetect, selected) | selected <- maybeToList detecting]
     ++ [(ErrorResolve, selected) | selected <- maybeToList resolving]
-  selected@(Context producing) -> [(ContextRequest, method) | Just Requester { handler = method } <- [producing]]
+  selected@Context {} -> [(ContextRequest, method) | method <- maybeToList (contextProducer selected)]
     ++ [(ContextRequire, method) | method <- maybeToList (contextReader selected)]
+    ++ [(ContextStream, method) | method <- maybeToList (contextParser selected)]
+    ++ [(ContextInput, method) | method <- maybeToList (contextInput selected)]
+  Stream method -> [(StreamHandler, selected) | selected <- maybeToList method]
 
 workflowNode :: WorkflowTree -> NodeId
 workflowNode (NodeAt identifier _) = identifier
 workflowNode (ChainedAt identifier _) = identifier
 workflowNode (ParallelAt identifier _) = identifier
 workflowNode (AlternativeAt identifier _ _) = identifier
+workflowNode (LifelongAt identifier _ _) = identifier
 
 workflowChildren :: WorkflowTree -> [WorkflowTree]
 workflowChildren (NodeAt _ _) = []
 workflowChildren (ChainedAt _ children) = children
 workflowChildren (ParallelAt _ children) = children
 workflowChildren (AlternativeAt _ _ children) = children
+workflowChildren (LifelongAt _ _ children) = children
 
 workflowTerminals :: WorkflowTree -> [String]
 workflowTerminals (NodeAt _ selected) = [selected]
 workflowTerminals tree = concatMap workflowTerminals (workflowChildren tree)
+
+workflowLifelongs :: WorkflowTree -> [(NodeId, LifelongProto)]
+workflowLifelongs tree = [(identifier, described) | LifelongAt identifier described _ <- allWorkflow tree]
 
 workflowSelectors :: WorkflowTree -> [String]
 workflowSelectors tree = case tree of
@@ -324,18 +384,38 @@ preparePrototype specifications sumTypes tree = do
   pure (PrototypePlan specifications effects workflow)
 
 numberWorkflow :: [EffectProto String] -> Fix WorkflowF -> Either (PrototypeError String) WorkflowTree
-numberWorkflow effects tree = cata number tree []
+numberWorkflow effects tree = cata number tree [] False
   where
-    number (Node selected) path = do
+    -- inside：是否位于 lifelong 内。持续订阅只能挂在 lifelong 内；lifelong 不嵌套。
+    number (Node selected) path inside = do
       effect <- findEffectProto effects selected
-      valid (effectKind effect `notElem` [ContextKind, ErrorKind])
+      valid (effectKind effect `notElem` [ContextKind, ErrorKind, StreamKind])
         ("AST terminal must be an original callable handle: " ++ selected)
       _ <- ordinaryEntry effect
+      let subscribed = streamedAssets effects selected
+      unless (inside || null subscribed) $ Left (InvalidLifelong path ("Node " ++ selected
+        ++ " subscribes to " ++ intercalate ", " subscribed ++ " with streams; mount it inside lifelong"))
       pure (NodeAt path selected)
-    number (Chained children) path = ChainedAt path <$> descend path children
-    number (Parallel children) path = ParallelAt path <$> descend path children
-    number (Alternative children) path = do
-      parts <- descend path children
+    number (Chained children) path inside = do
+      nonEmpty path inside children
+      ChainedAt path <$> descend path inside children
+    number (Parallel children) path inside = do
+      nonEmpty path inside children
+      ParallelAt path <$> descend path inside children
+    number (Lifelong children) path inside = do
+      when inside $ Left (InvalidLifelong path "lifelong cannot be nested")
+      nonEmpty path True children
+      parts <- descend path True children
+      -- 直接子项各为一个单元；直接子项是 parallel 时拆这一层，不穿透更深的结构。
+      let units = concat [case part of
+            ParallelAt _ inner -> map workflowNode inner
+            _ -> [workflowNode part] | part <- parts]
+      subscriptions <- mapM subscription [(node', selected) | part <- parts, NodeAt node' selected <- allWorkflow part]
+      sessions <- mapM (session path) (zip [0 ..] (nub (map snd subscriptions)))
+      pure (LifelongAt path (LifelongProto units subscriptions sessions) parts)
+    number (Alternative children) path inside = do
+      nonEmpty path inside children
+      parts <- descend path inside children
       cases <- mapM (candidateCase effects path) parts
       contractType <- case nub (map fst cases) of
         [selected] -> Right selected
@@ -346,8 +426,75 @@ numberWorkflow effects tree = cata number tree []
         invalid path "Candidates must cover every constructor exactly once"
       pure (AlternativeAt path (AlternativeProto contractType (path ++ [-1])
         (zip (map workflowNode parts) constructors)) parts)
-    descend path children = sequence [child (path ++ [index]) | (index, child) <- zip [0 ..] children]
+    descend path inside children = sequence [child (path ++ [index]) inside | (index, child) <- zip [0 ..] children]
     invalid path reason = Left (InvalidAlternative path reason)
+    -- lifelong 内每条成功路径都要领取新交付；挂载的 target 都订阅持续资产，所以只需拒绝空分支。
+    nonEmpty path inside children = when (inside && null children) $
+      Left (InvalidLifelong path "an empty branch inside lifelong never takes a delivery")
+    -- 一个挂载的 target 恰好由一份持续资产驱动；链内不再读取其他持续资产的快照，
+    -- 否则执行结果取决于读取时刻（多个来源的触发组合另行设计）。
+    subscription (node', selected) = case streamedAssets effects selected of
+      [contractType] -> do
+        let others = [other | other <- continuousReads effects selected, other /= contractType]
+        unless (null others) $ Left (InvalidLifelong node' ("Node " ++ selected ++ " is driven by " ++ contractType
+          ++ " and also reads continuous assets " ++ intercalate ", " others ++ "; read only its driving asset"))
+        pure (node', contractType)
+      [] -> Left (InvalidLifelong node' ("Node " ++ selected
+        ++ " inside lifelong must subscribe to exactly one continuous asset with streams"))
+      several -> Left (InvalidLifelong node' ("Node " ++ selected ++ " subscribes to several continuous assets "
+        ++ intercalate ", " several ++ "; one lifelong target is driven by one asset"))
+    -- 生产方式只看资产自己的注册：挂在 Stream 下即接收生产，否则反复 request。
+    session path (index, contractType) = do
+      producer <- case [effect | effect <- effects, effectProduces effect == Just contractType] of
+        [effect] -> pure effect
+        _ -> Left (UnknownPrototypeTarget contractType)
+      let plan = bootPlan effects producer
+      pure (SessionProto contractType plan [path ++ [-1, index, step] | step <- [0 .. sessionSteps plan - 1]])
+
+-- 生产方式只看资产自己的注册：挂在 Stream 下即接收生产，否则反复 request。
+bootPlan :: [EffectProto method] -> EffectProto method -> BootPlan
+bootPlan effects producer = case [effectName source | source <- effects, effectName source == effectInput producer
+                                 , effectKind source == StreamKind] of
+  source : _ -> Receive source
+  [] -> RepeatRequest
+
+sessionSteps :: BootPlan -> Int
+sessionSteps (Receive _) = 2
+sessionSteps RepeatRequest = 1
+
+-- 每个 Receive 资产一份 interpreter 托管的会话，挂载为 [-2, 序号, 步骤]；不属于 AST，
+-- 不作为任何读取点的可见前驱，只在 lifelong 外的有限 require 缺少交付时惰性启动。
+finiteSessions :: [EffectProto method] -> [SessionProto]
+finiteSessions effects =
+  [ SessionProto contractType plan [[-2, index, step] | step <- [0 .. sessionSteps plan - 1]]
+  | (index, (contractType, plan)) <- zip [0 ..] receiving ]
+  where
+    receiving = [(contractType, plan) | effect <- effects, effectContinuous effect
+      , Just contractType <- [effectProduces effect], let plan = bootPlan effects effect, plan /= RepeatRequest]
+
+-- 一条 original chain 由末端及其 Input 祖先组成；只看这些 effect 自己声明的 streams，
+-- 不汇总 Context 生产链内部的依赖。
+originEffects :: [EffectProto method] -> String -> [EffectProto method]
+originEffects effects selected =
+  [effect | effect <- effects, effectName effect `elem` (selected : concat
+    [effectInputChain terminal | terminal <- effects, effectName terminal == selected])]
+
+streamedAssets :: [EffectProto method] -> String -> [String]
+streamedAssets effects selected = nub
+  [demandContract demand | effect <- originEffects effects selected, demand <- effectDemands effect
+  , demandAccess demand == StreamAccess]
+
+-- 分支契约按其基础契约计入：读取持续和类型资产的分支即读取该资产。
+continuousReads :: [EffectProto method] -> String -> [String]
+continuousReads effects selected = nub
+  [base | effect <- originEffects effects selected, demand <- effectDemands effect
+  , let base = baseContract (demandContract demand)
+  , producer <- effects, effectContinuous producer, effectProduces producer == Just base]
+  where
+    baseContract contractType = case [produced | producer <- effects, Just produced <- [effectProduces producer]
+                                     , (branch, _) <- effectBranches producer, branch == contractType] of
+      produced : _ -> produced
+      [] -> contractType
 
 -- 候选对应只读 effect 原型中的 requires 与 Input 祖先；生成和加载校验共用。
 candidateCase :: [EffectProto method] -> NodeId -> WorkflowTree
@@ -399,7 +546,9 @@ buildPreparedPrototype plan shapes = do
     "An injected Context reaches its anchor through another method; call the anchor directly"
   mounted <- mapM mountedNode (allWorkflow workflow) >>= pure . concat
   selectors <- mapM mountedSelector [selected | selected@AlternativeAt {} <- allWorkflow workflow]
-  let mounts = mounted ++ selectors
+  sessions <- concat <$> mapM mountedSession lifelongSessionsOf
+  finiteMounts <- concat <$> mapM mountedSession finite
+  let mounts = mounted ++ selectors ++ sessions ++ finiteMounts
       entries = nub [method | (_, _, _, method) <- mounts]
       logical = withProducerReferences effects definitions
   graph <- either (Left . InvalidEffectGraph) Right (buildEffectGraph definitions (Choice (map Call entries)))
@@ -415,19 +564,45 @@ buildPreparedPrototype plan shapes = do
             ScopeOpen -> Just OriginChain
             ContextRequest -> Just ContextChain
             ContextRequire -> Just ContextChain
+            ContextStream -> Just ContextChain
+            StreamHandler -> Just ContextChain
             _ -> Nothing]]
       written = [definition { methodBody = maybe (methodBody definition) id
           (lookup (methodIdentity definition) shapes) } | definition <- defaults]
       defaultReaders = [methodIdentity definition | definition <- defaults
         , methodRole definition == ContextRequire, methodIdentity definition `notElem` map fst shapes]
-      result = Prototype (plannedRegistrations plan) effects definitions workflow
+      result = Prototype (plannedRegistrations plan) effects definitions workflow finite
         (map makeChain mounts) chainDefinitions graph scopes names []
+  -- Stream 只由生产会话的 Stream 单步读取：其他方法（包括解析器）直接调用 Stream 方法会另取一份原始输入，
+  -- 使会话已经取得的那一份不被解析。解析器经生成的 input 方法读取本次输入。
+  let streamMethods = [method | effect <- effects, (StreamHandler, method) <- effectMethods effect]
+  mapM_ (\definition -> case filter (`elem` streamMethods) (calledMethods (methodBody definition)) of
+      [] -> pure ()
+      called : _ -> Left (InvalidPrototype ("Method " ++ methodIdentity definition ++ " calls Stream method "
+        ++ called ++ " directly; only the production session reads a Stream"
+        ++ concat ["; the parser reads the current input with input" ++ contractType
+          | effect <- effects, (ContextStream, parser) <- effectMethods effect, parser == methodIdentity definition
+          , Just contractType <- [effectProduces effect]])))
+    [definition | definition <- definitions, methodRole definition /= StreamHandler]
+  -- 启动环：会话的生产链不能依赖其他持续资产，否则首次生产就要先等待另一份增量。
+  let continuousMethods = [(contractType, method) | effect <- effects, effectContinuous effect
+        , Just contractType <- [effectProduces effect], (role, method) <- effectMethods effect
+        , role `elem` [ContextRequest, ContextRequire, ContextStream]]
+  mapM_ (\chain -> do
+      let others = nub [contractType | (contractType, method) <- continuousMethods
+            , method `elem` chainReaches chain, contractType /= chainTerminal chain]
+      unless (null others) $ Left (InvalidLifelong (chainNode chain) ("Production of continuous asset "
+        ++ chainTerminal chain ++ " depends on continuous assets " ++ intercalate ", " others
+        ++ "; its first delivery would wait for another stream")))
+    [makeChain mount | mount <- sessions]
   analyzed <- resolveSources written defaultReaders result
   validatePrototype analyzed
   pure analyzed
   where
     effects = plannedEffects plan
     workflow = plannedWorkflow plan
+    lifelongSessionsOf = concatMap (lifelongSessions . snd) (workflowLifelongs workflow)
+    finite = finiteSessions effects
     resources = [resource | effect <- effects, Just resource <- [effectResource effect]]
     defaults = [MethodDefinition method owner role (defaultBody effect role)
       | effect <- effects, (_, owner) : _ <- [effectMethods effect], (role, method) <- effectMethods effect]
@@ -461,6 +636,22 @@ buildPreparedPrototype plan shapes = do
       [method] -> pure (alternativeSelector selected, SelectorChain, alternativeContract selected, method)
       _ -> Left (UnknownPrototypeTarget (alternativeContract selected))
     mountedSelector _ = Left (InvalidPrototype "Expected alternative selector")
+    -- 会话挂载：Receive 依次为 Stream 单步与解析器，RepeatRequest 只有 request；终端名记资产名。
+    mountedSession described = do
+      producer <- case [effect | effect <- effects, effectProduces effect == Just (sessionAsset described)] of
+        [effect] -> pure effect
+        _ -> Left (UnknownPrototypeTarget (sessionAsset described))
+      let roleOf effect role = maybe (Left (InvalidPrototype ("Session for " ++ sessionAsset described
+            ++ " has no " ++ show role ++ " method"))) Right (lookup role (effectMethods effect))
+      methods <- case sessionPlan described of
+        Receive source -> do
+          streamEffect <- findEffectProto effects source
+          handle <- roleOf streamEffect StreamHandler
+          parser <- roleOf producer ContextStream
+          pure [handle, parser]
+        RepeatRequest -> (: []) <$> roleOf producer ContextRequest
+      valid (length methods == length (sessionMounts described)) ("Session steps differ for " ++ sessionAsset described)
+      pure [(mount, SessionChain, sessionAsset described, method) | (mount, method) <- zip (sessionMounts described) methods]
 
 anchors :: [EffectProto method] -> [(method, method)]
 anchors effects = [(anchorMethod, produced)
@@ -525,6 +716,8 @@ allWorkflow tree = tree : concatMap allWorkflow (workflowChildren tree)
 knownWorkflowPosition :: WorkflowTree -> NodeId -> Bool
 knownWorkflowPosition tree selected = any ((== selected) . workflowNode) nodes
   || selected `elem` [alternativeSelector choice | AlternativeAt _ choice _ <- nodes]
+  || selected `elem` [mount | LifelongAt _ described _ <- nodes
+       , session <- lifelongSessions described, mount <- sessionMounts session]
   where nodes = allWorkflow tree
 
 lookupChain :: Prototype method -> NodeId -> Either (PrototypeError method) (ChainProto method)
@@ -545,6 +738,8 @@ matchWorkflowLayer (Parallel children) (ParallelAt _ expected)
   | length children == length expected = pure expected
 matchWorkflowLayer (Alternative children) (AlternativeAt _ _ expected)
   | length children == length expected = pure expected
+matchWorkflowLayer (Lifelong children) (LifelongAt _ _ expected)
+  | length children == length expected = pure expected
 matchWorkflowLayer _ _ = Left PrototypeWorkflowMismatch
 
 validateWorkflow :: Prototype method -> AST -> Either (PrototypeError method) ()
@@ -557,6 +752,7 @@ validateWorkflow prototype ast = foldAST check ast (protoWorkflow prototype)
     childChecks (Chained children) = children
     childChecks (Parallel children) = children
     childChecks (Alternative children) = children
+    childChecks (Lifelong children) = children
 
 -- 这些查询只给出结构关系；Stage 1 不据此改变资产读写语义。
 precedes :: WorkflowTree -> NodeId -> NodeId -> Bool
@@ -567,6 +763,9 @@ precedes tree before after = knownWorkflowPosition tree before && knownWorkflowP
       [workflowNode left `isPrefixOf` before && workflowNode right `isPrefixOf` after
       | (index, left) <- zip [0 :: Int ..] children, right <- drop (index + 1) children]
     orders (AlternativeAt _ selected children) = before == alternativeSelector selected
+      && any (\child -> workflowNode child `isPrefixOf` after) children
+    -- 会话是 lifelong 的共同上游：会话挂载先于全部单元；单元之间、各次执行之间互不可见。
+    orders (LifelongAt identifier _ children) = (identifier ++ [-1]) `isPrefixOf` before
       && any (\child -> workflowNode child `isPrefixOf` after) children
     orders _ = False
 
@@ -623,17 +822,40 @@ type AssetAnalysis = StateT AssetFacts (Either (PrototypeError String))
 resolveSources :: [MethodDefinition String] -> [String] -> Prototype String
                -> Either (PrototypeError String) (Prototype String)
 resolveSources definitions defaultReaders prototype = do
-  facts <- execStateT (workflow (protoWorkflow prototype) [] [] []) (AssetFacts [] [])
-  let reads = [(point, if null sources then FromOwnChain else FromChains (sort (nub sources)))
+  facts <- flip execStateT (AssetFacts [] []) $ do
+    _ <- workflow (protoWorkflow prototype) [] [] []
+    -- interpreter 托管的会话各自从空环境启动，不是任何读取点的可见前驱。
+    mapM_ (\mount -> root mount [] [] []) (concatMap sessionMounts (protoSessions prototype))
+  let reads = [(point, if readContract point `elem` receiving then FromSession
+                       else if null sources then FromOwnChain else FromChains (sort (nub sources)))
         | (point, sources) <- assetReads facts]
       annotate chain = chain
         { chainDrives = sort (nub [contractType | (node', contractType) <- assetDrives facts, node' == chainNode chain])
         , chainReads = sort (nub [readContract point | (point, _) <- reads, readNode point == chainNode chain])
         }
+  mapM_ companionRead reads
   pure prototype { protoChains = map annotate (protoChains prototype), protoSources = reads }
   where
     effects = protoEffects prototype
+    lifelongs = workflowLifelongs (protoWorkflow prototype)
+    -- 会话生产步骤的其他普通发布随交付读取（伴随发布），每一步都会替换。读取位置必须在调用前
+    -- 已经领取该会话的交付：由该资产驱动的 Node，或以它为转折资产的选择读取；否则读到哪一步取决于调度。
+    companionRead (point, FromChains nodes) = do
+      let producers = nub [sessionAsset session | (_, described) <- lifelongs
+            , session <- lifelongSessions described, any (`elem` sessionMounts session) nodes]
+          taken = [contractType | (_, described) <- lifelongs
+              , (node', contractType) <- lifelongSubscriptions described, node' == readNode point]
+            ++ [alternativeContract choice | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype)
+              , alternativeSelector choice == readNode point]
+          stray = filter (`notElem` taken) producers
+      unless (null stray) $ Left (InvalidLifelong (readNode point) ("Asset " ++ readContract point
+        ++ " is published by the production step of " ++ intercalate ", " stray
+        ++ " and is replaced at every delivery; read it only in targets driven by " ++ intercalate ", " stray
+        ++ ", or produce it before the lifelong"))
+    companionRead _ = pure ()
     resources = [source | effect <- effects, Just source <- [effectResource effect]]
+    receiving = [contractType | effect <- effects, effectContinuous effect
+      , Just contractType <- [effectProduces effect], bootPlan effects effect /= RepeatRequest]
     -- 复用已完成的可达性分析，保守包含 native reader，以及 caller 的 require 声明
     -- 将直接 producer 方法调用路由成读取的情况；不依赖尚未算出的 chainReads。
     possibleReads = [(chainNode chain, nub
@@ -650,6 +872,7 @@ resolveSources definitions defaultReaders prototype = do
         localReads = case tree of
           NodeAt node' _ -> readsAt node'
           AlternativeAt _ selected _ -> readsAt (alternativeSelector selected)
+          LifelongAt _ described _ -> concatMap readsAt (concatMap sessionMounts (lifelongSessions described))
           _ -> []
     retainPublications relevant = filter ((`elem` relevant) . snd)
     retainState relevant state = state
@@ -687,6 +910,10 @@ resolveSources definitions defaultReaders prototype = do
       Nothing -> lift (Left (InvalidPrototype "Context reader has no contract"))
       Just contractType -> case lookup contractType (assetCaptures state) of
         Just _ -> pure [AssetExit True state, AssetExit False state]
+        -- Receive 资产只由会话生产：没有本次交付时由 interpreter 托管的会话交付，不查询普通来源。
+        Nothing | contractType `elem` receiving -> do
+          recordRead (assetRoot call) contractType []
+          pure [AssetExit True (capture contractType Nothing state), AssetExit False state]
         Nothing -> do
           let sources = nub [node' | (node', produced) <- assetPublications state, produced == contractType
                 , visibleFrom (protoWorkflow prototype) node' (assetRoot call)]
@@ -756,20 +983,28 @@ resolveSources definitions defaultReaders prototype = do
                 Just consumer ->
                   let modes = [demandAccess demand | candidate <- effects, effectName candidate == consumer
                         , demand <- effectDemands candidate, demandProvider demand == effectName effect]
+                  -- streams 同时授予读取交付视图，按 require 处理。
                   in if RequestAccess `elem` modes then Just RequestAccess
-                     else if RequireAccess `elem` modes then Just RequireAccess else Nothing
+                     else if any (`elem` modes) [RequireAccess, StreamAccess] then Just RequireAccess else Nothing
           exits <- case role of
             ContextRequire | access == Nothing -> pure [AssetExit False state]
             ContextRequire | selected `elem` defaultReaders ->
               readAsset entered effect state
             ContextRequest -> case access of
               Nothing -> pure [AssetExit False state]
-              Just RequireAccess -> readAsset call effect state
               Just RequestAccess -> do
                 body <- shape entered (methodBody definition) state
                 successes (\after -> do
                   published <- publish call effect after
                   pure [AssetExit True published]) body
+              -- require 与 streams 都只读取，不进入生产。
+              Just _ -> readAsset call effect state
+            -- 解析器只由 Receive 会话挂载调用；成功即发布一次交付。
+            ContextStream -> do
+              body <- shape entered (methodBody definition) state
+              successes (\after -> do
+                published <- publish call effect after
+                pure [AssetExit True published]) body
             ScopeOpen | assetClosing call -> pure [AssetExit False state]
             ScopeOpen -> do
               let inside = entered { assetOpenings = effectName effect : assetOpenings entered }
@@ -830,6 +1065,36 @@ resolveSources definitions defaultReaders prototype = do
           else nub . concat <$> mapM (\child -> workflow child future (assetPublications state)
               [(contractType, origin) | (contractType, Just origin') <- assetCaptures state
                 , let origin = Just origin']) children) selected
+      LifelongAt boundary described children -> do
+        -- 会话是共同上游：生产挂载先各自分析一次。一条交付的伴随发布来自一次成功的生产步骤
+        -- （Receive 为 Stream 单步与解析器各一个成功出口），不同出口不合并：单元按每种交付状态分别分析，
+        -- 本条交付没有某个辅助资产时，单元的补产与后继复用照常记录。
+        -- 驱动资产以交接捕获交给单元，出身是会话的生产步骤。单元的每次执行都从进入 lifelong 时的状态开始。
+        let unitReads = nub (concatMap readsIn children)
+            sessions = lifelongSessions described
+            mounts = concatMap sessionMounts sessions
+            delivered = [(sessionAsset session, Just (last (sessionMounts session)))
+              | session <- sessions, not (null (sessionMounts session))]
+        steps <- mapM (mapM (\mount -> do
+            exits <- root mount unitReads handoff publications
+            pure (nub [assetPublications state | AssetExit True state <- exits])) . sessionMounts) sessions
+        let produced = [case map concat (sequence perMount) of
+              [] -> [[]]
+              states -> states | perMount <- steps]
+            -- 单元内显式 request 产生的交付不带伴随发布：单元会 request 的会话另加只含外层发布的状态。
+            -- 新状态可能使单元 request 更多会话资产，直到不再增加。
+            analyzeUnits requested = do
+              let options = [if sessionAsset session `elem` requested then [] : states else states
+                    | (session, states) <- zip sessions produced]
+              mapM_ (\state -> mapM_ (\child -> workflow child [] state (handoff ++ delivered)) children)
+                (nub [sort (nub (publications ++ concat combination)) | combination <- sequence options])
+              drives <- gets assetDrives
+              let now = nub [contractType | (node', contractType) <- drives, boundary `isPrefixOf` node'
+                    , node' `notElem` mounts, contractType `elem` map sessionAsset sessions]
+              unless (all (`elem` requested) now) (analyzeUnits (nub (requested ++ now)))
+        analyzeUnits []
+        -- lifelong 没有正常结束：排在它后面的后继不会执行。
+        pure [(False, [])]
     workflowSequence :: [WorkflowTree] -> [String] -> [(Bool, [(NodeId, String)])] -> [(String, Maybe NodeId)]
                      -> AssetAnalysis [(Bool, [(NodeId, String)])]
     workflowSequence children future states handoff = go positioned states
@@ -896,13 +1161,14 @@ validatePrototype prototype = do
   valid (sameSet (scopeCandidates tree) (graphScopeOrder graph)) "Scope candidates differ from the generated graph"
   valid (all (knownPair nodeIds) (scopeOpposed tree ++ scopeUndetermined tree)) "Unknown scope in order evidence"
   checkWorkflow [] (protoWorkflow prototype)
+  valid (protoSessions prototype == finiteSessions effects) "Interpreter sessions differ from the Receive assets"
   valid (unique (map chainNode chains)) "Duplicate mounted chain NodeId"
   valid (sameSet (map chainNode chains) expectedChainIds) "Mounted chain coverage differs from workflow"
   mapM_ validateChain chains
   valid (unique (map definitionEntry chainDefinitions)) "Duplicate chain definition"
   valid (sameSet (map definitionEntry chainDefinitions)
     [method | effect <- effects, (role, method) <- effectMethods effect
-      , role `elem` [HandlerMethod, ScopeOpen, ContextRequest, ContextRequire]])
+      , role `elem` [HandlerMethod, ScopeOpen, ContextRequest, ContextRequire, ContextStream, StreamHandler]])
     "Chain definitions do not cover the registered entries"
   mapM_ validateDefinition chainDefinitions
   valid (unique (map fst (protoSources prototype))) "Duplicate asset read point"
@@ -928,6 +1194,8 @@ validatePrototype prototype = do
       valid (readContract point `elem` contracts) "Read point has no base Context contract"
       case source of
         FromOwnChain -> pure ()
+        FromSession -> valid (readContract point `elem` [sessionAsset session | session <- protoSessions prototype])
+          "Session source has no interpreter session"
         FromChains selected -> do
           valid (not (null selected) && unique selected) "Invalid asset source alternatives"
           mapM_ (\node' -> do
@@ -955,13 +1223,15 @@ validatePrototype prototype = do
     expectedChainIds = concat [case selected of
       NodeAt identifier _ -> [identifier]
       AlternativeAt _ choice _ -> [alternativeSelector choice]
+      LifelongAt _ described _ -> concatMap sessionMounts (lifelongSessions described)
       _ -> [] | selected <- allWorkflow (protoWorkflow prototype)]
+      ++ concatMap sessionMounts (protoSessions prototype)
     checkWorkflow expected selected = do
       valid (workflowNode selected == expected) "Workflow NodeId differs from AST path"
       case selected of
         NodeAt _ terminal -> do
           effect <- findEffectProto effects terminal
-          valid (effectKind effect `notElem` [ContextKind, ErrorKind]) "Workflow node is not an origin chain"
+          valid (effectKind effect `notElem` [ContextKind, ErrorKind, StreamKind]) "Workflow node is not an origin chain"
         AlternativeAt identifier choice children -> do
           valid (alternativeSelector choice == identifier ++ [-1]) "Alternative selector has an invalid NodeId"
           valid (map fst (alternativeCases choice) == map workflowNode children) "Alternative case paths differ from children"
@@ -973,6 +1243,23 @@ validatePrototype prototype = do
           declaredCases <- mapM (candidateCase effects identifier) children
           valid (declaredCases == [(alternativeContract choice, constructor) | constructor <- selectedCases])
             "Alternative cases differ from candidate requirements"
+        LifelongAt identifier described children -> do
+          let inner = concatMap allWorkflow children
+              mounted = [(node', terminal) | NodeAt node' terminal <- inner]
+          valid (null [() | LifelongAt {} <- inner]) "Lifelong is nested"
+          valid (sameSet (lifelongUnits described) (concat [case child of
+              ParallelAt _ grand -> map workflowNode grand
+              _ -> [workflowNode child] | child <- children])) "Lifelong units differ from its children"
+          valid (sameSet (map fst (lifelongSubscriptions described)) (map fst mounted)
+            && unique (map fst (lifelongSubscriptions described))) "Lifelong subscriptions differ from its targets"
+          valid (sameSet (map sessionAsset (lifelongSessions described)) (nub (map snd (lifelongSubscriptions described)))
+            && unique (map sessionAsset (lifelongSessions described))) "Lifelong sessions differ from subscribed assets"
+          valid (and [ sessionMounts session == [identifier ++ [-1, index, step] | step <- [0 .. steps - 1]]
+            | (index, session) <- zip [0 ..] (lifelongSessions described)
+            , let steps = case sessionPlan session of Receive _ -> 2; RepeatRequest -> 1 ])
+            "Lifelong session mounts have invalid NodeIds"
+          valid (and [ any (\effect -> effectContinuous effect && effectProduces effect == Just contractType) effects
+            | (_, contractType) <- lifelongSubscriptions described ]) "Lifelong subscribes to a non-continuous asset"
         _ -> pure ()
       sequence_ [checkWorkflow (expected ++ [index]) child | (index, child) <- zip [0 ..] (workflowChildren selected)]
     validateChain chain = do
@@ -996,12 +1283,32 @@ validatePrototype prototype = do
             && chainEntry chain `elem` [method | effect <- effects, effectProduces effect == Just (chainTerminal chain)
               , (ContextRequire, method) <- effectMethods effect]) "Selector chain differs from alternative"
           _ -> Left (InvalidPrototype "Selector chain has no alternative")
+        SessionChain -> case [ (session, step)
+            | session <- concatMap (lifelongSessions . snd) (workflowLifelongs (protoWorkflow prototype))
+                ++ protoSessions prototype
+            , (step, mount) <- zip [0 :: Int ..] (sessionMounts session), mount == chainNode chain ] of
+          [(session, step)] -> do
+            producer <- case [effect | effect <- effects, effectProduces effect == Just (sessionAsset session)] of
+              [effect] -> pure effect
+              _ -> Left (InvalidPrototype "Session asset has no producer")
+            let expectedRole = case (sessionPlan session, step) of
+                  (Receive _, 0) -> Nothing
+                  (Receive _, _) -> Just ContextStream
+                  (RepeatRequest, _) -> Just ContextRequest
+                streamEntries = case sessionPlan session of
+                  Receive source -> [method | effect <- effects, effectName effect == source
+                    , (StreamHandler, method) <- effectMethods effect]
+                  RepeatRequest -> []
+                expected = maybe streamEntries (\role -> [method | (role', method) <- effectMethods producer, role' == role]) expectedRole
+            valid (sessionAsset session == chainTerminal chain && expected == [chainEntry chain])
+              "Session chain differs from its boot plan"
+          _ -> Left (InvalidPrototype "Session chain has no session")
     validateDefinition definition = do
       effect <- findEffectProto effects (definitionEffect definition)
       let roles = [role | (role, method) <- effectMethods effect, method == definitionEntry definition]
           expectedRoles = case definitionKind definition of
             OriginChain -> [HandlerMethod, ScopeOpen]
-            ContextChain -> [ContextRequest, ContextRequire]
+            ContextChain -> [ContextRequest, ContextRequire, ContextStream, StreamHandler]
       valid (not (null roles) && all (`elem` expectedRoles) roles) "Chain kind differs from its method role"
       valid (unique (definitionReaches definition) && all (`elem` allMethodIds) (definitionReaches definition)
         && definitionEntry definition `elem` definitionReaches definition) "Invalid chain definition reachability"

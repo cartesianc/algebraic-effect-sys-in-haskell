@@ -27,13 +27,13 @@ import System.IO.Error (tryIOError)
 import System.Mem (performGC)
 
 instance FileLocationsInputs m => FileLocationsEffect m where
-  fileNames = pure (FileNames
+  getFileNames = pure (FileNames
     [ "demo" </> "OpenFilesDemo" </> "output" </> ("file-" ++ show index ++ ".txt")
     | index <- [1..10 :: Int]
     ])
 
 instance FileResourcesInputs m => FileResourcesEffect m where
-  openedFiles = do
+  getOpenedFiles = do
     FileNames paths <- require @FileNames
     -- 整批获取是本 Context 的原子操作；中途失败释放此前已打开的文件。
     outcome <- liftIO $ tryIOError $ fmap OpenedFiles $

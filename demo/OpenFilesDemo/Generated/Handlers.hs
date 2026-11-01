@@ -33,30 +33,30 @@ import System.IO.Error (tryIOError)
 import System.Mem (performGC)
 
 instance FileLocationsInputs m => FileLocationsEffect m where
-  fileNames =
+  getFileNames =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations" FrameworkGenerated.ContextBindingError
       [("FileResources", FrameworkRuntime.RequireValue), ("HoldFiles", FrameworkRuntime.RequestValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocations"))
       FrameworkGenerated.boundFileLocations
       (\value bindings -> bindings { FrameworkGenerated.boundFileLocations = Just value })) $
       let
-        fileNames :: (m) (FrameworkGenerated.FileNames)
-        fileNames = pure (FileNames
+        getFileNames :: (m) (FrameworkGenerated.FileNames)
+        getFileNames = pure (FileNames
           [ "demo" </> "OpenFilesDemo" </> "output" </> ("file-" ++ show index ++ ".txt")
           | index <- [1..10 :: Int]
           ])
-      in fileNames
+      in getFileNames
 
 instance FileResourcesInputs m => FileResourcesEffect m where
-  openedFiles =
+  getOpenedFiles =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResources" FrameworkGenerated.ContextBindingError
       [("FileSession", FrameworkRuntime.RequestValue), ("InspectFiles", FrameworkRuntime.RequireValue), ("FinishInspection", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundFileResources
       (\value bindings -> bindings { FrameworkGenerated.boundFileResources = Just value })) $
       let
-        openedFiles :: (m) (FrameworkGenerated.OpenedFiles)
-        openedFiles = do
+        getOpenedFiles :: (m) (FrameworkGenerated.OpenedFiles)
+        getOpenedFiles = do
           FileNames paths <- require @FileNames
           -- 整批获取是本 Context 的原子操作；中途失败释放此前已打开的文件。
           outcome <- liftIO $ tryIOError $ fmap OpenedFiles $
@@ -67,7 +67,7 @@ instance FileResourcesInputs m => FileResourcesEffect m where
                 rest <- acquireRest
                 pure (FileHandle path file : rest)) (pure []) paths
           either (raise . FileResourcesError . displayException) pure outcome
-      in openedFiles
+      in getOpenedFiles
 
 instance FileSessionInputs m => FileSessionEffect m where
   openFiles =
@@ -156,7 +156,7 @@ instance FinishInspectionInputs m => FinishInspectionEffect m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "9562c69fc91f03bd3009bddb0179166c"
+handlerSourceFingerprint = Just "f82467c6b7e00d8bf10892761dc37206"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

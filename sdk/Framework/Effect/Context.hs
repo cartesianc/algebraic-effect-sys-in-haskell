@@ -3,7 +3,7 @@
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Effect.Context
   ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext
-  , projectContext, atomicHandle, atomicScope
+  , projectContext, atomicHandle, atomicScope, readHistory, streamInput
   ) where
 
 import Framework.Effect.Contract
@@ -11,6 +11,7 @@ import Framework.Effect.Contract
 import Control.Monad (forM_, when)
 import Control.Monad.Except (MonadError, catchError, throwError)
 import Data.Maybe (fromMaybe)
+import Framework.Effect.History (History, currentHistory)
 
 data ContextAccess = RequestValue | RequireValue deriving (Eq, Show)
 
@@ -114,6 +115,30 @@ projectContext
 projectContext producer contract wrap routes project = do
   base <- provideContext producer contract wrap routes
   maybe (failEffect producer (wrap (CaseNotSelected contract)) (show (CaseNotSelected contract))) pure (project base)
+
+-- 持续资产的 require：先用本次调用已经取得的视图（lifelong 交付或此前的会话读取）。
+-- 没有视图时，Receive 资产由 interpreter 托管的会话交付当前历史；有 request 的持续资产
+-- 在 lifelong 外按普通 require 取得一个值（已捕获、可见来源或求值一次 request），呈现为单条视图。
+readHistory
+  :: (ContextStore environment m, MonadError (Failure cause) m)
+  => String -> (ContextFault -> cause) -> [(String, ContextAccess)]
+  -> (environment -> Maybe value) -> Maybe (m value) -> m (History value)
+readHistory contextName wrap accesses select produce = requireContext contextName wrap accesses $ do
+  captured <- readContextHistory contextName select
+  case captured of
+    Just history -> pure history
+    Nothing -> case produce of
+      Just production -> currentHistory <$> readBoundContext contextName wrap Nothing select (Just production)
+      Nothing -> do
+        delivered <- awaitContextHistory contextName select
+        maybe (failEffect contextName (wrap ContextNotInitialized)
+          (contextName ++ ": no stream session can deliver here")) pure delivered
+
+-- 解析器读取本次原始输入；只有 SDK 在会话中调用解析器时才安装。
+streamInput :: (ContextStore environment m, MonadError (Failure cause) m) => String -> (ContextFault -> cause) -> m String
+streamInput contextName wrap = streamRawInput >>= maybe
+  (failEffect contextName (wrap ContextNotInitialized)
+    (contextName ++ ": no stream input is installed outside a stream parser call")) pure
 
 -- Excu.handler 的生成入口：方法体每次调用都执行。
 atomicHandle

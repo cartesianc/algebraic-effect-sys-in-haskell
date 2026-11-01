@@ -1,6 +1,6 @@
 # 静态 Prototype、运行图与 ScopeTree
 
-本文是[主设计第 5 章](LATEST_DESIGN.md)引用的详细规范，负责 Prototype、来源分析、RuntimeGraph、ScopeTree 与缓存。范围为 Stage 1/2 当前协议；Stream 的拟议字段及持续执行接入统一见 [Stream 第 10 节](STREAM_LIFELONG.md#10-生成和运行的实现边界)，尚未实现。
+本文是[主设计第 5 章](LATEST_DESIGN.md)引用的详细规范，负责 Prototype、来源分析、RuntimeGraph、ScopeTree 与缓存。范围为 Stage 1/2 的协议；Stream／lifelong 在原型中的表示（`LifelongAt`、会话挂载、`protoSessions`、`FromSession`）见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static)，运行接入见[第 7 节](STREAM_LIFELONG.md#sessions)。
 
 
 业务入口仍为 `main = interpreter ast effects`，手写 handler 仍使用原生 Haskell 的 `instance`、`do`、模式匹配和方法引用。`Framework.Prototype` 在 gencode 阶段统一构建注册、方法、workflow、链定义与挂载、effect graph 和 ScopeTree，发射唯一的 `generatedPrototype :: SDK.Prototype MethodGen` 显式 ADT 常量。运行时校验并直接使用这份原型，不预执行 Context 或资源 IO。
@@ -17,14 +17,15 @@
 | --- | --- | --- |
 | 注册与方法 | `protoEffects`、`protoMethods` | 集中保存能力、取值路由、挂接和显式方法结构 |
 | 链定义 | `protoChainDefinitions` | 用 `OriginChain` 与 `ContextChain` 区分原始操作链和 Context 生产／读取链；按入口方法识别 |
-| AST 挂载 | `protoWorkflow`、`protoChains` | 每个 node 和 alternative 选择读取各一条挂载记录，按 `NodeId` 识别 |
+| AST 挂载 | `protoWorkflow`、`protoChains` | 每个 node、alternative 选择读取和会话生产步骤各一条挂载记录（`NodeChain`／`SelectorChain`／`SessionChain`），按 `NodeId` 识别 |
+| 持续执行 | `protoWorkflow` 中的 `LifelongAt`、`protoSessions` | lifelong 的单元、订阅与会话；interpreter 托管的会话；见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static) |
 | 运行实例 | 活动 chain、Context 绑定出身、scope 实例与入口使用登记 | 运行图共享静态原型，根据实际调用更新；不反向修改定义 |
 
-`NodeId = [Int]` 是当前原型快照内的 AST 下标路径：根为 `[]`，普通子项从零编号；alternative 的选择读取链使用该分支路径加 `[-1]`。同一个 origin 末端挂载两次会有两个 `NodeId`，共享方法定义。Context 链经 demand 或挂接进入，定义本身没有虚构的 AST 位置。编辑 AST 后重新生成编号；这些路径不充当跨快照稳定 key 或运行调用序号。
+`NodeId = [Int]` 是当前原型快照内的 AST 下标路径：根为 `[]`，普通子项从零编号；alternative 的选择读取链使用该分支路径加 `[-1]`；lifelong 的会话步骤使用 lifelong 路径加 `[-1, 会话序号, 步骤]`，interpreter 托管的会话步骤使用 `[-2, 会话序号, 步骤]`。同一个 origin 末端挂载两次会有两个 `NodeId`，共享方法定义。Context 链经 demand 或挂接进入，定义本身没有虚构的 AST 位置。编辑 AST 后重新生成编号；这些路径不充当跨快照稳定 key 或运行调用序号。
 
 链事实和标准查询由 `Framework.Prototype` 统一提供。Codegen 读取这些事实生成接口与包装，Execution 读取挂载关系装配闭包，运行图共享这份原型并保存活动实例关系。运行图不累计完整方法调用历史。Stage 2 由 `chainDrives`、`chainReads` 和 `protoSources` 保存可能生产、缺值读取与可见来源候选；runtime 按 origin 读取和加锁。清理与 Error 边界保留。SDK 当前采用 Haskell ADT，不增加 JSON 或外部 LSP 协议。
 
-## 运行图与两种链启动
+## 运行图与链启动
 
 运行身份由 `Framework.Effect.Runtime.Identity` 定义，活动关系由 `Framework.Effect.Runtime.Graph` 管理。一次 interpreter 运行共享静态 Prototype 引用及运行图；活动 chain 引用其静态链定义，scope 实例引用其 Scoped 定义，Context 绑定保存产生它时的 `Execution`。
 
@@ -37,14 +38,16 @@ data Execution
   | CleanupExecution Origin String Int
 ```
 
-`Origin` 区分一次 AST 入口执行，`ActivationId` 区分运行图中的一次活动 chain。`RequestBoot` 的字符串是现有 Context effect 注册名；`CleanupExecution` 保存原业务 origin、scope 注册名及现有实例编号，不新增业务 key。Context 的嵌套生产有新的 activation，但普通生产沿用外层业务 origin。
+`Origin` 区分一次根入口执行（AST 入口或会话生产步骤），`ActivationId` 区分运行图中的一次活动 chain。`RequestBoot` 的字符串是现有 Context effect 注册名；`CleanupExecution` 保存原业务 origin、scope 注册名及现有实例编号，不新增业务 key。Context 的嵌套生产有新的 activation，但普通生产沿用外层业务 origin。
 
 `RuntimeGraph` 用存在类型包装保存实际的 `Prototype MethodGen` 和 `ChainDefinition MethodGen`，不把图转换为字符串副本。`runtimeScopes` 引用原有 scope 控制对象；`runtimeAssets` 按 origin 保存发布时无 owner 的业务绑定，后续 claim 保留该 publication 引用；open 内一开始就有 owner 的产物仍只保存在 scope／局部快照。`runtimeForcing` 按 origin 和 Context 来源分配求值锁。活动表中的每条 `Activation` 保存父 activation、启动方式、`Execution`、静态链定义、当前绑定 `IORef` 和 `ScopeUser`；执行器和活动表共享这些运行引用。
 
-链有两种启动边界：
+有限 workflow 使用以下两种启动边界：
 
 1. **AST 启动**：Node 或 alternative 的选择读取启动选定入口，建立本次 origin 及入口使用登记。
 2. **Context 启动**：实际 `request` 生产建立 ctx chain 记录，包住生产、成功发布和返回。嵌套 ctx 启动继承外层 origin 和入口使用登记；返回只结束本次生产记录，不撤销整个入口对 scope 的使用。读取已有绑定的 `require` 没有新 activation；缺值求值和挂接注入实际生产时经过同一启动边界。
+
+Stage 3 复用这两个 Boot 构造：会话的每个生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。会话步骤共用会话的 ScopeUser，lifelong 的消费 target 则每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
 
 这里的“入口使用登记”是原有有限使用闭包的资源含义：一次 AST 入口内，实际 open／require 选中的 scope 计入同一份使用。`ScopeUser` 保留原有 `Unique` 协调身份，并新增 `scopeUserExecution`；同一入口的 ctx chain 使用同一个 `ScopeUser`。`scopeUsers` 同时携带使用者身份与 `Execution`，不以 AST 位置替代并发使用协调。
 
@@ -63,16 +66,16 @@ ScopeTree 仍是独立的静态构树结果，保留路径分析、注册前提�
 来源分析在生成期使用规范化、尚未并入挂接注入的方法体，以及未被手写覆盖的默认 require 集合，区分显式生产、挂接注入和缺值时的条件生产；这些是构建过程中的局部数据，不额外发射到 runtime。沿有限方法及 workflow 路径计算每链的 `chainDrives`、`chainReads`，为 `ReadPoint NodeId 基础契约` 保存：
 
 ```haskell
-data Source = FromOwnChain | FromChains [NodeId]
+data Source = FromOwnChain | FromChains [NodeId] | FromSession
 ```
 
-`FromOwnChain` 表示缺值时按既有规则由当前入口生产；`FromChains` 保存许可的可见前驱候选。前驱必须由 AST 保证先于当前入口完成，alternative 选择读取先于其候选；parallel 兄弟互不可见。候选可有多个，生成期只要求在需要跨链解析的缺值路径上，同时可见的实际来源至多一个。已捕获绑定的其他路径上，这些节点可以共同发布，由当前快照确定读取值。证明考虑 alternative 和“上游没有发布才触发 fallback”的条件关系；不能以最后完成、距离最近或最后写入替代唯一性。
+`FromSession` 只用于挂在 Stream 下的持续资产：没有本次交付时由 interpreter 托管的会话交付，不查询普通来源。`FromOwnChain` 表示缺值时按既有规则由当前入口生产；`FromChains` 保存许可的可见前驱候选。前驱必须由 AST 保证先于当前入口完成，alternative 选择读取先于其候选；parallel 兄弟互不可见。候选可有多个，生成期只要求在需要跨链解析的缺值路径上，同时可见的实际来源至多一个。已捕获绑定的其他路径上，这些节点可以共同发布，由当前快照确定读取值。证明考虑 alternative 和“上游没有发布才触发 fallback”的条件关系；不能以最后完成、距离最近或最后写入替代唯一性。
 
 方法已经捕获绑定的路径不需要跨链解析；某些路径已捕获、其他路径尚未捕获是合法的。只对后者检查唯一来源。`Recover` 保留可能失败前缀，不假定正文生产全部完成。`Source` 只保存最终候选集合，不把路径证明伪装成已保存的数据；运行校验检查引用和可见性等字段自洽，不重跑来源分析，runtime 再核对本次实际已发布来源的唯一性。
 
 分析状态只保存本链或后续 workflow 可能读取的基础契约。读取集合从已有 `chainReaches` 保守推导，包含默认／覆盖的读取方法，以及 consumer 的 require 声明将直接生产方法调用路由为读取的情况。每个方法出口先投影发布与捕获状态，再去重；顺序节点向后传递后续仍需的发布，parallel 的各分支仍从同一前置状态分析，结果先投影再组合。`chainDrives`、`chainReads` 与来源候选单独累计，裁剪不删除这些事实，也不改变 runtime 的绑定保存。方法失败仍携带相关状态供 `Recover`／吞错注入继续；workflow 失败没有恢复后继，发布组合可直接丢弃。
 
-这样可消除独立、后续无人读取的可选发布造成的 `2^N` 状态组合；仍同时相关的契约保留原有路径关联，最坏状态数仍可能指数增长。本次优化不声称整体分析具有线性复杂度。
+这样可消除独立、后续无人读取的可选发布造成的 `2^N` 状态组合；仍同时相关的契约保留原有路径关联，最坏状态数仍可能指数增长。本次优化不声称整体分析具有线性复杂度。Stage 3 的 lifelong 当前先组合全部会话的成功交付状态，再分析各消费单元，尚未按单元提前裁剪无关会话组合；这是单独的已知复杂度问题，见 [TODO](TODO.md#stage-3-limitations)。
 
 无 owner 资产运行时依次查当前捕获、静态许可的实际发布、当前 origin 的按需求值。候选本次没有值且既有协议允许生产时，fallback 是一次普通 request：生产、按当前 origin 发布、返回，后续 AST 可见的读取能复用它。因而 fallback 也必须进入后继的来源分析，不能只固定最初候选而禁止后来合法生产的值传播。资源契约即使保留读取点，也仍由 owner 协议定位，缺值时不因来源表为空而自动生产；诊断和自动 cleanup 的缺值例外同样保留。按需求值锁按当前 origin 与 Context 来源分配；显式 request 每次执行，不参与自动合并。
 
@@ -202,4 +205,4 @@ AST node 末端必须是原始句柄，不能是 Context。gencode 从每个挂�
 
 任一 Context 的生产方法无法从这些入口到达时，生成器报错。挂接的 Context 经其他方法回到原句柄同样报错，不把直接输出回答与间接递归混为一谈。驱动检查与末端检查每次生成执行，缓存命中不跳过；首次缺少 Handlers、尚无方法结构时先生成契约，待方法实现后补齐完整检查。
 
-这项静态检查证明存在允许的结构路径，不证明本次条件分支一定生产。Stream 的独立启动和后续驱动还需 [BootPlan 规则](STREAM_LIFELONG.md#4-自动推导-bootplan)，不能仅由可达性推出。
+这项静态检查证明存在允许的结构路径，不证明本次条件分支一定生产。Stream 的生产方式按 [BootPlan 规则](STREAM_LIFELONG.md#bootplan)只由生产方注册决定，不由可达性推出。

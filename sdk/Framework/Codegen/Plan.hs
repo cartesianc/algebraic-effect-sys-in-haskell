@@ -18,6 +18,7 @@ renderPrototype prototype = unlines
   , ("protoEffects", list renderEffect (P.protoEffects prototype))
   , ("protoMethods", list renderMethod (P.protoMethods prototype))
   , ("protoWorkflow", renderWorkflow (P.protoWorkflow prototype))
+  , ("protoSessions", list renderSession (P.protoSessions prototype))
   , ("protoChains", list renderChain (P.protoChains prototype))
   , ("protoChainDefinitions", list renderChainDefinition (P.protoChainDefinitions prototype))
   , ("protoGraph", renderGraph (P.protoGraph prototype))
@@ -102,10 +103,12 @@ renderTyping (R.Excu method) = constructor "Excu" [show method]
 renderTyping (R.Scoped opening closing) = constructor "Scoped" [show opening, show closing]
 renderTyping (R.Error detecting resolving handled) =
   constructor "Error" [show detecting, show resolving, list renderHandles handled]
-renderTyping (R.Context producing) = constructor "Context" [maybeValue renderRequester producing]
+renderTyping (R.Context declared requesting requiring streaming) =
+  constructor "Context" [renderAsset declared, show requesting, show requiring, show streaming]
+renderTyping (R.Stream method) = constructor "Stream" [show method]
 
-renderRequester :: R.Requester -> String
-renderRequester (R.Requester method representation) = constructor "Requester" [show method, renderType representation]
+renderAsset :: R.AssetDecl -> String
+renderAsset (R.AssetDecl selected representation) = constructor "AssetDecl" [show selected, renderType representation]
 
 renderType :: R.TypeRef -> String
 renderType (R.TypeRef selected) = constructor "TypeRef" [show selected]
@@ -141,6 +144,7 @@ renderEffect effect = record "EffectProto"
   , ("effectNearestScopes", show (P.effectNearestScopes effect))
   , ("effectResource", show (P.effectResource effect))
   , ("effectContextDependencies", show (P.effectContextDependencies effect))
+  , ("effectContinuous", show (P.effectContinuous effect))
   ]
 
 renderMethod :: G.MethodDefinition String -> String
@@ -164,6 +168,8 @@ renderWorkflow (P.ChainedAt node children) = blockConstructor "ChainedAt" [show 
 renderWorkflow (P.ParallelAt node children) = blockConstructor "ParallelAt" [show node, blockList renderWorkflow children]
 renderWorkflow (P.AlternativeAt node alternative children) =
   blockConstructor "AlternativeAt" [show node, renderAlternative alternative, blockList renderWorkflow children]
+renderWorkflow (P.LifelongAt node lifelong children) =
+  blockConstructor "LifelongAt" [show node, renderLifelong lifelong, blockList renderWorkflow children]
 
 renderAlternative :: P.AlternativeProto -> String
 renderAlternative alternative = record "AlternativeProto"
@@ -171,6 +177,24 @@ renderAlternative alternative = record "AlternativeProto"
   , ("alternativeSelector", show (P.alternativeSelector alternative))
   , ("alternativeCases", show (P.alternativeCases alternative))
   ]
+
+renderLifelong :: P.LifelongProto -> String
+renderLifelong lifelong = record "LifelongProto"
+  [ ("lifelongUnits", show (P.lifelongUnits lifelong))
+  , ("lifelongSubscriptions", show (P.lifelongSubscriptions lifelong))
+  , ("lifelongSessions", list renderSession (P.lifelongSessions lifelong))
+  ]
+
+renderSession :: P.SessionProto -> String
+renderSession session = record "SessionProto"
+  [ ("sessionAsset", show (P.sessionAsset session))
+  , ("sessionPlan", renderBootPlan (P.sessionPlan session))
+  , ("sessionMounts", show (P.sessionMounts session))
+  ]
+
+renderBootPlan :: P.BootPlan -> String
+renderBootPlan (P.Receive source) = constructor "Receive" [show source]
+renderBootPlan P.RepeatRequest = "SDK.RepeatRequest"
 
 renderChain :: P.ChainProto String -> String
 renderChain chain = record "ChainProto"
@@ -227,3 +251,4 @@ renderReadPoint point = constructor "ReadPoint" [show (P.readNode point), show (
 renderSource :: P.Source -> String
 renderSource (P.FromChains nodes) = constructor "FromChains" [list show nodes]
 renderSource P.FromOwnChain = "SDK.FromOwnChain"
+renderSource P.FromSession = "SDK.FromSession"

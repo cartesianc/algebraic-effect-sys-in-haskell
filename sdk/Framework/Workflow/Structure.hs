@@ -33,6 +33,10 @@ renderStructure prototype workflowAST = do
     tree = protoScopes prototype
     rendered =
       ["Workflow"] ++ renderWorkflow 1 (protoWorkflow prototype)
+      ++ ["", "Interpreter sessions (booted by a finite require of a Receive asset; kept until exit)"]
+      ++ ["  session " ++ sessionAsset session ++ " " ++ describePlan (sessionPlan session)
+           ++ " mounts " ++ show (sessionMounts session)
+         | session <- protoSessions prototype]
       ++ ["", "Chain definitions"]
       ++ ["  " ++ show (definitionKind definition) ++ " " ++ definitionEffect definition
            ++ " (" ++ show (definitionEntry definition) ++ ")"
@@ -77,6 +81,7 @@ renderStructure prototype workflowAST = do
       [] -> []
     edge (before, after) = "  " ++ show before ++ " -> " ++ show after
     sourceDescription FromOwnChain = "own chain (request when missing)"
+    sourceDescription FromSession = "interpreter session (current history)"
     sourceDescription (FromChains nodes) = "visible candidates " ++ intercalate ", " (map describeNode nodes)
     describeNode node = case lookupChain prototype node of
       Right chain -> show node ++ " " ++ chainTerminal chain
@@ -93,3 +98,14 @@ renderStructure prototype workflowAST = do
           branch node ("Alternative on " ++ alternativeContract description
             ++ " (selector " ++ show (alternativeSelector description)
             ++ ", cases " ++ show (alternativeCases description) ++ ")") children
+        LifelongAt node description children ->
+          let inner = prefix ++ "  "
+          in (prefix ++ show node ++ " Lifelong (units " ++ show (lifelongUnits description) ++ ")")
+            : [inner ++ "session " ++ sessionAsset session ++ " " ++ describePlan (sessionPlan session)
+                ++ " mounts " ++ show (sessionMounts session)
+              | session <- lifelongSessions description]
+            ++ [inner ++ "subscribes " ++ show target ++ " <- " ++ asset
+               | (target, asset) <- lifelongSubscriptions description]
+            ++ concatMap (renderWorkflow (depth + 1)) children
+    describePlan (Receive source) = "Receive from " ++ source
+    describePlan RepeatRequest = "RepeatRequest"

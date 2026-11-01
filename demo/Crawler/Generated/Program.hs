@@ -4,7 +4,7 @@
 -- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
 module Crawler.Generated.Program where
 
-import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Requester(..), Handles(..), Demand(..), Access(..), TypeRef(..))
+import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), AssetDecl(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.SDK as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
 import Crawler.Generated.Effects hiding (request, require)
@@ -18,7 +18,9 @@ data Results = FetchPageResult (Produce FetchPage) | FetchLinkedPageResult (Prod
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。
 -- 第二个列表是各转折契约的读取末端：按 require 取得资产，返回它当前的构造器名。
-compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String])
+-- 第三个列表是各持续资产的生产步骤：会话按需启动，解析器或 request 自己发布一次资产。
+compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]
+                     , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
@@ -27,6 +29,7 @@ compiledEntries = do
       , SDK.targetApp "PrintPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrintPageResult <$> (() <$ printPage)))))
       , SDK.targetApp "PrintLinkedPage" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrintLinkedPageResult <$> (() <$ printLinkedPage)))))
       ]
+    , []
     , []
     )
 
@@ -41,13 +44,15 @@ generatedPrototype =
     { SDK.protoRegistrations =
         [ SDK.EffectSpec
             { SDK.name = "StartPage"
-            , SDK.typing = SDK.Context (Just (SDK.Requester ("startURL") (SDK.TypeRef ("PageURL"))))
+            , SDK.typing =
+                SDK.Context (SDK.AssetDecl ("StartURL") (SDK.TypeRef ("PageURL"))) (Just ()) (Just ()) (Nothing)
             , SDK.input = "Root"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "LinkedPage"
-            , SDK.typing = SDK.Context (Just (SDK.Requester ("linkedURL") (SDK.TypeRef ("PageURL"))))
+            , SDK.typing =
+                SDK.Context (SDK.AssetDecl ("LinkedURL") (SDK.TypeRef ("PageURL"))) (Just ()) (Just ()) (Nothing)
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -61,7 +66,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "ExtractPage"
             , SDK.typing =
-                SDK.Context (Just (SDK.Requester ("startPageSummary") (SDK.TypeRef ("PageSummary"))))
+                SDK.Context
+                  (SDK.AssetDecl ("StartPageSummary") (SDK.TypeRef ("PageSummary")))
+                  (Just ())
+                  (Just ())
+                  (Nothing)
             , SDK.input = "FetchPage"
             , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("StartURL")]
             }
@@ -81,7 +90,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "ExtractLinkedPage"
             , SDK.typing =
-                SDK.Context (Just (SDK.Requester ("linkedPageSummary") (SDK.TypeRef ("PageSummary"))))
+                SDK.Context
+                  (SDK.AssetDecl ("LinkedPageSummary") (SDK.TypeRef ("PageSummary")))
+                  (Just ())
+                  (Just ())
+                  (Nothing)
             , SDK.input = "FetchLinkedPage"
             , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("LinkedURL")]
             }
@@ -94,7 +107,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "SessionContext"
             , SDK.typing =
-                SDK.Context (Just (SDK.Requester ("crawlSessionInfo") (SDK.TypeRef ("SessionInfo"))))
+                SDK.Context
+                  (SDK.AssetDecl ("CrawlSessionInfo") (SDK.TypeRef ("SessionInfo")))
+                  (Just ())
+                  (Just ())
+                  (Nothing)
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -113,7 +130,8 @@ generatedPrototype =
             { SDK.effectName = "StartPage"
             , SDK.effectKind = SDK.ContextKind
             , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ContextRequest, StartURLGen), (SDK.ContextRequire, ReadStartURLGen)]
+            , SDK.effectMethods =
+                [(SDK.ContextRequest, GetStartURLGen), (SDK.ContextRequire, ReadStartURLGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Just "StartURL"
             , SDK.effectBranches = []
@@ -126,12 +144,14 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "LinkedPage"
             , SDK.effectKind = SDK.ContextKind
             , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ContextRequest, LinkedURLGen), (SDK.ContextRequire, ReadLinkedURLGen)]
+            , SDK.effectMethods =
+                [(SDK.ContextRequest, GetLinkedURLGen), (SDK.ContextRequire, ReadLinkedURLGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Just "LinkedURL"
             , SDK.effectBranches = []
@@ -144,6 +164,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FetchPage"
@@ -165,13 +186,14 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["CrawlSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","StartPage"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "ExtractPage"
             , SDK.effectKind = SDK.ContextKind
             , SDK.effectInput = "FetchPage"
             , SDK.effectMethods =
-                [(SDK.ContextRequest, StartPageSummaryGen), (SDK.ContextRequire, ReadStartPageSummaryGen)]
+                [(SDK.ContextRequest, GetStartPageSummaryGen), (SDK.ContextRequire, ReadStartPageSummaryGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("StartURL") ("StartPage")]
             , SDK.effectProduces = Just "StartPageSummary"
             , SDK.effectBranches = []
@@ -184,6 +206,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["CrawlSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","StartPage"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "PrintPage"
@@ -203,6 +226,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","StartPage","ExtractPage"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FetchLinkedPage"
@@ -224,13 +248,14 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["CrawlSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","LinkedPage"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "ExtractLinkedPage"
             , SDK.effectKind = SDK.ContextKind
             , SDK.effectInput = "FetchLinkedPage"
             , SDK.effectMethods =
-                [(SDK.ContextRequest, LinkedPageSummaryGen), (SDK.ContextRequire, ReadLinkedPageSummaryGen)]
+                [(SDK.ContextRequest, GetLinkedPageSummaryGen), (SDK.ContextRequire, ReadLinkedPageSummaryGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("LinkedURL") ("LinkedPage")]
             , SDK.effectProduces = Just "LinkedPageSummary"
             , SDK.effectBranches = []
@@ -243,6 +268,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["CrawlSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","LinkedPage"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "PrintLinkedPage"
@@ -262,13 +288,14 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","LinkedPage","ExtractLinkedPage"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "SessionContext"
             , SDK.effectKind = SDK.ContextKind
             , SDK.effectInput = "Root"
             , SDK.effectMethods =
-                [(SDK.ContextRequest, CrawlSessionInfoGen), (SDK.ContextRequire, ReadCrawlSessionInfoGen)]
+                [(SDK.ContextRequest, GetCrawlSessionInfoGen), (SDK.ContextRequire, ReadCrawlSessionInfoGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Just "CrawlSessionInfo"
             , SDK.effectBranches = []
@@ -281,6 +308,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "CrawlSession"
@@ -303,21 +331,22 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["CrawlSession"]
             , SDK.effectResource = Just "SessionContext"
             , SDK.effectContextDependencies = ["SessionContext"]
+            , SDK.effectContinuous = False
             }
         ]
     , SDK.protoMethods =
-        [ SDK.MethodDefinition (StartURLGen) (StartURLGen) (SDK.ContextRequest) (SDK.Empty)
+        [ SDK.MethodDefinition (GetStartURLGen) (GetStartURLGen) (SDK.ContextRequest) (SDK.Empty)
         , SDK.MethodDefinition
             (ReadStartURLGen)
-            (StartURLGen)
+            (GetStartURLGen)
             (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (StartURLGen)]))
-        , SDK.MethodDefinition (LinkedURLGen) (LinkedURLGen) (SDK.ContextRequest) (SDK.Empty)
+            (SDK.Choice ([SDK.Empty, SDK.Call (GetStartURLGen)]))
+        , SDK.MethodDefinition (GetLinkedURLGen) (GetLinkedURLGen) (SDK.ContextRequest) (SDK.Empty)
         , SDK.MethodDefinition
             (ReadLinkedURLGen)
-            (LinkedURLGen)
+            (GetLinkedURLGen)
             (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (LinkedURLGen)]))
+            (SDK.Choice ([SDK.Empty, SDK.Call (GetLinkedURLGen)]))
         , SDK.MethodDefinition
             (FetchStartPageGen)
             (FetchStartPageGen)
@@ -326,21 +355,21 @@ generatedPrototype =
               SDK.Sequence
                 (
                   [ SDK.Sequence
-                      ([SDK.Call (OpenCrawlSessionGen), SDK.Call (StartURLGen), SDK.Call (ReadCrawlSessionInfoGen)])
+                      ([SDK.Call (OpenCrawlSessionGen), SDK.Call (GetStartURLGen), SDK.Call (ReadCrawlSessionInfoGen)])
                   , SDK.Choice ([SDK.Empty, SDK.Sequence ([SDK.Sequence ([SDK.Empty, SDK.Call (ReadStartURLGen)])])])
                   ]
                 )
             )
         , SDK.MethodDefinition
-            (StartPageSummaryGen)
-            (StartPageSummaryGen)
+            (GetStartPageSummaryGen)
+            (GetStartPageSummaryGen)
             (SDK.ContextRequest)
             (SDK.Sequence ([SDK.Call (FetchStartPageGen), SDK.Call (ReadStartURLGen)]))
         , SDK.MethodDefinition
             (ReadStartPageSummaryGen)
-            (StartPageSummaryGen)
+            (GetStartPageSummaryGen)
             (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (StartPageSummaryGen)]))
+            (SDK.Choice ([SDK.Empty, SDK.Call (GetStartPageSummaryGen)]))
         , SDK.MethodDefinition
             (PrintPageGen)
             (PrintPageGen)
@@ -354,37 +383,41 @@ generatedPrototype =
               SDK.Sequence
                 (
                   [ SDK.Sequence
-                      ([SDK.Call (OpenCrawlSessionGen), SDK.Call (LinkedURLGen), SDK.Call (ReadCrawlSessionInfoGen)])
+                      ([SDK.Call (OpenCrawlSessionGen), SDK.Call (GetLinkedURLGen), SDK.Call (ReadCrawlSessionInfoGen)])
                   , SDK.Choice ([SDK.Empty, SDK.Sequence ([SDK.Sequence ([SDK.Empty, SDK.Call (ReadLinkedURLGen)])])])
                   ]
                 )
             )
         , SDK.MethodDefinition
-            (LinkedPageSummaryGen)
-            (LinkedPageSummaryGen)
+            (GetLinkedPageSummaryGen)
+            (GetLinkedPageSummaryGen)
             (SDK.ContextRequest)
             (SDK.Sequence ([SDK.Call (FetchLinkedPageGen), SDK.Call (ReadLinkedURLGen)]))
         , SDK.MethodDefinition
             (ReadLinkedPageSummaryGen)
-            (LinkedPageSummaryGen)
+            (GetLinkedPageSummaryGen)
             (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (LinkedPageSummaryGen)]))
+            (SDK.Choice ([SDK.Empty, SDK.Call (GetLinkedPageSummaryGen)]))
         , SDK.MethodDefinition
             (PrintLinkedPageGen)
             (PrintLinkedPageGen)
             (SDK.HandlerMethod)
             (SDK.Call (ReadLinkedPageSummaryGen))
-        , SDK.MethodDefinition (CrawlSessionInfoGen) (CrawlSessionInfoGen) (SDK.ContextRequest) (SDK.Empty)
+        , SDK.MethodDefinition
+            (GetCrawlSessionInfoGen)
+            (GetCrawlSessionInfoGen)
+            (SDK.ContextRequest)
+            (SDK.Empty)
         , SDK.MethodDefinition
             (ReadCrawlSessionInfoGen)
-            (CrawlSessionInfoGen)
+            (GetCrawlSessionInfoGen)
             (SDK.ContextRequire)
             (SDK.Empty)
         , SDK.MethodDefinition
             (OpenCrawlSessionGen)
             (OpenCrawlSessionGen)
             (SDK.ScopeOpen)
-            (SDK.Call (CrawlSessionInfoGen))
+            (SDK.Call (GetCrawlSessionInfoGen))
         , SDK.MethodDefinition
             (CloseCrawlSessionGen)
             (OpenCrawlSessionGen)
@@ -411,6 +444,7 @@ generatedPrototype =
                 )
             ]
           )
+    , SDK.protoSessions = []
     , SDK.protoChains =
         [ SDK.ChainProto
             { SDK.chainNode = [0,0]
@@ -420,11 +454,11 @@ generatedPrototype =
             , SDK.chainReaches =
                 [ FetchStartPageGen
                 , OpenCrawlSessionGen
-                , CrawlSessionInfoGen
-                , StartURLGen
+                , GetCrawlSessionInfoGen
+                , GetStartURLGen
                 , ReadCrawlSessionInfoGen
                 , ReadStartURLGen
-                , StartPageSummaryGen
+                , GetStartPageSummaryGen
                 ]
             , SDK.chainDrives = ["StartPageSummary","StartURL"]
             , SDK.chainReads = []
@@ -438,11 +472,11 @@ generatedPrototype =
             , SDK.chainReaches =
                 [ FetchLinkedPageGen
                 , OpenCrawlSessionGen
-                , CrawlSessionInfoGen
-                , LinkedURLGen
+                , GetCrawlSessionInfoGen
+                , GetLinkedURLGen
                 , ReadCrawlSessionInfoGen
                 , ReadLinkedURLGen
-                , LinkedPageSummaryGen
+                , GetLinkedPageSummaryGen
                 ]
             , SDK.chainDrives = ["LinkedPageSummary","LinkedURL"]
             , SDK.chainReads = []
@@ -456,11 +490,11 @@ generatedPrototype =
             , SDK.chainReaches =
                 [ PrintPageGen
                 , ReadStartPageSummaryGen
-                , StartPageSummaryGen
+                , GetStartPageSummaryGen
                 , FetchStartPageGen
                 , OpenCrawlSessionGen
-                , CrawlSessionInfoGen
-                , StartURLGen
+                , GetCrawlSessionInfoGen
+                , GetStartURLGen
                 , ReadCrawlSessionInfoGen
                 , ReadStartURLGen
                 ]
@@ -476,11 +510,11 @@ generatedPrototype =
             , SDK.chainReaches =
                 [ PrintLinkedPageGen
                 , ReadLinkedPageSummaryGen
-                , LinkedPageSummaryGen
+                , GetLinkedPageSummaryGen
                 , FetchLinkedPageGen
                 , OpenCrawlSessionGen
-                , CrawlSessionInfoGen
-                , LinkedURLGen
+                , GetCrawlSessionInfoGen
+                , GetLinkedURLGen
                 , ReadCrawlSessionInfoGen
                 , ReadLinkedURLGen
                 ]
@@ -493,26 +527,26 @@ generatedPrototype =
         [ SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "StartPage"
-            , SDK.definitionEntry = StartURLGen
-            , SDK.definitionReaches = [StartURLGen]
+            , SDK.definitionEntry = GetStartURLGen
+            , SDK.definitionReaches = [GetStartURLGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "StartPage"
             , SDK.definitionEntry = ReadStartURLGen
-            , SDK.definitionReaches = [ReadStartURLGen, StartURLGen]
+            , SDK.definitionReaches = [ReadStartURLGen, GetStartURLGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "LinkedPage"
-            , SDK.definitionEntry = LinkedURLGen
-            , SDK.definitionReaches = [LinkedURLGen]
+            , SDK.definitionEntry = GetLinkedURLGen
+            , SDK.definitionReaches = [GetLinkedURLGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "LinkedPage"
             , SDK.definitionEntry = ReadLinkedURLGen
-            , SDK.definitionReaches = [ReadLinkedURLGen, LinkedURLGen]
+            , SDK.definitionReaches = [ReadLinkedURLGen, GetLinkedURLGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
@@ -521,23 +555,23 @@ generatedPrototype =
             , SDK.definitionReaches =
                 [ FetchStartPageGen
                 , OpenCrawlSessionGen
-                , CrawlSessionInfoGen
-                , StartURLGen
+                , GetCrawlSessionInfoGen
+                , GetStartURLGen
                 , ReadCrawlSessionInfoGen
                 , ReadStartURLGen
-                , StartPageSummaryGen
+                , GetStartPageSummaryGen
                 ]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ExtractPage"
-            , SDK.definitionEntry = StartPageSummaryGen
+            , SDK.definitionEntry = GetStartPageSummaryGen
             , SDK.definitionReaches =
-                [ StartPageSummaryGen
+                [ GetStartPageSummaryGen
                 , FetchStartPageGen
                 , OpenCrawlSessionGen
-                , CrawlSessionInfoGen
-                , StartURLGen
+                , GetCrawlSessionInfoGen
+                , GetStartURLGen
                 , ReadCrawlSessionInfoGen
                 , ReadStartURLGen
                 ]
@@ -548,11 +582,11 @@ generatedPrototype =
             , SDK.definitionEntry = ReadStartPageSummaryGen
             , SDK.definitionReaches =
                 [ ReadStartPageSummaryGen
-                , StartPageSummaryGen
+                , GetStartPageSummaryGen
                 , FetchStartPageGen
                 , OpenCrawlSessionGen
-                , CrawlSessionInfoGen
-                , StartURLGen
+                , GetCrawlSessionInfoGen
+                , GetStartURLGen
                 , ReadCrawlSessionInfoGen
                 , ReadStartURLGen
                 ]
@@ -564,11 +598,11 @@ generatedPrototype =
             , SDK.definitionReaches =
                 [ PrintPageGen
                 , ReadStartPageSummaryGen
-                , StartPageSummaryGen
+                , GetStartPageSummaryGen
                 , FetchStartPageGen
                 , OpenCrawlSessionGen
-                , CrawlSessionInfoGen
-                , StartURLGen
+                , GetCrawlSessionInfoGen
+                , GetStartURLGen
                 , ReadCrawlSessionInfoGen
                 , ReadStartURLGen
                 ]
@@ -580,23 +614,23 @@ generatedPrototype =
             , SDK.definitionReaches =
                 [ FetchLinkedPageGen
                 , OpenCrawlSessionGen
-                , CrawlSessionInfoGen
-                , LinkedURLGen
+                , GetCrawlSessionInfoGen
+                , GetLinkedURLGen
                 , ReadCrawlSessionInfoGen
                 , ReadLinkedURLGen
-                , LinkedPageSummaryGen
+                , GetLinkedPageSummaryGen
                 ]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ExtractLinkedPage"
-            , SDK.definitionEntry = LinkedPageSummaryGen
+            , SDK.definitionEntry = GetLinkedPageSummaryGen
             , SDK.definitionReaches =
-                [ LinkedPageSummaryGen
+                [ GetLinkedPageSummaryGen
                 , FetchLinkedPageGen
                 , OpenCrawlSessionGen
-                , CrawlSessionInfoGen
-                , LinkedURLGen
+                , GetCrawlSessionInfoGen
+                , GetLinkedURLGen
                 , ReadCrawlSessionInfoGen
                 , ReadLinkedURLGen
                 ]
@@ -607,11 +641,11 @@ generatedPrototype =
             , SDK.definitionEntry = ReadLinkedPageSummaryGen
             , SDK.definitionReaches =
                 [ ReadLinkedPageSummaryGen
-                , LinkedPageSummaryGen
+                , GetLinkedPageSummaryGen
                 , FetchLinkedPageGen
                 , OpenCrawlSessionGen
-                , CrawlSessionInfoGen
-                , LinkedURLGen
+                , GetCrawlSessionInfoGen
+                , GetLinkedURLGen
                 , ReadCrawlSessionInfoGen
                 , ReadLinkedURLGen
                 ]
@@ -623,11 +657,11 @@ generatedPrototype =
             , SDK.definitionReaches =
                 [ PrintLinkedPageGen
                 , ReadLinkedPageSummaryGen
-                , LinkedPageSummaryGen
+                , GetLinkedPageSummaryGen
                 , FetchLinkedPageGen
                 , OpenCrawlSessionGen
-                , CrawlSessionInfoGen
-                , LinkedURLGen
+                , GetCrawlSessionInfoGen
+                , GetLinkedURLGen
                 , ReadCrawlSessionInfoGen
                 , ReadLinkedURLGen
                 ]
@@ -635,8 +669,8 @@ generatedPrototype =
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "SessionContext"
-            , SDK.definitionEntry = CrawlSessionInfoGen
-            , SDK.definitionReaches = [CrawlSessionInfoGen]
+            , SDK.definitionEntry = GetCrawlSessionInfoGen
+            , SDK.definitionReaches = [GetCrawlSessionInfoGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -648,7 +682,7 @@ generatedPrototype =
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "CrawlSession"
             , SDK.definitionEntry = OpenCrawlSessionGen
-            , SDK.definitionReaches = [OpenCrawlSessionGen, CrawlSessionInfoGen]
+            , SDK.definitionReaches = [OpenCrawlSessionGen, GetCrawlSessionInfoGen]
             }
         ]
     , SDK.protoGraph =
@@ -662,7 +696,7 @@ generatedPrototype =
                     SDK.Sequence
                       (
                         [ SDK.Sequence
-                            ([SDK.Call (OpenCrawlSessionGen), SDK.Call (StartURLGen), SDK.Call (ReadCrawlSessionInfoGen)])
+                            ([SDK.Call (OpenCrawlSessionGen), SDK.Call (GetStartURLGen), SDK.Call (ReadCrawlSessionInfoGen)])
                         , SDK.Choice ([SDK.Empty, SDK.Sequence ([SDK.Sequence ([SDK.Empty, SDK.Call (ReadStartURLGen)])])])
                         ]
                       )
@@ -671,19 +705,23 @@ generatedPrototype =
                   (OpenCrawlSessionGen)
                   (OpenCrawlSessionGen)
                   (SDK.ScopeOpen)
-                  (SDK.Call (CrawlSessionInfoGen))
-              , SDK.MethodDefinition (CrawlSessionInfoGen) (CrawlSessionInfoGen) (SDK.ContextRequest) (SDK.Empty)
-              , SDK.MethodDefinition (StartURLGen) (StartURLGen) (SDK.ContextRequest) (SDK.Empty)
+                  (SDK.Call (GetCrawlSessionInfoGen))
+              , SDK.MethodDefinition
+                  (GetCrawlSessionInfoGen)
+                  (GetCrawlSessionInfoGen)
+                  (SDK.ContextRequest)
+                  (SDK.Empty)
+              , SDK.MethodDefinition (GetStartURLGen) (GetStartURLGen) (SDK.ContextRequest) (SDK.Empty)
               , SDK.MethodDefinition
                   (ReadCrawlSessionInfoGen)
-                  (CrawlSessionInfoGen)
+                  (GetCrawlSessionInfoGen)
                   (SDK.ContextRequire)
                   (SDK.Empty)
               , SDK.MethodDefinition
                   (ReadStartURLGen)
-                  (StartURLGen)
+                  (GetStartURLGen)
                   (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (StartURLGen)]))
+                  (SDK.Choice ([SDK.Empty, SDK.Call (GetStartURLGen)]))
               , SDK.MethodDefinition
                   (FetchLinkedPageGen)
                   (FetchLinkedPageGen)
@@ -692,17 +730,17 @@ generatedPrototype =
                     SDK.Sequence
                       (
                         [ SDK.Sequence
-                            ([SDK.Call (OpenCrawlSessionGen), SDK.Call (LinkedURLGen), SDK.Call (ReadCrawlSessionInfoGen)])
+                            ([SDK.Call (OpenCrawlSessionGen), SDK.Call (GetLinkedURLGen), SDK.Call (ReadCrawlSessionInfoGen)])
                         , SDK.Choice ([SDK.Empty, SDK.Sequence ([SDK.Sequence ([SDK.Empty, SDK.Call (ReadLinkedURLGen)])])])
                         ]
                       )
                   )
-              , SDK.MethodDefinition (LinkedURLGen) (LinkedURLGen) (SDK.ContextRequest) (SDK.Empty)
+              , SDK.MethodDefinition (GetLinkedURLGen) (GetLinkedURLGen) (SDK.ContextRequest) (SDK.Empty)
               , SDK.MethodDefinition
                   (ReadLinkedURLGen)
-                  (LinkedURLGen)
+                  (GetLinkedURLGen)
                   (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (LinkedURLGen)]))
+                  (SDK.Choice ([SDK.Empty, SDK.Call (GetLinkedURLGen)]))
               , SDK.MethodDefinition
                   (PrintPageGen)
                   (PrintPageGen)
@@ -710,12 +748,12 @@ generatedPrototype =
                   (SDK.Call (ReadStartPageSummaryGen))
               , SDK.MethodDefinition
                   (ReadStartPageSummaryGen)
-                  (StartPageSummaryGen)
+                  (GetStartPageSummaryGen)
                   (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (StartPageSummaryGen)]))
+                  (SDK.Choice ([SDK.Empty, SDK.Call (GetStartPageSummaryGen)]))
               , SDK.MethodDefinition
-                  (StartPageSummaryGen)
-                  (StartPageSummaryGen)
+                  (GetStartPageSummaryGen)
+                  (GetStartPageSummaryGen)
                   (SDK.ContextRequest)
                   (SDK.Sequence ([SDK.Call (FetchStartPageGen), SDK.Call (ReadStartURLGen)]))
               , SDK.MethodDefinition
@@ -725,36 +763,36 @@ generatedPrototype =
                   (SDK.Call (ReadLinkedPageSummaryGen))
               , SDK.MethodDefinition
                   (ReadLinkedPageSummaryGen)
-                  (LinkedPageSummaryGen)
+                  (GetLinkedPageSummaryGen)
                   (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (LinkedPageSummaryGen)]))
+                  (SDK.Choice ([SDK.Empty, SDK.Call (GetLinkedPageSummaryGen)]))
               , SDK.MethodDefinition
-                  (LinkedPageSummaryGen)
-                  (LinkedPageSummaryGen)
+                  (GetLinkedPageSummaryGen)
+                  (GetLinkedPageSummaryGen)
                   (SDK.ContextRequest)
                   (SDK.Sequence ([SDK.Call (FetchLinkedPageGen), SDK.Call (ReadLinkedURLGen)]))
               ]
           , SDK.graphRoots = [FetchStartPageGen, FetchLinkedPageGen, PrintPageGen, PrintLinkedPageGen]
           , SDK.graphReferences =
               [ (FetchStartPageGen, OpenCrawlSessionGen)
-              , (FetchStartPageGen, StartURLGen)
+              , (FetchStartPageGen, GetStartURLGen)
               , (FetchStartPageGen, ReadCrawlSessionInfoGen)
               , (FetchStartPageGen, ReadStartURLGen)
-              , (OpenCrawlSessionGen, CrawlSessionInfoGen)
-              , (ReadStartURLGen, StartURLGen)
+              , (OpenCrawlSessionGen, GetCrawlSessionInfoGen)
+              , (ReadStartURLGen, GetStartURLGen)
               , (FetchLinkedPageGen, OpenCrawlSessionGen)
-              , (FetchLinkedPageGen, LinkedURLGen)
+              , (FetchLinkedPageGen, GetLinkedURLGen)
               , (FetchLinkedPageGen, ReadCrawlSessionInfoGen)
               , (FetchLinkedPageGen, ReadLinkedURLGen)
-              , (ReadLinkedURLGen, LinkedURLGen)
+              , (ReadLinkedURLGen, GetLinkedURLGen)
               , (PrintPageGen, ReadStartPageSummaryGen)
-              , (ReadStartPageSummaryGen, StartPageSummaryGen)
-              , (StartPageSummaryGen, FetchStartPageGen)
-              , (StartPageSummaryGen, ReadStartURLGen)
+              , (ReadStartPageSummaryGen, GetStartPageSummaryGen)
+              , (GetStartPageSummaryGen, FetchStartPageGen)
+              , (GetStartPageSummaryGen, ReadStartURLGen)
               , (PrintLinkedPageGen, ReadLinkedPageSummaryGen)
-              , (ReadLinkedPageSummaryGen, LinkedPageSummaryGen)
-              , (LinkedPageSummaryGen, FetchLinkedPageGen)
-              , (LinkedPageSummaryGen, ReadLinkedURLGen)
+              , (ReadLinkedPageSummaryGen, GetLinkedPageSummaryGen)
+              , (GetLinkedPageSummaryGen, FetchLinkedPageGen)
+              , (GetLinkedPageSummaryGen, ReadLinkedURLGen)
               ]
           , SDK.graphScopes = [OpenCrawlSessionGen]
           , SDK.graphScopePaths = [[OpenCrawlSessionGen], []]

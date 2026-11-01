@@ -33,16 +33,16 @@ import System.IO.Error (tryIOError)
 
 instance FileLocationInputs m => FileLocationEffect m where
   -- 示例专用文件：首次运行创建，后续追加；在项目根目录运行。
-  fileName =
+  getFileName =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation" FrameworkGenerated.ContextBindingError
       [("ValidateFileName", FrameworkRuntime.RequireValue), ("FileResource", FrameworkRuntime.RequireValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocation"))
       FrameworkGenerated.boundFileLocation
       (\value bindings -> bindings { FrameworkGenerated.boundFileLocation = Just value })) $
       let
-        fileName :: (m) (FrameworkGenerated.FileName)
-        fileName = pure (FileName ("demo" </> "FileDemo" </> "output.txt"))
-      in fileName
+        getFileName :: (m) (FrameworkGenerated.FileName)
+        getFileName = pure (FileName ("demo" </> "FileDemo" </> "output.txt"))
+      in getFileName
 
 instance ValidateFileNameInputs m => ValidateFileNameEffect m where
   validateFileName =
@@ -56,15 +56,15 @@ instance ValidateFileNameInputs m => ValidateFileNameEffect m where
       in validateFileName
 
 instance FileResourceInputs m => FileResourceEffect m where
-  openedFile =
+  getOpenedFile =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
       [("FileSession", FrameworkRuntime.RequestValue), ("FileRecovery", FrameworkRuntime.RequireValue), ("ReadFile", FrameworkRuntime.RequireValue), ("WriteFirstLine", FrameworkRuntime.RequireValue), ("AppendLine", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundFileResource
       (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
       let
-        openedFile :: (m) (FrameworkGenerated.OpenedFile)
-        openedFile = do
+        getOpenedFile :: (m) (FrameworkGenerated.OpenedFile)
+        getOpenedFile = do
           validateFileName
           FileName path <- require @FileName
           outcome <- liftIO $ tryIOError $
@@ -73,7 +73,7 @@ instance FileResourceInputs m => FileResourceEffect m where
               putStrLn ("[open] " ++ path)
               pure (OpenedFile (FileHandle path file))
           either (raise . FileResourceError . displayException) pure outcome
-      in openedFile
+      in getOpenedFile
 
 instance FileSessionInputs m => FileSessionEffect m where
   -- 开启期间 Context 保存真实 Handle，后续 require 复用它。
@@ -123,19 +123,19 @@ instance ReadFileInputs m => ReadFileEffect m where
 -- 挂在读取句柄下，把读到的文本解析成文件状态（和类型）。alternative 启动时按 require 求值它：
 -- state 中尚无值，便驱动读取句柄读一次文件。
 instance ExtractFileTextInputs m => ExtractFileTextEffect m where
-  fileText =
+  getFileText =
     (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.callContext "ExtractFileText" FrameworkGenerated.ContextBindingError
       [("WriteFirstLine", FrameworkRuntime.RequireValue), ("AppendLine", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundExtractFileText
       (\value bindings -> bindings { FrameworkGenerated.boundExtractFileText = Just value })) $
       let
-        fileText :: (m) (FrameworkGenerated.FileText)
-        fileText = do
+        getFileText :: (m) (FrameworkGenerated.FileText)
+        getFileText = do
           contents <- readFileContent
           text <- maybe (raise (ExtractFileTextError "File read returned no text")) pure contents
           pure (FileText (if null text then Blank else Written text))
-      in fileText
+      in getFileText
 
 instance FileRecoveryInputs m => FileRecoveryEffect m where
   detectFileSession =
@@ -206,7 +206,7 @@ instance AppendLineInputs m => AppendLineEffect m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "1a81ce82019af319b6c911c4899e647c"
+handlerSourceFingerprint = Just "2d366db58b764f219d948ef0b6697898"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -236,5 +236,5 @@ errorHandlers =
 -- 挂在原子句柄下的 Context：句柄的输出交给它解析并发布为资产；没有挂接时输出被丢弃。
 contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
 contextInjections =
-  [ ("readFileContent", [("ExtractFileText", () <$ fileText)])
+  [ ("readFileContent", [("ExtractFileText", () <$ getFileText)])
   ]
