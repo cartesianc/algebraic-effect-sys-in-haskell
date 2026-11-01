@@ -30,7 +30,7 @@ data TextState = Blank | Written String
   deriving Show
 ```
 
-文件状态只有 `Blank` 和 `Written` 两种构造。这个 ADT 说明数据长什么样，Context 再为它提供业务契约。
+文件状态只有 `Blank` 和 `Written` 两种构造，这个 ADT 说明数据长什么样。负责资产生产与解析的 effect 称为 **Context**：它声明具名的业务契约，handler 产生对应资产，消费方按声明的契约取用。下面通过 `ExtractFileText` 的注册和方法展示这层关系。
 
 [完整 Types.hs](../demo/FileDemo/Types.hs) · [资产定义与使用规则](#types)
 
@@ -735,7 +735,7 @@ monitor = lifelong
 
 ## 五、持续资产与 lifelong（Stream）
 
-前四节的程序是有限的：每个 node 执行一次。持续数据源（传感器、socket、消息队列、定时采样）由三部分表达：Stream effect 取得原始输入，`stream = Just ()` 的 Context 把它变成持续资产，`lifelong` 在每条新交付到达时启动消费方。下面用 [StreamDemo](../demo/StreamDemo) 展示写法；完整规则见 [Stream 与 lifelong](STREAM_LIFELONG.md)。
+前四节的程序是有限的：每个 node 执行一次。持续数据源（传感器、socket、消息队列、定时采样）同样通过 Context 对外提供资产：可以由 Stream effect 取得原始输入再交给 Context 解析，也可以由 Context request 反复生产。Context 以 `stream = Just ()` 声明持续资产，`lifelong` 根据交付就绪情况启动消费方。下面用 [StreamDemo](../demo/StreamDemo) 展示这两种生产方式；完整规则见 [Stream 与 lifelong](STREAM_LIFELONG.md)。
 
 ### 注册：两种生产方式
 

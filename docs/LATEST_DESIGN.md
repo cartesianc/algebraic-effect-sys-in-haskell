@@ -4,7 +4,7 @@
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
-按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [代码即文档](#code-as-documentation) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [Stream](#stream)。
+按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [Stream](#stream)。
 
 ## 1. 范围与实现状态
 
@@ -114,7 +114,7 @@ flowchart LR
 | AST／Workflow | 挂载的完整链末端和 branch 启动关系 | workflow 类型与 Prototype 校验 |
 | Generated／--structure | 派生接口、协议包装、静态装配事实与推导证据 | 可审查的普通 Haskell 和同一 Prototype；派生产物不另立手写权威 |
 
-文档的主要阅读入口使用独立标题“代码长什么样”，放在项目介绍之后、详细协议之前。README 保持项目整体介绍，用一行 Main 和 asset、effect、handler、workflow 的职责与关系自然引入使用指南；完整模块声明与 import 在指南展示。各模块的技术细节与具体启动命令在指南展开，README 通过引用提供入口。指南以同一个业务例子的原生 Haskell 代码块依次展示资产、注册、instance 和 workflow，每块标明所属文件、节选范围和继续阅读的位置，再展开字段与运行语义。
+文档的主要阅读入口使用独立标题“代码长什么样”，放在项目介绍之后、详细协议之前。README 使用独立的 Abstract 概括项目，用 Introduction 说明设计理念与定位，再以一行 Main 和 asset、effect、handler、workflow 的职责与关系引入使用指南。Context 等具体 effect 类别在指南中结合代码引入，完整模块声明与 import 也在指南展示。各模块的技术细节与具体启动命令在指南展开，README 随正文中的相关概念和开发步骤自然引入文档链接。指南以同一个业务例子的原生 Haskell 代码块依次展示资产、注册、instance 和 workflow，每块标明所属文件、节选范围和继续阅读的位置，再展开字段与运行语义。
 
 新增功能须先展示上述层次中实际受影响的写法，再说明新增语义及其依据。已有机制可表达的关系沿用已有写法，原子方法作者只需理解本方法的契约、可用能力和固定协议。重构除保持执行语义外，还要保持架构关系在源码中的可见性与可提取性；把 effect 调用或资产操作移出注册方法，不能仅以运行结果相同作为依据。
 
@@ -122,9 +122,18 @@ flowchart LR
 
 更新接口时同步其示例、语义说明及相关生成产物。可运行示例优先引用现有源码，节选标明省略范围；设计方案标明未实现状态。接口与文档不一致时明确差异并修正，不用“代码即文档”把偶然实现行为升级为设计决定。
 
-### 3.2 先确定语义，再实现操作
+<a id="declarative-design"></a>
+### 3.2 声明式组合与原子实现
 
-业务组合应能表达为固定结构、引用和契约，并可供第三方工具读写。先明确新功能改变的语义、生产与消费职责、启动和结束边界，再决定注册字段与 Haskell 接口。
+声明式设计负责表达业务组合的结构与契约：资产类型描述业务数据，Effects 声明操作类别、Input 能力与 demands 取值关系，Workflow／AST 描述挂载位置和启动方式。业务作者以固定声明和原生方法引用表达这些关系，生成器提取并检查结构，interpreter 按确定的协议装配和执行。
+
+原子行为由注册 instance 方法实现，包括 IO、解析、ADT 模式匹配和局部计算。handler 中显式调用上游类方法，也是结构分析的依据。Input 声明方法可用，实际调用仍由方法体写出；demands 声明资产访问权限，request／require 执行相应取值协议；AST branch 规定完整链何时启动。声明、原子实现与 SDK 执行责任因此都有明确边界。
+
+例如 `demands = [requires "FileTextWritten"]` 声明消费契约，方法体中的 `require @FileTextWritten` 执行读取；workflow 再选择该消费链的末端并组织启动。声明可以被静态检查、序列化和第三方工具生成，实际返回值、IO 成败及阻塞行为仍由原子实现和运行协议决定。声明式结构不要求 handler 全部是纯函数，也不意味着 SDK 自动执行全部已声明的上游能力。
+
+这一原则与另外两项设计相互衔接：“代码即文档”要求组合关系直接可读、可提取；“句柄操作和值操作分离”让调用能力与资产依赖分别表达。保持生成前的原生 Haskell 和现有 instance 写法，业务作者按本地契约实现原子行为，通用装配、来源路由与生命周期协调由 SDK 提供。
+
+设计新功能时，先明确组合语义、生产与消费职责、启动和结束边界，再决定注册字段与 Haskell 接口。组合关系应保持为有限的结构、引用和契约，即使它描述的是持续执行的程序。
 
 原子方法保存无法由框架穷尽解释的业务值操作和外部 IO。生成器提供确定的结构连接；不通过解释任意 IO 或让 LLM 理解完整 runtime 来恢复连接。新增语义尽量收敛在已有层次内，不为实现便利增加用户 key、手写 layer 或独立 impl。
 
