@@ -16,8 +16,9 @@
 | 统一 Prototype、运行图、静态来源与求值锁 | Stage 1/2 已实现 | [图与来源](EFFECT_GRAPH.md) |
 | 资产显式引用与构造器约束 | 当前已实现 | [源码资产](ASSETS.md) |
 | Stream、Context 的 stream 角色、历史视图与 lifelong | 已实现（Stage 3）；lifelong 中的失败暂按临时规则终止整次运行 | [第 7 章](#stream)及[完整规范](STREAM_LIFELONG.md) |
-| EOF、Stream close、嵌套 lifelong、背压等 | 本版延期 | [计划与开放项](TODO.md) |
-| Generic Map、独立 Middleware、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [计划与开放项](TODO.md) |
+| Stream 的 scope 化与 Middleware | 下一阶段，语义设计中 | [下一阶段](TODO.md#next-stage) |
+| EOF、Stream close、嵌套 lifelong、背压等 | 本版延期；close 与结束相关项转入下一阶段 | [计划与开放项](TODO.md) |
+| Generic Map、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [计划与开放项](TODO.md) |
 
 实现状态说明代码已接入的范围，不代表全部并发交错或资源逃逸已获证明。过去的编译及 demo 结果概述见 [TODO 的完成摘要](TODO.md#completed)。
 
@@ -185,7 +186,7 @@ ScopeTree 单独构造并保持无环，供依赖清理和 Error 祖先导航使
 
 规则按“输入前提 → 推导结构 → 运行行为 → 无法判定时的诊断”书写。能力去重不等于实际调用去重，结构可达不等于本次生产或后续持续推进；等待也不能自动解释为失败。
 
-Stream 的目标是让原子方法作者只需理解本方法的输入输出和允许引用的方法。gencode 静态推导 BootPlan，interpreter 执行它；不在运行中猜测业务属于 socket、event 还是 behavior。完整匹配与回调规则作为[主设计第 7 章](LATEST_DESIGN.md#stream)的一部分维护。
+Stream 的目标是让原子方法作者只需理解本方法的输入输出和允许引用的方法。gencode 静态推导 BootPlan，interpreter 执行它；不在运行中猜测业务属于 socket、event 还是 behavior，三种驱动关系各自的写法见 [Stream 第 4.1 节](STREAM_LIFELONG.md#drives)。完整匹配与回调规则作为[主设计第 7 章](LATEST_DESIGN.md#stream)的一部分维护。
 
 ### 3.8 约束、保证与开放问题
 
@@ -314,7 +315,7 @@ Input 继续表达操作或能力的前提关系。业务值来源单独表达�
 
 SDK 的 Effect.handler 是生成区内部入口。Root 转交 Failure 捕获／ErrorStore.handleFailure 协议，其他生成 Effect instance 转交同一 Root。普通方法、Context.request／require（包括默认和覆盖实现）、Scoped.open／close 的生成入口自动包装原协议，业务不写 handler／super 前缀。
 
-根入口不修改业务 caller、不预执行 Context、不另行 boot 或 lower 上游。scope 复用仍经过调用入口，但可以跳过资源方法体。独立 Middleware typing 及装卸策略仍待设计。
+根入口不修改业务 caller、不预执行 Context、不另行 boot 或 lower 上游。scope 复用仍经过调用入口，但可以跳过资源方法体。独立 Middleware typing 及装卸策略是下一阶段的设计主题，尚未实现，见 [TODO](TODO.md#next-stage)。
 
 <a id="context"></a>
 ### 4.3 Context、request 与 require
@@ -408,14 +409,14 @@ SDK 将 node 与 branch 分成两个抽象类型：
 
 ```haskell
 node :: String -> EffectNode
-chained, parallel :: BranchChild child => [child] -> AST
+chained, parallel, alternative, lifelong :: BranchChild child => [child] -> AST
 ```
 
 BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两个实例；业务不增加 class、instance 或转换调用。同一列表只能全是 node 或全是 branch，裸 node 不能赋给 AST，原始 AST 构造器与子项转换不公开。单节点模块用 `chained [node "目标"]`，空分支需如 `chained ([] :: [AST])` 的类型标注，仍成功返回空结果。内部递归表示与 algebra 不变，通过 foldAST 使用 cata。
 
 这项类型约束不证明分支来自独立文件，也不禁止内联子分支或直接构造叶模块。独立文件、顶层只引用模块名属于声明格式：正文采用固定 branch 构造、显式列表、node 与直接模块引用，不借任意 lambda／map／条件计算隐藏结构，引用保持有限无环。未来 LSP 保存模块定义、引用和源码位置，并检查该格式；当前执行 AST 不保留源码身份，不新增运行时模块 key。
 
-分文件不建立新 interpreter、注册环境、Context 或 scope。同一模块多次挂载意味着多次执行，不去重调用；原有串行短路、并发汇合与资源共享规则保持。五个 workflow demo 已按此拆分。持续执行的新增边界统一见 [Stream／lifelong](STREAM_LIFELONG.md)。
+分文件不建立新 interpreter、注册环境、Context 或 scope。同一模块多次挂载意味着多次执行，不去重调用；原有串行短路、并发汇合与资源共享规则保持。六个 workflow demo（含 StreamDemo）已按此拆分。chained、parallel、alternative 是有限 branch；lifelong 用于持续执行，见本节末的 [lifelong 的控制流](#lifelong-control)。
 
 #### 有限执行的完成规则
 
@@ -434,6 +435,26 @@ AST 只列候选，不写条件。gencode 将转折契约、选择读取路径�
 运行时先 require 转折资产，已有值直接读取，缺值时按需求值一次生产链；再只启动匹配构造器的候选，其他候选不执行。选择阶段捕获的无 owner 绑定经 Handoff 交给候选，两段读取同一快照，其他调用的 request 不改写它。执行只在已装配的闭包间选择，不在链中间重组。
 
 选择读取有独立入口使用登记，以契约名登记末端，NodeId 为 alternative 路径加 [-1]，参与构图与 ScopeTree。validatePrototype 核对转折契约、构造器唯一及覆盖完整；执行 fold 与 --structure 使用同一原型匹配当前 AST，不一致时在业务前拒绝。
+
+<a id="lifelong-control"></a>
+#### lifelong 的控制流
+
+lifelong 是第四种 branch，在交付就绪时反复 boot 其中的 target。完整规则见 [Stream 第 6 节](STREAM_LIFELONG.md#scheduling)；这里说明它与有限 branch 的关系：
+
+```haskell
+-- StreamDemo：先完成一次准备，再进入持续监控
+ast = chained [setup, monitor]
+monitor = lifelong
+  [ chained [node "ShowTemperature", node "CheckTrend"]
+  , chained [node "ReportHeartbeat"]
+  ]
+```
+
+- **单元**：直接子项各为一个单元，直接子项是 parallel 时只拆这一层；单元之间独立推进、互不等待。拆分写入 Prototype，运行时不推测。
+- **一次执行**：单元逐次执行，每次执行是一个 frame。控制流到达 target 时先领取其订阅资产的一条新交付（有积压立即领取，没有就挂起），再 boot target；同一 frame 内每个资产只领取一次，各调用共享这份视图。target 调用按上文的有限完成规则结束，本次执行结束后才开始下一次，上一次的普通产物不带入下一次。
+- **没有正常结束**：lifelong 不返回 Succ。`chained [setup, monitor]` 先完成 setup；`chained [monitor, after]` 中 after 不执行；`parallel [monitor, otherWork]` 两者同时运行。
+- **失败**：含 lifelong 的程序中，任何失败按临时规则终止整次运行（[Stream 第 9 节](STREAM_LIFELONG.md#failures)），不同于有限 parallel 不取消其他分支的规则。lifelong 的局部结束属于下一阶段的 [Stream scope 化](TODO.md#next-stage)。
+- **合法性**：lifelong 不嵌套、不含空分支；其中每个 target 恰好用 `streams` 订阅一个持续资产，见 [Stream 第 5.2 节](STREAM_LIFELONG.md#static)。
 
 <a id="mapping"></a>
 ### 4.6 业务转换与尚未实现的适配
@@ -592,8 +613,9 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 | 会话、完整历史、独立游标与 frame | [Stream 第 7 节](STREAM_LIFELONG.md#sessions) |
 | 生产路径、显式 request 与 lifelong 外的读取 | [Stream 第 8 节](STREAM_LIFELONG.md#production) |
 | 失败的临时规则、取消与 close 延期边界 | [Stream 第 9 节](STREAM_LIFELONG.md#failures) |
+| socket、event、behavior 各自的写法 | [Stream 第 4.1 节](STREAM_LIFELONG.md#drives) |
 
-当前实现限制见 [TODO](TODO.md#stage-3-limitations)，持续资产作为 scope 开启参数尚未接通。来源分析按消费单元提前裁剪再组合，相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
+当前实现限制见 [TODO](TODO.md#stage-3-limitations)，持续资产作为 scope 开启参数尚未接通。下一阶段设计 Stream 的 scope 化：Stream close、lifelong 的局部结束（取代临时失败规则）、会话生产资源与历史资源的存续，以及持续资产作为开启参数；具体语义尚未确定，见 [TODO](TODO.md#next-stage)。来源分析按消费单元提前裁剪再组合，相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
 
 这次扩展继续使用 Prototype、RuntimeGraph 和独立 ScopeTree。业务方法不新增游标、yield、调度器或无限递归写法；声明不成立时生成期诊断，不在运行中猜测生产方式。
 

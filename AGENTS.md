@@ -23,7 +23,7 @@
 - 取值的捕获、来源可见性、fallback 发布、资源认领和 once-spare 保证不能在重构中弱化。完整规则按下表阅读，不在本文件复制协议。
 - Prototype 是纯结构，RuntimeGraph 保存活动关系，ScopeTree 独立且无环。生成、执行、展示共享同一静态模型。
 - Generated 是派生产物；修改手写输入后显式生成，不在构建中隐式修改源码，不把手改生成结果当作持久权威。
-- 当前实现六类 effect（含 Stream）与 lifelong。lifelong 中的失败采用临时规则（终止整次运行）；EOF、Stream close、局部结束等延期项不得描述成已提供的能力。
+- 当前实现六类 effect（含 Stream）与 lifelong。lifelong 中的失败采用临时规则（终止整次运行）；EOF、Stream close、局部结束等延期项不得描述成已提供的能力。下一阶段的 Stream scope 化与 Middleware 尚在设计，同样不得写成当前能力。
 
 ## 按任务读取规范
 
@@ -35,6 +35,7 @@
 | 改 scope、归属、cleanup 或 Error | [运行语义：scope](docs/LATEST_DESIGN.md#scope)、[Error](docs/LATEST_DESIGN.md#error)、[ScopeTree](docs/EFFECT_GRAPH.md) |
 | 改 codegen、结构、缓存或资产检查 | [图与生成](docs/EFFECT_GRAPH.md)、[资产约束](docs/ASSETS.md)、[运行语义：生成](docs/LATEST_DESIGN.md#generation) |
 | 改 Stream／lifelong | [主设计第 7 章](docs/LATEST_DESIGN.md#stream)、[完整规范](docs/STREAM_LIFELONG.md)、[TODO](docs/TODO.md)，以及将修改的当前协议 |
+| 设计 Stream 的 scope 化或 Middleware | [下一阶段](docs/TODO.md#next-stage)、[主设计第 7 章](docs/LATEST_DESIGN.md#stream)、[运行语义：scope](docs/LATEST_DESIGN.md#scope)、[Root 入口包装](docs/LATEST_DESIGN.md#calls) |
 | 修改文档 | [文档职责与维护规则](docs/LATEST_DESIGN.md#documents)，只在所属专题维护详细规范 |
 
 ## 源码定位

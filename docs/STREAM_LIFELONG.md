@@ -41,7 +41,7 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 
 Stream 不进入 original chain，也不作为 AST target；只通过它下面的解析器 Context 进入生产。original target 始终代表一条完整消费链的末端。
 
-socket、event、behavior 可以用来解释不同的驱动关系，但不是类型标签。一次阻塞接收也可以由 request 实现。Receive 的 Context 只声明 stream 生产角色，不能声明 request；RepeatRequest 同时声明 request 与 stream，由 request 生产，stream 字段标记持续资产。
+socket、event、behavior 用来解释不同的驱动关系，但不是类型标签；三者各自的写法见 [4.1 节](#drives)。Receive 的 Context 只声明 stream 生产角色，不能声明 request；RepeatRequest 同时声明 request 与 stream，由 request 生产，stream 字段标记持续资产。
 
 <a id="contracts"></a>
 ## 3. 资产、方法与 beforegen
@@ -114,6 +114,22 @@ Excu／Scoped 的 `Maybe String` 仍表示可选信息，不能把 `Nothing` 释
 不成立的组合在生成期按 3.2 的匹配表报错，不在运行中猜测或退化为轮询。
 
 **启动依赖**：lifelong 会话的生产链（Stream 单步、解析器或 request 可达的方法）不能读取其他持续资产，否则首次交付要先等待另一个 stream，生成期拒绝。interpreter 托管的会话（8.3）不受此限。
+
+<a id="drives"></a>
+### 4.1 socket、event、behavior 的写法
+
+这三个词描述外部数据怎样到来，帮助业务作者选择注册；SDK 不识别它们，也不据此改变生产方式。每种写法最终仍是上表的两种 BootPlan 之一，或是进入已有会话的显式 request。
+
+| 驱动关系 | 数据怎样到来 | 写法 | 生产方式 |
+| --- | --- | --- | --- |
+| socket | 外部持续送来原始数据，逐条接收：连接、消息队列、传感器读数 | Stream 的方法阻塞接收一份原始输入（`m String`），挂在它下面的 Context 以 stream 角色解析为资产；连接等资源放在 Stream 的 Input 上游 scope 中，跨生产步骤保持（见 8.1） | Receive |
+| behavior | 值一直存在，随时可以采样：时钟、心跳、状态轮询 | 不在 Stream 下的 Context 声明 `request = Just ()` 与 `stream = Just ()`；request 方法取得当前值，并以自己的等待决定采样节奏 | RepeatRequest |
+| event | 离散地发生，每次发生得到一条 | 外部事件：阻塞读取下一个事件；需要解析原始文本时写成 Stream 单步＋解析器，直接得到业务值时写成 request。lifelong 内部产生的事件：消费者同时声明 `streams "T"` 与 `requests "T"`，在 lifelong 内 `request @T`，新发布进入本 lifelong 的会话（见 8.2） | Receive、RepeatRequest，或进入已有会话 |
+
+- 节奏只由单步方法的阻塞或等待决定，SDK 不加间隔；立即返回的方法会形成高频生产。
+- 不提供“观察 AST 中某条原链的发布”作为事件来源，理由见本节上方；lifelong 外的普通 request 也不广播给任何会话。
+- 外部 push callback 不能直接注册给 SDK，需要先转换成可阻塞读取的队列，再作为单步来源；通用回调适配本版延期（见第 11 节）。
+- StreamDemo 中，`TemperatureFeed`＋`TemperatureParser` 是 socket 写法，`Heartbeat` 是 behavior 写法。
 
 <a id="static"></a>
 ## 5. 静态结构与合法性
@@ -274,6 +290,8 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 
 不新增 Stream close、next-use 或历史资源按元素关闭协议。没有增量表示等待，不表示 EOF、故障或关闭。
 
+Stream close、lifelong 的局部结束、会话生产资源与历史资源的存续，以及持续资产作为 scope 开启参数，归入下一阶段“Stream 的 scope 化”设计，语义尚未确定，见 [TODO](TODO.md#next-stage)。
+
 完整历史保留不等于可以把多份资源 owner 合成一个，也不能复活已关闭的资源。通用的历史资源选择／关闭语义尚未设计。会话历史在运行期间持续增长，不承诺有界内存。持续资产作为 scope 开启参数尚未接通 History 的参数观察协议，可能报 `ScopeInputsMissing`；现有跨轮 scope 复用不代表支持该用法，跟踪见 [TODO](TODO.md#stage-3-limitations)。
 
 <a id="implementation"></a>
@@ -298,4 +316,4 @@ ScopeTree 独立构建并保持无环；订阅与回调关系不作为 scope 父
 
 本仓库按约定只做普通编译、生成结果审阅和示例观察，不新增测试框架、负例或穷举门槛。各批实际观察过的场景记录在 [TODO](TODO.md#stage-3-record)。LSP 仓库的外部穷举模型尚未扩展到 Stream／lifelong。
 
-本版明确延期：正常 EOF／Done、Stream close、lifelong 的局部结束（当前由 9.1 的临时规则代替）、历史资源精细关闭与回收、嵌套 lifelong、多个持续来源组合触发一个 target、自动重试、时间周期声明、容量背压、任意外部 push callback 注册和跨 interpreter 存续。已有阻塞事件／队列读取、socket 接收及主动采样可作为单步来源；不据此宣称自动适配所有外部回调 API。
+本版明确延期：正常 EOF／Done、Stream close、lifelong 的局部结束（当前由 9.1 的临时规则代替）、历史资源精细关闭与回收、嵌套 lifelong、多个持续来源组合触发一个 target、自动重试、时间周期声明、容量背压、任意外部 push callback 注册和跨 interpreter 存续。已有阻塞事件／队列读取、socket 接收及主动采样可作为单步来源（写法见 [4.1 节](#drives)）；不据此宣称自动适配所有外部回调 API。其中与结束和资源存续相关的项目转入[下一阶段](TODO.md#next-stage)。

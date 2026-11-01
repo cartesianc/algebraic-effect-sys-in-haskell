@@ -1,12 +1,13 @@
 # 实施计划与开放事项
 
-更新：2026-11-01。本文件跟踪实施顺序、开放项与必要完成摘要；规范从[主设计](LATEST_DESIGN.md)进入。
+更新：2026-11-02。本文件跟踪实施顺序、开放项与必要完成摘要；规范从[主设计](LATEST_DESIGN.md)进入。
 
 | 阶段 | 状态 | 资料 |
 | --- | --- | --- |
 | Stage 1：Prototype 与 RuntimeGraph | 已实现 | [规范](EFFECT_GRAPH.md)、[历史验收](TODO.md#completed) |
 | Stage 2：来源可见性与求值锁，以及 ownership／分析复杂度修复 | 已实现；外部穷举验证已在 LSP 仓库完成 | [规范](EFFECT_GRAPH.md)、[历史验收](TODO.md#completed) |
 | Stage 3：Stream 与 lifelong | 已实现；lifelong 失败暂用临时规则；[当前限制](#stage-3-limitations) | [规范](STREAM_LIFELONG.md)、[实施记录](TODO.md#stage-3-record) |
+| 下一阶段：Stream 的 scope 化与 Middleware | 设计中，尚未实现 | [下一阶段](#next-stage) |
 
 ## Stage 3：Stream 与 lifelong（依赖 Stage 2）
 
@@ -30,12 +31,12 @@ Stream 是[主设计第 7 章](LATEST_DESIGN.md#stream)的一部分。角色匹�
 
 ### 延期
 
-EOF／Done、Stream close、lifelong 的局部结束（当前由临时规则代替）、历史资源精细回收、嵌套 lifelong、多个持续来源组合触发、自动重试、周期声明、背压及通用外部 push callback 注册延期。持续示例通过失败或外部取消结束；有限 require 启动的持续会话由 interpreter 托管至退出。
+EOF／Done、Stream close、lifelong 的局部结束（当前由临时规则代替）、历史资源精细回收、嵌套 lifelong、多个持续来源组合触发、自动重试、周期声明、背压及通用外部 push callback 注册延期。持续示例通过失败或外部取消结束；有限 require 启动的持续会话由 interpreter 托管至退出。其中 Stream close、lifelong 的局部结束和历史资源回收转入[下一阶段](#next-stage)的 Stream scope 化设计。
 
 <a id="stage-3-limitations"></a>
 ### 当前已知实现限制
 
-- [ ] 持续资产作为 scope 开启参数：`readHistory` 返回交付视图时没有经过开启参数的观察协议，资源按本轮交付开启时可能报 `ScopeInputsMissing`。按用户安排，等 lifelong 的 close 语义补充后再处理（评审 2026-11-01）。
+- [ ] 持续资产作为 scope 开启参数：`readHistory` 返回交付视图时没有经过开启参数的观察协议，资源按本轮交付开启时可能报 `ScopeInputsMissing`。按用户安排，等 lifelong 的 close 语义补充后再处理（评审 2026-11-01），归入[下一阶段](#next-stage)。
 
 <a id="stage-3-record"></a>
 ### 实施记录（2026-11-01）
@@ -82,13 +83,32 @@ EOF／Done、Stream close、lifelong 的局部结束（当前由临时规则代�
 未覆盖：没有并发交错的系统性枚举；没有长时间运行的内存观察（完整历史按设计持续增长）；LSP 仓库的穷举模型尚未扩展到 Stream／lifelong；Ctrl-C 只在 Windows 上以 Ctrl-Break 方式验证。
 
 
+<a id="next-stage"></a>
+## 下一阶段：Stream 的 scope 化与 Middleware
+
+**状态**：设计中，尚未实现。下面记录已知缺口与现有证据；具体语义、声明写法和保证在设计确认后写入所属规范，声明语法变更须单独确认。在此之前，这些项目仍按当前规范描述为延期或未实现。
+
+### Stream 的 scope 化
+
+Stage 3 的持续执行没有结束协议：lifelong 不正常结束，失败按临时规则终止整次运行，会话生产资源在会话停止后交给 interpreter 退出清理。待设计的问题：
+
+- Stream close 与正常结束（EOF／Done）：Stream 何时、由谁关闭；没有增量与已经结束怎样区分（当前没有增量只表示等待）。
+- lifelong 的局部结束与 close 语义：取代 [Stream 9.1](STREAM_LIFELONG.md#failures) 的临时失败规则，并决定 `chained [monitor, after]` 中的后继能否执行。
+- 会话与生产资源的存续：当前各步骤共用会话的 scope 使用登记，资源跨步骤保持，停止时撤销登记、退出时清理（[Stream 8.1](STREAM_LIFELONG.md#production)）；需要确定会话、Stream 及其上游 scope 在 ScopeTree 与 once-spare 中的位置。
+- 历史资源的精细关闭与回收：完整历史当前一直保留。
+- 持续资产作为 scope 开启参数（见 [Stage 3 当前限制](#stage-3-limitations)）。
+
+### Middleware
+
+- 独立 Middleware typing 与装卸策略，以及它与 Root 统一入口包装（[主设计 4.2](LATEST_DESIGN.md#calls)）的关系。
+- Hanging 随 Middleware 一起确认；不沿用旧 loop 说明代替 lifelong 规范。
+
 ## 其余开放设计
 
 以下不作为 Stage 3 本版开工前提，进入对应专题时另行确认接口和保证：
 
 - Pure 的语义及 IO 限制。过去的 Local／Body 候选尚未定案，当前仍使用统一 raise。
 - Generic Map 的适配范围、失败接口与接入；当前没有可用自动适配。
-- 独立 Middleware typing 与 Hanging；不沿用旧 loop 说明代替 lifelong 规范。
 - 同一 handler／Scoped 注册服务多种细化类型；需一起调整 ScopeTree 身份、运行实例、绑定与 Error 导航。
 - 多方法 effect 的入口与结果契约、独立生成模块的组合、跨语言 schema。
 - 其他 cleanup policy、Linear 关闭凭证、任意逸出资源跟踪、未发布的部分获取恢复、跨独立 interpreter 存续。

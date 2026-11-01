@@ -402,6 +402,7 @@ typing = Context { asset = namedAsset "StartURL" @PageURL, request = Just (), re
 - **`asset = namedAsset "资产名" @表示类型`**：声明资产。资产名就是契约名，生成器产出 `newtype StartURL = StartURL PageURL`；表示类型怎么写见[资产书写](#types)。
 - **三个角色，方法名由资产名生成**：`request = Just ()` 生成生产方法 `getStartURL`，需要手写实现；`require = Just ()` 生成读取方法 `readStartURL`，由 SDK 实现，供消费方 `require @StartURL` 使用，业务代码不直接调用；`stream = Just ()` 声明持续资产，见[持续资产与 lifelong](#stream)。`Nothing` 不生成对应方法，消费方也不能声明相应的 `requests`／`requires`。
 - **必须有生产入口**：普通 Context 须声明 `request = Just ()`；挂在 Stream 下的解析器改用 `stream` 角色。
+- **持续资产的方法**：`stream = Just ()` 时，`readT` 返回 `History 契约`；挂在 Stream 下时另生成解析器 `streamT`（手写）和 `inputT`（读取本次原始输入），见[持续资产与 lifelong](#stream)。
 - **不能作为 AST 末端**：Context 在它挂接的句柄执行时产出，或在被 `request`／`require` 时产出。
 - **命名**：资产名决定契约名和方法名，要按业务含义起名（`StartURL`，而不是 `LoadStartURL`），不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
 
@@ -719,7 +720,11 @@ monitor = lifelong
   ]
 ```
 
-单元划分、交付与失败规则见[持续资产与 lifelong](#stream)。
+- **单元**：直接子项各是一个独立推进的单元，上例的读数单元和心跳单元互不等待。
+- **一次执行**：每个末端用 `streams` 订阅一个持续资产；执行到它时先领取一条新交付（没有就等待），本次执行完成后才开始下一次。
+- **不会正常结束**：放在 lifelong 后面的 branch 不会执行；含 lifelong 的程序中任何失败都会结束整次运行（临时规则）。
+
+单元划分、交付、会话与失败的完整写法见[持续资产与 lifelong](#stream)。
 
 ### 文件组织
 
@@ -783,6 +788,18 @@ EffectSpec
 
 - **读取类型**：持续资产的 `require @T` 在所有地方都返回 `History T`，普通资产仍返回 `T`；有没有消费方订阅不会改变它。
 - **订阅**：消费方写 `streams "T"`，表示由 T 的新交付驱动，同时取得 `require @T` 的权限，但不授予 `request`。
+
+### 按驱动关系选择写法
+
+持续数据通常以三种方式到来，分别落到上表的写法。这三个词只帮助选择注册，生成器和运行时不识别它们：
+
+| 驱动关系 | 例子 | 怎么写 |
+| --- | --- | --- |
+| socket：外部持续送来，逐条接收 | 连接、消息队列、传感器 | Stream 方法阻塞接收一份原始输入，挂在下面的 Context 用 `streamT` 解析（StreamDemo 的 `TemperatureFeed`＋`TemperatureParser`） |
+| behavior：值一直存在，随时采样 | 时钟、心跳、状态轮询 | Context 声明 `request = Just ()` 与 `stream = Just ()`，`getT` 取得当前值并自己等待采样间隔（StreamDemo 的 `Heartbeat`） |
+| event：离散发生，每次一条 | 事件队列、由回调转成的阻塞等待 | 阻塞读取下一个事件：要解析原始文本就写成 Stream＋解析器，直接得到业务值就写成请求序列。lifelong 内部产生的事件，由消费者声明 `streams "T"` 与 `requests "T"` 后执行 `request @T`，进入同一会话 |
+
+外部回调不能直接注册给 SDK，需要先转换成可阻塞读取的队列。详细规则见 [Stream 规范 4.1 节](STREAM_LIFELONG.md#drives)。
 
 ### 方法：每次只处理一份
 
@@ -968,7 +985,7 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 
 ## 当前限制
 
-- **未实现的能力**：middleware、通用结构适配尚未实现。
+- **未实现的能力**：middleware、通用结构适配尚未实现。middleware 与 Stream 的 scope 化（Stream close、lifelong 的局部结束、会话资源存续等）是下一阶段的设计主题，见 [TODO](TODO.md#next-stage)。
 - **持续执行的延期项**：没有正常结束（EOF）、Stream close、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；完整历史一直保留，持续运行时内存随发布增长。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
 - **Stage 3 已知实现限制**：持续资产作为 scope 开启参数尚未接通。见 [TODO](TODO.md#stage-3-limitations)。
 - **handler 复用**：同一段 handler 逻辑还不能服务多种数据类型，需要分别注册（Crawler 的两条链因此各有一份实现）。
