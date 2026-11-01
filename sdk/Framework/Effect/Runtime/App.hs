@@ -11,7 +11,7 @@ import Framework.Effect.Contract
 import Framework.Effect.Scope
 import Framework.Effect.Runtime.Graph
 import Framework.Effect.Runtime.Identity
-import Framework.Effect.Runtime.Session (View, awaitHistory)
+import Framework.Effect.Runtime.Session (Broken, View, awaitHistory)
 import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeException, fromException, mask, mask_, throwIO, try, finally)
@@ -59,16 +59,20 @@ data Environment env cause = Environment
   , views :: IORef [(String, View env cause)]
   -- 解析器本次的原始输入，只在会话调用解析器时安装。
   , streamRaw :: Maybe String
-  -- 会话步骤：该资产的发布进入会话历史，而不是按 Origin 的业务资产表。
-  , sessionSink :: Maybe (String, Bound env cause -> IO ())
+  -- 这些来源的发布进入会话历史，而不是按 Origin 的业务资产表：
+  -- 会话步骤的本资产，以及 lifelong 单元内对该 lifelong 会话资产的显式 request。
+  , sessionSinks :: [(String, Bound env cause -> IO ())]
+  -- lifelong 单元执行中：本次 frame 对会话资产的领取（同一 frame 只领取一次，各调用共享）。
+  , frameDeliver :: String -> Maybe (IO (Either (Broken cause) (View env cause)))
   }
 
--- 一次末端调用的起点：交接的绑定与视图；会话步骤另带原始输入和发布去向。
+-- 一次末端调用的起点：交接的绑定与视图；会话步骤另带原始输入，lifelong 单元另带本次 frame。
 data Launch env cause = Launch
   { launchBindings :: ScopeBindings env cause
   , launchViews :: [(String, View env cause)]
   , launchInput :: Maybe String
-  , launchSink :: Maybe (String, Bound env cause -> IO ())
+  , launchSinks :: [(String, Bound env cause -> IO ())]
+  , launchDeliver :: String -> Maybe (IO (Either (Broken cause) (View env cause)))
   }
 
 data Opening env cause = Opening
@@ -156,9 +160,9 @@ publishBinding environment source value = do
           -- 本次已有该资产的视图时，显式 request 的新发布接在本次视图末尾，不改写其他调用的交付。
           atomicModifyIORef' (views environment) $ \current ->
             ([(name, if name == source then view |> value else view) | (name, view) <- current], ())
-          case sessionSink environment of
-            Just (asset, deliver) | asset == source -> deliver value
-            _ -> publishAsset (runtimeGraph environment) origin source value
+          case lookup source (sessionSinks environment) of
+            Just deliver -> deliver value
+            Nothing -> publishAsset (runtimeGraph environment) origin source value
     _ -> pure ()
 
 -- 已合法捕获的绑定保持快照。资源按实例归属解析，普通值只读静态来源指定的 Origin。
@@ -477,25 +481,21 @@ instance ContextStore env (App env cause) where
         inside = environment { caller = Nothing, forcedRequire = False, errorHandlers = []
                              , replays = (method, raw) : replays environment }
     when allowed $ () <$ liftIO (runExceptT (runReaderT action inside))
+  -- 本次已有视图时直接读取；lifelong 单元中尚未领取的会话资产在第一次读取时领取本次 frame 的交付。
   readContextHistory source select = do
     environment <- AppRun ask
     captured <- rawIO (lookup source <$> readIORef (views environment))
-    pure (fmap (entriesOf select) captured)
+    case captured of
+      Just view -> pure (Just (entriesOf select view))
+      Nothing | deliveryAllowed environment, Just deliver <- frameDeliver environment source ->
+        Just <$> captureDelivery environment source select (rawIO deliver)
+      Nothing -> pure Nothing
   -- 诊断、收尾与 close 期间不启动会话；读到的历史捕获为本次视图。
   awaitContextHistory source select = do
     environment <- AppRun ask
-    let allowed = isNothing (originalFailure environment) && not (cleaningScopes environment)
-          && null (closings environment)
-    if not allowed then pure Nothing else do
+    if not (deliveryAllowed environment) then pure Nothing else do
       session <- rawIO (obtainSession (runtimeGraph environment) (Nothing, source))
-      delivered <- rawIO (awaitHistory session)
-      case delivered of
-        Left (Left exception) -> rawIO (throwIO exception)
-        Left (Right problem) -> throwError problem
-        Right view -> do
-          rawIO $ atomicModifyIORef' (views environment) $ \current ->
-            ((source, view) : filter ((/= source) . fst) current, ())
-          pure (Just (entriesOf select view))
+      Just <$> captureDelivery environment source select (rawIO (awaitHistory session))
   streamRawInput = AppRun (asks streamRaw)
   recordContextInput access value = do
     environment <- AppRun ask
@@ -625,6 +625,23 @@ runDiagnostic environment problem selected callback = do
 
 entriesOf :: (env -> Maybe value) -> View env cause -> [value]
 entriesOf select = mapMaybe (select . bindingValues) . toList
+
+deliveryAllowed :: Environment env cause -> Bool
+deliveryAllowed environment = isNothing (originalFailure environment) && not (cleaningScopes environment)
+  && null (closings environment)
+
+-- 会话失败时传播它的原失败或原生异常；取得的视图捕获为本次视图，之后的发布不改写它。
+captureDelivery :: Environment env cause -> String -> (env -> Maybe value)
+                -> App env cause (Either (Broken cause) (View env cause)) -> App env cause [value]
+captureDelivery environment source select deliver = do
+  delivered <- deliver
+  case delivered of
+    Left (Left exception) -> rawIO (throwIO exception)
+    Left (Right problem) -> throwError problem
+    Right view -> do
+      rawIO $ atomicModifyIORef' (views environment) $ \current ->
+        ((source, view) : filter ((/= source) . fst) current, ())
+      pure (entriesOf select view)
 
 -- 此证据只描述这次失败所涉及的实例，不参与开启参数的 Eq 匹配。
 scopeFailureTarget :: String -> Maybe (ScopeInstance env cause) -> Failure cause -> Failure cause
@@ -788,7 +805,8 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
         , activeActivation = Just (activationId activation), execution = currentExecution
         , forcedRequire = False, anchoredEntries = [], replays = []
-        , views = delivered, streamRaw = launchInput launch, sessionSink = launchSink launch }
+        , views = delivered, streamRaw = launchInput launch, sessionSinks = launchSinks launch
+        , frameDeliver = launchDeliver launch }
   (do
       completed <- try $ restore $ do
         outcome <- runExceptT (runReaderT action environment)
