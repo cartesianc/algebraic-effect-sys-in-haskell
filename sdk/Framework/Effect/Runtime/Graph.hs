@@ -206,9 +206,11 @@ installSessionLauncher graph = writeIORef (runtimeLauncher graph)
 -- 同一边界与资产只创建一份会话并只启动一次生产；在登记表锁内启动，停止时一定能看到它。
 -- 交接只在创建时使用：一个 lifelong 在一次运行中只进入一次，interpreter 会话没有交接。
 -- 停止开始后不再创建：请求方（正被停止的生产步骤）得到异常，不会留下逃出停止集合的任务。
+-- 启动与写回登记表在同一个不可中断区内完成：modifyMVar 的回调会恢复调用方的屏蔽状态，
+-- 否则取消可能落在任务已经启动、登记表尚未写回之间，登记表回滚而任务无人停止。
 obtainSession :: RuntimeGraph environment cause -> SessionKey -> ScopeBindings environment cause
               -> [(String, View environment cause)] -> IO (Session environment cause)
-obtainSession graph key bindings views = modifyMVar (runtimeSessions graph) $ \registry -> case registry of
+obtainSession graph key bindings views = uninterruptibleMask_ $ modifyMVar (runtimeSessions graph) $ \registry -> case registry of
   Nothing -> ioError (userError ("Sessions have stopped; the session for " ++ snd key
     ++ " is not started while the run is ending"))
   Just sessions -> case lookup key sessions of

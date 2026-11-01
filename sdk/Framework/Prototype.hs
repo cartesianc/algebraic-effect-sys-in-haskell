@@ -20,7 +20,7 @@ module Framework.Prototype
 
 import Control.DeepSeq (NFData)
 import Control.Monad (unless, when)
-import Control.Monad.State.Strict (StateT, execStateT, lift, modify')
+import Control.Monad.State.Strict (StateT, execStateT, gets, lift, modify')
 import Data.Char (isAlphaNum, isUpper)
 import Data.List (intercalate, intersect, isPrefixOf, nub, sort, (\\))
 import Data.Maybe (listToMaybe, maybeToList)
@@ -1065,17 +1065,34 @@ resolveSources definitions defaultReaders prototype = do
           else nub . concat <$> mapM (\child -> workflow child future (assetPublications state)
               [(contractType, origin) | (contractType, Just origin') <- assetCaptures state
                 , let origin = Just origin']) children) selected
-      LifelongAt _ described children -> do
-        -- 会话是共同上游：生产挂载先分析一次，其发布对全部单元可见；
+      LifelongAt boundary described children -> do
+        -- 会话是共同上游：生产挂载先各自分析一次。一条交付的伴随发布来自一次成功的生产步骤
+        -- （Receive 为 Stream 单步与解析器各一个成功出口），不同出口不合并：单元按每种交付状态分别分析，
+        -- 本条交付没有某个辅助资产时，单元的补产与后继复用照常记录。
         -- 驱动资产以交接捕获交给单元，出身是会话的生产步骤。单元的每次执行都从进入 lifelong 时的状态开始。
         let unitReads = nub (concatMap readsIn children)
-        sessionExits <- concat <$> mapM (\mount -> root mount unitReads handoff publications)
-          (concatMap sessionMounts (lifelongSessions described))
-        let sessionPublications = nub (publications ++ concat
-              [assetPublications state | AssetExit True state <- sessionExits])
+            sessions = lifelongSessions described
+            mounts = concatMap sessionMounts sessions
             delivered = [(sessionAsset session, Just (last (sessionMounts session)))
-              | session <- lifelongSessions described, not (null (sessionMounts session))]
-        mapM_ (\child -> workflow child [] sessionPublications (handoff ++ delivered)) children
+              | session <- sessions, not (null (sessionMounts session))]
+        steps <- mapM (mapM (\mount -> do
+            exits <- root mount unitReads handoff publications
+            pure (nub [assetPublications state | AssetExit True state <- exits])) . sessionMounts) sessions
+        let produced = [case map concat (sequence perMount) of
+              [] -> [[]]
+              states -> states | perMount <- steps]
+            -- 单元内显式 request 产生的交付不带伴随发布：单元会 request 的会话另加只含外层发布的状态。
+            -- 新状态可能使单元 request 更多会话资产，直到不再增加。
+            analyzeUnits requested = do
+              let options = [if sessionAsset session `elem` requested then [] : states else states
+                    | (session, states) <- zip sessions produced]
+              mapM_ (\state -> mapM_ (\child -> workflow child [] state (handoff ++ delivered)) children)
+                (nub [sort (nub (publications ++ concat combination)) | combination <- sequence options])
+              drives <- gets assetDrives
+              let now = nub [contractType | (node', contractType) <- drives, boundary `isPrefixOf` node'
+                    , node' `notElem` mounts, contractType `elem` map sessionAsset sessions]
+              unless (all (`elem` requested) now) (analyzeUnits (nub (requested ++ now)))
+        analyzeUnits []
         -- lifelong 没有正常结束：排在它后面的后继不会执行。
         pure [(False, [])]
     workflowSequence :: [WorkflowTree] -> [String] -> [(Bool, [(NodeId, String)])] -> [(String, Maybe NodeId)]

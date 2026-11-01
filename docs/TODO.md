@@ -59,6 +59,12 @@ EOF／Done、Stream close、lifelong 的局部结束（当前由临时规则代�
 - 生成期拒绝 Stream 单步以外的方法直接调用 Stream 方法，诊断指向解析器应使用的 `inputT`。
 - 验证：临时探针（RepeatRequest 资产 Pulse 的 request 生产辅助资产 Stamp 并把编号写入 Pulse，慢消费者订阅 Pulse 并读取 Stamp）在修正前的 SDK 上 10 条交付全部错配（例如第 1 条读到 Stamp 5），修正后全部一致；由其他资产驱动的 target 读取 Stamp、解析器直接调用 Stream 方法都得到生成期诊断；会话生产失败结束整次运行的探针连续 60 次没有挂起。`cabal build all`、六个程序重新生成无漂移、五个原有 demo 返回 Succ、StreamDemo 中断后断开传感器、可见性穷举回归计数不变。停止期间的竞争窗口只做了结构修正，没有构造确定性复现。
 
+评审修正（2026-11-01，对 `c87bb22` 的评审）：
+
+- `obtainSession` 整体放进不可中断区。`modifyMVar` 的回调会恢复调用方的屏蔽状态，而调用方（进入 lifelong 的单元线程、App 中的有限读取）不屏蔽：原先启动函数返回后、登记表写回前的取消会回滚登记表，已经启动的生产任务无人停止。
+- lifelong 的来源分析不再把会话挂载各成功出口的发布取并集：每种交付状态（各挂载成功出口的组合，单元会显式 request 的会话另加没有伴随发布的状态，求到不动点）分别分析单元。原先可选生产的辅助资产 X 被当作每条交付都有；某条交付没有 X 时，单元中前驱补产 X，后继的来源表里却没有这个前驱，于是再生产一份。
+- 验证：临时探针在 `c87bb22` 与修正后各自生成、编译、运行。屏蔽状态探针显示启动函数返回后的代码原先在 Unmasked 下运行，修正后为 MaskedUninterruptible；生产步骤奇数步才生产 Stamp 时，`c87bb22` 上没有 Stamp 的每条交付都由 First、Second 各生产一份，修正后 Second 的来源包含 First 并复用它；单元显式 request 的交付（没有伴随发布）同样由修正前的两份变为一份。会话生产失败的探针连续 60 次没有挂起；上一轮的探针、`cabal build all`、六个程序重新生成无漂移、五个原有 demo、StreamDemo 中断、可见性穷举回归均不变。
+
 未覆盖：没有并发交错的系统性枚举；没有长时间运行的内存观察（完整历史按设计持续增长）；LSP 仓库的穷举模型尚未扩展到 Stream／lifelong；Ctrl-C 只在 Windows 上以 Ctrl-Break 方式验证。
 
 
