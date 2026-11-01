@@ -6,16 +6,19 @@ module Framework.Effect.Runtime.Graph
   ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..)
   , newRuntimeGraph, configureRuntimeScopes, newOrigin
   , beginActivation, endActivation, sourceLock, finishOrigin
-  , publishAsset, readVisibleAsset
+  , publishAsset, readVisibleAsset, resetOrigins
+  , installSessionLauncher, obtainSession, stopSessions
   ) where
 
-import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
 import Control.Exception (evaluate, uninterruptibleMask_)
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
+import Data.List (isPrefixOf)
 import Data.Maybe (fromMaybe)
 import Framework.Effect.Contract (ContextFault(..))
 import Framework.Effect.Graph (MethodRole(..))
 import Framework.Effect.Runtime.Identity
+import Framework.Effect.Runtime.Session (Session, SessionKey, newSession, stopSession)
 import Framework.Effect.Scope
   ( Scopes, ScopeBinding, ScopeBindings, ScopeUser(..), configureScopeRelations )
 import Framework.Prototype
@@ -53,6 +56,9 @@ data RuntimeGraph environment cause = RuntimeGraph
   , runtimeActivations :: MVar [(ActivationId, Activation environment cause)]
   , runtimeOriginSequence :: IORef Integer
   , runtimeActivationSequence :: IORef Integer
+  -- 生产会话按（lifelong 边界，资产）共享；生产任务由运行层安装的启动函数创建。
+  , runtimeSessions :: MVar [(SessionKey, Session environment cause)]
+  , runtimeLauncher :: IORef (Session environment cause -> IO ())
   }
 
 newRuntimeGraph
@@ -60,6 +66,7 @@ newRuntimeGraph
   => Prototype method -> Scopes environment cause -> IO (RuntimeGraph environment cause)
 newRuntimeGraph prototype scopes = RuntimeGraph (PrototypeReference prototype) scopes
   <$> newIORef [] <*> newMVar [] <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
+  <*> newMVar [] <*> newIORef (const (ioError (userError "No session launcher is installed")))
 
 -- ScopeTree 的独立构建与校验仍在 Prototype；这里只把同一树的关系装入现有控制对象。
 configureRuntimeScopes :: RuntimeGraph environment cause -> IO ()
@@ -69,13 +76,31 @@ configureRuntimeScopes graph = case runtimePrototype graph of
 nextSequence :: IORef Integer -> IO Integer
 nextSequence counter = atomicModifyIORef' counter (\previous -> (previous + 1, previous))
 
+-- 同一挂载的执行彼此先后（有限 AST 只执行一次，重复单元与会话步骤逐次执行）；
+-- 被替换的 Origin 不再能经来源表读到，其无归属发布随之移出，避免重复执行累积。
 newOrigin :: RuntimeGraph environment cause -> NodeId -> IO Origin
 newOrigin graph node = do
   origin <- Origin node <$> nextSequence (runtimeOriginSequence graph)
-  atomicModifyIORef' (runtimeOrigins graph) $ \origins ->
+  replaced <- atomicModifyIORef' (runtimeOrigins graph) $ \origins ->
     let updated = (node, origin) : filter ((/= node) . fst) origins
-    in length updated `seq` (updated, ())
+    in length updated `seq` (updated, lookup node origins)
+  mapM_ (dropPublications graph . (: [])) replaced
   pure origin
+
+-- 新 frame 开始前移出该子树上一次执行的 Origin：本次没有执行的位置不能读到上一次的普通产物。
+resetOrigins :: RuntimeGraph environment cause -> NodeId -> IO ()
+resetOrigins graph prefix = do
+  removed <- atomicModifyIORef' (runtimeOrigins graph) $ \origins ->
+    let (dropped, kept) = (filter selected origins, filter (not . selected) origins)
+    in length kept `seq` (kept, map snd dropped)
+  dropPublications graph removed
+  where selected = (prefix `isPrefixOf`) . fst
+
+dropPublications :: RuntimeGraph environment cause -> [Origin] -> IO ()
+dropPublications _ [] = pure ()
+dropPublications graph origins = atomicModifyIORef' (runtimeAssets graph) $ \assets ->
+  let kept = filter ((`notElem` origins) . fst . fst) assets
+  in length kept `seq` (kept, ())
 
 -- 活动记录与 App 共享同一个绑定 IORef 和入口使用登记；ctx 不另建 scope 使用者。
 -- parent 只表达启动关系，不参与 ScopeTree 父边或资产可见性推导。
@@ -107,9 +132,10 @@ resolveDefinition :: PrototypeReference -> Boot -> Either String ChainReference
 resolveDefinition (PrototypeReference prototype) boot = do
   entry <- case boot of
     TargetedBoot node -> either (Left . show) (Right . chainEntry) (lookupChain prototype node)
+    -- 解析器与 request 一样发布一次资产；同一 Context 至多有其中一种生产入口。
     RequestBoot source -> case
       [method | effect <- protoEffects prototype, effectName effect == source
-        , (ContextRequest, method) <- effectMethods effect] of
+        , (role, method) <- effectMethods effect, role `elem` [ContextRequest, ContextStream]] of
       [method] -> Right method
       _ -> Left ("Runtime request has no Context production entry: " ++ source)
   case [definition | definition <- protoChainDefinitions prototype, definitionEntry definition == entry] of
@@ -150,6 +176,8 @@ readVisibleAsset graph origin source = do
   let selected = case sourcePlan (runtimePrototype graph) (originNode origin) source of
         FromOwnChain -> [origin]
         FromChains nodes -> [produced | node <- nodes, Just produced <- [lookup node origins]]
+        -- 会话交付不经普通来源表。
+        FromSession -> []
       candidates = [value | produced <- selected, Just value <- [lookup (produced, source) assets]]
   pure $ case candidates of
     [] -> Right Nothing
@@ -162,3 +190,21 @@ sourcePlan (PrototypeReference prototype) node source = case
     , Just contract <- [effectProduces effect]] of
   [contract] -> fromMaybe FromOwnChain (lookup (ReadPoint node contract) (protoSources prototype))
   _ -> FromOwnChain
+
+-- 运行层装配后安装：为新会话启动生产任务并登记到会话中。
+installSessionLauncher :: RuntimeGraph environment cause -> (Session environment cause -> IO ()) -> IO ()
+installSessionLauncher graph = writeIORef (runtimeLauncher graph)
+
+-- 同一边界与资产只创建一份会话并只启动一次生产；在登记表锁内启动，停止时一定能看到它。
+obtainSession :: RuntimeGraph environment cause -> SessionKey -> IO (Session environment cause)
+obtainSession graph key = modifyMVar (runtimeSessions graph) $ \sessions -> case lookup key sessions of
+  Just session -> pure (sessions, session)
+  Nothing -> do
+    session <- newSession key
+    launch <- readIORef (runtimeLauncher graph)
+    launch session
+    pure ((key, session) : sessions, session)
+
+-- interpreter 退出前取消全部生产任务，并等待步骤内的受控收尾完成。
+stopSessions :: RuntimeGraph environment cause -> IO ()
+stopSessions graph = readMVar (runtimeSessions graph) >>= mapM_ (stopSession . snd)

@@ -100,6 +100,16 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 以根调用身份运行一次注入；失败留在注入内，不进入原链，也不触发 Error 诊断。
   injectOutput :: String -> RawOutput -> m () -> m ()
   injectOutput _ _ _ = pure ()
+  -- 持续资产：本次调用已经取得的历史视图（lifelong 交付，或本次先前的会话读取），按发布顺序。
+  readContextHistory :: String -> (environment -> Maybe value) -> m (Maybe [value])
+  readContextHistory _ _ = pure Nothing
+  -- Receive 资产没有本次视图时，从 interpreter 托管的会话取得当前历史（至少一条），并捕获为本次视图。
+  -- Nothing 表示当前不允许启动会话（诊断、收尾）；会话失败时传播它的原失败。
+  awaitContextHistory :: String -> (environment -> Maybe value) -> m (Maybe [value])
+  awaitContextHistory _ _ = pure Nothing
+  -- 解析器本次的原始输入；只有会话调用解析器时才安装。
+  streamRawInput :: m (Maybe String)
+  streamRawInput = pure Nothing
 
 -- 原子句柄（Excu.handler、Scoped.open／close）的统一输出：是否成功，附带方法体给出的信息。
 -- 只在 SDK 内部交给挂在该句柄下的 Context；没有挂接时被丢弃，注册与 handler 签名都看不到它。

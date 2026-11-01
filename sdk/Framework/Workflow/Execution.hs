@@ -2,13 +2,15 @@
 module Framework.Workflow.Execution (runStructuredAST) where
 
 import Framework.Effect.Contract (Failure, Output(..))
-import Framework.Effect.Runtime (Target, Handoff, noHandoff, targetName, lowerTarget, scopeHandlers)
-import Framework.Effect.Runtime.Graph (RuntimeGraph, newRuntimeGraph, configureRuntimeScopes)
+import Framework.Effect.Runtime
+  (Target, Handoff, SessionSteps, noHandoff, targetName, lowerTarget, scopeHandlers, sessionLauncher)
+import Framework.Effect.Runtime.Graph
+  (RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, installSessionLauncher, stopSessions)
 import Framework.Prototype
 import Framework.Recursion (Algebra)
 import Framework.Workflow.AST (AST, WorkflowF(..), foldAST)
 import Control.Concurrent (MVar, ThreadId, forkIOWithUnmask, killThread, newEmptyMVar, putMVar, readMVar)
-import Control.Exception (SomeException, bracket, throwIO, try, uninterruptibleMask_)
+import Control.Exception (SomeException, bracket, finally, throwIO, try, uninterruptibleMask_)
 import Control.Monad (unless, void)
 import Control.Monad.Except (ExceptT(..), runExceptT)
 
@@ -96,18 +98,21 @@ executionAlgebra prototype store entries selectors layer expected = do
 -- Prototype 已在 SDK 入口完整求值并校验；这里一次 fold 核对当前 AST 并装配全部入口。
 -- 所有 Either 分支完成后才安装独立 ScopeTree 的关系、执行业务。
 -- 两类 boot、资产和实例使用共享 RuntimeGraph；方法体仍由已装配的闭包执行。
+-- 生产会话按需启动；AST 结束（或被取消）后先取消全部会话并等待其步骤收尾，再交给 interpreter 的退出清理。
 runStructuredAST
   :: (Eq method, Show method)
   => Prototype method -> AST
   -> [Target environment cause value]
   -> [Target environment cause String]
+  -> [(String, SessionSteps environment cause)]
   -> IO (Output cause [value])
-runStructuredAST prototype tree entries selectors = do
+runStructuredAST prototype tree entries selectors sessions = do
   store <- newRuntimeGraph prototype (scopeHandlers entries)
   prepared <- either (ioError . userError . show) pure $
     foldAST (executionAlgebra prototype store compiled readers) tree (protoWorkflow prototype)
   configureRuntimeScopes store
-  either Failed Succ <$> runExceptT (prepared noHandoff)
+  installSessionLauncher store (sessionLauncher store sessions)
+  (either Failed Succ <$> runExceptT (prepared noHandoff)) `finally` stopSessions store
   where
     compiled = [(targetName entry, entry) | entry <- entries]
     readers = [(targetName entry, entry) | entry <- selectors]

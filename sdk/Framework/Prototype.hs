@@ -15,6 +15,7 @@ module Framework.Prototype
   , expandChain, reachableMethods, calledMethods
   , lookupChain, lookupWorkflow, workflowNode, workflowChildren
   , workflowTerminals, workflowSelectors, workflowLifelongs, precedes, exclusive, visibleFrom
+  , bootPlan, sessionSteps, finiteSessions
   ) where
 
 import Control.DeepSeq (NFData)
@@ -39,6 +40,8 @@ data Prototype method = Prototype
   , protoEffects :: [EffectProto method]
   , protoMethods :: [MethodDefinition method]
   , protoWorkflow :: WorkflowTree
+  -- lifelong 外的有限 require 读取 Receive 资产时由 interpreter 托管的会话；按注册确定，惰性启动。
+  , protoSessions :: [SessionProto]
   , protoChains :: [ChainProto method]
   , protoChainDefinitions :: [ChainDefinition method]
   , protoGraph :: EffectGraph method
@@ -137,7 +140,8 @@ data ChainDefinition method = ChainDefinition
 data ReadPoint = ReadPoint { readNode :: NodeId, readContract :: String }
   deriving (Eq, Show, Read, Generic, NFData)
 
-data Source = FromChains [NodeId] | FromOwnChain
+-- FromSession：Receive 资产在没有本次交付时，由 interpreter 托管的会话交付当前历史。
+data Source = FromChains [NodeId] | FromOwnChain | FromSession
   deriving (Eq, Show, Read, Generic, NFData)
 
 data PrototypeError method
@@ -444,14 +448,29 @@ numberWorkflow effects tree = cata number tree [] False
       producer <- case [effect | effect <- effects, effectProduces effect == Just contractType] of
         [effect] -> pure effect
         _ -> Left (UnknownPrototypeTarget contractType)
-      let plan = case [effectName source | source <- effects, effectName source == effectInput producer
-                       , effectKind source == StreamKind] of
-            source : _ -> Receive source
-            [] -> RepeatRequest
-          steps = case plan of
-            Receive _ -> [0, 1]
-            RepeatRequest -> [0]
-      pure (SessionProto contractType plan [path ++ [-1, index, step] | step <- steps])
+      let plan = bootPlan effects producer
+      pure (SessionProto contractType plan [path ++ [-1, index, step] | step <- [0 .. sessionSteps plan - 1]])
+
+-- 生产方式只看资产自己的注册：挂在 Stream 下即接收生产，否则反复 request。
+bootPlan :: [EffectProto method] -> EffectProto method -> BootPlan
+bootPlan effects producer = case [effectName source | source <- effects, effectName source == effectInput producer
+                                 , effectKind source == StreamKind] of
+  source : _ -> Receive source
+  [] -> RepeatRequest
+
+sessionSteps :: BootPlan -> Int
+sessionSteps (Receive _) = 2
+sessionSteps RepeatRequest = 1
+
+-- 每个 Receive 资产一份 interpreter 托管的会话，挂载为 [-2, 序号, 步骤]；不属于 AST，
+-- 不作为任何读取点的可见前驱，只在 lifelong 外的有限 require 缺少交付时惰性启动。
+finiteSessions :: [EffectProto method] -> [SessionProto]
+finiteSessions effects =
+  [ SessionProto contractType plan [[-2, index, step] | step <- [0 .. sessionSteps plan - 1]]
+  | (index, (contractType, plan)) <- zip [0 ..] receiving ]
+  where
+    receiving = [(contractType, plan) | effect <- effects, effectContinuous effect
+      , Just contractType <- [effectProduces effect], let plan = bootPlan effects effect, plan /= RepeatRequest]
 
 -- 一条 original chain 由末端及其 Input 祖先组成；只看这些 effect 自己声明的 streams，
 -- 不汇总 Context 生产链内部的依赖。
@@ -520,8 +539,9 @@ buildPreparedPrototype plan shapes = do
     "An injected Context reaches its anchor through another method; call the anchor directly"
   mounted <- mapM mountedNode (allWorkflow workflow) >>= pure . concat
   selectors <- mapM mountedSelector [selected | selected@AlternativeAt {} <- allWorkflow workflow]
-  sessions <- concat <$> mapM mountedSession (concatMap (lifelongSessions . snd) (workflowLifelongs workflow))
-  let mounts = mounted ++ selectors ++ sessions
+  sessions <- concat <$> mapM mountedSession lifelongSessionsOf
+  finiteMounts <- concat <$> mapM mountedSession finite
+  let mounts = mounted ++ selectors ++ sessions ++ finiteMounts
       entries = nub [method | (_, _, _, method) <- mounts]
       logical = withProducerReferences effects definitions
   graph <- either (Left . InvalidEffectGraph) Right (buildEffectGraph definitions (Choice (map Call entries)))
@@ -544,7 +564,7 @@ buildPreparedPrototype plan shapes = do
           (lookup (methodIdentity definition) shapes) } | definition <- defaults]
       defaultReaders = [methodIdentity definition | definition <- defaults
         , methodRole definition == ContextRequire, methodIdentity definition `notElem` map fst shapes]
-      result = Prototype (plannedRegistrations plan) effects definitions workflow
+      result = Prototype (plannedRegistrations plan) effects definitions workflow finite
         (map makeChain mounts) chainDefinitions graph scopes names []
   -- 启动环：会话的生产链不能依赖其他持续资产，否则首次生产就要先等待另一份增量。
   let continuousMethods = [(contractType, method) | effect <- effects, effectContinuous effect
@@ -556,13 +576,15 @@ buildPreparedPrototype plan shapes = do
       unless (null others) $ Left (InvalidLifelong (chainNode chain) ("Production of continuous asset "
         ++ chainTerminal chain ++ " depends on continuous assets " ++ intercalate ", " others
         ++ "; its first delivery would wait for another stream")))
-    [chain | chain <- map makeChain mounts, chainRole chain == SessionChain]
+    [makeChain mount | mount <- sessions]
   analyzed <- resolveSources written defaultReaders result
   validatePrototype analyzed
   pure analyzed
   where
     effects = plannedEffects plan
     workflow = plannedWorkflow plan
+    lifelongSessionsOf = concatMap (lifelongSessions . snd) (workflowLifelongs workflow)
+    finite = finiteSessions effects
     resources = [resource | effect <- effects, Just resource <- [effectResource effect]]
     defaults = [MethodDefinition method owner role (defaultBody effect role)
       | effect <- effects, (_, owner) : _ <- [effectMethods effect], (role, method) <- effectMethods effect]
@@ -782,8 +804,12 @@ type AssetAnalysis = StateT AssetFacts (Either (PrototypeError String))
 resolveSources :: [MethodDefinition String] -> [String] -> Prototype String
                -> Either (PrototypeError String) (Prototype String)
 resolveSources definitions defaultReaders prototype = do
-  facts <- execStateT (workflow (protoWorkflow prototype) [] [] []) (AssetFacts [] [])
-  let reads = [(point, if null sources then FromOwnChain else FromChains (sort (nub sources)))
+  facts <- flip execStateT (AssetFacts [] []) $ do
+    _ <- workflow (protoWorkflow prototype) [] [] []
+    -- interpreter 托管的会话各自从空环境启动，不是任何读取点的可见前驱。
+    mapM_ (\mount -> root mount [] [] []) (concatMap sessionMounts (protoSessions prototype))
+  let reads = [(point, if readContract point `elem` receiving then FromSession
+                       else if null sources then FromOwnChain else FromChains (sort (nub sources)))
         | (point, sources) <- assetReads facts]
       annotate chain = chain
         { chainDrives = sort (nub [contractType | (node', contractType) <- assetDrives facts, node' == chainNode chain])
@@ -793,6 +819,8 @@ resolveSources definitions defaultReaders prototype = do
   where
     effects = protoEffects prototype
     resources = [source | effect <- effects, Just source <- [effectResource effect]]
+    receiving = [contractType | effect <- effects, effectContinuous effect
+      , Just contractType <- [effectProduces effect], bootPlan effects effect /= RepeatRequest]
     -- 复用已完成的可达性分析，保守包含 native reader，以及 caller 的 require 声明
     -- 将直接 producer 方法调用路由成读取的情况；不依赖尚未算出的 chainReads。
     possibleReads = [(chainNode chain, nub
@@ -847,6 +875,10 @@ resolveSources definitions defaultReaders prototype = do
       Nothing -> lift (Left (InvalidPrototype "Context reader has no contract"))
       Just contractType -> case lookup contractType (assetCaptures state) of
         Just _ -> pure [AssetExit True state, AssetExit False state]
+        -- Receive 资产只由会话生产：没有本次交付时由 interpreter 托管的会话交付，不查询普通来源。
+        Nothing | contractType `elem` receiving -> do
+          recordRead (assetRoot call) contractType []
+          pure [AssetExit True (capture contractType Nothing state), AssetExit False state]
         Nothing -> do
           let sources = nub [node' | (node', produced) <- assetPublications state, produced == contractType
                 , visibleFrom (protoWorkflow prototype) node' (assetRoot call)]
@@ -1077,6 +1109,7 @@ validatePrototype prototype = do
   valid (sameSet (scopeCandidates tree) (graphScopeOrder graph)) "Scope candidates differ from the generated graph"
   valid (all (knownPair nodeIds) (scopeOpposed tree ++ scopeUndetermined tree)) "Unknown scope in order evidence"
   checkWorkflow [] (protoWorkflow prototype)
+  valid (protoSessions prototype == finiteSessions effects) "Interpreter sessions differ from the Receive assets"
   valid (unique (map chainNode chains)) "Duplicate mounted chain NodeId"
   valid (sameSet (map chainNode chains) expectedChainIds) "Mounted chain coverage differs from workflow"
   mapM_ validateChain chains
@@ -1109,6 +1142,8 @@ validatePrototype prototype = do
       valid (readContract point `elem` contracts) "Read point has no base Context contract"
       case source of
         FromOwnChain -> pure ()
+        FromSession -> valid (readContract point `elem` [sessionAsset session | session <- protoSessions prototype])
+          "Session source has no interpreter session"
         FromChains selected -> do
           valid (not (null selected) && unique selected) "Invalid asset source alternatives"
           mapM_ (\node' -> do
@@ -1138,6 +1173,7 @@ validatePrototype prototype = do
       AlternativeAt _ choice _ -> [alternativeSelector choice]
       LifelongAt _ described _ -> concatMap sessionMounts (lifelongSessions described)
       _ -> [] | selected <- allWorkflow (protoWorkflow prototype)]
+      ++ concatMap sessionMounts (protoSessions prototype)
     checkWorkflow expected selected = do
       valid (workflowNode selected == expected) "Workflow NodeId differs from AST path"
       case selected of
@@ -1195,9 +1231,10 @@ validatePrototype prototype = do
             && chainEntry chain `elem` [method | effect <- effects, effectProduces effect == Just (chainTerminal chain)
               , (ContextRequire, method) <- effectMethods effect]) "Selector chain differs from alternative"
           _ -> Left (InvalidPrototype "Selector chain has no alternative")
-        SessionChain -> case [ (session, step) | (_, described) <- workflowLifelongs (protoWorkflow prototype)
-            , session <- lifelongSessions described, (step, mount) <- zip [0 :: Int ..] (sessionMounts session)
-            , mount == chainNode chain ] of
+        SessionChain -> case [ (session, step)
+            | session <- concatMap (lifelongSessions . snd) (workflowLifelongs (protoWorkflow prototype))
+                ++ protoSessions prototype
+            , (step, mount) <- zip [0 :: Int ..] (sessionMounts session), mount == chainNode chain ] of
           [(session, step)] -> do
             producer <- case [effect | effect <- effects, effectProduces effect == Just (sessionAsset session)] of
               [effect] -> pure effect
@@ -1213,7 +1250,7 @@ validatePrototype prototype = do
                 expected = maybe streamEntries (\role -> [method | (role', method) <- effectMethods producer, role' == role]) expectedRole
             valid (sessionAsset session == chainTerminal chain && expected == [chainEntry chain])
               "Session chain differs from its boot plan"
-          _ -> Left (InvalidPrototype "Session chain has no lifelong session")
+          _ -> Left (InvalidPrototype "Session chain has no session")
     validateDefinition definition = do
       effect <- findEffectProto effects (definitionEffect definition)
       let roles = [role | (role, method) <- effectMethods effect, method == definitionEntry definition]

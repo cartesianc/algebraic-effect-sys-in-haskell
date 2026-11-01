@@ -4,13 +4,14 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- IO 载体：Context 绑定携带值快照和 scope 归属，生命周期操作跟随该绑定。
-module Framework.Effect.Runtime.App (App, runAppWith, withScopeCleanups) where
+module Framework.Effect.Runtime.App (App, Launch(..), runAppWith, withScopeCleanups) where
 
 import Framework.Effect.Binding
 import Framework.Effect.Contract
 import Framework.Effect.Scope
 import Framework.Effect.Runtime.Graph
 import Framework.Effect.Runtime.Identity
+import Framework.Effect.Runtime.Session (View, awaitHistory)
 import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeException, fromException, mask, mask_, throwIO, try, finally)
@@ -18,9 +19,11 @@ import Control.Monad (filterM, forM, forM_, when)
 import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Reader (ReaderT, ask, asks, local, runReaderT)
+import Data.Foldable (toList)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (find, nub, nubBy)
-import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
+import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, mapMaybe)
+import Data.Sequence ((|>))
 import Data.Unique (Unique, newUnique)
 
 type Bound env cause = ScopeBinding env cause
@@ -52,6 +55,20 @@ data Environment env cause = Environment
   , anchoredEntries :: [(String, [(String, App env cause ())])]
   -- 注入期间各原子句柄的本次输出。
   , replays :: [(String, RawOutput)]
+  -- 持续资产在本次调用的历史视图：lifelong 交付或此前的会话读取；其他调用之后的发布不改写它。
+  , views :: IORef [(String, View env cause)]
+  -- 解析器本次的原始输入，只在会话调用解析器时安装。
+  , streamRaw :: Maybe String
+  -- 会话步骤：该资产的发布进入会话历史，而不是按 Origin 的业务资产表。
+  , sessionSink :: Maybe (String, Bound env cause -> IO ())
+  }
+
+-- 一次末端调用的起点：交接的绑定与视图；会话步骤另带原始输入和发布去向。
+data Launch env cause = Launch
+  { launchBindings :: ScopeBindings env cause
+  , launchViews :: [(String, View env cause)]
+  , launchInput :: Maybe String
+  , launchSink :: Maybe (String, Bound env cause -> IO ())
   }
 
 data Opening env cause = Opening
@@ -135,7 +152,13 @@ publishBinding environment source value = do
   case execution environment of
     BusinessExecution origin
       | isNothing owner, isNothing (originalFailure environment)
-      , not (cleaningScopes environment) -> publishAsset (runtimeGraph environment) origin source value
+      , not (cleaningScopes environment) -> do
+          -- 本次已有该资产的视图时，显式 request 的新发布接在本次视图末尾，不改写其他调用的交付。
+          atomicModifyIORef' (views environment) $ \current ->
+            ([(name, if name == source then view |> value else view) | (name, view) <- current], ())
+          case sessionSink environment of
+            Just (asset, deliver) | asset == source -> deliver value
+            _ -> publishAsset (runtimeGraph environment) origin source value
     _ -> pure ()
 
 -- 已合法捕获的绑定保持快照。资源按实例归属解析，普通值只读静态来源指定的 Origin。
@@ -454,6 +477,26 @@ instance ContextStore env (App env cause) where
         inside = environment { caller = Nothing, forcedRequire = False, errorHandlers = []
                              , replays = (method, raw) : replays environment }
     when allowed $ () <$ liftIO (runExceptT (runReaderT action inside))
+  readContextHistory source select = do
+    environment <- AppRun ask
+    captured <- rawIO (lookup source <$> readIORef (views environment))
+    pure (fmap (entriesOf select) captured)
+  -- 诊断、收尾与 close 期间不启动会话；读到的历史捕获为本次视图。
+  awaitContextHistory source select = do
+    environment <- AppRun ask
+    let allowed = isNothing (originalFailure environment) && not (cleaningScopes environment)
+          && null (closings environment)
+    if not allowed then pure Nothing else do
+      session <- rawIO (obtainSession (runtimeGraph environment) (Nothing, source))
+      delivered <- rawIO (awaitHistory session)
+      case delivered of
+        Left (Left exception) -> rawIO (throwIO exception)
+        Left (Right problem) -> throwError problem
+        Right view -> do
+          rawIO $ atomicModifyIORef' (views environment) $ \current ->
+            ((source, view) : filter ((/= source) . fst) current, ())
+          pure (Just (entriesOf select view))
+  streamRawInput = AppRun (asks streamRaw)
   recordContextInput access value = do
     environment <- AppRun ask
     case openings environment of
@@ -579,6 +622,9 @@ runDiagnostic environment problem selected callback = do
   case owner of
     Nothing -> execute
     Just slot -> withMVar (scopeRecoveryGate slot) (const execute)
+
+entriesOf :: (env -> Maybe value) -> View env cause -> [value]
+entriesOf select = mapMaybe (select . bindingValues) . toList
 
 -- 此证据只描述这次失败所涉及的实例，不参与开启参数的 Eq 匹配。
 scopeFailureTarget :: String -> Maybe (ScopeInstance env cause) -> Failure cause -> Failure cause
@@ -713,19 +759,22 @@ runClose name wrap (AppRun action) = AppRun $ do
 -- consumer 覆盖整个末端调用、诊断和结果消费；嵌套方法返回不提前释放借用。
 -- handoff 是交给本次调用的已捕获绑定（alternative 把选择时读到的资产交给候选）；
 -- 返回值另带本次调用结束时捕获的无归属绑定，scope 资源绑定随实例收尾，不向外交出。
-runAppWith :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> NodeId -> ScopeBindings env cause
+runAppWith :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> NodeId -> Launch env cause
            -> env -> App env cause value
-           -> IO (Either (Failure cause) value, ScopeBindings env cause)
-runAppWith consume graph node handoff initial action = do
-  values <- newIORef handoff
-  outcome <- runAppIn consume graph node values initial action
+           -> IO (Either (Failure cause) value, ScopeBindings env cause, [(String, View env cause)])
+runAppWith consume graph node launch initial action = do
+  values <- newIORef (launchBindings launch)
+  delivered <- newIORef (launchViews launch)
+  outcome <- runAppIn consume graph node values delivered launch initial action
   captured <- readIORef values
   handoffBindings <- filterM (fmap isNothing . readBindingOwner . snd) captured
-  pure (outcome, handoffBindings)
+  handoffViews <- readIORef delivered
+  pure (outcome, handoffBindings, handoffViews)
 
 runAppIn :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> NodeId -> IORef (ScopeBindings env cause)
-         -> env -> App env cause value -> IO (Either (Failure cause) value)
-runAppIn consume graph node values initial (AppRun action) = mask $ \restore -> do
+         -> IORef [(String, View env cause)] -> Launch env cause -> env -> App env cause value
+         -> IO (Either (Failure cause) value)
+runAppIn consume graph node values delivered launch initial (AppRun action) = mask $ \restore -> do
   origin <- newOrigin graph node
   let currentExecution = BusinessExecution origin
       handlers = runtimeScopes graph
@@ -738,7 +787,8 @@ runAppIn consume graph node values initial (AppRun action) = mask $ \restore -> 
         , scopeCleanups = [], cleaningScopes = False, consumer = user
         , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
         , activeActivation = Just (activationId activation), execution = currentExecution
-        , forcedRequire = False, anchoredEntries = [], replays = [] }
+        , forcedRequire = False, anchoredEntries = [], replays = []
+        , views = delivered, streamRaw = launchInput launch, sessionSink = launchSink launch }
   (do
       completed <- try $ restore $ do
         outcome <- runExceptT (runReaderT action environment)

@@ -18,7 +18,9 @@ data Results = PrepareProbeResult (Produce PrepareProbe) | WriteFirstResult (Pro
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。
 -- 第二个列表是各转折契约的读取末端：按 require 取得资产，返回它当前的构造器名。
-compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String])
+-- 第三个列表是各持续资产的生产步骤：会话按需启动，解析器或 request 自己发布一次资产。
+compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]
+                     , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
@@ -28,6 +30,7 @@ compiledEntries = do
       , SDK.targetApp "WriteThird" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteThirdResult <$> (() <$ writeThird)))))
       , SDK.targetApp "VerifyReuse" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (VerifyReuseResult <$> (() <$ verifyReuse)))))
       ]
+    , []
     , []
     )
 
@@ -355,6 +358,7 @@ generatedPrototype =
                 )
             ]
           )
+    , SDK.protoSessions = []
     , SDK.protoChains =
         [ SDK.ChainProto
             { SDK.chainNode = [0,0]

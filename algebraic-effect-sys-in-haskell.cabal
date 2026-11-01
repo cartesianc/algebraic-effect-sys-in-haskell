@@ -43,6 +43,7 @@ executable crawler-demo
       Framework.Effect.Runtime.App
       Framework.Effect.Runtime.Identity
       Framework.Effect.Runtime.Graph
+      Framework.Effect.Runtime.Session
       Framework.Recursion
       Framework.Prototype
       Framework.Workflow.AST
@@ -85,6 +86,7 @@ executable file-demo
       Framework.Effect.Runtime.App
       Framework.Effect.Runtime.Identity
       Framework.Effect.Runtime.Graph
+      Framework.Effect.Runtime.Session
       Framework.Recursion
       Framework.Prototype
       Framework.Workflow.AST
@@ -126,6 +128,7 @@ executable open-files-demo
       Framework.Effect.Runtime.App
       Framework.Effect.Runtime.Identity
       Framework.Effect.Runtime.Graph
+      Framework.Effect.Runtime.Session
       Framework.Recursion
       Framework.Prototype
       Framework.Workflow.AST
@@ -169,6 +172,7 @@ executable scope-reuse-demo
       Framework.Effect.Runtime.App
       Framework.Effect.Runtime.Identity
       Framework.Effect.Runtime.Graph
+      Framework.Effect.Runtime.Session
       Framework.Recursion
       Framework.Prototype
       Framework.Workflow.AST
@@ -211,6 +215,7 @@ executable scope-instances-demo
       Framework.Effect.Runtime.App
       Framework.Effect.Runtime.Identity
       Framework.Effect.Runtime.Graph
+      Framework.Effect.Runtime.Session
       Framework.Recursion
       Framework.Prototype
       Framework.Workflow.AST

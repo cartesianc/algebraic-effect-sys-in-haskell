@@ -436,18 +436,27 @@ renderProgram namespace prepared sumTypes = do
             ++ [(method, "m ()") | method <- errorMethods specification]
           methodLines = ["  " ++ method ++ " :: " ++ signature | (method, signature) <- methods]
           continuous = isContinuous (typing specification)
-          -- 缺值时的 thunk：有 request 时求值一次 request；Stream 来源没有 request，由会话交付首值。
-          -- （第 2 批暂行：会话尚未接入，读取未交付的 Stream 来源报 ContextNotInitialized。）
+          -- 缺值时的 thunk：有 request 时求值一次 request。
           missingValue = case entryMethod (typing specification) of
             Just method -> method
-            Nothing -> "(SDK.streamNotStarted " ++ show effectName ++ " ContextBindingError)"
+            Nothing -> "(SDK.failEffect " ++ show effectName ++ " (ContextBindingError SDK.ContextNotInitialized) "
+              ++ show (effectName ++ " has no production entry") ++ ")"
+          readerWrapper = "(FrameworkRoot.withErrorPath " ++ show (errorPath specification)
+            ++ " . FrameworkRoot.handler @Root) $"
+          -- 持续资产读取历史视图：先用本次交付；没有时 Receive 资产由会话交付当前历史，
+          -- 有 request 的持续资产按普通 require 取得一个值（呈现为单条视图）。
           readingLines = case contextReader (typing specification) of
+            Just method | continuous ->
+              [ "  " ++ method ++ " :: m (SDK.History (Produce " ++ effectName ++ "))"
+              , "  " ++ method ++ " = " ++ readerWrapper
+              , "    SDK.readHistory " ++ show effectName
+                ++ " ContextBindingError " ++ contextAccessTable "SDK." effectName
+                ++ " bound" ++ effectName ++ " "
+                ++ maybe "Nothing" (\producing -> "(Just " ++ producing ++ ")") (entryMethod (typing specification))
+              ]
             Just method ->
-              [ "  " ++ method ++ " :: m " ++ (if continuous then "(SDK.History (Produce " ++ effectName ++ "))"
-                                                 else "(Produce " ++ effectName ++ ")")
-              , "  " ++ method ++ " = " ++ (if continuous then "fmap SDK.currentHistory . " else "")
-                ++ "(FrameworkRoot.withErrorPath " ++ show (errorPath specification)
-                ++ " . FrameworkRoot.handler @Root) $"
+              [ "  " ++ method ++ " :: m (Produce " ++ effectName ++ ")"
+              , "  " ++ method ++ " = " ++ readerWrapper
               , "    SDK.readContext " ++ show effectName
                 ++ " ContextBindingError " ++ contextAccessTable "SDK." effectName
                 ++ " " ++ observation "SDK." effectName ++ " bound" ++ effectName
@@ -610,7 +619,9 @@ renderProgram namespace prepared sumTypes = do
           , ""
           , "-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。"
           , "-- 第二个列表是各转折契约的读取末端：按 require 取得资产，返回它当前的构造器名。"
-          , "compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String])"
+          , "-- 第三个列表是各持续资产的生产步骤：会话按需启动，解析器或 request 自己发布一次资产。"
+          , "compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]"
+          , "                     , [(String, SDK.SessionSteps ContextValues Errors)])"
           , "compiledEntries = do"
           , "  scopes <- Handlers.newScopeHandlers"
           , "  pure"
@@ -620,6 +631,7 @@ renderProgram namespace prepared sumTypes = do
           , "    , " ++ renderList "      "
               [ wrapTarget contractType ("caseOf" ++ contractType ++ " <$> " ++ reader)
               | contractType <- selectorContracts, reader <- readerOfContract contractType ]
+          , "    , " ++ renderList "      " sessionSteps
           , "    )"
           , ""
           ] ++ concat
@@ -635,6 +647,21 @@ renderProgram namespace prepared sumTypes = do
               ++ " Handlers.handlerSourceFingerprint generatedPrototype compiledEntries"
           ]
       where
+        -- 按 Context 注册名登记（与运行时绑定来源同名）。
+        -- Receive：Stream 单步取得原始输入，解析器读取它并发布；RepeatRequest：request 生产并发布。
+        sessionSteps =
+          [ "(" ++ show (name specification) ++ ", " ++ steps ++ ")"
+          | specification <- contextSpecs, isContinuous (typing specification)
+          , Just declared <- [contextAsset (typing specification)]
+          , let producerName = name specification
+                streamSource = [(name source, method) | source <- specifications, name source == input specification
+                  , Stream { handler = Just method } <- [typing source]]
+          , Just steps <- [case (streamSource, contextParser (typing specification), contextProducer (typing specification)) of
+              ((sourceName, handle) : _, Just parser, _) -> Just ("SDK.receiveSteps ("
+                ++ wrapTarget sourceName handle ++ ") (" ++ wrapTarget producerName ("() <$ " ++ parser) ++ ")")
+              ([], _, Just producing) -> Just ("SDK.requestSteps ("
+                ++ wrapTarget producerName ("() <$ " ++ producing) ++ ")")
+              _ -> Nothing] ]
         wrapTarget label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
           ++ " (FrameworkRoot.withErrorHandlers Handlers.errorHandlers"
           ++ " (FrameworkRoot.withAnchoredContexts Handlers.contextInjections"

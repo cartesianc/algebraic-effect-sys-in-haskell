@@ -36,7 +36,8 @@ interpreter
   :: (Show cause, Show value, Show method, Ord method, NFData method)
   => String
   -> Maybe String -> Prototype method
-  -> IO ([Target environment cause value], [Target environment cause String]) -> AST -> [EffectSpec] -> IO ()
+  -> IO ([Target environment cause value], [Target environment cause String], [(String, SessionSteps environment cause)])
+  -> AST -> [EffectSpec] -> IO ()
 interpreter namespace sourceFingerprint generatedPrototype createEntries tree specifications = do
   hSetEncoding stdout utf8
   arguments <- getArgs
@@ -47,10 +48,10 @@ interpreter namespace sourceFingerprint generatedPrototype createEntries tree sp
       | otherwise -> do
           verifyHandlerSource namespace sourceFingerprint
           structure <- initializeBeforeBusiness
-          (entries, selectors) <- createEntries
+          (entries, selectors, sessions) <- createEntries
           mask $ \restore -> do
             completed <- tryAny $ restore $ do
-              output <- runStructuredAST structure tree entries selectors
+              output <- runStructuredAST structure tree entries selectors sessions
               let rendered = show output
               -- 各 Node 已在释放使用前消费自己的结果；这里完成汇总错误的显示。
               evaluate (foldr seq () rendered)

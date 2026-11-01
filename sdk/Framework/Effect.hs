@@ -5,13 +5,13 @@
 -- Root.handler 只供生成区使用，避免与注册的 handler record 字段混名。
 module Framework.Effect
   ( Effect(Registration, Typing, Require, Produce, raise), type Error, EffectTyping(..), EffectKind(..), Root, Registered, App
-  , Target, targetApp
+  , Target, targetApp, SessionSteps, receiveSteps, requestSteps
   , Output(..), Failure(..), ErrorReport(..), caughtFailure, failEffect
   , AssetDecl(..), namedAsset, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
   , requests, requires, streams, Void
   , ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, projectContext, enterHandler
-  , atomicHandle, atomicScope, streamNotStarted, streamInput
-  , History, historyEntries, latest, historySize, currentHistory
+  , atomicHandle, atomicScope, readHistory, streamInput
+  , History, historyEntries, latest, historySize
   , ScopeInput(..), ScopeFault(..), openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, withScopeCleanups
   ) where
@@ -23,11 +23,11 @@ import Framework.Effect.Contract
   )
 import Framework.Effect.Context
   ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, projectContext
-  , atomicHandle, atomicScope, streamNotStarted, streamInput )
+  , atomicHandle, atomicScope, readHistory, streamInput )
 import Framework.Effect.Registration
   ( EffectTyping(..), AssetDecl(..), namedAsset, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
   , requests, requires, streams )
-import Framework.Effect.History (History, historyEntries, latest, historySize, currentHistory)
-import Framework.Effect.Runtime (App, Target, targetApp)
+import Framework.Effect.History (History, historyEntries, latest, historySize)
+import Framework.Effect.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, requestSteps)
 import Framework.Effect.Runtime.App (withScopeCleanups)
 import Framework.Effect.Scope (ScopeHandler, newScopeHandler)

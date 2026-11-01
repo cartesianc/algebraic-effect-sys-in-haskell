@@ -30,6 +30,6 @@ latest (History entries) = case viewr entries of
 historySize :: History value -> Int
 historySize (History entries) = Seq.length entries
 
--- 第 2 批暂行：会话与发布历史尚未接入，读取持续资产时把当前绑定呈现为只含一条的视图。
+-- lifelong 外读取有 request 的持续资产时按普通 require 取得一个值，呈现为只含一条的视图。
 currentHistory :: value -> History value
 currentHistory = History . Seq.singleton

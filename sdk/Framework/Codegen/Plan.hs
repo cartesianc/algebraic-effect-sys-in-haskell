@@ -18,6 +18,7 @@ renderPrototype prototype = unlines
   , ("protoEffects", list renderEffect (P.protoEffects prototype))
   , ("protoMethods", list renderMethod (P.protoMethods prototype))
   , ("protoWorkflow", renderWorkflow (P.protoWorkflow prototype))
+  , ("protoSessions", list renderSession (P.protoSessions prototype))
   , ("protoChains", list renderChain (P.protoChains prototype))
   , ("protoChainDefinitions", list renderChainDefinition (P.protoChainDefinitions prototype))
   , ("protoGraph", renderGraph (P.protoGraph prototype))
@@ -250,3 +251,4 @@ renderReadPoint point = constructor "ReadPoint" [show (P.readNode point), show (
 renderSource :: P.Source -> String
 renderSource (P.FromChains nodes) = constructor "FromChains" [list show nodes]
 renderSource P.FromOwnChain = "SDK.FromOwnChain"
+renderSource P.FromSession = "SDK.FromSession"
