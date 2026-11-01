@@ -1,8 +1,11 @@
 # 静态 Prototype、运行图与 ScopeTree
 
+本文是[主设计第 5 章](LATEST_DESIGN.md)引用的详细规范，负责 Prototype、来源分析、RuntimeGraph、ScopeTree 与缓存。范围为 Stage 1/2 当前协议；Stream 的拟议字段及持续执行接入统一见 [Stream 第 10 节](STREAM_LIFELONG.md#10-生成和运行的实现边界)，尚未实现。
+
+
 业务入口仍为 `main = interpreter ast effects`，手写 handler 仍使用原生 Haskell 的 `instance`、`do`、模式匹配和方法引用。`Framework.Prototype` 在 gencode 阶段统一构建注册、方法、workflow、链定义与挂载、effect graph 和 ScopeTree，发射唯一的 `generatedPrototype :: SDK.Prototype MethodGen` 显式 ADT 常量。运行时校验并直接使用这份原型，不预执行 Context 或资源 IO。
 
-生成前可由 GHC／HLS 检查手写模块是[核心设计约束](DESIGN_METHOD.md#生成前仍是原生-haskell核心约束)。已有契约接口提供类方法与 ADT 类型关系；生成器从合法 Haskell 中提取支持的结构，不要求先把业务源码转换成另一种语法。宿主语言类型正确与静态 effect 结构可提取需要分别满足。
+生成前可由 GHC／HLS 检查手写模块是[核心设计约束](LATEST_DESIGN.md#beforegen)。已有契约接口提供类方法与 ADT 类型关系；生成器从合法 Haskell 中提取支持的结构，不要求先把业务源码转换成另一种语法。宿主语言类型正确与静态 effect 结构可提取需要分别满足。
 
 初始化后的 `ScopeTree` 在 App／IO 中同时提供 Error 的祖先候选导航与有限执行自动收尾的保守清理前提。运行层仍按实际 scope 实例及使用登记判断能否关闭；静态图不判断故障归属或某份资源已经无人使用，也不新增 Error 的动态调用 tracing。
 
@@ -195,3 +198,12 @@ key 未变时复用纯原型和渲染文本，仍运行 `validatePrototype`、`c
 `Generated.Program` 仍是派生产物。手改 `generatedPrototype` 中的 `protoScopes` 后，运行校验读取这些显式字段，不会重新推导父边；它只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。下一次 gencode 会按源声明和方法结构恢复生成结果，缓存不把手改文件当作权威。不增加手工 edge override 层，也不承诺保留生成文件中的手改。
 
 本轮沿用项目的普通编译要求，不新增测试、负例或检查门槛。
+
+
+## Context 的剧本驱动检查
+
+AST node 末端必须是原始句柄，不能是 Context。gencode 从每个挂载末端沿显式方法引用求可达集合：require 的默认读取包含缺值时进入生产链的可能路径；挂接句柄可达时，其 Context 生产也视为可达；alternative 的选择读取末端同样作为起点。
+
+任一 Context 的生产方法无法从这些入口到达时，生成器报错。挂接的 Context 经其他方法回到原句柄同样报错，不把直接输出回答与间接递归混为一谈。驱动检查与末端检查每次生成执行，缓存命中不跳过；首次缺少 Handlers、尚无方法结构时先生成契约，待方法实现后补齐完整检查。
+
+这项静态检查证明存在允许的结构路径，不证明本次条件分支一定生产。Stream 的独立启动和后续驱动还需 [BootPlan 规则](STREAM_LIFELONG.md#4-自动推导-bootplan)，不能仅由可达性推出。
