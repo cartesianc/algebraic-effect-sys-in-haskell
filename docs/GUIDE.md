@@ -391,7 +391,7 @@ EffectSpec
 | `Stream` | `handler :: Maybe String` | 无，由生产会话调用 | `m String` | 持续取得原始输入，交给挂在它下面的 Context 解析 |
 
 - **`Maybe String` 是方法名**：`Just "名字"` 生成这个方法，`Nothing` 不生成。名字可以缺失，不代表返回值使用 `Maybe`。入口为 `Nothing` 的 effect 只作为声明存在，不能被 AST 选为末端。
-- **业务值只归 Context**：其他类别的方法只表示"完成"或"失败"。Excu 和 Scoped 返回的 `Maybe String` 是原子句柄交出的可选信息，只交给挂在这个句柄下的 Context 解析（见 `input`），调用这个句柄的其他方法不读取它。
+- **业务资产只归 Context**：Excu 和 Scoped 返回的 `Maybe String` 是原子句柄交出的可选信息，只交给挂接的 Context 解析（见 `input`）；Stream 返回的原始输入交给对应的 Context 解析器。它们都不直接产出业务资产。
 
 #### `Context`
 
@@ -495,7 +495,7 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 
 - **来源自动确定**：契约名就是生产方声明的资产名，每个资产恰好由一个 Context 声明，生成器自动接上，不用指名生产方。
 - **区分同类数据**：同一种数据有不同含义时，声明成不同的资产。例如 Crawler 的起始页和链接页 URL 都是 `PageURL`，分别声明为资产 `StartURL` 和 `LinkedURL`，类型上不能混用。
-- **同一契约两种方式都可以声明**：例如 Scoped 的 `open` request 资源、`close` require 它；但同一契约的同一种方式只能声明一次。
+- **同一契约可以声明多种合法取值方式**：例如 Scoped 的 `open` request 资源、`close` require 它；持续消费方也可同时声明 `streams` 和 `requests`（生产方须支持 request）。同一契约的同一种方式只能声明一次。
 - **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见[资产书写](#types)）只能 `requires`；`streams` 只能由 Pure、Excu、Scoped 声明，只能订阅 `stream = Just ()` 的基础契约。
 - **声明即权限**：方法体里取用了未声明的契约，生成器报错；运行时也会以 `UndeclaredContextAccess` 拒绝。
 
@@ -580,7 +580,7 @@ Context 的读取方法（`read契约名`）由 SDK 提供默认实现，不用�
 
 ```haskell
 instance ExtractPageInputs m => ExtractPageEffect m where
-  startPageSummary = do
+  getStartPageSummary = do
     fetched <- fetchStartPage            -- 挂接句柄交出的正文
     StartURL (PageURL url) <- require @StartURL
     html <- maybe (raise (ExtractPageError (url ++ ": fetch returned no page body"))) pure fetched
@@ -602,7 +602,7 @@ instance FileSessionInputs m => FileSessionEffect m where
     pure Nothing
 ```
 
-- **资源获取写在资源 Context 的生产方**：FileDemo 中打开文件的是 `openedFile`，`open` 只 `request` 它。
+- **资源获取写在资源 Context 的生产方**：FileDemo 中打开文件的是 `getOpenedFile`，`open` 只 `request` 它。
 - **使用方显式调用 `open`**：例如 `readFileContent` 先调用 `openFileSession`。实例已开启时 SDK 直接复用，跳过 `open` 的方法体。
 - **不用自己安排 `close`**：SDK 会自动清理（见「运行时行为」），也可以显式调用。
 
@@ -679,7 +679,7 @@ ast = operateFile
 | `chained` | 按顺序逐个执行 | 立即停止，后面的子项不执行 | 各子项结果按顺序拼接 |
 | `parallel` | 同时执行 | 等全部子项结束，按声明顺序取第一个失败 | 全部成功时按声明顺序拼接 |
 | `alternative` | 只执行一个候选 | 候选的失败原样传播 | 只有被选中候选的结果 |
-| `lifelong` | 各单元同时运行，每领到一条新交付执行一次 | 终止整次运行（临时规则） | 没有正常结束 |
+| `lifelong` | 各单元独立重复执行，到达 target 时等待其订阅资产的交付 | 终止整次运行（临时规则） | 没有正常结束 |
 
 程序里含 `lifelong` 时，`parallel` 中任何子项失败也立即终止整次运行，不再等待其他子项结束。
 
@@ -777,7 +777,7 @@ EffectSpec
 | --- | --- | --- | --- |
 | Stream effect | `Nothing` | `Just ()` | **接收**：会话反复调用 Stream 的方法取得原始输入，交给解析器 `streamT` 解析并发布 |
 | Root 或普通 effect | `Just ()` | `Just ()` | **请求序列**：会话反复执行 `getT`，每次成功即一条新发布 |
-| 任意 | 按普通规则 | `Nothing` | 普通单值资产，不能被 `streams` 订阅 |
+| Root 或普通 effect | `Just ()` | `Nothing` | 普通单值资产，不能被 `streams` 订阅 |
 
 其他组合由生成器拒绝：Stream 下的 Context 不能声明 `request`，必须声明 `stream`；`stream = Just ()` 不在 Stream 下时必须有 `request`；一个 Stream 恰好有一个 Context 以它为 `input`。
 
@@ -832,7 +832,7 @@ ast = chained [setup, monitor]
 ```
 
 - **单元**：lifelong 的每个直接子项是一个单元；直接子项是 `parallel` 时拆开这一层，其子项分别是单元。各单元同时运行，互不等待。
-- **一次执行**：单元每领到一条新交付执行一次，结束后再领下一条；有积压时立即继续，没有就挂起等待，不反复调用 handler 试探数据。同一次执行里，每个资产只领取一次，后面的节点（包括并行节点、alternative 的选择与候选）读到同一份视图；StreamDemo 中 `ShowTemperature` 和 `CheckTrend` 看到的是同一条读数。
+- **一次执行**：控制流到达 target 时领取其订阅资产的交付，再 boot 该 target；单元本轮完整结束后才开始下一轮。有积压时立即领取，没有就挂起等待，不反复调用 handler 试探数据。一个单元内不同 target 可以由不同资产驱动，各自到达时等待对应交付。同一次执行里，每个资产只领取一次，后面的节点（包括并行节点、alternative 的选择与候选）读到同一份视图；StreamDemo 中 `ShowTemperature` 和 `CheckTrend` 看到的是同一条读数。
 - **每次执行互相隔离**：上一次执行中产生的普通资产不会被这一次读到。
 - **订阅规则**：lifelong 里的每个末端（连同它的 Input 链）恰好订阅一个持续资产，并且不再读取别的持续资产；`streams` 不能用在 lifelong 外的末端。lifelong 不能嵌套，内部不能有空分支。
 - **会话**：同一个 lifelong 里订阅同一资产的单元共享一个生产会话，各自独立推进；不同 lifelong 的会话互相独立。会话在进入 lifelong 时启动；生产步骤用到的资源（例如 `connectSensor` 打开的连接）在各步骤间保持，退出时关闭。持续资产的生产不能依赖另一个持续资产。
@@ -842,7 +842,7 @@ ast = chained [setup, monitor]
 ### 结束与失败
 
 - **没有正常结束**：持续程序运行到被取消（Ctrl-C）为止。取消时 SDK 停止全部单元和会话，等它们收尾，再按 ScopeTree 关闭资源；StreamDemo 会打印 `[sensor] disconnected`。
-- **失败（临时规则）**：程序里含 lifelong 时，任何失败（生产、解析、某个单元或任何 branch，先完成 Error 诊断）都终止整次运行：取消全部任务、等待收尾，最后报告最初的那个失败。lifelong 的 close 语义设计后再改为局部结束。
+- **失败（临时规则）**：程序里含 lifelong 时，结构化失败（生产、解析、某个单元或任何 branch）在完成 Error 诊断后终止整次运行：取消全部任务、等待收尾，最后报告最初的那个失败；原生异常直接进入监督并在收尾后重新抛出。lifelong 的 close 语义设计后再改为局部结束。
 - **lifelong 外读取持续资产**：普通 `requires "T"` 只读取一次。挂在 Stream 下的资产没有交付时，由 interpreter 托管的会话产出（至少等到一条），返回当时的历史；这个会话保持到程序退出。请求序列资产按普通 require 取得一个值，呈现为只有一条的历史。
 
 ### 运行与查看
@@ -933,8 +933,8 @@ reading #2: 24.0 C
 | 经普通函数、未知的高阶组合或循环间接调用 effect | 在方法体中直接调用；支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法 |
 | 方法体调用了自己 `input` 链以外的 effect 方法 | GHC 报错（缺少该 effect 的能力）；把它加进 `input` 链，或改用 Context 取值 |
 | `alternative` 的候选没有依赖分支契约、依赖了多个，或候选没覆盖和类型的全部构造器；分支契约被写成 `requests` | 每个候选 `requires` 恰好一个分支契约，候选覆盖全部构造器；分支契约只能 `requires` |
-| AST 的 node 选中了 Context 或 Error | node 只挂原始句柄；Context 由它挂接的句柄执行时产出，或被 `request`／`require` 时产出；Error 由失败协议调用 |
-| 某个 Context 从 AST 出发永远到不了：既没有 node 带起它挂接的句柄，也没有被带起的链 `request`／`require` 它 | 把带起它的链加进 AST，或删掉这个 Context |
+| AST 的 node 选中了 Context、Error 或 Stream | node 只挂可选作末端的原始句柄；Context 由挂接、合法取值或生产会话带起；Stream 由生产会话调用，Error 由失败协议调用 |
+| 某个 Context 从 AST 出发永远到不了：没有挂接句柄、合法取值链或 lifelong 订阅生产会话带起它 | 把带起它的消费链加进 AST，或删掉这个 Context |
 | 缺值读取路径上，同一契约有多个可能同时发布的可见来源 | 细化契约或调整 AST；alternative 和条件 fallback 可证明互斥时允许多个候选 |
 | 持续资产的声明不成立：Stream 下的 Context 写了 `request` 或缺少 `stream = Just ()`；`stream = Just ()` 既不在 Stream 下也没有 `request`；Stream 下不是恰好一个 Context；`streams` 订阅了普通资产或分支契约 | 按[持续资产的声明规则](#stream)修正 |
 | `streams` 写在 lifelong 外的末端上；lifelong 嵌套或含空分支；lifelong 里的末端没有恰好订阅一个持续资产，或另外读取了别的持续资产 | 按 [lifelong 的规则](#stream)调整注册或 AST |
@@ -970,6 +970,7 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 
 - **未实现的能力**：middleware、通用结构适配尚未实现。
 - **持续执行的延期项**：没有正常结束（EOF）、Stream close、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；完整历史一直保留，持续运行时内存随发布增长。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
+- **Stage 3 已知实现限制**：持续资产作为 scope 开启参数尚未接通；多个独立会话的来源分析仍可能产生不必要的指数状态组合。见 [TODO](TODO.md#stage-3-limitations)。
 - **handler 复用**：同一段 handler 逻辑还不能服务多种数据类型，需要分别注册（Crawler 的两条链因此各有一份实现）。
 - **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。
 - **构建方式**：SDK 目前随仓库内的示例一起编译，不能作为独立依赖引入。

@@ -6,11 +6,11 @@
 | --- | --- | --- |
 | Stage 1：Prototype 与 RuntimeGraph | 已实现 | [规范](EFFECT_GRAPH.md)、[历史验收](TODO.md#completed) |
 | Stage 2：来源可见性与求值锁，以及 ownership／分析复杂度修复 | 已实现；外部穷举验证已在 LSP 仓库完成 | [规范](EFFECT_GRAPH.md)、[历史验收](TODO.md#completed) |
-| Stage 3：Stream 与 lifelong | 已实现；lifelong 失败暂用临时规则 | [规范](STREAM_LIFELONG.md)、[实施记录](TODO.md#stage-3-record) |
+| Stage 3：Stream 与 lifelong | 已实现；lifelong 失败暂用临时规则；[当前限制](#stage-3-limitations) | [规范](STREAM_LIFELONG.md)、[实施记录](TODO.md#stage-3-record) |
 
 ## Stage 3：Stream 与 lifelong（依赖 Stage 2）
 
-**状态**：2026-11-01 已实现（分支 `stage3-stream-lifelong`）。权威规则见 [Stream 与 lifelong](STREAM_LIFELONG.md)，写法见[使用指南第五节](GUIDE.md#stream)。本节取代旧的“方法体 stream @T 每调用一次领取一条”方案。
+**状态**：2026-11-01 已实现；当前实现限制见[下节](#stage-3-limitations)。权威规则见 [Stream 与 lifelong](STREAM_LIFELONG.md)，写法见[使用指南第五节](GUIDE.md#stream)。本节取代旧的“方法体 stream @T 每调用一次领取一条”方案。
 
 设计规范在实现前按用户确认作了三处修订，已写入规范：去掉“观察原链”（ObserveOrigin），只保留 Receive 与 RepeatRequest；`History` 读取类型由生产方注册（`stream = Just ()`）决定，不由消费方的 `streams` 决定；lifelong 中的失败在 close 语义设计前按临时规则终止整次运行。
 
@@ -31,6 +31,12 @@ Stream 是[主设计第 7 章](LATEST_DESIGN.md#stream)的一部分。角色匹�
 ### 延期
 
 EOF／Done、Stream close、lifelong 的局部结束（当前由临时规则代替）、历史资源精细回收、嵌套 lifelong、多个持续来源组合触发、自动重试、周期声明、背压及通用外部 push callback 注册延期。持续示例通过失败或外部取消结束；有限 require 启动的持续会话由 interpreter 托管至退出。
+
+<a id="stage-3-limitations"></a>
+### 当前已知实现限制
+
+- [ ] **来源分析的独立会话组合膨胀（P2）**：`552b92d` 保留交付缺值路径后，lifelong 先对全部会话状态做笛卡尔积，再分析各单元。N 个独立会话各自可选发布一个辅助资产、各单元只读取自己的辅助资产时，仍会形成至少 `2^N` 个全局状态。应先按消费单元的相关读取集合投影并去重，再组合相关状态，同时保留缺值补产路径与 request 固定点。此结论来自源码推导，尚未做性能实测；本次合并没有修复该项。
+- [ ] 持续资产作为 scope 开启参数：`readHistory` 返回交付视图时没有经过开启参数的观察协议，资源按本轮交付开启时可能报 `ScopeInputsMissing`。按用户安排，等 lifelong 的 close 语义补充后再处理（评审 2026-11-01）。
 
 <a id="stage-3-record"></a>
 ### 实施记录（2026-11-01）
@@ -65,6 +71,8 @@ EOF／Done、Stream close、lifelong 的局部结束（当前由临时规则代�
 - lifelong 的来源分析不再把会话挂载各成功出口的发布取并集：每种交付状态（各挂载成功出口的组合，单元会显式 request 的会话另加没有伴随发布的状态，求到不动点）分别分析单元。原先可选生产的辅助资产 X 被当作每条交付都有；某条交付没有 X 时，单元中前驱补产 X，后继的来源表里却没有这个前驱，于是再生产一份。
 - 验证：临时探针在 `c87bb22` 与修正后各自生成、编译、运行。屏蔽状态探针显示启动函数返回后的代码原先在 Unmasked 下运行，修正后为 MaskedUninterruptible；生产步骤奇数步才生产 Stamp 时，`c87bb22` 上没有 Stamp 的每条交付都由 First、Second 各生产一份，修正后 Second 的来源包含 First 并复用它；单元显式 request 的交付（没有伴随发布）同样由修正前的两份变为一份。会话生产失败的探针连续 60 次没有挂起；上一轮的探针、`cabal build all`、六个程序重新生成无漂移、五个原有 demo、StreamDemo 中断、可见性穷举回归均不变。
 
+合并前文档核对（2026-11-01，基于 `c8ad732`）：修正 Receive／RepeatRequest 的角色与生成方法说明、lifelong 单元的交付就绪规则、会话发布与运行身份，以及失败／取消的保证范围；同步主设计、资产约束、指南与 README。`cabal build all --offline -j1` 通过。本次未重新生成 demo、未执行业务示例或性能探针；已知限制列于上节。
+
 未覆盖：没有并发交错的系统性枚举；没有长时间运行的内存观察（完整历史按设计持续增长）；LSP 仓库的穷举模型尚未扩展到 Stream／lifelong；Ctrl-C 只在 Windows 上以 Ctrl-Break 方式验证。
 
 
@@ -84,7 +92,6 @@ EOF／Done、Stream close、lifelong 的局部结束（当前由临时规则代�
 
 - [x] Stage 2 原 2.7：LSP 仓库的 `verify/visibility` 建立了独立的运行语义模型，穷举小规模 AST 与契约组合，并以真实 `buildPrototype` 核对静态来源；包含变异自检。2026-11-01 基线：一层 9,222、两层 209,480、三层 43,800、alternative 7,688 个程序及 50,000 个随机程序，均为“接受且一致”或“拒绝且有依据”，没有不一致。本仓库不新增测试门槛。
 - [ ] 将上述穷举模型扩展到 Stream／lifelong（订阅、会话可见性与单元划分）。
-- [ ] 持续资产作为 scope 开启参数：`readHistory` 返回交付视图时没有经过开启参数的观察协议，资源按本轮交付开启时可能报 `ScopeInputsMissing`。按用户安排，等 lifelong 的 close 语义补充后再处理（评审 2026-11-01）。
 - [ ] 外部 LSP 按自身需要消费 SDK 原型与诊断；协议和展示格式在工具侧设计，不为其增加 SDK 专用导出。
 - [ ] 读取点来源、资产细化建议及模块引用索引的可视化。
 

@@ -26,7 +26,7 @@ main = interpreter ast effects
 | [Handler](docs/GUIDE.md#handlers) | 用原生 instance 方法实现操作、解析和显式调用。 |
 | [Workflow／AST](docs/GUIDE.md#workflow) | 选择完整操作链的末端，规定这些链如何顺序、并行或按条件启动。 |
 
-Context 是负责资产生产与解析的一类 effect：它的 handler 产生资产，消费方 handler 按声明的契约取用。持续数据由 Stream effect 取得原始输入，再由 Context 解析成持续资产，`lifelong` 在新数据到达时启动消费链（见[持续资产与 lifelong](docs/GUIDE.md#stream)）。Effect 声明关系，handler 实现行为，asset 连接生产与消费，workflow 组织执行。
+Context 是负责资产生产与解析的一类 effect：它的 handler 产生资产，消费方 handler 按声明的契约取用。持续数据可由 Stream effect 取得原始输入后经 Context 解析，也可由 Context request 重复生产；`lifelong` 在新数据到达时启动消费链（见[持续资产与 lifelong](docs/GUIDE.md#stream)）。Effect 声明关系，handler 实现行为，asset 连接生产与消费，workflow 组织执行。
 
 进入[使用指南：代码长什么样](docs/GUIDE.md#code-shape)，通过同一个例子展开各组件的 Haskell 写法；完整 Main 和导入关系见[运行入口](docs/GUIDE.md#运行入口mainhs)。
 

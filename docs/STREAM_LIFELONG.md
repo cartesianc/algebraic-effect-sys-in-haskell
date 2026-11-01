@@ -2,7 +2,7 @@
 
 本文通过引用构成[主设计第 7 章](LATEST_DESIGN.md#stream)的完整规范。主设计负责架构地图，本页唯一维护 Stream 的匹配、交付和调度规则；实施记录在 [TODO](TODO.md)，写法示例在[使用指南第五节](GUIDE.md#stream)。
 
-更新：2026-11-01。状态：已实现（Stage 3 第 1–6 批）；延期项见[第 11 节](#deferred)。
+更新：2026-11-01。状态：已实现（Stage 3 第 1–6 批）；当前实现限制见 [TODO](TODO.md#stage-3-limitations)，延期项见[第 11 节](#deferred)。
 
 本文手工记录 Stream、Context 与 lifelong 的匹配规则，作为代码生成、解释器和开发文档共同遵守的规范。下列规则与当前 SDK 一致；标明“延期”或“临时”的部分不是最终设计。
 
@@ -27,7 +27,7 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 | --- | --- |
 | Stream effect | 第六种 typing；手写方法每次取得一份原始输入（`String`），只由生产会话调用 |
 | Context.request | 一次主动生产，成功后发布资产 |
-| Context.stream | 解析 Stream 交付的本次原始输入，成功后发布资产 |
+| Context.stream | 声明持续资产；Receive 生成解析方法，RepeatRequest 复用 request 生产 |
 | Context.require | 读取已有绑定或交付视图；缺值按合法生产能力求值 |
 | `stream = Just ()` | 声明持续资产：`require` 返回 `History`，可以被 `streams` 订阅 |
 | `streams "T"` | 消费方声明以资产 T 的新交付驱动，同时取得读取权限；不是调用 parser 的语法 |
@@ -41,7 +41,7 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 
 Stream 不进入 original chain，也不作为 AST target；只通过它下面的解析器 Context 进入生产。original target 始终代表一条完整消费链的末端。
 
-socket、event、behavior 可以用来解释不同的驱动关系，但不是类型标签。一次阻塞接收也可以由 request 实现；request 与 stream 角色互斥是本版的声明约定。
+socket、event、behavior 可以用来解释不同的驱动关系，但不是类型标签。一次阻塞接收也可以由 request 实现。Receive 的 Context 只声明 stream 生产角色，不能声明 request；RepeatRequest 同时声明 request 与 stream，由 request 生产，stream 字段标记持续资产。
 
 <a id="contracts"></a>
 ## 3. 资产、方法与 beforegen
@@ -63,10 +63,10 @@ socket、event、behavior 可以用来解释不同的驱动关系，但不是类
 | --- | --- | --- |
 | request | `getT` | 生产一个成功资产（手写） |
 | require | `readT` | 读取确定的资产视图（SDK 实现，消费方经 `require @T` 使用） |
-| stream | `streamT` | 用本次原始输入解析一个成功资产（手写） |
-| stream 的输入 | `inputT` | 解析器读取本次原始输入（SDK 实现，只生成在该 Context 的类中） |
+| stream（仅 Receive） | `streamT` | 用本次原始输入解析一个成功资产（手写） |
+| stream 的输入（仅 Receive） | `inputT` | 解析器读取本次原始输入（SDK 实现，只生成在该 Context 的类中） |
 
-首次生成契约后才编写 Handlers；新增类型、默认方法和 parser 输入能力在执行副本生成之前就存在于 Generated/Effects。
+RepeatRequest 不生成 `streamT`／`inputT`，持续生产复用 `getT`；`readT` 按 require 角色生成。首次生成契约后才编写 Handlers；新增类型、默认方法和 parser 输入能力在执行副本生成之前就存在于 Generated/Effects。
 
 ### 3.2 Context 角色的匹配表
 
@@ -93,7 +93,7 @@ socket、event、behavior 可以用来解释不同的驱动关系，但不是类
 
 读取类型由生产方注册决定：`stream = Just ()` 的资产，其 `readT` 和所有消费方的 `require @T` 都返回 `History T`；`getT`／`streamT`／`request @T` 返回单个资产。普通资产保持单值读取。消费方新增订阅不会改变任何人的读取类型；一份契约需要同时有单值与持续两种读法时，细化为两个资产。分支契约投影本次交付的最新条目。
 
-History 是从会话首条发布到确定交付位置的有限、不可变序列，由 SDK 构造：`latest`、`historyEntries`、`historySize` 读取。相等值的两个 publication 仍是两条。无限的是 SDK 持续推进的过程，不是业务手写的无限列表。视图直接共享会话中的发布序列，取用条目时才投影出业务值：取得视图、`latest` 和 `historySize` 不随历史长度增长，`historyEntries` 才遍历全部条目。
+History 是从会话首条发布到确定交付位置的有限、不可变序列，由 SDK 构造：`latest`、`historyEntries`、`historySize` 读取。相等值的两个 publication 仍是两条。无限的是 SDK 持续推进的过程，不是业务手写的无限列表。History 包装共享发布序列，不逐条重建业务值；`latest` 取末项，`historySize` 取长度。领取一条交付还涉及序列前缀切分和伴随发布索引，因此不把整个领取过程承诺为常数时间；`historyEntries`、完整显示、比较或遍历可能访问全部条目。
 
 ### 3.4 原子输入与源码约束
 
@@ -216,8 +216,8 @@ monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同
 - 同一边界同一资产共享会话，不同单元各自推进；不同 lifelong 的会话与进度独立。
 - 会话在进入 lifelong 时取得并启动生产；单元的游标从会话的第一条发布开始。每次领取推进一条，视图是会话历史到这一条为止的前缀。
 - 每条 publication 保留原始 Binding、Execution 与共享 ownership；history 不是一个新的 owner。后台追加不改写已经取得的视图；require 不推进游标。
-- 会话发布只进入会话历史，不写入按 Origin 的普通资产表；普通跨链来源解析使用本次 frame 和合法外层前驱。
-- 每条交付另带产生它的生产步骤已经发布的普通资产（伴随发布）。frame 领取交付后，伴随发布作为已捕获绑定交给本次执行中的调用，交接中已经捕获的值优先；运行时不再按会话挂载的当前 Origin 读取这些发布。因此处理第 n 条交付时读到第 n 步的辅助资产，不会读到之后步骤的产物，也不会因旧发布已被替换而重新生产。单元内显式 request 产生的交付没有生产步骤，不带伴随发布，读取方按缺值处理。
+- 会话驱动资产的发布进入会话历史，不写入按 Origin 的普通资产表；生产步骤发布的普通辅助资产仍按 Origin 保存，并在交付时保存其伴随引用。普通跨链读取继续遵守捕获和静态来源规则。
+- 每条交付另带产生它的生产步骤已经发布的普通资产（伴随发布）。frame 领取交付后，伴随发布作为已捕获绑定交给本次执行中的调用，交接中已经捕获的值优先；运行时不再按会话挂载的当前 Origin 读取这些发布。因此处理第 n 条交付时读到第 n 步的辅助资产，不会读到之后步骤的产物，也不会因旧发布已被替换而重新生产。单元内显式 request 产生的交付不经过会话生产步骤，不带伴随发布；辅助资产仍按当前捕获、许可的普通来源及缺值补产规则读取，不因此强制重新生产。
 - 运行初始化不预生产 Context；会话按需启动。
 
 <a id="production"></a>
@@ -244,7 +244,7 @@ lifelong 外的普通 request 按原有 origin 发布，不因类型相同就广
 
 普通 `requires "T"` 只执行一次消费，不进入 lifelong。本次调用已有视图时读取它；否则：
 
-- **Receive 资产**：由 interpreter 托管的会话（`protoSessions`）交付。会话在第一次需要时启动，读取至少等到一条发布，取得当时的完整历史并捕获为本次视图。会话保持到 interpreter 退出，之后的读取看到更长的历史。
+- **Receive 资产**：由 interpreter 托管的会话（`protoSessions`）交付。会话在第一次需要时启动，读取至少等到一条发布，取得当时的完整历史并捕获为本次视图。会话保持到 interpreter 退出；后续调用取得当时的历史，有新发布时视图才会更长，同一调用已经捕获的视图保持不变。
 - **RepeatRequest 资产**：按普通 require 取得一个值（已捕获、可见来源或求值一次 request），呈现为只有一条的 History。
 
 诊断、自动收尾与 close 期间不启动会话。
@@ -258,22 +258,22 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 
 1. **适用范围**：只在 AST 中包含 lifelong 时生效；不包含 lifelong 的程序，失败处理保持现状（interpreter 会话的生产失败只传给等待它的读取方）。
 2. **触发**：生产失败、解析失败、消费单元失败、AST 中任何 node 或 alternative 选择读取的失败，以及上述任务中的原生异常。
-3. **处理**：先照常完成 Error 协议的诊断与处置，然后终止整次运行：停止启动新工作，取消全部任务（会话、等待中的单元、执行中的 target、其他并行分支）并等待它们退出，走现有的 interpreter 退出清理，最后以最初的那个失败报告 `Failed`（原生异常则重新抛出）。
+3. **处理**：结构化 Failure 先完成既有 Error 协议的诊断与处置，原生异常直接通知运行监督。随后终止整次运行：停止启动新工作，取消全部任务（会话、等待中的单元、执行中的 target、其他并行分支）并等待受控收尾，走 interpreter 退出清理；结构化失败报告最初的 `Failed`，原生异常重新抛出。
 4. **不做**：不只终止局部的 lifelong，不让外层 chained 继续执行后继，不重试。
 
 失败在发生处直接通知运行监督，因此 `parallel [monitor, otherWork]` 中 otherWork 的失败不会因等待永不结束的 monitor 而被吞掉。失败的会话不再接受新发布，等待它的读取方收到原失败。
 
 ### 9.2 取消
 
-外部取消（Ctrl-C）时，SDK 取消 AST 中的全部任务并等待其受控收尾，再停止全部会话（撤销会话的使用登记），最后由 interpreter 按 ScopeTree 关闭剩余资源。清理故障附在原失败之后，不覆盖它。
+外部取消（Ctrl-C）时，SDK 取消 AST 中的全部任务并等待其受控收尾，再停止全部会话（撤销会话的使用登记），最后由 interpreter 按 ScopeTree 关闭剩余资源。对于结构化 Failure，清理故障附在原失败之后；对于 Ctrl-C 等原生异常，清理故障单独报告后重新抛出原异常。
 
-创建会话时，启动生产任务与写回会话登记在同一个不可中断区内完成，取消不会落在两者之间。停止会话时先关闭会话登记，并在同一临界区取出全部会话：此后尚未停止的生产步骤不能再启动新会话（例如 interpreter 托管的依赖会话），请求方得到异常并随停止结束，不会留下逃出停止集合的生产任务。生产任务的启动与登记、失败报告、撤销使用登记和完成信号都在不可中断区内完成，只有生产本身可被取消，停止一定等得到任务退出。
+创建会话时，启动生产任务与写回会话登记在同一个不可中断区内完成，取消不会落在两者之间。停止会话时先关闭会话登记，并在同一临界区取出全部会话：此后尚未停止的生产步骤不能再启动新会话（例如 interpreter 托管的依赖会话），请求方得到异常并随停止结束，不会留下逃出停止集合的生产任务。生产任务的启动与登记、失败报告、撤销使用登记和完成信号都在不可中断区内完成，生产时解除屏蔽，停止等待任务退出。这保证 SDK 的登记与完成信号交接不会被取消打断；任务能否退出仍依赖业务 IO 响应取消、诊断与收尾能够返回。
 
 ### 9.3 close 延期的含义
 
 不新增 Stream close、next-use 或历史资源按元素关闭协议。没有增量表示等待，不表示 EOF、故障或关闭。
 
-完整历史保留不等于可以把多份资源 owner 合成一个，也不能复活已关闭的资源。通用的历史资源选择／关闭语义尚未设计。会话历史在运行期间持续增长，不承诺有界内存。
+完整历史保留不等于可以把多份资源 owner 合成一个，也不能复活已关闭的资源。通用的历史资源选择／关闭语义尚未设计。会话历史在运行期间持续增长，不承诺有界内存。持续资产作为 scope 开启参数尚未接通 History 的参数观察协议，可能报 `ScopeInputsMissing`；现有跨轮 scope 复用不代表支持该用法，跟踪见 [TODO](TODO.md#stage-3-limitations)。
 
 <a id="implementation"></a>
 ## 10. 实现位置
