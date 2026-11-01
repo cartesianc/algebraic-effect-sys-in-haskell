@@ -11,7 +11,8 @@ module Framework.Effect.Runtime
 
 import Framework.Effect.Contract (Failure)
 import Framework.Effect.Runtime.App (App, Launch(..), runAppWith)
-import Framework.Effect.Runtime.Graph (RuntimeGraph, PrototypeReference(..), runtimePrototype)
+import Framework.Effect.Runtime.Graph (RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, newOrigin)
+import Framework.Effect.Runtime.Identity (Execution(..))
 import Framework.Effect.Runtime.Session
 import Framework.Effect.Scope
 import Framework.Prototype
@@ -85,7 +86,7 @@ lowerTarget graph location frame (Handoff given views) target = do
   taken <- maybe (pure []) frameViews frame
   let merged = taken ++ [entry | entry@(source, _) <- views, source `notElem` map fst taken]
       sinks = [(source, appendDelivery session) | Just current <- [frame], (source, (session, _)) <- frameSessions current]
-      launch = Launch given merged Nothing sinks (\source -> frame >>= (`frameDelivery` source))
+      launch = Launch given merged Nothing sinks (\source -> frame >>= (`frameDelivery` source)) Nothing
   (outcome, captured, delivered) <- lowerWith graph location launch target
   pure (outcome, Handoff captured delivered)
 
@@ -118,32 +119,39 @@ requestSteps :: Target environment cause () -> SessionSteps environment cause
 requestSteps = RequestSteps
 
 -- 为新会话启动生产任务：按原型找到该边界的会话挂载，逐次执行生产步骤，把发布写入会话历史。
+-- 各步骤共用会话的 scope 使用登记，生产资源跨步骤保持；会话停止时撤销登记，资源交给退出清理。
 -- 生产失败（已经过 Error 协议诊断）或原生异常使会话失败并停止，并通知运行监督；
 -- 取消只结束任务，步骤内照常收尾。
 sessionLauncher :: RuntimeGraph environment cause -> [(String, SessionSteps environment cause)]
                 -> (Broken cause -> IO ()) -> Session environment cause -> IO ()
 sessionLauncher graph steps onBroken session = do
   finished <- newEmptyMVar
+  owner <- case mounts of
+    Just (mount : _) -> newOrigin graph mount >>= newScopeUser (runtimeScopes graph) . BusinessExecution
+    _ -> ioError (userError ("No session steps for " ++ source ++ " at " ++ show boundary
+      ++ "; regenerate with the SDK effect-codegen command"))
   thread <- forkIOWithUnmask $ \unmask -> do
-    outcome <- try (unmask produce)
+    outcome <- try (unmask (produce owner))
     case outcome of
       Left (exception :: SomeException)
         | Just (_ :: SomeAsyncException) <- fromException exception -> pure ()
         | otherwise -> broken (Left exception)
       Right () -> pure ()
+    detachScopeUser owner
     putMVar finished ()
   setSessionWorker session thread finished
   where
     (boundary, source) = sessionKey session
-    produce = case (lookup source steps, sessionMountsOf (runtimePrototype graph) boundary source) of
+    mounts = sessionMountsOf (runtimePrototype graph) boundary source
+    produce owner = case (lookup source steps, mounts) of
       (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ do
-        (raw, _, _) <- lowerWith graph streamMount (Launch [] [] Nothing [] noDelivery) stream
+        (raw, _, _) <- lowerWith graph streamMount (Launch [] [] Nothing [] noDelivery (Just owner)) stream
         case raw of
           Left problem -> pure (Left problem)
-          Right text -> first <$> lowerWith graph parserMount (Launch [] [] (Just text) sink noDelivery) parser
+          Right text -> first <$> lowerWith graph parserMount (Launch [] [] (Just text) sink noDelivery (Just owner)) parser
       (Just (RequestSteps request), Just [requestMount]) ->
-        loop (first <$> lowerWith graph requestMount (Launch [] [] Nothing sink noDelivery) request)
-      _ -> ioError (userError ("No session steps for " ++ source ++ " at " ++ show boundary
+        loop (first <$> lowerWith graph requestMount (Launch [] [] Nothing sink noDelivery (Just owner)) request)
+      _ -> ioError (userError ("Session steps differ from the prototype mounts for " ++ source
         ++ "; regenerate with the SDK effect-codegen command"))
     sink = [(source, appendDelivery session)]
     noDelivery = const Nothing

@@ -67,12 +67,14 @@ data Environment env cause = Environment
   }
 
 -- 一次末端调用的起点：交接的绑定与视图；会话步骤另带原始输入，lifelong 单元另带本次 frame。
+-- 会话步骤共用会话的使用登记：生产资源跨步骤保持，不因一次步骤结束按 once-spare 关闭。
 data Launch env cause = Launch
   { launchBindings :: ScopeBindings env cause
   , launchViews :: [(String, View env cause)]
   , launchInput :: Maybe String
   , launchSinks :: [(String, Bound env cause -> IO ())]
   , launchDeliver :: String -> Maybe (IO (Either (Broken cause) (View env cause)))
+  , launchUser :: Maybe (ScopeUser env cause)
   }
 
 data Opening env cause = Opening
@@ -795,7 +797,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
   origin <- newOrigin graph node
   let currentExecution = BusinessExecution origin
       handlers = runtimeScopes graph
-  user <- newScopeUser handlers currentExecution
+  user <- maybe (newScopeUser handlers currentExecution) pure (launchUser launch)
   activation <- beginActivation graph Nothing currentExecution (TargetedBoot node) values user
   let environment = Environment
         { emptyValues = initial, bindings = values, scopes = handlers
@@ -812,7 +814,8 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         outcome <- runExceptT (runReaderT action environment)
         consume outcome
         pure outcome
-      failures <- releaseScopeUser user handlers
+      -- 会话的使用登记在会话停止时才撤销。
+      failures <- maybe (releaseScopeUser user handlers) (const (pure [])) (launchUser launch)
       case completed of
         Left (exception :: SomeException) -> do
           saveCleanupFailures handlers failures
