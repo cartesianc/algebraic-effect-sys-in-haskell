@@ -49,7 +49,7 @@ deriving instance Eq (String) => Eq FileTextWritten
 deriving instance Show (String) => Show FileTextWritten
 
 -- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = FileNameGen | ReadFileNameGen | ValidateFileNameGen | OpenedFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | DetectFileSessionGen | ResolveFileSessionGen | ReadFileContentGen | FileTextGen | ReadFileTextGen | WriteFirstLineGen | AppendLineGen
+data MethodGen = GetFileNameGen | ReadFileNameGen | ValidateFileNameGen | GetOpenedFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | DetectFileSessionGen | ResolveFileSessionGen | ReadFileContentGen | GetFileTextGen | ReadFileTextGen | WriteFirstLineGen | AppendLineGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
@@ -59,11 +59,11 @@ type FileLocationInputs m = (FrameworkRoot.Capability FileLocation m, Effect Roo
 instance FrameworkRoot.Capability FileLocation App
 
 class (Effect Root m) => FileLocationEffect m where
-  fileName :: m (Produce FileLocation)
+  getFileName :: m (Produce FileLocation)
   readFileName :: m (Produce FileLocation)
   readFileName = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileLocation" ContextBindingError [("ValidateFileName", SDK.RequireValue), ("FileResource", SDK.RequireValue)] (Just (SDK.ScopeInput "FileLocation")) boundFileLocation fileName
-  {-# MINIMAL fileName #-}
+    SDK.readContext "FileLocation" ContextBindingError [("ValidateFileName", SDK.RequireValue), ("FileResource", SDK.RequireValue)] (Just (SDK.ScopeInput "FileLocation")) boundFileLocation getFileName
+  {-# MINIMAL getFileName #-}
 
 instance (Monad m, Effect Root m, FileLocationEffect m) => Effect FileLocation m where
   type Registration FileLocation = Registered FileLocationEffect Root
@@ -97,11 +97,11 @@ type FileResourceInputs m = (FrameworkRoot.Capability FileResource m, Effect Val
 instance FrameworkRoot.Capability FileResource App
 
 class (Effect ValidateFileName m, Provides FileName m) => FileResourceEffect m where
-  openedFile :: m (Produce FileResource)
+  getOpenedFile :: m (Produce FileResource)
   readOpenedFile :: m (Produce FileResource)
   readOpenedFile = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileResource" ContextBindingError [("FileSession", SDK.RequestValue), ("FileRecovery", SDK.RequireValue), ("ReadFile", SDK.RequireValue), ("WriteFirstLine", SDK.RequireValue), ("AppendLine", SDK.RequireValue)] Nothing boundFileResource openedFile
-  {-# MINIMAL openedFile #-}
+    SDK.readContext "FileResource" ContextBindingError [("FileSession", SDK.RequestValue), ("FileRecovery", SDK.RequireValue), ("ReadFile", SDK.RequireValue), ("WriteFirstLine", SDK.RequireValue), ("AppendLine", SDK.RequireValue)] Nothing boundFileResource getOpenedFile
+  {-# MINIMAL getOpenedFile #-}
 
 instance (Monad m, Effect ValidateFileName m, FileResourceEffect m) => Effect FileResource m where
   type Registration FileResource = Registered FileResourceEffect ValidateFileName
@@ -171,11 +171,11 @@ type ExtractFileTextInputs m = (FrameworkRoot.Capability ExtractFileText m, Effe
 instance FrameworkRoot.Capability ExtractFileText App
 
 class (Effect ReadFile m) => ExtractFileTextEffect m where
-  fileText :: m (Produce ExtractFileText)
+  getFileText :: m (Produce ExtractFileText)
   readFileText :: m (Produce ExtractFileText)
   readFileText = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handler @Root) $
-    SDK.readContext "ExtractFileText" ContextBindingError [("WriteFirstLine", SDK.RequireValue), ("AppendLine", SDK.RequireValue)] Nothing boundExtractFileText fileText
-  {-# MINIMAL fileText #-}
+    SDK.readContext "ExtractFileText" ContextBindingError [("WriteFirstLine", SDK.RequireValue), ("AppendLine", SDK.RequireValue)] Nothing boundExtractFileText getFileText
+  {-# MINIMAL getFileText #-}
 
 instance (Monad m, Effect ReadFile m, ExtractFileTextEffect m) => Effect ExtractFileText m where
   type Registration ExtractFileText = Registered ExtractFileTextEffect ReadFile
@@ -230,7 +230,7 @@ instance (FileLocationEffect App) => Provides FileName App where
   require = SDK.provideContext "FileLocation" "FileName" ContextBindingError [("ValidateFileName", readFileName), ("FileResource", readFileName)]
 
 instance (FileResourceEffect App) => Provides OpenedFile App where
-  request = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("FileSession", openedFile)]
+  request = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("FileSession", getOpenedFile)]
   require = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("FileSession", readOpenedFile), ("FileRecovery", readOpenedFile), ("ReadFile", readOpenedFile), ("WriteFirstLine", readOpenedFile), ("AppendLine", readOpenedFile)]
 
 instance (ExtractFileTextEffect App) => Provides FileTextBlank App where

@@ -4,7 +4,7 @@
 -- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
 module ScopeReuseDemo.Generated.Program where
 
-import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Requester(..), Handles(..), Demand(..), Access(..), TypeRef(..))
+import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), AssetDecl(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.SDK as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
 import ScopeReuseDemo.Generated.Effects hiding (request, require)
@@ -42,7 +42,8 @@ generatedPrototype =
     { SDK.protoRegistrations =
         [ SDK.EffectSpec
             { SDK.name = "FileLocations"
-            , SDK.typing = SDK.Context (Just (SDK.Requester ("filePaths") (SDK.TypeRef ("SharedPaths"))))
+            , SDK.typing =
+                SDK.Context (SDK.AssetDecl ("FilePaths") (SDK.TypeRef ("SharedPaths"))) (Just ()) (Just ())
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -54,7 +55,8 @@ generatedPrototype =
             }
         , SDK.EffectSpec
             { SDK.name = "FileResource"
-            , SDK.typing = SDK.Context (Just (SDK.Requester ("openedFile") (SDK.TypeRef ("SharedFile"))))
+            , SDK.typing =
+                SDK.Context (SDK.AssetDecl ("OpenedFile") (SDK.TypeRef ("SharedFile"))) (Just ()) (Just ())
             , SDK.input = "Root"
             , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("FilePaths")]
             }
@@ -98,7 +100,8 @@ generatedPrototype =
             { SDK.effectName = "FileLocations"
             , SDK.effectKind = SDK.ContextKind
             , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ContextRequest, FilePathsGen), (SDK.ContextRequire, ReadFilePathsGen)]
+            , SDK.effectMethods =
+                [(SDK.ContextRequest, GetFilePathsGen), (SDK.ContextRequire, ReadFilePathsGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Just "FilePaths"
             , SDK.effectBranches = []
@@ -135,7 +138,7 @@ generatedPrototype =
             , SDK.effectKind = SDK.ContextKind
             , SDK.effectInput = "Root"
             , SDK.effectMethods =
-                [(SDK.ContextRequest, OpenedFileGen), (SDK.ContextRequire, ReadOpenedFileGen)]
+                [(SDK.ContextRequest, GetOpenedFileGen), (SDK.ContextRequire, ReadOpenedFileGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("FilePaths") ("FileLocations")]
             , SDK.effectProduces = Just "OpenedFile"
             , SDK.effectBranches = []
@@ -253,28 +256,28 @@ generatedPrototype =
             }
         ]
     , SDK.protoMethods =
-        [ SDK.MethodDefinition (FilePathsGen) (FilePathsGen) (SDK.ContextRequest) (SDK.Empty)
+        [ SDK.MethodDefinition (GetFilePathsGen) (GetFilePathsGen) (SDK.ContextRequest) (SDK.Empty)
         , SDK.MethodDefinition
             (ReadFilePathsGen)
-            (FilePathsGen)
+            (GetFilePathsGen)
             (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (FilePathsGen)]))
+            (SDK.Choice ([SDK.Empty, SDK.Call (GetFilePathsGen)]))
         , SDK.MethodDefinition
             (PrepareProbeGen)
             (PrepareProbeGen)
             (SDK.HandlerMethod)
-            (SDK.Call (FilePathsGen))
+            (SDK.Call (GetFilePathsGen))
         , SDK.MethodDefinition
-            (OpenedFileGen)
-            (OpenedFileGen)
+            (GetOpenedFileGen)
+            (GetOpenedFileGen)
             (SDK.ContextRequest)
             (SDK.Call (ReadFilePathsGen))
-        , SDK.MethodDefinition (ReadOpenedFileGen) (OpenedFileGen) (SDK.ContextRequire) (SDK.Empty)
+        , SDK.MethodDefinition (ReadOpenedFileGen) (GetOpenedFileGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition
             (OpenSharedFileGen)
             (OpenSharedFileGen)
             (SDK.ScopeOpen)
-            (SDK.Call (OpenedFileGen))
+            (SDK.Call (GetOpenedFileGen))
         , SDK.MethodDefinition
             (CloseSharedFileGen)
             (OpenSharedFileGen)
@@ -284,18 +287,31 @@ generatedPrototype =
             (WriteFirstGen)
             (WriteFirstGen)
             (SDK.HandlerMethod)
-            (SDK.Sequence ([SDK.Call (FilePathsGen), SDK.Call (OpenSharedFileGen), SDK.Call (ReadOpenedFileGen)]))
+            (
+              SDK.Sequence
+                ([SDK.Call (GetFilePathsGen), SDK.Call (OpenSharedFileGen), SDK.Call (ReadOpenedFileGen)])
+            )
         , SDK.MethodDefinition
             (WriteSecondGen)
             (WriteSecondGen)
             (SDK.HandlerMethod)
-            (SDK.Sequence ([SDK.Call (FilePathsGen), SDK.Call (OpenSharedFileGen), SDK.Call (ReadOpenedFileGen)]))
+            (
+              SDK.Sequence
+                ([SDK.Call (GetFilePathsGen), SDK.Call (OpenSharedFileGen), SDK.Call (ReadOpenedFileGen)])
+            )
         , SDK.MethodDefinition
             (WriteThirdGen)
             (WriteThirdGen)
             (SDK.HandlerMethod)
-            (SDK.Sequence ([SDK.Call (FilePathsGen), SDK.Call (OpenSharedFileGen), SDK.Call (ReadOpenedFileGen)]))
-        , SDK.MethodDefinition (VerifyReuseGen) (VerifyReuseGen) (SDK.HandlerMethod) (SDK.Call (FilePathsGen))
+            (
+              SDK.Sequence
+                ([SDK.Call (GetFilePathsGen), SDK.Call (OpenSharedFileGen), SDK.Call (ReadOpenedFileGen)])
+            )
+        , SDK.MethodDefinition
+            (VerifyReuseGen)
+            (VerifyReuseGen)
+            (SDK.HandlerMethod)
+            (SDK.Call (GetFilePathsGen))
         ]
     , SDK.protoWorkflow =
         SDK.ChainedAt
@@ -329,7 +345,7 @@ generatedPrototype =
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "PrepareProbe"
             , SDK.chainEntry = PrepareProbeGen
-            , SDK.chainReaches = [PrepareProbeGen, FilePathsGen]
+            , SDK.chainReaches = [PrepareProbeGen, GetFilePathsGen]
             , SDK.chainDrives = ["FilePaths"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
@@ -340,7 +356,13 @@ generatedPrototype =
             , SDK.chainTerminal = "WriteFirst"
             , SDK.chainEntry = WriteFirstGen
             , SDK.chainReaches =
-                [WriteFirstGen, FilePathsGen, OpenSharedFileGen, OpenedFileGen, ReadFilePathsGen, ReadOpenedFileGen]
+                [ WriteFirstGen
+                , GetFilePathsGen
+                , OpenSharedFileGen
+                , GetOpenedFileGen
+                , ReadFilePathsGen
+                , ReadOpenedFileGen
+                ]
             , SDK.chainDrives = ["FilePaths"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenSharedFileGen]]
@@ -352,9 +374,9 @@ generatedPrototype =
             , SDK.chainEntry = WriteSecondGen
             , SDK.chainReaches =
                 [ WriteSecondGen
-                , FilePathsGen
+                , GetFilePathsGen
                 , OpenSharedFileGen
-                , OpenedFileGen
+                , GetOpenedFileGen
                 , ReadFilePathsGen
                 , ReadOpenedFileGen
                 ]
@@ -368,7 +390,13 @@ generatedPrototype =
             , SDK.chainTerminal = "WriteThird"
             , SDK.chainEntry = WriteThirdGen
             , SDK.chainReaches =
-                [WriteThirdGen, FilePathsGen, OpenSharedFileGen, OpenedFileGen, ReadFilePathsGen, ReadOpenedFileGen]
+                [ WriteThirdGen
+                , GetFilePathsGen
+                , OpenSharedFileGen
+                , GetOpenedFileGen
+                , ReadFilePathsGen
+                , ReadOpenedFileGen
+                ]
             , SDK.chainDrives = ["FilePaths"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenSharedFileGen]]
@@ -378,7 +406,7 @@ generatedPrototype =
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "VerifyReuse"
             , SDK.chainEntry = VerifyReuseGen
-            , SDK.chainReaches = [VerifyReuseGen, FilePathsGen]
+            , SDK.chainReaches = [VerifyReuseGen, GetFilePathsGen]
             , SDK.chainDrives = ["FilePaths"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
@@ -388,26 +416,26 @@ generatedPrototype =
         [ SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "FileLocations"
-            , SDK.definitionEntry = FilePathsGen
-            , SDK.definitionReaches = [FilePathsGen]
+            , SDK.definitionEntry = GetFilePathsGen
+            , SDK.definitionReaches = [GetFilePathsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "FileLocations"
             , SDK.definitionEntry = ReadFilePathsGen
-            , SDK.definitionReaches = [ReadFilePathsGen, FilePathsGen]
+            , SDK.definitionReaches = [ReadFilePathsGen, GetFilePathsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "PrepareProbe"
             , SDK.definitionEntry = PrepareProbeGen
-            , SDK.definitionReaches = [PrepareProbeGen, FilePathsGen]
+            , SDK.definitionReaches = [PrepareProbeGen, GetFilePathsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "FileResource"
-            , SDK.definitionEntry = OpenedFileGen
-            , SDK.definitionReaches = [OpenedFileGen, ReadFilePathsGen, FilePathsGen]
+            , SDK.definitionEntry = GetOpenedFileGen
+            , SDK.definitionReaches = [GetOpenedFileGen, ReadFilePathsGen, GetFilePathsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -419,14 +447,20 @@ generatedPrototype =
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "SharedFileScope"
             , SDK.definitionEntry = OpenSharedFileGen
-            , SDK.definitionReaches = [OpenSharedFileGen, OpenedFileGen, ReadFilePathsGen, FilePathsGen]
+            , SDK.definitionReaches = [OpenSharedFileGen, GetOpenedFileGen, ReadFilePathsGen, GetFilePathsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "WriteFirst"
             , SDK.definitionEntry = WriteFirstGen
             , SDK.definitionReaches =
-                [WriteFirstGen, FilePathsGen, OpenSharedFileGen, OpenedFileGen, ReadFilePathsGen, ReadOpenedFileGen]
+                [ WriteFirstGen
+                , GetFilePathsGen
+                , OpenSharedFileGen
+                , GetOpenedFileGen
+                , ReadFilePathsGen
+                , ReadOpenedFileGen
+                ]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
@@ -434,9 +468,9 @@ generatedPrototype =
             , SDK.definitionEntry = WriteSecondGen
             , SDK.definitionReaches =
                 [ WriteSecondGen
-                , FilePathsGen
+                , GetFilePathsGen
                 , OpenSharedFileGen
-                , OpenedFileGen
+                , GetOpenedFileGen
                 , ReadFilePathsGen
                 , ReadOpenedFileGen
                 ]
@@ -446,13 +480,19 @@ generatedPrototype =
             , SDK.definitionEffect = "WriteThird"
             , SDK.definitionEntry = WriteThirdGen
             , SDK.definitionReaches =
-                [WriteThirdGen, FilePathsGen, OpenSharedFileGen, OpenedFileGen, ReadFilePathsGen, ReadOpenedFileGen]
+                [ WriteThirdGen
+                , GetFilePathsGen
+                , OpenSharedFileGen
+                , GetOpenedFileGen
+                , ReadFilePathsGen
+                , ReadOpenedFileGen
+                ]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "VerifyReuse"
             , SDK.definitionEntry = VerifyReuseGen
-            , SDK.definitionReaches = [VerifyReuseGen, FilePathsGen]
+            , SDK.definitionReaches = [VerifyReuseGen, GetFilePathsGen]
             }
         ]
     , SDK.protoGraph =
@@ -462,57 +502,70 @@ generatedPrototype =
                   (PrepareProbeGen)
                   (PrepareProbeGen)
                   (SDK.HandlerMethod)
-                  (SDK.Call (FilePathsGen))
-              , SDK.MethodDefinition (FilePathsGen) (FilePathsGen) (SDK.ContextRequest) (SDK.Empty)
+                  (SDK.Call (GetFilePathsGen))
+              , SDK.MethodDefinition (GetFilePathsGen) (GetFilePathsGen) (SDK.ContextRequest) (SDK.Empty)
               , SDK.MethodDefinition
                   (WriteFirstGen)
                   (WriteFirstGen)
                   (SDK.HandlerMethod)
-                  (SDK.Sequence ([SDK.Call (FilePathsGen), SDK.Call (OpenSharedFileGen), SDK.Call (ReadOpenedFileGen)]))
+                  (
+                    SDK.Sequence
+                      ([SDK.Call (GetFilePathsGen), SDK.Call (OpenSharedFileGen), SDK.Call (ReadOpenedFileGen)])
+                  )
               , SDK.MethodDefinition
                   (OpenSharedFileGen)
                   (OpenSharedFileGen)
                   (SDK.ScopeOpen)
-                  (SDK.Call (OpenedFileGen))
+                  (SDK.Call (GetOpenedFileGen))
               , SDK.MethodDefinition
-                  (OpenedFileGen)
-                  (OpenedFileGen)
+                  (GetOpenedFileGen)
+                  (GetOpenedFileGen)
                   (SDK.ContextRequest)
                   (SDK.Call (ReadFilePathsGen))
               , SDK.MethodDefinition
                   (ReadFilePathsGen)
-                  (FilePathsGen)
+                  (GetFilePathsGen)
                   (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (FilePathsGen)]))
-              , SDK.MethodDefinition (ReadOpenedFileGen) (OpenedFileGen) (SDK.ContextRequire) (SDK.Empty)
+                  (SDK.Choice ([SDK.Empty, SDK.Call (GetFilePathsGen)]))
+              , SDK.MethodDefinition (ReadOpenedFileGen) (GetOpenedFileGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition
                   (WriteSecondGen)
                   (WriteSecondGen)
                   (SDK.HandlerMethod)
-                  (SDK.Sequence ([SDK.Call (FilePathsGen), SDK.Call (OpenSharedFileGen), SDK.Call (ReadOpenedFileGen)]))
+                  (
+                    SDK.Sequence
+                      ([SDK.Call (GetFilePathsGen), SDK.Call (OpenSharedFileGen), SDK.Call (ReadOpenedFileGen)])
+                  )
               , SDK.MethodDefinition
                   (WriteThirdGen)
                   (WriteThirdGen)
                   (SDK.HandlerMethod)
-                  (SDK.Sequence ([SDK.Call (FilePathsGen), SDK.Call (OpenSharedFileGen), SDK.Call (ReadOpenedFileGen)]))
-              , SDK.MethodDefinition (VerifyReuseGen) (VerifyReuseGen) (SDK.HandlerMethod) (SDK.Call (FilePathsGen))
+                  (
+                    SDK.Sequence
+                      ([SDK.Call (GetFilePathsGen), SDK.Call (OpenSharedFileGen), SDK.Call (ReadOpenedFileGen)])
+                  )
+              , SDK.MethodDefinition
+                  (VerifyReuseGen)
+                  (VerifyReuseGen)
+                  (SDK.HandlerMethod)
+                  (SDK.Call (GetFilePathsGen))
               ]
           , SDK.graphRoots = [PrepareProbeGen, WriteFirstGen, WriteSecondGen, WriteThirdGen, VerifyReuseGen]
           , SDK.graphReferences =
-              [ (PrepareProbeGen, FilePathsGen)
-              , (WriteFirstGen, FilePathsGen)
+              [ (PrepareProbeGen, GetFilePathsGen)
+              , (WriteFirstGen, GetFilePathsGen)
               , (WriteFirstGen, OpenSharedFileGen)
               , (WriteFirstGen, ReadOpenedFileGen)
-              , (OpenSharedFileGen, OpenedFileGen)
-              , (OpenedFileGen, ReadFilePathsGen)
-              , (ReadFilePathsGen, FilePathsGen)
-              , (WriteSecondGen, FilePathsGen)
+              , (OpenSharedFileGen, GetOpenedFileGen)
+              , (GetOpenedFileGen, ReadFilePathsGen)
+              , (ReadFilePathsGen, GetFilePathsGen)
+              , (WriteSecondGen, GetFilePathsGen)
               , (WriteSecondGen, OpenSharedFileGen)
               , (WriteSecondGen, ReadOpenedFileGen)
-              , (WriteThirdGen, FilePathsGen)
+              , (WriteThirdGen, GetFilePathsGen)
               , (WriteThirdGen, OpenSharedFileGen)
               , (WriteThirdGen, ReadOpenedFileGen)
-              , (VerifyReuseGen, FilePathsGen)
+              , (VerifyReuseGen, GetFilePathsGen)
               ]
           , SDK.graphScopes = [OpenSharedFileGen]
           , SDK.graphScopePaths = [[], [OpenSharedFileGen]]

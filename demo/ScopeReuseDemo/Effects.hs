@@ -3,7 +3,7 @@
 
 module ScopeReuseDemo.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), requester, requests, requires)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), namedAsset, requests, requires)
 import ScopeReuseDemo.Types
 
 -- Context 保存路径与活文件；Scoped 管理开启／关闭，日志记录实际开闭次数。
@@ -12,7 +12,7 @@ effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "FileLocations"
-      , typing = Context { request = requester "filePaths" @SharedPaths }
+      , typing = Context { asset = namedAsset "FilePaths" @SharedPaths, request = Just (), require = Just () }
       , input = "Root"
       , demands = []
       }
@@ -24,7 +24,7 @@ effects =
       }
   , EffectSpec
       { name = "FileResource"
-      , typing = Context { request = requester "openedFile" @SharedFile }
+      , typing = Context { asset = namedAsset "OpenedFile" @SharedFile, request = Just (), require = Just () }
       , input = "Root"
       , demands = [requires "FilePaths"]
       }

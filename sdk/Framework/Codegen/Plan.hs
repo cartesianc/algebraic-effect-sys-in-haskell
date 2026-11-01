@@ -102,10 +102,11 @@ renderTyping (R.Excu method) = constructor "Excu" [show method]
 renderTyping (R.Scoped opening closing) = constructor "Scoped" [show opening, show closing]
 renderTyping (R.Error detecting resolving handled) =
   constructor "Error" [show detecting, show resolving, list renderHandles handled]
-renderTyping (R.Context producing) = constructor "Context" [maybeValue renderRequester producing]
+renderTyping (R.Context declared requesting requiring) =
+  constructor "Context" [renderAsset declared, show requesting, show requiring]
 
-renderRequester :: R.Requester -> String
-renderRequester (R.Requester method representation) = constructor "Requester" [show method, renderType representation]
+renderAsset :: R.AssetDecl -> String
+renderAsset (R.AssetDecl selected representation) = constructor "AssetDecl" [show selected, renderType representation]
 
 renderType :: R.TypeRef -> String
 renderType (R.TypeRef selected) = constructor "TypeRef" [show selected]

@@ -27,7 +27,7 @@ import System.IO
 import System.IO.Error (tryIOError)
 
 instance FileLocationsInputs m => FileLocationsEffect m where
-  filePaths = pure (FilePaths (SharedPaths
+  getFilePaths = pure (FilePaths (SharedPaths
     ("demo" </> "ScopeReuseDemo" </> "output" </> "shared.txt")
     ("demo" </> "ScopeReuseDemo" </> "output" </> "events.txt")))
 
@@ -43,7 +43,7 @@ instance PrepareProbeInputs m => PrepareProbeEffect m where
     pure Nothing
 
 instance FileResourceInputs m => FileResourceEffect m where
-  openedFile = do
+  getOpenedFile = do
     FilePaths paths@(SharedPaths path journal) <- require @FilePaths
     outcome <- liftIO $ tryIOError $
       bracketOnError (openFile path AppendMode) hClose $ \file -> do

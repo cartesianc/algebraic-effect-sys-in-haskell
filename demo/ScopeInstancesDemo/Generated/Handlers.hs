@@ -47,33 +47,33 @@ instance PrepareFilesInputs m => PrepareFilesEffect m where
 
 -- 参数确实由 instance 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
 instance FileLocationInputs m => FileLocationEffect m where
-  fileName =
+  getFileName =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation" FrameworkGenerated.ContextBindingError
       [("FileResource", FrameworkRuntime.RequireValue), ("CheckIndependent", FrameworkRuntime.RequestValue), ("CheckReopen", FrameworkRuntime.RequestValue)]
       (Just (FrameworkRuntime.ScopeInput "FileLocation"))
       FrameworkGenerated.boundFileLocation
       (\value bindings -> bindings { FrameworkGenerated.boundFileLocation = Just value })) $
       let
-        fileName :: (m) (FrameworkGenerated.FileName)
-        fileName = do
+        getFileName :: (m) (FrameworkGenerated.FileName)
+        getFileName = do
           let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
               selection = outputDirectory </> "selected.txt"
               journal = outputDirectory </> "events.txt"
           path <- liftIO (readFile' selection)
           liftIO (appendFile journal ("argument " ++ path ++ "\n"))
           pure (FileName path)
-      in fileName
+      in getFileName
 
 instance FileResourceInputs m => FileResourceEffect m where
-  openedFile =
+  getOpenedFile =
     (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource" FrameworkGenerated.ContextBindingError
       [("FileSession", FrameworkRuntime.RequestValue), ("CheckIndependent", FrameworkRuntime.RequireValue), ("CheckReopen", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundFileResource
       (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
       let
-        openedFile :: (m) (FrameworkGenerated.OpenedFile)
-        openedFile = do
+        getOpenedFile :: (m) (FrameworkGenerated.OpenedFile)
+        getOpenedFile = do
           FileName path <- require @FileName
           let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
           outcome <- liftIO $ tryIOError $
@@ -81,7 +81,7 @@ instance FileResourceInputs m => FileResourceEffect m where
               appendFile journal ("acquire " ++ path ++ "\n")
               pure (OpenedFile (FileHandle path file))
           either (raise . FileResourceError . displayException) pure outcome
-      in openedFile
+      in getOpenedFile
 
 -- 与原写法相同：没有参数、状态标记、key 或 SDK 消费方法。
 instance FileSessionInputs m => FileSessionEffect m where
@@ -200,7 +200,7 @@ instance CheckReopenInputs m => CheckReopenEffect m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "9137e38d521cc4f71a869597c3ce0641"
+handlerSourceFingerprint = Just "bbb74a1b7d07d2bf355811dfdbfb28e3"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

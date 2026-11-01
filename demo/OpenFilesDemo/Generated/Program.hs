@@ -4,7 +4,7 @@
 -- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
 module OpenFilesDemo.Generated.Program where
 
-import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Requester(..), Handles(..), Demand(..), Access(..), TypeRef(..))
+import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), AssetDecl(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.SDK as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
 import OpenFilesDemo.Generated.Effects hiding (request, require)
@@ -40,13 +40,15 @@ generatedPrototype =
     { SDK.protoRegistrations =
         [ SDK.EffectSpec
             { SDK.name = "FileLocations"
-            , SDK.typing = SDK.Context (Just (SDK.Requester ("fileNames") (SDK.TypeRef ("[[Char]]"))))
+            , SDK.typing =
+                SDK.Context (SDK.AssetDecl ("FileNames") (SDK.TypeRef ("[[Char]]"))) (Just ()) (Just ())
             , SDK.input = "Root"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "FileResources"
-            , SDK.typing = SDK.Context (Just (SDK.Requester ("openedFiles") (SDK.TypeRef ("[FileHandle]"))))
+            , SDK.typing =
+                SDK.Context (SDK.AssetDecl ("OpenedFiles") (SDK.TypeRef ("[FileHandle]"))) (Just ()) (Just ())
             , SDK.input = "Root"
             , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("FileNames")]
             }
@@ -81,7 +83,8 @@ generatedPrototype =
             { SDK.effectName = "FileLocations"
             , SDK.effectKind = SDK.ContextKind
             , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ContextRequest, FileNamesGen), (SDK.ContextRequire, ReadFileNamesGen)]
+            , SDK.effectMethods =
+                [(SDK.ContextRequest, GetFileNamesGen), (SDK.ContextRequire, ReadFileNamesGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Just "FileNames"
             , SDK.effectBranches = []
@@ -100,7 +103,7 @@ generatedPrototype =
             , SDK.effectKind = SDK.ContextKind
             , SDK.effectInput = "Root"
             , SDK.effectMethods =
-                [(SDK.ContextRequest, OpenedFilesGen), (SDK.ContextRequire, ReadOpenedFilesGen)]
+                [(SDK.ContextRequest, GetOpenedFilesGen), (SDK.ContextRequire, ReadOpenedFilesGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("FileNames") ("FileLocations")]
             , SDK.effectProduces = Just "OpenedFiles"
             , SDK.effectBranches = []
@@ -191,25 +194,25 @@ generatedPrototype =
             }
         ]
     , SDK.protoMethods =
-        [ SDK.MethodDefinition (FileNamesGen) (FileNamesGen) (SDK.ContextRequest) (SDK.Empty)
+        [ SDK.MethodDefinition (GetFileNamesGen) (GetFileNamesGen) (SDK.ContextRequest) (SDK.Empty)
         , SDK.MethodDefinition
             (ReadFileNamesGen)
-            (FileNamesGen)
+            (GetFileNamesGen)
             (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (FileNamesGen)]))
+            (SDK.Choice ([SDK.Empty, SDK.Call (GetFileNamesGen)]))
         , SDK.MethodDefinition
-            (OpenedFilesGen)
-            (OpenedFilesGen)
+            (GetOpenedFilesGen)
+            (GetOpenedFilesGen)
             (SDK.ContextRequest)
             (SDK.Call (ReadFileNamesGen))
-        , SDK.MethodDefinition (ReadOpenedFilesGen) (OpenedFilesGen) (SDK.ContextRequire) (SDK.Empty)
-        , SDK.MethodDefinition (OpenFilesGen) (OpenFilesGen) (SDK.ScopeOpen) (SDK.Call (OpenedFilesGen))
+        , SDK.MethodDefinition (ReadOpenedFilesGen) (GetOpenedFilesGen) (SDK.ContextRequire) (SDK.Empty)
+        , SDK.MethodDefinition (OpenFilesGen) (OpenFilesGen) (SDK.ScopeOpen) (SDK.Call (GetOpenedFilesGen))
         , SDK.MethodDefinition (CloseFilesGen) (OpenFilesGen) (SDK.ScopeClose) (SDK.Call (ReadOpenedFilesGen))
         , SDK.MethodDefinition
             (HoldFilesGen)
             (HoldFilesGen)
             (SDK.HandlerMethod)
-            (SDK.Sequence ([SDK.Call (FileNamesGen), SDK.Call (OpenFilesGen)]))
+            (SDK.Sequence ([SDK.Call (GetFileNamesGen), SDK.Call (OpenFilesGen)]))
         , SDK.MethodDefinition
             (InspectFilesGen)
             (InspectFilesGen)
@@ -246,7 +249,8 @@ generatedPrototype =
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "HoldFiles"
             , SDK.chainEntry = HoldFilesGen
-            , SDK.chainReaches = [HoldFilesGen, FileNamesGen, OpenFilesGen, OpenedFilesGen, ReadFileNamesGen]
+            , SDK.chainReaches =
+                [HoldFilesGen, GetFileNamesGen, OpenFilesGen, GetOpenedFilesGen, ReadFileNamesGen]
             , SDK.chainDrives = ["FileNames"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenFilesGen]]
@@ -259,9 +263,9 @@ generatedPrototype =
             , SDK.chainReaches =
                 [ InspectFilesGen
                 , HoldFilesGen
-                , FileNamesGen
+                , GetFileNamesGen
                 , OpenFilesGen
-                , OpenedFilesGen
+                , GetOpenedFilesGen
                 , ReadFileNamesGen
                 , ReadOpenedFilesGen
                 ]
@@ -277,9 +281,9 @@ generatedPrototype =
             , SDK.chainReaches =
                 [ FinishInspectionGen
                 , HoldFilesGen
-                , FileNamesGen
+                , GetFileNamesGen
                 , OpenFilesGen
-                , OpenedFilesGen
+                , GetOpenedFilesGen
                 , ReadFileNamesGen
                 , ReadOpenedFilesGen
                 , CloseFilesGen
@@ -293,20 +297,20 @@ generatedPrototype =
         [ SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "FileLocations"
-            , SDK.definitionEntry = FileNamesGen
-            , SDK.definitionReaches = [FileNamesGen]
+            , SDK.definitionEntry = GetFileNamesGen
+            , SDK.definitionReaches = [GetFileNamesGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "FileLocations"
             , SDK.definitionEntry = ReadFileNamesGen
-            , SDK.definitionReaches = [ReadFileNamesGen, FileNamesGen]
+            , SDK.definitionReaches = [ReadFileNamesGen, GetFileNamesGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "FileResources"
-            , SDK.definitionEntry = OpenedFilesGen
-            , SDK.definitionReaches = [OpenedFilesGen, ReadFileNamesGen, FileNamesGen]
+            , SDK.definitionEntry = GetOpenedFilesGen
+            , SDK.definitionReaches = [GetOpenedFilesGen, ReadFileNamesGen, GetFileNamesGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -318,14 +322,14 @@ generatedPrototype =
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "FileSession"
             , SDK.definitionEntry = OpenFilesGen
-            , SDK.definitionReaches = [OpenFilesGen, OpenedFilesGen, ReadFileNamesGen, FileNamesGen]
+            , SDK.definitionReaches = [OpenFilesGen, GetOpenedFilesGen, ReadFileNamesGen, GetFileNamesGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "HoldFiles"
             , SDK.definitionEntry = HoldFilesGen
             , SDK.definitionReaches =
-                [HoldFilesGen, FileNamesGen, OpenFilesGen, OpenedFilesGen, ReadFileNamesGen]
+                [HoldFilesGen, GetFileNamesGen, OpenFilesGen, GetOpenedFilesGen, ReadFileNamesGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
@@ -334,9 +338,9 @@ generatedPrototype =
             , SDK.definitionReaches =
                 [ InspectFilesGen
                 , HoldFilesGen
-                , FileNamesGen
+                , GetFileNamesGen
                 , OpenFilesGen
-                , OpenedFilesGen
+                , GetOpenedFilesGen
                 , ReadFileNamesGen
                 , ReadOpenedFilesGen
                 ]
@@ -348,9 +352,9 @@ generatedPrototype =
             , SDK.definitionReaches =
                 [ FinishInspectionGen
                 , HoldFilesGen
-                , FileNamesGen
+                , GetFileNamesGen
                 , OpenFilesGen
-                , OpenedFilesGen
+                , GetOpenedFilesGen
                 , ReadFileNamesGen
                 , ReadOpenedFilesGen
                 , CloseFilesGen
@@ -364,25 +368,25 @@ generatedPrototype =
                   (HoldFilesGen)
                   (HoldFilesGen)
                   (SDK.HandlerMethod)
-                  (SDK.Sequence ([SDK.Call (FileNamesGen), SDK.Call (OpenFilesGen)]))
-              , SDK.MethodDefinition (FileNamesGen) (FileNamesGen) (SDK.ContextRequest) (SDK.Empty)
-              , SDK.MethodDefinition (OpenFilesGen) (OpenFilesGen) (SDK.ScopeOpen) (SDK.Call (OpenedFilesGen))
+                  (SDK.Sequence ([SDK.Call (GetFileNamesGen), SDK.Call (OpenFilesGen)]))
+              , SDK.MethodDefinition (GetFileNamesGen) (GetFileNamesGen) (SDK.ContextRequest) (SDK.Empty)
+              , SDK.MethodDefinition (OpenFilesGen) (OpenFilesGen) (SDK.ScopeOpen) (SDK.Call (GetOpenedFilesGen))
               , SDK.MethodDefinition
-                  (OpenedFilesGen)
-                  (OpenedFilesGen)
+                  (GetOpenedFilesGen)
+                  (GetOpenedFilesGen)
                   (SDK.ContextRequest)
                   (SDK.Call (ReadFileNamesGen))
               , SDK.MethodDefinition
                   (ReadFileNamesGen)
-                  (FileNamesGen)
+                  (GetFileNamesGen)
                   (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (FileNamesGen)]))
+                  (SDK.Choice ([SDK.Empty, SDK.Call (GetFileNamesGen)]))
               , SDK.MethodDefinition
                   (InspectFilesGen)
                   (InspectFilesGen)
                   (SDK.HandlerMethod)
                   (SDK.Sequence ([SDK.Call (HoldFilesGen), SDK.Call (ReadOpenedFilesGen)]))
-              , SDK.MethodDefinition (ReadOpenedFilesGen) (OpenedFilesGen) (SDK.ContextRequire) (SDK.Empty)
+              , SDK.MethodDefinition (ReadOpenedFilesGen) (GetOpenedFilesGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition
                   (FinishInspectionGen)
                   (FinishInspectionGen)
@@ -392,11 +396,11 @@ generatedPrototype =
               ]
           , SDK.graphRoots = [HoldFilesGen, InspectFilesGen, FinishInspectionGen]
           , SDK.graphReferences =
-              [ (HoldFilesGen, FileNamesGen)
+              [ (HoldFilesGen, GetFileNamesGen)
               , (HoldFilesGen, OpenFilesGen)
-              , (OpenFilesGen, OpenedFilesGen)
-              , (OpenedFilesGen, ReadFileNamesGen)
-              , (ReadFileNamesGen, FileNamesGen)
+              , (OpenFilesGen, GetOpenedFilesGen)
+              , (GetOpenedFilesGen, ReadFileNamesGen)
+              , (ReadFileNamesGen, GetFileNamesGen)
               , (InspectFilesGen, HoldFilesGen)
               , (InspectFilesGen, ReadOpenedFilesGen)
               , (FinishInspectionGen, HoldFilesGen)

@@ -142,8 +142,8 @@ buildEffectProtos :: [EffectSpec] -> SumTypes -> Either (PrototypeError String) 
 buildEffectProtos specifications sumTypes = do
   valid (unique (map name specifications)) "Duplicate effect name"
   valid (all ((/= "Root") . name) specifications) "Root is reserved"
-  valid (unique [contractOf producing | specification <- specifications,
-    Context (Just producing) <- [typing specification]]) "Duplicate Context contract"
+  valid (unique [contractOf declared | specification <- specifications,
+    Just declared <- [contextAsset (typing specification)]]) "Duplicate Context contract"
   mapM_ (\specification -> mapM_ (\demand -> valid (validContractName (contract demand))
       ("Demanded contract must be a contract name such as StartURL: " ++ contract demand
         ++ " in " ++ name specification)) (demands specification)) specifications
@@ -200,9 +200,7 @@ buildEffectProtos specifications sumTypes = do
         , effectInput = input specification
         , effectMethods = registeredMethods specification
         , effectDemands = resolvedOf (name specification)
-        , effectProduces = case typing specification of
-            Context (Just producing) -> Just (contractOf producing)
-            _ -> Nothing
+        , effectProduces = contractOf <$> contextAsset (typing specification)
         , effectBranches = branchesOf specification
         , effectAnchor = case typing specification of
             Context {} -> listToMaybe
@@ -249,9 +247,11 @@ buildEffectProtos specifications sumTypes = do
           Scoped opening closing -> do
             valid (length (requested specification) <= 1) ("Scoped requests at most one resource Context: " ++ name specification)
             valid (opening == Nothing || closing /= Nothing) ("Scoped.open needs Scoped.close for automatic cleanup: " ++ name specification)
-          Context Nothing -> Left (InvalidPrototype ("Context needs request = requester \"handler\" @Representation: " ++ name specification))
-          Context (Just producing) -> do
-            case representation producing of
+          Context { request = Nothing } -> Left (InvalidPrototype ("Context needs a production role, request = Just (): " ++ name specification))
+          Context { asset = declared } -> do
+            valid (validContractName (contractOf declared))
+              ("Asset name must be a type name such as StartURL: " ++ contractOf declared ++ " in " ++ name specification)
+            case representation declared of
               TypeRef _ -> pure ()
               _ -> Left (InvalidPrototype ("Context.request must wrap a business value, not Output: " ++ name specification))
             valid (null [() | anchor <- specifications, name anchor == input specification,
@@ -277,12 +277,12 @@ buildEffectProtos specifications sumTypes = do
       first : rest -> isUpper first && all (\character -> isAlphaNum character || character `elem` "_'") rest
       [] -> False
     branchesOf specification = case typing specification of
-      Context (Just producing) | TypeRef typeName <- representation producing
+      Context { asset = declared } | TypeRef typeName <- representation declared
         , Just constructors <- lookup typeName sumTypes, length constructors > 1 ->
-          [(contractOf producing ++ constructor, constructor) | (constructor, _) <- constructors]
+          [(contractOf declared ++ constructor, constructor) | (constructor, _) <- constructors]
       _ -> []
-    branchTable = [(branch, contractOf producing)
-      | specification <- specifications, Context (Just producing) <- [typing specification]
+    branchTable = [(branch, contractOf declared)
+      | specification <- specifications, Just declared <- [contextAsset (typing specification)]
       , (branch, _) <- branchesOf specification]
 
 registeredMethods :: EffectSpec -> [(MethodRole, String)]
@@ -293,7 +293,7 @@ registeredMethods specification = case typing specification of
     ++ [(ScopeClose, selected) | selected <- maybeToList closing]
   Error detecting resolving _ -> [(ErrorDetect, selected) | selected <- maybeToList detecting]
     ++ [(ErrorResolve, selected) | selected <- maybeToList resolving]
-  selected@(Context producing) -> [(ContextRequest, method) | Just Requester { handler = method } <- [producing]]
+  selected@Context {} -> [(ContextRequest, method) | method <- maybeToList (contextProducer selected)]
     ++ [(ContextRequire, method) | method <- maybeToList (contextReader selected)]
 
 workflowNode :: WorkflowTree -> NodeId

@@ -27,7 +27,7 @@ import System.IO.Error (tryIOError)
 
 instance FileLocationInputs m => FileLocationEffect m where
   -- 示例专用文件：首次运行创建，后续追加；在项目根目录运行。
-  fileName = pure (FileName ("demo" </> "FileDemo" </> "output.txt"))
+  getFileName = pure (FileName ("demo" </> "FileDemo" </> "output.txt"))
 
 instance ValidateFileNameInputs m => ValidateFileNameEffect m where
   validateFileName = do
@@ -36,7 +36,7 @@ instance ValidateFileNameInputs m => ValidateFileNameEffect m where
       raise (ValidateFileNameError "File name must be nonempty and contain no NUL character")
 
 instance FileResourceInputs m => FileResourceEffect m where
-  openedFile = do
+  getOpenedFile = do
     validateFileName
     FileName path <- require @FileName
     outcome <- liftIO $ tryIOError $
@@ -79,7 +79,7 @@ instance ReadFileInputs m => ReadFileEffect m where
 -- 挂在读取句柄下，把读到的文本解析成文件状态（和类型）。alternative 启动时按 require 求值它：
 -- state 中尚无值，便驱动读取句柄读一次文件。
 instance ExtractFileTextInputs m => ExtractFileTextEffect m where
-  fileText = do
+  getFileText = do
     contents <- readFileContent
     text <- maybe (raise (ExtractFileTextError "File read returned no text")) pure contents
     pure (FileText (if null text then Blank else Written text))

@@ -70,7 +70,7 @@ renderProgram namespace prepared sumTypes = do
     requestSource = Prototype.effectResource . protoOf . name
     producerMethod providerName = listToMaybe
       [method | specification <- specifications, name specification == providerName
-              , Context (Just Requester { handler = method }) <- [typing specification]]
+              , Just method <- [contextProducer (typing specification)]]
     readerMethod providerName = listToMaybe
       [method | specification <- specifications, name specification == providerName
               , Just method <- [contextReader (typing specification)]]
@@ -84,11 +84,11 @@ renderProgram namespace prepared sumTypes = do
           [ ((accessWord (demandAccess resolved), demandContract resolved), method)
           | resolved <- resolvedOf (name specification), Just method <- [sourceMethod resolved] ])
       | specification <- specifications ]
-    -- 每个 Context 的契约类型由 handler 名生成：(契约名, 表示类型, 生产方)。
+    -- 每个 Context 的契约类型由声明的资产名生成：(契约名, 表示类型, 生产方)。
     generatedDeclarations =
-      [ (contractOf producing, representation producing, name specification)
+      [ (contractOf declared, representation declared, name specification)
       | specification <- contextSpecs
-      , Context (Just producing) <- [typing specification] ]
+      , Just declared <- [contextAsset (typing specification)] ]
     -- 表示类型是和类型（至少两个构造器）时，每个构造器另有分支契约：契约名加构造器名。
     -- 分支契约是基础契约的投影，由基础契约的生产方提供，只能 require：
     -- (分支契约, (基础契约, 构造器, 字段类型, 生产方))。
@@ -185,7 +185,7 @@ renderProgram namespace prepared sumTypes = do
       , "-- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。"
       , "module " ++ namespace ++ ".Generated.Program where"
       , ""
-      , "import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Requester(..), Handles(..), Demand(..), Access(..), TypeRef(..))"
+      , "import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), AssetDecl(..), Handles(..), Demand(..), Access(..), TypeRef(..))"
       , "import qualified Framework.SDK as SDK"
       , "import qualified Framework.Effect.Contract as FrameworkRoot"
       , "import " ++ namespace ++ ".Generated.Effects hiding (request, require)"
@@ -268,7 +268,7 @@ renderProgram namespace prepared sumTypes = do
       where
         selectedName = name specification
         resultType = case typing specification of
-          Context (Just producing) -> "FrameworkGenerated." ++ contractOf producing
+          Context { asset = declared } -> "FrameworkGenerated." ++ contractOf declared
           Excu _ -> "Maybe String"
           Scoped _ _ -> "Maybe String"
           _ -> "()"
@@ -298,7 +298,7 @@ renderProgram namespace prepared sumTypes = do
                   ++ scopedDependencies ++ " . " ++ operation
               _ -> scopedDependencies ++ " . " ++ operation) ++ ")"
         operation = case typing specification of
-          Context (Just _) ->
+          Context {} ->
             "FrameworkRuntime.callContext " ++ show selectedName
               ++ " FrameworkGenerated.ContextBindingError\n"
               ++ "  " ++ contextAccessTable "FrameworkRuntime." selectedName
@@ -342,25 +342,25 @@ renderProgram namespace prepared sumTypes = do
       [method] -> Right method
       _ -> Left ("Prototype has no origin entry: " ++ selectedName)
 
-    -- 契约名由 handler 名推导：须是合法类型名，不与生成区固定名或 effect 派生名冲突；
-    -- handler 名因此同时决定资产名，应按业务含义起名（例如 startURL，而不是 loadStartURL）。
+    -- 契约名就是声明的资产名：须是合法类型名，不与生成区固定名或 effect 派生名冲突；
+    -- 资产名应按业务含义起名（例如 StartURL），方法名由它固定生成。
     -- 与 Types.hs 中的类型重名会在 GHC 名称解析时报歧义。表示类型须是普通业务或库类型。
     checkGenerated = do
       let declared = [contractType | (contractType, _, _) <- generatedDeclarations] ++ map fst branchContracts
           reserved = ["Root", "App", "Pure", "Provides", "ContextValues", "Errors", "MethodGen", "Results"]
             ++ concat [[name s, name s ++ "Effect", name s ++ "Inputs", name s ++ "Error", name s ++ "Failure"] | s <- specifications]
       case [contractType | contractType <- nub declared, length (filter (== contractType) declared) > 1] of
-        contractType : _ -> Left ("Contract " ++ contractType ++ " comes from more than one handler or branch; rename one of them")
+        contractType : _ -> Left ("Contract " ++ contractType ++ " comes from more than one asset or branch; rename one of them")
         [] -> pure ()
       case [branch | (branch, _) <- branchContracts, branch `elem` reserved] of
-        branch : _ -> Left ("Branch contract " ++ branch ++ " collides with a generated or effect name; rename the handler or constructor")
+        branch : _ -> Left ("Branch contract " ++ branch ++ " collides with a generated or effect name; rename the asset or constructor")
         [] -> pure ()
       mapM_ (\(contractType, representation', owner) -> do
           if not (validTypeName contractType)
-            then Left ("Handler name must start with a letter to name contract " ++ contractType ++ " in " ++ owner) else pure ()
+            then Left ("Asset name must be a type name such as StartURL: " ++ contractType ++ " in " ++ owner) else pure ()
           if contractType `elem` reserved
-            then Left ("Contract " ++ contractType ++ " (from the handler of " ++ owner
-              ++ ") collides with a generated or effect name; rename the handler") else pure ()
+            then Left ("Asset " ++ contractType ++ " (declared by " ++ owner
+              ++ ") collides with a generated or effect name; rename the asset") else pure ()
           case representation' of
             TypeRef _ -> pure ()
             _ -> Left ("Context.request must wrap a business value, not Output: " ++ owner))
@@ -373,9 +373,9 @@ renderProgram namespace prepared sumTypes = do
     errorScopes = maybeToList . Prototype.effectErrorScope . protoOf . name
     -- 业务产物只归 Context；Output 仍只在运行边界统一包装。
     valueContract specification = case typing specification of
-      Context (Just producing) -> Right (TypeRef (contractOf producing))
-      Context Nothing ->
-        Left ("Context needs request = requester \"handler\" @Representation: " ++ name specification)
+      Context { request = Nothing } ->
+        Left ("Context needs a production role, request = Just (): " ++ name specification)
+      Context { asset = declared } -> Right (TypeRef (contractOf declared))
       _ -> Right (TypeRef "()")
 
     declaration specification = do
@@ -423,7 +423,7 @@ renderProgram namespace prepared sumTypes = do
             [contract] -> contract
             contracts -> "(" ++ intercalate ", " contracts ++ ")"
           produceLines = case typing specification of
-            Context (Just _) -> ["  type Produce " ++ effectName ++ " = " ++ reference valueType]
+            Context {} -> ["  type Produce " ++ effectName ++ " = " ++ reference valueType]
             _ -> []
       pure ([ "data " ++ effectName
          , ""

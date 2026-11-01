@@ -7,7 +7,7 @@ module Framework.Effect
   ( Effect(Registration, Typing, Require, Produce, raise), type Error, EffectTyping(..), EffectKind(..), Root, Registered, App
   , Target, targetApp
   , Output(..), Failure(..), ErrorReport(..), caughtFailure, failEffect
-  , Requester(..), requester, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
+  , AssetDecl(..), namedAsset, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
   , requests, requires, Void
   , ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, projectContext, enterHandler
   , atomicHandle, atomicScope
@@ -24,7 +24,7 @@ import Framework.Effect.Context
   ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, projectContext
   , atomicHandle, atomicScope )
 import Framework.Effect.Registration
-  ( EffectTyping(..), Requester(..), requester, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
+  ( EffectTyping(..), AssetDecl(..), namedAsset, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
   , requests, requires )
 import Framework.Effect.Runtime (App, Target, targetApp)
 import Framework.Effect.Runtime.App (withScopeCleanups)

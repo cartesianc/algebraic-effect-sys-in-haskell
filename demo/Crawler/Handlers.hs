@@ -31,10 +31,10 @@ import Text.HTML.TagSoup
 -- 抓取是原子句柄，只执行 IO 并交出网页正文；解析由挂在它下面的 Context 产值；
 -- 打印只完成操作，不交出输出。
 instance StartPageInputs m => StartPageEffect m where
-  startURL = pure (StartURL (PageURL "https://www.google.com"))
+  getStartURL = pure (StartURL (PageURL "https://www.google.com"))
 
 instance LinkedPageInputs m => LinkedPageEffect m where
-  linkedURL = pure (LinkedURL (PageURL "https://www.baidu.com"))
+  getLinkedURL = pure (LinkedURL (PageURL "https://www.baidu.com"))
 
 
 instance FetchPageInputs m => FetchPageEffect m where
@@ -98,7 +98,7 @@ instance FetchLinkedPageInputs m => FetchLinkedPageEffect m where
 -- 挂在抓取句柄下：解析本次抓取交出的正文。剧本执行抓取时由 SDK 注入，不重新抓取；
 -- 尚未抓取时被 require，则由这里调用抓取句柄驱动整条链。
 instance ExtractPageInputs m => ExtractPageEffect m where
-  startPageSummary = do
+  getStartPageSummary = do
     fetched <- fetchStartPage
     StartURL (PageURL url) <- require @StartURL
     html <- maybe (raise (ExtractPageError (url ++ ": fetch returned no page body"))) pure fetched
@@ -117,7 +117,7 @@ instance ExtractPageInputs m => ExtractPageEffect m where
     pure (StartPageSummary (PageSummary url title content links))
 
 instance ExtractLinkedPageInputs m => ExtractLinkedPageEffect m where
-  linkedPageSummary = do
+  getLinkedPageSummary = do
     fetched <- fetchLinkedPage
     LinkedURL (PageURL url) <- require @LinkedURL
     html <- maybe (raise (ExtractLinkedPageError (url ++ ": fetch returned no page body"))) pure fetched
@@ -165,7 +165,7 @@ instance PrintLinkedPageInputs m => PrintLinkedPageEffect m where
 
 -- 会话信息由上游 Context 生产，SDK 在 scope 内保存并供各抓取链读取。
 instance SessionContextInputs m => SessionContextEffect m where
-  crawlSessionInfo = pure (CrawlSessionInfo (SessionInfo "crawler-demo" "algebraic-effect-sys-in-haskell/1.0"))
+  getCrawlSessionInfo = pure (CrawlSessionInfo (SessionInfo "crawler-demo" "algebraic-effect-sys-in-haskell/1.0"))
 
 -- 同一 instance 实现开启／关闭；都直接引用 superclass handler，不交出输出。
 -- 无开启输入的 scope 在实际重叠使用时共享；最后一条使用闭包退出后自动 close。

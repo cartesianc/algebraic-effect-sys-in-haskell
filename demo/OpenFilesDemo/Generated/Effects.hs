@@ -35,7 +35,7 @@ deriving instance Eq ([FileHandle]) => Eq OpenedFiles
 deriving instance Show ([FileHandle]) => Show OpenedFiles
 
 -- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = FileNamesGen | ReadFileNamesGen | OpenedFilesGen | ReadOpenedFilesGen | OpenFilesGen | CloseFilesGen | HoldFilesGen | InspectFilesGen | FinishInspectionGen
+data MethodGen = GetFileNamesGen | ReadFileNamesGen | GetOpenedFilesGen | ReadOpenedFilesGen | OpenFilesGen | CloseFilesGen | HoldFilesGen | InspectFilesGen | FinishInspectionGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
@@ -45,11 +45,11 @@ type FileLocationsInputs m = (FrameworkRoot.Capability FileLocations m, Effect R
 instance FrameworkRoot.Capability FileLocations App
 
 class (Effect Root m) => FileLocationsEffect m where
-  fileNames :: m (Produce FileLocations)
+  getFileNames :: m (Produce FileLocations)
   readFileNames :: m (Produce FileLocations)
   readFileNames = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileLocations" ContextBindingError [("FileResources", SDK.RequireValue), ("HoldFiles", SDK.RequestValue)] (Just (SDK.ScopeInput "FileLocations")) boundFileLocations fileNames
-  {-# MINIMAL fileNames #-}
+    SDK.readContext "FileLocations" ContextBindingError [("FileResources", SDK.RequireValue), ("HoldFiles", SDK.RequestValue)] (Just (SDK.ScopeInput "FileLocations")) boundFileLocations getFileNames
+  {-# MINIMAL getFileNames #-}
 
 instance (Monad m, Effect Root m, FileLocationsEffect m) => Effect FileLocations m where
   type Registration FileLocations = Registered FileLocationsEffect Root
@@ -66,11 +66,11 @@ type FileResourcesInputs m = (FrameworkRoot.Capability FileResources m, Effect R
 instance FrameworkRoot.Capability FileResources App
 
 class (Effect Root m, Provides FileNames m) => FileResourcesEffect m where
-  openedFiles :: m (Produce FileResources)
+  getOpenedFiles :: m (Produce FileResources)
   readOpenedFiles :: m (Produce FileResources)
   readOpenedFiles = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileResources" ContextBindingError [("FileSession", SDK.RequestValue), ("InspectFiles", SDK.RequireValue), ("FinishInspection", SDK.RequireValue)] Nothing boundFileResources openedFiles
-  {-# MINIMAL openedFiles #-}
+    SDK.readContext "FileResources" ContextBindingError [("FileSession", SDK.RequestValue), ("InspectFiles", SDK.RequireValue), ("FinishInspection", SDK.RequireValue)] Nothing boundFileResources getOpenedFiles
+  {-# MINIMAL getOpenedFiles #-}
 
 instance (Monad m, Effect Root m, FileResourcesEffect m) => Effect FileResources m where
   type Registration FileResources = Registered FileResourcesEffect Root
@@ -156,11 +156,11 @@ class Provides contract m where
   require :: m contract
 
 instance (FileLocationsEffect App) => Provides FileNames App where
-  request = SDK.provideContext "FileLocations" "FileNames" ContextBindingError [("HoldFiles", fileNames)]
+  request = SDK.provideContext "FileLocations" "FileNames" ContextBindingError [("HoldFiles", getFileNames)]
   require = SDK.provideContext "FileLocations" "FileNames" ContextBindingError [("FileResources", readFileNames)]
 
 instance (FileResourcesEffect App) => Provides OpenedFiles App where
-  request = SDK.provideContext "FileResources" "OpenedFiles" ContextBindingError [("FileSession", openedFiles)]
+  request = SDK.provideContext "FileResources" "OpenedFiles" ContextBindingError [("FileSession", getOpenedFiles)]
   require = SDK.provideContext "FileResources" "OpenedFiles" ContextBindingError [("FileSession", readOpenedFiles), ("InspectFiles", readOpenedFiles), ("FinishInspection", readOpenedFiles)]
 
 -- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
