@@ -484,10 +484,17 @@ streamedAssets effects selected = nub
   [demandContract demand | effect <- originEffects effects selected, demand <- effectDemands effect
   , demandAccess demand == StreamAccess]
 
+-- 分支契约按其基础契约计入：读取持续和类型资产的分支即读取该资产。
 continuousReads :: [EffectProto method] -> String -> [String]
 continuousReads effects selected = nub
-  [demandContract demand | effect <- originEffects effects selected, demand <- effectDemands effect
-  , producer <- effects, effectContinuous producer, effectProduces producer == Just (demandContract demand)]
+  [base | effect <- originEffects effects selected, demand <- effectDemands effect
+  , let base = baseContract (demandContract demand)
+  , producer <- effects, effectContinuous producer, effectProduces producer == Just base]
+  where
+    baseContract contractType = case [produced | producer <- effects, Just produced <- [effectProduces producer]
+                                     , (branch, _) <- effectBranches producer, branch == contractType] of
+      produced : _ -> produced
+      [] -> contractType
 
 -- 候选对应只读 effect 原型中的 requires 与 Input 祖先；生成和加载校验共用。
 candidateCase :: [EffectProto method] -> NodeId -> WorkflowTree

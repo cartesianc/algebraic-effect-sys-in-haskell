@@ -6,9 +6,9 @@ module Framework.Workflow.Execution (runStructuredAST) where
 import Framework.Effect.Contract (Failure, Output(..))
 import Framework.Effect.Runtime
   ( Target, Handoff, SessionSteps, Frame, noHandoff, targetName, lowerTarget, scopeHandlers
-  , newFrame, frameDelivery, sessionLauncher )
+  , newFrame, frameDelivery, boundarySession, sessionLauncher )
 import Framework.Effect.Runtime.Graph
-  ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, installSessionLauncher, obtainSession
+  ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, installSessionLauncher
   , stopSessions, resetOrigins )
 import Framework.Effect.Runtime.Session (Broken, newCursor)
 import Framework.Prototype
@@ -161,7 +161,7 @@ executionAlgebra prototype store entries selectors layer expected = do
       units <- concatMap compiledUnits <$> compiledChildren
       sources <- mapM (producerOf . sessionAsset) (lifelongSessions description)
       single $ \run handoff -> ExceptT $ do
-        sessions <- mapM (\source -> (,) source <$> obtainSession store (Just location, source)) sources
+        sessions <- mapM (\source -> (,) source <$> boundarySession store location source handoff) sources
         outcomes <- runParalleled [repeatUnit run handoff sessions unit | unit <- units]
         pure (concat <$> sequence outcomes)
     _ -> Left PrototypeWorkflowMismatch

@@ -93,7 +93,7 @@ socket、event、behavior 可以用来解释不同的驱动关系，但不是类
 
 读取类型由生产方注册决定：`stream = Just ()` 的资产，其 `readT` 和所有消费方的 `require @T` 都返回 `History T`；`getT`／`streamT`／`request @T` 返回单个资产。普通资产保持单值读取。消费方新增订阅不会改变任何人的读取类型；一份契约需要同时有单值与持续两种读法时，细化为两个资产。分支契约投影本次交付的最新条目。
 
-History 是从会话首条发布到确定交付位置的有限、不可变序列，由 SDK 构造：`latest`、`historyEntries`、`historySize` 读取。相等值的两个 publication 仍是两条。无限的是 SDK 持续推进的过程，不是业务手写的无限列表。
+History 是从会话首条发布到确定交付位置的有限、不可变序列，由 SDK 构造：`latest`、`historyEntries`、`historySize` 读取。相等值的两个 publication 仍是两条。无限的是 SDK 持续推进的过程，不是业务手写的无限列表。视图直接共享会话中的发布序列，取用条目时才投影出业务值：取得视图、`latest` 和 `historySize` 不随历史长度增长，`historyEntries` 才遍历全部条目。
 
 ### 3.4 原子输入与源码约束
 
@@ -125,7 +125,7 @@ Excu／Scoped 的 `Maybe String` 仍表示可选信息，不能把 `Nothing` 释
 ### 5.2 lifelong 合法性
 
 1. lifelong 内每个挂载的 target 恰好订阅一个持续资产。
-2. 这些 target 的 original chain 不再读取（requires／streams）其他持续资产；否则执行结果取决于读取时刻。多个来源的触发组合另行设计。
+2. 这些 target 的 original chain 不再读取（requires／streams）其他持续资产；否则执行结果取决于读取时刻。分支契约按其基础契约计入：读取所订阅资产的分支是同一资产，读取其他持续资产的分支同样被拒绝。多个来源的触发组合另行设计。
 3. 只有普通 request／require 的末端不能进入 lifelong；一次性准备放在外部 chained。streams 末端不能出现在 lifelong 之外。
 4. Stream、Context 不作为 target。
 5. lifelong 不嵌套；lifelong 内不能有空分支。因为每个 target 都订阅，单元每条成功路径都至少领取一条新交付。
@@ -149,7 +149,7 @@ lifelong 写入统一 Prototype，运行装配、来源分析与 `--structure` �
 
 - 会话挂载 NodeId 为 lifelong 路径加 `[-1, 会话序号, 步骤]`：Receive 的步骤 0 是 Stream 单步、步骤 1 是解析器；RepeatRequest 只有步骤 0（request）。挂载以 `SessionChain` 角色进入 `protoChains`，参与构图与 ScopeTree。
 - `protoSessions` 为每个 Receive 资产登记一份 interpreter 托管的会话，挂载为 `[-2, 序号, 步骤]`；它不属于 AST，不是任何读取点的可见前驱。
-- 可见性：lifelong 的会话挂载先于它的全部单元。来源分析中，会话挂载先作为根分析；单元的执行以订阅资产的交付作为已捕获绑定，出身是会话的生产步骤。lifelong 之后的后继按“没有正常结束”处理。
+- 可见性：lifelong 的会话挂载先于它的全部单元。来源分析中，会话挂载先作为根分析，以进入 lifelong 时的交接（例如外层 alternative 选择时捕获的值）为已捕获绑定；运行时每个生产步骤也从这份交接开始（见 8.1）。单元的执行以订阅资产的交付作为已捕获绑定，出身是会话的生产步骤。lifelong 之后的后继按“没有正常结束”处理。
 - 读取点来源新增 `FromSession`：Receive 资产在没有本次交付时由 interpreter 托管的会话交付，不查询普通来源表。
 - `--structure` 在 Workflow 中列出每个 lifelong 的单元、会话（生产方式与挂载）和订阅，并单独列出 interpreter 会话。
 
@@ -182,7 +182,7 @@ lifelong 安装订阅后不冒充整个 branch 的 Succ，否则外部 chained �
 每个单元逐次执行：一次执行结束后才开始下一次，同一单元的调用不重叠。一次执行就是一个 frame：
 
 - **boot 条件**：控制流到达某个 target 时，若本 frame 尚未领取它订阅的资产，先领取一条新交付；有积压时立即领取，没有新发布时挂起等待。领取到交付后才 boot target。不在生产调用栈里同步执行消费业务，也不反复调用 handler 试探数据。
-- **每个资产只领取一次**：同一 frame 中后续 target、alternative 的选择读取与候选、内部 parallel 中同时需要它的节点，都共享第一次领取的视图。alternative 的转折资产若是本 lifelong 的会话资产，选择读取先领取，候选共享。
+- **每个资产只领取一次**：同一 frame 中后续 target、alternative 的选择读取与候选、内部 parallel 中同时需要它的节点，都共享第一次领取的视图。alternative 的转折资产若是本 lifelong 的会话资产，选择读取先领取，候选共享；持续的和类型资产按本次交付的最新条目选择候选。lifelong 外的 alternative 以持续资产为转折时，同样按选择读取取得的视图的最新条目分派。
 - **首次读取领取**：frame 中尚未领取的本 lifelong 会话资产，在第一次 require 时领取（例如被生产链读取）。
 - **结束**：单元的一次执行结束后，下一次执行开始前清除该单元子树上一次执行的 Origin 及其普通发布；本次没有执行到的位置不会读到上一次的普通产物。执行结果不累积。
 
@@ -226,7 +226,7 @@ monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同
     Receive：Stream 单步取得原始输入 → 安装为解析器的本次输入 → 解析器解析并发布一次 → 下一步
     RepeatRequest：执行 request（它完成生产与发布）→ 下一次 request
 
-解析器与 request 的包装各自发布一次；会话不再次发布返回值，也不再调用一次 parser。每一步是一次独立的受控调用（自己的 Origin 与捕获环境），会话以发布写入历史。
+解析器与 request 的包装各自发布一次；会话不再次发布返回值，也不再调用一次 parser。每一步是一次独立的受控调用（自己的 Origin 与捕获环境），会话以发布写入历史。lifelong 的会话保存进入 lifelong 时的交接，每一步从它的新副本开始：外层已经捕获的值（例如 alternative 选择时读到的配置）在生产端与消费端一致，生产步骤不会另行生产一份。interpreter 托管的会话没有交接。
 
 生产会话的各步骤共用会话的 scope 使用登记：一步结束不会按 once-spare 关闭生产用到的资源，下一步按既有协议复用（例如无开启参数的连接 scope）。会话停止时撤销这份登记，资源交给 interpreter 退出清理。
 

@@ -2,7 +2,7 @@
 -- 会话按（lifelong 边界，生产该资产的 Context 注册名）区分；注册名与运行时绑定来源同名。
 -- Nothing 边界是 interpreter 托管的会话。
 module Framework.Effect.Runtime.Session
-  ( SessionKey, View, Broken, Session, sessionKey
+  ( SessionKey, View, Broken, Session, sessionKey, sessionBindings, sessionViews
   , newSession, appendDelivery, breakSession, setSessionWorker, stopSession
   , awaitHistory, Cursor, newCursor, takeDelivery
   ) where
@@ -15,7 +15,7 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Sequence (Seq, (|>))
 import qualified Data.Sequence as Seq
 import Framework.Effect.Contract (Failure)
-import Framework.Effect.Scope (ScopeBinding)
+import Framework.Effect.Scope (ScopeBinding, ScopeBindings)
 import Framework.Prototype (NodeId)
 
 type SessionKey = (Maybe NodeId, String)
@@ -33,16 +33,21 @@ data SessionState environment cause = SessionState
   , stateSignal :: MVar ()
   }
 
+-- 边界的交接：进入 lifelong 时已经捕获的绑定与视图（例如外层 alternative 选择时读到的值）。
+-- 每个生产步骤都从这份交接开始；interpreter 托管的会话没有交接。
 data Session environment cause = Session
   { sessionKey :: SessionKey
+  , sessionBindings :: ScopeBindings environment cause
+  , sessionViews :: [(String, View environment cause)]
   , sessionState :: MVar (SessionState environment cause)
   , sessionWorker :: MVar (Maybe (ThreadId, MVar ()))
   }
 
-newSession :: SessionKey -> IO (Session environment cause)
-newSession key = do
+newSession :: SessionKey -> ScopeBindings environment cause -> [(String, View environment cause)]
+           -> IO (Session environment cause)
+newSession key bindings views = do
   signal <- newEmptyMVar
-  Session key <$> newMVar (SessionState Seq.empty Nothing signal) <*> newMVar Nothing
+  Session key bindings views <$> newMVar (SessionState Seq.empty Nothing signal) <*> newMVar Nothing
 
 -- 两次相等的值仍是两条发布；会话已经失败时不再接受新条目。
 appendDelivery :: Session environment cause -> ScopeBinding environment cause -> IO ()

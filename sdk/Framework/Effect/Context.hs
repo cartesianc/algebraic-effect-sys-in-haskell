@@ -11,7 +11,7 @@ import Framework.Effect.Contract
 import Control.Monad (forM_, when)
 import Control.Monad.Except (MonadError, catchError, throwError)
 import Data.Maybe (fromMaybe)
-import Framework.Effect.History (History, currentHistory, historyFromList)
+import Framework.Effect.History (History, currentHistory)
 
 data ContextAccess = RequestValue | RequireValue deriving (Eq, Show)
 
@@ -126,13 +126,13 @@ readHistory
 readHistory contextName wrap accesses select produce = requireContext contextName wrap accesses $ do
   captured <- readContextHistory contextName select
   case captured of
-    Just entries -> pure (historyFromList entries)
+    Just history -> pure history
     Nothing -> case produce of
       Just production -> currentHistory <$> readBoundContext contextName wrap Nothing select (Just production)
       Nothing -> do
         delivered <- awaitContextHistory contextName select
         maybe (failEffect contextName (wrap ContextNotInitialized)
-          (contextName ++ ": no stream session can deliver here")) (pure . historyFromList) delivered
+          (contextName ++ ": no stream session can deliver here")) pure delivered
 
 -- 解析器读取本次原始输入；只有 SDK 在会话中调用解析器时才安装。
 streamInput :: (ContextStore environment m, MonadError (Failure cause) m) => String -> (ContextFault -> cause) -> m String

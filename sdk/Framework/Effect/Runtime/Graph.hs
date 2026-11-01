@@ -18,7 +18,7 @@ import Data.Maybe (fromMaybe)
 import Framework.Effect.Contract (ContextFault(..))
 import Framework.Effect.Graph (MethodRole(..))
 import Framework.Effect.Runtime.Identity
-import Framework.Effect.Runtime.Session (Session, SessionKey, newSession, stopSession)
+import Framework.Effect.Runtime.Session (Session, SessionKey, View, newSession, stopSession)
 import Framework.Effect.Scope
   ( Scopes, ScopeBinding, ScopeBindings, ScopeUser(..), configureScopeRelations )
 import Framework.Prototype
@@ -196,11 +196,13 @@ installSessionLauncher :: RuntimeGraph environment cause -> (Session environment
 installSessionLauncher graph = writeIORef (runtimeLauncher graph)
 
 -- 同一边界与资产只创建一份会话并只启动一次生产；在登记表锁内启动，停止时一定能看到它。
-obtainSession :: RuntimeGraph environment cause -> SessionKey -> IO (Session environment cause)
-obtainSession graph key = modifyMVar (runtimeSessions graph) $ \sessions -> case lookup key sessions of
+-- 交接只在创建时使用：一个 lifelong 在一次运行中只进入一次，interpreter 会话没有交接。
+obtainSession :: RuntimeGraph environment cause -> SessionKey -> ScopeBindings environment cause
+              -> [(String, View environment cause)] -> IO (Session environment cause)
+obtainSession graph key bindings views = modifyMVar (runtimeSessions graph) $ \sessions -> case lookup key sessions of
   Just session -> pure (sessions, session)
   Nothing -> do
-    session <- newSession key
+    session <- newSession key bindings views
     launch <- readIORef (runtimeLauncher graph)
     launch session
     pure ((key, session) : sessions, session)

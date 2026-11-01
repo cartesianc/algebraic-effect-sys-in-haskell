@@ -5,13 +5,14 @@
 module Framework.Effect.Runtime
   ( App, Target, targetApp
   , targetName, lowerTarget, Handoff, noHandoff, scopeHandlers, cleanupTargets
-  , Frame, newFrame, frameDelivery
+  , Frame, newFrame, frameDelivery, boundarySession
   , SessionSteps, receiveSteps, requestSteps, sessionLauncher
   ) where
 
 import Framework.Effect.Contract (Failure)
 import Framework.Effect.Runtime.App (App, Launch(..), runAppWith)
-import Framework.Effect.Runtime.Graph (RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, newOrigin)
+import Framework.Effect.Runtime.Graph
+  (RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, newOrigin, obtainSession)
 import Framework.Effect.Runtime.Identity (Execution(..))
 import Framework.Effect.Runtime.Session
 import Framework.Effect.Scope
@@ -52,6 +53,11 @@ data Frame environment cause = Frame
 
 newFrame :: [(String, (Session environment cause, Cursor))] -> IO (Frame environment cause)
 newFrame sessions = Frame sessions <$> newMVar []
+
+-- 进入 lifelong 时取得本边界的会话：生产步骤从进入时的交接开始，与来源分析给会话挂载的环境一致。
+boundarySession :: RuntimeGraph environment cause -> NodeId -> String -> Handoff environment cause
+                -> IO (Session environment cause)
+boundarySession graph boundary source (Handoff given views) = obtainSession graph (Just boundary, source) given views
 
 -- 不是本 lifelong 的会话资产时为 Nothing。没有新发布时挂起；有积压时立即领取下一条。
 frameDelivery :: Frame environment cause -> String -> Maybe (IO (Either (Broken cause) (View environment cause)))
@@ -145,15 +151,17 @@ sessionLauncher graph steps onBroken session = do
     mounts = sessionMountsOf (runtimePrototype graph) boundary source
     produce owner = case (lookup source steps, mounts) of
       (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ do
-        (raw, _, _) <- lowerWith graph streamMount (Launch [] [] Nothing [] noDelivery (Just owner)) stream
+        (raw, _, _) <- lowerWith graph streamMount (step owner Nothing []) stream
         case raw of
           Left problem -> pure (Left problem)
-          Right text -> first <$> lowerWith graph parserMount (Launch [] [] (Just text) sink noDelivery (Just owner)) parser
+          Right text -> first <$> lowerWith graph parserMount (step owner (Just text) sink) parser
       (Just (RequestSteps request), Just [requestMount]) ->
-        loop (first <$> lowerWith graph requestMount (Launch [] [] Nothing sink noDelivery (Just owner)) request)
+        loop (first <$> lowerWith graph requestMount (step owner Nothing sink) request)
       _ -> ioError (userError ("Session steps differ from the prototype mounts for " ++ source
         ++ "; regenerate with the SDK effect-codegen command"))
     sink = [(source, appendDelivery session)]
+    -- 每一步从边界交接的新副本开始，共用会话的使用登记。
+    step owner input sinks = Launch (sessionBindings session) (sessionViews session) input sinks noDelivery (Just owner)
     noDelivery = const Nothing
     first (outcome, _, _) = outcome
     broken reason = breakSession session reason >> onBroken reason

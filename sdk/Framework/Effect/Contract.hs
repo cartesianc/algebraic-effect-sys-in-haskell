@@ -25,6 +25,7 @@ module Framework.Effect.Contract
 
 import Control.Monad.Except (MonadError, catchError, throwError)
 import Control.DeepSeq (NFData)
+import Framework.Effect.History (History)
 import GHC.Generics (Generic)
 import Data.Kind (Constraint, Type)
 import Data.Void (Void)
@@ -101,11 +102,11 @@ class Monad m => ContextStore environment m | m -> environment where
   injectOutput :: String -> RawOutput -> m () -> m ()
   injectOutput _ _ _ = pure ()
   -- 持续资产：本次调用已经取得的历史视图（lifelong 交付，或本次先前的会话读取），按发布顺序。
-  readContextHistory :: String -> (environment -> Maybe value) -> m (Maybe [value])
+  readContextHistory :: String -> (environment -> Maybe value) -> m (Maybe (History value))
   readContextHistory _ _ = pure Nothing
   -- Receive 资产没有本次视图时，从 interpreter 托管的会话取得当前历史（至少一条），并捕获为本次视图。
   -- Nothing 表示当前不允许启动会话（诊断、收尾）；会话失败时传播它的原失败。
-  awaitContextHistory :: String -> (environment -> Maybe value) -> m (Maybe [value])
+  awaitContextHistory :: String -> (environment -> Maybe value) -> m (Maybe (History value))
   awaitContextHistory _ _ = pure Nothing
   -- 解析器本次的原始输入；只有会话调用解析器时才安装。
   streamRawInput :: m (Maybe String)

@@ -377,7 +377,7 @@ renderProgram namespace prepared sumTypes = do
     -- 与 Types.hs 中的类型重名会在 GHC 名称解析时报歧义。表示类型须是普通业务或库类型。
     checkGenerated = do
       let declared = [contractType | (contractType, _, _) <- generatedDeclarations] ++ map fst branchContracts
-          reserved = ["Root", "App", "Pure", "Provides", "ContextValues", "Errors", "MethodGen", "Results"]
+          reserved = ["Root", "App", "Pure", "Provides", "Reading", "ContextValues", "Errors", "MethodGen", "Results"]
             ++ concat [[name s, name s ++ "Effect", name s ++ "Inputs", name s ++ "Error", name s ++ "Failure"] | s <- specifications]
       case [contractType | contractType <- nub declared, length (filter (== contractType) declared) > 1] of
         contractType : _ -> Left ("Contract " ++ contractType ++ " comes from more than one asset or branch; rename one of them")
@@ -635,11 +635,19 @@ renderProgram namespace prepared sumTypes = do
           , "    )"
           , ""
           ] ++ concat
-          [ [ "caseOf" ++ contractType ++ " :: " ++ contractType ++ " -> String"
-            , "caseOf" ++ contractType ++ " (" ++ contractType ++ " value) = case value of" ]
-            ++ [ "  " ++ constructor ++ " {} -> " ++ show constructor
-               | (_, (base, constructor, _, _)) <- branchContracts, base == contractType ]
-            ++ [ "" ]
+          [ if continuousContract contractType
+              -- 持续资产读到交付视图：按本次交付的最新条目分派（交付视图至少有一条）。
+              then [ "caseOf" ++ contractType ++ " :: SDK.History " ++ contractType ++ " -> String"
+                   , "caseOf" ++ contractType ++ " history = case SDK.latest history of"
+                   , "  Just (" ++ contractType ++ " value) -> case value of" ]
+                   ++ [ "    " ++ constructor ++ " {} -> " ++ show constructor
+                      | (_, (base, constructor, _, _)) <- branchContracts, base == contractType ]
+                   ++ [ "  Nothing -> \"\"", "" ]
+              else [ "caseOf" ++ contractType ++ " :: " ++ contractType ++ " -> String"
+                   , "caseOf" ++ contractType ++ " (" ++ contractType ++ " value) = case value of" ]
+                   ++ [ "  " ++ constructor ++ " {} -> " ++ show constructor
+                      | (_, (base, constructor, _, _)) <- branchContracts, base == contractType ]
+                   ++ [ "" ]
           | contractType <- selectorContracts ] ++
           [ "-- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。"
           , "interpreter :: SDK.AST -> [EffectSpec] -> IO ()"

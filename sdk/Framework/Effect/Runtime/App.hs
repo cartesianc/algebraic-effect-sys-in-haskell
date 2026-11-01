@@ -11,6 +11,7 @@ import Framework.Effect.Contract
 import Framework.Effect.Scope
 import Framework.Effect.Runtime.Graph
 import Framework.Effect.Runtime.Identity
+import Framework.Effect.History (History, historyView)
 import Framework.Effect.Runtime.Session (Broken, View, awaitHistory)
 import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
@@ -19,10 +20,9 @@ import Control.Monad (filterM, forM, forM_, when)
 import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Reader (ReaderT, ask, asks, local, runReaderT)
-import Data.Foldable (toList)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (find, nub, nubBy)
-import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
 import Data.Sequence ((|>))
 import Data.Unique (Unique, newUnique)
 
@@ -488,7 +488,7 @@ instance ContextStore env (App env cause) where
     environment <- AppRun ask
     captured <- rawIO (lookup source <$> readIORef (views environment))
     case captured of
-      Just view -> pure (Just (entriesOf select view))
+      Just view -> pure (Just (historyOf source select view))
       Nothing | deliveryAllowed environment, Just deliver <- frameDeliver environment source ->
         Just <$> captureDelivery environment source select (rawIO deliver)
       Nothing -> pure Nothing
@@ -496,7 +496,7 @@ instance ContextStore env (App env cause) where
   awaitContextHistory source select = do
     environment <- AppRun ask
     if not (deliveryAllowed environment) then pure Nothing else do
-      session <- rawIO (obtainSession (runtimeGraph environment) (Nothing, source))
+      session <- rawIO (obtainSession (runtimeGraph environment) (Nothing, source) [] [])
       Just <$> captureDelivery environment source select (rawIO (awaitHistory session))
   streamRawInput = AppRun (asks streamRaw)
   recordContextInput access value = do
@@ -625,8 +625,11 @@ runDiagnostic environment problem selected callback = do
     Nothing -> execute
     Just slot -> withMVar (scopeRecoveryGate slot) (const execute)
 
-entriesOf :: (env -> Maybe value) -> View env cause -> [value]
-entriesOf select = mapMaybe (select . bindingValues) . toList
+-- 视图直接共享会话中的绑定序列，读取条目时才投影；每条发布都携带本资产的值。
+historyOf :: String -> (env -> Maybe value) -> View env cause -> History value
+historyOf source select view = historyView view $ \binding ->
+  fromMaybe (error ("SDK: a delivery of " ++ source ++ " carries no value; regenerate the program"))
+    (select (bindingValues binding))
 
 deliveryAllowed :: Environment env cause -> Bool
 deliveryAllowed environment = isNothing (originalFailure environment) && not (cleaningScopes environment)
@@ -634,7 +637,7 @@ deliveryAllowed environment = isNothing (originalFailure environment) && not (cl
 
 -- 会话失败时传播它的原失败或原生异常；取得的视图捕获为本次视图，之后的发布不改写它。
 captureDelivery :: Environment env cause -> String -> (env -> Maybe value)
-                -> App env cause (Either (Broken cause) (View env cause)) -> App env cause [value]
+                -> App env cause (Either (Broken cause) (View env cause)) -> App env cause (History value)
 captureDelivery environment source select deliver = do
   delivered <- deliver
   case delivered of
@@ -643,7 +646,7 @@ captureDelivery environment source select deliver = do
     Right view -> do
       rawIO $ atomicModifyIORef' (views environment) $ \current ->
         ((source, view) : filter ((/= source) . fst) current, ())
-      pure (entriesOf select view)
+      pure (historyOf source select view)
 
 -- 此证据只描述这次失败所涉及的实例，不参与开启参数的 Eq 匹配。
 scopeFailureTarget :: String -> Maybe (ScopeInstance env cause) -> Failure cause -> Failure cause

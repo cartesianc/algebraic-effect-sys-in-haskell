@@ -44,6 +44,13 @@ EOF／Done、Stream close、lifelong 的局部结束（当前由临时规则代�
 - 资源：Stream 方法每步打开的无参 scope 在会话内只打开一次，退出时关闭一次。
 - 取消：StreamDemo 运行中发送中断（Windows Ctrl-Break），会话与单元停止，退出清理关闭传感器连接。
 
+评审修正（2026-11-01，对 `3636128` 的评审）：
+
+- 持续的和类型资产驱动 alternative 时，生成的选择函数改为按本次交付的最新条目分派（原先 `caseOfT :: T -> String` 与返回 History 的读取组合后无法编译）。lifelong 合法性按基础契约计入分支契约。生成器把 `Reading`（Provides 的关联类型）列为保留名，资产重名时给出明确诊断。
+- lifelong 的会话保存进入 lifelong 时的交接，生产步骤从它开始，与来源分析一致；原先生产步骤从空环境开始，外层 alternative 已经捕获的值会在生产端被重新生产。
+- History 视图共享会话中的发布序列，读取时不再经列表重建；逐条消费 N 次交付的读取工作不再是 O(N²)。
+- 验证：临时探针（lifelong 内外以持续和类型资产驱动 alternative；以 alternative 选择的 lifelong，其会话生产方 require 外层已捕获的值）在修正后通过，用修正前的 SDK 重编同一探针可见每个生产步骤都重新生产该值；临时基准中逐条读取 2 万次交付的最新条目，旧路径 1.9 s、新视图约 1 ms。`cabal build all`、六个程序重新生成无漂移、五个原有 demo 返回 Succ。
+
 未覆盖：没有并发交错的系统性枚举；没有长时间运行的内存观察（完整历史按设计持续增长）；LSP 仓库的穷举模型尚未扩展到 Stream／lifelong；Ctrl-C 只在 Windows 上以 Ctrl-Break 方式验证。
 
 
@@ -63,6 +70,7 @@ EOF／Done、Stream close、lifelong 的局部结束（当前由临时规则代�
 
 - [x] Stage 2 原 2.7：LSP 仓库的 `verify/visibility` 建立了独立的运行语义模型，穷举小规模 AST 与契约组合，并以真实 `buildPrototype` 核对静态来源；包含变异自检。2026-11-01 基线：一层 9,222、两层 209,480、三层 43,800、alternative 7,688 个程序及 50,000 个随机程序，均为“接受且一致”或“拒绝且有依据”，没有不一致。本仓库不新增测试门槛。
 - [ ] 将上述穷举模型扩展到 Stream／lifelong（订阅、会话可见性与单元划分）。
+- [ ] 持续资产作为 scope 开启参数：`readHistory` 返回交付视图时没有经过开启参数的观察协议，资源按本轮交付开启时可能报 `ScopeInputsMissing`。按用户安排，等 lifelong 的 close 语义补充后再处理（评审 2026-11-01）。
 - [ ] 外部 LSP 按自身需要消费 SDK 原型与诊断；协议和展示格式在工具侧设计，不为其增加 SDK 专用导出。
 - [ ] 读取点来源、资产细化建议及模块引用索引的可视化。
 

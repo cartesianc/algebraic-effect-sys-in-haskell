@@ -285,6 +285,7 @@ executable effect-codegen
       Framework.Codegen.Plan
       Framework.Effect.Asset
       Framework.Effect.Contract
+      Framework.Effect.History
       Framework.Effect.Registration
       Framework.Effect.Graph
       Framework.Recursion
@@ -294,6 +295,7 @@ executable effect-codegen
   ghc-options: -main-is Framework.Generate
   build-depends:
       base >= 4.21 && < 5
+    , containers
     , deepseq
     , filepath
     , process >= 1.6 && < 1.7
