@@ -181,11 +181,7 @@ App／IO 的生成入口沿原有 Input／request 关系查找最近的 scope，
 generatedPrototype :: SDK.Prototype MethodGen
 ```
 
-现有 Main 无需修改，给 SDK 入口传 `--structure` 即可查看，例如：
-
-```sh
-cabal run crawler-demo -- --structure
-```
+现有 Main 无需修改，选择 `--structure` 模式即可查看。具体命令及其与生成、业务运行的区别见[指南：命令行与执行阶段](GUIDE.md#commands)。
 
 该分支通过纯校验核对当前 AST 与原型快照，以可读格式显示带 `NodeId` 的 workflow、origin／ctx 链定义、链挂载、方法及其 effect 归属、方法引用、scope 层次与共享父节点、各入口路径，以及双向实证和未定关系。它读取同一份原型，不调用 `createEntries`，不创建运行 scope 句柄，也不装配或执行 handler。普通启动在自己的单次执行装配 fold 中核对相同挂载规则。修改注册、AST 或手写 handler 后须重新生成。
 

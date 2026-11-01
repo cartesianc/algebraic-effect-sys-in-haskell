@@ -4,15 +4,11 @@
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
-按任务跳转：[核心对象](#model) · [设计原则](#principles) · [生成前类型检查](#beforegen) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [Stream](#stream)。
+按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [代码即文档](#code-as-documentation) · [生成前类型检查](#beforegen) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [Stream](#stream)。
 
 ## 1. 范围与实现状态
 
-本项目用原生 Haskell 表达可分析的 effect 组合：注册声明能力与资产依赖，instance 实现原子操作，workflow 决定完整链如何启动。业务入口固定为：
-
-```haskell
-main = interpreter ast effects
-```
+本项目用原生 Haskell 表达可分析的 effect 组合。先看下一节中的代码形态：资产定义、注册字段、instance 方法和具名 workflow 分别承担一种结构关系；运行入口只负责启动这份组合。
 
 | 范围 | 状态 | 详细规范 |
 | --- | --- | --- |
@@ -25,8 +21,48 @@ main = interpreter ast effects
 
 实现状态说明代码已接入的范围，不代表全部并发交错或资源逃逸已获证明。过去的编译及 demo 结果概述见 [TODO 的完成摘要](TODO.md#completed)。
 
+<a id="code-shape"></a>
+## 2. 代码长什么样
+
+从资产、注册、instance 与 workflow 的代码形态进入各层语义。[完整的 FileDemo 代码导览](GUIDE.md#code-shape)按这个顺序展开；以下用解析方法这一组声明与实现定位本页的协议章节。
+
+### 2.1 从一组注册与 instance 进入
+
+`Effects.hs` 的 `effects` 列表节选：
+
+```haskell
+EffectSpec
+  { name = "ExtractFileText"
+  , typing = Context { request = requester "fileText" @TextState }
+  , input = "ReadFile"
+  , demands = []
+  }
+```
+
+`Handlers.hs` 的对应 instance 节选，模块头和导入见 FileDemo 源码：
+
+```haskell
+instance ExtractFileTextInputs m => ExtractFileTextEffect m where
+  fileText = do
+    contents <- readFileContent
+    text <- maybe (raise (ExtractFileTextError "File read returned no text")) pure contents
+    pure (FileText (if null text then Blank else Written text))
+```
+
+注册给出类别、产物与能力，instance 给出实际方法调用和资产构造。沿代码中出现的结构进入对应子模块：
+
+| 看到的代码形态 | 继续阅读 |
+| --- | --- |
+| `data TextState = Blank \| Written String` | [资产写法](GUIDE.md#types)、[资产约束](ASSETS.md) |
+| `EffectSpec`、`typing`、`input`、`demands` | [注册写法](GUIDE.md#effects)、[方法契约](#registration) |
+| `instance XInputs m => XEffect m where` | [instance 写法](GUIDE.md#handlers)、[能力与实际调用](#calls) |
+| `request @T`、`require @T` | [Context 取值协议](#context) |
+| `openFileSession`、`closeFileSession`、`raise` | [scope](#scope)、[Error](#error) |
+| `alternative [node "WriteFirstLine", node "AppendLine"]` | [workflow 写法](GUIDE.md#workflow)、[启动协议](#workflow) |
+| 生成契约、`generatedPrototype` | [生成与源码同步](#generation)、[图与来源](EFFECT_GRAPH.md) |
+
 <a id="model"></a>
-## 2. 核心对象与层次
+### 2.2 核心对象与层次
 
 | 对象 | 表达什么 | 不应承担的职责 |
 | --- | --- | --- |
@@ -61,7 +97,32 @@ flowchart LR
 <a id="principles"></a>
 ## 3. 设计原则
 
-### 3.1 先确定语义，再实现操作
+<a id="code-as-documentation"></a>
+### 3.1 代码即文档，文档即代码
+
+代码的书写形态是框架的设计契约。读者应能沿原生 Haskell 的类型、声明、引用和方法体，读出程序的资产词汇、能力边界、取值关系、启动方式与原子操作；人、HLS 和 agent 共同面对这份源码。
+
+“代码即文档”要求架构信息落在可阅读、可定位、可检查的结构中。Effects 的 typing／Input／demands、Workflow 的具名 branch、Handlers 的类方法引用各自表达对应关系；命名使用业务概念，相关方法归入相应 instance。需要为理解一段组合而另找隐藏注册、外部 impl 或约定俗成的调用顺序时，应检查是否缺少明确的结构表达。
+
+“文档即代码”要求功能设计具体到开发者实际会写的 Haskell 形态。设计说明应给出相互对应的资产、注册、instance 和 workflow，解释生成器从哪里取得证据、interpreter 怎样装配，并区分当前可用代码、节选和待实现接口。这是语义与书写契约的对应要求；Markdown 本身不成为新的执行语言，也不承诺文档自动往返生成任意业务实现。
+
+| 阅读层 | 应直接读出的信息 | 对应边界 |
+| --- | --- | --- |
+| Types 与生成契约 | 业务资产的结构、名称与细化身份 | 原生 ADT 与类型检查；源码资产规则另行检查 |
+| Effects | 类别、方法入口、Input 能力、demands 取值模式 | 声明解析与生成的类约束 |
+| Handlers | 实际调用、取值、解析、IO 与 raise | 原生 Haskell；支持范围内的结构提取 |
+| AST／Workflow | 挂载的完整链末端和 branch 启动关系 | workflow 类型与 Prototype 校验 |
+| Generated／--structure | 派生接口、协议包装、静态装配事实与推导证据 | 可审查的普通 Haskell 和同一 Prototype；派生产物不另立手写权威 |
+
+文档的主要阅读入口使用独立标题“代码长什么样”，放在项目介绍之后、详细协议之前。README 保持项目整体介绍，用一行 Main 和 asset、effect、handler、workflow 的职责与关系自然引入使用指南；完整模块声明与 import 在指南展示。各模块的技术细节与具体启动命令在指南展开，README 通过引用提供入口。指南以同一个业务例子的原生 Haskell 代码块依次展示资产、注册、instance 和 workflow，每块标明所属文件、节选范围和继续阅读的位置，再展开字段与运行语义。
+
+新增功能须先展示上述层次中实际受影响的写法，再说明新增语义及其依据。已有机制可表达的关系沿用已有写法，原子方法作者只需理解本方法的契约、可用能力和固定协议。重构除保持执行语义外，还要保持架构关系在源码中的可见性与可提取性；把 effect 调用或资产操作移出注册方法，不能仅以运行结果相同作为依据。
+
+注释说明意图、取舍和边界，结构承载可检查的关系。方法可调用不证明它必然执行；结构可提取不证明任意业务 IO 正确或可由 gencode 判断。文档中仍需记录 SDK 的生命周期、故障等通用协议及当前保证范围。
+
+更新接口时同步其示例、语义说明及相关生成产物。可运行示例优先引用现有源码，节选标明省略范围；设计方案标明未实现状态。接口与文档不一致时明确差异并修正，不用“代码即文档”把偶然实现行为升级为设计决定。
+
+### 3.2 先确定语义，再实现操作
 
 业务组合应能表达为固定结构、引用和契约，并可供第三方工具读写。先明确新功能改变的语义、生产与消费职责、启动和结束边界，再决定注册字段与 Haskell 接口。
 
@@ -69,7 +130,7 @@ flowchart LR
 
 现有源码、demo 和历史编译结果是实现证据；不反过来固定新设计。需求不清或与证据冲突时先查缺口；声明语法变更单独确认，不添加未约定的兼容层或特殊情况。
 
-### 3.2 能力、值和启动分别表达
+### 3.3 能力、值和启动分别表达
 
 Input 是 superclass 能力链。下层方法经这条链获得可调用的上游类方法；实际组合写在 instance 方法体中。能力可用不等于必须执行，GHC 不证明方法体调用了全部上游。
 
@@ -80,7 +141,7 @@ AST 挂载完整 original chain 的末端，并规定启动和执行控制。Con
 业务入口保持 `interpreter ast effects`。闭包、Reader、线程和锁属于 SDK 执行装配，不能变成每个业务 handler 的额外装配工作。
 
 <a id="beforegen"></a>
-### 3.3 生成前仍是原生 Haskell
+### 3.4 生成前仍是原生 Haskell
 
 手写 Types、Effects、AST／Workflow 和 Handlers 必须能由 GHC／HLS 直接解析、名称解析和类型检查。类方法调用与 ADT 使用保持原生 Haskell；不依赖字符串调用、专用伪语法或生成器修复类型。
 
@@ -88,7 +149,7 @@ AST 挂载完整 original chain 的末端，并规定启动和执行控制。Con
 
 生成器可以提取方法关系、生成 MethodGen 和协议包装；运行副本保留原方法体表达式。HLS 类型检查、gencode 结构提取和资产约束检查是不同边界，不能互相替代。
 
-### 3.4 可观察组合与原子方法
+### 3.5 可观察组合与原子方法
 
 effect 调用直接写在注册 instance 方法中。纯结构提取识别支持的显式调用、分支和标准组合，擦除不含 effect 引用的业务值计算；无法提取的 effect 间接组合必须诊断，不能默认为空图。
 
@@ -96,7 +157,7 @@ effect 调用直接写在注册 instance 方法中。纯结构提取识别支持
 
 资产集合、递归 ADT、类型别名、构造器生产方归属以及检查例外统一见 [ASSETS](ASSETS.md)。这些约束不追踪泛型值来源，也不证明原子方法的 IO 粒度、业务正确性或所有资源别名。
 
-### 3.5 静态描述与运行状态分开
+### 3.6 静态描述与运行状态分开
 
 Prototype 保存结构和事实，不能保存执行函数、类字典或活资源。运行时共享 Prototype，另保存活动 chain、执行出身、资产绑定和 scope 实例。静态位置、运行调用、资产 publication 与资源 owner 必须区分。
 
@@ -104,13 +165,13 @@ ScopeTree 单独构造并保持无环，供依赖清理和 Error 祖先导航使
 
 声明的可序列化性不意味着运行中的资源也可以序列化。解释器内部使用函数、闭包和 IO 是正常实现方式，不需要把这些内部对象变成 facade 语法。
 
-### 3.6 自动装配必须有明确依据
+### 3.7 自动装配必须有明确依据
 
 规则按“输入前提 → 推导结构 → 运行行为 → 无法判定时的诊断”书写。能力去重不等于实际调用去重，结构可达不等于本次生产或后续持续推进；等待也不能自动解释为失败。
 
 Stream 的目标是让原子方法作者只需理解本方法的输入输出和允许引用的方法。gencode 静态推导 BootPlan，interpreter 执行它；不在运行中猜测业务属于 socket、event 还是 behavior。完整匹配与回调规则作为[主设计第 7 章](LATEST_DESIGN.md#stream)的一部分维护。
 
-### 3.7 约束、保证与开放问题
+### 3.8 约束、保证与开放问题
 
 方法签名、生成期结构检查、运行时协议和外部 IO 保证必须分别说明。绑定稳定性由 ContextStore 及共享 ownership 实现，不能从“描述是纯的”直接推导出重复 IO 幂等或资源安全。
 
@@ -449,12 +510,11 @@ handles 只按 Failure 的 origin 与 detail 分类匹配。Context 协议故障
 [Generate.hs](../sdk/Framework/Generate.hs) 提供统一首次生成命令：先加载 Types、Effects 和 AST，用 GHC 9.12 解析器读取 Handlers.hs 的模块、方法边界与显式 effect 引用，生成独立纯结构；再以 GHC 无代码生成模式解析业务名称并检查资产引用，成功后写回 Generated。候选生成模块及手写 Handlers 快照从内存加载，不执行业务。
 它们不导入 Generated 或 Handlers；effect 标记与错误类型自动生成，无须用户手写空 data。
 
-首次运行 cabal run effect-codegen -- workflow Crawler，生成接口后填写 handler，再次生成并编译 Main。缺少 Handlers.hs 时先生成空编译模块；有实现后进行完整资产检查，不执行 handler。
+首次使用独立生成器生成接口，填写 handler 后再次生成并编译 Main；命令与使用顺序集中见[指南：命令行与执行阶段](GUIDE.md#commands)。缺少 Handlers.hs 时先生成空编译模块；有实现后进行完整资产检查，不执行 handler。
 业务执行仍编译 Generated/Handlers，SDK 包装方法入口，保留原生取值与业务表达式；纯初始化结构由 Generated.Program 导出，不回写手写源码或新增业务类型类。手写实现变更后须重新生成。
 生成的 Handlers 保存解析时的源码指纹；公共 workflow 入口在启动业务前检查当前手写源，缺失或过期则拒绝执行，并核对注册快照；Main 写法不变。
 
-检查从仓库根目录读取源码，--generate 仍可修复过期副本。
-已有 Main --generate 仍要求导入链可编译，新增 effect 或缺少生成文件时使用独立 SDK 命令。
+业务启动与 --structure 都从仓库根目录读取源码并校验生成快照；--structure 只展示静态原型，不创建运行 scope 句柄或执行业务。已有 Main 的 --generate 转调同一独立生成器，仍要求导入链可编译；新增 effect 或缺少生成文件时直接使用独立生成器。普通构建只编译，不隐式生成；这些模式保持同一个 workflow 业务入口。
 [demo/Crawler/Main.hs](../demo/Crawler/Main.hs) 等 demo 演示 IO workflow；
 各 demo 的手写入口、注册、handler 与生成模块分别可 review；
 仍使用的并发辅助函数已并入当前 SDK。
@@ -477,9 +537,9 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 
 | 文件 | 唯一职责 |
 | --- | --- |
-| [README](../README.md) | 项目介绍、快速运行和阅读入口 |
+| [README](../README.md) | 项目整体介绍、一行 Main、基础组件关系和阅读入口；详细写法与操作通过引用进入指南 |
 | [AGENTS](../AGENTS.md) | 工作约束、任务路由和源码定位 |
-| [GUIDE](GUIDE.md) | 当前可用 API 的书写与操作指南 |
+| [GUIDE](GUIDE.md) | 当前代码形态、环境准备、生成／编译／运行／结构查看及开发流程 |
 | 本文 | 设计原则、当前协议和新语义的统一入口 |
 | [EFFECT_GRAPH](EFFECT_GRAPH.md) | Prototype、来源分析、运行图、ScopeTree 和缓存 |
 | [ASSETS](ASSETS.md) | 源码资产集合、显式引用和构造器所有权 |

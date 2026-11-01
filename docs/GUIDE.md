@@ -1,19 +1,137 @@
-# 使用指南：运行与编写当前程序
+# 使用指南：代码形态与编写
 
 状态：本文说明当前 SDK 可运行的接口。Stream、`streams`、`lifelong` 及独立资产命名属于[已确定但尚未实现的设计](STREAM_LIFELONG.md)，不能直接用于下列示例。
 
-第一次使用，先读“快速开始”和“读懂 FileDemo”；编写业务时再按文件查表。完整架构见[主设计文档](LATEST_DESIGN.md)，本指南中的协议概述用于解释使用效果，详细边界由[当前运行协议](LATEST_DESIGN.md#runtime)、[结构与来源分析](EFFECT_GRAPH.md)和[资产约束](ASSETS.md)维护。
+从“代码长什么样”进入：先看到资产、注册、instance 和 workflow 的代码块，再按链接深入对应模块。想直接运行时可跳到快速开始。完整语义见[主设计](LATEST_DESIGN.md)，源码约束见[ASSETS](ASSETS.md)。
 
 | 任务 | 阅读位置 |
 | --- | --- |
-| 构建并运行现有示例 | [快速开始](#quickstart) |
-| 看懂一个程序如何启动 | [读懂 FileDemo](#read-example) |
-| 明确手写与生成文件的分工 | [程序结构](#program-layout) |
-| 查注册类别、Input 和 demands | [effect 注册](#effects) |
-| 查 chained、parallel、alternative | [AST 书写](#workflow) |
-| 写原子操作、取值与失败处理 | [instance 书写](#handlers) |
+| 先看同一业务在各模块中的代码形态 | [代码长什么样](#code-shape) |
 | 定义表示类型和分支契约 | [资产书写](#types) |
+| 查注册类别、Input 和 demands | [effect 注册](#effects) |
+| 写原子操作、取值与失败处理 | [instance 书写](#handlers) |
+| 组织 chained、parallel、alternative | [workflow 书写](#workflow) |
+| 构建并运行现有示例 | [快速开始](#quickstart) |
+| 区分 gencode、runtime、结构查看及启动命令 | [命令行与执行阶段](#commands) |
+| 明确文件分工与编写顺序 | [程序结构](#program-layout) |
 | 重新生成、新增程序或处理诊断 | [开发流程](#development) |
+
+<a id="code-shape"></a>
+<a id="read-example"></a>
+## 代码长什么样
+
+下面用 FileDemo 展示同一组名字如何贯穿资产、注册、方法和 workflow。代码块均取自现有源码，省略模块头、导入以及未展示的注册与 instance；它们不是独立的完整程序。阅读顺序展示结构关系，首次编写时仍需先生成契约接口再写 Handlers。
+
+### 1. Types.hs：先看到业务资产的结构
+
+```haskell
+data TextState = Blank | Written String
+  deriving Show
+```
+
+文件状态只有 `Blank` 和 `Written` 两种构造。这个 ADT 说明数据长什么样，Context 再为它提供业务契约。
+
+[完整 Types.hs](../demo/FileDemo/Types.hs) · [资产定义与使用规则](#types)
+
+### 2. Effects.hs：为生产和消费写出关系
+
+以下是 `effects` 列表中的两个注册。生产方声明自己的方法与表示类型：
+
+```haskell
+EffectSpec
+  { name = "ExtractFileText"
+  , typing = Context { request = requester "fileText" @TextState }
+  , input = "ReadFile"
+  , demands = []
+  }
+```
+
+消费方声明可用的上游能力，以及需要读取的资产：
+
+```haskell
+EffectSpec
+  { name = "WriteFirstLine"
+  , typing = Excu { handler = Just "writeFirstLine" }
+  , input = "FileSession"
+  , demands = [requires "FileTextBlank", requires "OpenedFile"]
+  }
+```
+
+`input` 提供类方法能力，`demands` 指定取值契约。`FileTextBlank` 是 `FileText` 的 `Blank` 分支契约，`OpenedFile` 提供文件资源；它们的实际读取发生在下面的方法体中。另一个候选 `AppendLine` 使用 `FileTextWritten`。
+
+[完整 Effects.hs](../demo/FileDemo/Effects.hs) · [注册字段与类别](#effects)
+
+### 3. Handlers.hs：让声明落到原生类方法
+
+解析方法引用 `ReadFile` 提供的句柄，产生声明过的资产：
+
+```haskell
+instance ExtractFileTextInputs m => ExtractFileTextEffect m where
+  fileText = do
+    contents <- readFileContent
+    text <- maybe (raise (ExtractFileTextError "File read returned no text")) pure contents
+    pure (FileText (if null text then Blank else Written text))
+```
+
+消费方法显式开启 scope、读取契约、执行写入；以下保留该方法的完整实现：
+
+```haskell
+instance WriteFirstLineInputs m => WriteFirstLineEffect m where
+  writeFirstLine = do
+    openFileSession
+    _ <- require @FileTextBlank
+    OpenedFile (FileHandle path file) <- require @OpenedFile
+    let line = "file-demo: the file was empty; this is the first line.\n"
+    outcome <- liftIO $ tryIOError $ do
+      putStrLn "[read] (empty file)"
+      hSeek file SeekFromEnd 0
+      hPutStr file line
+      hFlush file
+      putStrLn ("[write] " ++ path ++ ": " ++ line)
+    either (raise . WriteFirstLineError . displayException) pure outcome
+    pure Nothing
+```
+
+`XInputs m => XEffect m` 是方法可用能力的边界；`openFileSession` 是实际调用，`require @T` 是实际取值。IO 和解析写在注册方法内部。
+
+[完整 Handlers.hs](../demo/FileDemo/Handlers.hs) · [instance、取值与错误写法](#handlers)
+
+### 4. Workflow 与 AST：把完整链组合成模块
+
+`Workflow/OperateFile.hs` 定义一个具名 branch：
+
+```haskell
+operateFile :: AST
+operateFile = alternative
+  [ node "WriteFirstLine"
+  , node "AppendLine"
+  ]
+```
+
+`AST.hs` 引用这个模块：
+
+```haskell
+ast :: AST
+ast = operateFile
+```
+
+`alternative` 的候选通过前面的分支契约对应 `Blank`／`Written`，AST 只列末端。每个末端代表自己的完整 original chain，Context 的生产通过取值关系接入。
+
+[OperateFile.hs](../demo/FileDemo/Workflow/OperateFile.hs) · [AST.hs](../demo/FileDemo/AST.hs) · [branch 与节点规则](#workflow)
+
+### 5. Generated：看到声明派生出的契约
+
+下面只节选生成的契约定义，派生实例与其他接口见源码：
+
+```haskell
+newtype FileText = FileText (TextState)
+newtype FileTextBlank = FileTextBlank (())
+newtype FileTextWritten = FileTextWritten (String)
+```
+
+它们把 `requester "fileText" @TextState`、业务 ADT、消费方的 `requires` 和方法体中的类型应用连接起来。Generated/Effects 提供可检查的接口，Generated/Program 保存末端登记和静态 Prototype；运行副本及协议由生成器维护。
+
+[Generated/Effects.hs](../demo/FileDemo/Generated/Effects.hs) · [Generated/Program.hs](../demo/FileDemo/Generated/Program.hs) · [生成与更新流程](#development)
 
 <a id="quickstart"></a>
 
@@ -34,23 +152,105 @@ cabal build all
 cabal run file-demo
 ```
 
-仓库已包含各示例生成好的代码，首次运行不需要先生成。所有命令都在仓库根目录执行。
+仓库已包含各示例生成好的代码，首次运行不需要先生成。完成上面的 clone 与 cd 后，本文其余命令均在仓库根目录执行；生成器和运行入口都需要从这里定位源码。各阶段的用途见下节。
 
-<a id="read-example"></a>
+### 运行入口：Main.hs
 
-## 读懂 FileDemo
+前面的声明、方法和 workflow 由同一个入口运行。FileDemo 的完整 Main 如下：
 
-这个示例根据文件当前内容选择“写第一行”或“追加一行”。先跟随启动关系阅读，再展开值和资源的细节：
+```haskell
+module FileDemo.Main (main) where
 
-1. [Main.hs](../demo/FileDemo/Main.hs) 只有解释器入口；[AST.hs](../demo/FileDemo/AST.hs) 引用具名 workflow。
-2. [Workflow/OperateFile.hs](../demo/FileDemo/Workflow/OperateFile.hs) 用 `alternative` 列出两个末端。每个 node 启动它所代表的完整原始操作链。
-3. [Effects.hs](../demo/FileDemo/Effects.hs) 声明末端可以调用谁（`input`），需要什么资产（`demands`）。`Input` 赋予调用能力，实际调用仍在方法体中。
-4. [Handlers.hs](../demo/FileDemo/Handlers.hs) 的 `writeFirstLine`／`appendLine` 显式打开 scope、读取 Context、执行一次写入。业务 ADT 定义在 [Types.hs](../demo/FileDemo/Types.hs)。
-5. 最后查看 [Generated/Effects.hs](../demo/FileDemo/Generated/Effects.hs) 的接口和 [Generated/Program.hs](../demo/FileDemo/Generated/Program.hs) 的静态原型。它们由生成器维护。
+import FileDemo.AST (ast)
+import FileDemo.Effects (effects)
+import FileDemo.Generated.Program (interpreter)
 
-这里有两条不同的关系：方法调用组合一条操作链，Context 则在操作之间提供业务资产。AST 选择链的末端并安排启动方式；它不重复书写链内的全部调用。
+main :: IO ()
+main = interpreter ast effects
+```
 
-编写新程序时采用相反的构建顺序：先定义类型、注册和 workflow，生成接口后再实现方法。下一节给出各文件的职责。
+[Main.hs](../demo/FileDemo/Main.hs) 从手写模块导入 `ast` 和 `effects`，从生成模块导入绑定本程序契约与原型的 `interpreter`。`main :: IO ()` 是原生 Haskell 入口；这一行调用启动前面定义好的 workflow。
+
+<a id="commands"></a>
+
+## 命令行与执行阶段
+
+**程序的业务入口始终只有一个：Main 中的 `interpreter ast effects`。** 命令行把生成、编译、结构查看和业务执行分开，让开发者能先检查结构，再执行实际 IO。
+
+本文的 **gencode** 指代码生成阶段，对应可执行目标 `effect-codegen`；**runtime** 指业务运行阶段，对应 `file-demo` 等程序的无参数启动。它们不是额外的命令或 `--runtime` 开关。
+
+### 命令总览
+
+以下全部使用 FileDemo。`FileDemo` 是 Haskell 模块命名空间，`file-demo` 是 [Cabal 文件](../algebraic-effect-sys-in-haskell.cabal)中的 executable 名称；其他程序的对应关系见[示例](#examples)。
+
+| 目的 | 命令 | 结果 | 执行 handler 业务 |
+| --- | --- | --- | --- |
+| gencode：生成或更新源码 | `cabal run effect-codegen -- workflow FileDemo` | 更新 `demo/FileDemo/Generated/` | 否 |
+| 编译 | `cabal build all` | 编译生成器及所有示例 | 否 |
+| runtime：运行 workflow | `cabal run file-demo` | 启动 AST，执行 IO、诊断与资源收尾，打印结果 | 是 |
+| structure：查看静态结构 | `cabal run file-demo -- --structure` | 校验并打印已生成的 Prototype | 否 |
+| 从已有程序转调生成器 | `cabal run file-demo -- --generate` | 转调第一行相同的生成命令，生成后退出 | 否 |
+
+`cabal run` 会先按需要编译指定 executable，再启动它；这一步编译不会自动运行 gencode。`--` 把后面的参数传给被启动的程序：`workflow FileDemo` 交给生成器，`--structure`／`--generate` 交给 FileDemo 的 interpreter。后两者是互斥的启动模式，不与普通业务运行一起执行。
+
+### 为什么生成有两个入口
+
+独立生成器只需要加载声明、AST 与手写源码，**不依赖当前业务 Main 能否编译**。因此首次建立程序、Generated 缺失、注册或类型接口变化时，使用：
+
+```sh
+cabal run effect-codegen -- workflow FileDemo
+```
+
+生成器输出契约接口 `Effects.hs`、带协议包装的 `Handlers.hs`、保存静态原型与装配入口的 `Program.hs`、资产目录 `Assets.hs`，以及结构缓存 `.scope-cache`。第一次还没有手写 `Handlers.hs` 时先生成接口与空实现模块，随后填写 instance，再生成完整执行副本。
+
+`--generate` 只是已有 Main 的快捷入口：Main 的导入链必须先能编译，interpreter 才能转调同一个生成器。它不会在生成后继续执行业务；下一次运行会编译更新后的代码。日常统一使用独立 `effect-codegen` 即可，不需要把两个生成入口都执行一遍。
+
+生成过程提取方法结构并检查资产约束，不调用业务 handler。缓存命中只复用纯构图结果；生成检查仍会进行，内容未变的文件不会重写。详见[生成缓存边界](EFFECT_GRAPH.md#内容缓存与重跑边界)。
+
+### runtime：执行已经生成的程序
+
+```sh
+cabal run file-demo
+```
+
+默认启动先核对当前源码、注册和生成原型，再按 AST 装配并启动 workflow。实际运行调用已编译的 handler，并在内存中维护资产、活动 chain 和 scope；它复用静态 Prototype，不重新跑一遍 handler 来构图，也不会在源码过期时替你生成。
+
+FileDemo 会创建或追加 `demo/FileDemo/output.txt`，完成后自动关闭资源，打印 `Succ [...]` 或 `Failed ...`。其他示例的业务行为见[示例](#examples)。
+
+### structure：检查结构，不启动业务
+
+```sh
+cabal run file-demo -- --structure
+```
+
+它展示 `Generated/Program.hs` 中的同一份 `generatedPrototype`，先检查注册、手写源码指纹和 AST 是否与生成结果一致。输出可按下面的顺序阅读：
+
+| 输出标题 | 查看内容 |
+| --- | --- |
+| `Workflow` | branch、末端与 AST 位置 NodeId |
+| `Chain definitions`／`Chain mounts` | original／Context 链定义、挂载位置、可达方法、可能生产和读取 |
+| `Asset sources` | 缺少捕获绑定时，各读取点许可的资产来源 |
+| `Effect methods`／`Effect references` | 方法身份、角色、所属 effect 与引用边 |
+| `Scope layers`／`Scope parents`／后续顺序证据 | scope 的层级、共享父节点、入口路径和顺序推导依据 |
+
+这是静态结构视图，不是实时 RuntimeGraph 或业务执行日志。该模式不创建运行 scope 句柄、不执行 handler，也不更新 Generated；源码过期时先重新生成。字段与推导规则见 [EffectGraph](EFFECT_GRAPH.md#查看初始化结果)。
+
+### 日常如何选择
+
+- **第一次运行仓库内现有示例**：按[快速开始](#quickstart)构建后直接运行；仓库已带生成结果。
+- **修改手写代码后**：先生成，再查看结构或运行。只改 handler 的原子 IO 也要生成，以更新执行副本与源码指纹。
+- **新增程序或接口**：先生成契约，再写 instance；完整步骤见[新建一个程序](#新建一个程序)。
+- **只想审查关系**：使用 `--structure`；它仍要求程序及生成模块可编译，但不触发文件读写等业务 IO。
+
+修改 FileDemo 后的一组常用命令如下；结构查看按需执行，最后一行才会运行文件读写业务：
+
+```sh
+cabal run effect-codegen -- workflow FileDemo
+cabal run file-demo -- --structure
+cabal run file-demo
+```
+
+两条 `cabal run file-demo` 会按需编译该程序；准备检查整个仓库时另外使用 `cabal build all`。若看到源码／注册过期提示，重新生成；若在进入 Main 前已经编译失败、因而无法使用 `--generate`，直接使用独立生成器，并按诊断修正手写源码。
 
 <a id="program-layout"></a>
 
@@ -58,29 +258,95 @@ cabal run file-demo
 
 一个程序由四个手写模块和一行运行入口组成，四个模块分别承担 DSL 的不同角色：
 
-| 模块 | 文件 | 在 DSL 中的角色 | 写什么 |
-| --- | --- | --- | --- |
-| 一、effect 注册 | `Effects.hs` | 声明：有哪些 effect 及其关系 | 每个 effect 的类别、方法名、能力继承、需要哪些值 |
-| 二、AST 书写 | `AST.hs`、`Workflow/*.hs` | 编排：程序从哪里启动、如何组合 | 哪些操作链按什么方式执行 |
-| 三、instance 书写 | `Handlers.hs` | 语义叶子：每个方法具体做什么 | 每个 effect 的 `instance`：计算、模式匹配和 IO |
-| 四、资产书写 | `Types.hs` | 值的词汇：effect 之间传递什么 | 在 effect 之间传递的业务数据类型 |
-| 运行入口 | `Main.hs` | 调用解释器 | 一行：`main = interpreter ast effects` |
+| 模块 | 文件 | 在代码中读到什么 |
+| --- | --- | --- |
+| 一、资产 | `Types.hs` | 业务数据的构造器、字段和类型 |
+| 二、effect 注册 | `Effects.hs` | 类别、方法名、能力和取值关系 |
+| 三、instance | `Handlers.hs` | 显式调用、模式匹配、解析与 IO |
+| 四、workflow | `AST.hs`、`Workflow/*.hs` | 具名 branch 与末端挂载 |
+| 生成接口与结构 | `Generated/` | 类型契约、协议包装、Prototype |
+| 运行入口 | `Main.hs` | interpreter 启动整份结构 |
 
-- **生成入口 `effect-codegen`**：即总体架构中的前端，修改任何手写源码后都要重新运行。
+- **生成入口 `effect-codegen`**：负责从手写源码生成契约、执行副本和静态原型；修改手写源码后显式运行，具体见[命令行与执行阶段](#commands)。
 - **运行入口 `Main.hs`**：`interpreter` 来自 `Generated/Program.hs`。每个 node 选择一个末端 effect，运行它的 instance 方法；方法体里显式调用上游 effect，或用 `request`／`require` 取值，整条操作链由此展开。
 - **生成区**：`Generated/` 由生成器产出，不要手改。运行时编译的是 `Generated/Handlers.hs`，即你的方法体加上 SDK 的协议包装。
 
 编写顺序：
 
-1. 在 `Types.hs` 写表示类型（模块四）。
-2. 在 `Effects.hs` 注册 effect（模块一），在 `AST.hs`／`Workflow/` 编排末端（模块二）。
+1. 在 `Types.hs` 写表示类型。
+2. 在 `Effects.hs` 注册 effect，在 `AST.hs`／`Workflow/` 编排末端。
 3. 生成接口：`cabal run effect-codegen -- workflow 程序名`。
-4. 按 `Generated/Effects.hs` 中的接口写 `Handlers.hs`（模块三）。
+4. 按 `Generated/Effects.hs` 中的接口写 `Handlers.hs`。
 5. 再生成一次，运行。
+
+<a id="types"></a>
+
+## 一、资产书写（`Types.hs`）
+
+FileDemo 的状态资产先写成这样的原生 ADT：
+
+```haskell
+data TextState = Blank | Written String
+  deriving Show
+```
+
+下面展开类型、生成契约和使用规则。资产是在 effect 之间传递的业务数据类型：Context 的产物、消费方取到的契约，以及它们字段里递归包含的业务类型。`String`、`Handle` 等库类型不是资产。
+
+### 表示类型（手写）
+
+在 `Types.hs` 用原生 `data`／`newtype` 定义，作为 `requester` 中的 `@表示类型`：
+
+```haskell
+data PageURL = PageURL { pageAddress :: String }   -- 记录
+data FileHandle = FileHandle FilePath Handle       -- 包装库类型
+data TextState = Blank | Written String            -- 和类型
+```
+
+- **只写值的结构**：契约由生成器产出，不需要再手写一层 newtype。单值可以直接用 Prelude 类型，例如 `requester "fileName" @FilePath`。
+- **库类型**：含 `Handle` 等需要导入的库类型时，在 `Types.hs` 定义一个记录包装它。
+- **`Eq`**：用作 scope 开启参数的类型需要 `Eq`（判断是否同参复用）；资源本身不需要。
+- **`Show`**：需要打印结果时派生。
+- **不导入生成区**：`Types.hs` 不导入 `Generated` 或 `Handlers`。
+
+### 契约类型（生成）
+
+每个 `requester "handler名" @表示类型` 生成一个契约类型：
+
+```haskell
+newtype StartURL = StartURL PageURL
+```
+
+- 契约名是 handler 名首字母大写。
+- 表示类型有 `Eq`／`Show` 时，契约才有 `Eq`／`Show`；契约不派生 `Read`。
+
+### 分支契约（生成）
+
+表示类型是和类型（至少两个构造器，每个构造器至多一个字段）时，生成器为每个构造器产出一个分支契约。以 FileDemo 的 `requester "fileText" @TextState` 为例：
+
+| 构造器 | 分支契约 |
+| --- | --- |
+| `Blank` | `newtype FileTextBlank = FileTextBlank ()` |
+| `Written String` | `newtype FileTextWritten = FileTextWritten String` |
+
+- **命名**：契约名加构造器名，包装该构造器的字段；没有字段时包装 `()`。
+- **取值**：资产当前是这个构造器时，`require` 分支契约才能取到值，否则报 `CaseNotSelected`。分支契约由基础契约的生产方提供，只能 `requires`。
+- **用途**：`alternative` 据此决定启动哪个候选（见[workflow 书写](#workflow)）。
+
+### 使用规则
+
+生成器每次都会检查资产在源码中的使用：
+
+- **只在 instance 方法里操作资产**：普通顶层函数、顶层值和方法内的具名局部函数，不能在签名、构造、模式匹配、字段访问／更新中显式使用资产。匿名 lambda 和局部数据计算属于方法体，允许。
+- **只有生产方能构造**：Context 产物类型的构造器只能在它的生产方方法里出现在表达式位置，记录更新也一样；其他 instance 只能模式匹配取用，例如 `StartURL (PageURL url) <- request @StartURL`。
+- **允许的情况**：`data`／`newtype` 声明与 deriving；泛型函数（`map`、`show` 等）不因实参是资产而违规；只处理 `String`、`Handle` 等库类型的普通函数允许。
+- **检查范围**：只看源码里显式写出的引用，不追踪值流向；`coerce`、泛型函数或派生 `read` 等不显式写出构造器的方式不会被拦下。
+- **资产目录**：生成的 `Generated/Assets.hs` 列出资产的类型、构造器、字段及定义位置，供 review 和编辑器使用，运行时不加载。
+
+完整规则见 [源码资产约束](ASSETS.md)。
 
 <a id="effects"></a>
 
-## 一、effect 注册（`Effects.hs`）
+## 二、effect 注册（`Effects.hs`）
 
 `Effects.hs` 导出 `effects :: [EffectSpec]`。每个 `EffectSpec` 注册一个 effect，只描述类别、方法名和依赖，不写实现（节选自 [FileDemo](../demo/FileDemo/Effects.hs)）：
 
@@ -130,7 +396,7 @@ EffectSpec
 typing = Context { request = requester "startURL" @PageURL }
 ```
 
-- **`requester "handler名" @表示类型`**：同时声明生产方法和契约。生成器产出 `newtype StartURL = StartURL PageURL`，契约名就是 handler 名首字母大写。表示类型怎么写见「四、资产书写」。
+- **`requester "handler名" @表示类型`**：同时声明生产方法和契约。生成器产出 `newtype StartURL = StartURL PageURL`，契约名就是 handler 名首字母大写。表示类型怎么写见[资产书写](#types)。
 - **读取方法**：生成器另外产出 `readStartURL`，供消费方 `require @StartURL` 使用。注册里不用写它，业务代码也不直接调用它。
 - **必须有生产方法**：`request` 不能是 `Nothing`。
 - **不能作为 AST 末端**：Context 在它挂接的句柄执行时产出，或在被 `request`／`require` 时产出。
@@ -218,81 +484,24 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 - **来源自动确定**：契约名是生产方 handler 名首字母大写，而方法名在注册集合中唯一，所以每个契约恰好有一个生产方，生成器自动接上，不用指名生产方。
 - **区分同类数据**：同一种数据有不同含义时，交给不同的 handler 产出。例如 Crawler 的起始页和链接页 URL 都是 `PageURL`，分别由 `startURL` 和 `linkedURL` 产出 `StartURL` 和 `LinkedURL`，类型上不能混用。
 - **同一契约两种方式都可以声明**：例如 Scoped 的 `open` request 资源、`close` require 它；但同一契约的同一种方式只能声明一次。
-- **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见「四、资产书写」）只能 `requires`。
+- **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见[资产书写](#types)）只能 `requires`。
 - **声明即权限**：方法体里取用了未声明的契约，生成器报错；运行时也会以 `UndeclaredContextAccess` 拒绝。
-
-<a id="workflow"></a>
-
-## 二、AST 书写（`AST.hs`、`Workflow/*.hs`）
-
-AST 描述"哪些操作链、按什么方式执行"。`AST.hs` 导出 `ast :: AST`，运行入口写成 `main = interpreter ast effects`。
-
-### 两种构件
-
-| 构件 | 写法 | 类型 | 含义 |
-| --- | --- | --- | --- |
-| node | `node "effect名"` | `EffectNode` | 选择一条操作链的末端 effect |
-| branch | `chained`、`parallel` 或 `alternative` 加子项列表 | `AST` | 组合 node 或其他 branch |
-
-- **node 不是 AST**：顶层和每个模块都必须是 branch，单个 node 也要包进一个 branch。
-- **子项列表同质**：一个列表要么全是 node，要么全是 branch，不能混排。
-- **空列表**：须标注元素类型，例如 `chained ([] :: [AST])`。
-
-### node
-
-- **只选原始句柄**：选中的 effect 必须是 Pure、Excu 或 Scoped，不能是 Context 或 Error。
-- **运行即调用入口方法**：Pure／Excu 调用 `handler`，Scoped 调用 `open`。方法体里调用的上游随之执行，Input 链不需要在 AST 里重写。
-- **node 结果不隐式传值**：一个 node 的结果不会交给下一个 node，值的传递只经 Context。后继 `require` 可读取 AST 因果顺序中唯一可见的发布来源；并行兄弟之间不按谁先完成决定读谁的值。
-
-### branch 的三种类型
-
-| branch | 子项如何执行 | 失败时 | 结果 |
-| --- | --- | --- | --- |
-| `chained` | 按顺序逐个执行 | 立即停止，后面的子项不执行 | 各子项结果按顺序拼接 |
-| `parallel` | 同时执行 | 等全部子项结束，按声明顺序取第一个失败 | 全部成功时按声明顺序拼接 |
-| `alternative` | 只执行一个候选 | 候选的失败原样传播 | 只有被选中候选的结果 |
-
-#### `chained`
-
-```haskell
--- Crawler/AST.hs：先并行抓取，全部成功后顺序打印
-ast = chained [parsePages, printPages]
-```
-
-#### `parallel`
-
-```haskell
--- Crawler/Workflow/ParsePages.hs
-parsePages = parallel [node "FetchPage", node "FetchLinkedPage"]
-```
-
-#### `alternative`
-
-```haskell
--- FileDemo/Workflow/OperateFile.hs：文件为空时写首行，否则追加
-operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
-```
-
-- **只列候选，不写条件**：选哪一个由一个和类型资产的当前构造器决定，AST 不暴露业务状态。
-- **候选怎么对应构造器**：每个候选（末端及其 Input 链上游）在 `demands` 里 `requires` 恰好一个同一资产的分支契约，生成器据此推出它对应的构造器。候选必须覆盖全部构造器，且不能重复。FileDemo 中 `WriteFirstLine` 依赖 `FileTextBlank`，`AppendLine` 依赖 `FileTextWritten`。
-- **运行时**：先 `require` 这个资产（已有值就直接用，没有就按需生产一次），再启动对应的候选，并把选择时读到的值交给候选；没被选中的候选不执行，也不出现在结果中。
-- 分支契约怎么产生，见「四、资产书写」。
-
-### 文件组织
-
-- 每个 branch 放在 `Workflow/` 下单独的文件里，顶层 `AST.hs` 用非限定 import 只组合这些名字。
-- `AST.hs` 和 `Workflow/*.hs` 不导入 `Generated` 或 `Handlers`。
-
-### 运行与查看
-
-- **运行**：`main = interpreter ast effects`，结果打印为 `Succ [...]` 或 `Failed ...`，例如 FileDemo 输出 `Succ [AppendLineResult ()]`。原子句柄交出的 `Maybe String` 不是业务产物，在结果中记为 `()`。
-- **查看结构**：`cabal run file-demo -- --structure` 显示生成器推导的调用结构和资源依赖，不执行任何业务。
 
 <a id="handlers"></a>
 
 ## 三、instance 书写（`Handlers.hs`）
 
-每个注册的 effect 在 `Handlers.hs` 里写一个 instance，实现生成接口中的方法。它是普通 Haskell，编辑器（HLS）可以直接检查；运行时编译的是生成器加上协议包装的副本 `Generated/Handlers.hs`。
+先看一个完整方法的形态，模块头和导入在后文给出：
+
+```haskell
+instance ExtractFileTextInputs m => ExtractFileTextEffect m where
+  fileText = do
+    contents <- readFileContent
+    text <- maybe (raise (ExtractFileTextError "File read returned no text")) pure contents
+    pure (FileText (if null text then Blank else Written text))
+```
+
+每个注册的 effect 在 `Handlers.hs` 中实现生成接口；`Inputs` 指定能力，方法体写实际调用和操作。手写代码由 HLS 检查，运行时编译入口带协议包装的 `Generated/Handlers.hs`。下面依次展开文件头、instance 约束和方法体规则。
 
 ### 文件头
 
@@ -410,63 +619,87 @@ instance FileRecoveryInputs m => FileRecoveryEffect m where
 - **普通计算**：不含 effect 调用的表达式可以使用原生 Haskell，仍须遵守下文的资产约束。
 - **不直接调用 Context 方法**：例如不能直接调用 `fileName`，改用 `request`／`require`。
 
-<a id="types"></a>
+<a id="workflow"></a>
 
-## 四、资产书写（`Types.hs`）
+## 四、workflow 书写（`AST.hs`、`Workflow/*.hs`）
 
-资产是在 effect 之间传递的业务数据类型：Context 的产物、消费方取到的契约，以及它们字段里递归包含的业务类型。`String`、`Handle` 等库类型不是资产。
-
-### 表示类型（手写）
-
-在 `Types.hs` 用原生 `data`／`newtype` 定义，作为 `requester` 中的 `@表示类型`：
+先看同一模块的两个文件。Workflow 定义具名 branch，AST 引用它：
 
 ```haskell
-data PageURL = PageURL { pageAddress :: String }   -- 记录
-data FileHandle = FileHandle FilePath Handle       -- 包装库类型
-data TextState = Blank | Written String            -- 和类型
+-- Workflow/OperateFile.hs
+operateFile :: AST
+operateFile = alternative
+  [ node "WriteFirstLine"
+  , node "AppendLine"
+  ]
+
+-- AST.hs
+ast :: AST
+ast = operateFile
 ```
 
-- **只写值的结构**：契约由生成器产出，不需要再手写一层 newtype。单值可以直接用 Prelude 类型，例如 `requester "fileName" @FilePath`。
-- **库类型**：含 `Handle` 等需要导入的库类型时，在 `Types.hs` 定义一个记录包装它。
-- **`Eq`**：用作 scope 开启参数的类型需要 `Eq`（判断是否同参复用）；资源本身不需要。
-- **`Show`**：需要打印结果时派生。
-- **不导入生成区**：`Types.hs` 不导入 `Generated` 或 `Handlers`。
+这两段是 FileDemo 对应文件的节选。AST 描述哪些完整链按什么方式启动；node 只选择末端，链内调用仍写在 instance 中。
 
-### 契约类型（生成）
+### 两种构件
 
-每个 `requester "handler名" @表示类型` 生成一个契约类型：
+| 构件 | 写法 | 类型 | 含义 |
+| --- | --- | --- | --- |
+| node | `node "effect名"` | `EffectNode` | 选择一条操作链的末端 effect |
+| branch | `chained`、`parallel` 或 `alternative` 加子项列表 | `AST` | 组合 node 或其他 branch |
+
+- **node 不是 AST**：顶层和每个模块都必须是 branch，单个 node 也要包进一个 branch。
+- **子项列表同质**：一个列表要么全是 node，要么全是 branch，不能混排。
+- **空列表**：须标注元素类型，例如 `chained ([] :: [AST])`。
+
+### node
+
+- **只选原始句柄**：选中的 effect 必须是 Pure、Excu 或 Scoped，不能是 Context 或 Error。
+- **运行即调用入口方法**：Pure／Excu 调用 `handler`，Scoped 调用 `open`。方法体里调用的上游随之执行，Input 链不需要在 AST 里重写。
+- **node 结果不隐式传值**：一个 node 的结果不会交给下一个 node，值的传递只经 Context。后继 `require` 可读取 AST 因果顺序中唯一可见的发布来源；并行兄弟之间不按谁先完成决定读谁的值。
+
+### branch 的三种类型
+
+| branch | 子项如何执行 | 失败时 | 结果 |
+| --- | --- | --- | --- |
+| `chained` | 按顺序逐个执行 | 立即停止，后面的子项不执行 | 各子项结果按顺序拼接 |
+| `parallel` | 同时执行 | 等全部子项结束，按声明顺序取第一个失败 | 全部成功时按声明顺序拼接 |
+| `alternative` | 只执行一个候选 | 候选的失败原样传播 | 只有被选中候选的结果 |
+
+#### `chained`
 
 ```haskell
-newtype StartURL = StartURL PageURL
+-- Crawler/AST.hs：先并行抓取，全部成功后顺序打印
+ast = chained [parsePages, printPages]
 ```
 
-- 契约名是 handler 名首字母大写。
-- 表示类型有 `Eq`／`Show` 时，契约才有 `Eq`／`Show`；契约不派生 `Read`。
+#### `parallel`
 
-### 分支契约（生成）
+```haskell
+-- Crawler/Workflow/ParsePages.hs
+parsePages = parallel [node "FetchPage", node "FetchLinkedPage"]
+```
 
-表示类型是和类型（至少两个构造器，每个构造器至多一个字段）时，生成器为每个构造器产出一个分支契约。以 FileDemo 的 `requester "fileText" @TextState` 为例：
+#### `alternative`
 
-| 构造器 | 分支契约 |
-| --- | --- |
-| `Blank` | `newtype FileTextBlank = FileTextBlank ()` |
-| `Written String` | `newtype FileTextWritten = FileTextWritten String` |
+```haskell
+-- FileDemo/Workflow/OperateFile.hs：文件为空时写首行，否则追加
+operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
+```
 
-- **命名**：契约名加构造器名，包装该构造器的字段；没有字段时包装 `()`。
-- **取值**：资产当前是这个构造器时，`require` 分支契约才能取到值，否则报 `CaseNotSelected`。分支契约由基础契约的生产方提供，只能 `requires`。
-- **用途**：`alternative` 据此决定启动哪个候选（见「二、AST 书写」）。
+- **只列候选，不写条件**：选哪一个由一个和类型资产的当前构造器决定，AST 不暴露业务状态。
+- **候选怎么对应构造器**：每个候选（末端及其 Input 链上游）在 `demands` 里 `requires` 恰好一个同一资产的分支契约，生成器据此推出它对应的构造器。候选必须覆盖全部构造器，且不能重复。FileDemo 中 `WriteFirstLine` 依赖 `FileTextBlank`，`AppendLine` 依赖 `FileTextWritten`。
+- **运行时**：先 `require` 这个资产（已有值就直接用，没有就按需生产一次），再启动对应的候选，并把选择时读到的值交给候选；没被选中的候选不执行，也不出现在结果中。
+- 分支契约怎么产生，见[资产书写](#types)。
 
-### 使用规则
+### 文件组织
 
-生成器每次都会检查资产在源码中的使用：
+- 每个 branch 放在 `Workflow/` 下单独的文件里，顶层 `AST.hs` 用非限定 import 只组合这些名字。
+- `AST.hs` 和 `Workflow/*.hs` 不导入 `Generated` 或 `Handlers`。
 
-- **只在 instance 方法里操作资产**：普通顶层函数、顶层值和方法内的具名局部函数，不能在签名、构造、模式匹配、字段访问／更新中显式使用资产。匿名 lambda 和局部数据计算属于方法体，允许。
-- **只有生产方能构造**：Context 产物类型的构造器只能在它的生产方方法里出现在表达式位置，记录更新也一样；其他 instance 只能模式匹配取用，例如 `StartURL (PageURL url) <- request @StartURL`。
-- **允许的情况**：`data`／`newtype` 声明与 deriving；泛型函数（`map`、`show` 等）不因实参是资产而违规；只处理 `String`、`Handle` 等库类型的普通函数允许。
-- **检查范围**：只看源码里显式写出的引用，不追踪值流向；`coerce`、泛型函数或派生 `read` 等不显式写出构造器的方式不会被拦下。
-- **资产目录**：生成的 `Generated/Assets.hs` 列出资产的类型、构造器、字段及定义位置，供 review 和编辑器使用，运行时不加载。
+### 运行与查看
 
-完整规则见 [源码资产约束](ASSETS.md)。
+- **运行**：`main = interpreter ast effects`，结果打印为 `Succ [...]` 或 `Failed ...`，例如 FileDemo 输出 `Succ [AppendLineResult ()]`。原子句柄交出的 `Maybe String` 不是业务产物，在结果中记为 `()`。
+- **查看结构**：使用[命令行的 structure 模式](#commands)查看生成器推导的调用结构和资源依赖。
 
 <a id="runtime-behavior"></a>
 
@@ -512,21 +745,11 @@ newtype StartURL = StartURL PageURL
 
 ## 开发流程
 
-修改任何手写文件后（包括只改 `Handlers.hs` 的方法体），都要重新生成：
+修改手写文件后，按[命令行与执行阶段](#commands)完成“生成 → 按需查看结构 → 运行”；整个仓库的编译使用 `cabal build all`。生成命令显式执行，普通构建不会更新 Generated。
 
-```sh
-cabal run effect-codegen -- workflow FileDemo
-cabal build all
-```
-
-- **运行时检查**：运行时会核对 `Handlers.hs` 和注册是否与生成时一致，不一致就拒绝启动并提示重新生成，不会悄悄运行旧代码。
 - **编辑器支持**：`Handlers.hs` 是普通 Haskell，可以在编辑器里用 HLS 检查（配置见 `hie.yaml`，HLS 需匹配 GHC 9.12.2）。它依赖的 `Generated/Effects.hs` 要先生成出来。
 - **新 effect 的顺序**：先注册、生成接口，再写实现，然后再生成一次。
-- **查看结构**：查看生成器推导出的调用结构和资源依赖，不执行任何业务：
-
-```sh
-cabal run crawler-demo -- --structure
-```
+- **检查分工**：HLS／GHC 检查 Haskell 语法与类型；gencode 另检查可提取的结构和资产约束；运行与结构查看再核对生成快照是否仍与当前程序一致。
 
 ### 生成器会检查什么
 

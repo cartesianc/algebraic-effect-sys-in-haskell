@@ -13,6 +13,8 @@
 
 ## 必须保持的架构边界
 
+- 文档用独立“代码长什么样”章节作为较早的阅读入口。README 保持项目整体介绍，用一行 Main 与 asset、effect、handler、workflow 的关系概述引导到指南；完整模块声明与 import 在指南展示；具体环境准备、生成、编译、运行和结构查看命令集中在指南，README 通过引用进入。指南再以同一业务的原生 Haskell 代码块展开各子模块，标明文件与节选边界并链接详细规则。
+- 代码的书写形态属于架构契约。新增功能先展示受影响的资产、注册、instance 与 workflow 写法，再说明装配语义；重构保持关系的源码可见性与可提取性。同步实际接口、示例与设计说明，目标接口标明未实现；详见[代码即文档](docs/LATEST_DESIGN.md#code-as-documentation)。
 - 程序只有 workflow 入口，保持 `main = interpreter ast effects`；不提供绕过 AST 的单末端业务入口。
 - facade／Handlers 在生成前保持原生 Haskell。先生成同步的契约接口，再写 instance；手写和 Generated/Handlers 分别加载，避免重复 instance。
 - 业务 instance 写作 `instance XInputs m => XEffect m`。Input 提供能力，方法体显式调用；SDK 不补跑未引用的上游。
