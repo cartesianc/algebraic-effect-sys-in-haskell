@@ -4,6 +4,8 @@
 
 **代码即文档，文档即代码。** 代码的书写形态就是架构的一部分。设计、源码与示例应保持对应，让人和工具都能沿代码理解程序。详见[核心设计原则](docs/LATEST_DESIGN.md#code-as-documentation)。
 
+**句柄操作和值操作分离。** 句柄组织可执行操作及其组合，Context 负责业务值的生产与解析，消费方按资产契约取值；workflow 决定何时启动。两者通过显式声明衔接，详见[句柄与值的分工](docs/LATEST_DESIGN.md#handles-and-values)。
+
 项目目前处于接口探索阶段。现有示例可以运行，包括持续执行的 StreamDemo；进度和开放项见 [TODO](docs/TODO.md)。
 
 <a id="code-shape"></a>

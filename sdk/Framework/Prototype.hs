@@ -1065,29 +1065,40 @@ resolveSources definitions defaultReaders prototype = do
           else nub . concat <$> mapM (\child -> workflow child future (assetPublications state)
               [(contractType, origin) | (contractType, Just origin') <- assetCaptures state
                 , let origin = Just origin']) children) selected
-      LifelongAt boundary described children -> do
-        -- 会话是共同上游：生产挂载先各自分析一次。一条交付的伴随发布来自一次成功的生产步骤
-        -- （Receive 为 Stream 单步与解析器各一个成功出口），不同出口不合并：单元按每种交付状态分别分析，
-        -- 本条交付没有某个辅助资产时，单元的补产与后继复用照常记录。
-        -- 驱动资产以交接捕获交给单元，出身是会话的生产步骤。单元的每次执行都从进入 lifelong 时的状态开始。
-        let unitReads = nub (concatMap readsIn children)
-            sessions = lifelongSessions described
+      LifelongAt boundary described _ -> do
+        -- 复用原型中的实际消费单元，只拆 lifelong 直接子项的那一层 parallel。
+        units <- lift $ mapM (\node' -> case lookupWorkflow tree node' of
+          Just unit -> Right unit
+          Nothing -> Left (InvalidPrototype ("Missing lifelong unit at " ++ show node')))
+          (lifelongUnits described)
+        let sessions = lifelongSessions described
             mounts = concatMap sessionMounts sessions
             delivered = [(sessionAsset session, Just (last (sessionMounts session)))
               | session <- sessions, not (null (sessionMounts session))]
-        steps <- mapM (mapM (\mount -> do
-            exits <- root mount unitReads handoff publications
-            pure (nub [assetPublications state | AssetExit True state <- exits])) . sessionMounts) sessions
-        let produced = [case map concat (sequence perMount) of
+            combineStates before after = nub [sort (nub (left ++ right))
+              | left <- before, right <- after]
+        -- 每个单元只保留自己可能读取的发布；root 仍保留生产链自身的读取依赖，
+        -- read/drive 事实独立累计。不能先按所有单元的读取并集展开，再于出口投影。
+        prepared <- mapM (\unit -> do
+          let relevant = readsIn unit
+          produced <- mapM (\session -> do
+            steps <- mapM (\mount -> do
+              exits <- root mount relevant handoff publications
+              pure (nub [retainPublications relevant (assetPublications state)
+                | AssetExit True state <- exits])) (sessionMounts session)
+            -- 各成功出口分别保留；Receive 的两个步骤先各自投影，再组合并去重。
+            pure $ case foldl combineStates [[]] steps of
               [] -> [[]]
-              states -> states | perMount <- steps]
-            -- 单元内显式 request 产生的交付不带伴随发布：单元会 request 的会话另加只含外层发布的状态。
-            -- 新状态可能使单元 request 更多会话资产，直到不再增加。
+              states -> states) sessions
+          pure (unit, retainPublications relevant publications, produced)) units
+        let -- 显式 request 的交付没有伴随发布，且会被本边界的其他单元消费；
+            -- 因此 request 固定点仍跨全部单元求解，生产步骤始终使用边界环境。
             analyzeUnits requested = do
-              let options = [if sessionAsset session `elem` requested then [] : states else states
-                    | (session, states) <- zip sessions produced]
-              mapM_ (\state -> mapM_ (\child -> workflow child [] state (handoff ++ delivered)) children)
-                (nub [sort (nub (publications ++ concat combination)) | combination <- sequence options])
+              mapM_ (\(unit, initial, produced) -> do
+                let options = [nub (if sessionAsset session `elem` requested then [] : states else states)
+                      | (session, states) <- zip sessions produced]
+                mapM_ (\state -> workflow unit [] state (handoff ++ delivered))
+                  (foldl combineStates [initial] options)) prepared
               drives <- gets assetDrives
               let now = nub [contractType | (node', contractType) <- drives, boundary `isPrefixOf` node'
                     , node' `notElem` mounts, contractType `elem` map sessionAsset sessions]

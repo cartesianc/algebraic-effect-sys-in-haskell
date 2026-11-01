@@ -4,7 +4,7 @@
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
-按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [代码即文档](#code-as-documentation) · [生成前类型检查](#beforegen) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [Stream](#stream)。
+按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [代码即文档](#code-as-documentation) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [Stream](#stream)。
 
 ## 1. 范围与实现状态
 
@@ -130,11 +130,18 @@ flowchart LR
 
 现有源码、demo 和历史编译结果是实现证据；不反过来固定新设计。需求不清或与证据冲突时先查缺口；声明语法变更单独确认，不添加未约定的兼容层或特殊情况。
 
-### 3.3 能力、值和启动分别表达
+<a id="handles-and-values"></a>
+### 3.3 句柄操作和值操作分离
 
-Input 是 superclass 能力链。下层方法经这条链获得可调用的上游类方法；实际组合写在 instance 方法体中。能力可用不等于必须执行，GHC 不证明方法体调用了全部上游。
+框架分别表达“执行哪些操作、怎样组合调用”和“产生什么业务值、怎样按契约取用”。这里的句柄指可调用的 effect 类方法；文件、连接等资源对象则由对应资产表达。
 
-Context 表达跨 handler 的业务产值，demands 表达消费契约和访问模式。Input 本身不传值；资产来源与 scope 关闭归属也不是同一个概念。
+**句柄操作**由 Input／superclass 提供可调用能力，业务在注册 instance 中显式引用上游类方法、组合操作。Input 不传递业务值，也不隐含执行；能力可用不等于必须调用，GHC 不证明方法体调用了全部上游。
+
+**值操作**由 Context 的生产、解析与资产契约承载，消费方通过 demands 声明取值关系。request 触发生产，require 按既有来源、捕获与缺值协议取值；持续基础资产的 require 返回本次确定的 History 视图。业务在 instance 中用原生 ADT 模式匹配和计算处理这些值，跨 handler 的业务产值继续通过 Context 发布。资产来源与 scope 的资源关闭归属分别管理。
+
+两者通过 Context 衔接：Excu.handler／Scoped.open 的操作信息交给挂接的 Context 解析为业务资产；Stream 的原始输入交给对应 Context 的 stream 解析方法。比如 FileDemo 中，`readFileContent` 执行读取操作，`getFileText` 将读取结果解析为 `FileText`，消费方通过 `require @FileTextBlank` 或 `require @FileTextWritten` 读取对应分支资产。操作调用关系和资产取值关系都能从声明与原生方法引用中读出，详见[原子输出挂接](#context)与[持续生产](#stream)。
+
+这种分离是职责与契约的划分，沿用现有注册和 handler 写法，不新增独立 impl 层。句柄调用与显式资产操作都写在注册 instance 方法内，并遵守[源码资产约束](ASSETS.md)；同一个方法可以先取值，再用取得的值完成原子操作。
 
 AST 挂载完整 original chain 的末端，并规定启动和执行控制。Context chain 由取值或挂接解析带起。Node algebra 只 lower 选定末端，SDK 不在方法外排序并补跑 Input 操作。
 
@@ -577,7 +584,7 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 | 生产路径、显式 request 与 lifelong 外的读取 | [Stream 第 8 节](STREAM_LIFELONG.md#production) |
 | 失败的临时规则、取消与 close 延期边界 | [Stream 第 9 节](STREAM_LIFELONG.md#failures) |
 
-当前实现限制见 [TODO](TODO.md#stage-3-limitations)，包括来源分析的独立会话组合膨胀、持续资产作为 scope 开启参数尚未接通。
+当前实现限制见 [TODO](TODO.md#stage-3-limitations)，持续资产作为 scope 开启参数尚未接通。来源分析按消费单元提前裁剪再组合，相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
 
 这次扩展继续使用 Prototype、RuntimeGraph 和独立 ScopeTree。业务方法不新增游标、yield、调度器或无限递归写法；声明不成立时生成期诊断，不在运行中猜测生产方式。
 

@@ -970,7 +970,7 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 
 - **未实现的能力**：middleware、通用结构适配尚未实现。
 - **持续执行的延期项**：没有正常结束（EOF）、Stream close、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；完整历史一直保留，持续运行时内存随发布增长。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
-- **Stage 3 已知实现限制**：持续资产作为 scope 开启参数尚未接通；多个独立会话的来源分析仍可能产生不必要的指数状态组合。见 [TODO](TODO.md#stage-3-limitations)。
+- **Stage 3 已知实现限制**：持续资产作为 scope 开启参数尚未接通。见 [TODO](TODO.md#stage-3-limitations)。
 - **handler 复用**：同一段 handler 逻辑还不能服务多种数据类型，需要分别注册（Crawler 的两条链因此各有一份实现）。
 - **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。
 - **构建方式**：SDK 目前随仓库内的示例一起编译，不能作为独立依赖引入。
