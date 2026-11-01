@@ -93,3 +93,14 @@ renderStructure prototype workflowAST = do
           branch node ("Alternative on " ++ alternativeContract description
             ++ " (selector " ++ show (alternativeSelector description)
             ++ ", cases " ++ show (alternativeCases description) ++ ")") children
+        LifelongAt node description children ->
+          let inner = prefix ++ "  "
+          in (prefix ++ show node ++ " Lifelong (units " ++ show (lifelongUnits description) ++ ")")
+            : [inner ++ "session " ++ sessionAsset session ++ " " ++ describePlan (sessionPlan session)
+                ++ " mounts " ++ show (sessionMounts session)
+              | session <- lifelongSessions description]
+            ++ [inner ++ "subscribes " ++ show target ++ " <- " ++ asset
+               | (target, asset) <- lifelongSubscriptions description]
+            ++ concatMap (renderWorkflow (depth + 1)) children
+    describePlan (Receive source) = "Receive from " ++ source
+    describePlan RepeatRequest = "RepeatRequest"

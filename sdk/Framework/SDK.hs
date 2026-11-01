@@ -7,7 +7,7 @@ module Framework.SDK
   , module Framework.Prototype
   , module Framework.Workflow.Structure
   , ResolvedDemand(..)
-  , AST, EffectNode, node, chained, parallel, alternative, interpreter
+  , AST, EffectNode, node, chained, parallel, alternative, lifelong, interpreter
   , Generic, NFData
   ) where
 
@@ -16,7 +16,7 @@ import Framework.Effect.Graph
 import Framework.Effect.Registration (ResolvedDemand(..))
 import Framework.Effect.Runtime (cleanupTargets)
 import Framework.Prototype
-import Framework.Workflow.AST (AST, EffectNode, node, chained, parallel, alternative)
+import Framework.Workflow.AST (AST, EffectNode, node, chained, parallel, alternative, lifelong)
 import Framework.Workflow.Execution (runStructuredAST)
 import Framework.Workflow.Structure
 import Control.DeepSeq (NFData, force)

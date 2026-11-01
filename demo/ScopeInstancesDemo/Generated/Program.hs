@@ -102,6 +102,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FileLocation"
@@ -121,6 +122,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FileResource"
@@ -140,6 +142,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FileSession"
@@ -161,6 +164,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Just "FileResource"
             , SDK.effectContextDependencies = ["FileLocation","FileResource"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "CheckIndependent"
@@ -182,6 +186,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation","FileResource"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "CheckReopen"
@@ -203,6 +208,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation","FileResource"]
+            , SDK.effectContinuous = False
             }
         ]
     , SDK.protoMethods =

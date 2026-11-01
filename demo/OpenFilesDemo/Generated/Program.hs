@@ -101,6 +101,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FileResources"
@@ -120,6 +121,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FileSession"
@@ -141,6 +143,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Just "FileResources"
             , SDK.effectContextDependencies = ["FileLocations","FileResources"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "HoldFiles"
@@ -159,6 +162,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations","FileResources"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "InspectFiles"
@@ -177,6 +181,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations","FileResources"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FinishInspection"
@@ -195,6 +200,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations","FileResources"]
+            , SDK.effectContinuous = False
             }
         ]
     , SDK.protoMethods =

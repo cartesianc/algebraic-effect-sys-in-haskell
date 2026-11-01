@@ -143,6 +143,7 @@ renderEffect effect = record "EffectProto"
   , ("effectNearestScopes", show (P.effectNearestScopes effect))
   , ("effectResource", show (P.effectResource effect))
   , ("effectContextDependencies", show (P.effectContextDependencies effect))
+  , ("effectContinuous", show (P.effectContinuous effect))
   ]
 
 renderMethod :: G.MethodDefinition String -> String
@@ -166,6 +167,8 @@ renderWorkflow (P.ChainedAt node children) = blockConstructor "ChainedAt" [show 
 renderWorkflow (P.ParallelAt node children) = blockConstructor "ParallelAt" [show node, blockList renderWorkflow children]
 renderWorkflow (P.AlternativeAt node alternative children) =
   blockConstructor "AlternativeAt" [show node, renderAlternative alternative, blockList renderWorkflow children]
+renderWorkflow (P.LifelongAt node lifelong children) =
+  blockConstructor "LifelongAt" [show node, renderLifelong lifelong, blockList renderWorkflow children]
 
 renderAlternative :: P.AlternativeProto -> String
 renderAlternative alternative = record "AlternativeProto"
@@ -173,6 +176,24 @@ renderAlternative alternative = record "AlternativeProto"
   , ("alternativeSelector", show (P.alternativeSelector alternative))
   , ("alternativeCases", show (P.alternativeCases alternative))
   ]
+
+renderLifelong :: P.LifelongProto -> String
+renderLifelong lifelong = record "LifelongProto"
+  [ ("lifelongUnits", show (P.lifelongUnits lifelong))
+  , ("lifelongSubscriptions", show (P.lifelongSubscriptions lifelong))
+  , ("lifelongSessions", list renderSession (P.lifelongSessions lifelong))
+  ]
+
+renderSession :: P.SessionProto -> String
+renderSession session = record "SessionProto"
+  [ ("sessionAsset", show (P.sessionAsset session))
+  , ("sessionPlan", renderBootPlan (P.sessionPlan session))
+  , ("sessionMounts", show (P.sessionMounts session))
+  ]
+
+renderBootPlan :: P.BootPlan -> String
+renderBootPlan (P.Receive source) = constructor "Receive" [show source]
+renderBootPlan P.RepeatRequest = "SDK.RepeatRequest"
 
 renderChain :: P.ChainProto String -> String
 renderChain chain = record "ChainProto"

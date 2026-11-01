@@ -82,6 +82,9 @@ executionAlgebra prototype store entries selectors layer expected = do
             Just chosen -> runExceptT (chosen captured)
             Nothing -> ioError (userError ("No alternative candidate for case " ++ constructor
               ++ "; regenerate with the SDK effect-codegen command"))
+    -- 静态原型已经包含 lifelong；会话与回调调度尚未接入运行时。
+    (Lifelong _, LifelongAt location _ _) ->
+      Left (InvalidPrototype ("Lifelong at " ++ show location ++ " is not executable yet"))
     _ -> Left PrototypeWorkflowMismatch
   where
     resolve compiled selected =

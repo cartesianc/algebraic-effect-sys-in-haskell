@@ -131,6 +131,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "ValidateFileName"
@@ -149,6 +150,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FileResource"
@@ -168,6 +170,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FileSession"
@@ -189,6 +192,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Just "FileResource"
             , SDK.effectContextDependencies = ["FileLocation","FileResource"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FileRecovery"
@@ -208,6 +212,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation","FileResource"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "ReadFile"
@@ -226,6 +231,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation","FileResource"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "ExtractFileText"
@@ -245,6 +251,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation","FileResource"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "WriteFirstLine"
@@ -266,6 +273,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation","FileResource","ExtractFileText"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "AppendLine"
@@ -287,6 +295,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation","FileResource","ExtractFileText"]
+            , SDK.effectContinuous = False
             }
         ]
     , SDK.protoMethods =

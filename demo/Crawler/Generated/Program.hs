@@ -141,6 +141,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "LinkedPage"
@@ -160,6 +161,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FetchPage"
@@ -181,6 +183,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["CrawlSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","StartPage"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "ExtractPage"
@@ -200,6 +203,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["CrawlSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","StartPage"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "PrintPage"
@@ -219,6 +223,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","StartPage","ExtractPage"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FetchLinkedPage"
@@ -240,6 +245,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["CrawlSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","LinkedPage"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "ExtractLinkedPage"
@@ -259,6 +265,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["CrawlSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","LinkedPage"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "PrintLinkedPage"
@@ -278,6 +285,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","LinkedPage","ExtractLinkedPage"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "SessionContext"
@@ -297,6 +305,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "CrawlSession"
@@ -319,6 +328,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["CrawlSession"]
             , SDK.effectResource = Just "SessionContext"
             , SDK.effectContextDependencies = ["SessionContext"]
+            , SDK.effectContinuous = False
             }
         ]
     , SDK.protoMethods =

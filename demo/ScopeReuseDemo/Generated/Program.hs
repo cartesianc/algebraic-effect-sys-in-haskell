@@ -122,6 +122,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "PrepareProbe"
@@ -140,6 +141,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "FileResource"
@@ -159,6 +161,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "SharedFileScope"
@@ -180,6 +183,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["SharedFileScope"]
             , SDK.effectResource = Just "FileResource"
             , SDK.effectContextDependencies = ["FileLocations","FileResource"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "WriteFirst"
@@ -201,6 +205,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["SharedFileScope"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations","FileResource"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "WriteSecond"
@@ -222,6 +227,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["SharedFileScope"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations","FileResource"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "WriteThird"
@@ -243,6 +249,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["SharedFileScope"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations","FileResource"]
+            , SDK.effectContinuous = False
             }
         , SDK.EffectProto
             { SDK.effectName = "VerifyReuse"
@@ -261,6 +268,7 @@ generatedPrototype =
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations"]
+            , SDK.effectContinuous = False
             }
         ]
     , SDK.protoMethods =
