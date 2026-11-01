@@ -15,7 +15,7 @@
 | Pure、Excu、Scoped、Error、Context；有限 workflow | 当前已实现；Pure 的 IO 边界仍待设计 | [运行语义](LATEST_DESIGN.md#runtime) |
 | 统一 Prototype、运行图、静态来源与求值锁 | Stage 1/2 已实现 | [图与来源](EFFECT_GRAPH.md) |
 | 资产显式引用与构造器约束 | 当前已实现 | [源码资产](ASSETS.md) |
-| Stream、Context 新角色、历史视图与 lifelong | 设计已确定，SDK 实现未开始 | [第 7 章](#stream)及[完整规范](STREAM_LIFELONG.md) |
+| Stream、Context 的 stream 角色、历史视图与 lifelong | 已实现（Stage 3）；lifelong 中的失败暂按临时规则终止整次运行 | [第 7 章](#stream)及[完整规范](STREAM_LIFELONG.md) |
 | EOF、Stream close、嵌套 lifelong、背压等 | 本版延期 | [计划与开放项](TODO.md) |
 | Generic Map、独立 Middleware、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [计划与开放项](TODO.md) |
 
@@ -33,7 +33,7 @@
 ```haskell
 EffectSpec
   { name = "ExtractFileText"
-  , typing = Context { request = requester "fileText" @TextState }
+  , typing = Context { asset = namedAsset "FileText" @TextState, request = Just (), require = Just (), stream = Nothing }
   , input = "ReadFile"
   , demands = []
   }
@@ -43,7 +43,7 @@ EffectSpec
 
 ```haskell
 instance ExtractFileTextInputs m => ExtractFileTextEffect m where
-  fileText = do
+  getFileText = do
     contents <- readFileContent
     text <- maybe (raise (ExtractFileTextError "File read returned no text")) pure contents
     pure (FileText (if null text then Blank else Written text))
@@ -183,12 +183,12 @@ Pure 的 IO 限制、Generic Map、跨独立 interpreter 存续、任意逃逸�
 <a id="runtime"></a>
 ## 4. 当前运行协议
 
-本章描述 Stage 1/2 当前协议。Stream 的新增角色、历史视图和持续执行由第 7 章单独规定，目标 API 尚不可用。
+本章描述有限执行的当前协议。Stream 的新增角色、历史视图和持续执行由第 7 章单独规定。
 
 <a id="registration"></a>
 ### 4.1 注册与类方法契约
 
-统一使用 EffectSpec 注册，effect typing 仅有 Pure、Excu、Scoped、Error、Context 五类。旧 Request 类型已并入 Context，request／require 是 Context 内的方法角色，不再计划独立 Request typing。所有方法名绑定放入 typing 对应的 ADT 构造器，不另设顶层 handlers。对外产值的业务转换归 Context，不另设 Map；独立 Read 已取消。
+统一使用 EffectSpec 注册，effect typing 有 Pure、Excu、Scoped、Error、Context、Stream 六类；Stream 是持续数据源，只由生产会话调用，规则见第 7 章。旧 Request 类型已并入 Context，request／require 是 Context 内的方法角色，不再计划独立 Request typing。所有方法名绑定放入 typing 对应的 ADT 构造器，不另设顶层 handlers。对外产值的业务转换归 Context，不另设 Map；独立 Read 已取消。
 
 一个 effect 对应一个业务 handler typeclass，可以有多个具名类方法。Scoped 将开启与关闭归入同一个 effect、同一个 typeclass 和同一个用户 instance；Error 将 detect 与 resolve 归入同一个 effect、同一个 typeclass 和同一个用户 instance。Close、Detect、Resolve 不再分别注册为独立 effect 或独立 typing。
 
@@ -198,13 +198,14 @@ Pure 的 IO 限制、Generic Map、跨独立 interpreter 存续、任意逃逸�
 | Excu | 执行声明的操作（原子句柄） | 返回可选信息 Maybe String，只交给挂接的 Context；接入能力并承接失败 |
 | Scoped | 开启、关闭（原子句柄），均为 m (Maybe String) | 开启输入 require 同参共享／request fresh；完整链持有实际实例，末个使用者退出且无子 scope 保留时 once-spare |
 | Error | detect 定位、resolve 处置，均为 m () | App／IO 沿 ScopeTree 祖先顺序检测；Succ 后调用可选 resolve，保存原始与次生失败 |
-| Context | request 产值、require 读取 | 包装 instance 入口；request 成功发布新绑定，require 读取 state、无值时按需求值，失败保留该来源旧值 |
+| Context | request 产值、require 读取；stream 解析 Stream 交付的原始输入 | 包装 instance 入口；request 成功发布新绑定，require 读取 state、无值时按需求值，失败保留该来源旧值；持续资产见第 7 章 |
+| Stream | handler 每次取得一份原始输入，m String | 只由生产会话调用；不作为 AST target |
 
 各类别保持统一的 effect 抽象。Input 只组合被注入的操作句柄，不承载业务值；Pure 返回 ()、原子句柄返回可选信息，或 raise，不手写 Succ，也不新增每 effect 的状态表。跨 handler 的业务成功产值统一由 Context 提供，request 只能引用具有生产入口的 Context。Scoped 自身不产值，open／close 在 instance 中通过 demands 声明的 request／require 取值；只有 scope 具有 SDK 管理的存续状态。
 
 #### 注册构造
 
-注册使用普通 ADT 的不同构造器携带各自属性，不因字段不同而引入 type family 或 data family。普通方法名绑定使用 Maybe String，包括 Scoped.open／close 和 Error.detect／resolve；只有 Context.request 使用 requester "方法名" @表示类型，将方法名和表示类型放在一起，契约类型按方法名生成。Nothing 表示未绑定该方法，不把 handler 返回值改成 Maybe。五类方法声明、Context 绑定、scope 状态及 Error 的检测／处置契约保留；App／IO 的 Error 祖先导航接入同一 ScopeTree，本轮自动收尾范围改为有限使用闭包，interpreter 退出仍兜底。
+注册使用普通 ADT 的不同构造器携带各自属性，不因字段不同而引入 type family 或 data family。普通方法名绑定使用 Maybe String，包括 Scoped.open／close 和 Error.detect／resolve；Context 以 `asset = namedAsset "资产名" @表示类型` 声明资产，以 request、require、stream 三个 `Maybe ()` 声明角色，方法名由资产名固定生成（getT、readT、streamT）。Nothing 表示未绑定该方法或角色，不把 handler 返回值改成 Maybe。各类方法声明、Context 绑定、scope 状态及 Error 的检测／处置契约保留；App／IO 的 Error 祖先导航接入同一 ScopeTree，本轮自动收尾范围改为有限使用闭包，interpreter 退出仍兜底。
 
 ```haskell
 -- 普通注册也把主方法名放入 typing
@@ -224,15 +225,18 @@ typing = Error
   , resolve = Just "resolveReport"
   }
 
--- 同一 Context effect 内的产值与读取类方法
-typing = Context { request = requester "crawlerConfig" @ConfigSettings }
+-- 同一 Context effect 内的产值与读取类方法（生成 getCrawlerConfig、readCrawlerConfig）
+typing = Context { asset = namedAsset "CrawlerConfig" @ConfigSettings, request = Just (), require = Just (), stream = Nothing }
+
+-- 持续数据源：每次取得一份原始输入，由挂在它下面的 Context 的 stream 角色解析
+typing = Stream { handler = Just "nextReading" }
 ```
 
-typing 保存本 effect 内的方法声明，只有 Context.request 以 requester 声明产物，契约类型按 handler 名生成；消费方 demands 以 requests "契约名"／requires "契约名" 引用契约，契约名即生产方 handler 名首字母大写。Pure／Excu 以 handler 为普通入口，Scoped 以 open 为入口，Context 以 request 为产值入口；require 的类型由同一生产契约推导，缺少该契约时报错。Error 以 handles 声明处理的故障类型，关联 scope 沿 Input／request 推导最近的 Scoped，由 Root 的故障协议调用，不作为普通 Node target。
+typing 保存本 effect 内的方法声明，只有 Context 以 asset 声明产物，契约名就是资产名；消费方 demands 以 requests "契约名"／requires "契约名"／streams "契约名" 引用契约，声明的取值方式须对应生产方已声明的角色。Pure／Excu 以 handler 为普通入口，Scoped 以 open 为入口，Context 以 request 为产值入口；require 的类型由同一生产契约推导，缺少该契约时报错。Error 以 handles 声明处理的故障类型，关联 scope 沿 Input／request 推导最近的 Scoped，由 Root 的故障协议调用，不作为普通 Node target。
 
 当前 handler = Nothing 不生成本地业务方法，保留类型契约与 Input 关系；被 target 选择时报没有入口。request 只允许引用具有生产方法的 Context。SDK 不猜测方法名，也不生成默认成功操作。其余多方法类别的缺省处置随协议另定，不能从 Nothing 自动推导出省略清理、吞掉错误或重新产值。
 
-注册中的 EffectTyping 保存方法声明，关联 Typing 只保存 SDK 的 EffectKind 类别标签，不把运行时 String 搬入类型级。五类标签均已加入。顶层 produces 已移除：只有 Context.request 声明业务产物，其他类别的成功值均为 ()。完成边界由 SDK 返回 Succ value 或 Failed failure，不含 Pending。
+注册中的 EffectTyping 保存方法声明，关联 Typing 只保存 SDK 的 EffectKind 类别标签，不把运行时 String 搬入类型级。六类标签均已加入。顶层 produces 已移除：只有 Context 的 asset 声明业务产物，其他类别的成功值均为 ()（Stream 的原始输入 String 不是业务产物）。完成边界由 SDK 返回 Succ value 或 Failed failure，不含 Pending。
 
 target 根据 typing 唯一确定调用入口，不要求 class 只有一个方法；request 固定选择 Context 的生产入口。Error 的匹配 scope 沿 Input／request 推导最近的 Scoped，故障路由不通过业务 request 表达；它仍可声明 Context 消费以供 instance 检查或处置。
 
@@ -253,7 +257,7 @@ Error 同样不增加位置参数；需要原始故障时，通过 SDK 的 caugh
 | --- | --- | --- |
 | Pure 主方法 | m () | 成功无业务产物；Pure 的语义与本地 IO 限制另定 |
 | Excu 主方法 | m (Maybe String) | 原子句柄；可选信息只交给挂接的 Context |
-| Context 生产／读取 | m (Produce e) | 类型为按 handler 名生成的契约；生产成功保存，读取不重复执行 |
+| Context 生产／读取 | m (Produce e) | 类型为按资产名生成的契约；生产成功保存，读取不重复执行；持续资产的读取为 m (History (Produce e)) |
 | Scoped 开启 | m (Maybe String) | 通过 demands 声明的 request @T／require @T 完成开启；require 参数共享选中的有效实例，request 参数创建新实例；复用实例跳过方法体时没有新输出 |
 | Scoped 关闭 | m (Maybe String) | 通过上游 require 读取信息，不重放生产；成功关闭不重复执行；没有挂接点，输出总被丢弃 |
 | Error detect | m () | 返回 () 定位成功，raise 表示未定位；SDK 保存 Succ／Failed |
@@ -305,13 +309,13 @@ SDK 的 Effect.handler 是生成区内部入口。Root 转交 Failure 捕获／E
 生产方与消费方分别描述，Context effect 自身也可以消费别的 Context：
 
 ```haskell
-typing = Context { request = requester "linkedPageSummary" @PageSummary }
+typing = Context { asset = namedAsset "LinkedPageSummary" @PageSummary, request = Just (), require = Just (), stream = Nothing }
 demands = [requests "LinkedFetchedPage"]
 ```
 
 typing 中是本 effect 提供的方法与生产契约；demands 中是本 effect 需要的契约与取值模式，不指名生产方的类或方法。
 requests 调用来源的生产入口，requires 读取来源的已有绑定。来源在注册集合中按类型唯一解析，多个生产方即报错。
-起始页与链接页两条链的抓取结果表示相同，含义不同；契约类型由各自 handler 名生成，例如 linkedFetchedPage 产出 LinkedFetchedPage，
+起始页与链接页两条链的抓取结果表示相同，含义不同；它们声明为不同的资产，契约类型即资产名，例如 LinkedFetchedPage，
 生成器不会按距离或拓扑替用户选择来源。request 加入解析出的生产者能力，保留原 Input；不再要求生产者的祖先已经包含消费者原 Input。
 
 输入契约与 typing 共同决定方法签名。当前生成器由 demands 形成关联 Require（单输入直接使用该契约，多输入按声明顺序排为元组），
@@ -334,8 +338,8 @@ SDK 不预初始化 Context，Input 仍只提供类方法能力；未被引用�
 AST 组织链的启动次序，也为跨链来源提供因果可见性。parallel 先抓取并注入解析两页，chained 再打印；打印方法 require 第一阶段发布的摘要，按各自唯一来源读取，不重复抓取。Generic Map 仍待设计。
 
 `Require e` 是 context 中 request／require 声明的 ADT 接收契约；`Produce e` 直接表示成功类型。
-业务表示类型在 Types.hs 用原生 data/newtype 单独定义，注册以 requester 的类型参数引用，契约类型按 handler 名生成；Require、Produce 是 Effect 中的关联 type。
-只有 Context 的 Produce 是按 handler 名生成的契约类型，其余当前类别默认 ()；Error e 由 SDK 按 effect 名生成，不从产物提取。
+业务表示类型在 Types.hs 用原生 data/newtype 单独定义，注册以 namedAsset 的类型参数引用，契约类型即资产名；Require、Produce 是 Effect 中的关联 type。
+只有 Context 的 Produce 是按资产名生成的契约类型，其余当前类别默认 ()；Error e 由 SDK 按 effect 名生成，不从产物提取。
 它们以原子 effect 为索引，不要求另设契约类，也不因执行载体 m 改变而改变 ADT。
 
 handler 方法是可调用句柄；部分调用产生业务值，但普通句柄组合不要求传递 Produce。
@@ -368,7 +372,7 @@ Excu.handler／Scoped.open 成功后，SDK 以根调用身份执行挂接的 Con
 
 Context 自己主动请求该句柄时直接执行而不再次注入；复用 open、重复 close、诊断与自动收尾不产生新的挂接注入。close 没有挂接点；scope 的资源 Context 不能挂在请求它的 Scoped 下。生成入口通过 atomicHandle／atomicScope 包装，挂接目录为 contextInjections。
 
-这是当前有限执行基线；持续订阅的 parser 故障通知由 [Stream 第 9 节](STREAM_LIFELONG.md#9-故障任务所有权与资源边界)明确扩展，不把此处的失败隔离当作永久等待的依据。
+这是有限执行的基线；持续生产中解析器的故障不在注入内隔离，会话失败并通知等待方，见 [Stream 第 9 节](STREAM_LIFELONG.md#failures)。
 
 <a id="assembly"></a>
 ### 4.4 原型与闭包装配
@@ -395,7 +399,7 @@ BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两�
 
 这项类型约束不证明分支来自独立文件，也不禁止内联子分支或直接构造叶模块。独立文件、顶层只引用模块名属于声明格式：正文采用固定 branch 构造、显式列表、node 与直接模块引用，不借任意 lambda／map／条件计算隐藏结构，引用保持有限无环。未来 LSP 保存模块定义、引用和源码位置，并检查该格式；当前执行 AST 不保留源码身份，不新增运行时模块 key。
 
-分文件不建立新 interpreter、注册环境、Context 或 scope。同一模块多次挂载意味着多次执行，不去重调用；原有串行短路、并发汇合与资源共享规则保持。五个 workflow demo 已按此拆分。持续执行的新增边界统一见 [Stream／lifelong](STREAM_LIFELONG.md)，当前 SDK 尚未实现。
+分文件不建立新 interpreter、注册环境、Context 或 scope。同一模块多次挂载意味着多次执行，不去重调用；原有串行短路、并发汇合与资源共享规则保持。五个 workflow demo 已按此拆分。持续执行的新增边界统一见 [Stream／lifelong](STREAM_LIFELONG.md)。
 
 #### 有限执行的完成规则
 
@@ -519,7 +523,7 @@ handles 只按 Failure 的 origin 与 detail 分类匹配。Context 协议故障
 各 demo 的手写入口、注册、handler 与生成模块分别可 review；
 仍使用的并发辅助函数已并入当前 SDK。
 
-同次 AST 的运行表保留，本轮迁移到有限使用闭包 once-spare、require 共享／request fresh 及补全后的清理依赖，并由使用协议协调显式关闭。App／IO 的 Root Error 祖先导航使用同一 ScopeTree，实例定位、detect／resolve 与原错传播保留，不自动恢复业务。具体实现与普通编译结果须按本轮代码核对，不由旧样例推断已验证；Stream／lifelong 的目标协议见 [Stream 规范](STREAM_LIFELONG.md)，实现未开始；其他开放项见 [TODO](TODO.md)。
+同次 AST 的运行表保留，本轮迁移到有限使用闭包 once-spare、require 共享／request fresh 及补全后的清理依赖，并由使用协议协调显式关闭。App／IO 的 Root Error 祖先导航使用同一 ScopeTree，实例定位、detect／resolve 与原错传播保留，不自动恢复业务。具体实现与普通编译结果须按本轮代码核对，不由旧样例推断已验证；Stream／lifelong 的协议见 [Stream 规范](STREAM_LIFELONG.md)；其他开放项见 [TODO](TODO.md)。
 
 
 ## 5. 静态原型与动态运行
@@ -543,7 +547,7 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 | 本文 | 设计原则、当前协议和新语义的统一入口 |
 | [EFFECT_GRAPH](EFFECT_GRAPH.md) | Prototype、来源分析、运行图、ScopeTree 和缓存 |
 | [ASSETS](ASSETS.md) | 源码资产集合、显式引用和构造器所有权 |
-| [STREAM_LIFELONG](STREAM_LIFELONG.md) | 第 7 章引用的持续执行完整规范，尚未实现 |
+| [STREAM_LIFELONG](STREAM_LIFELONG.md) | 第 7 章引用的持续执行完整规范 |
 | [TODO](TODO.md) | 实施计划、开放项与必要的完成摘要 |
 
 新手从 README 和 GUIDE 进入；维护者或 LLM 从 AGENTS 按任务进入本页章节及相关专题。不要为同一规则另建摘要文件或复制一份规范。
@@ -553,27 +557,28 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 文档保持 docs/*.md 平铺，与当前 Cabal 源码包清单一致。
 
 <a id="stream"></a>
-## 7. Stream 与 lifelong：已确定的下一阶段
+## 7. Stream 与 lifelong
 
-**[STREAM_LIFELONG.md](STREAM_LIFELONG.md)是本章的完整规范，通过引用并入主设计。** 其中目标 API 尚未实现；本章不重新维护另一份匹配表或调度规则。
+**[STREAM_LIFELONG.md](STREAM_LIFELONG.md)是本章的完整规范，通过引用并入主设计。** 本章不重新维护另一份匹配表或调度规则；写法示例见[使用指南第五节](GUIDE.md#stream)。
 
 增加的语义集中在三处：
 
-1. Stream effect 提供持续来源；Context 的 stream 角色逐条解析。普通 Context 也可按 request 序列供给。生产方式由明确结构匹配，不靠识别方法体里是 socket、event 还是 behavior。
-2. `streams "T"` 声明持续消费。handler 用 `require @T` 读取本次交付固定的历史视图；读取本身不领取下一个增量。
-3. lifelong 按资产发布和前驱完成的就绪条件回调 boot original-chain target。每次 target 调用仍有限完成，持续订阅由控制流管理。
+1. Stream effect 提供持续来源；挂在它下面的 Context 以 stream 角色逐条解析（Receive）。不在 Stream 下的 Context 声明 `stream = Just ()` 时由会话反复执行 request（RepeatRequest）。生产方式只看资产自己的注册，不靠识别方法体里是 socket、event 还是 behavior，也不随别处是否有节点产出同一资产而改变。
+2. `stream = Just ()` 的资产的 `require @T` 在所有地方都返回 `History T`；读取类型由生产方注册决定，不由消费方决定。`streams "T"` 声明持续消费并授予读取权限，读取本身不领取下一个增量。
+3. lifelong 的每个单元在本次执行领到订阅资产的新交付后 boot original-chain target；每次 target 调用仍有限完成，单元逐次重复，lifelong 本身没有正常结束。含 lifelong 的程序中任何失败暂按临时规则终止整次运行。
 
-| 需要确认或实现的主题 | 本章所属规范 |
+| 主题 | 本章所属规范 |
 | --- | --- |
-| 资产命名、Context 角色互斥、beforegen 类型 | [Stream 第 3 节](STREAM_LIFELONG.md#3-资产方法与-beforegen) |
-| Receive／ObserveOrigin／RepeatRequest 的推导 | [Stream 第 4 节](STREAM_LIFELONG.md#4-自动推导-bootplan) |
-| 原始链消费摘要与合法性 | [Stream 第 5 节](STREAM_LIFELONG.md#5-静态消费摘要与合法性) |
-| 并发单元、回调 boot 与有限完成边界 | [Stream 第 6 节](STREAM_LIFELONG.md#6-lifelong-的回调-boot-与控制流) |
-| 会话、完整历史、独立游标与固定捕获 | [Stream 第 7 节](STREAM_LIFELONG.md#7-会话历史捕获和运行身份) |
-| 失败、任务所有权与 close 延期边界 | [Stream 第 9 节](STREAM_LIFELONG.md#9-故障任务所有权与资源边界) |
+| 资产命名、Context 角色匹配、读取类型与 beforegen | [Stream 第 3 节](STREAM_LIFELONG.md#contracts) |
+| Receive／RepeatRequest 的推导与启动依赖 | [Stream 第 4 节](STREAM_LIFELONG.md#bootplan) |
+| 消费摘要、lifelong 合法性与原型中的表示 | [Stream 第 5 节](STREAM_LIFELONG.md#static) |
+| 单元、就绪检查与有限完成边界 | [Stream 第 6 节](STREAM_LIFELONG.md#scheduling) |
+| 会话、完整历史、独立游标与 frame | [Stream 第 7 节](STREAM_LIFELONG.md#sessions) |
+| 生产路径、显式 request 与 lifelong 外的读取 | [Stream 第 8 节](STREAM_LIFELONG.md#production) |
+| 失败的临时规则、取消与 close 延期边界 | [Stream 第 9 节](STREAM_LIFELONG.md#failures) |
 
-这次扩展继续使用 Prototype、RuntimeGraph 和独立 ScopeTree。业务方法不新增游标、yield、调度器或无限递归写法。来源和启动责任不明确时生成诊断；可达性本身不能证明已有驱动。
+这次扩展继续使用 Prototype、RuntimeGraph 和独立 ScopeTree。业务方法不新增游标、yield、调度器或无限递归写法；声明不成立时生成期诊断，不在运行中猜测生产方式。
 
 ## 8. 计划与证据
 
-实施批次、开放问题和必要验证摘要统一保存在 [TODO](TODO.md)。推进 Stage 3 时同步更新本文状态、所属规范与实际接口指南，不能把计划写成已实现能力。验证摘要保留日期和未覆盖范围，不代表本次重新执行。
+实施批次、开放问题和必要验证摘要统一保存在 [TODO](TODO.md)。新阶段推进时同步更新本文状态、所属规范与实际接口指南，不能把计划写成已实现能力。验证摘要保留日期和未覆盖范围，不代表本次重新执行。

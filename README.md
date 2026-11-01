@@ -4,7 +4,7 @@
 
 **代码即文档，文档即代码。** 代码的书写形态就是架构的一部分。设计、源码与示例应保持对应，让人和工具都能沿代码理解程序。详见[核心设计原则](docs/LATEST_DESIGN.md#code-as-documentation)。
 
-项目目前处于接口探索阶段。现有示例可以运行；Stream／lifelong 尚未实现，进度见 [TODO](docs/TODO.md)。
+项目目前处于接口探索阶段。现有示例可以运行，包括持续执行的 StreamDemo；进度和开放项见 [TODO](docs/TODO.md)。
 
 <a id="code-shape"></a>
 ## 代码长什么样
@@ -26,7 +26,7 @@ main = interpreter ast effects
 | [Handler](docs/GUIDE.md#handlers) | 用原生 instance 方法实现操作、解析和显式调用。 |
 | [Workflow／AST](docs/GUIDE.md#workflow) | 选择完整操作链的末端，规定这些链如何顺序、并行或按条件启动。 |
 
-Context 是负责资产生产与解析的一类 effect：它的 handler 产生资产，消费方 handler 按声明的契约取用。Effect 声明关系，handler 实现行为，asset 连接生产与消费，workflow 组织执行。
+Context 是负责资产生产与解析的一类 effect：它的 handler 产生资产，消费方 handler 按声明的契约取用。持续数据由 Stream effect 取得原始输入，再由 Context 解析成持续资产，`lifelong` 在新数据到达时启动消费链（见[持续资产与 lifelong](docs/GUIDE.md#stream)）。Effect 声明关系，handler 实现行为，asset 连接生产与消费，workflow 组织执行。
 
 进入[使用指南：代码长什么样](docs/GUIDE.md#code-shape)，通过同一个例子展开各组件的 Haskell 写法；完整 Main 和导入关系见[运行入口](docs/GUIDE.md#运行入口mainhs)。
 

@@ -1,6 +1,6 @@
 # 使用指南：代码形态与编写
 
-状态：本文说明当前 SDK 可运行的接口。Stream、`streams`、`lifelong` 及独立资产命名属于[已确定但尚未实现的设计](STREAM_LIFELONG.md)，不能直接用于下列示例。
+状态：本文说明当前 SDK 可运行的接口，包括持续资产（Stream、`streams`、`lifelong`，见[第五节](#stream)）。完整的持续执行规则见 [Stream 与 lifelong](STREAM_LIFELONG.md)，尚未设计的部分见[当前限制](#limitations)。
 
 从“代码长什么样”进入：先看到资产、注册、instance 和 workflow 的代码块，再按链接深入对应模块。想直接运行时可跳到快速开始。完整语义见[主设计](LATEST_DESIGN.md)，源码约束见[ASSETS](ASSETS.md)。
 
@@ -11,6 +11,7 @@
 | 查注册类别、Input 和 demands | [effect 注册](#effects) |
 | 写原子操作、取值与失败处理 | [instance 书写](#handlers) |
 | 组织 chained、parallel、alternative | [workflow 书写](#workflow) |
+| 接入持续数据源、编写 lifelong 监控 | [持续资产与 lifelong](#stream) |
 | 构建并运行现有示例 | [快速开始](#quickstart) |
 | 区分 gencode、runtime、结构查看及启动命令 | [命令行与执行阶段](#commands) |
 | 明确文件分工与编写顺序 | [程序结构](#program-layout) |
@@ -35,12 +36,12 @@ data TextState = Blank | Written String
 
 ### 2. Effects.hs：为生产和消费写出关系
 
-以下是 `effects` 列表中的两个注册。生产方声明自己的方法与表示类型：
+以下是 `effects` 列表中的两个注册。生产方声明资产名、表示类型和自己承担的方法角色：
 
 ```haskell
 EffectSpec
   { name = "ExtractFileText"
-  , typing = Context { request = requester "fileText" @TextState }
+  , typing = Context { asset = namedAsset "FileText" @TextState, request = Just (), require = Just (), stream = Nothing }
   , input = "ReadFile"
   , demands = []
   }
@@ -67,7 +68,7 @@ EffectSpec
 
 ```haskell
 instance ExtractFileTextInputs m => ExtractFileTextEffect m where
-  fileText = do
+  getFileText = do
     contents <- readFileContent
     text <- maybe (raise (ExtractFileTextError "File read returned no text")) pure contents
     pure (FileText (if null text then Blank else Written text))
@@ -129,7 +130,7 @@ newtype FileTextBlank = FileTextBlank (())
 newtype FileTextWritten = FileTextWritten (String)
 ```
 
-它们把 `requester "fileText" @TextState`、业务 ADT、消费方的 `requires` 和方法体中的类型应用连接起来。Generated/Effects 提供可检查的接口，Generated/Program 保存末端登记和静态 Prototype；运行副本及协议由生成器维护。
+它们把 `namedAsset "FileText" @TextState`、业务 ADT、消费方的 `requires` 和方法体中的类型应用连接起来。Generated/Effects 提供可检查的接口，Generated/Program 保存末端登记和静态 Prototype；运行副本及协议由生成器维护。
 
 [Generated/Effects.hs](../demo/FileDemo/Generated/Effects.hs) · [Generated/Program.hs](../demo/FileDemo/Generated/Program.hs) · [生成与更新流程](#development)
 
@@ -294,7 +295,7 @@ data TextState = Blank | Written String
 
 ### 表示类型（手写）
 
-在 `Types.hs` 用原生 `data`／`newtype` 定义，作为 `requester` 中的 `@表示类型`：
+在 `Types.hs` 用原生 `data`／`newtype` 定义，作为 `namedAsset` 中的 `@表示类型`：
 
 ```haskell
 data PageURL = PageURL { pageAddress :: String }   -- 记录
@@ -302,7 +303,7 @@ data FileHandle = FileHandle FilePath Handle       -- 包装库类型
 data TextState = Blank | Written String            -- 和类型
 ```
 
-- **只写值的结构**：契约由生成器产出，不需要再手写一层 newtype。单值可以直接用 Prelude 类型，例如 `requester "fileName" @FilePath`。
+- **只写值的结构**：契约由生成器产出，不需要再手写一层 newtype。单值可以直接用 Prelude 类型，例如 `namedAsset "FileName" @FilePath`。
 - **库类型**：含 `Handle` 等需要导入的库类型时，在 `Types.hs` 定义一个记录包装它。
 - **`Eq`**：用作 scope 开启参数的类型需要 `Eq`（判断是否同参复用）；资源本身不需要。
 - **`Show`**：需要打印结果时派生。
@@ -310,18 +311,19 @@ data TextState = Blank | Written String            -- 和类型
 
 ### 契约类型（生成）
 
-每个 `requester "handler名" @表示类型` 生成一个契约类型：
+每个 `namedAsset "资产名" @表示类型` 生成一个契约类型，契约名就是资产名：
 
 ```haskell
 newtype StartURL = StartURL PageURL
 ```
 
-- 契约名是 handler 名首字母大写。
+- 资产名须是 Haskell 类型名，按业务含义起名；不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
 - 表示类型有 `Eq`／`Show` 时，契约才有 `Eq`／`Show`；契约不派生 `Read`。
+- 持续资产（`stream = Just ()`）的 `require` 返回 `History 契约`，见[持续资产与 lifelong](#stream)。
 
 ### 分支契约（生成）
 
-表示类型是和类型（至少两个构造器，每个构造器至多一个字段）时，生成器为每个构造器产出一个分支契约。以 FileDemo 的 `requester "fileText" @TextState` 为例：
+表示类型是和类型（至少两个构造器，每个构造器至多一个字段）时，生成器为每个构造器产出一个分支契约。以 FileDemo 的 `namedAsset "FileText" @TextState` 为例：
 
 | 构造器 | 分支契约 |
 | --- | --- |
@@ -364,28 +366,29 @@ EffectSpec
 | 参数 | 类型 | 含义 |
 | --- | --- | --- |
 | `name` | `String` | effect 的注册名 |
-| `typing` | `EffectTyping` | 类别（五选一）及该类别的方法名 |
+| `typing` | `EffectTyping` | 类别（六选一）及该类别的方法名或角色 |
 | `input` | `String` | 能力继承：可以调用哪个 effect 的方法 |
 | `demands` | `[Demand]` | 需要哪些 Context 值，以及取值方式 |
 
-文件需开启 `DuplicateRecordFields`（多个类别共用字段名 `handler`）和 `TypeApplications`（`requester` 中的 `@类型`），从 `Framework.SDK` 导入 `EffectSpec(..)`、`EffectTyping(..)`、`requester`、`requests`、`requires`；用到 Error 时再导入 `Handles(..)`。
+文件需开启 `DuplicateRecordFields`（多个类别共用字段名 `handler`）和 `TypeApplications`（`namedAsset` 中的 `@类型`），从 `Framework.SDK` 导入 `EffectSpec(..)`、`EffectTyping(..)`、`namedAsset`、`requests`、`requires`；订阅持续资产时导入 `streams`，用到 Error 时再导入 `Handles(..)`。
 
 ### `name`
 
 - **唯一身份**：AST 的 `node`、其他 effect 的 `input`、Error 的 `handles` 都用这个名字引用它，在注册集合中不能重复。
 - **生成的名字**：生成器据此产出类型类 `名字Effect`、能力约束 `名字Inputs`、错误构造器 `名字Error` 等，所以 `name` 须是大写字母开头的 Haskell 类型名。
 
-### `typing`：五种类别
+### `typing`：六种类别
 
-`typing` 是五选一的枚举，每种类别带自己的方法名字段：
+`typing` 是六选一的枚举，每种类别带自己的方法名或角色字段：
 
 | 枚举 | 字段 | 入口方法 | 方法签名 | 用途 |
 | --- | --- | --- | --- | --- |
-| `Context` | `request = requester "handler名" @表示类型` | handler 名 | `m 契约类型` | 生产在操作之间传递的业务值 |
+| `Context` | `asset = namedAsset "T" @表示类型`；`request`、`require`、`stream :: Maybe ()` | 由资产名生成：`getT`、`readT`、`streamT` | `getT`／`streamT` 为 `m T` | 生产在操作之间传递的业务值 |
 | `Pure` | `handler :: Maybe String` | `handler` | `m ()` | 不产出业务值的检查 |
 | `Excu` | `handler :: Maybe String` | `handler` | `m (Maybe String)` | 执行操作（原子句柄） |
 | `Scoped` | `open`、`close :: Maybe String` | `open` | 均为 `m (Maybe String)` | 资源的开启与关闭（原子句柄） |
 | `Error` | `detect`、`resolve :: Maybe String`；`handles :: [Handles]` | 无，由失败协议调用 | 均为 `m ()` | 对指定失败做诊断和处置 |
+| `Stream` | `handler :: Maybe String` | 无，由生产会话调用 | `m String` | 持续取得原始输入，交给挂在它下面的 Context 解析 |
 
 - **`Maybe String` 是方法名**：`Just "名字"` 生成这个方法，`Nothing` 不生成。名字可以缺失，不代表返回值使用 `Maybe`。入口为 `Nothing` 的 effect 只作为声明存在，不能被 AST 选为末端。
 - **业务值只归 Context**：其他类别的方法只表示"完成"或"失败"。Excu 和 Scoped 返回的 `Maybe String` 是原子句柄交出的可选信息，只交给挂在这个句柄下的 Context 解析（见 `input`），调用这个句柄的其他方法不读取它。
@@ -393,14 +396,14 @@ EffectSpec
 #### `Context`
 
 ```haskell
-typing = Context { request = requester "startURL" @PageURL }
+typing = Context { asset = namedAsset "StartURL" @PageURL, request = Just (), require = Just (), stream = Nothing }
 ```
 
-- **`requester "handler名" @表示类型`**：同时声明生产方法和契约。生成器产出 `newtype StartURL = StartURL PageURL`，契约名就是 handler 名首字母大写。表示类型怎么写见[资产书写](#types)。
-- **读取方法**：生成器另外产出 `readStartURL`，供消费方 `require @StartURL` 使用。注册里不用写它，业务代码也不直接调用它。
-- **必须有生产方法**：`request` 不能是 `Nothing`。
+- **`asset = namedAsset "资产名" @表示类型`**：声明资产。资产名就是契约名，生成器产出 `newtype StartURL = StartURL PageURL`；表示类型怎么写见[资产书写](#types)。
+- **三个角色，方法名由资产名生成**：`request = Just ()` 生成生产方法 `getStartURL`，需要手写实现；`require = Just ()` 生成读取方法 `readStartURL`，由 SDK 实现，供消费方 `require @StartURL` 使用，业务代码不直接调用；`stream = Just ()` 声明持续资产，见[持续资产与 lifelong](#stream)。`Nothing` 不生成对应方法，消费方也不能声明相应的 `requests`／`requires`。
+- **必须有生产入口**：普通 Context 须声明 `request = Just ()`；挂在 Stream 下的解析器改用 `stream` 角色。
 - **不能作为 AST 末端**：Context 在它挂接的句柄执行时产出，或在被 `request`／`require` 时产出。
-- **命名**：handler 名同时决定契约名，要按业务含义起名（`startURL`，而不是 `loadStartURL`），不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
+- **命名**：资产名决定契约名和方法名，要按业务含义起名（`StartURL`，而不是 `LoadStartURL`），不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
 
 #### `Pure`
 
@@ -427,6 +430,14 @@ typing = Scoped { open = Just "openFileSession", close = Just "closeFileSession"
 - **两个方法都要声明**：`open` 和 `close` 写在同一个 instance 里；自动清理需要 `close`，所以两者缺一不可。
 - **资源是一个 Context**：Scoped 在 `demands` 里 `requests` 资源 Context（至多一个），`open` 用 `request` 取得它，`close` 用 `require` 读回它。
 - **开启参数**：资源 Context 的生产方取用的上游 Context 就是开启参数，SDK 按它们决定共享还是新建实例（见「运行时行为」）。
+
+#### `Stream`
+
+```haskell
+typing = Stream { handler = Just "nextReading" }
+```
+
+持续数据源：每次调用取得一份原始输入（`m String`），节奏由方法体自己的阻塞或等待决定。它不能作为 AST 末端，也不能被普通方法调用；恰好一个 Context 以它为 `input`，作为解析器读取这份输入。写法见[持续资产与 lifelong](#stream)。
 
 #### `Error`
 
@@ -474,17 +485,18 @@ input = "FileSession"
 demands = [requests "StartURL", requires "CrawlSessionInfo"]
 ```
 
-`demands` 是 `Demand` 列表，每一项用契约名声明一个需要的值及取值方式。契约类型在 `Effects.hs` 中看不到，所以用名字字符串引用；方法体里照常写类型。`Demand` 有两个枚举：
+`demands` 是 `Demand` 列表，每一项用契约名声明一个需要的值及取值方式。契约类型在 `Effects.hs` 中看不到，所以用名字字符串引用；方法体里照常写类型。`Demand` 有三种写法：
 
 | 枚举 | 方法体中 | 含义 |
 | --- | --- | --- |
 | `requests "T"` | `x <- request @T` | 重新生产一次，并把结果保存为当前绑定 |
 | `requires "T"` | `x <- require @T` | 读取已有的值，不重新生产；尚未生产过时自动生产一次并记住 |
+| `streams "T"` | `xs <- require @T` | 由持续资产 `T` 的新交付驱动，同时取得读取权限；只在 `lifelong` 内使用，见[持续资产与 lifelong](#stream) |
 
-- **来源自动确定**：契约名是生产方 handler 名首字母大写，而方法名在注册集合中唯一，所以每个契约恰好有一个生产方，生成器自动接上，不用指名生产方。
-- **区分同类数据**：同一种数据有不同含义时，交给不同的 handler 产出。例如 Crawler 的起始页和链接页 URL 都是 `PageURL`，分别由 `startURL` 和 `linkedURL` 产出 `StartURL` 和 `LinkedURL`，类型上不能混用。
+- **来源自动确定**：契约名就是生产方声明的资产名，每个资产恰好由一个 Context 声明，生成器自动接上，不用指名生产方。
+- **区分同类数据**：同一种数据有不同含义时，声明成不同的资产。例如 Crawler 的起始页和链接页 URL 都是 `PageURL`，分别声明为资产 `StartURL` 和 `LinkedURL`，类型上不能混用。
 - **同一契约两种方式都可以声明**：例如 Scoped 的 `open` request 资源、`close` require 它；但同一契约的同一种方式只能声明一次。
-- **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见[资产书写](#types)）只能 `requires`。
+- **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见[资产书写](#types)）只能 `requires`；`streams` 只能由 Pure、Excu、Scoped 声明，只能订阅 `stream = Just ()` 的基础契约。
 - **声明即权限**：方法体里取用了未声明的契约，生成器报错；运行时也会以 `UndeclaredContextAccess` 拒绝。
 
 <a id="handlers"></a>
@@ -495,7 +507,7 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 
 ```haskell
 instance ExtractFileTextInputs m => ExtractFileTextEffect m where
-  fileText = do
+  getFileText = do
     contents <- readFileContent
     text <- maybe (raise (ExtractFileTextError "File read returned no text")) pure contents
     pure (FileText (if null text then Blank else Written text))
@@ -538,13 +550,14 @@ instance ReadFileInputs m => ReadFileEffect m where
 
 | 类别 | 方法 | 签名 | 返回什么 |
 | --- | --- | --- | --- |
-| Context | `request` 声明的 handler 名 | `m 契约类型` | 用契约构造器包装的值，例如 `pure (FileName path)` |
+| Context | `getT`（request 角色）或 `streamT`（stream 角色） | `m T` | 用契约构造器包装的值，例如 `pure (FileName path)` |
 | Pure | `handler` | `m ()` | 正常结束即成功 |
 | Excu | `handler` | `m (Maybe String)` | 交给挂接 Context 的信息，没有就 `pure Nothing` |
 | Scoped | `open`、`close` | `m (Maybe String)` | 同上；`close` 的输出没有挂接点 |
 | Error | `detect`、`resolve` | `m ()` | 见下文「Error 的写法」 |
+| Stream | `handler` | `m String` | 一份原始输入 |
 
-Context 的读取方法（`read契约名`）由 SDK 提供默认实现，不用写。
+Context 的读取方法（`read契约名`）由 SDK 提供默认实现，不用写；解析器读取原始输入的 `input契约名` 也由 SDK 提供，只生成在该 Context 的类中。
 
 ### 方法体里的写法
 
@@ -553,6 +566,8 @@ Context 的读取方法（`read契约名`）由 SDK 提供默认实现，不用�
 | `openFileSession` | 调用 `input` 链上游的方法，上游随之执行 |
 | `x <- request @T` | 重新生产契约 `T` 的值，须在 `demands` 中声明 `requests "T"` |
 | `x <- require @T` | 读取 `T`，缺值时按需求值；须声明 `requests "T"` 或 `requires "T"` |
+| `xs <- require @T`（持续资产） | 取得 `History T`：本次交付为止的历史，用 `latest`／`historyEntries` 读取；须声明 `streams "T"` 或 `requires "T"` |
+| `raw <- inputT` | 解析器 `streamT` 读取本次原始输入 |
 | `raise (ReadFileError "message")` | 以本 effect 的错误失败；错误构造器是 effect 名加 `Error` |
 | `pure (Just info)` | Excu／Scoped 把信息交给挂接的 Context |
 | `contents <- readFileContent` | 挂接的 Context 调用它挂接的句柄，取得句柄交出的信息 |
@@ -617,7 +632,7 @@ instance FileRecoveryInputs m => FileRecoveryEffect m where
 - **effect 调用直接写在方法体里**：支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法。
 - **不能间接调用**：不能经普通函数、局部别名、未知的高阶组合或含 effect 的循环间接调用 effect，也不能递归调用 effect。
 - **普通计算**：不含 effect 调用的表达式可以使用原生 Haskell，仍须遵守下文的资产约束。
-- **不直接调用 Context 方法**：例如不能直接调用 `fileName`，改用 `request`／`require`。
+- **不直接调用 Context 方法**：例如不能直接调用 `getFileName`，改用 `request`／`require`。
 
 <a id="workflow"></a>
 
@@ -645,7 +660,7 @@ ast = operateFile
 | 构件 | 写法 | 类型 | 含义 |
 | --- | --- | --- | --- |
 | node | `node "effect名"` | `EffectNode` | 选择一条操作链的末端 effect |
-| branch | `chained`、`parallel` 或 `alternative` 加子项列表 | `AST` | 组合 node 或其他 branch |
+| branch | `chained`、`parallel`、`alternative` 或 `lifelong` 加子项列表 | `AST` | 组合 node 或其他 branch |
 
 - **node 不是 AST**：顶层和每个模块都必须是 branch，单个 node 也要包进一个 branch。
 - **子项列表同质**：一个列表要么全是 node，要么全是 branch，不能混排。
@@ -657,13 +672,16 @@ ast = operateFile
 - **运行即调用入口方法**：Pure／Excu 调用 `handler`，Scoped 调用 `open`。方法体里调用的上游随之执行，Input 链不需要在 AST 里重写。
 - **node 结果不隐式传值**：一个 node 的结果不会交给下一个 node，值的传递只经 Context。后继 `require` 可读取 AST 因果顺序中唯一可见的发布来源；并行兄弟之间不按谁先完成决定读谁的值。
 
-### branch 的三种类型
+### branch 的四种类型
 
 | branch | 子项如何执行 | 失败时 | 结果 |
 | --- | --- | --- | --- |
 | `chained` | 按顺序逐个执行 | 立即停止，后面的子项不执行 | 各子项结果按顺序拼接 |
 | `parallel` | 同时执行 | 等全部子项结束，按声明顺序取第一个失败 | 全部成功时按声明顺序拼接 |
 | `alternative` | 只执行一个候选 | 候选的失败原样传播 | 只有被选中候选的结果 |
+| `lifelong` | 各单元同时运行，每领到一条新交付执行一次 | 终止整次运行（临时规则） | 没有正常结束 |
+
+程序里含 `lifelong` 时，`parallel` 中任何子项失败也立即终止整次运行，不再等待其他子项结束。
 
 #### `chained`
 
@@ -691,6 +709,18 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 - **运行时**：先 `require` 这个资产（已有值就直接用，没有就按需生产一次），再启动对应的候选，并把选择时读到的值交给候选；没被选中的候选不执行，也不出现在结果中。
 - 分支契约怎么产生，见[资产书写](#types)。
 
+#### `lifelong`
+
+```haskell
+-- StreamDemo/Workflow/Monitor.hs：每条新读数显示并分析一次，心跳单元独立推进
+monitor = lifelong
+  [ chained [node "ShowTemperature", node "CheckTrend"]
+  , chained [node "ReportHeartbeat"]
+  ]
+```
+
+单元划分、交付与失败规则见[持续资产与 lifelong](#stream)。
+
 ### 文件组织
 
 - 每个 branch 放在 `Workflow/` 下单独的文件里，顶层 `AST.hs` 用非限定 import 只组合这些名字。
@@ -700,6 +730,142 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 
 - **运行**：`main = interpreter ast effects`，结果打印为 `Succ [...]` 或 `Failed ...`，例如 FileDemo 输出 `Succ [AppendLineResult ()]`。原子句柄交出的 `Maybe String` 不是业务产物，在结果中记为 `()`。
 - **查看结构**：使用[命令行的 structure 模式](#commands)查看生成器推导的调用结构和资源依赖。
+
+<a id="stream"></a>
+
+## 五、持续资产与 lifelong（Stream）
+
+前四节的程序是有限的：每个 node 执行一次。持续数据源（传感器、socket、消息队列、定时采样）由三部分表达：Stream effect 取得原始输入，`stream = Just ()` 的 Context 把它变成持续资产，`lifelong` 在每条新交付到达时启动消费方。下面用 [StreamDemo](../demo/StreamDemo) 展示写法；完整规则见 [Stream 与 lifelong](STREAM_LIFELONG.md)。
+
+### 注册：两种生产方式
+
+以下节选 StreamDemo 的四个注册：
+
+```haskell
+EffectSpec
+  { name = "TemperatureFeed"
+  , typing = Stream { handler = Just "nextReading" }
+  , input = "SensorLink"
+  , demands = []
+  }
+
+EffectSpec
+  { name = "TemperatureParser"
+  , typing = Context { asset = namedAsset "TemperatureSample" @Temperature, request = Nothing, require = Just (), stream = Just () }
+  , input = "TemperatureFeed"
+  , demands = []
+  }
+
+EffectSpec
+  { name = "Heartbeat"
+  , typing = Context { asset = namedAsset "Beat" @Int, request = Just (), require = Just (), stream = Just () }
+  , input = "Root"
+  , demands = []
+  }
+
+EffectSpec
+  { name = "ShowTemperature"
+  , typing = Excu { handler = Just "showTemperature" }
+  , input = "Root"
+  , demands = [streams "TemperatureSample"]
+  }
+```
+
+`stream = Just ()` 声明持续资产，生产方式只由这份注册决定，不看谁在消费：
+
+| Context 的 `input` | `request` | `stream` | 生产方式 |
+| --- | --- | --- | --- |
+| Stream effect | `Nothing` | `Just ()` | **接收**：会话反复调用 Stream 的方法取得原始输入，交给解析器 `streamT` 解析并发布 |
+| Root 或普通 effect | `Just ()` | `Just ()` | **请求序列**：会话反复执行 `getT`，每次成功即一条新发布 |
+| 任意 | 按普通规则 | `Nothing` | 普通单值资产，不能被 `streams` 订阅 |
+
+其他组合由生成器拒绝：Stream 下的 Context 不能声明 `request`，必须声明 `stream`；`stream = Just ()` 不在 Stream 下时必须有 `request`；一个 Stream 恰好有一个 Context 以它为 `input`。
+
+- **读取类型**：持续资产的 `require @T` 在所有地方都返回 `History T`，普通资产仍返回 `T`；有没有消费方订阅不会改变它。
+- **订阅**：消费方写 `streams "T"`，表示由 T 的新交付驱动，同时取得 `require @T` 的权限，但不授予 `request`。
+
+### 方法：每次只处理一份
+
+```haskell
+instance TemperatureFeedInputs m => TemperatureFeedEffect m where
+  nextReading = do
+    _ <- connectSensor
+    liftIO (threadDelay 700000)
+    seconds <- liftIO getMonotonicTime
+    pure (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
+
+instance TemperatureParserInputs m => TemperatureParserEffect m where
+  streamTemperatureSample = do
+    raw <- inputTemperatureSample
+    case reads raw of
+      [(value, "")] -> pure (TemperatureSample (Temperature value))
+      _ -> raise (TemperatureParserError ("unreadable sensor output: " ++ raw))
+
+instance ShowTemperatureInputs m => ShowTemperatureEffect m where
+  showTemperature = do
+    samples <- require @TemperatureSample
+    case latest samples of
+      Just (TemperatureSample (Temperature value)) ->
+        liftIO (printf "reading #%d: %.1f C\n" (length (historyEntries samples)) value)
+      Nothing -> pure ()
+    pure Nothing
+```
+
+- **Stream 方法**一次返回一份原始输入；节奏由方法体自己的阻塞或等待决定，SDK 不加间隔，立即返回的方法会持续高频运行。
+- **解析器 `streamT`** 用 `inputT` 读取本次原始输入并返回一个资产。`inputT` 只生成在这个 Context 的类里，其他 handler 调用不到。发布、历史和交付都由 SDK 完成，方法体里不写循环、发布或回调。
+- **请求序列**的 `getT` 与普通 request 的写法相同（StreamDemo 的 `getBeat`）。
+- **`History T`**：从会话首条发布到本次交付为止的不可变序列。`latest` 取本次交付的那一条，`historyEntries` 取全部，`historySize` 取条数；相等的两次发布是两条。
+
+[完整 Effects.hs](../demo/StreamDemo/Effects.hs) · [完整 Handlers.hs](../demo/StreamDemo/Handlers.hs)
+
+### workflow：lifelong
+
+```haskell
+-- Workflow/Monitor.hs
+monitor = lifelong
+  [ chained [node "ShowTemperature", node "CheckTrend"]
+  , chained [node "ReportHeartbeat"]
+  ]
+
+-- AST.hs：先执行一次准备，再进入持续监控
+ast = chained [setup, monitor]
+```
+
+- **单元**：lifelong 的每个直接子项是一个单元；直接子项是 `parallel` 时拆开这一层，其子项分别是单元。各单元同时运行，互不等待。
+- **一次执行**：单元每领到一条新交付执行一次，结束后再领下一条；有积压时立即继续，没有就挂起等待，不反复调用 handler 试探数据。同一次执行里，每个资产只领取一次，后面的节点（包括并行节点、alternative 的选择与候选）读到同一份视图；StreamDemo 中 `ShowTemperature` 和 `CheckTrend` 看到的是同一条读数。
+- **每次执行互相隔离**：上一次执行中产生的普通资产不会被这一次读到。
+- **订阅规则**：lifelong 里的每个末端（连同它的 Input 链）恰好订阅一个持续资产，并且不再读取别的持续资产；`streams` 不能用在 lifelong 外的末端。lifelong 不能嵌套，内部不能有空分支。
+- **会话**：同一个 lifelong 里订阅同一资产的单元共享一个生产会话，各自独立推进；不同 lifelong 的会话互相独立。会话在进入 lifelong 时启动；生产步骤用到的资源（例如 `connectSensor` 打开的连接）在各步骤间保持，退出时关闭。持续资产的生产不能依赖另一个持续资产。
+- **显式 request**：单元里声明了 `requests "T"` 的节点执行 `request @T` 时，新值发布进本 lifelong 的会话，并接在本次调用自己的视图末尾。
+- **外部组合**：`chained [setup, monitor]` 先执行 setup；lifelong 没有正常结束，排在它后面的节点不会执行；`parallel [monitor, otherWork]` 两者同时运行。
+
+### 结束与失败
+
+- **没有正常结束**：持续程序运行到被取消（Ctrl-C）为止。取消时 SDK 停止全部单元和会话，等它们收尾，再按 ScopeTree 关闭资源；StreamDemo 会打印 `[sensor] disconnected`。
+- **失败（临时规则）**：程序里含 lifelong 时，任何失败（生产、解析、某个单元或任何 branch，先完成 Error 诊断）都终止整次运行：取消全部任务、等待收尾，最后报告最初的那个失败。lifelong 的 close 语义设计后再改为局部结束。
+- **lifelong 外读取持续资产**：普通 `requires "T"` 只读取一次。挂在 Stream 下的资产没有交付时，由 interpreter 托管的会话产出（至少等到一条），返回当时的历史；这个会话保持到程序退出。请求序列资产按普通 require 取得一个值，呈现为只有一条的历史。
+
+### 运行与查看
+
+```sh
+cabal run effect-codegen -- workflow StreamDemo
+cabal run stream-demo -- --structure
+cabal run stream-demo
+```
+
+`--structure` 的 `Workflow` 部分列出每个 lifelong 的单元、会话（生产方式与挂载位置）和订阅关系，`Interpreter sessions` 列出 lifelong 外读取时使用的会话。运行输出类似：
+
+```text
+Monitoring the sensor; press Ctrl-C to stop.
+[sensor] connected
+reading #1: 23.9 C
+  trend: waiting for a second reading
+reading #2: 24.0 C
+  trend rising, average of the last 2: 23.95 C
+[heartbeat] #1
+...
+[sensor] disconnected
+```
 
 <a id="runtime-behavior"></a>
 
@@ -757,8 +923,9 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 
 | 情况 | 处理方式 |
 | --- | --- |
-| handler 名推出的契约名与 effect 名、生成区名字重名 | 换一个按业务含义起的 handler 名 |
-| `demands` 里的契约名没有对应的生产方 | 检查名字：契约名 = 生产方 handler 名首字母大写 |
+| 资产名与 effect 名、生成区名字重名 | 换一个按业务含义起的资产名 |
+| `demands` 里的契约名没有对应的生产方 | 检查名字：契约名就是生产方声明的资产名 |
+| 声明了 `request`／`require` 中没有的角色却去 `requests`／`requires` | 在生产方补上角色，或去掉这项 demand |
 | 方法体里 `request @T`／`require @T` 的 `T` 没有在 `demands` 中声明 | 补上声明 |
 | 直接调用其他 effect 的 Context 方法（如 `getFileName`） | 改用 `request @T`／`require @T` |
 | 在生产方以外构造某个 Context 产物类型的值（例如在消费方写 `StartURL (...)`） | 值应由它的生产方产生；消费方用 `request`／`require` 取得，只做模式匹配 |
@@ -769,6 +936,9 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 | AST 的 node 选中了 Context 或 Error | node 只挂原始句柄；Context 由它挂接的句柄执行时产出，或被 `request`／`require` 时产出；Error 由失败协议调用 |
 | 某个 Context 从 AST 出发永远到不了：既没有 node 带起它挂接的句柄，也没有被带起的链 `request`／`require` 它 | 把带起它的链加进 AST，或删掉这个 Context |
 | 缺值读取路径上，同一契约有多个可能同时发布的可见来源 | 细化契约或调整 AST；alternative 和条件 fallback 可证明互斥时允许多个候选 |
+| 持续资产的声明不成立：Stream 下的 Context 写了 `request` 或缺少 `stream = Just ()`；`stream = Just ()` 既不在 Stream 下也没有 `request`；Stream 下不是恰好一个 Context；`streams` 订阅了普通资产或分支契约 | 按[持续资产的声明规则](#stream)修正 |
+| `streams` 写在 lifelong 外的末端上；lifelong 嵌套或含空分支；lifelong 里的末端没有恰好订阅一个持续资产，或另外读取了别的持续资产 | 按 [lifelong 的规则](#stream)调整注册或 AST |
+| lifelong 中持续资产的生产链依赖另一个持续资产 | 首次交付会等待另一个 stream；改用普通资产作为生产前提 |
 
 这些规则保证：组合关系总能从源码中静态读出来，不会藏在任意函数里。
 
@@ -790,6 +960,7 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 | [OpenFilesDemo](../demo/OpenFilesDemo) | 一个资源持有多个文件，链结束后自动关闭与重开 | `cabal run open-files-demo` |
 | [ScopeInstancesDemo](../demo/ScopeInstancesDemo) | 按参数区分资源实例、复用与重开 | `cabal run scope-instances-demo` |
 | [ScopeReuseDemo](../demo/ScopeReuseDemo) | 并行的链共享同一个资源实例 | `cabal run scope-reuse-demo` |
+| [StreamDemo](../demo/StreamDemo) | 持续读数（Stream＋解析器）、请求序列心跳、lifelong 的两个独立单元；会话跨步骤保持传感器连接 | `cabal run stream-demo`（持续运行，Ctrl-C 结束） |
 
 Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各自目录下，已加入 Git 忽略。
 
@@ -797,7 +968,8 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 
 ## 当前限制
 
-- **未实现的能力**：[Stream 与 lifelong](STREAM_LIFELONG.md) 已形成设计规范（生产方式自动装配、资产交付与回调 boot），SDK 尚未实现；middleware、通用结构适配尚未实现。
+- **未实现的能力**：middleware、通用结构适配尚未实现。
+- **持续执行的延期项**：没有正常结束（EOF）、Stream close、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；完整历史一直保留，持续运行时内存随发布增长。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
 - **handler 复用**：同一段 handler 逻辑还不能服务多种数据类型，需要分别注册（Crawler 的两条链因此各有一份实现）。
 - **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。
 - **构建方式**：SDK 目前随仓库内的示例一起编译，不能作为独立依赖引入。
