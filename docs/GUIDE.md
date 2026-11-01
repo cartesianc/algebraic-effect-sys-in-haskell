@@ -812,7 +812,7 @@ instance ShowTemperatureInputs m => ShowTemperatureEffect m where
 ```
 
 - **Stream 方法**一次返回一份原始输入；节奏由方法体自己的阻塞或等待决定，SDK 不加间隔，立即返回的方法会持续高频运行。
-- **解析器 `streamT`** 用 `inputT` 读取本次原始输入并返回一个资产。`inputT` 只生成在这个 Context 的类里，其他 handler 调用不到。发布、历史和交付都由 SDK 完成，方法体里不写循环、发布或回调。
+- **解析器 `streamT`** 用 `inputT` 读取本次原始输入并返回一个资产。`inputT` 只生成在这个 Context 的类里，其他 handler 调用不到。解析器不要直接调用 Stream 方法：会话已经取得本次输入，再调用会另取一份，生成器会拒绝。发布、历史和交付都由 SDK 完成，方法体里不写循环、发布或回调。
 - **请求序列**的 `getT` 与普通 request 的写法相同（StreamDemo 的 `getBeat`）。
 - **`History T`**：从会话首条发布到本次交付为止的不可变序列。`latest` 取本次交付的那一条，`historyEntries` 取全部，`historySize` 取条数；相等的两次发布是两条。
 

@@ -12,14 +12,15 @@ module Framework.Effect.Runtime
 import Framework.Effect.Contract (Failure)
 import Framework.Effect.Runtime.App (App, Launch(..), runAppWith)
 import Framework.Effect.Runtime.Graph
-  (RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, newOrigin, obtainSession)
+  (RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, newOrigin, obtainSession, currentPublications)
 import Framework.Effect.Runtime.Identity (Execution(..))
 import Framework.Effect.Runtime.Session
 import Framework.Effect.Scope
 import Framework.Prototype
 import Control.Concurrent (forkIOWithUnmask)
 import Control.Concurrent.MVar (MVar, modifyMVar, newEmptyMVar, newMVar, putMVar, readMVar, tryReadMVar)
-import Control.Exception (SomeAsyncException, SomeException, evaluate, fromException, mask, throwIO, try)
+import Control.Exception
+  (SomeAsyncException, SomeException, evaluate, finally, fromException, mask, throwIO, try, uninterruptibleMask_)
 import Control.Monad (forM)
 import Data.List (nubBy)
 
@@ -44,11 +45,11 @@ noHandoff :: Handoff environment cause
 noHandoff = Handoff [] []
 
 -- lifelong 单元的一次执行：本 lifelong 的各会话及该单元的游标。每个会话资产在一次执行中只领取一次，
--- 第一个需要它的调用领取，其余调用（包括同一执行内并行的节点）共享同一份固定视图；
+-- 第一个需要它的调用领取，其余调用（包括同一执行内并行的节点）共享同一份固定视图与伴随发布；
 -- 单元内对这些资产的显式 request 发布进入对应会话。
 data Frame environment cause = Frame
   { frameSessions :: [(String, (Session environment cause, Cursor))]
-  , frameTaken :: MVar [(String, MVar (Either (Broken cause) (View environment cause)))]
+  , frameTaken :: MVar [(String, MVar (Either (Broken cause) (Delivery environment cause)))]
   }
 
 newFrame :: [(String, (Session environment cause, Cursor))] -> IO (Frame environment cause)
@@ -61,7 +62,10 @@ boundarySession graph boundary source (Handoff given views) = obtainSession grap
 
 -- 不是本 lifelong 的会话资产时为 Nothing。没有新发布时挂起；有积压时立即领取下一条。
 frameDelivery :: Frame environment cause -> String -> Maybe (IO (Either (Broken cause) (View environment cause)))
-frameDelivery frame source = do
+frameDelivery frame source = fmap (fmap fst) <$> frameTake frame source
+
+frameTake :: Frame environment cause -> String -> Maybe (IO (Either (Broken cause) (Delivery environment cause)))
+frameTake frame source = do
   (session, cursor) <- lookup source (frameSessions frame)
   pure $ do
     (slot, fresh) <- modifyMVar (frameTaken frame) $ \taken -> case lookup source taken of
@@ -75,24 +79,29 @@ frameDelivery frame source = do
       putMVar slot (either (Left . Left) id outcome)
       either throwIO pure outcome
 
-frameViews :: Frame environment cause -> IO [(String, View environment cause)]
-frameViews frame = do
+frameDeliveries :: Frame environment cause -> IO [(String, Delivery environment cause)]
+frameDeliveries frame = do
   taken <- readMVar (frameTaken frame)
   fmap concat $ forM taken $ \(source, slot) -> do
     filled <- tryReadMVar slot
-    pure [(source, view) | Just (Right view) <- [filled]]
+    pure [(source, delivery) | Just (Right delivery) <- [filled]]
 
 -- Node algebra 只 lower 末端；scope 引用已绑定在句柄中。
 -- 受控结果消费在撤销入口使用登记前完成，惰性读取不会落在自动 close 之后。
 -- 末端共享同一次 interpreter 运行的资产 state，使 require 可读取先前 Node 产出的资产。
 -- 在 lifelong 单元的 frame 中，已领取的交付优先于交接视图，尚未领取的会话资产在第一次读取时领取。
+-- 已领取交付的伴随发布作为已捕获绑定交给本次调用，交接中已经捕获的值优先（与来源分析一致）；
+-- 生成期保证读取伴随资产的位置在调用前已经领取了对应会话的交付。
+-- 单元内显式 request 产生的交付没有会话生产步骤，不带伴随发布。
 lowerTarget :: RuntimeGraph environment cause -> NodeId -> Maybe (Frame environment cause) -> Handoff environment cause
             -> Target environment cause value -> IO (Either (Failure cause) value, Handoff environment cause)
 lowerTarget graph location frame (Handoff given views) target = do
-  taken <- maybe (pure []) frameViews frame
-  let merged = taken ++ [entry | entry@(source, _) <- views, source `notElem` map fst taken]
-      sinks = [(source, appendDelivery session) | Just current <- [frame], (source, (session, _)) <- frameSessions current]
-      launch = Launch given merged Nothing sinks (\source -> frame >>= (`frameDelivery` source)) Nothing
+  taken <- maybe (pure []) frameDeliveries frame
+  let merged = [(source, view) | (source, (view, _)) <- taken]
+        ++ [entry | entry@(source, _) <- views, source `notElem` map fst taken]
+      companions = [entry | (_, (_, published)) <- taken, entry@(source, _) <- published, source `notElem` map fst given]
+      sinks = [(source, appendDelivery session []) | Just current <- [frame], (source, (session, _)) <- frameSessions current]
+      launch = Launch (given ++ companions) merged Nothing sinks (\source -> frame >>= (`frameDelivery` source)) Nothing
   (outcome, captured, delivered) <- lowerWith graph location launch target
   pure (outcome, Handoff captured delivered)
 
@@ -125,26 +134,27 @@ requestSteps :: Target environment cause () -> SessionSteps environment cause
 requestSteps = RequestSteps
 
 -- 为新会话启动生产任务：按原型找到该边界的会话挂载，逐次执行生产步骤，把发布写入会话历史。
+-- 每条交付带上本次生产步骤（各挂载当前一次执行）已经发布的普通资产，作为伴随发布。
 -- 各步骤共用会话的 scope 使用登记，生产资源跨步骤保持；会话停止时撤销登记，资源交给退出清理。
 -- 生产失败（已经过 Error 协议诊断）或原生异常使会话失败并停止，并通知运行监督；
 -- 取消只结束任务，步骤内照常收尾。
+-- 启动到登记在不可中断区内完成，取消不会落在任务已启动、尚未登记之间。任务继承这一屏蔽，只在生产时解除：
+-- 报告失败、撤销使用登记和填写完成信号都不会被停止请求打断，stopSession 一定等得到完成信号。
 sessionLauncher :: RuntimeGraph environment cause -> [(String, SessionSteps environment cause)]
                 -> (Broken cause -> IO ()) -> Session environment cause -> IO ()
-sessionLauncher graph steps onBroken session = do
+sessionLauncher graph steps onBroken session = uninterruptibleMask_ $ do
   finished <- newEmptyMVar
   owner <- case mounts of
     Just (mount : _) -> newOrigin graph mount >>= newScopeUser (runtimeScopes graph) . BusinessExecution
     _ -> ioError (userError ("No session steps for " ++ source ++ " at " ++ show boundary
       ++ "; regenerate with the SDK effect-codegen command"))
-  thread <- forkIOWithUnmask $ \unmask -> do
+  thread <- forkIOWithUnmask $ \unmask -> (`finally` putMVar finished ()) $ (`finally` detachScopeUser owner) $ do
     outcome <- try (unmask (produce owner))
     case outcome of
       Left (exception :: SomeException)
         | Just (_ :: SomeAsyncException) <- fromException exception -> pure ()
         | otherwise -> broken (Left exception)
-      Right () -> pure ()
-    detachScopeUser owner
-    putMVar finished ()
+      Right problem -> broken (Right problem)
   setSessionWorker session thread finished
   where
     (boundary, source) = sessionKey session
@@ -159,17 +169,16 @@ sessionLauncher graph steps onBroken session = do
         loop (first <$> lowerWith graph requestMount (step owner Nothing sink) request)
       _ -> ioError (userError ("Session steps differ from the prototype mounts for " ++ source
         ++ "; regenerate with the SDK effect-codegen command"))
-    sink = [(source, appendDelivery session)]
+    sink = [(source, \value -> do
+      companions <- currentPublications graph (maybe [] id mounts)
+      appendDelivery session companions value)]
     -- 每一步从边界交接的新副本开始，共用会话的使用登记。
     step owner input sinks = Launch (sessionBindings session) (sessionViews session) input sinks noDelivery (Just owner)
     noDelivery = const Nothing
     first (outcome, _, _) = outcome
     broken reason = breakSession session reason >> onBroken reason
-    loop step = do
-      outcome <- step
-      case outcome of
-        Left problem -> broken (Right problem)
-        Right () -> loop step
+    -- 逐次执行直到第一次失败；失败交回不可中断区报告。
+    loop step = step >>= either pure (const (loop step))
 
 -- 会话挂载只来自同一份原型：lifelong 边界的会话，或 interpreter 托管的会话；原型按资产名记录。
 sessionMountsOf :: PrototypeReference -> Maybe NodeId -> String -> Maybe [NodeId]

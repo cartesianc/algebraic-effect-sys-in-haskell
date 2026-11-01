@@ -573,6 +573,17 @@ buildPreparedPrototype plan shapes = do
         , methodRole definition == ContextRequire, methodIdentity definition `notElem` map fst shapes]
       result = Prototype (plannedRegistrations plan) effects definitions workflow finite
         (map makeChain mounts) chainDefinitions graph scopes names []
+  -- Stream 只由生产会话的 Stream 单步读取：其他方法（包括解析器）直接调用 Stream 方法会另取一份原始输入，
+  -- 使会话已经取得的那一份不被解析。解析器经生成的 input 方法读取本次输入。
+  let streamMethods = [method | effect <- effects, (StreamHandler, method) <- effectMethods effect]
+  mapM_ (\definition -> case filter (`elem` streamMethods) (calledMethods (methodBody definition)) of
+      [] -> pure ()
+      called : _ -> Left (InvalidPrototype ("Method " ++ methodIdentity definition ++ " calls Stream method "
+        ++ called ++ " directly; only the production session reads a Stream"
+        ++ concat ["; the parser reads the current input with input" ++ contractType
+          | effect <- effects, (ContextStream, parser) <- effectMethods effect, parser == methodIdentity definition
+          , Just contractType <- [effectProduces effect]])))
+    [definition | definition <- definitions, methodRole definition /= StreamHandler]
   -- 启动环：会话的生产链不能依赖其他持续资产，否则首次生产就要先等待另一份增量。
   let continuousMethods = [(contractType, method) | effect <- effects, effectContinuous effect
         , Just contractType <- [effectProduces effect], (role, method) <- effectMethods effect
@@ -822,9 +833,26 @@ resolveSources definitions defaultReaders prototype = do
         { chainDrives = sort (nub [contractType | (node', contractType) <- assetDrives facts, node' == chainNode chain])
         , chainReads = sort (nub [readContract point | (point, _) <- reads, readNode point == chainNode chain])
         }
+  mapM_ companionRead reads
   pure prototype { protoChains = map annotate (protoChains prototype), protoSources = reads }
   where
     effects = protoEffects prototype
+    lifelongs = workflowLifelongs (protoWorkflow prototype)
+    -- 会话生产步骤的其他普通发布随交付读取（伴随发布），每一步都会替换。读取位置必须在调用前
+    -- 已经领取该会话的交付：由该资产驱动的 Node，或以它为转折资产的选择读取；否则读到哪一步取决于调度。
+    companionRead (point, FromChains nodes) = do
+      let producers = nub [sessionAsset session | (_, described) <- lifelongs
+            , session <- lifelongSessions described, any (`elem` sessionMounts session) nodes]
+          taken = [contractType | (_, described) <- lifelongs
+              , (node', contractType) <- lifelongSubscriptions described, node' == readNode point]
+            ++ [alternativeContract choice | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype)
+              , alternativeSelector choice == readNode point]
+          stray = filter (`notElem` taken) producers
+      unless (null stray) $ Left (InvalidLifelong (readNode point) ("Asset " ++ readContract point
+        ++ " is published by the production step of " ++ intercalate ", " stray
+        ++ " and is replaced at every delivery; read it only in targets driven by " ++ intercalate ", " stray
+        ++ ", or produce it before the lifelong"))
+    companionRead _ = pure ()
     resources = [source | effect <- effects, Just source <- [effectResource effect]]
     receiving = [contractType | effect <- effects, effectContinuous effect
       , Just contractType <- [effectProduces effect], bootPlan effects effect /= RepeatRequest]
