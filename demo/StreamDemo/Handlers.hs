@@ -36,10 +36,11 @@ instance TemperatureFeedInputs m => TemperatureFeedEffect m where
     seconds <- liftIO getMonotonicTime
     pure (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
 
--- 解析器读取本次原始输入，返回一个资产；发布、历史和交付由 SDK 完成。
+-- 解析器挂在 Stream 下：调用 nextReading 得到会话本次取得的原始读数（不会再读一次），返回一个资产；
+-- 发布、历史和交付由 SDK 完成。
 instance TemperatureParserInputs m => TemperatureParserEffect m where
-  streamTemperatureSample = do
-    raw <- inputTemperatureSample
+  getTemperatureSample = do
+    raw <- nextReading
     case reads raw of
       [(value, "")] -> pure (TemperatureSample (Temperature value))
       _ -> raise (TemperatureParserError ("unreadable sensor output: " ++ raw))

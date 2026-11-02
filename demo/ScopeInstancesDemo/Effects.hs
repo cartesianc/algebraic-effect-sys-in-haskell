@@ -3,7 +3,7 @@
 
 module ScopeInstancesDemo.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), namedAsset, requests, requires)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), Asset(..), requests, requires)
 import ScopeInstancesDemo.Types
 
 -- 路径来源是 Context，scope 没有 key 或产值字段；demands 只声明契约，来源唯一解析。
@@ -17,13 +17,13 @@ effects =
       }
   , EffectSpec
       { name = "FileLocation"
-      , typing = Context { asset = namedAsset "FileName" @FilePath, request = Just (), require = Just (), stream = Nothing }
+      , typing = Context { asset = Asset @FilePath "FileName", request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = []
       }
   , EffectSpec
       { name = "FileResource"
-      , typing = Context { asset = namedAsset "OpenedFile" @FileHandle, request = Just (), require = Just (), stream = Nothing }
+      , typing = Context { asset = Asset @FileHandle "OpenedFile", request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = [requires "FileName"]
       }

@@ -26,10 +26,11 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 | 结构 | 职责 |
 | --- | --- |
 | Stream effect | 第六种 typing；手写方法每次取得一份原始输入（`String`），只由生产会话调用 |
-| Context.request | 一次主动生产，成功后发布资产 |
-| Context.stream | 声明持续资产；Receive 生成解析方法，RepeatRequest 复用 request 生产 |
+| Context.request | 一次主动生产，成功后发布资产；挂在 Stream 下时它的 `getT` 就是解析器 |
+| 解析器 | 挂在 Stream 下的 Context：`getT` 调用 Stream 方法得到会话本次取得的原始输入，解析后发布 |
+| Context.stream | 不在 Stream 下的 Context 声明持续资产，由会话反复执行 request（RepeatRequest）；挂在 Stream 下的 Context 不写 |
 | Context.require | 读取已有绑定或交付视图；缺值按合法生产能力求值 |
-| `stream = Just ()` | 声明持续资产：`require` 返回 `History`，可以被 `streams` 订阅 |
+| 持续资产 | 挂在 Stream 下的 Context 的资产，或声明 `stream = Just ()` 的资产：`require` 返回 `History`，可以被 `streams` 订阅 |
 | `streams "T"` | 消费方声明以资产 T 的新交付驱动，同时取得读取权限；不是调用 parser 的语法 |
 | lifelong | 为其单元订阅会话，在交付就绪时 boot original target |
 | BootPlan | 生成器按生产方注册推导的生产方式：Receive 或 RepeatRequest，不是手写标签 |
@@ -41,32 +42,30 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 
 Stream 不进入 original chain，也不作为 AST target；只通过它下面的解析器 Context 进入生产。original target 始终代表一条完整消费链的末端。
 
-socket、event、behavior 用来解释不同的驱动关系，但不是类型标签；三者各自的写法见 [4.1 节](#drives)。Receive 的 Context 只声明 stream 生产角色，不能声明 request；RepeatRequest 同时声明 request 与 stream，由 request 生产，stream 字段标记持续资产。
+socket、event、behavior 用来解释不同的驱动关系，但不是类型标签；三者各自的写法见 [4.1 节](#drives)。Receive 的 Context 与挂在原子句柄下的 Context 写法相同：声明 request，`getT` 调用上游 Stream 的方法取得本次输入，不写 stream；RepeatRequest 同时声明 request 与 `stream = Just ()`，由 request 生产，stream 字段标记持续资产。
 
 <a id="contracts"></a>
 ## 3. 资产、方法与 beforegen
 
 ### 3.1 资产身份独立于方法身份
 
-业务表示类型先在 Types.hs 定义，Context 以资产名和表示类型声明资产，再声明三个可选角色：
+业务表示类型先在 Types.hs 定义，Context 把它细化为一个资产（refinement asset，意义见[主设计 4.3](LATEST_DESIGN.md#refinement)），再声明三个可选角色。挂在 Stream `TemperatureFeed` 下的解析器写作：
 
     typing = Context
-      { asset   = namedAsset "TemperatureSample" @Temperature
-      , request = Nothing
+      { asset   = Asset @Temperature "TemperatureSample"
+      , request = Just ()
       , require = Just ()
-      , stream  = Just ()
+      , stream  = Nothing
       }
 
 资产名就是契约名，生成器产出 `newtype TemperatureSample = TemperatureSample Temperature`。方法名由资产名 T 固定生成：
 
 | 角色 | 生成的方法 | 方法体职责 |
 | --- | --- | --- |
-| request | `getT` | 生产一个成功资产（手写） |
+| request | `getT` | 生产一个成功资产（手写）；挂在 Stream 下时就是解析器 |
 | require | `readT` | 读取确定的资产视图（SDK 实现，消费方经 `require @T` 使用） |
-| stream（仅 Receive） | `streamT` | 用本次原始输入解析一个成功资产（手写） |
-| stream 的输入（仅 Receive） | `inputT` | 解析器读取本次原始输入（SDK 实现，只生成在该 Context 的类中） |
 
-RepeatRequest 不生成 `streamT`／`inputT`，持续生产复用 `getT`；`readT` 按 require 角色生成。首次生成契约后才编写 Handlers；新增类型、默认方法和 parser 输入能力在执行副本生成之前就存在于 Generated/Effects。
+挂在 Stream 下的 Context 没有另外的解析方法或输入方法：`getT` 调用 Stream 的方法取得本次原始输入，这次调用由会话本次取得的输入回答，不再执行 Stream 方法体，与挂在原子句柄下的 Context 调用句柄相同（[主设计 4.3](LATEST_DESIGN.md#context) 的原子输出挂接）。RepeatRequest 同样以 `getT` 生产。首次生成契约后才编写 Handlers。
 
 ### 3.2 Context 角色的匹配表
 
@@ -74,30 +73,30 @@ RepeatRequest 不生成 `streamT`／`inputT`，持续生产复用 `getT`；`read
 
 | Context.input | request | stream | 结果 |
 | --- | --- | --- | --- |
-| Stream effect | `Nothing` | `Just ()` | 持续资产，Receive：Stream 单步＋解析器 |
+| Stream effect | `Just ()` | `Nothing` | 持续资产，Receive：Stream 单步＋解析器 `getT` |
 | Root 或普通 effect | `Just ()` | `Just ()` | 持续资产，RepeatRequest：反复执行 request |
 | Root 或普通 effect | `Just ()` | `Nothing` | 普通单值资产 |
-| Stream effect | `Just ()` | 任意 | 报错：Stream 下的 Context 由解析器生产，不能声明 request |
-| Stream effect | `Nothing` | `Nothing` | 报错：缺少解析输入的 stream 角色 |
-| Root 或普通 effect | `Nothing` | `Just ()` | 报错：没有 Stream 输入；挂到 Stream 下，或声明 request 以反复请求 |
+| Stream effect | `Just ()` | `Just ()` | 报错：挂在 Stream 下已经是持续资产，去掉 `stream = Just ()` |
+| Stream effect | `Nothing` | 任意 | 报错：缺少解析器入口，声明 `request = Just ()` |
+| Root 或普通 effect | `Nothing` | `Just ()` | 报错：持续资产需要 request；不在 Stream 下时由会话反复 request |
 | Root 或普通 effect | `Nothing` | `Nothing` | 报错：缺少生产入口 |
 
-另外：Stream 必须声明 handler；以 Stream 为 input 的必须恰好是一个 Context（它的解析器），其他 effect 不能直接取得原始输入。Input 提供能力不等于方法一定执行；任意祖先具有 Stream 能力不使 Context 成为解析器，只有直接 input 算数。
+另外：Stream 必须声明 handler；以 Stream 为 input 的必须恰好是一个 Context（它的解析器），其他 effect 不能直接取得原始输入。挂在 Stream 下的资产只由会话生产，消费方不能声明 `requests "T"`。Input 提供能力不等于方法一定执行；任意祖先具有 Stream 能力不使 Context 成为解析器，只有直接 input 算数。
 
 ### 3.3 消费权限与读取类型
 
 消费方写 `streams "T"`，方法体用 `require @T` 读取交付。streams 同时授予这项读取权限，不必再写 `requires "T"`，但 T 必须声明 require 角色；streams 不授予 request 权限，主动生产须另外声明 `requests "T"`。
 
-- 只有 `stream = Just ()` 的基础契约可以被订阅；订阅分支契约时报错，应订阅其基础契约。
+- 只有持续资产（挂在 Stream 下，或 `stream = Just ()`）的基础契约可以被订阅；订阅分支契约时报错，应订阅其基础契约。
 - 只有 Pure、Excu、Scoped 可以声明 streams。
 
-读取类型由生产方注册决定：`stream = Just ()` 的资产，其 `readT` 和所有消费方的 `require @T` 都返回 `History T`；`getT`／`streamT`／`request @T` 返回单个资产。普通资产保持单值读取。消费方新增订阅不会改变任何人的读取类型；一份契约需要同时有单值与持续两种读法时，细化为两个资产。分支契约投影本次交付的最新条目。
+读取类型由生产方注册决定：持续资产的 `readT` 和所有消费方的 `require @T` 都返回 `History T`；`getT`／`request @T` 返回单个资产。普通资产保持单值读取。消费方新增订阅不会改变任何人的读取类型；一份契约需要同时有单值与持续两种读法时，细化为两个资产。分支契约投影本次交付的最新条目。
 
 History 是从会话首条发布到确定交付位置的有限、不可变序列，由 SDK 构造：`latest`、`historyEntries`、`historySize` 读取。相等值的两个 publication 仍是两条。无限的是 SDK 持续推进的过程，不是业务手写的无限列表。History 包装共享发布序列，不逐条重建业务值；`latest` 取末项，`historySize` 取长度。领取一条交付还涉及序列前缀切分和伴随发布索引，因此不把整个领取过程承诺为常数时间；`historyEntries`、完整显示、比较或遍历可能访问全部条目。
 
 ### 3.4 原子输入与源码约束
 
-Stream 方法一次返回一个原始输入，解析器一次解析一个；parser 不再请求生产入口。解析器经生成的 `inputT` 读取会话已经取得的本次输入，不直接调用 Stream 方法：直接调用会另取一份输入，使会话取得的那一份不被解析。生成期拒绝 Stream 单步以外任何方法对 Stream 方法的调用。业务只写原生 instance、类方法调用、ADT、局部计算和 raise，不手写 yield、递归连接、publish、subscribe、acknowledge 或回调参数。现有资产显式引用约束继续适用：资产构造器只出现在其生产方（含解析器）的方法中。
+Stream 方法一次返回一个原始输入，解析器一次解析一个。解析器的 `getT` 直接调用 Stream 方法取得本次输入：会话调用解析器时安装了这份输入，这次调用由它回答，不再执行 Stream 方法体另取一份。其他方法直接调用 Stream 方法会绕过会话，生成期拒绝。业务只写原生 instance、类方法调用、ADT、局部计算和 raise，不手写 yield、递归连接、publish、subscribe、acknowledge 或回调参数。现有资产显式引用约束继续适用：资产构造器只出现在其生产方（含解析器）的方法中。
 
 Excu／Scoped 的 `Maybe String` 仍表示可选信息，不能把 `Nothing` 释为 EOF；正常结束协议本版延期。
 
@@ -122,7 +121,7 @@ Excu／Scoped 的 `Maybe String` 仍表示可选信息，不能把 `Nothing` 释
 
 | 驱动关系 | 数据怎样到来 | 写法 | 生产方式 |
 | --- | --- | --- | --- |
-| socket | 外部持续送来原始数据，逐条接收：连接、消息队列、传感器读数 | Stream 的方法阻塞接收一份原始输入（`m String`），挂在它下面的 Context 以 stream 角色解析为资产；连接等资源放在 Stream 的 Input 上游 scope 中，跨生产步骤保持（见 8.1） | Receive |
+| socket | 外部持续送来原始数据，逐条接收：连接、消息队列、传感器读数 | Stream 的方法阻塞接收一份原始输入（`m String`），挂在它下面的 Context 由 `getT` 调用该方法取得这份输入并解析为资产；连接等资源放在 Stream 的 Input 上游 scope 中，跨生产步骤保持（见 8.1） | Receive |
 | behavior | 值一直存在，随时可以采样：时钟、心跳、状态轮询 | 不在 Stream 下的 Context 声明 `request = Just ()` 与 `stream = Just ()`；request 方法取得当前值，并以自己的等待决定采样节奏 | RepeatRequest |
 | event | 离散地发生，每次发生得到一条 | 外部事件：阻塞读取下一个事件；需要解析原始文本时写成 Stream 单步＋解析器，直接得到业务值时写成 request。lifelong 内部产生的事件：消费者同时声明 `streams "T"` 与 `requests "T"`，在 lifelong 内 `request @T`，新发布进入本 lifelong 的会话（见 8.2） | Receive、RepeatRequest，或进入已有会话 |
 
@@ -307,7 +306,7 @@ Stream close、lifelong 的局部结束、会话生产资源与历史资源的�
 | 生产任务、frame、交付视图的交接 | [Runtime.hs](../sdk/Framework/Effect/Runtime.hs) |
 | 视图读取、解析器输入、会话发布路由 | [App.hs](../sdk/Framework/Effect/Runtime/App.hs)、[Context.hs](../sdk/Framework/Effect/Context.hs) |
 | 单元调度、就绪检查、运行监督 | [Execution.hs](../sdk/Framework/Workflow/Execution.hs) |
-| 生成的读取方法、`inputT`、会话步骤登记 | [Codegen.hs](../sdk/Framework/Codegen.hs) |
+| 生成的读取方法、Stream 方法的会话包装、会话步骤登记 | [Codegen.hs](../sdk/Framework/Codegen.hs)、[Context.hs](../sdk/Framework/Effect/Context.hs)（`streamHandle`） |
 
 ScopeTree 独立构建并保持无环；订阅与回调关系不作为 scope 父边。运行时不累计完整方法调用历史或无限 workflow 结果。
 

@@ -226,7 +226,7 @@ buildEffectProtos specifications sumTypes = do
         { effectName = name specification
         , effectKind = Registration.effectKind (typing specification)
         , effectInput = input specification
-        , effectMethods = registeredMethods specification
+        , effectMethods = registeredMethods specifications specification
         , effectDemands = resolvedOf (name specification)
         , effectProduces = contractOf <$> contextAsset (typing specification)
         , effectBranches = branchesOf specification
@@ -248,7 +248,7 @@ buildEffectProtos specifications sumTypes = do
         , effectNearestScopes = nub (nearest [] (name specification))
         , effectResource = case typing specification of Scoped {} -> requestSource specification; _ -> Nothing
         , effectContextDependencies = contextDependencies
-        , effectContinuous = isContinuous (typing specification)
+        , effectContinuous = continuousContext specifications specification
         }
       prototypes = zipWith make specifications dependencies
       findSpec selected = case filter ((== selected) . name) specifications of
@@ -277,16 +277,17 @@ buildEffectProtos specifications sumTypes = do
             valid (length (requested specification) <= 1) ("Scoped requests at most one resource Context: " ++ name specification)
             valid (opening == Nothing || closing /= Nothing) ("Scoped.open needs Scoped.close for automatic cleanup: " ++ name specification)
           Context { asset = declared, request = requesting, stream = streaming } -> do
-            -- 生产方式只看本注册：挂在 Stream 下由解析器生产，否则由 request 生产（持续资产即反复 request）。
+            -- 生产方式只看本注册：挂在 Stream 下由 request 声明的 getT 解析会话取得的原始输入，资产自动是持续资产；
+            -- 否则由 request 生产，stream = Just () 时由会话反复 request。
             let streamInput = [name source | source <- specifications, name source == input specification
                   , Stream {} <- [typing source]]
             case (streamInput, requesting, streaming) of
-              (source : _, Just (), _) -> Left (InvalidPrototype ("Context " ++ name specification ++ " hangs below Stream "
-                ++ source ++ " and must not declare request; its stream parser produces the asset"))
-              (source : _, Nothing, Nothing) -> Left (InvalidPrototype ("Context " ++ name specification ++ " hangs below Stream "
-                ++ source ++ " and needs stream = Just () to parse its input"))
+              (source : _, Nothing, _) -> Left (InvalidPrototype ("Context " ++ name specification ++ " hangs below Stream "
+                ++ source ++ " and needs request = Just (); its getT parses each raw input of the Stream"))
+              (source : _, Just (), Just ()) -> Left (InvalidPrototype ("Context " ++ name specification ++ " hangs below Stream "
+                ++ source ++ " and is already a continuous asset; remove stream = Just ()"))
               ([], Nothing, Just ()) -> Left (InvalidPrototype ("Context " ++ name specification
-                ++ " declares stream = Just () without a Stream input; hang it below a Stream, or declare request = Just () to repeat request"))
+                ++ " declares stream = Just () without request = Just (); a continuous asset outside a Stream is produced by repeated request"))
               ([], Nothing, Nothing) -> Left (InvalidPrototype ("Context needs a production role, request = Just (): " ++ name specification))
               _ -> pure ()
             valid (validContractName (contractOf declared))
@@ -337,18 +338,19 @@ buildEffectProtos specifications sumTypes = do
       | specification <- specifications, Just declared <- [contextAsset (typing specification)]
       , (branch, _) <- branchesOf specification]
 
-registeredMethods :: EffectSpec -> [(MethodRole, String)]
-registeredMethods specification = case typing specification of
+registeredMethods :: [EffectSpec] -> EffectSpec -> [(MethodRole, String)]
+registeredMethods specifications specification = case typing specification of
   Pure method -> [(HandlerMethod, selected) | selected <- maybeToList method]
   Excu method -> [(HandlerMethod, selected) | selected <- maybeToList method]
   Scoped opening closing -> [(ScopeOpen, selected) | selected <- maybeToList opening]
     ++ [(ScopeClose, selected) | selected <- maybeToList closing]
   Error detecting resolving _ -> [(ErrorDetect, selected) | selected <- maybeToList detecting]
     ++ [(ErrorResolve, selected) | selected <- maybeToList resolving]
-  selected@Context {} -> [(ContextRequest, method) | method <- maybeToList (contextProducer selected)]
+  -- 挂在 Stream 下时 getT 是解析器：只由会话在取得一份原始输入后调用，不是可请求的生产入口。
+  selected@Context {} ->
+    [ (if belowStream specifications specification then ContextStream else ContextRequest, method)
+    | method <- maybeToList (contextProducer selected) ]
     ++ [(ContextRequire, method) | method <- maybeToList (contextReader selected)]
-    ++ [(ContextStream, method) | method <- maybeToList (contextParser selected)]
-    ++ [(ContextInput, method) | method <- maybeToList (contextInput selected)]
   Stream method -> [(StreamHandler, selected) | selected <- maybeToList method]
 
 workflowNode :: WorkflowTree -> NodeId
@@ -573,16 +575,16 @@ buildPreparedPrototype plan shapes = do
         , methodRole definition == ContextRequire, methodIdentity definition `notElem` map fst shapes]
       result = Prototype (plannedRegistrations plan) effects definitions workflow finite
         (map makeChain mounts) chainDefinitions graph scopes names []
-  -- Stream 只由生产会话的 Stream 单步读取：其他方法（包括解析器）直接调用 Stream 方法会另取一份原始输入，
-  -- 使会话已经取得的那一份不被解析。解析器经生成的 input 方法读取本次输入。
-  let streamMethods = [method | effect <- effects, (StreamHandler, method) <- effectMethods effect]
-  mapM_ (\definition -> case filter (`elem` streamMethods) (calledMethods (methodBody definition)) of
+  -- Stream 的方法只经会话执行：Stream 单步执行它取得下一份原始输入；挂在该 Stream 下的解析器调用它时，
+  -- 由会话本次取得的输入回答，与挂在原子句柄下的 Context 调用句柄相同。其他方法直接调用会绕过会话另取一份。
+  let streamMethods = [(effectName effect, method) | effect <- effects, (StreamHandler, method) <- effectMethods effect]
+      parsing = [(parser, method) | effect <- effects, (ContextStream, parser) <- effectMethods effect
+        , (source, method) <- streamMethods, source == effectInput effect]
+  mapM_ (\definition -> case [called | called <- calledMethods (methodBody definition), called `elem` map snd streamMethods
+        , (methodIdentity definition, called) `notElem` parsing] of
       [] -> pure ()
       called : _ -> Left (InvalidPrototype ("Method " ++ methodIdentity definition ++ " calls Stream method "
-        ++ called ++ " directly; only the production session reads a Stream"
-        ++ concat ["; the parser reads the current input with input" ++ contractType
-          | effect <- effects, (ContextStream, parser) <- effectMethods effect, parser == methodIdentity definition
-          , Just contractType <- [effectProduces effect]])))
+        ++ called ++ " directly; only its session and the parser Context hanging below that Stream may call it")))
     [definition | definition <- definitions, methodRole definition /= StreamHandler]
   -- 启动环：会话的生产链不能依赖其他持续资产，否则首次生产就要先等待另一份增量。
   let continuousMethods = [(contractType, method) | effect <- effects, effectContinuous effect

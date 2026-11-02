@@ -36,7 +36,7 @@ deriving instance Eq (Int) => Eq Beat
 deriving instance Show (Int) => Show Beat
 
 -- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = ConnectSensorGen | DisconnectSensorGen | NextReadingGen | ReadTemperatureSampleGen | StreamTemperatureSampleGen | InputTemperatureSampleGen | GetBeatGen | ReadBeatGen | AnnounceGen | ShowTemperatureGen | CheckTrendGen | ReportHeartbeatGen
+data MethodGen = ConnectSensorGen | DisconnectSensorGen | NextReadingGen | GetTemperatureSampleGen | ReadTemperatureSampleGen | GetBeatGen | ReadBeatGen | AnnounceGen | ShowTemperatureGen | CheckTrendGen | ReportHeartbeatGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
@@ -81,13 +81,11 @@ type TemperatureParserInputs m = (FrameworkRoot.Capability TemperatureParser m, 
 instance FrameworkRoot.Capability TemperatureParser App
 
 class (Effect TemperatureFeed m) => TemperatureParserEffect m where
-  streamTemperatureSample :: m (Produce TemperatureParser)
+  getTemperatureSample :: m (Produce TemperatureParser)
   readTemperatureSample :: m (SDK.History (Produce TemperatureParser))
   readTemperatureSample = (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handler @Root) $
     SDK.readHistory "TemperatureParser" ContextBindingError [("ShowTemperature", SDK.RequireValue), ("CheckTrend", SDK.RequireValue)] boundTemperatureParser Nothing
-  inputTemperatureSample :: m String
-  inputTemperatureSample = SDK.streamInput "TemperatureParser" ContextBindingError
-  {-# MINIMAL streamTemperatureSample #-}
+  {-# MINIMAL getTemperatureSample #-}
 
 instance (Monad m, Effect TemperatureFeed m, TemperatureParserEffect m) => Effect TemperatureParser m where
   type Registration TemperatureParser = Registered TemperatureParserEffect TemperatureFeed

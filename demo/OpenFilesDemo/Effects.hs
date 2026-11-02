@@ -3,7 +3,7 @@
 
 module OpenFilesDemo.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), namedAsset, requests, requires)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), Asset(..), requests, requires)
 import OpenFilesDemo.Types
 
 -- Context 传递路径与资源，Scoped 管理一组文件的存续，Excu 执行观察与收尾。
@@ -12,13 +12,13 @@ effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "FileLocations"
-      , typing = Context { asset = namedAsset "FileNames" @[FilePath], request = Just (), require = Just (), stream = Nothing }
+      , typing = Context { asset = Asset @[FilePath] "FileNames", request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = []
       }
   , EffectSpec
       { name = "FileResources"
-      , typing = Context { asset = namedAsset "OpenedFiles" @[FileHandle], request = Just (), require = Just (), stream = Nothing }
+      , typing = Context { asset = Asset @[FileHandle] "OpenedFiles", request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = [requires "FileNames"]
       }

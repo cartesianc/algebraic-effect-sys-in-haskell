@@ -22,8 +22,8 @@ Stream 是[主设计第 7 章](LATEST_DESIGN.md#stream)的一部分。角色匹�
 ### 实施批次
 
 - [x] 3.0 手工整理匹配规则、设计核心与文档入口；标明设计和实现状态。
-- [x] 3.1 资产身份／固定方法名重构（`namedAsset`、`getT`／`readT`）；迁移五个 demo。外部工具需按新的 Context 字段（`asset`、`request`、`require`、`stream`）读取注册。
-- [x] 3.2 Stream typing、Context 的 stream 角色与匹配表、`streams`、History 读取类型、parser 专属的 `inputT`。
+- [x] 3.1 资产身份／固定方法名重构（`namedAsset`、`getT`／`readT`；2026-11-02 改写为 `Asset @X "T"`，见[声明调整](#declaration-update)）；迁移五个 demo。外部工具需按新的 Context 字段（`asset`、`request`、`require`、`stream`）读取注册。
+- [x] 3.2 Stream typing、Context 的 stream 角色与匹配表、`streams`、History 读取类型、parser 专属的 `inputT`（2026-11-02 改为解析器以 request 写法直接调用 Stream 方法，见[声明调整](#declaration-update)）。
 - [x] 3.3 lifelong 构造、单元／订阅／会话的原型表示、合法性与启动依赖检查、`--structure` 展示。
 - [x] 3.4 会话、完整历史、游标、frame、交付视图交接、interpreter 托管的会话与 `FromSession` 来源。
 - [x] 3.5 单元调度与就绪检查、frame 内一次领取、显式 request 进入会话、临时失败规则与取消。
@@ -37,6 +37,13 @@ EOF／Done、Stream close、lifelong 的局部结束（当前由临时规则代�
 ### 当前已知实现限制
 
 - [ ] 持续资产作为 scope 开启参数：`readHistory` 返回交付视图时没有经过开启参数的观察协议，资源按本轮交付开启时可能报 `ScopeInputsMissing`。按用户安排，等 lifelong 的 close 语义补充后再处理（评审 2026-11-01），归入[下一阶段](#next-stage)。
+
+<a id="declaration-update"></a>
+### 声明调整（2026-11-02）
+
+- 资产声明改为 `asset = Asset @表示类型 "资产名"`（原 `namedAsset "资产名" @表示类型`），文档统一称细化资产（refinement asset），并在[主设计](LATEST_DESIGN.md#refinement)写明它作为按类型寻址的注入键、锁定唯一来源的作用。`Asset` 是捆绑在 `Asset` 类型上的模式同义词，业务导入 `Asset(..)`；GHC 9.12 不允许构造器在普通参数之后接类型参数，所以类型应用写在资产名之前。注册的序列化形式仍是 `AssetDecl`。
+- 挂在 Stream 下的 Context 改用与挂在原子句柄下相同的写法：`request = Just ()`，不写 `stream`；`getT` 就是解析器，调用 Stream 方法取得会话本次的原始输入（由 `streamHandle` 回答，不再执行方法体）。去掉 `streamT`、`inputT`；`stream = Just ()` 只用于 RepeatRequest。生成期新增：Stream 下的 Context 缺少 request 或多写 stream 时报错；消费方不能 `requests` 挂在 Stream 下的资产；除解析器外的方法不能调用 Stream 方法。
+- 验证：`cabal build all` 通过；六个程序重新生成（五个只有 Program 的导入行变化，StreamDemo 的解析器改为 `getTemperatureSample`），五个原有 demo 返回 Succ，StreamDemo 中断后断开传感器。临时探针在 Stream 方法体中计数，3 秒内 9 次实际读取对应 9 条解析后的读数，没有重复读取；上述三条新诊断各自报出。可见性穷举回归计数与基线一致。
 
 <a id="stage-3-record"></a>
 ### 实施记录（2026-11-01）

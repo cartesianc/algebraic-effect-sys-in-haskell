@@ -3,7 +3,7 @@
 
 module StreamDemo.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), namedAsset, streams)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), Asset(..), streams)
 import StreamDemo.Types
 
 -- Stream：每次取得一份原始输入（String），本身不是 AST 末端；挂在它下面的 Context 用 stream 角色解析。
@@ -26,13 +26,13 @@ effects =
       }
   , EffectSpec
       { name = "TemperatureParser"
-      , typing = Context { asset = namedAsset "TemperatureSample" @Temperature, request = Nothing, require = Just (), stream = Just () }
+      , typing = Context { asset = Asset @Temperature "TemperatureSample", request = Just (), require = Just (), stream = Nothing }
       , input = "TemperatureFeed"
       , demands = []
       }
   , EffectSpec
       { name = "Heartbeat"
-      , typing = Context { asset = namedAsset "Beat" @Int, request = Just (), require = Just (), stream = Just () }
+      , typing = Context { asset = Asset @Int "Beat", request = Just (), require = Just (), stream = Just () }
       , input = "Root"
       , demands = []
       }

@@ -47,7 +47,7 @@ instance SensorLinkInputs m => SensorLinkEffect m where
 -- 一次只取一份原始读数；节奏由方法体自己的等待决定，SDK 不加间隔。
 instance TemperatureFeedInputs m => TemperatureFeedEffect m where
   nextReading =
-    (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.enterHandler "TemperatureFeed") $
+    (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.enterHandler "TemperatureFeed") $
       let
         nextReading :: (m) (String)
         nextReading = do
@@ -57,22 +57,23 @@ instance TemperatureFeedInputs m => TemperatureFeedEffect m where
           pure (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
       in nextReading
 
--- 解析器读取本次原始输入，返回一个资产；发布、历史和交付由 SDK 完成。
+-- 解析器挂在 Stream 下：调用 nextReading 得到会话本次取得的原始读数（不会再读一次），返回一个资产；
+-- 发布、历史和交付由 SDK 完成。
 instance TemperatureParserInputs m => TemperatureParserEffect m where
-  streamTemperatureSample =
+  getTemperatureSample =
     (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.callContext "TemperatureParser" FrameworkGenerated.ContextBindingError
       [("ShowTemperature", FrameworkRuntime.RequireValue), ("CheckTrend", FrameworkRuntime.RequireValue)]
       Nothing
       FrameworkGenerated.boundTemperatureParser
       (\value bindings -> bindings { FrameworkGenerated.boundTemperatureParser = Just value })) $
       let
-        streamTemperatureSample :: (m) (FrameworkGenerated.TemperatureSample)
-        streamTemperatureSample = do
-          raw <- inputTemperatureSample
+        getTemperatureSample :: (m) (FrameworkGenerated.TemperatureSample)
+        getTemperatureSample = do
+          raw <- nextReading
           case reads raw of
             [(value, "")] -> pure (TemperatureSample (Temperature value))
             _ -> raise (TemperatureParserError ("unreadable sensor output: " ++ raw))
-      in streamTemperatureSample
+      in getTemperatureSample
 
 -- 请求序列：会话反复执行 request，每次成功即一条新交付。
 instance HeartbeatInputs m => HeartbeatEffect m where
@@ -146,7 +147,7 @@ instance ReportHeartbeatInputs m => ReportHeartbeatEffect m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "92e53b8a50806263ef4dfb0ddc2292d1"
+handlerSourceFingerprint = Just "7478524e77834b2454331f040908102f"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

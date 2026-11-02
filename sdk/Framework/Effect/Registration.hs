@@ -2,15 +2,17 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- 纯注册描述与依赖解析，不执行 handler。
 module Framework.Effect.Registration
-  ( EffectTyping(..), AssetDecl(..), namedAsset, contractOf, contextAsset, contextProducer, contextReader
-  , contextParser, contextInput, isContinuous
+  ( EffectTyping(..), Asset(.., Asset), contractOf, contextAsset, contextProducer, contextReader
+  , declaresStream, belowStream, continuousContext
   , Handles(..), TypeRef(..), typeRef, contractName
   , EffectSpec(..), Demand(..), Access(..), requests, requires, streams
   , ResolvedDemand(..), resolveDemands, contextNames
@@ -33,31 +35,39 @@ data EffectTyping
   | Error { detect :: Maybe String, resolve :: Maybe String, handles :: [Handles] }
   -- Context 围绕一个具名资产声明方法角色；Just () 表示生成该角色的方法，Nothing 不生成。
   -- 方法名由资产名固定生成：request 为 get 加资产名，require 为 read 加资产名。
-  -- stream = Just () 表示持续资产：require 返回 History，可以被 streams 订阅。
-  -- input 是 Stream 时由解析器（stream 加资产名）逐次解析原始输入，request 必须为 Nothing；
-  -- input 是普通 effect 时由 SDK 反复调用 request 供给，request 必须为 Just ()。
-  | Context { asset :: AssetDecl, request :: Maybe (), require :: Maybe (), stream :: Maybe () }
+  -- input 是 Stream 时，request 声明的 getT 就是解析器，资产自动是持续资产，不再写 stream。
+  -- 不在 Stream 下时 stream = Just () 表示持续资产，由 SDK 反复调用 request 供给。
+  -- 持续资产的 require 返回 History，可以被 streams 订阅。
+  | Context { asset :: Asset, request :: Maybe (), require :: Maybe (), stream :: Maybe () }
   -- 第六种 typing：持续生产节点。handler 每次调用取得一份原始输入（String），SDK 负责反复调用；
   -- 不作为 AST 末端，只经挂在它下面的 Context 解析后进入资产。
   | Stream { handler :: Maybe String }
   deriving (Eq, Show, Read, Generic, NFData)
 
--- 资产身份独立于方法名：资产名就是契约名，表示类型来自 Types.hs 或 Prelude。
+-- 细化资产（refinement asset）：表示类型来自 Types.hs 或 Prelude，资产名给它一个独立的名义类型，
 -- 生成器产出 newtype 资产名 = 资产名 表示类型，例如 newtype StartURL = StartURL PageURL。
-data AssetDecl = AssetDecl
+-- 资产名就是契约名：消费方按它解析唯一的生产方，同一表示类型的不同细化互不相通。
+data Asset = AssetDecl
   { assetName :: String
   , representation :: TypeRef
   } deriving (Eq, Show, Read, Generic, NFData)
 
--- 写作 namedAsset "StartURL" @PageURL：先资产名，后被包装的表示类型。
-namedAsset :: String -> forall value. Typeable value => AssetDecl
-namedAsset selected @value = AssetDecl selected (typeRef @value)
+-- 写作 Asset @PageURL "StartURL"：把表示类型 PageURL 细化为资产 StartURL。
+-- 用于声明；作为模式时按表示类型核对。
+pattern Asset :: forall value. Typeable value => String -> Asset
+pattern Asset selected <- (matchAsset @value -> Just selected)
+  where Asset selected = AssetDecl selected (typeRef @value)
+
+matchAsset :: forall value. Typeable value => Asset -> Maybe String
+matchAsset (AssetDecl selected declared)
+  | declared == typeRef @value = Just selected
+  | otherwise = Nothing
 
 -- 契约名就是资产名，是生产方与消费方共享的唯一键。
-contractOf :: AssetDecl -> String
+contractOf :: Asset -> String
 contractOf = assetName
 
-contextAsset :: EffectTyping -> Maybe AssetDecl
+contextAsset :: EffectTyping -> Maybe Asset
 contextAsset (Context declared _ _ _) = Just declared
 contextAsset _ = Nothing
 
@@ -71,19 +81,22 @@ contextReader :: EffectTyping -> Maybe String
 contextReader (Context declared _ (Just ()) _) = Just ("read" ++ contractOf declared)
 contextReader _ = Nothing
 
-isContinuous :: EffectTyping -> Bool
-isContinuous (Context _ _ _ (Just ())) = True
-isContinuous _ = False
+-- stream = Just ()：不在 Stream 下的持续资产，由会话反复执行 request。
+declaresStream :: EffectTyping -> Bool
+declaresStream (Context _ _ _ (Just ())) = True
+declaresStream _ = False
 
--- 解析器只属于 Stream 来源的持续资产（stream = Just () 且没有 request）：
--- stream 加资产名解析当前原始输入，input 加资产名读取它；后者由 SDK 默认实现，只在该 Context 的类中出现。
-contextParser :: EffectTyping -> Maybe String
-contextParser (Context declared Nothing _ (Just ())) = Just ("stream" ++ contractOf declared)
-contextParser _ = Nothing
+-- input 是 Stream 的 Context 是它的解析器：request 声明的 getT 解析会话本次取得的原始输入。
+-- getT 照常调用 Stream 的方法取得这份输入，写法与挂在原子句柄下的 Context 相同。
+belowStream :: [EffectSpec] -> EffectSpec -> Bool
+belowStream specifications specification = case typing specification of
+  Context {} -> not (null [() | source <- specifications, name source == input specification, Stream {} <- [typing source]])
+  _ -> False
 
-contextInput :: EffectTyping -> Maybe String
-contextInput (Context declared Nothing _ (Just ())) = Just ("input" ++ contractOf declared)
-contextInput _ = Nothing
+-- 持续资产：require 返回 History，可以被 streams 订阅。由 Stream 下的解析器生产，或声明 stream = Just () 反复 request。
+continuousContext :: [EffectSpec] -> EffectSpec -> Bool
+continuousContext specifications specification =
+  belowStream specifications specification || declaresStream (typing specification)
 
 -- 业务 raise 与 SDK 协议故障分开声明；名字均指注册的 effect。
 data Handles
@@ -189,12 +202,15 @@ resolveDemands branches specifications consumer = do
         [] -> Left ("No Context produces contract " ++ contract demand ++ " for " ++ name consumer
           ++ "; a contract is the asset name declared by its producer Context")
       case (access demand, typing provider) of
+        (RequestAccess, _) | belowStream specifications provider -> Left ("Contract " ++ contract demand
+          ++ " is parsed from Stream input by its session, so " ++ name consumer ++ " cannot request it")
         (RequestAccess, Context { request = Nothing }) -> Left ("Contract " ++ contract demand
           ++ " has no request role, so " ++ name consumer ++ " cannot request it")
         (RequireAccess, Context { require = Nothing }) -> Left ("Contract " ++ contract demand
           ++ " has no require role, so " ++ name consumer ++ " cannot require it")
-        (StreamAccess, Context { stream = Nothing }) -> Left ("Contract " ++ contract demand
-          ++ " is not a continuous asset (stream = Nothing), so " ++ name consumer ++ " cannot subscribe to it")
+        (StreamAccess, Context {}) | not (continuousContext specifications provider) -> Left ("Contract " ++ contract demand
+          ++ " is not a continuous asset (hang its Context below a Stream, or declare stream = Just ()), so "
+          ++ name consumer ++ " cannot subscribe to it")
         (StreamAccess, Context { require = Nothing }) -> Left ("Contract " ++ contract demand
           ++ " has no require role, so " ++ name consumer ++ " cannot read its deliveries")
         (StreamAccess, _) | producedContract /= contract demand -> Left ("Branch contract " ++ contract demand

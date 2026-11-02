@@ -107,7 +107,7 @@ renderTyping (R.Context declared requesting requiring streaming) =
   constructor "Context" [renderAsset declared, show requesting, show requiring, show streaming]
 renderTyping (R.Stream method) = constructor "Stream" [show method]
 
-renderAsset :: R.AssetDecl -> String
+renderAsset :: R.Asset -> String
 renderAsset (R.AssetDecl selected representation) = constructor "AssetDecl" [show selected, renderType representation]
 
 renderType :: R.TypeRef -> String

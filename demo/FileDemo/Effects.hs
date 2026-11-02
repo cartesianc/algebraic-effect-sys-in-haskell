@@ -3,20 +3,20 @@
 
 module FileDemo.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), Handles(..), namedAsset, requests, requires)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), Handles(..), Asset(..), requests, requires)
 import FileDemo.Types
 
 -- 注册只描述分类、方法和依赖；文件 IO 与上游方法引用在 Handlers.hs。
 -- Context：生产／读取业务值。Pure：无产值的纯检查。
 -- Excu 与 Scoped 的 open／close 是原子句柄，可交出可选信息；SDK 保存 scope 生命周期状态。
 -- input 指向原子句柄的 Context 挂在该句柄下，解析它交出的信息（ExtractFileText 挂在 ReadFile 下）。
--- namedAsset "资产名" @表示类型：资产名即契约名，生成器产出 newtype 契约 = 契约 表示类型；request 角色生成 get 加资产名的生产方法，require 角色生成 read 加资产名的读取方法；demands 以契约名引用。
+-- Asset @表示类型 "资产名" 把表示类型细化为以资产名命名的资产（refinement asset）。资产名即契约名，生成器产出 newtype 契约 = 契约 表示类型；request 角色生成 get 加资产名的生产方法，require 角色生成 read 加资产名的读取方法；demands 以契约名引用。
 -- Error：handles 声明处理的故障类型；作用的 scope 由 Input 链上最近的 Scoped 推导。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "FileLocation"
-      , typing = Context { asset = namedAsset "FileName" @FilePath, request = Just (), require = Just (), stream = Nothing }
+      , typing = Context { asset = Asset @FilePath "FileName", request = Just (), require = Just (), stream = Nothing }
       , input = "Root"
       , demands = []
       }
@@ -28,7 +28,7 @@ effects =
       }
   , EffectSpec
       { name = "FileResource"
-      , typing = Context { asset = namedAsset "OpenedFile" @FileHandle, request = Just (), require = Just (), stream = Nothing }
+      , typing = Context { asset = Asset @FileHandle "OpenedFile", request = Just (), require = Just (), stream = Nothing }
       , input = "ValidateFileName"
       , demands = [requires "FileName"]
       }
@@ -57,7 +57,7 @@ effects =
   -- 文件状态是和类型资产：生成器另为构造器产出分支契约 FileTextBlank、FileTextWritten。
   , EffectSpec
       { name = "ExtractFileText"
-      , typing = Context { asset = namedAsset "FileText" @TextState, request = Just (), require = Just (), stream = Nothing }
+      , typing = Context { asset = Asset @TextState "FileText", request = Just (), require = Just (), stream = Nothing }
       , input = "ReadFile"
       , demands = []
       }

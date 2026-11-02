@@ -4,7 +4,7 @@
 -- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
 module StreamDemo.Generated.Program where
 
-import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), AssetDecl(..), Handles(..), Demand(..), Access(..), TypeRef(..))
+import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.SDK as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
 import StreamDemo.Generated.Effects hiding (request, require)
@@ -30,7 +30,7 @@ compiledEntries = do
       , SDK.targetApp "ReportHeartbeat" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReportHeartbeatResult <$> (() <$ reportHeartbeat)))))
       ]
     , []
-    , [ ("TemperatureParser", SDK.receiveSteps (SDK.targetApp "TemperatureFeed" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (nextReading))))) (SDK.targetApp "TemperatureParser" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ streamTemperatureSample))))))
+    , [ ("TemperatureParser", SDK.receiveSteps (SDK.targetApp "TemperatureFeed" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (nextReading))))) (SDK.targetApp "TemperatureParser" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ getTemperatureSample))))))
       , ("Heartbeat", SDK.requestSteps (SDK.targetApp "Heartbeat" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ getBeat))))))
       ]
     )
@@ -61,9 +61,9 @@ generatedPrototype =
             , SDK.typing =
                 SDK.Context
                   (SDK.AssetDecl ("TemperatureSample") (SDK.TypeRef ("Temperature")))
+                  (Just ())
+                  (Just ())
                   (Nothing)
-                  (Just ())
-                  (Just ())
             , SDK.input = "TemperatureFeed"
             , SDK.demands = []
             }
@@ -143,10 +143,7 @@ generatedPrototype =
             , SDK.effectKind = SDK.ContextKind
             , SDK.effectInput = "TemperatureFeed"
             , SDK.effectMethods =
-                [ (SDK.ContextRequire, ReadTemperatureSampleGen)
-                , (SDK.ContextStream, StreamTemperatureSampleGen)
-                , (SDK.ContextInput, InputTemperatureSampleGen)
-                ]
+                [(SDK.ContextStream, GetTemperatureSampleGen), (SDK.ContextRequire, ReadTemperatureSampleGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Just "TemperatureSample"
             , SDK.effectBranches = []
@@ -268,19 +265,14 @@ generatedPrototype =
             (SDK.StreamHandler)
             (SDK.Call (ConnectSensorGen))
         , SDK.MethodDefinition
-            (ReadTemperatureSampleGen)
-            (ReadTemperatureSampleGen)
-            (SDK.ContextRequire)
-            (SDK.Empty)
-        , SDK.MethodDefinition
-            (StreamTemperatureSampleGen)
-            (ReadTemperatureSampleGen)
+            (GetTemperatureSampleGen)
+            (GetTemperatureSampleGen)
             (SDK.ContextStream)
-            (SDK.Empty)
+            (SDK.Call (NextReadingGen))
         , SDK.MethodDefinition
-            (InputTemperatureSampleGen)
             (ReadTemperatureSampleGen)
-            (SDK.ContextInput)
+            (GetTemperatureSampleGen)
+            (SDK.ContextRequire)
             (SDK.Empty)
         , SDK.MethodDefinition (GetBeatGen) (GetBeatGen) (SDK.ContextRequest) (SDK.Empty)
         , SDK.MethodDefinition
@@ -416,11 +408,11 @@ generatedPrototype =
             { SDK.chainNode = [1,-1,0,1]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "TemperatureSample"
-            , SDK.chainEntry = StreamTemperatureSampleGen
-            , SDK.chainReaches = [StreamTemperatureSampleGen]
+            , SDK.chainEntry = GetTemperatureSampleGen
+            , SDK.chainReaches = [GetTemperatureSampleGen, NextReadingGen, ConnectSensorGen]
             , SDK.chainDrives = ["TemperatureSample"]
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[]]
+            , SDK.chainScopePaths = [[ConnectSensorGen]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [1,-1,1,0]
@@ -446,11 +438,11 @@ generatedPrototype =
             { SDK.chainNode = [-2,0,1]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "TemperatureSample"
-            , SDK.chainEntry = StreamTemperatureSampleGen
-            , SDK.chainReaches = [StreamTemperatureSampleGen]
+            , SDK.chainEntry = GetTemperatureSampleGen
+            , SDK.chainReaches = [GetTemperatureSampleGen, NextReadingGen, ConnectSensorGen]
             , SDK.chainDrives = ["TemperatureSample"]
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[]]
+            , SDK.chainScopePaths = [[ConnectSensorGen]]
             }
         ]
     , SDK.protoChainDefinitions =
@@ -469,14 +461,14 @@ generatedPrototype =
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "TemperatureParser"
-            , SDK.definitionEntry = ReadTemperatureSampleGen
-            , SDK.definitionReaches = [ReadTemperatureSampleGen]
+            , SDK.definitionEntry = GetTemperatureSampleGen
+            , SDK.definitionReaches = [GetTemperatureSampleGen, NextReadingGen, ConnectSensorGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "TemperatureParser"
-            , SDK.definitionEntry = StreamTemperatureSampleGen
-            , SDK.definitionReaches = [StreamTemperatureSampleGen]
+            , SDK.definitionEntry = ReadTemperatureSampleGen
+            , SDK.definitionReaches = [ReadTemperatureSampleGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -526,7 +518,7 @@ generatedPrototype =
                   (SDK.Call (ReadTemperatureSampleGen))
               , SDK.MethodDefinition
                   (ReadTemperatureSampleGen)
-                  (ReadTemperatureSampleGen)
+                  (GetTemperatureSampleGen)
                   (SDK.ContextRequire)
                   (SDK.Empty)
               , SDK.MethodDefinition
@@ -552,10 +544,10 @@ generatedPrototype =
                   (SDK.Call (ConnectSensorGen))
               , SDK.MethodDefinition (ConnectSensorGen) (ConnectSensorGen) (SDK.ScopeOpen) (SDK.Empty)
               , SDK.MethodDefinition
-                  (StreamTemperatureSampleGen)
-                  (ReadTemperatureSampleGen)
+                  (GetTemperatureSampleGen)
+                  (GetTemperatureSampleGen)
                   (SDK.ContextStream)
-                  (SDK.Empty)
+                  (SDK.Call (NextReadingGen))
               ]
           , SDK.graphRoots =
               [ AnnounceGen
@@ -563,7 +555,7 @@ generatedPrototype =
               , CheckTrendGen
               , ReportHeartbeatGen
               , NextReadingGen
-              , StreamTemperatureSampleGen
+              , GetTemperatureSampleGen
               , GetBeatGen
               ]
           , SDK.graphReferences =
@@ -572,6 +564,7 @@ generatedPrototype =
               , (ReportHeartbeatGen, ReadBeatGen)
               , (ReadBeatGen, GetBeatGen)
               , (NextReadingGen, ConnectSensorGen)
+              , (GetTemperatureSampleGen, NextReadingGen)
               ]
           , SDK.graphScopes = [ConnectSensorGen]
           , SDK.graphScopePaths = [[], [ConnectSensorGen]]
@@ -581,7 +574,7 @@ generatedPrototype =
               , (CheckTrendGen, [[]])
               , (ReportHeartbeatGen, [[]])
               , (NextReadingGen, [[ConnectSensorGen]])
-              , (StreamTemperatureSampleGen, [[]])
+              , (GetTemperatureSampleGen, [[ConnectSensorGen]])
               , (GetBeatGen, [[]])
               ]
           , SDK.graphScopeOrder = []

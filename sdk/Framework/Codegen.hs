@@ -70,7 +70,7 @@ renderProgram namespace prepared sumTypes = do
     readsAccess selectedAccess = selectedAccess `elem` [RequireAccess, StreamAccess]
     -- 持续资产：require 返回 History；分支契约仍返回当前交付的投影。
     continuousContract contractType = or
-      [ isContinuous (typing specification) | specification <- contextSpecs
+      [ Prototype.effectContinuous (protoOf (name specification)) | specification <- contextSpecs
       , Just declared <- [contextAsset (typing specification)], contractOf declared == contractType ]
     -- Scoped 至多 request 一个资源 Context；它就是该 scope 的资源来源。
     requestSource = Prototype.effectResource . protoOf . name
@@ -121,8 +121,7 @@ renderProgram namespace prepared sumTypes = do
       [ (name specification ++ "Effect", method)
       | specification <- contextSpecs
       , method <- maybeToList (entryMethod (typing specification))
-          ++ maybeToList (contextReader (typing specification))
-          ++ maybeToList (contextParser (typing specification)) ]
+          ++ maybeToList (contextReader (typing specification)) ]
 
     -- 原子句柄：Excu.handler 与 Scoped.open／close，统一输出 RawOutput（SDK 内部）。
     -- input 指向原子 effect 的 Context 挂在它下面，解析其入口方法（handler／open）的输出；
@@ -193,7 +192,7 @@ renderProgram namespace prepared sumTypes = do
       , "-- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。"
       , "module " ++ namespace ++ ".Generated.Program where"
       , ""
-      , "import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), AssetDecl(..), Handles(..), Demand(..), Access(..), TypeRef(..))"
+      , "import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))"
       , "import qualified Framework.SDK as SDK"
       , "import qualified Framework.Effect.Contract as FrameworkRoot"
       , "import " ++ namespace ++ ".Generated.Effects hiding (request, require)"
@@ -289,13 +288,12 @@ renderProgram namespace prepared sumTypes = do
     instanceWrappers specification =
       [ (name specification ++ "Effect", method, wrapper method, resultType method)
       | method <- maybeToList (entryMethod (typing specification)) ++ closing
-          ++ maybeToList (contextParser (typing specification))
           ++ errorMethods specification ++ maybeToList reading ]
       where
         selectedName = name specification
         resultType method = case typing specification of
           Context { asset = declared }
-            | Just method == reading && isContinuous (typing specification) ->
+            | Just method == reading && Prototype.effectContinuous (protoOf selectedName) ->
                 "FrameworkRuntime.History FrameworkGenerated." ++ contractOf declared
             | otherwise -> "FrameworkGenerated." ++ contractOf declared
           Excu _ -> "Maybe String"
@@ -326,6 +324,8 @@ renderProgram namespace prepared sumTypes = do
                   ++ scopedDependencies ++ " . FrameworkRuntime.enterHandler " ++ show selectedName
               Excu _ -> "FrameworkRuntime.atomicHandle " ++ show method ++ " . "
                   ++ scopedDependencies ++ " . " ++ operation
+              -- 解析器调用 Stream 方法时由会话本次取得的原始输入回答，不再执行方法体。
+              Stream _ -> "FrameworkRuntime.streamHandle . " ++ scopedDependencies ++ " . " ++ operation
               _ -> scopedDependencies ++ " . " ++ operation) ++ ")"
         operation = case typing specification of
           Context {} ->
@@ -430,12 +430,10 @@ renderProgram namespace prepared sumTypes = do
           closingMethods = case typing specification of
             Scoped _ closing -> [(method, "m (Maybe String)") | method <- maybeToList closing]
             _ -> []
-          -- 解析器由业务实现：读取本次原始输入，返回一个资产，由 SDK 发布。
-          parserMethods = [(method, "m (Produce " ++ effectName ++ ")") | method <- maybeToList (contextParser (typing specification))]
-          methods = ordinaryMethods ++ closingMethods ++ parserMethods
+          methods = ordinaryMethods ++ closingMethods
             ++ [(method, "m ()") | method <- errorMethods specification]
           methodLines = ["  " ++ method ++ " :: " ++ signature | (method, signature) <- methods]
-          continuous = isContinuous (typing specification)
+          continuous = Prototype.effectContinuous (protoOf effectName)
           -- 缺值时的 thunk：有 request 时求值一次 request。
           missingValue = case entryMethod (typing specification) of
             Just method -> method
@@ -452,7 +450,8 @@ renderProgram namespace prepared sumTypes = do
               , "    SDK.readHistory " ++ show effectName
                 ++ " ContextBindingError " ++ contextAccessTable "SDK." effectName
                 ++ " bound" ++ effectName ++ " "
-                ++ maybe "Nothing" (\producing -> "(Just " ++ producing ++ ")") (entryMethod (typing specification))
+                ++ maybe "Nothing" (\producing -> "(Just " ++ producing ++ ")")
+                  (lookup Graph.ContextRequest (Prototype.effectMethods (protoOf effectName)))
               ]
             Just method ->
               [ "  " ++ method ++ " :: m (Produce " ++ effectName ++ ")"
@@ -461,13 +460,6 @@ renderProgram namespace prepared sumTypes = do
                 ++ " ContextBindingError " ++ contextAccessTable "SDK." effectName
                 ++ " " ++ observation "SDK." effectName ++ " bound" ++ effectName
                 ++ " " ++ missingValue
-              ]
-            _ -> []
-          -- 解析器读取本次原始输入的能力只生成在这个 Context 的类中，其他 handler 无法调用。
-          inputLines = case contextInput (typing specification) of
-            Just method ->
-              [ "  " ++ method ++ " :: m String"
-              , "  " ++ method ++ " = SDK.streamInput " ++ show effectName ++ " ContextBindingError"
               ]
             _ -> []
           minimalLines = case methods of
@@ -495,7 +487,7 @@ renderProgram namespace prepared sumTypes = do
          , ""
          , "class (" ++ intercalate ", " superclasses ++ ") => " ++ effectName ++ "Effect m where"
          ]
-         ++ methodLines ++ readingLines ++ inputLines ++ minimalLines
+         ++ methodLines ++ readingLines ++ minimalLines
          ++ [ ""
             , "instance (Monad m, Effect " ++ upstream ++ " m, " ++ effectName
               ++ "Effect m) => Effect " ++ effectName ++ " m where"
@@ -659,15 +651,15 @@ renderProgram namespace prepared sumTypes = do
         -- Receive：Stream 单步取得原始输入，解析器读取它并发布；RepeatRequest：request 生产并发布。
         sessionSteps =
           [ "(" ++ show (name specification) ++ ", " ++ steps ++ ")"
-          | specification <- contextSpecs, isContinuous (typing specification)
+          | specification <- contextSpecs, Prototype.effectContinuous (protoOf (name specification))
           , Just declared <- [contextAsset (typing specification)]
           , let producerName = name specification
                 streamSource = [(name source, method) | source <- specifications, name source == input specification
                   , Stream { handler = Just method } <- [typing source]]
-          , Just steps <- [case (streamSource, contextParser (typing specification), contextProducer (typing specification)) of
-              ((sourceName, handle) : _, Just parser, _) -> Just ("SDK.receiveSteps ("
+          , Just steps <- [case (streamSource, contextProducer (typing specification)) of
+              ((sourceName, handle) : _, Just parser) -> Just ("SDK.receiveSteps ("
                 ++ wrapTarget sourceName handle ++ ") (" ++ wrapTarget producerName ("() <$ " ++ parser) ++ ")")
-              ([], _, Just producing) -> Just ("SDK.requestSteps ("
+              ([], Just producing) -> Just ("SDK.requestSteps ("
                 ++ wrapTarget producerName ("() <$ " ++ producing) ++ ")")
               _ -> Nothing] ]
         wrapTarget label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"

@@ -7,10 +7,10 @@ module Framework.Effect
   ( Effect(Registration, Typing, Require, Produce, raise), type Error, EffectTyping(..), EffectKind(..), Root, Registered, App
   , Target, targetApp, SessionSteps, receiveSteps, requestSteps
   , Output(..), Failure(..), ErrorReport(..), caughtFailure, failEffect
-  , AssetDecl(..), namedAsset, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
+  , Asset(..), Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
   , requests, requires, streams, Void
   , ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, projectContext, enterHandler
-  , atomicHandle, atomicScope, readHistory, streamInput
+  , atomicHandle, atomicScope, readHistory, streamHandle
   , History, historyEntries, latest, historySize
   , ScopeInput(..), ScopeFault(..), openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, withScopeCleanups
@@ -23,9 +23,9 @@ import Framework.Effect.Contract
   )
 import Framework.Effect.Context
   ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, projectContext
-  , atomicHandle, atomicScope, readHistory, streamInput )
+  , atomicHandle, atomicScope, readHistory, streamHandle )
 import Framework.Effect.Registration
-  ( EffectTyping(..), AssetDecl(..), namedAsset, Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
+  ( EffectTyping(..), Asset(..), Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
   , requests, requires, streams )
 import Framework.Effect.History (History, historyEntries, latest, historySize)
 import Framework.Effect.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, requestSteps)

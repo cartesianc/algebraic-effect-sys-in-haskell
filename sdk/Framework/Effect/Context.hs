@@ -3,7 +3,7 @@
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Effect.Context
   ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext
-  , projectContext, atomicHandle, atomicScope, readHistory, streamInput
+  , projectContext, atomicHandle, atomicScope, readHistory, streamHandle
   ) where
 
 import Framework.Effect.Contract
@@ -134,11 +134,11 @@ readHistory contextName wrap accesses select produce = requireContext contextNam
         maybe (failEffect contextName (wrap ContextNotInitialized)
           (contextName ++ ": no stream session can deliver here")) pure delivered
 
--- 解析器读取本次原始输入；只有 SDK 在会话中调用解析器时才安装。
-streamInput :: (ContextStore environment m, MonadError (Failure cause) m) => String -> (ContextFault -> cause) -> m String
-streamInput contextName wrap = streamRawInput >>= maybe
-  (failEffect contextName (wrap ContextNotInitialized)
-    (contextName ++ ": no stream input is installed outside a stream parser call")) pure
+-- Stream.handler 的生成入口。会话调用解析器时安装了本次原始输入：解析器对 Stream 方法的调用
+-- 由这份输入回答，不再执行方法体另取一份，与挂在原子句柄下的 Context 调用句柄相同。
+-- Stream 单步没有安装输入，执行方法体取得下一份。
+streamHandle :: ContextStore environment m => m String -> m String
+streamHandle body = streamRawInput >>= maybe body pure
 
 -- Excu.handler 的生成入口：方法体每次调用都执行。
 atomicHandle
