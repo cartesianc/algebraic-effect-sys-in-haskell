@@ -2,7 +2,7 @@ module FileDemo.Types (FileHandle(..), TextState(..)) where
 
 import System.IO (Handle)
 
--- 活资源的表示：路径与真实 Handle。Context 契约 OpenedFile 由生成器按 handler 名包装它；
+-- 活资源的表示：路径与真实 Handle。Context 契约 OpenedFile 由生成器按声明的资产名包装它；
 -- 文件名等单值契约直接包装 FilePath，不再手写一层 newtype。
 data FileHandle = FileHandle FilePath Handle
   deriving Show

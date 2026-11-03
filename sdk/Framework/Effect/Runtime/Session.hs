@@ -1,4 +1,6 @@
--- 生产会话的运行状态：完整发布历史（每条带伴随发布）、广播信号与消费游标。生产任务由运行层启动，这里只保存状态。
+-- 生产会话的发布历史、广播通知、消费游标及停止句柄。
+-- Runtime 启动并登记生产线程；本模块不执行生产方法，只保存交付并取消／等待该线程。
+-- Runtime/Graph 控制会话的唯一登记和整体停止；Workflow/Execution 持有各单元游标。
 -- 会话按（lifelong 边界，生产该资产的 Context 注册名）区分；注册名与运行时绑定来源同名。
 -- Nothing 边界是 interpreter 托管的会话。
 module Framework.Effect.Runtime.Session
@@ -92,6 +94,8 @@ awaitHistory session = awaitState session $ \state ->
   if Seq.null (stateEntries state) then Nothing else Just (stateEntries state)
 
 -- 消费游标属于（单元，会话）：记录已经交付的条数，每次交付推进一条。
+-- 单元逐轮推进同一个游标；一轮内并发读取由 Runtime.Frame 的领取槽合并，
+-- 不能绕过 Frame 并发调用同一游标的 takeDelivery。
 newtype Cursor = Cursor (IORef Int)
 
 newCursor :: IO Cursor

@@ -1,6 +1,9 @@
 {-# LANGUAGE ExistentialQuantification #-}
 
--- 只读 Prototype 的运行实例：活动 chain 引用、绑定、scope 控制对象与既有求值锁。
+-- 只读 Prototype 的运行实例：活动 chain、Origin 资产表、scope 引用和求值锁。
+-- 同时持有唯一的会话登记表；登记／停止的原子边界在这里，生产线程由 Runtime 启动。
+-- 生命周期：Execution 创建并安装树关系；App 更新调用与发布；Execution 退出时
+-- 关闭会话登记并等待任务，Program 随后进行 scope 退出清理。
 -- 运行不解释图边；业务仍由已经装配的闭包执行。
 module Framework.Effect.Runtime.Graph
   ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..)
@@ -77,6 +80,8 @@ newRuntimeGraph prototype scopes = RuntimeGraph (PrototypeReference prototype) s
 configureRuntimeScopes :: RuntimeGraph environment cause -> IO ()
 configureRuntimeScopes graph = case runtimePrototype graph of
   PrototypeReference prototype -> configureScopeRelations (scopeRelations prototype) (runtimeScopes graph)
+
+-- 活动身份与来源绑定 -----------------------------------------------------------
 
 nextSequence :: IORef Integer -> IO Integer
 nextSequence counter = atomicModifyIORef' counter (\previous -> (previous + 1, previous))
@@ -198,6 +203,8 @@ sourcePlan (PrototypeReference prototype) node source = case
     , Just contract <- [effectProduces effect]] of
   [contract] -> fromMaybe FromOwnChain (lookup (ReadPoint node contract) (protoSources prototype))
   _ -> FromOwnChain
+
+-- 会话登记与停止 ---------------------------------------------------------------
 
 -- 运行层装配后安装：为新会话启动生产任务并登记到会话中。
 installSessionLauncher :: RuntimeGraph environment cause -> (Session environment cause -> IO ()) -> IO ()

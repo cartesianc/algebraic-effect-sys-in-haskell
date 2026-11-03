@@ -1,7 +1,11 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- 末端句柄描述与 lower；scope 控制对象由生成句柄共享。程序只经 AST 启动，末端都在 App 载体上。
+-- 执行装配：把生成的 Target lower 到 App，并为持续执行连接 Frame 和生产步骤。
+-- Target 只保存末端句柄与共享 scope；Handoff 交接捕获值；Frame 固定一轮的交付。
+-- sessionLauncher 负责生产线程，Runtime/Session 保存交付日志并停止线程，
+-- Runtime/Graph 负责唯一会话登记，Workflow/Execution 负责消费单元和整次运行监督。
+-- 程序只经 AST 启动，业务方法不管理这些线程、游标和交接对象。
 module Framework.Effect.Runtime
   ( App, Target, targetApp
   , targetName, lowerTarget, Handoff, noHandoff, scopeHandlers, cleanupTargets
@@ -23,6 +27,8 @@ import Control.Exception
   (SomeAsyncException, SomeException, evaluate, finally, fromException, mask, throwIO, try, uninterruptibleMask_)
 import Control.Monad (forM)
 import Data.List (nubBy)
+
+-- 末端句柄与调用交接 -----------------------------------------------------------
 
 -- 一个生成程序的 Node 共用同一存储契约。
 data Target environment cause value where
@@ -121,7 +127,9 @@ scopeHandlers entries = nubBy sameHandler (concatMap targetScopes entries)
 cleanupTargets :: [Target environment cause value] -> IO [(Maybe SomeException, Failure cause)]
 cleanupTargets = cleanupScopes . scopeHandlers
 
--- 生成区按资产登记的生产步骤：Receive 为 Stream 单步与解析器，RepeatRequest 为 request。
+-- 持续生产的装配与退出 ---------------------------------------------------------
+
+-- 生成区按资产登记的生产步骤：Receive 为 Stream 单步与解析器，RepeatRequest 为 request.
 -- 解析器与 request 的包装各自发布一次资产；会话不再次发布返回值。
 data SessionSteps environment cause
   = ReceiveSteps (Target environment cause String) (Target environment cause ())

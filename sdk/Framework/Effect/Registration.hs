@@ -9,21 +9,20 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
--- 纯注册描述与依赖解析，不执行 handler。
+-- 纯注册声明：保存业务语法与方法角色，不执行 handler。
+-- 资产来源、访问权限和读取结果的解析规则统一在 Framework.Effect.Demand。
 module Framework.Effect.Registration
   ( EffectTyping(..), Asset(.., Asset), contractOf, contextAsset, contextProducer, contextReader
   , declaresStream, belowStream, continuousContext
   , Handles(..), TypeRef(..), typeRef, contractName
   , EffectSpec(..), Demand(..), Access(..), requests, requires, streams
-  , ResolvedDemand(..), resolveDemands, contextNames
+  , ResolvedDemand(..)
   , effectKind, entryMethod
   ) where
 
 import Framework.Effect.Contract (EffectKind(..), Output)
-import Control.Monad (unless)
 import Control.DeepSeq (NFData)
 import GHC.Generics (Generic)
-import Data.List (nub)
 import Data.Proxy (Proxy(..))
 import Data.Typeable (Typeable, splitTyConApp, typeRep, typeRepTyCon)
 
@@ -174,60 +173,3 @@ data ResolvedDemand = ResolvedDemand
   , demandContract :: String
   , demandProvider :: String
   } deriving (Eq, Show, Read, Generic, NFData)
-
-findEffect :: [EffectSpec] -> String -> Either String EffectSpec
-findEffect specifications selected = case filter ((== selected) . name) specifications of
-  [specification] -> Right specification
-  [] -> Left ("Unknown effect: " ++ selected)
-  _ -> Left ("Duplicate effect: " ++ selected)
-
-produced :: EffectSpec -> Maybe String
-produced specification = contractOf <$> contextAsset (typing specification)
-
--- 资产名在注册集合中唯一，因此每个契约恰好对应一个生产方。
--- 取值模式须对应生产方已声明的角色：request 需要 request 角色，require 需要 require 角色。
--- branches：和类型资产的分支契约 → 基础契约；分支契约由基础契约的生产方提供（投影）。
-resolveDemands :: [(String, String)] -> [EffectSpec] -> EffectSpec -> Either String [ResolvedDemand]
-resolveDemands branches specifications consumer = do
-  let keys = [(access demand, contract demand) | demand <- demands consumer]
-  unless (length keys == length (nub keys)) $
-    Left ("Duplicate demand in " ++ name consumer ++ "; each contract may be requested and required once")
-  mapM resolveOne (demands consumer)
-  where
-    resolveOne demand = do
-      let producedContract = maybe (contract demand) id (lookup (contract demand) branches)
-      provider <- case [specification | specification <- specifications
-            , name specification /= name consumer, produced specification == Just producedContract] of
-        specification : _ -> pure specification
-        [] -> Left ("No Context produces contract " ++ contract demand ++ " for " ++ name consumer
-          ++ "; a contract is the asset name declared by its producer Context")
-      case (access demand, typing provider) of
-        (RequestAccess, _) | belowStream specifications provider -> Left ("Contract " ++ contract demand
-          ++ " is parsed from Stream input by its session, so " ++ name consumer ++ " cannot request it")
-        (RequestAccess, Context { request = Nothing }) -> Left ("Contract " ++ contract demand
-          ++ " has no request role, so " ++ name consumer ++ " cannot request it")
-        (RequireAccess, Context { require = Nothing }) -> Left ("Contract " ++ contract demand
-          ++ " has no require role, so " ++ name consumer ++ " cannot require it")
-        (StreamAccess, Context {}) | not (continuousContext specifications provider) -> Left ("Contract " ++ contract demand
-          ++ " is not a continuous asset (hang its Context below a Stream, or declare stream = Just ()), so "
-          ++ name consumer ++ " cannot subscribe to it")
-        (StreamAccess, Context { require = Nothing }) -> Left ("Contract " ++ contract demand
-          ++ " has no require role, so " ++ name consumer ++ " cannot read its deliveries")
-        (StreamAccess, _) | producedContract /= contract demand -> Left ("Branch contract " ++ contract demand
-          ++ " cannot be subscribed; subscribe to " ++ producedContract ++ " in " ++ name consumer)
-        _ -> pure ()
-      pure (ResolvedDemand (access demand) (contract demand) (name provider))
-
--- 收集声明前提所需的 Context，按依赖顺序去重；不根据业务值合并调用。
-contextNames :: [(String, String)] -> [EffectSpec] -> [String] -> Either String [String]
-contextNames branches specifications selected = nub . concat <$> mapM (visit []) selected
-  where
-    visit _ "Root" = Right []
-    visit seen selectedName
-      | selectedName `elem` seen = Left ("Cyclic input/demand: " ++ selectedName)
-      | otherwise = do
-          specification <- findEffect specifications selectedName
-          resolved <- resolveDemands branches specifications specification
-          let providers = nub (map demandProvider resolved)
-          upstream <- concat <$> mapM (visit (selectedName : seen)) (nub (input specification : providers))
-          pure (upstream ++ providers)

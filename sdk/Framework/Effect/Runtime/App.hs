@@ -3,7 +3,14 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- IO 载体：Context 绑定携带值快照和 scope 归属，生命周期操作跟随该绑定。
+-- IO 载体：把 ContextStore／ScopeStore／ErrorStore 解释为同一套受控执行协议。
+-- Environment 保存当前调用、诊断或收尾的局部环境；RuntimeGraph 和 scope 控制对象
+-- 在整个运行中共享。Binding 的值与出身不变，归属通过共享单元认领。
+--
+-- 调用链：Runtime.lowerTarget -> runAppWith -> 注册方法的生成包装 -> 对应 Store。
+-- 完整调用负责诊断及结果消费，然后撤销使用；嵌套 request 只登记 activation。
+-- open／close 在实际读取资源绑定时选择实例；不在 handler 外预先执行取值。
+-- 本文件保留共享 Environment 的解释器实现，按绑定、Store、诊断、生命周期和根调用分组。
 module Framework.Effect.Runtime.App (App, Launch(..), runAppWith, withScopeCleanups) where
 
 import Framework.Effect.Binding
@@ -25,6 +32,8 @@ import Data.List (find, nub, nubBy)
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
 import Data.Sequence ((|>))
 import Data.Unique (Unique, newUnique)
+
+-- 调用环境与生命周期尝试 -------------------------------------------------------
 
 type Bound env cause = ScopeBinding env cause
 
@@ -134,6 +143,8 @@ resourceSource handler = fromMaybe ("$scope:" ++ scopeName handler) (scopeContex
 ownedNames :: Environment env cause -> [String]
 ownedNames environment = map (scopeName . family) (openings environment)
   ++ map (scopeName . closeFamily) (closings environment)
+
+-- 绑定捕获、发布与资源定位 -------------------------------------------------------
 
 -- 捕获：只写入本次调用；用于读取已有绑定、恢复 scope 快照和认领归属，不改写运行级 state。
 captureBinding :: Environment env cause -> String -> Bound env cause -> IO ()
@@ -380,6 +391,8 @@ beginClose environment attempt value = do
                 setPhase slot ScopeClosing
                 pure (Right ())
 
+-- 载体协议解释 ---------------------------------------------------------------
+
 instance ContextStore env (App env cause) where
   enterRequest source (AppRun action) = AppRun $ do
     environment <- ask
@@ -571,6 +584,8 @@ instance ErrorStore cause (App env cause) where
                 liftIO (runDiagnostic environment traced selected callback)
               throwError traced { errorHandling = Just reports }
 
+-- 故障诊断与持续交付 -----------------------------------------------------------
+
 -- 检测/处置共享本次故障的绑定快照。失败的 scope 可在此受限上下文中被检查、清理；
 -- 不扫描其他实例，不修改业务调用已经捕获的值，也不重放业务 action。
 runDiagnostic :: Environment env cause -> Failure cause -> Maybe String -> ErrorHandler cause (App env cause)
@@ -655,6 +670,8 @@ scopeFailureTarget selected owner problem
   | otherwise = problem
       { scopeTargets = (selected, scopeIdentity <$> owner)
           : filter ((/= selected) . fst) (scopeTargets problem) }
+
+-- 生命周期执行与清理闭包 -------------------------------------------------------
 
 -- 生成区安装 close 引用；安装本身不执行资源操作。
 withScopeCleanups :: [(String, App env cause ())] -> App env cause value -> App env cause value
@@ -777,6 +794,8 @@ runClose name wrap (AppRun action) = AppRun $ do
           pure (either (Left . scopeFailureTarget name (fst <$> acquired)) (Right . Just) completed))
       `finally` releaseReservation
   either throwError pure result
+
+-- 完整调用边界 ---------------------------------------------------------------
 
 -- consumer 覆盖整个末端调用、诊断和结果消费；嵌套方法返回不提前释放借用。
 -- handoff 是交给本次调用的已捕获绑定（alternative 把选择时读到的资产交给候选）；

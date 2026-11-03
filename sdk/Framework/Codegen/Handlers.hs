@@ -51,7 +51,7 @@ prepareHandlers namespace wrappers scopeHandlers routes = do
     Nothing -> pure $ if null extraExports
       then "module " ++ generatedName ++ " () where\n"
       else "module " ++ generatedName ++ " (" ++ intercalate ", " extraExports ++ ") where\n"
-        ++ "import qualified Framework.SDK as FrameworkRuntime\n"
+        ++ "import qualified Framework.Generated as FrameworkRuntime\n"
         ++ "import qualified Framework.Effect.Contract as FrameworkRoot\n"
         ++ "import qualified " ++ namespace ++ ".Generated.Effects as FrameworkGenerated\n"
     Just (source, parsed, _, _) -> either (ioError . userError) pure
@@ -111,7 +111,7 @@ parseSourceFile inputPath = do
         in pure (source, unLoc parsed, enabled "ImplicitPrelude", enabled "RebindableSyntax")
 
 -- Types.hs 中的和类型：至少两个构造器、每个构造器至多一个字段；字段类型取源码原文。
--- 有构造器带多个字段的类型不算和类型资产，不生成分支契约。
+-- 多字段和类型仍是合法业务 ADT；这里只支持上述自动投影形状，其余不生成分支契约。
 loadSumTypes :: String -> IO [(String, [(String, Maybe String)])]
 loadSumTypes namespace = do
   let inputPath = namespaceDirectory namespace </> "Types.hs"
@@ -170,7 +170,7 @@ wrapModule namespace generatedName wrappers extraExports source parsed = do
     [] -> Left "Handlers.hs must import the generated effect contracts"
   (importStart, _) <- range (getLocA firstImport)
   let imports = (importStart, importStart,
-        "import qualified Framework.SDK as FrameworkRuntime\n"
+        "import qualified Framework.Generated as FrameworkRuntime\n"
         ++ "import qualified Framework.Effect.Contract as FrameworkRoot\n"
         ++ "import qualified " ++ namespace ++ ".Generated.Effects as FrameworkGenerated\n")
   edits <- concat <$> mapM instanceEdits (hsmodDecls parsed)

@@ -13,7 +13,7 @@
 
 module ScopeInstancesDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
-import qualified Framework.SDK as FrameworkRuntime
+import qualified Framework.Generated as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified ScopeInstancesDemo.Generated.Effects as FrameworkGenerated
 import Framework.SDK (Effect(..))
@@ -119,7 +119,7 @@ instance CheckIndependentInputs m => CheckIndependentEffect m where
               secondFile = outputDirectory </> "two.txt"
               selection = outputDirectory </> "selected.txt"
           liftIO (writeFile selection firstFile)
-          _ <- request @FileName
+          FileName _ <- request @FileName
           openFileSession
           OpenedFile (FileHandle pathA fileA) <- require @OpenedFile
           openFileSession
@@ -129,7 +129,7 @@ instance CheckIndependentInputs m => CheckIndependentEffect m where
           liftIO (putStrLn "[check] equal opening values reuse the same file Handle")
         
           liftIO (writeFile selection secondFile)
-          _ <- request @FileName
+          FileName _ <- request @FileName
           openFileSession
           OpenedFile (FileHandle pathB fileB) <- require @OpenedFile
           unless (pathB == secondFile && fileA /= fileB) $
@@ -161,7 +161,7 @@ instance CheckReopenInputs m => CheckReopenEffect m where
               selection = outputDirectory </> "selected.txt"
               journal = outputDirectory </> "events.txt"
           liftIO (writeFile selection firstFile)
-          _ <- request @FileName
+          FileName _ <- request @FileName
           openFileSession
           OpenedFile (FileHandle pathA fileA) <- require @OpenedFile
           events <- liftIO (lines <$> readFile' journal)
@@ -173,7 +173,7 @@ instance CheckReopenInputs m => CheckReopenEffect m where
           liftIO (putStrLn "[check] another Node explicitly reopens file 1 after the previous chain ended")
         
           liftIO (writeFile selection secondFile)
-          _ <- request @FileName
+          FileName _ <- request @FileName
           openFileSession
           OpenedFile (FileHandle pathB fileB) <- require @OpenedFile
           closedB <- liftIO (hIsClosed fileB)
@@ -200,7 +200,7 @@ instance CheckReopenInputs m => CheckReopenEffect m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "bbb74a1b7d07d2bf355811dfdbfb28e3"
+handlerSourceFingerprint = Just "471756c1d45d43f99022261abdc381b3"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

@@ -1,4 +1,12 @@
--- SDK 的 scope 状态与并发开启保护；不另设业务产值契约。
+-- Scope 的状态、使用登记与关闭预约；不执行业务 open／close 的方法体。
+-- ScopeHandler 属于一份注册，持有运行实例表；ScopeInstance 属于一次资源获取；
+-- ScopeUser 属于一个受控入口（或持续生产会话），记录它实际使用的实例。
+-- 注册间依赖由 Prototype 的独立 ScopeTree 安装，活动调用父子关系不改写它。
+--
+-- 锁边界：coordinator 串行化归属认领、使用登记与关闭预约，锁内只改内存；
+-- scopeInstances 保护实例表；scopeGate 保护单实例生命周期；scopeRecoveryGate
+-- 串行化诊断。业务方法体和生命周期 gate 的等待由 Runtime/App 协调。
+-- 最后使用者撤销后 cleanupAvailable 按依赖释放，Program 在任务退出后做兜底。
 module Framework.Effect.Scope
   ( ScopePhase(..), ScopeRecord(..), ScopeOperation(..)
   , emptyScope, scopeFailure, beginScope, finishScope, interruptedScope
@@ -19,6 +27,8 @@ import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef')
 import Data.List (find, sortOn, nub)
 import Data.Maybe (isJust)
 import Data.Unique (Unique, hashUnique, newUnique)
+
+-- 生命周期状态 ---------------------------------------------------------------
 
 data ScopePhase cause
   = ScopeIdle | ScopeOpening | ScopeActive | ScopeClosing
@@ -67,6 +77,8 @@ finishScope CloseScope selected wrap _ (Right ()) = ScopeClosed (scopeFault sele
 interruptedScope :: String -> (ScopeFault -> cause) -> SomeException -> ScopePhase cause
 interruptedScope selected wrap exception =
   ScopeInvalid (scopeFault selected wrap (ScopeInterrupted (displayException exception)))
+
+-- 控制对象、实例和入口使用者 ---------------------------------------------------
 
 -- 生成的 handler 创建各自的控制对象；末端句柄只保存对同份对象的引用。
 -- 集合本身不可变，生命周期状态和锁属于各个 scope，不属于 AST。
@@ -159,6 +171,8 @@ scopeErrorPath handlers seeds = do
         let ready = [name | name <- remaining, all (`notElem` remaining) (parents name)]
         in ready ++ topDown (filter (`notElem` ready) remaining)
   pure (topDown ordered)
+
+-- 归属、使用与实例选择 ---------------------------------------------------------
 
 -- 锁内仅做内存登记；不运行 handler，也不等待 scopeGate 或关闭完成信号。
 coordinated :: ScopeHandler environment cause -> IO value -> IO value
@@ -283,7 +297,9 @@ hasLiveChildren slot = do
     if scopeName handler `elem` parents then readMVar (scopeInstances child) else pure []
   or <$> mapM liveInstance children
 
--- permit 仅由已预约的 cleanup 传回；显式 close 只可排除自身 consumer。
+-- 关闭预约与自动收尾 -----------------------------------------------------------
+
+-- permit 仅由已预约的 cleanup 传回；显式 close 只可排除自身 consumer.
 reserveScopeClose :: Maybe Unique -> Maybe Unique -> Unique -> ScopeInstance environment cause -> IO Bool
 reserveScopeClose consumer permit ticket slot = coordinated (scopeFamily slot) $ do
   retiring <- readIORef (scopeRetiring slot)

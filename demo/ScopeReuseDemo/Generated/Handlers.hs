@@ -14,7 +14,7 @@
 
 module ScopeReuseDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
-import qualified Framework.SDK as FrameworkRuntime
+import qualified Framework.Generated as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified ScopeReuseDemo.Generated.Effects as FrameworkGenerated
 import Framework.SDK (Effect(..))
@@ -116,7 +116,7 @@ instance WriteFirstInputs m => WriteFirstEffect m where
       let
         writeFirst :: (m) (Maybe String)
         writeFirst = do
-          _ <- request @FilePaths
+          FilePaths _ <- request @FilePaths
           openSharedFile
           OpenedFile (SharedFile _ file) <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
@@ -132,7 +132,7 @@ instance WriteSecondInputs m => WriteSecondEffect m where
       let
         writeSecond :: (m) (Maybe String)
         writeSecond = do
-          _ <- request @FilePaths
+          FilePaths _ <- request @FilePaths
           openSharedFile
           OpenedFile (SharedFile _ file) <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
@@ -148,7 +148,7 @@ instance WriteThirdInputs m => WriteThirdEffect m where
       let
         writeThird :: (m) (Maybe String)
         writeThird = do
-          _ <- request @FilePaths
+          FilePaths _ <- request @FilePaths
           openSharedFile
           OpenedFile (SharedFile _ file) <- require @OpenedFile
           outcome <- liftIO $ tryIOError $ do
@@ -189,7 +189,7 @@ instance VerifyReuseInputs m => VerifyReuseEffect m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "05f281d548048cc609c8a46eef1cd8d8"
+handlerSourceFingerprint = Just "9e90b194752f912bf22b56a08087bec2"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

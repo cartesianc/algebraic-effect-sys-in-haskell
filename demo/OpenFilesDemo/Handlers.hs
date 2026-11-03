@@ -61,7 +61,7 @@ instance FileSessionInputs m => FileSessionEffect m where
 
 instance HoldFilesInputs m => HoldFilesEffect m where
   holdFiles = do
-    _ <- request @FileNames
+    FileNames _ <- request @FileNames
     openFiles
     pure Nothing
 

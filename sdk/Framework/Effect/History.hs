@@ -32,7 +32,8 @@ instance Show value => Show (History value) where
   showsPrec precedence history = showParen (precedence > 10) $
     showString "historyFromList " . showsPrec 11 (historyEntries history)
 
--- 视图只由 SDK 构造；业务代码按条目读取，不能伪造历史。
+-- 构造函数供 SDK 内部使用；业务公共入口仅导出读取操作。
+-- 这是模块 API 边界，不是对任意内部模块导入或泛型构造的不可伪造证明。
 historyFromList :: [value] -> History value
 historyFromList values = History (Seq.fromList values) id
 

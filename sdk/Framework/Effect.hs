@@ -1,33 +1,24 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ExplicitNamespaces #-}
 
--- Effect SDK 的统一入口；内部存储协议和 target 执行细节不在此导出。
--- Root.handler 只供生成区使用，避免与注册的 handler record 字段混名。
+-- 手写 effect 的公共契约。这里提供注册、raise、故障读取与历史观察；
+-- Context 存储入口、Target 装配和 scope 生命周期包装由 Framework.Generated 提供。
+-- Root.handler 仍只供生成区使用，避免与注册的 handler record 字段混名。
 module Framework.Effect
-  ( Effect(Registration, Typing, Require, Produce, raise), type Error, EffectTyping(..), EffectKind(..), Root, Registered, App
-  , Target, targetApp, SessionSteps, receiveSteps, requestSteps
-  , Output(..), Failure(..), ErrorReport(..), caughtFailure, failEffect
-  , Asset(..), Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
-  , requests, requires, streams, Void
-  , ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, projectContext, enterHandler
-  , atomicHandle, atomicScope, readHistory, streamHandle
+  ( Effect(Registration, Typing, Require, Produce, raise), type Error
+  , EffectTyping(..), EffectKind(..), EffectSpec(..), Asset(..), Handles(..)
+  , Demand(..), Access(..), requests, requires, streams
+  , Output(..), Failure(..), ErrorReport(..), caughtFailure
+  , ContextFault(..), ScopeFault(..)
   , History, historyEntries, latest, historySize
-  , ScopeInput(..), ScopeFault(..), openScope, closeScope, withScopeDependencies
-  , ScopeHandler, newScopeHandler, withScopeCleanups
   ) where
 
 import Framework.Effect.Contract
-  ( Effect(Registration, Typing, Require, Produce, Error, raise), EffectKind(..), Root, Registered, Void
-  , Output(..), Failure(..), ErrorReport(..), ErrorStore(caughtFailure), failEffect, ContextStore(enterHandler)
-  , ScopeInput(..), ScopeFault(..), ScopeStore(openScope, closeScope, withScopeDependencies)
+  ( Effect(Registration, Typing, Require, Produce, Error, raise), EffectKind(..)
+  , Output(..), Failure(..), ErrorReport(..), ErrorStore(caughtFailure)
+  , ContextFault(..), ScopeFault(..)
   )
-import Framework.Effect.Context
-  ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext, projectContext
-  , atomicHandle, atomicScope, readHistory, streamHandle )
 import Framework.Effect.Registration
-  ( EffectTyping(..), Asset(..), Handles(..), TypeRef(..), typeRef, EffectSpec(..), Demand(..), Access(..)
+  ( EffectTyping(..), EffectSpec(..), Asset(..), Handles(..), Demand(..), Access(..)
   , requests, requires, streams )
 import Framework.Effect.History (History, historyEntries, latest, historySize)
-import Framework.Effect.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, requestSteps)
-import Framework.Effect.Runtime.App (withScopeCleanups)
-import Framework.Effect.Scope (ScopeHandler, newScopeHandler)

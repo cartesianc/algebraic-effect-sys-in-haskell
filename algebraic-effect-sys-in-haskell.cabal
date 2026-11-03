@@ -31,10 +31,13 @@ executable crawler-demo
       Crawler.Generated.Program
       Crawler.Generated.Handlers
       Framework.SDK
+      Framework.Generated
+      Framework.Program
       Framework.Effect
       Framework.Effect.Contract
       Framework.Effect.History
       Framework.Effect.Registration
+      Framework.Effect.Demand
       Framework.Effect.Graph
       Framework.Effect.Context
       Framework.Effect.Binding
@@ -46,6 +49,9 @@ executable crawler-demo
       Framework.Effect.Runtime.Session
       Framework.Recursion
       Framework.Prototype
+      Framework.Prototype.Types
+      Framework.Prototype.Query
+      Framework.Prototype.Sources
       Framework.Workflow.AST
       Framework.Workflow.Execution
       Framework.Workflow.Structure
@@ -74,10 +80,13 @@ executable file-demo
       FileDemo.Generated.Program
       FileDemo.Generated.Handlers
       Framework.SDK
+      Framework.Generated
+      Framework.Program
       Framework.Effect
       Framework.Effect.Contract
       Framework.Effect.History
       Framework.Effect.Registration
+      Framework.Effect.Demand
       Framework.Effect.Graph
       Framework.Effect.Context
       Framework.Effect.Binding
@@ -89,6 +98,9 @@ executable file-demo
       Framework.Effect.Runtime.Session
       Framework.Recursion
       Framework.Prototype
+      Framework.Prototype.Types
+      Framework.Prototype.Query
+      Framework.Prototype.Sources
       Framework.Workflow.AST
       Framework.Workflow.Execution
       Framework.Workflow.Structure
@@ -116,10 +128,13 @@ executable open-files-demo
       OpenFilesDemo.Generated.Program
       OpenFilesDemo.Generated.Handlers
       Framework.SDK
+      Framework.Generated
+      Framework.Program
       Framework.Effect
       Framework.Effect.Contract
       Framework.Effect.History
       Framework.Effect.Registration
+      Framework.Effect.Demand
       Framework.Effect.Graph
       Framework.Effect.Context
       Framework.Effect.Binding
@@ -131,6 +146,9 @@ executable open-files-demo
       Framework.Effect.Runtime.Session
       Framework.Recursion
       Framework.Prototype
+      Framework.Prototype.Types
+      Framework.Prototype.Query
+      Framework.Prototype.Sources
       Framework.Workflow.AST
       Framework.Workflow.Execution
       Framework.Workflow.Structure
@@ -160,10 +178,13 @@ executable scope-reuse-demo
       ScopeReuseDemo.Generated.Program
       ScopeReuseDemo.Generated.Handlers
       Framework.SDK
+      Framework.Generated
+      Framework.Program
       Framework.Effect
       Framework.Effect.Contract
       Framework.Effect.History
       Framework.Effect.Registration
+      Framework.Effect.Demand
       Framework.Effect.Graph
       Framework.Effect.Context
       Framework.Effect.Binding
@@ -175,6 +196,9 @@ executable scope-reuse-demo
       Framework.Effect.Runtime.Session
       Framework.Recursion
       Framework.Prototype
+      Framework.Prototype.Types
+      Framework.Prototype.Query
+      Framework.Prototype.Sources
       Framework.Workflow.AST
       Framework.Workflow.Execution
       Framework.Workflow.Structure
@@ -203,10 +227,13 @@ executable scope-instances-demo
       ScopeInstancesDemo.Generated.Program
       ScopeInstancesDemo.Generated.Handlers
       Framework.SDK
+      Framework.Generated
+      Framework.Program
       Framework.Effect
       Framework.Effect.Contract
       Framework.Effect.History
       Framework.Effect.Registration
+      Framework.Effect.Demand
       Framework.Effect.Graph
       Framework.Effect.Context
       Framework.Effect.Binding
@@ -218,6 +245,9 @@ executable scope-instances-demo
       Framework.Effect.Runtime.Session
       Framework.Recursion
       Framework.Prototype
+      Framework.Prototype.Types
+      Framework.Prototype.Query
+      Framework.Prototype.Sources
       Framework.Workflow.AST
       Framework.Workflow.Execution
       Framework.Workflow.Structure
@@ -246,10 +276,13 @@ executable stream-demo
       StreamDemo.Generated.Program
       StreamDemo.Generated.Handlers
       Framework.SDK
+      Framework.Generated
+      Framework.Program
       Framework.Effect
       Framework.Effect.Contract
       Framework.Effect.History
       Framework.Effect.Registration
+      Framework.Effect.Demand
       Framework.Effect.Graph
       Framework.Effect.Context
       Framework.Effect.Binding
@@ -261,6 +294,9 @@ executable stream-demo
       Framework.Effect.Runtime.Session
       Framework.Recursion
       Framework.Prototype
+      Framework.Prototype.Types
+      Framework.Prototype.Query
+      Framework.Prototype.Sources
       Framework.Workflow.AST
       Framework.Workflow.Execution
       Framework.Workflow.Structure
@@ -279,7 +315,9 @@ executable effect-codegen
   main-is: Framework/Generate.hs
   hs-source-dirs: sdk
   other-modules:
+      Framework.Codegen
       Framework.Codegen.Handlers
+      Framework.Codegen.Demand
       Framework.Codegen.Assets
       Framework.Codegen.Structure
       Framework.Codegen.Plan
@@ -287,9 +325,13 @@ executable effect-codegen
       Framework.Effect.Contract
       Framework.Effect.History
       Framework.Effect.Registration
+      Framework.Effect.Demand
       Framework.Effect.Graph
       Framework.Recursion
       Framework.Prototype
+      Framework.Prototype.Types
+      Framework.Prototype.Query
+      Framework.Prototype.Sources
       Framework.Workflow.AST
       Framework.Workflow.Structure
   ghc-options: -main-is Framework.Generate

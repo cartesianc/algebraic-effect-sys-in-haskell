@@ -73,7 +73,7 @@ instance SharedFileScopeInputs m => SharedFileScopeEffect m where
 -- 不在业务中加打开标志或互斥锁，也不为尚未开始的 Node 预留资源。
 instance WriteFirstInputs m => WriteFirstEffect m where
   writeFirst = do
-    _ <- request @FilePaths
+    FilePaths _ <- request @FilePaths
     openSharedFile
     OpenedFile (SharedFile _ file) <- require @OpenedFile
     outcome <- liftIO $ tryIOError $ do
@@ -84,7 +84,7 @@ instance WriteFirstInputs m => WriteFirstEffect m where
 
 instance WriteSecondInputs m => WriteSecondEffect m where
   writeSecond = do
-    _ <- request @FilePaths
+    FilePaths _ <- request @FilePaths
     openSharedFile
     OpenedFile (SharedFile _ file) <- require @OpenedFile
     outcome <- liftIO $ tryIOError $ do
@@ -95,7 +95,7 @@ instance WriteSecondInputs m => WriteSecondEffect m where
 
 instance WriteThirdInputs m => WriteThirdEffect m where
   writeThird = do
-    _ <- request @FilePaths
+    FilePaths _ <- request @FilePaths
     openSharedFile
     OpenedFile (SharedFile _ file) <- require @OpenedFile
     outcome <- liftIO $ tryIOError $ do

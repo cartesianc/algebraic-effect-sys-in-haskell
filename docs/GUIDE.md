@@ -493,14 +493,16 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 
 | 枚举 | 方法体中 | 含义 |
 | --- | --- | --- |
-| `requests "T"` | `x <- request @T` | 重新生产一次，并把结果保存为当前绑定 |
-| `requires "T"` | `x <- require @T` | 读取已有的值，不重新生产；尚未生产过时自动生产一次并记住 |
+| `requests "T"` | `T x <- request @T` | 重新生产一次，并把结果保存为当前绑定 |
+| `requires "T"` | `T x <- require @T`（普通资产） | 读取已有的值，不重新生产；尚未生产过时自动生产一次并记住 |
 | `streams "T"` | `xs <- require @T` | 由持续资产 `T` 的新交付驱动，同时取得读取权限；只在 `lifelong` 内使用，见[持续资产与 lifelong](#stream) |
 
 - **来源自动确定**：契约名就是生产方声明的资产名，每个资产恰好由一个 Context 声明，生成器自动接上，不用指名生产方。
 - **区分同类数据**：同一种数据有不同含义时，声明成不同的资产。例如 Crawler 的起始页和链接页 URL 都是 `PageURL`，分别声明为资产 `StartURL` 和 `LinkedURL`，类型上不能混用。
 - **同一契约可以声明多种合法取值方式**：例如 Scoped 的 `open` request 资源、`close` require 它；持续消费方也可同时声明 `streams` 和 `requests`（生产方须支持 request）。同一契约的同一种方式只能声明一次。
-- **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见[资产书写](#types)）只能 `requires`；`streams` 只能由 Pure、Excu、Scoped 声明，只能订阅 `stream = Just ()` 的基础契约。
+- **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见[资产书写](#types)）只能 `requires`；`streams` 只能由 Pure、Excu、Scoped 声明，只能订阅持续资产的基础契约（直接挂在 Stream 下，或声明 `stream = Just ()`）。
+- **同一资产只有一个 Context 来源**：访问方式不改变资产的 ADT 或生产方；不限制一个消费者只能声明一个资产。
+- **声明须有接收依据**：每个资产在该 instance 中显式读取，或参与现有 alternative 选择／streams 交付。无需每个方法或每种访问方式都读一次。
 - **声明即权限**：方法体里取用了未声明的契约，生成器报错；运行时也会以 `UndeclaredContextAccess` 拒绝。
 
 <a id="handlers"></a>
@@ -568,8 +570,8 @@ Context 的读取方法（`read契约名`）由 SDK 提供默认实现，不用�
 | 写法 | 作用 |
 | --- | --- |
 | `openFileSession` | 调用 `input` 链上游的方法，上游随之执行 |
-| `x <- request @T` | 重新生产契约 `T` 的值，须在 `demands` 中声明 `requests "T"` |
-| `x <- require @T` | 读取 `T`，缺值时按需求值；须声明 `requests "T"` 或 `requires "T"` |
+| `T x <- request @T` | 重新生产契约 `T` 的值，须在 `demands` 中声明 `requests "T"` |
+| `T x <- require @T`（普通资产） | 读取 `T`，缺值时按需求值；须声明 `requires "T"` |
 | `xs <- require @T`（持续资产） | 取得 `History T`：本次交付为止的历史，用 `latest`／`historyEntries` 读取；须声明 `streams "T"` 或 `requires "T"` |
 | 挂接的 Context 调用所挂句柄的方法，例如 `contents <- readFileContent`、`raw <- nextReading` | 由句柄本次的输出回答，不再执行一遍；挂在 Stream 下时就是会话本次取得的原始输入 |
 | `raise (ReadFileError "message")` | 以本 effect 的错误失败；错误构造器是 effect 名加 `Error` |
@@ -577,7 +579,8 @@ Context 的读取方法（`read契约名`）由 SDK 提供默认实现，不用�
 | `contents <- readFileContent` | 挂接的 Context 调用它挂接的句柄，取得句柄交出的信息 |
 | `liftIO (...)` | 执行 IO |
 
-- **取值的模式匹配**：单构造器可以直接写在 `<-` 左侧，例如 `OpenedFile (FileHandle path file) <- require @OpenedFile`；多构造器的值先绑定，再用普通 `case` 处理，失败用 `raise`。
+- **取值的模式匹配**：普通资产需显式匹配其包装构造器，例如 `OpenedFile (FileHandle path file) <- require @OpenedFile`，只需确认身份时可写 `OpenedFile _`；也可先具名接收，再用 `case` 匹配。和类型在 case／lambda-case 中分派，失败用 `raise`。gencode 检查这种接收形态，GHC／HLS 检查 ADT 类型一致；规则见[主设计](LATEST_DESIGN.md#demand-contract)。
+- **历史视图**：持续资产用 `samples <- require @TemperatureSample` 具名接收 History，通过 latest／historyEntries 观察，不拆 SDK 内部构造器。
 - **挂接句柄的输出**：本次成功句柄的挂接注入期间，Context 对该句柄的直接调用由本次输出回答，不重复执行。显式 request 或缺值补产仍正常执行生产方法；这不是链级调用缓存。
 
 例如 [Crawler](../demo/Crawler/Handlers.hs) 中挂在抓取句柄下的解析 Context：
@@ -597,7 +600,7 @@ instance ExtractPageInputs m => ExtractPageEffect m where
 ```haskell
 instance FileSessionInputs m => FileSessionEffect m where
   openFileSession = do
-    _ <- request @OpenedFile
+    OpenedFile _ <- request @OpenedFile
     pure Nothing
 
   closeFileSession = do
@@ -944,9 +947,12 @@ reading #2: 24.0 C
 | 情况 | 处理方式 |
 | --- | --- |
 | 资产名与 effect 名、生成区名字重名 | 换一个按业务含义起的资产名 |
+| 两个 Context 声明同一资产名 | 每个 refined asset 保留唯一来源；不同业务来源使用不同资产名 |
 | `demands` 里的契约名没有对应的生产方 | 检查名字：契约名就是生产方声明的资产名 |
 | 声明了 `request`／`require` 中没有的角色却去 `requests`／`requires` | 在生产方补上角色，或去掉这项 demand |
 | 方法体里 `request @T`／`require @T` 的 `T` 没有在 `demands` 中声明 | 补上声明 |
+| 声明的资产既无显式读取，也无 alternative 选择／streams 交付依据 | 实现对应接收，或删掉无用声明 |
+| 普通资产直接丢弃、仅绑定变量而不匹配，或经未知 helper 隐藏接收位置 | 在方法体显式匹配 `T ...`，或具名绑定后 case；History 使用具名整体绑定 |
 | 直接调用其他 effect 的 Context 方法（如 `getFileName`） | 改用 `request @T`／`require @T` |
 | 在生产方以外构造某个 Context 产物类型的值（例如在消费方写 `StartURL (...)`） | 值应由它的生产方产生；消费方用 `request`／`require` 取得，只做模式匹配 |
 | 普通顶层函数显式使用业务类型、构造器或字段 | 把这部分操作移进注册的 instance 方法；只处理 `String` 等通用类型的普通函数可以保留 |
@@ -988,9 +994,9 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 
 ## 当前限制
 
-- **未实现的能力**：middleware、通用结构适配尚未实现。middleware 与 Stream 的 scope 化（Stream close、lifelong 的局部结束、会话资源存续等）是下一阶段的设计主题，见 [TODO](TODO.md#next-stage)。
+- **未实现的能力**：middleware、通用结构适配尚未实现。Stream／lifelong 的结束与清理进入本轮[六阶段计划](NEXT_STAGES.md#stages)，middleware 保留为[后续专题](NEXT_STAGES.md#middleware)。目标接口尚未实现，本指南继续描述当前写法。
 - **持续执行的延期项**：没有正常结束（EOF）、Stream close、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；完整历史一直保留，持续运行时内存随发布增长。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
-- **Stage 3 已知实现限制**：持续资产作为 scope 开启参数尚未接通。见 [TODO](TODO.md#stage-3-limitations)。
+- **Stage 3 已知实现限制**：持续资产作为 scope 开启参数尚未接通。见 [Next stages](NEXT_STAGES.md#current-limits)。
 - **handler 复用**：同一段 handler 逻辑还不能服务多种数据类型，需要分别注册（Crawler 的两条链因此各有一份实现）。
 - **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。
 - **构建方式**：SDK 目前随仓库内的示例一起编译，不能作为独立依赖引入。

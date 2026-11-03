@@ -1,9 +1,8 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 
--- 注册、方法定义与 AST 挂载的唯一静态原型；不包含闭包或运行中的资源。
+-- 统一静态原型的构建与校验门面；不包含闭包或运行中的资源。
+-- Types 保存同一份纯模型，Query 提供结构查询，Sources 分析资产发布与读取来源。
+-- 生成、执行装配和展示仍经本模块访问原型，不各自维护一份静态事实。
 module Framework.Prototype
   ( NodeId, SumTypes, Prototype(..), PrototypePlan(..), EffectProto(..)
   , WorkflowTree(..), AlternativeProto(..), LifelongProto(..), SessionProto(..), BootPlan(..)
@@ -18,140 +17,20 @@ module Framework.Prototype
   , bootPlan, sessionSteps, finiteSessions
   ) where
 
-import Control.DeepSeq (NFData)
 import Control.Monad (unless, when)
-import Control.Monad.State.Strict (StateT, execStateT, gets, lift, modify')
 import Data.Char (isAlphaNum, isUpper)
-import Data.List (intercalate, intersect, isPrefixOf, nub, sort, (\\))
+import Data.List (intercalate, intersect, nub, sort, (\\))
 import Data.Maybe (listToMaybe, maybeToList)
-import GHC.Generics (Generic)
 import Framework.Effect.Contract (EffectKind(..))
+import Framework.Effect.Demand (resolveDemands, contextNames, validateAssetSources)
 import Framework.Effect.Graph
 import Framework.Effect.Registration hiding (effectKind)
 import qualified Framework.Effect.Registration as Registration
+import Framework.Prototype.Types
+import Framework.Prototype.Query
+import Framework.Prototype.Sources (resolveSources)
 import Framework.Recursion (Fix(..), cata)
 import Framework.Workflow.AST (AST, WorkflowF(..), foldAST)
-
-type NodeId = [Int]
-type SumTypes = [(String, [(String, Maybe String)])]
-
-data Prototype method = Prototype
-  { protoRegistrations :: [EffectSpec]
-  , protoEffects :: [EffectProto method]
-  , protoMethods :: [MethodDefinition method]
-  , protoWorkflow :: WorkflowTree
-  -- lifelong 外的有限 require 读取 Receive 资产时由 interpreter 托管的会话；按注册确定，惰性启动。
-  , protoSessions :: [SessionProto]
-  , protoChains :: [ChainProto method]
-  , protoChainDefinitions :: [ChainDefinition method]
-  , protoGraph :: EffectGraph method
-  , protoScopes :: ScopeTree method
-  , protoScopeNames :: [(method, String)]
-  , protoSources :: [(ReadPoint, Source)]
-  } deriving (Eq, Show, Read, Functor, Generic, NFData)
-
--- 声明接口先于 Handlers 存在；准备阶段只运行一次，方法解析后补全同一份计划。
-data PrototypePlan = PrototypePlan
-  { plannedRegistrations :: [EffectSpec]
-  , plannedEffects :: [EffectProto String]
-  , plannedWorkflow :: WorkflowTree
-  } deriving (Eq, Show, Read, Generic, NFData)
-
-data EffectProto method = EffectProto
-  { effectName :: String
-  , effectKind :: EffectKind
-  , effectInput :: String
-  , effectMethods :: [(MethodRole, method)]
-  , effectDemands :: [ResolvedDemand]
-  , effectProduces :: Maybe String
-  , effectBranches :: [(String, String)]
-  , effectAnchor :: Maybe String
-  , effectScopes :: [String]
-  , effectErrorScope :: Maybe String
-  , effectInputChain :: [String]
-  , effectScopeParents :: [String]
-  , effectOpeningInputs :: [String]
-  , effectNearestScopes :: [String]
-  , effectResource :: Maybe String
-  , effectContextDependencies :: [String]
-  -- 持续资产（stream = Just ()）：require 返回 History，可被 streams 订阅。
-  , effectContinuous :: Bool
-  } deriving (Eq, Show, Read, Functor, Generic, NFData)
-
-data WorkflowTree
-  = NodeAt NodeId String
-  | ChainedAt NodeId [WorkflowTree]
-  | ParallelAt NodeId [WorkflowTree]
-  | AlternativeAt NodeId AlternativeProto [WorkflowTree]
-  | LifelongAt NodeId LifelongProto [WorkflowTree]
-  deriving (Eq, Show, Read, Generic, NFData)
-
-data AlternativeProto = AlternativeProto
-  { alternativeContract :: String
-  , alternativeSelector :: NodeId
-  , alternativeCases :: [(NodeId, String)]
-  } deriving (Eq, Show, Read, Generic, NFData)
-
--- lifelong 的静态装配：消费单元、每个挂载 target 的驱动资产，以及按资产共享的生产会话。
--- 会话以 lifelong 边界为出身，挂载路径为 lifelong 路径加 [-1, 会话序号, 步骤序号]，先于全部单元。
-data LifelongProto = LifelongProto
-  { lifelongUnits :: [NodeId]
-  , lifelongSubscriptions :: [(NodeId, String)]
-  , lifelongSessions :: [SessionProto]
-  } deriving (Eq, Show, Read, Generic, NFData)
-
-data SessionProto = SessionProto
-  { sessionAsset :: String
-  , sessionPlan :: BootPlan
-  , sessionMounts :: [NodeId]
-  } deriving (Eq, Show, Read, Generic, NFData)
-
--- 生产方式只由资产自己的注册决定：挂在 Stream 下由解析器接收生产；否则反复执行 request。
--- Receive 的两步挂载依次为 Stream 单步与解析器；RepeatRequest 只有 request 一步。
-data BootPlan = Receive String | RepeatRequest
-  deriving (Eq, Show, Read, Generic, NFData)
-
-data ChainRole = NodeChain | SelectorChain | SessionChain
-  deriving (Eq, Show, Read, Generic, NFData)
-
-data ChainProto method = ChainProto
-  { chainNode :: NodeId
-  , chainRole :: ChainRole
-  , chainTerminal :: String
-  , chainEntry :: method
-  , chainReaches :: [method]
-  , chainDrives :: [String]
-  , chainReads :: [String]
-  , chainScopePaths :: [[method]]
-  } deriving (Eq, Show, Read, Functor, Generic, NFData)
-
--- 定义身份属于方法；NodeId 只属于 AST 挂载。同一 origin 定义可挂载多次，
--- Context 生产／读取链由 demand 进入，始终没有虚构的 AST 路径。
-data ChainKind = OriginChain | ContextChain
-  deriving (Eq, Show, Read, Generic, NFData)
-
-data ChainDefinition method = ChainDefinition
-  { definitionKind :: ChainKind
-  , definitionEffect :: String
-  , definitionEntry :: method
-  , definitionReaches :: [method]
-  } deriving (Eq, Show, Read, Functor, Generic, NFData)
-
-data ReadPoint = ReadPoint { readNode :: NodeId, readContract :: String }
-  deriving (Eq, Show, Read, Generic, NFData)
-
--- FromSession：Receive 资产在没有本次交付时，由 interpreter 托管的会话交付当前历史。
-data Source = FromChains [NodeId] | FromOwnChain | FromSession
-  deriving (Eq, Show, Read, Generic, NFData)
-
-data PrototypeError method
-  = InvalidPrototype String
-  | InvalidEffectGraph (GraphError method)
-  | UnknownPrototypeTarget String
-  | InvalidAlternative NodeId String
-  | InvalidLifelong NodeId String
-  | PrototypeWorkflowMismatch
-  deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 valid :: Bool -> String -> Either (PrototypeError method) ()
 valid condition reason = unless condition (Left (InvalidPrototype reason))
@@ -170,8 +49,7 @@ buildEffectProtos :: [EffectSpec] -> SumTypes -> Either (PrototypeError String) 
 buildEffectProtos specifications sumTypes = do
   valid (unique (map name specifications)) "Duplicate effect name"
   valid (all ((/= "Root") . name) specifications) "Root is reserved"
-  valid (unique [contractOf declared | specification <- specifications,
-    Just declared <- [contextAsset (typing specification)]]) "Duplicate Context contract"
+  fromRegistration (validateAssetSources specifications)
   mapM_ (\specification -> mapM_ (\demand -> valid (validContractName (contract demand))
       ("Demanded contract must be a contract name such as StartURL: " ++ contract demand
         ++ " in " ++ name specification)) (demands specification)) specifications
@@ -353,32 +231,6 @@ registeredMethods specifications specification = case typing specification of
     ++ [(ContextRequire, method) | method <- maybeToList (contextReader selected)]
   Stream method -> [(StreamHandler, selected) | selected <- maybeToList method]
 
-workflowNode :: WorkflowTree -> NodeId
-workflowNode (NodeAt identifier _) = identifier
-workflowNode (ChainedAt identifier _) = identifier
-workflowNode (ParallelAt identifier _) = identifier
-workflowNode (AlternativeAt identifier _ _) = identifier
-workflowNode (LifelongAt identifier _ _) = identifier
-
-workflowChildren :: WorkflowTree -> [WorkflowTree]
-workflowChildren (NodeAt _ _) = []
-workflowChildren (ChainedAt _ children) = children
-workflowChildren (ParallelAt _ children) = children
-workflowChildren (AlternativeAt _ _ children) = children
-workflowChildren (LifelongAt _ _ children) = children
-
-workflowTerminals :: WorkflowTree -> [String]
-workflowTerminals (NodeAt _ selected) = [selected]
-workflowTerminals tree = concatMap workflowTerminals (workflowChildren tree)
-
-workflowLifelongs :: WorkflowTree -> [(NodeId, LifelongProto)]
-workflowLifelongs tree = [(identifier, described) | LifelongAt identifier described _ <- allWorkflow tree]
-
-workflowSelectors :: WorkflowTree -> [String]
-workflowSelectors tree = case tree of
-  AlternativeAt _ selected children -> alternativeContract selected : concatMap workflowSelectors children
-  _ -> concatMap workflowSelectors (workflowChildren tree)
-
 preparePrototype :: [EffectSpec] -> SumTypes -> Fix WorkflowF -> Either (PrototypeError String) PrototypePlan
 preparePrototype specifications sumTypes tree = do
   effects <- buildEffectProtos specifications sumTypes
@@ -452,17 +304,6 @@ numberWorkflow effects tree = cata number tree [] False
         _ -> Left (UnknownPrototypeTarget contractType)
       let plan = bootPlan effects producer
       pure (SessionProto contractType plan [path ++ [-1, index, step] | step <- [0 .. sessionSteps plan - 1]])
-
--- 生产方式只看资产自己的注册：挂在 Stream 下即接收生产，否则反复 request。
-bootPlan :: [EffectProto method] -> EffectProto method -> BootPlan
-bootPlan effects producer = case [effectName source | source <- effects, effectName source == effectInput producer
-                                 , effectKind source == StreamKind] of
-  source : _ -> Receive source
-  [] -> RepeatRequest
-
-sessionSteps :: BootPlan -> Int
-sessionSteps (Receive _) = 2
-sessionSteps RepeatRequest = 1
 
 -- 每个 Receive 资产一份 interpreter 托管的会话，挂载为 [-2, 序号, 步骤]；不属于 AST，
 -- 不作为任何读取点的可见前驱，只在 lifelong 外的有限 require 缺少交付时惰性启动。
@@ -712,24 +553,6 @@ checkDriven prototype = valid (null undriven)
     undriven = [methodIdentity definition | definition <- protoMethods prototype
       , methodRole definition == ContextRequest, methodIdentity definition `notElem` reached]
 
-allWorkflow :: WorkflowTree -> [WorkflowTree]
-allWorkflow tree = tree : concatMap allWorkflow (workflowChildren tree)
-
-knownWorkflowPosition :: WorkflowTree -> NodeId -> Bool
-knownWorkflowPosition tree selected = any ((== selected) . workflowNode) nodes
-  || selected `elem` [alternativeSelector choice | AlternativeAt _ choice _ <- nodes]
-  || selected `elem` [mount | LifelongAt _ described _ <- nodes
-       , session <- lifelongSessions described, mount <- sessionMounts session]
-  where nodes = allWorkflow tree
-
-lookupChain :: Prototype method -> NodeId -> Either (PrototypeError method) (ChainProto method)
-lookupChain prototype identifier = case filter ((== identifier) . chainNode) (protoChains prototype) of
-  [chain] -> pure chain
-  _ -> Left (InvalidPrototype ("Missing or duplicate chain at " ++ show identifier))
-
-lookupWorkflow :: WorkflowTree -> NodeId -> Maybe WorkflowTree
-lookupWorkflow tree identifier = listToMaybe [node' | node' <- allWorkflow tree, workflowNode node' == identifier]
-
 -- 运行装配和纯展示共用层校验，不再为执行检查重复 fold 当前 AST。
 matchWorkflowLayer :: WorkflowF child -> WorkflowTree -> Either (PrototypeError method) [WorkflowTree]
 matchWorkflowLayer (Node selected) (NodeAt _ expected)
@@ -755,372 +578,6 @@ validateWorkflow prototype ast = foldAST check ast (protoWorkflow prototype)
     childChecks (Parallel children) = children
     childChecks (Alternative children) = children
     childChecks (Lifelong children) = children
-
--- 这些查询只给出结构关系；Stage 1 不据此改变资产读写语义。
-precedes :: WorkflowTree -> NodeId -> NodeId -> Bool
-precedes tree before after = knownWorkflowPosition tree before && knownWorkflowPosition tree after
-  && any orders (allWorkflow tree)
-  where
-    orders (ChainedAt _ children) = or
-      [workflowNode left `isPrefixOf` before && workflowNode right `isPrefixOf` after
-      | (index, left) <- zip [0 :: Int ..] children, right <- drop (index + 1) children]
-    orders (AlternativeAt _ selected children) = before == alternativeSelector selected
-      && any (\child -> workflowNode child `isPrefixOf` after) children
-    -- 会话是 lifelong 的共同上游：会话挂载先于全部单元；单元之间、各次执行之间互不可见。
-    orders (LifelongAt identifier _ children) = (identifier ++ [-1]) `isPrefixOf` before
-      && any (\child -> workflowNode child `isPrefixOf` after) children
-    orders _ = False
-
-exclusive :: WorkflowTree -> NodeId -> NodeId -> Bool
-exclusive tree left right = knownWorkflowPosition tree left && knownWorkflowPosition tree right
-  && any separate (allWorkflow tree)
-  where
-    separate (AlternativeAt _ _ children) = or
-      [workflowNode first `isPrefixOf` left && workflowNode second `isPrefixOf` right
-      | first <- children, second <- children, workflowNode first /= workflowNode second]
-    separate _ = False
-
-visibleFrom :: WorkflowTree -> NodeId -> NodeId -> Bool
-visibleFrom tree source target = source == target && knownWorkflowPosition tree source
-  || precedes tree source target
-
-driveSet :: Prototype method -> NodeId -> Either (PrototypeError method) [String]
-driveSet prototype selected = chainDrives <$> lookupChain prototype selected
-
-readPoints :: Prototype method -> [ReadPoint]
-readPoints = map fst . protoSources
-
--- 生成期只跟踪“已经发布／捕获了哪个 origin”，不求值业务值。
--- Nothing 是 scope 资源归属；它可在本次调用使用，但不成为普通资产的跨链来源。
-data AssetState = AssetState
-  { assetPublications :: [(NodeId, String)]
-  , assetCaptures :: [(String, Maybe NodeId)]
-  } deriving (Eq, Show)
-
-data AssetExit = AssetExit Bool AssetState deriving (Eq, Show)
-
-data AssetFacts = AssetFacts
-  { assetDrives :: [(NodeId, String)]
-  , assetReads :: [(ReadPoint, [NodeId])]
-  }
-
-data AssetCall = AssetCall
-  { assetRoot :: NodeId
-  , assetCaller :: Maybe String
-  , assetOpenings :: [String]
-  , assetReplays :: [String]
-  , assetActiveMethods :: [String]
-  , assetClosing :: Bool
-  , assetRelevant :: [String]
-  }
-
-type AssetAnalysis = StateT AssetFacts (Either (PrototypeError String))
-
--- 可选生产保留为状态分支：A 未发布时 B 的 require 才能补产，故 A/B 不会被
--- 简单的 may-set 误报为共存来源。parallel 从相同输入独立分析，随后合并发布，
--- 因而两个旁支的缺值补产仍能同时出现。状态按有限事实去重，不展开任何业务 IO。
--- 只保留本链或后续 workflow 可能读取的契约；在方法出口就裁剪，避免无关注入
--- 的成功／失败组合先指数展开。仍保留活跃契约之间的相关性，不退化为 may-set。
-resolveSources :: [MethodDefinition String] -> [String] -> Prototype String
-               -> Either (PrototypeError String) (Prototype String)
-resolveSources definitions defaultReaders prototype = do
-  facts <- flip execStateT (AssetFacts [] []) $ do
-    _ <- workflow (protoWorkflow prototype) [] [] []
-    -- interpreter 托管的会话各自从空环境启动，不是任何读取点的可见前驱。
-    mapM_ (\mount -> root mount [] [] []) (concatMap sessionMounts (protoSessions prototype))
-  let reads = [(point, if readContract point `elem` receiving then FromSession
-                       else if null sources then FromOwnChain else FromChains (sort (nub sources)))
-        | (point, sources) <- assetReads facts]
-      annotate chain = chain
-        { chainDrives = sort (nub [contractType | (node', contractType) <- assetDrives facts, node' == chainNode chain])
-        , chainReads = sort (nub [readContract point | (point, _) <- reads, readNode point == chainNode chain])
-        }
-  mapM_ companionRead reads
-  pure prototype { protoChains = map annotate (protoChains prototype), protoSources = reads }
-  where
-    effects = protoEffects prototype
-    lifelongs = workflowLifelongs (protoWorkflow prototype)
-    -- 会话生产步骤的其他普通发布随交付读取（伴随发布），每一步都会替换。读取位置必须在调用前
-    -- 已经领取该会话的交付：由该资产驱动的 Node，或以它为转折资产的选择读取；否则读到哪一步取决于调度。
-    companionRead (point, FromChains nodes) = do
-      let producers = nub [sessionAsset session | (_, described) <- lifelongs
-            , session <- lifelongSessions described, any (`elem` sessionMounts session) nodes]
-          taken = [contractType | (_, described) <- lifelongs
-              , (node', contractType) <- lifelongSubscriptions described, node' == readNode point]
-            ++ [alternativeContract choice | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype)
-              , alternativeSelector choice == readNode point]
-          stray = filter (`notElem` taken) producers
-      unless (null stray) $ Left (InvalidLifelong (readNode point) ("Asset " ++ readContract point
-        ++ " is published by the production step of " ++ intercalate ", " stray
-        ++ " and is replaced at every delivery; read it only in targets driven by " ++ intercalate ", " stray
-        ++ ", or produce it before the lifelong"))
-    companionRead _ = pure ()
-    resources = [source | effect <- effects, Just source <- [effectResource effect]]
-    receiving = [contractType | effect <- effects, effectContinuous effect
-      , Just contractType <- [effectProduces effect], bootPlan effects effect /= RepeatRequest]
-    -- 复用已完成的可达性分析，保守包含 native reader，以及 caller 的 require 声明
-    -- 将直接 producer 方法调用路由成读取的情况；不依赖尚未算出的 chainReads。
-    possibleReads = [(chainNode chain, nub
-      [contractType | effect <- effects, Just contractType <- [effectProduces effect]
-        , let reached role = maybe False (`elem` chainReaches chain) (lookup role (effectMethods effect))
-        , reached ContextRequire || reached ContextRequest && any
-            (\consumer -> any ((`elem` chainReaches chain) . snd) (effectMethods consumer)
-              && any (\demand -> demandProvider demand == effectName effect
-                && demandAccess demand == RequireAccess) (effectDemands consumer)) effects])
-      | chain <- protoChains prototype]
-    readsAt node' = maybe [] id (lookup node' possibleReads)
-    readsIn tree = nub (localReads ++ concatMap readsIn (workflowChildren tree))
-      where
-        localReads = case tree of
-          NodeAt node' _ -> readsAt node'
-          AlternativeAt _ selected _ -> readsAt (alternativeSelector selected)
-          LifelongAt _ described _ -> concatMap readsAt (concatMap sessionMounts (lifelongSessions described))
-          _ -> []
-    retainPublications relevant = filter ((`elem` relevant) . snd)
-    retainState relevant state = state
-      { assetPublications = retainPublications relevant (assetPublications state)
-      , assetCaptures = filter ((`elem` relevant) . fst) (assetCaptures state)
-      }
-    retainExit relevant (AssetExit succeeded state) = AssetExit succeeded (retainState relevant state)
-    -- Workflow 失败后没有恢复分支；读取／生产事实已单独记录，失败产物不再传给后继。
-    -- 方法层的失败仍保留相关状态，供 Recover 和吞错注入继续分析。
-    retainOutcome relevant (succeeded, publications) =
-      (succeeded, if succeeded then retainPublications relevant publications else [])
-    effectFor :: String -> AssetAnalysis (EffectProto String)
-    effectFor method = case [effect | effect <- effects, method `elem` map snd (effectMethods effect)] of
-      [effect] -> pure effect
-      _ -> lift (Left (InvalidPrototype ("Asset analysis has no effect for method " ++ method)))
-    definitionFor :: String -> AssetAnalysis (MethodDefinition String)
-    definitionFor method = case [definition | definition <- definitions, methodIdentity definition == method] of
-      [definition] -> pure definition
-      _ -> lift (Left (InvalidPrototype ("Asset analysis has no body for method " ++ method)))
-    capture :: String -> Maybe NodeId -> AssetState -> AssetState
-    capture contractType origin state = state
-      { assetCaptures = sort ((contractType, origin) : filter ((/= contractType) . fst) (assetCaptures state)) }
-    recordRead :: NodeId -> String -> [NodeId] -> AssetAnalysis ()
-    recordRead node' contractType sources = modify' $ \facts ->
-      let point = ReadPoint node' contractType
-          previous = maybe [] id (lookup point (assetReads facts))
-          updated = (point, nub (previous ++ sources))
-      in facts { assetReads = updated : filter ((/= point) . fst) (assetReads facts) }
-    recordDrive :: NodeId -> String -> AssetAnalysis ()
-    recordDrive node' contractType = modify' $ \facts -> facts
-      { assetDrives = nub ((node', contractType) : assetDrives facts) }
-    -- 在已经捕获的路径上不查询外部来源；所有缺值路径使用同一静态候选表。
-    readAsset :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis [AssetExit]
-    readAsset call effect state = case effectProduces effect of
-      Nothing -> lift (Left (InvalidPrototype "Context reader has no contract"))
-      Just contractType -> case lookup contractType (assetCaptures state) of
-        Just _ -> pure [AssetExit True state, AssetExit False state]
-        -- Receive 资产只由会话生产：没有本次交付时由 interpreter 托管的会话交付，不查询普通来源。
-        Nothing | contractType `elem` receiving -> do
-          recordRead (assetRoot call) contractType []
-          pure [AssetExit True (capture contractType Nothing state), AssetExit False state]
-        Nothing -> do
-          let sources = nub [node' | (node', produced) <- assetPublications state, produced == contractType
-                , visibleFrom (protoWorkflow prototype) node' (assetRoot call)]
-              external = filter (/= assetRoot call) sources
-          recordRead (assetRoot call) contractType external
-          case sources of
-            [] | effectName effect `elem` resources ->
-              -- 资源可由仍活着的实例提供；缺失时失败，绝不按需求值。
-              pure [AssetExit True (capture contractType Nothing state), AssetExit False state]
-            [] | assetClosing call -> pure [AssetExit False state]
-            [] -> case lookup ContextRequest (effectMethods effect) of
-              Just producing -> method (call { assetCaller = Nothing }) producing state
-              Nothing -> pure [AssetExit False state]
-            [source] -> pure [AssetExit True (capture contractType (Just source) state), AssetExit False state]
-            _ -> lift (Left (InvalidPrototype ("Asset " ++ contractType ++ " read at " ++ show (assetRoot call)
-              ++ " has several visible sources " ++ show sources ++ "; refine the contract or the workflow")))
-    publish :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis AssetState
-    publish call effect state = case effectProduces effect of
-      Nothing -> lift (Left (InvalidPrototype "Context production has no contract"))
-      Just contractType -> do
-        let owned = case assetOpenings call of
-              current : _ -> any (\scope -> effectName scope == current
-                && effectResource scope == Just (effectName effect)) effects
-              [] -> False
-            captured = capture contractType (if owned then Nothing else Just (assetRoot call)) state
-        if owned then pure captured else do
-          recordDrive (assetRoot call) contractType
-          pure captured { assetPublications = sort (nub ((assetRoot call, contractType) : assetPublications state)) }
-    successes :: (AssetState -> AssetAnalysis [AssetExit]) -> [AssetExit] -> AssetAnalysis [AssetExit]
-    successes action exits = nub . concat <$> mapM (\exit@(AssetExit succeeded state) ->
-      if succeeded then action state else pure [exit]) exits
-    -- 每个不透明原子方法都可能失败；失败保留此前已捕获和已发布的事实。
-    -- 这些失败前缀只会在 Recover 或吞错注入继续，正常 Sequence 仍失败停止。
-    withFailures :: AssetState -> [AssetExit] -> [AssetExit]
-    withFailures state exits = AssetExit False state : exits
-      ++ [AssetExit False after | AssetExit True after <- exits]
-    shape :: AssetCall -> MethodShape String -> AssetState -> AssetAnalysis [AssetExit]
-    shape _ Empty state = pure [AssetExit True state, AssetExit False state]
-    shape call (Call selected) state = method call selected state
-    shape call (Sequence parts) state = sequential (shape call) parts [AssetExit True state]
-    shape call (Choice parts) state = case parts of
-      [] -> pure [AssetExit True state]
-      _ -> nub . concat <$> mapM (\part -> shape call part state) parts
-    shape call (Recover body recovery) state = do
-      before <- shape call body state
-      nub . concat <$> mapM (\exit@(AssetExit succeeded after) ->
-        if succeeded then pure [exit] else shape call recovery after) before
-    sequential :: (part -> AssetState -> AssetAnalysis [AssetExit]) -> [part] -> [AssetExit] -> AssetAnalysis [AssetExit]
-    sequential _ [] exits = pure (nub exits)
-    sequential action (part : rest) exits = do
-      next <- successes (action part) exits
-      sequential action rest next
-    method :: AssetCall -> String -> AssetState -> AssetAnalysis [AssetExit]
-    method call selected state
-      | selected `elem` assetReplays call = pure [AssetExit True (retainState (assetRelevant call) state)]
-      | selected `elem` assetActiveMethods call =
-          lift (Left (InvalidEffectGraph (RecursiveMethod selected)))
-      | otherwise = do
-          effect <- effectFor selected
-          definition <- definitionFor selected
-          let entered = call { assetCaller = if methodRole definition == ContextRequire
-                  then assetCaller call else Just (effectName effect)
-                , assetActiveMethods = selected : assetActiveMethods call }
-              role = methodRole definition
-              access = case assetCaller call of
-                Nothing -> Just RequestAccess
-                Just consumer ->
-                  let modes = [demandAccess demand | candidate <- effects, effectName candidate == consumer
-                        , demand <- effectDemands candidate, demandProvider demand == effectName effect]
-                  -- streams 同时授予读取交付视图，按 require 处理。
-                  in if RequestAccess `elem` modes then Just RequestAccess
-                     else if any (`elem` modes) [RequireAccess, StreamAccess] then Just RequireAccess else Nothing
-          exits <- case role of
-            ContextRequire | access == Nothing -> pure [AssetExit False state]
-            ContextRequire | selected `elem` defaultReaders ->
-              readAsset entered effect state
-            ContextRequest -> case access of
-              Nothing -> pure [AssetExit False state]
-              Just RequestAccess -> do
-                body <- shape entered (methodBody definition) state
-                successes (\after -> do
-                  published <- publish call effect after
-                  pure [AssetExit True published]) body
-              -- require 与 streams 都只读取，不进入生产。
-              Just _ -> readAsset call effect state
-            -- 解析器只由 Receive 会话挂载调用；成功即发布一次交付。
-            ContextStream -> do
-              body <- shape entered (methodBody definition) state
-              successes (\after -> do
-                published <- publish call effect after
-                pure [AssetExit True published]) body
-            ScopeOpen | assetClosing call -> pure [AssetExit False state]
-            ScopeOpen -> do
-              let inside = entered { assetOpenings = effectName effect : assetOpenings entered }
-              body <- shape inside (methodBody definition) state
-              fresh <- inject call selected body
-              let restoreResource after = foldr (\contractType -> capture contractType Nothing) after
-                    [contractType | producer <- effects, effectResource effect == Just (effectName producer)
-                      , Just contractType <- [effectProduces producer]]
-                  -- 无输入 scope 在进入方法体前选择复用；有输入时可在取得参数后
-                  -- 跳过余下方法体，保守保留失败前缀中的已完成输入操作。
-                  reused = if null (effectOpeningInputs effect) then [state]
-                    else nub (state : [after | AssetExit _ after <- body])
-              pure (fresh ++ [AssetExit True (restoreResource after) | after <- reused])
-            ScopeClose -> do
-              body <- shape (entered { assetClosing = True }) (methodBody definition) state
-              -- 重复 close 可在取得资源绑定时跳过余下方法体并成功返回；不触发注入。
-              pure (body ++ [AssetExit True after | after <- nub (state : [part | AssetExit _ part <- body])])
-            _ -> shape entered (methodBody definition) state >>= inject call selected
-          pure (nub (map (retainExit (assetRelevant call)) (withFailures state exits)))
-    inject :: AssetCall -> String -> [AssetExit] -> AssetAnalysis [AssetExit]
-    inject call anchor exits = do
-      let producing = [(effectName effect, method') | effect <- effects
-            , Just anchorName <- [effectAnchor effect]
-            , owner <- effects, effectName owner == anchorName
-            , (role, anchoredMethod) <- effectMethods owner
-            , role `elem` [HandlerMethod, ScopeOpen], anchoredMethod == anchor
-            , Just method' <- [lookup ContextRequest (effectMethods effect)]]
-      if maybe False (`elem` map fst producing) (assetCaller call)
-        then pure exits
-        else successes (\state -> do
-          let injectOne (_, produced) before = do
-                results <- method (call { assetCaller = Nothing
-                  , assetReplays = anchor : assetReplays call }) produced before
-                -- 每个 parser 的失败都留在注入内，先前成功发布不会回滚。
-                pure (nub [AssetExit True after | AssetExit _ after <- results])
-          sequential injectOne producing [AssetExit True state]) exits
-    root :: NodeId -> [String] -> [(String, Maybe NodeId)] -> [(NodeId, String)] -> AssetAnalysis [AssetExit]
-    root node' future handoff publications = do
-      chain <- lift (lookupChain prototype node')
-      let relevant = nub (readsAt node' ++ future)
-      method (AssetCall node' Nothing [] [] [] False relevant) (chainEntry chain)
-        (retainState relevant (AssetState publications handoff))
-    workflow :: WorkflowTree -> [String] -> [(NodeId, String)] -> [(String, Maybe NodeId)]
-             -> AssetAnalysis [(Bool, [(NodeId, String)])]
-    workflow tree future publications handoff = case tree of
-      NodeAt node' _ -> do
-        exits <- root node' future handoff publications
-        pure (nub [retainOutcome future (succeeded, assetPublications state) | AssetExit succeeded state <- exits])
-      ChainedAt _ children -> workflowSequence children future [(True, publications)] handoff
-      ParallelAt _ children -> do
-        -- 兄弟各读同一份前置状态；只把外层后继仍需要的产物交给组合，避免无关笛卡尔积。
-        parts <- mapM (\child -> workflow child future publications handoff) children
-        pure (foldl (combine future) [(True, retainPublications future publications)] parts)
-      AlternativeAt _ choice children -> do
-        selected <- root (alternativeSelector choice) (nub (concatMap readsIn children ++ future)) handoff publications
-        nub . concat <$> mapM (\(AssetExit succeeded state) -> if not succeeded
-          then pure [(False, [])]
-          else nub . concat <$> mapM (\child -> workflow child future (assetPublications state)
-              [(contractType, origin) | (contractType, Just origin') <- assetCaptures state
-                , let origin = Just origin']) children) selected
-      LifelongAt boundary described _ -> do
-        -- 复用原型中的实际消费单元，只拆 lifelong 直接子项的那一层 parallel。
-        units <- lift $ mapM (\node' -> case lookupWorkflow tree node' of
-          Just unit -> Right unit
-          Nothing -> Left (InvalidPrototype ("Missing lifelong unit at " ++ show node')))
-          (lifelongUnits described)
-        let sessions = lifelongSessions described
-            mounts = concatMap sessionMounts sessions
-            delivered = [(sessionAsset session, Just (last (sessionMounts session)))
-              | session <- sessions, not (null (sessionMounts session))]
-            combineStates before after = nub [sort (nub (left ++ right))
-              | left <- before, right <- after]
-        -- 每个单元只保留自己可能读取的发布；root 仍保留生产链自身的读取依赖，
-        -- read/drive 事实独立累计。不能先按所有单元的读取并集展开，再于出口投影。
-        prepared <- mapM (\unit -> do
-          let relevant = readsIn unit
-          produced <- mapM (\session -> do
-            steps <- mapM (\mount -> do
-              exits <- root mount relevant handoff publications
-              pure (nub [retainPublications relevant (assetPublications state)
-                | AssetExit True state <- exits])) (sessionMounts session)
-            -- 各成功出口分别保留；Receive 的两个步骤先各自投影，再组合并去重。
-            pure $ case foldl combineStates [[]] steps of
-              [] -> [[]]
-              states -> states) sessions
-          pure (unit, retainPublications relevant publications, produced)) units
-        let -- 显式 request 的交付没有伴随发布，且会被本边界的其他单元消费；
-            -- 因此 request 固定点仍跨全部单元求解，生产步骤始终使用边界环境。
-            analyzeUnits requested = do
-              mapM_ (\(unit, initial, produced) -> do
-                let options = [nub (if sessionAsset session `elem` requested then [] : states else states)
-                      | (session, states) <- zip sessions produced]
-                mapM_ (\state -> workflow unit [] state (handoff ++ delivered))
-                  (foldl combineStates [initial] options)) prepared
-              drives <- gets assetDrives
-              let now = nub [contractType | (node', contractType) <- drives, boundary `isPrefixOf` node'
-                    , node' `notElem` mounts, contractType `elem` map sessionAsset sessions]
-              unless (all (`elem` requested) now) (analyzeUnits (nub (requested ++ now)))
-        analyzeUnits []
-        -- lifelong 没有正常结束：排在它后面的后继不会执行。
-        pure [(False, [])]
-    workflowSequence :: [WorkflowTree] -> [String] -> [(Bool, [(NodeId, String)])] -> [(String, Maybe NodeId)]
-                     -> AssetAnalysis [(Bool, [(NodeId, String)])]
-    workflowSequence children future states handoff = go positioned states
-      where
-        positioned = zip children (drop 1 (scanr (\child later -> nub (readsIn child ++ later)) future children))
-        go [] outcomes = pure (nub (map (retainOutcome future) outcomes))
-        go ((child, later) : rest) outcomes = do
-          next <- nub . concat <$> mapM (\outcome@(succeeded, publications) -> if succeeded
-            then workflow child later publications handoff else pure [outcome]) outcomes
-          go rest next
-    combine :: [String] -> [(Bool, [(NodeId, String)])] -> [(Bool, [(NodeId, String)])] -> [(Bool, [(NodeId, String)])]
-    combine future before after = nub [retainOutcome future (leftOK && rightOK, sort (nub (left ++ right)))
-      | (leftOK, left) <- before, (rightOK, right) <- after]
 
 -- 只核对显式字段的自洽性，不展开 methodBody、不重构图或修正手调 scope 父边。
 validatePrototype :: (Ord method, Show method) => Prototype method -> Either (PrototypeError method) ()

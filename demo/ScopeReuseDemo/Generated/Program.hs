@@ -4,8 +4,8 @@
 -- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
 module ScopeReuseDemo.Generated.Program where
 
-import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
-import qualified Framework.SDK as SDK
+import Framework.Generated (Effect(..), EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
+import qualified Framework.Generated as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
 import ScopeReuseDemo.Generated.Effects hiding (request, require)
 import qualified ScopeReuseDemo.Generated.Handlers as Handlers
@@ -36,7 +36,7 @@ compiledEntries = do
 
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "ScopeReuseDemo" Handlers.handlerSourceFingerprint generatedPrototype compiledEntries
+interpreter = SDK.interpreter "ScopeReuseDemo" "demo/ScopeReuseDemo/Handlers.hs" Handlers.handlerSourceFingerprint generatedPrototype compiledEntries
 -- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
 -- NodeId 只在这份 AST 快照中有效；运行时校验后装配闭包。
 generatedPrototype :: SDK.Prototype MethodGen

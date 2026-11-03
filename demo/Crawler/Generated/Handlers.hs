@@ -14,7 +14,7 @@
 
 module Crawler.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
-import qualified Framework.SDK as FrameworkRuntime
+import qualified Framework.Generated as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified Crawler.Generated.Effects as FrameworkGenerated
 import Framework.SDK (Effect(..))

@@ -1,8 +1,8 @@
 # Stream 与 lifelong：资产驱动的自动装配
 
-本文通过引用构成[主设计第 7 章](LATEST_DESIGN.md#stream)的完整规范。主设计负责架构地图，本页唯一维护 Stream 的匹配、交付和调度规则；实施记录在 [TODO](TODO.md)，写法示例在[使用指南第五节](GUIDE.md#stream)。
+本文通过引用构成[主设计第 7 章](LATEST_DESIGN.md#stream)的完整规范。主设计负责架构地图，本页唯一维护 Stream 的匹配、交付和调度规则；实施记录在 [Next stages](NEXT_STAGES.md)，写法示例在[使用指南第五节](GUIDE.md#stream)。
 
-更新：2026-11-01。状态：已实现（Stage 3 第 1–6 批）；当前实现限制见 [TODO](TODO.md#stage-3-limitations)，延期项见[第 11 节](#deferred)。
+更新：2026-11-04。状态：已实现（Stage 3 第 1–6 批）；当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，延期项见[第 11 节](#deferred)。
 
 本文手工记录 Stream、Context 与 lifelong 的匹配规则，作为代码生成、解释器和开发文档共同遵守的规范。下列规则与当前 SDK 一致；标明“延期”或“临时”的部分不是最终设计。
 
@@ -67,6 +67,8 @@ socket、event、behavior 用来解释不同的驱动关系，但不是类型标
 
 挂在 Stream 下的 Context 没有另外的解析方法或输入方法：`getT` 调用 Stream 的方法取得本次原始输入，这次调用由会话本次取得的输入回答，不再执行 Stream 方法体，与挂在原子句柄下的 Context 调用句柄相同（[主设计 4.3](LATEST_DESIGN.md#context) 的原子输出挂接）。RepeatRequest 同样以 `getT` 生产。首次生成契约后才编写 Handlers。
 
+同一 refined asset 的所有访问方式共享固定表示 ADT 和唯一 Context 来源；request／require 的返回形态不同，不会产生第二种资产身份。声明与 handler 的显式接收规则统一见[主设计：资产接收契约](LATEST_DESIGN.md#demand-contract)，包括 streams 在 Prototype 中的交付依据。
+
 ### 3.2 Context 角色的匹配表
 
 生产方式只看 Context 自己的注册：
@@ -90,7 +92,7 @@ socket、event、behavior 用来解释不同的驱动关系，但不是类型标
 - 只有持续资产（挂在 Stream 下，或 `stream = Just ()`）的基础契约可以被订阅；订阅分支契约时报错，应订阅其基础契约。
 - 只有 Pure、Excu、Scoped 可以声明 streams。
 
-读取类型由生产方注册决定：持续资产的 `readT` 和所有消费方的 `require @T` 都返回 `History T`；`getT`／`request @T` 返回单个资产。普通资产保持单值读取。消费方新增订阅不会改变任何人的读取类型；一份契约需要同时有单值与持续两种读法时，细化为两个资产。分支契约投影本次交付的最新条目。
+读取类型由生产方注册决定：持续资产的 `readT` 和所有消费方的 `require @T` 都返回 `History T`；`getT`／`request @T` 返回单个资产。普通资产保持单值读取。消费方新增订阅不会改变任何人的读取类型；request 返回 T、require 返回 History T 时仍是同一资产。若需要两个独立来源或独立持续能力，再细化为两个资产。分支契约投影本次交付的最新条目。
 
 History 是从会话首条发布到确定交付位置的有限、不可变序列，由 SDK 构造：`latest`、`historyEntries`、`historySize` 读取。相等值的两个 publication 仍是两条。无限的是 SDK 持续推进的过程，不是业务手写的无限列表。History 包装共享发布序列，不逐条重建业务值；`latest` 取末项，`historySize` 取长度。领取一条交付还涉及序列前缀切分和伴随发布索引，因此不把整个领取过程承诺为常数时间；`historyEntries`、完整显示、比较或遍历可能访问全部条目。
 
@@ -289,9 +291,9 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 
 不新增 Stream close、next-use 或历史资源按元素关闭协议。没有增量表示等待，不表示 EOF、故障或关闭。
 
-Stream close、lifelong 的局部结束、会话生产资源与历史资源的存续，以及持续资产作为 scope 开启参数，归入下一阶段“Stream 的 scope 化”设计，语义尚未确定，见 [TODO](TODO.md#next-stage)。
+Stream close、lifelong 的局部结束、会话生产资源与历史资源的存续，以及持续资产作为 scope 开启参数，纳入本轮[六阶段计划](NEXT_STAGES.md#stages)。计划以 Stream effect 与 lifelong 的共同运行协议为基础；单一 demand、当前值／历史拆分和正常 end 尚未实现，本页仍记录当前协议。
 
-完整历史保留不等于可以把多份资源 owner 合成一个，也不能复活已关闭的资源。通用的历史资源选择／关闭语义尚未设计。会话历史在运行期间持续增长，不承诺有界内存。持续资产作为 scope 开启参数尚未接通 History 的参数观察协议，可能报 `ScopeInputsMissing`；现有跨轮 scope 复用不代表支持该用法，跟踪见 [TODO](TODO.md#stage-3-limitations)。
+完整历史保留不等于可以把多份资源 owner 合成一个，也不能复活已关闭的资源。通用的历史资源选择／关闭语义尚未设计。会话历史在运行期间持续增长，不承诺有界内存。持续资产作为 scope 开启参数尚未接通 History 的参数观察协议，可能报 `ScopeInputsMissing`；现有跨轮 scope 复用不代表支持该用法，跟踪见 [Next stages](NEXT_STAGES.md#current-limits)。
 
 <a id="implementation"></a>
 ## 10. 实现位置
@@ -313,6 +315,6 @@ ScopeTree 独立构建并保持无环；订阅与回调关系不作为 scope 父
 <a id="deferred"></a>
 ## 11. 验证与延期
 
-本仓库按约定只做普通编译、生成结果审阅和示例观察，不新增测试框架、负例或穷举门槛。各批实际观察过的场景记录在 [TODO](TODO.md#stage-3-record)。LSP 仓库的外部穷举模型尚未扩展到 Stream／lifelong。
+本仓库按约定只做普通编译、生成结果审阅和示例观察，不新增测试框架、负例或穷举门槛。已有验证范围概述见 [Next stages](NEXT_STAGES.md#baseline)，逐次观察记录保留在 Git 历史。LSP 仓库的外部穷举模型尚未扩展到 Stream／lifelong。
 
-本版明确延期：正常 EOF／Done、Stream close、lifelong 的局部结束（当前由 9.1 的临时规则代替）、历史资源精细关闭与回收、嵌套 lifelong、多个持续来源组合触发一个 target、自动重试、时间周期声明、容量背压、任意外部 push callback 注册和跨 interpreter 存续。已有阻塞事件／队列读取、socket 接收及主动采样可作为单步来源（写法见 [4.1 节](#drives)）；不据此宣称自动适配所有外部回调 API。其中与结束和资源存续相关的项目转入[下一阶段](TODO.md#next-stage)。
+本版明确延期：正常 EOF／Done、Stream close、lifelong 的局部结束（当前由 9.1 的临时规则代替）、历史资源精细关闭与回收、嵌套 lifelong、多个持续来源组合触发一个 target、自动重试、时间周期声明、容量背压、任意外部 push callback 注册和跨 interpreter 存续。已有阻塞事件／队列读取、socket 接收及主动采样可作为单步来源（写法见 [4.1 节](#drives)）；不据此宣称自动适配所有外部回调 API。其中与结束和资源存续相关的项目转入[下一阶段](NEXT_STAGES.md#stages)。

@@ -15,7 +15,9 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
--- Effect 契约与根能力；不包含执行载体或 workflow。
+-- Effect 契约与根能力；不包含具体执行载体或 workflow。
+-- 这里定义载体必须实现的 ContextStore／ScopeStore／ErrorStore 协议；
+-- 通用 Context 组合在 Context.hs，IO 解释在 Runtime/App.hs，业务入口只导出所需能力。
 module Framework.Effect.Contract
   ( Effect(..), EffectKind(..), Root, Registered, Void, Capability
   , Failure(..), Output(..), failEffect, ErrorHandler(..), ErrorReport(..), ErrorStore(..), runErrorHandler
@@ -30,6 +32,8 @@ import GHC.Generics (Generic)
 import Data.Kind (Constraint, Type)
 import Data.Void (Void)
 import Data.Typeable (Typeable, cast)
+
+-- 注册与载体能力 --------------------------------------------------------------
 
 -- 关联 Typing 只保留类别；方法名由注册描述。
 data EffectKind = PureKind | ExcuKind | ScopedKind | ErrorKind | ContextKind | StreamKind deriving (Eq, Show, Read, Generic)
@@ -64,6 +68,8 @@ class (Monad m, Inherited (Registration effect) m) => Effect effect m where
 
 -- 根 superclass 没有业务失败入口；空类型只供 SDK 根约束使用。
 data NoError (effect :: Type) deriving Show
+
+-- Context 访问与发布协议 -------------------------------------------------------
 
 -- SDK 内部存储协议：App 载体经 Reader 访问共享存储。
 -- 用户的 Context 仍只实现生产方法；读取与发布回调由生成器连接。
@@ -124,6 +130,8 @@ data ContextFault = ContextNotInitialized | UndeclaredContextAccess String
   | AmbiguousContextBinding String | CaseNotSelected String
   deriving (Eq, Show)
 
+-- Scope 参数与生命周期能力 ----------------------------------------------------
+
 -- 开启参数保留真实 ADT 值；类型相同且 Eq 相等才是同一输入。
 -- 这是 SDK 观察记录，不是用户注册的 key 字段。
 data ScopeInput = forall value. (Eq value, Typeable value) => ScopeInput String value
@@ -159,7 +167,9 @@ instance (Monad m, ContextStore environment m, ScopeStore cause m, ErrorStore ca
   -- 方法入口统一捕获；业务 instance 不需要手写 catch 或 super 前缀。
   handler = handleFailure
 
--- 回调由生成区装配；不让 Root 的 superclass 反向依赖业务 Error 类。
+-- Error 回调与统一完成结果 -----------------------------------------------------
+
+-- 回调由生成区装配；不让 Root 的 superclass 反向依赖业务 Error 类.
 -- 匹配函数由注册的 handles 生成，只读取 Failure 的来源与分类，不解释业务消息。
 data ErrorHandler cause m = ErrorHandler String (Failure cause -> Bool) (Maybe (m ())) (Maybe (m ()))
 

@@ -1,6 +1,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- Node 按原型中的挂载位置 lower 末端句柄；branch 组合执行闭包。
+-- Workflow 执行与受管理任务边界。这里装配 branch、重复消费单元并监督整次运行；
+-- Runtime 负责末端及生产任务，Session 负责交付日志，App 负责单次调用的资源协议。
+-- 退出先取消并等待 AST 子任务，再停止生产会话；scope 最终兜底由 Program 负责。
 module Framework.Workflow.Execution (runStructuredAST) where
 
 import Framework.Effect.Contract (Failure, Output(..))

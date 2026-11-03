@@ -14,7 +14,7 @@
 
 module OpenFilesDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
-import qualified Framework.SDK as FrameworkRuntime
+import qualified Framework.Generated as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified OpenFilesDemo.Generated.Effects as FrameworkGenerated
 import Framework.SDK (Effect(..))
@@ -99,7 +99,7 @@ instance HoldFilesInputs m => HoldFilesEffect m where
       let
         holdFiles :: (m) (Maybe String)
         holdFiles = do
-          _ <- request @FileNames
+          FileNames _ <- request @FileNames
           openFiles
           pure Nothing
       in holdFiles
@@ -156,7 +156,7 @@ instance FinishInspectionInputs m => FinishInspectionEffect m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "f82467c6b7e00d8bf10892761dc37206"
+handlerSourceFingerprint = Just "650e47983b0cb87ee15acd84b55224ff"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

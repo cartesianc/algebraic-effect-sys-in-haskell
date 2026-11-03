@@ -14,7 +14,7 @@
 
 module FileDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
-import qualified Framework.SDK as FrameworkRuntime
+import qualified Framework.Generated as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified FileDemo.Generated.Effects as FrameworkGenerated
 import Framework.SDK (Effect(..))
@@ -82,7 +82,7 @@ instance FileSessionInputs m => FileSessionEffect m where
       let
         openFileSession :: (m) (Maybe String)
         openFileSession = do
-          _ <- request @OpenedFile
+          OpenedFile _ <- request @OpenedFile
           pure Nothing
       in openFileSession
 
@@ -170,7 +170,7 @@ instance WriteFirstLineInputs m => WriteFirstLineEffect m where
         writeFirstLine :: (m) (Maybe String)
         writeFirstLine = do
           openFileSession
-          _ <- require @FileTextBlank
+          FileTextBlank _ <- require @FileTextBlank
           OpenedFile (FileHandle path file) <- require @OpenedFile
           let line = "file-demo: the file was empty; this is the first line.\n"
           outcome <- liftIO $ tryIOError $ do
@@ -206,7 +206,7 @@ instance AppendLineInputs m => AppendLineEffect m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "2d366db58b764f219d948ef0b6697898"
+handlerSourceFingerprint = Just "bd9043e680f75b38aea21b06b66c340d"
 
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

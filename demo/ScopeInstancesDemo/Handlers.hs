@@ -76,7 +76,7 @@ instance CheckIndependentInputs m => CheckIndependentEffect m where
         secondFile = outputDirectory </> "two.txt"
         selection = outputDirectory </> "selected.txt"
     liftIO (writeFile selection firstFile)
-    _ <- request @FileName
+    FileName _ <- request @FileName
     openFileSession
     OpenedFile (FileHandle pathA fileA) <- require @OpenedFile
     openFileSession
@@ -86,7 +86,7 @@ instance CheckIndependentInputs m => CheckIndependentEffect m where
     liftIO (putStrLn "[check] equal opening values reuse the same file Handle")
 
     liftIO (writeFile selection secondFile)
-    _ <- request @FileName
+    FileName _ <- request @FileName
     openFileSession
     OpenedFile (FileHandle pathB fileB) <- require @OpenedFile
     unless (pathB == secondFile && fileA /= fileB) $
@@ -113,7 +113,7 @@ instance CheckReopenInputs m => CheckReopenEffect m where
         selection = outputDirectory </> "selected.txt"
         journal = outputDirectory </> "events.txt"
     liftIO (writeFile selection firstFile)
-    _ <- request @FileName
+    FileName _ <- request @FileName
     openFileSession
     OpenedFile (FileHandle pathA fileA) <- require @OpenedFile
     events <- liftIO (lines <$> readFile' journal)
@@ -125,7 +125,7 @@ instance CheckReopenInputs m => CheckReopenEffect m where
     liftIO (putStrLn "[check] another Node explicitly reopens file 1 after the previous chain ended")
 
     liftIO (writeFile selection secondFile)
-    _ <- request @FileName
+    FileName _ <- request @FileName
     openFileSession
     OpenedFile (FileHandle pathB fileB) <- require @OpenedFile
     closedB <- liftIO (hIsClosed fileB)

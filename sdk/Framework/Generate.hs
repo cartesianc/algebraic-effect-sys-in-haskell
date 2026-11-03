@@ -3,6 +3,7 @@ module Framework.Generate (main) where
 
 import Control.Exception (evaluate)
 import Data.Char (isAlphaNum, isUpper)
+import Framework.Codegen (GeneratedCode(..))
 import Framework.Codegen.Handlers (prepareHandlers, loadSumTypes)
 import Framework.Codegen.Assets (checkAssets)
 import Framework.Codegen.Plan (renderPrototype)
@@ -59,7 +60,15 @@ main = do
             ExitSuccess -> case readMaybe output of
               Nothing -> die "Cannot read the SDK handler wrapping plan"
               Just (Left problem) -> die problem
-              Just (Right (contracts, program, wrappers, scopeHandlers, plan, assetRoots, routes, owners)) -> do
+              Just (Right generatedCode) -> do
+                let contracts = codeEffects generatedCode
+                    program = codeProgram generatedCode
+                    wrappers = codeWrappers generatedCode
+                    scopeHandlers = codeSupport generatedCode
+                    plan = codePrototypePlan generatedCode
+                    assetRoots = codeAssetRoots generatedCode
+                    routes = codeDemandRoutes generatedCode
+                    owners = codeAssetOwners generatedCode
                 (handlers, shapes, nativeSource) <- prepareHandlers namespace wrappers scopeHandlers routes
                 let generated = directory </> "Generated"
                     cachePath = generated </> ".scope-cache"
@@ -83,7 +92,7 @@ main = do
                 _ <- evaluate (length structure)
                 assets <- checkAssets namespace
                   [("Effects", contracts), ("Program", program ++ structure), ("Handlers", handlers)]
-                  assetRoots [(owner, method) | (owner, method, _, _) <- wrappers] owners nativeSource
+                  assetRoots [(owner, method) | (owner, method, _, _) <- wrappers] owners prototype nativeSource
                 createDirectoryIfMissing True generated
                 changed <- sequence
                   [ writeIfChanged (generated </> "Effects.hs") contracts
@@ -102,9 +111,13 @@ main = do
 structureSources :: [FilePath]
 structureSources =
   [ "sdk/Framework/Prototype.hs"
+  , "sdk/Framework/Prototype/Types.hs"
+  , "sdk/Framework/Prototype/Query.hs"
+  , "sdk/Framework/Prototype/Sources.hs"
   , "sdk/Framework/Codegen.hs"
   , "sdk/Framework/Codegen/Plan.hs"
   , "sdk/Framework/Effect/Registration.hs"
+  , "sdk/Framework/Effect/Demand.hs"
   , "sdk/Framework/Effect/Contract.hs"
   , "sdk/Framework/Effect/Graph.hs"
   , "sdk/Framework/Recursion.hs"

@@ -1,10 +1,11 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 
 -- 将注册和选定末端 lower 为普通 Haskell 源码；不执行业务。
-module Framework.Codegen (lowerProgram) where
+module Framework.Codegen (GeneratedCode(..), lowerProgram) where
 
 import Framework.Effect.Contract (EffectKind(..))
 import Framework.Effect.Registration
+import Framework.Effect.Demand (readsAccess, accessOperation, AccessResult(..), accessResult)
 import qualified Framework.Prototype as Prototype
 import Framework.Workflow.AST (WorkflowF)
 import Framework.Recursion (Fix)
@@ -13,7 +14,8 @@ import Data.Char (isAlphaNum, isUpper, toUpper)
 import Data.List (intercalate, nub)
 import Data.Maybe (fromMaybe, listToMaybe, maybeToList)
 
--- 3. 生成契约、superclass 和末端句柄登记。
+-- 生成契约、superclass 和末端句柄登记。
+-- 方法结果类型只由 methodResult 计算；接口签名与执行副本共用这份规则。
 -- 不生成外部 request 流水线；上游方法由用户 instance 直接引用。
 -- Input 保存操作能力；Context 经 demands 按契约解析来源，消费方不指名生产者的类。
 -- 程序只经 AST 启动：入口是 AST 中各 node 选中的末端 effect。
@@ -25,16 +27,29 @@ type DemandRoutes = ([(String, [((String, String), String)])], [(String, String)
 -- Types.hs 中的和类型：类型名 → [(构造器名, 唯一字段的类型原文)]；由 SDK 解析 Types.hs 得到。
 type SumTypes = [(String, [(String, Maybe String)])]
 
+-- 生成进程交接的是具名的源码产物与纯计划；字段不包含闭包或运行状态。
+-- 通过 Show/Read 交接 ghci 的声明加载结果，避免用位置含义不清的大元组。
+data GeneratedCode = GeneratedCode
+  { codeEffects :: String
+  , codeProgram :: String
+  , codeWrappers :: [(String, String, String, String)]
+  , codeSupport :: String
+  , codePrototypePlan :: Prototype.PrototypePlan
+  , codeAssetRoots :: [String]
+  , codeDemandRoutes :: DemandRoutes
+  , codeAssetOwners :: [(String, String, Bool)]
+  } deriving (Eq, Show, Read)
+
 -- 完整 AST 先交给 Prototype 编号和解析；渲染只读取其中的声明事实。
 lowerProgram :: String -> [EffectSpec] -> Fix WorkflowF -> SumTypes
-             -> Either String (String, String, [(String, String, String, String)], String, Prototype.PrototypePlan, [String], DemandRoutes, [(String, String, Bool)])
+             -> Either String GeneratedCode
 lowerProgram namespace specifications tree sumTypes = do
   plan <- either (Left . show) Right (Prototype.preparePrototype specifications sumTypes tree)
   renderProgram namespace plan sumTypes
 
 -- 接口和运行包装只读取统一原型准备阶段的事实；方法体随后由生成器补入。
 renderProgram :: String -> Prototype.PrototypePlan -> SumTypes
-              -> Either String (String, String, [(String, String, String, String)], String, Prototype.PrototypePlan, [String], DemandRoutes, [(String, String, Bool)])
+              -> Either String GeneratedCode
 renderProgram namespace prepared sumTypes = do
   checkGenerated
   if null selected
@@ -42,17 +57,17 @@ renderProgram namespace prepared sumTypes = do
     else pure ()
   selectedMethods <- mapM findHandler selected
   declarations <- mapM declaration specifications
-  pure
-    ( unlines (contractHeader ++ runtimeAliases ++ generatedContracts ++ methodIdentities ++ concat declarations
+  pure GeneratedCode
+    { codeEffects = unlines (contractHeader ++ runtimeAliases ++ generatedContracts ++ methodIdentities ++ concat declarations
         ++ providerDeclarations ++ errorDeclaration ++ contextDeclarations)
-    , unlines (programHeader ++ astInterpreter selectedMethods)
-    , concatMap instanceWrappers specifications
-    , scopeHandlers ++ scopeCleanups ++ errorHandlers ++ injectionTable
-    , prepared
-    , nub [reference representation' | (_, representation', _) <- generatedDeclarations]
-    , (demandRoutes, contextMethods)
-    , contractOwners
-    )
+    , codeProgram = unlines (programHeader ++ astInterpreter selectedMethods)
+    , codeWrappers = concatMap instanceWrappers specifications
+    , codeSupport = scopeHandlers ++ scopeCleanups ++ errorHandlers ++ injectionTable
+    , codePrototypePlan = prepared
+    , codeAssetRoots = nub [reference representation' | (_, representation', _) <- generatedDeclarations]
+    , codeDemandRoutes = (demandRoutes, contextMethods)
+    , codeAssetOwners = contractOwners
+    }
   where
     specifications = Prototype.plannedRegistrations prepared
     effectPrototypes = Prototype.plannedEffects prepared
@@ -67,7 +82,6 @@ renderProgram namespace prepared sumTypes = do
     -- streams 同时授予读取交付视图，在读取路由、访问表和 scope 前提中与 require 相同。
     requireProviders specification =
       nub [demandProvider resolved | resolved <- resolvedOf (name specification), readsAccess (demandAccess resolved)]
-    readsAccess selectedAccess = selectedAccess `elem` [RequireAccess, StreamAccess]
     -- 持续资产：require 返回 History；分支契约仍返回当前交付的投影。
     continuousContract contractType = or
       [ Prototype.effectContinuous (protoOf (name specification)) | specification <- contextSpecs
@@ -83,11 +97,9 @@ renderProgram namespace prepared sumTypes = do
     sourceMethod resolved = case demandAccess resolved of
       RequestAccess -> producerMethod (demandProvider resolved)
       _ -> readerMethod (demandProvider resolved)
-    accessWord RequestAccess = "request"
-    accessWord _ = "require"
     demandRoutes =
       [ (name specification ++ "Effect",
-          [ ((accessWord (demandAccess resolved), demandContract resolved), method)
+          [ ((accessOperation (demandAccess resolved), demandContract resolved), method)
           | resolved <- resolvedOf (name specification), Just method <- [sourceMethod resolved] ])
       | specification <- specifications ]
     -- 每个 Context 的契约类型由声明的资产名生成：(契约名, 表示类型, 生产方)。
@@ -163,7 +175,7 @@ renderProgram namespace prepared sumTypes = do
       , ""
       , "import Framework.Effect.Contract (Effect(..), Registered)"
       , "import qualified Framework.Effect.Contract as FrameworkRoot"
-      , "import qualified Framework.SDK as SDK"
+      , "import qualified Framework.Generated as SDK"
       , "import Control.Monad.IO.Class (MonadIO)"
       , "import " ++ namespace ++ ".Types"
       , ""
@@ -192,8 +204,8 @@ renderProgram namespace prepared sumTypes = do
       , "-- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。"
       , "module " ++ namespace ++ ".Generated.Program where"
       , ""
-      , "import Framework.SDK (Effect(..), EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))"
-      , "import qualified Framework.SDK as SDK"
+      , "import Framework.Generated (Effect(..), EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))"
+      , "import qualified Framework.Generated as SDK"
       , "import qualified Framework.Effect.Contract as FrameworkRoot"
       , "import " ++ namespace ++ ".Generated.Effects hiding (request, require)"
       , "import qualified " ++ namespace ++ ".Generated.Handlers as Handlers"
@@ -237,10 +249,8 @@ renderProgram namespace prepared sumTypes = do
         ++ [ "" ]
       | demanded <- nub [demandContract resolved | (_, resolvedDemands) <- resolvedTable, resolved <- resolvedDemands]
       , let contractType = demanded
-            readingType
-              | Just _ <- lookup contractType branchContracts = contractType
-              | continuousContract contractType = "SDK.History " ++ contractType
-              | otherwise = contractType
+            readingType = renderAccessResult "SDK.History" contractType
+              (accessResult (continuousContract contractType) RequireAccess)
             projected field = if field == Nothing then " -> Just (" ++ contractType ++ " ())"
                               else " field -> Just (" ++ contractType ++ " field)"
             routes selected =
@@ -260,7 +270,7 @@ renderProgram namespace prepared sumTypes = do
     -- Eq／Show 仅在表示类型具备时可用。
     generatedContracts = case generatedDeclarations of
       [] -> []
-      _ -> "-- 每个 Context 的契约类型：名字来自 handler 名，包装其表示类型；只能由该生产方构造。"
+      _ -> "-- 每个 Context 的契约类型：名字来自 Asset 声明，包装其表示类型；只能由该生产方构造。"
         : concat
           [ [ "newtype " ++ generated ++ " = " ++ generated ++ " (" ++ reference representation' ++ ")"
             , "deriving instance Eq (" ++ reference representation' ++ ") => Eq " ++ generated
@@ -291,15 +301,8 @@ renderProgram namespace prepared sumTypes = do
           ++ errorMethods specification ++ maybeToList reading ]
       where
         selectedName = name specification
-        resultType method = case typing specification of
-          Context { asset = declared }
-            | Just method == reading && Prototype.effectContinuous (protoOf selectedName) ->
-                "FrameworkRuntime.History FrameworkGenerated." ++ contractOf declared
-            | otherwise -> "FrameworkGenerated." ++ contractOf declared
-          Excu _ -> "Maybe String"
-          Scoped _ _ -> "Maybe String"
-          Stream _ -> "String"
-          _ -> "()"
+        resultType method = methodResult specification method "FrameworkRuntime.History"
+          (maybe "()" (("FrameworkGenerated." ++) . contractOf) (contextAsset (typing specification)))
         closing = case typing specification of
           Scoped _ method -> maybeToList method
           _ -> []
@@ -402,6 +405,22 @@ renderProgram namespace prepared sumTypes = do
 
     errorScopes = maybeToList . Prototype.effectErrorScope . protoOf . name
     -- 业务产物只归 Context；Output 仍只在运行边界统一包装。
+    -- 类型知识只维护一次：类签名使用 Produce，包装副本使用同一资产的具名类型。
+    -- require 的历史/单值选择来自 Demand，不能由两个渲染分支分别决定。
+    applyType constructor argument = constructor ++ " "
+      ++ (if ' ' `elem` argument then "(" ++ argument ++ ")" else argument)
+    renderAccessResult historyType valueType result = case result of
+      AssetValue -> valueType
+      AssetHistory -> applyType historyType valueType
+    methodResult specification method historyType valueType = case typing specification of
+      Context {} -> renderAccessResult historyType valueType
+        (accessResult (Prototype.effectContinuous (protoOf (name specification)))
+          (if Just method == contextReader (typing specification) then RequireAccess else RequestAccess))
+      Excu {} -> "Maybe String"
+      Scoped {} -> "Maybe String"
+      Stream {} -> "String"
+      _ -> "()"
+
     valueContract specification = case typing specification of
       -- 生产角色的合法性已由 Prototype 按生产方式匹配表检查。
       Context { asset = declared } -> Right (TypeRef (contractOf declared))
@@ -417,21 +436,14 @@ renderProgram namespace prepared sumTypes = do
             ["Provides " ++ contract demand ++ " m" | demand <- demands specification])
           -- 原子句柄（Excu、Scoped.open／close）返回可选的信息；业务值只归 Context。
           -- 这份输出只交给挂在它下面的 Context，资源信息仍来自显式声明的上游 Context。
-          ordinaryMethods =
-            [ (method, case effectKind (typing specification) of
-                PureKind -> "m ()"
-                ExcuKind -> "m (Maybe String)"
-                ScopedKind -> "m (Maybe String)"
-                ErrorKind -> "m ()"
-                -- Stream 每次取得一份原始输入，交给挂在它下面的解析器。
-                StreamKind -> "m String"
-                _ -> "m (Produce " ++ effectName ++ ")")
-            | method <- maybeToList (entryMethod (typing specification)) ]
+          methodType method = applyType "m" (methodResult specification method "SDK.History"
+            ("Produce " ++ effectName))
+          ordinaryMethods = [(method, methodType method) | method <- maybeToList (entryMethod (typing specification))]
           closingMethods = case typing specification of
-            Scoped _ closing -> [(method, "m (Maybe String)") | method <- maybeToList closing]
+            Scoped _ closing -> [(method, methodType method) | method <- maybeToList closing]
             _ -> []
           methods = ordinaryMethods ++ closingMethods
-            ++ [(method, "m ()") | method <- errorMethods specification]
+            ++ [(method, methodType method) | method <- errorMethods specification]
           methodLines = ["  " ++ method ++ " :: " ++ signature | (method, signature) <- methods]
           continuous = Prototype.effectContinuous (protoOf effectName)
           -- 缺值时的 thunk：有 request 时求值一次 request。
@@ -445,7 +457,7 @@ renderProgram namespace prepared sumTypes = do
           -- 有 request 的持续资产按普通 require 取得一个值（呈现为单条视图）。
           readingLines = case contextReader (typing specification) of
             Just method | continuous ->
-              [ "  " ++ method ++ " :: m (SDK.History (Produce " ++ effectName ++ "))"
+              [ "  " ++ method ++ " :: " ++ methodType method
               , "  " ++ method ++ " = " ++ readerWrapper
               , "    SDK.readHistory " ++ show effectName
                 ++ " ContextBindingError " ++ contextAccessTable "SDK." effectName
@@ -454,7 +466,7 @@ renderProgram namespace prepared sumTypes = do
                   (lookup Graph.ContextRequest (Prototype.effectMethods (protoOf effectName)))
               ]
             Just method ->
-              [ "  " ++ method ++ " :: m (Produce " ++ effectName ++ ")"
+              [ "  " ++ method ++ " :: " ++ methodType method
               , "  " ++ method ++ " = " ++ readerWrapper
               , "    SDK.readContext " ++ show effectName
                 ++ " ContextBindingError " ++ contextAccessTable "SDK." effectName
@@ -644,6 +656,7 @@ renderProgram namespace prepared sumTypes = do
           [ "-- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。"
           , "interpreter :: SDK.AST -> [EffectSpec] -> IO ()"
           , "interpreter = SDK.interpreter " ++ show namespace
+              ++ " " ++ show ("demo/" ++ map (\character -> if character == '.' then '/' else character) namespace ++ "/Handlers.hs")
               ++ " Handlers.handlerSourceFingerprint generatedPrototype compiledEntries"
           ]
       where

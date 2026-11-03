@@ -8,7 +8,7 @@
 
 你可以把文件操作、网页抓取等业务组织成可复用的操作链，再用 workflow 安排顺序执行、并行执行和按业务状态选择分支。对于持续输入，也可以由资产更新驱动消费链反复执行。这些组合的代码形态见[workflow 指南](docs/GUIDE.md#workflow)，持续执行的例子见[Stream 指南](docs/GUIDE.md#stream)。
 
-框架还提供资产依赖与来源检查、资源共享和自动清理，以及失败检测与处置，让业务方法沿用统一的取值和资源管理协议。具体保证见[运行时行为](docs/GUIDE.md#runtime-behavior)。项目目前处于接口探索阶段，现有示例可以运行；已完成的能力和开放问题记录在[开发进度](docs/TODO.md)中，下一阶段是 [Stream 的 scope 化与 middleware](docs/TODO.md#next-stage) 的设计。
+框架还提供资产依赖与来源检查、资源共享和自动清理，以及失败检测与处置，让业务方法沿用统一的取值和资源管理协议。具体保证见[运行时行为](docs/GUIDE.md#runtime-behavior)。项目目前处于接口探索阶段，现有示例可以运行；已有基础、开放问题和下一轮计划记录在 [Next stages](docs/NEXT_STAGES.md) 中；本轮从 Stream 与 lifelong 的共同执行结构出发，分阶段收敛输入契约、资产访问、结束与资源清理。
 
 ## 为什么这样设计
 

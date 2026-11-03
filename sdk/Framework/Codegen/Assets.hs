@@ -8,6 +8,8 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Data (Data, cast, gmapQ)
 import Data.List (intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sortOn, stripPrefix)
 import Data.Time.Clock (getCurrentTime)
+import Framework.Codegen.Demand (checkDemands)
+import Framework.Prototype (Prototype)
 import Framework.Effect.Asset
 import GHC
 import GHC.Core.DataCon (dataConName, dataConOrigArgTys)
@@ -36,11 +38,11 @@ import Text.Read (readMaybe)
 
 -- 新契约及包装副本只作为内存 target；检查失败不改写 Generated。
 -- 同时加载手写与生成模块，但不在同一业务导入链混入两份 instance。
--- owners 列出 Context 产物类型、其生产方的类，以及该类型是否由生成器产出（refine @T @(Gen "X")）：
+-- owners 列出 Context 产物类型、其生产方的类，以及该类型是否由 Asset 声明生成名义包装：
 -- 这些类型只能在生产方的方法中构造。
 checkAssets :: String -> [(String, String)] -> [String] -> [(String, String)] -> [(String, String, Bool)]
-            -> Maybe String -> IO String
-checkAssets namespace generated roots methods owners native = do
+            -> Prototype String -> Maybe String -> IO String
+checkAssets namespace generated roots methods owners prototype native = do
   library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
   files <- sourceFiles (modulePath namespace)
   now <- getCurrentTime
@@ -113,7 +115,9 @@ checkAssets namespace generated roots methods owners native = do
           | (index, body) <- rootAliases "OwnedContract", (contract, generated) <- take 1 (drop index ownedTypes)
           , selected <- typeConstructors body, generated || selected `elem` localTypes, isAlgTyCon selected ]
         failures = concatMap (checkModule namespace methods symbols ownership) checked
-    unless (null failures) $ liftIO (ioError (userError (intercalate "\n" failures)))
+    demandFailures <- concat <$> mapM (checkDemands namespace prototype methods) checked
+    unless (null (failures ++ demandFailures)) $
+      liftIO (ioError (userError (intercalate "\n" (failures ++ demandFailures))))
     pure (renderAssets namespace (sortOn assetType (map describeAsset assets)))
 
 modulePath :: String -> FilePath
@@ -282,7 +286,7 @@ checkModule namespace methods assets ownership checked = case tm_renamed_source 
     checkBinding :: Bool -> HsBind GhcRn -> [String]
     checkBinding False binding@FunBind {fun_id = identifier}
       | sourceModule == namespace ++ ".Effects", occNameString (nameOccName (unLoc identifier)) == "effects" =
-          localFunctions binding -- 唯一注册声明允许 typeRef @Asset；不豁免其余普通函数。
+          localFunctions binding -- 唯一注册声明允许 Asset @表示类型；不豁免其余普通函数。
     checkBinding local binding
       | not local || any (`elem` functions) (collectHsBindBinders CollNoDictBinders binding) =
           reject (bindingLocation binding) binding

@@ -24,7 +24,8 @@ data MethodRole
   | ScopeClose
   | ErrorDetect
   | ErrorResolve
-  -- Stream 的单步取得原始输入；Context.stream 解析当前输入；Context.input 读取当前输入（SDK 默认实现）。
+  -- StreamHandler 取得单步原始输入；ContextStream 标记挂在 Stream 下的 getT 解析器。
+  -- 解析器仍调用 Stream 方法；运行包装用本次原始输入回答，不再获取一次。
   | StreamHandler
   | ContextStream
   deriving (Eq, Ord, Show, Read, Generic, NFData)

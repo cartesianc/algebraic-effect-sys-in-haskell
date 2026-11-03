@@ -18,7 +18,7 @@ module ScopeReuseDemo.Generated.Effects where
 
 import Framework.Effect.Contract (Effect(..), Registered)
 import qualified Framework.Effect.Contract as FrameworkRoot
-import qualified Framework.SDK as SDK
+import qualified Framework.Generated as SDK
 import Control.Monad.IO.Class (MonadIO)
 import ScopeReuseDemo.Types
 
@@ -26,7 +26,7 @@ import ScopeReuseDemo.Types
 type Root = SDK.Root ContextValues Errors
 type App = SDK.App ContextValues Errors
 
--- 每个 Context 的契约类型：名字来自 handler 名，包装其表示类型；只能由该生产方构造。
+-- 每个 Context 的契约类型：名字来自 Asset 声明，包装其表示类型；只能由该生产方构造。
 newtype FilePaths = FilePaths (SharedPaths)
 deriving instance Eq (SharedPaths) => Eq FilePaths
 deriving instance Show (SharedPaths) => Show FilePaths

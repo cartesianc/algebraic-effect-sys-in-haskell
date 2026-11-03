@@ -1,10 +1,10 @@
 # 主设计：Algebraic Effect Sys in Haskell
 
-更新：2026-11-02。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范。
+更新：2026-11-04。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范。
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
-按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [Stream](#stream)。
+按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [SDK 分工](#sdk-layout) · [Stream](#stream)。
 
 ## 1. 范围与实现状态
 
@@ -16,11 +16,11 @@
 | 统一 Prototype、运行图、静态来源与求值锁 | Stage 1/2 已实现 | [图与来源](EFFECT_GRAPH.md) |
 | 资产显式引用与构造器约束 | 当前已实现 | [源码资产](ASSETS.md) |
 | Stream 与挂在它下面的解析器 Context、持续资产的历史视图与 lifelong | 已实现（Stage 3）；lifelong 中的失败暂按临时规则终止整次运行 | [第 7 章](#stream)及[完整规范](STREAM_LIFELONG.md) |
-| Stream 的 scope 化与 Middleware | 下一阶段，语义设计中 | [下一阶段](TODO.md#next-stage) |
-| EOF、Stream close、嵌套 lifelong、背压等 | 本版延期；close 与结束相关项转入下一阶段 | [计划与开放项](TODO.md) |
-| Generic Map、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [计划与开放项](TODO.md) |
+| 输入契约、持续执行同构、资产访问、结束与资源清理 | Stage 1 已实现；后续阶段继续收敛 | [Next stages](NEXT_STAGES.md#stages) |
+| 嵌套 lifelong、背压与历史容量等 | 后续专题，本轮不扩展 | [开放事项](NEXT_STAGES.md#deferred) |
+| Middleware、Generic Map、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [开放事项](NEXT_STAGES.md#deferred) |
 
-实现状态说明代码已接入的范围，不代表全部并发交错或资源逃逸已获证明。过去的编译及 demo 结果概述见 [TODO 的完成摘要](TODO.md#completed)。
+实现状态说明代码已接入的范围，不代表全部并发交错或资源逃逸已获证明。过去的编译及 demo 结果概述见 [已有基础与验证边界](NEXT_STAGES.md#baseline)。
 
 <a id="code-shape"></a>
 ## 2. 代码长什么样
@@ -192,7 +192,7 @@ Stream 的目标是让原子方法作者只需理解本方法的输入输出和�
 
 方法签名、生成期结构检查、运行时协议和外部 IO 保证必须分别说明。绑定稳定性由 ContextStore 及共享 ownership 实现，不能从“描述是纯的”直接推导出重复 IO 幂等或资源安全。
 
-Pure 的 IO 限制、Generic Map、跨独立 interpreter 存续、任意逃逸资源和恢复已展开 continuation 等仍有开放边界；状态见 [TODO](TODO.md)。不以旧候选接口充当已接受的当前 API。
+Pure 的 IO 限制、Generic Map、跨独立 interpreter 存续、任意逃逸资源和恢复已展开 continuation 等仍有开放边界；状态见 [Next stages](NEXT_STAGES.md)。不以旧候选接口充当已接受的当前 API。
 
 新增功能先给出 facade、生成契约、runtime 责任及 failure／cleanup 边界，再分批实现。当前探索阶段只做必要普通编译，不自行新增测试、负例或额外检查门槛。
 
@@ -315,7 +315,7 @@ Input 继续表达操作或能力的前提关系。业务值来源单独表达�
 
 SDK 的 Effect.handler 是生成区内部入口。Root 转交 Failure 捕获／ErrorStore.handleFailure 协议，其他生成 Effect instance 转交同一 Root。普通方法、Context.request／require（包括默认和覆盖实现）、Scoped.open／close 的生成入口自动包装原协议，业务不写 handler／super 前缀。
 
-根入口不修改业务 caller、不预执行 Context、不另行 boot 或 lower 上游。scope 复用仍经过调用入口，但可以跳过资源方法体。独立 Middleware typing 及装卸策略是下一阶段的设计主题，尚未实现，见 [TODO](TODO.md#next-stage)。
+根入口不修改业务 caller、不预执行 Context、不另行 boot 或 lower 上游。scope 复用仍经过调用入口，但可以跳过资源方法体。独立 Middleware typing 及装卸策略保留为后续专题，尚未实现，见 [Next stages](NEXT_STAGES.md#middleware)。
 
 <a id="context"></a>
 ### 4.3 Context、request 与 require
@@ -362,14 +362,40 @@ newtype LinkedPageSummary = LinkedPageSummary PageSummary
 
 同一表示类型往往有不同来源和含义，例如起始页与链接页的摘要都是 PageSummary。若直接以表示类型为键，两条生产路径落在同一个键上，消费方取到哪一份将取决于来源选择；生成器拒绝这种歧义，不按距离或拓扑猜测。细化为两个名义类型后，每个键只有一个生产方，消费方的依赖被锁定到这个来源（来源锁）；两者不能互相替用，混用在类型检查时报错。
 
-细化只分配身份，不承担数据结构。和类型的分支契约是在细化资产之上按构造器再细化（`FileTextBlank`、`FileTextWritten`）。资产名同时决定生成的方法名（getT、readT）；同一份数据需要两个独立来源，或需要单值与持续两种读法时，各自细化为不同资产。
+细化只分配身份，不承担数据结构。和类型的分支契约是在细化资产之上按构造器再细化（`FileTextBlank`、`FileTextWritten`）。资产名同时决定生成的方法名（getT、readT）；同一份数据需要两个独立来源时，各自细化为不同资产；同一资产的 request 单值与 require 历史不是两个来源。
 
-输入契约与 typing 共同决定方法签名。当前生成器由 demands 形成关联 Require（单输入直接使用该契约，多输入按声明顺序排为元组），
-并为每个被需要的契约在本程序载体上生成 Provides instance，按当前消费者分派到解析出的来源方法。
-LinkedFetchedPage 包装 FetchedPage，FetchedHTML 是 instance 可匹配的构造器；类型引用不描述某个构造器的子集。
-instance 使用原生 Haskell：在 do 中通过 `value <- request @T` 或 `value <- require @T` 取得业务值，普通操作直接引用 superclass 方法。
+<a id="demand-contract"></a>
+#### demand 约束的资产接收契约
 
-可确定匹配的单构造器模式可直接写在 `<-` 左侧；多构造器值先绑定再用普通 case 显式处理，失败通过 raise，不新增 MonadFail。SDK 在注册生成的 Context 入口连接 request 生产与 require 读取；生成器解析显式 effect 方法引用以生成纯结构副本；业务执行副本仍只包装入口，不改写原方法体表达式。方法不新增位置参数、Definition、consume 或独立 booter；嵌套取值共享本次 Context 和 scope。未进入的分支不取值，生成源码和创建 Target 不执行业务 IO；不使用 unsafePerformIO／unsafeInterleaveIO。
+**每个 refined asset 固定一个表示 ADT 和唯一 Context 来源。** 这一点对普通和持续资产相同，也检查当前没有消费者的声明。request、require、streams 是同一资产的访问方式；同一消费者可以为同一资产声明多种合法方式，也可以依赖多个不同资产。访问模式和不同运行时 publication 不创建新的静态来源身份。分支契约继续由基础资产的唯一生产方投影。
+
+```haskell
+-- 同一个资源资产，开启时生产，关闭时读取
+-- Effects.hs 节选
+demands = [requests "OpenedFile", requires "OpenedFile"]
+
+-- Handlers.hs 节选
+instance FileSessionInputs m => FileSessionEffect m where
+  openFileSession = do
+    OpenedFile _ <- request @OpenedFile
+    pure Nothing
+  closeFileSession = do
+    OpenedFile (FileHandle _ file) <- require @OpenedFile
+    liftIO (hClose file)
+    pure Nothing
+```
+
+`@OpenedFile` 指定生成的契约类型，左侧 `OpenedFile` 是它的值构造器，`FileHandle` 是手写表示类型的值构造器。GHC／HLS 检查两者类型一致。单构造器可以在 `<-` 左侧直接解构；也可以先具名绑定，再在同一方法体中显式 case 匹配该资产。和类型的业务分支用 case 或 lambda-case 表达；SDK 不增加 MonadFail，不把类型类约束当作执行过模式匹配的证明。
+
+生成器以 GHC 解析后的名称检查每个显式 request／require 的接收位置。普通资产需显式出现其契约构造器；`T _` 可以只确认资产身份，不要求递归展开字段。`_ <- request @T`、丢弃整个结果或通过未知函数隐藏接收位置不满足这项结构契约。持续 require 的 History 是抽象视图，保持具名整体接收，再通过 latest／historyEntries 观察；不要求拆开 SDK 内部构造器。
+
+每个 demands 声明的资产还须有消费依据：注册 instance 中的显式读取，或现有 Prototype 中 alternative 选择／streams 交付的控制读取。完全没有依据的声明在 gencode 报错。检查以 instance 和资产为单位，不强制每个协议方法、每种访问方式或每条路径都读一次；某个控制流已经接收资产时，也不要求业务为通过检查再补一遍读取。
+
+生成器由 demands 形成关联 Require，并为各契约生成 Provides 路由；Require 是关联类型描述，不是注入方法的位置参数。同一资产的不同模式共享同一名义类型；当前多项关联 Require 按资产首次声明顺序去重后描述，不作为批量预读取计划。
+
+当前返回形态由同一规则计算：request 返回 T，普通 require 返回 T，持续基础资产的 require 返回 History T，分支契约返回当前投影。streams 通过 require 读取本次交付，不提供独立 `stream @T`。T 与 History T 是同一个资产的不同结果形态，不是两个来源。当前值／历史访问的后续拆分归 Stage 3。
+
+Effect.Demand 保存唯一来源、访问解析与结果形态的纯规则；Prototype 保存解析事实；Codegen.Demand 检查手写源码的接收形态；运行时继续执行已确定的捕获、可见性、求值锁与 ownership 协议。结构检查不移动取值、不提前求值、不合并重复 request，也不证明所有路径、字段使用、case 穷尽或业务计算正确。直接绑定的不可失败判断按 GHC 给出的构造器集合保守检查；由 GADT 索引排除其他构造器的复杂匹配可以使用显式 case，不宣称源码检查器完成全部 GADT 覆盖证明。
 
 手写 Handlers 保持原生语法，运行仍编译 Generated/Handlers 的协议包装副本，修改实现后须重新生成。
 
@@ -482,7 +508,7 @@ monitor = lifelong
 - **单元**：直接子项各为一个单元，直接子项是 parallel 时只拆这一层；单元之间独立推进、互不等待。拆分写入 Prototype，运行时不推测。
 - **一次执行**：单元逐次执行，每次执行是一个 frame。控制流到达 target 时先领取其订阅资产的一条新交付（有积压立即领取，没有就挂起），再 boot target；同一 frame 内每个资产只领取一次，各调用共享这份视图。target 调用按上文的有限完成规则结束，本次执行结束后才开始下一次，上一次的普通产物不带入下一次。
 - **没有正常结束**：lifelong 不返回 Succ。`chained [setup, monitor]` 先完成 setup；`chained [monitor, after]` 中 after 不执行；`parallel [monitor, otherWork]` 两者同时运行。
-- **失败**：含 lifelong 的程序中，任何失败按临时规则终止整次运行（[Stream 第 9 节](STREAM_LIFELONG.md#failures)），不同于有限 parallel 不取消其他分支的规则。lifelong 的局部结束属于下一阶段的 [Stream scope 化](TODO.md#next-stage)。
+- **失败**：含 lifelong 的程序中，任何失败按临时规则终止整次运行（[Stream 第 9 节](STREAM_LIFELONG.md#failures)），不同于有限 parallel 不取消其他分支的规则。lifelong 的局部结束属于本轮[结束传播阶段](NEXT_STAGES.md#stage-5)，其与故障传播的关系仍需确认。
 - **合法性**：lifelong 不嵌套、不含空分支；其中每个 target 恰好用 `streams` 订阅一个持续资产，见 [Stream 第 5.2 节](STREAM_LIFELONG.md#static)。
 
 <a id="mapping"></a>
@@ -490,7 +516,7 @@ monitor = lifelong
 
 对外产生业务值的纯转换注册为 Context；不新增 Map typing。当前取值连接要求已声明的契约，Generic Map 尚未接入。
 
-后续结构适配的方向是在 SDK 内部实现固定规则，不增加业务 adapter 配置；支持的类型范围、失败接口及接入仍需确定。状态统一在 [TODO](TODO.md) 跟踪，不把旧候选解释成当前能力。
+后续结构适配的方向是在 SDK 内部实现固定规则，不增加业务 adapter 配置；支持的类型范围、失败接口及接入仍需确定。状态统一在 [Next stages](NEXT_STAGES.md) 跟踪，不把旧候选解释成当前能力。
 
 <a id="scope"></a>
 ### 4.7 Scope 存续、归属与自动清理
@@ -571,12 +597,10 @@ handles 只按 Failure 的 origin 与 detail 分类匹配。Context 协议故障
 <a id="generation"></a>
 ### 4.9 生成、运行入口与源码同步
 
-[sdk/Framework/SDK.hs](../sdk/Framework/SDK.hs) 保留统一入口；[Effect.hs](../sdk/Framework/Effect.hs) 下分 Contract、Registration、Context 与 Runtime，
-分别负责契约、注册解析、存储原语和末端句柄描述／lower。[Recursion.hs](../sdk/Framework/Recursion.hs) 提供纯 Fix／cata／zygo；
-[Workflow/AST.hs](../sdk/Framework/Workflow/AST.hs) 保存结构，[Workflow/Execution.hs](../sdk/Framework/Workflow/Execution.hs) 提供执行 algebra 与并发汇合；
-[Codegen.hs](../sdk/Framework/Codegen.hs) 负责源码生成。
+手写业务的框架门面是 [Framework.SDK](../sdk/Framework/SDK.hs)：注册、资产访问能力、故障观察和 AST 组合。生成代码使用 [Framework.Generated](../sdk/Framework/Generated.hs)，其中包含包装和装配需要的内部接口。Generated.Program 绑定程序元数据后，业务仍写 `interpreter ast effects`。
 
-拆分不改变 boot 范围或 IO 权限，本次文件分离不改变 handler 签名或执行语义。
+[Framework.Program](../sdk/Framework/Program.hs) 负责强制校验原型、执行 workflow 和退出清理；它不读取命令行或推导 demo 路径。[Framework.Generated](../sdk/Framework/Generated.hs) 负责现有 CLI 模式及源码指纹适配，手写源码路径由生成器显式传入。源码组织与阅读顺序见下方 [SDK 分工](#sdk-layout)。
+
 [Generate.hs](../sdk/Framework/Generate.hs) 提供统一首次生成命令：先加载 Types、Effects 和 AST，用 GHC 9.12 解析器读取 Handlers.hs 的模块、方法边界与显式 effect 引用，生成独立纯结构；再以 GHC 无代码生成模式解析业务名称并检查资产引用，成功后写回 Generated。候选生成模块及手写 Handlers 快照从内存加载，不执行业务。
 它们不导入 Generated 或 Handlers；effect 标记与错误类型自动生成，无须用户手写空 data。
 
@@ -589,7 +613,7 @@ handles 只按 Failure 的 origin 与 detail 分类匹配。Context 协议故障
 各 demo 的手写入口、注册、handler 与生成模块分别可 review；
 仍使用的并发辅助函数已并入当前 SDK。
 
-同次 AST 的运行表保留，本轮迁移到有限使用闭包 once-spare、require 共享／request fresh 及补全后的清理依赖，并由使用协议协调显式关闭。App／IO 的 Root Error 祖先导航使用同一 ScopeTree，实例定位、detect／resolve 与原错传播保留，不自动恢复业务。具体实现与普通编译结果须按本轮代码核对，不由旧样例推断已验证；Stream／lifelong 的协议见 [Stream 规范](STREAM_LIFELONG.md)；其他开放项见 [TODO](TODO.md)。
+同次 AST 的运行表保留，本轮迁移到有限使用闭包 once-spare、require 共享／request fresh 及补全后的清理依赖，并由使用协议协调显式关闭。App／IO 的 Root Error 祖先导航使用同一 ScopeTree，实例定位、detect／resolve 与原错传播保留，不自动恢复业务。具体实现与普通编译结果须按本轮代码核对，不由旧样例推断已验证；Stream／lifelong 的协议见 [Stream 规范](STREAM_LIFELONG.md)；其他开放项见 [Next stages](NEXT_STAGES.md)。
 
 
 ## 5. 静态原型与动态运行
@@ -601,6 +625,52 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 运行时先求值并校验原型、注册与源码，再一次 cata 装配当前 AST。RuntimeGraph 复用静态定义并保存活动关系；ScopeTree 单独保持无环。不重跑 handler 建图，也不记录无限方法历史。
 
 结构、来源证明、ScopeTree 算法及缓存细节统一引用 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)。
+
+
+<a id="sdk-layout"></a>
+### SDK 的职责与阅读顺序
+
+```text
+sdk/Framework/
+  SDK.hs / Effect.hs        手写业务门面
+  Generated.hs              生成代码门面、CLI 与源码同步适配
+  Program.hs                原型初始化、workflow 执行与退出收尾
+  Effect/
+    Registration.hs         声明 ADT
+    Demand.hs               资产来源、访问方式与结果形态的纯规则
+    Asset.hs                源码资产目录 ADT，供生成与审查
+    Graph.hs                MethodShape、EffectGraph 与独立 ScopeTree 构建
+    Contract.hs             effect 与运行存储协议
+    Context.hs              取值与原子入口包装
+    Binding.hs / History.hs 绑定身份、共享归属与历史视图
+    Scope.hs                scope 实例、使用登记与物理清理
+    Runtime.hs              Target、frame、交接与会话装配
+    Runtime/
+      App.hs                各存储协议在 App 上的实现
+      Identity.hs           Origin、ActivationId、Execution
+      Graph.hs              活动链、发布、求值锁与会话登记
+      Session.hs            发布历史、游标、通知与任务停止
+  Prototype.hs              统一静态模型的构建、校验与公共查询门面
+  Prototype/
+    Types.hs                纯 ADT
+    Query.hs                只读结构、可见性与启动查询
+    Sources.hs              生成期来源分析，保留路径相关性
+  Workflow/
+    AST.hs                  声明结构
+    Execution.hs            执行 algebra、分支组合与调度
+    Structure.hs            静态结构展示
+  Codegen.hs                GeneratedCode 具名生成结果与源码渲染
+  Generate.hs               声明加载、缓存、检查与文件写回
+  Codegen/
+    Handlers.hs / Structure.hs  原生方法提取与入口包装
+    Assets.hs / Demand.hs      显式资产边界与接收结构检查
+    Plan.hs                    Prototype 的 Haskell ADT 渲染
+  Recursion.hs              Fix、cata、zygo
+```
+
+改声明从 Registration → Demand → Prototype → Codegen 进入；改取值从 Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Workflow.Execution → Runtime → Scope／Session 进入。Prototype.Sources 是生成期证明，Runtime.Graph 是本次实际活动关系，Scope 独立持有资源生命周期；三者不复制彼此的状态。
+
+模块头说明职责和边界；关键锁、所有权、取消窗口及清理顺序在实现处保留注释。App 仍集中实现共享同一执行 frame 的存储协议，以章节分组，不为行数拆出互相依赖的状态容器。
 
 <a id="documents"></a>
 ## 6. 文档分工与维护
@@ -614,7 +684,7 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 | [EFFECT_GRAPH](EFFECT_GRAPH.md) | Prototype、来源分析、运行图、ScopeTree 和缓存 |
 | [ASSETS](ASSETS.md) | 源码资产集合、显式引用和构造器所有权 |
 | [STREAM_LIFELONG](STREAM_LIFELONG.md) | 第 7 章引用的持续执行完整规范 |
-| [TODO](TODO.md) | 实施计划、开放项与必要的完成摘要 |
+| [Next stages](NEXT_STAGES.md) | 唯一阶段计划入口，保存待审查摘要、开放项与必要的完成摘要 |
 
 新手从 README 和 GUIDE 进入；维护者或 LLM 从 AGENTS 按任务进入本页章节及相关专题。不要为同一规则另建摘要文件或复制一份规范。
 
@@ -644,10 +714,10 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 | 失败的临时规则、取消与 close 延期边界 | [Stream 第 9 节](STREAM_LIFELONG.md#failures) |
 | socket、event、behavior 各自的写法 | [Stream 第 4.1 节](STREAM_LIFELONG.md#drives) |
 
-当前实现限制见 [TODO](TODO.md#stage-3-limitations)，持续资产作为 scope 开启参数尚未接通。下一阶段设计 Stream 的 scope 化：Stream close、lifelong 的局部结束（取代临时失败规则）、会话生产资源与历史资源的存续，以及持续资产作为开启参数；具体语义尚未确定，见 [TODO](TODO.md#next-stage)。来源分析按消费单元提前裁剪再组合，相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
+当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，持续资产作为 scope 开启参数尚未接通。本轮先收敛资产来源与接收契约，再处理 Stream effect 与 lifelong 的共同运行协议、资产访问、scope 使用、结束传播与清理，见[阶段计划](NEXT_STAGES.md#stages)。Stage 1 的唯一资产来源与显式接收规则见[资产接收契约](#demand-contract)；require 单值／stream 历史以及正常 end 仍属后续设计，尚未替换本章的当前协议；是否调整临时失败规则须在结束传播阶段确认。来源分析按消费单元提前裁剪再组合，相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
 
 这次扩展继续使用 Prototype、RuntimeGraph 和独立 ScopeTree。业务方法不新增游标、yield、调度器或无限递归写法；声明不成立时生成期诊断，不在运行中猜测生产方式。
 
 ## 8. 计划与证据
 
-实施批次、开放问题和必要验证摘要统一保存在 [TODO](TODO.md)。新阶段推进时同步更新本文状态、所属规范与实际接口指南，不能把计划写成已实现能力。验证摘要保留日期和未覆盖范围，不代表本次重新执行。
+实施批次、开放问题和必要验证摘要统一保存在 [Next stages](NEXT_STAGES.md)。新阶段推进时同步更新本文状态、所属规范与实际接口指南，不能把计划写成已实现能力。验证摘要保留日期和未覆盖范围，不代表本次重新执行。

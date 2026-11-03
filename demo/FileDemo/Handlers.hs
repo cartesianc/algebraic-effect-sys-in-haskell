@@ -49,7 +49,7 @@ instance FileResourceInputs m => FileResourceEffect m where
 instance FileSessionInputs m => FileSessionEffect m where
   -- 开启期间 Context 保存真实 Handle，后续 require 复用它。
   openFileSession = do
-    _ <- request @OpenedFile
+    OpenedFile _ <- request @OpenedFile
     pure Nothing
 
   closeFileSession = do
@@ -103,7 +103,7 @@ instance FileRecoveryInputs m => FileRecoveryEffect m where
 instance WriteFirstLineInputs m => WriteFirstLineEffect m where
   writeFirstLine = do
     openFileSession
-    _ <- require @FileTextBlank
+    FileTextBlank _ <- require @FileTextBlank
     OpenedFile (FileHandle path file) <- require @OpenedFile
     let line = "file-demo: the file was empty; this is the first line.\n"
     outcome <- liftIO $ tryIOError $ do
