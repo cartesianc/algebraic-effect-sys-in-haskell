@@ -151,7 +151,8 @@ instance Provides TextFile App where
 - 写入的文件内容正确；每个 scope 各开关一次。
 - `alternative` 按资产状态选择候选；Stream 解析器和 lifelong 消费者按各自资产工作。
 - lifelong 结束时报 `origin = "ShowA"`，共享 handler 的失败归到具体 effect。
-- handler 调用 `openTextFile` 或读取 `@OpenedReport`，GHC 都直接拒绝。
+- handler 调用 effect 的方法（`openReport`）、读取细化资产（`@OpenedReport`）或未声明的表示类型（`@LineCount`），GHC 都拒绝。
+- handler 调用**另一个 handler 的类方法**（`openTextFile`）能通过 GHC：通用实例在同一模块，上下文也满足。这样会绕过 effect 入口，只能靠生成期检查拒绝，这条检查还不存在。
 
 ## 模拟了什么，没有覆盖什么
 
