@@ -56,7 +56,7 @@ Effects 以 Asset 声明来源，demands 选择资产和访问权限；空 deman
 
 **状态：已实现（2026-11-08）。本节写法与当前 SDK 一致，完整写法见[指南](GUIDE.md)；实现范围、验证与未覆盖见[实现与验证](#stage-2-status)。**
 
-effect 是业务装配，handler 是可复用的原子操作。多个 effect 可以绑定同一个 handler；Input 与 demands 由 gencode 装配，不进入 handler 文本。gencode 是这个 EDSL 的编译器：它把分散的注册关系化成一张图，在生成期解决链的组合、读取路由和合法性检查；生成的 Haskell 是交给 GHC 编译的中间表示，这些问题不留给运行时。
+effect 是业务装配，handler 是可复用的原子操作。多个 effect 可以绑定同一个 handler；Input 与 demands 由 gencode 装配，不进入 handler 文本。gencode 是这个 EDSL 的编译器：它把分散的注册关系化成一张图，在生成期解决链的组合、读取路由和合法性检查；生成的 Haskell 是交给 GHC 编译的中间表示，这些问题不留给运行时。SDK 据此分为源语言、gen、编译产物、运行时四层，见[主设计：gen 是编译器](LATEST_DESIGN.md#compiler)。
 
 <a id="stage-2-history"></a>
 #### 问题如何演变
@@ -244,7 +244,7 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 在分支 `stage2-handler-reuse` 上全面替换旧写法，不保留兼容层：
 
 - **注册与检查**：`Context { asset, parser, require, stream }`；删除 Context 的 request 角色、RepeatRequest、没有关联 scope 的全局 Error 与 Codegen.Demand 的接收形态检查。Prototype 新增：Input 不能指向 Error、Error 恰好关联一个 scope、`RaisedBy` 写已注册的 handler 名、handler 名不能与生成的入口重名；Effect.Demand 新增 `requires` 需要 `require = True`、`streams` 只订阅持续资产等访问规则。
-- **生成**：每个 handler 一份 `XxxLayer`／`XxxHandler`／`XxxError`；运行副本在 `At "名字"` 标签上原样复制方法体，生成按标签的 `Reads`／`Raw`／`Raises` 实例与“驱动 → Input → 方法体”的入口。结构分析提取 `require @T`／`raw` 的原子形状，按绑定代换后组成 effect 方法结构，并检查读取路由、同一 handler 各绑定的签名与 Layer、读取依据与 handler 互调。Codegen.Assets 改为顶层白名单与资产目录。
+- **生成**：每个 handler 一份 `XxxLayer`／`XxxHandler`／`XxxError`；运行副本在 `At "名字"` 标签上原样复制方法体，生成按标签的 `Reads`／`Raw`／`Raises` 实例与“驱动 → Input → 方法体”的入口。结构分析提取 `require @T`／`raw` 的原子形状，按绑定代换后组成 effect 方法结构，并检查读取路由、同一 handler 各绑定的签名与 Layer、读取依据与 handler 互调。资产检查（当时的 Codegen.Assets，现 Gen.Assets）改为顶层白名单与资产目录。
 - **demo**：六个 demo 与 FacadeProbe 全部迁移。Crawler 两条链共用 `fetchPage`、`extractSummary`、`printSummary`；StreamDemo 的心跳改为 `HeartbeatClock`（Stream）＋`Heartbeat`（parser）；OpenFilesDemo 增加 `ReleaseFiles`（绑定 `holdFiles`）与挂在它下面的 `InspectionSnapshot`，`FinishInspection` 改为 Input Root、requires 快照，按实际依赖声明；ScopeInstancesDemo 拆成共用 `checkSelection` 的 `UseFirst`／`UseSecond`／`ReopenFirst`，以及 `SelectSecond`／`SelectFirst` 与 `CheckJournal`；FileDemo 的 `resolveFileSession` 改为 `pure ()`（TODO）；FacadeProbe 改为真实注册与 handler，删除手写的 Contracts.hs、Facade.hs。
 
 **验证**（本次实际执行）：
@@ -256,7 +256,7 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 **未覆盖**：
 
 - 没有新增测试或负例；生成期检查只在七个程序的合法写法上运行过，各条报错路径没有逐一触发。
-- `requires` 不在入口驱动，但读取缺值时仍按 Stage 1 协议按需生产一次（fallback），没有改为严格只读。
+- `requires` 不在入口驱动，但读取缺值时仍按 Stage 1 协议按需生产一次（fallback），没有改为严格只读。运行时还按当前 handler 查读取声明表：查不到报 UndeclaredContextAccess，查到时也决定 `getT` 在读取中是刷新还是只读，因此与 fallback 是同一处协议，需要一起收敛。2026-11-08 按生成的来源表统计，依赖 fallback 的读取有 FileDemo 4 处、FacadeProbe 6 处，其中包括两个 alternative 的选择读取；OpenFilesDemo 的 1 处是 scope 资源，不依赖 fallback。改为严格只读前，需要先确定选择读取由谁驱动、缺值读取在生成期如何报错。
 - detect／resolve 的 Layer 不含 `caughtFailure`，handler 读不到原失败；Error 驱动链待定。
 - Pure 仍是 `m ()` 守卫；Stream 的驱动方式未区分；lifelong 内的显式反馈随 RepeatRequest 取消，没有替代写法；`streamT` 已生成，handler 读取历史仍写 `require @(History T)`。
 - Stream 的背压与资源释放不在本次范围；并发交错、长时间内存与 Windows 以外的取消仍未观察。
@@ -415,6 +415,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 - 2026-11-07：[FacadeProbe](../demo/FacadeProbe/README.md) 以手写的生成结果验证共享 handler：同一 handler 配不同 Input 与 demand、共享 Scoped 开关、挂接 parser、Stream parser 与 lifelong 消费者均可运行，非交错输出与显式写法一致。生成器未修改；路由当时按运行时调用者查表，已由 Stage 2 的编译期标签取代。
 - 2026-11-08：Stage 2 设计确认；独立的标签探针以 GHC 9.12 编译运行，确认按 effect 标签选择读取与 `raw` 时方法体无需改写。
 - 2026-11-08：Stage 2 在分支 `stage2-handler-reuse` 实现并全面替换旧写法；`cabal build all --offline -j1` 通过，七个程序重新生成并与迁移前输出对照，详见[实现与验证](#stage-2-status)。
+- 2026-11-08：SDK 按[源语言、gen、编译产物、运行时四层](LATEST_DESIGN.md#compiler)重组，生成拆为读取、降级、绑定、形状、组成、构图、输出、类检八个阶段，[流水线](LATEST_DESIGN.md#generation)在 `Framework.Gen`；声明加载进程只执行降级，绑定与输出改在生成器进程内读取 PrototypePlan；生成代码只经 `Framework.Generated` 引用 SDK。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，除生成代码的模块别名与资产目录的导入外，Generated 与重组前逐字相同；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和重组前相同，StreamDemo 在终端运行到第 33 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾和重组前一致，Crawler 除随请求变化的链接行外相同；FacadeProbe 按 README 编译运行，仍以 `ShowLevelFailure` 结束。运行行为未改；前述 `requires` 的 fallback 与读取声明表仍在运行时。
 - 历史验证未系统枚举全部并发交错，未观察长时间内存；Stream 外部模型未完成；取消只记录过 Windows Ctrl-Break。已通过编译和示例不能扩大资源逃逸、任意底层 IO 或所有调度的保证。
 
 <a id="maintenance"></a>

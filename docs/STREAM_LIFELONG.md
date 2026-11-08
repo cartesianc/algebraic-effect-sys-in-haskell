@@ -295,15 +295,17 @@ Stream close、lifelong 的局部结束、会话生产资源与历史资源的�
 
 | 内容 | 源码 |
 | --- | --- |
-| Stream typing、Context 声明、`streams` 与权限检查 | [Registration.hs](../sdk/Framework/Effect/Registration.hs)、[Demand.hs](../sdk/Framework/Effect/Demand.hs) |
-| 声明匹配、lifelong 合法性、单元／订阅／会话、`protoSessions`、来源分析 | [Prototype.hs](../sdk/Framework/Prototype.hs) |
-| History 视图 | [History.hs](../sdk/Framework/Effect/History.hs) |
-| 会话状态、历史、游标 | [Session.hs](../sdk/Framework/Effect/Runtime/Session.hs) |
-| 会话登记、Origin 清除 | [Graph.hs](../sdk/Framework/Effect/Runtime/Graph.hs) |
-| 生产任务、frame、交付视图的交接 | [Runtime.hs](../sdk/Framework/Effect/Runtime.hs) |
-| 视图读取、最新值投影（`latestContext`）、parser 输入、会话发布路由 | [App.hs](../sdk/Framework/Effect/Runtime/App.hs)、[Context.hs](../sdk/Framework/Effect/Context.hs) |
-| 单元调度、就绪检查、运行监督 | [Execution.hs](../sdk/Framework/Workflow/Execution.hs) |
-| 生成的读取方法与路由、Stream 入口的会话包装、`Raw` 实例、会话步骤登记 | [Codegen.hs](../sdk/Framework/Codegen.hs)、[Context.hs](../sdk/Framework/Effect/Context.hs)（`streamHandle`） |
+| Stream typing、Context 声明 | [Registration.hs](../sdk/Framework/Language/Registration.hs) |
+| `streams` 与权限检查 | [Gen/Demand.hs](../sdk/Framework/Gen/Demand.hs) |
+| 声明匹配、lifelong 合法性、单元／订阅／会话 | [Gen/Lower.hs](../sdk/Framework/Gen/Lower.hs) |
+| `protoSessions`、启动环检查、来源分析 | [Gen/Build.hs](../sdk/Framework/Gen/Build.hs)、[Gen/Build/Sources.hs](../sdk/Framework/Gen/Build/Sources.hs)、[Prototype/Query.hs](../sdk/Framework/Prototype/Query.hs)（`finiteSessions`、`bootPlan`） |
+| History 视图 | [History.hs](../sdk/Framework/Language/History.hs) |
+| 会话状态、历史、游标 | [Session.hs](../sdk/Framework/Runtime/Session.hs) |
+| 会话登记、Origin 清除 | [Graph.hs](../sdk/Framework/Runtime/Graph.hs) |
+| 生产任务、frame、交付视图的交接 | [Runtime.hs](../sdk/Framework/Runtime.hs) |
+| 视图读取、最新值投影（`latestContext`）、parser 输入、会话发布路由 | [App.hs](../sdk/Framework/Runtime/App.hs)、[Context.hs](../sdk/Framework/Runtime/Context.hs) |
+| 单元调度、就绪检查、运行监督 | [Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
+| 生成的读取方法与路由、Stream 入口的会话包装、`Raw` 实例、会话步骤登记 | [Gen/Emit/Handlers.hs](../sdk/Framework/Gen/Emit/Handlers.hs)、[Gen/Emit/Program.hs](../sdk/Framework/Gen/Emit/Program.hs)、[Context.hs](../sdk/Framework/Runtime/Context.hs)（`streamHandle`） |
 
 ScopeTree 独立构建并保持无环；订阅与回调关系不作为 scope 父边。运行时不累计完整方法调用历史或无限 workflow 结果。
 

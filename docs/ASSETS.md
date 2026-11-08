@@ -66,6 +66,6 @@ GHC／HLS 的普通类型检查不自行执行这项架构检查。当前接入�
 generatedAssets :: [Asset]
 ```
 
-`Asset`／`AssetSymbol` 定义在 SDK 的 `Framework.Effect.Asset`。目录记录类型、构造器和字段及其定义位置；不含业务值、Context 来源、权限 key 或 scope 实例。目录与检查使用同一次 GHC 名称解析，文件内容不变时不重写。目录是派生产物，下次生成会按源码恢复。
+`Asset`／`AssetSymbol` 定义在 gen 的 `Framework.Gen.Catalog`，目录由类检阶段 `Framework.Gen.Assets` 产出。目录记录类型、构造器和字段及其定义位置；不含业务值、Context 来源、权限 key 或 scope 实例。目录与检查使用同一次 GHC 名称解析，文件内容不变时不重写。目录是派生产物，下次生成会按源码恢复。
 
 显式目录便于 review、LSP 建立引用索引与跨文件跳转，也可供后续 langserver 的描述接口使用。当前执行器不导入这份目录，因此不为它增加启动步骤、运行时状态或清理协议。未来需要可执行文件提供 introspection 时，可以按需导入；这份元数据本身不提供任意 ADT 的 JSON 编解码。

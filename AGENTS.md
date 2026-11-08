@@ -23,6 +23,7 @@
 - Error 只指向 scope：`RaisedBy` 写 handler 名，必须关联恰好一个 scope；resolve 暂不操作 scope（Error 驱动链待定）。
 - Context 通过 demands 接入。区分 original chain、Context chain、静态 NodeId、运行 Origin／ActivationId 与 Binding ownership。
 - 取值的捕获、来源可见性、fallback 发布、资源认领和 once-spare 保证不能在重构中弱化。完整规则按下表阅读，不在本文件复制协议。
+- gen 是这个 EDSL 的编译器。SDK 分为源语言（`Framework/Language/`）、gen（`Framework/Gen/`）、编译产物（`Framework/Prototype/`、Generated）与运行时（`Framework/Runtime/`）四层，依赖只从上往下：gen 不导入运行时，运行时不导入 gen。能在生成期判定的组合、读取路由与合法性问题由 gen 报错，不留给运行时；新增检查放进流水线的对应阶段，见 [gen 是编译器](docs/LATEST_DESIGN.md#compiler)与[编译流水线](docs/LATEST_DESIGN.md#generation)。
 - Prototype 是纯结构，RuntimeGraph 保存活动关系，ScopeTree 独立且无环。生成、执行、展示共享同一静态模型。
 - Generated 是派生产物；修改手写输入后显式生成，不在构建中隐式修改源码，不把手改生成结果当作持久权威。
 - 当前实现六类 effect（含 Stream）与 lifelong。lifelong 中的失败采用临时规则（终止整次运行）；EOF、Stream close、局部结束等延期项不得描述成已提供的能力。本轮已完成输入契约及 SDK 分工整理（Stage 1）与 handler 复用（Stage 2）；Pure 的值管道语义、Stream 的驱动方式（event／behavior／socket）与 Error 的驱动链待定，持续执行同构、资产访问、scope 边界、结束与清理仍按阶段确认；Middleware 保留为后续专题，均不得写成当前能力。
@@ -35,7 +36,7 @@
 | 改 requests／require／raw／注入 | [运行语义：Context](docs/LATEST_DESIGN.md#context)、[入口装配](docs/LATEST_DESIGN.md#calls)、[图与来源](docs/EFFECT_GRAPH.md) |
 | 改 branch 或启动 | [运行语义：workflow](docs/LATEST_DESIGN.md#workflow)、[图与身份](docs/EFFECT_GRAPH.md) |
 | 改 scope、归属、cleanup 或 Error | [运行语义：scope](docs/LATEST_DESIGN.md#scope)、[Error](docs/LATEST_DESIGN.md#error)、[ScopeTree](docs/EFFECT_GRAPH.md) |
-| 改 codegen、结构、缓存或资产检查 | [图与生成](docs/EFFECT_GRAPH.md)、[资产约束](docs/ASSETS.md)、[运行语义：生成](docs/LATEST_DESIGN.md#generation) |
+| 改 gen：流水线阶段、结构、缓存或资产检查 | [gen 是编译器](docs/LATEST_DESIGN.md#compiler)、[编译流水线](docs/LATEST_DESIGN.md#generation)、[图与生成](docs/EFFECT_GRAPH.md)、[资产约束](docs/ASSETS.md) |
 | 改 Stream／lifelong | [主设计第 7 章](docs/LATEST_DESIGN.md#stream)、[完整规范](docs/STREAM_LIFELONG.md)、[Next stages](docs/NEXT_STAGES.md)，以及将修改的当前协议 |
 | 设计持续执行的结束与清理 | [六阶段计划](docs/NEXT_STAGES.md#stages)、[主设计第 7 章](docs/LATEST_DESIGN.md#stream)、[运行语义：scope](docs/LATEST_DESIGN.md#scope) |
 | 设计 Middleware 与 Hanging | [后续专题](docs/NEXT_STAGES.md#middleware)、[Root 入口包装](docs/LATEST_DESIGN.md#calls) |
@@ -45,16 +46,18 @@
 
 | 范围 | 入口 |
 | --- | --- |
-| 手写业务与生成代码门面 | [SDK.hs](sdk/Framework/SDK.hs)、[Generated.hs](sdk/Framework/Generated.hs) |
-| 原型初始化、执行与退出收尾 | [Program.hs](sdk/Framework/Program.hs) |
-| 注册、资产访问规则、handler 能力类和运行协议 | [Registration.hs](sdk/Framework/Effect/Registration.hs)、[Demand.hs](sdk/Framework/Effect/Demand.hs)、[Contract.hs](sdk/Framework/Effect/Contract.hs) |
-| 静态原型、模型、查询和来源分析 | [Prototype.hs](sdk/Framework/Prototype.hs)、[Types](sdk/Framework/Prototype/Types.hs)、[Query](sdk/Framework/Prototype/Query.hs)、[Sources](sdk/Framework/Prototype/Sources.hs) |
-| AST 与执行 algebra | [AST.hs](sdk/Framework/Workflow/AST.hs)、[Execution.hs](sdk/Framework/Workflow/Execution.hs) |
-| Context 与绑定 | [Context.hs](sdk/Framework/Effect/Context.hs)、[Binding.hs](sdk/Framework/Effect/Binding.hs) |
-| 实际执行、运行身份与图 | [App.hs](sdk/Framework/Effect/Runtime/App.hs)、[Identity.hs](sdk/Framework/Effect/Runtime/Identity.hs)、[Graph.hs](sdk/Framework/Effect/Runtime/Graph.hs) |
-| scope | [Scope.hs](sdk/Framework/Effect/Scope.hs) |
-| 持续执行：历史视图、会话、单元调度 | [History.hs](sdk/Framework/Effect/History.hs)、[Session.hs](sdk/Framework/Effect/Runtime/Session.hs)、[Runtime.hs](sdk/Framework/Effect/Runtime.hs)、[Execution.hs](sdk/Framework/Workflow/Execution.hs) |
-| 生成与源码提取 | [Generate.hs](sdk/Framework/Generate.hs)、[Codegen](sdk/Framework/Codegen.hs)、[Handlers](sdk/Framework/Codegen/Handlers.hs)、[Structure](sdk/Framework/Codegen/Structure.hs)、[Assets](sdk/Framework/Codegen/Assets.hs) |
+| 源语言：手写业务门面、注册、AST、handler 能力类与历史视图 | [SDK.hs](sdk/Framework/SDK.hs)、[Registration](sdk/Framework/Language/Registration.hs)、[AST](sdk/Framework/Language/AST.hs)、[Handler](sdk/Framework/Language/Handler.hs)、[History](sdk/Framework/Language/History.hs) |
+| gen 流水线与命令行 | [Gen.hs](sdk/Framework/Gen.hs)、[Main](sdk/Framework/Gen/Main.hs) |
+| gen：读取、降级、资产来源规则与派生名字 | [Source](sdk/Framework/Gen/Source.hs)、[Lower](sdk/Framework/Gen/Lower.hs)、[Demand](sdk/Framework/Gen/Demand.hs)、[Names](sdk/Framework/Gen/Names.hs) |
+| gen：绑定、方法体形状与组成 | [Bind](sdk/Framework/Gen/Bind.hs)、[Shape](sdk/Framework/Gen/Shape.hs) |
+| gen：构图与来源证明 | [Build](sdk/Framework/Gen/Build.hs)、[Build/Graph](sdk/Framework/Gen/Build/Graph.hs)、[Build/Sources](sdk/Framework/Gen/Build/Sources.hs) |
+| gen：输出与类检 | [Emit/Effects](sdk/Framework/Gen/Emit/Effects.hs)、[Emit/Handlers](sdk/Framework/Gen/Emit/Handlers.hs)、[Emit/Program](sdk/Framework/Gen/Emit/Program.hs)、[Emit/Prototype](sdk/Framework/Gen/Emit/Prototype.hs)、[Assets](sdk/Framework/Gen/Assets.hs)、[Catalog](sdk/Framework/Gen/Catalog.hs) |
+| 编译产物：Prototype 模型、查询、校验与展示 | [Prototype.hs](sdk/Framework/Prototype.hs)、[Types](sdk/Framework/Prototype/Types.hs)、[Graph](sdk/Framework/Prototype/Graph.hs)、[Query](sdk/Framework/Prototype/Query.hs)、[Validate](sdk/Framework/Prototype/Validate.hs)、[Structure](sdk/Framework/Prototype/Structure.hs) |
+| 生成代码门面与运行入口 | [Generated.hs](sdk/Framework/Generated.hs)、[Program.hs](sdk/Framework/Program.hs) |
+| 运行时：协议、Context 与绑定 | [Protocol](sdk/Framework/Runtime/Protocol.hs)、[Context](sdk/Framework/Runtime/Context.hs)、[Binding](sdk/Framework/Runtime/Binding.hs) |
+| 运行时：实际执行、运行身份与图 | [App](sdk/Framework/Runtime/App.hs)、[Identity](sdk/Framework/Runtime/Identity.hs)、[Graph](sdk/Framework/Runtime/Graph.hs) |
+| 运行时：scope | [Scope](sdk/Framework/Runtime/Scope.hs) |
+| 运行时：执行 algebra、会话与单元调度 | [Execution](sdk/Framework/Runtime/Execution.hs)、[Runtime.hs](sdk/Framework/Runtime.hs)、[Session](sdk/Framework/Runtime/Session.hs) |
 
 完整目录与阅读路线见[主设计：SDK 分工](docs/LATEST_DESIGN.md#sdk-layout)。
 

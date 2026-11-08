@@ -3,7 +3,7 @@
 本文是[主设计第 5 章](LATEST_DESIGN.md)引用的详细规范，负责 Prototype、来源分析、RuntimeGraph、ScopeTree 与缓存。范围为 Stage 1/2 的协议；Stream／lifelong 在原型中的表示（`LifelongAt`、会话挂载、`protoSessions`、`FromSession`）见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static)，运行接入见[第 7 节](STREAM_LIFELONG.md#sessions)。
 
 
-业务入口仍为 `main = interpreter ast effects`，手写 handler 仍使用原生 Haskell 的 `instance`、`do`、模式匹配和读取（`require @T`、`raw`）。`Framework.Prototype` 在 gencode 阶段统一构建注册、方法、workflow、链定义与挂载、effect graph 和 ScopeTree，发射唯一的 `generatedPrototype :: SDK.Prototype MethodGen` 显式 ADT 常量。运行时校验并直接使用这份原型，不预执行 Context 或资源 IO。
+业务入口仍为 `main = interpreter ast effects`，手写 handler 仍使用原生 Haskell 的 `instance`、`do`、模式匹配和读取（`require @T`、`raw`）。gen 的降级与构图阶段（`Framework.Gen.Lower`、`Framework.Gen.Build`）统一构建注册、方法、workflow、链定义与挂载、effect graph 和 ScopeTree，输出唯一的 `generatedPrototype :: SDK.Prototype MethodGen` 显式 ADT 常量；数据模型在 `Framework.Prototype`。运行时校验并直接使用这份原型，不预执行 Context 或资源 IO。
 
 生成前可由 GHC／HLS 检查手写模块是[核心设计约束](LATEST_DESIGN.md#beforegen)。已有契约接口提供类方法与 ADT 类型关系；生成器从合法 Haskell 中提取支持的结构，不要求先把业务源码转换成另一种语法。宿主语言类型正确与静态 effect 结构可提取需要分别满足。
 
@@ -23,11 +23,11 @@
 
 `NodeId = [Int]` 是当前原型快照内的 AST 下标路径：根为 `[]`，普通子项从零编号；alternative 的选择读取链使用该分支路径加 `[-1]`；lifelong 的会话步骤使用 lifelong 路径加 `[-1, 会话序号, 步骤]`，interpreter 托管的会话步骤使用 `[-2, 会话序号, 步骤]`。同一个 origin 末端挂载两次会有两个 `NodeId`，共享方法定义。Context 链经 demand 或挂接进入，定义本身没有虚构的 AST 位置。编辑 AST 后重新生成编号；这些路径不充当跨快照稳定 key 或运行调用序号。
 
-链事实和标准查询由 `Framework.Prototype` 统一提供。内部由 `Prototype.Types` 保存纯模型、`Prototype.Query` 提供只读查询、`Prototype.Sources` 执行来源分析；拆分不复制 Prototype，也不改变来源算法。Codegen 读取这些事实生成接口与包装，Execution 读取挂载关系装配闭包，运行图共享这份原型并保存活动实例关系。运行图不累计完整方法调用历史。Stage 2 由 `chainDrives`、`chainReads` 和 `protoSources` 保存可能生产、缺值读取与可见来源候选；runtime 按 origin 读取和加锁。清理与 Error 边界保留。SDK 当前采用 Haskell ADT，不增加 JSON 或外部 LSP 协议。
+链事实和标准查询由 `Framework.Prototype` 统一提供：`Prototype.Types` 保存纯模型，`Prototype.Graph` 保存方法图与 ScopeTree 的数据，`Prototype.Query` 提供只读查询，`Prototype.Validate` 校验自洽并核对 AST 快照。构建算法属于 gen：`Gen.Lower` 降级注册与 workflow，`Gen.Build` 与 `Gen.Build.Graph` 构图，`Gen.Build.Sources` 执行来源分析；拆分不复制 Prototype。gen 的绑定与输出阶段读取这些事实生成接口与包装，Execution 读取挂载关系装配闭包，运行图共享这份原型并保存活动实例关系。运行图不累计完整方法调用历史。Stage 2 由 `chainDrives`、`chainReads` 和 `protoSources` 保存可能生产、缺值读取与可见来源候选；runtime 按 origin 读取和加锁。清理与 Error 边界保留。SDK 当前采用 Haskell ADT，不增加 JSON 或外部 LSP 协议。
 
 ## 运行图与链启动
 
-运行身份由 `Framework.Effect.Runtime.Identity` 定义，活动关系由 `Framework.Effect.Runtime.Graph` 管理。一次 interpreter 运行共享静态 Prototype 引用及运行图；活动 chain 引用其静态链定义，scope 实例引用其 Scoped 定义，Context 绑定保存产生它时的 `Execution`。
+运行身份由 `Framework.Runtime.Identity` 定义，活动关系由 `Framework.Runtime.Graph` 管理。一次 interpreter 运行共享静态 Prototype 引用及运行图；活动 chain 引用其静态链定义，scope 实例引用其 Scoped 定义，Context 绑定保存产生它时的 `Execution`。
 
 ```haskell
 data Origin = Origin { originNode :: NodeId, originSequence :: Integer }
@@ -190,7 +190,7 @@ generatedPrototype :: SDK.Prototype MethodGen
 
 ## 内容缓存与重跑边界
 
-每次 gencode 仍加载声明并读取 Handlers 快照；结构分析和执行副本共用该快照，顶层检查与资产目录另用 GHC 名称解析同一快照，每次执行。`Generated/.scope-cache` 保存三项：输入 key、纯 `Prototype String`、已经渲染的 Haskell 源码。key 精确比较完整 `PrototypePlan`、规范化方法结构及算法源码：`Prototype.hs`、`Prototype/Types.hs`、`Prototype/Query.hs`、`Prototype/Sources.hs`、`Codegen.hs`、`Codegen/Plan.hs`、`Effect/Registration.hs`、`Effect/Demand.hs`、`Effect/Contract.hs`、`Effect/Graph.hs`、`Recursion.hs`、`Workflow/AST.hs` 和 `Workflow/Structure.hs`。不用 mtime 判断命中，也不加载或执行 `Generated.Program` 读取缓存。
+每次 gencode 仍加载声明并读取 Handlers 快照；结构分析和执行副本共用该快照，顶层检查与资产目录另用 GHC 名称解析同一快照，每次执行。`Generated/.scope-cache` 保存三项：输入 key、纯 `Prototype String`、已经渲染的 Haskell 源码。key 精确比较完整 `PrototypePlan`、规范化方法结构及构图相关的 SDK 源码：`Prototype.hs` 与 `Prototype/` 下的 Types、Graph、Query、Validate，`Gen/` 下的 Lower、Demand、Names、Bind、Build、Build/Graph、Build/Sources、Emit/Prototype，`Language/Registration.hs`、`Language/AST.hs` 和 `Recursion.hs`；列表在 [Framework.Gen](../sdk/Framework/Gen.hs) 的 `structureSources`。不用 mtime 判断命中，也不加载或执行 `Generated.Program` 读取缓存。
 
 key 未变时复用纯原型和渲染文本，仍运行 `validatePrototype`、`checkDriven` 及源码资产检查；首次没有 Handlers 时仍按原协议跳过驱动检查、先提供契约。原子业务 IO 的修改若不改变方法结构，可复用原型，同时更新业务包装副本及源码指纹。每份生成文件都先比较完整内容，内容相同就不写回；这减少结构重算和无变化文件写入，不等于跳过整条生成命令，也不是逐方法热点生成、文件监听或运行中热重载。
 

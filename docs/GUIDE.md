@@ -219,7 +219,7 @@ cabal run effect-codegen -- workflow FileDemo
 
 `--generate` 只是已有 Main 的快捷入口：Main 的导入链必须先能编译，interpreter 才能转调同一个生成器。它不会在生成后继续执行业务；下一次运行会编译更新后的代码。日常统一使用独立 `effect-codegen` 即可，不需要把两个生成入口都执行一遍。
 
-生成过程提取方法结构并检查资产约束，不调用业务 handler。缓存命中只复用纯构图结果；生成检查仍会进行，内容未变的文件不会重写。详见[生成缓存边界](EFFECT_GRAPH.md#内容缓存与重跑边界)。
+gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提取 handler 方法体的读取形状、构图、输出源码，最后用 GHC 类型检查业务模块与输出并检查顶层白名单；任何一步报错都不写回 Generated，也不调用业务 handler。各阶段做什么、报告哪些错误见[编译流水线](LATEST_DESIGN.md#generation)。缓存命中只复用纯构图结果，其余阶段仍会执行，内容未变的文件不会重写。详见[生成缓存边界](EFFECT_GRAPH.md#内容缓存与重跑边界)。
 
 ### runtime：执行已经生成的程序
 

@@ -1,10 +1,10 @@
 # 主设计：Algebraic Effect Sys in Haskell
 
-更新：2026-11-08（Stage 2：原子 handler 与业务 effect 分离）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范。
+更新：2026-11-08（Stage 2：原子 handler 与业务 effect 分离；SDK 按“源语言 → gen → 编译产物 → 运行时”重组）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范。
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
-按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [SDK 分工](#sdk-layout) · [Stream](#stream)。
+按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [gen 是编译器](#compiler) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [SDK 分工](#sdk-layout) · [Stream](#stream)。
 
 ## 1. 范围与实现状态
 
@@ -17,6 +17,7 @@
 | 资产目录与业务模块的顶层白名单 | 当前已实现（Stage 2 取代普通函数的资产检查与构造器归属） | [源码资产](ASSETS.md) |
 | Stream 与挂在它下面的解析器 Context、持续资产的历史视图与 lifelong | 已实现（Stage 3）；lifelong 中的失败暂按临时规则终止整次运行 | [第 7 章](#stream)及[完整规范](STREAM_LIFELONG.md) |
 | 原子 handler 复用、前驱与驱动装配、按标签路由 | 已实现（Stage 2，2026-11-08）；本文第 4 章即当前协议 | [Next stages](NEXT_STAGES.md#stage-2) |
+| gen 作为编译器：SDK 分为源语言、gen、编译产物、运行时四层，生成按阶段执行 | 已实现（2026-11-08） | [gen 是编译器](#compiler)、[编译流水线](#generation)、[SDK 分工](#sdk-layout) |
 | 输入契约、持续执行同构、资产访问、结束与资源清理 | Stage 1、2 已实现；后续阶段继续收敛 | [Next stages](NEXT_STAGES.md#stages) |
 | 嵌套 lifelong、背压与历史容量等 | 后续专题，本轮不扩展 | [开放事项](NEXT_STAGES.md#deferred) |
 | Middleware、Generic Map、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [开放事项](NEXT_STAGES.md#deferred) |
@@ -84,7 +85,7 @@ instance ParseFileTextLayer m => ParseFileTextHandler m where
 
 ```mermaid
 flowchart LR
-    F[Types / Effects / Workflow] --> G[gencode]
+    F[Types / Effects / Workflow] --> G[gen：编译器]
     H[原生 Handlers] --> G
     G --> P[Generated 契约、包装、Prototype]
     P --> I[interpreter：校验与一次 cata 装配]
@@ -195,6 +196,24 @@ Pure 的值管道语义、Error 的驱动链、Generic Map、跨独立 interpret
 
 新增功能先给出 facade、生成契约、runtime 责任及 failure／cleanup 边界，再分批实现。当前探索阶段只做必要普通编译，不自行新增测试、负例或额外检查门槛。
 
+<a id="compiler"></a>
+### 3.9 gen 是这个 EDSL 的编译器
+
+框架分成四层，gen 居中：
+
+| 层 | 是什么 | SDK 位置 |
+| --- | --- | --- |
+| 源语言 | 用户写的 Types、Effects（注册）、AST 与 Handlers，全部是原生 Haskell | `Framework.SDK`、`Framework/Language/` |
+| 编译器（gen） | 读取源程序，降级为一张图，在生成期定下链的组合、读取路由与合法性，输出 Generated | `Framework.Gen`、`Framework/Gen/` |
+| 编译产物 | Generated 下交给 GHC 的 Haskell（契约、入口、按标签的路由）与其中的 Prototype（静态结构） | `Framework.Prototype`、`Framework/Prototype/`、`Framework.Generated` |
+| 运行时 | 执行编译产物：取值、scope、Error、会话与 workflow 调度 | `Framework.Program`、`Framework.Runtime`、`Framework/Runtime/` |
+
+依赖只从上往下：源语言不导入其他层；gen 导入源语言与 Prototype 的数据模型，不导入运行时；运行时导入源语言与 Prototype，不导入 gen。demo 的可执行程序不链接 `Framework.Gen.*`，`effect-codegen` 不链接 `Framework.Runtime.*`。Generated/Assets.hs 是审查用的资产目录，不进入运行导入链。
+
+能在生成期判定的组合、读取路由与合法性问题，都由 gen 报错，不留给运行时。运行时启动前只核对编译产物与当前源码是同一份——注册快照、Handlers 指纹、AST 的层级——并校验 Prototype 自洽，不重新推导结构。仍在运行时发生的推导有两处，属于 Stage 2 未收敛的部分：`requires` 读到缺值时按需生产一次，以及按当前 handler 查读取声明表；见 [Next stages](NEXT_STAGES.md#stage-2-status)。
+
+流水线的阶段、输入输出与各阶段的检查见 [4.9 编译流水线](#generation)，源码目录见 [SDK 分工](#sdk-layout)。
+
 
 <a id="runtime"></a>
 ## 4. 当前运行协议
@@ -259,7 +278,7 @@ Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必�
 | `Raises XxxError m` | 总是 | `raise (XxxError "...")` |
 | `MonadIO m` | Pure 以外总是 | `liftIO` |
 
-Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 handler 的类或 request；单独的 requests 不带来 Reads。一个 handler 只有一份 Layer，各绑定推出的方法类型与 Layer 必须一致，否则 gencode 报错。`Reads`、`Raw`、`Raises` 定义在 Framework.Effect.Contract，由 Framework.SDK 导出；`Raw`、`Raises` 是暂定名。
+Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 handler 的类或 request；单独的 requests 不带来 Reads。一个 handler 只有一份 Layer，各绑定推出的方法类型与 Layer 必须一致，否则 gencode 报错。`Reads`、`Raw`、`Raises` 定义在 Framework.Language.Handler，由 Framework.SDK 导出；`Raw`、`Raises` 是暂定名。
 
 失败属于 handler：raise 的错误类型由 handler 名决定，不随绑定改变，Errors 中的分类是 `XxxFailure`；发生在哪个 effect 由 SDK 记为 Failure.origin，只是诊断位置。原始 Failure 保存 origin、detail 分类和 message，传播或次生失败不覆盖原故障；不要求用户声明错误 ADT。
 
@@ -394,7 +413,7 @@ handler 直接在 `<-` 左侧匹配表示类型的构造器，或先具名绑定
 
 当前返回形态：普通资产的读取返回表示类型，分支契约返回当前构造器的字段；持续资产按访问方式，streams 返回 `History 表示类型`（本次交付为止的历史），requires 返回最新一条。T 与 History T 是同一个资产的不同结果形态，不是两个来源；读取写法与视图位置的收敛归 [Stage 4](NEXT_STAGES.md#stage-4)。
 
-Effect.Demand 保存唯一来源、访问解析与结果形态的纯规则；Prototype 保存解析事实；Codegen 按绑定检查读取路由与读取依据；运行时继续执行已确定的捕获、可见性、求值锁与 ownership 协议。结构检查不移动取值、不提前求值、不合并重复驱动，也不证明所有路径、字段使用、case 穷尽或业务计算正确。
+Gen.Demand 保存唯一来源、访问解析与结果形态的纯规则；Prototype 保存解析事实；Gen.Bind 按绑定检查读取路由与读取依据；运行时继续执行已确定的捕获、可见性、求值锁与 ownership 协议。结构检查不移动取值、不提前求值、不合并重复驱动，也不证明所有路径、字段使用、case 穷尽或业务计算正确。
 
 手写 Handlers 保持原生语法，运行仍编译 Generated/Handlers 的副本，修改实现后须重新生成。
 
@@ -573,18 +592,28 @@ FileDemo 的 FileRecovery 演示：handles 写 `RaisedBy "readFileContent"` 等 
 handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler 的 `XxxFailure` 分类匹配，不论失败发生在哪个绑定；ScopeFaultIn／ContextFaultIn 按 effect 名匹配。Context 协议故障，包括未声明的读取及 CaseNotSelected，origin 使用生产方 effect 注册名，不使用资产名。同一 scope 下同一故障类型只允许一个 Error 注册。
 
 <a id="generation"></a>
-### 4.9 生成、运行入口与源码同步
+### 4.9 编译流水线、运行入口与源码同步
 
-手写业务的框架门面是 [Framework.SDK](../sdk/Framework/SDK.hs)：注册、资产访问能力、故障观察和 AST 组合。生成代码使用 [Framework.Generated](../sdk/Framework/Generated.hs)，其中包含包装和装配需要的内部接口。Generated.Program 绑定程序元数据后，业务仍写 `interpreter ast effects`。
+[gen 是编译器](#compiler)。手写业务只导入 [Framework.SDK](../sdk/Framework/SDK.hs)：注册、handler 能力、故障观察和 AST 组合，定义在 `Framework/Language/`；Types、Effects、AST 不导入 Generated 或 Handlers，handler 的类、Layer 与错误类型由 gen 生成，无须手写。生成代码只导入 [Framework.Generated](../sdk/Framework/Generated.hs)：Prototype 的数据模型、运行协议与装配操作，以及程序命令的适配。Generated.Program 绑定程序元数据后，业务仍写 `interpreter ast effects`。
 
-[Framework.Program](../sdk/Framework/Program.hs) 负责强制校验原型、执行 workflow 和退出清理；它不读取命令行或推导 demo 路径。[Framework.Generated](../sdk/Framework/Generated.hs) 负责现有 CLI 模式及源码指纹适配，手写源码路径由生成器显式传入。源码组织与阅读顺序见下方 [SDK 分工](#sdk-layout)。
+[Framework.Gen](../sdk/Framework/Gen.hs) 按阶段执行编译，[Gen/Main.hs](../sdk/Framework/Gen/Main.hs) 是 `effect-codegen` 的命令行入口。每个阶段一个模块，失败即停止；全部通过后才写回 Generated，未变的文件保留时间戳。整个过程不执行 handler 业务：
 
-[Generate.hs](../sdk/Framework/Generate.hs) 提供统一首次生成命令：先加载 Types、Effects 和 AST，用 GHC 9.12 解析器读取 Handlers.hs 的模块、handler 方法边界与读取（`require @T`、`raw`），按绑定组成 effect 方法的纯结构；再以 GHC 无代码生成模式类型检查业务模块与候选副本，检查顶层白名单并产出资产目录，成功后写回 Generated。候选生成模块及手写 Handlers 快照从内存加载，不执行业务。
-它们不导入 Generated 或 Handlers；handler 类、Layer 与错误类型自动生成，无须用户手写。
+| 阶段 | 模块 | 输入 → 输出 | 这一阶段报告的错误 |
+| --- | --- | --- | --- |
+| 读取 | [Gen.Source](../sdk/Framework/Gen/Source.hs) | Types.hs → 和类型；在独立的 ghci 进程中求值 `effects` 与 `ast` | 声明不能加载或求值 |
+| 降级 | [Gen.Lower](../sdk/Framework/Gen/Lower.hs)、[Gen.Demand](../sdk/Framework/Gen/Demand.hs) | 注册与 workflow → PrototypePlan：effect 原型、每个 demand 的唯一生产方、WorkflowTree | 资产来源与访问方式；Input、Scoped、Context、Stream、Error 的注册规则；AST 末端、alternative 候选与 lifelong 订阅 |
+| 绑定 | [Gen.Bind](../sdk/Framework/Gen/Bind.hs)、[Gen.Names](../sdk/Framework/Gen/Names.hs) | PrototypePlan → 每个 handler 绑定的前驱、驱动、raw 来源与读取路由；handler 的方法类型与 Layer | 生成名字冲突；一个 effect 内表示类型重复；同一 handler 的绑定推出不同的签名或 Layer |
+| 形状 | [Gen.Shape](../sdk/Framework/Gen/Shape.hs) | Handlers.hs 的语法树 → 各 handler 方法体的读取形状（`require @T`、`raw`） | handler 调用其他 handler 或 effect 方法；`require` 没有类型应用；读取经不支持的高阶组合传递 |
+| 组成 | Gen.Bind 的 `composeMethods` | 形状 × 绑定 → effect 方法的结构 | 读取的表示类型没有声明；`raw` 用在挂接 parser 之外；声明的读取没有被方法体或控制流使用 |
+| 构图 | [Gen.Build](../sdk/Framework/Gen/Build.hs)、[Build.Graph](../sdk/Framework/Gen/Build/Graph.hs)、[Build.Sources](../sdk/Framework/Gen/Build/Sources.hs) | PrototypePlan + 方法结构 → Prototype：EffectGraph、ScopeTree、链挂载与资产来源 | 注入经其他方法绕到句柄；直接调用 Stream 方法；持续资产的启动环；读取有多个可见来源；Context 没有被驱动 |
+| 输出 | `Gen.Emit.*`（[Effects](../sdk/Framework/Gen/Emit/Effects.hs)、[Handlers](../sdk/Framework/Gen/Emit/Handlers.hs)、[Program](../sdk/Framework/Gen/Emit/Program.hs)、[Prototype](../sdk/Framework/Gen/Emit/Prototype.hs)） | 绑定与 Prototype → Generated/Effects、Handlers、Program 的源码 | 只渲染，不再判定 |
+| 类检 | [Gen.Assets](../sdk/Framework/Gen/Assets.hs) | 业务模块与输出副本（在内存中）→ 资产目录 Generated/Assets | GHC 类型错误；顶层白名单 |
 
-首次使用独立生成器生成接口，填写 handler 后再次生成并编译 Main；命令与使用顺序集中见[指南：命令行与执行阶段](GUIDE.md#commands)。缺少 Handlers.hs 时先生成空编译模块；有实现后进行完整检查，不执行 handler。
-业务执行仍编译 Generated/Handlers：handler 方法体原样复制到按 effect 的类型标签上，SDK 生成入口与路由；纯初始化结构由 Generated.Program 导出，不回写手写源码或新增业务类型类。手写实现变更后须重新生成。
-生成的 Handlers 保存解析时的源码指纹；公共 workflow 入口在启动业务前检查当前手写源，缺失或过期则拒绝执行，并核对注册快照；Main 写法不变。
+只有降级在独立的 ghci 进程里执行：`effects` 与 `ast` 是 Haskell 值，必须加载业务模块才能求值；PrototypePlan 经 Show/Read 交回，之后的阶段都在生成器进程内读取这份计划。Handlers.hs 只解析，不加载；类检阶段把业务模块与刚输出的副本放在内存中，交给 GHC 无代码生成模式检查。构图结果按 PrototypePlan、方法结构与构图相关的 SDK 源码缓存在 Generated/.scope-cache，命中时仍校验 Prototype；驱动检查每次执行。
+
+首次没有 Handlers.hs 时，形状为空，不检查读取与驱动，只生成契约和空的 Handlers 模块；填写 handler 后再次生成并编译 Main，命令与使用顺序见[指南：命令行与执行阶段](GUIDE.md#commands)。业务执行编译 Generated/Handlers：handler 方法体原样复制到按 effect 的类型标签上，后接 gen 生成的入口与路由；不回写手写源码或新增业务类型类。手写实现变更后须重新生成。
+
+[Framework.Program](../sdk/Framework/Program.hs) 是运行入口：强制并校验 Prototype、执行 workflow 和退出清理；它不读取命令行或推导 demo 路径。[Framework.Generated](../sdk/Framework/Generated.hs) 负责程序命令及源码指纹适配，手写源码路径由生成器显式传入。生成的 Handlers 保存解析时的源码指纹；公共 workflow 入口在启动业务前核对注册快照与当前手写源，缺失或过期则拒绝执行；执行时逐层核对 AST 与编译时的 WorkflowTree。Main 写法不变。
 
 业务启动与 --structure 都从仓库根目录读取源码并校验生成快照；--structure 只展示静态原型，不创建运行 scope 句柄或执行业务。已有 Main 的 --generate 转调同一独立生成器，仍要求导入链可编译；新增 effect 或缺少生成文件时直接使用独立生成器。普通构建只编译，不隐式生成；这些模式保持同一个 workflow 业务入口。
 [demo/Crawler/Main.hs](../demo/Crawler/Main.hs) 等 demo 演示 IO workflow；
@@ -608,45 +637,58 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 <a id="sdk-layout"></a>
 ### SDK 的职责与阅读顺序
 
+SDK 按[四层](#compiler)组织，gen 居中：
+
 ```text
 sdk/Framework/
-  SDK.hs / Effect.hs        手写业务门面
-  Generated.hs              生成代码门面、CLI 与源码同步适配
-  Program.hs                原型初始化、workflow 执行与退出收尾
-  Effect/
-    Registration.hs         声明 ADT
-    Demand.hs               资产来源、访问方式与结果形态的纯规则
-    Asset.hs                源码资产目录 ADT，供生成与审查
-    Graph.hs                MethodShape、EffectGraph 与独立 ScopeTree 构建
-    Contract.hs             handler 能力类（Reads、Raw、Raises）与运行存储协议
-    Context.hs              取值、分支投影与原子入口包装
-    Binding.hs / History.hs 绑定身份、共享归属与历史视图
-    Scope.hs                scope 实例、使用登记与物理清理
-    Runtime.hs              Target、frame、交接与会话装配
-    Runtime/
-      App.hs                各存储协议在 App 上的实现
-      Identity.hs           Origin、ActivationId、Execution
-      Graph.hs              活动链、发布、求值锁与会话登记
-      Session.hs            发布历史、游标、通知与任务停止
-  Prototype.hs              统一静态模型的构建、校验与公共查询门面
+  SDK.hs                    源语言门面：手写业务只导入它
+  Language/                 源语言
+    Registration.hs         注册 ADT：EffectSpec、EffectTyping、Asset、Demand、Handles、EffectKind
+    AST.hs                  workflow 组合子与 WorkflowF
+    Handler.hs              handler 能力类（Reads、Raw、Raises）与完成结果（Failure、Output）
+    History.hs              持续资产的历史视图
+  Gen.hs                    编译器：按阶段执行的流水线
+  Gen/
+    Main.hs                 effect-codegen 命令行入口
+    Source.hs               读取：解析 Types.hs、Handlers.hs，在 ghci 中求值声明
+    Lower.hs / Demand.hs    降级：注册与 workflow → PrototypePlan；demand 解析与资产来源规则
+    Names.hs                gen 派生的全部名字
+    Bind.hs                 绑定与组成：前驱、驱动、raw、读取路由、签名与 Layer；effect 方法结构
+    Shape.hs                形状：handler 方法体的读取结构
+    Build.hs                构图：Prototype 构建与驱动检查
+    Build/
+      Graph.hs              EffectGraph 与 ScopeTree 算法
+      Sources.hs            资产来源证明，保留路径相关性
+    Emit/
+      Effects.hs            Generated/Effects.hs
+      Handlers.hs           Generated/Handlers.hs：方法体副本、At 路由与 effect 方法
+      Program.hs            Generated/Program.hs 的程序部分
+      Prototype.hs          Prototype 的 Haskell 值渲染
+    Assets.hs / Catalog.hs  类检：类型检查、顶层白名单与资产目录
+  Prototype.hs              编译产物门面：生成、执行、展示共用的静态模型
   Prototype/
-    Types.hs                纯 ADT
+    Types.hs                Prototype 的纯 ADT
+    Graph.hs                方法结构、EffectGraph 与 ScopeTree 的数据
     Query.hs                只读结构、可见性与启动查询
-    Sources.hs              生成期来源分析，保留路径相关性
-  Workflow/
-    AST.hs                  声明结构
+    Validate.hs             Prototype 自洽与 AST 快照核对
+    Structure.hs            静态结构展示与 scope 祖先投影
+  Generated.hs              生成代码门面、程序命令与源码同步适配
+  Program.hs                运行入口：原型初始化、workflow 执行与退出收尾
+  Runtime.hs                Target、frame、交接与会话装配
+  Runtime/
+    Protocol.hs             ContextStore／ScopeStore／ErrorStore 协议与协议故障
+    Context.hs              取值、分支投影与原子入口包装
+    Binding.hs              绑定身份与共享归属
+    Scope.hs                scope 实例、使用登记与物理清理
+    App.hs                  各存储协议在 App 上的实现
+    Identity.hs             Origin、ActivationId、Execution
+    Graph.hs                活动链、发布、求值锁与会话登记
+    Session.hs              发布历史、游标、通知与任务停止
     Execution.hs            执行 algebra、分支组合与调度
-    Structure.hs            静态结构展示
-  Codegen.hs                GeneratedCode、handler 契约、入口与路由渲染，读取形状的组合与检查
-  Generate.hs               声明加载、缓存、检查与文件写回
-  Codegen/
-    Handlers.hs / Structure.hs  handler 方法体复制与读取形状提取
-    Assets.hs                  类型检查、顶层白名单与资产目录
-    Plan.hs                    Prototype 的 Haskell ADT 渲染
   Recursion.hs              Fix、cata、zygo
 ```
 
-改声明从 Registration → Demand → Prototype → Codegen 进入；改取值从 Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Workflow.Execution → Runtime → Scope／Session 进入。Prototype.Sources 是生成期证明，Runtime.Graph 是本次实际活动关系，Scope 独立持有资源生命周期；三者不复制彼此的状态。
+改声明语法从 Language.Registration 进入，再沿流水线 Lower → Bind → Build → Emit；改读取路由或入口生成从 Gen.Bind 与 Gen.Emit.Handlers 进入；改取值从 Runtime.Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Runtime.Execution → Runtime → Scope／Session 进入。Gen.Build.Sources 是生成期证明，Runtime.Graph 是本次实际活动关系，Runtime.Scope 独立持有资源生命周期；三者不复制彼此的状态。
 
 模块头说明职责和边界；关键锁、所有权、取消窗口及清理顺序在实现处保留注释。App 仍集中实现共享同一执行 frame 的存储协议，以章节分组，不为行数拆出互相依赖的状态容器。
 
