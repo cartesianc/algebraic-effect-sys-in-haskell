@@ -2,16 +2,15 @@
 
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Effect.Context
-  ( ContextFault(..), ContextAccess(..), readContext, requireContext, requestContext, callContext, provideContext
-  , projectContext, atomicHandle, atomicScope, readHistory, streamHandle
+  ( ContextFault(..), ContextAccess(..), readContext, callContext
+  , projectContext, latestContext, atomicHandle, atomicScope, readHistory, streamHandle
   ) where
 
 import Framework.Effect.Contract
   (ContextStore(..), ContextFault(..), ScopeInput, ScopeInputAccess(..), Failure(..), RawOutput(..), failEffect)
 import Control.Monad (forM_, when)
 import Control.Monad.Except (MonadError, catchError, throwError)
-import Data.Maybe (fromMaybe)
-import Framework.Effect.History (History, currentHistory)
+import Framework.Effect.History (History, currentHistory, latest)
 
 data ContextAccess = RequestValue | RequireValue deriving (Eq, Show)
 
@@ -85,8 +84,7 @@ requestContext selected synchronize produce = enterRequest selected $
     publishContextBinding selected (synchronize value)
     pure value
 
--- 生成的 instance 包装调用此入口；业务 instance 仍直接引用上游类方法。
--- 根调用执行生产；链内根据当前消费者的注册选择刷新或只读。
+-- getT 的生成入口。根调用执行生产；链内按当前消费者的 demands 选择刷新（requests）或只读（requires）。
 callContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
   => String -> (ContextFault -> cause) -> [(String, ContextAccess)]
@@ -106,19 +104,24 @@ callContext selected wrap accesses compareValue select synchronize produce = do
       observeInput mode compareValue value
       pure value
 
--- 和类型资产的分支契约是基础契约的投影：按消费者分派到基础契约的读取入口，
--- 资产当前是该构造器时取出其字段，否则报 CaseNotSelected。不新增状态，也不单独生产。
--- 故障来源是生产方的注册名，与 ContextFaultIn 的匹配一致。
+-- 和类型资产的分支契约是基础契约的投影：读取基础契约，资产当前是该构造器时取出其字段，
+-- 否则报 CaseNotSelected。不新增状态，也不单独生产。故障来源是生产方的注册名，与 ContextFaultIn 的匹配一致。
 projectContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> String -> (ContextFault -> cause) -> [(String, m base)] -> (base -> Maybe branch) -> m branch
-projectContext producer contract wrap routes project = do
-  base <- provideContext producer contract wrap routes
+  => String -> String -> (ContextFault -> cause) -> (base -> Maybe branch) -> m base -> m branch
+projectContext producer contract wrap project readBase = do
+  base <- readBase
   maybe (failEffect producer (wrap (CaseNotSelected contract)) (show (CaseNotSelected contract))) pure (project base)
 
--- 持续资产的 require：先用本次调用已经取得的视图（lifelong 交付或此前的会话读取）。
--- 没有视图时，Receive 资产由 interpreter 托管的会话交付当前历史；有 request 的持续资产
--- 在 lifelong 外按普通 require 取得一个值（已捕获、可见来源或求值一次 request），呈现为单条视图。
+-- 持续资产的 requires：读取历史视图在本次交付位置的最新条目。
+latestContext
+  :: (ContextStore environment m, MonadError (Failure cause) m)
+  => String -> (ContextFault -> cause) -> m (History value) -> m value
+latestContext producer wrap readHistory' = readHistory' >>= maybe
+  (failEffect producer (wrap ContextNotInitialized) (producer ++ ": no delivery yet")) pure . latest
+
+-- streamT 的生成入口：先用本次调用已经取得的视图（lifelong 交付或此前的会话读取）。
+-- 没有视图时，由 interpreter 托管的会话交付当前历史。
 readHistory
   :: (ContextStore environment m, MonadError (Failure cause) m)
   => String -> (ContextFault -> cause) -> [(String, ContextAccess)]
@@ -134,29 +137,28 @@ readHistory contextName wrap accesses select produce = requireContext contextNam
         maybe (failEffect contextName (wrap ContextNotInitialized)
           (contextName ++ ": no stream session can deliver here")) pure delivered
 
--- Stream.handler 的生成入口。会话调用解析器时安装了本次原始输入：解析器对 Stream 方法的调用
--- 由这份输入回答，不再执行方法体另取一份，与挂在原子句柄下的 Context 调用句柄相同。
--- Stream 单步没有安装输入，执行方法体取得下一份。
+-- Stream 的生成入口。会话调用 parser 时安装了本次原始输入：parser 的 raw 由这份输入回答，
+-- 不再执行 handler 另取一份，与挂在原子句柄下的 Context 相同。Stream 单步没有安装输入，执行 handler 取得下一份。
 streamHandle :: ContextStore environment m => m String -> m String
 streamHandle body = streamRawInput >>= maybe body pure
 
--- Excu.handler 的生成入口：方法体每次调用都执行。
+-- Excu 的生成入口：每次调用都执行。
 atomicHandle
   :: (ContextStore environment m, MonadError (Failure cause) m)
   => String -> m (Maybe String) -> m (Maybe String)
 atomicHandle method = atomicScope method . fmap Just
 
--- 原子句柄（Excu.handler、Scoped.open／close）的统一出口。方法体给出的信息与是否成功
--- 组成 RawOutput，只交给挂在该句柄下的 Context 解析并作为资产发布；没有挂接时直接丢弃。
--- 组合它的上层方法照常继续，不读取这份输出，注入的成败也不影响它。
--- 外层 Nothing 表示方法体没有执行（复用的 scope 实例、重复 close），此时没有新的输出。
+-- 原子句柄（Excu、Scoped.open／close）的统一出口。handler 给出的信息与是否成功
+-- 组成 RawOutput，只交给挂在该句柄下的 Context parser 解析并作为资产发布；没有挂接时直接丢弃。
+-- 以它为 Input 的入口照常继续，不读取这份输出，注入的成败也不影响它。
+-- 外层 Nothing 表示 handler 没有执行（复用的 scope 实例、重复 close），此时没有新的输出。
 atomicScope
   :: (ContextStore environment m, MonadError (Failure cause) m)
   => String -> m (Maybe (Maybe String)) -> m (Maybe String)
 atomicScope method body = do
   replayed <- replayedOutput method
   case replayed of
-    -- 注入中的 Context 调用它挂接的句柄：回答本次输出，不重复执行。
+    -- 注入中的 parser 经 raw 调用它挂接的句柄：回答本次输出，不重复执行。
     Just raw -> pure (info raw)
     Nothing -> do
       consumer <- currentHandler
@@ -172,17 +174,3 @@ atomicScope method body = do
       anchored <- anchoredContexts method
       when (maybe True (`notElem` map fst anchored) consumer) $
         forM_ anchored $ \(_, produce) -> injectOutput method raw produce
-
--- 消费方的 request @T / require @T 按当前调用者分派到注册解析出的来源入口。
--- 路由表由生成器从 demands 解析得到；来源入口仍走原有的生产或读取包装。
-provideContext
-  :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> String -> (ContextFault -> cause) -> [(String, m value)] -> m value
-provideContext producer contract wrap routes = do
-  caller <- currentHandler
-  case caller >>= (`lookup` routes) of
-    Just action -> action
-    -- 故障来源是生产方的注册名，与 ContextFaultIn 的匹配一致。
-    Nothing -> failEffect producer (wrap (UndeclaredContextAccess consumer))
-      ("No declared demand for " ++ contract ++ " from " ++ consumer)
-      where consumer = fromMaybe "the root call" caller

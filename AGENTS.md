@@ -16,23 +16,23 @@
 - 文档用独立“代码长什么样”章节作为较早的阅读入口。README 以自然语言分层介绍这是什么框架、能做什么、为什么这样设计、代码长什么样及如何开始；开篇概括项目，正文解释设计要解决的问题，以一行 Main 与 asset、effect、handler、workflow 的关系概述引导到指南；Context 等具体 effect 类别、完整模块声明与 import 在指南展示；具体环境准备、生成、编译、运行和结构查看命令集中在指南，README 随正文中的相关概念和开发步骤自然引入文档链接。指南再以同一业务的原生 Haskell 代码块展开各子模块，标明文件与节选边界并链接详细规则。
 - 代码的书写形态属于架构契约。新增功能先展示受影响的资产、注册、instance 与 workflow 写法，再说明装配语义；重构保持关系的源码可见性与可提取性。同步实际接口、示例与设计说明，目标接口标明未实现；详见[代码即文档](docs/LATEST_DESIGN.md#code-as-documentation)。
 - 程序只有 workflow 入口，保持 `main = interpreter ast effects`；不提供绕过 AST 的单末端业务入口。
-- facade／Handlers 在生成前保持原生 Haskell。先生成同步的契约接口，再写 instance；手写和 Generated/Handlers 分别加载，避免重复 instance。
-- 业务 instance 写作 `instance XInputs m => XEffect m`。Input 提供能力，方法体显式调用；SDK 不补跑未引用的上游。
-- effect 调用和显式资产操作写在注册 instance 方法中。普通函数、局部具名函数、泛型例外和构造器归属遵循 [ASSETS](docs/ASSETS.md)，不恢复旧的“全面禁止普通函数”规则。
-- 每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；同一资产可声明多种合法访问方式，一个消费者可依赖多个资产。取值通过原生 request／require，并满足[显式接收契约](docs/LATEST_DESIGN.md#demand-contract)；不新增位置参数或提前取值。
-- **迁移边界：**[Stage 2](docs/NEXT_STAGES.md#stage-2) 已确认替换以上三条：handler 写作 `instance XxxLayer m => XxxHandler m`，按表示类型读取，Input 与驱动由 gencode 装配；禁止顶层普通函数；接收形态检查取消。迁移完成前，未迁移的代码仍按以上三条。
+- Handlers 在生成前保持原生 Haskell。先生成同步的契约接口，再写 instance；手写和 Generated/Handlers 分别加载，避免重复 instance。
+- handler 是不带参数的原子类方法，写作 `instance XxxLayer m => XxxHandler m`：按表示类型 `require`，挂接的 parser 用 `raw`，失败用本 handler 的 `raise`。一个 handler 可注册到多个 effect。Input 前驱与 `requests` 驱动由 gencode 装配进 effect 入口；方法体不调用上游、其他 handler 或 effect 方法，SDK 不补跑未声明的上游。
+- 业务模块顶层只允许类型声明、instance、`effects`、具名 AST 与 `main`，禁止顶层普通函数；值操作写在 handler 方法体内，方法体内的局部函数与 lambda 不限制。规则见 [ASSETS](docs/ASSETS.md)。
+- 每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；同一资产可声明多种合法访问方式，一个消费者可依赖多个资产。读取按“表示类型 + effect”路由到唯一资产，一个 effect 内表示类型不重复，见[资产来源与访问约束](docs/LATEST_DESIGN.md#demand-contract)；不新增位置参数或提前取值。
+- Error 只指向 scope：`RaisedBy` 写 handler 名，必须关联恰好一个 scope；resolve 暂不操作 scope（Error 驱动链待定）。
 - Context 通过 demands 接入。区分 original chain、Context chain、静态 NodeId、运行 Origin／ActivationId 与 Binding ownership。
 - 取值的捕获、来源可见性、fallback 发布、资源认领和 once-spare 保证不能在重构中弱化。完整规则按下表阅读，不在本文件复制协议。
 - Prototype 是纯结构，RuntimeGraph 保存活动关系，ScopeTree 独立且无环。生成、执行、展示共享同一静态模型。
 - Generated 是派生产物；修改手写输入后显式生成，不在构建中隐式修改源码，不把手改生成结果当作持久权威。
-- 当前实现六类 effect（含 Stream）与 lifelong。lifelong 中的失败采用临时规则（终止整次运行）；EOF、Stream close、局部结束等延期项不得描述成已提供的能力。本轮已完成输入契约及 SDK 分工整理，Stage 2 的 handler 复用正在实现，持续执行同构、资产访问、scope 边界、结束与清理仍按阶段确认；Middleware 保留为后续专题，均不得写成当前能力。
+- 当前实现六类 effect（含 Stream）与 lifelong。lifelong 中的失败采用临时规则（终止整次运行）；EOF、Stream close、局部结束等延期项不得描述成已提供的能力。本轮已完成输入契约及 SDK 分工整理（Stage 1）与 handler 复用（Stage 2）；Pure 的值管道语义、Stream 的驱动方式（event／behavior／socket）与 Error 的驱动链待定，持续执行同构、资产访问、scope 边界、结束与清理仍按阶段确认；Middleware 保留为后续专题，均不得写成当前能力。
 
 ## 按任务读取规范
 
 | 任务 | 必须读取 |
 | --- | --- |
 | 改注册、方法签名或 beforegen | [设计方法](docs/LATEST_DESIGN.md#principles)、[运行语义：注册](docs/LATEST_DESIGN.md#registration)、[指南](docs/GUIDE.md) |
-| 改 request／require／注入 | [运行语义：Context](docs/LATEST_DESIGN.md#context)、[图与来源](docs/EFFECT_GRAPH.md) |
+| 改 requests／require／raw／注入 | [运行语义：Context](docs/LATEST_DESIGN.md#context)、[入口装配](docs/LATEST_DESIGN.md#calls)、[图与来源](docs/EFFECT_GRAPH.md) |
 | 改 branch 或启动 | [运行语义：workflow](docs/LATEST_DESIGN.md#workflow)、[图与身份](docs/EFFECT_GRAPH.md) |
 | 改 scope、归属、cleanup 或 Error | [运行语义：scope](docs/LATEST_DESIGN.md#scope)、[Error](docs/LATEST_DESIGN.md#error)、[ScopeTree](docs/EFFECT_GRAPH.md) |
 | 改 codegen、结构、缓存或资产检查 | [图与生成](docs/EFFECT_GRAPH.md)、[资产约束](docs/ASSETS.md)、[运行语义：生成](docs/LATEST_DESIGN.md#generation) |
@@ -47,14 +47,14 @@
 | --- | --- |
 | 手写业务与生成代码门面 | [SDK.hs](sdk/Framework/SDK.hs)、[Generated.hs](sdk/Framework/Generated.hs) |
 | 原型初始化、执行与退出收尾 | [Program.hs](sdk/Framework/Program.hs) |
-| 注册、资产接收规则和运行协议 | [Registration.hs](sdk/Framework/Effect/Registration.hs)、[Demand.hs](sdk/Framework/Effect/Demand.hs)、[Contract.hs](sdk/Framework/Effect/Contract.hs) |
+| 注册、资产访问规则、handler 能力类和运行协议 | [Registration.hs](sdk/Framework/Effect/Registration.hs)、[Demand.hs](sdk/Framework/Effect/Demand.hs)、[Contract.hs](sdk/Framework/Effect/Contract.hs) |
 | 静态原型、模型、查询和来源分析 | [Prototype.hs](sdk/Framework/Prototype.hs)、[Types](sdk/Framework/Prototype/Types.hs)、[Query](sdk/Framework/Prototype/Query.hs)、[Sources](sdk/Framework/Prototype/Sources.hs) |
 | AST 与执行 algebra | [AST.hs](sdk/Framework/Workflow/AST.hs)、[Execution.hs](sdk/Framework/Workflow/Execution.hs) |
 | Context 与绑定 | [Context.hs](sdk/Framework/Effect/Context.hs)、[Binding.hs](sdk/Framework/Effect/Binding.hs) |
 | 实际执行、运行身份与图 | [App.hs](sdk/Framework/Effect/Runtime/App.hs)、[Identity.hs](sdk/Framework/Effect/Runtime/Identity.hs)、[Graph.hs](sdk/Framework/Effect/Runtime/Graph.hs) |
 | scope | [Scope.hs](sdk/Framework/Effect/Scope.hs) |
 | 持续执行：历史视图、会话、单元调度 | [History.hs](sdk/Framework/Effect/History.hs)、[Session.hs](sdk/Framework/Effect/Runtime/Session.hs)、[Runtime.hs](sdk/Framework/Effect/Runtime.hs)、[Execution.hs](sdk/Framework/Workflow/Execution.hs) |
-| 生成与源码提取 | [Generate.hs](sdk/Framework/Generate.hs)、[Codegen](sdk/Framework/Codegen.hs)、[Handlers](sdk/Framework/Codegen/Handlers.hs)、[Structure](sdk/Framework/Codegen/Structure.hs)、[Assets](sdk/Framework/Codegen/Assets.hs)、[Demand](sdk/Framework/Codegen/Demand.hs) |
+| 生成与源码提取 | [Generate.hs](sdk/Framework/Generate.hs)、[Codegen](sdk/Framework/Codegen.hs)、[Handlers](sdk/Framework/Codegen/Handlers.hs)、[Structure](sdk/Framework/Codegen/Structure.hs)、[Assets](sdk/Framework/Codegen/Assets.hs) |
 
 完整目录与阅读路线见[主设计：SDK 分工](docs/LATEST_DESIGN.md#sdk-layout)。
 

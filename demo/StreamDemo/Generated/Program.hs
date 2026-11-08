@@ -1,37 +1,36 @@
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE TypeFamilies #-}
 
--- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
+-- 自动生成；只登记末端入口与原型，执行由 SDK 的 interpreter 完成。
 module StreamDemo.Generated.Program where
 
-import Framework.Generated (Effect(..), EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
+import Framework.Generated (EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.Generated as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
-import StreamDemo.Generated.Effects hiding (request, require)
+import StreamDemo.Generated.Effects
 import qualified StreamDemo.Generated.Handlers as Handlers
 import StreamDemo.Types
 
 
--- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。
-data Results = AnnounceResult (Produce Announce) | ShowTemperatureResult (Produce ShowTemperature) | CheckTrendResult (Produce CheckTrend) | ReportHeartbeatResult (Produce ReportHeartbeat)
+-- 仅汇总所选末端的成功结果，不保存共享绑定或增加完成包装。
+data Results = AnnounceResult () | ShowTemperatureResult () | CheckTrendResult () | ReportHeartbeatResult ()
   deriving Show
 
--- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。
--- 第二个列表是各转折契约的读取末端：按 require 取得资产，返回它当前的构造器名。
--- 第三个列表是各持续资产的生产步骤：会话按需启动，解析器或 request 自己发布一次资产。
+-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
+-- 第二个列表是各转折契约的读取末端：读取资产，返回它当前的构造器名。
+-- 第三个列表是各持续资产的生产步骤：会话按需启动，Stream 单步取得原始输入，parser 发布一次资产。
 compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]
                      , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "Announce" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (AnnounceResult <$> (() <$ announce)))))
-      , SDK.targetApp "ShowTemperature" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowTemperatureResult <$> (() <$ showTemperature)))))
-      , SDK.targetApp "CheckTrend" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (CheckTrendResult <$> (() <$ checkTrend)))))
-      , SDK.targetApp "ReportHeartbeat" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReportHeartbeatResult <$> (() <$ reportHeartbeat)))))
+    ( [ SDK.targetApp "Announce" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (AnnounceResult <$> (() <$ Handlers.runAnnounce)))))
+      , SDK.targetApp "ShowTemperature" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowTemperatureResult <$> (() <$ Handlers.runShowTemperature)))))
+      , SDK.targetApp "CheckTrend" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (CheckTrendResult <$> (() <$ Handlers.runCheckTrend)))))
+      , SDK.targetApp "ReportHeartbeat" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReportHeartbeatResult <$> (() <$ Handlers.runReportHeartbeat)))))
       ]
     , []
-    , [ ("TemperatureParser", SDK.receiveSteps (SDK.targetApp "TemperatureFeed" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (nextReading))))) (SDK.targetApp "TemperatureParser" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ getTemperatureSample))))))
-      , ("Heartbeat", SDK.requestSteps (SDK.targetApp "Heartbeat" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ getBeat))))))
+    , [ ("TemperatureParser", SDK.receiveSteps (SDK.targetApp "TemperatureFeed" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextTemperatureFeed))))) (SDK.targetApp "TemperatureParser" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getTemperatureSample))))))
+      , ("Heartbeat", SDK.receiveSteps (SDK.targetApp "HeartbeatClock" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextHeartbeatClock))))) (SDK.targetApp "Heartbeat" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getBeat))))))
       ]
     )
 
@@ -61,17 +60,23 @@ generatedPrototype =
             , SDK.typing =
                 SDK.Context
                   (SDK.AssetDecl ("TemperatureSample") (SDK.TypeRef ("Temperature")))
-                  (Just ())
-                  (Just ())
-                  (Nothing)
+                  (Just "parseTemperature")
+                  (True)
+                  (True)
             , SDK.input = "TemperatureFeed"
+            , SDK.demands = []
+            }
+        , SDK.EffectSpec
+            { SDK.name = "HeartbeatClock"
+            , SDK.typing = SDK.Stream (Just "nextBeat")
+            , SDK.input = "Root"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "Heartbeat"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("Beat") (SDK.TypeRef ("Int"))) (Just ()) (Just ()) (Just ())
-            , SDK.input = "Root"
+                SDK.Context (SDK.AssetDecl ("Beat") (SDK.TypeRef ("Int"))) (Just "parseBeat") (True) (True)
+            , SDK.input = "HeartbeatClock"
             , SDK.demands = []
             }
         , SDK.EffectSpec
@@ -104,7 +109,7 @@ generatedPrototype =
             { SDK.effectName = "SensorLink"
             , SDK.effectKind = SDK.ScopedKind
             , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ScopeOpen, ConnectSensorGen), (SDK.ScopeClose, DisconnectSensorGen)]
+            , SDK.effectMethods = [(SDK.ScopeOpen, OpenSensorLinkGen), (SDK.ScopeClose, CloseSensorLinkGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
@@ -123,7 +128,7 @@ generatedPrototype =
             { SDK.effectName = "TemperatureFeed"
             , SDK.effectKind = SDK.StreamKind
             , SDK.effectInput = "SensorLink"
-            , SDK.effectMethods = [(SDK.StreamHandler, NextReadingGen)]
+            , SDK.effectMethods = [(SDK.StreamHandler, NextTemperatureFeedGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
@@ -143,7 +148,7 @@ generatedPrototype =
             , SDK.effectKind = SDK.ContextKind
             , SDK.effectInput = "TemperatureFeed"
             , SDK.effectMethods =
-                [(SDK.ContextStream, GetTemperatureSampleGen), (SDK.ContextRequire, ReadTemperatureSampleGen)]
+                [(SDK.ContextStream, GetTemperatureSampleGen), (SDK.ContextRequire, StreamTemperatureSampleGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Just "TemperatureSample"
             , SDK.effectBranches = []
@@ -159,17 +164,36 @@ generatedPrototype =
             , SDK.effectContinuous = True
             }
         , SDK.EffectProto
+            { SDK.effectName = "HeartbeatClock"
+            , SDK.effectKind = SDK.StreamKind
+            , SDK.effectInput = "Root"
+            , SDK.effectMethods = [(SDK.StreamHandler, NextHeartbeatClockGen)]
+            , SDK.effectDemands = []
+            , SDK.effectProduces = Nothing
+            , SDK.effectBranches = []
+            , SDK.effectAnchor = Nothing
+            , SDK.effectScopes = []
+            , SDK.effectErrorScope = Nothing
+            , SDK.effectInputChain = []
+            , SDK.effectScopeParents = []
+            , SDK.effectOpeningInputs = []
+            , SDK.effectNearestScopes = []
+            , SDK.effectResource = Nothing
+            , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
+            }
+        , SDK.EffectProto
             { SDK.effectName = "Heartbeat"
             , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ContextRequest, GetBeatGen), (SDK.ContextRequire, ReadBeatGen)]
+            , SDK.effectInput = "HeartbeatClock"
+            , SDK.effectMethods = [(SDK.ContextStream, GetBeatGen), (SDK.ContextRequire, StreamBeatGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Just "Beat"
             , SDK.effectBranches = []
             , SDK.effectAnchor = Nothing
             , SDK.effectScopes = []
             , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
+            , SDK.effectInputChain = ["HeartbeatClock"]
             , SDK.effectScopeParents = []
             , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = []
@@ -181,7 +205,7 @@ generatedPrototype =
             { SDK.effectName = "Announce"
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, AnnounceGen)]
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunAnnounceGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
@@ -200,7 +224,7 @@ generatedPrototype =
             { SDK.effectName = "ShowTemperature"
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, ShowTemperatureGen)]
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunShowTemperatureGen)]
             , SDK.effectDemands =
                 [SDK.ResolvedDemand (SDK.StreamAccess) ("TemperatureSample") ("TemperatureParser")]
             , SDK.effectProduces = Nothing
@@ -220,7 +244,7 @@ generatedPrototype =
             { SDK.effectName = "CheckTrend"
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, CheckTrendGen)]
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunCheckTrendGen)]
             , SDK.effectDemands =
                 [SDK.ResolvedDemand (SDK.StreamAccess) ("TemperatureSample") ("TemperatureParser")]
             , SDK.effectProduces = Nothing
@@ -240,7 +264,7 @@ generatedPrototype =
             { SDK.effectName = "ReportHeartbeat"
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, ReportHeartbeatGen)]
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunReportHeartbeatGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand (SDK.StreamAccess) ("Beat") ("Heartbeat")]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
@@ -257,45 +281,46 @@ generatedPrototype =
             }
         ]
     , SDK.protoMethods =
-        [ SDK.MethodDefinition (ConnectSensorGen) (ConnectSensorGen) (SDK.ScopeOpen) (SDK.Empty)
-        , SDK.MethodDefinition (DisconnectSensorGen) (ConnectSensorGen) (SDK.ScopeClose) (SDK.Empty)
+        [ SDK.MethodDefinition (OpenSensorLinkGen) (OpenSensorLinkGen) (SDK.ScopeOpen) (SDK.Empty)
+        , SDK.MethodDefinition (CloseSensorLinkGen) (OpenSensorLinkGen) (SDK.ScopeClose) (SDK.Empty)
         , SDK.MethodDefinition
-            (NextReadingGen)
-            (NextReadingGen)
+            (NextTemperatureFeedGen)
+            (NextTemperatureFeedGen)
             (SDK.StreamHandler)
-            (SDK.Call (ConnectSensorGen))
+            (SDK.Call (OpenSensorLinkGen))
         , SDK.MethodDefinition
             (GetTemperatureSampleGen)
             (GetTemperatureSampleGen)
             (SDK.ContextStream)
-            (SDK.Call (NextReadingGen))
+            (SDK.Call (NextTemperatureFeedGen))
         , SDK.MethodDefinition
-            (ReadTemperatureSampleGen)
+            (StreamTemperatureSampleGen)
             (GetTemperatureSampleGen)
             (SDK.ContextRequire)
             (SDK.Empty)
-        , SDK.MethodDefinition (GetBeatGen) (GetBeatGen) (SDK.ContextRequest) (SDK.Empty)
+        , SDK.MethodDefinition (NextHeartbeatClockGen) (NextHeartbeatClockGen) (SDK.StreamHandler) (SDK.Empty)
         , SDK.MethodDefinition
-            (ReadBeatGen)
             (GetBeatGen)
-            (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (GetBeatGen)]))
-        , SDK.MethodDefinition (AnnounceGen) (AnnounceGen) (SDK.HandlerMethod) (SDK.Empty)
+            (GetBeatGen)
+            (SDK.ContextStream)
+            (SDK.Call (NextHeartbeatClockGen))
+        , SDK.MethodDefinition (StreamBeatGen) (GetBeatGen) (SDK.ContextRequire) (SDK.Empty)
+        , SDK.MethodDefinition (RunAnnounceGen) (RunAnnounceGen) (SDK.HandlerMethod) (SDK.Empty)
         , SDK.MethodDefinition
-            (ShowTemperatureGen)
-            (ShowTemperatureGen)
+            (RunShowTemperatureGen)
+            (RunShowTemperatureGen)
             (SDK.HandlerMethod)
-            (SDK.Call (ReadTemperatureSampleGen))
+            (SDK.Call (StreamTemperatureSampleGen))
         , SDK.MethodDefinition
-            (CheckTrendGen)
-            (CheckTrendGen)
+            (RunCheckTrendGen)
+            (RunCheckTrendGen)
             (SDK.HandlerMethod)
-            (SDK.Call (ReadTemperatureSampleGen))
+            (SDK.Call (StreamTemperatureSampleGen))
         , SDK.MethodDefinition
-            (ReportHeartbeatGen)
-            (ReportHeartbeatGen)
+            (RunReportHeartbeatGen)
+            (RunReportHeartbeatGen)
             (SDK.HandlerMethod)
-            (SDK.Call (ReadBeatGen))
+            (SDK.Call (StreamBeatGen))
         ]
     , SDK.protoWorkflow =
         SDK.ChainedAt
@@ -322,8 +347,8 @@ generatedPrototype =
                             }
                         , SDK.SessionProto
                             { SDK.sessionAsset = "Beat"
-                            , SDK.sessionPlan = SDK.RepeatRequest
-                            , SDK.sessionMounts = [[1,-1,1,0]]
+                            , SDK.sessionPlan = SDK.Receive ("HeartbeatClock")
+                            , SDK.sessionMounts = [[1,-1,1,0],[1,-1,1,1]]
                             }
                         ]
                     }
@@ -352,14 +377,19 @@ generatedPrototype =
             , SDK.sessionPlan = SDK.Receive ("TemperatureFeed")
             , SDK.sessionMounts = [[-2,0,0],[-2,0,1]]
             }
+        , SDK.SessionProto
+            { SDK.sessionAsset = "Beat"
+            , SDK.sessionPlan = SDK.Receive ("HeartbeatClock")
+            , SDK.sessionMounts = [[-2,1,0],[-2,1,1]]
+            }
         ]
     , SDK.protoChains =
         [ SDK.ChainProto
             { SDK.chainNode = [0,0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "Announce"
-            , SDK.chainEntry = AnnounceGen
-            , SDK.chainReaches = [AnnounceGen]
+            , SDK.chainEntry = RunAnnounceGen
+            , SDK.chainReaches = [RunAnnounceGen]
             , SDK.chainDrives = []
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
@@ -368,8 +398,8 @@ generatedPrototype =
             { SDK.chainNode = [1,0,0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ShowTemperature"
-            , SDK.chainEntry = ShowTemperatureGen
-            , SDK.chainReaches = [ShowTemperatureGen, ReadTemperatureSampleGen]
+            , SDK.chainEntry = RunShowTemperatureGen
+            , SDK.chainReaches = [RunShowTemperatureGen, StreamTemperatureSampleGen]
             , SDK.chainDrives = []
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
@@ -378,8 +408,8 @@ generatedPrototype =
             { SDK.chainNode = [1,0,1]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "CheckTrend"
-            , SDK.chainEntry = CheckTrendGen
-            , SDK.chainReaches = [CheckTrendGen, ReadTemperatureSampleGen]
+            , SDK.chainEntry = RunCheckTrendGen
+            , SDK.chainReaches = [RunCheckTrendGen, StreamTemperatureSampleGen]
             , SDK.chainDrives = []
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
@@ -388,8 +418,8 @@ generatedPrototype =
             { SDK.chainNode = [1,1,0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ReportHeartbeat"
-            , SDK.chainEntry = ReportHeartbeatGen
-            , SDK.chainReaches = [ReportHeartbeatGen, ReadBeatGen, GetBeatGen]
+            , SDK.chainEntry = RunReportHeartbeatGen
+            , SDK.chainReaches = [RunReportHeartbeatGen, StreamBeatGen]
             , SDK.chainDrives = []
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
@@ -398,28 +428,38 @@ generatedPrototype =
             { SDK.chainNode = [1,-1,0,0]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "TemperatureSample"
-            , SDK.chainEntry = NextReadingGen
-            , SDK.chainReaches = [NextReadingGen, ConnectSensorGen]
+            , SDK.chainEntry = NextTemperatureFeedGen
+            , SDK.chainReaches = [NextTemperatureFeedGen, OpenSensorLinkGen]
             , SDK.chainDrives = []
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[ConnectSensorGen]]
+            , SDK.chainScopePaths = [[OpenSensorLinkGen]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [1,-1,0,1]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "TemperatureSample"
             , SDK.chainEntry = GetTemperatureSampleGen
-            , SDK.chainReaches = [GetTemperatureSampleGen, NextReadingGen, ConnectSensorGen]
+            , SDK.chainReaches = [GetTemperatureSampleGen, NextTemperatureFeedGen, OpenSensorLinkGen]
             , SDK.chainDrives = ["TemperatureSample"]
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[ConnectSensorGen]]
+            , SDK.chainScopePaths = [[OpenSensorLinkGen]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [1,-1,1,0]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "Beat"
+            , SDK.chainEntry = NextHeartbeatClockGen
+            , SDK.chainReaches = [NextHeartbeatClockGen]
+            , SDK.chainDrives = []
+            , SDK.chainReads = []
+            , SDK.chainScopePaths = [[]]
+            }
+        , SDK.ChainProto
+            { SDK.chainNode = [1,-1,1,1]
+            , SDK.chainRole = SDK.SessionChain
+            , SDK.chainTerminal = "Beat"
             , SDK.chainEntry = GetBeatGen
-            , SDK.chainReaches = [GetBeatGen]
+            , SDK.chainReaches = [GetBeatGen, NextHeartbeatClockGen]
             , SDK.chainDrives = ["Beat"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
@@ -428,173 +468,202 @@ generatedPrototype =
             { SDK.chainNode = [-2,0,0]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "TemperatureSample"
-            , SDK.chainEntry = NextReadingGen
-            , SDK.chainReaches = [NextReadingGen, ConnectSensorGen]
+            , SDK.chainEntry = NextTemperatureFeedGen
+            , SDK.chainReaches = [NextTemperatureFeedGen, OpenSensorLinkGen]
             , SDK.chainDrives = []
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[ConnectSensorGen]]
+            , SDK.chainScopePaths = [[OpenSensorLinkGen]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [-2,0,1]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "TemperatureSample"
             , SDK.chainEntry = GetTemperatureSampleGen
-            , SDK.chainReaches = [GetTemperatureSampleGen, NextReadingGen, ConnectSensorGen]
+            , SDK.chainReaches = [GetTemperatureSampleGen, NextTemperatureFeedGen, OpenSensorLinkGen]
             , SDK.chainDrives = ["TemperatureSample"]
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[ConnectSensorGen]]
+            , SDK.chainScopePaths = [[OpenSensorLinkGen]]
+            }
+        , SDK.ChainProto
+            { SDK.chainNode = [-2,1,0]
+            , SDK.chainRole = SDK.SessionChain
+            , SDK.chainTerminal = "Beat"
+            , SDK.chainEntry = NextHeartbeatClockGen
+            , SDK.chainReaches = [NextHeartbeatClockGen]
+            , SDK.chainDrives = []
+            , SDK.chainReads = []
+            , SDK.chainScopePaths = [[]]
+            }
+        , SDK.ChainProto
+            { SDK.chainNode = [-2,1,1]
+            , SDK.chainRole = SDK.SessionChain
+            , SDK.chainTerminal = "Beat"
+            , SDK.chainEntry = GetBeatGen
+            , SDK.chainReaches = [GetBeatGen, NextHeartbeatClockGen]
+            , SDK.chainDrives = ["Beat"]
+            , SDK.chainReads = []
+            , SDK.chainScopePaths = [[]]
             }
         ]
     , SDK.protoChainDefinitions =
         [ SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "SensorLink"
-            , SDK.definitionEntry = ConnectSensorGen
-            , SDK.definitionReaches = [ConnectSensorGen]
+            , SDK.definitionEntry = OpenSensorLinkGen
+            , SDK.definitionReaches = [OpenSensorLinkGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "TemperatureFeed"
-            , SDK.definitionEntry = NextReadingGen
-            , SDK.definitionReaches = [NextReadingGen, ConnectSensorGen]
+            , SDK.definitionEntry = NextTemperatureFeedGen
+            , SDK.definitionReaches = [NextTemperatureFeedGen, OpenSensorLinkGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "TemperatureParser"
             , SDK.definitionEntry = GetTemperatureSampleGen
-            , SDK.definitionReaches = [GetTemperatureSampleGen, NextReadingGen, ConnectSensorGen]
+            , SDK.definitionReaches = [GetTemperatureSampleGen, NextTemperatureFeedGen, OpenSensorLinkGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "TemperatureParser"
-            , SDK.definitionEntry = ReadTemperatureSampleGen
-            , SDK.definitionReaches = [ReadTemperatureSampleGen]
+            , SDK.definitionEntry = StreamTemperatureSampleGen
+            , SDK.definitionReaches = [StreamTemperatureSampleGen]
+            }
+        , SDK.ChainDefinition
+            { SDK.definitionKind = SDK.ContextChain
+            , SDK.definitionEffect = "HeartbeatClock"
+            , SDK.definitionEntry = NextHeartbeatClockGen
+            , SDK.definitionReaches = [NextHeartbeatClockGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "Heartbeat"
             , SDK.definitionEntry = GetBeatGen
-            , SDK.definitionReaches = [GetBeatGen]
+            , SDK.definitionReaches = [GetBeatGen, NextHeartbeatClockGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "Heartbeat"
-            , SDK.definitionEntry = ReadBeatGen
-            , SDK.definitionReaches = [ReadBeatGen, GetBeatGen]
+            , SDK.definitionEntry = StreamBeatGen
+            , SDK.definitionReaches = [StreamBeatGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "Announce"
-            , SDK.definitionEntry = AnnounceGen
-            , SDK.definitionReaches = [AnnounceGen]
+            , SDK.definitionEntry = RunAnnounceGen
+            , SDK.definitionReaches = [RunAnnounceGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "ShowTemperature"
-            , SDK.definitionEntry = ShowTemperatureGen
-            , SDK.definitionReaches = [ShowTemperatureGen, ReadTemperatureSampleGen]
+            , SDK.definitionEntry = RunShowTemperatureGen
+            , SDK.definitionReaches = [RunShowTemperatureGen, StreamTemperatureSampleGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "CheckTrend"
-            , SDK.definitionEntry = CheckTrendGen
-            , SDK.definitionReaches = [CheckTrendGen, ReadTemperatureSampleGen]
+            , SDK.definitionEntry = RunCheckTrendGen
+            , SDK.definitionReaches = [RunCheckTrendGen, StreamTemperatureSampleGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "ReportHeartbeat"
-            , SDK.definitionEntry = ReportHeartbeatGen
-            , SDK.definitionReaches = [ReportHeartbeatGen, ReadBeatGen, GetBeatGen]
+            , SDK.definitionEntry = RunReportHeartbeatGen
+            , SDK.definitionReaches = [RunReportHeartbeatGen, StreamBeatGen]
             }
         ]
     , SDK.protoGraph =
         SDK.EffectGraph
           { SDK.graphMethods =
-              [ SDK.MethodDefinition (AnnounceGen) (AnnounceGen) (SDK.HandlerMethod) (SDK.Empty)
+              [ SDK.MethodDefinition (RunAnnounceGen) (RunAnnounceGen) (SDK.HandlerMethod) (SDK.Empty)
               , SDK.MethodDefinition
-                  (ShowTemperatureGen)
-                  (ShowTemperatureGen)
+                  (RunShowTemperatureGen)
+                  (RunShowTemperatureGen)
                   (SDK.HandlerMethod)
-                  (SDK.Call (ReadTemperatureSampleGen))
+                  (SDK.Call (StreamTemperatureSampleGen))
               , SDK.MethodDefinition
-                  (ReadTemperatureSampleGen)
+                  (StreamTemperatureSampleGen)
                   (GetTemperatureSampleGen)
                   (SDK.ContextRequire)
                   (SDK.Empty)
               , SDK.MethodDefinition
-                  (CheckTrendGen)
-                  (CheckTrendGen)
+                  (RunCheckTrendGen)
+                  (RunCheckTrendGen)
                   (SDK.HandlerMethod)
-                  (SDK.Call (ReadTemperatureSampleGen))
+                  (SDK.Call (StreamTemperatureSampleGen))
               , SDK.MethodDefinition
-                  (ReportHeartbeatGen)
-                  (ReportHeartbeatGen)
+                  (RunReportHeartbeatGen)
+                  (RunReportHeartbeatGen)
                   (SDK.HandlerMethod)
-                  (SDK.Call (ReadBeatGen))
+                  (SDK.Call (StreamBeatGen))
+              , SDK.MethodDefinition (StreamBeatGen) (GetBeatGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition
-                  (ReadBeatGen)
-                  (GetBeatGen)
-                  (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (GetBeatGen)]))
-              , SDK.MethodDefinition (GetBeatGen) (GetBeatGen) (SDK.ContextRequest) (SDK.Empty)
-              , SDK.MethodDefinition
-                  (NextReadingGen)
-                  (NextReadingGen)
+                  (NextTemperatureFeedGen)
+                  (NextTemperatureFeedGen)
                   (SDK.StreamHandler)
-                  (SDK.Call (ConnectSensorGen))
-              , SDK.MethodDefinition (ConnectSensorGen) (ConnectSensorGen) (SDK.ScopeOpen) (SDK.Empty)
+                  (SDK.Call (OpenSensorLinkGen))
+              , SDK.MethodDefinition (OpenSensorLinkGen) (OpenSensorLinkGen) (SDK.ScopeOpen) (SDK.Empty)
               , SDK.MethodDefinition
                   (GetTemperatureSampleGen)
                   (GetTemperatureSampleGen)
                   (SDK.ContextStream)
-                  (SDK.Call (NextReadingGen))
+                  (SDK.Call (NextTemperatureFeedGen))
+              , SDK.MethodDefinition (NextHeartbeatClockGen) (NextHeartbeatClockGen) (SDK.StreamHandler) (SDK.Empty)
+              , SDK.MethodDefinition
+                  (GetBeatGen)
+                  (GetBeatGen)
+                  (SDK.ContextStream)
+                  (SDK.Call (NextHeartbeatClockGen))
               ]
           , SDK.graphRoots =
-              [ AnnounceGen
-              , ShowTemperatureGen
-              , CheckTrendGen
-              , ReportHeartbeatGen
-              , NextReadingGen
+              [ RunAnnounceGen
+              , RunShowTemperatureGen
+              , RunCheckTrendGen
+              , RunReportHeartbeatGen
+              , NextTemperatureFeedGen
               , GetTemperatureSampleGen
+              , NextHeartbeatClockGen
               , GetBeatGen
               ]
           , SDK.graphReferences =
-              [ (ShowTemperatureGen, ReadTemperatureSampleGen)
-              , (CheckTrendGen, ReadTemperatureSampleGen)
-              , (ReportHeartbeatGen, ReadBeatGen)
-              , (ReadBeatGen, GetBeatGen)
-              , (NextReadingGen, ConnectSensorGen)
-              , (GetTemperatureSampleGen, NextReadingGen)
+              [ (RunShowTemperatureGen, StreamTemperatureSampleGen)
+              , (RunCheckTrendGen, StreamTemperatureSampleGen)
+              , (RunReportHeartbeatGen, StreamBeatGen)
+              , (NextTemperatureFeedGen, OpenSensorLinkGen)
+              , (GetTemperatureSampleGen, NextTemperatureFeedGen)
+              , (GetBeatGen, NextHeartbeatClockGen)
               ]
-          , SDK.graphScopes = [ConnectSensorGen]
-          , SDK.graphScopePaths = [[], [ConnectSensorGen]]
+          , SDK.graphScopes = [OpenSensorLinkGen]
+          , SDK.graphScopePaths = [[], [OpenSensorLinkGen]]
           , SDK.graphRootPaths =
-              [ (AnnounceGen, [[]])
-              , (ShowTemperatureGen, [[]])
-              , (CheckTrendGen, [[]])
-              , (ReportHeartbeatGen, [[]])
-              , (NextReadingGen, [[ConnectSensorGen]])
-              , (GetTemperatureSampleGen, [[ConnectSensorGen]])
+              [ (RunAnnounceGen, [[]])
+              , (RunShowTemperatureGen, [[]])
+              , (RunCheckTrendGen, [[]])
+              , (RunReportHeartbeatGen, [[]])
+              , (NextTemperatureFeedGen, [[OpenSensorLinkGen]])
+              , (GetTemperatureSampleGen, [[OpenSensorLinkGen]])
+              , (NextHeartbeatClockGen, [[]])
               , (GetBeatGen, [[]])
               ]
           , SDK.graphScopeOrder = []
           }
     , SDK.protoScopes =
         SDK.ScopeTree
-          { SDK.scopeRoots = [ConnectSensorGen]
+          { SDK.scopeRoots = [OpenSensorLinkGen]
           , SDK.scopeNodes =
               [ SDK.ScopeNode
-                  { SDK.scopeIdentity = ConnectSensorGen
+                  { SDK.scopeIdentity = OpenSensorLinkGen
                   , SDK.scopeParents = []
                   , SDK.scopeChildren = []
                   }
               ]
-          , SDK.scopeLayers = [[ConnectSensorGen]]
-          , SDK.scopePaths = [[], [ConnectSensorGen]]
+          , SDK.scopeLayers = [[OpenSensorLinkGen]]
+          , SDK.scopePaths = [[], [OpenSensorLinkGen]]
           , SDK.scopeCandidates = []
           , SDK.scopeOpposed = []
           , SDK.scopeUndetermined = []
           }
-    , SDK.protoScopeNames = [(ConnectSensorGen, "SensorLink")]
+    , SDK.protoScopeNames = [(OpenSensorLinkGen, "SensorLink")]
     , SDK.protoSources = []
     }

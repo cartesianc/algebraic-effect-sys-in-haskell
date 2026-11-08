@@ -1,17 +1,17 @@
+-- handler 是不带参数的类方法：按表示类型 require 资产，用 raw 读取挂接上游的本次输出，
+-- 用 raise 报告自己的失败；不出现上游 effect、scope、细化资产或 effect 错误。
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
--- Today's explicit form of the same program: the baseline, and the source of the prototype.
 module FacadeProbe.Handlers () where
 
-import Framework.SDK (Effect(..), historySize, latest)
+import Framework.SDK (History, Raises(..), Raw(..), Reads(..), historySize, latest)
 import FacadeProbe.Generated.Effects
 import FacadeProbe.Types
 import Control.Concurrent (threadDelay)
@@ -20,168 +20,106 @@ import Control.Monad.IO.Class (liftIO)
 import System.FilePath ((</>))
 import System.IO (IOMode(WriteMode), hClose, hFlush, hPutStr, openFile, readFile')
 
-instance ReportLocationInputs m => ReportLocationEffect m where
-  getReportPath = do
-    pure (ReportPath ("demo" </> "FacadeProbe" </> "output" </> "report.txt"))
+instance ReportLocationLayer m => ReportLocationHandler m where
+  reportLocation = pure ("demo" </> "FacadeProbe" </> "output" </> "report.txt")
 
-instance ReplyLocationInputs m => ReplyLocationEffect m where
-  getReplyPath = do
-    pure (ReplyPath ("demo" </> "FacadeProbe" </> "output" </> "reply.txt"))
+instance ReplyLocationLayer m => ReplyLocationHandler m where
+  replyLocation = pure ("demo" </> "FacadeProbe" </> "output" </> "reply.txt")
 
-instance ReportDraftInputs m => ReportDraftEffect m where
-  getReportBody = do
-    pure (ReportBody (Body "report line 1\nreport line 2\nreport line 3\n"))
+instance ReportDraftLayer m => ReportDraftHandler m where
+  reportDraft = pure (Body "report line 1\nreport line 2\nreport line 3\n")
 
-instance ReplyDraftInputs m => ReplyDraftEffect m where
-  getReplyBody = do
-    pure (ReplyBody (Body "reply line 1\n"))
+instance ReplyDraftLayer m => ReplyDraftHandler m where
+  replyDraft = pure (Body "reply line 1\n")
 
-instance ReportFileInputs m => ReportFileEffect m where
-  getOpenedReport = do
-    ReportPath path <- require @ReportPath
+instance AcquireFileLayer m => AcquireFileHandler m where
+  acquireFile = do
+    path <- require @FilePath
     file <- liftIO (openFile path WriteMode)
-    pure (OpenedReport (TextFile path file))
+    pure (TextFile path file)
 
-instance ReplyFileInputs m => ReplyFileEffect m where
-  getOpenedReply = do
-    ReplyPath path <- require @ReplyPath
-    file <- liftIO (openFile path WriteMode)
-    pure (OpenedReply (TextFile path file))
-
-instance ReportScopeInputs m => ReportScopeEffect m where
-  openReport = do
-    OpenedReport (TextFile path _) <- request @OpenedReport
+instance OpenTextFileLayer m => OpenTextFileHandler m where
+  openTextFile = do
+    TextFile path _ <- require @TextFile
     liftIO (putStrLn ("[open] " ++ path))
     pure Nothing
-  closeReport = do
-    OpenedReport (TextFile path file) <- require @OpenedReport
+
+instance CloseTextFileLayer m => CloseTextFileHandler m where
+  closeTextFile = do
+    TextFile path file <- require @TextFile
     liftIO (hClose file >> putStrLn ("[close] " ++ path))
     pure Nothing
 
-instance ReplyScopeInputs m => ReplyScopeEffect m where
-  openReply = do
-    OpenedReply (TextFile path _) <- request @OpenedReply
-    liftIO (putStrLn ("[open] " ++ path))
-    pure Nothing
-  closeReply = do
-    OpenedReply (TextFile path file) <- require @OpenedReply
-    liftIO (hClose file >> putStrLn ("[close] " ++ path))
-    pure Nothing
-
-instance WriteReportInputs m => WriteReportEffect m where
-  writeReport = do
-    openReport
-    OpenedReport (TextFile path file) <- require @OpenedReport
-    ReportBody (Body text) <- require @ReportBody
+instance WriteTextLayer m => WriteTextHandler m where
+  writeText = do
+    TextFile path file <- require @TextFile
+    Body text <- require @Body
     liftIO (hPutStr file text >> hFlush file >> putStrLn ("[write] " ++ path))
     pure Nothing
 
-instance WriteReplyInputs m => WriteReplyEffect m where
-  writeReply = do
-    openReply
-    OpenedReply (TextFile path file) <- require @OpenedReply
-    ReplyBody (Body text) <- require @ReplyBody
-    liftIO (hPutStr file text >> hFlush file >> putStrLn ("[write] " ++ path))
-    pure Nothing
-
-instance MarkReplyInputs m => MarkReplyEffect m where
-  markReply = do
+instance MarkReadLayer m => MarkReadHandler m where
+  markRead = do
     liftIO (putStrLn "[mark] before reading")
     pure Nothing
 
-instance ReadReportInputs m => ReadReportEffect m where
-  readReport = do
-    ReportPath path <- require @ReportPath
+instance ReadTextLayer m => ReadTextHandler m where
+  readText = do
+    path <- require @FilePath
     contents <- liftIO (readFile' path)
     pure (Just contents)
 
-instance ReadReplyInputs m => ReadReplyEffect m where
-  readReply = do
-    markReply
-    ReplyPath path <- require @ReplyPath
-    contents <- liftIO (readFile' path)
-    pure (Just contents)
+instance CountLinesLayer m => CountLinesHandler m where
+  countLines = do
+    output <- raw
+    contents <- maybe (raise (CountLinesError "no text")) pure output
+    pure (LineCount (length (lines contents)))
 
-instance ReportCounterInputs m => ReportCounterEffect m where
-  getReportStats = do
-    output <- readReport
-    contents <- maybe (raise (ReportCounterError "no text")) pure output
-    pure (ReportStats (LineCount (length (lines contents))))
-
-instance ReplyCounterInputs m => ReplyCounterEffect m where
-  getReplyStats = do
-    output <- readReply
-    contents <- maybe (raise (ReplyCounterError "no text")) pure output
-    pure (ReplyStats (LineCount (length (lines contents))))
-
-instance ShowReportInputs m => ShowReportEffect m where
-  showReport = do
-    ReportStats (LineCount count) <- require @ReportStats
+instance ShowCountLayer m => ShowCountHandler m where
+  showCount = do
+    LineCount count <- require @LineCount
     liftIO (putStrLn ("[lines] " ++ show count))
     pure Nothing
 
-instance ShowReplyInputs m => ShowReplyEffect m where
-  showReply = do
-    ReplyStats (LineCount count) <- require @ReplyStats
-    liftIO (putStrLn ("[lines] " ++ show count))
-    pure Nothing
-
-instance ReportInspectInputs m => ReportInspectEffect m where
-  getReportState = do
-    ReportPath path <- require @ReportPath
+instance InspectFileLayer m => InspectFileHandler m where
+  inspectFile = do
+    path <- require @FilePath
     contents <- liftIO (readFile' path)
-    pure (ReportState (if null contents then Blank else Filled (Body contents)))
+    pure (if null contents then Blank else Filled (Body contents))
 
-instance OnBlankInputs m => OnBlankEffect m where
-  onBlank = do
-    ReportStateBlank _ <- require @ReportStateBlank
+instance DescribeBlankLayer m => DescribeBlankHandler m where
+  describeBlank = do
     liftIO (putStrLn "[state] blank")
     pure Nothing
 
-instance OnFilledInputs m => OnFilledEffect m where
-  onFilled = do
-    ReportStateFilled (Body text) <- require @ReportStateFilled
+instance DescribeFilledLayer m => DescribeFilledHandler m where
+  describeFilled = do
+    Body text <- require @Body
     liftIO (putStrLn ("[state] filled, " ++ show (length text) ++ " characters"))
     pure Nothing
 
-instance FeedAInputs m => FeedAEffect m where
+instance NextALayer m => NextAHandler m where
   nextA = do
     liftIO (threadDelay 40000)
     pure "10"
 
-instance FeedBInputs m => FeedBEffect m where
+instance NextBLayer m => NextBHandler m where
   nextB = do
     liftIO (threadDelay 60000)
     pure "20"
 
-instance ParserAInputs m => ParserAEffect m where
-  getLevelA = do
-    raw <- nextA
-    case reads raw of
-      [(value, "")] -> pure (LevelA (Level value))
-      _ -> raise (ParserAError raw)
+instance ParseLevelLayer m => ParseLevelHandler m where
+  parseLevel = do
+    reading <- maybe "" id <$> raw
+    case reads reading of
+      [(value, "")] -> pure (Level value)
+      _ -> raise (ParseLevelError reading)
 
-instance ParserBInputs m => ParserBEffect m where
-  getLevelB = do
-    raw <- nextB
-    case reads raw of
-      [(value, "")] -> pure (LevelB (Level value))
-      _ -> raise (ParserBError raw)
-
-instance ShowAInputs m => ShowAEffect m where
-  showA = do
-    samples <- require @LevelA
+-- ShowA 与 ShowB 共用；失败按 handler 固定为 ShowLevelError，origin 仍是具体的 effect。
+instance ShowLevelLayer m => ShowLevelHandler m where
+  showLevel = do
+    samples <- require @(History Level)
     case latest samples of
-      Just (LevelA (Level value)) -> liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show (historySize samples)))
+      Just (Level value) -> liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show (historySize samples)))
       Nothing -> pure ()
-    when (historySize samples >= 3) (raise (ShowAError "enough deliveries"))
-    pure Nothing
-
-instance ShowBInputs m => ShowBEffect m where
-  showB = do
-    samples <- require @LevelB
-    case latest samples of
-      Just (LevelB (Level value)) -> liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show (historySize samples)))
-      Nothing -> pure ()
-    when (historySize samples >= 3) (raise (ShowBError "enough deliveries"))
+    when (historySize samples >= 3) (raise (ShowLevelError "enough deliveries"))
     pure Nothing

@@ -1,17 +1,17 @@
--- 原生 Haskell 取值；SDK 生成方法入口包装，运行编译 Generated 副本。
+-- handler 是不带参数的类方法：按表示类型 require 资产，用 raise 报告自己的失败。
+-- 开启参数的刷新与 scope 开启由 gen 按注册装配，运行编译 Generated 副本。
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
 module ScopeReuseDemo.Handlers () where
 
-import Framework.SDK (Effect(..))
+import Framework.SDK (Raises(..), Reads(..))
 import ScopeReuseDemo.Generated.Effects
 import ScopeReuseDemo.Types
 import Control.Exception (bracketOnError, displayException)
@@ -26,14 +26,14 @@ import System.IO
   , hSetEncoding, openFile, readFile', utf8 )
 import System.IO.Error (tryIOError)
 
-instance FileLocationsInputs m => FileLocationsEffect m where
-  getFilePaths = pure (FilePaths (SharedPaths
+instance SharedPathsLayer m => SharedPathsHandler m where
+  sharedPaths = pure (SharedPaths
     ("demo" </> "ScopeReuseDemo" </> "output" </> "shared.txt")
-    ("demo" </> "ScopeReuseDemo" </> "output" </> "events.txt")))
+    ("demo" </> "ScopeReuseDemo" </> "output" </> "events.txt"))
 
-instance PrepareProbeInputs m => PrepareProbeEffect m where
+instance PrepareProbeLayer m => PrepareProbeHandler m where
   prepareProbe = do
-    FilePaths (SharedPaths path journal) <- request @FilePaths
+    SharedPaths path journal <- require @SharedPaths
     outcome <- liftIO $ tryIOError $ do
       createDirectoryIfMissing True (takeDirectory path)
       -- 仅重置本 demo 的两份产物，在三个分支启动前完成。
@@ -42,71 +42,67 @@ instance PrepareProbeInputs m => PrepareProbeEffect m where
     either (raise . PrepareProbeError . displayException) pure outcome
     pure Nothing
 
-instance FileResourceInputs m => FileResourceEffect m where
-  getOpenedFile = do
-    FilePaths paths@(SharedPaths path journal) <- require @FilePaths
+instance AcquireFileLayer m => AcquireFileHandler m where
+  acquireFile = do
+    paths@(SharedPaths path journal) <- require @SharedPaths
     outcome <- liftIO $ tryIOError $
       bracketOnError (openFile path AppendMode) hClose $ \file -> do
         hSetEncoding file utf8
         -- 记录真实资源获取；日志独立于 Context，重新产值不会清零它。
         appendFile journal "file-open\n"
-        pure (OpenedFile (SharedFile paths file))
-    either (raise . FileResourceError . displayException) pure outcome
+        pure (SharedFile paths file)
+    either (raise . AcquireFileError . displayException) pure outcome
 
-instance SharedFileScopeInputs m => SharedFileScopeEffect m where
+-- requests 在开启前驱动 FileResource 打开文件。
+instance OpenSharedFileLayer m => OpenSharedFileHandler m where
   openSharedFile = do
-    OpenedFile (SharedFile (SharedPaths _ journal) _) <- request @OpenedFile
+    SharedFile (SharedPaths _ journal) _ <- require @SharedFile
     outcome <- liftIO (tryIOError (appendFile journal "open-body\n"))
-    either (raise . SharedFileScopeError . displayException) pure outcome
+    either (raise . OpenSharedFileError . displayException) pure outcome
     pure Nothing
 
+instance CloseSharedFileLayer m => CloseSharedFileHandler m where
   closeSharedFile = do
-    OpenedFile (SharedFile (SharedPaths _ journal) file) <- require @OpenedFile
+    SharedFile (SharedPaths _ journal) file <- require @SharedFile
     outcome <- liftIO $ tryIOError $ do
       appendFile journal "close-body\n"
       hClose file
       appendFile journal "file-close\n"
-    either (raise . SharedFileScopeError . displayException) pure outcome
+    either (raise . CloseSharedFileError . displayException) pure outcome
     pure Nothing
 
--- 每条链先 request 参数；scope 内 require 稳定参数，重叠使用时可共享实例。
+-- 每条链先由 requests 刷新参数，再经 Input 开启；scope 内 require 稳定参数，重叠使用时可共享实例。
 -- 不在业务中加打开标志或互斥锁，也不为尚未开始的 Node 预留资源。
-instance WriteFirstInputs m => WriteFirstEffect m where
+instance WriteFirstLayer m => WriteFirstHandler m where
   writeFirst = do
-    FilePaths _ <- request @FilePaths
-    openSharedFile
-    OpenedFile (SharedFile _ file) <- require @OpenedFile
+    SharedFile _ file <- require @SharedFile
     outcome <- liftIO $ tryIOError $ do
       hPutStr file "first\n"
       hFlush file
     either (raise . WriteFirstError . displayException) pure outcome
     pure Nothing
 
-instance WriteSecondInputs m => WriteSecondEffect m where
+instance WriteSecondLayer m => WriteSecondHandler m where
   writeSecond = do
-    FilePaths _ <- request @FilePaths
-    openSharedFile
-    OpenedFile (SharedFile _ file) <- require @OpenedFile
+    SharedFile _ file <- require @SharedFile
     outcome <- liftIO $ tryIOError $ do
       hPutStr file "second\n"
       hFlush file
     either (raise . WriteSecondError . displayException) pure outcome
     pure Nothing
 
-instance WriteThirdInputs m => WriteThirdEffect m where
+instance WriteThirdLayer m => WriteThirdHandler m where
   writeThird = do
-    FilePaths _ <- request @FilePaths
-    openSharedFile
-    OpenedFile (SharedFile _ file) <- require @OpenedFile
+    SharedFile _ file <- require @SharedFile
     outcome <- liftIO $ tryIOError $ do
       hPutStr file "third\n"
       hFlush file
     either (raise . WriteThirdError . displayException) pure outcome
     pure Nothing
 
-instance VerifyReuseInputs m => VerifyReuseEffect m where
+instance VerifyReuseLayer m => VerifyReuseHandler m where
   verifyReuse = do
-    FilePaths (SharedPaths path journal) <- request @FilePaths
+    SharedPaths path journal <- require @SharedPaths
     -- parallel 已等待各链退出及自动清理；此处只读日志和文件，不 require 旧资源。
     outcome <- liftIO $ tryIOError $ do
       events <- readFile' journal

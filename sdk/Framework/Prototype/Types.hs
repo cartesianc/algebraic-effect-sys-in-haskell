@@ -61,7 +61,7 @@ data EffectProto method = EffectProto
   , effectNearestScopes :: [String]
   , effectResource :: Maybe String
   , effectContextDependencies :: [String]
-  -- 持续资产：挂在 Stream 下，或声明 stream = Just ()；当前 require 返回 History。
+  -- 持续资产：stream = True，只能挂在 Stream 下；streams 读取 History，requires 读取最新一条。
   , effectContinuous :: Bool
   } deriving (Eq, Show, Read, Functor, Generic, NFData)
 
@@ -93,9 +93,8 @@ data SessionProto = SessionProto
   , sessionMounts :: [NodeId]
   } deriving (Eq, Show, Read, Generic, NFData)
 
--- 生产方式只由资产自己的注册决定：挂在 Stream 下由解析器接收生产；否则反复执行 request。
--- Receive 的两步挂载依次为 Stream 单步与解析器；RepeatRequest 只有 request 一步。
-data BootPlan = Receive String | RepeatRequest
+-- 持续资产只由上游 Stream 驱动：两步挂载依次为 Stream 单步与 parser。
+data BootPlan = Receive String
   deriving (Eq, Show, Read, Generic, NFData)
 
 data ChainRole = NodeChain | SelectorChain | SessionChain

@@ -1,32 +1,22 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- 自动生成；通过 SDK 的 effect-codegen 更新，手写注册与 handler 位于上级目录。
 module ScopeInstancesDemo.Generated.Effects where
 
-import Framework.Effect.Contract (Effect(..), Registered)
-import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified Framework.Generated as SDK
 import Control.Monad.IO.Class (MonadIO)
 import ScopeInstancesDemo.Types
 
--- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
-type Root = SDK.Root ContextValues Errors
+-- SDK 提供运行载体；资产存储与错误分类由本文件给出。
 type App = SDK.App ContextValues Errors
 
--- 每个 Context 的契约类型：名字来自 Asset 声明，包装其表示类型；只能由该生产方构造。
+-- 每个 Context 的资产类型：名字来自 Asset 声明，包装其表示类型。
 newtype FileName = FileName ([Char])
 deriving instance Eq ([Char]) => Eq FileName
 deriving instance Show ([Char]) => Show FileName
@@ -35,171 +25,100 @@ newtype OpenedFile = OpenedFile (FileHandle)
 deriving instance Eq (FileHandle) => Eq OpenedFile
 deriving instance Show (FileHandle) => Show OpenedFile
 
--- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = PrepareFilesGen | GetFileNameGen | ReadFileNameGen | GetOpenedFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | CheckIndependentGen | CheckReopenGen
+-- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
+data MethodGen = RunPrepareFilesGen | GetFileNameGen | ReadFileNameGen | GetOpenedFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | RunUseFirstGen | RunSelectSecondGen | RunUseSecondGen | RunSelectFirstGen | RunReopenFirstGen | RunCheckJournalGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
-data PrepareFiles
-
-type PrepareFilesInputs m = (FrameworkRoot.Capability PrepareFiles m, Effect Root m, MonadIO m)
-instance FrameworkRoot.Capability PrepareFiles App
-
-class (Effect Root m) => PrepareFilesEffect m where
+-- handler prepareFiles：绑定到 PrepareFiles。
+type PrepareFilesLayer m = (SDK.Raises PrepareFilesError m, MonadIO m)
+class PrepareFilesHandler m where
   prepareFiles :: m (Maybe String)
-  {-# MINIMAL prepareFiles #-}
 
-instance (Monad m, Effect Root m, PrepareFilesEffect m) => Effect PrepareFiles m where
-  type Registration PrepareFiles = Registered PrepareFilesEffect Root
-  type Typing PrepareFiles = 'SDK.ExcuKind
-  type Require PrepareFiles = SDK.Void
-  type Error PrepareFiles = PrepareFilesError
-  raise (PrepareFilesError description) = SDK.failEffect "PrepareFiles" PrepareFilesFailure description
-  handler = FrameworkRoot.handler @Root
-
-data FileLocation
-
-type FileLocationInputs m = (FrameworkRoot.Capability FileLocation m, Effect Root m, MonadIO m)
-instance FrameworkRoot.Capability FileLocation App
-
-class (Effect Root m) => FileLocationEffect m where
-  getFileName :: m (Produce FileLocation)
-  readFileName :: m (Produce FileLocation)
-  readFileName = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileLocation" ContextBindingError [("FileResource", SDK.RequireValue), ("CheckIndependent", SDK.RequestValue), ("CheckReopen", SDK.RequestValue)] (Just (SDK.ScopeInput "FileLocation")) boundFileLocation getFileName
-  {-# MINIMAL getFileName #-}
-
-instance (Monad m, Effect Root m, FileLocationEffect m) => Effect FileLocation m where
-  type Registration FileLocation = Registered FileLocationEffect Root
-  type Typing FileLocation = 'SDK.ContextKind
-  type Require FileLocation = SDK.Void
-  type Produce FileLocation = FileName
-  type Error FileLocation = FileLocationError
-  raise (FileLocationError description) = SDK.failEffect "FileLocation" FileLocationFailure description
-  handler = FrameworkRoot.handler @Root
-
-data FileResource
-
-type FileResourceInputs m = (FrameworkRoot.Capability FileResource m, Effect Root m, Provides FileName m, MonadIO m)
-instance FrameworkRoot.Capability FileResource App
-
-class (Effect Root m, Provides FileName m) => FileResourceEffect m where
-  getOpenedFile :: m (Produce FileResource)
-  readOpenedFile :: m (Produce FileResource)
-  readOpenedFile = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileResource" ContextBindingError [("FileSession", SDK.RequestValue), ("CheckIndependent", SDK.RequireValue), ("CheckReopen", SDK.RequireValue)] Nothing boundFileResource getOpenedFile
-  {-# MINIMAL getOpenedFile #-}
-
-instance (Monad m, Effect Root m, FileResourceEffect m) => Effect FileResource m where
-  type Registration FileResource = Registered FileResourceEffect Root
-  type Typing FileResource = 'SDK.ContextKind
-  type Require FileResource = FileName
-  type Produce FileResource = OpenedFile
-  type Error FileResource = FileResourceError
-  raise (FileResourceError description) = SDK.failEffect "FileResource" FileResourceFailure description
-  handler = FrameworkRoot.handler @Root
-
-data FileSession
-
-type FileSessionInputs m = (FrameworkRoot.Capability FileSession m, Effect Root m, Provides OpenedFile m, MonadIO m)
-instance FrameworkRoot.Capability FileSession App
-
-class (Effect Root m, Provides OpenedFile m) => FileSessionEffect m where
-  openFileSession :: m (Maybe String)
-  closeFileSession :: m (Maybe String)
-  {-# MINIMAL openFileSession, closeFileSession #-}
-
-instance (Monad m, Effect Root m, FileSessionEffect m) => Effect FileSession m where
-  type Registration FileSession = Registered FileSessionEffect Root
-  type Typing FileSession = 'SDK.ScopedKind
-  type Require FileSession = OpenedFile
-  type Error FileSession = FileSessionError
-  raise (FileSessionError description) = SDK.failEffect "FileSession" FileSessionFailure description
-  handler = FrameworkRoot.handler @Root
-
-data CheckIndependent
-
-type CheckIndependentInputs m = (FrameworkRoot.Capability CheckIndependent m, Effect FileSession m, Provides FileName m, Provides OpenedFile m, FileSessionEffect m, MonadIO m)
-instance FrameworkRoot.Capability CheckIndependent App
-
-class (Effect FileSession m, Provides FileName m, Provides OpenedFile m) => CheckIndependentEffect m where
-  checkIndependent :: m (Maybe String)
-  {-# MINIMAL checkIndependent #-}
-
-instance (Monad m, Effect FileSession m, CheckIndependentEffect m) => Effect CheckIndependent m where
-  type Registration CheckIndependent = Registered CheckIndependentEffect FileSession
-  type Typing CheckIndependent = 'SDK.ExcuKind
-  type Require CheckIndependent = (FileName, OpenedFile)
-  type Error CheckIndependent = CheckIndependentError
-  raise (CheckIndependentError description) = SDK.failEffect "CheckIndependent" CheckIndependentFailure description
-  handler = FrameworkRoot.handler @Root
-
-data CheckReopen
-
-type CheckReopenInputs m = (FrameworkRoot.Capability CheckReopen m, Effect FileSession m, Provides FileName m, Provides OpenedFile m, FileSessionEffect m, MonadIO m)
-instance FrameworkRoot.Capability CheckReopen App
-
-class (Effect FileSession m, Provides FileName m, Provides OpenedFile m) => CheckReopenEffect m where
-  checkReopen :: m (Maybe String)
-  {-# MINIMAL checkReopen #-}
-
-instance (Monad m, Effect FileSession m, CheckReopenEffect m) => Effect CheckReopen m where
-  type Registration CheckReopen = Registered CheckReopenEffect FileSession
-  type Typing CheckReopen = 'SDK.ExcuKind
-  type Require CheckReopen = (FileName, OpenedFile)
-  type Error CheckReopen = CheckReopenError
-  raise (CheckReopenError description) = SDK.failEffect "CheckReopen" CheckReopenFailure description
-  handler = FrameworkRoot.handler @Root
-
--- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。
--- Reading 是 require 的结果：持续资产为 History，其余为契约本身；只由资产自己的声明决定。
-class Provides contract m where
-  type Reading contract
-  request :: m contract
-  require :: m (Reading contract)
-
-instance (FileLocationEffect App) => Provides FileName App where
-  type Reading FileName = FileName
-  request = SDK.provideContext "FileLocation" "FileName" ContextBindingError [("CheckIndependent", getFileName), ("CheckReopen", getFileName)]
-  require = SDK.provideContext "FileLocation" "FileName" ContextBindingError [("FileResource", readFileName)]
-
-instance (FileResourceEffect App) => Provides OpenedFile App where
-  type Reading OpenedFile = OpenedFile
-  request = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("FileSession", getOpenedFile)]
-  require = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("FileSession", readOpenedFile), ("CheckIndependent", readOpenedFile), ("CheckReopen", readOpenedFile)]
-
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "prepareFiles" 匹配。
 newtype PrepareFilesError = PrepareFilesError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
-newtype FileLocationError = FileLocationError String
+-- handler selectedFile：绑定到 FileLocation。
+type SelectedFileLayer m = (SDK.Raises SelectedFileError m, MonadIO m)
+class SelectedFileHandler m where
+  selectedFile :: m [Char]
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "selectedFile" 匹配。
+newtype SelectedFileError = SelectedFileError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
-newtype FileResourceError = FileResourceError String
+-- handler acquireFile：绑定到 FileResource。
+type AcquireFileLayer m = (SDK.Reads ([Char]) m, SDK.Raises AcquireFileError m, MonadIO m)
+class AcquireFileHandler m where
+  acquireFile :: m FileHandle
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "acquireFile" 匹配。
+newtype AcquireFileError = AcquireFileError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
-newtype FileSessionError = FileSessionError String
+-- handler openSelectedFile：绑定到 FileSession。
+type OpenSelectedFileLayer m = (SDK.Reads (FileHandle) m, SDK.Raises OpenSelectedFileError m, MonadIO m)
+class OpenSelectedFileHandler m where
+  openSelectedFile :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openSelectedFile" 匹配。
+newtype OpenSelectedFileError = OpenSelectedFileError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
-newtype CheckIndependentError = CheckIndependentError String
+-- handler closeSelectedFile：绑定到 FileSession。
+type CloseSelectedFileLayer m = (SDK.Reads (FileHandle) m, SDK.Raises CloseSelectedFileError m, MonadIO m)
+class CloseSelectedFileHandler m where
+  closeSelectedFile :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeSelectedFile" 匹配。
+newtype CloseSelectedFileError = CloseSelectedFileError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
-newtype CheckReopenError = CheckReopenError String
+-- handler checkSelection：绑定到 UseFirst、UseSecond、ReopenFirst。
+type CheckSelectionLayer m = (SDK.Reads (FileHandle) m, SDK.Reads ([Char]) m, SDK.Raises CheckSelectionError m, MonadIO m)
+class CheckSelectionHandler m where
+  checkSelection :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "checkSelection" 匹配。
+newtype CheckSelectionError = CheckSelectionError String
   deriving (Eq, Show, Read)
 
--- 统一失败协议的分类标签；消息与来源由 SDK.Failure 保存。
-data Errors = PrepareFilesFailure | FileLocationFailure | FileResourceFailure | FileSessionFailure | CheckIndependentFailure | CheckReopenFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+-- handler selectSecond：绑定到 SelectSecond。
+type SelectSecondLayer m = (SDK.Raises SelectSecondError m, MonadIO m)
+class SelectSecondHandler m where
+  selectSecond :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "selectSecond" 匹配。
+newtype SelectSecondError = SelectSecondError String
+  deriving (Eq, Show, Read)
+
+-- handler selectFirst：绑定到 SelectFirst。
+type SelectFirstLayer m = (SDK.Raises SelectFirstError m, MonadIO m)
+class SelectFirstHandler m where
+  selectFirst :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "selectFirst" 匹配。
+newtype SelectFirstError = SelectFirstError String
+  deriving (Eq, Show, Read)
+
+-- handler checkJournal：绑定到 CheckJournal。
+type CheckJournalLayer m = (SDK.Raises CheckJournalError m, MonadIO m)
+class CheckJournalHandler m where
+  checkJournal :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "checkJournal" 匹配。
+newtype CheckJournalError = CheckJournalError String
+  deriving (Eq, Show, Read)
+
+-- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
+data Errors = PrepareFilesFailure | SelectedFileFailure | AcquireFileFailure | OpenSelectedFileFailure | CloseSelectedFileFailure | CheckSelectionFailure | SelectSecondFailure | SelectFirstFailure | CheckJournalFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。
 data ContextValues = ContextValues
-  { boundFileLocation :: Maybe (Produce FileLocation)
-  , boundFileResource :: Maybe (Produce FileResource)
+  { boundFileLocation :: Maybe FileName
+  , boundFileResource :: Maybe OpenedFile
   }
 
 emptyContexts :: ContextValues

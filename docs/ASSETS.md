@@ -1,64 +1,48 @@
 # 源码资产约束
 
-本文是[主设计](LATEST_DESIGN.md)引用的源码约束规范。业务写法先读[指南](GUIDE.md)；本页负责资产集合、显式引用和构造器所有权，不描述运行时 scope 归属。
+本文是[主设计](LATEST_DESIGN.md)引用的源码约束规范。业务写法先读[指南](GUIDE.md)；本页负责资产集合、业务模块的顶层白名单和资产目录，不描述运行时 scope 归属。
 
+更新：2026-11-08（Stage 2：顶层白名单取代普通函数的资产检查、构造器归属与接收形态检查）。
 
-更新：2026-11-01。
-
-资产约束检查普通定义在源码中是否显式依赖框架业务 ADT，并检查 Context 产物只在其生产方中构造；不判断运行时值流向，也不记录 Context 来源或资源关闭归属。
+生成器只检查源码里显式写出的定义；不判断运行时值流向，也不记录 Context 来源或资源关闭归属。
 
 ## 集合从哪里来
 
-生成器汇总当前注册集合中 Context 的产物类型，以及消费者 request／require／streams 的接收契约类型。按真实 Haskell 类型身份去重，再沿业务 ADT 字段递归收集内嵌业务类型，并补全关联类型别名。例如 Crawler 的 StartURL 会带入 PageURL；同一类型无论出现在多少个契约中都只有一个资产条目。String、Handle 等库类型不因出现在字段内而变成资产。
+生成器汇总当前注册集合中 Context 的表示类型和生成的资产类型。按真实 Haskell 类型身份去重，再沿业务 ADT 字段递归收集内嵌业务类型，并补全关联类型别名。例如 Crawler 的 `StartURL` 会带入 `PageURL`；同一类型无论出现在多少个资产中都只有一个条目。`String`、`Handle` 等库类型不因出现在字段内而变成资产。
 
-持续资产使用同一套集合与构造器规则：Receive 的解析器就是该 Context 的 request 生产方法 `getT`；RepeatRequest 使用原有 request 生产方法。`History T` 是 SDK 提供的读取视图，T 及其业务表示类型仍按上述规则收集，不另建资产目录或给予构造器豁免。
+持续资产使用同一套集合规则：`History T` 是 SDK 提供的读取视图，T 及其业务表示类型仍按上述规则收集，不另建资产目录。
 
 类型、数据构造器和字段均保留模块身份与定义位置。名称解析由 GHC 9.12 完成，导入别名、重导出与同名局部变量不会被简单字符串匹配混淆。只在生成命令可见的业务源码范围内收集与检查，不扫描外部包的实现；SDK 和 Generated 模块不属于手写业务约束范围。
 
-## 哪些定义允许使用资产
+## 顶层白名单
 
-- 注册类方法的 instance 实现允许显式构造、匹配、读取和更新资产；但 Context 产物类型只能在其生产方的方法中构造，见下文“构造器归属”。匿名 lambda、局部数据绑定与计算属于方法体。
-- 普通顶层函数和顶层值，以及方法内的具名局部函数，不得在签名或方法体中显式引用资产类型、构造器或字段。局部 point-free 函数也检查；GHC 类型信息只用来区分函数绑定与数据绑定，不用于推导资产传播。
-- data/newtype/type 声明及 deriving 属于契约定义。注册入口 `Namespace.Effects.effects` 可以通过 `Asset @表示类型 "资产名"` 引用表示类型，并把它细化为资产（意义见[主设计：细化资产](LATEST_DESIGN.md#refinement)）；该模块的其他普通函数并不因此获豁免。
-- 泛型函数的定义未显式依赖资产，调用时不会因为实参是资产类型而违规。`identity :: a -> a`、`map`、`show` 等适用同一规则。只处理 String、Handle 等通用类型的普通函数也允许。
+所有值操作都写成 handler 的类方法，经注册进入 effect 链，才能被 SDK 驱动和静态分析。因此业务模块的顶层只允许：
 
-例如以下普通函数会被拒绝：
+| 模块 | 顶层允许 |
+| --- | --- |
+| `Types.hs`、`Handlers.hs` 及其他业务模块 | 类型声明（`data`／`newtype`／`type`）与 deriving、instance |
+| `Effects.hs` | 以上声明，以及 `effects`；局部辅助写在 `effects` 的 `where` 里 |
+| `AST.hs`、`Workflow/*.hs` | 以上声明，以及类型为 `AST` 的命名 workflow |
+| `Main.hs` | 以上声明，以及 `main` |
 
-```haskell
-parsePage :: FetchedPage -> PageSummary
-parsePage ... = ...
+顶层普通函数与顶层值、类声明（handler 类由注册生成）、foreign 声明和 rewrite rule 都被拒绝，诊断给出位置和建议。
 
--- 删掉签名不能消除构造器的显式引用。
-extractHTML (FetchedHTML _ html) = html
-```
+方法体内的 `let`／`where` 局部函数、lambda 与局部数据计算不受限制：它们属于 handler，随 handler 进入 effect 链。需要在多处使用的逻辑注册成 handler，通过 effect 组合；以后无副作用的辅助逻辑由 Pure 承接（语义见 [Stage 2：本阶段不处理](NEXT_STAGES.md#stage-2-later)）。
 
-而 `identity page` 不会因为 `page` 恰好是 FetchedPage 而违规。将资产字段投影成 String 后，约束不继续跟踪该 String。它也不判断某段仅处理通用类型的代码是否在业务意义上值得成为独立 effect。
-
-effect 方法调用另受结构分析约束：effect 组合只能直接写在注册方法体中，不能经普通函数间接进行。这与允许不显式依赖资产的普通函数并不冲突。
-
-## 构造器归属
-
-值来自表达式求值，产生某类值的表达式就是该类型的 Context 生产方：request 重新求值并发布绑定，Stream 下的解析器 `getT` 按输入发布增量，require 读取已确定的绑定或历史视图。若消费方在自己的方法里直接构造这个类型，就等于藏了一个未注册的生产方，绕过了 Context 的生产、发布与读取协议。因此：
-
-- Context 产物类型 T 的构造器只能在 T 的生产方 instance 方法中出现在表达式位置（构造值，包括把构造器当函数使用和记录构造）。
-- 对 T 的记录更新同样产生新值，也只能在生产方中进行。
-- 其他 instance 可以在模式中使用 T 的构造器取出内容，例如 `StartURL (PageURL url) <- request @StartURL`；视图模式里的表达式部分仍按表达式检查。
-
-例如 Crawler 中，下面的写法若出现在 FetchLinkedPage 的方法里会被拒绝，因为 StartURL 只能由 StartPage 产生：
+例如以下顶层函数会被拒绝，即使它只处理 `String`：
 
 ```haskell
-let url = StartURL (PageURL address)
+countLinesOf :: String -> Int
+countLinesOf = length . lines
 ```
 
-Context 的契约类型都由生成器按声明的资产名产出，同样受此约束；它们也是资产，普通函数不得显式使用，且不派生 Read。规则只保护产物类型本身的构造器与字段。产物内部的类型（如 StartURL 里的 PageURL）若自身不是 Context 产物，可以在方法体内作为局部数据计算构造。普通顶层函数本来就不能显式使用资产，因此这条规则只在注册 instance 方法之间区分归属。同一手写表示类型可以被多个不同 refined asset 包装；它们是不同契约。每个生成契约本身始终只有一个 Context 来源，包括当前未被消费的声明。
+改写成方法体内的局部计算，或绑定到 effect 的 handler。
 
-检查只看显式引用，不追踪值流向。已知缺口：`coerce`、泛型函数和派生的 `read` 等不显式写出构造器的方式不会被拦下。生成类型没有 Read 实例，不受 `read` 影响；手写在 Types.hs 中且派生了 Read 的产物类型仍可被 `read "..."` 构造，是否禁止契约类型派生 Read 尚待决定。
+## 细化资产不进入 handler
 
-## 声明与接收形态
+handler 只按表示类型读取（`require @PageURL`），由 gen 按“表示类型 + effect”路由到唯一的细化资产；生成的资产类型只在 Generated 的存储、路由和入口中使用。Context 的 parser 返回表示类型的值，由生成的 `getT` 包成资产发布。因此 Stage 1 的构造器归属检查（资产类型只能在生产方构造）与接收形态检查（显式匹配资产包装构造器）随之取消：handler 不写资产类型，也就没有需要保护的构造与匹配位置。
 
-资产边界检查与[主设计的 demand 接收契约](LATEST_DESIGN.md#demand-contract)共同执行：前者限制显式资产操作写在哪里，后者检查注册方法怎样接收所声明的资产。同一 refined asset 的 request、require、streams 共用静态来源。普通资产需显式模式匹配生成的包装构造器；History 保持具名整体绑定。声明的资产必须有显式读取或已有 workflow 控制交付依据，不证明每条运行路径都会使用它。
-
-两项检查复用同一次 GHC 名称解析；Codegen.Assets 负责资产集合与构造器归属，Codegen.Demand 读取同一个 Prototype 检查接收形态，缓存命中也执行。
+检查只看显式引用，不追踪值流向；handler 若绕过 Layer 自行导入并使用 Generated 中的资产类型，不在本检查范围内。
 
 ## 生成与检查
 
@@ -70,9 +54,9 @@ cabal run effect-codegen -- workflow Crawler
 
 生成器先从声明形成候选契约和纯结构，再用 GHC 的无代码生成模式取得手写源码的名称解析结果。候选 Generated 文件和本次读取的 Handlers 快照以内存 target 供分析使用；检查成功后才写回生成区。它不会调用 handler 或运行业务 IO。首次没有 Handlers 时，只分析可用声明与契约，仍可先生成接口；实现后再次生成才检查完整业务源码。
 
-检查覆盖命名空间目录内的手写 Haskell 模块，以及其导入链上的本地业务模块；GHC 需要它们的语法、导入和类型成立。使用 Cabal 项目 package environment 解析依赖，不维护外部函数白名单。资产检查每次生成都执行，scope 结构缓存命中不会跳过它。
+检查覆盖命名空间目录内的手写 Haskell 模块，以及其导入链上的本地业务模块；GHC 需要它们的语法、导入和类型成立。使用 Cabal 项目 package environment 解析依赖，不维护外部函数白名单。顶层检查每次生成都执行，scope 结构缓存命中不会跳过它。
 
-GHC／HLS 的普通类型检查不自行执行这项架构检查。当前接入点是 gencode，尚未实现语言服务器诊断推送或编译器插件；修改契约、业务模块或普通函数后应重新生成。已有运行入口的过期检测仍核对 Handlers 指纹与注册快照，不是覆盖全部源码文件的资产安全证明。
+GHC／HLS 的普通类型检查不自行执行这项架构检查。当前接入点是 gencode，尚未实现语言服务器诊断推送或编译器插件；修改业务模块后应重新生成。已有运行入口的过期检测仍核对 Handlers 指纹与注册快照，不是覆盖全部源码文件的安全证明。
 
 ## 显式生成目录
 
@@ -82,6 +66,6 @@ GHC／HLS 的普通类型检查不自行执行这项架构检查。当前接入�
 generatedAssets :: [Asset]
 ```
 
-`Asset`／`AssetSymbol` 定义在 SDK 的 `Framework.Effect.Asset`。目录记录类型、构造器和字段及其定义位置；不含业务值、Context 来源、权限 key 或 scope 实例。检查和发射目录使用同一份资产集合，文件内容不变时不重写。目录是派生产物，下次生成会按源码恢复。
+`Asset`／`AssetSymbol` 定义在 SDK 的 `Framework.Effect.Asset`。目录记录类型、构造器和字段及其定义位置；不含业务值、Context 来源、权限 key 或 scope 实例。目录与检查使用同一次 GHC 名称解析，文件内容不变时不重写。目录是派生产物，下次生成会按源码恢复。
 
 显式目录便于 review、LSP 建立引用索引与跨文件跳转，也可供后续 langserver 的描述接口使用。当前执行器不导入这份目录，因此不为它增加启动步骤、运行时状态或清理协议。未来需要可执行文件提供 introspection 时，可以按需导入；这份元数据本身不提供任意 ADT 的 JSON 编解码。

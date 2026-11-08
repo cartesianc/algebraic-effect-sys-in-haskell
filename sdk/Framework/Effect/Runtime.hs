@@ -10,7 +10,7 @@ module Framework.Effect.Runtime
   ( App, Target, targetApp
   , targetName, lowerTarget, Handoff, noHandoff, scopeHandlers, cleanupTargets
   , Frame, newFrame, frameDelivery, boundarySession
-  , SessionSteps, receiveSteps, requestSteps, sessionLauncher
+  , SessionSteps, receiveSteps, sessionLauncher
   ) where
 
 import Framework.Effect.Contract (Failure)
@@ -129,17 +129,13 @@ cleanupTargets = cleanupScopes . scopeHandlers
 
 -- 持续生产的装配与退出 ---------------------------------------------------------
 
--- 生成区按资产登记的生产步骤：Receive 为 Stream 单步与解析器，RepeatRequest 为 request.
--- 解析器与 request 的包装各自发布一次资产；会话不再次发布返回值。
+-- 生成区按资产登记的生产步骤：Stream 单步与 parser。parser 的入口发布一次资产；会话不再次发布返回值。
+-- 持续交付只由上游 Stream 驱动。
 data SessionSteps environment cause
   = ReceiveSteps (Target environment cause String) (Target environment cause ())
-  | RequestSteps (Target environment cause ())
 
 receiveSteps :: Target environment cause String -> Target environment cause () -> SessionSteps environment cause
 receiveSteps = ReceiveSteps
-
-requestSteps :: Target environment cause () -> SessionSteps environment cause
-requestSteps = RequestSteps
 
 -- 为新会话启动生产任务：按原型找到该边界的会话挂载，逐次执行生产步骤，把发布写入会话历史。
 -- 每条交付带上本次生产步骤（各挂载当前一次执行）已经发布的普通资产，作为伴随发布。
@@ -173,8 +169,6 @@ sessionLauncher graph steps onBroken session = uninterruptibleMask_ $ do
         case raw of
           Left problem -> pure (Left problem)
           Right text -> first <$> lowerWith graph parserMount (step owner (Just text) sink) parser
-      (Just (RequestSteps request), Just [requestMount]) ->
-        loop (first <$> lowerWith graph requestMount (step owner Nothing sink) request)
       _ -> ioError (userError ("Session steps differ from the prototype mounts for " ++ source
         ++ "; regenerate with the SDK effect-codegen command"))
     sink = [(source, \value -> do

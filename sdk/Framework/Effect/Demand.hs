@@ -19,25 +19,23 @@ validateAssetSources specifications =
     names = [contractOf declared | specification <- specifications
              , Just declared <- [contextAsset (typing specification)]]
 
--- streams 当前通过 require 读取控制流已经固定的交付视图，不授予主动 request。
+-- requires 与 streams 读取资产；requests 只驱动，不读取。
 readsAccess :: Access -> Bool
 readsAccess RequestAccess = False
 readsAccess RequireAccess = True
 readsAccess StreamAccess = True
 
 accessOperation :: Access -> String
-accessOperation RequestAccess = "request"
-accessOperation RequireAccess = "require"
-accessOperation StreamAccess = "require"
+accessOperation RequestAccess = "requests"
+accessOperation RequireAccess = "requires"
+accessOperation StreamAccess = "streams"
 
--- 返回形态仍属于同一资产。当前持续 require 是历史；单值/历史拆分属于后续阶段。
--- 投影契约不是持续基础契约，调用方按已解析的基础/投影身份传入 False。
+-- requires 读到最新值，streams 读到历史；投影契约不是持续资产，只能 requires。
 data AccessResult = AssetValue | AssetHistory deriving (Eq, Show, Read)
 
-accessResult :: Bool -> Access -> AccessResult
-accessResult continuous selected
-  | readsAccess selected && continuous = AssetHistory
-  | otherwise = AssetValue
+accessResult :: Access -> AccessResult
+accessResult StreamAccess = AssetHistory
+accessResult _ = AssetValue
 
 findEffect :: [EffectSpec] -> String -> Either String EffectSpec
 findEffect specifications selected = case filter ((== selected) . name) specifications of
@@ -49,7 +47,7 @@ produced :: EffectSpec -> Maybe String
 produced specification = contractOf <$> contextAsset (typing specification)
 
 -- 资产名在注册集合中唯一，因此每个契约恰好对应一个生产方。
--- 取值模式须对应生产方已声明的角色：request 需要 request 角色，require 需要 require 角色。
+-- requires 需要生产方缓存（require = True），streams 需要持续资产。
 -- branches：和类型资产的分支契约 → 基础契约；分支契约由基础契约的生产方提供（投影）。
 resolveDemands :: [(String, String)] -> [EffectSpec] -> EffectSpec -> Either String [ResolvedDemand]
 resolveDemands branches specifications consumer = do
@@ -70,15 +68,11 @@ resolveDemands branches specifications consumer = do
       case (access demand, typing provider) of
         (RequestAccess, _) | belowStream specifications provider -> Left ("Contract " ++ contract demand
           ++ " is parsed from Stream input by its session, so " ++ name consumer ++ " cannot request it")
-        (RequestAccess, Context { request = Nothing }) -> Left ("Contract " ++ contract demand
-          ++ " has no request role, so " ++ name consumer ++ " cannot request it")
-        (RequireAccess, Context { require = Nothing }) -> Left ("Contract " ++ contract demand
-          ++ " has no require role, so " ++ name consumer ++ " cannot require it")
-        (StreamAccess, Context {}) | not (continuousContext specifications provider) -> Left ("Contract " ++ contract demand
-          ++ " is not a continuous asset (hang its Context below a Stream, or declare stream = Just ()), so "
+        (RequireAccess, Context { require = False }) -> Left ("Contract " ++ contract demand
+          ++ " is not cached (require = False), so " ++ name consumer ++ " cannot require it")
+        (StreamAccess, _) | not (continuousContext provider) -> Left ("Contract " ++ contract demand
+          ++ " is not a continuous asset (hang its Context below a Stream with stream = True), so "
           ++ name consumer ++ " cannot subscribe to it")
-        (StreamAccess, Context { require = Nothing }) -> Left ("Contract " ++ contract demand
-          ++ " has no require role, so " ++ name consumer ++ " cannot read its deliveries")
         (StreamAccess, _) | producedContract /= contract demand -> Left ("Branch contract " ++ contract demand
           ++ " cannot be subscribed; subscribe to " ++ producedContract ++ " in " ++ name consumer)
         _ -> pure ()

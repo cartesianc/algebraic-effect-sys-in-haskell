@@ -8,7 +8,6 @@ module Framework.Prototype.Query
 
 import Data.List (isPrefixOf)
 import Data.Maybe (listToMaybe)
-import Framework.Effect.Contract (EffectKind(StreamKind))
 import Framework.Prototype.Types
 
 workflowNode :: WorkflowTree -> NodeId
@@ -89,13 +88,9 @@ driveSet prototype selected = chainDrives <$> lookupChain prototype selected
 readPoints :: Prototype method -> [ReadPoint]
 readPoints = map fst . protoSources
 
--- 生产方式只看资产自己的注册：挂在 Stream 下即接收生产，否则反复 request。
+-- 持续资产的 Input 一定是 Stream（注册校验保证）；会话从它接收。
 bootPlan :: [EffectProto method] -> EffectProto method -> BootPlan
-bootPlan effects producer = case [effectName source | source <- effects, effectName source == effectInput producer
-                                 , effectKind source == StreamKind] of
-  source : _ -> Receive source
-  [] -> RepeatRequest
+bootPlan _ producer = Receive (effectInput producer)
 
 sessionSteps :: BootPlan -> Int
 sessionSteps (Receive _) = 2
-sessionSteps RepeatRequest = 1

@@ -1,32 +1,35 @@
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE TypeFamilies #-}
 
--- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
+-- 自动生成；只登记末端入口与原型，执行由 SDK 的 interpreter 完成。
 module ScopeInstancesDemo.Generated.Program where
 
-import Framework.Generated (Effect(..), EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
+import Framework.Generated (EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.Generated as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
-import ScopeInstancesDemo.Generated.Effects hiding (request, require)
+import ScopeInstancesDemo.Generated.Effects
 import qualified ScopeInstancesDemo.Generated.Handlers as Handlers
 import ScopeInstancesDemo.Types
 
 
--- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。
-data Results = PrepareFilesResult (Produce PrepareFiles) | CheckIndependentResult (Produce CheckIndependent) | CheckReopenResult (Produce CheckReopen)
+-- 仅汇总所选末端的成功结果，不保存共享绑定或增加完成包装。
+data Results = PrepareFilesResult () | UseFirstResult () | SelectSecondResult () | UseSecondResult () | SelectFirstResult () | ReopenFirstResult () | CheckJournalResult ()
   deriving Show
 
--- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。
--- 第二个列表是各转折契约的读取末端：按 require 取得资产，返回它当前的构造器名。
--- 第三个列表是各持续资产的生产步骤：会话按需启动，解析器或 request 自己发布一次资产。
+-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
+-- 第二个列表是各转折契约的读取末端：读取资产，返回它当前的构造器名。
+-- 第三个列表是各持续资产的生产步骤：会话按需启动，Stream 单步取得原始输入，parser 发布一次资产。
 compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]
                      , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "PrepareFiles" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrepareFilesResult <$> (() <$ prepareFiles)))))
-      , SDK.targetApp "CheckIndependent" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (CheckIndependentResult <$> (() <$ checkIndependent)))))
-      , SDK.targetApp "CheckReopen" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (CheckReopenResult <$> (() <$ checkReopen)))))
+    ( [ SDK.targetApp "PrepareFiles" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrepareFilesResult <$> (() <$ Handlers.runPrepareFiles)))))
+      , SDK.targetApp "UseFirst" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (UseFirstResult <$> (() <$ Handlers.runUseFirst)))))
+      , SDK.targetApp "SelectSecond" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (SelectSecondResult <$> (() <$ Handlers.runSelectSecond)))))
+      , SDK.targetApp "UseSecond" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (UseSecondResult <$> (() <$ Handlers.runUseSecond)))))
+      , SDK.targetApp "SelectFirst" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (SelectFirstResult <$> (() <$ Handlers.runSelectFirst)))))
+      , SDK.targetApp "ReopenFirst" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReopenFirstResult <$> (() <$ Handlers.runReopenFirst)))))
+      , SDK.targetApp "CheckJournal" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (CheckJournalResult <$> (() <$ Handlers.runCheckJournal)))))
       ]
     , []
     , []
@@ -50,7 +53,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "FileLocation"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("FileName") (SDK.TypeRef ("[Char]"))) (Just ()) (Just ()) (Nothing)
+                SDK.Context
+                  (SDK.AssetDecl ("FileName") (SDK.TypeRef ("[Char]")))
+                  (Just "selectedFile")
+                  (True)
+                  (False)
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -59,32 +66,66 @@ generatedPrototype =
             , SDK.typing =
                 SDK.Context
                   (SDK.AssetDecl ("OpenedFile") (SDK.TypeRef ("FileHandle")))
-                  (Just ())
-                  (Just ())
-                  (Nothing)
+                  (Just "acquireFile")
+                  (True)
+                  (False)
             , SDK.input = "Root"
             , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("FileName")]
             }
         , SDK.EffectSpec
             { SDK.name = "FileSession"
-            , SDK.typing = SDK.Scoped (Just "openFileSession") (Just "closeFileSession")
+            , SDK.typing = SDK.Scoped (Just "openSelectedFile") (Just "closeSelectedFile")
             , SDK.input = "Root"
             , SDK.demands =
                 [SDK.Demand (SDK.RequestAccess) ("OpenedFile"), SDK.Demand (SDK.RequireAccess) ("OpenedFile")]
             }
         , SDK.EffectSpec
-            { SDK.name = "CheckIndependent"
-            , SDK.typing = SDK.Excu (Just "checkIndependent")
+            { SDK.name = "UseFirst"
+            , SDK.typing = SDK.Excu (Just "checkSelection")
             , SDK.input = "FileSession"
             , SDK.demands =
-                [SDK.Demand (SDK.RequestAccess) ("FileName"), SDK.Demand (SDK.RequireAccess) ("OpenedFile")]
+                [ SDK.Demand (SDK.RequestAccess) ("FileName")
+                , SDK.Demand (SDK.RequireAccess) ("FileName")
+                , SDK.Demand (SDK.RequireAccess) ("OpenedFile")
+                ]
             }
         , SDK.EffectSpec
-            { SDK.name = "CheckReopen"
-            , SDK.typing = SDK.Excu (Just "checkReopen")
+            { SDK.name = "SelectSecond"
+            , SDK.typing = SDK.Excu (Just "selectSecond")
+            , SDK.input = "Root"
+            , SDK.demands = []
+            }
+        , SDK.EffectSpec
+            { SDK.name = "UseSecond"
+            , SDK.typing = SDK.Excu (Just "checkSelection")
             , SDK.input = "FileSession"
             , SDK.demands =
-                [SDK.Demand (SDK.RequestAccess) ("FileName"), SDK.Demand (SDK.RequireAccess) ("OpenedFile")]
+                [ SDK.Demand (SDK.RequestAccess) ("FileName")
+                , SDK.Demand (SDK.RequireAccess) ("FileName")
+                , SDK.Demand (SDK.RequireAccess) ("OpenedFile")
+                ]
+            }
+        , SDK.EffectSpec
+            { SDK.name = "SelectFirst"
+            , SDK.typing = SDK.Excu (Just "selectFirst")
+            , SDK.input = "Root"
+            , SDK.demands = []
+            }
+        , SDK.EffectSpec
+            { SDK.name = "ReopenFirst"
+            , SDK.typing = SDK.Excu (Just "checkSelection")
+            , SDK.input = "FileSession"
+            , SDK.demands =
+                [ SDK.Demand (SDK.RequestAccess) ("FileName")
+                , SDK.Demand (SDK.RequireAccess) ("FileName")
+                , SDK.Demand (SDK.RequireAccess) ("OpenedFile")
+                ]
+            }
+        , SDK.EffectSpec
+            { SDK.name = "CheckJournal"
+            , SDK.typing = SDK.Excu (Just "checkJournal")
+            , SDK.input = "Root"
+            , SDK.demands = []
             }
         ]
     , SDK.protoEffects =
@@ -92,7 +133,7 @@ generatedPrototype =
             { SDK.effectName = "PrepareFiles"
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, PrepareFilesGen)]
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunPrepareFilesGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
@@ -170,12 +211,13 @@ generatedPrototype =
             , SDK.effectContinuous = False
             }
         , SDK.EffectProto
-            { SDK.effectName = "CheckIndependent"
+            { SDK.effectName = "UseFirst"
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "FileSession"
-            , SDK.effectMethods = [(SDK.HandlerMethod, CheckIndependentGen)]
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunUseFirstGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand (SDK.RequestAccess) ("FileName") ("FileLocation")
+                , SDK.ResolvedDemand (SDK.RequireAccess) ("FileName") ("FileLocation")
                 , SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedFile") ("FileResource")
                 ]
             , SDK.effectProduces = Nothing
@@ -192,12 +234,32 @@ generatedPrototype =
             , SDK.effectContinuous = False
             }
         , SDK.EffectProto
-            { SDK.effectName = "CheckReopen"
+            { SDK.effectName = "SelectSecond"
+            , SDK.effectKind = SDK.ExcuKind
+            , SDK.effectInput = "Root"
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunSelectSecondGen)]
+            , SDK.effectDemands = []
+            , SDK.effectProduces = Nothing
+            , SDK.effectBranches = []
+            , SDK.effectAnchor = Nothing
+            , SDK.effectScopes = []
+            , SDK.effectErrorScope = Nothing
+            , SDK.effectInputChain = []
+            , SDK.effectScopeParents = []
+            , SDK.effectOpeningInputs = []
+            , SDK.effectNearestScopes = []
+            , SDK.effectResource = Nothing
+            , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
+            }
+        , SDK.EffectProto
+            { SDK.effectName = "UseSecond"
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "FileSession"
-            , SDK.effectMethods = [(SDK.HandlerMethod, CheckReopenGen)]
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunUseSecondGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand (SDK.RequestAccess) ("FileName") ("FileLocation")
+                , SDK.ResolvedDemand (SDK.RequireAccess) ("FileName") ("FileLocation")
                 , SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedFile") ("FileResource")
                 ]
             , SDK.effectProduces = Nothing
@@ -213,9 +275,70 @@ generatedPrototype =
             , SDK.effectContextDependencies = ["FileLocation","FileResource"]
             , SDK.effectContinuous = False
             }
+        , SDK.EffectProto
+            { SDK.effectName = "SelectFirst"
+            , SDK.effectKind = SDK.ExcuKind
+            , SDK.effectInput = "Root"
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunSelectFirstGen)]
+            , SDK.effectDemands = []
+            , SDK.effectProduces = Nothing
+            , SDK.effectBranches = []
+            , SDK.effectAnchor = Nothing
+            , SDK.effectScopes = []
+            , SDK.effectErrorScope = Nothing
+            , SDK.effectInputChain = []
+            , SDK.effectScopeParents = []
+            , SDK.effectOpeningInputs = []
+            , SDK.effectNearestScopes = []
+            , SDK.effectResource = Nothing
+            , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
+            }
+        , SDK.EffectProto
+            { SDK.effectName = "ReopenFirst"
+            , SDK.effectKind = SDK.ExcuKind
+            , SDK.effectInput = "FileSession"
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunReopenFirstGen)]
+            , SDK.effectDemands =
+                [ SDK.ResolvedDemand (SDK.RequestAccess) ("FileName") ("FileLocation")
+                , SDK.ResolvedDemand (SDK.RequireAccess) ("FileName") ("FileLocation")
+                , SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedFile") ("FileResource")
+                ]
+            , SDK.effectProduces = Nothing
+            , SDK.effectBranches = []
+            , SDK.effectAnchor = Nothing
+            , SDK.effectScopes = ["FileSession"]
+            , SDK.effectErrorScope = Nothing
+            , SDK.effectInputChain = ["FileSession"]
+            , SDK.effectScopeParents = ["FileSession"]
+            , SDK.effectOpeningInputs = []
+            , SDK.effectNearestScopes = ["FileSession"]
+            , SDK.effectResource = Nothing
+            , SDK.effectContextDependencies = ["FileLocation","FileResource"]
+            , SDK.effectContinuous = False
+            }
+        , SDK.EffectProto
+            { SDK.effectName = "CheckJournal"
+            , SDK.effectKind = SDK.ExcuKind
+            , SDK.effectInput = "Root"
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunCheckJournalGen)]
+            , SDK.effectDemands = []
+            , SDK.effectProduces = Nothing
+            , SDK.effectBranches = []
+            , SDK.effectAnchor = Nothing
+            , SDK.effectScopes = []
+            , SDK.effectErrorScope = Nothing
+            , SDK.effectInputChain = []
+            , SDK.effectScopeParents = []
+            , SDK.effectOpeningInputs = []
+            , SDK.effectNearestScopes = []
+            , SDK.effectResource = Nothing
+            , SDK.effectContextDependencies = []
+            , SDK.effectContinuous = False
+            }
         ]
     , SDK.protoMethods =
-        [ SDK.MethodDefinition (PrepareFilesGen) (PrepareFilesGen) (SDK.HandlerMethod) (SDK.Empty)
+        [ SDK.MethodDefinition (RunPrepareFilesGen) (RunPrepareFilesGen) (SDK.HandlerMethod) (SDK.Empty)
         , SDK.MethodDefinition (GetFileNameGen) (GetFileNameGen) (SDK.ContextRequest) (SDK.Empty)
         , SDK.MethodDefinition
             (ReadFileNameGen)
@@ -232,50 +355,57 @@ generatedPrototype =
             (OpenFileSessionGen)
             (OpenFileSessionGen)
             (SDK.ScopeOpen)
-            (SDK.Call (GetOpenedFileGen))
+            (SDK.Sequence ([SDK.Call (GetOpenedFileGen), SDK.Call (ReadOpenedFileGen)]))
         , SDK.MethodDefinition
             (CloseFileSessionGen)
             (OpenFileSessionGen)
             (SDK.ScopeClose)
             (SDK.Call (ReadOpenedFileGen))
         , SDK.MethodDefinition
-            (CheckIndependentGen)
-            (CheckIndependentGen)
+            (RunUseFirstGen)
+            (RunUseFirstGen)
             (SDK.HandlerMethod)
             (
               SDK.Sequence
                 (
                   [ SDK.Call (GetFileNameGen)
                   , SDK.Call (OpenFileSessionGen)
+                  , SDK.Call (ReadFileNameGen)
                   , SDK.Call (ReadOpenedFileGen)
-                  , SDK.Call (OpenFileSessionGen)
-                  , SDK.Call (ReadOpenedFileGen)
-                  , SDK.Call (GetFileNameGen)
-                  , SDK.Call (OpenFileSessionGen)
-                  , SDK.Call (ReadOpenedFileGen)
-                  , SDK.Call (CloseFileSessionGen)
-                  , SDK.Call (CloseFileSessionGen)
                   ]
                 )
             )
+        , SDK.MethodDefinition (RunSelectSecondGen) (RunSelectSecondGen) (SDK.HandlerMethod) (SDK.Empty)
         , SDK.MethodDefinition
-            (CheckReopenGen)
-            (CheckReopenGen)
+            (RunUseSecondGen)
+            (RunUseSecondGen)
             (SDK.HandlerMethod)
             (
               SDK.Sequence
                 (
                   [ SDK.Call (GetFileNameGen)
                   , SDK.Call (OpenFileSessionGen)
+                  , SDK.Call (ReadFileNameGen)
                   , SDK.Call (ReadOpenedFileGen)
-                  , SDK.Call (CloseFileSessionGen)
-                  , SDK.Call (GetFileNameGen)
-                  , SDK.Call (OpenFileSessionGen)
-                  , SDK.Call (ReadOpenedFileGen)
-                  , SDK.Call (CloseFileSessionGen)
                   ]
                 )
             )
+        , SDK.MethodDefinition (RunSelectFirstGen) (RunSelectFirstGen) (SDK.HandlerMethod) (SDK.Empty)
+        , SDK.MethodDefinition
+            (RunReopenFirstGen)
+            (RunReopenFirstGen)
+            (SDK.HandlerMethod)
+            (
+              SDK.Sequence
+                (
+                  [ SDK.Call (GetFileNameGen)
+                  , SDK.Call (OpenFileSessionGen)
+                  , SDK.Call (ReadFileNameGen)
+                  , SDK.Call (ReadOpenedFileGen)
+                  ]
+                )
+            )
+        , SDK.MethodDefinition (RunCheckJournalGen) (RunCheckJournalGen) (SDK.HandlerMethod) (SDK.Empty)
         ]
     , SDK.protoWorkflow =
         SDK.ChainedAt
@@ -290,8 +420,12 @@ generatedPrototype =
             , SDK.ChainedAt
                 ([1])
                 (
-                  [ SDK.NodeAt ([1,0]) ("CheckIndependent")
-                  , SDK.NodeAt ([1,1]) ("CheckReopen")
+                  [ SDK.NodeAt ([1,0]) ("UseFirst")
+                  , SDK.NodeAt ([1,1]) ("SelectSecond")
+                  , SDK.NodeAt ([1,2]) ("UseSecond")
+                  , SDK.NodeAt ([1,3]) ("SelectFirst")
+                  , SDK.NodeAt ([1,4]) ("ReopenFirst")
+                  , SDK.NodeAt ([1,5]) ("CheckJournal")
                   ]
                 )
             ]
@@ -302,8 +436,8 @@ generatedPrototype =
             { SDK.chainNode = [0,0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "PrepareFiles"
-            , SDK.chainEntry = PrepareFilesGen
-            , SDK.chainReaches = [PrepareFilesGen]
+            , SDK.chainEntry = RunPrepareFilesGen
+            , SDK.chainReaches = [RunPrepareFilesGen]
             , SDK.chainDrives = []
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
@@ -311,16 +445,15 @@ generatedPrototype =
         , SDK.ChainProto
             { SDK.chainNode = [1,0]
             , SDK.chainRole = SDK.NodeChain
-            , SDK.chainTerminal = "CheckIndependent"
-            , SDK.chainEntry = CheckIndependentGen
+            , SDK.chainTerminal = "UseFirst"
+            , SDK.chainEntry = RunUseFirstGen
             , SDK.chainReaches =
-                [ CheckIndependentGen
+                [ RunUseFirstGen
                 , GetFileNameGen
                 , OpenFileSessionGen
                 , GetOpenedFileGen
                 , ReadFileNameGen
                 , ReadOpenedFileGen
-                , CloseFileSessionGen
                 ]
             , SDK.chainDrives = ["FileName"]
             , SDK.chainReads = []
@@ -329,28 +462,74 @@ generatedPrototype =
         , SDK.ChainProto
             { SDK.chainNode = [1,1]
             , SDK.chainRole = SDK.NodeChain
-            , SDK.chainTerminal = "CheckReopen"
-            , SDK.chainEntry = CheckReopenGen
+            , SDK.chainTerminal = "SelectSecond"
+            , SDK.chainEntry = RunSelectSecondGen
+            , SDK.chainReaches = [RunSelectSecondGen]
+            , SDK.chainDrives = []
+            , SDK.chainReads = []
+            , SDK.chainScopePaths = [[]]
+            }
+        , SDK.ChainProto
+            { SDK.chainNode = [1,2]
+            , SDK.chainRole = SDK.NodeChain
+            , SDK.chainTerminal = "UseSecond"
+            , SDK.chainEntry = RunUseSecondGen
             , SDK.chainReaches =
-                [ CheckReopenGen
+                [ RunUseSecondGen
                 , GetFileNameGen
                 , OpenFileSessionGen
                 , GetOpenedFileGen
                 , ReadFileNameGen
                 , ReadOpenedFileGen
-                , CloseFileSessionGen
                 ]
             , SDK.chainDrives = ["FileName"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenFileSessionGen]]
+            }
+        , SDK.ChainProto
+            { SDK.chainNode = [1,3]
+            , SDK.chainRole = SDK.NodeChain
+            , SDK.chainTerminal = "SelectFirst"
+            , SDK.chainEntry = RunSelectFirstGen
+            , SDK.chainReaches = [RunSelectFirstGen]
+            , SDK.chainDrives = []
+            , SDK.chainReads = []
+            , SDK.chainScopePaths = [[]]
+            }
+        , SDK.ChainProto
+            { SDK.chainNode = [1,4]
+            , SDK.chainRole = SDK.NodeChain
+            , SDK.chainTerminal = "ReopenFirst"
+            , SDK.chainEntry = RunReopenFirstGen
+            , SDK.chainReaches =
+                [ RunReopenFirstGen
+                , GetFileNameGen
+                , OpenFileSessionGen
+                , GetOpenedFileGen
+                , ReadFileNameGen
+                , ReadOpenedFileGen
+                ]
+            , SDK.chainDrives = ["FileName"]
+            , SDK.chainReads = []
+            , SDK.chainScopePaths = [[OpenFileSessionGen]]
+            }
+        , SDK.ChainProto
+            { SDK.chainNode = [1,5]
+            , SDK.chainRole = SDK.NodeChain
+            , SDK.chainTerminal = "CheckJournal"
+            , SDK.chainEntry = RunCheckJournalGen
+            , SDK.chainReaches = [RunCheckJournalGen]
+            , SDK.chainDrives = []
+            , SDK.chainReads = []
+            , SDK.chainScopePaths = [[]]
             }
         ]
     , SDK.protoChainDefinitions =
         [ SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "PrepareFiles"
-            , SDK.definitionEntry = PrepareFilesGen
-            , SDK.definitionReaches = [PrepareFilesGen]
+            , SDK.definitionEntry = RunPrepareFilesGen
+            , SDK.definitionReaches = [RunPrepareFilesGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -380,58 +559,82 @@ generatedPrototype =
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "FileSession"
             , SDK.definitionEntry = OpenFileSessionGen
-            , SDK.definitionReaches = [OpenFileSessionGen, GetOpenedFileGen, ReadFileNameGen, GetFileNameGen]
+            , SDK.definitionReaches =
+                [OpenFileSessionGen, GetOpenedFileGen, ReadFileNameGen, GetFileNameGen, ReadOpenedFileGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
-            , SDK.definitionEffect = "CheckIndependent"
-            , SDK.definitionEntry = CheckIndependentGen
+            , SDK.definitionEffect = "UseFirst"
+            , SDK.definitionEntry = RunUseFirstGen
             , SDK.definitionReaches =
-                [ CheckIndependentGen
+                [ RunUseFirstGen
                 , GetFileNameGen
                 , OpenFileSessionGen
                 , GetOpenedFileGen
                 , ReadFileNameGen
                 , ReadOpenedFileGen
-                , CloseFileSessionGen
                 ]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
-            , SDK.definitionEffect = "CheckReopen"
-            , SDK.definitionEntry = CheckReopenGen
+            , SDK.definitionEffect = "SelectSecond"
+            , SDK.definitionEntry = RunSelectSecondGen
+            , SDK.definitionReaches = [RunSelectSecondGen]
+            }
+        , SDK.ChainDefinition
+            { SDK.definitionKind = SDK.OriginChain
+            , SDK.definitionEffect = "UseSecond"
+            , SDK.definitionEntry = RunUseSecondGen
             , SDK.definitionReaches =
-                [ CheckReopenGen
+                [ RunUseSecondGen
                 , GetFileNameGen
                 , OpenFileSessionGen
                 , GetOpenedFileGen
                 , ReadFileNameGen
                 , ReadOpenedFileGen
-                , CloseFileSessionGen
                 ]
+            }
+        , SDK.ChainDefinition
+            { SDK.definitionKind = SDK.OriginChain
+            , SDK.definitionEffect = "SelectFirst"
+            , SDK.definitionEntry = RunSelectFirstGen
+            , SDK.definitionReaches = [RunSelectFirstGen]
+            }
+        , SDK.ChainDefinition
+            { SDK.definitionKind = SDK.OriginChain
+            , SDK.definitionEffect = "ReopenFirst"
+            , SDK.definitionEntry = RunReopenFirstGen
+            , SDK.definitionReaches =
+                [ RunReopenFirstGen
+                , GetFileNameGen
+                , OpenFileSessionGen
+                , GetOpenedFileGen
+                , ReadFileNameGen
+                , ReadOpenedFileGen
+                ]
+            }
+        , SDK.ChainDefinition
+            { SDK.definitionKind = SDK.OriginChain
+            , SDK.definitionEffect = "CheckJournal"
+            , SDK.definitionEntry = RunCheckJournalGen
+            , SDK.definitionReaches = [RunCheckJournalGen]
             }
         ]
     , SDK.protoGraph =
         SDK.EffectGraph
           { SDK.graphMethods =
-              [ SDK.MethodDefinition (PrepareFilesGen) (PrepareFilesGen) (SDK.HandlerMethod) (SDK.Empty)
+              [ SDK.MethodDefinition (RunPrepareFilesGen) (RunPrepareFilesGen) (SDK.HandlerMethod) (SDK.Empty)
               , SDK.MethodDefinition
-                  (CheckIndependentGen)
-                  (CheckIndependentGen)
+                  (RunUseFirstGen)
+                  (RunUseFirstGen)
                   (SDK.HandlerMethod)
                   (
                     SDK.Sequence
                       (
                         [ SDK.Call (GetFileNameGen)
                         , SDK.Call (OpenFileSessionGen)
+                        , SDK.Call (ReadFileNameGen)
                         , SDK.Call (ReadOpenedFileGen)
-                        , SDK.Call (OpenFileSessionGen)
-                        , SDK.Call (ReadOpenedFileGen)
-                        , SDK.Call (GetFileNameGen)
-                        , SDK.Call (OpenFileSessionGen)
-                        , SDK.Call (ReadOpenedFileGen)
-                        , SDK.Call (CloseFileSessionGen)
-                        , SDK.Call (CloseFileSessionGen)
                         ]
                       )
                   )
@@ -440,7 +643,7 @@ generatedPrototype =
                   (OpenFileSessionGen)
                   (OpenFileSessionGen)
                   (SDK.ScopeOpen)
-                  (SDK.Call (GetOpenedFileGen))
+                  (SDK.Sequence ([SDK.Call (GetOpenedFileGen), SDK.Call (ReadOpenedFileGen)]))
               , SDK.MethodDefinition
                   (GetOpenedFileGen)
                   (GetOpenedFileGen)
@@ -452,51 +655,75 @@ generatedPrototype =
                   (SDK.ContextRequire)
                   (SDK.Choice ([SDK.Empty, SDK.Call (GetFileNameGen)]))
               , SDK.MethodDefinition (ReadOpenedFileGen) (GetOpenedFileGen) (SDK.ContextRequire) (SDK.Empty)
+              , SDK.MethodDefinition (RunSelectSecondGen) (RunSelectSecondGen) (SDK.HandlerMethod) (SDK.Empty)
               , SDK.MethodDefinition
-                  (CloseFileSessionGen)
-                  (OpenFileSessionGen)
-                  (SDK.ScopeClose)
-                  (SDK.Call (ReadOpenedFileGen))
-              , SDK.MethodDefinition
-                  (CheckReopenGen)
-                  (CheckReopenGen)
+                  (RunUseSecondGen)
+                  (RunUseSecondGen)
                   (SDK.HandlerMethod)
                   (
                     SDK.Sequence
                       (
                         [ SDK.Call (GetFileNameGen)
                         , SDK.Call (OpenFileSessionGen)
+                        , SDK.Call (ReadFileNameGen)
                         , SDK.Call (ReadOpenedFileGen)
-                        , SDK.Call (CloseFileSessionGen)
-                        , SDK.Call (GetFileNameGen)
-                        , SDK.Call (OpenFileSessionGen)
-                        , SDK.Call (ReadOpenedFileGen)
-                        , SDK.Call (CloseFileSessionGen)
                         ]
                       )
                   )
+              , SDK.MethodDefinition (RunSelectFirstGen) (RunSelectFirstGen) (SDK.HandlerMethod) (SDK.Empty)
+              , SDK.MethodDefinition
+                  (RunReopenFirstGen)
+                  (RunReopenFirstGen)
+                  (SDK.HandlerMethod)
+                  (
+                    SDK.Sequence
+                      (
+                        [ SDK.Call (GetFileNameGen)
+                        , SDK.Call (OpenFileSessionGen)
+                        , SDK.Call (ReadFileNameGen)
+                        , SDK.Call (ReadOpenedFileGen)
+                        ]
+                      )
+                  )
+              , SDK.MethodDefinition (RunCheckJournalGen) (RunCheckJournalGen) (SDK.HandlerMethod) (SDK.Empty)
               ]
-          , SDK.graphRoots = [PrepareFilesGen, CheckIndependentGen, CheckReopenGen]
+          , SDK.graphRoots =
+              [ RunPrepareFilesGen
+              , RunUseFirstGen
+              , RunSelectSecondGen
+              , RunUseSecondGen
+              , RunSelectFirstGen
+              , RunReopenFirstGen
+              , RunCheckJournalGen
+              ]
           , SDK.graphReferences =
-              [ (CheckIndependentGen, GetFileNameGen)
-              , (CheckIndependentGen, OpenFileSessionGen)
-              , (CheckIndependentGen, ReadOpenedFileGen)
-              , (CheckIndependentGen, CloseFileSessionGen)
+              [ (RunUseFirstGen, GetFileNameGen)
+              , (RunUseFirstGen, OpenFileSessionGen)
+              , (RunUseFirstGen, ReadFileNameGen)
+              , (RunUseFirstGen, ReadOpenedFileGen)
               , (OpenFileSessionGen, GetOpenedFileGen)
+              , (OpenFileSessionGen, ReadOpenedFileGen)
               , (GetOpenedFileGen, ReadFileNameGen)
               , (ReadFileNameGen, GetFileNameGen)
-              , (CloseFileSessionGen, ReadOpenedFileGen)
-              , (CheckReopenGen, GetFileNameGen)
-              , (CheckReopenGen, OpenFileSessionGen)
-              , (CheckReopenGen, ReadOpenedFileGen)
-              , (CheckReopenGen, CloseFileSessionGen)
+              , (RunUseSecondGen, GetFileNameGen)
+              , (RunUseSecondGen, OpenFileSessionGen)
+              , (RunUseSecondGen, ReadFileNameGen)
+              , (RunUseSecondGen, ReadOpenedFileGen)
+              , (RunReopenFirstGen, GetFileNameGen)
+              , (RunReopenFirstGen, OpenFileSessionGen)
+              , (RunReopenFirstGen, ReadFileNameGen)
+              , (RunReopenFirstGen, ReadOpenedFileGen)
               ]
           , SDK.graphScopes = [OpenFileSessionGen]
           , SDK.graphScopePaths = [[], [OpenFileSessionGen]]
           , SDK.graphRootPaths =
-              [ (PrepareFilesGen, [[]])
-              , (CheckIndependentGen, [[OpenFileSessionGen]])
-              , (CheckReopenGen, [[OpenFileSessionGen]])
+              [ (RunPrepareFilesGen, [[]])
+              , (RunUseFirstGen, [[OpenFileSessionGen]])
+              , (RunSelectSecondGen, [[]])
+              , (RunUseSecondGen, [[OpenFileSessionGen]])
+              , (RunSelectFirstGen, [[]])
+              , (RunReopenFirstGen, [[OpenFileSessionGen]])
+              , (RunCheckJournalGen, [[]])
               ]
           , SDK.graphScopeOrder = []
           }

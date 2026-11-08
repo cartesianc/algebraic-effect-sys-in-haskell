@@ -6,10 +6,9 @@ module StreamDemo.Effects (effects) where
 import Framework.SDK (EffectSpec(..), EffectTyping(..), Asset(..), streams)
 import StreamDemo.Types
 
--- Stream：每次取得一份原始输入（String），本身不是 AST 末端；挂在它下面的 Context 用 stream 角色解析。
--- stream = Just () 声明持续资产：require 返回 History。挂在 Stream 下时由接收会话生产（Receive），
--- 否则由会话反复执行 request（RepeatRequest）。生产方式只看资产自己的注册。
--- 消费方写 streams "资产名"：以该资产的新交付驱动，同时取得 require 读取权限；只能挂在 lifelong 内。
+-- Stream：每次取得一份原始输入（String），本身不是 AST 末端；挂在它下面的 Context 是它的 parser。
+-- stream = True 声明持续资产：持续交付只由上游 Stream 驱动，因此 Input 必须是 Stream，且同时 require = True。
+-- 消费方写 streams "资产名"：以该资产的新交付驱动，handler 用 require @(History 表示类型) 读取历史；只能挂在 lifelong 内。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
@@ -26,14 +25,20 @@ effects =
       }
   , EffectSpec
       { name = "TemperatureParser"
-      , typing = Context { asset = Asset @Temperature "TemperatureSample", request = Just (), require = Just (), stream = Nothing }
+      , typing = Context { asset = Asset @Temperature "TemperatureSample", parser = Just "parseTemperature", require = True, stream = True }
       , input = "TemperatureFeed"
       , demands = []
       }
   , EffectSpec
-      { name = "Heartbeat"
-      , typing = Context { asset = Asset @Int "Beat", request = Just (), require = Just (), stream = Just () }
+      { name = "HeartbeatClock"
+      , typing = Stream { handler = Just "nextBeat" }
       , input = "Root"
+      , demands = []
+      }
+  , EffectSpec
+      { name = "Heartbeat"
+      , typing = Context { asset = Asset @Int "Beat", parser = Just "parseBeat", require = True, stream = True }
+      , input = "HeartbeatClock"
       , demands = []
       }
   , EffectSpec

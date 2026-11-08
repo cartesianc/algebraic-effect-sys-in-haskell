@@ -1,17 +1,17 @@
--- 原生 Haskell 取值；SDK 生成方法入口包装，运行编译 Generated 副本。
+-- handler 是不带参数的类方法：按表示类型 require 资产，用 raise 报告自己的失败。
+-- 开启、关闭与上游由 gen 按注册装配，运行编译 Generated 副本。
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
 module OpenFilesDemo.Handlers () where
 
-import Framework.SDK (Effect(..))
+import Framework.SDK (Raises(..), Reads(..))
 import OpenFilesDemo.Generated.Effects
 import OpenFilesDemo.Types
 import Control.Exception (bracketOnError, displayException)
@@ -26,50 +26,53 @@ import System.IO
 import System.IO.Error (tryIOError)
 import System.Mem (performGC)
 
-instance FileLocationsInputs m => FileLocationsEffect m where
-  getFileNames = pure (FileNames
+instance ListFilesLayer m => ListFilesHandler m where
+  listFiles = pure
     [ "demo" </> "OpenFilesDemo" </> "output" </> ("file-" ++ show index ++ ".txt")
     | index <- [1..10 :: Int]
-    ])
+    ]
 
-instance FileResourcesInputs m => FileResourcesEffect m where
-  getOpenedFiles = do
-    FileNames paths <- require @FileNames
+instance AcquireFilesLayer m => AcquireFilesHandler m where
+  acquireFiles = do
+    paths <- require @[FilePath]
     -- 整批获取是本 Context 的原子操作；中途失败释放此前已打开的文件。
-    outcome <- liftIO $ tryIOError $ fmap OpenedFiles $
+    outcome <- liftIO $ tryIOError $
       foldr (\path acquireRest -> do
         createDirectoryIfMissing True (takeDirectory path)
         bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
           hSetEncoding file utf8
           rest <- acquireRest
           pure (FileHandle path file : rest)) (pure []) paths
-    either (raise . FileResourcesError . displayException) pure outcome
+    either (raise . AcquireFilesError . displayException) pure outcome
 
-instance FileSessionInputs m => FileSessionEffect m where
+-- requests 在开启前驱动 FileResources 打开整批文件。
+instance OpenFilesLayer m => OpenFilesHandler m where
   openFiles = do
-    OpenedFiles files <- request @OpenedFiles
+    files <- require @[FileHandle]
     liftIO (putStrLn ("[open] acquired " ++ show (length files) ++ " files"))
     pure Nothing
 
+instance CloseFilesLayer m => CloseFilesHandler m where
   closeFiles = do
-    OpenedFiles held <- require @OpenedFiles
+    held <- require @[FileHandle]
     let files = [(path, file) | FileHandle path file <- held]
     outcome <- liftIO (tryIOError (mapM_ (hClose . snd) files))
-    either (raise . FileSessionError . displayException) pure outcome
+    either (raise . CloseFilesError . displayException) pure outcome
     liftIO (putStrLn ("[close] released " ++ show (length files) ++ " files"))
     pure Nothing
 
-instance HoldFilesInputs m => HoldFilesEffect m where
-  holdFiles = do
-    FileNames _ <- request @FileNames
-    openFiles
-    pure Nothing
+-- 挂在 ReleaseFiles 下，记下本链持有的文件；值只经资产流动，关闭后的检查读取这份快照，不再 require 已关闭的资源。
+instance SnapshotFilesLayer m => SnapshotFilesHandler m where
+  snapshotFiles = require @[FileHandle]
 
-instance InspectFilesInputs m => InspectFilesEffect m where
+-- HoldFiles 与 ReleaseFiles 共用：Input 已开启文件，本链只持有它们，链退出后 SDK 自动关闭。
+instance HoldFilesLayer m => HoldFilesHandler m where
+  holdFiles = pure Nothing
+
+instance InspectFilesLayer m => InspectFilesHandler m where
   inspectFiles = do
-    -- 前一 Node 的使用已经结束；本条链显式 open，并持有自己的资源绑定。
-    holdFiles
-    OpenedFiles held <- require @OpenedFiles
+    -- 前一 Node 的使用已经结束；本条链经 Input 重新开启，并持有自己的资源绑定。
+    held <- require @[FileHandle]
     let files = [(path, file) | FileHandle path file <- held]
     unless (length files == 10 && length (nub (map fst files)) == 10) $
       raise (InspectFilesError "Expected ten distinct files")
@@ -91,16 +94,14 @@ instance InspectFilesInputs m => InspectFilesEffect m where
     -- 链退出后自动关闭；后续 Node 不继承这份活资源。
     pure Nothing
 
-instance FinishInspectionInputs m => FinishInspectionEffect m where
+-- 前一个 node 的链已经退出，SDK 已关闭它持有的文件；这里只检查快照中的 Handle。
+instance FinishInspectionLayer m => FinishInspectionHandler m where
   finishInspection = do
-    holdFiles
-    -- 在关闭前取得 Handle，随后只检查本地快照，不向已关闭 scope 再次 require。
-    OpenedFiles held <- require @OpenedFiles
+    held <- require @[FileHandle]
     let files = [(path, file) | FileHandle path file <- held]
-    closeFiles
     outcome <- liftIO (tryIOError (mapM (hIsClosed . snd) files))
     closed <- either (raise . FinishInspectionError . displayException) pure outcome
     unless (length closed == 10 && and closed) $
-      raise (FinishInspectionError "Not all files closed after closeFiles")
-    liftIO (putStrLn "[check] after explicit close: 10/10 closed")
+      raise (FinishInspectionError "Not all files closed after the scope closed")
+    liftIO (putStrLn "[check] after the scope closed: 10/10 closed")
     pure Nothing

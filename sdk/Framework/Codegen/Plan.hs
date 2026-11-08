@@ -103,8 +103,8 @@ renderTyping (R.Excu method) = constructor "Excu" [show method]
 renderTyping (R.Scoped opening closing) = constructor "Scoped" [show opening, show closing]
 renderTyping (R.Error detecting resolving handled) =
   constructor "Error" [show detecting, show resolving, list renderHandles handled]
-renderTyping (R.Context declared requesting requiring streaming) =
-  constructor "Context" [renderAsset declared, show requesting, show requiring, show streaming]
+renderTyping (R.Context declared parsing requiring streaming) =
+  constructor "Context" [renderAsset declared, show parsing, show requiring, show streaming]
 renderTyping (R.Stream method) = constructor "Stream" [show method]
 
 renderAsset :: R.Asset -> String
@@ -194,7 +194,6 @@ renderSession session = record "SessionProto"
 
 renderBootPlan :: P.BootPlan -> String
 renderBootPlan (P.Receive source) = constructor "Receive" [show source]
-renderBootPlan P.RepeatRequest = "SDK.RepeatRequest"
 
 renderChain :: P.ChainProto String -> String
 renderChain chain = record "ChainProto"

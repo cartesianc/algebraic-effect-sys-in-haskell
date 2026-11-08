@@ -53,6 +53,6 @@ latest (History entries project) = case viewr entries of
 historySize :: History value -> Int
 historySize (History entries _) = Seq.length entries
 
--- lifelong 外读取有 request 的持续资产时按普通 require 取得一个值，呈现为只含一条的视图。
+-- 把单个值呈现为只含一条的视图；readHistory 传入生产入口时使用（RepeatRequest 取消后生成代码不再传入）。
 currentHistory :: value -> History value
 currentHistory value = History (Seq.singleton value) id

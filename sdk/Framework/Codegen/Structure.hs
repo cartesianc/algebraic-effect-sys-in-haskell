@@ -1,6 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- 原生方法的纯结构副本；只保留显式 effect 引用，不求值业务数据或 IO。
+-- handler 方法体的纯结构副本；只保留按表示类型的读取与 raw，不求值业务数据或 IO。
+-- 读取 @T 与 raw 的来源因绑定而异，由 gen 在每个绑定上替换为 effect 方法调用。
 module Framework.Codegen.Structure (analyzeModule) where
 
 import Control.Monad (unless)
@@ -14,60 +15,51 @@ import GHC.Types.Name.Occurrence (occNameString)
 import GHC.Types.Name.Reader (RdrName(..), rdrNameOcc)
 import GHC.Types.SrcLoc (GenLocated(..), unLoc)
 import GHC.Unit.Module (moduleNameString)
+import GHC.Utils.Outputable (ppr, showSDocUnsafe)
 
 data Environment = Environment
   { contractsModule :: String
-  , registeredMethods :: [(String, String)]
+  , handlerMethods :: [(String, String)]
   , imports :: [ImportDecl GhcPs]
   , boundNames :: [String]
   , hasImplicitPrelude :: Bool
-  -- 当前所在的注册 instance 类；request @T / require @T 只在其中按 demands 解析。
+  -- 当前所在的 handler 类，用于诊断。
   , ownerClass :: Maybe String
-  , demandRoutes :: [(String, [((String, String), String)])]
-  , contextMethods :: [(String, String)]
   }
 
--- request @T / require @T 被解析为 demands 选定来源的生产／读取方法；
--- 直接调用其他 effect 的 Context 方法会绕过声明的接线，因此拒绝。
+-- SDK 中 handler 能力的导出模块。
+capabilityModules :: [String]
+capabilityModules = ["Framework.SDK", "Framework.Effect"]
+
+-- 每个 handler 方法体得到一份结构：require @T 记为 @T，raw 记为 %raw。
+-- handler 不能调用其他 handler：组合只经注册的 Input、demands 与 AST。
 analyzeModule
-  :: String -> [(String, String)] -> ([(String, [((String, String), String)])], [(String, String)])
-  -> Bool -> HsModule GhcPs
-  -> Either String [((String, String), MethodShape String)]
-analyzeModule namespace methods (routes, contextual) implicitPrelude parsed = do
-  unless (length (nub (map snd methods)) == length methods) $
-    Left "Structure analysis needs distinct registered method names"
-  -- effect 调用只能直接写在注册方法体中；不猜测普通函数的执行语义。
-  -- 资产显式引用由 Assets 另行检查；泛型函数不因接收业务 ADT 而违规。
-  mapM_ (rejectReferences environment "effect references in a top-level function") topBindings
+  :: String -> [(String, String)] -> Bool -> HsModule GhcPs
+  -> Either String [(String, MethodShape String)]
+analyzeModule namespace handlers implicitPrelude parsed = do
+  unless (length (nub (map snd handlers)) == length handlers) $
+    Left "Structure analysis needs distinct handler names"
   concat <$> mapM instanceShapes (hsmodDecls parsed)
   where
-    topBindings = [binding | L _ (ValD _ binding) <- hsmodDecls parsed]
-    environment = Environment (namespace ++ ".Generated.Effects") methods
-      (map unLoc (hsmodImports parsed)) (concatMap bindingNames topBindings) implicitPrelude
-      Nothing routes contextual
+    environment = Environment (namespace ++ ".Generated.Effects") handlers
+      (map unLoc (hsmodImports parsed)) [] implicitPrelude Nothing
     instanceShapes (L _ (InstD _ (ClsInstD _ declaration))) =
       case classIdentifier (sig_body (unLoc (cid_poly_ty declaration))) of
         Just identifier
           | let owner = identifierName identifier
-          , owner `elem` map fst methods ->
+          , owner `elem` map fst handlers ->
               if imported environment [contractsModule environment] Nothing identifier
                 then concat <$> mapM (methodShape owner) (cid_binds declaration)
-                else if any (registeredBinding owner) (cid_binds declaration)
-                  then Left ("Cannot resolve registered class " ++ owner
-                    ++ "; import " ++ contractsModule environment ++ " directly for structure analysis")
-                  else pure []
+                else Left ("Cannot resolve handler class " ++ owner
+                  ++ "; import " ++ contractsModule environment ++ " directly for structure analysis")
         _ -> pure []
     instanceShapes _ = pure []
     methodShape owner (L _ FunBind {fun_id = identifier, fun_matches = matches})
-      | (owner, method) `elem` methods = do
-          result <- prefixError (owner ++ "." ++ method)
-            (shapeMatches environment {ownerClass = Just owner} matches)
-          pure [((owner, method), result)]
+      | (owner, method) `elem` handlers = do
+          result <- prefixError method (shapeMatches environment {ownerClass = Just owner} matches)
+          pure [(method, result)]
       where method = identifierName (unLoc identifier)
     methodShape _ _ = pure []
-    registeredBinding owner (L _ FunBind {fun_id = identifier}) =
-      (owner, identifierName (unLoc identifier)) `elem` methods
-    registeredBinding _ _ = False
 
 prefixError :: String -> Either String value -> Either String value
 prefixError location = either (Left . (("Cannot analyze " ++ location ++ ": ") ++)) Right
@@ -90,54 +82,37 @@ shadow names environment = environment {boundNames = names ++ boundNames environ
 patternNames :: LPat GhcPs -> [String]
 patternNames = map identifierName . collectPatBinders CollNoDictBinders
 
-bindingNames :: HsBind GhcPs -> [String]
-bindingNames FunBind {fun_id = identifier} = [identifierName (unLoc identifier)]
-bindingNames PatBind {pat_lhs = pattern'} = patternNames pattern'
-bindingNames _ = []
-
 localEnvironment :: Environment -> HsLocalBinds GhcPs -> Environment
 localEnvironment environment =
   flip shadow environment . map identifierName . collectLocalBinders CollNoDictBinders
 
--- 只识别真正导入的 Generated.Effects 名称；qualified alias 与 hiding 都参与。
--- 局部 pattern/let/where 名称优先，不把同名业务变量误当作 effect 方法。
--- 生成的 Provides.request／require 记为带 @ 前缀的取值标记，须配合类型实参解析。
+-- 只识别真正导入的名称；qualified alias 与 hiding 都参与。
+-- 局部 pattern/let/where 名称优先，不把同名业务变量误当作 SDK 能力或 handler。
+-- require 记为带 @ 前缀的取值标记，须配合类型实参；handler 方法记为带 ! 前缀的标记，在调用处拒绝。
 methodReference :: Environment -> RdrName -> Maybe String
 methodReference environment identifier
-  | identifierName identifier `elem` ["request", "require"]
-  , imported environment [contractsModule environment] (Just "Provides") identifier =
-      Just ('@' : identifierName identifier)
+  | identifierName identifier == "require"
+  , imported environment capabilityModules (Just "Reads") identifier = Just "@require"
+  | identifierName identifier == "raw"
+  , imported environment capabilityModules (Just "Raw") identifier = Just "%raw"
   | otherwise = case
-      [method | (owner, method) <- registeredMethods environment
+      [method | (owner, method) <- handlerMethods environment
         , method == identifierName identifier
         , imported environment [contractsModule environment] (Just owner) identifier] of
-      [method] -> Just method
+      [method] -> Just ('!' : method)
       _ -> Nothing
 
--- 取值标记与类型实参一起解析为来源方法；未在 demands 中声明的契约在生成前报错。
-demandCall :: Environment -> String -> LHsWcType GhcPs -> Either String (MethodShape String)
-demandCall environment word argument = do
-  owner <- maybe (Left (word ++ " @T is only supported inside registered instance methods")) Right
-    (ownerClass environment)
-  contractType <- typeArgumentName (hswc_body argument)
-  case lookup (word, contractType) (concat [entries | (selected, entries) <- demandRoutes environment, selected == owner]) of
-    Just method -> pure (Call method)
-    Nothing -> Left (word ++ " @" ++ contractType ++ " is not declared in the demands of "
-      ++ owner ++ "; add " ++ (if word == "request" then "requests" else "requires") ++ " for it")
-  where
-    typeArgumentName located = case unLoc located of
-      HsTyVar _ _ identifier -> Right (identifierName (unLoc identifier))
-      HsParTy _ body -> typeArgumentName body
-      _ -> Left (word ++ " needs a named contract type, e.g. " ++ word ++ " @PageURL")
+-- require @T 记为按表示类型的读取；类型原文由 gen 规范化后与绑定的路由比较。
+demandCall :: LHsWcType GhcPs -> Either String (MethodShape String)
+demandCall argument = pure (Call ('@' : showSDocUnsafe (ppr (hswc_body argument))))
 
--- 同一 effect 内部可使用自己的方法；跨 effect 的 Context 值只经 request／require 取得。
+-- handler 之间不直接调用：被调用的 handler 不经 effect 入口，Input、驱动和错误位置都会丢失。
 directCall :: Environment -> String -> Either String (MethodShape String)
-directCall environment method
-  | (word : _) <- [drop 1 method | take 1 method == "@"] =
-      Left (word ++ " needs an explicit contract type application, e.g. " ++ word ++ " @PageURL")
-  | any (\(owner, contextual) -> contextual == method && Just owner /= ownerClass environment) (contextMethods environment) =
-      Left ("direct call to Context method " ++ method ++ " bypasses the declared demands; use request @T or require @T")
-  | otherwise = pure (Call method)
+directCall environment reference = case reference of
+  "@require" -> Left "require needs an explicit representation type, e.g. require @PageURL"
+  '!' : method -> Left ("handler " ++ maybe "" (++ " ") (ownerClass environment) ++ "calls handler " ++ method
+    ++ " directly; compose handlers through effect registrations (Input, demands) and the AST")
+  _ -> pure (Call reference)
 
 imported :: Environment -> [String] -> Maybe String -> RdrName -> Bool
 imported environment modules owner identifier = case identifier of
@@ -229,7 +204,7 @@ statementReferences environment (statement : rest) =
 rejectReferences :: Data value => Environment -> String -> value -> Either String ()
 rejectReferences environment description value =
   unless (null (references environment value)) $
-    Left (description ++ "; keep effect composition in explicit registered method calls")
+    Left (description ++ "; bind the asset with require before using it")
 
 sequenceShape :: [MethodShape String] -> MethodShape String
 sequenceShape shapes = case concatMap flatten shapes of
@@ -290,8 +265,7 @@ shapeExpression environment located
         (methodReference environment (unLoc identifier))
       HsPar _ body -> shapeExpression environment body
       HsAppType _ (L _ (HsVar _ identifier)) argument
-        | Just ('@' : word) <- methodReference environment (unLoc identifier) ->
-            demandCall environment word argument
+        | Just "@require" <- methodReference environment (unLoc identifier) -> demandCall argument
       HsAppType _ body _ -> shapeExpression environment body
       ExprWithTySig _ body _ -> shapeExpression environment body
       HsPragE _ _ body -> shapeExpression environment body
@@ -319,7 +293,7 @@ shapeExpression environment located
           else shapeApplication environment operator [left, right]
       _ -> unsupported
   where
-    unsupported = Left "unsupported effect expression; use direct calls, do, if/case, or a supported composition combinator"
+    unsupported = Left "unsupported use of require/raw; bind it in a do statement, or use if/case or a supported combinator"
 
 application :: LHsExpr GhcPs -> (LHsExpr GhcPs, [LHsExpr GhcPs])
 application expression = case unLoc expression of

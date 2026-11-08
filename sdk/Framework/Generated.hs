@@ -8,10 +8,10 @@ module Framework.Generated
   , module Framework.Effect.Graph
   , module Framework.Prototype
   , module Framework.Workflow.Structure
-  , Root, Registered, App, Void, TypeRef(..), typeRef, ResolvedDemand(..)
-  , Target, targetApp, SessionSteps, receiveSteps, requestSteps
-  , failEffect, ContextAccess(..), readContext, requireContext, requestContext
-  , callContext, provideContext, projectContext, enterHandler
+  , App, TypeRef(..), typeRef, ResolvedDemand(..)
+  , Target, targetApp, SessionSteps, receiveSteps
+  , failEffect, handleFailure, ContextAccess(..), readContext, latestContext
+  , callContext, projectContext, enterHandler
   , atomicHandle, atomicScope, readHistory, streamHandle
   , ScopeInput(..), openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, withScopeCleanups
@@ -20,14 +20,14 @@ module Framework.Generated
 
 import Framework.SDK
 import Framework.Effect.Contract
-  ( Root, Registered, Void, failEffect, ContextStore(enterHandler)
+  ( failEffect, ErrorStore(handleFailure), ContextStore(enterHandler)
   , ScopeInput(..), ScopeStore(openScope, closeScope, withScopeDependencies) )
 import Framework.Effect.Context
-  ( ContextAccess(..), readContext, requireContext, requestContext, callContext
-  , provideContext, projectContext, atomicHandle, atomicScope, readHistory, streamHandle )
+  ( ContextAccess(..), readContext, latestContext, callContext
+  , projectContext, atomicHandle, atomicScope, readHistory, streamHandle )
 import Framework.Effect.Graph
 import Framework.Effect.Registration (TypeRef(..), typeRef, ResolvedDemand(..))
-import Framework.Effect.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, requestSteps)
+import Framework.Effect.Runtime (App, Target, targetApp, SessionSteps, receiveSteps)
 import Framework.Effect.Runtime.App (withScopeCleanups)
 import Framework.Effect.Scope (ScopeHandler, newScopeHandler)
 import Framework.Program (initializePrototype, runProgram)

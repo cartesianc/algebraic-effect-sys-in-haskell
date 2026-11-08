@@ -1,23 +1,34 @@
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
--- 原生 Haskell 取值；SDK 生成方法入口包装，运行编译 Generated 副本。
+{-# LANGUAGE UndecidableInstances #-}
+-- handler 是不带参数的类方法；SDK 按注册装配上游、会话与读取来源，运行编译 Generated 副本。
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module StreamDemo.Generated.Handlers (handlerSourceFingerprint, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
+module StreamDemo.Generated.Handlers (handlerSourceFingerprint, openSensorLink, closeSensorLink, nextTemperatureFeed, getTemperatureSample, streamTemperatureSample, nextHeartbeatClock, getBeat, streamBeat, runAnnounce, runShowTemperature, runCheckTrend, runReportHeartbeat, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
 import qualified Framework.Generated as FrameworkRuntime
 import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified StreamDemo.Generated.Effects as FrameworkGenerated
-import Framework.SDK (Effect(..), historyEntries, latest)
+import qualified Control.Monad.IO.Class as FrameworkIO
+import qualified Data.Proxy as FrameworkProxy
+import qualified GHC.TypeLits as FrameworkTypes
+import StreamDemo.Types
+import Framework.SDK (History, Raises(..), Raw(..), Reads(..), historyEntries, latest)
 import StreamDemo.Generated.Effects
 import StreamDemo.Types
 import Control.Concurrent (threadDelay)
@@ -25,130 +36,200 @@ import Control.Monad.IO.Class (liftIO)
 import GHC.Clock (getMonotonicTime)
 import Text.Printf (printf)
 
--- 连接在第一次读数时打开；生产会话的各步骤共用它，运行退出时由 SDK 关闭。
-instance SensorLinkInputs m => SensorLinkEffect m where
-  connectSensor =
-    (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "connectSensor" . FrameworkRuntime.openScope "SensorLink" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
-      let
-        connectSensor :: (m) (Maybe String)
-        connectSensor = do
-          liftIO (putStrLn "[sensor] connected")
-          pure Nothing
-      in connectSensor
-  disconnectSensor =
-    (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicScope "disconnectSensor" . FrameworkRuntime.closeScope "SensorLink" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
-      let
-        disconnectSensor :: (m) (Maybe String)
-        disconnectSensor = do
-          liftIO (putStrLn "[sensor] disconnected")
-          pure Nothing
-      in disconnectSensor
+-- 连接在第一次读数时由 Input 打开；生产会话的各步骤共用它，运行退出时由 SDK 关闭。
+instance ConnectSensorLayer m => ConnectSensorHandler m where
+  connectSensor = do
+    liftIO (putStrLn "[sensor] connected")
+    pure Nothing
 
--- 一次只取一份原始读数；节奏由方法体自己的等待决定，SDK 不加间隔。
-instance TemperatureFeedInputs m => TemperatureFeedEffect m where
-  nextReading =
-    (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.enterHandler "TemperatureFeed") $
-      let
-        nextReading :: (m) (String)
-        nextReading = do
-          _ <- connectSensor
-          liftIO (threadDelay 700000)
-          seconds <- liftIO getMonotonicTime
-          pure (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
-      in nextReading
+instance DisconnectSensorLayer m => DisconnectSensorHandler m where
+  disconnectSensor = do
+    liftIO (putStrLn "[sensor] disconnected")
+    pure Nothing
 
--- 解析器挂在 Stream 下：调用 nextReading 得到会话本次取得的原始读数（不会再读一次），返回一个资产；
+-- 一次只取一份原始读数；节奏由 handler 自己的等待决定，SDK 不加间隔。
+instance NextReadingLayer m => NextReadingHandler m where
+  nextReading = do
+    liftIO (threadDelay 700000)
+    seconds <- liftIO getMonotonicTime
+    pure (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
+
+-- parser 挂在 Stream 下：raw 是会话本次取得的原始读数（不会再读一次），返回一份资产的表示值；
 -- 发布、历史和交付由 SDK 完成。
-instance TemperatureParserInputs m => TemperatureParserEffect m where
-  getTemperatureSample =
-    (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.callContext "TemperatureParser" FrameworkGenerated.ContextBindingError
-      [("ShowTemperature", FrameworkRuntime.RequireValue), ("CheckTrend", FrameworkRuntime.RequireValue)]
-      Nothing
-      FrameworkGenerated.boundTemperatureParser
-      (\value bindings -> bindings { FrameworkGenerated.boundTemperatureParser = Just value })) $
-      let
-        getTemperatureSample :: (m) (FrameworkGenerated.TemperatureSample)
-        getTemperatureSample = do
-          raw <- nextReading
-          case reads raw of
-            [(value, "")] -> pure (TemperatureSample (Temperature value))
-            _ -> raise (TemperatureParserError ("unreadable sensor output: " ++ raw))
-      in getTemperatureSample
+instance ParseTemperatureLayer m => ParseTemperatureHandler m where
+  parseTemperature = do
+    reading <- maybe "" id <$> raw
+    case reads reading of
+      [(value, "")] -> pure (Temperature value)
+      _ -> raise (ParseTemperatureError ("unreadable sensor output: " ++ reading))
 
--- 请求序列：会话反复执行 request，每次成功即一条新交付。
-instance HeartbeatInputs m => HeartbeatEffect m where
-  getBeat =
-    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "Heartbeat" FrameworkGenerated.ContextBindingError
-      [("ReportHeartbeat", FrameworkRuntime.RequireValue)]
-      Nothing
-      FrameworkGenerated.boundHeartbeat
-      (\value bindings -> bindings { FrameworkGenerated.boundHeartbeat = Just value })) $
-      let
-        getBeat :: (m) (FrameworkGenerated.Beat)
-        getBeat = do
-          liftIO (threadDelay 2000000)
-          seconds <- liftIO getMonotonicTime
-          pure (Beat (round seconds))
-      in getBeat
+-- 心跳也是 Stream：每两秒交出一次单调时钟的秒数，由挂在它下面的 parser 解析。
+instance NextBeatLayer m => NextBeatHandler m where
+  nextBeat = do
+    liftIO (threadDelay 2000000)
+    seconds <- liftIO getMonotonicTime
+    pure (show (round seconds :: Int))
 
-instance AnnounceInputs m => AnnounceEffect m where
-  announce =
-    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "announce" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "Announce") $
-      let
-        announce :: (m) (Maybe String)
-        announce = do
-          liftIO (putStrLn "Monitoring the sensor; press Ctrl-C to stop.")
-          pure Nothing
-      in announce
+instance ParseBeatLayer m => ParseBeatHandler m where
+  parseBeat = do
+    tick <- maybe "" id <$> raw
+    case reads tick of
+      [(value, "")] -> pure value
+      _ -> raise (ParseBeatError ("unreadable clock output: " ++ tick))
+
+instance AnnounceLayer m => AnnounceHandler m where
+  announce = do
+    liftIO (putStrLn "Monitoring the sensor; press Ctrl-C to stop.")
+    pure Nothing
 
 -- 同一单元的一次执行里，ShowTemperature 与 CheckTrend 读到同一份交付视图。
-instance ShowTemperatureInputs m => ShowTemperatureEffect m where
-  showTemperature =
-    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "showTemperature" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowTemperature") $
-      let
-        showTemperature :: (m) (Maybe String)
-        showTemperature = do
-          samples <- require @TemperatureSample
-          case latest samples of
-            Just (TemperatureSample (Temperature value)) ->
-              liftIO (printf "reading #%d: %.1f C\n" (length (historyEntries samples)) value)
-            Nothing -> pure ()
-          pure Nothing
-      in showTemperature
+instance ShowTemperatureLayer m => ShowTemperatureHandler m where
+  showTemperature = do
+    samples <- require @(History Temperature)
+    case latest samples of
+      Just (Temperature value) ->
+        liftIO (printf "reading #%d: %.1f C\n" (length (historyEntries samples)) value)
+      Nothing -> pure ()
+    pure Nothing
 
-instance CheckTrendInputs m => CheckTrendEffect m where
-  checkTrend =
-    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "checkTrend" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CheckTrend") $
-      let
-        checkTrend :: (m) (Maybe String)
-        checkTrend = do
-          samples <- require @TemperatureSample
-          let values = [value | TemperatureSample (Temperature value) <- historyEntries samples]
-              recent = drop (length values - 5) values
-              average = sum recent / fromIntegral (length recent)
-          case reverse recent of
-            current : previous : _ ->
-              liftIO (printf "  trend %s, average of the last %d: %.2f C\n"
-                (if current >= previous then "rising" else "falling" :: String) (length recent) average)
-            _ -> liftIO (putStrLn "  trend: waiting for a second reading")
-          pure Nothing
-      in checkTrend
+instance CheckTrendLayer m => CheckTrendHandler m where
+  checkTrend = do
+    samples <- require @(History Temperature)
+    let values = [value | Temperature value <- historyEntries samples]
+        recent = drop (length values - 5) values
+        average = sum recent / fromIntegral (length recent)
+    case reverse recent of
+      current : previous : _ ->
+        liftIO (printf "  trend %s, average of the last %d: %.2f C\n"
+          (if current >= previous then "rising" else "falling" :: String) (length recent) average)
+      _ -> liftIO (putStrLn "  trend: waiting for a second reading")
+    pure Nothing
 
-instance ReportHeartbeatInputs m => ReportHeartbeatEffect m where
-  reportHeartbeat =
-    (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @FrameworkGenerated.Root . FrameworkRuntime.atomicHandle "reportHeartbeat" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReportHeartbeat") $
-      let
-        reportHeartbeat :: (m) (Maybe String)
-        reportHeartbeat = do
-          beats <- require @Beat
-          liftIO (putStrLn ("[heartbeat] #" ++ show (length (historyEntries beats))))
-          pure Nothing
-      in reportHeartbeat
+instance ReportHeartbeatLayer m => ReportHeartbeatHandler m where
+  reportHeartbeat = do
+    beats <- require @(History Int)
+    liftIO (putStrLn ("[heartbeat] #" ++ show (length (historyEntries beats))))
+    pure Nothing
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "7478524e77834b2454331f040908102f"
+handlerSourceFingerprint = Just "9103ff660395d7c3380589656a0788a2"
 
+-- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
+-- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
+newtype At (effect :: FrameworkTypes.Symbol) value = At { runAt :: FrameworkGenerated.App value }
+  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ConnectSensorError (At effect) where
+  raise (FrameworkGenerated.ConnectSensorError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ConnectSensorFailure description)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DisconnectSensorError (At effect) where
+  raise (FrameworkGenerated.DisconnectSensorError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.DisconnectSensorFailure description)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextReadingError (At effect) where
+  raise (FrameworkGenerated.NextReadingError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NextReadingFailure description)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseTemperatureError (At effect) where
+  raise (FrameworkGenerated.ParseTemperatureError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ParseTemperatureFailure description)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextBeatError (At effect) where
+  raise (FrameworkGenerated.NextBeatError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NextBeatFailure description)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseBeatError (At effect) where
+  raise (FrameworkGenerated.ParseBeatError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ParseBeatFailure description)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AnnounceError (At effect) where
+  raise (FrameworkGenerated.AnnounceError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.AnnounceFailure description)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ShowTemperatureError (At effect) where
+  raise (FrameworkGenerated.ShowTemperatureError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ShowTemperatureFailure description)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CheckTrendError (At effect) where
+  raise (FrameworkGenerated.CheckTrendError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CheckTrendFailure description)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReportHeartbeatError (At effect) where
+  raise (FrameworkGenerated.ReportHeartbeatError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReportHeartbeatFailure description)
+
+instance FrameworkRuntime.Reads (FrameworkRuntime.History (Temperature)) (At "ShowTemperature") where
+  require = At (fmap (\(FrameworkGenerated.TemperatureSample value) -> value) <$> streamTemperatureSample)
+
+instance FrameworkRuntime.Reads (FrameworkRuntime.History (Temperature)) (At "CheckTrend") where
+  require = At (fmap (\(FrameworkGenerated.TemperatureSample value) -> value) <$> streamTemperatureSample)
+
+instance FrameworkRuntime.Reads (FrameworkRuntime.History (Int)) (At "ReportHeartbeat") where
+  require = At (fmap (\(FrameworkGenerated.Beat value) -> value) <$> streamBeat)
+
+instance FrameworkRuntime.Raw (At "TemperatureParser") where
+  raw = At (Just <$> nextTemperatureFeed)
+
+instance FrameworkRuntime.Raw (At "Heartbeat") where
+  raw = At (Just <$> nextHeartbeatClock)
+
+openSensorLink :: FrameworkGenerated.App (Maybe String)
+openSensorLink = (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handleFailure . FrameworkRuntime.atomicScope "openSensorLink" . FrameworkRuntime.openScope "SensorLink" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
+  runAt @"SensorLink" FrameworkGenerated.connectSensor
+
+closeSensorLink :: FrameworkGenerated.App (Maybe String)
+closeSensorLink = (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handleFailure . FrameworkRuntime.atomicScope "closeSensorLink" . FrameworkRuntime.closeScope "SensorLink" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
+  runAt @"SensorLink" FrameworkGenerated.disconnectSensor
+
+nextTemperatureFeed :: FrameworkGenerated.App String
+nextTemperatureFeed = (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.enterHandler "TemperatureFeed") $
+  openSensorLink >> runAt @"TemperatureFeed" FrameworkGenerated.nextReading
+
+getTemperatureSample :: FrameworkGenerated.App FrameworkGenerated.TemperatureSample
+getTemperatureSample = (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handleFailure . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.callContext "TemperatureParser" FrameworkGenerated.ContextBindingError
+    [("ShowTemperature", FrameworkRuntime.RequireValue), ("CheckTrend", FrameworkRuntime.RequireValue)]
+    Nothing
+    FrameworkGenerated.boundTemperatureParser
+    (\value bindings -> bindings { FrameworkGenerated.boundTemperatureParser = Just value })) $
+  (FrameworkGenerated.TemperatureSample <$> runAt @"TemperatureParser" FrameworkGenerated.parseTemperature)
+
+streamTemperatureSample :: FrameworkGenerated.App (FrameworkRuntime.History FrameworkGenerated.TemperatureSample)
+streamTemperatureSample = (FrameworkRoot.withErrorPath ["SensorLink"] . FrameworkRoot.handleFailure) $
+  FrameworkRuntime.readHistory "TemperatureParser" FrameworkGenerated.ContextBindingError [("ShowTemperature", FrameworkRuntime.RequireValue), ("CheckTrend", FrameworkRuntime.RequireValue)] FrameworkGenerated.boundTemperatureParser Nothing
+
+nextHeartbeatClock :: FrameworkGenerated.App String
+nextHeartbeatClock = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "HeartbeatClock") $
+  runAt @"HeartbeatClock" FrameworkGenerated.nextBeat
+
+getBeat :: FrameworkGenerated.App FrameworkGenerated.Beat
+getBeat = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "Heartbeat" FrameworkGenerated.ContextBindingError
+    [("ReportHeartbeat", FrameworkRuntime.RequireValue)]
+    Nothing
+    FrameworkGenerated.boundHeartbeat
+    (\value bindings -> bindings { FrameworkGenerated.boundHeartbeat = Just value })) $
+  (FrameworkGenerated.Beat <$> runAt @"Heartbeat" FrameworkGenerated.parseBeat)
+
+streamBeat :: FrameworkGenerated.App (FrameworkRuntime.History FrameworkGenerated.Beat)
+streamBeat = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure) $
+  FrameworkRuntime.readHistory "Heartbeat" FrameworkGenerated.ContextBindingError [("ReportHeartbeat", FrameworkRuntime.RequireValue)] FrameworkGenerated.boundHeartbeat Nothing
+
+runAnnounce :: FrameworkGenerated.App (Maybe String)
+runAnnounce = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure . FrameworkRuntime.atomicHandle "runAnnounce" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "Announce") $
+  runAt @"Announce" FrameworkGenerated.announce
+
+runShowTemperature :: FrameworkGenerated.App (Maybe String)
+runShowTemperature = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure . FrameworkRuntime.atomicHandle "runShowTemperature" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowTemperature") $
+  runAt @"ShowTemperature" FrameworkGenerated.showTemperature
+
+runCheckTrend :: FrameworkGenerated.App (Maybe String)
+runCheckTrend = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure . FrameworkRuntime.atomicHandle "runCheckTrend" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CheckTrend") $
+  runAt @"CheckTrend" FrameworkGenerated.checkTrend
+
+runReportHeartbeat :: FrameworkGenerated.App (Maybe String)
+runReportHeartbeat = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure . FrameworkRuntime.atomicHandle "runReportHeartbeat" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReportHeartbeat") $
+  runAt @"ReportHeartbeat" FrameworkGenerated.reportHeartbeat
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
@@ -159,16 +240,16 @@ newScopeHandlers = sequence
 -- SDK 自动收尾入口；安装时不关闭资源。
 scopeCleanups :: [(String, FrameworkGenerated.App ())]
 scopeCleanups =
-  [ ("SensorLink", () <$ disconnectSensor)
+  [ ("SensorLink", () <$ closeSensorLink)
   ]
 
--- Error 回调登记：按 handles 匹配故障来源与分类；关联 scope 由 Input 链推导。
+-- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。
 errorHandlers :: [(Maybe String, FrameworkRoot.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
 errorHandlers =
   [
   ]
 
--- 挂在原子句柄下的 Context：句柄的输出交给它解析并发布为资产；没有挂接时输出被丢弃。
+-- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。
 contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
 contextInjections =
   [

@@ -85,7 +85,7 @@ resolveSources definitions defaultReaders prototype = do
     companionRead _ = pure ()
     resources = [source | effect <- effects, Just source <- [effectResource effect]]
     receiving = [contractType | effect <- effects, effectContinuous effect
-      , Just contractType <- [effectProduces effect], bootPlan effects effect /= RepeatRequest]
+      , Just contractType <- [effectProduces effect]]
     -- 复用已完成的可达性分析，保守包含 native reader，以及 caller 的 require 声明
     -- 将直接 producer 方法调用路由成读取的情况；不依赖尚未算出的 chainReads。
     possibleReads = [(chainNode chain, nub

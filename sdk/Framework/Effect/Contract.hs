@@ -1,25 +1,16 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE EmptyCase #-}
-{-# LANGUAGE EmptyDataDeriving #-}
-{-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE TypeFamilyDependencies #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
 
--- Effect 契约与根能力；不包含具体执行载体或 workflow。
+-- handler 能力与载体协议；不包含具体执行载体或 workflow。
 -- 这里定义载体必须实现的 ContextStore／ScopeStore／ErrorStore 协议；
 -- 通用 Context 组合在 Context.hs，IO 解释在 Runtime/App.hs，业务入口只导出所需能力。
 module Framework.Effect.Contract
-  ( Effect(..), EffectKind(..), Root, Registered, Void, Capability
+  ( EffectKind(..), Reads(..), Raw(..), Raises(..)
   , Failure(..), Output(..), failEffect, ErrorHandler(..), ErrorReport(..), ErrorStore(..), runErrorHandler
   , ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault(..), ScopeInput(..), ScopeInputAccess(..)
   , RawOutput(..)
@@ -29,45 +20,29 @@ import Control.Monad.Except (MonadError, catchError, throwError)
 import Control.DeepSeq (NFData)
 import Framework.Effect.History (History)
 import GHC.Generics (Generic)
-import Data.Kind (Constraint, Type)
-import Data.Void (Void)
 import Data.Typeable (Typeable, cast)
 
--- 注册与载体能力 --------------------------------------------------------------
+-- 注册类别 ---------------------------------------------------------------------
 
--- 关联 Typing 只保留类别；方法名由注册描述。
+-- 只保留类别；handler 名由注册描述。
 data EffectKind = PureKind | ExcuKind | ScopedKind | ErrorKind | ContextKind | StreamKind deriving (Eq, Show, Read, Generic)
 
 instance NFData EffectKind
 
-data Root environment cause
-newtype Registered (handler :: (Type -> Type) -> Constraint) parent = Registered parent
+-- handler 的能力 ---------------------------------------------------------------
 
--- 能力标记：只有生成区在本程序载体上给出实例。effect 的 instance 对 m 泛型，
--- 其上下文含自身标记，因此方法体无法凭泛型 instance 现场构造其他 effect 的字典，
--- 只能经 Input 链的 superclass 取得上游句柄。
-class Capability effect (m :: Type -> Type)
+-- handler 是对 m 泛型的类方法，只能使用 gen 按注册给出的 Layer：
+-- Reads 按表示类型读取资产，来源由 effect 的 demands 在 gen 时解析；
+-- Raw 读取直接 Input（Excu、Scoped.open 或 Stream）本次交出的原始输出，只给挂在它下面的 parser；
+-- Raises 以本 handler 的错误失败，发生位置由 SDK 记录。
+class Reads value m where
+  require :: m value
 
-type family Inherited registration (m :: Type -> Type) :: Constraint where
-  Inherited (Root environment cause) m =
-    (ContextStore environment m, ScopeStore cause m, ErrorStore cause m, MonadError (Failure cause) m)
-  Inherited (Registered handler parent) m = (Effect parent m, handler m)
+class Raw m where
+  raw :: m (Maybe String)
 
-class (Monad m, Inherited (Registration effect) m) => Effect effect m where
-  type Registration effect :: Type
-  type Typing effect :: EffectKind
-  type Require effect :: Type
-  -- 业务产物只归 Context；普通操作和 Scoped 方法均无产物。
-  type Produce effect :: Type
-  type Produce effect = ()
-  -- SDK 生成的错误类型唯一确定所属 effect，使 raise 自动推导来源。
-  type Error effect = (cause :: Type) | cause -> effect
-  raise :: Error effect -> m value
-  -- SDK 生成的统一调用入口；具体 effect 转交 Root，不改变业务调用者或提前执行上游。
-  handler :: m value -> m value
-
--- 根 superclass 没有业务失败入口；空类型只供 SDK 根约束使用。
-data NoError (effect :: Type) deriving Show
+class Raises failure m where
+  raise :: failure -> m value
 
 -- Context 访问与发布协议 -------------------------------------------------------
 
@@ -155,18 +130,6 @@ class Monad m => ScopeStore cause m | m -> cause where
   closeScope :: String -> (ScopeFault -> cause) -> m value -> m (Maybe value)
   invalidateScope :: String -> Failure cause -> m ()
 
--- 链首提供 Monad、上下文存储与业务失败短路能力，没有全局业务 handle。
--- 环境类型由 facade 中的生成代码指定，不反向依赖业务模块。
-instance (Monad m, ContextStore environment m, ScopeStore cause m, ErrorStore cause m, MonadError (Failure cause) m)
-      => Effect (Root environment cause) m where
-  type Registration (Root environment cause) = Root environment cause
-  type Typing (Root environment cause) = 'PureKind
-  type Require (Root environment cause) = Void
-  type Error (Root environment cause) = NoError (Root environment cause)
-  raise cause = case cause of {}
-  -- 方法入口统一捕获；业务 instance 不需要手写 catch 或 super 前缀。
-  handler = handleFailure
-
 -- Error 回调与统一完成结果 -----------------------------------------------------
 
 -- 回调由生成区装配；不让 Root 的 superclass 反向依赖业务 Error 类.
@@ -219,6 +182,6 @@ data Failure cause = Failure
 data Output cause value = Succ value | Failed (Failure cause)
   deriving (Eq, Show)
 
--- 生成的 Effect instance 统一实现 raise，绑定注册名并接入本次错误总和类型。
+-- 生成的 Raises instance 统一实现 raise：origin 是发生位置的 effect 名，cause 是 handler 的错误分类。
 failEffect :: MonadError (Failure cause) m => String -> cause -> String -> m value
 failEffect effectName cause description = throwError (Failure effectName cause description [] [] Nothing [])

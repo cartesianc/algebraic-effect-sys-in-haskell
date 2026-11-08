@@ -6,16 +6,16 @@ import Framework.Effect.Asset (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "StreamDemo.Generated.Effects", assetName = "Beat", assetFile = "demo/StreamDemo/Generated/Effects.hs", assetLine = 34, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "StreamDemo.Generated.Effects", assetName = "Beat", assetFile = "demo/StreamDemo/Generated/Effects.hs", assetLine = 24, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "StreamDemo.Generated.Effects", assetName = "Beat", assetFile = "demo/StreamDemo/Generated/Effects.hs", assetLine = 34, assetColumn = 16}
+          [ AssetSymbol {assetModule = "StreamDemo.Generated.Effects", assetName = "Beat", assetFile = "demo/StreamDemo/Generated/Effects.hs", assetLine = 24, assetColumn = 16}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "StreamDemo.Generated.Effects", assetName = "TemperatureSample", assetFile = "demo/StreamDemo/Generated/Effects.hs", assetLine = 30, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "StreamDemo.Generated.Effects", assetName = "TemperatureSample", assetFile = "demo/StreamDemo/Generated/Effects.hs", assetLine = 20, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "StreamDemo.Generated.Effects", assetName = "TemperatureSample", assetFile = "demo/StreamDemo/Generated/Effects.hs", assetLine = 30, assetColumn = 29}
+          [ AssetSymbol {assetModule = "StreamDemo.Generated.Effects", assetName = "TemperatureSample", assetFile = "demo/StreamDemo/Generated/Effects.hs", assetLine = 20, assetColumn = 29}
           ]
       , assetFields = []
       }

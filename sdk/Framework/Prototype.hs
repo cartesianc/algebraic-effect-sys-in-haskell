@@ -112,7 +112,7 @@ buildEffectProtos specifications sumTypes = do
             Context {} -> listToMaybe
               [name anchor | anchor <- specifications, name anchor == input specification
                 , Registration.effectKind (typing anchor) `elem` [ExcuKind, ScopedKind]
-                , Just _ <- [entryMethod (typing anchor)]]
+                , Just _ <- [entryMethod anchor]]
             _ -> Nothing
         , effectScopes = upstream specification
         , effectErrorScope = case typing specification of
@@ -126,7 +126,7 @@ buildEffectProtos specifications sumTypes = do
         , effectNearestScopes = nub (nearest [] (name specification))
         , effectResource = case typing specification of Scoped {} -> requestSource specification; _ -> Nothing
         , effectContextDependencies = contextDependencies
-        , effectContinuous = continuousContext specifications specification
+        , effectContinuous = continuousContext specification
         }
       prototypes = zipWith make specifications dependencies
       findSpec selected = case filter ((== selected) . name) specifications of
@@ -137,7 +137,9 @@ buildEffectProtos specifications sumTypes = do
         case typing specification of
           Scoped (Just _) (Just _) -> pure ()
           _ -> Left (InvalidPrototype ("Input scope needs Scoped.open and Scoped.close: " ++ selected))
-      checkHandled (RaisedBy selected) = findSpec selected >> pure ()
+      boundHandlers = nub (concatMap (map snd . handlerBindings) specifications)
+      checkHandled (RaisedBy selected) = valid (selected `elem` boundHandlers)
+        ("RaisedBy must name a registered handler: " ++ selected)
       checkHandled (ScopeFaultIn selected) = do
         target <- findSpec selected
         valid (Registration.effectKind (typing target) == ScopedKind) ("ScopeFaultIn must name a Scoped effect: " ++ selected)
@@ -149,25 +151,20 @@ buildEffectProtos specifications sumTypes = do
           predecessor <- findSpec (input specification)
           valid (Registration.effectKind (typing predecessor) /= ContextKind)
             ("Input cannot reference Context " ++ name predecessor ++ " in " ++ name specification ++ "; use demands")
+          valid (Registration.effectKind (typing predecessor) /= ErrorKind)
+            ("Input cannot reference Error " ++ name predecessor ++ " in " ++ name specification ++ "; Error runs only for scope failures")
         mapM_ checkScope (upstream specification)
         case typing specification of
           Scoped opening closing -> do
             valid (length (requested specification) <= 1) ("Scoped requests at most one resource Context: " ++ name specification)
             valid (opening == Nothing || closing /= Nothing) ("Scoped.open needs Scoped.close for automatic cleanup: " ++ name specification)
-          Context { asset = declared, request = requesting, stream = streaming } -> do
-            -- 生产方式只看本注册：挂在 Stream 下由 request 声明的 getT 解析会话取得的原始输入，资产自动是持续资产；
-            -- 否则由 request 生产，stream = Just () 时由会话反复 request。
-            let streamInput = [name source | source <- specifications, name source == input specification
-                  , Stream {} <- [typing source]]
-            case (streamInput, requesting, streaming) of
-              (source : _, Nothing, _) -> Left (InvalidPrototype ("Context " ++ name specification ++ " hangs below Stream "
-                ++ source ++ " and needs request = Just (); its getT parses each raw input of the Stream"))
-              (source : _, Just (), Just ()) -> Left (InvalidPrototype ("Context " ++ name specification ++ " hangs below Stream "
-                ++ source ++ " and is already a continuous asset; remove stream = Just ()"))
-              ([], Nothing, Just ()) -> Left (InvalidPrototype ("Context " ++ name specification
-                ++ " declares stream = Just () without request = Just (); a continuous asset outside a Stream is produced by repeated request"))
-              ([], Nothing, Nothing) -> Left (InvalidPrototype ("Context needs a production role, request = Just (): " ++ name specification))
-              _ -> pure ()
+          Context { asset = declared, parser = parsing, require = requiring, stream = streaming } -> do
+            -- 持续交付只由上游 Stream 驱动：stream 当且仅当 input 是 Stream，持续资产也缓存最新值。
+            valid (parsing /= Nothing) ("Context needs a parser handler: " ++ name specification)
+            valid (streaming == belowStream specifications specification)
+              (if streaming then "Context " ++ name specification ++ " declares stream = True but its input is not a Stream"
+               else "Context " ++ name specification ++ " hangs below a Stream and needs stream = True")
+            valid (not streaming || requiring) ("Context " ++ name specification ++ " declares stream = True and needs require = True")
             valid (validContractName (contractOf declared))
               ("Asset name must be a type name such as StartURL: " ++ contractOf declared ++ " in " ++ name specification)
             case representation declared of
@@ -177,7 +174,7 @@ buildEffectProtos specifications sumTypes = do
               Scoped {} <- [typing anchor], requestSource anchor == Just (name specification)])
               ("Context " ++ name specification ++ " cannot hang below the scope that requests it as its resource")
           Stream method -> do
-            valid (method /= Nothing) ("Stream needs a handler method: " ++ name specification)
+            valid (method /= Nothing) ("Stream needs a handler: " ++ name specification)
             -- 只有解析器 Context 能以 Stream 为 input，否则其他方法可以绕过会话直接取原始输入。
             let below = [typing consumer | consumer <- specifications, input consumer == name specification]
                 isContext selected = case selected of Context {} -> True; _ -> False
@@ -188,7 +185,11 @@ buildEffectProtos specifications sumTypes = do
           Error { handles = matched } -> do
             valid (not (null matched)) ("Error must declare the failures it handles: " ++ name specification)
             mapM_ checkHandled matched
-            valid (length (errorScopes specification) <= 1) ("Error capability reaches several nearest scopes: " ++ name specification)
+            -- Error 只指向 scope；普通 effect 的失败通过提前 mock 解决，不作全局处置。
+            case errorScopes specification of
+              [_] -> pure ()
+              [] -> Left (InvalidPrototype ("Error " ++ name specification ++ " has no scope on its Input chain; Error only handles scope failures"))
+              _ -> Left (InvalidPrototype ("Error capability reaches several nearest scopes: " ++ name specification))
           _ -> pure ()
         valid (null [demand | demand <- demands specification, access demand == RequestAccess,
           contract demand `elem` map fst branchTable]) ("Branch contracts can only be required: " ++ name specification)
@@ -197,7 +198,12 @@ buildEffectProtos specifications sumTypes = do
           ("Only original-chain effects may subscribe with streams: " ++ name specification)
       handled specification = case typing specification of Error { handles = matched } -> matched; _ -> []
   mapM_ check specifications
-  valid (unique (concatMap (map snd . effectMethods) prototypes)) "Registered method names must be unique"
+  let generatedMethods = concatMap (map snd . effectMethods) prototypes
+  valid (unique generatedMethods) "Generated effect method names must be unique; rename an effect or asset"
+  case [selected | selected <- nub (concatMap (map snd . handlerBindings) specifications), selected `elem` generatedMethods] of
+    [] -> pure ()
+    selected : _ -> Left (InvalidPrototype ("Handler " ++ selected
+      ++ " has the name of a generated effect method; rename the handler"))
   valid (null [(name left, name right)
     | (index, left) <- zip [0 :: Int ..] specifications, right <- drop (index + 1) specifications
     , not (null (handled left `intersect` handled right)), errorScopes left == errorScopes right])
@@ -216,20 +222,21 @@ buildEffectProtos specifications sumTypes = do
       | specification <- specifications, Just declared <- [contextAsset (typing specification)]
       , (branch, _) <- branchesOf specification]
 
+-- effect 方法由 gen 生成并命名：run／open／close／detect／resolve／next 加 effect 名，get／read／stream 加资产名。
 registeredMethods :: [EffectSpec] -> EffectSpec -> [(MethodRole, String)]
 registeredMethods specifications specification = case typing specification of
-  Pure method -> [(HandlerMethod, selected) | selected <- maybeToList method]
-  Excu method -> [(HandlerMethod, selected) | selected <- maybeToList method]
-  Scoped opening closing -> [(ScopeOpen, selected) | selected <- maybeToList opening]
-    ++ [(ScopeClose, selected) | selected <- maybeToList closing]
-  Error detecting resolving _ -> [(ErrorDetect, selected) | selected <- maybeToList detecting]
-    ++ [(ErrorResolve, selected) | selected <- maybeToList resolving]
-  -- 挂在 Stream 下时 getT 是解析器：只由会话在取得一份原始输入后调用，不是可请求的生产入口。
+  Pure method -> named HandlerMethod "run" method
+  Excu method -> named HandlerMethod "run" method
+  Scoped opening closing -> named ScopeOpen "open" opening ++ named ScopeClose "close" closing
+  Error detecting resolving _ -> named ErrorDetect "detect" detecting ++ named ErrorResolve "resolve" resolving
+  -- 挂在 Stream 下时 getT 是 parser：只由会话在取得一份原始输入后调用，不是可请求的生产入口。
   selected@Context {} ->
     [ (if belowStream specifications specification then ContextStream else ContextRequest, method)
     | method <- maybeToList (contextProducer selected) ]
     ++ [(ContextRequire, method) | method <- maybeToList (contextReader selected)]
-  Stream method -> [(StreamHandler, selected) | selected <- maybeToList method]
+  Stream method -> named StreamHandler "next" method
+  where
+    named role prefix method = [(role, effectMethodName prefix (name specification)) | Just _ <- [method]]
 
 preparePrototype :: [EffectSpec] -> SumTypes -> Fix WorkflowF -> Either (PrototypeError String) PrototypePlan
 preparePrototype specifications sumTypes tree = do
@@ -297,7 +304,7 @@ numberWorkflow effects tree = cata number tree [] False
         ++ " inside lifelong must subscribe to exactly one continuous asset with streams"))
       several -> Left (InvalidLifelong node' ("Node " ++ selected ++ " subscribes to several continuous assets "
         ++ intercalate ", " several ++ "; one lifelong target is driven by one asset"))
-    -- 生产方式只看资产自己的注册：挂在 Stream 下即接收生产，否则反复 request。
+    -- 持续资产只由上游 Stream 驱动。
     session path (index, contractType) = do
       producer <- case [effect | effect <- effects, effectProduces effect == Just contractType] of
         [effect] -> pure effect
@@ -313,7 +320,7 @@ finiteSessions effects =
   | (index, (contractType, plan)) <- zip [0 ..] receiving ]
   where
     receiving = [(contractType, plan) | effect <- effects, effectContinuous effect
-      , Just contractType <- [effectProduces effect], let plan = bootPlan effects effect, plan /= RepeatRequest]
+      , Just contractType <- [effectProduces effect], let plan = bootPlan effects effect]
 
 -- 一条 original chain 由末端及其 Input 祖先组成；只看这些 effect 自己声明的 streams，
 -- 不汇总 Context 生产链内部的依赖。
@@ -369,7 +376,7 @@ findEffectProto effects selected = case filter ((== selected) . effectName) effe
 ordinaryEntry :: EffectProto method -> Either (PrototypeError method) method
 ordinaryEntry effect = case [method | (role, method) <- effectMethods effect, role `elem` [HandlerMethod, ScopeOpen]] of
   method : _ -> pure method
-  [] -> Left (InvalidPrototype ("Effect has no callable entry (handler/open = Nothing): " ++ effectName effect))
+  [] -> Left (InvalidPrototype ("Effect has no callable entry (no handler or open handler): " ++ effectName effect))
 
 buildPrototype :: [EffectSpec] -> SumTypes -> [(String, MethodShape String)] -> Fix WorkflowF
                -> Either (PrototypeError String) (Prototype String)
@@ -479,7 +486,7 @@ buildPreparedPrototype plan shapes = do
       [method] -> pure (alternativeSelector selected, SelectorChain, alternativeContract selected, method)
       _ -> Left (UnknownPrototypeTarget (alternativeContract selected))
     mountedSelector _ = Left (InvalidPrototype "Expected alternative selector")
-    -- 会话挂载：Receive 依次为 Stream 单步与解析器，RepeatRequest 只有 request；终端名记资产名。
+    -- 会话挂载依次为 Stream 单步与 parser；终端名记资产名。
     mountedSession described = do
       producer <- case [effect | effect <- effects, effectProduces effect == Just (sessionAsset described)] of
         [effect] -> pure effect
@@ -492,7 +499,6 @@ buildPreparedPrototype plan shapes = do
           handle <- roleOf streamEffect StreamHandler
           parser <- roleOf producer ContextStream
           pure [handle, parser]
-        RepeatRequest -> (: []) <$> roleOf producer ContextRequest
       valid (length methods == length (sessionMounts described)) ("Session steps differ for " ++ sessionAsset described)
       pure [(mount, SessionChain, sessionAsset described, method) | (mount, method) <- zip (sessionMounts described) methods]
 
@@ -726,7 +732,7 @@ validatePrototype prototype = do
             && unique (map sessionAsset (lifelongSessions described))) "Lifelong sessions differ from subscribed assets"
           valid (and [ sessionMounts session == [identifier ++ [-1, index, step] | step <- [0 .. steps - 1]]
             | (index, session) <- zip [0 ..] (lifelongSessions described)
-            , let steps = case sessionPlan session of Receive _ -> 2; RepeatRequest -> 1 ])
+            , let steps = sessionSteps (sessionPlan session) ])
             "Lifelong session mounts have invalid NodeIds"
           valid (and [ any (\effect -> effectContinuous effect && effectProduces effect == Just contractType) effects
             | (_, contractType) <- lifelongSubscriptions described ]) "Lifelong subscribes to a non-continuous asset"
@@ -764,11 +770,9 @@ validatePrototype prototype = do
             let expectedRole = case (sessionPlan session, step) of
                   (Receive _, 0) -> Nothing
                   (Receive _, _) -> Just ContextStream
-                  (RepeatRequest, _) -> Just ContextRequest
                 streamEntries = case sessionPlan session of
                   Receive source -> [method | effect <- effects, effectName effect == source
                     , (StreamHandler, method) <- effectMethods effect]
-                  RepeatRequest -> []
                 expected = maybe streamEntries (\role -> [method | (role', method) <- effectMethods producer, role' == role]) expectedRole
             valid (sessionAsset session == chainTerminal chain && expected == [chainEntry chain])
               "Session chain differs from its boot plan"

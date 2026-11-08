@@ -3,7 +3,8 @@ module Framework.Generate (main) where
 
 import Control.Exception (evaluate)
 import Data.Char (isAlphaNum, isUpper)
-import Framework.Codegen (GeneratedCode(..))
+import Data.Maybe (isJust)
+import Framework.Codegen (GeneratedCode(..), composeMethods)
 import Framework.Codegen.Handlers (prepareHandlers, loadSumTypes)
 import Framework.Codegen.Assets (checkAssets)
 import Framework.Codegen.Plan (renderPrototype)
@@ -14,12 +15,14 @@ import System.Exit (ExitCode(..), die, exitWith)
 import System.FilePath ((</>), pathSeparator)
 import System.Process
   (CreateProcess(..), StdStream(..), proc, rawSystem, waitForProcess, withCreateProcess)
-import System.IO (IOMode(ReadMode, WriteMode), hGetContents, hPutStr, hSetEncoding, utf8, withFile)
+import System.IO (IOMode(ReadMode, WriteMode), hGetContents, hPutStr, hSetEncoding, stderr, utf8, withFile)
 import System.IO.Error (tryIOError)
 import Text.Read (readMaybe)
 
 main :: IO ()
 main = do
+  -- 进程内 GHC 的诊断含非 ASCII 符号；固定为 UTF-8，避免按区域编码输出时诊断本身失败。
+  hSetEncoding stderr utf8
   arguments <- getArgs
   -- GHC API 也需要 Cabal 的依赖可见性；复用项目 package environment，
   -- 不硬编码业务库白名单或本机 package-db 路径。
@@ -55,24 +58,22 @@ main = do
               _ <- evaluate (length output)
               result <- waitForProcess process
               pure (result, output)
-            Nothing -> die "Cannot read the SDK handler wrapping plan"
+            Nothing -> die "Cannot read the SDK generation plan"
           case result of
             ExitSuccess -> case readMaybe output of
-              Nothing -> die "Cannot read the SDK handler wrapping plan"
+              Nothing -> die "Cannot read the SDK generation plan"
               Just (Left problem) -> die problem
               Just (Right generatedCode) -> do
                 let contracts = codeEffects generatedCode
                     program = codeProgram generatedCode
-                    wrappers = codeWrappers generatedCode
-                    scopeHandlers = codeSupport generatedCode
                     plan = codePrototypePlan generatedCode
-                    assetRoots = codeAssetRoots generatedCode
-                    routes = codeDemandRoutes generatedCode
-                    owners = codeAssetOwners generatedCode
-                (handlers, shapes, nativeSource) <- prepareHandlers namespace wrappers scopeHandlers routes
+                (handlers, shapes, nativeSource) <- prepareHandlers namespace
+                  (codeHandlers generatedCode) (codeExports generatedCode) (codeSupport generatedCode)
+                -- handler 方法体的结构按每个绑定换成 effect 方法的结构；首次尚无 Handlers 时不检查读取。
+                methods <- either die pure (composeMethods (isJust nativeSource)
+                  (codeBindings generatedCode) (codeReads generatedCode) shapes)
                 let generated = directory </> "Generated"
                     cachePath = generated </> ".scope-cache"
-                    methods = [(method, shape) | ((_, method), shape) <- shapes]
                 dependencies <- mapM readUtf8 structureSources
                 let cacheKey = show (plan, methods, dependencies)
                 cached <- tryIOError (readExisting cachePath)
@@ -92,7 +93,7 @@ main = do
                 _ <- evaluate (length structure)
                 assets <- checkAssets namespace
                   [("Effects", contracts), ("Program", program ++ structure), ("Handlers", handlers)]
-                  assetRoots [(owner, method) | (owner, method, _, _) <- wrappers] owners prototype nativeSource
+                  (codeAssetRoots generatedCode) (codeAssetContracts generatedCode) nativeSource
                 createDirectoryIfMissing True generated
                 changed <- sequence
                   [ writeIfChanged (generated </> "Effects.hs") contracts

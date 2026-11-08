@@ -6,16 +6,16 @@ import Framework.Effect.Asset (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Generated.Effects", assetName = "FilePaths", assetFile = "demo/ScopeReuseDemo/Generated/Effects.hs", assetLine = 30, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Generated.Effects", assetName = "FilePaths", assetFile = "demo/ScopeReuseDemo/Generated/Effects.hs", assetLine = 20, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "ScopeReuseDemo.Generated.Effects", assetName = "FilePaths", assetFile = "demo/ScopeReuseDemo/Generated/Effects.hs", assetLine = 30, assetColumn = 21}
+          [ AssetSymbol {assetModule = "ScopeReuseDemo.Generated.Effects", assetName = "FilePaths", assetFile = "demo/ScopeReuseDemo/Generated/Effects.hs", assetLine = 20, assetColumn = 21}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demo/ScopeReuseDemo/Generated/Effects.hs", assetLine = 34, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demo/ScopeReuseDemo/Generated/Effects.hs", assetLine = 24, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "ScopeReuseDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demo/ScopeReuseDemo/Generated/Effects.hs", assetLine = 34, assetColumn = 22}
+          [ AssetSymbol {assetModule = "ScopeReuseDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demo/ScopeReuseDemo/Generated/Effects.hs", assetLine = 24, assetColumn = 22}
           ]
       , assetFields = []
       }

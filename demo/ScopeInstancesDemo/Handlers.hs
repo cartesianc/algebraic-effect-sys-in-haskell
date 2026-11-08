@@ -1,150 +1,131 @@
--- 原生 Haskell 取值；SDK 生成方法入口包装，运行编译 Generated 副本。
+-- handler 是不带参数的类方法：按表示类型 require 资产，用 raise 报告自己的失败。
+-- scope 的开启与关闭由 gen 按注册装配到使用闭包上，handler 中不调用 open／close。
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
 module ScopeInstancesDemo.Handlers () where
 
-import Framework.SDK (Effect(..))
+import Framework.SDK (Raises(..), Reads(..))
 import ScopeInstancesDemo.Generated.Effects
 import ScopeInstancesDemo.Types
 import Control.Exception (bracketOnError, displayException)
 import Control.Monad (unless)
 import Control.Monad.IO.Class (liftIO)
 import System.Directory (createDirectoryIfMissing)
-import System.FilePath ((</>))
-import System.IO (IOMode(ReadWriteMode), hClose, hFlush, hIsClosed, hPutStrLn, openFile, readFile')
+import System.FilePath ((</>), takeFileName)
+import System.IO (IOMode(AppendMode), hClose, hFlush, hIsClosed, hPutStrLn, openFile, readFile')
 import System.IO.Error (tryIOError)
 
-instance PrepareFilesInputs m => PrepareFilesEffect m where
+instance PrepareFilesLayer m => PrepareFilesHandler m where
   prepareFiles = do
-    liftIO $ do
-      let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
-          firstFile = outputDirectory </> "one.txt"
-          secondFile = outputDirectory </> "two.txt"
-          selection = outputDirectory </> "selected.txt"
-          journal = outputDirectory </> "events.txt"
+    let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+    outcome <- liftIO $ tryIOError $ do
       createDirectoryIfMissing True outputDirectory
-      mapM_ (`writeFile` "") [firstFile, secondFile, journal]
-      writeFile selection firstFile
+      -- 仅重置本 demo 的产物；初始选择第一份文件。
+      mapM_ ((`writeFile` "") . (outputDirectory </>)) ["one.txt", "two.txt", "events.txt"]
+      writeFile (outputDirectory </> "selected.txt") (outputDirectory </> "one.txt")
+    either (raise . PrepareFilesError . displayException) pure outcome
     pure Nothing
 
--- 参数确实由 instance 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
-instance FileLocationInputs m => FileLocationEffect m where
-  getFileName = do
+-- 选择由普通 Excu 节点改写；下一条使用闭包的 requests 会重新读取它。
+instance SelectSecondLayer m => SelectSecondHandler m where
+  selectSecond = do
     let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
-        selection = outputDirectory </> "selected.txt"
-        journal = outputDirectory </> "events.txt"
-    path <- liftIO (readFile' selection)
-    liftIO (appendFile journal ("argument " ++ path ++ "\n"))
-    pure (FileName path)
+    outcome <- liftIO (tryIOError (writeFile (outputDirectory </> "selected.txt") (outputDirectory </> "two.txt")))
+    either (raise . SelectSecondError . displayException) pure outcome
+    pure Nothing
 
-instance FileResourceInputs m => FileResourceEffect m where
-  getOpenedFile = do
-    FileName path <- require @FileName
+instance SelectFirstLayer m => SelectFirstHandler m where
+  selectFirst = do
+    let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+    outcome <- liftIO (tryIOError (writeFile (outputDirectory </> "selected.txt") (outputDirectory </> "one.txt")))
+    either (raise . SelectFirstError . displayException) pure outcome
+    pure Nothing
+
+-- 参数确实由 parser 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
+instance SelectedFileLayer m => SelectedFileHandler m where
+  selectedFile = do
+    let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
+        journal = outputDirectory </> "events.txt"
+    outcome <- liftIO $ tryIOError $ do
+      path <- readFile' (outputDirectory </> "selected.txt")
+      appendFile journal ("argument " ++ path ++ "\n")
+      pure path
+    either (raise . SelectedFileError . displayException) pure outcome
+
+instance AcquireFileLayer m => AcquireFileHandler m where
+  acquireFile = do
+    path <- require @FilePath
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     outcome <- liftIO $ tryIOError $
-      bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
+      bracketOnError (openFile path AppendMode) hClose $ \file -> do
         appendFile journal ("acquire " ++ path ++ "\n")
-        pure (OpenedFile (FileHandle path file))
-    either (raise . FileResourceError . displayException) pure outcome
+        pure (FileHandle path file)
+    either (raise . AcquireFileError . displayException) pure outcome
 
--- 与原写法相同：没有参数、状态标记、key 或 SDK 消费方法。
-instance FileSessionInputs m => FileSessionEffect m where
-  openFileSession = do
-    OpenedFile (FileHandle path _) <- request @OpenedFile
+-- requests 在开启前驱动 FileResource 打开文件；open／close 只读取 scope 内的资源。
+instance OpenSelectedFileLayer m => OpenSelectedFileHandler m where
+  openSelectedFile = do
+    FileHandle path _ <- require @FileHandle
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
-    liftIO (appendFile journal ("open " ++ path ++ "\n"))
+    outcome <- liftIO (tryIOError (appendFile journal ("open " ++ path ++ "\n")))
+    either (raise . OpenSelectedFileError . displayException) pure outcome
     pure Nothing
-  closeFileSession = do
-    OpenedFile (FileHandle path file) <- require @OpenedFile
+
+instance CloseSelectedFileLayer m => CloseSelectedFileHandler m where
+  closeSelectedFile = do
+    FileHandle path file <- require @FileHandle
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
-    liftIO $ do
+    outcome <- liftIO $ tryIOError $ do
       hClose file
       appendFile journal ("close " ++ path ++ "\n")
+    either (raise . CloseSelectedFileError . displayException) pure outcome
     pure Nothing
 
-instance CheckIndependentInputs m => CheckIndependentEffect m where
-  checkIndependent = do
+-- UseFirst、UseSecond、ReopenFirst 共用：scope 内 require 稳定参数与本条闭包选中的实例。
+instance CheckSelectionLayer m => CheckSelectionHandler m where
+  checkSelection = do
+    selected <- require @FilePath
+    FileHandle path file <- require @FileHandle
+    closed <- liftIO (hIsClosed file)
+    unless (path == selected && not closed) $
+      raise (CheckSelectionError ("The instance does not match the current argument " ++ selected))
+    outcome <- liftIO $ tryIOError $ do
+      hPutStrLn file "used"
+      hFlush file
+    either (raise . CheckSelectionError . displayException) pure outcome
+    liftIO (putStrLn ("[use] " ++ takeFileName path ++ ": the current argument selected this instance; its Handle is live"))
+    pure Nothing
+
+-- 各使用闭包已退出并自动关闭实例；此处只读日志和文件，不 require 旧资源。
+instance CheckJournalLayer m => CheckJournalHandler m where
+  checkJournal = do
     let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
         firstFile = outputDirectory </> "one.txt"
         secondFile = outputDirectory </> "two.txt"
-        selection = outputDirectory </> "selected.txt"
-    liftIO (writeFile selection firstFile)
-    FileName _ <- request @FileName
-    openFileSession
-    OpenedFile (FileHandle pathA fileA) <- require @OpenedFile
-    openFileSession
-    OpenedFile (FileHandle pathA' fileA') <- require @OpenedFile
-    unless (pathA == firstFile && pathA' == firstFile && fileA == fileA') $
-      raise (CheckIndependentError "Equal arguments did not reuse the same Handle")
-    liftIO (putStrLn "[check] equal opening values reuse the same file Handle")
-
-    liftIO (writeFile selection secondFile)
-    FileName _ <- request @FileName
-    openFileSession
-    OpenedFile (FileHandle pathB fileB) <- require @OpenedFile
-    unless (pathB == secondFile && fileA /= fileB) $
-      raise (CheckIndependentError "Different opening values did not select independent files")
-    liftIO $ do
-      hPutStrLn fileA "first"
-      hPutStrLn fileB "second"
-      hFlush fileA
-      hFlush fileB
-    closeFileSession
-    closeFileSession
-    (closedA, closedB) <- liftIO ((,) <$> hIsClosed fileA <*> hIsClosed fileB)
-    unless (not closedA && closedB) $
-      raise (CheckIndependentError "Closing the second instance affected the first")
-    liftIO (putStrLn "[check] require selects the current instance; repeated close closes only file 2")
-    -- 第一份在本链内仍保持开启；本链退出时由 SDK 自动关闭。
-    pure Nothing
-
-instance CheckReopenInputs m => CheckReopenEffect m where
-  checkReopen = do
-    let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
-        firstFile = outputDirectory </> "one.txt"
-        secondFile = outputDirectory </> "two.txt"
-        selection = outputDirectory </> "selected.txt"
-        journal = outputDirectory </> "events.txt"
-    liftIO (writeFile selection firstFile)
-    FileName _ <- request @FileName
-    openFileSession
-    OpenedFile (FileHandle pathA fileA) <- require @OpenedFile
-    events <- liftIO (lines <$> readFile' journal)
-    unless (pathA == firstFile && length (filter (== "acquire " ++ firstFile) events) == 2) $
-      raise (CheckReopenError "The next chain did not reopen the first file")
-    closeFileSession
-    closedA <- liftIO (hIsClosed fileA)
-    unless closedA (raise (CheckReopenError "First file was not closed"))
-    liftIO (putStrLn "[check] another Node explicitly reopens file 1 after the previous chain ended")
-
-    liftIO (writeFile selection secondFile)
-    FileName _ <- request @FileName
-    openFileSession
-    OpenedFile (FileHandle pathB fileB) <- require @OpenedFile
-    closedB <- liftIO (hIsClosed fileB)
-    unless (pathB == secondFile && not closedB) $
-      raise (CheckReopenError "Opening a closed instance did not obtain a live file")
-    liftIO $ hPutStrLn fileB "reopened" >> hFlush fileB
-    closeFileSession
-    finalClosed <- liftIO (hIsClosed fileB)
-    finalEvents <- liftIO (lines <$> readFile' journal)
-    let expectedEvents =
+    outcome <- liftIO $ tryIOError $ do
+      events <- readFile' (outputDirectory </> "events.txt")
+      first <- readFile' firstFile
+      second <- readFile' secondFile
+      pure (lines events, lines first, lines second)
+    (events, first, second) <- either (raise . CheckJournalError . displayException) pure outcome
+    let expected =
           [ operation ++ path
-          | operation <- ["acquire ", "close ", "open ", "argument "]
-          , path <- [firstFile, secondFile]
+          | path <- [firstFile, secondFile, firstFile]
+          , operation <- ["argument ", "acquire ", "open ", "close "]
           ]
-        countsMatch = all (\event -> length (filter (== event) finalEvents) == 2) expectedEvents
-    unless (finalClosed && countsMatch) $
-      raise (CheckReopenError ("Unexpected lifecycle or extra Context evaluation: " ++ show finalEvents))
+    unless (events == expected) $
+      raise (CheckJournalError ("Unexpected lifecycle or extra Context evaluation: " ++ show events))
+    unless (first == ["used", "used"] && second == ["used"]) $
+      raise (CheckJournalError ("Unexpected file contents: " ++ show (first, second)))
     liftIO $ do
-      putStrLn "[check] closed file 2 reopened successfully; both files now closed"
-      putStrLn "[check] actual acquisitions/closures: file 1 = 2/2; file 2 = 2/2"
-      putStrLn "[check] five open calls, four argument requests; require reuses stable parameters within each chain"
+      putStrLn "[check] each use closure opened the instance its current argument selected and closed it on exit"
+      putStrLn "[check] actual acquisitions/closures: file 1 = 2/2; file 2 = 1/1"
+      putStrLn "[check] three argument requests, three open calls; require reuses the stable parameter within each chain"
     pure Nothing

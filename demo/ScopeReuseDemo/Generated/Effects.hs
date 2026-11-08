@@ -1,32 +1,22 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- 自动生成；通过 SDK 的 effect-codegen 更新，手写注册与 handler 位于上级目录。
 module ScopeReuseDemo.Generated.Effects where
 
-import Framework.Effect.Contract (Effect(..), Registered)
-import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified Framework.Generated as SDK
 import Control.Monad.IO.Class (MonadIO)
 import ScopeReuseDemo.Types
 
--- SDK 提供运行载体与空存储；Context 经声明的 request/require 取得。
-type Root = SDK.Root ContextValues Errors
+-- SDK 提供运行载体；资产存储与错误分类由本文件给出。
 type App = SDK.App ContextValues Errors
 
--- 每个 Context 的契约类型：名字来自 Asset 声明，包装其表示类型；只能由该生产方构造。
+-- 每个 Context 的资产类型：名字来自 Asset 声明，包装其表示类型。
 newtype FilePaths = FilePaths (SharedPaths)
 deriving instance Eq (SharedPaths) => Eq FilePaths
 deriving instance Show (SharedPaths) => Show FilePaths
@@ -35,213 +25,100 @@ newtype OpenedFile = OpenedFile (SharedFile)
 deriving instance Eq (SharedFile) => Eq OpenedFile
 deriving instance Show (SharedFile) => Show OpenedFile
 
--- 方法定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = GetFilePathsGen | ReadFilePathsGen | PrepareProbeGen | GetOpenedFileGen | ReadOpenedFileGen | OpenSharedFileGen | CloseSharedFileGen | WriteFirstGen | WriteSecondGen | WriteThirdGen | VerifyReuseGen
+-- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
+data MethodGen = GetFilePathsGen | ReadFilePathsGen | RunPrepareProbeGen | GetOpenedFileGen | ReadOpenedFileGen | OpenSharedFileScopeGen | CloseSharedFileScopeGen | RunWriteFirstGen | RunWriteSecondGen | RunWriteThirdGen | RunVerifyReuseGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
-data FileLocations
+-- handler sharedPaths：绑定到 FileLocations。
+type SharedPathsLayer m = (SDK.Raises SharedPathsError m, MonadIO m)
+class SharedPathsHandler m where
+  sharedPaths :: m SharedPaths
 
-type FileLocationsInputs m = (FrameworkRoot.Capability FileLocations m, Effect Root m, MonadIO m)
-instance FrameworkRoot.Capability FileLocations App
-
-class (Effect Root m) => FileLocationsEffect m where
-  getFilePaths :: m (Produce FileLocations)
-  readFilePaths :: m (Produce FileLocations)
-  readFilePaths = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileLocations" ContextBindingError [("PrepareProbe", SDK.RequestValue), ("FileResource", SDK.RequireValue), ("WriteFirst", SDK.RequestValue), ("WriteSecond", SDK.RequestValue), ("WriteThird", SDK.RequestValue), ("VerifyReuse", SDK.RequestValue)] (Just (SDK.ScopeInput "FileLocations")) boundFileLocations getFilePaths
-  {-# MINIMAL getFilePaths #-}
-
-instance (Monad m, Effect Root m, FileLocationsEffect m) => Effect FileLocations m where
-  type Registration FileLocations = Registered FileLocationsEffect Root
-  type Typing FileLocations = 'SDK.ContextKind
-  type Require FileLocations = SDK.Void
-  type Produce FileLocations = FilePaths
-  type Error FileLocations = FileLocationsError
-  raise (FileLocationsError description) = SDK.failEffect "FileLocations" FileLocationsFailure description
-  handler = FrameworkRoot.handler @Root
-
-data PrepareProbe
-
-type PrepareProbeInputs m = (FrameworkRoot.Capability PrepareProbe m, Effect Root m, Provides FilePaths m, MonadIO m)
-instance FrameworkRoot.Capability PrepareProbe App
-
-class (Effect Root m, Provides FilePaths m) => PrepareProbeEffect m where
-  prepareProbe :: m (Maybe String)
-  {-# MINIMAL prepareProbe #-}
-
-instance (Monad m, Effect Root m, PrepareProbeEffect m) => Effect PrepareProbe m where
-  type Registration PrepareProbe = Registered PrepareProbeEffect Root
-  type Typing PrepareProbe = 'SDK.ExcuKind
-  type Require PrepareProbe = FilePaths
-  type Error PrepareProbe = PrepareProbeError
-  raise (PrepareProbeError description) = SDK.failEffect "PrepareProbe" PrepareProbeFailure description
-  handler = FrameworkRoot.handler @Root
-
-data FileResource
-
-type FileResourceInputs m = (FrameworkRoot.Capability FileResource m, Effect Root m, Provides FilePaths m, MonadIO m)
-instance FrameworkRoot.Capability FileResource App
-
-class (Effect Root m, Provides FilePaths m) => FileResourceEffect m where
-  getOpenedFile :: m (Produce FileResource)
-  readOpenedFile :: m (Produce FileResource)
-  readOpenedFile = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handler @Root) $
-    SDK.readContext "FileResource" ContextBindingError [("SharedFileScope", SDK.RequestValue), ("WriteFirst", SDK.RequireValue), ("WriteSecond", SDK.RequireValue), ("WriteThird", SDK.RequireValue)] Nothing boundFileResource getOpenedFile
-  {-# MINIMAL getOpenedFile #-}
-
-instance (Monad m, Effect Root m, FileResourceEffect m) => Effect FileResource m where
-  type Registration FileResource = Registered FileResourceEffect Root
-  type Typing FileResource = 'SDK.ContextKind
-  type Require FileResource = FilePaths
-  type Produce FileResource = OpenedFile
-  type Error FileResource = FileResourceError
-  raise (FileResourceError description) = SDK.failEffect "FileResource" FileResourceFailure description
-  handler = FrameworkRoot.handler @Root
-
-data SharedFileScope
-
-type SharedFileScopeInputs m = (FrameworkRoot.Capability SharedFileScope m, Effect Root m, Provides OpenedFile m, MonadIO m)
-instance FrameworkRoot.Capability SharedFileScope App
-
-class (Effect Root m, Provides OpenedFile m) => SharedFileScopeEffect m where
-  openSharedFile :: m (Maybe String)
-  closeSharedFile :: m (Maybe String)
-  {-# MINIMAL openSharedFile, closeSharedFile #-}
-
-instance (Monad m, Effect Root m, SharedFileScopeEffect m) => Effect SharedFileScope m where
-  type Registration SharedFileScope = Registered SharedFileScopeEffect Root
-  type Typing SharedFileScope = 'SDK.ScopedKind
-  type Require SharedFileScope = OpenedFile
-  type Error SharedFileScope = SharedFileScopeError
-  raise (SharedFileScopeError description) = SDK.failEffect "SharedFileScope" SharedFileScopeFailure description
-  handler = FrameworkRoot.handler @Root
-
-data WriteFirst
-
-type WriteFirstInputs m = (FrameworkRoot.Capability WriteFirst m, Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m, SharedFileScopeEffect m, MonadIO m)
-instance FrameworkRoot.Capability WriteFirst App
-
-class (Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m) => WriteFirstEffect m where
-  writeFirst :: m (Maybe String)
-  {-# MINIMAL writeFirst #-}
-
-instance (Monad m, Effect SharedFileScope m, WriteFirstEffect m) => Effect WriteFirst m where
-  type Registration WriteFirst = Registered WriteFirstEffect SharedFileScope
-  type Typing WriteFirst = 'SDK.ExcuKind
-  type Require WriteFirst = (FilePaths, OpenedFile)
-  type Error WriteFirst = WriteFirstError
-  raise (WriteFirstError description) = SDK.failEffect "WriteFirst" WriteFirstFailure description
-  handler = FrameworkRoot.handler @Root
-
-data WriteSecond
-
-type WriteSecondInputs m = (FrameworkRoot.Capability WriteSecond m, Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m, SharedFileScopeEffect m, MonadIO m)
-instance FrameworkRoot.Capability WriteSecond App
-
-class (Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m) => WriteSecondEffect m where
-  writeSecond :: m (Maybe String)
-  {-# MINIMAL writeSecond #-}
-
-instance (Monad m, Effect SharedFileScope m, WriteSecondEffect m) => Effect WriteSecond m where
-  type Registration WriteSecond = Registered WriteSecondEffect SharedFileScope
-  type Typing WriteSecond = 'SDK.ExcuKind
-  type Require WriteSecond = (FilePaths, OpenedFile)
-  type Error WriteSecond = WriteSecondError
-  raise (WriteSecondError description) = SDK.failEffect "WriteSecond" WriteSecondFailure description
-  handler = FrameworkRoot.handler @Root
-
-data WriteThird
-
-type WriteThirdInputs m = (FrameworkRoot.Capability WriteThird m, Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m, SharedFileScopeEffect m, MonadIO m)
-instance FrameworkRoot.Capability WriteThird App
-
-class (Effect SharedFileScope m, Provides FilePaths m, Provides OpenedFile m) => WriteThirdEffect m where
-  writeThird :: m (Maybe String)
-  {-# MINIMAL writeThird #-}
-
-instance (Monad m, Effect SharedFileScope m, WriteThirdEffect m) => Effect WriteThird m where
-  type Registration WriteThird = Registered WriteThirdEffect SharedFileScope
-  type Typing WriteThird = 'SDK.ExcuKind
-  type Require WriteThird = (FilePaths, OpenedFile)
-  type Error WriteThird = WriteThirdError
-  raise (WriteThirdError description) = SDK.failEffect "WriteThird" WriteThirdFailure description
-  handler = FrameworkRoot.handler @Root
-
-data VerifyReuse
-
-type VerifyReuseInputs m = (FrameworkRoot.Capability VerifyReuse m, Effect Root m, Provides FilePaths m, MonadIO m)
-instance FrameworkRoot.Capability VerifyReuse App
-
-class (Effect Root m, Provides FilePaths m) => VerifyReuseEffect m where
-  verifyReuse :: m (Maybe String)
-  {-# MINIMAL verifyReuse #-}
-
-instance (Monad m, Effect Root m, VerifyReuseEffect m) => Effect VerifyReuse m where
-  type Registration VerifyReuse = Registered VerifyReuseEffect Root
-  type Typing VerifyReuse = 'SDK.ExcuKind
-  type Require VerifyReuse = FilePaths
-  type Error VerifyReuse = VerifyReuseError
-  raise (VerifyReuseError description) = SDK.failEffect "VerifyReuse" VerifyReuseFailure description
-  handler = FrameworkRoot.handler @Root
-
--- 依值入口：request 重新生产，require 读取已有绑定；来源由注册解析，不由消费方指名。
--- Reading 是 require 的结果：持续资产为 History，其余为契约本身；只由资产自己的声明决定。
-class Provides contract m where
-  type Reading contract
-  request :: m contract
-  require :: m (Reading contract)
-
-instance (FileLocationsEffect App) => Provides FilePaths App where
-  type Reading FilePaths = FilePaths
-  request = SDK.provideContext "FileLocations" "FilePaths" ContextBindingError [("PrepareProbe", getFilePaths), ("WriteFirst", getFilePaths), ("WriteSecond", getFilePaths), ("WriteThird", getFilePaths), ("VerifyReuse", getFilePaths)]
-  require = SDK.provideContext "FileLocations" "FilePaths" ContextBindingError [("FileResource", readFilePaths)]
-
-instance (FileResourceEffect App) => Provides OpenedFile App where
-  type Reading OpenedFile = OpenedFile
-  request = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("SharedFileScope", getOpenedFile)]
-  require = SDK.provideContext "FileResource" "OpenedFile" ContextBindingError [("SharedFileScope", readOpenedFile), ("WriteFirst", readOpenedFile), ("WriteSecond", readOpenedFile), ("WriteThird", readOpenedFile)]
-
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
-newtype FileLocationsError = FileLocationsError String
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "sharedPaths" 匹配。
+newtype SharedPathsError = SharedPathsError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+-- handler prepareProbe：绑定到 PrepareProbe。
+type PrepareProbeLayer m = (SDK.Reads (SharedPaths) m, SDK.Raises PrepareProbeError m, MonadIO m)
+class PrepareProbeHandler m where
+  prepareProbe :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "prepareProbe" 匹配。
 newtype PrepareProbeError = PrepareProbeError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
-newtype FileResourceError = FileResourceError String
+-- handler acquireFile：绑定到 FileResource。
+type AcquireFileLayer m = (SDK.Reads (SharedPaths) m, SDK.Raises AcquireFileError m, MonadIO m)
+class AcquireFileHandler m where
+  acquireFile :: m SharedFile
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "acquireFile" 匹配。
+newtype AcquireFileError = AcquireFileError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
-newtype SharedFileScopeError = SharedFileScopeError String
+-- handler openSharedFile：绑定到 SharedFileScope。
+type OpenSharedFileLayer m = (SDK.Reads (SharedFile) m, SDK.Raises OpenSharedFileError m, MonadIO m)
+class OpenSharedFileHandler m where
+  openSharedFile :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openSharedFile" 匹配。
+newtype OpenSharedFileError = OpenSharedFileError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+-- handler closeSharedFile：绑定到 SharedFileScope。
+type CloseSharedFileLayer m = (SDK.Reads (SharedFile) m, SDK.Raises CloseSharedFileError m, MonadIO m)
+class CloseSharedFileHandler m where
+  closeSharedFile :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeSharedFile" 匹配。
+newtype CloseSharedFileError = CloseSharedFileError String
+  deriving (Eq, Show, Read)
+
+-- handler writeFirst：绑定到 WriteFirst。
+type WriteFirstLayer m = (SDK.Reads (SharedFile) m, SDK.Raises WriteFirstError m, MonadIO m)
+class WriteFirstHandler m where
+  writeFirst :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeFirst" 匹配。
 newtype WriteFirstError = WriteFirstError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+-- handler writeSecond：绑定到 WriteSecond。
+type WriteSecondLayer m = (SDK.Reads (SharedFile) m, SDK.Raises WriteSecondError m, MonadIO m)
+class WriteSecondHandler m where
+  writeSecond :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeSecond" 匹配。
 newtype WriteSecondError = WriteSecondError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+-- handler writeThird：绑定到 WriteThird。
+type WriteThirdLayer m = (SDK.Reads (SharedFile) m, SDK.Raises WriteThirdError m, MonadIO m)
+class WriteThirdHandler m where
+  writeThird :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeThird" 匹配。
 newtype WriteThirdError = WriteThirdError String
   deriving (Eq, Show, Read)
 
--- SDK 生成的本地错误只接收消息；类型唯一确定 raise 来源。
+-- handler verifyReuse：绑定到 VerifyReuse。
+type VerifyReuseLayer m = (SDK.Reads (SharedPaths) m, SDK.Raises VerifyReuseError m, MonadIO m)
+class VerifyReuseHandler m where
+  verifyReuse :: m (Maybe String)
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "verifyReuse" 匹配。
 newtype VerifyReuseError = VerifyReuseError String
   deriving (Eq, Show, Read)
 
--- 统一失败协议的分类标签；消息与来源由 SDK.Failure 保存。
-data Errors = FileLocationsFailure | PrepareProbeFailure | FileResourceFailure | SharedFileScopeFailure | WriteFirstFailure | WriteSecondFailure | WriteThirdFailure | VerifyReuseFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+-- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
+data Errors = SharedPathsFailure | PrepareProbeFailure | AcquireFileFailure | OpenSharedFileFailure | CloseSharedFileFailure | WriteFirstFailure | WriteSecondFailure | WriteThirdFailure | VerifyReuseFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。
 data ContextValues = ContextValues
-  { boundFileLocations :: Maybe (Produce FileLocations)
-  , boundFileResource :: Maybe (Produce FileResource)
+  { boundFileLocations :: Maybe FilePaths
+  , boundFileResource :: Maybe OpenedFile
   }
 
 emptyContexts :: ContextValues

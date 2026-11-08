@@ -1,33 +1,32 @@
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE TypeFamilies #-}
 
--- 自动生成；只登记末端句柄，Node algebra 才 lower，业务组合仍在 handler 内。
+-- 自动生成；只登记末端入口与原型，执行由 SDK 的 interpreter 完成。
 module FileDemo.Generated.Program where
 
-import Framework.Generated (Effect(..), EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
+import Framework.Generated (EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.Generated as SDK
 import qualified Framework.Effect.Contract as FrameworkRoot
-import FileDemo.Generated.Effects hiding (request, require)
+import FileDemo.Generated.Effects
 import qualified FileDemo.Generated.Handlers as Handlers
 import FileDemo.Types
 
 
--- 仅汇总所选末端的成功产物，不保存共享绑定或增加完成包装。
-data Results = WriteFirstLineResult (Produce WriteFirstLine) | AppendLineResult (Produce AppendLine)
+-- 仅汇总所选末端的成功结果，不保存共享绑定或增加完成包装。
+data Results = WriteFirstLineResult () | AppendLineResult ()
   deriving Show
 
--- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower，业务调用仍在 instance 内。
--- 第二个列表是各转折契约的读取末端：按 require 取得资产，返回它当前的构造器名。
--- 第三个列表是各持续资产的生产步骤：会话按需启动，解析器或 request 自己发布一次资产。
+-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
+-- 第二个列表是各转折契约的读取末端：读取资产，返回它当前的构造器名。
+-- 第三个列表是各持续资产的生产步骤：会话按需启动，Stream 单步取得原始输入，parser 发布一次资产。
 compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]
                      , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "WriteFirstLine" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteFirstLineResult <$> (() <$ writeFirstLine)))))
-      , SDK.targetApp "AppendLine" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (AppendLineResult <$> (() <$ appendLine)))))
+    ( [ SDK.targetApp "WriteFirstLine" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteFirstLineResult <$> (() <$ Handlers.runWriteFirstLine)))))
+      , SDK.targetApp "AppendLine" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (AppendLineResult <$> (() <$ Handlers.runAppendLine)))))
       ]
-    , [ SDK.targetApp "FileText" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (caseOfFileText <$> readFileText))))
+    , [ SDK.targetApp "FileText" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (caseOfFileText <$> Handlers.readFileText))))
       ]
     , []
     )
@@ -49,7 +48,7 @@ generatedPrototype =
         [ SDK.EffectSpec
             { SDK.name = "FileLocation"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("FileName") (SDK.TypeRef ("[Char]"))) (Just ()) (Just ()) (Nothing)
+                SDK.Context (SDK.AssetDecl ("FileName") (SDK.TypeRef ("[Char]"))) (Just "locateFile") (True) (False)
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -64,15 +63,15 @@ generatedPrototype =
             , SDK.typing =
                 SDK.Context
                   (SDK.AssetDecl ("OpenedFile") (SDK.TypeRef ("FileHandle")))
-                  (Just ())
-                  (Just ())
-                  (Nothing)
+                  (Just "acquireFile")
+                  (True)
+                  (False)
             , SDK.input = "ValidateFileName"
             , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("FileName")]
             }
         , SDK.EffectSpec
             { SDK.name = "FileSession"
-            , SDK.typing = SDK.Scoped (Just "openFileSession") (Just "closeFileSession")
+            , SDK.typing = SDK.Scoped (Just "openSession") (Just "closeSession")
             , SDK.input = "ValidateFileName"
             , SDK.demands =
                 [SDK.Demand (SDK.RequestAccess) ("OpenedFile"), SDK.Demand (SDK.RequireAccess) ("OpenedFile")]
@@ -83,7 +82,7 @@ generatedPrototype =
                 SDK.Error
                   (Just "detectFileSession")
                   (Just "resolveFileSession")
-                  ([SDK.RaisedBy ("ReadFile"), SDK.RaisedBy ("WriteFirstLine"), SDK.RaisedBy ("AppendLine")])
+                  ([SDK.RaisedBy ("readFileContent"), SDK.RaisedBy ("writeFirstLine"), SDK.RaisedBy ("appendLine")])
             , SDK.input = "FileSession"
             , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("OpenedFile")]
             }
@@ -96,7 +95,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "ExtractFileText"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("FileText") (SDK.TypeRef ("TextState"))) (Just ()) (Just ()) (Nothing)
+                SDK.Context
+                  (SDK.AssetDecl ("FileText") (SDK.TypeRef ("TextState")))
+                  (Just "parseFileText")
+                  (True)
+                  (False)
             , SDK.input = "ReadFile"
             , SDK.demands = []
             }
@@ -140,7 +143,7 @@ generatedPrototype =
             { SDK.effectName = "ValidateFileName"
             , SDK.effectKind = SDK.PureKind
             , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, ValidateFileNameGen)]
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunValidateFileNameGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("FileName") ("FileLocation")]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
@@ -202,7 +205,7 @@ generatedPrototype =
             , SDK.effectKind = SDK.ErrorKind
             , SDK.effectInput = "FileSession"
             , SDK.effectMethods =
-                [(SDK.ErrorDetect, DetectFileSessionGen), (SDK.ErrorResolve, ResolveFileSessionGen)]
+                [(SDK.ErrorDetect, DetectFileRecoveryGen), (SDK.ErrorResolve, ResolveFileRecoveryGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedFile") ("FileResource")]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
@@ -221,7 +224,7 @@ generatedPrototype =
             { SDK.effectName = "ReadFile"
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "FileSession"
-            , SDK.effectMethods = [(SDK.HandlerMethod, ReadFileContentGen)]
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunReadFileGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedFile") ("FileResource")]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
@@ -260,7 +263,7 @@ generatedPrototype =
             { SDK.effectName = "WriteFirstLine"
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "FileSession"
-            , SDK.effectMethods = [(SDK.HandlerMethod, WriteFirstLineGen)]
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunWriteFirstLineGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand (SDK.RequireAccess) ("FileTextBlank") ("ExtractFileText")
                 , SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedFile") ("FileResource")
@@ -282,7 +285,7 @@ generatedPrototype =
             { SDK.effectName = "AppendLine"
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "FileSession"
-            , SDK.effectMethods = [(SDK.HandlerMethod, AppendLineGen)]
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunAppendLineGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand (SDK.RequireAccess) ("FileTextWritten") ("ExtractFileText")
                 , SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedFile") ("FileResource")
@@ -309,39 +312,35 @@ generatedPrototype =
             (SDK.ContextRequire)
             (SDK.Choice ([SDK.Empty, SDK.Call (GetFileNameGen)]))
         , SDK.MethodDefinition
-            (ValidateFileNameGen)
-            (ValidateFileNameGen)
+            (RunValidateFileNameGen)
+            (RunValidateFileNameGen)
             (SDK.HandlerMethod)
             (SDK.Call (ReadFileNameGen))
         , SDK.MethodDefinition
             (GetOpenedFileGen)
             (GetOpenedFileGen)
             (SDK.ContextRequest)
-            (SDK.Sequence ([SDK.Call (ValidateFileNameGen), SDK.Call (ReadFileNameGen)]))
+            (SDK.Sequence ([SDK.Call (RunValidateFileNameGen), SDK.Call (ReadFileNameGen)]))
         , SDK.MethodDefinition (ReadOpenedFileGen) (GetOpenedFileGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition
             (OpenFileSessionGen)
             (OpenFileSessionGen)
             (SDK.ScopeOpen)
-            (SDK.Call (GetOpenedFileGen))
+            (SDK.Sequence ([SDK.Call (GetOpenedFileGen), SDK.Call (RunValidateFileNameGen)]))
         , SDK.MethodDefinition
             (CloseFileSessionGen)
             (OpenFileSessionGen)
             (SDK.ScopeClose)
             (SDK.Call (ReadOpenedFileGen))
         , SDK.MethodDefinition
-            (DetectFileSessionGen)
-            (DetectFileSessionGen)
+            (DetectFileRecoveryGen)
+            (DetectFileRecoveryGen)
             (SDK.ErrorDetect)
             (SDK.Call (ReadOpenedFileGen))
+        , SDK.MethodDefinition (ResolveFileRecoveryGen) (DetectFileRecoveryGen) (SDK.ErrorResolve) (SDK.Empty)
         , SDK.MethodDefinition
-            (ResolveFileSessionGen)
-            (DetectFileSessionGen)
-            (SDK.ErrorResolve)
-            (SDK.Call (CloseFileSessionGen))
-        , SDK.MethodDefinition
-            (ReadFileContentGen)
-            (ReadFileContentGen)
+            (RunReadFileGen)
+            (RunReadFileGen)
             (SDK.HandlerMethod)
             (
               SDK.Sequence
@@ -355,23 +354,20 @@ generatedPrototype =
             (GetFileTextGen)
             (GetFileTextGen)
             (SDK.ContextRequest)
-            (SDK.Call (ReadFileContentGen))
+            (SDK.Call (RunReadFileGen))
         , SDK.MethodDefinition
             (ReadFileTextGen)
             (GetFileTextGen)
             (SDK.ContextRequire)
             (SDK.Choice ([SDK.Empty, SDK.Call (GetFileTextGen)]))
         , SDK.MethodDefinition
-            (WriteFirstLineGen)
-            (WriteFirstLineGen)
+            (RunWriteFirstLineGen)
+            (RunWriteFirstLineGen)
             (SDK.HandlerMethod)
-            (
-              SDK.Sequence
-                ([SDK.Call (OpenFileSessionGen), SDK.Call (ReadFileTextGen), SDK.Call (ReadOpenedFileGen)])
-            )
+            (SDK.Sequence ([SDK.Call (OpenFileSessionGen), SDK.Call (ReadOpenedFileGen)]))
         , SDK.MethodDefinition
-            (AppendLineGen)
-            (AppendLineGen)
+            (RunAppendLineGen)
+            (RunAppendLineGen)
             (SDK.HandlerMethod)
             (
               SDK.Sequence
@@ -399,17 +395,14 @@ generatedPrototype =
             { SDK.chainNode = [0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "WriteFirstLine"
-            , SDK.chainEntry = WriteFirstLineGen
+            , SDK.chainEntry = RunWriteFirstLineGen
             , SDK.chainReaches =
-                [ WriteFirstLineGen
+                [ RunWriteFirstLineGen
                 , OpenFileSessionGen
                 , GetOpenedFileGen
-                , ValidateFileNameGen
+                , RunValidateFileNameGen
                 , ReadFileNameGen
                 , GetFileNameGen
-                , ReadFileTextGen
-                , GetFileTextGen
-                , ReadFileContentGen
                 , ReadOpenedFileGen
                 ]
             , SDK.chainDrives = ["FileName"]
@@ -420,17 +413,17 @@ generatedPrototype =
             { SDK.chainNode = [1]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "AppendLine"
-            , SDK.chainEntry = AppendLineGen
+            , SDK.chainEntry = RunAppendLineGen
             , SDK.chainReaches =
-                [ AppendLineGen
+                [ RunAppendLineGen
                 , OpenFileSessionGen
                 , GetOpenedFileGen
-                , ValidateFileNameGen
+                , RunValidateFileNameGen
                 , ReadFileNameGen
                 , GetFileNameGen
                 , ReadFileTextGen
                 , GetFileTextGen
-                , ReadFileContentGen
+                , RunReadFileGen
                 , ReadOpenedFileGen
                 ]
             , SDK.chainDrives = ["FileName"]
@@ -445,10 +438,10 @@ generatedPrototype =
             , SDK.chainReaches =
                 [ ReadFileTextGen
                 , GetFileTextGen
-                , ReadFileContentGen
+                , RunReadFileGen
                 , OpenFileSessionGen
                 , GetOpenedFileGen
-                , ValidateFileNameGen
+                , RunValidateFileNameGen
                 , ReadFileNameGen
                 , GetFileNameGen
                 , ReadOpenedFileGen
@@ -474,14 +467,15 @@ generatedPrototype =
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "ValidateFileName"
-            , SDK.definitionEntry = ValidateFileNameGen
-            , SDK.definitionReaches = [ValidateFileNameGen, ReadFileNameGen, GetFileNameGen]
+            , SDK.definitionEntry = RunValidateFileNameGen
+            , SDK.definitionReaches = [RunValidateFileNameGen, ReadFileNameGen, GetFileNameGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "FileResource"
             , SDK.definitionEntry = GetOpenedFileGen
-            , SDK.definitionReaches = [GetOpenedFileGen, ValidateFileNameGen, ReadFileNameGen, GetFileNameGen]
+            , SDK.definitionReaches =
+                [GetOpenedFileGen, RunValidateFileNameGen, ReadFileNameGen, GetFileNameGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -494,17 +488,17 @@ generatedPrototype =
             , SDK.definitionEffect = "FileSession"
             , SDK.definitionEntry = OpenFileSessionGen
             , SDK.definitionReaches =
-                [OpenFileSessionGen, GetOpenedFileGen, ValidateFileNameGen, ReadFileNameGen, GetFileNameGen]
+                [OpenFileSessionGen, GetOpenedFileGen, RunValidateFileNameGen, ReadFileNameGen, GetFileNameGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "ReadFile"
-            , SDK.definitionEntry = ReadFileContentGen
+            , SDK.definitionEntry = RunReadFileGen
             , SDK.definitionReaches =
-                [ ReadFileContentGen
+                [ RunReadFileGen
                 , OpenFileSessionGen
                 , GetOpenedFileGen
-                , ValidateFileNameGen
+                , RunValidateFileNameGen
                 , ReadFileNameGen
                 , GetFileNameGen
                 , ReadOpenedFileGen
@@ -517,10 +511,10 @@ generatedPrototype =
             , SDK.definitionEntry = GetFileTextGen
             , SDK.definitionReaches =
                 [ GetFileTextGen
-                , ReadFileContentGen
+                , RunReadFileGen
                 , OpenFileSessionGen
                 , GetOpenedFileGen
-                , ValidateFileNameGen
+                , RunValidateFileNameGen
                 , ReadFileNameGen
                 , GetFileNameGen
                 , ReadOpenedFileGen
@@ -533,10 +527,10 @@ generatedPrototype =
             , SDK.definitionReaches =
                 [ ReadFileTextGen
                 , GetFileTextGen
-                , ReadFileContentGen
+                , RunReadFileGen
                 , OpenFileSessionGen
                 , GetOpenedFileGen
-                , ValidateFileNameGen
+                , RunValidateFileNameGen
                 , ReadFileNameGen
                 , GetFileNameGen
                 , ReadOpenedFileGen
@@ -545,34 +539,31 @@ generatedPrototype =
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "WriteFirstLine"
-            , SDK.definitionEntry = WriteFirstLineGen
+            , SDK.definitionEntry = RunWriteFirstLineGen
             , SDK.definitionReaches =
-                [ WriteFirstLineGen
+                [ RunWriteFirstLineGen
                 , OpenFileSessionGen
                 , GetOpenedFileGen
-                , ValidateFileNameGen
+                , RunValidateFileNameGen
                 , ReadFileNameGen
                 , GetFileNameGen
-                , ReadFileTextGen
-                , GetFileTextGen
-                , ReadFileContentGen
                 , ReadOpenedFileGen
                 ]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "AppendLine"
-            , SDK.definitionEntry = AppendLineGen
+            , SDK.definitionEntry = RunAppendLineGen
             , SDK.definitionReaches =
-                [ AppendLineGen
+                [ RunAppendLineGen
                 , OpenFileSessionGen
                 , GetOpenedFileGen
-                , ValidateFileNameGen
+                , RunValidateFileNameGen
                 , ReadFileNameGen
                 , GetFileNameGen
                 , ReadFileTextGen
                 , GetFileTextGen
-                , ReadFileContentGen
+                , RunReadFileGen
                 , ReadOpenedFileGen
                 ]
             }
@@ -581,26 +572,23 @@ generatedPrototype =
         SDK.EffectGraph
           { SDK.graphMethods =
               [ SDK.MethodDefinition
-                  (WriteFirstLineGen)
-                  (WriteFirstLineGen)
+                  (RunWriteFirstLineGen)
+                  (RunWriteFirstLineGen)
                   (SDK.HandlerMethod)
-                  (
-                    SDK.Sequence
-                      ([SDK.Call (OpenFileSessionGen), SDK.Call (ReadFileTextGen), SDK.Call (ReadOpenedFileGen)])
-                  )
+                  (SDK.Sequence ([SDK.Call (OpenFileSessionGen), SDK.Call (ReadOpenedFileGen)]))
               , SDK.MethodDefinition
                   (OpenFileSessionGen)
                   (OpenFileSessionGen)
                   (SDK.ScopeOpen)
-                  (SDK.Call (GetOpenedFileGen))
+                  (SDK.Sequence ([SDK.Call (GetOpenedFileGen), SDK.Call (RunValidateFileNameGen)]))
               , SDK.MethodDefinition
                   (GetOpenedFileGen)
                   (GetOpenedFileGen)
                   (SDK.ContextRequest)
-                  (SDK.Sequence ([SDK.Call (ValidateFileNameGen), SDK.Call (ReadFileNameGen)]))
+                  (SDK.Sequence ([SDK.Call (RunValidateFileNameGen), SDK.Call (ReadFileNameGen)]))
               , SDK.MethodDefinition
-                  (ValidateFileNameGen)
-                  (ValidateFileNameGen)
+                  (RunValidateFileNameGen)
+                  (RunValidateFileNameGen)
                   (SDK.HandlerMethod)
                   (SDK.Call (ReadFileNameGen))
               , SDK.MethodDefinition
@@ -609,6 +597,15 @@ generatedPrototype =
                   (SDK.ContextRequire)
                   (SDK.Choice ([SDK.Empty, SDK.Call (GetFileNameGen)]))
               , SDK.MethodDefinition (GetFileNameGen) (GetFileNameGen) (SDK.ContextRequest) (SDK.Empty)
+              , SDK.MethodDefinition (ReadOpenedFileGen) (GetOpenedFileGen) (SDK.ContextRequire) (SDK.Empty)
+              , SDK.MethodDefinition
+                  (RunAppendLineGen)
+                  (RunAppendLineGen)
+                  (SDK.HandlerMethod)
+                  (
+                    SDK.Sequence
+                      ([SDK.Call (OpenFileSessionGen), SDK.Call (ReadFileTextGen), SDK.Call (ReadOpenedFileGen)])
+                  )
               , SDK.MethodDefinition
                   (ReadFileTextGen)
                   (GetFileTextGen)
@@ -618,10 +615,10 @@ generatedPrototype =
                   (GetFileTextGen)
                   (GetFileTextGen)
                   (SDK.ContextRequest)
-                  (SDK.Call (ReadFileContentGen))
+                  (SDK.Call (RunReadFileGen))
               , SDK.MethodDefinition
-                  (ReadFileContentGen)
-                  (ReadFileContentGen)
+                  (RunReadFileGen)
+                  (RunReadFileGen)
                   (SDK.HandlerMethod)
                   (
                     SDK.Sequence
@@ -631,39 +628,30 @@ generatedPrototype =
                         ]
                       )
                   )
-              , SDK.MethodDefinition (ReadOpenedFileGen) (GetOpenedFileGen) (SDK.ContextRequire) (SDK.Empty)
-              , SDK.MethodDefinition
-                  (AppendLineGen)
-                  (AppendLineGen)
-                  (SDK.HandlerMethod)
-                  (
-                    SDK.Sequence
-                      ([SDK.Call (OpenFileSessionGen), SDK.Call (ReadFileTextGen), SDK.Call (ReadOpenedFileGen)])
-                  )
               ]
-          , SDK.graphRoots = [WriteFirstLineGen, AppendLineGen, ReadFileTextGen]
+          , SDK.graphRoots = [RunWriteFirstLineGen, RunAppendLineGen, ReadFileTextGen]
           , SDK.graphReferences =
-              [ (WriteFirstLineGen, OpenFileSessionGen)
-              , (WriteFirstLineGen, ReadFileTextGen)
-              , (WriteFirstLineGen, ReadOpenedFileGen)
+              [ (RunWriteFirstLineGen, OpenFileSessionGen)
+              , (RunWriteFirstLineGen, ReadOpenedFileGen)
               , (OpenFileSessionGen, GetOpenedFileGen)
-              , (GetOpenedFileGen, ValidateFileNameGen)
+              , (OpenFileSessionGen, RunValidateFileNameGen)
+              , (GetOpenedFileGen, RunValidateFileNameGen)
               , (GetOpenedFileGen, ReadFileNameGen)
-              , (ValidateFileNameGen, ReadFileNameGen)
+              , (RunValidateFileNameGen, ReadFileNameGen)
               , (ReadFileNameGen, GetFileNameGen)
+              , (RunAppendLineGen, OpenFileSessionGen)
+              , (RunAppendLineGen, ReadFileTextGen)
+              , (RunAppendLineGen, ReadOpenedFileGen)
               , (ReadFileTextGen, GetFileTextGen)
-              , (GetFileTextGen, ReadFileContentGen)
-              , (ReadFileContentGen, OpenFileSessionGen)
-              , (ReadFileContentGen, ReadOpenedFileGen)
-              , (AppendLineGen, OpenFileSessionGen)
-              , (AppendLineGen, ReadFileTextGen)
-              , (AppendLineGen, ReadOpenedFileGen)
+              , (GetFileTextGen, RunReadFileGen)
+              , (RunReadFileGen, OpenFileSessionGen)
+              , (RunReadFileGen, ReadOpenedFileGen)
               ]
           , SDK.graphScopes = [OpenFileSessionGen]
           , SDK.graphScopePaths = [[OpenFileSessionGen], []]
           , SDK.graphRootPaths =
-              [ (WriteFirstLineGen, [[OpenFileSessionGen]])
-              , (AppendLineGen, [[OpenFileSessionGen]])
+              [ (RunWriteFirstLineGen, [[OpenFileSessionGen]])
+              , (RunAppendLineGen, [[OpenFileSessionGen]])
               , (ReadFileTextGen, [[], [OpenFileSessionGen]])
               ]
           , SDK.graphScopeOrder = []

@@ -13,11 +13,11 @@
 -- 资产来源、访问权限和读取结果的解析规则统一在 Framework.Effect.Demand。
 module Framework.Effect.Registration
   ( EffectTyping(..), Asset(.., Asset), contractOf, contextAsset, contextProducer, contextReader
-  , declaresStream, belowStream, continuousContext
+  , belowStream, continuousContext
   , Handles(..), TypeRef(..), typeRef, contractName
   , EffectSpec(..), Demand(..), Access(..), requests, requires, streams
   , ResolvedDemand(..)
-  , effectKind, entryMethod
+  , effectKind, entryMethod, handlerBindings, effectMethodName
   ) where
 
 import Framework.Effect.Contract (EffectKind(..), Output)
@@ -26,19 +26,19 @@ import GHC.Generics (Generic)
 import Data.Proxy (Proxy(..))
 import Data.Typeable (Typeable, splitTyConApp, typeRep, typeRepTyCon)
 
+-- 每个字段写 handler 名：handler 是不带参数的类方法，可以被多个注册复用。
+-- effect 自己的方法由 gen 按 effect 名或资产名生成，只在生成区使用。
 data EffectTyping
   = Pure { handler :: Maybe String }
   | Excu { handler :: Maybe String }
   | Scoped { open :: Maybe String, close :: Maybe String }
   -- handles 按错误类型匹配；作用的 scope 由 Input 链上最近的 Scoped 推导，不手写连接。
   | Error { detect :: Maybe String, resolve :: Maybe String, handles :: [Handles] }
-  -- Context 围绕一个具名资产声明方法角色；Just () 表示生成该角色的方法，Nothing 不生成。
-  -- 方法名由资产名固定生成：request 为 get 加资产名，require 为 read 加资产名。
-  -- input 是 Stream 时，request 声明的 getT 就是解析器，资产自动是持续资产，不再写 stream。
-  -- 不在 Stream 下时 stream = Just () 表示持续资产，由 SDK 反复调用 request 供给。
-  -- 持续资产的 require 返回 History，可以被 streams 订阅。
-  | Context { asset :: Asset, request :: Maybe (), require :: Maybe (), stream :: Maybe () }
-  -- 第六种 typing：持续生产节点。handler 每次调用取得一份原始输入（String），SDK 负责反复调用；
+  -- Context 只有一个 parser handler，产出资产的表示类型。require = True 缓存最新值，
+  -- stream = True 还缓存历史；stream 当且仅当 input 是 Stream，并且要求 require = True。
+  -- gen 按资产名生成 getT（驱动 parser）、readT 或 streamT（读取缓存）。
+  | Context { asset :: Asset, parser :: Maybe String, require :: Bool, stream :: Bool }
+  -- 持续生产节点。handler 每次调用取得一份原始输入（String），SDK 负责反复调用；
   -- 不作为 AST 末端，只经挂在它下面的 Context 解析后进入资产。
   | Stream { handler :: Maybe String }
   deriving (Eq, Show, Read, Generic, NFData)
@@ -70,34 +70,33 @@ contextAsset :: EffectTyping -> Maybe Asset
 contextAsset (Context declared _ _ _) = Just declared
 contextAsset _ = Nothing
 
--- request 生产方法名：get 加资产名，例如 getStartURL；消费方写 request @契约名，不直接调用它。
+-- 生产入口：get 加资产名，例如 getStartURL；它沿 Input 驱动 parser，结果发布为资产。
+-- 消费方写 requests 驱动它，handler 不直接调用。
 contextProducer :: EffectTyping -> Maybe String
-contextProducer (Context declared (Just ()) _ _) = Just ("get" ++ contractOf declared)
+contextProducer (Context declared (Just _) _ _) = Just ("get" ++ contractOf declared)
 contextProducer _ = Nothing
 
--- require 读取方法名：read 加资产名，例如 readStartURL；消费方写 require @契约名，不直接调用它。
+-- 读取入口：read 加资产名读取最新值；持续资产为 stream 加资产名，读取历史。
+-- 消费方写 requires／streams，handler 按表示类型 require，不直接调用它。
 contextReader :: EffectTyping -> Maybe String
-contextReader (Context declared _ (Just ()) _) = Just ("read" ++ contractOf declared)
+contextReader (Context declared _ True streaming) =
+  Just ((if streaming then "stream" else "read") ++ contractOf declared)
 contextReader _ = Nothing
 
--- stream = Just ()：不在 Stream 下的持续资产，由会话反复执行 request。
-declaresStream :: EffectTyping -> Bool
-declaresStream (Context _ _ _ (Just ())) = True
-declaresStream _ = False
-
--- input 是 Stream 的 Context 是它的解析器：request 声明的 getT 解析会话本次取得的原始输入。
--- getT 照常调用 Stream 的方法取得这份输入，写法与挂在原子句柄下的 Context 相同。
+-- input 是 Stream 的 Context 是它的 parser：会话每取得一份原始输入就调用一次 getT。
 belowStream :: [EffectSpec] -> EffectSpec -> Bool
 belowStream specifications specification = case typing specification of
   Context {} -> not (null [() | source <- specifications, name source == input specification, Stream {} <- [typing source]])
   _ -> False
 
--- 持续资产：require 返回 History，可以被 streams 订阅。由 Stream 下的解析器生产，或声明 stream = Just () 反复 request。
-continuousContext :: [EffectSpec] -> EffectSpec -> Bool
-continuousContext specifications specification =
-  belowStream specifications specification || declaresStream (typing specification)
+-- 持续资产：stream = True，缓存历史，可以被 streams 订阅。
+continuousContext :: EffectSpec -> Bool
+continuousContext specification = case typing specification of
+  Context { stream = streaming } -> streaming
+  _ -> False
 
--- 业务 raise 与 SDK 协议故障分开声明；名字均指注册的 effect。
+-- RaisedBy 写 handler 名：失败属于 handler，不属于调用它的链。
+-- ScopeFaultIn／ContextFaultIn 写 effect 名，指 SDK 协议故障发生的注册。
 data Handles
   = RaisedBy String
   | ScopeFaultIn String
@@ -112,16 +111,33 @@ effectKind Error {} = ErrorKind
 effectKind Context {} = ContextKind
 effectKind (Stream _) = StreamKind
 
+-- effect 方法名由 gen 生成：前缀加 effect 名，只在生成区使用。
+effectMethodName :: String -> String -> String
+effectMethodName prefix effectName = prefix ++ effectName
+
 -- 普通入口按角色确定，关闭方法不参与入口选择。
-entryMethod :: EffectTyping -> Maybe String
-entryMethod (Pure method) = method
-entryMethod (Excu method) = method
-entryMethod (Scoped opening _) = opening
--- Error 的两个方法由故障协议激活，不猜测一个普通 Node 入口。
-entryMethod Error {} = Nothing
-entryMethod selected@Context {} = contextProducer selected
--- Stream 的 handler 是它唯一的方法，但不作为 AST 末端；末端检查另行拒绝。
-entryMethod (Stream method) = method
+entryMethod :: EffectSpec -> Maybe String
+entryMethod specification = case typing specification of
+  Pure method -> effectMethodName "run" (name specification) <$ method
+  Excu method -> effectMethodName "run" (name specification) <$ method
+  Scoped opening _ -> effectMethodName "open" (name specification) <$ opening
+  -- Error 的两个方法由故障协议激活，不猜测一个普通 Node 入口。
+  Error {} -> Nothing
+  selected@Context {} -> contextProducer selected
+  -- Stream 的方法只经会话执行，不作为 AST 末端；末端检查另行拒绝。
+  Stream method -> effectMethodName "next" (name specification) <$ method
+
+-- 注册把 handler 绑定到 effect 方法：(effect 方法名, handler 名)。
+handlerBindings :: EffectSpec -> [(String, String)]
+handlerBindings specification = case typing specification of
+  Pure method -> bound "run" method
+  Excu method -> bound "run" method
+  Scoped opening closing -> bound "open" opening ++ bound "close" closing
+  Error { detect = detecting, resolve = resolving } -> bound "detect" detecting ++ bound "resolve" resolving
+  selected@Context { parser = parsing } -> [(method, selected') | Just method <- [contextProducer selected], Just selected' <- [parsing]]
+  Stream method -> bound "next" method
+  where
+    bound prefix method = [(effectMethodName prefix (name specification), selected) | Just selected <- [method]]
 
 -- 表示类型引用 Types.hs 中的原生类型；不复制其 ADT 结构。
 -- 识别 Output 以拒绝把完成协议声明为业务产物；业务 ADT 仍是不透明名称。
@@ -150,7 +166,8 @@ data EffectSpec = EffectSpec
 
 -- 消费方以契约名声明需要的值与取值模式；契约名即生产方声明的资产名。
 -- 契约类型由生成器产出，手写声明看不到它，因此以名字引用。
--- StreamAccess 以持续资产的新增量驱动消费，同时授予 require @T 读取交付视图；不授予 request。
+-- 三种 demand 是驱动关系：requests 沿 Input 驱动资产的整条 Context 链（gen 在入口先调用 getT），
+-- requires 只读取最新值，streams 由持续资产的新交付驱动并读取历史。handler 只写 require @表示类型。
 data Access = RequestAccess | RequireAccess | StreamAccess
   deriving (Eq, Show, Read, Generic, NFData)
 

@@ -1,10 +1,10 @@
-# 原子 handler 复用：facade 原型
+# 原子 handler 复用：FacadeProbe
 
-**状态：设计原型，SDK 未实现。** 生成器目前不认识下面的目标写法。这里手写了 gen 应该产出的结果，用来验证目标写法能否运行；请不要把它当成当前可用接口。
+**状态：已由 SDK 实现（Stage 2，2026-11-08）。** 本目录的注册与 handler 就是当前写法，Generated 由 `effect-codegen` 生成，不再手写。
 
-例子：报表和回复用同一套打开、写入、读取、解析和打印操作，只是资产和前驱不同。
+例子：报表和回复用同一套打开、写入、读取、解析和打印 handler，只是资产和前驱不同；两个持续数据源共用同一个 parser 和消费者。
 
-## 目标写法
+## 代码长什么样
 
 ### 1. Types.hs：只写数据结构
 
@@ -18,88 +18,64 @@ data FileState = Blank | Filled Body deriving Show
 
 ### 2. Effects.hs：effect 是业务配置
 
+注册里的字段写 handler 名；同一个 handler 绑定多次，Input 与 demands 各不相同（节选，完整列表见 [Effects.hs](Effects.hs)，局部辅助 `context`、`scoped`、`excu` 等写在 `effects` 的 `where` 里）：
+
 ```haskell
 effects =
-  [ -- 两份资产，同一个获取和开关 handler
-    EffectSpec { name = "ReportFile"
-               , typing = Context { asset = Asset @TextFile "OpenedReport", request = Just "acquireFile", require = Just (), stream = Nothing }
-               , input = "Root", demands = [requires "ReportPath"] }
-  , EffectSpec { name = "ReplyFile"
-               , typing = Context { asset = Asset @TextFile "OpenedReply", request = Just "acquireFile", require = Just (), stream = Nothing }
-               , input = "Root", demands = [requires "ReplyPath"] }
-  , EffectSpec { name = "ReportScope"
-               , typing = Scoped { open = Just "openTextFile", close = Just "closeTextFile" }
-               , input = "Root", demands = [requests "OpenedReport", requires "OpenedReport"] }
-  , EffectSpec { name = "ReplyScope"
-               , typing = Scoped { open = Just "openTextFile", close = Just "closeTextFile" }
-               , input = "Root", demands = [requests "OpenedReply", requires "OpenedReply"] }
-
-    -- 同一个 writeText：Input 和 demand 都不同
-  , EffectSpec { name = "WriteReport"
-               , typing = Excu { handler = Just "writeText" }
-               , input = "ReportScope", demands = [requires "OpenedReport", requires "ReportBody"] }
-  , EffectSpec { name = "WriteReply"
-               , typing = Excu { handler = Just "writeText" }
-               , input = "ReplyScope", demands = [requires "OpenedReply", requires "ReplyBody"] }
-
+  [ -- 两份资产，同一个获取 handler；两个 Scoped 注册共用开关 handler，彼此独立
+    context "ReportFile" (Asset @TextFile "OpenedReport") "acquireFile" "Root" [requires "ReportPath"]
+  , context "ReplyFile" (Asset @TextFile "OpenedReply") "acquireFile" "Root" [requires "ReplyPath"]
+  , scoped "ReportScope" "OpenedReport"     -- open = "openTextFile", close = "closeTextFile"
+  , scoped "ReplyScope" "OpenedReply"
+    -- 同一个 writeText：Input 和 demands 都不同
+  , excu "WriteReport" "writeText" "ReportScope" [requires "OpenedReport", requires "ReportBody"]
+  , excu "WriteReply" "writeText" "ReplyScope" [requires "OpenedReply", requires "ReplyBody"]
     -- 同一个 readText：前驱不同
-  , EffectSpec { name = "MarkReply", typing = Excu { handler = Just "markRead" }, input = "Root", demands = [] }
-  , EffectSpec { name = "ReadReport"
-               , typing = Excu { handler = Just "readText" }
-               , input = "Root", demands = [requires "ReportPath"] }
-  , EffectSpec { name = "ReadReply"
-               , typing = Excu { handler = Just "readText" }
-               , input = "MarkReply", demands = [requires "ReplyPath"] }
-
-    -- 同一个解析器，挂在不同的句柄下
-  , EffectSpec { name = "ReportCounter"
-               , typing = Context { asset = Asset @LineCount "ReportStats", request = Just "countLines", require = Just (), stream = Nothing }
-               , input = "ReadReport", demands = [] }
-  , EffectSpec { name = "ReplyCounter"
-               , typing = Context { asset = Asset @LineCount "ReplyStats", request = Just "countLines", require = Just (), stream = Nothing }
-               , input = "ReadReply", demands = [] }
-
-    -- 同一个 Stream 解析器和消费者
-  , EffectSpec { name = "FeedA", typing = Stream { handler = Just "nextA" }, input = "Root", demands = [] }
-  , EffectSpec { name = "ParserA"
-               , typing = Context { asset = Asset @Level "LevelA", request = Just "parseLevel", require = Just (), stream = Nothing }
-               , input = "FeedA", demands = [] }
-  , EffectSpec { name = "ShowA", typing = Excu { handler = Just "showLevel" }, input = "Root", demands = [streams "LevelA"] }
-    -- 其余注册写法相同，完整列表见下方“文件说明”中的 Effects.hs
+  , excu "MarkReply" "markRead" "Root" []
+  , excu "ReadReport" "readText" "Root" [requires "ReportPath"]
+  , excu "ReadReply" "readText" "MarkReply" [requires "ReplyPath"]
+    -- 同一个 parser，挂在不同的句柄下
+  , context "ReportCounter" (Asset @LineCount "ReportStats") "countLines" "ReadReport" []
+  , context "ReplyCounter" (Asset @LineCount "ReplyStats") "countLines" "ReadReply" []
+    -- 同一个 Stream parser 和消费者
+  , stream "FeedA" "nextA"
+  , continuous "ParserA" (Asset @Level "LevelA") "parseLevel" "FeedA"
+  , excu "ShowA" "showLevel" "Root" [streams "LevelA"]
+  ...
   ]
 ```
 
 ### 3. Handlers.hs：handler 是类方法
 
-没有参数，不出现上游、scope、细化资产和 effect 错误。这部分是可编译的真实代码，见 [Facade.hs](Facade.hs)。
+没有参数，不出现上游、scope、细化资产或 effect 错误（节选自 [Handlers.hs](Handlers.hs)）：
 
 ```haskell
-instance OpenTextFileInputs m => OpenTextFileHandler m where
+instance OpenTextFileLayer m => OpenTextFileHandler m where
   openTextFile = do
-    TextFile path _ <- request @TextFile
+    TextFile path _ <- require @TextFile
     liftIO (putStrLn ("[open] " ++ path))
     pure Nothing
 
-instance WriteTextInputs m => WriteTextHandler m where
+instance WriteTextLayer m => WriteTextHandler m where
   writeText = do
     TextFile path file <- require @TextFile
     Body text <- require @Body
     liftIO (hPutStr file text >> hFlush file >> putStrLn ("[write] " ++ path))
     pure Nothing
 
-instance CountLinesInputs m => CountLinesHandler m where
+instance CountLinesLayer m => CountLinesHandler m where
   countLines = do
-    output <- upstreamOutput
-    contents <- maybe (failWith "no text") pure output
+    output <- raw
+    contents <- maybe (raise (CountLinesError "no text")) pure output
     pure (LineCount (length (lines contents)))
 
-instance ShowLevelInputs m => ShowLevelHandler m where
+instance ShowLevelLayer m => ShowLevelHandler m where
   showLevel = do
     samples <- require @(History Level)
     case latest samples of
-      Just (Level value) -> liftIO (putStrLn ("[level] " ++ show value))
+      Just (Level value) -> liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show (historySize samples)))
       Nothing -> pure ()
-    when (historySize samples >= 3) (failWith "enough deliveries")
+    when (historySize samples >= 3) (raise (ShowLevelError "enough deliveries"))
     pure Nothing
 ```
 
@@ -115,73 +91,47 @@ ast = chained
   ]
 ```
 
-### 5. gen 的产出（这里是手写的）
+### 5. gen 的产出
 
-每个 handler 一个类，上下文来自它读取的表示类型，不含 Input 链，见 [Contracts.hs](Contracts.hs)：
+每个 handler 一个类和一份 Layer，内容由它的各个绑定推出（[Generated/Effects.hs](Generated/Effects.hs)）：
 
 ```haskell
-type WriteTextInputs m = (Reads TextFile m, Reads Body m, MonadIO m)
-class WriteTextHandler m where writeText :: m (Maybe String)
+type WriteTextLayer m = (SDK.Reads (Body) m, SDK.Reads (TextFile) m, SDK.Raises WriteTextError m, MonadIO m)
+class WriteTextHandler m where
+  writeText :: m (Maybe String)
 ```
 
-每个 effect 一个入口，前驱和细化资产的包装写在 handler 外面：
+每个 effect 一个类型标签和一个入口，前驱与驱动写在 handler 外面；读取按“表示类型 + effect”路由到细化资产（[Generated/Handlers.hs](Generated/Handlers.hs)）：
 
 ```haskell
-writeReport    = openReport >> writeText
-writeReply     = openReply >> writeText
-readReply      = markReply >> readText
-getReportStats = ReportStats <$> countLines
-```
+runWriteReport = ⟨入口包装⟩ $
+  openReportScope >> runAt @"WriteReport" FrameworkGenerated.writeText
+runReadReply = ⟨入口包装⟩ $
+  runMarkReply >> runAt @"ReadReply" FrameworkGenerated.readText
 
-路由由 demands 推出，键是表示类型加当前调用者：
+instance FrameworkRuntime.Reads (TextFile) (At "WriteReport") where
+  require = At ((\(FrameworkGenerated.OpenedReport value) -> value) <$> readOpenedReport)
 
-```haskell
-instance Provides TextFile App where
-  require = route "TextFile"
-    [ ("WriteReport", require @OpenedReport >>= \(OpenedReport value) -> pure value)
-    , ("WriteReply", require @OpenedReply >>= \(OpenedReply value) -> pure value)
-    , ... ]
+instance FrameworkRuntime.Raw (At "ReportCounter") where
+  raw = At (runReadReport)
 ```
 
 ## 实测结果
 
-与现有显式写法（[Handlers.hs](Handlers.hs)）对比，日期 2026-11-07：
+2026-11-08，与 2026-11-07 的手写原型（当时的 Contracts.hs、Facade.hs 与手改的 Generated/Handlers.hs）运行结果对比：
 
-- `parallel` 的交错和两个 lifelong 单元的交错除外，其余输出行相同。
-- 写入的文件内容正确；每个 scope 各开关一次。
-- `alternative` 按资产状态选择候选；Stream 解析器和 lifelong 消费者按各自资产工作。
-- lifelong 结束时报 `origin = "ShowA"`，共享 handler 的失败归到具体 effect。
-- handler 调用 effect 的方法（`openReport`）、读取细化资产（`@OpenedReport`）或未声明的表示类型（`@LineCount`），GHC 都拒绝。
-- handler 调用**另一个 handler 的类方法**（`openTextFile`）能通过 GHC：通用实例在同一模块，上下文也满足。这样会绕过 effect 入口，只能靠生成期检查拒绝，这条检查还不存在。
-
-## 模拟了什么，没有覆盖什么
-
-- `Contracts.hs`、`Generated/Handlers.hs` 里的入口与路由是手写的。原型（`Generated/Program.hs`）由现有写法生成，并未从目标注册推导。
-- 重新运行生成器会覆盖手写的 `Generated/Handlers.hs`。
-- 位置和正文 Context、Stream 方法体各不相同，没有共享，仍是现有写法。
-- 不在此范围：重复开关资源的方法（`checkReopen` 等）、`requests` 刷新规则、手动 close、绑定配错时的生成期检查。
-
-## 还没定的写法
-
-下面几项只是为了让原型跑起来，不是已确认的接口：
-
-- Context 用 `request = Just "handler名"` 引用 handler。
-- `failWith` 代替按 effect 生成的错误构造器。
-- `upstreamOutput`、`upstreamRaw` 读取挂接上游的本次输出。
-- 每个 handler 一个类，类名和 `Inputs` 别名按 handler 名生成。
-
-## 文件说明
-
-| 文件 | 作用 |
-| --- | --- |
-| [Facade.hs](Facade.hs) | 目标写法的手写 handler |
-| [Contracts.hs](Contracts.hs) | 手写的目标生成契约 |
-| [Handlers.hs](Handlers.hs)、[Effects.hs](Effects.hs) | 同一程序的现有写法；生成器用它们产出原型，也是对比基线 |
-| [Generated/Handlers.hs](Generated/Handlers.hs) | 手写绑定与路由之后的生成副本 |
+- 除 `parallel` 的交错和两个 lifelong 单元的交错外，输出行相同；写入的 `report.txt`、`reply.txt` 内容相同；每个 scope 各开关一次。
+- `alternative` 按资产状态选择候选（`[state] filled, 42 characters`）；Stream parser 和 lifelong 消费者按各自资产工作。
+- lifelong 结束时报 `origin = "ShowA"`；`detail` 由原型的 `ShowAFailure` 变为 `ShowLevelFailure`：失败属于 handler，发生在哪个 effect 记在 `origin`。
+- 原型实测时 GHC 放过的“handler 调用另一个 handler 的类方法”，现在由 gencode 报错；读取未声明的表示类型、在非挂接 handler 中使用 `raw`，同样在生成期报错。以上报错路径本次没有逐一触发。
 
 ## 运行
 
 在仓库根目录执行，不进入 Cabal 构建：
+
+```bash
+cabal run effect-codegen -- workflow FacadeProbe
+```
 
 ```bash
 cabal exec -- ghc -threaded -isdk -idemo -main-is FacadeProbe.Main -outputdir dist-newstyle/facade -o dist-newstyle/facade/facade-probe demo/FacadeProbe/Main.hs

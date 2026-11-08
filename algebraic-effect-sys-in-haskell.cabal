@@ -317,7 +317,6 @@ executable effect-codegen
   other-modules:
       Framework.Codegen
       Framework.Codegen.Handlers
-      Framework.Codegen.Demand
       Framework.Codegen.Assets
       Framework.Codegen.Structure
       Framework.Codegen.Plan

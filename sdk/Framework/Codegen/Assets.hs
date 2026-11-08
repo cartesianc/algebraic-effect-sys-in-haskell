@@ -1,29 +1,27 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- 只检查源码的显式名称引用。GHC 负责名称解析；不从推导出的实参类型传播资产。
+-- 用 GHC 加载并类型检查业务模块与新生成的副本，检查顶层定义，并给出源码资产目录。
+-- 只读取 GHC 已解析的名字和类型；不执行 handler。
 module Framework.Codegen.Assets (checkAssets) where
 
 import Control.Monad (forM, unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.Data (Data, cast, gmapQ)
-import Data.List (intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sortOn, stripPrefix)
+import Data.List (intercalate, isInfixOf, isPrefixOf, nub, sortOn, stripPrefix)
 import Data.Time.Clock (getCurrentTime)
-import Framework.Codegen.Demand (checkDemands)
-import Framework.Prototype (Prototype)
 import Framework.Effect.Asset
 import GHC
 import GHC.Core.DataCon (dataConName, dataConOrigArgTys)
 import GHC.Core.TyCon (isAlgTyCon, synTyConRhs_maybe, tyConDataCons, tyConFieldLabels, tyConName)
 import GHC.Core.TyCo.FVs (tyConsOfType)
 import GHC.Core.TyCo.Rep (scaledThing)
-import GHC.Core.Type (isFunTy)
+import GHC.Core.Type (splitTyConApp_maybe)
 import GHC.Data.FastString (unpackFS)
 import GHC.Data.StringBuffer (stringToStringBuffer)
 import GHC.Driver.Backend (noBackend)
 import GHC.Driver.Session (DynFlags(..), GhcLink(..))
 import GHC.Hs
 import GHC.Hs.Utils (CollectFlag(..), collectHsBindBinders)
-import GHC.Tc.Utils.TcType (tcSplitSigmaTy)
 import GHC.Types.FieldLabel (flSelector)
 import GHC.Types.Name (nameModule_maybe, nameOccName, nameSrcSpan)
 import GHC.Types.Name.Occurrence (occNameString)
@@ -32,17 +30,15 @@ import GHC.Types.Var (Var, varName, varType)
 import GHC.Unit.Module (moduleNameString)
 import GHC.Utils.Outputable (ppr, showSDocUnsafe)
 import System.Directory (doesDirectoryExist, listDirectory)
-import System.FilePath ((</>), normalise, takeExtension, takeFileName)
+import System.FilePath (normalise, takeExtension, takeFileName)
 import System.Process (readProcess)
 import Text.Read (readMaybe)
 
--- 新契约及包装副本只作为内存 target；检查失败不改写 Generated。
+-- 新契约及副本只作为内存 target；检查失败不改写 Generated。
 -- 同时加载手写与生成模块，但不在同一业务导入链混入两份 instance。
--- owners 列出 Context 产物类型、其生产方的类，以及该类型是否由 Asset 声明生成名义包装：
--- 这些类型只能在生产方的方法中构造。
-checkAssets :: String -> [(String, String)] -> [String] -> [(String, String)] -> [(String, String, Bool)]
-            -> Prototype String -> Maybe String -> IO String
-checkAssets namespace generated roots methods owners prototype native = do
+-- roots 是资产的表示类型，contracts 是生成的资产类型；二者组成资产目录。
+checkAssets :: String -> [(String, String)] -> [String] -> [String] -> Maybe String -> IO String
+checkAssets namespace generated roots contracts native = do
   library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
   files <- sourceFiles (modulePath namespace)
   now <- getCurrentTime
@@ -65,9 +61,8 @@ checkAssets namespace generated roots methods owners prototype native = do
           , "import qualified " ++ namespace ++ ".Generated.Effects as GeneratedContracts"]
           ++ ["type AssetRoot" ++ show index ++ " = " ++ contract
                | (index, contract) <- zip [0 :: Int ..] roots]
-          ++ ["type OwnedContract" ++ show index ++ " = " ++ (if generated then "GeneratedContracts." else "") ++ contract
-               | (index, (contract, generated)) <- zip [0 :: Int ..] ownedTypes]
-        ownedTypes = nub [(contract, generated) | (contract, _, generated) <- owners]
+          ++ ["type GeneratedContract" ++ show index ++ " = GeneratedContracts." ++ contract
+               | (index, contract) <- zip [0 :: Int ..] contracts]
         candidates = case native of
           Nothing -> filter ((== "Effects") . fst) generated
           Just _ -> generated
@@ -80,7 +75,7 @@ checkAssets namespace generated roots methods owners prototype native = do
       ++ [memoryTarget (namespace ++ ".Handlers") source | Just source <- [native]])
     result <- load LoadAllTargets
     case result of
-      Failed -> liftIO (ioError (userError "Cannot resolve asset references; fix the native Haskell diagnostics above"))
+      Failed -> liftIO (ioError (userError "Cannot load the business and generated modules; fix the native Haskell diagnostics above"))
       Succeeded -> pure ()
     graph <- getModuleGraph
     let summaries = mgModSummaries graph
@@ -97,27 +92,12 @@ checkAssets namespace generated roots methods owners prototype native = do
           , Just index <- [stripPrefix prefix (occNameString (nameOccName (tyConName alias))) >>= readMaybe]
           , Just body <- [synTyConRhs_maybe alias]]
         rootTypes = [constructor | (_ :: Int, body) <- rootAliases "AssetRoot", constructor <- typeConstructors body]
-        -- 生成的契约类型也是资产：普通函数不得显式使用；它们不在业务模块中，单独并入。
-        assets = nub (assetClosure localTypes rootTypes
-          ++ [selected | (_, _, selected) <- ownedTyCons, selected `notElem` localTypes])
-        symbols = nub (concatMap assetNames assets)
-        -- 只约束业务模块中定义的代数类型；库类型没有可归属的业务构造器。
-        ownership = Ownership
-          { ownedConstructors =
-              [ (dataConName constructor, (contract, classes))
-              | (contract, classes, selected) <- ownedTyCons, constructor <- tyConDataCons selected ]
-          , ownedFields =
-              [ (flSelector field, (contract, classes))
-              | (contract, classes, selected) <- ownedTyCons, field <- tyConFieldLabels selected ]
-          }
-        ownedTyCons =
-          [ (contract, [owner | (produced, owner, _) <- owners, produced == contract], selected)
-          | (index, body) <- rootAliases "OwnedContract", (contract, generated) <- take 1 (drop index ownedTypes)
-          , selected <- typeConstructors body, generated || selected `elem` localTypes, isAlgTyCon selected ]
-        failures = concatMap (checkModule namespace methods symbols ownership) checked
-    demandFailures <- concat <$> mapM (checkDemands namespace prototype methods) checked
-    unless (null (failures ++ demandFailures)) $
-      liftIO (ioError (userError (intercalate "\n" (failures ++ demandFailures))))
+        generatedTypes = [constructor | (_ :: Int, body) <- rootAliases "GeneratedContract"
+          , constructor <- typeConstructors body, isAlgTyCon constructor, constructor `notElem` localTypes]
+        assets = nub (assetClosure localTypes rootTypes ++ generatedTypes)
+        failures = concatMap (checkTopLevel namespace) checked
+    unless (null failures) $
+      liftIO (ioError (userError (intercalate "\n" failures)))
     pure (renderAssets namespace (sortOn assetType (map describeAsset assets)))
 
 modulePath :: String -> FilePath
@@ -137,7 +117,6 @@ typeConstructors :: Type -> [TyCon]
 typeConstructors = nonDetEltsUniqSet . tyConsOfType
 
 -- 只沿业务定义展开；String、Handle 等库类型不因成为字段而被占有。
--- 别名双向补全，避免用 type Alias = Asset 绕过显式引用检查。
 assetClosure :: [TyCon] -> [TyCon] -> [TyCon]
 assetClosure local roots = expand [] (filter (`elem` local) roots)
   where
@@ -156,11 +135,6 @@ assetClosure local roots = expand [] (filter (`elem` local) roots)
         [scaledThing field | constructor <- tyConDataCons selected, field <- dataConOrigArgTys constructor]
       _ -> []
 
-assetNames :: TyCon -> [Name]
-assetNames selected = tyConName selected : if isAlgTyCon selected
-  then map dataConName (tyConDataCons selected) ++ map flSelector (tyConFieldLabels selected)
-  else []
-
 describeAsset :: TyCon -> Asset
 describeAsset selected = Asset (describeName (tyConName selected))
   (if isAlgTyCon selected then map (describeName . dataConName) (tyConDataCons selected) else [])
@@ -177,158 +151,62 @@ describeName name = AssetSymbol
     slash '\\' = '/'
     slash character = character
 
--- 遍历 renamed source 的 Name；绝不遍历 typechecked expression 的推导类型。
--- 这样泛型方法收到 Asset 实参不会产生新的显式资产引用。
-explicitNames :: Data value => value -> [Name]
-explicitNames value
-  | Just name <- cast value = [name]
-  | otherwise = concat (gmapQ explicitNames value)
+data ModuleRole = EffectsModule | WorkflowModule | MainModule | OtherModule deriving Eq
 
--- 类型检查仅用来区分局部函数绑定与局部数据绑定，包括无参 point-free 函数。
--- 不把这里得到的函数参数／返回类型当作资产引用。
-functionBindings :: Data value => value -> [Name]
-functionBindings value
-  | Just (identifier :: Var) <- cast value =
-      let (_, _, body) = tcSplitSigmaTy (varType identifier)
-      in [varName identifier | isFunTy body]
-  | Just (_ :: Type) <- cast value = []
-  | otherwise = concat (gmapQ functionBindings value)
-
--- 产物类型的构造器与字段 → (类型名, 允许构造它的生产方类)。
-data Ownership = Ownership
-  { ownedConstructors :: [(Name, (String, [String]))]
-  , ownedFields :: [(Name, (String, [String]))]
-  }
-
--- 表达式位置出现的名字。模式中的构造器只是解构，不算构造；视图模式的表达式部分仍计入。
-expressionNames :: Data value => value -> [Name]
-expressionNames value
-  | Just name <- cast value = [name]
-  | Just (pattern' :: Pat GhcRn) <- cast value = patternExpressionNames pattern'
-  | otherwise = concat (gmapQ expressionNames value)
-
-patternExpressionNames :: Pat GhcRn -> [Name]
-patternExpressionNames (ViewPat _ expression inner) =
-  expressionNames expression ++ patternExpressionNames (unLoc inner)
-patternExpressionNames pattern' = concat (gmapQ nestedPatterns pattern')
+-- 业务模块的顶层只允许类型声明、instance，以及固定的注册、workflow 与入口值：
+-- Effects 的 effects，AST 与 Workflow 模块中类型为 AST 的命名 workflow，Main 的 main。
+-- 顶层普通函数一律拒绝：值操作写在 handler 方法体内，经注册进入 effect 链，才能被静态分析。
+-- 方法体内的局部函数与 lambda 不受限制。
+checkTopLevel :: String -> TypecheckedModule -> [String]
+checkTopLevel namespace checked = case tm_renamed_source checked of
+  Nothing -> ["Top-level checking requires renamed source"]
+  Just (group, _, _, _, _) ->
+    [ at (getLocA binding) ++ "top-level definition " ++ occNameString (nameOccName binder) ++ " is not allowed in "
+        ++ sourceModule ++ "; " ++ advice
+    | binding <- topBindings (hs_valds group)
+    , binder <- collectHsBindBinders CollNoDictBinders (unLoc binding), not (allowed binder) ]
+    ++ [ at (getLocA declaration) ++ "class declaration " ++ occNameString (nameOccName (unLoc (tcdLName (unLoc declaration))))
+          ++ " is not allowed in " ++ sourceModule ++ "; handler classes are generated from registrations"
+       | classes <- hs_tyclds group, declaration@(L _ ClassDecl {}) <- group_tyclds classes ]
+    ++ [ at (getLocA declaration) ++ "foreign declaration is not allowed in " ++ sourceModule
+       | declaration <- hs_fords group ]
+    ++ [ at (getLocA declaration) ++ "rewrite rule is not allowed in " ++ sourceModule
+       | declaration <- hs_ruleds group ]
   where
-    nestedPatterns :: Data value => value -> [Name]
-    nestedPatterns value
-      | Just (nested :: Pat GhcRn) <- cast value = patternExpressionNames nested
-      | otherwise = concat (gmapQ nestedPatterns value)
-
--- 记录更新也会产生该类型的新值；只取被更新的字段名，不取右侧表达式。
-updatedFields :: Data value => value -> [Name]
-updatedFields value
-  | Just (expression :: HsExpr GhcRn) <- cast value, RecordUpd {rupd_flds = fields} <- expression =
-      labelNames fields ++ concat (gmapQ updatedFields value)
-  | otherwise = concat (gmapQ updatedFields value)
-  where
-    labelNames :: Data value => value -> [Name]
-    labelNames nested
-      | Just name <- cast nested = [name]
-      | Just (_ :: HsExpr GhcRn) <- cast nested = []
-      | otherwise = concat (gmapQ labelNames nested)
-
-checkModule :: String -> [(String, String)] -> [Name] -> Ownership -> TypecheckedModule -> [String]
-checkModule namespace methods assets ownership checked = case tm_renamed_source checked of
-  Nothing -> ["Asset checking requires renamed source"]
-  Just (group, _, _, _, _) -> checkTop group
-  where
-    functions = nub (functionBindings (tm_typechecked_source checked))
     sourceModule = moduleNameString (moduleName (ms_mod (pm_mod_summary (tm_parsed_module checked))))
-    isMethod owner name =
-      (occNameString (nameOccName owner), occNameString (nameOccName name)) `elem` methods
-      && fmap (moduleNameString . moduleName) (nameModule_maybe owner) == Just (namespace ++ ".Generated.Effects")
-    reject :: Data value => SrcSpan -> value -> [String]
-    reject location value = case nub (filter (`elem` assets) (explicitNames value)) of
-      [] -> []
-      found -> [showSDocUnsafe (ppr location) ++ ": ordinary definition explicitly uses effect asset(s): "
-        ++ intercalate ", " [assetModule symbol ++ "." ++ assetName symbol | symbol <- map describeName found]
-        ++ "; move this asset operation into a registered instance method (generic calls are allowed)"]
-    checkTop :: HsGroup GhcRn -> [String]
-    checkTop group = checkValues False (hs_valds group)
-      ++ concatMap checkClasses (hs_tyclds group)
-      ++ concat [reject (getLocA declaration) declaration | declaration <- hs_fords group]
-      ++ concat [reject (getLocA declaration) declaration | declaration <- hs_ruleds group]
-    checkClasses :: TyClGroup GhcRn -> [String]
-    checkClasses group = concatMap checkInstance (group_instds group)
-      ++ concatMap checkClass (group_tyclds group)
-    checkClass :: LTyClDecl GhcRn -> [String]
-    checkClass (L location ClassDecl {tcdSigs = signatures, tcdMeths = bindings}) =
-      concatMap (reject (locA location)) signatures ++ concatMap (checkBinding False . unLoc) bindings
-    checkClass _ = [] -- data/newtype/type 与 deriving 是合法契约声明。
-    checkInstance :: LInstDecl GhcRn -> [String]
-    checkInstance (L location (ClsInstD _ declaration)) =
-      case className (sig_body (unLoc (cid_poly_ty declaration))) of
-        Just owner | any ((== occNameString (nameOccName owner)) . fst) methods
-          , fmap (moduleNameString . moduleName) (nameModule_maybe owner) == Just (namespace ++ ".Generated.Effects") ->
-            concatMap (\binding -> case unLoc binding of
-              FunBind {fun_id = identifier} | isMethod owner (unLoc identifier) ->
-                localFunctions (unLoc binding) ++ constructedElsewhere owner (unLoc binding)
-              other -> checkBinding False other) (cid_binds declaration)
-        _ -> reject (locA location) (cid_poly_ty declaration)
-          ++ concatMap (reject (locA location)) (cid_sigs declaration)
-          ++ concatMap (checkBinding False . unLoc) (cid_binds declaration)
-    checkInstance _ = []
-    checkValues :: Bool -> HsValBinds GhcRn -> [String]
-    checkValues local bindings = case bindings of
-      ValBinds _ values signatures -> check values signatures
-      XValBindsLR (NValBinds groups signatures) -> check (concatMap snd groups) signatures
-      where
-        check values signatures = concatMap (checkBinding local . unLoc) values
-          ++ concatMap (checkSignature local) signatures
-    checkSignature :: Bool -> LSig GhcRn -> [String]
-    checkSignature local signature@(L location value) = case value of
-      TypeSig _ names _ | not local || any ((`elem` functions) . unLoc) names -> reject (locA location) signature
-      TypeSig {} -> []
-      _ -> reject (locA location) signature
-    checkBinding :: Bool -> HsBind GhcRn -> [String]
-    checkBinding False binding@FunBind {fun_id = identifier}
-      | sourceModule == namespace ++ ".Effects", occNameString (nameOccName (unLoc identifier)) == "effects" =
-          localFunctions binding -- 唯一注册声明允许 Asset @表示类型；不豁免其余普通函数。
-    checkBinding local binding
-      | not local || any (`elem` functions) (collectHsBindBinders CollNoDictBinders binding) =
-          reject (bindingLocation binding) binding
-      | otherwise = localFunctions binding
-    -- 构造器归属：Context 产物只能由其生产方的方法构造或通过记录更新产生；
-    -- 其他 instance 只能模式匹配取用。只看显式引用，不追踪 coerce 或值流向。
-    constructedElsewhere :: Name -> HsBind GhcRn -> [String]
-    constructedElsewhere owner binding =
-      [ showSDocUnsafe (ppr (bindingLocation binding)) ++ ": " ++ occNameString (nameOccName owner)
-          ++ " " ++ how ++ " " ++ occNameString (nameOccName symbol) ++ " of Context product " ++ contract
-          ++ "; only " ++ intercalate ", " (map effectName classes)
-          ++ " may produce it (other instances may pattern match it)"
-      | (how, symbol, (contract, classes)) <- nub (constructed ++ updated)
-      , occNameString (nameOccName owner) `notElem` classes ]
-      where
-        updated = [("updates field", symbol, entry) | symbol <- updatedFields binding
-          , Just entry <- [lookup symbol (ownedFields ownership)]]
-        -- GHC 在名称解析时把记录更新展开为重建构造器的表达式；同一类型已按记录更新报告时不再重复。
-        updatedContracts = [contract | (_, _, (contract, _)) <- updated]
-        constructed = [("constructs", symbol, entry) | symbol <- expressionNames binding
-          , Just entry@(contract, _) <- [lookup symbol (ownedConstructors ownership)]
-          , contract `notElem` updatedContracts]
-    effectName className
-      | "Effect" `isSuffixOf` className = take (length className - length "Effect") className
-      | otherwise = className
-    bindingLocation :: HsBind GhcRn -> SrcSpan
-    bindingLocation FunBind {fun_id = identifier} = getLocA identifier
-    bindingLocation PatBind {pat_lhs = pattern'} = getLocA pattern'
-    bindingLocation _ = noSrcSpan
-    localFunctions :: Data value => value -> [String]
-    localFunctions value
-      | Just (HsValBinds _ bindings :: HsLocalBinds GhcRn) <- cast value = checkValues True bindings
-      | otherwise = concat (gmapQ localFunctions value)
+    role
+      | sourceModule == namespace ++ ".Effects" = EffectsModule
+      | sourceModule == namespace ++ ".Main" = MainModule
+      | sourceModule == namespace ++ ".AST" || (namespace ++ ".Workflow.") `isPrefixOf` sourceModule = WorkflowModule
+      | otherwise = OtherModule
+    allowed binder = case role of
+      EffectsModule -> occNameString (nameOccName binder) == "effects"
+      MainModule -> occNameString (nameOccName binder) == "main"
+      WorkflowModule -> any (workflowType . snd) (filter ((== binder) . fst) typed)
+      OtherModule -> False
+    advice = case role of
+      EffectsModule -> "Effects.hs defines only effects; local helpers may stay in its where clause"
+      WorkflowModule -> "workflow modules define only named AST values"
+      MainModule -> "Main.hs defines only main"
+      OtherModule -> "write value operations inside handler methods (local functions there are fine)"
+    workflowType selected = case splitTyConApp_maybe selected of
+      Just (constructor, []) -> fmap (moduleNameString . moduleName) (nameModule_maybe (tyConName constructor))
+        == Just "Framework.Workflow.AST"
+      _ -> False
+    typed = typedVariables (tm_typechecked_source checked)
+    at location = showSDocUnsafe (ppr location) ++ ": "
 
-className :: LHsType GhcRn -> Maybe Name
-className located = case unLoc located of
-  HsQualTy {hst_body = body} -> className body
-  HsForAllTy {hst_body = body} -> className body
-  HsParTy _ body -> className body
-  HsAppTy _ function _ -> className function
-  HsTyVar _ _ identifier -> Just (unLoc identifier)
-  _ -> Nothing
+topBindings :: HsValBinds GhcRn -> [LHsBind GhcRn]
+topBindings bindings = case bindings of
+  ValBinds _ values _ -> values
+  XValBindsLR (NValBinds groups _) -> concatMap snd groups
+
+-- 类型检查后的绑定名与其类型；不遍历类型本身。
+typedVariables :: Data value => value -> [(Name, Type)]
+typedVariables value
+  | Just (identifier :: Var) <- cast value = [(varName identifier, varType identifier)]
+  | Just (_ :: Type) <- cast value = []
+  | otherwise = concat (gmapQ typedVariables value)
 
 renderAssets :: String -> [Asset] -> String
 renderAssets namespace assets = unlines

@@ -6,37 +6,37 @@ import Framework.Effect.Asset (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "CrawlSessionInfo", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 46, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "CrawlSessionInfo", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 36, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "CrawlSessionInfo", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 46, assetColumn = 28}
+          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "CrawlSessionInfo", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 36, assetColumn = 28}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedPageSummary", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 42, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedPageSummary", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 32, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedPageSummary", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 42, assetColumn = 29}
+          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedPageSummary", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 32, assetColumn = 29}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedURL", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 34, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedURL", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 24, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedURL", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 34, assetColumn = 21}
+          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "LinkedURL", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 24, assetColumn = 21}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartPageSummary", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 38, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartPageSummary", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 28, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartPageSummary", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 38, assetColumn = 28}
+          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartPageSummary", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 28, assetColumn = 28}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartURL", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 30, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartURL", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 20, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartURL", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 30, assetColumn = 20}
+          [ AssetSymbol {assetModule = "Crawler.Generated.Effects", assetName = "StartURL", assetFile = "demo/Crawler/Generated/Effects.hs", assetLine = 20, assetColumn = 20}
           ]
       , assetFields = []
       }
