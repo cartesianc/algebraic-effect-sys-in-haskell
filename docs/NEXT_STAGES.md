@@ -37,7 +37,7 @@ Effects 以 Asset 声明来源，demands 选择资产和访问权限；空 deman
 
 每个声明的资产须有注册 instance 中的显式读取，或 Prototype 中已有的 alternative 选择／streams 交付依据。检查以 instance 与资产为单位，不要求每个协议方法、每一种访问模式或每条运行路径都读取。允许 open request、close require 同一资产；重复的显式 request 仍重复执行。完整规则见[主设计：资产接收契约](LATEST_DESIGN.md#demand-contract)。
 
-本阶段保留当前访问结果：普通 request／require 返回 T；持续资产的 require 返回 History T，streams 授予本次交付视图的 require 权限；尚不增加 `stream @T`，也不改变来源可见性、求值锁或资源 ownership。
+本阶段保留当前访问结果：普通 request／require 返回 T；持续资产的 require 返回 History T，streams 授予本次交付视图的 require 权限；尚不增加 `stream @T`，也不改变来源可见性、缺值等待或资源 ownership。
 
 **实现落点：** Effect.Demand 集中纯规则；Prototype 继续保存唯一的静态来源；Codegen.Demand 在 GHC 名称解析后检查接收结构与声明依据。同步 SDK 门面与执行入口的职责拆分，Prototype 内部分离模型、查询与来源分析，补充状态归属和调用流程注释；不新建一套资产或 runtime 图。
 
@@ -96,14 +96,14 @@ newtype LineCount = LineCount Int deriving Show
 ```haskell
 EffectSpec { name = "ReportFile"
            , typing = Context { asset = Asset @TextFile "OpenedReport", parser = Just "acquireFile", require = True, stream = False }
-           , input = "Root", demands = [requires "ReportPath"] }
+           , input = "Root", demands = [requests "ReportPath", requires "ReportPath"] }
 EffectSpec { name = "ReportScope"
            , typing = Scoped { open = Just "openTextFile", close = Just "closeTextFile" }
            , input = "Root", demands = [requests "OpenedReport", requires "OpenedReport"] }
 EffectSpec { name = "WriteReport", typing = Excu { handler = Just "writeText" }
-           , input = "ReportScope", demands = [requires "OpenedReport", requires "ReportBody"] }
+           , input = "ReportScope", demands = [requests "ReportBody", requires "OpenedReport", requires "ReportBody"] }
 EffectSpec { name = "WriteReply", typing = Excu { handler = Just "writeText" }
-           , input = "ReplyScope", demands = [requires "OpenedReply", requires "ReplyBody"] }
+           , input = "ReplyScope", demands = [requests "ReplyBody", requires "OpenedReply", requires "ReplyBody"] }
 EffectSpec { name = "ReportCounter"
            , typing = Context { asset = Asset @LineCount "ReportStats", parser = Just "countLines", require = True, stream = False }
            , input = "ReadReport", demands = [] }
@@ -147,7 +147,7 @@ getReportStats = ⟨入口包装⟩ $
 instance FrameworkRuntime.Reads (TextFile) (At "WriteReport") where
   require = At ((\(FrameworkGenerated.OpenedReport value) -> value) <$> readOpenedReport)
 
--- raw：直接 Input 的入口；注入时由本次输出回答，缺值求值时执行该入口
+-- raw：直接 Input 的入口；注入时由本次输出回答，被驱动时执行该入口
 instance FrameworkRuntime.Raw (At "ReportCounter") where
   raw = At (runReadReport)
 ```
@@ -162,7 +162,7 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 | handler | 类方法，不带参数，写作 `instance XxxLayer m => XxxHandler m`；类名、Layer、错误类型和方法类型由 gen 从 handler 名与绑定方式推出 |
 | Input | gen 在入口中把 Input 装配为前驱，在方法体之前执行；方法体不调用上游，也不捕获 Input 的失败，失败后的改道用 AST 的 alternative |
 | 挂接 parser | Input 是 Excu、Scoped.open 或 Stream 时，parser 以 `raw :: m (Maybe String)` 读取直接 Input 的本次输出，沿用现有注入与回放协议 |
-| 驱动 | `requests` 驱动对应资产沿 Input 的整条 Context 链；`requires` 只读取，不驱动；`streams` 由持续交付驱动。入口顺序是驱动 → Input → 方法体；handler 只写 `require` |
+| 驱动 | `requests` 驱动对应资产沿 Input 的整条 Context 链；`requires` 只读取，不驱动，也不在读取处生产，还没有值时等待发布；alternative 的选择读取驱动转折资产，相当于 `requests`；`streams` 由持续交付驱动。入口顺序是驱动 → Input → 方法体；handler 只写 `require` |
 | 读取 | handler 按表示类型读取；gen 按“表示类型 + effect”路由到唯一的细化资产，一个 effect 内表示类型不重复；需要两个同类型值的操作用角色类型区分 |
 | 值传递 | 值只经资产流动；原子句柄和 Stream 的输出只交给挂在其下的 parser |
 | Context | `Context { asset, parser, require :: Bool, stream :: Bool }`；`getT`、`readT`、`streamT` 由 gen 按资产名生成；`require` 缓存最新值，`stream` 缓存历史 |
@@ -256,7 +256,7 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 **未覆盖**：
 
 - 没有新增测试或负例；生成期检查只在七个程序的合法写法上运行过，各条报错路径没有逐一触发。
-- `requires` 不在入口驱动，但读取缺值时仍按 Stage 1 协议按需生产一次（fallback），没有改为严格只读。运行时还按当前 handler 查读取声明表：查不到报 UndeclaredContextAccess，查到时也决定 `getT` 在读取中是刷新还是只读，因此与 fallback 是同一处协议，需要一起收敛。2026-11-08 按生成的来源表统计，依赖 fallback 的读取有 FileDemo 4 处、FacadeProbe 6 处，其中包括两个 alternative 的选择读取；OpenFilesDemo 的 1 处是 scope 资源，不依赖 fallback。改为严格只读前，需要先确定选择读取由谁驱动、缺值读取在生成期如何报错。
+- （已于同日收敛）当时 `requires` 读取缺值仍按 Stage 1 协议按需生产一次（fallback），运行时还按当前 handler 查读取声明表；依赖 fallback 的读取有 FileDemo 4 处、FacadeProbe 6 处，含两个 alternative 的选择读取。两者已一起去掉：读取缺值时等待发布，选择读取驱动转折资产，见[已有基础](#baseline)的最后一条。
 - detect／resolve 的 Layer 不含 `caughtFailure`，handler 读不到原失败；Error 驱动链待定。
 - Pure 仍是 `m ()` 守卫；Stream 的驱动方式未区分；lifelong 内的显式反馈随 RepeatRequest 取消，没有替代写法；`streamT` 已生成，handler 读取历史仍写 `require @(History T)`。
 - Stream 的背压与资源释放不在本次范围；并发交错、长时间内存与 Windows 以外的取消仍未观察。
@@ -416,6 +416,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 - 2026-11-08：Stage 2 设计确认；独立的标签探针以 GHC 9.12 编译运行，确认按 effect 标签选择读取与 `raw` 时方法体无需改写。
 - 2026-11-08：Stage 2 在分支 `stage2-handler-reuse` 实现并全面替换旧写法；`cabal build all --offline -j1` 通过，七个程序重新生成并与迁移前输出对照，详见[实现与验证](#stage-2-status)。
 - 2026-11-08：SDK 按[源语言、gen、编译产物、运行时四层](LATEST_DESIGN.md#compiler)重组，生成拆为读取、降级、绑定、形状、组成、构图、输出、类检八个阶段，[流水线](LATEST_DESIGN.md#generation)在 `Framework.Gen`；声明加载进程只执行降级，绑定与输出改在生成器进程内读取 PrototypePlan；生成代码只经 `Framework.Generated` 引用 SDK。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，除生成代码的模块别名与资产目录的导入外，Generated 与重组前逐字相同；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和重组前相同，StreamDemo 在终端运行到第 33 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾和重组前一致，Crawler 除随请求变化的链接行外相同；FacadeProbe 按 README 编译运行，仍以 `ShowLevelFailure` 结束。运行行为未改；前述 `requires` 的 fallback 与读取声明表仍在运行时。
+- 2026-11-08：去掉 `requires` 的兜底生产与运行时读取声明表。读取不生产：还没有值时像 await 一样阻塞当前链，等之后的一次普通发布再按同一来源表重读，不报错；资源、诊断、自动收尾与 close 期间不等待，缺值仍报 `ContextNotInitialized`。alternative 的选择读取驱动转折资产（相当于 `requests`），持续资产仍领取会话交付。gen 侧读取方法不再连到生产方法，来源分析中没有可见发布的读取路径不返回，生产入口每次调用都生产；运行时以发布信号替代求值锁，`UndeclaredContextAccess` 与 `ContextAccess` 删除。FileDemo 的 `FileResource` 补 `requests "FileName"`，FacadeProbe 的 `ReportFile`／`ReplyFile` 补 `requests` 路径、`WriteReport`／`WriteReply` 补 `requests` 正文。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，生成的来源表中没有 `FromOwnChain` 读取；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和本次改动前相同；Crawler 除随请求变化的链接行外相同；StreamDemo 在终端运行到第 48 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾一致；FacadeProbe 按 README 编译运行，输出行相同（parallel 的交错顺序不同），写出的文件相同，仍以 `ShowLevelFailure` 结束。未覆盖：没有触发过真正等待的读取；当前可见性下 parallel 兄弟互不可见，可见范围内没有生产的读取会一直等待，等待能否由兄弟或其他并发链的发布唤醒需要另定可见性规则；parallel 中一个分支失败时，另一分支若正在等待，汇合仍会等它。
 - 历史验证未系统枚举全部并发交错，未观察长时间内存；Stream 外部模型未完成；取消只记录过 Windows Ctrl-Break。已通过编译和示例不能扩大资源逃逸、任意底层 IO 或所有调度的保证。
 
 <a id="maintenance"></a>

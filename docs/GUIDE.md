@@ -420,7 +420,7 @@ typing = Context { asset = Asset @PageURL "StartURL", parser = Just "startURL", 
 - **`parser`**（必填）：产出表示类型值的 handler，签名 `m 表示类型`，直接返回 `pure (PageURL ...)`，不包资产构造器。gen 生成 `getStartURL`：执行 Input 前驱和 parser，再包成资产发布。
 - **`require`**：`True` 时 SDK 缓存最新值并生成读取方法 `readStartURL`，消费方才能 `requires` 它；`False` 不缓存，消费方不能 `requires`。
 - **`stream`**：`True` 声明持续资产，SDK 缓存历史，读取方法是 `streamStartURL`。只能在 Input 是 Stream 时声明，且必须同时 `require = True`；挂在 Stream 下的 Context 必须 `stream = True`。见[持续资产与 lifelong](#stream)。
-- **不能作为 AST 末端**：Context 在它挂接的句柄执行时产出，被 `requests` 驱动时产出，或被读取而缺值时按需产出。
+- **不能作为 AST 末端**：Context 在它挂接的句柄执行时产出，被 `requests` 驱动或被 alternative 的选择读取驱动时产出；被读取时不产出。
 - **命名**：资产名决定资产类型和入口方法名，要按业务含义起名（`StartURL`，而不是 `LoadStartURL`），不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
 
 #### `Pure`
@@ -519,7 +519,7 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 - **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见[资产书写](#types)）只能 `requires`；`requires` 需要生产方 `require = True`；挂在 Stream 下的资产不能 `requests`；`streams` 只能由 Pure、Excu、Scoped 声明，只能订阅持续资产的基础资产（`stream = True`）。
 - **同一资产只有一个 Context 来源**：访问方式不改变资产的 ADT 或生产方；不限制一个消费者只能声明一个资产。
 - **声明须有读取依据**：每个 `requires`／`streams` 的资产须在绑定的 handler 中读取，或参与现有 alternative 选择／streams 交付。
-- **声明即权限**：handler 读取了 effect 没有声明的表示类型，生成器报错；运行时也会以 `UndeclaredContextAccess` 拒绝。
+- **声明即权限**：handler 读取了 effect 没有声明的表示类型，生成器报错；读取实例只为声明了 `requires`／`streams` 的 effect 生成，运行时不再查声明表。
 
 <a id="handlers"></a>
 
@@ -596,7 +596,7 @@ Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，
 
 | 写法 | 作用 |
 | --- | --- |
-| `x <- require @T`（普通资产） | 读取绑定的 effect 所声明、表示类型为 `T` 的资产；缺值时按协议求值 |
+| `x <- require @T`（普通资产） | 读取绑定的 effect 所声明、表示类型为 `T` 的资产；还没有值时等待发布，不生产 |
 | `xs <- require @(History T)`（持续资产） | 取得本次交付为止的历史，用 `latest`／`historyEntries`／`historySize` 读取；须声明 `streams` |
 | `output <- raw` | 挂接的 parser 读取所挂句柄本次的输出（`Maybe String`），句柄不再执行一遍；挂在 Stream 下时就是会话本次取得的原始输入 |
 | `raise (ReadFileContentError "message")` | 以本 handler 的错误失败；错误类型是 handler 名首字母大写加 `Error` |
@@ -738,7 +738,7 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 
 - **只列候选，不写条件**：选哪一个由一个和类型资产的当前构造器决定，AST 不暴露业务状态。
 - **候选怎么对应构造器**：每个候选（末端及其 Input 链上游）在 `demands` 里 `requires` 恰好一个同一资产的分支契约，生成器据此推出它对应的构造器。候选必须覆盖全部构造器，且不能重复。FileDemo 中 `WriteFirstLine` 依赖 `FileTextBlank`，`AppendLine` 依赖 `FileTextWritten`。
-- **运行时**：先 `require` 这个资产（已有值就直接用，没有就按需生产一次），再启动对应的候选，并把选择时读到的值交给候选；没被选中的候选不执行，也不出现在结果中。
+- **运行时**：选择读取自己驱动这个资产，相当于写了 `requests`：先执行它的生产链（FileDemo 里是读文件再解析），再启动对应的候选，并把选择时取得的值交给候选；没被选中的候选不执行，也不出现在结果中。持续资产由会话驱动，选择读取领取本次交付。
 - 分支契约怎么产生，见[资产书写](#types)。
 
 #### `lifelong`
@@ -923,16 +923,16 @@ reading #2: 24.0 C
 ### 驱动与读取：`requests` 与 `require`
 
 - **`requests` 驱动**：入口在 Input 之前执行资产的 `getT`，每次重新生产，成功后以当前入口的 origin 保存并替换该 origin 的绑定；生产失败时不覆盖旧值，原失败继续传播。
-- **`require` 读取**：handler 的 `require @T` 经路由进入资产的 `readT`：先读当前调用已捕获的绑定，再查原型许可的唯一可见来源；仍无值时在当前 origin 生产一次并发布。同一 origin、同一来源的并发按需求值共用锁，不同 origin 独立。第一次读取后绑定固定，其他调用的发布不原地改写它。
-- **跨 node 保存**：发布时无资源 owner 的值按 origin 保存，后补 owner 保留原发布记录；open 内一开始就有 owner 的产物只留在 scope／当前调用。一个来源在 AST 中保证先于当前节点完成，或属于当前入口时才可见；并行兄弟互不可见。需要跨链解析的缺值路径若有多个同时可见来源，就需细化契约或调整编排，生成器不会选“最后写入”的那个。
-- **缺值生产也能传递**：fallback 是一次普通生产，其结果可被 AST 可见后继复用。若前驱 A 没发布，B 的 `require` 生产了值，后继 C 可读取 B 的结果；生成器将这条条件生产路径纳入来源唯一性检查。
-- **部分路径已取值合法**：已经捕获值的分支直接使用该绑定，只有缺值路径需要解析唯一来源。alternative 或缺值生产条件可证明这些路径的来源唯一；已捕获路径上允许多个节点共同发布，由已有快照确定读取值。
-- 注册确定访问方式；require 是否补产还取决于本次捕获、可见绑定及资源等协议例外。
+- **`require` 读取**：handler 的 `require @T` 经路由进入资产的 `readT`：先读当前调用已捕获的绑定，再查原型许可的唯一可见来源。读取不生产：仍没有值时，像 await 一样阻塞这条链，等之后的发布再读，不报错。第一次读取后绑定固定，其他调用的发布不原地改写它。
+- **值从哪里来**：`requests` 驱动、alternative 的选择读取、挂接句柄的注入，以及 Stream 会话。要读的值必须有人驱动；例如 FileDemo 的 `FileResource` 写了 `[requests "FileName", requires "FileName"]`，取得文件前先驱动文件名，`ValidateFileName` 只读取它。
+- **跨 node 保存**：发布时无资源 owner 的值按 origin 保存，后补 owner 保留原发布记录；open 内一开始就有 owner 的产物只留在 scope／当前调用。一个来源在 AST 中保证先于当前节点完成，或属于当前入口时才可见；并行兄弟互不可见。需要跨链解析的读取路径若有多个同时可见来源，就需细化契约或调整编排，生成器不会选“最后写入”的那个。
+- **可见范围内没人生产就一直等**：并行兄弟互不可见，前驱已经完成；所以一个读取在可见范围内没有 `requests` 或会话生产时，这条链会一直等待，SDK 不替它补产，也不报错。资源、Error 诊断、自动收尾与 close 期间不等待，缺值时报 `ContextNotInitialized`。
+- **部分路径已取值合法**：已经捕获值的分支直接使用该绑定，只有尚未取值的路径需要解析唯一来源。alternative 或可选生产的条件可证明这些路径的来源唯一；已捕获路径上允许多个节点共同发布，由已有快照确定读取值。
 
 ### 挂在句柄下的 Context
 
-- **句柄在操作链里执行时**：句柄返回后，SDK 自动用这次的输出运行挂在下面的 parser（`raw` 由本次输出回答），产出的值保存起来，不会再执行一次句柄。调用句柄的那条链照常继续，不受影响；解析失败只留在这次注入里，之后有人读取这个值时才按正常协议报出。
-- **资产缺值、允许按需求值时**：读取进入 Context 的 `getT`，parser 的 `raw` 执行所挂句柄的入口，由此启动生产链；资源与诊断等缺值例外见运行协议。
+- **句柄在操作链里执行时**：句柄返回后，SDK 自动用这次的输出运行挂在下面的 parser（`raw` 由本次输出回答），产出的值保存起来，不会再执行一次句柄。调用句柄的那条链照常继续，不受影响；解析失败只留在这次注入里，值没有发布，之后读取它的位置等待下一次发布。
+- **被驱动时**：`requests` 或 alternative 的选择读取进入 Context 的 `getT`，parser 的 `raw` 执行所挂句柄的入口，由此启动生产链。
 
 所以 Crawler 先并行抓取，打印时直接 `require` 解析好的摘要，不再重新抓取。
 
@@ -985,8 +985,8 @@ reading #2: 24.0 C
 | `input` 指向 Context 或 Error；Error 关联不到恰好一个 scope；`RaisedBy` 写的不是已注册的 handler 名 | Context 经 demands 接入；Error 的 Input 链上要有 Scoped；`RaisedBy` 写 handler 名 |
 | `alternative` 的候选没有依赖分支契约、依赖了多个，或候选没覆盖和类型的全部构造器；分支契约被写成 `requests` | 每个候选 `requires` 恰好一个分支契约，候选覆盖全部构造器；分支契约只能 `requires` |
 | AST 的 node 选中了 Context、Error 或 Stream | node 只挂可选作末端的原始句柄；Context 由挂接、驱动、合法读取或生产会话带起；Stream 由生产会话调用，Error 由失败协议调用 |
-| 某个 Context 从 AST 出发永远到不了：没有挂接句柄、驱动或读取链，也没有 lifelong 订阅生产会话带起它 | 把带起它的消费链加进 AST，或删掉这个 Context |
-| 缺值读取路径上，同一资产有多个可能同时发布的可见来源 | 细化资产或调整 AST；alternative 和条件 fallback 可证明互斥时允许多个候选 |
+| 某个 Context 从 AST 出发永远到不了：没有挂接句柄、`requests` 驱动或选择读取，也没有 lifelong 订阅生产会话带起它（只被 `requires` 读取不算） | 在读取它的链上写 `requests` 驱动它，或把带起它的消费链加进 AST，或删掉这个 Context |
+| 尚未取值的读取路径上，同一资产有多个可能同时发布的可见来源 | 细化资产或调整 AST；alternative 和可选生产的条件可证明互斥时允许多个候选 |
 | 持续资产的声明不成立：`stream = True` 的 Context 不在 Stream 下，或没有同时 `require = True`；Stream 下的 Context 没写 `stream = True`；Stream 下不是恰好一个 Context；`streams` 订阅了普通资产或分支契约 | 按[持续资产的声明规则](#stream)修正 |
 | `streams` 写在 lifelong 外的末端上；lifelong 嵌套或含空分支；lifelong 里的末端没有恰好订阅一个持续资产，或另外读取了别的持续资产 | 按 [lifelong 的规则](#stream)调整注册或 AST |
 | lifelong 中持续资产的生产链依赖另一个持续资产 | 首次交付会等待另一个 stream；改用普通资产作为生产前提 |

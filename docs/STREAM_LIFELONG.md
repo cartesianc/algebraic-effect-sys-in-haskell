@@ -28,7 +28,7 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 | Stream effect | 第六种 typing；绑定的 handler 每次取得一份原始输入（`String`），只由生产会话驱动 |
 | parser | 挂在 Stream 下的 Context 绑定的 handler：用 `raw` 读取会话本次取得的原始输入，返回表示类型的值 |
 | Context.stream | `True` 声明持续资产，缓存发布历史；只能挂在 Stream 下，且须同时 `require = True` |
-| Context.require | `True` 缓存最新值；读取已有绑定或交付视图，缺值按合法生产能力求值 |
+| Context.require | `True` 缓存最新值；读取已有绑定或交付视图，不生产，普通资产还没有值时等待发布 |
 | 持续资产 | `stream = True` 的资产：`streams` 读取 `History`，`requires` 读取最新一条，可以被 `streams` 订阅 |
 | `streams "T"` | 消费方声明以资产 T 的新交付驱动，同时取得读取权限；不是调用 parser 的语法 |
 | lifelong | 为其单元订阅会话，在交付就绪时 boot original target |
@@ -136,7 +136,7 @@ Stage 2 取消了 RepeatRequest：不在 Stream 下的 Context 不能声明持�
 
 ### 5.1 消费摘要
 
-每个挂载的 target 的订阅只看 original chain 自身：末端 effect 及其 Input 祖先声明的 streams demand。不能汇总 `chainReaches`，它包含 Context 缺值求值与生产链内部的传递可达方法；生产链内部的依赖另用于启动依赖检查。
+每个挂载的 target 的订阅只看 original chain 自身：末端 effect 及其 Input 祖先声明的 streams demand。不能汇总 `chainReaches`，它包含被驱动的 Context 与生产链内部的传递可达方法；生产链内部的依赖另用于启动依赖检查。
 
 ### 5.2 lifelong 合法性
 
@@ -146,7 +146,7 @@ Stage 2 取消了 RepeatRequest：不在 Stream 下的 Context 不能声明持�
 4. Stream、Context 不作为 target。
 5. lifelong 不嵌套；lifelong 内不能有空分支。因为每个 target 都订阅，单元每条成功路径都至少领取一条新交付。
 6. 合法 Haskell 不自动等于结构可提取；未知高阶 effect、隐藏的 effect 循环等继续使用现有诊断。
-7. 会话生产步骤顺带发布的普通资产（例如 parser 读取时按需生产的辅助资产 X）随每条交付保存为伴随发布（见 7）。lifelong 内以生产步骤为来源读取这类资产的位置，必须由该会话的资产驱动：订阅它的 target，或以它为转折资产的选择读取；否则生成期拒绝，因为读到哪一步的产物将取决于调度。需要各单元共享同一个值时，在 lifelong 之前生产它。
+7. 会话生产步骤顺带发布的普通资产（例如 parser 链上 `requests` 驱动的辅助资产 X）随每条交付保存为伴随发布（见 7）。lifelong 内以生产步骤为来源读取这类资产的位置，必须由该会话的资产驱动：订阅它的 target，或以它为转折资产的选择读取；否则生成期拒绝，因为读到哪一步的产物将取决于调度。需要各单元共享同一个值时，在 lifelong 之前生产它。
 
 这些检查不证明任意原子 IO 能够返回，也不证明即时采样会限速。
 
@@ -166,7 +166,7 @@ lifelong 写入统一 Prototype，运行装配、来源分析与 `--structure` �
 
 - 会话挂载 NodeId 为 lifelong 路径加 `[-1, 会话序号, 步骤]`：步骤 0 是 Stream 单步、步骤 1 是 parser。挂载以 `SessionChain` 角色进入 `protoChains`，参与构图与 ScopeTree。
 - `protoSessions` 为每个 Receive 资产登记一份 interpreter 托管的会话，挂载为 `[-2, 序号, 步骤]`；它不属于 AST，不是任何读取点的可见前驱。
-- 可见性：lifelong 的会话挂载先于它的全部单元。来源分析中，会话挂载按各消费单元的后续读取需求分别作为根分析，以进入 lifelong 时的交接（例如外层 alternative 选择时捕获的值）为已捕获绑定；运行时每个生产步骤也从这份交接开始（见 8.1）。单元的执行以订阅资产的交付作为已捕获绑定，出身是会话的生产步骤；单元读取生产步骤的其他普通发布时，读到的是所处理交付那一步的发布（伴随发布，见 7）。会话挂载的各个成功出口不合并：一条交付的伴随发布对应一次成功的生产步骤（Stream 单步与 parser 各一个成功出口），单元按每种交付状态分别分析。Stage 2 取消 lifelong 内的显式 request 后，不再出现“没有伴随发布”的交付状态。某条交付的伴随发布中没有辅助资产 X 时，单元中第一个读取 X 的位置补产并记为后继的来源，后继复用它，不再生产第二份。lifelong 之后的后继按“没有正常结束”处理。
+- 可见性：lifelong 的会话挂载先于它的全部单元。来源分析中，会话挂载按各消费单元的后续读取需求分别作为根分析，以进入 lifelong 时的交接（例如外层 alternative 选择时捕获的值）为已捕获绑定；运行时每个生产步骤也从这份交接开始（见 8.1）。单元的执行以订阅资产的交付作为已捕获绑定，出身是会话的生产步骤；单元读取生产步骤的其他普通发布时，读到的是所处理交付那一步的发布（伴随发布，见 7）。会话挂载的各个成功出口不合并：一条交付的伴随发布对应一次成功的生产步骤（Stream 单步与 parser 各一个成功出口），单元按每种交付状态分别分析。Stage 2 取消 lifelong 内的显式 request 后，不再出现“没有伴随发布”的交付状态。某条交付的伴随发布中没有辅助资产 X 时，单元中读取 X 的位置不补产，等待它的发布；需要这个值时按第 5.2 节第 7 条，由该会话的资产驱动读取位置，或在 lifelong 之前生产它。lifelong 之后的后继按“没有正常结束”处理。
 - 分析裁剪：以 `lifelongUnits` 确定单元，不穿透单元内的 chained、alternative 或 parallel。每个生产挂载保留本单元可能读取的契约及生产链自身的读取依赖，成功出口再按单元相关契约投影、去重，然后逐步组合 Receive 的步骤和各会话状态。仍分析全部会话，避免遗漏其他会话造成的来源冲突；不把成功出口取并集。生产链的 read／drive 事实独立累计。
 - 读取点来源新增 `FromSession`：持续资产在没有本次交付时由 interpreter 托管的会话交付，不查询普通来源表。
 - `--structure` 在 Workflow 中列出每个 lifelong 的单元、会话（生产方式与挂载）和订阅，并单独列出 interpreter 会话。

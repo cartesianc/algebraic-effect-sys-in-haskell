@@ -40,12 +40,12 @@ data Execution
 
 `Origin` 区分一次根入口执行（AST 入口或会话生产步骤），`ActivationId` 区分运行图中的一次活动 chain。`RequestBoot` 的字符串是现有 Context effect 注册名；`CleanupExecution` 保存原业务 origin、scope 注册名及现有实例编号，不新增业务 key。Context 的嵌套生产有新的 activation，但普通生产沿用外层业务 origin。
 
-`RuntimeGraph` 用存在类型包装保存实际的 `Prototype MethodGen` 和 `ChainDefinition MethodGen`，不把图转换为字符串副本。`runtimeScopes` 引用原有 scope 控制对象；`runtimeAssets` 按 origin 保存发布时无 owner 的业务绑定，后续 claim 保留该 publication 引用；open 内一开始就有 owner 的产物仍只保存在 scope／局部快照。`runtimeForcing` 按 origin 和 Context 来源分配求值锁。活动表中的每条 `Activation` 保存父 activation、启动方式、`Execution`、静态链定义、当前绑定 `IORef` 和 `ScopeUser`；执行器和活动表共享这些运行引用。
+`RuntimeGraph` 用存在类型包装保存实际的 `Prototype MethodGen` 和 `ChainDefinition MethodGen`，不把图转换为字符串副本。`runtimeScopes` 引用原有 scope 控制对象；`runtimeAssets` 按 origin 保存发布时无 owner 的业务绑定，后续 claim 保留该 publication 引用；open 内一开始就有 owner 的产物仍只保存在 scope／局部快照。`runtimePublished` 是普通发布的信号：每次写入 `runtimeAssets` 后填满并换新，等待缺值的读取据此醒来重读。活动表中的每条 `Activation` 保存父 activation、启动方式、`Execution`、静态链定义、当前绑定 `IORef` 和 `ScopeUser`；执行器和活动表共享这些运行引用。
 
 有限 workflow 使用以下两种启动边界：
 
 1. **AST 启动**：Node 或 alternative 的选择读取启动选定入口，建立本次 origin 及入口使用登记。
-2. **Context 启动**：实际生产（`requests` 驱动的 getT）建立 ctx chain 记录，包住生产、成功发布和返回。嵌套 ctx 启动继承外层 origin 和入口使用登记；返回只结束本次生产记录，不撤销整个入口对 scope 的使用。读取已有绑定没有新 activation；缺值求值和挂接注入实际生产时经过同一启动边界。
+2. **Context 启动**：实际生产（`requests` 驱动的 getT）建立 ctx chain 记录，包住生产、成功发布和返回。嵌套 ctx 启动继承外层 origin 和入口使用登记；返回只结束本次生产记录，不撤销整个入口对 scope 的使用。读取不生产，也没有新 activation；选择读取驱动转折资产、挂接注入实际生产时经过同一启动边界。
 
 Stage 3 复用这两个 Boot 构造：会话的每个生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。会话步骤共用会话的 ScopeUser，lifelong 的消费 target 则每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
 
@@ -63,21 +63,23 @@ ScopeTree 仍是独立的静态构树结果，保留路径分析、注册前提�
 
 注册中的唯一 Context 生产方与运行中的唯一来源是两个层次：一个生产方法可能被多个 AST 入口调用，产物因此具有不同 origin。运行级保存按 origin 与 Context 来源区分，同一来源在不同入口中的值不再全局互相覆盖。
 
-来源分析在生成期使用规范化、尚未并入挂接注入的 effect 方法结构（入口的驱动与前驱，加上按绑定代换后的 handler 读取），区分显式生产、挂接注入和缺值时的条件生产；这些是构建过程中的局部数据，不额外发射到 runtime。沿有限方法及 workflow 路径计算每链的 `chainDrives`、`chainReads`，为 `ReadPoint NodeId 基础契约` 保存：
+来源分析在生成期使用规范化、尚未并入挂接注入的 effect 方法结构（入口的驱动与前驱，加上按绑定代换后的 handler 读取），区分显式生产（`requests` 驱动与选择读取）和挂接注入，读取本身不生产；这些是构建过程中的局部数据，不额外发射到 runtime。沿有限方法及 workflow 路径计算每链的 `chainDrives`、`chainReads`，为 `ReadPoint NodeId 基础契约` 保存：
 
 ```haskell
 data Source = FromOwnChain | FromChains [NodeId] | FromSession
 ```
 
-`FromSession` 只用于挂在 Stream 下的持续资产：没有本次交付时由 interpreter 托管的会话交付，不查询普通来源。`FromOwnChain` 表示缺值时按既有规则由当前入口生产；`FromChains` 保存许可的可见前驱候选。前驱必须由 AST 保证先于当前入口完成，alternative 选择读取先于其候选；parallel 兄弟互不可见。候选可有多个，生成期只要求在需要跨链解析的缺值路径上，同时可见的实际来源至多一个。已捕获绑定的其他路径上，这些节点可以共同发布，由当前快照确定读取值。证明考虑 alternative 和“上游没有发布才触发 fallback”的条件关系；不能以最后完成、距离最近或最后写入替代唯一性。
+`FromSession` 只用于挂在 Stream 下的持续资产：没有本次交付时由 interpreter 托管的会话交付，不查询普通来源。`FromOwnChain` 表示没有其他可见来源，只读当前入口自己的发布；`FromChains` 保存许可的可见前驱候选。前驱必须由 AST 保证先于当前入口完成，alternative 选择读取先于其候选；parallel 兄弟互不可见。候选可有多个，生成期只要求在需要跨链解析的缺值路径上，同时可见的实际来源至多一个。已捕获绑定的其他路径上，这些节点可以共同发布，由当前快照确定读取值。证明考虑 alternative 与可选生产的条件关系；不能以最后完成、距离最近或最后写入替代唯一性。
 
 方法已经捕获绑定的路径不需要跨链解析；某些路径已捕获、其他路径尚未捕获是合法的。只对后者检查唯一来源。`Recover` 保留可能失败前缀，不假定正文生产全部完成。`Source` 只保存最终候选集合，不把路径证明伪装成已保存的数据；运行校验检查引用和可见性等字段自洽，不重跑来源分析，runtime 再核对本次实际已发布来源的唯一性。
 
-分析状态只保存本链或后续 workflow 可能读取的基础契约。读取集合从已有 `chainReaches` 保守推导，包含默认／覆盖的读取方法，以及 consumer 的 require 声明将直接生产方法调用路由为读取的情况。每个方法出口先投影发布与捕获状态，再去重；顺序节点向后传递后续仍需的发布，parallel 的各分支仍从同一前置状态分析，结果先投影再组合。`chainDrives`、`chainReads` 与来源候选单独累计，裁剪不删除这些事实，也不改变 runtime 的绑定保存。方法失败仍携带相关状态供 `Recover`／吞错注入继续；workflow 失败没有恢复后继，发布组合可直接丢弃。
+分析状态只保存本链或后续 workflow 可能读取的基础契约。读取集合从已有 `chainReaches` 推导，即链能到达的读取方法；生产方法每次调用都生产，不按调用方的声明改成读取。每个方法出口先投影发布与捕获状态，再去重；顺序节点向后传递后续仍需的发布，parallel 的各分支仍从同一前置状态分析，结果先投影再组合。`chainDrives`、`chainReads` 与来源候选单独累计，裁剪不删除这些事实，也不改变 runtime 的绑定保存。方法失败仍携带相关状态供 `Recover`／吞错注入继续；workflow 失败没有恢复后继，发布组合可直接丢弃。
 
 这样可消除独立、后续无人读取的可选发布造成的 `2^N` 状态组合；仍同时相关的契约保留原有路径关联，最坏状态数仍可能指数增长。本次优化不声称整体分析具有线性复杂度。lifelong 按原型的 `lifelongUnits` 分别分析消费单元：生产挂载以该单元的读取集合为后续需求，仍保留生产链自身的读取依赖；各成功出口再投影到单元相关契约，Receive 的步骤及不同会话逐步组合并去重。无关会话的差异在组合前消除；同一出口内相关资产的来源身份与缺值路径保留。单个单元或生产链自身同时相关的状态仍可能指数增长。
 
-无 owner 资产运行时依次查当前捕获、静态许可的实际发布、当前 origin 的按需求值。候选本次没有值且既有协议允许生产时，fallback 是一次普通生产：执行 getT、按当前 origin 发布、返回，后续 AST 可见的读取能复用它。因而 fallback 也必须进入后继的来源分析，不能只固定最初候选而禁止后来合法生产的值传播。资源契约即使保留读取点，也仍由 owner 协议定位，缺值时不因来源表为空而自动生产；诊断和自动 cleanup 的缺值例外同样保留。按需求值锁按当前 origin 与 Context 来源分配；显式驱动每次执行，不参与自动合并。
+无 owner 资产运行时依次查当前捕获与静态许可的实际发布。仍没有值时读取不生产：它在读取之前取得 `runtimePublished` 的当前信号，读不到就等之后的一次普通发布，醒来后按同一来源表重读，像 await 一样阻塞当前链，不报错。值只来自 `requests` 驱动、alternative 的选择读取、挂接注入与 Stream 会话；显式驱动每次执行，不参与合并。生成期的来源分析与此一致：没有可见发布的路径停在这次读取，不从读取返回，也没有“读取时补产”的条件路径。
+
+当前可见性只许可 AST 保证先完成的前驱和本入口自己的发布，parallel 兄弟互不可见；因此在可见范围内没有生产的普通资产，读取会一直等待，注册需要写出驱动它的 `requests`。等待能否由并发的兄弟或其他链唤醒，取决于今后是否扩展可见性，尚未确定。资源契约即使保留读取点，也仍由 owner 协议定位，缺值时不等待也不生产，报 `ContextNotInitialized`；诊断、自动 cleanup 与 close 期间同样不等待。
 
 scope 的例外只覆盖具有 owner 的绑定，资源仍经实际实例定位和共享。实例快照中的无 owner 辅助值只从按 origin 保存的权威表取用，不通过资源复用绕过可见性。诊断及自动 cleanup 的新产物仅局部可见。现有 App 的 bind 在取得值后继续方法体，handler 写法、AST 语法和 ScopeTree 算法均不因此改变。
 
@@ -158,7 +160,7 @@ Pred 与由它得到的 `precedes` 只用于 `buildScopeTree` 的内部计算，
 
 ## 注册前提与运行清理
 
-生成期从 `EffectProto` 的方法、名字与 `effectScopeParents` 取得每个可开启 scope 的 open 方法身份、运行名字及保守前提。前提包括 `Input`／`requests` 链上的 scope，以及声明的 `requires` 来源可导航到的资源 Context owner 候选。这种结构补全不预执行来源生产者或打开 owner；运行时的读取保留已有值直接读取、缺值按 thunk 求值以及资源 Context 禁止按需求值的原协议。关闭本 scope 自己声明的资源不会形成自依赖。实际实例归属仍由 Context 绑定中的 owner 决定。
+生成期从 `EffectProto` 的方法、名字与 `effectScopeParents` 取得每个可开启 scope 的 open 方法身份、运行名字及保守前提。前提包括 `Input`／`requests` 链上的 scope，以及声明的 `requires` 来源可导航到的资源 Context owner 候选。这种结构补全不预执行来源生产者或打开 owner；运行时的读取已有值直接读取，缺值时等待发布、不生产；资源 Context 缺值不等待，按 owner 协议报错。关闭本 scope 自己声明的资源不会形成自依赖。实际实例归属仍由 Context 绑定中的 owner 决定。
 
 生成期合并的是上述前提和 `buildScopeTree` 得到的共同前序，不使用 `scopeCandidates` 的并集。注册前提是依赖：上游 scope 必须比下游活得久，下游的 close 也可能调用上游。观察到的开启顺序是证据：共同前序按完整传递关系逐条补入，与注册前提及已补入的边构成相反方向的不作为父边，例如 handler 先开启 B、后开启 B 的 Input 上游 A 时以 A 为 B 的父节点。被推翻的顺序仍保留在 `scopeCandidates`，`--structure` 单列显示。所有可开启注册 scope 都进入最终树，包括本次结构没有出现 open 的注册；它们没有被执行就不会产生待清理资源。重复身份或名字、缺失映射、未知前提及注册前提自身的环均在生成时报告错误。
 
@@ -201,7 +203,7 @@ key 未变时复用纯原型和渲染文本，仍运行 `validatePrototype`、`c
 
 ## Context 的剧本驱动检查
 
-AST node 末端必须是原始句柄，不能是 Context。gencode 从每个挂载末端沿显式方法引用求可达集合：require 的默认读取包含缺值时进入生产链的可能路径；挂接句柄可达时，其 Context 生产也视为可达；alternative 的选择读取末端同样作为起点。
+AST node 末端必须是原始句柄，不能是 Context。gencode 从每个挂载末端沿显式方法引用求可达集合：读取方法不连到生产方法，生产只经 `requests` 驱动到达；挂接句柄可达时，其 Context 生产也视为可达；alternative 的选择读取末端驱动转折资产，同样作为起点。
 
 任一 Context 的生产方法无法从这些入口到达时，生成器报错。挂接的 Context 经其他方法回到原句柄同样报错，不把直接输出回答与间接递归混为一谈。驱动检查与末端检查每次生成执行，缓存命中不跳过；首次缺少 Handlers、尚无方法结构时先生成契约，待方法实现后补齐完整检查。
 

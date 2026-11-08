@@ -13,7 +13,7 @@
 | 范围 | 状态 | 详细规范 |
 | --- | --- | --- |
 | Pure、Excu、Scoped、Error、Context；有限 workflow | 当前已实现；Pure 的值管道语义与 Error 的驱动链仍待设计 | [运行语义](LATEST_DESIGN.md#runtime) |
-| 统一 Prototype、运行图、静态来源与求值锁 | Stage 1/2 已实现 | [图与来源](EFFECT_GRAPH.md) |
+| 统一 Prototype、运行图、静态来源与缺值等待 | Stage 1/2 已实现 | [图与来源](EFFECT_GRAPH.md) |
 | 资产目录与业务模块的顶层白名单 | 当前已实现（Stage 2 取代普通函数的资产检查与构造器归属） | [源码资产](ASSETS.md) |
 | Stream 与挂在它下面的解析器 Context、持续资产的历史视图与 lifelong | 已实现（Stage 3）；lifelong 中的失败暂按临时规则终止整次运行 | [第 7 章](#stream)及[完整规范](STREAM_LIFELONG.md) |
 | 原子 handler 复用、前驱与驱动装配、按标签路由 | 已实现（Stage 2，2026-11-08）；本文第 4 章即当前协议 | [Next stages](NEXT_STAGES.md#stage-2) |
@@ -149,7 +149,7 @@ flowchart LR
 
 **句柄操作**由注册的 Input 组合：gen 把 Input 装配为前驱，在 handler 之前执行；方法体不调用上游。Input 不传递业务值；前驱失败原样传播，改道写在 AST 的 alternative 中。
 
-**值操作**由 Context 的生产、解析与资产承载，消费方通过 demands 声明驱动与读取。requests 在入口驱动生产，require 按既有来源、捕获与缺值协议读取；持续资产的读取返回本次确定的 History 视图。handler 用原生 ADT 模式匹配和计算处理这些值；值只经资产流动，跨 handler 的业务产值通过 Context 发布。资产来源与 scope 的资源关闭归属分别管理。
+**值操作**由 Context 的生产、解析与资产承载，消费方通过 demands 声明驱动与读取。requests 在入口驱动生产，require 按既有来源与捕获读取，不生产，还没有值时等待发布；持续资产的读取返回本次确定的 History 视图。handler 用原生 ADT 模式匹配和计算处理这些值；值只经资产流动，跨 handler 的业务产值通过 Context 发布。资产来源与 scope 的资源关闭归属分别管理。
 
 两者通过 Context 衔接：Excu.handler／Scoped.open 的操作信息交给挂接的 Context 解析为业务资产；Stream 的原始输入交给挂在它下面的 Context 解析，写法与挂在原子句柄下的 Context 相同。比如 FileDemo 中，`readFileContent` 执行读取操作，挂在它下面的 `parseFileText` 用 `raw` 把读取结果解析为 `FileText`，消费方通过 `requires "FileTextBlank"` 或 `requires "FileTextWritten"` 读取对应分支资产。前驱关系和资产读取关系都能从注册与 handler 的读取中读出，详见[原子输出挂接](#context)与[持续生产](#stream)。
 
@@ -231,7 +231,7 @@ Pure 的值管道语义、Error 的驱动链、Generic Map、跨独立 interpret
 | Excu | handler | m (Maybe String) | run名字 | 可选信息只交给挂接的 Context；入口装配驱动与前驱并承接失败 |
 | Scoped | open、close | 均为 m (Maybe String) | open名字、close名字 | 开启参数读取同参共享／驱动 fresh；完整链持有实际实例，末个使用者退出且无子 scope 保留时 once-spare |
 | Error | detect、resolve | 均为 m () | detect名字、resolve名字 | 只处理关联 scope 的失败；沿 ScopeTree 祖先顺序检测，Succ 后调用可选 resolve，保存原始与次生失败 |
-| Context | parser | m 表示类型 | getT；`require = True` 时 readT，`stream = True` 时为 streamT | getT 执行前驱与 parser 并包装发布；读取先用 state，无值时按需求值；失败保留该来源旧值；持续资产见第 7 章 |
+| Context | parser | m 表示类型 | getT；`require = True` 时 readT，`stream = True` 时为 streamT | getT 执行前驱与 parser 并包装发布；读取先用 state，无值时等待发布，不生产；失败保留该来源旧值；持续资产见第 7 章 |
 | Stream | handler | m String | next名字 | 只由生产会话驱动；不作为 AST target |
 
 #### 注册构造
@@ -320,7 +320,7 @@ getStartURL = ⟨入口包装⟩ $
 - **驱动**：effect 的 requests 依次执行对应资产的 getT，重新生产并发布当前 origin 的绑定。
 - **Input**：前驱的入口在方法体之前执行；方法体不调用上游，也不捕获前驱的失败，失败后的改道用 AST 的 alternative。Scoped 前驱已开启时复用实例，跳过 open 的方法体。
 - **方法体**：在 `At "名字"` 上运行绑定的 handler；Context 的入口再把结果包成资产。
-- **挂接**：Input 是 Excu、Scoped 或 Stream 的 Context 不把 Input 当作前驱执行，raw 由 Input 的入口回答：注入时由本次输出回答，缺值求值时执行该入口，Stream 下为 `Just <$> next名字`。
+- **挂接**：Input 是 Excu、Scoped 或 Stream 的 Context 不把 Input 当作前驱执行，raw 由 Input 的入口回答：注入时由本次输出回答，被驱动时执行该入口，Stream 下为 `Just <$> next名字`。
 - **只运行 handler 的入口**：close、detect、resolve 不驱动，也不执行前驱。
 
 生成器读取方法体中的读取（`require @T`、`raw`），形成每个 handler 的原子形状；再按绑定把表示类型代换成该 effect 的细化资产读取，与入口的驱动和前驱一起组成 effect 方法的纯结构。它不解释任意 Haskell 业务值语义。handler 方法体不能直接调用其他 handler 或 effect 的方法，gencode 报错：那样会绕过 effect 入口，丢失 Input、驱动和错误位置。
@@ -413,17 +413,17 @@ handler 直接在 `<-` 左侧匹配表示类型的构造器，或先具名绑定
 
 当前返回形态：普通资产的读取返回表示类型，分支契约返回当前构造器的字段；持续资产按访问方式，streams 返回 `History 表示类型`（本次交付为止的历史），requires 返回最新一条。T 与 History T 是同一个资产的不同结果形态，不是两个来源；读取写法与视图位置的收敛归 [Stage 4](NEXT_STAGES.md#stage-4)。
 
-Gen.Demand 保存唯一来源、访问解析与结果形态的纯规则；Prototype 保存解析事实；Gen.Bind 按绑定检查读取路由与读取依据；运行时继续执行已确定的捕获、可见性、求值锁与 ownership 协议。结构检查不移动取值、不提前求值、不合并重复驱动，也不证明所有路径、字段使用、case 穷尽或业务计算正确。
+Gen.Demand 保存唯一来源、访问解析与结果形态的纯规则；Prototype 保存解析事实；Gen.Bind 按绑定检查读取路由与读取依据；运行时继续执行已确定的捕获、可见性、缺值等待与 ownership 协议。结构检查不移动取值、不提前求值、不合并重复驱动，也不证明所有路径、字段使用、case 穷尽或业务计算正确。
 
 手写 Handlers 保持原生语法，运行仍编译 Generated/Handlers 的副本，修改实现后须重新生成。
 
 #### 驱动与读取的运行协议
 
-驱动（requests）每次重新生产，成功后将同一个值发布为当前 origin 的新绑定。读取先使用当前捕获，再按 protoSources 查本次唯一已发布的可见来源，缺值时在当前 origin 求值一次 getT。fallback 成功按普通生产发布，后继可见节点能复用；其条件生产也参与生成期来源唯一性证明。按需求值以（origin，Context 来源）加锁，不合并不同 origin 或显式驱动。诊断、自动 cleanup 及 scope 资源 Context 缺值不按需求值；这些阶段的显式生产仅更新局部快照。按需求值触发的 scope 开启参数仍按读取观察。Stage 2 确定 requires 不在入口驱动；读取缺值时的按需求值沿用上述协议，本阶段未调整。
+驱动（requests）每次重新生产，成功后将同一个值发布为当前 origin 的新绑定。读取先使用当前捕获，再按 protoSources 查本次唯一已发布的可见来源。读取不生产：仍没有值时，它像 await 一样阻塞当前链，等之后的一次普通发布再按同一来源表重读，不报错。值只来自 `requests` 驱动、alternative 的选择读取（见 [workflow](#workflow)）、挂接注入与 Stream 会话。当前可见范围只有 AST 保证先完成的前驱与本入口自己的发布，parallel 兄弟互不可见，所以可见范围内没有生产的读取会一直等待，注册需要写出驱动它的 `requests`。诊断、自动 cleanup、close 期间及 scope 资源 Context 缺值不等待，报 `ContextNotInitialized`；这些阶段的显式生产仅更新局部快照。生产的值按 request 被 scope 开启参数观察，读取到的值按读取观察。
 
 刷新失败不覆盖旧绑定，错误原样传播，已完成操作不回滚。普通无 owner 绑定按 origin 保存在一次 interpreter 的权威表，current capture 固定已读取值。scope 例外只覆盖资源 owner 绑定；实例快照里的无 owner 辅助值不能通过资源复用绕过静态来源路由。
 
-SDK 用局部 Reader 记录当前消费者；读取入口检查该来源是否在 demands 中声明，未声明时报 UndeclaredContextAccess，不读取绑定。gencode 拒绝 handler 读取未声明的表示类型。SDK 不预初始化 Context，未声明的上游不执行。
+读取权限在生成期确定：gencode 拒绝 handler 读取未声明的表示类型，只为声明了 requires／streams 的 effect 生成读取实例，运行时不再按当前消费者查声明表。SDK 不预初始化 Context，未声明的上游不执行。
 
 AST 组织链的启动次序，也为跨链来源提供因果可见性。Crawler 中 parallel 先抓取并注入解析两页，chained 再打印；共用的打印 handler 读取第一阶段发布的摘要，按各自唯一来源读取，不重复抓取。Generic Map 仍待设计。
 
@@ -433,13 +433,13 @@ AST 组织链的启动次序，也为跨链来源提供因果可见性。Crawler
 
 #### 消费声明与读取权限
 
-同一消费者对同一资产的同一访问方式只能声明一次。requires "T" 或 streams "T" 授予读取权限，读取本身不刷新；requests "T" 只驱动，不授予读取权限；挂在 Stream 下的资产只由会话生产，不能 requests。Scoped 至多 requests 一个资源 Context。生成器与读取入口都执行声明检查。
+同一消费者对同一资产的同一访问方式只能声明一次。requires "T" 或 streams "T" 授予读取权限，读取本身不刷新；requests "T" 只驱动，不授予读取权限；挂在 Stream 下的资产只由会话生产，不能 requests。Scoped 至多 requests 一个资源 Context。声明检查由生成器执行。
 
 #### 原子输出挂接与失败隔离
 
-Excu.handler／Scoped.open 成功后，SDK 以根调用身份执行挂接 Context 的 getT；parser 的 raw 由本次输出回答，不重复执行句柄。挂在 Stream 下的 parser 沿用同一写法：会话每取得一份原始输入调用一次 parser，raw 由这份输入回答（见第 7 章）。注入失败留在注入内部，不进入原链也不触发 Error；后来按需求值失败仍按正常协议传播。
+Excu.handler／Scoped.open 成功后，SDK 以根调用身份执行挂接 Context 的 getT；parser 的 raw 由本次输出回答，不重复执行句柄。挂在 Stream 下的 parser 沿用同一写法：会话每取得一份原始输入调用一次 parser，raw 由这份输入回答（见第 7 章）。注入失败留在注入内部，不进入原链也不触发 Error；资产没有发布，之后读取它的位置等待下一次发布。
 
-缺值求值时 parser 的 raw 直接执行句柄入口，不再次注入；复用 open、重复 close、诊断与自动收尾不产生新的挂接注入。close 没有挂接点；scope 的资源 Context 不能挂在请求它的 Scoped 下。生成入口通过 atomicHandle／atomicScope 包装，挂接目录为 contextInjections。
+parser 被 requests 驱动或被选择读取驱动时，raw 直接执行句柄入口，不再次注入；复用 open、重复 close、诊断与自动收尾不产生新的挂接注入。close 没有挂接点；scope 的资源 Context 不能挂在请求它的 Scoped 下。生成入口通过 atomicHandle／atomicScope 包装，挂接目录为 contextInjections。
 
 这是有限执行的基线；持续生产中 parser 的故障不在注入内隔离，会话失败并通知等待方，见 [Stream 第 9 节](STREAM_LIFELONG.md#failures)。
 
@@ -484,7 +484,7 @@ chained 按声明顺序执行，遇失败停止；parallel 并发执行，等待
 
 AST 只列候选，不写条件。gencode 将转折契约、选择读取路径和候选 NodeId 到构造器的关系保存为 WorkflowTree 的 AlternativeProto；分支契约目录保存在 EffectProto。
 
-运行时先读取转折资产，已有值直接读取，缺值时按需求值一次生产链；再只启动匹配构造器的候选，其他候选不执行。选择阶段捕获的无 owner 绑定经 Handoff 交给候选，两段读取同一快照，其他调用的驱动不改写它。执行只在已装配的闭包间选择，不在链中间重组。
+选择读取自己驱动转折资产，相当于写了 `requests`：运行时先执行它的生产链并发布，再只启动匹配构造器的候选，其他候选不执行。挂在 Stream 下的持续资产由会话驱动，选择读取领取本次交付。选择阶段捕获的无 owner 绑定经 Handoff 交给候选，两段读取同一快照，其他调用的驱动不改写它。执行只在已装配的闭包间选择，不在链中间重组。
 
 选择读取有独立入口使用登记，以契约名登记末端，NodeId 为 alternative 路径加 [-1]，参与构图与 ScopeTree。validatePrototype 核对转折契约、构造器唯一及覆盖完整；执行 fold 与 --structure 使用同一原型匹配当前 AST，不一致时在业务前拒绝。
 
@@ -520,7 +520,7 @@ monitor = lifelong
 
 本节记录本轮定案的有限使用闭包协议；运行载体和旧样例按此迁移，不以旧版编译或运行结果宣称本轮已验证。
 
-effect 不配置 dependency。SDK 沿 Input 与 requests 收集 Scoped；读取只在 state 无值时按需求值 getT（scope 资源除外），其已有资源前提必须纳入清理依赖。open 由入口按 Input 装配，handler 不调用 open／close，二者均为 m (Maybe String)；使用闭包撤销使用后由 SDK 按 once-spare 调用登记的 close，interpreter 退出保留兜底。
+effect 不配置 dependency。SDK 沿 Input 与 requests 收集 Scoped；读取不执行 getT，所读值的生产链已有的资源前提仍纳入清理依赖。open 由入口按 Input 装配，handler 不调用 open／close，二者均为 m (Maybe String)；使用闭包撤销使用后由 SDK 按 once-spare 调用登记的 close，interpreter 退出保留兜底。
 
 同一 interpreter 自动创建一批 ScopeHandler，由所有末端 Target 捕获。每个 Scoped 注册持有实例集合，每份实例独立保存 MVar、生命周期和开启期 Context；实际开启输入是被驱动还是被读取，决定新建还是共享。两个 Scoped 注册共用 open／close handler 时仍是两个独立的 scope。Main、Effects 和 Handlers 不增加 key、位置参数、用户装配或手写 layer，也没有进程全局单例。运行表可跨 Node 共享，但不预约未来 Node 的活资源。运行表只保留还可能被选中或等待清理的实例：已关闭的实例，以及没有使用者、没有登记清理的非共享实例移出运行表；旧绑定直接持有实例引用，旧引用仍报已关闭；同参共享的失效实例保留，同参 open 继续报原失败，显式 close 后移出。
 
@@ -682,7 +682,7 @@ sdk/Framework/
     Scope.hs                scope 实例、使用登记与物理清理
     App.hs                  各存储协议在 App 上的实现
     Identity.hs             Origin、ActivationId、Execution
-    Graph.hs                活动链、发布、求值锁与会话登记
+    Graph.hs                活动链、发布与发布信号、会话登记
     Session.hs              发布历史、游标、通知与任务停止
     Execution.hs            执行 algebra、分支组合与调度
   Recursion.hs              Fix、cata、zygo
