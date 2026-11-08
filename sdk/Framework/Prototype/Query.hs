@@ -4,7 +4,7 @@ module Framework.Prototype.Query
   ( workflowNode, workflowChildren, workflowTerminals, workflowLifelongs, workflowSelectors
   , allWorkflow, lookupChain, lookupWorkflow, precedes, exclusive, visibleFrom
   , driveSet, readPoints, bootPlan, sessionSteps
-  , finiteSessions, candidateCase, findEffectProto, ordinaryEntry, calledMethods, reachableMethods
+  , finiteSessions, candidateCase, findEffectProto, ordinaryEntry, selectorMethod, calledMethods, reachableMethods
   ) where
 
 import Data.List (isPrefixOf, nub)
@@ -139,6 +139,11 @@ ordinaryEntry :: EffectProto method -> Either (PrototypeError method) method
 ordinaryEntry effect = case [method | (role, method) <- effectMethods effect, role `elem` [HandlerMethod, ScopeOpen]] of
   method : _ -> pure method
   [] -> Left (InvalidPrototype ("Effect has no callable entry (no handler or open handler): " ++ effectName effect))
+
+-- alternative 选择读取的入口：自己驱动转折资产（生产入口，相当于 requests）；
+-- 持续资产由会话驱动，选择读取它的读取入口，领取本次交付。
+selectorMethod :: EffectProto method -> Maybe method
+selectorMethod effect = lookup (if effectContinuous effect then ContextRequire else ContextRequest) (effectMethods effect)
 
 calledMethods :: MethodShape method -> [method]
 calledMethods Empty = []

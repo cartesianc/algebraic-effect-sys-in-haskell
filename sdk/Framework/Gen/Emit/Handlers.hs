@@ -8,7 +8,6 @@ module Framework.Gen.Emit.Handlers (renderHandlers, handlerExports) where
 import Data.List (intercalate, nub, sortOn)
 import Data.Maybe (isJust)
 import Framework.Gen.Bind
-import Framework.Gen.Demand (readsAccess)
 import Framework.Gen.Names (contextProducer, contextReader, entryMethod, handlerBindings, handlerError, handlerFailure)
 import Framework.Gen.Source (HandlerSource(..), sourceOffset)
 import Framework.Language.Registration
@@ -121,48 +120,29 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
           -- parser 的 raw 在会话中由本次原始输入回答，不再执行 handler。
           Stream _ -> "FrameworkRuntime.streamHandle . " ++ entered
           Context {} -> scoped ++ " . FrameworkRuntime.callContext " ++ show selectedName
-            ++ " FrameworkGenerated.ContextBindingError\n    " ++ contextAccessTable selectedName
             ++ "\n    " ++ observation selectedName
-            ++ "\n    FrameworkGenerated.bound" ++ selectedName
             ++ "\n    (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"
           _ -> entered
     rootWrapper specification = "FrameworkRuntime.withErrorPath " ++ show (Prototype.effectNearestScopes (protoOf unit (name specification)))
       ++ " . FrameworkRuntime.handleFailure"
-    -- readT 读最新值：尚无值时按需求值一次 getT；streamT 读历史视图，由会话交付。
+    -- readT 读最新值：尚无值时等待之后的发布，不调用 getT；streamT 读历史视图，由会话交付。
     readerDefinition specification method
       | Prototype.effectContinuous (protoOf unit selectedName) = definition method
           ("FrameworkRuntime.History FrameworkGenerated." ++ contractType) (rootWrapper specification)
-          ("FrameworkRuntime.readHistory " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError "
-            ++ contextAccessTable selectedName ++ " FrameworkGenerated.bound" ++ selectedName ++ " Nothing")
+          ("FrameworkRuntime.readHistory " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError"
+            ++ " FrameworkGenerated.bound" ++ selectedName)
       | otherwise = definition method ("FrameworkGenerated." ++ contractType) (rootWrapper specification)
           ("FrameworkRuntime.readContext " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError "
-            ++ contextAccessTable selectedName ++ " " ++ observation selectedName ++ " FrameworkGenerated.bound" ++ selectedName
-            ++ " " ++ missing)
+            ++ observation selectedName ++ " FrameworkGenerated.bound" ++ selectedName)
       where
         selectedName = name specification
         contractType = maybe "" contractOf (contextAsset (typing specification))
-        missing = case contextProducer (typing specification) of
-          Just producing -> producing
-          Nothing -> "(FrameworkRuntime.failEffect " ++ show selectedName
-            ++ " (FrameworkGenerated.ContextBindingError FrameworkRuntime.ContextNotInitialized) "
-            ++ show (selectedName ++ " has no parser") ++ ")"
     definition method resultType wrapper body =
       [ method ++ " :: FrameworkGenerated.App " ++ parenthesized resultType
       , method ++ " = (" ++ wrapper ++ ") $"
       , "  " ++ body
       , "" ]
 
-    -- 生产与读取共用声明表：requests 刷新，requires／streams 只读。键是 effect 名（运行时的当前 handler 位置）。
-    contextAccessTable selectedName = "[" ++ intercalate ", "
-      [ "(" ++ show (name consumer) ++ ", FrameworkRuntime." ++ access ++ ")"
-      | consumer <- specifications unit
-      , Just access <- [accessFor consumer] ] ++ "]"
-      where
-        providersOf consumer mode = [demandProvider resolved | resolved <- resolvedOf unit (name consumer), mode (demandAccess resolved)]
-        accessFor consumer
-          | selectedName `elem` providersOf consumer (== RequestAccess) = Just "RequestValue"
-          | selectedName `elem` providersOf consumer readsAccess = Just "RequireValue"
-          | otherwise = Nothing
     orderedScopes = nub (concat
       [ Prototype.effectScopes effect ++ [Prototype.effectName effect | Prototype.effectKind effect == ScopedKind]
       | effect <- effectPrototypes unit ])

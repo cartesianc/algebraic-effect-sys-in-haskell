@@ -223,7 +223,7 @@ validatePrototype prototype = do
             alternativeSelector choice == chainNode chain] of
           [choice] -> valid (alternativeContract choice == chainTerminal chain
             && chainEntry chain `elem` [method | effect <- effects, effectProduces effect == Just (chainTerminal chain)
-              , (ContextRequire, method) <- effectMethods effect]) "Selector chain differs from alternative"
+              , Just method <- [selectorMethod effect]]) "Selector chain differs from alternative"
           _ -> Left (InvalidPrototype "Selector chain has no alternative")
         SessionChain -> case [ (session, step)
             | session <- concatMap (lifelongSessions . snd) (workflowLifelongs (protoWorkflow prototype))

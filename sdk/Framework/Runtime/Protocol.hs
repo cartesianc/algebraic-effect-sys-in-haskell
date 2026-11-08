@@ -37,13 +37,10 @@ class Monad m => ContextStore environment m | m -> environment where
   enterContext = enterHandler
   recordContextInput :: ScopeInputAccess -> ScopeInput -> m ()
   recordContextInput _ _ = pure ()
-  -- require 在 state 中取不到值时，按需求值一次 request 表达式并写回 state。
-  -- 返回 Nothing 表示当前不允许转去生产（诊断、收尾，或该来源是 scope 资源）。
-  forceContext :: String -> m value -> m (Maybe value)
-  forceContext _ _ = pure Nothing
-  -- 本次生产被 scope 开启参数观察时的取值模式；按需求值的 require 仍按 require 处理。
-  productionAccess :: m ScopeInputAccess
-  productionAccess = pure RequestedInput
+  -- require 不生产：读取之前先取等待动作，读不到值时执行它，等之后的一次发布再重读。
+  -- 返回 Nothing 表示当前不等待（诊断、收尾，或该来源是 scope 资源），缺值按 ContextNotInitialized 报出。
+  awaitContext :: String -> m (Maybe (m ()))
+  awaitContext _ = pure Nothing
   -- 生成区按原子句柄方法名安装挂在它下面的 Context 生产入口。
   withAnchoredContexts :: [(String, [(String, m ())])] -> m value -> m value
   withAnchoredContexts _ = id
@@ -74,7 +71,7 @@ data RawOutput = RawOutput
   } deriving (Eq, Show)
 
 -- CaseNotSelected：读取和类型资产的某个分支契约，而资产当前是另一个构造器。
-data ContextFault = ContextNotInitialized | UndeclaredContextAccess String
+data ContextFault = ContextNotInitialized
   | AmbiguousContextBinding String | CaseNotSelected String
   deriving (Eq, Show)
 

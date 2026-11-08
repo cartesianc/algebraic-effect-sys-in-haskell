@@ -15,7 +15,7 @@ data Results = PrepareFilesResult () | UseFirstResult () | SelectSecondResult ()
   deriving Show
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
--- 第二个列表是各转折契约的读取末端：读取资产，返回它当前的构造器名。
+-- 第二个列表是各转折契约的选择末端：驱动资产（持续资产领取本次交付），返回它当前的构造器名。
 -- 第三个列表是各持续资产的生产步骤：会话按需启动，Stream 单步取得原始输入，parser 发布一次资产。
 compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]
                      , [(String, SDK.SessionSteps ContextValues Errors)])
@@ -339,11 +339,7 @@ generatedPrototype =
     , SDK.protoMethods =
         [ SDK.MethodDefinition (RunPrepareFilesGen) (RunPrepareFilesGen) (SDK.HandlerMethod) (SDK.Empty)
         , SDK.MethodDefinition (GetFileNameGen) (GetFileNameGen) (SDK.ContextRequest) (SDK.Empty)
-        , SDK.MethodDefinition
-            (ReadFileNameGen)
-            (GetFileNameGen)
-            (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (GetFileNameGen)]))
+        , SDK.MethodDefinition (ReadFileNameGen) (GetFileNameGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition
             (GetOpenedFileGen)
             (GetOpenedFileGen)
@@ -540,13 +536,13 @@ generatedPrototype =
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "FileLocation"
             , SDK.definitionEntry = ReadFileNameGen
-            , SDK.definitionReaches = [ReadFileNameGen, GetFileNameGen]
+            , SDK.definitionReaches = [ReadFileNameGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "FileResource"
             , SDK.definitionEntry = GetOpenedFileGen
-            , SDK.definitionReaches = [GetOpenedFileGen, ReadFileNameGen, GetFileNameGen]
+            , SDK.definitionReaches = [GetOpenedFileGen, ReadFileNameGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -559,7 +555,7 @@ generatedPrototype =
             , SDK.definitionEffect = "FileSession"
             , SDK.definitionEntry = OpenFileSessionGen
             , SDK.definitionReaches =
-                [OpenFileSessionGen, GetOpenedFileGen, ReadFileNameGen, GetFileNameGen, ReadOpenedFileGen]
+                [OpenFileSessionGen, GetOpenedFileGen, ReadFileNameGen, ReadOpenedFileGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
@@ -648,11 +644,7 @@ generatedPrototype =
                   (GetOpenedFileGen)
                   (SDK.ContextRequest)
                   (SDK.Call (ReadFileNameGen))
-              , SDK.MethodDefinition
-                  (ReadFileNameGen)
-                  (GetFileNameGen)
-                  (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (GetFileNameGen)]))
+              , SDK.MethodDefinition (ReadFileNameGen) (GetFileNameGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition (ReadOpenedFileGen) (GetOpenedFileGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition (RunSelectSecondGen) (RunSelectSecondGen) (SDK.HandlerMethod) (SDK.Empty)
               , SDK.MethodDefinition
@@ -703,7 +695,6 @@ generatedPrototype =
               , (OpenFileSessionGen, GetOpenedFileGen)
               , (OpenFileSessionGen, ReadOpenedFileGen)
               , (GetOpenedFileGen, ReadFileNameGen)
-              , (ReadFileNameGen, GetFileNameGen)
               , (RunUseSecondGen, GetFileNameGen)
               , (RunUseSecondGen, OpenFileSessionGen)
               , (RunUseSecondGen, ReadFileNameGen)

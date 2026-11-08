@@ -2,7 +2,7 @@
 
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Runtime.Context
-  ( ContextFault(..), ContextAccess(..), readContext, callContext
+  ( ContextFault(..), readContext, callContext
   , projectContext, latestContext, atomicHandle, atomicScope, readHistory, streamHandle
   ) where
 
@@ -11,57 +11,24 @@ import Framework.Runtime.Protocol
 import Framework.Language.Handler (Failure(..))
 import Control.Monad (forM_, when)
 import Control.Monad.Except (MonadError, catchError, throwError)
-import Framework.Language.History (History, currentHistory, latest)
+import Framework.Language.History (History, latest)
 
-data ContextAccess = RequestValue | RequireValue deriving (Eq, Show)
-
--- require 是一个表达式：值只来自 request，求得后存入 state；require 读取 state。
--- state 中尚无值时转去求值同一个 request（传入的生产入口），结果写回 state，相当于 thunk。
+-- require 是一次读取：值只来自 requests 驱动的生产或 Stream 会话，读取本身不生产。
+-- 已有值时直接返回；尚无值时像 await 一样阻塞这条链，等之后的发布再按同一来源表重读，不报错。
+-- 载体在诊断、收尾或 scope 资源时不等待，缺值按 ContextNotInitialized 报出。
 readContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> (ContextFault -> cause) -> [(String, ContextAccess)] -> Maybe (value -> ScopeInput)
-  -> (environment -> Maybe value) -> m value -> m value
-readContext contextName wrap accesses compareValue select produce =
-  requireContext contextName wrap accesses (readBoundContext contextName wrap compareValue select (Just produce))
-
--- 默认和用户覆盖的读取入口都检查来源声明；不改变 caller，state 中已有值时不重新执行生产者。
-requireContext
-  :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> (ContextFault -> cause) -> [(String, ContextAccess)] -> m value -> m value
-requireContext selected wrap accesses action = do
-  _ <- contextAccess selected wrap accesses
-  action
-
-contextAccess
-  :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> (ContextFault -> cause) -> [(String, ContextAccess)] -> m (Maybe ContextAccess)
-contextAccess selected wrap accesses = do
-  caller <- currentHandler
-  case caller of
-    Nothing -> pure Nothing
-    Just consumer -> case lookup consumer accesses of
-      Just access -> pure (Just access)
-      Nothing -> failEffect selected (wrap (UndeclaredContextAccess consumer))
-        ("No context request/require from " ++ consumer ++ " to " ++ selected)
-
--- 只由已经校验过的入口读取 state；已有值时即使声明了 request 也不刷新。
--- 尚无值时按需求值一次 request（载体负责单次求值，并在诊断、收尾或 scope 资源时拒绝）；
--- 求值失败不写入 state，原失败继续传播，下次 require 会再次求值。
-readBoundContext
-  :: (ContextStore environment m, MonadError (Failure cause) m)
   => String -> (ContextFault -> cause) -> Maybe (value -> ScopeInput)
-  -> (environment -> Maybe value) -> Maybe (m value) -> m value
-readBoundContext contextName wrap compareValue select produce = do
-  bound <- lookupBound
-  case bound of
-    Just value -> observed value
-    Nothing -> case produce of
-      Nothing -> notInitialized
-      Just production -> do
-        -- 等待并发求值后再查一次 state，避免同一资产重复求值。
-        forced <- forceContext contextName (lookupBound >>= maybe production observed)
-        maybe notInitialized pure forced
+  -> (environment -> Maybe value) -> m value
+readContext contextName wrap compareValue select = awaitBound
   where
+    awaitBound = do
+      -- 先取等待动作再读：读取之后、开始等待之前的发布也会唤醒这次等待。
+      waiting <- awaitContext contextName
+      bound <- lookupBound
+      case bound of
+        Just value -> observed value
+        Nothing -> maybe notInitialized (>> awaitBound) waiting
     lookupBound = do
       resolved <- readContextBinding contextName select
       either (\problem -> failEffect contextName (wrap problem) (show problem)) pure resolved
@@ -85,25 +52,16 @@ requestContext selected synchronize produce = enterRequest selected $
     publishContextBinding selected (synchronize value)
     pure value
 
--- getT 的生成入口。根调用执行生产；链内按当前消费者的 demands 选择刷新（requests）或只读（requires）。
+-- getT 的生成入口：每次调用都生产并发布。只有 requests 驱动、alternative 的选择读取、
+-- 挂接注入和会话步骤调用它；require 读取走 readContext，不经这里。
 callContext
-  :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> (ContextFault -> cause) -> [(String, ContextAccess)]
-  -> Maybe (value -> ScopeInput)
-  -> (environment -> Maybe value) -> (value -> environment -> environment)
+  :: ContextStore environment m
+  => String -> Maybe (value -> ScopeInput) -> (value -> environment -> environment)
   -> m value -> m value
-callContext selected wrap accesses compareValue select synchronize produce = do
-  access <- contextAccess selected wrap accesses
-  case access of
-    Just RequireValue -> readBoundContext selected wrap compareValue select (Just refresh)
-    _ -> refresh
-  where
-    refresh = do
-      -- 按需求值的 require 生产时仍按 require 被 scope 开启参数观察（同参共享）。
-      mode <- productionAccess
-      value <- requestContext selected synchronize (enterContext selected produce)
-      observeInput mode compareValue value
-      pure value
+callContext selected compareValue synchronize produce = do
+  value <- requestContext selected synchronize (enterContext selected produce)
+  observeInput RequestedInput compareValue value
+  pure value
 
 -- 和类型资产的分支契约是基础契约的投影：读取基础契约，资产当前是该构造器时取出其字段，
 -- 否则报 CaseNotSelected。不新增状态，也不单独生产。故障来源是生产方的注册名，与 ContextFaultIn 的匹配一致。
@@ -125,18 +83,15 @@ latestContext producer wrap readHistory' = readHistory' >>= maybe
 -- 没有视图时，由 interpreter 托管的会话交付当前历史。
 readHistory
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> (ContextFault -> cause) -> [(String, ContextAccess)]
-  -> (environment -> Maybe value) -> Maybe (m value) -> m (History value)
-readHistory contextName wrap accesses select produce = requireContext contextName wrap accesses $ do
+  => String -> (ContextFault -> cause) -> (environment -> Maybe value) -> m (History value)
+readHistory contextName wrap select = do
   captured <- readContextHistory contextName select
   case captured of
     Just history -> pure history
-    Nothing -> case produce of
-      Just production -> currentHistory <$> readBoundContext contextName wrap Nothing select (Just production)
-      Nothing -> do
-        delivered <- awaitContextHistory contextName select
-        maybe (failEffect contextName (wrap ContextNotInitialized)
-          (contextName ++ ": no stream session can deliver here")) pure delivered
+    Nothing -> do
+      delivered <- awaitContextHistory contextName select
+      maybe (failEffect contextName (wrap ContextNotInitialized)
+        (contextName ++ ": no stream session can deliver here")) pure delivered
 
 -- Stream 的生成入口。会话调用 parser 时安装了本次原始输入：parser 的 raw 由这份输入回答，
 -- 不再执行 handler 另取一份，与挂在原子句柄下的 Context 相同。Stream 单步没有安装输入，执行 handler 取得下一份。
@@ -170,7 +125,7 @@ atomicScope method body = do
         Left problem -> deliver consumer (RawOutput False (Just (message problem))) >> throwError problem
   where
     -- 失败的输出不交给 Context，原失败照常沿原链传播。
-    -- 挂接的 Context 自己拉取该句柄时（request 或按需求值），由它自己的入口发布，不再注入。
+    -- 挂接的 Context 自己拉取该句柄时（requests 驱动或选择读取），由它自己的入口发布，不再注入。
     deliver consumer raw = when (succeeded raw) $ do
       anchored <- anchoredContexts method
       when (maybe True (`notElem` map fst anchored) consumer) $

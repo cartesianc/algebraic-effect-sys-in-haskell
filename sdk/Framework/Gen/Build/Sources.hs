@@ -8,7 +8,6 @@ import Control.Monad (unless)
 import Control.Monad.State.Strict (StateT, execStateT, gets, lift, modify')
 import Data.List (intercalate, isPrefixOf, nub, sort)
 import Framework.Prototype.Graph (MethodDefinition(..), MethodRole(..), MethodShape(..), GraphError(..))
-import Framework.Language.Registration (Access(..))
 import Framework.Prototype.Types
 import Framework.Prototype.Query
 
@@ -44,9 +43,9 @@ data AssetCall = AssetCall
 
 type AssetAnalysis = StateT AssetFacts (Either (PrototypeError String))
 
--- 可选生产保留为状态分支：A 未发布时 B 的 require 才能补产，故 A/B 不会被
--- 简单的 may-set 误报为共存来源。parallel 从相同输入独立分析，随后合并发布，
--- 因而两个旁支的缺值补产仍能同时出现。状态按有限事实去重，不展开任何业务 IO。
+-- 可选生产保留为状态分支：A 未发布的路径上 B 的 require 只能等待，故 A/B 不会被
+-- 简单的 may-set 误报为共存来源。parallel 从相同输入独立分析，随后合并发布。
+-- require 不生产：没有可见发布的路径停在这次读取，不从读取返回。状态按有限事实去重，不展开任何业务 IO。
 -- 只保留本链或后续 workflow 可能读取的契约；在方法出口就裁剪，避免无关注入
 -- 的成功／失败组合先指数展开。仍保留活跃契约之间的相关性，不退化为 may-set。
 resolveSources :: [MethodDefinition String] -> [String] -> Prototype String
@@ -86,15 +85,11 @@ resolveSources definitions defaultReaders prototype = do
     resources = [source | effect <- effects, Just source <- [effectResource effect]]
     receiving = [contractType | effect <- effects, effectContinuous effect
       , Just contractType <- [effectProduces effect]]
-    -- 复用已完成的可达性分析，保守包含 native reader，以及 caller 的 require 声明
-    -- 将直接 producer 方法调用路由成读取的情况；不依赖尚未算出的 chainReads。
+    -- 复用已完成的可达性分析：链能到达读取入口的契约。生产入口只生产，不再按调用方路由成读取；
+    -- 不依赖尚未算出的 chainReads。
     possibleReads = [(chainNode chain, nub
       [contractType | effect <- effects, Just contractType <- [effectProduces effect]
-        , let reached role = maybe False (`elem` chainReaches chain) (lookup role (effectMethods effect))
-        , reached ContextRequire || reached ContextRequest && any
-            (\consumer -> any ((`elem` chainReaches chain) . snd) (effectMethods consumer)
-              && any (\demand -> demandProvider demand == effectName effect
-                && demandAccess demand == RequireAccess) (effectDemands consumer)) effects])
+        , Just reader <- [lookup ContextRequire (effectMethods effect)], reader `elem` chainReaches chain])
       | chain <- protoChains prototype]
     readsAt node' = maybe [] id (lookup node' possibleReads)
     readsIn tree = nub (localReads ++ concatMap readsIn (workflowChildren tree))
@@ -151,12 +146,12 @@ resolveSources definitions defaultReaders prototype = do
           recordRead (assetRoot call) contractType external
           case sources of
             [] | effectName effect `elem` resources ->
-              -- 资源可由仍活着的实例提供；缺失时失败，绝不按需求值。
+              -- 资源可由仍活着的实例提供；缺失时失败，绝不生产。
               pure [AssetExit True (capture contractType Nothing state), AssetExit False state]
             [] | assetClosing call -> pure [AssetExit False state]
-            [] -> case lookup ContextRequest (effectMethods effect) of
-              Just producing -> method (call { assetCaller = Nothing }) producing state
-              Nothing -> pure [AssetExit False state]
+            -- 没有可见发布：运行时这次读取等待之后的发布，本条路径不从读取返回；
+            -- 失败出口由 method 统一补上。
+            [] -> pure []
             [source] -> pure [AssetExit True (capture contractType (Just source) state), AssetExit False state]
             _ -> lift (Left (InvalidPrototype ("Asset " ++ contractType ++ " read at " ++ show (assetRoot call)
               ++ " has several visible sources " ++ show sources ++ "; refine the contract or the workflow")))
@@ -208,27 +203,15 @@ resolveSources definitions defaultReaders prototype = do
                   then assetCaller call else Just (effectName effect)
                 , assetActiveMethods = selected : assetActiveMethods call }
               role = methodRole definition
-              access = case assetCaller call of
-                Nothing -> Just RequestAccess
-                Just consumer ->
-                  let modes = [demandAccess demand | candidate <- effects, effectName candidate == consumer
-                        , demand <- effectDemands candidate, demandProvider demand == effectName effect]
-                  -- streams 同时授予读取交付视图，按 require 处理。
-                  in if RequestAccess `elem` modes then Just RequestAccess
-                     else if any (`elem` modes) [RequireAccess, StreamAccess] then Just RequireAccess else Nothing
           exits <- case role of
-            ContextRequire | access == Nothing -> pure [AssetExit False state]
             ContextRequire | selected `elem` defaultReaders ->
               readAsset entered effect state
-            ContextRequest -> case access of
-              Nothing -> pure [AssetExit False state]
-              Just RequestAccess -> do
-                body <- shape entered (methodBody definition) state
-                successes (\after -> do
-                  published <- publish call effect after
-                  pure [AssetExit True published]) body
-              -- require 与 streams 都只读取，不进入生产。
-              Just _ -> readAsset call effect state
+            -- 生产入口每次调用都生产并发布：requests 驱动、选择读取、注入与会话步骤。
+            ContextRequest -> do
+              body <- shape entered (methodBody definition) state
+              successes (\after -> do
+                published <- publish call effect after
+                pure [AssetExit True published]) body
             -- 解析器只由 Receive 会话挂载调用；成功即发布一次交付。
             ContextStream -> do
               body <- shape entered (methodBody definition) state

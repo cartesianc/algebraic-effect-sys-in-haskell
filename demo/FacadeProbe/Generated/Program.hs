@@ -15,7 +15,7 @@ data Results = WriteReportResult () | WriteReplyResult () | ReadReportResult () 
   deriving Show
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
--- 第二个列表是各转折契约的读取末端：读取资产，返回它当前的构造器名。
+-- 第二个列表是各转折契约的选择末端：驱动资产（持续资产领取本次交付），返回它当前的构造器名。
 -- 第三个列表是各持续资产的生产步骤：会话按需启动，Stream 单步取得原始输入，parser 发布一次资产。
 compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]
                      , [(String, SDK.SessionSteps ContextValues Errors)])
@@ -33,7 +33,7 @@ compiledEntries = do
       , SDK.targetApp "ShowA" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowAResult <$> (() <$ Handlers.runShowA)))))
       , SDK.targetApp "ShowB" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowBResult <$> (() <$ Handlers.runShowB)))))
       ]
-    , [ SDK.targetApp "ReportState" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (caseOfReportState <$> Handlers.readReportState))))
+    , [ SDK.targetApp "ReportState" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (caseOfReportState <$> Handlers.getReportState))))
       ]
     , [ ("ParserA", SDK.receiveSteps (SDK.targetApp "FeedA" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextFeedA))))) (SDK.targetApp "ParserA" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getLevelA))))))
       , ("ParserB", SDK.receiveSteps (SDK.targetApp "FeedB" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextFeedB))))) (SDK.targetApp "ParserB" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getLevelB))))))
@@ -103,7 +103,8 @@ generatedPrototype =
                   (True)
                   (False)
             , SDK.input = "Root"
-            , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("ReportPath")]
+            , SDK.demands =
+                [SDK.Demand (SDK.RequestAccess) ("ReportPath"), SDK.Demand (SDK.RequireAccess) ("ReportPath")]
             }
         , SDK.EffectSpec
             { SDK.name = "ReplyFile"
@@ -114,7 +115,8 @@ generatedPrototype =
                   (True)
                   (False)
             , SDK.input = "Root"
-            , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("ReplyPath")]
+            , SDK.demands =
+                [SDK.Demand (SDK.RequestAccess) ("ReplyPath"), SDK.Demand (SDK.RequireAccess) ("ReplyPath")]
             }
         , SDK.EffectSpec
             { SDK.name = "ReportScope"
@@ -135,14 +137,20 @@ generatedPrototype =
             , SDK.typing = SDK.Excu (Just "writeText")
             , SDK.input = "ReportScope"
             , SDK.demands =
-                [SDK.Demand (SDK.RequireAccess) ("OpenedReport"), SDK.Demand (SDK.RequireAccess) ("ReportBody")]
+                [ SDK.Demand (SDK.RequestAccess) ("ReportBody")
+                , SDK.Demand (SDK.RequireAccess) ("OpenedReport")
+                , SDK.Demand (SDK.RequireAccess) ("ReportBody")
+                ]
             }
         , SDK.EffectSpec
             { SDK.name = "WriteReply"
             , SDK.typing = SDK.Excu (Just "writeText")
             , SDK.input = "ReplyScope"
             , SDK.demands =
-                [SDK.Demand (SDK.RequireAccess) ("OpenedReply"), SDK.Demand (SDK.RequireAccess) ("ReplyBody")]
+                [ SDK.Demand (SDK.RequestAccess) ("ReplyBody")
+                , SDK.Demand (SDK.RequireAccess) ("OpenedReply")
+                , SDK.Demand (SDK.RequireAccess) ("ReplyBody")
+                ]
             }
         , SDK.EffectSpec
             { SDK.name = "MarkReply"
@@ -345,7 +353,10 @@ generatedPrototype =
             , SDK.effectInput = "Root"
             , SDK.effectMethods =
                 [(SDK.ContextRequest, GetOpenedReportGen), (SDK.ContextRequire, ReadOpenedReportGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("ReportPath") ("ReportLocation")]
+            , SDK.effectDemands =
+                [ SDK.ResolvedDemand (SDK.RequestAccess) ("ReportPath") ("ReportLocation")
+                , SDK.ResolvedDemand (SDK.RequireAccess) ("ReportPath") ("ReportLocation")
+                ]
             , SDK.effectProduces = Just "OpenedReport"
             , SDK.effectBranches = []
             , SDK.effectAnchor = Nothing
@@ -365,7 +376,10 @@ generatedPrototype =
             , SDK.effectInput = "Root"
             , SDK.effectMethods =
                 [(SDK.ContextRequest, GetOpenedReplyGen), (SDK.ContextRequire, ReadOpenedReplyGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("ReplyPath") ("ReplyLocation")]
+            , SDK.effectDemands =
+                [ SDK.ResolvedDemand (SDK.RequestAccess) ("ReplyPath") ("ReplyLocation")
+                , SDK.ResolvedDemand (SDK.RequireAccess) ("ReplyPath") ("ReplyLocation")
+                ]
             , SDK.effectProduces = Just "OpenedReply"
             , SDK.effectBranches = []
             , SDK.effectAnchor = Nothing
@@ -429,7 +443,8 @@ generatedPrototype =
             , SDK.effectInput = "ReportScope"
             , SDK.effectMethods = [(SDK.HandlerMethod, RunWriteReportGen)]
             , SDK.effectDemands =
-                [ SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedReport") ("ReportFile")
+                [ SDK.ResolvedDemand (SDK.RequestAccess) ("ReportBody") ("ReportDraft")
+                , SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedReport") ("ReportFile")
                 , SDK.ResolvedDemand (SDK.RequireAccess) ("ReportBody") ("ReportDraft")
                 ]
             , SDK.effectProduces = Nothing
@@ -451,7 +466,8 @@ generatedPrototype =
             , SDK.effectInput = "ReplyScope"
             , SDK.effectMethods = [(SDK.HandlerMethod, RunWriteReplyGen)]
             , SDK.effectDemands =
-                [ SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedReply") ("ReplyFile")
+                [ SDK.ResolvedDemand (SDK.RequestAccess) ("ReplyBody") ("ReplyDraft")
+                , SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedReply") ("ReplyFile")
                 , SDK.ResolvedDemand (SDK.RequireAccess) ("ReplyBody") ("ReplyDraft")
                 ]
             , SDK.effectProduces = Nothing
@@ -779,40 +795,24 @@ generatedPrototype =
         ]
     , SDK.protoMethods =
         [ SDK.MethodDefinition (GetReportPathGen) (GetReportPathGen) (SDK.ContextRequest) (SDK.Empty)
-        , SDK.MethodDefinition
-            (ReadReportPathGen)
-            (GetReportPathGen)
-            (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (GetReportPathGen)]))
+        , SDK.MethodDefinition (ReadReportPathGen) (GetReportPathGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition (GetReplyPathGen) (GetReplyPathGen) (SDK.ContextRequest) (SDK.Empty)
-        , SDK.MethodDefinition
-            (ReadReplyPathGen)
-            (GetReplyPathGen)
-            (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (GetReplyPathGen)]))
+        , SDK.MethodDefinition (ReadReplyPathGen) (GetReplyPathGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition (GetReportBodyGen) (GetReportBodyGen) (SDK.ContextRequest) (SDK.Empty)
-        , SDK.MethodDefinition
-            (ReadReportBodyGen)
-            (GetReportBodyGen)
-            (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (GetReportBodyGen)]))
+        , SDK.MethodDefinition (ReadReportBodyGen) (GetReportBodyGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition (GetReplyBodyGen) (GetReplyBodyGen) (SDK.ContextRequest) (SDK.Empty)
-        , SDK.MethodDefinition
-            (ReadReplyBodyGen)
-            (GetReplyBodyGen)
-            (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (GetReplyBodyGen)]))
+        , SDK.MethodDefinition (ReadReplyBodyGen) (GetReplyBodyGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition
             (GetOpenedReportGen)
             (GetOpenedReportGen)
             (SDK.ContextRequest)
-            (SDK.Call (ReadReportPathGen))
+            (SDK.Sequence ([SDK.Call (GetReportPathGen), SDK.Call (ReadReportPathGen)]))
         , SDK.MethodDefinition (ReadOpenedReportGen) (GetOpenedReportGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition
             (GetOpenedReplyGen)
             (GetOpenedReplyGen)
             (SDK.ContextRequest)
-            (SDK.Call (ReadReplyPathGen))
+            (SDK.Sequence ([SDK.Call (GetReplyPathGen), SDK.Call (ReadReplyPathGen)]))
         , SDK.MethodDefinition (ReadOpenedReplyGen) (GetOpenedReplyGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition
             (OpenReportScopeGen)
@@ -840,7 +840,13 @@ generatedPrototype =
             (SDK.HandlerMethod)
             (
               SDK.Sequence
-                ([SDK.Call (OpenReportScopeGen), SDK.Call (ReadOpenedReportGen), SDK.Call (ReadReportBodyGen)])
+                (
+                  [ SDK.Call (GetReportBodyGen)
+                  , SDK.Call (OpenReportScopeGen)
+                  , SDK.Call (ReadOpenedReportGen)
+                  , SDK.Call (ReadReportBodyGen)
+                  ]
+                )
             )
         , SDK.MethodDefinition
             (RunWriteReplyGen)
@@ -848,7 +854,13 @@ generatedPrototype =
             (SDK.HandlerMethod)
             (
               SDK.Sequence
-                ([SDK.Call (OpenReplyScopeGen), SDK.Call (ReadOpenedReplyGen), SDK.Call (ReadReplyBodyGen)])
+                (
+                  [ SDK.Call (GetReplyBodyGen)
+                  , SDK.Call (OpenReplyScopeGen)
+                  , SDK.Call (ReadOpenedReplyGen)
+                  , SDK.Call (ReadReplyBodyGen)
+                  ]
+                )
             )
         , SDK.MethodDefinition (RunMarkReplyGen) (RunMarkReplyGen) (SDK.HandlerMethod) (SDK.Empty)
         , SDK.MethodDefinition
@@ -873,21 +885,13 @@ generatedPrototype =
             (GetReportStatsGen)
             (SDK.ContextRequest)
             (SDK.Call (RunReadReportGen))
-        , SDK.MethodDefinition
-            (ReadReportStatsGen)
-            (GetReportStatsGen)
-            (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (GetReportStatsGen)]))
+        , SDK.MethodDefinition (ReadReportStatsGen) (GetReportStatsGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition
             (GetReplyStatsGen)
             (GetReplyStatsGen)
             (SDK.ContextRequest)
             (SDK.Call (RunReadReplyGen))
-        , SDK.MethodDefinition
-            (ReadReplyStatsGen)
-            (GetReplyStatsGen)
-            (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (GetReplyStatsGen)]))
+        , SDK.MethodDefinition (ReadReplyStatsGen) (GetReplyStatsGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition
             (RunShowReportGen)
             (RunShowReportGen)
@@ -903,11 +907,7 @@ generatedPrototype =
             (GetReportStateGen)
             (SDK.ContextRequest)
             (SDK.Call (ReadReportPathGen))
-        , SDK.MethodDefinition
-            (ReadReportStateGen)
-            (GetReportStateGen)
-            (SDK.ContextRequire)
-            (SDK.Choice ([SDK.Empty, SDK.Call (GetReportStateGen)]))
+        , SDK.MethodDefinition (ReadReportStateGen) (GetReportStateGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition (RunOnBlankGen) (RunOnBlankGen) (SDK.HandlerMethod) (SDK.Empty)
         , SDK.MethodDefinition
             (RunOnFilledGen)
@@ -1009,16 +1009,16 @@ generatedPrototype =
             , SDK.chainEntry = RunWriteReportGen
             , SDK.chainReaches =
                 [ RunWriteReportGen
+                , GetReportBodyGen
                 , OpenReportScopeGen
                 , GetOpenedReportGen
-                , ReadReportPathGen
                 , GetReportPathGen
+                , ReadReportPathGen
                 , ReadOpenedReportGen
                 , ReadReportBodyGen
-                , GetReportBodyGen
                 ]
             , SDK.chainDrives = ["ReportBody","ReportPath"]
-            , SDK.chainReads = ["ReportBody","ReportPath"]
+            , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenReportScopeGen]]
             }
         , SDK.ChainProto
@@ -1028,16 +1028,16 @@ generatedPrototype =
             , SDK.chainEntry = RunWriteReplyGen
             , SDK.chainReaches =
                 [ RunWriteReplyGen
+                , GetReplyBodyGen
                 , OpenReplyScopeGen
                 , GetOpenedReplyGen
-                , ReadReplyPathGen
                 , GetReplyPathGen
+                , ReadReplyPathGen
                 , ReadOpenedReplyGen
                 , ReadReplyBodyGen
-                , GetReplyBodyGen
                 ]
             , SDK.chainDrives = ["ReplyBody","ReplyPath"]
-            , SDK.chainReads = ["ReplyBody","ReplyPath"]
+            , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenReplyScopeGen]]
             }
         , SDK.ChainProto
@@ -1045,8 +1045,8 @@ generatedPrototype =
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ReadReport"
             , SDK.chainEntry = RunReadReportGen
-            , SDK.chainReaches = [RunReadReportGen, ReadReportPathGen, GetReportPathGen, GetReportStatsGen]
-            , SDK.chainDrives = ["ReportPath","ReportStats"]
+            , SDK.chainReaches = [RunReadReportGen, ReadReportPathGen, GetReportStatsGen]
+            , SDK.chainDrives = ["ReportStats"]
             , SDK.chainReads = ["ReportPath"]
             , SDK.chainScopePaths = [[]]
             }
@@ -1055,9 +1055,8 @@ generatedPrototype =
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ReadReply"
             , SDK.chainEntry = RunReadReplyGen
-            , SDK.chainReaches =
-                [RunReadReplyGen, RunMarkReplyGen, ReadReplyPathGen, GetReplyPathGen, GetReplyStatsGen]
-            , SDK.chainDrives = ["ReplyPath","ReplyStats"]
+            , SDK.chainReaches = [RunReadReplyGen, RunMarkReplyGen, ReadReplyPathGen, GetReplyStatsGen]
+            , SDK.chainDrives = ["ReplyStats"]
             , SDK.chainReads = ["ReplyPath"]
             , SDK.chainScopePaths = [[]]
             }
@@ -1066,16 +1065,9 @@ generatedPrototype =
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ShowReport"
             , SDK.chainEntry = RunShowReportGen
-            , SDK.chainReaches =
-                [ RunShowReportGen
-                , ReadReportStatsGen
-                , GetReportStatsGen
-                , RunReadReportGen
-                , ReadReportPathGen
-                , GetReportPathGen
-                ]
-            , SDK.chainDrives = ["ReportStats"]
-            , SDK.chainReads = ["ReportPath","ReportStats"]
+            , SDK.chainReaches = [RunShowReportGen, ReadReportStatsGen]
+            , SDK.chainDrives = []
+            , SDK.chainReads = ["ReportStats"]
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
@@ -1083,17 +1075,9 @@ generatedPrototype =
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ShowReply"
             , SDK.chainEntry = RunShowReplyGen
-            , SDK.chainReaches =
-                [ RunShowReplyGen
-                , ReadReplyStatsGen
-                , GetReplyStatsGen
-                , RunReadReplyGen
-                , RunMarkReplyGen
-                , ReadReplyPathGen
-                , GetReplyPathGen
-                ]
-            , SDK.chainDrives = ["ReplyStats"]
-            , SDK.chainReads = ["ReplyPath","ReplyStats"]
+            , SDK.chainReaches = [RunShowReplyGen, ReadReplyStatsGen]
+            , SDK.chainDrives = []
+            , SDK.chainReads = ["ReplyStats"]
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
@@ -1111,8 +1095,7 @@ generatedPrototype =
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "OnFilled"
             , SDK.chainEntry = RunOnFilledGen
-            , SDK.chainReaches =
-                [RunOnFilledGen, ReadReportStateGen, GetReportStateGen, ReadReportPathGen, GetReportPathGen]
+            , SDK.chainReaches = [RunOnFilledGen, ReadReportStateGen]
             , SDK.chainDrives = []
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
@@ -1141,10 +1124,10 @@ generatedPrototype =
             { SDK.chainNode = [3,-1]
             , SDK.chainRole = SDK.SelectorChain
             , SDK.chainTerminal = "ReportState"
-            , SDK.chainEntry = ReadReportStateGen
-            , SDK.chainReaches = [ReadReportStateGen, GetReportStateGen, ReadReportPathGen, GetReportPathGen]
+            , SDK.chainEntry = GetReportStateGen
+            , SDK.chainReaches = [GetReportStateGen, ReadReportPathGen]
             , SDK.chainDrives = ["ReportState"]
-            , SDK.chainReads = ["ReportPath","ReportState"]
+            , SDK.chainReads = ["ReportPath"]
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
@@ -1239,7 +1222,7 @@ generatedPrototype =
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ReportLocation"
             , SDK.definitionEntry = ReadReportPathGen
-            , SDK.definitionReaches = [ReadReportPathGen, GetReportPathGen]
+            , SDK.definitionReaches = [ReadReportPathGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -1251,7 +1234,7 @@ generatedPrototype =
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ReplyLocation"
             , SDK.definitionEntry = ReadReplyPathGen
-            , SDK.definitionReaches = [ReadReplyPathGen, GetReplyPathGen]
+            , SDK.definitionReaches = [ReadReplyPathGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -1263,7 +1246,7 @@ generatedPrototype =
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ReportDraft"
             , SDK.definitionEntry = ReadReportBodyGen
-            , SDK.definitionReaches = [ReadReportBodyGen, GetReportBodyGen]
+            , SDK.definitionReaches = [ReadReportBodyGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -1275,13 +1258,13 @@ generatedPrototype =
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ReplyDraft"
             , SDK.definitionEntry = ReadReplyBodyGen
-            , SDK.definitionReaches = [ReadReplyBodyGen, GetReplyBodyGen]
+            , SDK.definitionReaches = [ReadReplyBodyGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ReportFile"
             , SDK.definitionEntry = GetOpenedReportGen
-            , SDK.definitionReaches = [GetOpenedReportGen, ReadReportPathGen, GetReportPathGen]
+            , SDK.definitionReaches = [GetOpenedReportGen, GetReportPathGen, ReadReportPathGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -1293,7 +1276,7 @@ generatedPrototype =
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ReplyFile"
             , SDK.definitionEntry = GetOpenedReplyGen
-            , SDK.definitionReaches = [GetOpenedReplyGen, ReadReplyPathGen, GetReplyPathGen]
+            , SDK.definitionReaches = [GetOpenedReplyGen, GetReplyPathGen, ReadReplyPathGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -1306,14 +1289,14 @@ generatedPrototype =
             , SDK.definitionEffect = "ReportScope"
             , SDK.definitionEntry = OpenReportScopeGen
             , SDK.definitionReaches =
-                [OpenReportScopeGen, GetOpenedReportGen, ReadReportPathGen, GetReportPathGen, ReadOpenedReportGen]
+                [OpenReportScopeGen, GetOpenedReportGen, GetReportPathGen, ReadReportPathGen, ReadOpenedReportGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "ReplyScope"
             , SDK.definitionEntry = OpenReplyScopeGen
             , SDK.definitionReaches =
-                [OpenReplyScopeGen, GetOpenedReplyGen, ReadReplyPathGen, GetReplyPathGen, ReadOpenedReplyGen]
+                [OpenReplyScopeGen, GetOpenedReplyGen, GetReplyPathGen, ReadReplyPathGen, ReadOpenedReplyGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
@@ -1321,13 +1304,13 @@ generatedPrototype =
             , SDK.definitionEntry = RunWriteReportGen
             , SDK.definitionReaches =
                 [ RunWriteReportGen
+                , GetReportBodyGen
                 , OpenReportScopeGen
                 , GetOpenedReportGen
-                , ReadReportPathGen
                 , GetReportPathGen
+                , ReadReportPathGen
                 , ReadOpenedReportGen
                 , ReadReportBodyGen
-                , GetReportBodyGen
                 ]
             }
         , SDK.ChainDefinition
@@ -1336,13 +1319,13 @@ generatedPrototype =
             , SDK.definitionEntry = RunWriteReplyGen
             , SDK.definitionReaches =
                 [ RunWriteReplyGen
+                , GetReplyBodyGen
                 , OpenReplyScopeGen
                 , GetOpenedReplyGen
-                , ReadReplyPathGen
                 , GetReplyPathGen
+                , ReadReplyPathGen
                 , ReadOpenedReplyGen
                 , ReadReplyBodyGen
-                , GetReplyBodyGen
                 ]
             }
         , SDK.ChainDefinition
@@ -1355,89 +1338,61 @@ generatedPrototype =
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "ReadReport"
             , SDK.definitionEntry = RunReadReportGen
-            , SDK.definitionReaches =
-                [RunReadReportGen, ReadReportPathGen, GetReportPathGen, GetReportStatsGen]
+            , SDK.definitionReaches = [RunReadReportGen, ReadReportPathGen, GetReportStatsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "ReadReply"
             , SDK.definitionEntry = RunReadReplyGen
-            , SDK.definitionReaches =
-                [RunReadReplyGen, RunMarkReplyGen, ReadReplyPathGen, GetReplyPathGen, GetReplyStatsGen]
+            , SDK.definitionReaches = [RunReadReplyGen, RunMarkReplyGen, ReadReplyPathGen, GetReplyStatsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ReportCounter"
             , SDK.definitionEntry = GetReportStatsGen
-            , SDK.definitionReaches =
-                [GetReportStatsGen, RunReadReportGen, ReadReportPathGen, GetReportPathGen]
+            , SDK.definitionReaches = [GetReportStatsGen, RunReadReportGen, ReadReportPathGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ReportCounter"
             , SDK.definitionEntry = ReadReportStatsGen
-            , SDK.definitionReaches =
-                [ReadReportStatsGen, GetReportStatsGen, RunReadReportGen, ReadReportPathGen, GetReportPathGen]
+            , SDK.definitionReaches = [ReadReportStatsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ReplyCounter"
             , SDK.definitionEntry = GetReplyStatsGen
-            , SDK.definitionReaches =
-                [GetReplyStatsGen, RunReadReplyGen, RunMarkReplyGen, ReadReplyPathGen, GetReplyPathGen]
+            , SDK.definitionReaches = [GetReplyStatsGen, RunReadReplyGen, RunMarkReplyGen, ReadReplyPathGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ReplyCounter"
             , SDK.definitionEntry = ReadReplyStatsGen
-            , SDK.definitionReaches =
-                [ ReadReplyStatsGen
-                , GetReplyStatsGen
-                , RunReadReplyGen
-                , RunMarkReplyGen
-                , ReadReplyPathGen
-                , GetReplyPathGen
-                ]
+            , SDK.definitionReaches = [ReadReplyStatsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "ShowReport"
             , SDK.definitionEntry = RunShowReportGen
-            , SDK.definitionReaches =
-                [ RunShowReportGen
-                , ReadReportStatsGen
-                , GetReportStatsGen
-                , RunReadReportGen
-                , ReadReportPathGen
-                , GetReportPathGen
-                ]
+            , SDK.definitionReaches = [RunShowReportGen, ReadReportStatsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "ShowReply"
             , SDK.definitionEntry = RunShowReplyGen
-            , SDK.definitionReaches =
-                [ RunShowReplyGen
-                , ReadReplyStatsGen
-                , GetReplyStatsGen
-                , RunReadReplyGen
-                , RunMarkReplyGen
-                , ReadReplyPathGen
-                , GetReplyPathGen
-                ]
+            , SDK.definitionReaches = [RunShowReplyGen, ReadReplyStatsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ReportInspect"
             , SDK.definitionEntry = GetReportStateGen
-            , SDK.definitionReaches = [GetReportStateGen, ReadReportPathGen, GetReportPathGen]
+            , SDK.definitionReaches = [GetReportStateGen, ReadReportPathGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ReportInspect"
             , SDK.definitionEntry = ReadReportStateGen
-            , SDK.definitionReaches =
-                [ReadReportStateGen, GetReportStateGen, ReadReportPathGen, GetReportPathGen]
+            , SDK.definitionReaches = [ReadReportStateGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
@@ -1449,8 +1404,7 @@ generatedPrototype =
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "OnFilled"
             , SDK.definitionEntry = RunOnFilledGen
-            , SDK.definitionReaches =
-                [RunOnFilledGen, ReadReportStateGen, GetReportStateGen, ReadReportPathGen, GetReportPathGen]
+            , SDK.definitionReaches = [RunOnFilledGen, ReadReportStateGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -1510,8 +1464,15 @@ generatedPrototype =
                   (SDK.HandlerMethod)
                   (
                     SDK.Sequence
-                      ([SDK.Call (OpenReportScopeGen), SDK.Call (ReadOpenedReportGen), SDK.Call (ReadReportBodyGen)])
+                      (
+                        [ SDK.Call (GetReportBodyGen)
+                        , SDK.Call (OpenReportScopeGen)
+                        , SDK.Call (ReadOpenedReportGen)
+                        , SDK.Call (ReadReportBodyGen)
+                        ]
+                      )
                   )
+              , SDK.MethodDefinition (GetReportBodyGen) (GetReportBodyGen) (SDK.ContextRequest) (SDK.Empty)
               , SDK.MethodDefinition
                   (OpenReportScopeGen)
                   (OpenReportScopeGen)
@@ -1521,28 +1482,26 @@ generatedPrototype =
                   (GetOpenedReportGen)
                   (GetOpenedReportGen)
                   (SDK.ContextRequest)
-                  (SDK.Call (ReadReportPathGen))
-              , SDK.MethodDefinition
-                  (ReadReportPathGen)
-                  (GetReportPathGen)
-                  (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (GetReportPathGen)]))
+                  (SDK.Sequence ([SDK.Call (GetReportPathGen), SDK.Call (ReadReportPathGen)]))
               , SDK.MethodDefinition (GetReportPathGen) (GetReportPathGen) (SDK.ContextRequest) (SDK.Empty)
+              , SDK.MethodDefinition (ReadReportPathGen) (GetReportPathGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition (ReadOpenedReportGen) (GetOpenedReportGen) (SDK.ContextRequire) (SDK.Empty)
-              , SDK.MethodDefinition
-                  (ReadReportBodyGen)
-                  (GetReportBodyGen)
-                  (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (GetReportBodyGen)]))
-              , SDK.MethodDefinition (GetReportBodyGen) (GetReportBodyGen) (SDK.ContextRequest) (SDK.Empty)
+              , SDK.MethodDefinition (ReadReportBodyGen) (GetReportBodyGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition
                   (RunWriteReplyGen)
                   (RunWriteReplyGen)
                   (SDK.HandlerMethod)
                   (
                     SDK.Sequence
-                      ([SDK.Call (OpenReplyScopeGen), SDK.Call (ReadOpenedReplyGen), SDK.Call (ReadReplyBodyGen)])
+                      (
+                        [ SDK.Call (GetReplyBodyGen)
+                        , SDK.Call (OpenReplyScopeGen)
+                        , SDK.Call (ReadOpenedReplyGen)
+                        , SDK.Call (ReadReplyBodyGen)
+                        ]
+                      )
                   )
+              , SDK.MethodDefinition (GetReplyBodyGen) (GetReplyBodyGen) (SDK.ContextRequest) (SDK.Empty)
               , SDK.MethodDefinition
                   (OpenReplyScopeGen)
                   (OpenReplyScopeGen)
@@ -1552,20 +1511,11 @@ generatedPrototype =
                   (GetOpenedReplyGen)
                   (GetOpenedReplyGen)
                   (SDK.ContextRequest)
-                  (SDK.Call (ReadReplyPathGen))
-              , SDK.MethodDefinition
-                  (ReadReplyPathGen)
-                  (GetReplyPathGen)
-                  (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (GetReplyPathGen)]))
+                  (SDK.Sequence ([SDK.Call (GetReplyPathGen), SDK.Call (ReadReplyPathGen)]))
               , SDK.MethodDefinition (GetReplyPathGen) (GetReplyPathGen) (SDK.ContextRequest) (SDK.Empty)
+              , SDK.MethodDefinition (ReadReplyPathGen) (GetReplyPathGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition (ReadOpenedReplyGen) (GetOpenedReplyGen) (SDK.ContextRequire) (SDK.Empty)
-              , SDK.MethodDefinition
-                  (ReadReplyBodyGen)
-                  (GetReplyBodyGen)
-                  (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (GetReplyBodyGen)]))
-              , SDK.MethodDefinition (GetReplyBodyGen) (GetReplyBodyGen) (SDK.ContextRequest) (SDK.Empty)
+              , SDK.MethodDefinition (ReadReplyBodyGen) (GetReplyBodyGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition
                   (RunReadReportGen)
                   (RunReadReportGen)
@@ -1589,51 +1539,29 @@ generatedPrototype =
                   (RunShowReportGen)
                   (SDK.HandlerMethod)
                   (SDK.Call (ReadReportStatsGen))
-              , SDK.MethodDefinition
-                  (ReadReportStatsGen)
-                  (GetReportStatsGen)
-                  (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (GetReportStatsGen)]))
-              , SDK.MethodDefinition
-                  (GetReportStatsGen)
-                  (GetReportStatsGen)
-                  (SDK.ContextRequest)
-                  (SDK.Call (RunReadReportGen))
+              , SDK.MethodDefinition (ReadReportStatsGen) (GetReportStatsGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition
                   (RunShowReplyGen)
                   (RunShowReplyGen)
                   (SDK.HandlerMethod)
                   (SDK.Call (ReadReplyStatsGen))
-              , SDK.MethodDefinition
-                  (ReadReplyStatsGen)
-                  (GetReplyStatsGen)
-                  (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (GetReplyStatsGen)]))
-              , SDK.MethodDefinition
-                  (GetReplyStatsGen)
-                  (GetReplyStatsGen)
-                  (SDK.ContextRequest)
-                  (SDK.Call (RunReadReplyGen))
+              , SDK.MethodDefinition (ReadReplyStatsGen) (GetReplyStatsGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition (RunOnBlankGen) (RunOnBlankGen) (SDK.HandlerMethod) (SDK.Empty)
               , SDK.MethodDefinition
                   (RunOnFilledGen)
                   (RunOnFilledGen)
                   (SDK.HandlerMethod)
                   (SDK.Call (ReadReportStateGen))
-              , SDK.MethodDefinition
-                  (ReadReportStateGen)
-                  (GetReportStateGen)
-                  (SDK.ContextRequire)
-                  (SDK.Choice ([SDK.Empty, SDK.Call (GetReportStateGen)]))
+              , SDK.MethodDefinition (ReadReportStateGen) (GetReportStateGen) (SDK.ContextRequire) (SDK.Empty)
+              , SDK.MethodDefinition (RunShowAGen) (RunShowAGen) (SDK.HandlerMethod) (SDK.Call (StreamLevelAGen))
+              , SDK.MethodDefinition (StreamLevelAGen) (GetLevelAGen) (SDK.ContextRequire) (SDK.Empty)
+              , SDK.MethodDefinition (RunShowBGen) (RunShowBGen) (SDK.HandlerMethod) (SDK.Call (StreamLevelBGen))
+              , SDK.MethodDefinition (StreamLevelBGen) (GetLevelBGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition
                   (GetReportStateGen)
                   (GetReportStateGen)
                   (SDK.ContextRequest)
                   (SDK.Call (ReadReportPathGen))
-              , SDK.MethodDefinition (RunShowAGen) (RunShowAGen) (SDK.HandlerMethod) (SDK.Call (StreamLevelAGen))
-              , SDK.MethodDefinition (StreamLevelAGen) (GetLevelAGen) (SDK.ContextRequire) (SDK.Empty)
-              , SDK.MethodDefinition (RunShowBGen) (RunShowBGen) (SDK.HandlerMethod) (SDK.Call (StreamLevelBGen))
-              , SDK.MethodDefinition (StreamLevelBGen) (GetLevelBGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition (NextFeedAGen) (NextFeedAGen) (SDK.StreamHandler) (SDK.Empty)
               , SDK.MethodDefinition (GetLevelAGen) (GetLevelAGen) (SDK.ContextStream) (SDK.Call (NextFeedAGen))
               , SDK.MethodDefinition (NextFeedBGen) (NextFeedBGen) (SDK.StreamHandler) (SDK.Empty)
@@ -1650,43 +1578,38 @@ generatedPrototype =
               , RunOnFilledGen
               , RunShowAGen
               , RunShowBGen
-              , ReadReportStateGen
+              , GetReportStateGen
               , NextFeedAGen
               , GetLevelAGen
               , NextFeedBGen
               , GetLevelBGen
               ]
           , SDK.graphReferences =
-              [ (RunWriteReportGen, OpenReportScopeGen)
+              [ (RunWriteReportGen, GetReportBodyGen)
+              , (RunWriteReportGen, OpenReportScopeGen)
               , (RunWriteReportGen, ReadOpenedReportGen)
               , (RunWriteReportGen, ReadReportBodyGen)
               , (OpenReportScopeGen, GetOpenedReportGen)
               , (OpenReportScopeGen, ReadOpenedReportGen)
+              , (GetOpenedReportGen, GetReportPathGen)
               , (GetOpenedReportGen, ReadReportPathGen)
-              , (ReadReportPathGen, GetReportPathGen)
-              , (ReadReportBodyGen, GetReportBodyGen)
+              , (RunWriteReplyGen, GetReplyBodyGen)
               , (RunWriteReplyGen, OpenReplyScopeGen)
               , (RunWriteReplyGen, ReadOpenedReplyGen)
               , (RunWriteReplyGen, ReadReplyBodyGen)
               , (OpenReplyScopeGen, GetOpenedReplyGen)
               , (OpenReplyScopeGen, ReadOpenedReplyGen)
+              , (GetOpenedReplyGen, GetReplyPathGen)
               , (GetOpenedReplyGen, ReadReplyPathGen)
-              , (ReadReplyPathGen, GetReplyPathGen)
-              , (ReadReplyBodyGen, GetReplyBodyGen)
               , (RunReadReportGen, ReadReportPathGen)
               , (RunReadReplyGen, RunMarkReplyGen)
               , (RunReadReplyGen, ReadReplyPathGen)
               , (RunShowReportGen, ReadReportStatsGen)
-              , (ReadReportStatsGen, GetReportStatsGen)
-              , (GetReportStatsGen, RunReadReportGen)
               , (RunShowReplyGen, ReadReplyStatsGen)
-              , (ReadReplyStatsGen, GetReplyStatsGen)
-              , (GetReplyStatsGen, RunReadReplyGen)
               , (RunOnFilledGen, ReadReportStateGen)
-              , (ReadReportStateGen, GetReportStateGen)
-              , (GetReportStateGen, ReadReportPathGen)
               , (RunShowAGen, StreamLevelAGen)
               , (RunShowBGen, StreamLevelBGen)
+              , (GetReportStateGen, ReadReportPathGen)
               , (GetLevelAGen, NextFeedAGen)
               , (GetLevelBGen, NextFeedBGen)
               ]
@@ -1703,7 +1626,7 @@ generatedPrototype =
               , (RunOnFilledGen, [[]])
               , (RunShowAGen, [[]])
               , (RunShowBGen, [[]])
-              , (ReadReportStateGen, [[]])
+              , (GetReportStateGen, [[]])
               , (NextFeedAGen, [[]])
               , (GetLevelAGen, [[]])
               , (NextFeedBGen, [[]])
@@ -1734,17 +1657,10 @@ generatedPrototype =
           }
     , SDK.protoScopeNames = [(OpenReportScopeGen, "ReportScope"), (OpenReplyScopeGen, "ReplyScope")]
     , SDK.protoSources =
-        [ (SDK.ReadPoint ([3,-1]) ("ReportPath"), SDK.FromChains ([[0,0], [1,0]]))
-        , (SDK.ReadPoint ([3,-1]) ("ReportState"), SDK.FromOwnChain)
+        [ (SDK.ReadPoint ([3,-1]) ("ReportPath"), SDK.FromChains ([[0,0]]))
         , (SDK.ReadPoint ([2,1]) ("ReplyStats"), SDK.FromChains ([[1,1]]))
         , (SDK.ReadPoint ([2,0]) ("ReportStats"), SDK.FromChains ([[1,0]]))
-        , (SDK.ReadPoint ([2,1]) ("ReplyPath"), SDK.FromChains ([[0,1], [1,1]]))
-        , (SDK.ReadPoint ([2,0]) ("ReportPath"), SDK.FromChains ([[0,0], [1,0]]))
         , (SDK.ReadPoint ([1,1]) ("ReplyPath"), SDK.FromChains ([[0,1]]))
         , (SDK.ReadPoint ([1,0]) ("ReportPath"), SDK.FromChains ([[0,0]]))
-        , (SDK.ReadPoint ([0,1]) ("ReplyBody"), SDK.FromOwnChain)
-        , (SDK.ReadPoint ([0,1]) ("ReplyPath"), SDK.FromOwnChain)
-        , (SDK.ReadPoint ([0,0]) ("ReportBody"), SDK.FromOwnChain)
-        , (SDK.ReadPoint ([0,0]) ("ReportPath"), SDK.FromOwnChain)
         ]
     }

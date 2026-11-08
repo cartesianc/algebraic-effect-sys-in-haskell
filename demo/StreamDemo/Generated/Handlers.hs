@@ -187,32 +187,28 @@ nextTemperatureFeed = (FrameworkRuntime.withErrorPath ["SensorLink"] . Framework
   openSensorLink >> runAt @"TemperatureFeed" FrameworkGenerated.nextReading
 
 getTemperatureSample :: FrameworkGenerated.App FrameworkGenerated.TemperatureSample
-getTemperatureSample = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.callContext "TemperatureParser" FrameworkGenerated.ContextBindingError
-    [("ShowTemperature", FrameworkRuntime.RequireValue), ("CheckTrend", FrameworkRuntime.RequireValue)]
+getTemperatureSample = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.callContext "TemperatureParser"
     Nothing
-    FrameworkGenerated.boundTemperatureParser
     (\value bindings -> bindings { FrameworkGenerated.boundTemperatureParser = Just value })) $
   (FrameworkGenerated.TemperatureSample <$> runAt @"TemperatureParser" FrameworkGenerated.parseTemperature)
 
 streamTemperatureSample :: FrameworkGenerated.App (FrameworkRuntime.History FrameworkGenerated.TemperatureSample)
 streamTemperatureSample = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readHistory "TemperatureParser" FrameworkGenerated.ContextBindingError [("ShowTemperature", FrameworkRuntime.RequireValue), ("CheckTrend", FrameworkRuntime.RequireValue)] FrameworkGenerated.boundTemperatureParser Nothing
+  FrameworkRuntime.readHistory "TemperatureParser" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundTemperatureParser
 
 nextHeartbeatClock :: FrameworkGenerated.App String
 nextHeartbeatClock = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "HeartbeatClock") $
   runAt @"HeartbeatClock" FrameworkGenerated.nextBeat
 
 getBeat :: FrameworkGenerated.App FrameworkGenerated.Beat
-getBeat = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "Heartbeat" FrameworkGenerated.ContextBindingError
-    [("ReportHeartbeat", FrameworkRuntime.RequireValue)]
+getBeat = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "Heartbeat"
     Nothing
-    FrameworkGenerated.boundHeartbeat
     (\value bindings -> bindings { FrameworkGenerated.boundHeartbeat = Just value })) $
   (FrameworkGenerated.Beat <$> runAt @"Heartbeat" FrameworkGenerated.parseBeat)
 
 streamBeat :: FrameworkGenerated.App (FrameworkRuntime.History FrameworkGenerated.Beat)
 streamBeat = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readHistory "Heartbeat" FrameworkGenerated.ContextBindingError [("ReportHeartbeat", FrameworkRuntime.RequireValue)] FrameworkGenerated.boundHeartbeat Nothing
+  FrameworkRuntime.readHistory "Heartbeat" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundHeartbeat
 
 runAnnounce :: FrameworkGenerated.App (Maybe String)
 runAnnounce = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runAnnounce" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "Announce") $

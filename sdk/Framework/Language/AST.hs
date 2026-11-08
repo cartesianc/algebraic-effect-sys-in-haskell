@@ -9,7 +9,7 @@ import Framework.Recursion (Fix(..), Algebra, cata)
 
 -- AST 只保存调用描述；递归位置独立为 next，由不同 algebra 解释。
 -- Alternative 只列出候选，不写条件：候选经注册依赖同一和类型资产的不同分支契约，
--- 运行时先 require 该资产，再按它的构造器启动对应候选。
+-- 运行时先驱动该资产（相当于 requests；持续资产领取本次交付），再按它的构造器启动对应候选。
 data WorkflowF next
   = Node String
   | Chained [next]

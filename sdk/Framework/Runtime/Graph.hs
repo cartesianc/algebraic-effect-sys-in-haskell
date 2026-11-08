@@ -1,6 +1,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 
--- 只读 Prototype 的运行实例：活动 chain、Origin 资产表、scope 引用和求值锁。
+-- 只读 Prototype 的运行实例：活动 chain、Origin 资产表、scope 引用和发布信号。
 -- 同时持有唯一的会话登记表；登记／停止的原子边界在这里，生产线程由 Runtime 启动。
 -- 生命周期：Execution 创建并安装树关系；App 更新调用与发布；Execution 退出时
 -- 关闭会话登记并等待任务，Program 随后进行 scope 退出清理。
@@ -8,12 +8,12 @@
 module Framework.Runtime.Graph
   ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..)
   , newRuntimeGraph, configureRuntimeScopes, newOrigin
-  , beginActivation, endActivation, sourceLock, finishOrigin
-  , publishAsset, readVisibleAsset, resetOrigins
+  , beginActivation, endActivation
+  , publishAsset, publicationSignal, readVisibleAsset, resetOrigins
   , installSessionLauncher, obtainSession, stopSessions, currentPublications
   ) where
 
-import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newEmptyMVar, newMVar, putMVar)
 import Control.Exception (evaluate, uninterruptibleMask_)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (isPrefixOf)
@@ -53,7 +53,8 @@ data RuntimeGraph environment cause = RuntimeGraph
   -- 发布时无归属的资产按 Origin 分组；后续认领保留同一引用，读取再检查共享 owner。
   -- 同一来源内只替换该入口自己的最新绑定，旧引用不会指向后来的 request 产物。
   , runtimeAssets :: IORef [((Origin, String), ScopeBinding environment cause)]
-  , runtimeForcing :: MVar [((Origin, String), MVar ())]
+  -- 每次普通发布后填满并换新：缺值的 require 先取当前信号再读取，读不到就等它。
+  , runtimePublished :: IORef (MVar ())
   -- 有限 AST 每个挂载只启动一次；完成后只保留身份，供后继读取，不保留其 activation。
   , runtimeOrigins :: IORef [(NodeId, Origin)]
   , runtimeActivations :: MVar [(ActivationId, Activation environment cause)]
@@ -71,7 +72,7 @@ newRuntimeGraph
   :: (Eq method, Show method)
   => Prototype method -> Scopes environment cause -> IO (RuntimeGraph environment cause)
 newRuntimeGraph prototype scopes = RuntimeGraph (PrototypeReference prototype) scopes
-  <$> newIORef [] <*> newMVar [] <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
+  <$> newIORef [] <*> (newEmptyMVar >>= newIORef) <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
   <*> newMVar (Just []) <*> newIORef (const (ioError (userError "No session launcher is installed")))
   <*> pure [mount | (_, described) <- workflowLifelongs (protoWorkflow prototype)
          , session <- lifelongSessions described, mount <- sessionMounts session]
@@ -152,32 +153,24 @@ resolveDefinition (PrototypeReference prototype) boot = do
     [definition] -> Right (ChainReference definition)
     _ -> Left "Runtime activation has no unique static chain definition"
 
--- 只对本入口的缺值求值串行化；显式 request 不经此锁，不合并其他入口的生产。
-sourceLock :: RuntimeGraph environment cause -> Origin -> String -> IO (MVar ())
-sourceLock graph origin source = modifyMVar (runtimeForcing graph) $ \locks -> case lookup key locks of
-  Just lock -> pure (locks, lock)
-  Nothing -> do
-    lock <- newMVar ()
-    pure ((key, lock) : locks, lock)
-  where key = (origin, source)
-
--- 入口、诊断及收尾均已退出；保留产物和轻量 Origin 索引，撤销不再使用的求值锁。
-finishOrigin :: RuntimeGraph environment cause -> Origin -> IO ()
-finishOrigin graph origin = uninterruptibleMask_ $
-  modifyMVar_ (runtimeForcing graph) $ \locks -> do
-    let remaining = filter ((/= origin) . fst . fst) locks
-    _ <- evaluate (length remaining)
-    pure remaining
-
+-- 先写资产表再换信号：等待者醒来重新读取时一定能看到这次发布。
 publishAsset :: RuntimeGraph environment cause -> Origin -> String
              -> ScopeBinding environment cause -> IO ()
-publishAsset graph origin source value = atomicModifyIORef' (runtimeAssets graph) $ \assets ->
-  let key = (origin, source)
-      updated = (key, value) : filter ((/= key) . fst) assets
-  in length updated `seq` (updated, ())
+publishAsset graph origin source value = uninterruptibleMask_ $ do
+  atomicModifyIORef' (runtimeAssets graph) $ \assets ->
+    let key = (origin, source)
+        updated = (key, value) : filter ((/= key) . fst) assets
+    in length updated `seq` (updated, ())
+  fresh <- newEmptyMVar
+  previous <- atomicModifyIORef' (runtimePublished graph) (\current -> (fresh, current))
+  putMVar previous ()
+
+-- 读取之前取得的信号；此后的任何普通发布都会填满它。
+publicationSignal :: RuntimeGraph environment cause -> IO (MVar ())
+publicationSignal = readIORef . runtimePublished
 
 -- 先按生成表定位来源入口，再读取本次实际发布；不按完成时序或全局最新值挑选。
--- 缺少发布只返回空值，由当前调用继续执行普通 request thunk。
+-- 缺少发布只返回空值，由当前 require 等待之后的发布再重读。
 readVisibleAsset :: RuntimeGraph environment cause -> Origin -> String
                  -> IO (Either ContextFault (Maybe (ScopeBinding environment cause)))
 readVisibleAsset graph origin source = do

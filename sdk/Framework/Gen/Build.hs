@@ -86,13 +86,9 @@ buildPrototype plan shapes = do
     workflow = plannedWorkflow plan
     lifelongSessionsOf = concatMap (lifelongSessions . snd) (workflowLifelongs workflow)
     finite = finiteSessions effects
-    resources = [resource | effect <- effects, Just resource <- [effectResource effect]]
-    defaults = [MethodDefinition method owner role (defaultBody effect role)
+    -- 读取入口不调用生产方法：require 缺值时等待发布，图中没有读取到生产的边。
+    defaults = [MethodDefinition method owner role Empty
       | effect <- effects, (_, owner) : _ <- [effectMethods effect], (role, method) <- effectMethods effect]
-    defaultBody effect ContextRequire
-      | effectName effect `notElem` resources
-      , Just producing <- lookup ContextRequest (effectMethods effect) = Choice [Empty, Call producing]
-    defaultBody _ _ = Empty
     orderedScopes = filter hasOpening $ nub
       (concat [effectScopes effect ++ [effectName effect | effectKind effect == ScopedKind] | effect <- effects])
     hasOpening selected = any (\effect -> effectName effect == selected
@@ -115,7 +111,7 @@ buildPrototype plan shapes = do
     mountedNode _ = pure []
     mountedSelector (AlternativeAt _ selected _) = case
       [method | effect <- effects, effectProduces effect == Just (alternativeContract selected)
-        , (ContextRequire, method) <- effectMethods effect] of
+        , Just method <- [selectorMethod effect]] of
       [method] -> pure (alternativeSelector selected, SelectorChain, alternativeContract selected, method)
       _ -> Left (UnknownPrototypeTarget (alternativeContract selected))
     mountedSelector _ = Left (InvalidPrototype "Expected alternative selector")

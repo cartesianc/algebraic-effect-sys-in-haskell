@@ -209,44 +209,38 @@ instance FrameworkRuntime.Raw (At "ExtractLinkedPage") where
   raw = At (runFetchLinkedPage)
 
 getStartURL :: FrameworkGenerated.App FrameworkGenerated.StartURL
-getStartURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "StartPage" FrameworkGenerated.ContextBindingError
-    [("FetchPage", FrameworkRuntime.RequestValue), ("ExtractPage", FrameworkRuntime.RequireValue)]
+getStartURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "StartPage"
     Nothing
-    FrameworkGenerated.boundStartPage
     (\value bindings -> bindings { FrameworkGenerated.boundStartPage = Just value })) $
   (FrameworkGenerated.StartURL <$> runAt @"StartPage" FrameworkGenerated.startURL)
 
 readStartURL :: FrameworkGenerated.App FrameworkGenerated.StartURL
 readStartURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "StartPage" FrameworkGenerated.ContextBindingError [("FetchPage", FrameworkRuntime.RequestValue), ("ExtractPage", FrameworkRuntime.RequireValue)] Nothing FrameworkGenerated.boundStartPage getStartURL
+  FrameworkRuntime.readContext "StartPage" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundStartPage
 
 getLinkedURL :: FrameworkGenerated.App FrameworkGenerated.LinkedURL
-getLinkedURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "LinkedPage" FrameworkGenerated.ContextBindingError
-    [("FetchLinkedPage", FrameworkRuntime.RequestValue), ("ExtractLinkedPage", FrameworkRuntime.RequireValue)]
+getLinkedURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "LinkedPage"
     Nothing
-    FrameworkGenerated.boundLinkedPage
     (\value bindings -> bindings { FrameworkGenerated.boundLinkedPage = Just value })) $
   (FrameworkGenerated.LinkedURL <$> runAt @"LinkedPage" FrameworkGenerated.linkedURL)
 
 readLinkedURL :: FrameworkGenerated.App FrameworkGenerated.LinkedURL
 readLinkedURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "LinkedPage" FrameworkGenerated.ContextBindingError [("FetchLinkedPage", FrameworkRuntime.RequestValue), ("ExtractLinkedPage", FrameworkRuntime.RequireValue)] Nothing FrameworkGenerated.boundLinkedPage getLinkedURL
+  FrameworkRuntime.readContext "LinkedPage" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundLinkedPage
 
 runFetchPage :: FrameworkGenerated.App (Maybe String)
 runFetchPage = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runFetchPage" . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FetchPage") $
   getStartURL >> openCrawlSession >> runAt @"FetchPage" FrameworkGenerated.fetchPage
 
 getStartPageSummary :: FrameworkGenerated.App FrameworkGenerated.StartPageSummary
-getStartPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractPage" FrameworkGenerated.ContextBindingError
-    [("PrintPage", FrameworkRuntime.RequireValue)]
+getStartPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractPage"
     Nothing
-    FrameworkGenerated.boundExtractPage
     (\value bindings -> bindings { FrameworkGenerated.boundExtractPage = Just value })) $
   (FrameworkGenerated.StartPageSummary <$> runAt @"ExtractPage" FrameworkGenerated.extractSummary)
 
 readStartPageSummary :: FrameworkGenerated.App FrameworkGenerated.StartPageSummary
 readStartPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ExtractPage" FrameworkGenerated.ContextBindingError [("PrintPage", FrameworkRuntime.RequireValue)] Nothing FrameworkGenerated.boundExtractPage getStartPageSummary
+  FrameworkRuntime.readContext "ExtractPage" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundExtractPage
 
 runPrintPage :: FrameworkGenerated.App (Maybe String)
 runPrintPage = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrintPage" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrintPage") $
@@ -257,32 +251,28 @@ runFetchLinkedPage = (FrameworkRuntime.withErrorPath ["CrawlSession"] . Framewor
   getLinkedURL >> openCrawlSession >> runAt @"FetchLinkedPage" FrameworkGenerated.fetchPage
 
 getLinkedPageSummary :: FrameworkGenerated.App FrameworkGenerated.LinkedPageSummary
-getLinkedPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractLinkedPage" FrameworkGenerated.ContextBindingError
-    [("PrintLinkedPage", FrameworkRuntime.RequireValue)]
+getLinkedPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractLinkedPage"
     Nothing
-    FrameworkGenerated.boundExtractLinkedPage
     (\value bindings -> bindings { FrameworkGenerated.boundExtractLinkedPage = Just value })) $
   (FrameworkGenerated.LinkedPageSummary <$> runAt @"ExtractLinkedPage" FrameworkGenerated.extractSummary)
 
 readLinkedPageSummary :: FrameworkGenerated.App FrameworkGenerated.LinkedPageSummary
 readLinkedPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ExtractLinkedPage" FrameworkGenerated.ContextBindingError [("PrintLinkedPage", FrameworkRuntime.RequireValue)] Nothing FrameworkGenerated.boundExtractLinkedPage getLinkedPageSummary
+  FrameworkRuntime.readContext "ExtractLinkedPage" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundExtractLinkedPage
 
 runPrintLinkedPage :: FrameworkGenerated.App (Maybe String)
 runPrintLinkedPage = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrintLinkedPage" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrintLinkedPage") $
   runAt @"PrintLinkedPage" FrameworkGenerated.printSummary
 
 getCrawlSessionInfo :: FrameworkGenerated.App FrameworkGenerated.CrawlSessionInfo
-getCrawlSessionInfo = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "SessionContext" FrameworkGenerated.ContextBindingError
-    [("FetchPage", FrameworkRuntime.RequireValue), ("FetchLinkedPage", FrameworkRuntime.RequireValue), ("CrawlSession", FrameworkRuntime.RequestValue)]
+getCrawlSessionInfo = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "SessionContext"
     Nothing
-    FrameworkGenerated.boundSessionContext
     (\value bindings -> bindings { FrameworkGenerated.boundSessionContext = Just value })) $
   (FrameworkGenerated.CrawlSessionInfo <$> runAt @"SessionContext" FrameworkGenerated.sessionInfo)
 
 readCrawlSessionInfo :: FrameworkGenerated.App FrameworkGenerated.CrawlSessionInfo
 readCrawlSessionInfo = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "SessionContext" FrameworkGenerated.ContextBindingError [("FetchPage", FrameworkRuntime.RequireValue), ("FetchLinkedPage", FrameworkRuntime.RequireValue), ("CrawlSession", FrameworkRuntime.RequestValue)] Nothing FrameworkGenerated.boundSessionContext getCrawlSessionInfo
+  FrameworkRuntime.readContext "SessionContext" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundSessionContext
 
 openCrawlSession :: FrameworkGenerated.App (Maybe String)
 openCrawlSession = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openCrawlSession" . FrameworkRuntime.openScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $

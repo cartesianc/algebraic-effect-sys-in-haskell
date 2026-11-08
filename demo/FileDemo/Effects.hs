@@ -11,7 +11,8 @@ import FileDemo.Types
 -- Excu 与 Scoped 的 open／close 是原子句柄，可交出可选信息；SDK 保存 scope 生命周期状态。
 -- input 是前驱：gen 在 handler 之前执行它。input 是原子句柄的 Context 挂在它下面，parser 用 raw 读取句柄的输出。
 -- Asset @表示类型 "资产名" 把表示类型细化为以资产名命名的资产；handler 按表示类型 require，来源由 demands 决定。
--- requests 驱动资产的生产链，requires 只读取。Error：handles 写 handler 名，作用的 scope 由 Input 链推导。
+-- requests 驱动资产的生产链，requires 只读取：读取时还没有发布就等待，不在读取处生产。
+-- Error：handles 写 handler 名，作用的 scope 由 Input 链推导。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
@@ -26,11 +27,12 @@ effects =
       , input = "Root"
       , demands = [requires "FileName"]
       }
+  -- 取得文件前先驱动文件名；它的 Input ValidateFileName 与 acquireFile 都只读取这次的文件名。
   , EffectSpec
       { name = "FileResource"
       , typing = Context { asset = Asset @FileHandle "OpenedFile", parser = Just "acquireFile", require = True, stream = False }
       , input = "ValidateFileName"
-      , demands = [requires "FileName"]
+      , demands = [requests "FileName", requires "FileName"]
       }
   , EffectSpec
       { name = "FileSession"

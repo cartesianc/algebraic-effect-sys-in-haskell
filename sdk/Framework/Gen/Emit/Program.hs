@@ -30,9 +30,11 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
       , ""
       ]
     selectorContracts = nub (Prototype.workflowSelectors workflow)
-    readerOfContract contractType =
-      [ reader | AssetDeclaration declared _ owner <- unitAssets unit, declared == contractType
-      , Just reader <- [contextReader (typing (specOf unit owner))] ]
+    -- 选择读取自己驱动转折资产（相当于 requests）；持续资产由会话驱动，选择读取领取本次交付。
+    selectorOfContract contractType =
+      [ selector | AssetDeclaration declared _ owner <- unitAssets unit, declared == contractType
+      , Just selector <- [(if continuousContract unit contractType then contextReader else contextProducer)
+          (typing (specOf unit owner))] ]
     branchesOf contractType = [branchConstructor branch | branch <- unitBranches unit, branchBase branch == contractType]
     astInterpreter =
       [ ""
@@ -41,7 +43,7 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
       , "  deriving Show"
       , ""
       , "-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。"
-      , "-- 第二个列表是各转折契约的读取末端：读取资产，返回它当前的构造器名。"
+      , "-- 第二个列表是各转折契约的选择末端：驱动资产（持续资产领取本次交付），返回它当前的构造器名。"
       , "-- 第三个列表是各持续资产的生产步骤：会话按需启动，Stream 单步取得原始输入，parser 发布一次资产。"
       , "compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]"
       , "                     , [(String, SDK.SessionSteps ContextValues Errors)])"
@@ -52,8 +54,8 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
           [ wrapTarget terminal (terminal ++ "Result <$> (() <$ Handlers." ++ method ++ ")")
           | (terminal, method) <- unitTerminals unit ]
       , "    , " ++ renderList "      "
-          [ wrapTarget contractType ("caseOf" ++ contractType ++ " <$> Handlers." ++ reader)
-          | contractType <- selectorContracts, reader <- readerOfContract contractType ]
+          [ wrapTarget contractType ("caseOf" ++ contractType ++ " <$> Handlers." ++ selector)
+          | contractType <- selectorContracts, selector <- selectorOfContract contractType ]
       , "    , " ++ renderList "      " sessionSteps
       , "    )"
       , ""

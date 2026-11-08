@@ -10,7 +10,7 @@ module Framework.Generated
   , App, TypeRef(..)
   , Target, targetApp, SessionSteps, receiveSteps
   , failEffect, handleFailure, withErrorPath, withErrorHandlers, ErrorHandler(..)
-  , ContextAccess(..), readContext, latestContext
+  , readContext, latestContext
   , callContext, projectContext, enterHandler, withAnchoredContexts
   , atomicHandle, atomicScope, readHistory, streamHandle
   , ScopeInput(..), openScope, closeScope, withScopeDependencies
@@ -24,7 +24,7 @@ import Framework.Runtime.Protocol
   , ContextStore(enterHandler, withAnchoredContexts)
   , ScopeInput(..), ScopeStore(openScope, closeScope, withScopeDependencies) )
 import Framework.Runtime.Context
-  ( ContextAccess(..), readContext, latestContext, callContext
+  ( readContext, latestContext, callContext
   , projectContext, atomicHandle, atomicScope, readHistory, streamHandle )
 import Framework.Language.Registration (TypeRef(..))
 import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps)

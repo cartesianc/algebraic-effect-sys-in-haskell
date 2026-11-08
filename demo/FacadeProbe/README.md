@@ -22,14 +22,15 @@ data FileState = Blank | Filled Body deriving Show
 
 ```haskell
 effects =
-  [ -- 两份资产，同一个获取 handler；两个 Scoped 注册共用开关 handler，彼此独立
-    context "ReportFile" (Asset @TextFile "OpenedReport") "acquireFile" "Root" [requires "ReportPath"]
-  , context "ReplyFile" (Asset @TextFile "OpenedReply") "acquireFile" "Root" [requires "ReplyPath"]
+  [ -- 两份资产，同一个获取 handler；两个 Scoped 注册共用开关 handler，彼此独立。
+    -- 取得文件前先驱动路径；后面的读取只读这次发布的路径。
+    context "ReportFile" (Asset @TextFile "OpenedReport") "acquireFile" "Root" [requests "ReportPath", requires "ReportPath"]
+  , context "ReplyFile" (Asset @TextFile "OpenedReply") "acquireFile" "Root" [requests "ReplyPath", requires "ReplyPath"]
   , scoped "ReportScope" "OpenedReport"     -- open = "openTextFile", close = "closeTextFile"
   , scoped "ReplyScope" "OpenedReply"
     -- 同一个 writeText：Input 和 demands 都不同
-  , excu "WriteReport" "writeText" "ReportScope" [requires "OpenedReport", requires "ReportBody"]
-  , excu "WriteReply" "writeText" "ReplyScope" [requires "OpenedReply", requires "ReplyBody"]
+  , excu "WriteReport" "writeText" "ReportScope" [requests "ReportBody", requires "OpenedReport", requires "ReportBody"]
+  , excu "WriteReply" "writeText" "ReplyScope" [requests "ReplyBody", requires "OpenedReply", requires "ReplyBody"]
     -- 同一个 readText：前驱不同
   , excu "MarkReply" "markRead" "Root" []
   , excu "ReadReport" "readText" "Root" [requires "ReportPath"]

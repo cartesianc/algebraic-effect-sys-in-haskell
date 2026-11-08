@@ -59,8 +59,6 @@ data Environment env cause = Environment
   , runtimeGraph :: RuntimeGraph env cause
   , activeActivation :: Maybe ActivationId
   , execution :: Execution
-  -- 当前生产由 require 按需求值触发；进入任一 handler 后复位。
-  , forcedRequire :: Bool
   -- 原子句柄方法名 → 挂在它下面的 Context 生产入口，由生成区安装。
   , anchoredEntries :: [(String, [(String, App env cause ())])]
   -- 注入期间各原子句柄的本次输出。
@@ -467,34 +465,29 @@ instance ContextStore env (App env cause) where
         rawIO (maybe (pure ()) (\slot -> saveBinding slot source value) selected)
       _ -> pure ()
   currentHandler = AppRun (asks caller)
-  enterHandler name (AppRun action) = AppRun (local (\env -> env { caller = Just name, forcedRequire = False }) action)
+  enterHandler name (AppRun action) = AppRun (local (\env -> env { caller = Just name }) action)
   enterContext name (AppRun action) = AppRun $ local
-    (\env -> env { caller = Just name, contexts = name : contexts env, forcedRequire = False }) action
-  -- 诊断、收尾与 scope 资源不按需求值：资源只能经 open 取得，诊断不预执行 Context。
-  -- 当前 Origin 的同一来源持锁串行；锁内重新读取，不合并平行入口各自的补产。
-  forceContext source (AppRun action) = AppRun $ do
+    (\env -> env { caller = Just name, contexts = name : contexts env }) action
+  -- 诊断、收尾与 scope 资源不等待：资源只能经 open 取得，诊断与收尾期间没有新的业务发布。
+  -- 其余缺值读取在读之前取得发布信号；读不到就等下一次发布，醒来后按同一来源表重读。
+  awaitContext source = AppRun $ do
     environment <- ask
     let resource = any ((== Just source) . scopeContextSource) (scopes environment)
         allowed = not resource && not (isJust (originalFailure environment))
           && not (cleaningScopes environment) && null (closings environment)
     if not allowed then pure Nothing else do
-      lock <- liftIO (sourceLock (runtimeGraph environment) (executionOrigin (execution environment)) source)
-      let inside = environment { caller = Nothing, forcedRequire = True }
-      result <- liftIO (withMVar lock (const (runExceptT (runReaderT action inside))))
-      either throwError (pure . Just) result
-  productionAccess = AppRun $ do
-    forced <- asks forcedRequire
-    pure (if forced then RequiredInput else RequestedInput)
+      signal <- liftIO (publicationSignal (runtimeGraph environment))
+      pure (Just (rawIO (readMVar signal)))
   withAnchoredContexts entries (AppRun action) = AppRun $ local
     (\environment -> environment { anchoredEntries = entries }) action
   anchoredContexts method = AppRun (asks (fromMaybe [] . lookup method . anchoredEntries))
   replayedOutput method = AppRun (asks (lookup method . replays))
   -- 诊断与收尾期间不注入。注入以根调用身份运行，失败只留在注入内：资产不发布，
-  -- 原链照常继续；之后 require 该资产时按需求值，故障在那里按正常协议报出。
+  -- 原链照常继续；之后 require 该资产时等待它的发布，不在读取处补产。
   injectOutput method raw (AppRun action) = AppRun $ do
     environment <- ask
     let allowed = not (isJust (originalFailure environment)) && not (cleaningScopes environment)
-        inside = environment { caller = Nothing, forcedRequire = False, errorHandlers = []
+        inside = environment { caller = Nothing, errorHandlers = []
                              , replays = (method, raw) : replays environment }
     when allowed $ () <$ liftIO (runExceptT (runReaderT action inside))
   -- 本次已有视图时直接读取；lifelong 单元中尚未领取的会话资产在第一次读取时领取本次 frame 的交付。
@@ -629,7 +622,7 @@ runDiagnostic environment problem selected callback = do
         values <- newIORef restored
         let inside = environment
               { bindings = values, caller = Nothing, contexts = [], openings = [], closings = []
-              , originalFailure = Just problem, diagnosticOwner = owner, forcedRequire = False, replays = [] }
+              , originalFailure = Just problem, diagnosticOwner = owner, replays = [] }
             AppRun action = runErrorHandler selected callback
         result <- runExceptT (runReaderT action inside)
         -- runErrorHandler 接回 detect/resolve 的 Failure；不捕获取消等原生 IO 异常。
@@ -698,7 +691,7 @@ captureScopeCleanup environment attempt slot =
               let inside = environment
                     { bindings = values, caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
                     , errorPath = []
-                    , originalFailure = Nothing, diagnosticOwner = Nothing, cleaningScopes = True, forcedRequire = False
+                    , originalFailure = Nothing, diagnosticOwner = Nothing, cleaningScopes = True
                     , replays = []
                     , consumer = cleanupUser, cleanupPermit = Just (permit, slot)
                     , activeActivation = Nothing, execution = cleanupExecution
@@ -829,7 +822,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         , scopeCleanups = [], cleaningScopes = False, consumer = user
         , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
         , activeActivation = Just (activationId activation), execution = currentExecution
-        , forcedRequire = False, anchoredEntries = [], replays = []
+        , anchoredEntries = [], replays = []
         , views = delivered, streamRaw = launchInput launch, sessionSinks = launchSinks launch
         , frameDeliver = launchDeliver launch }
   (do
@@ -854,4 +847,4 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
             (Left original, problems) -> Left original { cleanupFailures = cleanupFailures original ++ problems }
             (Right _, first : rest) -> Left first { cleanupFailures = cleanupFailures first ++ rest }
             (Right value, []) -> Right value)
-    `finally` (endActivation graph (activationId activation) `finally` finishOrigin graph origin)
+    `finally` endActivation graph (activationId activation)
