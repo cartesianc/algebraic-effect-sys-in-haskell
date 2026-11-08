@@ -16,7 +16,8 @@
 | 统一 Prototype、运行图、静态来源与求值锁 | Stage 1/2 已实现 | [图与来源](EFFECT_GRAPH.md) |
 | 资产显式引用与构造器约束 | 当前已实现 | [源码资产](ASSETS.md) |
 | Stream 与挂在它下面的解析器 Context、持续资产的历史视图与 lifelong | 已实现（Stage 3）；lifelong 中的失败暂按临时规则终止整次运行 | [第 7 章](#stream)及[完整规范](STREAM_LIFELONG.md) |
-| 输入契约、持续执行同构、资产访问、结束与资源清理 | Stage 1 已实现；后续阶段继续收敛 | [Next stages](NEXT_STAGES.md#stages) |
+| 原子 handler 复用与前驱装配 | 设计已确认，实现中（Stage 2）；实现前仍按本文第 4 章运行 | [Next stages](NEXT_STAGES.md#stage-2) |
+| 输入契约、持续执行同构、资产访问、结束与资源清理 | Stage 1 已实现；Stage 2 实现中；后续阶段继续收敛 | [Next stages](NEXT_STAGES.md#stages) |
 | 嵌套 lifelong、背压与历史容量等 | 后续专题，本轮不扩展 | [开放事项](NEXT_STAGES.md#deferred) |
 | Middleware、Generic Map、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [开放事项](NEXT_STAGES.md#deferred) |
 
@@ -128,7 +129,7 @@ flowchart LR
 
 声明式设计负责表达业务组合的结构与契约：资产类型描述业务数据，Effects 声明操作类别、Input 能力与 demands 取值关系，Workflow／AST 描述挂载位置和启动方式。业务作者以固定声明和原生方法引用表达这些关系，生成器提取并检查结构，interpreter 按确定的协议装配和执行。
 
-原子行为由注册 instance 方法实现，包括 IO、解析、ADT 模式匹配和局部计算。handler 中显式调用上游类方法，也是结构分析的依据。Input 声明方法可用，实际调用仍由方法体写出；demands 声明资产访问权限，request／require 执行相应取值协议；AST branch 规定完整链何时启动。声明、原子实现与 SDK 执行责任因此都有明确边界。
+原子行为由注册 instance 方法实现，包括 IO、解析、ADT 模式匹配和局部计算。handler 中显式调用上游类方法，也是结构分析的依据。Input 声明方法可用，实际调用仍由方法体写出；demands 声明资产访问权限，request／require 执行相应取值协议；AST branch 规定完整链何时启动。声明、原子实现与 SDK 执行责任因此都有明确边界。**下一阶段调整：**[Stage 2](NEXT_STAGES.md#stage-2) 改为由 gencode 把 Input 装配为前驱、多个 effect 共享原子 handler，handler 不再显式调用上游；实现前仍以本段为准。
 
 例如 `demands = [requires "FileTextWritten"]` 声明消费契约，方法体中的 `require @FileTextWritten` 执行读取；workflow 再选择该消费链的末端并组织启动。声明可以被静态检查、序列化和第三方工具生成，实际返回值、IO 成败及阻塞行为仍由原子实现和运行协议决定。声明式结构不要求 handler 全部是纯函数，也不意味着 SDK 自动执行全部已声明的上游能力。
 
@@ -295,7 +296,7 @@ gencode 不要求手写 instance 上下文文本恰为 XInputs。生成执行副
 <a id="calls"></a>
 ### 4.2 原子定义、注册与实际调用
 
-注册定义契约、Input 能力依赖及生产者引用；instance 在这些可用能力内直接引用上游类方法。生成器读取方法体中的显式 effect 引用形成纯结构副本，不解释任意 Haskell 业务值语义；实际调用仍由原 instance 表达，注册继承不等于自动执行。多份注册的句柄复用语法另行 review。
+注册定义契约、Input 能力依赖及生产者引用；instance 在这些可用能力内直接引用上游类方法。生成器读取方法体中的显式 effect 引用形成纯结构副本，不解释任意 Haskell 业务值语义；实际调用仍由原 instance 表达，注册继承不等于自动执行。多份注册共享句柄的写法见 [Stage 2](NEXT_STAGES.md#stage-2)，设计已确认，尚未实现。
 
 注册中的参数来源是可序列化的调用描述，不是 env -> value 函数或 IO 闭包。生产者通过注册引用连接；引用者无需复制生产者的定义及其整条上游声明。这份描述不是被重新引入的 impl 层，执行装配仍由 SDK 提供。
 
@@ -393,7 +394,7 @@ instance FileSessionInputs m => FileSessionEffect m where
 
 生成器由 demands 形成关联 Require，并为各契约生成 Provides 路由；Require 是关联类型描述，不是注入方法的位置参数。同一资产的不同模式共享同一名义类型；当前多项关联 Require 按资产首次声明顺序去重后描述，不作为批量预读取计划。
 
-当前返回形态由同一规则计算：request 返回 T，普通 require 返回 T，持续基础资产的 require 返回 History T，分支契约返回当前投影。streams 通过 require 读取本次交付，不提供独立 `stream @T`。T 与 History T 是同一个资产的不同结果形态，不是两个来源。当前值／历史访问的后续拆分归 Stage 3。
+当前返回形态由同一规则计算：request 返回 T，普通 require 返回 T，持续基础资产的 require 返回 History T，分支契约返回当前投影。streams 通过 require 读取本次交付，不提供独立 `stream @T`。T 与 History T 是同一个资产的不同结果形态，不是两个来源。Context 的 require 缓存最新值、stream 缓存历史已由 [Stage 2](NEXT_STAGES.md#stage-2) 确定但尚未实现，视图位置的收敛归 [Stage 4](NEXT_STAGES.md#stage-4)。
 
 Effect.Demand 保存唯一来源、访问解析与结果形态的纯规则；Prototype 保存解析事实；Codegen.Demand 检查手写源码的接收形态；运行时继续执行已确定的捕获、可见性、求值锁与 ownership 协议。结构检查不移动取值、不提前求值、不合并重复 request，也不证明所有路径、字段使用、case 穷尽或业务计算正确。直接绑定的不可失败判断按 GHC 给出的构造器集合保守检查；由 GADT 索引排除其他构造器的复杂匹配可以使用显式 case，不宣称源码检查器完成全部 GADT 覆盖证明。
 
@@ -508,7 +509,7 @@ monitor = lifelong
 - **单元**：直接子项各为一个单元，直接子项是 parallel 时只拆这一层；单元之间独立推进、互不等待。拆分写入 Prototype，运行时不推测。
 - **一次执行**：单元逐次执行，每次执行是一个 frame。控制流到达 target 时先领取其订阅资产的一条新交付（有积压立即领取，没有就挂起），再 boot target；同一 frame 内每个资产只领取一次，各调用共享这份视图。target 调用按上文的有限完成规则结束，本次执行结束后才开始下一次，上一次的普通产物不带入下一次。
 - **没有正常结束**：lifelong 不返回 Succ。`chained [setup, monitor]` 先完成 setup；`chained [monitor, after]` 中 after 不执行；`parallel [monitor, otherWork]` 两者同时运行。
-- **失败**：含 lifelong 的程序中，任何失败按临时规则终止整次运行（[Stream 第 9 节](STREAM_LIFELONG.md#failures)），不同于有限 parallel 不取消其他分支的规则。lifelong 的局部结束属于本轮[结束传播阶段](NEXT_STAGES.md#stage-5)，其与故障传播的关系仍需确认。
+- **失败**：含 lifelong 的程序中，任何失败按临时规则终止整次运行（[Stream 第 9 节](STREAM_LIFELONG.md#failures)），不同于有限 parallel 不取消其他分支的规则。lifelong 的局部结束属于本轮[结束传播阶段](NEXT_STAGES.md#stage-6)，其与故障传播的关系仍需确认。
 - **合法性**：lifelong 不嵌套、不含空分支；其中每个 target 恰好用 `streams` 订阅一个持续资产，见 [Stream 第 5.2 节](STREAM_LIFELONG.md#static)。
 
 <a id="mapping"></a>
@@ -714,7 +715,7 @@ sdk/Framework/
 | 失败的临时规则、取消与 close 延期边界 | [Stream 第 9 节](STREAM_LIFELONG.md#failures) |
 | socket、event、behavior 各自的写法 | [Stream 第 4.1 节](STREAM_LIFELONG.md#drives) |
 
-当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，持续资产作为 scope 开启参数尚未接通。本轮先收敛资产来源与接收契约，再处理 Stream effect 与 lifelong 的共同运行协议、资产访问、scope 使用、结束传播与清理，见[阶段计划](NEXT_STAGES.md#stages)。Stage 1 的唯一资产来源与显式接收规则见[资产接收契约](#demand-contract)；require 单值／stream 历史以及正常 end 仍属后续设计，尚未替换本章的当前协议；是否调整临时失败规则须在结束传播阶段确认。来源分析按消费单元提前裁剪再组合，相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
+当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，持续资产作为 scope 开启参数尚未接通。本轮先收敛资产来源与接收契约、分离原子 handler 与业务 effect，再处理 Stream effect 与 lifelong 的共同运行协议、资产访问、scope 使用、结束传播与清理，见[阶段计划](NEXT_STAGES.md#stages)。Stage 1 的唯一资产来源与显式接收规则见[资产接收契约](#demand-contract)；require 缓存最新值、stream 缓存历史已由 Stage 2 确定但尚未实现，正常 end 仍属后续设计，二者都尚未替换本章的当前协议；是否调整临时失败规则须在结束传播阶段确认。来源分析按消费单元提前裁剪再组合，相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
 
 这次扩展继续使用 Prototype、RuntimeGraph 和独立 ScopeTree。业务方法不新增游标、yield、调度器或无限递归写法；声明不成立时生成期诊断，不在运行中猜测生产方式。
 

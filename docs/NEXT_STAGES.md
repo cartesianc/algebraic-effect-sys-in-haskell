@@ -1,24 +1,25 @@
 # Next stages
 
-更新：2026-11-04。**状态：Stage 1 已实现；Stage 2–6 继续逐阶段收敛。**
+更新：2026-11-08。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 设计已确认，正在实现；Stage 3–7 继续逐阶段收敛。**
 
-本轮目标是在框架现有概念内，统一 Stream effect 与 lifelong 的持续执行协议，完成正常结束、停止传播和资源收尾。每阶段先收敛设计与代码形态，再实现；本文记录推进顺序、待确认事项及开放边界，不替代[主设计](LATEST_DESIGN.md)和[当前 Stream 规范](STREAM_LIFELONG.md)。
+本轮目标是在框架现有概念内，先分离原子 handler 与业务 effect，使 handler 可以复用、前驱由声明装配；再统一 Stream effect 与 lifelong 的持续执行协议，完成正常结束、停止传播和资源收尾。每阶段先收敛设计与代码形态，再实现；本文记录推进顺序、待确认事项及开放边界，不替代[主设计](LATEST_DESIGN.md)和[当前 Stream 规范](STREAM_LIFELONG.md)。
 
-本文件是唯一的阶段计划与开放项入口。以下 Stage 1–6 是本轮编号，与已经完成的 Prototype／RuntimeGraph、来源可见性、Stream 初版三个历史阶段区分。
+本文件是唯一的阶段计划与开放项入口。以下 Stage 1–7 是本轮编号，与已经完成的 Prototype／RuntimeGraph、来源可见性、Stream 初版三个历史阶段区分。
 
 <a id="scope"></a>
 ## 本轮收敛什么
 
-只收敛已提出的输入契约、资产访问、持续执行、结束和资源释放。不新增 effect 类别、boot 类别、手写 layer、资源寿命标签或可选 cleanup policy，不以新增配置掩盖尚未确定的持有关系。
+只收敛已提出的输入契约、handler 复用与前驱装配、资产访问、持续执行、结束和资源释放。不新增 effect 类别、boot 类别、手写装配层、资源寿命标签或可选 cleanup policy，不以新增配置掩盖尚未确定的持有关系。Stage 2 的 `XxxLayer` 是生成的约束别名，不是手写装配。
 
-保持六类 effect、AST targeted boot 与 Context 资产 boot、原生 instance、独立无环 ScopeTree，以及统一 Prototype／RuntimeGraph。Input 继续提供句柄能力，Context 继续承载跨 handler 的业务产值；来源可见性、捕获稳定性和唯一 ownership 不能因重构弱化。
+保持六类 effect、AST targeted boot 与 Context 资产 boot、原生 instance、独立无环 ScopeTree，以及统一 Prototype／RuntimeGraph。Context 继续承载跨 handler 的业务产值；来源可见性、捕获稳定性和唯一 ownership 不能因重构弱化。Stage 2 起 Input 由生成装配为实际执行的前驱，不再只提供句柄能力。
 
-本轮有接口与协议调整，不等于现有行为不变。Stage 1 的资产来源与接收规则已经确认；三种取值方式的后续拆分、end 的手写接口仍须先确认，再同步生成契约和实现；生成前代码始终能由 GHC／HLS 解析、名称解析和类型检查。
+本轮有接口与协议调整，不等于现有行为不变。Stage 1、Stage 2 的规则已经确认；end 的手写接口等后续接口仍须先确认，再同步生成契约和实现；生成前代码始终能由 GHC／HLS 解析、名称解析和类型检查。
 
 <a id="stages"></a>
-## 六个阶段
+## 七个阶段
 
     输入契约
+    → handler 复用与前驱装配
     → 共同执行结构
     → 资产与发布
     → 使用边界
@@ -28,7 +29,7 @@
 <a id="stage-1"></a>
 ### Stage 1：收敛资产来源与 handler 接收契约
 
-**状态：已实现。**
+**状态：已实现；接收形态与 Context 的 request 角色由 [Stage 2](#stage-2) 取代。**
 
 “单一”约束的是每个 refined asset：同一个资产名对应同一个表示 ADT、唯一一个 Context 生产方。request、require、streams 是访问方式，可以同时声明，不生成另一种资产身份；一个消费者仍可依赖多个不同资产，Scoped 的单资源 request 限制保持。
 
@@ -42,8 +43,198 @@ Effects 以 Asset 声明来源，demands 选择资产和访问权限；空 deman
 
 **交付：** 一致的声明、生成签名、原生 instance、源码检查、六个示例及文档。生成前仍由 GHC／HLS 检查原生 Haskell；架构接收约束由 gencode 检查。
 
+**由 Stage 2 取代的部分：**
+
+- 显式匹配生成资产的值构造器：handler 改为按表示类型读取，细化资产的构造器只出现在生成代码中，接收形态检查随之取消。
+- Context 的 request 角色：Context 只声明一个 parser，取值方式全部属于 demand 端。
+- 单独声明 requests 也要求读取：requests 表示驱动，不再要求 handler 读取。
+
+保留的部分：每个 refined asset 唯一来源、访问方式须对应生产方已声明的角色、requires／streams 须有读取或 alternative／streams 依据，以及 SDK 门面与 Prototype 的分工。
+
 <a id="stage-2"></a>
-### Stage 2：确定 Stream 与 lifelong 的共同执行结构
+### Stage 2：分离原子 handler 与业务 effect
+
+**状态：设计已确认（2026-11-08），实现中。本节写法均为目标接口，尚未实现；当前可运行写法见[指南](GUIDE.md)。**
+
+effect 是业务装配，handler 是可复用的原子操作。多个 effect 可以绑定同一个 handler；Input 与 demands 由 gencode 装配，不进入 handler 文本。gencode 是这个 EDSL 的编译器：它把分散的注册关系化成一张图，在生成期解决链的组合、读取路由和合法性检查；生成的 Haskell 是交给 GHC 编译的中间表示，这些问题不留给运行时。
+
+<a id="stage-2-history"></a>
+#### 问题如何演变
+
+- **起点：固定 demand 限制了来源复用。** demand 指定具体 refined asset，由资产确定唯一 Context 来源。它保证工厂装配明确，也把消费者绑定到具体生产链：同一个写入操作分别消费报表和回复时，要写两份方法体，固定的 `require @ReportText` 不会因挂到另一条链而改变来源。Input 只描述句柄能力，不携带“本次使用应绑定哪个来源”的信息。
+- **澄清：alternative 不是跨来源装配。** alternative 从同一基础资产的分支投影推导候选，按该资产的构造器选择流程。`FileTextBlank`、`FileTextWritten` 来自同一个 `FileText`、同一个 Context，属于同源状态分派，不能当作跨 Context 来源多态的证据，也不按“谁先生产就选谁”竞争。
+- **曾经的困难：坚持同一个 effect 只注册一次。** 同时复用方法体和 effect 注册，使讨论转向来源参数、模块绑定、链路 newtype 和 `resource`。这些方向都缺少同一份信息：使用处只写 `input = "EffectA"`，没有来源实例化信息，类型兼容、挂载身份和生产时序都不能补出业务选择。
+- **转向：原子性落在 handler，effect 可以业务化。** 原子操作由 handler 实现；effect 是业务装配，可以有不同的 Input、demands 和运行身份；多个 effect 绑定同一个 handler，来源由注册区分。不新增 `resource`、`oneOf` 或链路 newtype。此前“一个原子操作只能对应一个 effect 注册”的要求已被替代。
+
+<a id="stage-2-roles"></a>
+#### 职责边界
+
+| 层次 | 职责 |
+| --- | --- |
+| 原子 handler | 实现操作：按表示类型读取注入的值，交出结果或自身的失败 |
+| 业务 effect | 绑定 handler，声明 Input、具体资产需求及驱动关系 |
+| gencode | 编译：组合链、路由读取、生成契约和静态图，并做生成期检查 |
+| runtime | 执行编译结果，管理绑定、scope、注入与故障 |
+
+共享 handler 不通过模块名、调用时序或链路位置判断业务来源。handler 定义共享不合并实际调用或运行实例。
+
+<a id="stage-2-code"></a>
+#### 代码长什么样
+
+以 [FacadeProbe](../demo/FacadeProbe/README.md) 的报表与回复为例：两者共用打开、写入、读取和解析，只是资产和前驱不同。
+
+`Types.hs` 只写数据结构，不变：
+
+```haskell
+data TextFile = TextFile FilePath Handle deriving Show
+newtype Body = Body String deriving Show
+newtype LineCount = LineCount Int deriving Show
+```
+
+`Effects.hs`：注册里的名字指向 handler；同一个 handler 绑定多次，Input 与 demand 各不相同。
+
+```haskell
+EffectSpec { name = "ReportFile"
+           , typing = Context { asset = Asset @TextFile "OpenedReport", parser = Just "acquireFile", require = True, stream = False }
+           , input = "Root", demands = [requires "ReportPath"] }
+EffectSpec { name = "ReportScope"
+           , typing = Scoped { open = Just "openTextFile", close = Just "closeTextFile" }
+           , input = "Root", demands = [requests "OpenedReport", requires "OpenedReport"] }
+EffectSpec { name = "WriteReport", typing = Excu { handler = Just "writeText" }
+           , input = "ReportScope", demands = [requires "OpenedReport", requires "ReportBody"] }
+EffectSpec { name = "WriteReply", typing = Excu { handler = Just "writeText" }
+           , input = "ReplyScope", demands = [requires "OpenedReply", requires "ReplyBody"] }
+EffectSpec { name = "ReportCounter"
+           , typing = Context { asset = Asset @LineCount "ReportStats", parser = Just "countLines", require = True, stream = False }
+           , input = "ReadReport", demands = [] }
+```
+
+`Handlers.hs`：每个 handler 一个类。方法体不出现 Input、细化资产、effect 名或 request。
+
+```haskell
+instance WriteTextLayer m => WriteTextHandler m where
+  writeText = do
+    TextFile path file <- require @TextFile
+    Body text <- require @Body
+    liftIO (hPutStr file text >> hFlush file)
+    pure Nothing
+
+instance CountLinesLayer m => CountLinesHandler m where
+  countLines = do
+    output <- raw
+    contents <- maybe (raise (CountLinesError "no text")) pure output
+    pure (LineCount (length (lines contents)))
+```
+
+`AST.hs` 不变，仍按 effect 名挂节点。
+
+生成的契约与装配：每个 effect 一个类型标签 `At "名字"`，handler 方法体原样复制，读取由按标签区分的 instance 在编译期选定，运行时不按调用者查表。
+
+```haskell
+type WriteTextLayer m = (Reads TextFile m, Reads Body m, Raises WriteTextError m, MonadIO m)
+class WriteTextHandler m where writeText :: m (Maybe String)
+newtype WriteTextError = WriteTextError String
+
+-- 入口：驱动 → Input → 方法体；外层仍是现有的入口包装
+writeReport = ⟨入口包装⟩ (openReport >> runAt @"WriteReport" writeText)
+getReportStats = ⟨入口包装⟩ (ReportStats <$> runAt @"ReportCounter" countLines)
+
+-- 路由：表示类型 + effect → 唯一的细化资产
+instance Provides TextFile (At "WriteReport") where
+  require = At ((\(OpenedReport value) -> value) <$> require @OpenedReport)
+
+-- raw：直接 Input 的方法；注入时由本次输出回答，拉取时执行该 Input
+instance Raw (At "ReportCounter") where raw = At readReport
+```
+
+2026-11-08 的标签探针确认：两个 effect 共用一份 `writeText`、两个 parser 共用一份 `countLines` 时，GHC 按标签选出各自的读取，方法体不改写。
+
+<a id="stage-2-decisions"></a>
+#### 已确认的决定
+
+| 主题 | 决定 |
+| --- | --- |
+| handler | 类方法，不带参数，写作 `instance XxxLayer m => XxxHandler m`；类名、Layer、错误类型和方法类型由 gen 从 handler 名与绑定方式推出 |
+| Input | gen 在入口中把 Input 装配为前驱，在方法体之前执行；方法体不调用上游，也不捕获 Input 的失败，失败后的改道用 AST 的 alternative |
+| 挂接 parser | Input 是 Excu、Scoped.open 或 Stream 时，parser 以 `raw :: m (Maybe String)` 读取直接 Input 的本次输出，沿用现有注入与回放协议 |
+| 驱动 | `requests` 驱动对应资产沿 Input 的整条 Context 链；`requires` 只读取，不驱动；`streams` 由持续交付驱动。入口顺序是驱动 → Input → 方法体；handler 只写 `require` |
+| 读取 | handler 按表示类型读取；gen 按“表示类型 + effect”路由到唯一的细化资产，一个 effect 内表示类型不重复；需要两个同类型值的操作用角色类型区分 |
+| 值传递 | 值只经资产流动；原子句柄和 Stream 的输出只交给挂在其下的 parser |
+| Context | `Context { asset, parser, require :: Bool, stream :: Bool }`；`getT`、`readT`、`streamT` 由 gen 按资产名生成；`require` 缓存最新值，`stream` 缓存历史 |
+| 持续资产 | `stream = True` 当且仅当 Input 是 Stream，且必须同时 `require = True`；持续交付只由上游 Stream 驱动，RepeatRequest 取消 |
+| 注册名字 | Pure、Excu、Scoped、Stream、Context.parser、Error.detect／resolve 都写 handler 名；effect 方法名由 gen 内部生成，用户不写也不调用 |
+| 失败 | 属于 handler：`raise (XxxError "...")`，不随绑定改变；发生在哪个节点只是诊断位置 |
+| Error | 只指向 scope；`RaisedBy` 写 handler 名，`ScopeFaultIn`／`ContextFaultIn` 仍写 effect 名；没有关联 scope 时由 gen 报错；普通 effect 的错误靠提前 mock 排除 |
+| scope | 实例跟随注册：两个 Scoped 注册共用 open／close，仍是两个独立 scope |
+| 普通函数 | 禁止用户在顶层定义普通函数，所有值操作写成类方法并注册；方法体内的局部函数与 lambda 不限制 |
+| 替换 | 全面替换旧写法，不保留兼容层 |
+
+<a id="stage-2-layer"></a>
+#### Layer 包含什么
+
+| 约束 | 什么时候有 | 方法体可写 |
+| --- | --- | --- |
+| `Reads T m` | 绑定它的 effect `requires` 了表示类型为 T 的资产 | `require @T` |
+| `Reads (History T) m` | 绑定它的 effect `streams` 了持续资产 | `require @(History T)` |
+| `Raw m` | 绑成挂接的 parser | `raw` |
+| `Raises XxxError m` | 总是 | `raise (XxxError "...")` |
+| `MonadIO m` | Pure 以外总是 | `liftIO` |
+
+单独的 `requests` 不带来 `Reads`。Layer 不含 Input 的 effect 类、effect 自身的能力标记、细化资产、其他 handler 的类或 request。一个 handler 只有一份 Layer，各绑定推出的内容必须一致。`Raw`、`Raises` 是暂定名。
+
+| 绑定方式 | 方法类型 |
+| --- | --- |
+| Pure | `m ()`（语义待定，见下文） |
+| Excu、Scoped.open／close | `m (Maybe String)` |
+| Context.parser | `m T`，T 是 `Asset @T` 的表示类型 |
+| Stream | `m String` |
+| Error.detect／resolve | `m ()` |
+
+<a id="stage-2-checks"></a>
+#### 生成期检查
+
+以下都是编译错误，由 gencode 在生成前报告：
+
+- 每个读取在每个绑定下解析到唯一的细化资产；一个 effect 的 demands 里同一表示类型只出现一次。
+- 同一个 handler 的各个绑定推出相同的方法类型与 Layer。
+- handler 方法体不调用其他 handler 或 effect 的方法；GHC 只能拦下其中一部分（见 FacadeProbe 的实测）。
+- requires 需要的资产能沿已有来源分析得到驱动依据。
+- 顶层只允许类型声明、instance、`effects`、`ast` 与 `main`。
+- Context 的 `stream`、`require` 与 Input 组合合法；挂在 Stream 下的资产不能 `requests`。
+- Error 必须关联一个 scope。
+- handler 名推出的类、Layer、错误类型与其他生成名字冲突。
+- 沿用 Stage 1：每个细化资产唯一来源；访问方式对应生产方已声明的角色；requires／streams 须有读取或 alternative／streams 依据。
+
+<a id="stage-2-migration"></a>
+#### 迁移与取代
+
+| 现有写法 | 新写法 |
+| --- | --- |
+| 方法体第一行调用 Input | gen 在入口装配 |
+| 方法体里的 `request`，包括只为刷新的 `_ <- request @T` | 注册里的 `requests` |
+| 按 effect 生成的 `raise (XxxError ...)` | 按 handler 生成 |
+| parser 调用 Input 的方法 | `raw` |
+| `finishInspection`、`checkIndependent`、`checkReopen` 在方法体中间或重复开关资源 | 拆成多个 effect，由 AST 安排顺序；`FinishInspection` 声明的 Input 是 `InspectFiles`，方法体却只调用 `holdFiles`，迁移时按实际依赖改声明，不悄悄新增执行 |
+| FileDemo 的 `validateFileName` 作为守卫 | 仍是 `FileResource` 的 Input，由 gen 在方法体之前执行 |
+| StreamDemo 的 `Beat`（不在 Stream 下的持续资产） | Stream effect 加 parser |
+| FileDemo 的 `resolveFileSession` 调用 `closeFileSession` | resolve 暂不操作 scope，见下文 Error 驱动链 |
+| Crawler 两个抓取、两个打印的重复方法体 | 共享 handler |
+
+取消的现行规则：Stage 1 的接收形态检查；Context 的 request 角色；RepeatRequest；没有关联 scope 的全局 Error 处置；Pure 的旧候选名单协议；普通函数的资产检查与具名局部函数限制（改为顶层白名单）；AGENTS.md 中“业务 instance 写作 `instance XInputs m => XEffect m`，方法体显式调用 Input”与“不恢复全面禁止普通函数”两条。
+
+<a id="stage-2-later"></a>
+#### 本阶段不处理
+
+- **Pure 的语义**：Pure 是没有外部性的值管道，它的值直接进入下一个 effect，Layer 不含 `MonadIO`；以后辅助逻辑由 Pure 承接。返回类型、下游的读取方式、能否 raise 待定；本阶段 Pure 保持返回 `m ()` 的守卫用法。
+- **Stream 的驱动方式**：event、behavior（轮询）与 socket 三种方式待定；持续资产的读取类型是继续用 `History` 还是直接暴露标准序列待定。
+- **Error 驱动链**：Error 是另一条驱动链，resolve 不应调用 close；Error 如何驱动 scope 的修复待定。
+- **读取历史的写法**：`streamT` 由 gen 生成；handler 中暂沿用 `require @(History T)`，是否另设读取方法待定。
+
+<a id="stage-2-delivery"></a>
+**交付：** 一致的注册、生成契约、原生 handler、生成装配与检查；六个 demo 与 FacadeProbe 全部迁移并与迁移前输出对照；同步主设计、指南、ASSETS、EFFECT_GRAPH、STREAM_LIFELONG 与 AGENTS。
+
+<a id="stage-3"></a>
+### Stage 3：确定 Stream 与 lifelong 的共同执行结构
 
 统一 lower 后的持续执行模型：等待执行条件、完成一次有限操作、发布本次实际产生的资产、继续或进入结束协议。这里的“同构”指共同运行协议的对应，不先宣称两种前端 ADT 已有一一同构证明。
 
@@ -60,8 +251,8 @@ Effects 以 Asset 声明来源，demands 选择资产和访问权限；空 deman
 
 **交付：** 共同执行协议、两种入口的映射，以及有限调用与持续推进的边界。后续阶段基于这一协议处理状态与清理，不分别维护两套生命周期。
 
-<a id="stage-3"></a>
-### Stage 3：统一生产、当前值和历史
+<a id="stage-4"></a>
+### Stage 4：统一生产、当前值和历史
 
 收敛目标访问语义：
 
@@ -71,6 +262,8 @@ Effects 以 Asset 声明来源，demands 选择资产和访问权限；空 deman
 | require | 读取当前调用确定的值 |
 | stream | 读取截至同一确定位置的历史 |
 
+Stage 2 已确定：request 是消费链对生产链的驱动，写在注册里；Context 的 `require` 缓存最新值、`stream` 缓存历史。本阶段在此基础上收敛发布与视图位置。
+
 本轮交付后，后台的新发布不改写当前调用的值或历史视图。显式 request 是否以及怎样更新当前视图，须与已有刷新、来源和捕获协议一起确认；有持续来源不意味着它一定支持消费方主动 request。
 
 Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context 发布。lifelong 内节点既可消费也可产值；已有 workflow 产生的输出不能再被另起的生产循环重复执行。发布沿用合法来源与会话身份，不因资产同名变成全局广播。
@@ -79,8 +272,8 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 **交付：** 统一的发布、当前值与历史协议，明确每次读取的出身和视图。区分普通历史数据、伴随发布和有资源归属的绑定，为后续释放建立依据。
 
-<a id="stage-4"></a>
-### Stage 4：建立持续边界与 scope 的使用关系
+<a id="stage-5"></a>
+### Stage 5：建立持续边界与 scope 的使用关系
 
 将生产会话、lifelong 单元、有限调用与实际 scope 实例接入现有 RuntimeGraph。ScopeTree 继续独立维护无环资源依赖；订阅和 callback 关系不能直接变成 scope 父子边。
 
@@ -92,8 +285,8 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 **交付：** 具有结构依据的持有与撤销规则，包括共享会话、实际实例、排队交付和历史资源的关系。规则明确后再进入清理实现。
 
-<a id="stage-5"></a>
-### Stage 5：实现 end 与终止传播
+<a id="stage-6"></a>
+### Stage 6：实现 end 与终止传播
 
 区分来源正常结束、失败、取消和消费者退出。确定停止发布、处理已接受增量、结束消费单元、结束派生输出之间的顺序，以及等待数据的任务如何被唤醒。
 
@@ -103,8 +296,8 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 **交付：** 正常结束、失败和取消各自的完整传播路径。持续程序能够正常结束，外层 workflow 可以按定义继续；暂时无数据、单次成功和整条流结束有明确区别。
 
-<a id="stage-6"></a>
-### Stage 6：接通自动清理与手动 close
+<a id="stage-7"></a>
+### Stage 7：接通自动清理与手动 close
 
 把退出路径接回现有 Scoped.close、once-spare 和 ScopeTree：
 
@@ -125,12 +318,13 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 | 事项 | 所属阶段 | 审查产物 |
 | --- | --- | --- |
-| 共同执行协议与两种入口的对应 | Stage 2 | 单步、推进、发布和边界的关系 |
-| 每个资产唯一来源与显式接收形态 | Stage 1（已确认） | Effects、类签名、instance 和检查规则 |
-| 当前值、历史与显式刷新 | Stage 3 | 访问权限、视图位置与发布规则 |
-| scope 使用和跨轮持有的依据 | Stage 4 | 连接池、事务及参数变化的生命周期解释 |
-| end 接口、退出范围与交付收尾 | Stage 5 | 正常结束、失败、取消和 branch 返回规则 |
-| 手动 close、历史资源与自动 cleanup | Stage 6 | 共用的关闭条件及释放顺序 |
+| 每个资产唯一来源与显式接收形态 | Stage 1（已确认，接收形态由 Stage 2 取代） | Effects、类签名、instance 和检查规则 |
+| handler 复用、前驱装配与读取路由 | Stage 2（已确认） | 注册、生成契约、handler、生成装配与检查规则 |
+| 共同执行协议与两种入口的对应 | Stage 3 | 单步、推进、发布和边界的关系 |
+| 当前值、历史与显式刷新 | Stage 4 | 访问权限、视图位置与发布规则 |
+| scope 使用和跨轮持有的依据 | Stage 5 | 连接池、事务及参数变化的生命周期解释 |
+| end 接口、退出范围与交付收尾 | Stage 6 | 正常结束、失败、取消和 branch 返回规则 |
+| 手动 close、历史资源与自动 cleanup | Stage 7 | 共用的关闭条件及释放顺序 |
 
 这些是待审查的接口与协议，不是已经批准实施的具体语法。线程、锁、等待者唤醒和使用登记的内部实现由 SDK 承担，不要求原子 handler 作者管理调度。
 
@@ -139,13 +333,14 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 | 当前事实或缺口 | 本轮处理位置 |
 | --- | --- |
-| 多个资产／访问方式合法；方法体主动取值，检查显式接收形态，不添加位置参数 | Stage 1 |
-| 持续资产 require 返回 History，没有拆分当前值与历史读取 | Stage 3 |
-| readHistory 未经过 scope 开启参数观察，可能报 ScopeInputsMissing | Stage 3–4 |
-| 会话步骤共用 scope 使用登记；停止后主要依赖 interpreter 退出清理 | Stage 4、6 |
-| 无正常 EOF／Done，lifelong 只能因失败或取消退出 | Stage 5 |
-| 含 lifelong 程序的失败使用整次运行终止的临时规则 | Stage 5 明确保留或调整范围 |
-| 历史资源缺少精细持有和释放协议 | Stage 3、4、6 |
+| 多个资产／访问方式合法；方法体主动取值，检查显式接收形态，不添加位置参数 | Stage 1，接收形态由 Stage 2 取代 |
+| handler 绑定在 Input 链上：方法体显式调用上游，同一操作按 effect 重复书写 | Stage 2 |
+| 持续资产 require 返回 History，没有拆分当前值与历史读取 | Stage 2 确定缓存语义，Stage 4 收敛视图 |
+| readHistory 未经过 scope 开启参数观察，可能报 ScopeInputsMissing | Stage 4–5 |
+| 会话步骤共用 scope 使用登记；停止后主要依赖 interpreter 退出清理 | Stage 5、7 |
+| 无正常 EOF／Done，lifelong 只能因失败或取消退出 | Stage 6 |
+| 含 lifelong 程序的失败使用整次运行终止的临时规则 | Stage 6 明确保留或调整范围 |
+| 历史资源缺少精细持有和释放协议 | Stage 4、5、7 |
 | 完整历史持续增长，没有容量背压 | 本轮只明确退出与资源释放；容量和历史策略另议 |
 
 <a id="deferred"></a>
@@ -157,18 +352,19 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 | --- | --- |
 | 背压与历史容量 | 容量、溢出策略、历史窗口、慢消费者、无订阅者行为，以及同步 request 回馈与有界队列的进展问题；完整历史不承诺有界内存 |
 | workflow 扩展 | 嵌套 lifelong、多个持续来源组合触发一个 target |
-| 来源与调度 | 自动重试、时间周期声明、通用外部 push callback 注册；阻塞单步来源可用不代表任意回调 API 已自动适配 |
-| Pure | 语义与 IO 限制；过去 Local／Body 候选未定案，当前仍使用统一 raise |
+| 来源与调度 | Stream 的 event、behavior（轮询）、socket 三种驱动方式；自动重试、时间周期声明、通用外部 push callback 注册；阻塞单步来源可用不代表任意回调 API 已自动适配 |
+| Pure | 方向已在 Stage 2 确定：没有外部性的值管道，值直接进入下一个 effect；返回类型、下游读取方式、能否 raise 待定 |
 | Generic Map | 适配范围、失败接口和接入；当前没有可用自动适配 |
-| 多细化资产 | 同一 handler／Scoped 注册服务多种细化类型时，ScopeTree 身份、实例、Binding ownership 与 Error 导航如何一起调整 |
+| 多细化资产 | 同一个 handler 服务多种细化资产已由 Stage 2 以多份注册解决；同一个注册服务多种细化资产仍不支持 |
+| 同类二元操作 | 一次操作需要两个同表示类型的值时，Stage 2 先用角色类型区分；是否需要其他写法待定 |
 | 模块与接口 | 多方法 effect 的入口与结果契约、独立生成模块组合、跨语言 schema |
 | 资源协议扩展 | 其他 cleanup policy、Linear 关闭凭证、任意逸出资源跟踪、未发布部分获取恢复、跨独立 interpreter 存续 |
-| 故障恢复 | 已展开 continuation 的恢复、跨调用诊断范围；当前 Error 处置成功仍传播原失败 |
+| 故障恢复 | Error 驱动链：resolve 如何驱动 scope 修复（Stage 2 起 resolve 不调用 close）；已展开 continuation 的恢复、跨调用诊断范围；当前 Error 处置成功仍传播原失败 |
 
 <a id="middleware"></a>
 ### Middleware 与 Hanging
 
-独立 Middleware typing、装卸策略及其与 [Root 入口包装](LATEST_DESIGN.md#calls)的关系，保留为后续独立专题。Hanging 随之确认；不沿用旧 loop 说明替代 lifelong 规范。本轮六阶段不以新增 Middleware 类别为前提。
+独立 Middleware typing、装卸策略及其与 [Root 入口包装](LATEST_DESIGN.md#calls)的关系，保留为后续独立专题。Hanging 随之确认；不沿用旧 loop 说明替代 lifelong 规范。本轮七个阶段不以新增 Middleware 类别为前提。
 
 <a id="external-tools"></a>
 ### 外部工具与后续观察
@@ -188,6 +384,8 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 - 2026-11-01：会话启动登记、完成信号、停止期间新建会话、伴随发布与缺值补产来源等修复已记录验证；来源分析按消费单元裁剪再组合的修复通过生成与普通编译。相关状态组合仍可能指数增长，没有整体线性复杂度保证。
 - 2026-11-02：资产声明改为 Asset @表示类型 "资产名"；Stream 下的解析器以 getT 直接引用原始 Stream 方法，由会话提供本次输入。原计划记录普通编译、六个程序生成、五个有限 demo 及 StreamDemo 中断观察通过。
 - 2026-11-04：本轮 Stage 1 落地每个 refined asset 的唯一来源、统一访问结果规则与 GHC 源码接收检查；整理 SDK／Generated／Program 门面和 Prototype 内部分工，六个 demo 已重新生成，`cabal build all --offline -j1` 通过。生成包含手写模块的 GHC 类型检查与资产接收检查；未新增测试、未运行业务 demo，未验证全部 GADT 匹配或并发交错。现有来源分析与 runtime 调度算法保持。
+- 2026-11-07：[FacadeProbe](../demo/FacadeProbe/README.md) 以手写的生成结果验证共享 handler：同一 handler 配不同 Input 与 demand、共享 Scoped 开关、挂接 parser、Stream parser 与 lifelong 消费者均可运行，非交错输出与显式写法一致。生成器未修改；路由当时按运行时调用者查表，已由 Stage 2 的编译期标签取代。
+- 2026-11-08：Stage 2 设计确认；独立的标签探针以 GHC 9.12 编译运行，确认按 effect 标签选择读取与 `raw` 时方法体无需改写。尚未接入 SDK。
 - 历史验证未系统枚举全部并发交错，未观察长时间内存；Stream 外部模型未完成；取消只记录过 Windows Ctrl-Break。已通过编译和示例不能扩大资源逃逸、任意底层 IO 或所有调度的保证。
 
 <a id="maintenance"></a>

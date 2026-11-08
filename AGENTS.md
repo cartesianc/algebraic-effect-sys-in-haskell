@@ -20,11 +20,12 @@
 - 业务 instance 写作 `instance XInputs m => XEffect m`。Input 提供能力，方法体显式调用；SDK 不补跑未引用的上游。
 - effect 调用和显式资产操作写在注册 instance 方法中。普通函数、局部具名函数、泛型例外和构造器归属遵循 [ASSETS](docs/ASSETS.md)，不恢复旧的“全面禁止普通函数”规则。
 - 每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；同一资产可声明多种合法访问方式，一个消费者可依赖多个资产。取值通过原生 request／require，并满足[显式接收契约](docs/LATEST_DESIGN.md#demand-contract)；不新增位置参数或提前取值。
+- **迁移边界：**[Stage 2](docs/NEXT_STAGES.md#stage-2) 已确认替换以上三条：handler 写作 `instance XxxLayer m => XxxHandler m`，按表示类型读取，Input 与驱动由 gencode 装配；禁止顶层普通函数；接收形态检查取消。迁移完成前，未迁移的代码仍按以上三条。
 - Context 通过 demands 接入。区分 original chain、Context chain、静态 NodeId、运行 Origin／ActivationId 与 Binding ownership。
 - 取值的捕获、来源可见性、fallback 发布、资源认领和 once-spare 保证不能在重构中弱化。完整规则按下表阅读，不在本文件复制协议。
 - Prototype 是纯结构，RuntimeGraph 保存活动关系，ScopeTree 独立且无环。生成、执行、展示共享同一静态模型。
 - Generated 是派生产物；修改手写输入后显式生成，不在构建中隐式修改源码，不把手改生成结果当作持久权威。
-- 当前实现六类 effect（含 Stream）与 lifelong。lifelong 中的失败采用临时规则（终止整次运行）；EOF、Stream close、局部结束等延期项不得描述成已提供的能力。本轮已完成输入契约及 SDK 分工整理，持续执行同构、资产访问、scope 边界、结束与清理仍按阶段确认；Middleware 保留为后续专题，均不得写成当前能力。
+- 当前实现六类 effect（含 Stream）与 lifelong。lifelong 中的失败采用临时规则（终止整次运行）；EOF、Stream close、局部结束等延期项不得描述成已提供的能力。本轮已完成输入契约及 SDK 分工整理，Stage 2 的 handler 复用正在实现，持续执行同构、资产访问、scope 边界、结束与清理仍按阶段确认；Middleware 保留为后续专题，均不得写成当前能力。
 
 ## 按任务读取规范
 
