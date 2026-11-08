@@ -296,7 +296,7 @@ Stage 2 已确定：request 是消费链对生产链的驱动，写在注册里�
 
 Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context 发布。lifelong 内节点既可消费也可产值；已有 workflow 产生的输出不能再被另起的生产循环重复执行。发布沿用合法来源与会话身份，不因资产同名变成全局广播。
 
-**当前差异：** 持续资产的 require 仍返回 History；方法体 stream @T 及上述拆分尚未实现。其目标是读取历史，不是每调用一次就领取下一条增量。
+**当前差异：** Stage 2 后 `streams` 读取 History、`requires` 读取最新一条；handler 读取历史仍写 `require @(History T)`，gen 已生成的 `streamT` 尚未作为 handler 的读取写法，视图位置的拆分尚未实现。读取历史的目标是读到确定位置为止的历史，不是每调用一次就领取下一条增量。
 
 **交付：** 统一的发布、当前值与历史协议，明确每次读取的出身和视图。区分普通历史数据、伴随发布和有资源归属的绑定，为后续释放建立依据。
 
