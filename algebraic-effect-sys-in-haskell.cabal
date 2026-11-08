@@ -10,7 +10,7 @@ extra-source-files:
     AGENTS.md
     hie.yaml
     docs/*.md
-    sdk/Framework/Codegen.hs
+    sdk/Framework/Gen/Lower.hs
     demo/*/Handlers.hs
     demo/*/Generated/Assets.hs
 
@@ -33,28 +33,27 @@ executable crawler-demo
       Framework.SDK
       Framework.Generated
       Framework.Program
-      Framework.Effect
-      Framework.Effect.Contract
-      Framework.Effect.History
-      Framework.Effect.Registration
-      Framework.Effect.Demand
-      Framework.Effect.Graph
-      Framework.Effect.Context
-      Framework.Effect.Binding
-      Framework.Effect.Scope
-      Framework.Effect.Runtime
-      Framework.Effect.Runtime.App
-      Framework.Effect.Runtime.Identity
-      Framework.Effect.Runtime.Graph
-      Framework.Effect.Runtime.Session
       Framework.Recursion
+      Framework.Language.AST
+      Framework.Language.Handler
+      Framework.Language.History
+      Framework.Language.Registration
       Framework.Prototype
       Framework.Prototype.Types
+      Framework.Prototype.Graph
       Framework.Prototype.Query
-      Framework.Prototype.Sources
-      Framework.Workflow.AST
-      Framework.Workflow.Execution
-      Framework.Workflow.Structure
+      Framework.Prototype.Validate
+      Framework.Prototype.Structure
+      Framework.Runtime
+      Framework.Runtime.Protocol
+      Framework.Runtime.Context
+      Framework.Runtime.Binding
+      Framework.Runtime.Scope
+      Framework.Runtime.App
+      Framework.Runtime.Identity
+      Framework.Runtime.Graph
+      Framework.Runtime.Session
+      Framework.Runtime.Execution
   ghc-options: -main-is Crawler.Main -threaded
   build-depends:
       base >= 4.21 && < 5
@@ -82,28 +81,27 @@ executable file-demo
       Framework.SDK
       Framework.Generated
       Framework.Program
-      Framework.Effect
-      Framework.Effect.Contract
-      Framework.Effect.History
-      Framework.Effect.Registration
-      Framework.Effect.Demand
-      Framework.Effect.Graph
-      Framework.Effect.Context
-      Framework.Effect.Binding
-      Framework.Effect.Scope
-      Framework.Effect.Runtime
-      Framework.Effect.Runtime.App
-      Framework.Effect.Runtime.Identity
-      Framework.Effect.Runtime.Graph
-      Framework.Effect.Runtime.Session
       Framework.Recursion
+      Framework.Language.AST
+      Framework.Language.Handler
+      Framework.Language.History
+      Framework.Language.Registration
       Framework.Prototype
       Framework.Prototype.Types
+      Framework.Prototype.Graph
       Framework.Prototype.Query
-      Framework.Prototype.Sources
-      Framework.Workflow.AST
-      Framework.Workflow.Execution
-      Framework.Workflow.Structure
+      Framework.Prototype.Validate
+      Framework.Prototype.Structure
+      Framework.Runtime
+      Framework.Runtime.Protocol
+      Framework.Runtime.Context
+      Framework.Runtime.Binding
+      Framework.Runtime.Scope
+      Framework.Runtime.App
+      Framework.Runtime.Identity
+      Framework.Runtime.Graph
+      Framework.Runtime.Session
+      Framework.Runtime.Execution
   ghc-options: -main-is FileDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
@@ -130,28 +128,27 @@ executable open-files-demo
       Framework.SDK
       Framework.Generated
       Framework.Program
-      Framework.Effect
-      Framework.Effect.Contract
-      Framework.Effect.History
-      Framework.Effect.Registration
-      Framework.Effect.Demand
-      Framework.Effect.Graph
-      Framework.Effect.Context
-      Framework.Effect.Binding
-      Framework.Effect.Scope
-      Framework.Effect.Runtime
-      Framework.Effect.Runtime.App
-      Framework.Effect.Runtime.Identity
-      Framework.Effect.Runtime.Graph
-      Framework.Effect.Runtime.Session
       Framework.Recursion
+      Framework.Language.AST
+      Framework.Language.Handler
+      Framework.Language.History
+      Framework.Language.Registration
       Framework.Prototype
       Framework.Prototype.Types
+      Framework.Prototype.Graph
       Framework.Prototype.Query
-      Framework.Prototype.Sources
-      Framework.Workflow.AST
-      Framework.Workflow.Execution
-      Framework.Workflow.Structure
+      Framework.Prototype.Validate
+      Framework.Prototype.Structure
+      Framework.Runtime
+      Framework.Runtime.Protocol
+      Framework.Runtime.Context
+      Framework.Runtime.Binding
+      Framework.Runtime.Scope
+      Framework.Runtime.App
+      Framework.Runtime.Identity
+      Framework.Runtime.Graph
+      Framework.Runtime.Session
+      Framework.Runtime.Execution
   ghc-options: -main-is OpenFilesDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
@@ -180,28 +177,27 @@ executable scope-reuse-demo
       Framework.SDK
       Framework.Generated
       Framework.Program
-      Framework.Effect
-      Framework.Effect.Contract
-      Framework.Effect.History
-      Framework.Effect.Registration
-      Framework.Effect.Demand
-      Framework.Effect.Graph
-      Framework.Effect.Context
-      Framework.Effect.Binding
-      Framework.Effect.Scope
-      Framework.Effect.Runtime
-      Framework.Effect.Runtime.App
-      Framework.Effect.Runtime.Identity
-      Framework.Effect.Runtime.Graph
-      Framework.Effect.Runtime.Session
       Framework.Recursion
+      Framework.Language.AST
+      Framework.Language.Handler
+      Framework.Language.History
+      Framework.Language.Registration
       Framework.Prototype
       Framework.Prototype.Types
+      Framework.Prototype.Graph
       Framework.Prototype.Query
-      Framework.Prototype.Sources
-      Framework.Workflow.AST
-      Framework.Workflow.Execution
-      Framework.Workflow.Structure
+      Framework.Prototype.Validate
+      Framework.Prototype.Structure
+      Framework.Runtime
+      Framework.Runtime.Protocol
+      Framework.Runtime.Context
+      Framework.Runtime.Binding
+      Framework.Runtime.Scope
+      Framework.Runtime.App
+      Framework.Runtime.Identity
+      Framework.Runtime.Graph
+      Framework.Runtime.Session
+      Framework.Runtime.Execution
   ghc-options: -main-is ScopeReuseDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
@@ -229,28 +225,27 @@ executable scope-instances-demo
       Framework.SDK
       Framework.Generated
       Framework.Program
-      Framework.Effect
-      Framework.Effect.Contract
-      Framework.Effect.History
-      Framework.Effect.Registration
-      Framework.Effect.Demand
-      Framework.Effect.Graph
-      Framework.Effect.Context
-      Framework.Effect.Binding
-      Framework.Effect.Scope
-      Framework.Effect.Runtime
-      Framework.Effect.Runtime.App
-      Framework.Effect.Runtime.Identity
-      Framework.Effect.Runtime.Graph
-      Framework.Effect.Runtime.Session
       Framework.Recursion
+      Framework.Language.AST
+      Framework.Language.Handler
+      Framework.Language.History
+      Framework.Language.Registration
       Framework.Prototype
       Framework.Prototype.Types
+      Framework.Prototype.Graph
       Framework.Prototype.Query
-      Framework.Prototype.Sources
-      Framework.Workflow.AST
-      Framework.Workflow.Execution
-      Framework.Workflow.Structure
+      Framework.Prototype.Validate
+      Framework.Prototype.Structure
+      Framework.Runtime
+      Framework.Runtime.Protocol
+      Framework.Runtime.Context
+      Framework.Runtime.Binding
+      Framework.Runtime.Scope
+      Framework.Runtime.App
+      Framework.Runtime.Identity
+      Framework.Runtime.Graph
+      Framework.Runtime.Session
+      Framework.Runtime.Execution
   ghc-options: -main-is ScopeInstancesDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
@@ -278,28 +273,27 @@ executable stream-demo
       Framework.SDK
       Framework.Generated
       Framework.Program
-      Framework.Effect
-      Framework.Effect.Contract
-      Framework.Effect.History
-      Framework.Effect.Registration
-      Framework.Effect.Demand
-      Framework.Effect.Graph
-      Framework.Effect.Context
-      Framework.Effect.Binding
-      Framework.Effect.Scope
-      Framework.Effect.Runtime
-      Framework.Effect.Runtime.App
-      Framework.Effect.Runtime.Identity
-      Framework.Effect.Runtime.Graph
-      Framework.Effect.Runtime.Session
       Framework.Recursion
+      Framework.Language.AST
+      Framework.Language.Handler
+      Framework.Language.History
+      Framework.Language.Registration
       Framework.Prototype
       Framework.Prototype.Types
+      Framework.Prototype.Graph
       Framework.Prototype.Query
-      Framework.Prototype.Sources
-      Framework.Workflow.AST
-      Framework.Workflow.Execution
-      Framework.Workflow.Structure
+      Framework.Prototype.Validate
+      Framework.Prototype.Structure
+      Framework.Runtime
+      Framework.Runtime.Protocol
+      Framework.Runtime.Context
+      Framework.Runtime.Binding
+      Framework.Runtime.Scope
+      Framework.Runtime.App
+      Framework.Runtime.Identity
+      Framework.Runtime.Graph
+      Framework.Runtime.Session
+      Framework.Runtime.Execution
   ghc-options: -main-is StreamDemo.Main -threaded
   build-depends:
       base >= 4.21 && < 5
@@ -312,28 +306,36 @@ executable stream-demo
   default-language: Haskell2010
 
 executable effect-codegen
-  main-is: Framework/Generate.hs
+  main-is: Framework/Gen/Main.hs
   hs-source-dirs: sdk
   other-modules:
-      Framework.Codegen
-      Framework.Codegen.Handlers
-      Framework.Codegen.Assets
-      Framework.Codegen.Structure
-      Framework.Codegen.Plan
-      Framework.Effect.Asset
-      Framework.Effect.Contract
-      Framework.Effect.History
-      Framework.Effect.Registration
-      Framework.Effect.Demand
-      Framework.Effect.Graph
+      Framework.Gen
+      Framework.Gen.Source
+      Framework.Gen.Lower
+      Framework.Gen.Demand
+      Framework.Gen.Names
+      Framework.Gen.Bind
+      Framework.Gen.Shape
+      Framework.Gen.Build
+      Framework.Gen.Build.Graph
+      Framework.Gen.Build.Sources
+      Framework.Gen.Emit.Effects
+      Framework.Gen.Emit.Handlers
+      Framework.Gen.Emit.Program
+      Framework.Gen.Emit.Prototype
+      Framework.Gen.Assets
+      Framework.Gen.Catalog
       Framework.Recursion
+      Framework.Language.AST
+      Framework.Language.Handler
+      Framework.Language.History
+      Framework.Language.Registration
       Framework.Prototype
       Framework.Prototype.Types
+      Framework.Prototype.Graph
       Framework.Prototype.Query
-      Framework.Prototype.Sources
-      Framework.Workflow.AST
-      Framework.Workflow.Structure
-  ghc-options: -main-is Framework.Generate
+      Framework.Prototype.Validate
+  ghc-options: -main-is Framework.Gen.Main
   build-depends:
       base >= 4.21 && < 5
     , containers

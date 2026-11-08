@@ -23,7 +23,6 @@
 module OpenFilesDemo.Generated.Handlers (handlerSourceFingerprint, getFileNames, readFileNames, getOpenedFiles, readOpenedFiles, openFileSession, closeFileSession, runHoldFiles, runInspectFiles, runReleaseFiles, getInspectedFiles, readInspectedFiles, runFinishInspection, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
 import qualified Framework.Generated as FrameworkRuntime
-import qualified Framework.Effect.Contract as FrameworkRoot
 import qualified OpenFilesDemo.Generated.Effects as FrameworkGenerated
 import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
@@ -184,7 +183,7 @@ instance FrameworkRuntime.Raw (At "InspectionSnapshot") where
   raw = At (runReleaseFiles)
 
 getFileNames :: FrameworkGenerated.App FrameworkGenerated.FileNames
-getFileNames = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations" FrameworkGenerated.ContextBindingError
+getFileNames = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations" FrameworkGenerated.ContextBindingError
     [("FileResources", FrameworkRuntime.RequireValue), ("HoldFiles", FrameworkRuntime.RequestValue)]
     (Just (FrameworkRuntime.ScopeInput "FileLocations"))
     FrameworkGenerated.boundFileLocations
@@ -192,11 +191,11 @@ getFileNames = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure . F
   (FrameworkGenerated.FileNames <$> runAt @"FileLocations" FrameworkGenerated.listFiles)
 
 readFileNames :: FrameworkGenerated.App FrameworkGenerated.FileNames
-readFileNames = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure) $
+readFileNames = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "FileLocations" FrameworkGenerated.ContextBindingError [("FileResources", FrameworkRuntime.RequireValue), ("HoldFiles", FrameworkRuntime.RequestValue)] (Just (FrameworkRuntime.ScopeInput "FileLocations")) FrameworkGenerated.boundFileLocations getFileNames
 
 getOpenedFiles :: FrameworkGenerated.App FrameworkGenerated.OpenedFiles
-getOpenedFiles = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResources" FrameworkGenerated.ContextBindingError
+getOpenedFiles = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResources" FrameworkGenerated.ContextBindingError
     [("FileSession", FrameworkRuntime.RequestValue), ("InspectFiles", FrameworkRuntime.RequireValue), ("InspectionSnapshot", FrameworkRuntime.RequireValue)]
     Nothing
     FrameworkGenerated.boundFileResources
@@ -204,31 +203,31 @@ getOpenedFiles = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure .
   (FrameworkGenerated.OpenedFiles <$> runAt @"FileResources" FrameworkGenerated.acquireFiles)
 
 readOpenedFiles :: FrameworkGenerated.App FrameworkGenerated.OpenedFiles
-readOpenedFiles = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure) $
+readOpenedFiles = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "FileResources" FrameworkGenerated.ContextBindingError [("FileSession", FrameworkRuntime.RequestValue), ("InspectFiles", FrameworkRuntime.RequireValue), ("InspectionSnapshot", FrameworkRuntime.RequireValue)] Nothing FrameworkGenerated.boundFileResources getOpenedFiles
 
 openFileSession :: FrameworkGenerated.App (Maybe String)
-openFileSession = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handleFailure . FrameworkRuntime.atomicScope "openFileSession" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+openFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFileSession" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
   getOpenedFiles >> runAt @"FileSession" FrameworkGenerated.openFiles
 
 closeFileSession :: FrameworkGenerated.App (Maybe String)
-closeFileSession = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handleFailure . FrameworkRuntime.atomicScope "closeFileSession" . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+closeFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeFileSession" . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
   runAt @"FileSession" FrameworkGenerated.closeFiles
 
 runHoldFiles :: FrameworkGenerated.App (Maybe String)
-runHoldFiles = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handleFailure . FrameworkRuntime.atomicHandle "runHoldFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "HoldFiles") $
+runHoldFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runHoldFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "HoldFiles") $
   getFileNames >> openFileSession >> runAt @"HoldFiles" FrameworkGenerated.holdFiles
 
 runInspectFiles :: FrameworkGenerated.App (Maybe String)
-runInspectFiles = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handleFailure . FrameworkRuntime.atomicHandle "runInspectFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "InspectFiles") $
+runInspectFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runInspectFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "InspectFiles") $
   runHoldFiles >> runAt @"InspectFiles" FrameworkGenerated.inspectFiles
 
 runReleaseFiles :: FrameworkGenerated.App (Maybe String)
-runReleaseFiles = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handleFailure . FrameworkRuntime.atomicHandle "runReleaseFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "ReleaseFiles") $
+runReleaseFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReleaseFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "ReleaseFiles") $
   runHoldFiles >> runAt @"ReleaseFiles" FrameworkGenerated.holdFiles
 
 getInspectedFiles :: FrameworkGenerated.App FrameworkGenerated.InspectedFiles
-getInspectedFiles = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handleFailure . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.callContext "InspectionSnapshot" FrameworkGenerated.ContextBindingError
+getInspectedFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.callContext "InspectionSnapshot" FrameworkGenerated.ContextBindingError
     [("FinishInspection", FrameworkRuntime.RequireValue)]
     Nothing
     FrameworkGenerated.boundInspectionSnapshot
@@ -236,11 +235,11 @@ getInspectedFiles = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot
   (FrameworkGenerated.InspectedFiles <$> runAt @"InspectionSnapshot" FrameworkGenerated.snapshotFiles)
 
 readInspectedFiles :: FrameworkGenerated.App FrameworkGenerated.InspectedFiles
-readInspectedFiles = (FrameworkRoot.withErrorPath ["FileSession"] . FrameworkRoot.handleFailure) $
+readInspectedFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "InspectionSnapshot" FrameworkGenerated.ContextBindingError [("FinishInspection", FrameworkRuntime.RequireValue)] Nothing FrameworkGenerated.boundInspectionSnapshot getInspectedFiles
 
 runFinishInspection :: FrameworkGenerated.App (Maybe String)
-runFinishInspection = (FrameworkRoot.withErrorPath [] . FrameworkRoot.handleFailure . FrameworkRuntime.atomicHandle "runFinishInspection" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FinishInspection") $
+runFinishInspection = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runFinishInspection" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FinishInspection") $
   runAt @"FinishInspection" FrameworkGenerated.finishInspection
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -256,7 +255,7 @@ scopeCleanups =
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。
-errorHandlers :: [(Maybe String, FrameworkRoot.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
+errorHandlers :: [(Maybe String, FrameworkRuntime.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
 errorHandlers =
   [
   ]

@@ -4,10 +4,13 @@ module Framework.Prototype.Query
   ( workflowNode, workflowChildren, workflowTerminals, workflowLifelongs, workflowSelectors
   , allWorkflow, lookupChain, lookupWorkflow, precedes, exclusive, visibleFrom
   , driveSet, readPoints, bootPlan, sessionSteps
+  , finiteSessions, candidateCase, findEffectProto, ordinaryEntry, calledMethods, reachableMethods
   ) where
 
-import Data.List (isPrefixOf)
+import Data.List (isPrefixOf, nub)
 import Data.Maybe (listToMaybe)
+import Framework.Language.Registration (Access(..))
+import Framework.Prototype.Graph
 import Framework.Prototype.Types
 
 workflowNode :: WorkflowTree -> NodeId
@@ -94,3 +97,61 @@ bootPlan _ producer = Receive (effectInput producer)
 
 sessionSteps :: BootPlan -> Int
 sessionSteps (Receive _) = 2
+
+-- 每个 Receive 资产一份 interpreter 托管的会话，挂载为 [-2, 序号, 步骤]；不属于 AST，
+-- 不作为任何读取点的可见前驱，只在 lifelong 外的有限 require 缺少交付时惰性启动。
+finiteSessions :: [EffectProto method] -> [SessionProto]
+finiteSessions effects =
+  [ SessionProto contractType plan [[-2, index, step] | step <- [0 .. sessionSteps plan - 1]]
+  | (index, (contractType, plan)) <- zip [0 ..] receiving ]
+  where
+    receiving = [(contractType, plan) | effect <- effects, effectContinuous effect
+      , Just contractType <- [effectProduces effect], let plan = bootPlan effects effect]
+
+-- 候选对应只读 effect 原型中的 requires 与 Input 祖先；生成和加载校验共用。
+candidateCase :: [EffectProto method] -> NodeId -> WorkflowTree
+              -> Either (PrototypeError method) (String, String)
+candidateCase effects path subtree = do
+  cases <- mapM terminalCase (workflowTerminals subtree)
+  case nub cases of
+    [selected] -> pure selected
+    _ -> invalid "Every candidate terminal must select the same constructor"
+  where
+    terminalCase selected = do
+      effect <- findEffectProto effects selected
+      let inherited = selected : effectInputChain effect
+          cases = nub [(base, constructor)
+            | consumer <- effects, effectName consumer `elem` inherited
+            , demand <- effectDemands consumer, demandAccess demand == RequireAccess
+            , producer <- effects, Just base <- [effectProduces producer]
+            , (branch, constructor) <- effectBranches producer, branch == demandContract demand]
+      case cases of
+        [selectedCase] -> pure selectedCase
+        _ -> invalid ("Candidate must require exactly one branch contract: " ++ selected)
+    invalid reason = Left (InvalidAlternative path reason)
+
+findEffectProto :: [EffectProto method] -> String -> Either (PrototypeError method) (EffectProto method)
+findEffectProto effects selected = case filter ((== selected) . effectName) effects of
+  [effect] -> Right effect
+  _ -> Left (UnknownPrototypeTarget selected)
+
+ordinaryEntry :: EffectProto method -> Either (PrototypeError method) method
+ordinaryEntry effect = case [method | (role, method) <- effectMethods effect, role `elem` [HandlerMethod, ScopeOpen]] of
+  method : _ -> pure method
+  [] -> Left (InvalidPrototype ("Effect has no callable entry (no handler or open handler): " ++ effectName effect))
+
+calledMethods :: MethodShape method -> [method]
+calledMethods Empty = []
+calledMethods (Call method) = [method]
+calledMethods (Sequence children) = concatMap calledMethods children
+calledMethods (Choice children) = concatMap calledMethods children
+calledMethods (Recover body recovery) = calledMethods body ++ calledMethods recovery
+
+reachableMethods :: Eq method => [MethodDefinition method] -> [method] -> [method]
+reachableMethods definitions = visit []
+  where
+    visit seen [] = seen
+    visit seen (method : rest)
+      | method `elem` seen = visit seen rest
+      | otherwise = visit (seen ++ [method])
+          (concat [calledMethods (methodBody definition) | definition <- definitions, methodIdentity definition == method] ++ rest)

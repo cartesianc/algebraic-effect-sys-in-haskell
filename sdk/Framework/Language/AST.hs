@@ -1,0 +1,58 @@
+{-# LANGUAGE DeriveFunctor #-}
+
+-- Workflow 的可序列化结构与引用收集；不启动节点。
+module Framework.Language.AST
+  ( WorkflowF(..), AST, EffectNode, node, chained, parallel, alternative, lifelong, foldAST, toWorkflowF
+  ) where
+
+import Framework.Recursion (Fix(..), Algebra, cata)
+
+-- AST 只保存调用描述；递归位置独立为 next，由不同 algebra 解释。
+-- Alternative 只列出候选，不写条件：候选经注册依赖同一和类型资产的不同分支契约，
+-- 运行时先 require 该资产，再按它的构造器启动对应候选。
+data WorkflowF next
+  = Node String
+  | Chained [next]
+  | Parallel [next]
+  | Alternative [next]
+  -- Lifelong 订阅持续资产：每个消费单元在新增量交付后执行一次，再等待下一条；本身没有正常结束。
+  -- 直接子项各为一个单元，直接子项是 parallel 时拆这一层；其余子树作为有限单元整体重复。
+  | Lifelong [next]
+  deriving (Eq, Functor, Show, Read)
+
+-- 对外区分原子节点与完整 branch，不导出构造器或原始树转换。
+newtype EffectNode = EffectNode String
+newtype AST = AST (Fix WorkflowF)
+
+-- 仅 SDK 内部提供这两种子项；齐次列表不允许 node 与 branch 混排。
+class BranchChild child where
+  childTree :: child -> Fix WorkflowF
+
+instance BranchChild EffectNode where
+  childTree (EffectNode selected) = Fix (Node selected)
+
+instance BranchChild AST where
+  childTree (AST tree) = tree
+
+node :: String -> EffectNode
+node = EffectNode
+
+chained :: BranchChild child => [child] -> AST
+chained children = AST (Fix (Chained (map childTree children)))
+
+parallel :: BranchChild child => [child] -> AST
+parallel children = AST (Fix (Parallel (map childTree children)))
+
+alternative :: BranchChild child => [child] -> AST
+alternative children = AST (Fix (Alternative (map childTree children)))
+
+lifelong :: BranchChild child => [child] -> AST
+lifelong children = AST (Fix (Lifelong (map childTree children)))
+
+-- 解释器只折叠已经构造好的 branch，不能据此把裸 node 提升为 AST。
+foldAST :: Algebra WorkflowF value -> AST -> value
+foldAST algebra (AST tree) = cata algebra tree
+
+-- SDK 的原型构建器读取有限 AST；业务仍只通过 node/branch 构造。
+toWorkflowF :: AST -> Fix WorkflowF
+toWorkflowF (AST tree) = tree

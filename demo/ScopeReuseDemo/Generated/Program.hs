@@ -5,7 +5,6 @@ module ScopeReuseDemo.Generated.Program where
 
 import Framework.Generated (EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.Generated as SDK
-import qualified Framework.Effect.Contract as FrameworkRoot
 import ScopeReuseDemo.Generated.Effects
 import qualified ScopeReuseDemo.Generated.Handlers as Handlers
 import ScopeReuseDemo.Types
@@ -23,11 +22,11 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "PrepareProbe" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrepareProbeResult <$> (() <$ Handlers.runPrepareProbe)))))
-      , SDK.targetApp "WriteFirst" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteFirstResult <$> (() <$ Handlers.runWriteFirst)))))
-      , SDK.targetApp "WriteSecond" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteSecondResult <$> (() <$ Handlers.runWriteSecond)))))
-      , SDK.targetApp "WriteThird" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteThirdResult <$> (() <$ Handlers.runWriteThird)))))
-      , SDK.targetApp "VerifyReuse" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (VerifyReuseResult <$> (() <$ Handlers.runVerifyReuse)))))
+    ( [ SDK.targetApp "PrepareProbe" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrepareProbeResult <$> (() <$ Handlers.runPrepareProbe)))))
+      , SDK.targetApp "WriteFirst" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteFirstResult <$> (() <$ Handlers.runWriteFirst)))))
+      , SDK.targetApp "WriteSecond" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteSecondResult <$> (() <$ Handlers.runWriteSecond)))))
+      , SDK.targetApp "WriteThird" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteThirdResult <$> (() <$ Handlers.runWriteThird)))))
+      , SDK.targetApp "VerifyReuse" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (VerifyReuseResult <$> (() <$ Handlers.runVerifyReuse)))))
       ]
     , []
     , []

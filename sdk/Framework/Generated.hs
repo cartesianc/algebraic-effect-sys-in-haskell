@@ -5,13 +5,13 @@
 -- 并适配可执行程序的运行／生成／结构查看命令；真正执行交给 Framework.Program。
 module Framework.Generated
   ( module Framework.SDK
-  , module Framework.Effect.Graph
   , module Framework.Prototype
-  , module Framework.Workflow.Structure
-  , App, TypeRef(..), typeRef, ResolvedDemand(..)
+  , module Framework.Prototype.Structure
+  , App, TypeRef(..)
   , Target, targetApp, SessionSteps, receiveSteps
-  , failEffect, handleFailure, ContextAccess(..), readContext, latestContext
-  , callContext, projectContext, enterHandler
+  , failEffect, handleFailure, withErrorPath, withErrorHandlers, ErrorHandler(..)
+  , ContextAccess(..), readContext, latestContext
+  , callContext, projectContext, enterHandler, withAnchoredContexts
   , atomicHandle, atomicScope, readHistory, streamHandle
   , ScopeInput(..), openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, withScopeCleanups
@@ -19,20 +19,20 @@ module Framework.Generated
   ) where
 
 import Framework.SDK
-import Framework.Effect.Contract
-  ( failEffect, ErrorStore(handleFailure), ContextStore(enterHandler)
+import Framework.Runtime.Protocol
+  ( failEffect, ErrorStore(handleFailure, withErrorPath, withErrorHandlers), ErrorHandler(..)
+  , ContextStore(enterHandler, withAnchoredContexts)
   , ScopeInput(..), ScopeStore(openScope, closeScope, withScopeDependencies) )
-import Framework.Effect.Context
+import Framework.Runtime.Context
   ( ContextAccess(..), readContext, latestContext, callContext
   , projectContext, atomicHandle, atomicScope, readHistory, streamHandle )
-import Framework.Effect.Graph
-import Framework.Effect.Registration (TypeRef(..), typeRef, ResolvedDemand(..))
-import Framework.Effect.Runtime (App, Target, targetApp, SessionSteps, receiveSteps)
-import Framework.Effect.Runtime.App (withScopeCleanups)
-import Framework.Effect.Scope (ScopeHandler, newScopeHandler)
+import Framework.Language.Registration (TypeRef(..))
+import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps)
+import Framework.Runtime.App (withScopeCleanups)
+import Framework.Runtime.Scope (ScopeHandler, newScopeHandler)
 import Framework.Program (initializePrototype, runProgram)
 import Framework.Prototype
-import Framework.Workflow.Structure
+import Framework.Prototype.Structure
 import Control.DeepSeq (NFData)
 import Control.Exception (evaluate)
 import GHC.Fingerprint (fingerprintString)

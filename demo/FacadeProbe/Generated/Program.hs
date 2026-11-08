@@ -5,7 +5,6 @@ module FacadeProbe.Generated.Program where
 
 import Framework.Generated (EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.Generated as SDK
-import qualified Framework.Effect.Contract as FrameworkRoot
 import FacadeProbe.Generated.Effects
 import qualified FacadeProbe.Generated.Handlers as Handlers
 import FacadeProbe.Types
@@ -23,21 +22,21 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "WriteReport" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteReportResult <$> (() <$ Handlers.runWriteReport)))))
-      , SDK.targetApp "WriteReply" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteReplyResult <$> (() <$ Handlers.runWriteReply)))))
-      , SDK.targetApp "ReadReport" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReadReportResult <$> (() <$ Handlers.runReadReport)))))
-      , SDK.targetApp "ReadReply" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReadReplyResult <$> (() <$ Handlers.runReadReply)))))
-      , SDK.targetApp "ShowReport" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowReportResult <$> (() <$ Handlers.runShowReport)))))
-      , SDK.targetApp "ShowReply" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowReplyResult <$> (() <$ Handlers.runShowReply)))))
-      , SDK.targetApp "OnBlank" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (OnBlankResult <$> (() <$ Handlers.runOnBlank)))))
-      , SDK.targetApp "OnFilled" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (OnFilledResult <$> (() <$ Handlers.runOnFilled)))))
-      , SDK.targetApp "ShowA" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowAResult <$> (() <$ Handlers.runShowA)))))
-      , SDK.targetApp "ShowB" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowBResult <$> (() <$ Handlers.runShowB)))))
+    ( [ SDK.targetApp "WriteReport" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteReportResult <$> (() <$ Handlers.runWriteReport)))))
+      , SDK.targetApp "WriteReply" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteReplyResult <$> (() <$ Handlers.runWriteReply)))))
+      , SDK.targetApp "ReadReport" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReadReportResult <$> (() <$ Handlers.runReadReport)))))
+      , SDK.targetApp "ReadReply" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReadReplyResult <$> (() <$ Handlers.runReadReply)))))
+      , SDK.targetApp "ShowReport" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowReportResult <$> (() <$ Handlers.runShowReport)))))
+      , SDK.targetApp "ShowReply" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowReplyResult <$> (() <$ Handlers.runShowReply)))))
+      , SDK.targetApp "OnBlank" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (OnBlankResult <$> (() <$ Handlers.runOnBlank)))))
+      , SDK.targetApp "OnFilled" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (OnFilledResult <$> (() <$ Handlers.runOnFilled)))))
+      , SDK.targetApp "ShowA" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowAResult <$> (() <$ Handlers.runShowA)))))
+      , SDK.targetApp "ShowB" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowBResult <$> (() <$ Handlers.runShowB)))))
       ]
-    , [ SDK.targetApp "ReportState" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (caseOfReportState <$> Handlers.readReportState))))
+    , [ SDK.targetApp "ReportState" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (caseOfReportState <$> Handlers.readReportState))))
       ]
-    , [ ("ParserA", SDK.receiveSteps (SDK.targetApp "FeedA" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextFeedA))))) (SDK.targetApp "ParserA" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getLevelA))))))
-      , ("ParserB", SDK.receiveSteps (SDK.targetApp "FeedB" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextFeedB))))) (SDK.targetApp "ParserB" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getLevelB))))))
+    , [ ("ParserA", SDK.receiveSteps (SDK.targetApp "FeedA" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextFeedA))))) (SDK.targetApp "ParserA" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getLevelA))))))
+      , ("ParserB", SDK.receiveSteps (SDK.targetApp "FeedB" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextFeedB))))) (SDK.targetApp "ParserB" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getLevelB))))))
       ]
     )
 

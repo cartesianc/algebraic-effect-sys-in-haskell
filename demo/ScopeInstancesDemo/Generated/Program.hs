@@ -5,7 +5,6 @@ module ScopeInstancesDemo.Generated.Program where
 
 import Framework.Generated (EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.Generated as SDK
-import qualified Framework.Effect.Contract as FrameworkRoot
 import ScopeInstancesDemo.Generated.Effects
 import qualified ScopeInstancesDemo.Generated.Handlers as Handlers
 import ScopeInstancesDemo.Types
@@ -23,13 +22,13 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "PrepareFiles" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrepareFilesResult <$> (() <$ Handlers.runPrepareFiles)))))
-      , SDK.targetApp "UseFirst" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (UseFirstResult <$> (() <$ Handlers.runUseFirst)))))
-      , SDK.targetApp "SelectSecond" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (SelectSecondResult <$> (() <$ Handlers.runSelectSecond)))))
-      , SDK.targetApp "UseSecond" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (UseSecondResult <$> (() <$ Handlers.runUseSecond)))))
-      , SDK.targetApp "SelectFirst" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (SelectFirstResult <$> (() <$ Handlers.runSelectFirst)))))
-      , SDK.targetApp "ReopenFirst" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReopenFirstResult <$> (() <$ Handlers.runReopenFirst)))))
-      , SDK.targetApp "CheckJournal" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (CheckJournalResult <$> (() <$ Handlers.runCheckJournal)))))
+    ( [ SDK.targetApp "PrepareFiles" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrepareFilesResult <$> (() <$ Handlers.runPrepareFiles)))))
+      , SDK.targetApp "UseFirst" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (UseFirstResult <$> (() <$ Handlers.runUseFirst)))))
+      , SDK.targetApp "SelectSecond" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (SelectSecondResult <$> (() <$ Handlers.runSelectSecond)))))
+      , SDK.targetApp "UseSecond" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (UseSecondResult <$> (() <$ Handlers.runUseSecond)))))
+      , SDK.targetApp "SelectFirst" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (SelectFirstResult <$> (() <$ Handlers.runSelectFirst)))))
+      , SDK.targetApp "ReopenFirst" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReopenFirstResult <$> (() <$ Handlers.runReopenFirst)))))
+      , SDK.targetApp "CheckJournal" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (CheckJournalResult <$> (() <$ Handlers.runCheckJournal)))))
       ]
     , []
     , []

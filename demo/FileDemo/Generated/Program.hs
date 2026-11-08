@@ -5,7 +5,6 @@ module FileDemo.Generated.Program where
 
 import Framework.Generated (EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.Generated as SDK
-import qualified Framework.Effect.Contract as FrameworkRoot
 import FileDemo.Generated.Effects
 import qualified FileDemo.Generated.Handlers as Handlers
 import FileDemo.Types
@@ -23,10 +22,10 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "WriteFirstLine" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteFirstLineResult <$> (() <$ Handlers.runWriteFirstLine)))))
-      , SDK.targetApp "AppendLine" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (AppendLineResult <$> (() <$ Handlers.runAppendLine)))))
+    ( [ SDK.targetApp "WriteFirstLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteFirstLineResult <$> (() <$ Handlers.runWriteFirstLine)))))
+      , SDK.targetApp "AppendLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (AppendLineResult <$> (() <$ Handlers.runAppendLine)))))
       ]
-    , [ SDK.targetApp "FileText" emptyContexts scopes (FrameworkRoot.withErrorHandlers Handlers.errorHandlers (FrameworkRoot.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (caseOfFileText <$> Handlers.readFileText))))
+    , [ SDK.targetApp "FileText" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (caseOfFileText <$> Handlers.readFileText))))
       ]
     , []
     )

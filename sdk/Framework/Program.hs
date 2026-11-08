@@ -3,11 +3,11 @@
 -- Workflow.Execution 先停止并等待受管理任务，再返回到这里做 scope 退出兜底。
 module Framework.Program (initializePrototype, runProgram) where
 
-import Framework.Effect.Contract (Failure(..), Output(..))
-import Framework.Effect.Runtime (Target, SessionSteps, cleanupTargets)
+import Framework.Language.Handler (Failure(..), Output(..))
+import Framework.Runtime (Target, SessionSteps, cleanupTargets)
 import Framework.Prototype (Prototype, validatePrototype)
-import Framework.Workflow.AST (AST)
-import Framework.Workflow.Execution (runStructuredAST)
+import Framework.Language.AST (AST)
+import Framework.Runtime.Execution (runStructuredAST)
 import Control.DeepSeq (NFData, force)
 import Control.Exception (SomeException, evaluate, mask, throwIO, try)
 import Control.Monad (unless, void)
