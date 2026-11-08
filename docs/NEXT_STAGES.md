@@ -1,6 +1,6 @@
 # Next stages
 
-更新：2026-11-08。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08，分支 `stage2-handler-reuse`）；Stage 3–7 继续逐阶段收敛。**
+更新：2026-11-08。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已确定、尚未实现；Stage 3–7 继续逐阶段收敛。**
 
 本轮目标是在框架现有概念内，先分离原子 handler 与业务 effect，使 handler 可以复用、前驱由声明装配；再统一 Stream effect 与 lifelong 的持续执行协议，完成正常结束、停止传播和资源收尾。每阶段先收敛设计与代码形态，再实现；本文记录推进顺序、待确认事项及开放边界，不替代[主设计](LATEST_DESIGN.md)和[当前 Stream 规范](STREAM_LIFELONG.md)。
 
@@ -39,7 +39,7 @@ Effects 以 Asset 声明来源，demands 选择资产和访问权限；空 deman
 
 本阶段保留当前访问结果：普通 request／require 返回 T；持续资产的 require 返回 History T，streams 授予本次交付视图的 require 权限；尚不增加 `stream @T`，也不改变来源可见性、缺值等待或资源 ownership。
 
-**实现落点：** Effect.Demand 集中纯规则；Prototype 继续保存唯一的静态来源；Codegen.Demand 在 GHC 名称解析后检查接收结构与声明依据。同步 SDK 门面与执行入口的职责拆分，Prototype 内部分离模型、查询与来源分析，补充状态归属和调用流程注释；不新建一套资产或 runtime 图。
+**实现落点：** 纯规则集中在 Gen.Demand；Prototype 保存唯一的静态来源；声明依据由 gen 的绑定阶段（Gen.Bind）检查，接收结构检查已由 Stage 2 取消。SDK 门面与执行入口分开，Prototype 只保存模型、查询与校验，来源分析在 gen 的构图阶段（Gen.Build.Sources）；不新建一套资产或 runtime 图。
 
 **交付：** 一致的声明、生成签名、原生 instance、源码检查、六个示例及文档。生成前仍由 GHC／HLS 检查原生 Haskell；架构接收约束由 gencode 检查。
 
@@ -241,10 +241,11 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 <a id="stage-2-status"></a>
 #### 实现与验证（2026-11-08）
 
-在分支 `stage2-handler-reuse` 上全面替换旧写法，不保留兼容层：
+全面替换旧写法，不保留兼容层：
 
-- **注册与检查**：`Context { asset, parser, require, stream }`；删除 Context 的 request 角色、RepeatRequest、没有关联 scope 的全局 Error 与 Codegen.Demand 的接收形态检查。Prototype 新增：Input 不能指向 Error、Error 恰好关联一个 scope、`RaisedBy` 写已注册的 handler 名、handler 名不能与生成的入口重名；Effect.Demand 新增 `requires` 需要 `require = True`、`streams` 只订阅持续资产等访问规则。
-- **生成**：每个 handler 一份 `XxxLayer`／`XxxHandler`／`XxxError`；运行副本在 `At "名字"` 标签上原样复制方法体，生成按标签的 `Reads`／`Raw`／`Raises` 实例与“驱动 → Input → 方法体”的入口。结构分析提取 `require @T`／`raw` 的原子形状，按绑定代换后组成 effect 方法结构，并检查读取路由、同一 handler 各绑定的签名与 Layer、读取依据与 handler 互调。资产检查（当时的 Codegen.Assets，现 Gen.Assets）改为顶层白名单与资产目录。
+- **注册与检查**：`Context { asset, parser, require, stream }`；删除 Context 的 request 角色、RepeatRequest、没有关联 scope 的全局 Error 与 Stage 1 的接收形态检查。降级阶段（Gen.Lower）新增：Input 不能指向 Error、Error 恰好关联一个 scope、`RaisedBy` 写已注册的 handler 名；Gen.Demand 新增 `requires` 需要 `require = True`、`streams` 只订阅持续资产等访问规则；绑定阶段（Gen.Bind）拒绝与生成的入口重名的 handler 名。
+- **生成**：每个 handler 一份 `XxxLayer`／`XxxHandler`／`XxxError`；运行副本在 `At "名字"` 标签上原样复制方法体，生成按标签的 `Reads`／`Raw`／`Raises` 实例与“驱动 → Input → 方法体”的入口。结构分析提取 `require @T`／`raw` 的原子形状，按绑定代换后组成 effect 方法结构，并检查读取路由、同一 handler 各绑定的签名与 Layer、读取依据与 handler 互调。资产检查（Gen.Assets）改为顶层白名单与资产目录。
+- **读取**：`requires` 不生产。读取先用本次捕获，再查静态来源表；还没有值时阻塞当前链，等之后的发布再重读，不报错。资源、诊断、自动收尾与 close 期间不等待，缺值报 `ContextNotInitialized`。alternative 的选择读取驱动转折资产，相当于 `requests`；持续资产领取会话交付。读取权限只在生成期检查，运行时没有读取声明表。
 - **demo**：六个 demo 与 FacadeProbe 全部迁移。Crawler 两条链共用 `fetchPage`、`extractSummary`、`printSummary`；StreamDemo 的心跳改为 `HeartbeatClock`（Stream）＋`Heartbeat`（parser）；OpenFilesDemo 增加 `ReleaseFiles`（绑定 `holdFiles`）与挂在它下面的 `InspectionSnapshot`，`FinishInspection` 改为 Input Root、requires 快照，按实际依赖声明；ScopeInstancesDemo 拆成共用 `checkSelection` 的 `UseFirst`／`UseSecond`／`ReopenFirst`，以及 `SelectSecond`／`SelectFirst` 与 `CheckJournal`；FileDemo 的 `resolveFileSession` 改为 `pure ()`（TODO）；FacadeProbe 改为真实注册与 handler，删除手写的 Contracts.hs、Facade.hs。
 
 **验证**（本次实际执行）：
@@ -256,10 +257,28 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 **未覆盖**：
 
 - 没有新增测试或负例；生成期检查只在七个程序的合法写法上运行过，各条报错路径没有逐一触发。
-- （已于同日收敛）当时 `requires` 读取缺值仍按 Stage 1 协议按需生产一次（fallback），运行时还按当前 handler 查读取声明表；依赖 fallback 的读取有 FileDemo 4 处、FacadeProbe 6 处，含两个 alternative 的选择读取。两者已一起去掉：读取缺值时等待发布，选择读取驱动转折资产，见[已有基础](#baseline)的最后一条。
+- 七个程序中没有真正进入等待的读取。parallel 兄弟互不可见，可见范围内没人生产的读取会一直等待；对应的设计已确定、尚未实现，见[可见范围内的等待](#stage-2-await)。
 - detect／resolve 的 Layer 不含 `caughtFailure`，handler 读不到原失败；Error 驱动链待定。
 - Pure 仍是 `m ()` 守卫；Stream 的驱动方式未区分；lifelong 内的显式反馈随 RepeatRequest 取消，没有替代写法；`streamT` 已生成，handler 读取历史仍写 `require @(History T)`。
 - Stream 的背压与资源释放不在本次范围；并发交错、长时间内存与 Windows 以外的取消仍未观察。
+
+<a id="stage-2-await"></a>
+#### 可见范围内的等待（已确定，未实现）
+
+**状态：设计已确认（2026-11-08），尚未实现。** 规则见[主设计：可见范围与等待的结束](LATEST_DESIGN.md#await-visibility)。
+
+现在 `requires` 缺值时已经等待发布，但可见范围只有先完成的前驱与本入口自己，parallel 兄弟互不可见：可见范围内没人生产的读取会一直等，兄弟的发布也叫不醒它。确认的分工是：
+
+- **唯一性**由资产细化、与消费链分离保证，生成期不再证明唯一可见来源。
+- **可见性**用来判断这次等待能不能等到，并限定哪些发布能叫醒读取；parallel 兄弟纳入可见范围。
+- **生成期**报“永远等不到”：读取点在可见范围内没有可能的生产者，或兄弟之间互等。
+- **运行时**取可见范围内最新的一次发布；可能的生产者都已结束仍没有发布时，结束等待并报 `ContextNotInitialized`。
+
+**实现落点：**
+
+- gen：Query 的可见关系纳入 parallel 兄弟；来源分析记录每个读取点在可见范围内的可能生产者，去掉“有多个可见来源”的报错，改为检查等不到的读取与兄弟互等。
+- 运行时：发布带顺序，读取在可见发布中取最新的一次，去掉普通发布的 `AmbiguousContextBinding`（资源实例的歧义检查保留）；等待在每次发布、每个可能的生产链结束时重查。
+- 文档：主设计 4.3 节与 EFFECT_GRAPH 的来源一节改为当前协议，GUIDE 补充兄弟之间读取的写法。
 
 <a id="stage-3"></a>
 ### Stage 3：确定 Stream 与 lifelong 的共同执行结构
@@ -348,6 +367,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 | --- | --- | --- |
 | 每个资产唯一来源与显式接收形态 | Stage 1（已确认，接收形态由 Stage 2 取代） | Effects、类签名、instance 和检查规则 |
 | handler 复用、前驱装配与读取路由 | Stage 2（已实现） | 注册、生成契约、handler、生成装配与检查规则 |
+| 可见范围内的等待：parallel 兄弟可见、等不到的读取、取最新与等待结束 | Stage 2（已确定，未实现） | 可见关系、来源分析与运行时读取规则 |
 | 共同执行协议与两种入口的对应 | Stage 3 | 单步、推进、发布和边界的关系 |
 | 当前值、历史与显式刷新 | Stage 4 | 访问权限、视图位置与发布规则 |
 | scope 使用和跨轮持有的依据 | Stage 5 | 连接池、事务及参数变化的生命周期解释 |
@@ -363,6 +383,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 | --- | --- |
 | 多个资产／访问方式合法；方法体主动取值，检查显式接收形态，不添加位置参数 | Stage 1，接收形态由 Stage 2 取代 |
 | handler 绑定在 Input 链上：方法体显式调用上游，同一操作按 effect 重复书写 | Stage 2（已解决：handler 可复用，前驱由 gencode 装配） |
+| parallel 兄弟互不可见，读取不能被并发发布唤醒；可见范围内没人生产的读取一直等待 | Stage 2（[已确定，未实现](#stage-2-await)） |
 | 持续资产的当前值与历史读取 | Stage 2 已实现缓存语义（requires 读最新值，streams 读历史）；Stage 4 收敛视图与读取写法 |
 | readHistory 未经过 scope 开启参数观察，可能报 ScopeInputsMissing | Stage 4–5 |
 | 会话步骤共用 scope 使用登记；停止后主要依赖 interpreter 退出清理 | Stage 5、7 |
@@ -407,16 +428,16 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 以下压缩自原计划的历史记录，不代表本次重新执行。逐次修复与探针细节保留在 Git 历史。
 
-- 原 Stage 1/2 已实现统一 Prototype、RuntimeGraph、来源路由、求值锁和 ownership 修复；原 Stage 3 已实现 Stream／lifelong 初版，当前保证见 [STREAM_LIFELONG](STREAM_LIFELONG.md)。
+- 原 Stage 1/2 已实现统一 Prototype、RuntimeGraph、来源路由和 ownership 修复；原 Stage 3 已实现 Stream／lifelong 初版，当前保证见 [STREAM_LIFELONG](STREAM_LIFELONG.md)。
 - 2026-11-01：Stage 2 外部来源可见性穷举模型已完成既有基线核对；尚未扩展到 Stream／lifelong。原计划中更早的“Stage 2 外部模型未完成”已被此记录取代。
-- 2026-11-01：会话启动登记、完成信号、停止期间新建会话、伴随发布与缺值补产来源等修复已记录验证；来源分析按消费单元裁剪再组合的修复通过生成与普通编译。相关状态组合仍可能指数增长，没有整体线性复杂度保证。
+- 2026-11-01：会话启动登记、完成信号、停止期间新建会话与伴随发布等修复已记录验证；来源分析按消费单元裁剪再组合的修复通过生成与普通编译。相关状态组合仍可能指数增长，没有整体线性复杂度保证。
 - 2026-11-02：资产声明改为 Asset @表示类型 "资产名"；Stream 下的解析器以 getT 直接引用原始 Stream 方法，由会话提供本次输入。原计划记录普通编译、六个程序生成、五个有限 demo 及 StreamDemo 中断观察通过。
 - 2026-11-04：本轮 Stage 1 落地每个 refined asset 的唯一来源、统一访问结果规则与 GHC 源码接收检查；整理 SDK／Generated／Program 门面和 Prototype 内部分工，六个 demo 已重新生成，`cabal build all --offline -j1` 通过。生成包含手写模块的 GHC 类型检查与资产接收检查；未新增测试、未运行业务 demo，未验证全部 GADT 匹配或并发交错。现有来源分析与 runtime 调度算法保持。
-- 2026-11-07：[FacadeProbe](../demo/FacadeProbe/README.md) 以手写的生成结果验证共享 handler：同一 handler 配不同 Input 与 demand、共享 Scoped 开关、挂接 parser、Stream parser 与 lifelong 消费者均可运行，非交错输出与显式写法一致。生成器未修改；路由当时按运行时调用者查表，已由 Stage 2 的编译期标签取代。
+- 2026-11-07：[FacadeProbe](../demo/FacadeProbe/README.md) 以手写的生成结果验证共享 handler：同一 handler 配不同 Input 与 demand、共享 Scoped 开关、挂接 parser、Stream parser 与 lifelong 消费者均可运行，非交错输出与显式写法一致。这次验证没有修改生成器；Stage 2 的读取路由改为编译期标签。
 - 2026-11-08：Stage 2 设计确认；独立的标签探针以 GHC 9.12 编译运行，确认按 effect 标签选择读取与 `raw` 时方法体无需改写。
-- 2026-11-08：Stage 2 在分支 `stage2-handler-reuse` 实现并全面替换旧写法；`cabal build all --offline -j1` 通过，七个程序重新生成并与迁移前输出对照，详见[实现与验证](#stage-2-status)。
-- 2026-11-08：SDK 按[源语言、gen、编译产物、运行时四层](LATEST_DESIGN.md#compiler)重组，生成拆为读取、降级、绑定、形状、组成、构图、输出、类检八个阶段，[流水线](LATEST_DESIGN.md#generation)在 `Framework.Gen`；声明加载进程只执行降级，绑定与输出改在生成器进程内读取 PrototypePlan；生成代码只经 `Framework.Generated` 引用 SDK。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，除生成代码的模块别名与资产目录的导入外，Generated 与重组前逐字相同；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和重组前相同，StreamDemo 在终端运行到第 33 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾和重组前一致，Crawler 除随请求变化的链接行外相同；FacadeProbe 按 README 编译运行，仍以 `ShowLevelFailure` 结束。运行行为未改；前述 `requires` 的 fallback 与读取声明表仍在运行时。
-- 2026-11-08：去掉 `requires` 的兜底生产与运行时读取声明表。读取不生产：还没有值时像 await 一样阻塞当前链，等之后的一次普通发布再按同一来源表重读，不报错；资源、诊断、自动收尾与 close 期间不等待，缺值仍报 `ContextNotInitialized`。alternative 的选择读取驱动转折资产（相当于 `requests`），持续资产仍领取会话交付。gen 侧读取方法不再连到生产方法，来源分析中没有可见发布的读取路径不返回，生产入口每次调用都生产；运行时以发布信号替代求值锁，`UndeclaredContextAccess` 与 `ContextAccess` 删除。FileDemo 的 `FileResource` 补 `requests "FileName"`，FacadeProbe 的 `ReportFile`／`ReplyFile` 补 `requests` 路径、`WriteReport`／`WriteReply` 补 `requests` 正文。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，生成的来源表中没有 `FromOwnChain` 读取；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和本次改动前相同；Crawler 除随请求变化的链接行外相同；StreamDemo 在终端运行到第 48 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾一致；FacadeProbe 按 README 编译运行，输出行相同（parallel 的交错顺序不同），写出的文件相同，仍以 `ShowLevelFailure` 结束。未覆盖：没有触发过真正等待的读取；当前可见性下 parallel 兄弟互不可见，可见范围内没有生产的读取会一直等待，等待能否由兄弟或其他并发链的发布唤醒需要另定可见性规则；parallel 中一个分支失败时，另一分支若正在等待，汇合仍会等它。
+- 2026-11-08：Stage 2 实现并全面替换旧写法；`cabal build all --offline -j1` 通过，七个程序重新生成并与迁移前输出对照，详见[实现与验证](#stage-2-status)。
+- 2026-11-08：SDK 按[源语言、gen、编译产物、运行时四层](LATEST_DESIGN.md#compiler)重组，生成拆为读取、降级、绑定、形状、组成、构图、输出、类检八个阶段，[流水线](LATEST_DESIGN.md#generation)在 `Framework.Gen`；声明加载进程只执行降级，绑定与输出改在生成器进程内读取 PrototypePlan；生成代码只经 `Framework.Generated` 引用 SDK。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，除生成代码的模块别名与资产目录的导入外，Generated 与重组前逐字相同；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和重组前相同，StreamDemo 在终端运行到第 33 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾和重组前一致，Crawler 除随请求变化的链接行外相同；FacadeProbe 按 README 编译运行，仍以 `ShowLevelFailure` 结束。重组不改运行行为。
+- 2026-11-08：`requires` 改为不生产、缺值等待，读取权限只在生成期检查，规则见 Stage 2 [实现与验证](#stage-2-status)的“读取”。gen 侧读取方法不连到生产方法，来源分析中没有可见发布的读取路径不返回，生产入口每次调用都生产；运行时以发布信号唤醒等待的读取。FileDemo 的 `FileResource` 补 `requests "FileName"`，FacadeProbe 的 `ReportFile`／`ReplyFile` 补 `requests` 路径、`WriteReport`／`WriteReply` 补 `requests` 正文。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，生成的来源表中没有 `FromOwnChain` 读取；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和本次改动前相同；Crawler 除随请求变化的链接行外相同；StreamDemo 在终端运行到第 48 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾一致；FacadeProbe 按 README 编译运行，输出行相同（parallel 的交错顺序不同），写出的文件相同，仍以 `ShowLevelFailure` 结束。未覆盖：没有触发过真正等待的读取；兄弟间可见与等待的结束见[可见范围内的等待](#stage-2-await)。
 - 历史验证未系统枚举全部并发交错，未观察长时间内存；Stream 外部模型未完成；取消只记录过 Windows Ctrl-Break。已通过编译和示例不能扩大资源逃逸、任意底层 IO 或所有调度的保证。
 
 <a id="maintenance"></a>

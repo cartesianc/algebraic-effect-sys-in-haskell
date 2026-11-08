@@ -1,6 +1,6 @@
 # 主设计：Algebraic Effect Sys in Haskell
 
-更新：2026-11-08（Stage 2：原子 handler 与业务 effect 分离；SDK 按“源语言 → gen → 编译产物 → 运行时”重组）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范。
+更新：2026-11-08（Stage 2：原子 handler 与业务 effect 分离，`requires` 不生产、缺值等待；SDK 按“源语言 → gen → 编译产物 → 运行时”重组）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范。
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
@@ -14,6 +14,7 @@
 | --- | --- | --- |
 | Pure、Excu、Scoped、Error、Context；有限 workflow | 当前已实现；Pure 的值管道语义与 Error 的驱动链仍待设计 | [运行语义](LATEST_DESIGN.md#runtime) |
 | 统一 Prototype、运行图、静态来源与缺值等待 | Stage 1/2 已实现 | [图与来源](EFFECT_GRAPH.md) |
+| parallel 兄弟可见、等不到的读取在生成期报错、取最新发布与等待的结束 | 已确定，未实现 | [可见范围与等待的结束](#await-visibility) |
 | 资产目录与业务模块的顶层白名单 | 当前已实现（Stage 2 取代普通函数的资产检查与构造器归属） | [源码资产](ASSETS.md) |
 | Stream 与挂在它下面的解析器 Context、持续资产的历史视图与 lifelong | 已实现（Stage 3）；lifelong 中的失败暂按临时规则终止整次运行 | [第 7 章](#stream)及[完整规范](STREAM_LIFELONG.md) |
 | 原子 handler 复用、前驱与驱动装配、按标签路由 | 已实现（Stage 2，2026-11-08）；本文第 4 章即当前协议 | [Next stages](NEXT_STAGES.md#stage-2) |
@@ -90,7 +91,7 @@ flowchart LR
     G --> P[Generated 契约、包装、Prototype]
     P --> I[interpreter：校验与一次 cata 装配]
     I --> T[AST target 启动 original chain]
-    T --> C[按需进入 Context chain]
+    T --> C[驱动进入 Context chain]
     T --> R[RuntimeGraph / scope 使用登记]
     C --> R
 ```
@@ -210,10 +211,9 @@ Pure 的值管道语义、Error 的驱动链、Generic Map、跨独立 interpret
 
 依赖只从上往下：源语言不导入其他层；gen 导入源语言与 Prototype 的数据模型，不导入运行时；运行时导入源语言与 Prototype，不导入 gen。demo 的可执行程序不链接 `Framework.Gen.*`，`effect-codegen` 不链接 `Framework.Runtime.*`。Generated/Assets.hs 是审查用的资产目录，不进入运行导入链。
 
-能在生成期判定的组合、读取路由与合法性问题，都由 gen 报错，不留给运行时。运行时启动前只核对编译产物与当前源码是同一份——注册快照、Handlers 指纹、AST 的层级——并校验 Prototype 自洽，不重新推导结构。仍在运行时发生的推导有两处，属于 Stage 2 未收敛的部分：`requires` 读到缺值时按需生产一次，以及按当前 handler 查读取声明表；见 [Next stages](NEXT_STAGES.md#stage-2-status)。
+能在生成期判定的组合、读取路由与合法性问题，都由 gen 报错，不留给运行时。运行时启动前只核对编译产物与当前源码是同一份——注册快照、Handlers 指纹、AST 的层级——并校验 Prototype 自洽，不重新推导结构。读取同样只执行编译结果：按生成的来源表取值，缺值时等待发布而不生产；读取权限在生成期确定，运行时不查声明表。
 
 流水线的阶段、输入输出与各阶段的检查见 [4.9 编译流水线](#generation)，源码目录见 [SDK 分工](#sdk-layout)。
-
 
 <a id="runtime"></a>
 ## 4. 当前运行协议
@@ -346,7 +346,7 @@ Input 表达操作的前提关系，业务值来源单独由 demands 表达；Co
 <a id="context"></a>
 ### 4.3 Context、驱动与读取
 
-手写 input 只允许 Root 或非 Context、非 Error 的 effect；Context 经 demands 接入。生产者自身仍可有 Input、消费其他 Context，但不能作为 AST node 的末端。沿 Input 与 requests 收集 scope；读取在 state 无值时可能求值 getT（scope 资源除外）。input 指向 Excu、Scoped 或 Stream 的 Context 挂在该句柄下，由句柄入口注入解析其输出。
+手写 input 只允许 Root 或非 Context、非 Error 的 effect；Context 经 demands 接入。生产者自身仍可有 Input、消费其他 Context，但不能作为 AST node 的末端。沿 Input 与 requests 收集 scope；读取不执行 getT，还没有值时等待发布。input 指向 Excu、Scoped 或 Stream 的 Context 挂在该句柄下，由句柄入口注入解析其输出。
 
 生产方与消费方分别描述，Context effect 自身也可以消费别的 Context：
 
@@ -423,7 +423,7 @@ Gen.Demand 保存唯一来源、访问解析与结果形态的纯规则；Protot
 
 刷新失败不覆盖旧绑定，错误原样传播，已完成操作不回滚。普通无 owner 绑定按 origin 保存在一次 interpreter 的权威表，current capture 固定已读取值。scope 例外只覆盖资源 owner 绑定；实例快照里的无 owner 辅助值不能通过资源复用绕过静态来源路由。
 
-读取权限在生成期确定：gencode 拒绝 handler 读取未声明的表示类型，只为声明了 requires／streams 的 effect 生成读取实例，运行时不再按当前消费者查声明表。SDK 不预初始化 Context，未声明的上游不执行。
+读取权限在生成期确定：gencode 拒绝 handler 读取未声明的表示类型，只为声明了 requires／streams 的 effect 生成读取实例，运行时不按当前消费者查声明表。SDK 不预初始化 Context，未声明的上游不执行。
 
 AST 组织链的启动次序，也为跨链来源提供因果可见性。Crawler 中 parallel 先抓取并注入解析两页，chained 再打印；共用的打印 handler 读取第一阶段发布的摘要，按各自唯一来源读取，不重复抓取。Generic Map 仍待设计。
 
@@ -442,6 +442,19 @@ Excu.handler／Scoped.open 成功后，SDK 以根调用身份执行挂接 Contex
 parser 被 requests 驱动或被选择读取驱动时，raw 直接执行句柄入口，不再次注入；复用 open、重复 close、诊断与自动收尾不产生新的挂接注入。close 没有挂接点；scope 的资源 Context 不能挂在请求它的 Scoped 下。生成入口通过 atomicHandle／atomicScope 包装，挂接目录为 contextInjections。
 
 这是有限执行的基线；持续生产中 parser 的故障不在注入内隔离，会话失败并通知等待方，见 [Stream 第 9 节](STREAM_LIFELONG.md#failures)。
+
+<a id="await-visibility"></a>
+#### 可见范围与等待的结束（已确定，未实现）
+
+**状态：设计已确认（2026-11-08），尚未实现；实现前以上述当前协议为准。** 推进见 [Next stages](NEXT_STAGES.md#stage-2-await)。
+
+资产是细化的，每份资产只有一个生产方，又与消费链分离：发布出来的值就是读取要的那份资产。因此生成期不再证明“唯一可见来源”。可见性只回答两件事：这次等待能不能等到，以及运行时哪些发布能叫醒它。
+
+- **可见范围**：AST 保证先完成的前驱（chained 中排在前面的节点，alternative 的选择读取之于候选，lifelong 的会话之于单元），本入口在这次读取之前的发布，以及与读取并发的 parallel 兄弟。alternative 的其他候选、lifelong 的其他单元和 AST 中排在后面的节点不可见；持续资产仍由会话交付。
+- **生成期**：每个读取点在可见范围内至少要有一个可能的生产者，即 `requests` 驱动、选择读取、挂接注入或会话；没有时 gen 报错，指出这里永远等不到该资产。兄弟各自在发布之前等对方的资产（A 等 B 的 X，B 等 A 的 Y）同样等不到，一并报错。这报的是“不可能”，不是“还没有”。
+- **运行时**：读取先用本次调用的捕获，再取可见范围内最新的一次发布，读到后本次调用固定使用它；可见范围内有多个生产者不再报错。还没有值时等待，可见范围内任何一次发布都会叫醒它重读。
+- **等待的结束**：可见范围内可能的生产者都已结束（成功或失败）且都没有发布时，确定等不到，读取结束等待并报 `ContextNotInitialized`。parallel 中一个分支失败，等待它的兄弟随之结束，汇合不会卡住；parallel 的失败语义不变。
+- **不变的部分**：资源仍由 owner 协议定位，诊断、自动收尾与 close 期间不等待；lifelong 单元每次执行前仍移出上一次的发布，单元之间互不可见；持续资产的视图位置归 [Stage 4](NEXT_STAGES.md#stage-4)。
 
 <a id="assembly"></a>
 ### 4.4 原型与闭包装配
@@ -622,7 +635,6 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 
 同次 AST 的运行表保留，本轮迁移到有限使用闭包 once-spare、读取共享／驱动 fresh 及补全后的清理依赖，并由使用协议协调显式关闭。App／IO 的 Root Error 祖先导航使用同一 ScopeTree，实例定位、detect／resolve 与原错传播保留，不自动恢复业务。具体实现与普通编译结果须按本轮代码核对，不由旧样例推断已验证；Stream／lifelong 的协议见 [Stream 规范](STREAM_LIFELONG.md)；其他开放项见 [Next stages](NEXT_STAGES.md)。
 
-
 ## 5. 静态原型与动态运行
 
 gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effect 注册、方法结构、WorkflowTree、origin／Context 链定义和挂载、EffectGraph、ScopeTree 与来源表。
@@ -632,7 +644,6 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 运行时先求值并校验原型、注册与源码，再一次 cata 装配当前 AST。RuntimeGraph 复用静态定义并保存活动关系；ScopeTree 单独保持无环。不重跑 handler 建图，也不记录无限方法历史。
 
 结构、来源证明、ScopeTree 算法及缓存细节统一引用 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)。
-
 
 <a id="sdk-layout"></a>
 ### SDK 的职责与阅读顺序

@@ -18,7 +18,7 @@ data ExpandedF method next
   | RecoverLayer next next
   deriving Functor
 
--- 只展开表中已解析到来源的方法引用；require 的按需求值路径由生成计划表达，不启动生产。
+-- 只展开表中已解析到来源的方法引用；require 的读取方法不连到生产方法，不启动生产。
 -- Choice 保留各分支路径，Sequence 组合路径；有限分支的路径数可能呈指数增长。
 -- scope 记在其 open 方法体之后，即开启完成的位置：open 内部开启的 scope 排在它前面，
 -- 嵌套 open 的方向与注册前提一致。同一 scope 在一条路径中只保留首次完成。
