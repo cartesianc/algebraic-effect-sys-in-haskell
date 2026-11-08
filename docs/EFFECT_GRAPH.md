@@ -79,7 +79,7 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 无 owner 资产运行时依次查当前捕获与静态许可的实际发布。仍没有值时读取不生产：它在读取之前取得 `runtimePublished` 的当前信号，读不到就等之后的一次普通发布，醒来后按同一来源表重读，像 await 一样阻塞当前链，不报错。值只来自 `requests` 驱动、alternative 的选择读取、挂接注入与 Stream 会话；显式驱动每次执行，不参与合并。生成期的来源分析与此一致：没有可见发布的路径停在这次读取，不从读取返回。
 
-当前可见性只许可 AST 保证先完成的前驱和本入口自己的发布，parallel 兄弟互不可见；因此在可见范围内没有生产的普通资产，读取会一直等待，注册需要写出驱动它的 `requests`。下一步的来源规则已确定、尚未实现：parallel 兄弟纳入可见范围，来源分析改为判断每个读取点在可见范围内有没有可能的生产者、不再证明唯一来源，运行时取可见范围内最新的发布并在生产者都结束时结束等待，见[主设计：可见范围与等待的结束](LATEST_DESIGN.md#await-visibility)。资源契约即使保留读取点，也仍由 owner 协议定位，缺值时不等待也不生产，报 `ContextNotInitialized`；诊断、自动 cleanup 与 close 期间同样不等待。
+当前可见性只许可 AST 保证先完成的前驱和本入口自己的发布，parallel 兄弟互不可见；因此在可见范围内没有生产的普通资产，读取会一直等待，注册需要写出驱动它的 `requests`。下一步的来源规则已确定、尚未实现：parallel 兄弟纳入可见范围，来源分析改为判断每个读取点在可见范围内有没有可能的生产者、不再证明唯一来源，运行时按执行帧为每份资产保存一个 state（request 直接覆盖，require 读当前值），并在生产者都结束时结束等待，见[主设计：可见范围与等待的结束](LATEST_DESIGN.md#await-visibility)。资源契约即使保留读取点，也仍由 owner 协议定位，缺值时不等待也不生产，报 `ContextNotInitialized`；诊断、自动 cleanup 与 close 期间同样不等待。
 
 scope 的例外只覆盖具有 owner 的绑定，资源仍经实际实例定位和共享。实例快照中的无 owner 辅助值只从按 origin 保存的权威表取用，不通过资源复用绕过可见性。诊断及自动 cleanup 的新产物仅局部可见。现有 App 的 bind 在取得值后继续方法体，handler 写法、AST 语法和 ScopeTree 算法均不因此改变。
 
