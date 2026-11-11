@@ -64,13 +64,15 @@ EffectSpec
 
 ### 3. Handlers.hs：让声明落到原生类方法
 
-parser 挂在 `ReadFile` 下，用 `raw` 读取读取句柄本次交出的文本，返回表示类型的值：
+parser 挂在 `ReadFile` 下，用 `raw` 读取读取句柄本次交出的 list（这里是一段文本），返回表示类型的值：
 
 ```haskell
 instance ParseFileTextLayer m => ParseFileTextHandler m where
   parseFileText = do
     contents <- raw
-    text <- maybe (raise (ParseFileTextError "File read returned no text")) pure contents
+    text <- case contents of
+      [whole] -> pure whole
+      _ -> raise (ParseFileTextError "File read returned no text")
     pure (if null text then Blank else Written text)
 ```
 
@@ -88,10 +90,10 @@ instance WriteFirstLineLayer m => WriteFirstLineHandler m where
       hFlush file
       putStrLn ("[write] " ++ path ++ ": " ++ line)
     either (raise . WriteFirstLineError . displayException) pure outcome
-    pure Nothing
+    pure []
 ```
 
-`XxxLayer m => XxxHandler m` 由 handler 名生成，Layer 是方法体可用能力的边界：按表示类型的读取 `Reads T`、挂接 parser 的 `raw`、本 handler 的 `raise` 和 `MonadIO`。方法体里没有上游、scope 或资产名：`FileSession` 由 gen 在方法体之前开启；`require @FileHandle` 读的是 `OpenedFile`，这由绑定它的 effect 的 demands 决定。同一个 handler 可以注册到多个 effect，各自读到不同的资产。IO 和解析写在 handler 方法体内。
+`XxxLayer m => XxxHandler m` 由 handler 名生成，Layer 是方法体可用能力的边界：按表示类型的读取 `Reads T`、挂接 parser 与 Pure 的 `raw`、本 handler 的 `raise` 和 `MonadIO`。方法体里没有上游、scope 或资产名：`FileSession` 由 gen 在方法体之前开启；`require @FileHandle` 读的是 `OpenedFile`，这由绑定它的 effect 的 demands 决定。同一个 handler 可以注册到多个 effect，各自读到不同的资产。IO 和解析写在 handler 方法体内。
 
 [完整 Handlers.hs](../demo/FileDemo/Handlers.hs) · [handler、读取与错误写法](#handlers)
 
@@ -128,7 +130,7 @@ newtype FileText = FileText (TextState)
 -- handler writeFirstLine：绑定到 WriteFirstLine。
 type WriteFirstLineLayer m = (SDK.Reads (()) m, SDK.Reads (FileHandle) m, SDK.Raises WriteFirstLineError m, MonadIO m)
 class WriteFirstLineHandler m where
-  writeFirstLine :: m (Maybe String)
+  writeFirstLine :: m [String]
 
 newtype WriteFirstLineError = WriteFirstLineError String
 ```
@@ -399,16 +401,16 @@ EffectSpec
 | 枚举 | 字段 | handler 签名 | gen 生成的内部入口 | 用途 |
 | --- | --- | --- | --- | --- |
 | `Context` | `asset = Asset @表示类型 "T"`；`parser :: Maybe String`；`require`、`stream :: Bool` | parser 为 `m 表示类型` | `getT`；`require = True` 时另有 `readT`（持续资产为 `streamT`） | 生产在操作之间传递的业务值 |
-| `Pure` | `handler :: Maybe String` | `m ()` | `run名字` | 不产出业务值的检查 |
-| `Excu` | `handler :: Maybe String` | `m (Maybe String)` | `run名字` | 执行操作（原子句柄） |
-| `Scoped` | `open`、`close :: Maybe String` | 均为 `m (Maybe String)` | `open名字`、`close名字` | 资源的开启与关闭（原子句柄） |
+| `Pure` | `handler :: Maybe String`（必填） | `m [String]` | `run名字` | 生产链中的纯值变换：去重、排序、过滤上层交出的 list |
+| `Excu` | `handler :: Maybe String` | `m [String]` | `run名字` | 执行操作（原子句柄） |
+| `Scoped` | `open`、`close :: Maybe String` | 均为 `m [String]` | `open名字`、`close名字` | 资源的开启与关闭（原子句柄） |
 | `Error` | `detect`、`resolve :: Maybe String`；`handles :: [Handles]` | 均为 `m ()` | `detect名字`、`resolve名字`，由失败协议调用 | 对 scope 内的指定失败做诊断和处置 |
 | `Stream` | `handler :: Maybe String` | `m String` | `next名字`，由生产会话调用 | 持续取得原始输入，交给挂在它下面的 Context 解析 |
 
 - **字段写 handler 名**：`Just "名字"` 绑定 `Handlers.hs` 中同名的类方法，`Nothing` 不绑定。入口为 `Nothing` 的 effect 只作为声明存在，不能被 AST 选为末端。
 - **handler 可以复用**：同一个 handler 可以绑定到多个 effect，前提是各绑定推出相同的签名和 Layer。例如 Crawler 的 `FetchPage`、`FetchLinkedPage` 共用 `fetchPage`，FacadeProbe 的两个 Scoped 共用 `openTextFile`／`closeTextFile`。
 - **入口是内部名字**：上表的入口方法由 gen 按 effect 名或资产名生成，用户不写也不调用；handler 名不能与它们重名。
-- **业务资产只归 Context**：Excu 和 Scoped 返回的 `Maybe String` 是原子句柄交出的可选信息，只交给挂接的 Context 解析（见 `input`）；Stream 返回的原始输入交给对应的 Context 解析器。它们都不直接产出业务资产。
+- **业务资产只归 Context**：Excu 和 Scoped 返回的 `[String]` 是原子句柄交出的输出，只交给挂接的 Context 解析，中间可以经过一串 Pure（见 `input`）；Stream 返回的原始输入交给对应的 Context 解析器。它们和 Pure 都不直接产出业务资产。
 
 #### `Context`
 
@@ -417,7 +419,7 @@ typing = Context { asset = Asset @PageURL "StartURL", parser = Just "startURL", 
 ```
 
 - **`asset = Asset @表示类型 "资产名"`**：把表示类型细化为资产，生成器产出 `newtype StartURL = StartURL PageURL`；表示类型怎么写见[资产书写](#types)。
-- **`parser`**（必填）：产出表示类型值的 handler，签名 `m 表示类型`，直接返回 `pure (PageURL ...)`，不包资产构造器。gen 生成 `getStartURL`：执行 Input 前驱和 parser，再包成资产发布。
+- **`parser`**（必填）：产出表示类型值的 handler，签名 `m 表示类型`，直接返回 `pure (PageURL ...)`，不包资产构造器。gen 生成 `getStartURL`：执行 Input 前驱和 parser，再包成资产发布。parser 是细化 parser：挂在句柄或 Pure 下时，它把 `raw` 读到的 list 解析成表示类型，作用类似 tokenize；值的变换交给 Pure。
 - **`require`**：`True` 时 SDK 缓存最新值并生成读取方法 `readStartURL`，消费方才能 `requires` 它；`False` 不缓存，消费方不能 `requires`。
 - **`stream`**：`True` 声明持续资产，SDK 缓存历史，读取方法是 `streamStartURL`。只能在 Input 是 Stream 时声明，且必须同时 `require = True`；挂在 Stream 下的 Context 必须 `stream = True`。见[持续资产与 lifelong](#stream)。
 - **不能作为 AST 末端**：Context 在它挂接的句柄执行时产出，被 `requests` 驱动或被 alternative 的选择读取驱动时产出；被读取时不产出。
@@ -429,7 +431,14 @@ typing = Context { asset = Asset @PageURL "StartURL", parser = Just "startURL", 
 typing = Pure { handler = Just "validateFileName" }
 ```
 
-不产出业务值的检查：正常结束即成功，失败用 `raise`。Layer 不含 `MonadIO`，方法体不能执行 IO。Pure 作为无外部性的值管道的完整语义（返回类型、下游如何读取）仍待确定，当前保持 `m ()` 的守卫用法。
+生产链中的纯值变换，相当于对上层输出做 fmap：handler 用 `raw` 读直接 Input 交出的 list，返回变换后的 list，例如去重、排序、过滤；检查不通过时 `raise`。
+
+- **只在生产链中**：`input` 必须是 Excu、Scoped 或另一个 Pure；以它为 `input` 的只能是 Context 或 Pure，且至少有一个，所以一串 Pure 最后一定落到一个 Context。
+- **值只从 raw 来**：Pure 不写 demands，Layer 只有 `Raw` 和 `Raises`，没有 `MonadIO`，不能执行 IO，也不读资产。
+- **不能当 AST 末端**，必须绑定 handler。
+- **不挂在 Stream 下**：Stream 有自己的数据结构，下面只挂它的 parser Context。
+
+写法与执行见[挂在句柄下的 Context](#runtime-anchored) 和[主设计：Pure](LATEST_DESIGN.md#pure)。
 
 #### `Excu`
 
@@ -437,7 +446,7 @@ typing = Pure { handler = Just "validateFileName" }
 typing = Excu { handler = Just "fetchPage" }
 ```
 
-执行一次操作的原子句柄。它可以交出一段可选信息（`pure (Just info)`，没有就 `pure Nothing`），供挂在它下面的 Context 解析。
+执行一次操作的原子句柄。它交出一个 `[String]`，供挂在它下面的 Context（可经一串 Pure）解析：没有信息时 `pure []`，一项是 `pure [info]`，一串操作或递归的结果在方法体里用 `:`、`concat` 组合。
 
 #### `Scoped`
 
@@ -456,7 +465,7 @@ typing = Scoped { open = Just "openSession", close = Just "closeSession" }
 typing = Stream { handler = Just "nextReading" }
 ```
 
-持续数据源：每次调用取得一份原始输入（`m String`），节奏由方法体自己的阻塞或等待决定。它不能作为 AST 末端，由生产会话驱动；恰好一个 Context 以它为 `input`，其 parser 用 `raw` 读取这份输入。写法见[持续资产与 lifelong](#stream)。
+持续数据源：每次调用取得一份原始输入（`m String`），节奏由方法体自己的阻塞或等待决定。它不能作为 AST 末端，由生产会话驱动；恰好一个 Context 以它为 `input`，其 parser 用 `raw` 读取这份输入（单元素 list）。Stream 有自己的数据结构，不改成 list 输出，也不能在下面挂 Pure。写法见[持续资产与 lifelong](#stream)。
 
 #### `Error`
 
@@ -489,10 +498,11 @@ Context 协议故障的来源一律记为生产方的注册名，不是契约名
 input = "FileSession"
 ```
 
-- **取值**：`"Root"`（没有上游），或另一个**非 Context、非 Error** 的 effect 名。Context 只能经 `demands` 接入，不能写在 `input` 里。
+- **取值**：`"Root"`（没有上游），或另一个**非 Context、非 Error** 的 effect 名。Context 只能经 `demands` 接入，不能写在 `input` 里。只有 Context 和 Pure 可以把 Pure 写在 `input` 里。
 - **含义**：前驱。gen 在这个 effect 的入口中先执行 `input` 指向的 effect（连同它自己的前驱），再执行绑定的 handler；方法体不调用上游，也不捕获前驱的失败。前驱失败后的改道用 AST 的 `alternative`。
 - **已开启的 scope 不重开**：前驱是 Scoped 时，同一条链里已开启的实例直接复用，不再执行 `open`。
-- **挂接**：Context 的 `input` 指向 Excu、Scoped 或 Stream 时，它就挂在这个句柄下，parser 用 `raw` 读取句柄入口（`handler`／`open`）本次交出的信息；`close` 没有挂接点。挂接的 Context 不把句柄当作前驱重跑。例如 [Crawler](../demo/Crawler/Effects.hs) 的 `ExtractPage` 挂在 `FetchPage` 下，把抓到的正文解析成摘要。
+- **挂接**：Context 的 `input` 指向 Excu、Scoped 或 Stream 时，它就挂在这个句柄下，parser 用 `raw` 读取句柄入口（`handler`／`open`）本次交出的 list；`close` 没有挂接点。挂接的 Context 不把句柄当作前驱重跑。例如 [Crawler](../demo/Crawler/Effects.hs) 的 `ExtractPage` 挂在 `FetchPage` 下，把抓到的正文解析成摘要。
+- **经 Pure 挂接**：Context 或 Pure 的 `input` 指向 Pure 时，`raw` 读的是这个 Pure 变换后的 list；整串 Pure 的挂接点是最上面的句柄。例如 [FileDemo](../demo/FileDemo/Effects.hs) 的 `LocateFile` → `ValidateFileName`（Pure）→ `FileLocation`（Context）。
 - **限制**：
   - input 链不能成环；
   - 链上的 Scoped 必须同时声明 `open` 和 `close`；
@@ -509,14 +519,14 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 | 枚举 | handler 中 | 含义 |
 | --- | --- | --- |
 | `requests "T"` | 不写 | 驱动：入口在 Input 之前重新生产一次 `T`，结果保存为当前绑定。单独的 `requests` 不带来读取权限 |
-| `requires "T"` | `x <- require @表示类型` | 读取已有的值，不在入口驱动；尚无可见值时按现有协议生产一次并记住 |
+| `requires "T"` | `x <- require @表示类型` | 读取已有的值，不在入口驱动，也不在读取处生产；还没有值时等待之后的发布 |
 | `streams "T"` | `xs <- require @(History 表示类型)` | 由持续资产 `T` 的新交付驱动，同时取得读取权限；只在 `lifelong` 内使用，见[持续资产与 lifelong](#stream) |
 
 - **驱动与读取分开写**：既要刷新又要读取的资产写两项，例如 Crawler 的 `[requests "StartURL", requires "StartURL"]`。入口顺序是驱动 → Input → handler，因此 `requests` 驱动的值在前驱和 handler 中都已就绪。
 - **来源自动确定**：每个资产恰好由一个 Context 声明，生成器按资产名自动接上，不用指名生产方。
 - **读取按表示类型路由**：handler 的 `require @T` 由 gen 按“表示类型 + effect”路由到这个 effect 声明的那份细化资产；一个 effect 的 demands 里同一表示类型只能出现一次。同一种数据有不同含义时，声明成不同的资产，例如 Crawler 的 `StartURL` 和 `LinkedURL`，再由各自的 effect 选择。
 - **同一资产可以声明多种合法访问方式**：同一资产的同一种方式只能声明一次。
-- **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见[资产书写](#types)）只能 `requires`；`requires` 需要生产方 `require = True`；挂在 Stream 下的资产不能 `requests`；`streams` 只能由 Pure、Excu、Scoped 声明，只能订阅持续资产的基础资产（`stream = True`）。
+- **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见[资产书写](#types)）只能 `requires`；`requires` 需要生产方 `require = True`；挂在 Stream 下的资产不能 `requests`；`streams` 只能由 Excu、Scoped 声明，只能订阅持续资产的基础资产（`stream = True`）。
 - **同一资产只有一个 Context 来源**：访问方式不改变资产的 ADT 或生产方；不限制一个消费者只能声明一个资产。
 - **声明须有读取依据**：每个 `requires`／`streams` 的资产须在绑定的 handler 中读取，或参与现有 alternative 选择／streams 交付。
 - **声明即权限**：handler 读取了 effect 没有声明的表示类型，生成器报错；读取实例只为声明了 `requires`／`streams` 的 effect 生成，运行时不再查声明表。
@@ -531,7 +541,9 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 instance ParseFileTextLayer m => ParseFileTextHandler m where
   parseFileText = do
     contents <- raw
-    text <- maybe (raise (ParseFileTextError "File read returned no text")) pure contents
+    text <- case contents of
+      [whole] -> pure whole
+      _ -> raise (ParseFileTextError "File read returned no text")
     pure (if null text then Blank else Written text)
 ```
 
@@ -572,7 +584,7 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
 | --- | --- | --- |
 | `Reads T m` | 绑定它的 effect `requires` 了表示类型为 T 的资产 | `require @T` |
 | `Reads (History T) m` | 绑定它的 effect `streams` 了持续资产 | `require @(History T)` |
-| `Raw m` | 绑定成挂接的 parser | `raw` |
+| `Raw m` | 绑定成挂接的 parser 或 Pure | `raw` |
 | `Raises 名字Error m` | 总是 | `raise (名字Error "...")` |
 | `MonadIO m` | Pure 以外总是 | `liftIO` |
 
@@ -583,10 +595,10 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
 
 | 绑定方式 | 签名 | 返回什么 |
 | --- | --- | --- |
-| Context.parser | `m 表示类型` | 表示类型的值，例如 `pure ("demo" </> "FileDemo" </> "output.txt")` |
-| Pure | `m ()` | 正常结束即成功 |
-| Excu | `m (Maybe String)` | 交给挂接 Context 的信息，没有就 `pure Nothing` |
-| Scoped.open／close | `m (Maybe String)` | 同上；`close` 的输出没有挂接点 |
+| Context.parser | `m 表示类型` | 表示类型的值，例如 `pure (Written text)` |
+| Pure | `m [String]` | 变换后的 list，交给下面的 Pure 或 Context |
+| Excu | `m [String]` | 交给挂接 Context 的 list，没有就 `pure []` |
+| Scoped.open／close | `m [String]` | 同上；`close` 的输出没有挂接点 |
 | Error.detect／resolve | `m ()` | 见下文「Error 的写法」 |
 | Stream | `m String` | 一份原始输入 |
 
@@ -598,9 +610,9 @@ Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，
 | --- | --- |
 | `x <- require @T`（普通资产） | 读取绑定的 effect 所声明、表示类型为 `T` 的资产；还没有值时等待发布，不生产 |
 | `xs <- require @(History T)`（持续资产） | 取得本次交付为止的历史，用 `latest`／`historyEntries`／`historySize` 读取；须声明 `streams` |
-| `output <- raw` | 挂接的 parser 读取所挂句柄本次的输出（`Maybe String`），句柄不再执行一遍；挂在 Stream 下时就是会话本次取得的原始输入 |
+| `output <- raw` | 挂接的 parser 或 Pure 读取直接 Input 本次交出的 `[String]`，句柄不再执行一遍；挂在 Stream 下时是会话本次取得的那份原始输入（单元素 list） |
 | `raise (ReadFileContentError "message")` | 以本 handler 的错误失败；错误类型是 handler 名首字母大写加 `Error` |
-| `pure (Just info)` | Excu／Scoped 把信息交给挂接的 Context |
+| `pure [info]`、`pure (x : rest)` | Excu／Scoped／Pure 交出 list，交给挂在下面的 Pure 或 Context |
 | `liftIO (...)` | 执行 IO（Pure 不可用） |
 
 - **按表示类型读取**：`require` 必须显式写类型应用，例如 `FileHandle path file <- require @FileHandle`；可以直接在绑定处匹配表示类型的构造器，也可以先具名接收再 `case`。和类型的失败分支用 `raise`。
@@ -612,9 +624,11 @@ Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，
 ```haskell
 instance ExtractSummaryLayer m => ExtractSummaryHandler m where
   extractSummary = do
-    fetched <- raw                       -- 挂接句柄本次交出的正文
+    fetched <- raw                       -- 挂接句柄本次交出的 list：一页正文
     PageURL url <- require @PageURL      -- StartURL 或 LinkedURL，由绑定的 effect 决定
-    html <- maybe (raise (ExtractSummaryError (url ++ ": fetch returned no page body"))) pure fetched
+    html <- case fetched of
+      [page] -> pure page
+      _ -> raise (ExtractSummaryError (url ++ ": fetch returned no page body"))
     ...                                  -- 解析标题、段落和链接
     pure (PageSummary url title content links)
 ```
@@ -623,7 +637,7 @@ instance ExtractSummaryLayer m => ExtractSummaryHandler m where
 
 ```haskell
 instance OpenSessionLayer m => OpenSessionHandler m where
-  openSession = pure Nothing
+  openSession = pure []
 
 instance CloseSessionLayer m => CloseSessionHandler m where
   closeSession = do
@@ -631,7 +645,7 @@ instance CloseSessionLayer m => CloseSessionHandler m where
     outcome <- liftIO (tryIOError (hClose file))
     either (raise . CloseSessionError . displayException) pure outcome
     liftIO (putStrLn ("[close] " ++ path))
-    pure Nothing
+    pure []
 ```
 
 - **资源获取写在资源 Context 的 parser**：FileDemo 中打开文件的是 `acquireFile`；Scoped 注册 `requests "OpenedFile"`，gen 在 `open` 之前驱动它，`open` 本身不必读取资源。
@@ -700,7 +714,7 @@ ast = operateFile
 
 ### node
 
-- **只选原始句柄**：选中的 effect 必须是 Pure、Excu 或 Scoped，不能是 Context 或 Error。
+- **只选原始句柄**：选中的 effect 必须是 Excu 或 Scoped，不能是 Pure、Context、Stream 或 Error。
 - **运行即执行入口**：入口先按 `requests` 驱动资产，再执行 Input 链上的前驱，最后执行绑定的 handler（Scoped 末端执行 `open`）。Input 链不需要在 AST 里重写。
 - **node 结果不隐式传值**：一个 node 的结果不会交给下一个 node，值的传递只经 Context。后继 `require` 可读取 AST 因果顺序中唯一可见的发布来源；并行兄弟之间不按谁先完成决定读谁的值。
 
@@ -764,7 +778,7 @@ monitor = lifelong
 
 ### 运行与查看
 
-- **运行**：`main = interpreter ast effects`，结果打印为 `Succ [...]` 或 `Failed ...`，例如 FileDemo 输出 `Succ [AppendLineResult ()]`。原子句柄交出的 `Maybe String` 不是业务产物，在结果中记为 `()`。
+- **运行**：`main = interpreter ast effects`，结果打印为 `Succ [...]` 或 `Failed ...`，例如 FileDemo 输出 `Succ [AppendLineResult ()]`。原子句柄交出的 `[String]` 不是业务产物，在结果中记为 `()`。
 - **查看结构**：使用[命令行的 structure 模式](#commands)查看生成器推导的调用结构和资源依赖。
 
 <a id="stream"></a>
@@ -845,7 +859,7 @@ instance NextReadingLayer m => NextReadingHandler m where
 
 instance ParseTemperatureLayer m => ParseTemperatureHandler m where
   parseTemperature = do
-    reading <- maybe "" id <$> raw
+    reading <- concat <$> raw
     case reads reading of
       [(value, "")] -> pure (Temperature value)
       _ -> raise (ParseTemperatureError ("unreadable sensor output: " ++ reading))
@@ -857,11 +871,11 @@ instance ShowTemperatureLayer m => ShowTemperatureHandler m where
       Just (Temperature value) ->
         liftIO (printf "reading #%d: %.1f C\n" (length (historyEntries samples)) value)
       Nothing -> pure ()
-    pure Nothing
+    pure []
 ```
 
 - **Stream handler**一次返回一份原始输入；节奏由方法体自己的阻塞或等待决定，SDK 不加间隔，立即返回的方法会持续高频运行。它的 Input（这里是 `SensorLink`）由 gen 作为前驱装配：传感器连接在第一次读数时开启，并在会话的各步骤间保持。
-- **parser** 和挂在 Excu 下的 Context 写法相同：`raw` 是会话本次取得的原始输入，不会再执行 Stream handler 另取一份。发布、历史和交付都由 SDK 完成，方法体里不写循环、发布或回调。
+- **parser** 和挂在 Excu 下的 Context 写法相同：`raw` 是会话本次取得的那份原始输入（单元素 list，这里用 `concat` 取出），不会再执行 Stream handler 另取一份。发布、历史和交付都由 SDK 完成，方法体里不写循环、发布或回调。
 - **`History T`**：从会话首条发布到本次交付为止的不可变序列。`latest` 取本次交付的那一条，`historyEntries` 取全部，`historySize` 取条数；相等的两次发布是两条。
 
 [完整 Effects.hs](../demo/StreamDemo/Effects.hs) · [完整 Handlers.hs](../demo/StreamDemo/Handlers.hs)
@@ -924,15 +938,18 @@ reading #2: 24.0 C
 
 - **`requests` 驱动**：入口在 Input 之前执行资产的 `getT`，每次重新生产，成功后以当前入口的 origin 保存并替换该 origin 的绑定；生产失败时不覆盖旧值，原失败继续传播。
 - **`require` 读取**：handler 的 `require @T` 经路由进入资产的 `readT`：先读当前调用已捕获的绑定，再查原型许可的唯一可见来源。读取不生产：仍没有值时，像 await 一样阻塞这条链，等之后的发布再读，不报错。第一次读取后绑定固定，其他调用的发布不原地改写它。
-- **值从哪里来**：`requests` 驱动、alternative 的选择读取、挂接句柄的注入，以及 Stream 会话。要读的值必须有人驱动；例如 FileDemo 的 `FileResource` 写了 `[requests "FileName", requires "FileName"]`，取得文件前先驱动文件名，`ValidateFileName` 只读取它。
+- **值从哪里来**：`requests` 驱动、alternative 的选择读取、挂接句柄的注入，以及 Stream 会话。要读的值必须有人驱动；例如 FileDemo 的 `FileResource` 写了 `[requests "FileName", requires "FileName"]`，取得文件前先驱动文件名的生产链（`LocateFile` → `ValidateFileName` → `FileLocation`），`acquireFile` 再读取它。
 - **跨 node 保存**：发布时无资源 owner 的值按 origin 保存，后补 owner 保留原发布记录；open 内一开始就有 owner 的产物只留在 scope／当前调用。一个来源在 AST 中保证先于当前节点完成，或属于当前入口时才可见；并行兄弟互不可见。需要跨链解析的读取路径若有多个同时可见来源，就需细化契约或调整编排，生成器不会选“最后写入”的那个。
 - **可见范围内没人生产就一直等**：并行兄弟互不可见，前驱已经完成；所以一个读取在可见范围内没有 `requests` 或会话生产时，这条链会一直等待，SDK 不替它补产，也不报错。资源、Error 诊断、自动收尾与 close 期间不等待，缺值时报 `ContextNotInitialized`。
 - **部分路径已取值合法**：已经捕获值的分支直接使用该绑定，只有尚未取值的路径需要解析唯一来源。alternative 或可选生产的条件可证明这些路径的来源唯一；已捕获路径上允许多个节点共同发布，由已有快照确定读取值。
+
+<a id="runtime-anchored"></a>
 
 ### 挂在句柄下的 Context
 
 - **句柄在操作链里执行时**：句柄返回后，SDK 自动用这次的输出运行挂在下面的 parser（`raw` 由本次输出回答），产出的值保存起来，不会再执行一次句柄。调用句柄的那条链照常继续，不受影响；解析失败只留在这次注入里，值没有发布，之后读取它的位置等待下一次发布。
 - **被驱动时**：`requests` 或 alternative 的选择读取进入 Context 的 `getT`，parser 的 `raw` 执行所挂句柄的入口，由此启动生产链。
+- **中间有一串 Pure 时**：挂接点是最上面的句柄，句柄的输出依次经过每个 Pure 再交给 parser。注入时 Pure 读到的是本次输出，不重新执行句柄；被驱动时 Pure 的 `raw` 执行句柄入口。Pure 的 `raise` 按解析失败处理：注入时留在注入里，被驱动时向上传播。
 
 所以 Crawler 先并行抓取，打印时直接 `require` 解析好的摘要，不再重新抓取。
 
@@ -975,7 +992,8 @@ reading #2: 24.0 C
 | `demands` 里的资产名没有对应的生产方 | 检查名字：资产名就是生产方 `Asset` 声明的名字 |
 | `requires` 了 `require = False` 的资产；`requests` 了挂在 Stream 下的资产 | 在生产方打开 `require`，或去掉这项 demand；持续资产由会话生产 |
 | 一个 effect 的 demands 里有两个表示类型相同的资产 | 用不同的表示类型（角色类型）区分，或拆成两个 effect |
-| handler 读取了绑定它的某个 effect 没有声明的表示类型；或非挂接的 handler 使用 `raw` | 在该 effect 的 demands 里补上声明；`raw` 只给挂在 Excu、Scoped 或 Stream 下的 parser |
+| handler 读取了绑定它的某个 effect 没有声明的表示类型；或非挂接的 handler 使用 `raw` | 在该 effect 的 demands 里补上声明；`raw` 只给挂接的 parser 与 Pure |
+| Pure 写了 demands、`input` 是 Root 或 Stream、下面没有 Context 或 Pure，或被 Excu／Scoped／Stream／Error 当作 `input` | Pure 只在生产链中：值从上层句柄或 Pure 的 `raw` 来，交给下面的 Pure 或 Context |
 | `require` 没有写类型应用 | 写成 `require @表示类型` |
 | 同一个 handler 的各个绑定推出不同的签名或 Layer | 只在绑定方式与读取一致处复用 handler，否则拆成两个 handler |
 | effect 声明的 `requires`／`streams` 资产，绑定的 handler 既不读取，也不参与 alternative 选择／streams 交付 | 读取它，或删掉无用声明 |
@@ -1023,6 +1041,6 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 - **未实现的能力**：middleware、通用结构适配尚未实现。Stream／lifelong 的结束与清理进入本轮[六阶段计划](NEXT_STAGES.md#stages)，middleware 保留为[后续专题](NEXT_STAGES.md#middleware)。本指南只描述当前写法。
 - **持续执行的延期项**：没有正常结束（EOF）、Stream close、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；完整历史一直保留，持续运行时内存随发布增长。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
 - **Stage 3 已知实现限制**：持续资产作为 scope 开启参数尚未接通。见 [Next stages](NEXT_STAGES.md#current-limits)。
-- **handler 复用的边界**：同一个 handler 可以注册到多个 effect，但各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能读一份资产。Pure 的值管道语义、Stream 的驱动方式和 Error 的驱动链仍待确定，见 [Stage 2：本阶段不处理](NEXT_STAGES.md#stage-2-later)。
+- **handler 复用的边界**：同一个 handler 可以注册到多个 effect，但各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能读一份资产。Stream 的驱动方式和 Error 的驱动链仍待确定，见 [Stage 2：本阶段不处理](NEXT_STAGES.md#stage-2-later)。
 - **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。
 - **构建方式**：SDK 目前随仓库内的示例一起编译，不能作为独立依赖引入。

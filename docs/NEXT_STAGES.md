@@ -1,6 +1,6 @@
 # Next stages
 
-更新：2026-11-08。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已确定、尚未实现；Stage 3–7 继续逐阶段收敛。**
+更新：2026-11-12。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已确定、尚未实现；[Pure 的值管道与 list 原子输出](#pure-pipeline)已实现（2026-11-12）；Stage 3–7 继续逐阶段收敛。**
 
 本轮目标是在框架现有概念内，先分离原子 handler 与业务 effect，使 handler 可以复用、前驱由声明装配；再统一 Stream effect 与 lifelong 的持续执行协议，完成正常结束、停止传播和资源收尾。每阶段先收敛设计与代码形态，再实现；本文记录推进顺序、待确认事项及开放边界，不替代[主设计](LATEST_DESIGN.md)和[当前 Stream 规范](STREAM_LIFELONG.md)。
 
@@ -54,7 +54,7 @@ Effects 以 Asset 声明来源，demands 选择资产和访问权限；空 deman
 <a id="stage-2"></a>
 ### Stage 2：分离原子 handler 与业务 effect
 
-**状态：已实现（2026-11-08）。本节写法与当前 SDK 一致，完整写法见[指南](GUIDE.md)；实现范围、验证与未覆盖见[实现与验证](#stage-2-status)。**
+**状态：已实现（2026-11-08）。本节写法与当前 SDK 一致（原子句柄的输出已由 [Pure 的值管道](#pure-pipeline) 从 `Maybe String` 改为 `[String]`），完整写法见[指南](GUIDE.md)；实现范围、验证与未覆盖见[实现与验证](#stage-2-status)。**
 
 effect 是业务装配，handler 是可复用的原子操作。多个 effect 可以绑定同一个 handler；Input 与 demands 由 gencode 装配，不进入 handler 文本。gencode 是这个 EDSL 的编译器：它把分散的注册关系化成一张图，在生成期解决链的组合、读取路由和合法性检查；生成的 Haskell 是交给 GHC 编译的中间表示，这些问题不留给运行时。SDK 据此分为源语言、gen、编译产物、运行时四层，见[主设计：gen 是编译器](LATEST_DESIGN.md#compiler)。
 
@@ -117,12 +117,14 @@ instance WriteTextLayer m => WriteTextHandler m where
     TextFile path file <- require @TextFile
     Body text <- require @Body
     liftIO (hPutStr file text >> hFlush file)
-    pure Nothing
+    pure []
 
 instance CountLinesLayer m => CountLinesHandler m where
   countLines = do
     output <- raw
-    contents <- maybe (raise (CountLinesError "no text")) pure output
+    contents <- case output of
+      [text] -> pure text
+      _ -> raise (CountLinesError "no text")
     pure (LineCount (length (lines contents)))
 ```
 
@@ -134,7 +136,7 @@ instance CountLinesLayer m => CountLinesHandler m where
 -- Generated/Effects.hs
 type WriteTextLayer m = (SDK.Reads (Body) m, SDK.Reads (TextFile) m, SDK.Raises WriteTextError m, MonadIO m)
 class WriteTextHandler m where
-  writeText :: m (Maybe String)
+  writeText :: m [String]
 newtype WriteTextError = WriteTextError String
 
 -- Generated/Handlers.hs 入口：驱动 → Input → 方法体；外层是入口包装
@@ -161,7 +163,7 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 | --- | --- |
 | handler | 类方法，不带参数，写作 `instance XxxLayer m => XxxHandler m`；类名、Layer、错误类型和方法类型由 gen 从 handler 名与绑定方式推出 |
 | Input | gen 在入口中把 Input 装配为前驱，在方法体之前执行；方法体不调用上游，也不捕获 Input 的失败，失败后的改道用 AST 的 alternative |
-| 挂接 parser | Input 是 Excu、Scoped.open 或 Stream 时，parser 以 `raw :: m (Maybe String)` 读取直接 Input 的本次输出，沿用现有注入与回放协议 |
+| 挂接 parser | Input 是 Excu、Scoped.open 或 Stream 时，parser 以 `raw` 读取直接 Input 的本次输出，沿用现有注入与回放协议；`raw` 现为 `m [String]`，Pure 同样用它，见 [Pure 的值管道](#pure-pipeline) |
 | 驱动 | `requests` 驱动对应资产沿 Input 的整条 Context 链；`requires` 只读取，不驱动，也不在读取处生产，还没有值时等待发布；alternative 的选择读取驱动转折资产，相当于 `requests`；`streams` 由持续交付驱动。入口顺序是驱动 → Input → 方法体；handler 只写 `require` |
 | 读取 | handler 按表示类型读取；gen 按“表示类型 + effect”路由到唯一的细化资产，一个 effect 内表示类型不重复；需要两个同类型值的操作用角色类型区分 |
 | 值传递 | 值只经资产流动；原子句柄和 Stream 的输出只交给挂在其下的 parser |
@@ -181,7 +183,7 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 | --- | --- | --- |
 | `Reads T m` | 绑定它的 effect `requires` 了表示类型为 T 的资产 | `require @T` |
 | `Reads (History T) m` | 绑定它的 effect `streams` 了持续资产 | `require @(History T)` |
-| `Raw m` | 绑成挂接的 parser | `raw` |
+| `Raw m` | 绑成挂接的 parser 或 Pure | `raw` |
 | `Raises XxxError m` | 总是 | `raise (XxxError "...")` |
 | `MonadIO m` | Pure 以外总是 | `liftIO` |
 
@@ -189,8 +191,8 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 
 | 绑定方式 | 方法类型 |
 | --- | --- |
-| Pure | `m ()`（语义待定，见下文） |
-| Excu、Scoped.open／close | `m (Maybe String)` |
+| Pure | `m [String]`（见 [Pure 的值管道](#pure-pipeline)） |
+| Excu、Scoped.open／close | `m [String]`（Stage 2 时为 `m (Maybe String)`） |
 | Context.parser | `m T`，T 是 `Asset @T` 的表示类型 |
 | Stream | `m String` |
 | Error.detect／resolve | `m ()` |
@@ -220,7 +222,7 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 | 按 effect 生成的 `raise (XxxError ...)` | 按 handler 生成 |
 | parser 调用 Input 的方法 | `raw` |
 | `finishInspection`、`checkIndependent`、`checkReopen` 在方法体中间或重复开关资源 | 拆成多个 effect，由 AST 安排顺序；`FinishInspection` 声明的 Input 是 `InspectFiles`，方法体却只调用 `holdFiles`，迁移时按实际依赖改声明，不悄悄新增执行 |
-| FileDemo 的 `validateFileName` 作为守卫 | 仍是 `FileResource` 的 Input，由 gen 在方法体之前执行 |
+| FileDemo 的 `validateFileName` 作为守卫 | Stage 2 时仍是 `FileResource` 的 Input；现在是挂在 `LocateFile` 下的 Pure，见 [Pure 的值管道](#pure-pipeline) |
 | StreamDemo 的 `Beat`（不在 Stream 下的持续资产） | Stream effect 加 parser |
 | FileDemo 的 `resolveFileSession` 调用 `closeFileSession` | resolve 暂不操作 scope，见下文 Error 驱动链 |
 | Crawler 两个抓取、两个打印的重复方法体 | 共享 handler |
@@ -230,7 +232,7 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 <a id="stage-2-later"></a>
 #### 本阶段不处理
 
-- **Pure 的语义**：Pure 是没有外部性的值管道，它的值直接进入下一个 effect，Layer 不含 `MonadIO`；以后辅助逻辑由 Pure 承接。返回类型、下游的读取方式、能否 raise 待定；本阶段 Pure 保持返回 `m ()` 的守卫用法。
+- **Pure 的语义**：Stage 2 只定了方向（没有外部性的值管道，值直接进入下一个 effect）；返回类型、下游读取方式与能否 raise 已由 [Pure 的值管道](#pure-pipeline) 确定并实现（2026-11-12）。
 - **Stream 的驱动方式**：event、behavior（轮询）与 socket 三种方式待定；持续资产的读取类型是继续用 `History` 还是直接暴露标准序列待定。
 - **Error 驱动链**：Error 是另一条驱动链，resolve 不应调用 close；Error 如何驱动 scope 的修复待定。
 - **读取历史的写法**：`streamT` 由 gen 生成；handler 中暂沿用 `require @(History T)`，是否另设读取方法待定。
@@ -259,7 +261,7 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 - 没有新增测试或负例；生成期检查只在七个程序的合法写法上运行过，各条报错路径没有逐一触发。
 - 七个程序中没有真正进入等待的读取。parallel 兄弟互不可见，可见范围内没人生产的读取会一直等待；对应的设计已确定、尚未实现，见[可见范围内的等待](#stage-2-await)。
 - detect／resolve 的 Layer 不含 `caughtFailure`，handler 读不到原失败；Error 驱动链待定。
-- Pure 仍是 `m ()` 守卫；Stream 的驱动方式未区分；lifelong 内的显式反馈随 RepeatRequest 取消，没有替代写法；`streamT` 已生成，handler 读取历史仍写 `require @(History T)`。
+- Pure 当时仍是 `m ()` 守卫，已由 [Pure 的值管道](#pure-pipeline) 取代；Stream 的驱动方式未区分；lifelong 内的显式反馈随 RepeatRequest 取消，没有替代写法；`streamT` 已生成，handler 读取历史仍写 `require @(History T)`。
 - Stream 的背压与资源释放不在本次范围；并发交错、长时间内存与 Windows 以外的取消仍未观察。
 
 <a id="stage-2-await"></a>
@@ -279,6 +281,49 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 - gen：Query 的可见关系纳入 parallel 兄弟；来源分析记录每个读取点在可见范围内的可能生产者，去掉“有多个可见来源”的报错，改为检查等不到的读取与兄弟互等。
 - 运行时：普通发布从按 Origin 分组的整张表，改为每个执行帧、每份资产一个 `TVar`。request 用一次 `writeTVar` 直接覆盖，写入即唤醒，去掉整表的 `atomicModifyIORef'`、`uninterruptibleMask_` 与全局发布信号；require 依次读本帧和外层帧，都空时 `retry`。普通发布不再按来源表挑选 Origin，去掉普通发布的 `AmbiguousContextBinding`（资源实例的歧义检查保留）。lifelong 单元每次执行建立新帧，取代 `resetOrigins`；会话挂载的发布照旧作为伴随发布交付。等待的结束：可能的生产者的结束记录与 state 在同一次 `retry` 中检查。cabal 加入 GHC 自带的 `stm`。
 - 文档：主设计 4.3 节与 EFFECT_GRAPH 的来源一节改为当前协议，GUIDE 补充兄弟之间读取的写法。
+
+<a id="pure-pipeline"></a>
+### Pure 的值管道与 list 原子输出
+
+**状态：已实现（2026-11-12）。** 规则与代码形态见[主设计：Pure](LATEST_DESIGN.md#pure)，写法见[指南](GUIDE.md#pure)。这一项不属于 Stage 1–7 的持续执行计划，是 Stage 2 留下的 Pure 语义的收敛。
+
+**确认的决定：**
+
+| 主题 | 决定 |
+| --- | --- |
+| 原子输出 | Excu、Scoped.open／close 交出 `[String]`，取代 `Maybe String`：没有信息是 `[]`，一项是 `[x]`，一串操作或递归的结果用 `:`、`concat` 组合。list 是自由幺半群，只承诺顺序与拼接，不保留嵌套 |
+| Pure | 生产链中的纯值变换，对上层输出做 fmap：签名 `m [String]`，用 `raw` 读直接 Input；Layer 只有 `Raw`、`Raises`，没有 `MonadIO`；可以 `raise`；不声明 demands，不作为 AST 末端，必须绑定 handler |
+| 位置 | Pure 的 input 是 Excu、Scoped 或 Pure；以 Pure 为 input 的只能是 Context 或 Pure，且至少一个，一串 Pure 总是落到一个 Context |
+| Context | 细化 parser，作用类似 tokenize：把 raw 解析成表示类型；即使结果仍是 list，也要经过 Context 才成为资产。值的变换写在 Pure 里 |
+| 取值 | Pure 与 Context 都从直接 Input 的 raw 取值，不走 demands，避免 demands 的循环依赖 |
+| Stream | 有自己的数据结构：handler 仍是 `m String`，parser 的 raw 读作单元素 list；下面不挂 Pure |
+
+**实现：**
+
+- **源语言**：`Raw` 的 `raw :: m [String]`。
+- **降级（Gen.Lower）**：Pure 的注册规则；Context 的挂接句柄沿一串 Pure 向上找到 Excu 或 Scoped；"资源 Context 不能挂在请求它的 scope 下"按这个句柄检查；`streams` 只由 Excu、Scoped 声明；AST 末端不能是 Pure。
+- **绑定（Gen.Bind）**：Context 的 parser 与 Pure 读 raw，由直接 Input 的入口回答，Input 不作为前驱执行；Excu、Scoped、Pure 的方法类型为 `[String]`；Stream 下的 raw 为 `(: []) <$> next名字`。
+- **构图（Gen.Build、Build.Sources）**：注入副本把中间的 Pure 就地展开到句柄为止，图中不成环；"注入经其他方法绕到句柄"的检查允许经 Pure；来源分析中 Pure 不改变调用者。
+- **输出（Emit.Handlers）**：Pure 的入口没有原子句柄包装，也不进入 handler 身份，因此不改变调用者；Raw 实例也为 Pure 生成。
+- **运行时**：`RawOutput` 的 `info` 为 `[String]`；`atomicHandle`／`atomicScope` 交出 list，handler 没有执行（复用实例、重复 close）时为 `[]`。
+
+**迁移：**
+
+- 七个程序中 Excu／Scoped 的 handler 改为 `pure []`／`pure [x]`（43 处），六个读 `raw` 的 parser 改为匹配 list；Stream 下的 parser 用 `concat <$> raw`。
+- FileDemo：`locateFile` 改为 Excu `LocateFile`，交出路径；`ValidateFileName` 改为挂在它下面的 Pure，检查后原样交出；新增 parser `parseFileName`，`FileLocation` 挂在 Pure 下；`FileResource`、`FileSession` 的 input 改为 Root，文件名仍由 `FileResource` 的 `requests "FileName"` 驱动，经过检查后才打开文件。
+- 顺带修正 Crawler、FileDemo 中两处仍写"require 时驱动"的旧注释，以及 GUIDE 中 `requires` 仍写"生产一次并记住"的旧描述。
+
+**验证**（本次实际执行）：
+
+- `cabal build all` 通过；七个程序均用 `effect-codegen` 重新生成；FacadeProbe 按其 README 的 ghc 命令编译。
+- 与改动前（main，0651829）对照：在 `dist-newstyle/bl` 的 worktree 中编译 main，两边从同一份 `output.txt` 开始各运行一次。FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 输出相同，FileDemo 写出的文件相同；Crawler 除随请求变化的链接签名外相同；StreamDemo 两版同时在终端运行到第 56 条读数左右，读数、趋势与心跳节奏一致，新版另运行一次，Ctrl-C 后以 `[sensor] disconnected` 收尾；FacadeProbe 输出行相同（parallel 的交错顺序不同），写出的文件相同，仍以 `ShowLevelFailure` 结束。
+
+**未覆盖：**
+
+- 没有新增测试或负例；Pure 的各条生成期报错没有逐一触发。
+- 七个程序中没有经 Pure 的注入：FileDemo 的 `LocateFile` 不在任何操作链里执行，只经 `requests` 驱动，注入路径只出现在生成的结构中；Pure 的 `raise` 也没有触发过。
+- 没有 handler 交出多于一项的 list；递归组合、去重与排序只在文档示例中出现。
+- 带类型的原子输出、嵌套结构（森林）与 Pure 挂在 Stream 下待另行设计。
 
 <a id="stage-3"></a>
 ### Stage 3：确定 Stream 与 lifelong 的共同执行结构
@@ -402,7 +447,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 | 背压与历史容量 | 容量、溢出策略、历史窗口、慢消费者、无订阅者行为，以及同步 request 回馈与有界队列的进展问题；完整历史不承诺有界内存 |
 | workflow 扩展 | 嵌套 lifelong、多个持续来源组合触发一个 target |
 | 来源与调度 | Stream 的 event、behavior（轮询）、socket 三种驱动方式；自动重试、时间周期声明、通用外部 push callback 注册；阻塞单步来源可用不代表任意回调 API 已自动适配 |
-| Pure | 方向已在 Stage 2 确定：没有外部性的值管道，值直接进入下一个 effect；返回类型、下游读取方式、能否 raise 待定 |
+| Pure 与原子输出 | Pure 作为生产链中的值变换已实现（[Pure 的值管道](#pure-pipeline)）；带类型的原子输出（注册声明输出类型）、交出嵌套结构（森林）、Pure 挂在 Stream 下仍待设计 |
 | Generic Map | 适配范围、失败接口和接入；当前没有可用自动适配 |
 | 多细化资产 | 同一个 handler 服务多种细化资产已由 Stage 2 以多份注册解决；同一个注册服务多种细化资产仍不支持 |
 | 同类二元操作 | 一次操作需要两个同表示类型的值时，Stage 2 先用角色类型区分；是否需要其他写法待定 |
@@ -438,6 +483,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 - 2026-11-08：Stage 2 实现并全面替换旧写法；`cabal build all --offline -j1` 通过，七个程序重新生成并与迁移前输出对照，详见[实现与验证](#stage-2-status)。
 - 2026-11-08：SDK 按[源语言、gen、编译产物、运行时四层](LATEST_DESIGN.md#compiler)重组，生成拆为读取、降级、绑定、形状、组成、构图、输出、类检八个阶段，[流水线](LATEST_DESIGN.md#generation)在 `Framework.Gen`；声明加载进程只执行降级，绑定与输出改在生成器进程内读取 PrototypePlan；生成代码只经 `Framework.Generated` 引用 SDK。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，除生成代码的模块别名与资产目录的导入外，Generated 与重组前逐字相同；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和重组前相同，StreamDemo 在终端运行到第 33 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾和重组前一致，Crawler 除随请求变化的链接行外相同；FacadeProbe 按 README 编译运行，仍以 `ShowLevelFailure` 结束。重组不改运行行为。
 - 2026-11-08：`requires` 改为不生产、缺值等待，读取权限只在生成期检查，规则见 Stage 2 [实现与验证](#stage-2-status)的“读取”。gen 侧读取方法不连到生产方法，来源分析中没有可见发布的读取路径不返回，生产入口每次调用都生产；运行时以发布信号唤醒等待的读取。FileDemo 的 `FileResource` 补 `requests "FileName"`，FacadeProbe 的 `ReportFile`／`ReplyFile` 补 `requests` 路径、`WriteReport`／`WriteReply` 补 `requests` 正文。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，生成的来源表中没有 `FromOwnChain` 读取；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和本次改动前相同；Crawler 除随请求变化的链接行外相同；StreamDemo 在终端运行到第 48 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾一致；FacadeProbe 按 README 编译运行，输出行相同（parallel 的交错顺序不同），写出的文件相同，仍以 `ShowLevelFailure` 结束。未覆盖：没有触发过真正等待的读取；兄弟间可见与等待的结束见[可见范围内的等待](#stage-2-await)。
+- 2026-11-12：Pure 改为生产链中的值变换，Excu／Scoped 的输出改为 `[String]`，见 [Pure 的值管道与 list 原子输出](#pure-pipeline)。验证：`cabal build all` 通过；七个程序重新生成，与 main 对照运行，行为一致（Crawler 只差随请求变化的链接签名，FacadeProbe 只差 parallel 交错顺序）。未覆盖：没有经 Pure 的注入，也没有交出多项 list 的 handler。
 - 历史验证未系统枚举全部并发交错，未观察长时间内存；Stream 外部模型未完成；取消只记录过 Windows Ctrl-Break。已通过编译和示例不能扩大资源逃逸、任意底层 IO 或所有调度的保证。
 
 <a id="maintenance"></a>

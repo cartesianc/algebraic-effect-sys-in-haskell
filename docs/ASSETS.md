@@ -27,7 +27,7 @@
 
 顶层普通函数与顶层值、类声明（handler 类由注册生成）、foreign 声明和 rewrite rule 都被拒绝，诊断给出位置和建议。
 
-方法体内的 `let`／`where` 局部函数、lambda 与局部数据计算不受限制：它们属于 handler，随 handler 进入 effect 链。需要在多处使用的逻辑注册成 handler，通过 effect 组合；以后无副作用的辅助逻辑由 Pure 承接（语义见 [Stage 2：本阶段不处理](NEXT_STAGES.md#stage-2-later)）。
+方法体内的 `let`／`where` 局部函数、lambda 与局部数据计算不受限制：它们属于 handler，随 handler 进入 effect 链。需要在多处使用的逻辑注册成 handler，通过 effect 组合；生产链中对句柄输出的纯变换（去重、排序、过滤）由 Pure 承接，见[主设计：Pure](LATEST_DESIGN.md#pure)。
 
 例如以下顶层函数会被拒绝，即使它只处理 `String`：
 

@@ -64,7 +64,7 @@ socket、event、behavior 用来解释不同的驱动关系，但不是类型标
 | `getT` | 执行 parser 并包装发布一个资产；会话每取得一份原始输入调用一次 |
 | `streamT` | 读取确定的历史视图（SDK 实现，消费方经路由的 `require` 使用） |
 
-parser 没有另外的输入方法：`raw` 由会话本次取得的输入回答（`Just <$> next名字`），不再执行 Stream handler，与挂在原子句柄下的 Context 读取句柄输出相同（[主设计 4.3](LATEST_DESIGN.md#context) 的原子输出挂接）。首次生成契约后才编写 Handlers。
+parser 没有另外的输入方法：`raw` 由会话本次取得的输入回答，读作单元素 list（`(: []) <$> next名字`），不再执行 Stream handler，与挂在原子句柄下的 Context 读取句柄输出相同（[主设计 4.3](LATEST_DESIGN.md#context) 的原子输出挂接）。首次生成契约后才编写 Handlers。
 
 同一 refined asset 的所有访问方式共享固定表示 ADT 和唯一 Context 来源；读取的返回形态不同，不会产生第二种资产身份。声明与读取依据统一见[主设计：资产来源与访问约束](LATEST_DESIGN.md#demand-contract)，包括 streams 在 Prototype 中的交付依据。
 
@@ -87,7 +87,7 @@ parser 没有另外的输入方法：`raw` 由会话本次取得的输入回答�
 消费方写 `streams "T"`，handler 用 `require @(History 表示类型)` 读取交付。streams 同时授予这项读取权限，不必再写 `requires "T"`。
 
 - 只有持续资产的基础资产可以被订阅；订阅分支契约时报错，应订阅其基础资产。
-- 只有 Pure、Excu、Scoped 可以声明 streams。
+- 只有 Excu、Scoped 可以声明 streams。
 - `requires "T"` 读取持续资产时，handler 用 `require @表示类型` 取得最新一条，不由交付驱动。
 
 读取类型按访问方式确定：streams 返回 `History 表示类型`，requires 返回最新一条；普通资产保持单值读取。`stream` 缓存历史，`require` 缓存最新值；两者是同一资产的不同结果形态，不是两个来源。若需要两个独立来源或独立持续能力，再细化为两个资产。分支契约投影本次交付的最新条目。读取历史另设方法（gen 已生成 `streamT`）的写法待定。
@@ -96,9 +96,9 @@ History 是从会话首条发布到确定交付位置的有限、不可变序列
 
 ### 3.4 原子输入与源码约束
 
-Stream handler 一次返回一个原始输入，parser 一次解析一个。parser 的 `raw` 由会话本次取得的输入回答，不再执行 Stream handler 另取一份；Stream handler 由会话驱动，其他 handler 不能取得原始输入。Stream 自己的 Input（例如传感器连接的 Scoped）作为前驱在 handler 之前执行，跨生产步骤保持（见 8.1）。业务只写原生 instance、读取、ADT、局部计算和 raise，不手写 yield、递归连接、publish、subscribe、acknowledge 或回调参数；顶层白名单继续适用（[ASSETS](ASSETS.md)）。
+Stream handler 一次返回一个原始输入，parser 一次解析一个。parser 的 `raw` 由会话本次取得的输入回答，不再执行 Stream handler 另取一份；Stream handler 由会话驱动，其他 handler 不能取得原始输入。Stream 有自己的数据结构：handler 仍是每次一份 `String`，不改成原子句柄的 list 输出，下面也不挂 Pure（[主设计：Pure](LATEST_DESIGN.md#pure)）。Stream 自己的 Input（例如传感器连接的 Scoped）作为前驱在 handler 之前执行，跨生产步骤保持（见 8.1）。业务只写原生 instance、读取、ADT、局部计算和 raise，不手写 yield、递归连接、publish、subscribe、acknowledge 或回调参数；顶层白名单继续适用（[ASSETS](ASSETS.md)）。
 
-Excu／Scoped 的 `Maybe String` 仍表示可选信息，不能把 `Nothing` 释为 EOF；正常结束协议本版延期。
+Excu／Scoped 交出的 `[String]` 是原子句柄的输出，不能把空 list 释为 EOF；正常结束协议本版延期。
 
 <a id="bootplan"></a>
 ## 4. 生产方式（BootPlan）
