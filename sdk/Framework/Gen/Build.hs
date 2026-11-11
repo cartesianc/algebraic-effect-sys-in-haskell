@@ -23,10 +23,11 @@ buildPrototype plan shapes = do
   valid (unique (map fst shapes)) "Duplicate handler method in the structure generation plan"
   valid (all (`elem` map methodIdentity defaults) (map fst shapes)) "Unregistered handler method in the structure generation plan"
   let definitions = mergedDefinitions effects defaults shapes
+      bodyOf = writtenBody defaults shapes
+  -- 注入只回放挂接句柄：Context 只能直接或经一串 Pure 读到句柄，不能经其他方法再到达它。
   valid (null [(anchor, produced) | (anchor, produced) <- anchors effects
-      , definition <- definitions, methodIdentity definition == produced
-      , anchor `elem` reachableMethods definitions (filter (/= anchor) (calledMethods (methodBody definition)))])
-    "An injected Context reaches its anchor through another method; call the anchor directly"
+      , anchor `elem` reachableMethods definitions (calledMethods (replayedBody effects bodyOf anchor (bodyOf produced)))])
+    "An injected Context reaches its anchor through another method; read the anchor with raw, directly or through Pure"
   mounted <- mapM mountedNode (allWorkflow workflow) >>= pure . concat
   selectors <- mapM mountedSelector [selected | selected@AlternativeAt {} <- allWorkflow workflow]
   sessions <- concat <$> mapM mountedSession lifelongSessionsOf
@@ -141,18 +142,31 @@ anchors effects = [(anchorMethod, produced)
 mergedDefinitions :: [EffectProto String] -> [MethodDefinition String] -> [(String, MethodShape String)]
                   -> [MethodDefinition String]
 mergedDefinitions effects defaults shapes =
-  [definition { methodBody = injected (methodIdentity definition) (written definition) } | definition <- defaults]
+  [definition { methodBody = injected (methodIdentity definition) (bodyOf (methodIdentity definition)) } | definition <- defaults]
   where
-    written definition = maybe (methodBody definition) id (lookup (methodIdentity definition) shapes)
-    bodyOf selected = maybe Empty written (listToMaybe [definition | definition <- defaults, methodIdentity definition == selected])
-    injected selected body = case [replayed selected (bodyOf produced) | (anchor, produced) <- anchors effects, anchor == selected] of
+    bodyOf = writtenBody defaults shapes
+    injected selected body = case [replayedBody effects bodyOf selected (bodyOf produced) | (anchor, produced) <- anchors effects, anchor == selected] of
       [] -> body
       contexts -> Sequence [body, Choice [Empty, Sequence contexts]]
-    replayed anchor shape = case shape of
-      Call method | method == anchor -> Empty
-      Sequence children -> Sequence (map (replayed anchor) children)
-      Choice children -> Choice (map (replayed anchor) children)
-      Recover body recovery -> Recover (replayed anchor body) (replayed anchor recovery)
+
+writtenBody :: [MethodDefinition String] -> [(String, MethodShape String)] -> String -> MethodShape String
+writtenBody defaults shapes selected = case lookup selected shapes of
+  Just shape -> shape
+  Nothing -> maybe Empty methodBody (listToMaybe [definition | definition <- defaults, methodIdentity definition == selected])
+
+-- 注入副本：挂接 Context 的生产方法体里，对句柄的调用由本次输出回答（Empty）；
+-- 中间的 Pure 入口就地展开，同样回答到句柄为止。注入副本因此不再调用句柄或 Pure，图中不成环。
+replayedBody :: [EffectProto String] -> (String -> MethodShape String) -> String -> MethodShape String -> MethodShape String
+replayedBody effects bodyOf anchor = replay []
+  where
+    pureMethods = [method | effect <- effects, effectKind effect == PureKind, (_, method) <- effectMethods effect]
+    replay seen shape = case shape of
+      Call method
+        | method == anchor -> Empty
+        | method `elem` pureMethods, method `notElem` seen -> replay (method : seen) (bodyOf method)
+      Sequence children -> Sequence (map (replay seen) children)
+      Choice children -> Choice (map (replay seen) children)
+      Recover body recovery -> Recover (replay seen body) (replay seen recovery)
       other -> other
 
 withProducerReferences :: Eq method => [EffectProto method] -> [MethodDefinition method] -> [MethodDefinition method]

@@ -83,6 +83,15 @@ buildEffectProtos specifications sumTypes = do
             [requested producer ++ required producer
               ++ concatMap (valueInputs (selected : seen)) (requested producer)
             | producer <- specifications, name producer == selected]
+      -- Context 挂接的句柄：沿一串 Pure 向上，直到 Excu 或 Scoped；中间的 Pure 只变换句柄交出的 list。
+      anchorOf seen selected
+        | selected `elem` seen = Nothing
+        | otherwise = listToMaybe
+            [ found | anchor <- specifications, name anchor == selected
+            , found <- case typing anchor of
+                Pure _ -> maybeToList (anchorOf (selected : seen) (input anchor))
+                kind | Registration.effectKind kind `elem` [ExcuKind, ScopedKind], Just _ <- entryMethod anchor -> [name anchor]
+                _ -> [] ]
       inputAncestors "Root" = []
       inputAncestors selected = selected : concat
         [inputAncestors (input specification) | specification <- specifications, name specification == selected]
@@ -95,10 +104,7 @@ buildEffectProtos specifications sumTypes = do
         , effectProduces = contractOf <$> contextAsset (typing specification)
         , effectBranches = branchesOf specification
         , effectAnchor = case typing specification of
-            Context {} -> listToMaybe
-              [name anchor | anchor <- specifications, name anchor == input specification
-                , Registration.effectKind (typing anchor) `elem` [ExcuKind, ScopedKind]
-                , Just _ <- [entryMethod anchor]]
+            Context {} -> anchorOf [] (input specification)
             _ -> Nothing
         , effectScopes = upstream specification
         , effectErrorScope = case typing specification of
@@ -156,9 +162,25 @@ buildEffectProtos specifications sumTypes = do
             case representation declared of
               TypeRef _ -> pure ()
               _ -> Left (InvalidPrototype ("Context.request must wrap a business value, not Output: " ++ name specification))
-            valid (null [() | anchor <- specifications, name anchor == input specification,
-              Scoped {} <- [typing anchor], requestSource anchor == Just (name specification)])
+            valid (null [() | anchorName <- maybeToList (anchorOf [] (input specification))
+              , anchor <- specifications, name anchor == anchorName
+              , Scoped {} <- [typing anchor], requestSource anchor == Just (name specification)])
               ("Context " ++ name specification ++ " cannot hang below the scope that requests it as its resource")
+          -- Pure 只在生产链中：值来自上层的 raw，交给下面的 Pure 或 Context，不声明 demands。
+          Pure method -> do
+            valid (method /= Nothing) ("Pure needs a handler: " ++ name specification)
+            valid (null (demands specification))
+              ("Pure " ++ name specification ++ " takes its value from raw and declares no demands")
+            upper <- if input specification == "Root"
+              then Left (InvalidPrototype ("Pure " ++ name specification
+                ++ " needs an Excu, Scoped or Pure input to read raw from"))
+              else findSpec (input specification)
+            valid (Registration.effectKind (typing upper) `elem` [ExcuKind, ScopedKind, PureKind])
+              ("Pure " ++ name specification ++ " reads raw from an Excu, Scoped or Pure, not from "
+                ++ name upper ++ "; a Stream has only its parser Context below it")
+            let below = [Registration.effectKind (typing consumer) | consumer <- specifications, input consumer == name specification]
+            valid (not (null below) && all (`elem` [ContextKind, PureKind]) below)
+              ("Pure " ++ name specification ++ " is used only in a production chain: only a Context or another Pure may take it as input, and at least one must")
           Stream method -> do
             valid (method /= Nothing) ("Stream needs a handler: " ++ name specification)
             -- 只有解析器 Context 能以 Stream 为 input，否则其他方法可以绕过会话直接取原始输入。
@@ -180,7 +202,7 @@ buildEffectProtos specifications sumTypes = do
         valid (null [demand | demand <- demands specification, access demand == RequestAccess,
           contract demand `elem` map fst branchTable]) ("Branch contracts can only be required: " ++ name specification)
         valid (null [() | demand <- demands specification, access demand == StreamAccess]
-          || Registration.effectKind (typing specification) `elem` [PureKind, ExcuKind, ScopedKind])
+          || Registration.effectKind (typing specification) `elem` [ExcuKind, ScopedKind])
           ("Only original-chain effects may subscribe with streams: " ++ name specification)
       handled specification = case typing specification of Error { handles = matched } -> matched; _ -> []
   mapM_ check specifications
@@ -236,8 +258,9 @@ numberWorkflow effects tree = cata number tree [] False
     -- inside：是否位于 lifelong 内。持续订阅只能挂在 lifelong 内；lifelong 不嵌套。
     number (Node selected) path inside = do
       effect <- findEffectProto effects selected
-      valid (effectKind effect `notElem` [ContextKind, ErrorKind, StreamKind])
-        ("AST terminal must be an original callable handle: " ++ selected)
+      valid (effectKind effect `notElem` [PureKind, ContextKind, ErrorKind, StreamKind])
+        ("AST terminal must be an Excu or Scoped handle: " ++ selected
+          ++ " (Pure, Context, Stream and Error run only inside their chains)")
       _ <- ordinaryEntry effect
       let subscribed = streamedAssets effects selected
       unless (inside || null subscribed) $ Left (InvalidLifelong path ("Node " ++ selected

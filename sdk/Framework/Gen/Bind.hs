@@ -7,7 +7,7 @@
 module Framework.Gen.Bind
   ( Unit(..), Binding(..), Signature(..), AssetDeclaration(..), BranchContract(..), bindProgram
   , specifications, effectPrototypes, specOf, protoOf, resolvedOf, contextSpecs, allMethods
-  , readDemands, readType, readerOf, continuousContract, beforeOf, rawExpression, resultOf, reference, parenthesized
+  , readDemands, readType, readerOf, continuousContract, beforeOf, rawExpression, readsRaw, resultOf, reference, parenthesized
   , composeMethods, normalizeType
   ) where
 
@@ -94,7 +94,7 @@ bindProgram namespace prepared sumTypes = do
       , unitSignatures = []
       , unitBindings =
           [ Binding (name specification) method handler' (beforeOf unit specification method)
-              (if Just method == contextProducer (typing specification) then rawSource unit specification else Nothing)
+              (if readsRaw specification method then rawSource unit specification else Nothing)
               [ (normalizeType (readType unit "History" resolved), (demandContract resolved, readerOf unit (demandProvider resolved)))
               | resolved <- readDemands unit (name specification) ]
           | specification <- specifications unit, (method, handler') <- handlerBindings specification ]
@@ -177,19 +177,33 @@ drives unit specification =
   [ getter | resolved <- resolvedOf unit (name specification), demandAccess resolved == RequestAccess
   , Just getter <- [contextProducer (typing (specOf unit (demandProvider resolved)))] ]
 
--- 挂在原子句柄或 Stream 下的 parser 用 raw 读取直接 Input 的输出，不把 Input 当前驱执行。
+-- 挂接的 parser 与 Pure 用 raw 读取直接 Input 的输出，不把 Input 当前驱执行：
+-- Input 是 Excu、Scoped、Pure 时读它交出的 list，是 Stream 时读会话本次取得的一份输入。
 rawSource :: Unit -> EffectSpec -> Maybe String
-rawSource unit specification = case typing specification of
-  Context {} | input specification /= "Root" -> case typing (specOf unit (input specification)) of
-    Excu _ -> entryMethod (specOf unit (input specification))
-    Scoped {} -> entryMethod (specOf unit (input specification))
-    Stream _ -> entryMethod (specOf unit (input specification))
-    _ -> Nothing
-  _ -> Nothing
+rawSource unit specification
+  | rawKind (typing specification), input specification /= "Root" = case typing (specOf unit (input specification)) of
+      Excu _ -> entryMethod (specOf unit (input specification))
+      Scoped {} -> entryMethod (specOf unit (input specification))
+      Pure _ -> entryMethod (specOf unit (input specification))
+      Stream _ -> entryMethod (specOf unit (input specification))
+      _ -> Nothing
+  | otherwise = Nothing
+  where
+    rawKind Context {} = True
+    rawKind (Pure _) = True
+    rawKind _ = False
 
+-- 读取 raw 的方法：Context 的 parser（生产入口）与 Pure 的入口。
+readsRaw :: EffectSpec -> String -> Bool
+readsRaw specification method = case typing specification of
+  selected@Context {} -> Just method == contextProducer selected
+  Pure _ -> Just method == entryMethod specification
+  _ -> False
+
+-- Stream 一次交出一份 String；raw 统一是 list，所以读作单元素 list。
 rawExpression :: Unit -> EffectSpec -> Maybe String
 rawExpression unit specification = case rawSource unit specification of
-  Just method | Stream {} <- typing (specOf unit (input specification)) -> Just ("Just <$> " ++ method)
+  Just method | Stream {} <- typing (specOf unit (input specification)) -> Just ("(: []) <$> " ++ method)
   other -> other
 
 -- 其他 Input 是前驱：在 handler 之前执行一次，输出不交给 handler。
@@ -205,12 +219,12 @@ beforeOf unit specification method
   | Just method == entryMethod specification = drives unit specification ++ predecessor unit specification
   | otherwise = []
 
--- 绑定类别决定方法类型。
+-- 绑定类别决定方法类型：原子句柄与 Pure 都交出 [String]。
 resultOf :: EffectSpec -> String
 resultOf specification = case typing specification of
-  Pure _ -> "()"
-  Excu _ -> "Maybe String"
-  Scoped {} -> "Maybe String"
+  Pure _ -> "[String]"
+  Excu _ -> "[String]"
+  Scoped {} -> "[String]"
   Error {} -> "()"
   Stream _ -> "String"
   Context { asset = declared } -> reference (representation declared)
@@ -218,7 +232,7 @@ resultOf specification = case typing specification of
 layerOf :: Unit -> EffectSpec -> String -> [String]
 layerOf unit specification method = sort (nub ["SDK.Reads (" ++ readType unit "SDK.History" resolved ++ ") m"
     | resolved <- readDemands unit (name specification)])
-  ++ ["SDK.Raw m" | Just method == contextProducer (typing specification), Just _ <- [rawSource unit specification]]
+  ++ ["SDK.Raw m" | readsRaw specification method, Just _ <- [rawSource unit specification]]
   ++ [if effectKind (typing specification) == PureKind then "Monad m" else "MonadIO m"]
 
 signatureOf :: Unit -> String -> Either String Signature
@@ -363,7 +377,7 @@ composeMethods checkReads bindings required handlerShapes = do
       Call "%raw" -> case bindingRaw binding of
         Just method -> pure (Call method, [])
         Nothing -> Left ("Handler " ++ bindingHandler binding ++ " uses raw in " ++ bindingEffect binding
-          ++ "; only a Context parser hanging below an Excu, Scoped or Stream reads raw")
+          ++ "; only a Context parser or a Pure hanging below an Excu, Scoped, Pure or Stream reads raw")
       Call other -> pure (Call other, [])
       Sequence children -> combine Sequence children
       Choice children -> combine Choice children

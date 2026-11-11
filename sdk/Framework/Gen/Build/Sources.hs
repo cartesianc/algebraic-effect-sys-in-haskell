@@ -7,6 +7,7 @@ module Framework.Gen.Build.Sources (resolveSources) where
 import Control.Monad (unless)
 import Control.Monad.State.Strict (StateT, execStateT, gets, lift, modify')
 import Data.List (intercalate, isPrefixOf, nub, sort)
+import Framework.Language.Registration (EffectKind(..))
 import Framework.Prototype.Graph (MethodDefinition(..), MethodRole(..), MethodShape(..), GraphError(..))
 import Framework.Prototype.Types
 import Framework.Prototype.Query
@@ -199,7 +200,8 @@ resolveSources definitions defaultReaders prototype = do
       | otherwise = do
           effect <- effectFor selected
           definition <- definitionFor selected
-          let entered = call { assetCaller = if methodRole definition == ContextRequire
+          -- 读取入口与 Pure 不改变调用者：经一串 Pure 拉取句柄的 Context 仍是它自己，句柄不再注入它。
+          let entered = call { assetCaller = if methodRole definition == ContextRequire || effectKind effect == PureKind
                   then assetCaller call else Just (effectName effect)
                 , assetActiveMethods = selected : assetActiveMethods call }
               role = methodRole definition

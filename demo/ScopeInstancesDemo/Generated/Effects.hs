@@ -33,7 +33,7 @@ instance SDK.NFData MethodGen
 -- handler prepareFiles：绑定到 PrepareFiles。
 type PrepareFilesLayer m = (SDK.Raises PrepareFilesError m, MonadIO m)
 class PrepareFilesHandler m where
-  prepareFiles :: m (Maybe String)
+  prepareFiles :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "prepareFiles" 匹配。
 newtype PrepareFilesError = PrepareFilesError String
@@ -60,7 +60,7 @@ newtype AcquireFileError = AcquireFileError String
 -- handler openSelectedFile：绑定到 FileSession。
 type OpenSelectedFileLayer m = (SDK.Reads (FileHandle) m, SDK.Raises OpenSelectedFileError m, MonadIO m)
 class OpenSelectedFileHandler m where
-  openSelectedFile :: m (Maybe String)
+  openSelectedFile :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openSelectedFile" 匹配。
 newtype OpenSelectedFileError = OpenSelectedFileError String
@@ -69,7 +69,7 @@ newtype OpenSelectedFileError = OpenSelectedFileError String
 -- handler closeSelectedFile：绑定到 FileSession。
 type CloseSelectedFileLayer m = (SDK.Reads (FileHandle) m, SDK.Raises CloseSelectedFileError m, MonadIO m)
 class CloseSelectedFileHandler m where
-  closeSelectedFile :: m (Maybe String)
+  closeSelectedFile :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeSelectedFile" 匹配。
 newtype CloseSelectedFileError = CloseSelectedFileError String
@@ -78,7 +78,7 @@ newtype CloseSelectedFileError = CloseSelectedFileError String
 -- handler checkSelection：绑定到 UseFirst、UseSecond、ReopenFirst。
 type CheckSelectionLayer m = (SDK.Reads (FileHandle) m, SDK.Reads ([Char]) m, SDK.Raises CheckSelectionError m, MonadIO m)
 class CheckSelectionHandler m where
-  checkSelection :: m (Maybe String)
+  checkSelection :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "checkSelection" 匹配。
 newtype CheckSelectionError = CheckSelectionError String
@@ -87,7 +87,7 @@ newtype CheckSelectionError = CheckSelectionError String
 -- handler selectSecond：绑定到 SelectSecond。
 type SelectSecondLayer m = (SDK.Raises SelectSecondError m, MonadIO m)
 class SelectSecondHandler m where
-  selectSecond :: m (Maybe String)
+  selectSecond :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "selectSecond" 匹配。
 newtype SelectSecondError = SelectSecondError String
@@ -96,7 +96,7 @@ newtype SelectSecondError = SelectSecondError String
 -- handler selectFirst：绑定到 SelectFirst。
 type SelectFirstLayer m = (SDK.Raises SelectFirstError m, MonadIO m)
 class SelectFirstHandler m where
-  selectFirst :: m (Maybe String)
+  selectFirst :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "selectFirst" 匹配。
 newtype SelectFirstError = SelectFirstError String
@@ -105,7 +105,7 @@ newtype SelectFirstError = SelectFirstError String
 -- handler checkJournal：绑定到 CheckJournal。
 type CheckJournalLayer m = (SDK.Raises CheckJournalError m, MonadIO m)
 class CheckJournalHandler m where
-  checkJournal :: m (Maybe String)
+  checkJournal :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "checkJournal" 匹配。
 newtype CheckJournalError = CheckJournalError String

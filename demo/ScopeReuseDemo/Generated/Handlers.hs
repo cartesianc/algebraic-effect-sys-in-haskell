@@ -57,7 +57,7 @@ instance PrepareProbeLayer m => PrepareProbeHandler m where
       writeFile path ""
       writeFile journal ""
     either (raise . PrepareProbeError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance AcquireFileLayer m => AcquireFileHandler m where
   acquireFile = do
@@ -76,7 +76,7 @@ instance OpenSharedFileLayer m => OpenSharedFileHandler m where
     SharedFile (SharedPaths _ journal) _ <- require @SharedFile
     outcome <- liftIO (tryIOError (appendFile journal "open-body\n"))
     either (raise . OpenSharedFileError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance CloseSharedFileLayer m => CloseSharedFileHandler m where
   closeSharedFile = do
@@ -86,7 +86,7 @@ instance CloseSharedFileLayer m => CloseSharedFileHandler m where
       hClose file
       appendFile journal "file-close\n"
     either (raise . CloseSharedFileError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 -- 每条链先由 requests 刷新参数，再经 Input 开启；scope 内 require 稳定参数，重叠使用时可共享实例。
 -- 不在业务中加打开标志或互斥锁，也不为尚未开始的 Node 预留资源。
@@ -97,7 +97,7 @@ instance WriteFirstLayer m => WriteFirstHandler m where
       hPutStr file "first\n"
       hFlush file
     either (raise . WriteFirstError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance WriteSecondLayer m => WriteSecondHandler m where
   writeSecond = do
@@ -106,7 +106,7 @@ instance WriteSecondLayer m => WriteSecondHandler m where
       hPutStr file "second\n"
       hFlush file
     either (raise . WriteSecondError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance WriteThirdLayer m => WriteThirdHandler m where
   writeThird = do
@@ -115,7 +115,7 @@ instance WriteThirdLayer m => WriteThirdHandler m where
       hPutStr file "third\n"
       hFlush file
     either (raise . WriteThirdError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance VerifyReuseLayer m => VerifyReuseHandler m where
   verifyReuse = do
@@ -139,11 +139,11 @@ instance VerifyReuseLayer m => VerifyReuseHandler m where
     liftIO $ do
       putStrLn ("[check] actual resource opens/closes: " ++ show fileOpens ++ "/" ++ show fileCloses)
       putStrLn "[check] all writer chains released their resources; each line written exactly once"
-    pure Nothing
+    pure []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "b0a3fccedca9743f90134eb921e2ccf5"
+handlerSourceFingerprint = Just "f67952eb8185e826660c71f475062247"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -217,7 +217,7 @@ readFilePaths :: FrameworkGenerated.App FrameworkGenerated.FilePaths
 readFilePaths = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "FileLocations" FrameworkGenerated.ContextBindingError (Just (FrameworkRuntime.ScopeInput "FileLocations")) FrameworkGenerated.boundFileLocations
 
-runPrepareProbe :: FrameworkGenerated.App (Maybe String)
+runPrepareProbe :: FrameworkGenerated.App [String]
 runPrepareProbe = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrepareProbe" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareProbe") $
   getFilePaths >> runAt @"PrepareProbe" FrameworkGenerated.prepareProbe
 
@@ -231,27 +231,27 @@ readOpenedFile :: FrameworkGenerated.App FrameworkGenerated.OpenedFile
 readOpenedFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "FileResource" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundFileResource
 
-openSharedFileScope :: FrameworkGenerated.App (Maybe String)
+openSharedFileScope :: FrameworkGenerated.App [String]
 openSharedFileScope = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openSharedFileScope" . FrameworkRuntime.openScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
   getOpenedFile >> runAt @"SharedFileScope" FrameworkGenerated.openSharedFile
 
-closeSharedFileScope :: FrameworkGenerated.App (Maybe String)
+closeSharedFileScope :: FrameworkGenerated.App [String]
 closeSharedFileScope = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeSharedFileScope" . FrameworkRuntime.closeScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
   runAt @"SharedFileScope" FrameworkGenerated.closeSharedFile
 
-runWriteFirst :: FrameworkGenerated.App (Maybe String)
+runWriteFirst :: FrameworkGenerated.App [String]
 runWriteFirst = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteFirst" . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteFirst") $
   getFilePaths >> openSharedFileScope >> runAt @"WriteFirst" FrameworkGenerated.writeFirst
 
-runWriteSecond :: FrameworkGenerated.App (Maybe String)
+runWriteSecond :: FrameworkGenerated.App [String]
 runWriteSecond = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteSecond" . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteSecond") $
   getFilePaths >> openSharedFileScope >> runAt @"WriteSecond" FrameworkGenerated.writeSecond
 
-runWriteThird :: FrameworkGenerated.App (Maybe String)
+runWriteThird :: FrameworkGenerated.App [String]
 runWriteThird = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteThird" . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteThird") $
   getFilePaths >> openSharedFileScope >> runAt @"WriteThird" FrameworkGenerated.writeThird
 
-runVerifyReuse :: FrameworkGenerated.App (Maybe String)
+runVerifyReuse :: FrameworkGenerated.App [String]
 runVerifyReuse = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runVerifyReuse" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "VerifyReuse") $
   getFilePaths >> runAt @"VerifyReuse" FrameworkGenerated.verifyReuse
 

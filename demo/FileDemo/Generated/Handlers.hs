@@ -20,7 +20,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module FileDemo.Generated.Handlers (handlerSourceFingerprint, getFileName, readFileName, runValidateFileName, getOpenedFile, readOpenedFile, openFileSession, closeFileSession, detectFileRecovery, resolveFileRecovery, runReadFile, getFileText, readFileText, runWriteFirstLine, runAppendLine, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
+module FileDemo.Generated.Handlers (handlerSourceFingerprint, runLocateFile, runValidateFileName, getFileName, readFileName, getOpenedFile, readOpenedFile, openFileSession, closeFileSession, detectFileRecovery, resolveFileRecovery, runReadFile, getFileText, readFileText, runWriteFirstLine, runAppendLine, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
 import qualified Framework.Generated as FrameworkRuntime
 import qualified FileDemo.Generated.Effects as FrameworkGenerated
@@ -42,17 +42,27 @@ import System.IO
   , openFile, utf8 )
 import System.IO.Error (tryIOError)
 
--- 示例专用文件：首次运行创建，后续追加；在项目根目录运行。
+-- 示例专用文件：首次运行创建，后续追加；在项目根目录运行。原子句柄交出路径 list。
 instance LocateFileLayer m => LocateFileHandler m where
-  locateFile = pure ("demo" </> "FileDemo" </> "output.txt")
+  locateFile = pure ["demo" </> "FileDemo" </> "output.txt"]
 
+-- Pure：raw 是上层交出的路径 list；逐项检查后原样交给下面的 parser。没有 IO，也不读资产。
 instance ValidateFileNameLayer m => ValidateFileNameHandler m where
   validateFileName = do
-    path <- require @FilePath
-    unless (not (null path) && '\0' `notElem` path) $
+    paths <- raw
+    unless (all (\path -> not (null path) && '\0' `notElem` path) paths) $
       raise (ValidateFileNameError "File name must be nonempty and contain no NUL character")
+    pure paths
 
--- Input ValidateFileName 已在它之前执行。
+-- Context 是细化 parser：通过检查的 list 恰好有一个路径时，才是文件名资产。
+instance ParseFileNameLayer m => ParseFileNameHandler m where
+  parseFileName = do
+    paths <- raw
+    case paths of
+      [path] -> pure path
+      _ -> raise (ParseFileNameError "Expected exactly one file name")
+
+-- 文件名由 requests 驱动，生产时已经过 ValidateFileName 的检查。
 instance AcquireFileLayer m => AcquireFileHandler m where
   acquireFile = do
     path <- require @FilePath
@@ -65,7 +75,7 @@ instance AcquireFileLayer m => AcquireFileHandler m where
 
 -- requests 在开启前驱动 FileResource 打开文件；开启期间 Context 保存真实 Handle，后续 require 复用它。
 instance OpenSessionLayer m => OpenSessionHandler m where
-  openSession = pure Nothing
+  openSession = pure []
 
 instance CloseSessionLayer m => CloseSessionHandler m where
   closeSession = do
@@ -73,7 +83,7 @@ instance CloseSessionLayer m => CloseSessionHandler m where
     outcome <- liftIO (tryIOError (hClose file))
     either (raise . CloseSessionError . displayException) pure outcome
     liftIO (putStrLn ("[close] " ++ path))
-    pure Nothing
+    pure []
 
 -- 读取是原子句柄：只执行 IO，把读到的文本交出；FileText 由挂在它下面的 ExtractFileText 解析。
 -- Input FileSession 已在它之前开启（同份已开启的 scope 不再执行 open）。
@@ -89,14 +99,16 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
           then pure (reverse characters)
           else hGetChar file >>= \character -> next (character : characters)) []
     contents <- either (raise . ReadFileContentError . displayException) pure outcome
-    pure (Just contents)
+    pure [contents]
 
--- parser 挂在读取句柄下：raw 是句柄本次交出的文本，解析成文件状态（和类型）。
--- alternative 启动时读取它：尚无值便驱动读取句柄读一次文件。
+-- parser 挂在读取句柄下：raw 是句柄本次交出的 list（一段文本），解析成文件状态（和类型）。
+-- alternative 的选择读取驱动它：raw 执行读取句柄，读一次文件。
 instance ParseFileTextLayer m => ParseFileTextHandler m where
   parseFileText = do
     contents <- raw
-    text <- maybe (raise (ParseFileTextError "File read returned no text")) pure contents
+    text <- case contents of
+      [whole] -> pure whole
+      _ -> raise (ParseFileTextError "File read returned no text")
     pure (if null text then Blank else Written text)
 
 instance DetectFileSessionLayer m => DetectFileSessionHandler m where
@@ -125,7 +137,7 @@ instance WriteFirstLineLayer m => WriteFirstLineHandler m where
       hFlush file
       putStrLn ("[write] " ++ path ++ ": " ++ line)
     either (raise . WriteFirstLineError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance AppendLineLayer m => AppendLineHandler m where
   appendLine = do
@@ -140,11 +152,11 @@ instance AppendLineLayer m => AppendLineHandler m where
       hFlush file
       putStrLn ("[write] " ++ path ++ ": " ++ line)
     either (raise . AppendLineError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "11649129934e2c2371d57df983d643cb"
+handlerSourceFingerprint = Just "28e83d56924ecdd4406b15ae341a9d46"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -158,6 +170,10 @@ instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkG
 instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ValidateFileNameError (At effect) where
   raise (FrameworkGenerated.ValidateFileNameError description) = At (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ValidateFileNameFailure description)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseFileNameError (At effect) where
+  raise (FrameworkGenerated.ParseFileNameError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ParseFileNameFailure description)
 
 instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AcquireFileError (At effect) where
   raise (FrameworkGenerated.AcquireFileError description) = At (FrameworkRuntime.failEffect
@@ -195,9 +211,6 @@ instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkG
   raise (FrameworkGenerated.AppendLineError description) = At (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.AppendLineFailure description)
 
-instance FrameworkRuntime.Reads ([Char]) (At "ValidateFileName") where
-  require = At ((\(FrameworkGenerated.FileName value) -> value) <$> readFileName)
-
 instance FrameworkRuntime.Reads ([Char]) (At "FileResource") where
   require = At ((\(FrameworkGenerated.FileName value) -> value) <$> readFileName)
 
@@ -222,38 +235,48 @@ instance FrameworkRuntime.Reads (String) (At "AppendLine") where
 instance FrameworkRuntime.Reads (FileHandle) (At "AppendLine") where
   require = At ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
+instance FrameworkRuntime.Raw (At "ValidateFileName") where
+  raw = At (runLocateFile)
+
+instance FrameworkRuntime.Raw (At "FileLocation") where
+  raw = At (runValidateFileName)
+
 instance FrameworkRuntime.Raw (At "ExtractFileText") where
   raw = At (runReadFile)
+
+runLocateFile :: FrameworkGenerated.App [String]
+runLocateFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runLocateFile" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "LocateFile") $
+  runAt @"LocateFile" FrameworkGenerated.locateFile
+
+runValidateFileName :: FrameworkGenerated.App [String]
+runValidateFileName = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies []) $
+  runAt @"ValidateFileName" FrameworkGenerated.validateFileName
 
 getFileName :: FrameworkGenerated.App FrameworkGenerated.FileName
 getFileName = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation"
     (Just (FrameworkRuntime.ScopeInput "FileLocation"))
     (\value bindings -> bindings { FrameworkGenerated.boundFileLocation = Just value })) $
-  (FrameworkGenerated.FileName <$> runAt @"FileLocation" FrameworkGenerated.locateFile)
+  (FrameworkGenerated.FileName <$> runAt @"FileLocation" FrameworkGenerated.parseFileName)
 
 readFileName :: FrameworkGenerated.App FrameworkGenerated.FileName
 readFileName = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "FileLocation" FrameworkGenerated.ContextBindingError (Just (FrameworkRuntime.ScopeInput "FileLocation")) FrameworkGenerated.boundFileLocation
 
-runValidateFileName :: FrameworkGenerated.App ()
-runValidateFileName = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ValidateFileName") $
-  runAt @"ValidateFileName" FrameworkGenerated.validateFileName
-
 getOpenedFile :: FrameworkGenerated.App FrameworkGenerated.OpenedFile
 getOpenedFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource"
     Nothing
     (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
-  getFileName >> runValidateFileName >> (FrameworkGenerated.OpenedFile <$> runAt @"FileResource" FrameworkGenerated.acquireFile)
+  getFileName >> (FrameworkGenerated.OpenedFile <$> runAt @"FileResource" FrameworkGenerated.acquireFile)
 
 readOpenedFile :: FrameworkGenerated.App FrameworkGenerated.OpenedFile
 readOpenedFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "FileResource" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundFileResource
 
-openFileSession :: FrameworkGenerated.App (Maybe String)
+openFileSession :: FrameworkGenerated.App [String]
 openFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFileSession" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
-  getOpenedFile >> runValidateFileName >> runAt @"FileSession" FrameworkGenerated.openSession
+  getOpenedFile >> runAt @"FileSession" FrameworkGenerated.openSession
 
-closeFileSession :: FrameworkGenerated.App (Maybe String)
+closeFileSession :: FrameworkGenerated.App [String]
 closeFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeFileSession" . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
   runAt @"FileSession" FrameworkGenerated.closeSession
 
@@ -265,7 +288,7 @@ resolveFileRecovery :: FrameworkGenerated.App ()
 resolveFileRecovery = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileRecovery") $
   runAt @"FileRecovery" FrameworkGenerated.resolveFileSession
 
-runReadFile :: FrameworkGenerated.App (Maybe String)
+runReadFile :: FrameworkGenerated.App [String]
 runReadFile = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReadFile" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "ReadFile") $
   openFileSession >> runAt @"ReadFile" FrameworkGenerated.readFileContent
 
@@ -279,11 +302,11 @@ readFileText :: FrameworkGenerated.App FrameworkGenerated.FileText
 readFileText = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "ExtractFileText" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundExtractFileText
 
-runWriteFirstLine :: FrameworkGenerated.App (Maybe String)
+runWriteFirstLine :: FrameworkGenerated.App [String]
 runWriteFirstLine = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteFirstLine" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "WriteFirstLine") $
   openFileSession >> runAt @"WriteFirstLine" FrameworkGenerated.writeFirstLine
 
-runAppendLine :: FrameworkGenerated.App (Maybe String)
+runAppendLine :: FrameworkGenerated.App [String]
 runAppendLine = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runAppendLine" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "AppendLine") $
   openFileSession >> runAt @"AppendLine" FrameworkGenerated.appendLine
 
@@ -314,5 +337,6 @@ errorHandlers =
 -- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。
 contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
 contextInjections =
-  [ ("runReadFile", [("ExtractFileText", () <$ getFileText)])
+  [ ("runLocateFile", [("FileLocation", () <$ getFileName)])
+  , ("runReadFile", [("ExtractFileText", () <$ getFileText)])
   ]

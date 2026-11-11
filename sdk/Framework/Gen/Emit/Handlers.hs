@@ -90,7 +90,7 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       [ [ "instance FrameworkRuntime.Raw (At " ++ show (name specification) ++ ") where"
         , "  raw = At (" ++ expression ++ ")"
         , "" ]
-      | specification <- contextSpecs unit, Just expression <- [rawExpression unit specification] ]
+      | specification <- specifications unit, Just expression <- [rawExpression unit specification] ]
 
     -- effect 方法：外层包装由类别决定；方法体先驱动、再执行 Input 前驱，最后在本 effect 的标签下执行 handler。
     entryDefinitions specification =
@@ -119,6 +119,8 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
           Excu _ -> "FrameworkRuntime.atomicHandle " ++ show method ++ " . " ++ entered
           -- parser 的 raw 在会话中由本次原始输入回答，不再执行 handler。
           Stream _ -> "FrameworkRuntime.streamHandle . " ++ entered
+          -- Pure 是 parser 读取 raw 的中间一段：不改变调用者，挂接句柄因此认得出经它拉取的 Context，不重复注入。
+          Pure _ -> scoped
           Context {} -> scoped ++ " . FrameworkRuntime.callContext " ++ show selectedName
             ++ "\n    " ++ observation selectedName
             ++ "\n    (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"

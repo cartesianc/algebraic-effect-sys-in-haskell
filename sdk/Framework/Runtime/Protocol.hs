@@ -63,11 +63,11 @@ class Monad m => ContextStore environment m | m -> environment where
   streamRawInput :: m (Maybe String)
   streamRawInput = pure Nothing
 
--- 原子句柄（Excu.handler、Scoped.open／close）的统一输出：是否成功，附带方法体给出的信息。
--- 只在 SDK 内部交给挂在该句柄下的 Context；没有挂接时被丢弃，注册与 handler 签名都看不到它。
+-- 原子句柄（Excu.handler、Scoped.open／close）的统一输出：是否成功，附带方法体交出的 list。
+-- 只在 SDK 内部交给挂在该句柄下（可经一串 Pure）的 Context；没有挂接时被丢弃，注册与 handler 签名都看不到它。
 data RawOutput = RawOutput
   { succeeded :: Bool
-  , info :: Maybe String
+  , info :: [String]
   } deriving (Eq, Show)
 
 -- CaseNotSelected：读取和类型资产的某个分支契约，而资产当前是另一个构造器。

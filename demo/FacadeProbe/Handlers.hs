@@ -42,43 +42,45 @@ instance OpenTextFileLayer m => OpenTextFileHandler m where
   openTextFile = do
     TextFile path _ <- require @TextFile
     liftIO (putStrLn ("[open] " ++ path))
-    pure Nothing
+    pure []
 
 instance CloseTextFileLayer m => CloseTextFileHandler m where
   closeTextFile = do
     TextFile path file <- require @TextFile
     liftIO (hClose file >> putStrLn ("[close] " ++ path))
-    pure Nothing
+    pure []
 
 instance WriteTextLayer m => WriteTextHandler m where
   writeText = do
     TextFile path file <- require @TextFile
     Body text <- require @Body
     liftIO (hPutStr file text >> hFlush file >> putStrLn ("[write] " ++ path))
-    pure Nothing
+    pure []
 
 instance MarkReadLayer m => MarkReadHandler m where
   markRead = do
     liftIO (putStrLn "[mark] before reading")
-    pure Nothing
+    pure []
 
 instance ReadTextLayer m => ReadTextHandler m where
   readText = do
     path <- require @FilePath
     contents <- liftIO (readFile' path)
-    pure (Just contents)
+    pure [contents]
 
 instance CountLinesLayer m => CountLinesHandler m where
   countLines = do
     output <- raw
-    contents <- maybe (raise (CountLinesError "no text")) pure output
+    contents <- case output of
+      [text] -> pure text
+      _ -> raise (CountLinesError "no text")
     pure (LineCount (length (lines contents)))
 
 instance ShowCountLayer m => ShowCountHandler m where
   showCount = do
     LineCount count <- require @LineCount
     liftIO (putStrLn ("[lines] " ++ show count))
-    pure Nothing
+    pure []
 
 instance InspectFileLayer m => InspectFileHandler m where
   inspectFile = do
@@ -89,13 +91,13 @@ instance InspectFileLayer m => InspectFileHandler m where
 instance DescribeBlankLayer m => DescribeBlankHandler m where
   describeBlank = do
     liftIO (putStrLn "[state] blank")
-    pure Nothing
+    pure []
 
 instance DescribeFilledLayer m => DescribeFilledHandler m where
   describeFilled = do
     Body text <- require @Body
     liftIO (putStrLn ("[state] filled, " ++ show (length text) ++ " characters"))
-    pure Nothing
+    pure []
 
 instance NextALayer m => NextAHandler m where
   nextA = do
@@ -109,7 +111,7 @@ instance NextBLayer m => NextBHandler m where
 
 instance ParseLevelLayer m => ParseLevelHandler m where
   parseLevel = do
-    reading <- maybe "" id <$> raw
+    reading <- concat <$> raw
     case reads reading of
       [(value, "")] -> pure (Level value)
       _ -> raise (ParseLevelError reading)
@@ -122,4 +124,4 @@ instance ShowLevelLayer m => ShowLevelHandler m where
       Just (Level value) -> liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show (historySize samples)))
       Nothing -> pure ()
     when (historySize samples >= 3) (raise (ShowLevelError "enough deliveries"))
-    pure Nothing
+    pure []

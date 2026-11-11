@@ -39,12 +39,12 @@ import Text.Printf (printf)
 instance ConnectSensorLayer m => ConnectSensorHandler m where
   connectSensor = do
     liftIO (putStrLn "[sensor] connected")
-    pure Nothing
+    pure []
 
 instance DisconnectSensorLayer m => DisconnectSensorHandler m where
   disconnectSensor = do
     liftIO (putStrLn "[sensor] disconnected")
-    pure Nothing
+    pure []
 
 -- 一次只取一份原始读数；节奏由 handler 自己的等待决定，SDK 不加间隔。
 instance NextReadingLayer m => NextReadingHandler m where
@@ -53,11 +53,11 @@ instance NextReadingLayer m => NextReadingHandler m where
     seconds <- liftIO getMonotonicTime
     pure (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
 
--- parser 挂在 Stream 下：raw 是会话本次取得的原始读数（不会再读一次），返回一份资产的表示值；
+-- parser 挂在 Stream 下：raw 是会话本次取得的一份原始读数（单元素 list，不会再读一次），返回一份资产的表示值；
 -- 发布、历史和交付由 SDK 完成。
 instance ParseTemperatureLayer m => ParseTemperatureHandler m where
   parseTemperature = do
-    reading <- maybe "" id <$> raw
+    reading <- concat <$> raw
     case reads reading of
       [(value, "")] -> pure (Temperature value)
       _ -> raise (ParseTemperatureError ("unreadable sensor output: " ++ reading))
@@ -71,7 +71,7 @@ instance NextBeatLayer m => NextBeatHandler m where
 
 instance ParseBeatLayer m => ParseBeatHandler m where
   parseBeat = do
-    tick <- maybe "" id <$> raw
+    tick <- concat <$> raw
     case reads tick of
       [(value, "")] -> pure value
       _ -> raise (ParseBeatError ("unreadable clock output: " ++ tick))
@@ -79,7 +79,7 @@ instance ParseBeatLayer m => ParseBeatHandler m where
 instance AnnounceLayer m => AnnounceHandler m where
   announce = do
     liftIO (putStrLn "Monitoring the sensor; press Ctrl-C to stop.")
-    pure Nothing
+    pure []
 
 -- 同一单元的一次执行里，ShowTemperature 与 CheckTrend 读到同一份交付视图。
 instance ShowTemperatureLayer m => ShowTemperatureHandler m where
@@ -89,7 +89,7 @@ instance ShowTemperatureLayer m => ShowTemperatureHandler m where
       Just (Temperature value) ->
         liftIO (printf "reading #%d: %.1f C\n" (length (historyEntries samples)) value)
       Nothing -> pure ()
-    pure Nothing
+    pure []
 
 instance CheckTrendLayer m => CheckTrendHandler m where
   checkTrend = do
@@ -102,17 +102,17 @@ instance CheckTrendLayer m => CheckTrendHandler m where
         liftIO (printf "  trend %s, average of the last %d: %.2f C\n"
           (if current >= previous then "rising" else "falling" :: String) (length recent) average)
       _ -> liftIO (putStrLn "  trend: waiting for a second reading")
-    pure Nothing
+    pure []
 
 instance ReportHeartbeatLayer m => ReportHeartbeatHandler m where
   reportHeartbeat = do
     beats <- require @(History Int)
     liftIO (putStrLn ("[heartbeat] #" ++ show (length (historyEntries beats))))
-    pure Nothing
+    pure []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "9103ff660395d7c3380589656a0788a2"
+handlerSourceFingerprint = Just "6740435b373ec4b64f11e0bf346af887"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -169,16 +169,16 @@ instance FrameworkRuntime.Reads (FrameworkRuntime.History (Int)) (At "ReportHear
   require = At (fmap (\(FrameworkGenerated.Beat value) -> value) <$> streamBeat)
 
 instance FrameworkRuntime.Raw (At "TemperatureParser") where
-  raw = At (Just <$> nextTemperatureFeed)
+  raw = At ((: []) <$> nextTemperatureFeed)
 
 instance FrameworkRuntime.Raw (At "Heartbeat") where
-  raw = At (Just <$> nextHeartbeatClock)
+  raw = At ((: []) <$> nextHeartbeatClock)
 
-openSensorLink :: FrameworkGenerated.App (Maybe String)
+openSensorLink :: FrameworkGenerated.App [String]
 openSensorLink = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openSensorLink" . FrameworkRuntime.openScope "SensorLink" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
   runAt @"SensorLink" FrameworkGenerated.connectSensor
 
-closeSensorLink :: FrameworkGenerated.App (Maybe String)
+closeSensorLink :: FrameworkGenerated.App [String]
 closeSensorLink = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeSensorLink" . FrameworkRuntime.closeScope "SensorLink" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
   runAt @"SensorLink" FrameworkGenerated.disconnectSensor
 
@@ -210,19 +210,19 @@ streamBeat :: FrameworkGenerated.App (FrameworkRuntime.History FrameworkGenerate
 streamBeat = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readHistory "Heartbeat" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundHeartbeat
 
-runAnnounce :: FrameworkGenerated.App (Maybe String)
+runAnnounce :: FrameworkGenerated.App [String]
 runAnnounce = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runAnnounce" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "Announce") $
   runAt @"Announce" FrameworkGenerated.announce
 
-runShowTemperature :: FrameworkGenerated.App (Maybe String)
+runShowTemperature :: FrameworkGenerated.App [String]
 runShowTemperature = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runShowTemperature" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowTemperature") $
   runAt @"ShowTemperature" FrameworkGenerated.showTemperature
 
-runCheckTrend :: FrameworkGenerated.App (Maybe String)
+runCheckTrend :: FrameworkGenerated.App [String]
 runCheckTrend = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runCheckTrend" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CheckTrend") $
   runAt @"CheckTrend" FrameworkGenerated.checkTrend
 
-runReportHeartbeat :: FrameworkGenerated.App (Maybe String)
+runReportHeartbeat :: FrameworkGenerated.App [String]
 runReportHeartbeat = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReportHeartbeat" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReportHeartbeat") $
   runAt @"ReportHeartbeat" FrameworkGenerated.reportHeartbeat
 

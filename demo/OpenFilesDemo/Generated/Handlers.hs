@@ -67,7 +67,7 @@ instance OpenFilesLayer m => OpenFilesHandler m where
   openFiles = do
     files <- require @[FileHandle]
     liftIO (putStrLn ("[open] acquired " ++ show (length files) ++ " files"))
-    pure Nothing
+    pure []
 
 instance CloseFilesLayer m => CloseFilesHandler m where
   closeFiles = do
@@ -76,7 +76,7 @@ instance CloseFilesLayer m => CloseFilesHandler m where
     outcome <- liftIO (tryIOError (mapM_ (hClose . snd) files))
     either (raise . CloseFilesError . displayException) pure outcome
     liftIO (putStrLn ("[close] released " ++ show (length files) ++ " files"))
-    pure Nothing
+    pure []
 
 -- 挂在 ReleaseFiles 下，记下本链持有的文件；值只经资产流动，关闭后的检查读取这份快照，不再 require 已关闭的资源。
 instance SnapshotFilesLayer m => SnapshotFilesHandler m where
@@ -84,7 +84,7 @@ instance SnapshotFilesLayer m => SnapshotFilesHandler m where
 
 -- HoldFiles 与 ReleaseFiles 共用：Input 已开启文件，本链只持有它们，链退出后 SDK 自动关闭。
 instance HoldFilesLayer m => HoldFilesHandler m where
-  holdFiles = pure Nothing
+  holdFiles = pure []
 
 instance InspectFilesLayer m => InspectFilesHandler m where
   inspectFiles = do
@@ -109,7 +109,7 @@ instance InspectFilesLayer m => InspectFilesHandler m where
     either (raise . InspectFilesError . displayException) pure written
     liftIO (putStrLn "[check] write and flush: 10/10 succeeded before close")
     -- 链退出后自动关闭；后续 Node 不继承这份活资源。
-    pure Nothing
+    pure []
 
 -- 前一个 node 的链已经退出，SDK 已关闭它持有的文件；这里只检查快照中的 Handle。
 instance FinishInspectionLayer m => FinishInspectionHandler m where
@@ -121,11 +121,11 @@ instance FinishInspectionLayer m => FinishInspectionHandler m where
     unless (length closed == 10 && and closed) $
       raise (FinishInspectionError "Not all files closed after the scope closed")
     liftIO (putStrLn "[check] after the scope closed: 10/10 closed")
-    pure Nothing
+    pure []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "ed09ccbad79505d2d631148c5a49618f"
+handlerSourceFingerprint = Just "63242e28103b32fa7873ea8d4096e691"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -202,23 +202,23 @@ readOpenedFiles :: FrameworkGenerated.App FrameworkGenerated.OpenedFiles
 readOpenedFiles = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "FileResources" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundFileResources
 
-openFileSession :: FrameworkGenerated.App (Maybe String)
+openFileSession :: FrameworkGenerated.App [String]
 openFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFileSession" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
   getOpenedFiles >> runAt @"FileSession" FrameworkGenerated.openFiles
 
-closeFileSession :: FrameworkGenerated.App (Maybe String)
+closeFileSession :: FrameworkGenerated.App [String]
 closeFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeFileSession" . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
   runAt @"FileSession" FrameworkGenerated.closeFiles
 
-runHoldFiles :: FrameworkGenerated.App (Maybe String)
+runHoldFiles :: FrameworkGenerated.App [String]
 runHoldFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runHoldFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "HoldFiles") $
   getFileNames >> openFileSession >> runAt @"HoldFiles" FrameworkGenerated.holdFiles
 
-runInspectFiles :: FrameworkGenerated.App (Maybe String)
+runInspectFiles :: FrameworkGenerated.App [String]
 runInspectFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runInspectFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "InspectFiles") $
   runHoldFiles >> runAt @"InspectFiles" FrameworkGenerated.inspectFiles
 
-runReleaseFiles :: FrameworkGenerated.App (Maybe String)
+runReleaseFiles :: FrameworkGenerated.App [String]
 runReleaseFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReleaseFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "ReleaseFiles") $
   runHoldFiles >> runAt @"ReleaseFiles" FrameworkGenerated.holdFiles
 
@@ -232,7 +232,7 @@ readInspectedFiles :: FrameworkGenerated.App FrameworkGenerated.InspectedFiles
 readInspectedFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "InspectionSnapshot" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundInspectionSnapshot
 
-runFinishInspection :: FrameworkGenerated.App (Maybe String)
+runFinishInspection :: FrameworkGenerated.App [String]
 runFinishInspection = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runFinishInspection" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FinishInspection") $
   runAt @"FinishInspection" FrameworkGenerated.finishInspection
 

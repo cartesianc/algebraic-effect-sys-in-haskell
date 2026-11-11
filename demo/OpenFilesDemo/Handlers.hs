@@ -50,7 +50,7 @@ instance OpenFilesLayer m => OpenFilesHandler m where
   openFiles = do
     files <- require @[FileHandle]
     liftIO (putStrLn ("[open] acquired " ++ show (length files) ++ " files"))
-    pure Nothing
+    pure []
 
 instance CloseFilesLayer m => CloseFilesHandler m where
   closeFiles = do
@@ -59,7 +59,7 @@ instance CloseFilesLayer m => CloseFilesHandler m where
     outcome <- liftIO (tryIOError (mapM_ (hClose . snd) files))
     either (raise . CloseFilesError . displayException) pure outcome
     liftIO (putStrLn ("[close] released " ++ show (length files) ++ " files"))
-    pure Nothing
+    pure []
 
 -- 挂在 ReleaseFiles 下，记下本链持有的文件；值只经资产流动，关闭后的检查读取这份快照，不再 require 已关闭的资源。
 instance SnapshotFilesLayer m => SnapshotFilesHandler m where
@@ -67,7 +67,7 @@ instance SnapshotFilesLayer m => SnapshotFilesHandler m where
 
 -- HoldFiles 与 ReleaseFiles 共用：Input 已开启文件，本链只持有它们，链退出后 SDK 自动关闭。
 instance HoldFilesLayer m => HoldFilesHandler m where
-  holdFiles = pure Nothing
+  holdFiles = pure []
 
 instance InspectFilesLayer m => InspectFilesHandler m where
   inspectFiles = do
@@ -92,7 +92,7 @@ instance InspectFilesLayer m => InspectFilesHandler m where
     either (raise . InspectFilesError . displayException) pure written
     liftIO (putStrLn "[check] write and flush: 10/10 succeeded before close")
     -- 链退出后自动关闭；后续 Node 不继承这份活资源。
-    pure Nothing
+    pure []
 
 -- 前一个 node 的链已经退出，SDK 已关闭它持有的文件；这里只检查快照中的 Handle。
 instance FinishInspectionLayer m => FinishInspectionHandler m where
@@ -104,4 +104,4 @@ instance FinishInspectionLayer m => FinishInspectionHandler m where
     unless (length closed == 10 && and closed) $
       raise (FinishInspectionError "Not all files closed after the scope closed")
     liftIO (putStrLn "[check] after the scope closed: 10/10 closed")
-    pure Nothing
+    pure []

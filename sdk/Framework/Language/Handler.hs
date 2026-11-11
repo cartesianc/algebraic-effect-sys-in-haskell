@@ -9,13 +9,14 @@ module Framework.Language.Handler
 
 -- handler 是对 m 泛型的类方法，只能使用 gen 按注册给出的 Layer：
 -- Reads 按表示类型读取资产，来源由 effect 的 demands 在 gen 时解析；
--- Raw 读取直接 Input（Excu、Scoped.open 或 Stream）本次交出的原始输出，只给挂在它下面的 parser；
+-- Raw 读取直接 Input 本次交出的输出，只给挂接的 parser 与 Pure：Excu、Scoped.open、Pure 交出 [String]，
+-- Stream 的一份原始输入读作单元素 list；
 -- Raises 以本 handler 的错误失败，发生位置由 SDK 记录。
 class Reads value m where
   require :: m value
 
 class Raw m where
-  raw :: m (Maybe String)
+  raw :: m [String]
 
 class Raises failure m where
   raise :: failure -> m value

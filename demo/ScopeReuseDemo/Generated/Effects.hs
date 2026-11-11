@@ -42,7 +42,7 @@ newtype SharedPathsError = SharedPathsError String
 -- handler prepareProbe：绑定到 PrepareProbe。
 type PrepareProbeLayer m = (SDK.Reads (SharedPaths) m, SDK.Raises PrepareProbeError m, MonadIO m)
 class PrepareProbeHandler m where
-  prepareProbe :: m (Maybe String)
+  prepareProbe :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "prepareProbe" 匹配。
 newtype PrepareProbeError = PrepareProbeError String
@@ -60,7 +60,7 @@ newtype AcquireFileError = AcquireFileError String
 -- handler openSharedFile：绑定到 SharedFileScope。
 type OpenSharedFileLayer m = (SDK.Reads (SharedFile) m, SDK.Raises OpenSharedFileError m, MonadIO m)
 class OpenSharedFileHandler m where
-  openSharedFile :: m (Maybe String)
+  openSharedFile :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openSharedFile" 匹配。
 newtype OpenSharedFileError = OpenSharedFileError String
@@ -69,7 +69,7 @@ newtype OpenSharedFileError = OpenSharedFileError String
 -- handler closeSharedFile：绑定到 SharedFileScope。
 type CloseSharedFileLayer m = (SDK.Reads (SharedFile) m, SDK.Raises CloseSharedFileError m, MonadIO m)
 class CloseSharedFileHandler m where
-  closeSharedFile :: m (Maybe String)
+  closeSharedFile :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeSharedFile" 匹配。
 newtype CloseSharedFileError = CloseSharedFileError String
@@ -78,7 +78,7 @@ newtype CloseSharedFileError = CloseSharedFileError String
 -- handler writeFirst：绑定到 WriteFirst。
 type WriteFirstLayer m = (SDK.Reads (SharedFile) m, SDK.Raises WriteFirstError m, MonadIO m)
 class WriteFirstHandler m where
-  writeFirst :: m (Maybe String)
+  writeFirst :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeFirst" 匹配。
 newtype WriteFirstError = WriteFirstError String
@@ -87,7 +87,7 @@ newtype WriteFirstError = WriteFirstError String
 -- handler writeSecond：绑定到 WriteSecond。
 type WriteSecondLayer m = (SDK.Reads (SharedFile) m, SDK.Raises WriteSecondError m, MonadIO m)
 class WriteSecondHandler m where
-  writeSecond :: m (Maybe String)
+  writeSecond :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeSecond" 匹配。
 newtype WriteSecondError = WriteSecondError String
@@ -96,7 +96,7 @@ newtype WriteSecondError = WriteSecondError String
 -- handler writeThird：绑定到 WriteThird。
 type WriteThirdLayer m = (SDK.Reads (SharedFile) m, SDK.Raises WriteThirdError m, MonadIO m)
 class WriteThirdHandler m where
-  writeThird :: m (Maybe String)
+  writeThird :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeThird" 匹配。
 newtype WriteThirdError = WriteThirdError String
@@ -105,7 +105,7 @@ newtype WriteThirdError = WriteThirdError String
 -- handler verifyReuse：绑定到 VerifyReuse。
 type VerifyReuseLayer m = (SDK.Reads (SharedPaths) m, SDK.Raises VerifyReuseError m, MonadIO m)
 class VerifyReuseHandler m where
-  verifyReuse :: m (Maybe String)
+  verifyReuse :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "verifyReuse" 匹配。
 newtype VerifyReuseError = VerifyReuseError String

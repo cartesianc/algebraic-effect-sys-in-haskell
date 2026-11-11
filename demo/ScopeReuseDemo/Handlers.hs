@@ -40,7 +40,7 @@ instance PrepareProbeLayer m => PrepareProbeHandler m where
       writeFile path ""
       writeFile journal ""
     either (raise . PrepareProbeError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance AcquireFileLayer m => AcquireFileHandler m where
   acquireFile = do
@@ -59,7 +59,7 @@ instance OpenSharedFileLayer m => OpenSharedFileHandler m where
     SharedFile (SharedPaths _ journal) _ <- require @SharedFile
     outcome <- liftIO (tryIOError (appendFile journal "open-body\n"))
     either (raise . OpenSharedFileError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance CloseSharedFileLayer m => CloseSharedFileHandler m where
   closeSharedFile = do
@@ -69,7 +69,7 @@ instance CloseSharedFileLayer m => CloseSharedFileHandler m where
       hClose file
       appendFile journal "file-close\n"
     either (raise . CloseSharedFileError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 -- 每条链先由 requests 刷新参数，再经 Input 开启；scope 内 require 稳定参数，重叠使用时可共享实例。
 -- 不在业务中加打开标志或互斥锁，也不为尚未开始的 Node 预留资源。
@@ -80,7 +80,7 @@ instance WriteFirstLayer m => WriteFirstHandler m where
       hPutStr file "first\n"
       hFlush file
     either (raise . WriteFirstError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance WriteSecondLayer m => WriteSecondHandler m where
   writeSecond = do
@@ -89,7 +89,7 @@ instance WriteSecondLayer m => WriteSecondHandler m where
       hPutStr file "second\n"
       hFlush file
     either (raise . WriteSecondError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance WriteThirdLayer m => WriteThirdHandler m where
   writeThird = do
@@ -98,7 +98,7 @@ instance WriteThirdLayer m => WriteThirdHandler m where
       hPutStr file "third\n"
       hFlush file
     either (raise . WriteThirdError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance VerifyReuseLayer m => VerifyReuseHandler m where
   verifyReuse = do
@@ -122,4 +122,4 @@ instance VerifyReuseLayer m => VerifyReuseHandler m where
     liftIO $ do
       putStrLn ("[check] actual resource opens/closes: " ++ show fileOpens ++ "/" ++ show fileCloses)
       putStrLn "[check] all writer chains released their resources; each line written exactly once"
-    pure Nothing
+    pure []

@@ -55,19 +55,21 @@ instance OpenTextFileLayer m => OpenTextFileHandler m where
   openTextFile = do
     TextFile path _ <- require @TextFile
     liftIO (putStrLn ("[open] " ++ path))
-    pure Nothing
+    pure []
 
 instance WriteTextLayer m => WriteTextHandler m where
   writeText = do
     TextFile path file <- require @TextFile
     Body text <- require @Body
     liftIO (hPutStr file text >> hFlush file >> putStrLn ("[write] " ++ path))
-    pure Nothing
+    pure []
 
 instance CountLinesLayer m => CountLinesHandler m where
   countLines = do
     output <- raw
-    contents <- maybe (raise (CountLinesError "no text")) pure output
+    contents <- case output of
+      [text] -> pure text
+      _ -> raise (CountLinesError "no text")
     pure (LineCount (length (lines contents)))
 
 instance ShowLevelLayer m => ShowLevelHandler m where
@@ -77,7 +79,7 @@ instance ShowLevelLayer m => ShowLevelHandler m where
       Just (Level value) -> liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show (historySize samples)))
       Nothing -> pure ()
     when (historySize samples >= 3) (raise (ShowLevelError "enough deliveries"))
-    pure Nothing
+    pure []
 ```
 
 ### 4. AST.hs：不变
@@ -99,7 +101,7 @@ ast = chained
 ```haskell
 type WriteTextLayer m = (SDK.Reads (Body) m, SDK.Reads (TextFile) m, SDK.Raises WriteTextError m, MonadIO m)
 class WriteTextHandler m where
-  writeText :: m (Maybe String)
+  writeText :: m [String]
 ```
 
 每个 effect 一个类型标签和一个入口，前驱与驱动写在 handler 外面；读取按“表示类型 + effect”路由到细化资产（[Generated/Handlers.hs](Generated/Handlers.hs)）：

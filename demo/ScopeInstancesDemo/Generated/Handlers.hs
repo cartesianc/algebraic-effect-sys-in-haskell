@@ -48,7 +48,7 @@ instance PrepareFilesLayer m => PrepareFilesHandler m where
       mapM_ ((`writeFile` "") . (outputDirectory </>)) ["one.txt", "two.txt", "events.txt"]
       writeFile (outputDirectory </> "selected.txt") (outputDirectory </> "one.txt")
     either (raise . PrepareFilesError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 -- 选择由普通 Excu 节点改写；下一条使用闭包的 requests 会重新读取它。
 instance SelectSecondLayer m => SelectSecondHandler m where
@@ -56,14 +56,14 @@ instance SelectSecondLayer m => SelectSecondHandler m where
     let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
     outcome <- liftIO (tryIOError (writeFile (outputDirectory </> "selected.txt") (outputDirectory </> "two.txt")))
     either (raise . SelectSecondError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance SelectFirstLayer m => SelectFirstHandler m where
   selectFirst = do
     let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
     outcome <- liftIO (tryIOError (writeFile (outputDirectory </> "selected.txt") (outputDirectory </> "one.txt")))
     either (raise . SelectFirstError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 -- 参数确实由 parser 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
 instance SelectedFileLayer m => SelectedFileHandler m where
@@ -93,7 +93,7 @@ instance OpenSelectedFileLayer m => OpenSelectedFileHandler m where
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     outcome <- liftIO (tryIOError (appendFile journal ("open " ++ path ++ "\n")))
     either (raise . OpenSelectedFileError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance CloseSelectedFileLayer m => CloseSelectedFileHandler m where
   closeSelectedFile = do
@@ -103,7 +103,7 @@ instance CloseSelectedFileLayer m => CloseSelectedFileHandler m where
       hClose file
       appendFile journal ("close " ++ path ++ "\n")
     either (raise . CloseSelectedFileError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 -- UseFirst、UseSecond、ReopenFirst 共用：scope 内 require 稳定参数与本条闭包选中的实例。
 instance CheckSelectionLayer m => CheckSelectionHandler m where
@@ -118,7 +118,7 @@ instance CheckSelectionLayer m => CheckSelectionHandler m where
       hFlush file
     either (raise . CheckSelectionError . displayException) pure outcome
     liftIO (putStrLn ("[use] " ++ takeFileName path ++ ": the current argument selected this instance; its Handle is live"))
-    pure Nothing
+    pure []
 
 -- 各使用闭包已退出并自动关闭实例；此处只读日志和文件，不 require 旧资源。
 instance CheckJournalLayer m => CheckJournalHandler m where
@@ -145,11 +145,11 @@ instance CheckJournalLayer m => CheckJournalHandler m where
       putStrLn "[check] each use closure opened the instance its current argument selected and closed it on exit"
       putStrLn "[check] actual acquisitions/closures: file 1 = 2/2; file 2 = 1/1"
       putStrLn "[check] three argument requests, three open calls; require reuses the stable parameter within each chain"
-    pure Nothing
+    pure []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "d8c7f93e40930a711db5f1ef215de89f"
+handlerSourceFingerprint = Just "78520366b00ac43b711576260bd83b06"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -216,7 +216,7 @@ instance FrameworkRuntime.Reads ([Char]) (At "ReopenFirst") where
 instance FrameworkRuntime.Reads (FileHandle) (At "ReopenFirst") where
   require = At ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
-runPrepareFiles :: FrameworkGenerated.App (Maybe String)
+runPrepareFiles :: FrameworkGenerated.App [String]
 runPrepareFiles = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrepareFiles" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareFiles") $
   runAt @"PrepareFiles" FrameworkGenerated.prepareFiles
 
@@ -240,35 +240,35 @@ readOpenedFile :: FrameworkGenerated.App FrameworkGenerated.OpenedFile
 readOpenedFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "FileResource" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundFileResource
 
-openFileSession :: FrameworkGenerated.App (Maybe String)
+openFileSession :: FrameworkGenerated.App [String]
 openFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFileSession" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
   getOpenedFile >> runAt @"FileSession" FrameworkGenerated.openSelectedFile
 
-closeFileSession :: FrameworkGenerated.App (Maybe String)
+closeFileSession :: FrameworkGenerated.App [String]
 closeFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeFileSession" . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
   runAt @"FileSession" FrameworkGenerated.closeSelectedFile
 
-runUseFirst :: FrameworkGenerated.App (Maybe String)
+runUseFirst :: FrameworkGenerated.App [String]
 runUseFirst = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runUseFirst" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "UseFirst") $
   getFileName >> openFileSession >> runAt @"UseFirst" FrameworkGenerated.checkSelection
 
-runSelectSecond :: FrameworkGenerated.App (Maybe String)
+runSelectSecond :: FrameworkGenerated.App [String]
 runSelectSecond = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runSelectSecond" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SelectSecond") $
   runAt @"SelectSecond" FrameworkGenerated.selectSecond
 
-runUseSecond :: FrameworkGenerated.App (Maybe String)
+runUseSecond :: FrameworkGenerated.App [String]
 runUseSecond = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runUseSecond" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "UseSecond") $
   getFileName >> openFileSession >> runAt @"UseSecond" FrameworkGenerated.checkSelection
 
-runSelectFirst :: FrameworkGenerated.App (Maybe String)
+runSelectFirst :: FrameworkGenerated.App [String]
 runSelectFirst = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runSelectFirst" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SelectFirst") $
   runAt @"SelectFirst" FrameworkGenerated.selectFirst
 
-runReopenFirst :: FrameworkGenerated.App (Maybe String)
+runReopenFirst :: FrameworkGenerated.App [String]
 runReopenFirst = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReopenFirst" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "ReopenFirst") $
   getFileName >> openFileSession >> runAt @"ReopenFirst" FrameworkGenerated.checkSelection
 
-runCheckJournal :: FrameworkGenerated.App (Maybe String)
+runCheckJournal :: FrameworkGenerated.App [String]
 runCheckJournal = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runCheckJournal" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CheckJournal") $
   runAt @"CheckJournal" FrameworkGenerated.checkJournal
 

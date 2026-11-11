@@ -79,15 +79,17 @@ instance FetchPageLayer m => FetchPageHandler m where
     case outcome of
       Left problem -> raise (FetchPageError (url ++ ": " ++ displayException problem))
       Right (ExitFailure _, _, message) -> raise (FetchPageError (url ++ ": " ++ message))
-      Right (ExitSuccess, html, _) -> pure (Just html)
+      Right (ExitSuccess, html, _) -> pure [html]
 
--- 挂在抓取句柄下，两个解析共用：raw 是本次抓取交出的正文。剧本执行抓取时由 SDK 注入，不重新抓取；
--- 尚未抓取时被 require，则 raw 驱动抓取句柄执行整条链。
+-- 挂在抓取句柄下，两个解析共用：raw 是本次抓取交出的 list（一页正文）。剧本执行抓取时由 SDK 注入，不重新抓取；
+-- 被 requests 驱动时，raw 执行抓取句柄，启动整条链。
 instance ExtractSummaryLayer m => ExtractSummaryHandler m where
   extractSummary = do
     fetched <- raw
     PageURL url <- require @PageURL
-    html <- maybe (raise (ExtractSummaryError (url ++ ": fetch returned no page body"))) pure fetched
+    html <- case fetched of
+      [page] -> pure page
+      _ -> raise (ExtractSummaryError (url ++ ": fetch returned no page body"))
     let tags = canonicalizeTags (parseTags html)
         titleTags = takeWhile (not . isTagCloseName "title")
                   (drop 1 (dropWhile (not . isTagOpenName "title") tags))
@@ -115,7 +117,7 @@ instance PrintSummaryLayer m => PrintSummaryHandler m where
            ] ++ (if null links then ["  (none)"] else map ("  " ++) links) ++ [""])
     outcome <- liftIO (tryIOError (putStr report >> hFlush stdout))
     either (\problem -> raise (PrintSummaryError (url ++ ": " ++ displayException problem))) pure outcome
-    pure Nothing
+    pure []
 
 -- 会话信息由 Context 生产，SDK 在 scope 内保存并供各抓取链读取。
 instance SessionInfoLayer m => SessionInfoHandler m where
@@ -126,17 +128,17 @@ instance OpenSessionLayer m => OpenSessionHandler m where
   openSession = do
     SessionInfo name _ <- require @SessionInfo
     liftIO (putStrLn ("[scope] open " ++ name))
-    pure Nothing
+    pure []
 
 instance CloseSessionLayer m => CloseSessionHandler m where
   closeSession = do
     SessionInfo name _ <- require @SessionInfo
     liftIO (putStrLn ("[scope] close " ++ name))
-    pure Nothing
+    pure []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "9641b785a0d26072d80dfd9d7548e6b8"
+handlerSourceFingerprint = Just "54f798bb4e6e713b06a40810f5d67ebd"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -228,7 +230,7 @@ readLinkedURL :: FrameworkGenerated.App FrameworkGenerated.LinkedURL
 readLinkedURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "LinkedPage" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundLinkedPage
 
-runFetchPage :: FrameworkGenerated.App (Maybe String)
+runFetchPage :: FrameworkGenerated.App [String]
 runFetchPage = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runFetchPage" . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FetchPage") $
   getStartURL >> openCrawlSession >> runAt @"FetchPage" FrameworkGenerated.fetchPage
 
@@ -242,11 +244,11 @@ readStartPageSummary :: FrameworkGenerated.App FrameworkGenerated.StartPageSumma
 readStartPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "ExtractPage" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundExtractPage
 
-runPrintPage :: FrameworkGenerated.App (Maybe String)
+runPrintPage :: FrameworkGenerated.App [String]
 runPrintPage = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrintPage" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrintPage") $
   runAt @"PrintPage" FrameworkGenerated.printSummary
 
-runFetchLinkedPage :: FrameworkGenerated.App (Maybe String)
+runFetchLinkedPage :: FrameworkGenerated.App [String]
 runFetchLinkedPage = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runFetchLinkedPage" . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FetchLinkedPage") $
   getLinkedURL >> openCrawlSession >> runAt @"FetchLinkedPage" FrameworkGenerated.fetchPage
 
@@ -260,7 +262,7 @@ readLinkedPageSummary :: FrameworkGenerated.App FrameworkGenerated.LinkedPageSum
 readLinkedPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "ExtractLinkedPage" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundExtractLinkedPage
 
-runPrintLinkedPage :: FrameworkGenerated.App (Maybe String)
+runPrintLinkedPage :: FrameworkGenerated.App [String]
 runPrintLinkedPage = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrintLinkedPage" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrintLinkedPage") $
   runAt @"PrintLinkedPage" FrameworkGenerated.printSummary
 
@@ -274,11 +276,11 @@ readCrawlSessionInfo :: FrameworkGenerated.App FrameworkGenerated.CrawlSessionIn
 readCrawlSessionInfo = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
   FrameworkRuntime.readContext "SessionContext" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundSessionContext
 
-openCrawlSession :: FrameworkGenerated.App (Maybe String)
+openCrawlSession :: FrameworkGenerated.App [String]
 openCrawlSession = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openCrawlSession" . FrameworkRuntime.openScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
   getCrawlSessionInfo >> runAt @"CrawlSession" FrameworkGenerated.openSession
 
-closeCrawlSession :: FrameworkGenerated.App (Maybe String)
+closeCrawlSession :: FrameworkGenerated.App [String]
 closeCrawlSession = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeCrawlSession" . FrameworkRuntime.closeScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
   runAt @"CrawlSession" FrameworkGenerated.closeSession
 

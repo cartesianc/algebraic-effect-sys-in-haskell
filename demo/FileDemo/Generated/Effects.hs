@@ -30,26 +30,35 @@ deriving instance Eq (TextState) => Eq FileText
 deriving instance Show (TextState) => Show FileText
 
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = GetFileNameGen | ReadFileNameGen | RunValidateFileNameGen | GetOpenedFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | DetectFileRecoveryGen | ResolveFileRecoveryGen | RunReadFileGen | GetFileTextGen | ReadFileTextGen | RunWriteFirstLineGen | RunAppendLineGen
+data MethodGen = RunLocateFileGen | RunValidateFileNameGen | GetFileNameGen | ReadFileNameGen | GetOpenedFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | DetectFileRecoveryGen | ResolveFileRecoveryGen | RunReadFileGen | GetFileTextGen | ReadFileTextGen | RunWriteFirstLineGen | RunAppendLineGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
--- handler locateFile：绑定到 FileLocation。
+-- handler locateFile：绑定到 LocateFile。
 type LocateFileLayer m = (SDK.Raises LocateFileError m, MonadIO m)
 class LocateFileHandler m where
-  locateFile :: m [Char]
+  locateFile :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "locateFile" 匹配。
 newtype LocateFileError = LocateFileError String
   deriving (Eq, Show, Read)
 
 -- handler validateFileName：绑定到 ValidateFileName。
-type ValidateFileNameLayer m = (SDK.Reads ([Char]) m, SDK.Raises ValidateFileNameError m, Monad m)
+type ValidateFileNameLayer m = (SDK.Raw m, SDK.Raises ValidateFileNameError m, Monad m)
 class ValidateFileNameHandler m where
-  validateFileName :: m ()
+  validateFileName :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "validateFileName" 匹配。
 newtype ValidateFileNameError = ValidateFileNameError String
+  deriving (Eq, Show, Read)
+
+-- handler parseFileName：绑定到 FileLocation。
+type ParseFileNameLayer m = (SDK.Raw m, SDK.Raises ParseFileNameError m, MonadIO m)
+class ParseFileNameHandler m where
+  parseFileName :: m [Char]
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseFileName" 匹配。
+newtype ParseFileNameError = ParseFileNameError String
   deriving (Eq, Show, Read)
 
 -- handler acquireFile：绑定到 FileResource。
@@ -64,7 +73,7 @@ newtype AcquireFileError = AcquireFileError String
 -- handler openSession：绑定到 FileSession。
 type OpenSessionLayer m = (SDK.Reads (FileHandle) m, SDK.Raises OpenSessionError m, MonadIO m)
 class OpenSessionHandler m where
-  openSession :: m (Maybe String)
+  openSession :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openSession" 匹配。
 newtype OpenSessionError = OpenSessionError String
@@ -73,7 +82,7 @@ newtype OpenSessionError = OpenSessionError String
 -- handler closeSession：绑定到 FileSession。
 type CloseSessionLayer m = (SDK.Reads (FileHandle) m, SDK.Raises CloseSessionError m, MonadIO m)
 class CloseSessionHandler m where
-  closeSession :: m (Maybe String)
+  closeSession :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeSession" 匹配。
 newtype CloseSessionError = CloseSessionError String
@@ -100,7 +109,7 @@ newtype ResolveFileSessionError = ResolveFileSessionError String
 -- handler readFileContent：绑定到 ReadFile。
 type ReadFileContentLayer m = (SDK.Reads (FileHandle) m, SDK.Raises ReadFileContentError m, MonadIO m)
 class ReadFileContentHandler m where
-  readFileContent :: m (Maybe String)
+  readFileContent :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "readFileContent" 匹配。
 newtype ReadFileContentError = ReadFileContentError String
@@ -118,7 +127,7 @@ newtype ParseFileTextError = ParseFileTextError String
 -- handler writeFirstLine：绑定到 WriteFirstLine。
 type WriteFirstLineLayer m = (SDK.Reads (()) m, SDK.Reads (FileHandle) m, SDK.Raises WriteFirstLineError m, MonadIO m)
 class WriteFirstLineHandler m where
-  writeFirstLine :: m (Maybe String)
+  writeFirstLine :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeFirstLine" 匹配。
 newtype WriteFirstLineError = WriteFirstLineError String
@@ -127,14 +136,14 @@ newtype WriteFirstLineError = WriteFirstLineError String
 -- handler appendLine：绑定到 AppendLine。
 type AppendLineLayer m = (SDK.Reads (FileHandle) m, SDK.Reads (String) m, SDK.Raises AppendLineError m, MonadIO m)
 class AppendLineHandler m where
-  appendLine :: m (Maybe String)
+  appendLine :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "appendLine" 匹配。
 newtype AppendLineError = AppendLineError String
   deriving (Eq, Show, Read)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
-data Errors = LocateFileFailure | ValidateFileNameFailure | AcquireFileFailure | OpenSessionFailure | CloseSessionFailure | DetectFileSessionFailure | ResolveFileSessionFailure | ReadFileContentFailure | ParseFileTextFailure | WriteFirstLineFailure | AppendLineFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+data Errors = LocateFileFailure | ValidateFileNameFailure | ParseFileNameFailure | AcquireFileFailure | OpenSessionFailure | CloseSessionFailure | DetectFileSessionFailure | ResolveFileSessionFailure | ReadFileContentFailure | ParseFileTextFailure | WriteFirstLineFailure | AppendLineFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。

@@ -101,31 +101,32 @@ streamHandle body = streamRawInput >>= maybe body pure
 -- Excu 的生成入口：每次调用都执行。
 atomicHandle
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> m (Maybe String) -> m (Maybe String)
+  => String -> m [String] -> m [String]
 atomicHandle method = atomicScope method . fmap Just
 
--- 原子句柄（Excu、Scoped.open／close）的统一出口。handler 给出的信息与是否成功
--- 组成 RawOutput，只交给挂在该句柄下的 Context parser 解析并作为资产发布；没有挂接时直接丢弃。
+-- 原子句柄（Excu、Scoped.open／close）的统一出口。handler 交出的 list 与是否成功
+-- 组成 RawOutput，只交给挂在该句柄下（可经一串 Pure）的 Context parser 解析并作为资产发布；没有挂接时直接丢弃。
 -- 以它为 Input 的入口照常继续，不读取这份输出，注入的成败也不影响它。
 -- 外层 Nothing 表示 handler 没有执行（复用的 scope 实例、重复 close），此时没有新的输出。
 atomicScope
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> m (Maybe (Maybe String)) -> m (Maybe String)
+  => String -> m (Maybe [String]) -> m [String]
 atomicScope method body = do
   replayed <- replayedOutput method
   case replayed of
-    -- 注入中的 parser 经 raw 调用它挂接的句柄：回答本次输出，不重复执行。
+    -- 注入中的 parser（或它上方的 Pure）经 raw 调用挂接的句柄：回答本次输出，不重复执行。
     Just raw -> pure (info raw)
     Nothing -> do
       consumer <- currentHandler
       outcome <- (Right <$> body) `catchError` (pure . Left)
       case outcome of
-        Right Nothing -> pure Nothing
+        Right Nothing -> pure []
         Right (Just output) -> deliver consumer (RawOutput True output) >> pure output
-        Left problem -> deliver consumer (RawOutput False (Just (message problem))) >> throwError problem
+        Left problem -> deliver consumer (RawOutput False [message problem]) >> throwError problem
   where
     -- 失败的输出不交给 Context，原失败照常沿原链传播。
-    -- 挂接的 Context 自己拉取该句柄时（requests 驱动或选择读取），由它自己的入口发布，不再注入。
+    -- 挂接的 Context 自己拉取该句柄时（requests 驱动或选择读取），由它自己的入口发布，不再注入；
+    -- 中间的 Pure 入口不改变调用者，所以经一串 Pure 拉取时仍认得出是这个 Context。
     deliver consumer raw = when (succeeded raw) $ do
       anchored <- anchoredContexts method
       when (maybe True (`notElem` map fst anchored) consumer) $

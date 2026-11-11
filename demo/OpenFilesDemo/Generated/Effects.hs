@@ -55,7 +55,7 @@ newtype AcquireFilesError = AcquireFilesError String
 -- handler openFiles：绑定到 FileSession。
 type OpenFilesLayer m = (SDK.Reads ([FileHandle]) m, SDK.Raises OpenFilesError m, MonadIO m)
 class OpenFilesHandler m where
-  openFiles :: m (Maybe String)
+  openFiles :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openFiles" 匹配。
 newtype OpenFilesError = OpenFilesError String
@@ -64,7 +64,7 @@ newtype OpenFilesError = OpenFilesError String
 -- handler closeFiles：绑定到 FileSession。
 type CloseFilesLayer m = (SDK.Reads ([FileHandle]) m, SDK.Raises CloseFilesError m, MonadIO m)
 class CloseFilesHandler m where
-  closeFiles :: m (Maybe String)
+  closeFiles :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeFiles" 匹配。
 newtype CloseFilesError = CloseFilesError String
@@ -73,7 +73,7 @@ newtype CloseFilesError = CloseFilesError String
 -- handler holdFiles：绑定到 HoldFiles、ReleaseFiles。
 type HoldFilesLayer m = (SDK.Raises HoldFilesError m, MonadIO m)
 class HoldFilesHandler m where
-  holdFiles :: m (Maybe String)
+  holdFiles :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "holdFiles" 匹配。
 newtype HoldFilesError = HoldFilesError String
@@ -82,7 +82,7 @@ newtype HoldFilesError = HoldFilesError String
 -- handler inspectFiles：绑定到 InspectFiles。
 type InspectFilesLayer m = (SDK.Reads ([FileHandle]) m, SDK.Raises InspectFilesError m, MonadIO m)
 class InspectFilesHandler m where
-  inspectFiles :: m (Maybe String)
+  inspectFiles :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "inspectFiles" 匹配。
 newtype InspectFilesError = InspectFilesError String
@@ -100,7 +100,7 @@ newtype SnapshotFilesError = SnapshotFilesError String
 -- handler finishInspection：绑定到 FinishInspection。
 type FinishInspectionLayer m = (SDK.Reads ([FileHandle]) m, SDK.Raises FinishInspectionError m, MonadIO m)
 class FinishInspectionHandler m where
-  finishInspection :: m (Maybe String)
+  finishInspection :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "finishInspection" 匹配。
 newtype FinishInspectionError = FinishInspectionError String

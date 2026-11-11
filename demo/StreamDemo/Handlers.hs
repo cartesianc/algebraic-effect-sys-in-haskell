@@ -22,12 +22,12 @@ import Text.Printf (printf)
 instance ConnectSensorLayer m => ConnectSensorHandler m where
   connectSensor = do
     liftIO (putStrLn "[sensor] connected")
-    pure Nothing
+    pure []
 
 instance DisconnectSensorLayer m => DisconnectSensorHandler m where
   disconnectSensor = do
     liftIO (putStrLn "[sensor] disconnected")
-    pure Nothing
+    pure []
 
 -- 一次只取一份原始读数；节奏由 handler 自己的等待决定，SDK 不加间隔。
 instance NextReadingLayer m => NextReadingHandler m where
@@ -36,11 +36,11 @@ instance NextReadingLayer m => NextReadingHandler m where
     seconds <- liftIO getMonotonicTime
     pure (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
 
--- parser 挂在 Stream 下：raw 是会话本次取得的原始读数（不会再读一次），返回一份资产的表示值；
+-- parser 挂在 Stream 下：raw 是会话本次取得的一份原始读数（单元素 list，不会再读一次），返回一份资产的表示值；
 -- 发布、历史和交付由 SDK 完成。
 instance ParseTemperatureLayer m => ParseTemperatureHandler m where
   parseTemperature = do
-    reading <- maybe "" id <$> raw
+    reading <- concat <$> raw
     case reads reading of
       [(value, "")] -> pure (Temperature value)
       _ -> raise (ParseTemperatureError ("unreadable sensor output: " ++ reading))
@@ -54,7 +54,7 @@ instance NextBeatLayer m => NextBeatHandler m where
 
 instance ParseBeatLayer m => ParseBeatHandler m where
   parseBeat = do
-    tick <- maybe "" id <$> raw
+    tick <- concat <$> raw
     case reads tick of
       [(value, "")] -> pure value
       _ -> raise (ParseBeatError ("unreadable clock output: " ++ tick))
@@ -62,7 +62,7 @@ instance ParseBeatLayer m => ParseBeatHandler m where
 instance AnnounceLayer m => AnnounceHandler m where
   announce = do
     liftIO (putStrLn "Monitoring the sensor; press Ctrl-C to stop.")
-    pure Nothing
+    pure []
 
 -- 同一单元的一次执行里，ShowTemperature 与 CheckTrend 读到同一份交付视图。
 instance ShowTemperatureLayer m => ShowTemperatureHandler m where
@@ -72,7 +72,7 @@ instance ShowTemperatureLayer m => ShowTemperatureHandler m where
       Just (Temperature value) ->
         liftIO (printf "reading #%d: %.1f C\n" (length (historyEntries samples)) value)
       Nothing -> pure ()
-    pure Nothing
+    pure []
 
 instance CheckTrendLayer m => CheckTrendHandler m where
   checkTrend = do
@@ -85,10 +85,10 @@ instance CheckTrendLayer m => CheckTrendHandler m where
         liftIO (printf "  trend %s, average of the last %d: %.2f C\n"
           (if current >= previous then "rising" else "falling" :: String) (length recent) average)
       _ -> liftIO (putStrLn "  trend: waiting for a second reading")
-    pure Nothing
+    pure []
 
 instance ReportHeartbeatLayer m => ReportHeartbeatHandler m where
   reportHeartbeat = do
     beats <- require @(History Int)
     liftIO (putStrLn ("[heartbeat] #" ++ show (length (historyEntries beats))))
-    pure Nothing
+    pure []

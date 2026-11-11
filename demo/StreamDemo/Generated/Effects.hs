@@ -33,7 +33,7 @@ instance SDK.NFData MethodGen
 -- handler connectSensor：绑定到 SensorLink。
 type ConnectSensorLayer m = (SDK.Raises ConnectSensorError m, MonadIO m)
 class ConnectSensorHandler m where
-  connectSensor :: m (Maybe String)
+  connectSensor :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "connectSensor" 匹配。
 newtype ConnectSensorError = ConnectSensorError String
@@ -42,7 +42,7 @@ newtype ConnectSensorError = ConnectSensorError String
 -- handler disconnectSensor：绑定到 SensorLink。
 type DisconnectSensorLayer m = (SDK.Raises DisconnectSensorError m, MonadIO m)
 class DisconnectSensorHandler m where
-  disconnectSensor :: m (Maybe String)
+  disconnectSensor :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "disconnectSensor" 匹配。
 newtype DisconnectSensorError = DisconnectSensorError String
@@ -87,7 +87,7 @@ newtype ParseBeatError = ParseBeatError String
 -- handler announce：绑定到 Announce。
 type AnnounceLayer m = (SDK.Raises AnnounceError m, MonadIO m)
 class AnnounceHandler m where
-  announce :: m (Maybe String)
+  announce :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "announce" 匹配。
 newtype AnnounceError = AnnounceError String
@@ -96,7 +96,7 @@ newtype AnnounceError = AnnounceError String
 -- handler showTemperature：绑定到 ShowTemperature。
 type ShowTemperatureLayer m = (SDK.Reads (SDK.History (Temperature)) m, SDK.Raises ShowTemperatureError m, MonadIO m)
 class ShowTemperatureHandler m where
-  showTemperature :: m (Maybe String)
+  showTemperature :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "showTemperature" 匹配。
 newtype ShowTemperatureError = ShowTemperatureError String
@@ -105,7 +105,7 @@ newtype ShowTemperatureError = ShowTemperatureError String
 -- handler checkTrend：绑定到 CheckTrend。
 type CheckTrendLayer m = (SDK.Reads (SDK.History (Temperature)) m, SDK.Raises CheckTrendError m, MonadIO m)
 class CheckTrendHandler m where
-  checkTrend :: m (Maybe String)
+  checkTrend :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "checkTrend" 匹配。
 newtype CheckTrendError = CheckTrendError String
@@ -114,7 +114,7 @@ newtype CheckTrendError = CheckTrendError String
 -- handler reportHeartbeat：绑定到 ReportHeartbeat。
 type ReportHeartbeatLayer m = (SDK.Reads (SDK.History (Int)) m, SDK.Raises ReportHeartbeatError m, MonadIO m)
 class ReportHeartbeatHandler m where
-  reportHeartbeat :: m (Maybe String)
+  reportHeartbeat :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "reportHeartbeat" 匹配。
 newtype ReportHeartbeatError = ReportHeartbeatError String

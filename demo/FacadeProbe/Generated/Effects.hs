@@ -114,7 +114,7 @@ newtype AcquireFileError = AcquireFileError String
 -- handler openTextFile：绑定到 ReportScope、ReplyScope。
 type OpenTextFileLayer m = (SDK.Reads (TextFile) m, SDK.Raises OpenTextFileError m, MonadIO m)
 class OpenTextFileHandler m where
-  openTextFile :: m (Maybe String)
+  openTextFile :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openTextFile" 匹配。
 newtype OpenTextFileError = OpenTextFileError String
@@ -123,7 +123,7 @@ newtype OpenTextFileError = OpenTextFileError String
 -- handler closeTextFile：绑定到 ReportScope、ReplyScope。
 type CloseTextFileLayer m = (SDK.Reads (TextFile) m, SDK.Raises CloseTextFileError m, MonadIO m)
 class CloseTextFileHandler m where
-  closeTextFile :: m (Maybe String)
+  closeTextFile :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeTextFile" 匹配。
 newtype CloseTextFileError = CloseTextFileError String
@@ -132,7 +132,7 @@ newtype CloseTextFileError = CloseTextFileError String
 -- handler writeText：绑定到 WriteReport、WriteReply。
 type WriteTextLayer m = (SDK.Reads (Body) m, SDK.Reads (TextFile) m, SDK.Raises WriteTextError m, MonadIO m)
 class WriteTextHandler m where
-  writeText :: m (Maybe String)
+  writeText :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeText" 匹配。
 newtype WriteTextError = WriteTextError String
@@ -141,7 +141,7 @@ newtype WriteTextError = WriteTextError String
 -- handler markRead：绑定到 MarkReply。
 type MarkReadLayer m = (SDK.Raises MarkReadError m, MonadIO m)
 class MarkReadHandler m where
-  markRead :: m (Maybe String)
+  markRead :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "markRead" 匹配。
 newtype MarkReadError = MarkReadError String
@@ -150,7 +150,7 @@ newtype MarkReadError = MarkReadError String
 -- handler readText：绑定到 ReadReport、ReadReply。
 type ReadTextLayer m = (SDK.Reads ([Char]) m, SDK.Raises ReadTextError m, MonadIO m)
 class ReadTextHandler m where
-  readText :: m (Maybe String)
+  readText :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "readText" 匹配。
 newtype ReadTextError = ReadTextError String
@@ -168,7 +168,7 @@ newtype CountLinesError = CountLinesError String
 -- handler showCount：绑定到 ShowReport、ShowReply。
 type ShowCountLayer m = (SDK.Reads (LineCount) m, SDK.Raises ShowCountError m, MonadIO m)
 class ShowCountHandler m where
-  showCount :: m (Maybe String)
+  showCount :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "showCount" 匹配。
 newtype ShowCountError = ShowCountError String
@@ -186,7 +186,7 @@ newtype InspectFileError = InspectFileError String
 -- handler describeBlank：绑定到 OnBlank。
 type DescribeBlankLayer m = (SDK.Reads (()) m, SDK.Raises DescribeBlankError m, MonadIO m)
 class DescribeBlankHandler m where
-  describeBlank :: m (Maybe String)
+  describeBlank :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "describeBlank" 匹配。
 newtype DescribeBlankError = DescribeBlankError String
@@ -195,7 +195,7 @@ newtype DescribeBlankError = DescribeBlankError String
 -- handler describeFilled：绑定到 OnFilled。
 type DescribeFilledLayer m = (SDK.Reads (Body) m, SDK.Raises DescribeFilledError m, MonadIO m)
 class DescribeFilledHandler m where
-  describeFilled :: m (Maybe String)
+  describeFilled :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "describeFilled" 匹配。
 newtype DescribeFilledError = DescribeFilledError String
@@ -231,7 +231,7 @@ newtype ParseLevelError = ParseLevelError String
 -- handler showLevel：绑定到 ShowA、ShowB。
 type ShowLevelLayer m = (SDK.Reads (SDK.History (Level)) m, SDK.Raises ShowLevelError m, MonadIO m)
 class ShowLevelHandler m where
-  showLevel :: m (Maybe String)
+  showLevel :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "showLevel" 匹配。
 newtype ShowLevelError = ShowLevelError String

@@ -31,7 +31,7 @@ instance PrepareFilesLayer m => PrepareFilesHandler m where
       mapM_ ((`writeFile` "") . (outputDirectory </>)) ["one.txt", "two.txt", "events.txt"]
       writeFile (outputDirectory </> "selected.txt") (outputDirectory </> "one.txt")
     either (raise . PrepareFilesError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 -- 选择由普通 Excu 节点改写；下一条使用闭包的 requests 会重新读取它。
 instance SelectSecondLayer m => SelectSecondHandler m where
@@ -39,14 +39,14 @@ instance SelectSecondLayer m => SelectSecondHandler m where
     let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
     outcome <- liftIO (tryIOError (writeFile (outputDirectory </> "selected.txt") (outputDirectory </> "two.txt")))
     either (raise . SelectSecondError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance SelectFirstLayer m => SelectFirstHandler m where
   selectFirst = do
     let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
     outcome <- liftIO (tryIOError (writeFile (outputDirectory </> "selected.txt") (outputDirectory </> "one.txt")))
     either (raise . SelectFirstError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 -- 参数确实由 parser 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
 instance SelectedFileLayer m => SelectedFileHandler m where
@@ -76,7 +76,7 @@ instance OpenSelectedFileLayer m => OpenSelectedFileHandler m where
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     outcome <- liftIO (tryIOError (appendFile journal ("open " ++ path ++ "\n")))
     either (raise . OpenSelectedFileError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 instance CloseSelectedFileLayer m => CloseSelectedFileHandler m where
   closeSelectedFile = do
@@ -86,7 +86,7 @@ instance CloseSelectedFileLayer m => CloseSelectedFileHandler m where
       hClose file
       appendFile journal ("close " ++ path ++ "\n")
     either (raise . CloseSelectedFileError . displayException) pure outcome
-    pure Nothing
+    pure []
 
 -- UseFirst、UseSecond、ReopenFirst 共用：scope 内 require 稳定参数与本条闭包选中的实例。
 instance CheckSelectionLayer m => CheckSelectionHandler m where
@@ -101,7 +101,7 @@ instance CheckSelectionLayer m => CheckSelectionHandler m where
       hFlush file
     either (raise . CheckSelectionError . displayException) pure outcome
     liftIO (putStrLn ("[use] " ++ takeFileName path ++ ": the current argument selected this instance; its Handle is live"))
-    pure Nothing
+    pure []
 
 -- 各使用闭包已退出并自动关闭实例；此处只读日志和文件，不 require 旧资源。
 instance CheckJournalLayer m => CheckJournalHandler m where
@@ -128,4 +128,4 @@ instance CheckJournalLayer m => CheckJournalHandler m where
       putStrLn "[check] each use closure opened the instance its current argument selected and closed it on exit"
       putStrLn "[check] actual acquisitions/closures: file 1 = 2/2; file 2 = 1/1"
       putStrLn "[check] three argument requests, three open calls; require reuses the stable parameter within each chain"
-    pure Nothing
+    pure []

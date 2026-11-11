@@ -63,7 +63,7 @@ newtype LinkedURLError = LinkedURLError String
 -- handler fetchPage：绑定到 FetchPage、FetchLinkedPage。
 type FetchPageLayer m = (SDK.Reads (PageURL) m, SDK.Reads (SessionInfo) m, SDK.Raises FetchPageError m, MonadIO m)
 class FetchPageHandler m where
-  fetchPage :: m (Maybe String)
+  fetchPage :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "fetchPage" 匹配。
 newtype FetchPageError = FetchPageError String
@@ -81,7 +81,7 @@ newtype ExtractSummaryError = ExtractSummaryError String
 -- handler printSummary：绑定到 PrintPage、PrintLinkedPage。
 type PrintSummaryLayer m = (SDK.Reads (PageSummary) m, SDK.Raises PrintSummaryError m, MonadIO m)
 class PrintSummaryHandler m where
-  printSummary :: m (Maybe String)
+  printSummary :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "printSummary" 匹配。
 newtype PrintSummaryError = PrintSummaryError String
@@ -99,7 +99,7 @@ newtype SessionInfoError = SessionInfoError String
 -- handler openSession：绑定到 CrawlSession。
 type OpenSessionLayer m = (SDK.Reads (SessionInfo) m, SDK.Raises OpenSessionError m, MonadIO m)
 class OpenSessionHandler m where
-  openSession :: m (Maybe String)
+  openSession :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openSession" 匹配。
 newtype OpenSessionError = OpenSessionError String
@@ -108,7 +108,7 @@ newtype OpenSessionError = OpenSessionError String
 -- handler closeSession：绑定到 CrawlSession。
 type CloseSessionLayer m = (SDK.Reads (SessionInfo) m, SDK.Raises CloseSessionError m, MonadIO m)
 class CloseSessionHandler m where
-  closeSession :: m (Maybe String)
+  closeSession :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeSession" 匹配。
 newtype CloseSessionError = CloseSessionError String
