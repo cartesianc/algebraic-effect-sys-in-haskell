@@ -38,7 +38,7 @@ deriving instance Eq (SessionInfo) => Eq CrawlSessionInfo
 deriving instance Show (SessionInfo) => Show CrawlSessionInfo
 
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = GetStartURLGen | ReadStartURLGen | GetLinkedURLGen | ReadLinkedURLGen | RunFetchPageGen | GetStartPageSummaryGen | ReadStartPageSummaryGen | RunPrintPageGen | RunFetchLinkedPageGen | GetLinkedPageSummaryGen | ReadLinkedPageSummaryGen | RunPrintLinkedPageGen | GetCrawlSessionInfoGen | ReadCrawlSessionInfoGen | OpenCrawlSessionGen | CloseCrawlSessionGen
+data MethodGen = GetStartURLGen | ReadStartURLGen | GetLinkedURLGen | ReadLinkedURLGen | RunFetchPageGen | RunKeepPageBodyGen | GetStartPageSummaryGen | ReadStartPageSummaryGen | RunPrintPageGen | RunFetchLinkedPageGen | RunKeepLinkedPageBodyGen | GetLinkedPageSummaryGen | ReadLinkedPageSummaryGen | RunPrintLinkedPageGen | GetCrawlSessionInfoGen | ReadCrawlSessionInfoGen | OpenCrawlSessionGen | CloseCrawlSessionGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
@@ -67,6 +67,15 @@ class FetchPageHandler m where
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "fetchPage" 匹配。
 newtype FetchPageError = FetchPageError String
+  deriving (Eq, Show, Read)
+
+-- handler dropBlankBodies：绑定到 KeepPageBody、KeepLinkedPageBody。
+type DropBlankBodiesLayer m = (SDK.Raw m, SDK.Raises DropBlankBodiesError m, Monad m)
+class DropBlankBodiesHandler m where
+  dropBlankBodies :: m [String]
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "dropBlankBodies" 匹配。
+newtype DropBlankBodiesError = DropBlankBodiesError String
   deriving (Eq, Show, Read)
 
 -- handler extractSummary：绑定到 ExtractPage、ExtractLinkedPage。
@@ -115,7 +124,7 @@ newtype CloseSessionError = CloseSessionError String
   deriving (Eq, Show, Read)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
-data Errors = StartURLFailure | LinkedURLFailure | FetchPageFailure | ExtractSummaryFailure | PrintSummaryFailure | SessionInfoFailure | OpenSessionFailure | CloseSessionFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+data Errors = StartURLFailure | LinkedURLFailure | FetchPageFailure | DropBlankBodiesFailure | ExtractSummaryFailure | PrintSummaryFailure | SessionInfoFailure | OpenSessionFailure | CloseSessionFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。

@@ -16,6 +16,7 @@ import Crawler.Types
 import Control.Concurrent (forkFinally, killThread, newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (bracket, displayException, throwIO)
 import Control.Monad.IO.Class (liftIO)
+import Data.Char (isSpace)
 import Data.List (intercalate)
 import System.Exit (ExitCode(..))
 import System.IO (hFlush, hGetContents', hSetEncoding, stdout, utf8)
@@ -26,7 +27,7 @@ import Text.HTML.TagSoup
 
 
 -- 3. Handler code：handler 只按表示类型 require；读的是哪份资产由绑定它的 effect 的 demands 决定。
--- 抓取是原子句柄，只执行 IO 并交出网页正文；解析由挂在它下面的 Context 产值；
+-- 抓取是原子句柄，只执行 IO 并交出网页正文；Pure 去掉空白正文，解析由挂在 Pure 下的 Context 产值；
 -- 打印只完成操作，不交出输出。
 instance StartURLLayer m => StartURLHandler m where
   startURL = pure (PageURL "https://www.google.com")
@@ -64,8 +65,12 @@ instance FetchPageLayer m => FetchPageHandler m where
       Right (ExitFailure _, _, message) -> raise (FetchPageError (url ++ ": " ++ message))
       Right (ExitSuccess, html, _) -> pure [html]
 
--- 挂在抓取句柄下，两个解析共用：raw 是本次抓取交出的 list（一页正文）。剧本执行抓取时由 SDK 注入，不重新抓取；
--- 被 requests 驱动时，raw 执行抓取句柄，启动整条链。
+-- Pure，两个抓取链共用：raw 是本次抓取交出的 list，只留下有内容的正文；没有 IO，也不读资产。
+instance DropBlankBodiesLayer m => DropBlankBodiesHandler m where
+  dropBlankBodies = filter (not . all isSpace) <$> raw
+
+-- 挂在 Pure 下，两个解析共用：raw 是去掉空白后的 list（一页正文）。AST 执行抓取时由 SDK 注入，
+-- 本次输出经 Pure 交到这里，不重新抓取；被 requests 驱动时，raw 经 Pure 执行抓取句柄，启动整条链。
 instance ExtractSummaryLayer m => ExtractSummaryHandler m where
   extractSummary = do
     fetched <- raw

@@ -10,7 +10,8 @@ import Crawler.Types
 -- Asset @表示类型 "资产名" 把表示类型细化为以资产名命名的资产（refinement asset），demands 以资产名引用。
 -- handler 按表示类型 require；同一个 handler 注册到不同 effect，由各自的 demands 决定读哪份资产。
 -- requests 在入口驱动资产的生产链，requires 只读取；input 是前驱，gen 在 handler 之前执行它。
--- 抓取是原子句柄（Excu），只执行 IO；解析 Context 以 input 挂在抓取句柄下，用 raw 读取它的输出。
+-- 抓取是原子句柄（Excu），只执行 IO，交出 [String]；Pure 在生产链中去掉空白正文；
+-- 解析 Context 以 input 挂在 Pure 下，用 raw 读取它变换后的 list。
 -- 无开启输入的 scope 在实际重叠的使用闭包之间共享。业务产值统一由 Context 提供，失败仍用 raise。
 effects :: [EffectSpec]
 effects =
@@ -33,10 +34,17 @@ effects =
       , input = "CrawlSession"
       , demands = [requests "StartURL", requires "StartURL", requires "CrawlSessionInfo"]
       }
+  -- 两个 Pure 共用 dropBlankBodies：只变换上层交出的 list，不声明 demands。
+  , EffectSpec
+      { name = "KeepPageBody"
+      , typing = Pure { handler = Just "dropBlankBodies" }
+      , input = "FetchPage"
+      , demands = []
+      }
   , EffectSpec
       { name = "ExtractPage"
       , typing = Context { asset = Asset @PageSummary "StartPageSummary", parser = Just "extractSummary", require = True, stream = False }
-      , input = "FetchPage"
+      , input = "KeepPageBody"
       , demands = [requires "StartURL"]
       }
   , EffectSpec
@@ -52,9 +60,15 @@ effects =
       , demands = [requests "LinkedURL", requires "LinkedURL", requires "CrawlSessionInfo"]
       }
   , EffectSpec
+      { name = "KeepLinkedPageBody"
+      , typing = Pure { handler = Just "dropBlankBodies" }
+      , input = "FetchLinkedPage"
+      , demands = []
+      }
+  , EffectSpec
       { name = "ExtractLinkedPage"
       , typing = Context { asset = Asset @PageSummary "LinkedPageSummary", parser = Just "extractSummary", require = True, stream = False }
-      , input = "FetchLinkedPage"
+      , input = "KeepLinkedPageBody"
       , demands = [requires "LinkedURL"]
       }
   , EffectSpec

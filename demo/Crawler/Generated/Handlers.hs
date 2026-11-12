@@ -19,7 +19,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module Crawler.Generated.Handlers (handlerSourceFingerprint, getStartURL, readStartURL, getLinkedURL, readLinkedURL, runFetchPage, getStartPageSummary, readStartPageSummary, runPrintPage, runFetchLinkedPage, getLinkedPageSummary, readLinkedPageSummary, runPrintLinkedPage, getCrawlSessionInfo, readCrawlSessionInfo, openCrawlSession, closeCrawlSession, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
+module Crawler.Generated.Handlers (handlerSourceFingerprint, getStartURL, readStartURL, getLinkedURL, readLinkedURL, runFetchPage, runKeepPageBody, getStartPageSummary, readStartPageSummary, runPrintPage, runFetchLinkedPage, runKeepLinkedPageBody, getLinkedPageSummary, readLinkedPageSummary, runPrintLinkedPage, getCrawlSessionInfo, readCrawlSessionInfo, openCrawlSession, closeCrawlSession, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
 
 import qualified Framework.Generated as FrameworkRuntime
 import qualified Crawler.Generated.Effects as FrameworkGenerated
@@ -33,6 +33,7 @@ import Crawler.Types
 import Control.Concurrent (forkFinally, killThread, newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (bracket, displayException, throwIO)
 import Control.Monad.IO.Class (liftIO)
+import Data.Char (isSpace)
 import Data.List (intercalate)
 import System.Exit (ExitCode(..))
 import System.IO (hFlush, hGetContents', hSetEncoding, stdout, utf8)
@@ -43,7 +44,7 @@ import Text.HTML.TagSoup
 
 
 -- 3. Handler code：handler 只按表示类型 require；读的是哪份资产由绑定它的 effect 的 demands 决定。
--- 抓取是原子句柄，只执行 IO 并交出网页正文；解析由挂在它下面的 Context 产值；
+-- 抓取是原子句柄，只执行 IO 并交出网页正文；Pure 去掉空白正文，解析由挂在 Pure 下的 Context 产值；
 -- 打印只完成操作，不交出输出。
 instance StartURLLayer m => StartURLHandler m where
   startURL = pure (PageURL "https://www.google.com")
@@ -81,8 +82,12 @@ instance FetchPageLayer m => FetchPageHandler m where
       Right (ExitFailure _, _, message) -> raise (FetchPageError (url ++ ": " ++ message))
       Right (ExitSuccess, html, _) -> pure [html]
 
--- 挂在抓取句柄下，两个解析共用：raw 是本次抓取交出的 list（一页正文）。剧本执行抓取时由 SDK 注入，不重新抓取；
--- 被 requests 驱动时，raw 执行抓取句柄，启动整条链。
+-- Pure，两个抓取链共用：raw 是本次抓取交出的 list，只留下有内容的正文；没有 IO，也不读资产。
+instance DropBlankBodiesLayer m => DropBlankBodiesHandler m where
+  dropBlankBodies = filter (not . all isSpace) <$> raw
+
+-- 挂在 Pure 下，两个解析共用：raw 是去掉空白后的 list（一页正文）。AST 执行抓取时由 SDK 注入，
+-- 本次输出经 Pure 交到这里，不重新抓取；被 requests 驱动时，raw 经 Pure 执行抓取句柄，启动整条链。
 instance ExtractSummaryLayer m => ExtractSummaryHandler m where
   extractSummary = do
     fetched <- raw
@@ -138,7 +143,7 @@ instance CloseSessionLayer m => CloseSessionHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "54f798bb4e6e713b06a40810f5d67ebd"
+handlerSourceFingerprint = Just "1434b28d58664b93c295683b09237f73"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -156,6 +161,10 @@ instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkG
 instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.FetchPageError (At effect) where
   raise (FrameworkGenerated.FetchPageError description) = At (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.FetchPageFailure description)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DropBlankBodiesError (At effect) where
+  raise (FrameworkGenerated.DropBlankBodiesError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.DropBlankBodiesFailure description)
 
 instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ExtractSummaryError (At effect) where
   raise (FrameworkGenerated.ExtractSummaryError description) = At (FrameworkRuntime.failEffect
@@ -204,11 +213,17 @@ instance FrameworkRuntime.Reads (PageSummary) (At "PrintLinkedPage") where
 instance FrameworkRuntime.Reads (SessionInfo) (At "CrawlSession") where
   require = At ((\(FrameworkGenerated.CrawlSessionInfo value) -> value) <$> readCrawlSessionInfo)
 
-instance FrameworkRuntime.Raw (At "ExtractPage") where
+instance FrameworkRuntime.Raw (At "KeepPageBody") where
   raw = At (runFetchPage)
 
-instance FrameworkRuntime.Raw (At "ExtractLinkedPage") where
+instance FrameworkRuntime.Raw (At "ExtractPage") where
+  raw = At (runKeepPageBody)
+
+instance FrameworkRuntime.Raw (At "KeepLinkedPageBody") where
   raw = At (runFetchLinkedPage)
+
+instance FrameworkRuntime.Raw (At "ExtractLinkedPage") where
+  raw = At (runKeepLinkedPageBody)
 
 getStartURL :: FrameworkGenerated.App FrameworkGenerated.StartURL
 getStartURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "StartPage"
@@ -234,6 +249,10 @@ runFetchPage :: FrameworkGenerated.App [String]
 runFetchPage = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runFetchPage" . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FetchPage") $
   getStartURL >> openCrawlSession >> runAt @"FetchPage" FrameworkGenerated.fetchPage
 
+runKeepPageBody :: FrameworkGenerated.App [String]
+runKeepPageBody = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"]) $
+  runAt @"KeepPageBody" FrameworkGenerated.dropBlankBodies
+
 getStartPageSummary :: FrameworkGenerated.App FrameworkGenerated.StartPageSummary
 getStartPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractPage"
     Nothing
@@ -251,6 +270,10 @@ runPrintPage = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailu
 runFetchLinkedPage :: FrameworkGenerated.App [String]
 runFetchLinkedPage = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runFetchLinkedPage" . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FetchLinkedPage") $
   getLinkedURL >> openCrawlSession >> runAt @"FetchLinkedPage" FrameworkGenerated.fetchPage
+
+runKeepLinkedPageBody :: FrameworkGenerated.App [String]
+runKeepLinkedPageBody = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"]) $
+  runAt @"KeepLinkedPageBody" FrameworkGenerated.dropBlankBodies
 
 getLinkedPageSummary :: FrameworkGenerated.App FrameworkGenerated.LinkedPageSummary
 getLinkedPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractLinkedPage"
