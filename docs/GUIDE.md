@@ -487,8 +487,8 @@ typing = Error
 | 枚举 | 匹配的失败 | 参数须是 |
 | --- | --- | --- |
 | `RaisedBy "x"` | handler `x` 在方法体里 `raise` 的业务失败，不论它绑定在哪个 effect | 已注册的 handler 名 |
-| `ScopeFaultIn "X"` | Scoped `X` 的资源协议故障（开启、关闭、实例冲突等） | Scoped effect |
-| `ContextFaultIn "X"` | Context `X` 的取值协议故障（尚未初始化、未声明的取值、分支不匹配等） | Context effect |
+| `ScopeFaultIn "X"` | Scoped `X` 的资源协议故障（开启参数、实例归属、关闭等，见 [SDK 协议故障](#sdk-faults)） | Scoped effect |
+| `ContextFaultIn "X"` | Context `X` 的取值协议故障（缺值、多份可选的值、分支不匹配，见 [SDK 协议故障](#sdk-faults)） | Context effect |
 
 Context 协议故障的来源一律记为生产方的注册名，不是契约名。
 
@@ -971,6 +971,46 @@ reading #2: 24.0 C
 - **Error 处置**：SDK 捕获失败后，按 `handles` 匹配失败路径上 scope 关联的 Error，沿资源依赖从外层到内层依次执行它们的 `detect`／`resolve`。不在任何 scope 中的失败不经 Error 处置。
 - **处置不改变结果**：处置之后原失败仍然继续传播。
 
+<a id="sdk-faults"></a>
+#### SDK 协议故障
+
+除了 handler 自己 `raise` 的失败，SDK 在取值和资源生命周期出错时也报失败。这些故障只有两个类型，定义在 [Protocol.hs](../sdk/Framework/Runtime/Protocol.hs)；每个程序生成的 `Errors` 里各有一个固定构造器承载它们：
+
+- **`ContextBindingError ContextFault`**：取值协议故障。`origin` 是生产这份资产的 Context 注册名（不是契约名），Error 用 `ContextFaultIn "该 Context"` 匹配。
+- **`ScopeBindingError ScopeFault`**：资源协议故障。`origin` 是 Scoped 的注册名，Error 用 `ScopeFaultIn "该 Scoped"` 匹配。
+
+它们和业务失败走同一套协议：沿调用链传播，按 scope 进入 Error 处置，最后以 `Failed` 返回。完整协议见[主设计：Context](LATEST_DESIGN.md#context)与 [scope](LATEST_DESIGN.md#scope)。
+
+**取值故障（`ContextFault`）**
+
+| 故障 | 什么时候报 | 怎么改 |
+| --- | --- | --- |
+| `ContextNotInitialized` | 在不等待的场合缺值：Error 诊断、自动收尾与 close 期间；读取 scope 的资源 Context，却没有仍开着的实例提供它；持续资产在不能启动会话的场合（诊断、收尾）没有本次视图。普通业务读取缺值时等待发布，不报这个故障 | 在读取之前的链上用 `requests` 驱动它；资源只在 scope 内读取（Input 链上有对应的 Scoped） |
+| `AmbiguousContextBinding` | 读取时有两份以上可选的值：普通资产有多个已发布的可见来源（生成期通常已拦下，运行时兜底）；或资源 Context 在可见的 scope 中有两个仍开着的实例各持有一份，而本次调用没有捕获其中任何一份 | 细化资产或调整 AST；让读取只处在一个 scope 实例中 |
+| `CaseNotSelected 契约` | 读取和类型资产的分支契约（例如 `FileTextBlank`），资产当前却是另一个构造器 | 分支契约只在选中对应构造器的 alternative 候选中读取；其他地方读取基础资产再 `case` |
+
+**资源故障（`ScopeFault`）**
+
+close 由 SDK 的自动收尾调用，handler 不直接调用；下表中的 close 都指这个过程。
+
+| 故障 | 什么时候报 | 怎么改 |
+| --- | --- | --- |
+| `ScopeInputsMissing [参数]` | 带开启参数的 scope 要在参数齐备后才能选定实例；资源发布或 open 结束时仍有参数没读到，例如资源 parser 先获取资源、后读取参数。持续资产作为开启参数时也会报，这是当前限制（见 [Stream 规范 9.3](STREAM_LIFELONG.md#failures)） | 在当前链上先用 `requests` 驱动参数；资源 parser 先读参数，再获取资源 |
+| `ScopeInputAfterOpen 参数` | 实例选定之后，这次开启又 request 了开启参数，或读到与选定时不同的值 | 选定实例前确定全部参数；open 范围内不再刷新参数 |
+| `ScopeContextMismatch 资源` | 一份资源绑定只能归一个实例：open 要认领的资源已属于另一个 scope 或同注册的另一个实例；或 close 读到的资源属于别的实例 | 不同实例各自驱动自己的资源，不共用同一次生产 |
+| `ScopeContextMissing 资源` | open 结束时，选中的实例里没有资源绑定；或 close 定位不到要关闭的实例：本次调用没有这个 scope 的资源绑定，或 close 的 handler 没有读取资源 | Scoped 在 demands 里 `requests` 并 `requires` 资源；open／close 的 handler 用 `require` 读取资源 |
+| `ScopeReentry` | 同一个 scope 在自己的 open 或 close 过程中又被 open 或 close。生成期的环检查通常会先拦下 | 调整 `input`／`demands`，让 scope 不依赖自身 |
+| `ScopeCleanupInProgress` | 自动收尾或 close 执行期间，调用链又要开启 scope | close 经过的链上不开启 scope |
+| `ScopeInUse` | close 时实例仍有其他使用者，或已被别的调用预约关闭；或在 open、close、自动收尾持有一个实例时，又要等另一个正在关闭的实例：SDK 不等待，直接报错，避免互相等待 | 检查 scope 之间的依赖，不在一个 scope 的 open／close 中读取另一个正在收尾的资源 |
+| `ScopeIsClosed` | 实例 close 之后，又读取本次调用早先捕获的、属于它的资源绑定 | 只在 scope 的使用范围内读取资源 |
+| `ScopeInterrupted 原因` | open 或 close 的方法体被原生异常（包括取消）打断。实例随之失效，之后同参 open 继续报这次失败 | 检查 open／close 中的 IO，把可预期的错误转换成 `raise` |
+| `ScopeCleanupInterrupted 原因` | 自动收尾执行 close 时被原生异常打断 | 检查 close 中的 IO |
+| `ScopeNotOpen` | close 遇到从未开启的实例 | 自动收尾只为开启过的实例登记 close，正常写法不会触发；出现时按 SDK 问题报告 |
+
+open 方法体自己 `raise` 时，实例同样失效；之后同参 open 报的是那次原失败，不是新的协议故障。
+
+**不走 Failure 的错误**：少数情况直接抛出 IO 异常，不进入 Error 处置。生成产物与当前程序不一致时（提示 `changed or has not been generated`，或 `Cannot initialize effect prototype`），按提示重新生成；运行结束时仍要启动会话、运行图中找不到生成的结构等，表示 SDK 内部约定被打破，重新生成后仍出现时按 SDK 问题报告。
+
 <a id="development"></a>
 
 ## 开发流程
@@ -987,9 +1027,13 @@ reading #2: 24.0 C
 
 | 情况 | 处理方式 |
 | --- | --- |
-| 资产名与 effect 名、生成区名字重名；handler 名与生成的入口方法名重名 | 换一个按业务含义起的资产名或 handler 名 |
-| 两个 Context 声明同一资产名 | 每个 refined asset 保留唯一来源；不同业务来源使用不同资产名 |
-| `demands` 里的资产名没有对应的生产方 | 检查名字：资产名就是生产方 `Asset` 声明的名字 |
+| effect 名重复，或用了保留名 `Root`；资产名与 effect 名、生成区名字重名；handler 名不是小写标识符，或与生成的入口方法名重名 | 换一个按业务含义起的 effect 名、资产名或 handler 名 |
+| 两个 Context 声明同一资产名；资产名与某个和类型资产的分支契约重名 | 每个 refined asset 保留唯一来源；不同业务来源使用不同资产名 |
+| 资产名不是类型名的形式；资产的表示类型是 SDK 的 `Output` | 资产名用大写开头的名字，如 `StartURL`；表示类型用业务 ADT |
+| `demands` 里的资产名没有对应的生产方；同一项 demand 写了两次；`input` 或 `node` 引用了不存在的 effect | 检查名字：资产名就是生产方 `Asset` 声明的名字，effect 名就是注册的 `name`；删掉重复的 demand |
+| Context、Pure 或 Stream 没有绑定 handler；作为 Input 的 Scoped 没有同时声明 `open` 和 `close` | 补上 handler 名 |
+| Scoped `requests` 了多个资源 Context；资源 Context 的 `input` 挂在请求它的 Scoped 下 | 一个 Scoped 至多一个资源 Context；资源 Context 不挂在自己所属的 scope 下 |
+| `input`／`demands` 形成环；handler 方法之间的调用成环；scope 之间的依赖成环 | 拆开环，让前驱、驱动和资源依赖只沿一个方向 |
 | `requires` 了 `require = False` 的资产；`requests` 了挂在 Stream 下的资产 | 在生产方打开 `require`，或去掉这项 demand；持续资产由会话生产 |
 | 一个 effect 的 demands 里有两个表示类型相同的资产 | 用不同的表示类型（角色类型）区分，或拆成两个 effect |
 | handler 读取了绑定它的某个 effect 没有声明的表示类型；或非挂接的 handler 使用 `raw` | 在该 effect 的 demands 里补上声明；`raw` 只给挂接的 parser 与 Pure |
@@ -998,18 +1042,21 @@ reading #2: 24.0 C
 | 同一个 handler 的各个绑定推出不同的签名或 Layer | 只在绑定方式与读取一致处复用 handler，否则拆成两个 handler |
 | effect 声明的 `requires`／`streams` 资产，绑定的 handler 既不读取，也不参与 alternative 选择／streams 交付 | 读取它，或删掉无用声明 |
 | handler 直接调用另一个 handler 的类方法 | 通过注册（`input`、`demands`）和 AST 组合 |
-| 读取经未知的高阶组合传递 | 在方法体中直接读取；支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法 |
+| 读取经未知的高阶组合传递；`require`／`raw` 出现在 guard、模式、`let`／`where`、`if` 条件或 `case` 的被匹配值中；混用运算符没加括号；方法体使用 `RebindableSyntax` | 先在 `do` 中用 `x <- require @T` 绑定，再使用；支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法 |
+| `Handlers.hs` 没有直接导入生成的 `Generated.Effects`，结构分析找不到 handler 类 | 直接 `import 程序名.Generated.Effects` |
 | 业务模块顶层定义了普通函数、类、foreign 声明或 rewrite rule | 值操作移进 handler 方法体；`Effects.hs` 的辅助写进 `effects` 的 `where` |
-| `input` 指向 Context 或 Error；Error 关联不到恰好一个 scope；`RaisedBy` 写的不是已注册的 handler 名 | Context 经 demands 接入；Error 的 Input 链上要有 Scoped；`RaisedBy` 写 handler 名 |
+| `input` 指向 Context 或 Error；Error 的 `handles` 为空、关联不到恰好一个 scope，或与同一 scope 下的另一个 Error 处理同一种失败；`RaisedBy` 写的不是已注册的 handler 名 | Context 经 demands 接入；Error 的 Input 链上要有 Scoped；同一 scope 下每种失败只由一个 Error 处理；`RaisedBy` 写 handler 名 |
 | `alternative` 的候选没有依赖分支契约、依赖了多个，或候选没覆盖和类型的全部构造器；分支契约被写成 `requests` | 每个候选 `requires` 恰好一个分支契约，候选覆盖全部构造器；分支契约只能 `requires` |
-| AST 的 node 选中了 Context、Error 或 Stream | node 只挂可选作末端的原始句柄；Context 由挂接、驱动、合法读取或生产会话带起；Stream 由生产会话调用，Error 由失败协议调用 |
+| AST 的 node 选中了 Pure、Context、Error 或 Stream；别的方法直接调用到 Stream 的 handler | node 只挂 Excu 或 Scoped；Pure 与 Context 在生产链中由挂接、驱动、合法读取或生产会话带起；Stream 只由生产会话和挂在它下面的 parser 调用，Error 由失败协议调用 |
+| 挂接的 Context 经别的方法、而不是直接或经 Pure 用 `raw` 到达它挂接的句柄 | parser 用 `raw` 读取挂接句柄，中间只经过 Pure |
 | 某个 Context 从 AST 出发永远到不了：没有挂接句柄、`requests` 驱动或选择读取，也没有 lifelong 订阅生产会话带起它（只被 `requires` 读取不算） | 在读取它的链上写 `requests` 驱动它，或把带起它的消费链加进 AST，或删掉这个 Context |
 | 尚未取值的读取路径上，同一资产有多个可能同时发布的可见来源 | 细化资产或调整 AST；alternative 和可选生产的条件可证明互斥时允许多个候选 |
-| 持续资产的声明不成立：`stream = True` 的 Context 不在 Stream 下，或没有同时 `require = True`；Stream 下的 Context 没写 `stream = True`；Stream 下不是恰好一个 Context；`streams` 订阅了普通资产或分支契约 | 按[持续资产的声明规则](#stream)修正 |
+| 持续资产的声明不成立：`stream = True` 的 Context 不在 Stream 下，或没有同时 `require = True`；Stream 下的 Context 没写 `stream = True`；Stream 下不是恰好一个 Context，或 parser 以外的 effect 以 Stream 为 `input`；`streams` 订阅了普通资产或分支契约，或由 Excu、Scoped 以外的 effect 声明 | 按[持续资产的声明规则](#stream)修正 |
 | `streams` 写在 lifelong 外的末端上；lifelong 嵌套或含空分支；lifelong 里的末端没有恰好订阅一个持续资产，或另外读取了别的持续资产 | 按 [lifelong 的规则](#stream)调整注册或 AST |
 | lifelong 中持续资产的生产链依赖另一个持续资产 | 首次交付会等待另一个 stream；改用普通资产作为生产前提 |
+| lifelong 中读取生产会话步骤发布的普通资产（伴随发布），读取它的末端却不由这个持续资产驱动 | 只在由该持续资产驱动的末端读取，或在 lifelong 之前生产它 |
 
-这些规则保证：组合关系总能从注册与 AST 中静态读出来，不会藏在任意函数里。
+这些规则保证：组合关系总能从注册与 AST 中静态读出来，不会藏在任意函数里。生成器打印的英文消息给出具体的 effect、资产和位置；运行时才能发现的问题见 [SDK 协议故障](#sdk-faults)。
 
 ### 新建一个程序
 
