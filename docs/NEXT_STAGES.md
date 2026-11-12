@@ -311,17 +311,19 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 
 - 七个程序中 Excu／Scoped 的 handler 改为 `pure []`／`pure [x]`（43 处），六个读 `raw` 的 parser 改为匹配 list；Stream 下的 parser 用 `concat <$> raw`。
 - FileDemo：`locateFile` 改为 Excu `LocateFile`，交出路径；`ValidateFileName` 改为挂在它下面的 Pure，检查后原样交出；新增 parser `parseFileName`，`FileLocation` 挂在 Pure 下；`FileResource`、`FileSession` 的 input 改为 Root，文件名仍由 `FileResource` 的 `requests "FileName"` 驱动，经过检查后才打开文件。
+- Crawler：`FetchPage`、`FetchLinkedPage` 与各自的解析 Context 之间加入 Pure `KeepPageBody`、`KeepLinkedPageBody`，共用 `dropBlankBodies`，去掉空白正文；抓取在 AST 中执行，解析经 Pure 注入，覆盖经 Pure 的注入路径。正文全是空白时，解析现在报 `ExtractSummaryError`（此前会解析出空摘要）。
 - 顺带修正 Crawler、FileDemo 中两处仍写"require 时驱动"的旧注释，以及 GUIDE 中 `requires` 仍写"生产一次并记住"的旧描述。
 
 **验证**（本次实际执行）：
 
 - `cabal build all` 通过；七个程序均用 `effect-codegen` 重新生成；FacadeProbe 按其 README 的 ghc 命令编译。
 - 与改动前（main，0651829）对照：在 `dist-newstyle/bl` 的 worktree 中编译 main，两边从同一份 `output.txt` 开始各运行一次。FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 输出相同，FileDemo 写出的文件相同；Crawler 除随请求变化的链接签名外相同；StreamDemo 两版同时在终端运行到第 56 条读数左右，读数、趋势与心跳节奏一致，新版另运行一次，Ctrl-C 后以 `[sensor] disconnected` 收尾；FacadeProbe 输出行相同（parallel 的交错顺序不同），写出的文件相同，仍以 `ShowLevelFailure` 结束。
+- Crawler 加入 Pure 后再次 `cabal build all`、重新生成并运行：两页摘要都由经 Pure 的注入发布并打印，输出共 100 行，与之前的运行相比只有网页本身随时间变化的链接不同（Google 的链接签名、百度的热搜链接）。
 
 **未覆盖：**
 
 - 没有新增测试或负例；Pure 的各条生成期报错没有逐一触发。
-- 七个程序中没有经 Pure 的注入：FileDemo 的 `LocateFile` 不在任何操作链里执行，只经 `requests` 驱动，注入路径只出现在生成的结构中；Pure 的 `raise` 也没有触发过。
+- Pure 的 `raise` 没有触发过；经 Pure 的注入只在 Crawler 的成功路径上运行过，注入中的 Pure 失败没有观察。
 - 没有 handler 交出多于一项的 list；递归组合、去重与排序只在文档示例中出现。
 - 带类型的原子输出、嵌套结构（森林）与 Pure 挂在 Stream 下待另行设计。
 
@@ -483,7 +485,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 - 2026-11-08：Stage 2 实现并全面替换旧写法；`cabal build all --offline -j1` 通过，七个程序重新生成并与迁移前输出对照，详见[实现与验证](#stage-2-status)。
 - 2026-11-08：SDK 按[源语言、gen、编译产物、运行时四层](LATEST_DESIGN.md#compiler)重组，生成拆为读取、降级、绑定、形状、组成、构图、输出、类检八个阶段，[流水线](LATEST_DESIGN.md#generation)在 `Framework.Gen`；声明加载进程只执行降级，绑定与输出改在生成器进程内读取 PrototypePlan；生成代码只经 `Framework.Generated` 引用 SDK。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，除生成代码的模块别名与资产目录的导入外，Generated 与重组前逐字相同；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和重组前相同，StreamDemo 在终端运行到第 33 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾和重组前一致，Crawler 除随请求变化的链接行外相同；FacadeProbe 按 README 编译运行，仍以 `ShowLevelFailure` 结束。重组不改运行行为。
 - 2026-11-08：`requires` 改为不生产、缺值等待，读取权限只在生成期检查，规则见 Stage 2 [实现与验证](#stage-2-status)的“读取”。gen 侧读取方法不连到生产方法，来源分析中没有可见发布的读取路径不返回，生产入口每次调用都生产；运行时以发布信号唤醒等待的读取。FileDemo 的 `FileResource` 补 `requests "FileName"`，FacadeProbe 的 `ReportFile`／`ReplyFile` 补 `requests` 路径、`WriteReport`／`WriteReply` 补 `requests` 正文。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，生成的来源表中没有 `FromOwnChain` 读取；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和本次改动前相同；Crawler 除随请求变化的链接行外相同；StreamDemo 在终端运行到第 48 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾一致；FacadeProbe 按 README 编译运行，输出行相同（parallel 的交错顺序不同），写出的文件相同，仍以 `ShowLevelFailure` 结束。未覆盖：没有触发过真正等待的读取；兄弟间可见与等待的结束见[可见范围内的等待](#stage-2-await)。
-- 2026-11-12：Pure 改为生产链中的值变换，Excu／Scoped 的输出改为 `[String]`，见 [Pure 的值管道与 list 原子输出](#pure-pipeline)。验证：`cabal build all` 通过；七个程序重新生成，与 main 对照运行，行为一致（Crawler 只差随请求变化的链接签名，FacadeProbe 只差 parallel 交错顺序）。未覆盖：没有经 Pure 的注入，也没有交出多项 list 的 handler。
+- 2026-11-12：Pure 改为生产链中的值变换，Excu／Scoped 的输出改为 `[String]`，见 [Pure 的值管道与 list 原子输出](#pure-pipeline)。验证：`cabal build all` 通过；七个程序重新生成，与 main 对照运行，行为一致（Crawler 只差随请求变化的链接签名，FacadeProbe 只差 parallel 交错顺序）。Crawler 随后在抓取与解析之间加入 Pure，经 Pure 的注入在运行中走通。未覆盖：Pure 的 `raise` 与交出多项 list 的 handler。
 - 历史验证未系统枚举全部并发交错，未观察长时间内存；Stream 外部模型未完成；取消只记录过 Windows Ctrl-Break。已通过编译和示例不能扩大资源逃逸、任意底层 IO 或所有调度的保证。
 
 <a id="maintenance"></a>
