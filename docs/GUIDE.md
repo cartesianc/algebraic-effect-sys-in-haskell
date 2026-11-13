@@ -320,7 +320,7 @@ data TextState = Blank | Written String            -- 和类型
 
 - **只写值的结构**：资产类型由生成器产出，不需要再手写一层 newtype。单值可以直接用 Prelude 类型，例如 `Asset @FilePath "FileName"`。
 - **库类型**：含 `Handle` 等需要导入的库类型时，在 `Types.hs` 定义一个记录包装它。
-- **`Eq`**：用作 scope 开启参数的类型需要 `Eq`（判断是否同参复用）；资源本身不需要。
+- **scope 开启参数**：按绑定的生产身份共享，参数和资源都不因 scope 匹配而需要 `Eq`。
 - **`Show`**：需要打印结果时派生。
 - **不导入生成区**：`Types.hs` 不导入 `Generated` 或 `Handlers`。
 
@@ -454,7 +454,7 @@ typing = Excu { handler = Just "fetchPage" }
 typing = Scoped { open = Just "openSession", close = Just "closeSession" }
 ```
 
-- **两个 handler 都要声明**：自动清理需要 `close`，所以两者缺一不可。
+- **open 必填，close 可选**：可开启的 scope 声明 open；`close = Nothing` 时不生成关闭方法，实例不可达后只移出运行表。
 - **资源是一个 Context**：Scoped 在 `demands` 里 `requests` 资源 Context（至多一个）并 `requires` 它；gen 在 `open` 之前驱动资源的生产，`open`／`close` 的 handler 用 `require` 读取资源。
 - **开启参数**：资源 Context 的 parser 读取的上游 Context 就是开启参数，SDK 按它们决定共享还是新建实例（见「运行时行为」）。
 - **实例跟随注册**：两个 Scoped 注册即使共用 open／close handler，也是两个独立的 scope。
@@ -505,7 +505,7 @@ input = "FileSession"
 - **经 Pure 挂接**：Context 或 Pure 的 `input` 指向 Pure 时，`raw` 读的是这个 Pure 变换后的 list；整串 Pure 的挂接点是最上面的句柄。例如 [Crawler](../demo/Crawler/Effects.hs) 的 `FetchPage` → `KeepPageBody`（Pure，去掉空白正文）→ `ExtractPage`（Context，解析成摘要）：抓取在 AST 中执行后，本次输出经 Pure 注入解析；[FileDemo](../demo/FileDemo/Effects.hs) 的 `LocateFile` → `ValidateFileName`（Pure）→ `FileLocation`（Context）则由 `requests` 驱动。
 - **限制**：
   - input 链不能成环；
-  - 链上的 Scoped 必须同时声明 `open` 和 `close`；
+  - 链上的 Scoped 必须声明 `open`；`close` 可为 `Nothing`，此时实例不可达后只移出运行表；
   - Scoped 的资源 Context 不能挂在请求它的那个 Scoped 下。
 
 ### `demands`
@@ -955,21 +955,39 @@ reading #2: 24.0 C
 
 ### 资源：共享、新建与自动关闭
 
-- **共享**：开启参数以读取取得、值相等（`Eq`）时，复用同一个仍然有效的实例；没有开启参数的资源也共享。
-- **新建**：开启参数在本次被重新生产（驱动）时，开启新的实例。
-- **自动关闭**：SDK 为一次 AST 入口调用登记资源使用；整条操作链结束（包括出错）并完成诊断和结果消费后撤销这份登记，关闭没有其他入口在用、也没有子资源依赖的实例。嵌套 Context 生产继承同一份使用登记，生产方法返回不会提前关闭资源；程序退出时仍兜底清理。
-- **不手动关闭**：handler 不调用 `close`；需要在某个时点之后不再使用资源时，用 AST 安排使用闭包的边界（例如 OpenFilesDemo 把检查放在持有文件的链结束之后）。
-- SDK 不主动检查资源健康，也不自动重开已关闭或失效的实例。
+资源实例由 Scoped 注册与开启参数的那一次生产共同确定。`requests` 产生新身份，`requires` 引用已有身份；参数值相等并不意味着同一个实例，参数类型不需要 `Eq`。
 
-资源共享例外只覆盖带 owner 的绑定。scope 快照中的无 owner 辅助值仍按 origin 来源表读取，不因复用资源而绕过可见性。诊断和自动 cleanup 中产生的新值只留在其局部快照，不发布成后续业务的来源。
+| 写法 | 实际行为 |
+| --- | --- |
+| 资源没有开启参数 | 同一个 Scoped 共用注册级单例 |
+| 前驱 `requests` 参数，后继及资源 parser 只 `requires` 它 | 读到同一次生产的开启共享实例，即使节点依次执行或并行分支没有实际重叠 |
+| 每条开启链或资源 Context 各自 `requests` 参数 | 每次新生产对应新实例；后继仍可通过读取同一次生产共享它 |
 
-每次驱动产生独立绑定，所有捕获和交接共享它的资源归属。资源先在 open 外生产、再被 scope 认领时，已有引用也能看到同一个 owner；其他实例不能再次认领。SDK 同时把仍在使用这份绑定的入口登记到实例，避免认领后提前关闭。认领保留原来的值、出身和发布记录，不要求更改 handler 或添加 key；两次驱动私下包装同一个底层 Handle 的物理别名仍不追踪。
+ScopeReuseDemo 的字段节选展示共享写法：
+
+```haskell
+-- PrepareProbe 先生产一次 FilePaths。
+EffectSpec { name = "PrepareProbe", typing = Excu { .. }, input = "Root", demands = [requests "FilePaths", requires "FilePaths"] }
+-- 资源 parser 读取已有参数，writer 经 Input 开启同一个 scope。
+EffectSpec { name = "FileResource", typing = Context { .. }, input = "Root", demands = [requires "FilePaths"] }
+EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope", demands = [requires "OpenedFile"] }
+```
+
+- **自动关闭**：SDK 等当前调用的业务、诊断和结果消费结束，再撤销使用；同时检查后续仍待用的节点及子 scope。全部不再触达实例时同步执行 close，完成后继续后继。嵌套 Context 生产返回不会提前关闭资源。
+- **lifelong**：无参数或参数来自外层的实例跨轮保留；本轮新生产参数的实例属于本轮，轮内后继共享不改变归属，本轮结束回收。
+- **资源读取**：消费资源的链须先经 Input 开启其所属 Scoped，否则生成期报错；不能因为别的链还开着某个实例就直接读取它。
+- **close 可选**：handler 不手动调用 close。`close = Nothing` 时，不可达实例只移出运行表，不执行释放 IO。整次运行结束时同样遵守这条规则。
+- **关闭失败**：close 的业务失败经 Error 诊断后单独记录、运行结束汇总，不改变业务结果，也不重试。取消发生在 close 中仍会停止后续工作，完成其余收尾后向外传播。
+
+SDK 不主动检查健康，不自动恢复或重开失效实例。资源共享只交接带 owner 的绑定，scope 快照中的普通辅助值仍按来源表读取。诊断和 cleanup 中的新产物只留局部快照。
+
+每次生产的绑定保留自己的值、生产身份、出身和共享 ownership。资源被 scope 首次认领后，已有引用看见同一个 owner；其他实例不能再次认领。SDK 同时接入仍活跃的使用者，防止认领后提前关闭；两次生产私下包装同一个底层 Handle 的物理别名仍不追踪。完整规则见[主设计：scope](LATEST_DESIGN.md#scope)。
 
 ### 失败与 Error 处置
 
 - **失败的形态**：每个 handler 自动获得错误类型 `名字Error String`，用 `raise` 抛出，分类是 `名字Failure`，不随绑定改变。失败沿调用链原样传播，记录发生的 effect（`origin`）、分类和消息；程序最终返回 `Succ 结果` 或 `Failed 失败信息`。
 - **Error 处置**：SDK 捕获失败后，按 `handles` 匹配失败路径上 scope 关联的 Error，沿资源依赖从外层到内层依次执行它们的 `detect`／`resolve`。不在任何 scope 中的失败不经 Error 处置。
-- **处置不改变结果**：处置之后原失败仍然继续传播。
+- **处置不改变结果**：业务调用的原失败在处置后继续传播。自动 close 的失败处置后只进入关闭报告，不改变业务调用的结果。
 
 <a id="sdk-faults"></a>
 #### SDK 协议故障
@@ -979,14 +997,14 @@ reading #2: 24.0 C
 - **`ContextBindingError ContextFault`**：取值协议故障。`origin` 是生产这份资产的 Context 注册名（不是契约名），Error 用 `ContextFaultIn "该 Context"` 匹配。
 - **`ScopeBindingError ScopeFault`**：资源协议故障。`origin` 是 Scoped 的注册名，Error 用 `ScopeFaultIn "该 Scoped"` 匹配。
 
-它们和业务失败走同一套协议：沿调用链传播，按 scope 进入 Error 处置，最后以 `Failed` 返回。完整协议见[主设计：Context](LATEST_DESIGN.md#context)与 [scope](LATEST_DESIGN.md#scope)。
+它们按 scope 进入 Error 处置；发生在业务调用中时沿链传播并以 `Failed` 返回，发生在自动 close 中时只进入关闭报告。完整协议见[主设计：Context](LATEST_DESIGN.md#context)与 [scope](LATEST_DESIGN.md#scope)。
 
 **取值故障（`ContextFault`）**
 
 | 故障 | 什么时候报 | 怎么改 |
 | --- | --- | --- |
-| `ContextNotInitialized` | 在不等待的场合缺值：Error 诊断、自动收尾与 close 期间；读取 scope 的资源 Context，却没有仍开着的实例提供它；持续资产在不能启动会话的场合（诊断、收尾）没有本次视图。普通业务读取缺值时等待发布，不报这个故障 | 在读取之前的链上用 `requests` 驱动它；资源只在 scope 内读取（Input 链上有对应的 Scoped） |
-| `AmbiguousContextBinding` | 读取时有两份以上可选的值：普通资产有多个已发布的可见来源（生成期通常已拦下，运行时兜底）；或资源 Context 在可见的 scope 中有两个仍开着的实例各持有一份，而本次调用没有捕获其中任何一份 | 细化资产或调整 AST；让读取只处在一个 scope 实例中 |
+| `ContextNotInitialized` | 在不等待的场合缺值：Error 诊断、自动收尾与 close 期间；读取 scope 的资源 Context，却没有本链已开启实例的绑定；持续资产在不能启动会话的场合（诊断、收尾）没有本次视图。普通业务读取缺值时等待发布，不报这个故障 | 在读取之前的链上用 `requests` 驱动它；资源只在 scope 内读取（Input 链上有对应的 Scoped） |
+| `AmbiguousContextBinding` | 普通资产有多个已发布的可见来源，运行时无法确定唯一绑定；生成期通常已拦下 | 细化资产或调整 AST，确保实际来源唯一 |
 | `CaseNotSelected 契约` | 读取和类型资产的分支契约（例如 `FileTextBlank`），资产当前却是另一个构造器 | 分支契约只在选中对应构造器的 alternative 候选中读取；其他地方读取基础资产再 `case` |
 
 **资源故障（`ScopeFault`）**
@@ -995,19 +1013,19 @@ close 由 SDK 的自动收尾调用，handler 不直接调用；下表中的 clo
 
 | 故障 | 什么时候报 | 怎么改 |
 | --- | --- | --- |
-| `ScopeInputsMissing [参数]` | 带开启参数的 scope 要在参数齐备后才能选定实例；资源发布或 open 结束时仍有参数没读到，例如资源 parser 先获取资源、后读取参数。持续资产作为开启参数时也会报，这是当前限制（见 [Stream 规范 9.3](STREAM_LIFELONG.md#failures)） | 在当前链上先用 `requests` 驱动参数；资源 parser 先读参数，再获取资源 |
-| `ScopeInputAfterOpen 参数` | 实例选定之后，这次开启又 request 了开启参数，或读到与选定时不同的值 | 选定实例前确定全部参数；open 范围内不再刷新参数 |
+| `ScopeInputsMissing [参数]` | 带开启参数的 scope 要在参数齐备后才能选定实例；资源发布或 open 结束时仍有参数没读到，例如资源 parser 先获取资源、后读取参数。持续资产作为开启参数时也会报，这是当前限制（见 [Stream 规范 9.3](STREAM_LIFELONG.md#failures)） | 先安排参数生产；资源 parser 先读参数，再获取资源。共享时读取前驱的同一次生产 |
+| `ScopeInputAfterOpen 参数` | 实例选定之后，这次开启读到另一份参数生产；即使新旧值相等也不同 | 选定实例前确定全部参数；open 范围内不再刷新参数 |
 | `ScopeContextMismatch 资源` | 一份资源绑定只能归一个实例：open 要认领的资源已属于另一个 scope 或同注册的另一个实例；或 close 读到的资源属于别的实例 | 不同实例各自驱动自己的资源，不共用同一次生产 |
 | `ScopeContextMissing 资源` | open 结束时，选中的实例里没有资源绑定；或 close 定位不到要关闭的实例：本次调用没有这个 scope 的资源绑定，或 close 的 handler 没有读取资源 | Scoped 在 demands 里 `requests` 并 `requires` 资源；open／close 的 handler 用 `require` 读取资源 |
 | `ScopeReentry` | 同一个 scope 在自己的 open 或 close 过程中又被 open 或 close。生成期的环检查通常会先拦下 | 调整 `input`／`demands`，让 scope 不依赖自身 |
 | `ScopeCleanupInProgress` | 自动收尾或 close 执行期间，调用链又要开启 scope | close 经过的链上不开启 scope |
-| `ScopeInUse` | close 时实例仍有其他使用者，或已被别的调用预约关闭；或在 open、close、自动收尾持有一个实例时，又要等另一个正在关闭的实例：SDK 不等待，直接报错，避免互相等待 | 检查 scope 之间的依赖，不在一个 scope 的 open／close 中读取另一个正在收尾的资源 |
+| `ScopeInUse` | SDK 内部使用、依赖或关闭预约不变量冲突；自动 close 应只处理不可达实例 | 按 SDK 问题报告，并附注册、workflow 与故障信息；不要据此添加业务重试 |
 | `ScopeIsClosed` | 实例 close 之后，又读取本次调用早先捕获的、属于它的资源绑定 | 只在 scope 的使用范围内读取资源 |
-| `ScopeInterrupted 原因` | open 或 close 的方法体被原生异常（包括取消）打断。实例随之失效，之后同参 open 继续报这次失败 | 检查 open／close 中的 IO，把可预期的错误转换成 `raise` |
-| `ScopeCleanupInterrupted 原因` | 自动收尾执行 close 时被原生异常打断 | 检查 close 中的 IO |
+| `ScopeInterrupted 原因` | open 或 close 被原生异常打断，实例失效；尚保留的同生产实例继续携带原失败 | 检查 IO；可预期错误用 `raise`，外部取消照常传播 |
+| `ScopeCleanupInterrupted 原因` | 自动 close 被原生异常打断；记录后不重试，取消仍向外传播 | 检查 close 中的 IO，不将外部取消改成业务重试 |
 | `ScopeNotOpen` | close 遇到从未开启的实例 | 自动收尾只为开启过的实例登记 close，正常写法不会触发；出现时按 SDK 问题报告 |
 
-open 方法体自己 `raise` 时，实例同样失效；之后同参 open 报的是那次原失败，不是新的协议故障。
+open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实例继续报告那次原失败。close 的失败只汇总报告，不重试已尝试的关闭。
 
 **不走 Failure 的错误**：少数情况直接抛出 IO 异常，不进入 Error 处置。生成产物与当前程序不一致时（提示 `changed or has not been generated`，或 `Cannot initialize effect prototype`），按提示重新生成；运行结束时仍要启动会话、运行图中找不到生成的结构等，表示 SDK 内部约定被打破，重新生成后仍出现时按 SDK 问题报告。
 
@@ -1089,5 +1107,5 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 - **持续执行的延期项**：没有正常结束（EOF）、Stream close、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；完整历史一直保留，持续运行时内存随发布增长。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
 - **Stage 3 已知实现限制**：持续资产作为 scope 开启参数尚未接通。见 [Next stages](NEXT_STAGES.md#current-limits)。
 - **handler 复用的边界**：同一个 handler 可以注册到多个 effect，但各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能读一份资产。Stream 的驱动方式和 Error 的驱动链仍待确定，见 [Stage 2：本阶段不处理](NEXT_STAGES.md#stage-2-later)。
-- **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。实例的共享与关闭时机将改为按 `requires`／`requests` 区分单例与多例、按剩余程序的可达性回收（已确定，尚未实现，见[主设计](LATEST_DESIGN.md#scope-identity)）；本指南描述当前行为。
+- **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。实例按参数生产身份共享、按剩余程序可达性回收，见[主设计](LATEST_DESIGN.md#scope-identity)；持续资产作为开启参数、历史资源精细释放与正常 end 仍待后续阶段。
 - **构建方式**：SDK 目前随仓库内的示例一起编译，不能作为独立依赖引入。

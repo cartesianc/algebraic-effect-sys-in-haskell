@@ -7,7 +7,7 @@ import Framework.SDK (EffectSpec(..), EffectTyping(..), Asset(..), requests, req
 import ScopeReuseDemo.Types
 
 -- Context 保存路径与活文件；Scoped 管理开启／关闭，日志记录实际开闭次数。
--- 三个 Excu 写入者是兄弟节点，input 均为同一个 SharedFileScope；requests 在开启前刷新开启参数。
+-- 三个 Excu 写入者读取 PrepareProbe 的同一次路径生产，按生产身份共享 SharedFileScope。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
@@ -38,19 +38,19 @@ effects =
       { name = "WriteFirst"
       , typing = Excu { handler = Just "writeFirst" }
       , input = "SharedFileScope"
-      , demands = [requests "FilePaths", requires "OpenedFile"]
+      , demands = [requires "OpenedFile"]
       }
   , EffectSpec
       { name = "WriteSecond"
       , typing = Excu { handler = Just "writeSecond" }
       , input = "SharedFileScope"
-      , demands = [requests "FilePaths", requires "OpenedFile"]
+      , demands = [requires "OpenedFile"]
       }
   , EffectSpec
       { name = "WriteThird"
       , typing = Excu { handler = Just "writeThird" }
       , input = "SharedFileScope"
-      , demands = [requests "FilePaths", requires "OpenedFile"]
+      , demands = [requires "OpenedFile"]
       }
   , EffectSpec
       { name = "VerifyReuse"

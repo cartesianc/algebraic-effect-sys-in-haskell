@@ -254,23 +254,21 @@ runValidateFileName = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.hand
 
 getFileName :: FrameworkGenerated.App FrameworkGenerated.FileName
 getFileName = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation"
-    (Just (FrameworkRuntime.ScopeInput "FileLocation"))
     (\value bindings -> bindings { FrameworkGenerated.boundFileLocation = Just value })) $
   (FrameworkGenerated.FileName <$> runAt @"FileLocation" FrameworkGenerated.parseFileName)
 
 readFileName :: FrameworkGenerated.App FrameworkGenerated.FileName
 readFileName = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "FileLocation" FrameworkGenerated.ContextBindingError (Just (FrameworkRuntime.ScopeInput "FileLocation")) FrameworkGenerated.boundFileLocation
+  FrameworkRuntime.readContext "FileLocation" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileLocation
 
 getOpenedFile :: FrameworkGenerated.App FrameworkGenerated.OpenedFile
 getOpenedFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource"
-    Nothing
     (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
   getFileName >> (FrameworkGenerated.OpenedFile <$> runAt @"FileResource" FrameworkGenerated.acquireFile)
 
 readOpenedFile :: FrameworkGenerated.App FrameworkGenerated.OpenedFile
 readOpenedFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "FileResource" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundFileResource
+  FrameworkRuntime.readContext "FileResource" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileResource
 
 openFileSession :: FrameworkGenerated.App [String]
 openFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFileSession" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
@@ -294,13 +292,12 @@ runReadFile = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime
 
 getFileText :: FrameworkGenerated.App FrameworkGenerated.FileText
 getFileText = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.callContext "ExtractFileText"
-    Nothing
     (\value bindings -> bindings { FrameworkGenerated.boundExtractFileText = Just value })) $
   (FrameworkGenerated.FileText <$> runAt @"ExtractFileText" FrameworkGenerated.parseFileText)
 
 readFileText :: FrameworkGenerated.App FrameworkGenerated.FileText
 readFileText = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ExtractFileText" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundExtractFileText
+  FrameworkRuntime.readContext "ExtractFileText" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundExtractFileText
 
 runWriteFirstLine :: FrameworkGenerated.App [String]
 runWriteFirstLine = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteFirstLine" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "WriteFirstLine") $

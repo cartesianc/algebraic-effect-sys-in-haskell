@@ -1,5 +1,5 @@
 -- 生成期的资产来源分析：输入是已解析方法体与统一 Prototype，
--- 输出仅补全 chainDrives、chainReads 和 protoSources，不运行业务或修改 ScopeTree。
+-- 输出补全 chainDrives、chainReads、protoSources 和 scope 开启出处，不运行业务或修改 ScopeTree。
 -- 每个候选状态保留发布/捕获的相关性；先按消费单元及后续读取裁剪，再组合状态。
 -- Query 提供同一套 AST 可见性关系；runtime 只使用分析结果，不重新执行本分析。
 module Framework.Gen.Build.Sources (resolveSources) where
@@ -13,12 +13,16 @@ import Framework.Prototype.Types
 import Framework.Prototype.Query
 
 -- 生成期只跟踪“已经发布／捕获了哪个 origin”，不求值业务值。
--- Nothing 表示资源实例或 Receive 交付的捕获，不作为普通资产的跨链发布位置。
+-- Nothing 表示 Receive 交付；资源保留本链的开启位置，但不进入普通资产发布表。
 data AssetState = AssetState
   -- 可跨链路由的发布位置与资产契约；有 owner 的资源不进入这份普通来源表。
   { assetPublications :: [(NodeId, String)]
   -- 本条分析路径已捕获的契约及其位置；Nothing 表示不按普通发布路由的捕获。
   , assetCaptures :: [(String, Maybe NodeId)]
+  -- 只在本条链内传播：其他节点成功开启的资源不能成为隐式读取来源。
+  , assetOpened :: [String]
+  -- 当前 open 协议实际取得的参数；已有捕获本身不等于开启已经观察过它。
+  , assetInputs :: [(String, [(String, Maybe NodeId)])]
   } deriving (Eq, Show)
 
 -- Bool 为本出口是否成功；失败出口保留此前事实，供 Recover 或吞错注入继续分析。
@@ -28,6 +32,7 @@ data AssetExit = AssetExit Bool AssetState deriving (Eq, Show)
 data AssetFacts = AssetFacts
   { assetDrives :: [(NodeId, String)]
   , assetReads :: [(ReadPoint, [NodeId])]
+  , assetScopeOpenings :: [ScopeOpening]
   }
 
 -- 当前分析调用的环境；不表示 runtime 调用对象。重放句柄与活动方法分别防止
@@ -52,7 +57,7 @@ type AssetAnalysis = StateT AssetFacts (Either (PrototypeError String))
 resolveSources :: [MethodDefinition String] -> [String] -> Prototype String
                -> Either (PrototypeError String) (Prototype String)
 resolveSources definitions defaultReaders prototype = do
-  facts <- flip execStateT (AssetFacts [] []) $ do
+  facts <- flip execStateT (AssetFacts [] [] []) $ do
     _ <- workflow (protoWorkflow prototype) [] [] []
     -- interpreter 托管的会话各自从空环境启动，不是任何读取点的可见前驱。
     mapM_ (\mount -> root mount [] [] []) (concatMap sessionMounts (protoSessions prototype))
@@ -64,7 +69,8 @@ resolveSources definitions defaultReaders prototype = do
         , chainReads = sort (nub [readContract point | (point, _) <- reads, readNode point == chainNode chain])
         }
   mapM_ companionRead reads
-  pure prototype { protoChains = map annotate (protoChains prototype), protoSources = reads }
+  pure prototype { protoChains = map annotate (protoChains prototype), protoSources = reads
+    , protoScopeOpenings = assetScopeOpenings facts }
   where
     effects = protoEffects prototype
     lifelongs = workflowLifelongs (protoWorkflow prototype)
@@ -84,6 +90,11 @@ resolveSources definitions defaultReaders prototype = do
         ++ ", or produce it before the lifelong"))
     companionRead _ = pure ()
     resources = [source | effect <- effects, Just source <- [effectResource effect]]
+    resourceContracts = [contractType | effect <- effects, effectName effect `elem` resources
+      , Just contractType <- [effectProduces effect]]
+    resourceOwners = [(contractType, effectName scope) | scope <- effects
+      , producer <- effects, effectResource scope == Just (effectName producer)
+      , Just contractType <- [effectProduces producer]]
     receiving = [contractType | effect <- effects, effectContinuous effect
       , Just contractType <- [effectProduces effect]]
     -- 复用已完成的可达性分析：链能到达读取入口的契约。生产入口只生产，不再按调用方路由成读取；
@@ -104,6 +115,9 @@ resolveSources definitions defaultReaders prototype = do
     retainState relevant state = state
       { assetPublications = retainPublications relevant (assetPublications state)
       , assetCaptures = filter ((`elem` relevant) . fst) (assetCaptures state)
+      -- 开启事实只服务本链资源读取；无关的可选 open 不能使已等价的状态继续分叉。
+      , assetOpened = sort [scope | scope <- assetOpened state
+          , scope `elem` [owner | (contractType, owner) <- resourceOwners, contractType `elem` relevant]]
       }
     retainExit relevant (AssetExit succeeded state) = AssetExit succeeded (retainState relevant state)
     -- Workflow 失败后没有恢复分支；读取／生产事实已单独记录，失败产物不再传给后继。
@@ -130,11 +144,67 @@ resolveSources definitions defaultReaders prototype = do
     recordDrive :: NodeId -> String -> AssetAnalysis ()
     recordDrive node' contractType = modify' $ \facts -> facts
       { assetDrives = nub ((node', contractType) : assetDrives facts) }
+    -- 只从本路径已捕获的参数记录出处，保留 alternative 的交接；不能用 chainDrives
+    -- 把条件生产的位置一律判成多例。跨路径只合并候选及已观察到的类别。
+    openingInputs :: EffectProto String -> AssetState -> Maybe [(String, NodeId)]
+    openingInputs effect state = sequence
+      [ do observed <- lookup (effectName effect) (assetInputs state)
+           Just origin <- lookup source observed
+           pure (source, origin)
+      | source <- effectOpeningInputs effect ]
+    recordOpening :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis ()
+    recordOpening call effect state = case openingInputs effect state of
+      Nothing -> pure ()
+      Just inputs -> modify' $ \facts ->
+        let node' = assetRoot call
+            same opening = openingNode opening == node' && openingScope opening == effectName effect
+            previous = filter same (assetScopeOpenings facts)
+            sources = [(source, sort (nub (origin : concat
+                [old | opening <- previous, (selected, old) <- openingSources opening, selected == source])))
+              | (source, origin) <- inputs]
+            possible | null inputs = [RegistrationSingleton]
+                     | any (\(source, origin) -> origin == node' && source `notElem` resources) inputs = [ExecutionMultiple]
+                     -- owner 的本链 open 也可能复用前驱实例；资源自身不进入普通来源表，
+                     -- 实际生产身份沿 owner 的开启参数确定，不能据此硬判一次新生产。
+                     | any ((== node') . snd) inputs = [ProductionSingleton, ExecutionMultiple]
+                     | otherwise = [ProductionSingleton]
+            kinds = sort (nub (possible ++ concatMap openingKinds previous))
+            opening = ScopeOpeningPlan node' (effectName effect) sources kinds
+        in facts { assetScopeOpenings = opening : filter (not . same) (assetScopeOpenings facts) }
+    observeOpeningInput :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis AssetState
+    observeOpeningInput call producer state = case assetOpenings call of
+      selected : _ -> case [scope | scope <- effects, effectName scope == selected
+          , effectName producer `elem` effectOpeningInputs scope] of
+        [scope] -> do
+          let observed = maybe [] id (lookup selected (assetInputs state))
+              origin = effectProduces producer >>= (\contractType -> lookup contractType (assetCaptures state))
+              updated = case origin of
+                Nothing -> observed
+                Just source -> (effectName producer, source) : filter ((/= effectName producer) . fst) observed
+              after = state { assetInputs = (selected, updated) : filter ((/= selected) . fst) (assetInputs state) }
+          recordOpening call scope after
+          pure after
+        _ -> pure state
+      [] -> pure state
+    checkResourceRead :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis ()
+    checkResourceRead call effect state =
+      let owners = [effectName scope | scope <- effects, effectResource scope == Just (effectName effect)]
+          available = assetOpenings call ++ assetOpened state
+      in unless (null owners || assetClosing call || any (`elem` available) owners) $
+        lift (Left (InvalidPrototype ("Resource " ++ effectName effect ++ " read at " ++ show (assetRoot call)
+          ++ " requires its Scoped to be opened in the same chain: " ++ intercalate ", " owners)))
     -- 在已经捕获的路径上不查询外部来源；所有缺值路径使用同一静态候选表。
     readAsset :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis [AssetExit]
-    readAsset call effect state = case effectProduces effect of
-      Nothing -> lift (Left (InvalidPrototype "Context reader has no contract"))
-      Just contractType -> case lookup contractType (assetCaptures state) of
+    readAsset call effect state = do
+      checkResourceRead call effect state
+      exits <- case effectProduces effect of
+        Nothing -> lift (Left (InvalidPrototype "Context reader has no contract"))
+        Just contractType -> readContractAsset contractType
+      successes (\after -> do
+        observed <- observeOpeningInput call effect after
+        pure [AssetExit True observed]) exits
+      where
+      readContractAsset contractType = case lookup contractType (assetCaptures state) of
         Just _ -> pure [AssetExit True state, AssetExit False state]
         -- Receive 资产只由会话生产：没有本次交付时由 interpreter 托管的会话交付，不查询普通来源。
         Nothing | contractType `elem` receiving -> do
@@ -146,9 +216,7 @@ resolveSources definitions defaultReaders prototype = do
               external = filter (/= assetRoot call) sources
           recordRead (assetRoot call) contractType external
           case sources of
-            [] | effectName effect `elem` resources ->
-              -- 资源可由仍活着的实例提供；缺失时失败，绝不生产。
-              pure [AssetExit True (capture contractType Nothing state), AssetExit False state]
+            [] | effectName effect `elem` resources -> pure [AssetExit False state]
             [] | assetClosing call -> pure [AssetExit False state]
             -- 没有可见发布：运行时这次读取等待之后的发布，本条路径不从读取返回；
             -- 失败出口由 method 统一补上。
@@ -164,7 +232,7 @@ resolveSources definitions defaultReaders prototype = do
               current : _ -> any (\scope -> effectName scope == current
                 && effectResource scope == Just (effectName effect)) effects
               [] -> False
-            captured = capture contractType (if owned then Nothing else Just (assetRoot call)) state
+            captured = capture contractType (Just (assetRoot call)) state
         if owned then pure captured else do
           recordDrive (assetRoot call) contractType
           pure captured { assetPublications = sort (nub ((assetRoot call, contractType) : assetPublications state)) }
@@ -213,7 +281,8 @@ resolveSources definitions defaultReaders prototype = do
               body <- shape entered (methodBody definition) state
               successes (\after -> do
                 published <- publish call effect after
-                pure [AssetExit True published]) body
+                observed <- observeOpeningInput call effect published
+                pure [AssetExit True observed]) body
             -- 解析器只由 Receive 会话挂载调用；成功即发布一次交付。
             ContextStream -> do
               body <- shape entered (methodBody definition) state
@@ -223,20 +292,28 @@ resolveSources definitions defaultReaders prototype = do
             ScopeOpen | assetClosing call -> pure [AssetExit False state]
             ScopeOpen -> do
               let inside = entered { assetOpenings = effectName effect : assetOpenings entered }
-              body <- shape inside (methodBody definition) state
-              fresh <- inject call selected body
-              let restoreResource after = foldr (\contractType -> capture contractType Nothing) after
+                  initial = state { assetInputs = (effectName effect, []) : filter ((/= effectName effect) . fst) (assetInputs state) }
+                  opened (AssetExit succeeded after) = AssetExit succeeded
+                    (if succeeded then after { assetOpened = nub (effectName effect : assetOpened after) } else after)
+                  finished (AssetExit succeeded after) = AssetExit succeeded
+                    (after { assetInputs = filter ((/= effectName effect) . fst) (assetInputs after) })
+              recordOpening inside effect initial
+              body <- shape inside (methodBody definition) initial
+              fresh <- inject call selected (map opened body)
+              let restoreResource after = foldr (\contractType -> capture contractType (Just (assetRoot call))) after
                     [contractType | producer <- effects, effectResource effect == Just (effectName producer)
                       , Just contractType <- [effectProduces producer]]
                   -- 无输入 scope 在进入方法体前选择复用；有输入时可在取得参数后
                   -- 跳过余下方法体，保守保留失败前缀中的已完成输入操作。
-                  reused = if null (effectOpeningInputs effect) then [state]
-                    else nub (state : [after | AssetExit _ after <- body])
-              pure (fresh ++ [AssetExit True (restoreResource after) | after <- reused])
+                  reused = nub [after | after <- initial : [after | AssetExit _ after <- body]
+                    , Just _ <- [openingInputs effect after]]
+              pure (map (finished . opened) (fresh ++ [AssetExit True (restoreResource after) | after <- reused]))
             ScopeClose -> do
               body <- shape (entered { assetClosing = True }) (methodBody definition) state
               -- 重复 close 可在取得资源绑定时跳过余下方法体并成功返回；不触发注入。
               pure (body ++ [AssetExit True after | after <- nub (state : [part | AssetExit _ part <- body])])
+            ErrorDetect -> shape (entered { assetClosing = True }) (methodBody definition) state
+            ErrorResolve -> shape (entered { assetClosing = True }) (methodBody definition) state
             _ -> shape entered (methodBody definition) state >>= inject call selected
           pure (nub (map (retainExit (assetRelevant call)) (withFailures state exits)))
     inject :: AssetCall -> String -> [AssetExit] -> AssetAnalysis [AssetExit]
@@ -261,7 +338,7 @@ resolveSources definitions defaultReaders prototype = do
       chain <- lift (lookupChain prototype node')
       let relevant = nub (readsAt node' ++ future)
       method (AssetCall node' Nothing [] [] [] False relevant) (chainEntry chain)
-        (retainState relevant (AssetState publications handoff))
+        (retainState relevant (AssetState publications handoff [] []))
     workflow :: WorkflowTree -> [String] -> [(NodeId, String)] -> [(String, Maybe NodeId)]
              -> AssetAnalysis [(Bool, [(NodeId, String)])]
     workflow tree future publications handoff = case tree of
@@ -279,7 +356,7 @@ resolveSources definitions defaultReaders prototype = do
           then pure [(False, [])]
           else nub . concat <$> mapM (\child -> workflow child future (assetPublications state)
               [(contractType, origin) | (contractType, Just origin') <- assetCaptures state
-                , let origin = Just origin']) children) selected
+                , contractType `notElem` resourceContracts, let origin = Just origin']) children) selected
       LifelongAt boundary described _ -> do
         -- 复用原型中的实际消费单元，只拆 lifelong 直接子项的那一层 parallel。
         units <- lift $ mapM (\node' -> case lookupWorkflow tree node' of

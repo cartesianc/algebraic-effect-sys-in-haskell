@@ -232,9 +232,9 @@ monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同
 
 - 同一边界同一资产共享会话，不同单元各自推进；不同 lifelong 的会话与进度独立。
 - 会话在进入 lifelong 时取得并启动生产；单元的游标从会话的第一条发布开始。每次领取推进一条，视图是会话历史到这一条为止的前缀。
-- 每条 publication 保留原始 Binding、Execution 与共享 ownership；history 不是一个新的 owner。后台追加不改写已经取得的视图；读取不推进游标。
+- 每条 publication 保留原始 Binding、生产 ActivationId、执行帧、Execution 与共享 ownership；history 不是一个新的 owner。后台追加不改写已经取得的视图；读取不推进游标。
 - 会话驱动资产的发布进入会话历史，不写入按 Origin 的普通资产表；生产步骤发布的普通辅助资产仍按 Origin 保存，并在交付时保存其伴随引用。普通跨链读取继续遵守捕获和静态来源规则。
-- 每条交付另带产生它的生产步骤已经发布的普通资产（伴随发布）。frame 领取交付后，伴随发布作为已捕获绑定交给本次执行中的调用，交接中已经捕获的值优先；运行时不再按会话挂载的当前 Origin 读取这些发布。因此处理第 n 条交付时读到第 n 步的辅助资产，不会读到之后步骤的产物，也不会因旧发布已被替换而重新生产。
+- 每条交付另带产生它的生产步骤已经发布的普通资产（伴随发布）。DeliveryFrame 领取交付后，伴随发布作为已捕获绑定交给本次执行中的调用，交接中已经捕获的值优先；运行时不再按会话挂载的当前 Origin 读取这些发布。因此处理第 n 条交付时读到第 n 步的辅助资产，不会读到之后步骤的产物，也不会因旧发布已被替换而重新生产。
 - 运行初始化不预生产 Context；会话按需启动。
 
 <a id="production"></a>
@@ -246,7 +246,9 @@ monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同
 
 parser 的包装发布一次；会话不再次发布返回值，也不再调用一次 parser。每一步是一次独立的受控调用（自己的 Origin 与捕获环境），会话以发布写入历史。lifelong 的会话保存进入 lifelong 时的交接，每一步从它的新副本开始：外层已经捕获的值（例如 alternative 选择时读到的配置）在生产端与消费端一致，生产步骤不会另行生产一份。interpreter 托管的会话没有交接。
 
-生产会话的各步骤共用会话的 scope 使用登记：一步结束不会按 once-spare 关闭生产用到的资源，下一步按既有协议复用（例如无开启参数的连接 scope）。会话停止时撤销这份登记，资源交给 interpreter 退出清理。下一步的回收规则已确定、尚未实现：会话是可达性的根，运行结束时关闭声明了 close 的实例，见[主设计：按可达性回收](LATEST_DESIGN.md#scope-gc)。
+生产会话的各步骤共用会话的 scope 使用登记，一步结束不撤销会话对资源的使用。无开启参数的连接 scope 因此跨步骤共享。会话停止时撤销登记；运行结束撤销全部待用关系，按 ScopeTree 清理不可达且声明了 close 的实例，没有 close 的实例只移出运行表，见[主设计：按可达性回收](LATEST_DESIGN.md#scope-gc)。正常 end 何时停止会话仍待后续阶段。
+
+lifelong 单元每次执行建立独立的 ExecutionFrame。参数来自外层或没有参数的 scope 由外层帧保留；参数来自本轮的实例归本轮，轮内后继共享不改变归属，本轮结束回收。DeliveryFrame 仍负责本轮会话视图的领取；ExecutionFrame 只记录已经领取的普通伴随资产的生产身份，不复制值。根实例的待用查询包含活动子帧：即使后台会话已经发布下一步，本轮后继仍按固定交付身份保留同一实例。轮帧结束后清空并从父帧摘除。这不保留尚未领取的历史资源，也不接通持续资产直接作为 scope 参数的观察协议。
 
 Stream handler 的阻塞／等待决定节奏，SDK 不加间隔；立即返回的生产会形成高频生产，完整历史随之增长。本版不提供容量背压、丢弃或去重。
 
@@ -278,7 +280,7 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 
 ### 9.2 取消
 
-外部取消（Ctrl-C）时，SDK 取消 AST 中的全部任务并等待其受控收尾，再停止全部会话（撤销会话的使用登记），最后由 interpreter 按 ScopeTree 关闭剩余资源。对于结构化 Failure，清理故障附在原失败之后；对于 Ctrl-C 等原生异常，清理故障单独报告后重新抛出原异常。
+外部取消（Ctrl-C）时，SDK 取消 AST 中的全部任务并等待其受控收尾，再停止全部会话（撤销会话的使用登记），最后由 interpreter 按 ScopeTree 关闭剩余资源。关闭业务失败单独汇总，不改变原业务结果，也不重试。Ctrl-C 等原生异常在其余收尾后重新抛出；取消发生在同步 close 中也停止后续启动，不能降为仅报告的关闭业务失败。
 
 创建会话时，启动生产任务与写回会话登记在同一个不可中断区内完成，取消不会落在两者之间。停止会话时先关闭会话登记，并在同一临界区取出全部会话：此后尚未停止的生产步骤不能再启动新会话（例如 interpreter 托管的依赖会话），请求方得到异常并随停止结束，不会留下逃出停止集合的生产任务。生产任务的启动与登记、失败报告、撤销使用登记和完成信号都在不可中断区内完成，生产时解除屏蔽，停止等待任务退出。这保证 SDK 的登记与完成信号交接不会被取消打断；任务能否退出仍依赖业务 IO 响应取消、诊断与收尾能够返回。
 
@@ -286,7 +288,7 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 
 不新增 Stream close、next-use 或历史资源按元素关闭协议。没有增量表示等待，不表示 EOF、故障或关闭。
 
-Stream close、lifelong 的局部结束、会话生产资源与历史资源的存续，以及持续资产作为 scope 开启参数，纳入本轮[六阶段计划](NEXT_STAGES.md#stages)。计划以 Stream effect 与 lifelong 的共同运行协议为基础；require 缓存最新值、stream 缓存历史已随 Stage 2 实现，单一 demand 与正常 end 尚未实现，本页记录当前协议。
+Stream close、lifelong 的局部结束、会话生产资源与历史资源的存续，以及持续资产作为 scope 开启参数，纳入本轮[七阶段计划](NEXT_STAGES.md#stages)。计划以 Stream effect 与 lifelong 的共同运行协议为基础；require 缓存最新值、stream 缓存历史已随 Stage 2 实现，正常 end 尚未实现，本页记录当前协议。
 
 完整历史保留不等于可以把多份资源 owner 合成一个，也不能复活已关闭的资源。通用的历史资源选择／关闭语义尚未设计。会话历史在运行期间持续增长，不承诺有界内存。持续资产作为 scope 开启参数尚未接通 History 的参数观察协议，可能报 `ScopeInputsMissing`；现有跨轮 scope 复用不代表支持该用法，跟踪见 [Next stages](NEXT_STAGES.md#current-limits)。
 
@@ -302,9 +304,10 @@ Stream close、lifelong 的局部结束、会话生产资源与历史资源的�
 | History 视图 | [History.hs](../sdk/Framework/Language/History.hs) |
 | 会话状态、历史、游标 | [Session.hs](../sdk/Framework/Runtime/Session.hs) |
 | 会话登记、Origin 清除 | [Graph.hs](../sdk/Framework/Runtime/Graph.hs) |
-| 生产任务、frame、交付视图的交接 | [Runtime.hs](../sdk/Framework/Runtime.hs) |
+| 生产任务、DeliveryFrame、交付视图的交接 | [Runtime.hs](../sdk/Framework/Runtime.hs) |
 | 视图读取、最新值投影（`latestContext`）、parser 输入、会话发布路由 | [App.hs](../sdk/Framework/Runtime/App.hs)、[Context.hs](../sdk/Framework/Runtime/Context.hs) |
 | 单元调度、就绪检查、运行监督 | [Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
+| 根帧／轮帧与节点进度、scope 待用查询 | [Frame.hs](../sdk/Framework/Runtime/Frame.hs)、[Graph.hs](../sdk/Framework/Runtime/Graph.hs) |
 | 生成的读取方法与路由、Stream 入口的会话包装、`Raw` 实例、会话步骤登记 | [Gen/Emit/Handlers.hs](../sdk/Framework/Gen/Emit/Handlers.hs)、[Gen/Emit/Program.hs](../sdk/Framework/Gen/Emit/Program.hs)、[Context.hs](../sdk/Framework/Runtime/Context.hs)（`streamHandle`） |
 
 ScopeTree 独立构建并保持无环；订阅与回调关系不作为 scope 父边。运行时不累计完整方法调用历史或无限 workflow 结果。

@@ -6,24 +6,25 @@
 -- 锁边界：coordinator 串行化归属认领、使用登记与关闭预约，锁内只改内存；
 -- scopeInstances 保护实例表；scopeGate 保护单实例生命周期；scopeRecoveryGate
 -- 串行化诊断。业务方法体和生命周期 gate 的等待由 Runtime/App 协调。
--- 最后使用者撤销后 cleanupAvailable 按依赖释放，Program 在任务退出后做兜底。
+-- 实际使用与执行帧的待用关系均消失后，cleanupAvailable 按依赖释放。
 module Framework.Runtime.Scope
   ( ScopePhase(..), ScopeRecord(..), ScopeOperation(..)
   , emptyScope, scopeFailure, beginScope, finishScope, interruptedScope
   , Scopes, ScopeBinding, ScopeBindings, ScopeHandler(..), ScopeInstance(..), ScopeInput(..)
-  , ScopeCleanup(..), cleanupScopes, newScopeHandler, findScope, getScope, selectScopeInstance
-  , ScopeUser(..), newScopeUser, useScope, detachScopeUser, releaseScopeUser, saveCleanupFailures
+  , ScopeCleanup(..), cleanupScopes, cleanupAvailable, newScopeHandler, findScope, getScope, selectScopeInstance
+  , ScopeUser(..), newScopeUser, useScope, detachScopeUser, saveCleanupFailures
   , rememberUnownedBinding, claimBindingOwner
   , configureScopeRelations, scopeErrorPath, reserveScopeClose, finishScopeClose
   ) where
 
 import Framework.Runtime.Binding (Binding(..), BindingOwnership(..), Bindings)
 import Framework.Language.Handler (Failure(..))
-import Framework.Runtime.Protocol (ScopeFault(..), ScopeInput(..), ScopeInputAccess(..))
+import Framework.Runtime.Protocol (ScopeFault(..), ScopeInput(..), ScopeInputAccess)
 import Framework.Runtime.Identity (Execution)
-import Control.Concurrent.MVar (MVar, newMVar, newEmptyMVar, modifyMVar, modifyMVar_, readMVar, withMVar, putMVar)
-import Control.Exception (SomeException, displayException, mask_, try, finally, uninterruptibleMask_)
-import Control.Monad (forM, forM_, when)
+import Framework.Runtime.Frame (ExecutionFrame)
+import Control.Concurrent.MVar (MVar, newMVar, newEmptyMVar, modifyMVar, readMVar, withMVar, putMVar)
+import Control.Exception (SomeException, displayException, mask, try, finally, uninterruptibleMask_)
+import Control.Monad (forM, forM_, when, void)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef')
 import Data.List (find, sortOn, nub)
 import Data.Maybe (isJust)
@@ -94,6 +95,7 @@ data ScopeHandler environment cause = ScopeHandler
   , scopeCoordinator :: IORef (MVar ())
   , scopePeers :: IORef (Scopes environment cause)
   , scopeParentNames :: IORef [String]
+  , scopeReachable :: IORef (ScopeInstance environment cause -> IO Bool)
   , scopePendingFailures :: IORef [(Maybe SomeException, Failure cause)]
   }
 
@@ -108,7 +110,7 @@ type ScopeOwnership environment cause =
 
 data ScopeInstance environment cause = ScopeInstance
   { scopeInputs :: [ScopeInput]
-  , scopeShared :: Bool
+  , scopeFrame :: ExecutionFrame
   , scopeFamily :: ScopeHandler environment cause
   , scopeGate :: MVar ()
   , scopeRecoveryGate :: MVar ()
@@ -116,6 +118,7 @@ data ScopeInstance environment cause = ScopeInstance
   , scopeRecord :: IORef (ScopeRecord (ScopeBindings environment cause) cause)
   , scopeCleanup :: IORef (Maybe (ScopeCleanup cause))
   , scopeUsers :: IORef [(Unique, Execution)]
+  , scopeParents :: IORef [ScopeInstance environment cause]
   , scopeRetiring :: IORef (Maybe (Unique, MVar ()))
   }
 
@@ -137,13 +140,14 @@ newScopeUser handlers execution = do
 
 -- 捕获一次实际开启的实例和绑定；业务仍只实现原来的 close 方法。
 data ScopeCleanup cause = ScopeCleanup
-  (String -> Failure cause)
+  (Unique -> SomeException -> IO (Failure cause))
   (Unique -> IO (Either (Failure cause) ()))
 
 newScopeHandler :: String -> [String] -> Maybe String -> IO (ScopeHandler environment cause)
 newScopeHandler selected inputs source = do
   handler <- ScopeHandler selected inputs source <$> newMVar []
-    <*> (newMVar () >>= newIORef) <*> newIORef [] <*> newIORef [] <*> newIORef []
+    <*> (newMVar () >>= newIORef) <*> newIORef [] <*> newIORef []
+    <*> newIORef (const (pure False)) <*> newIORef []
   writeIORef (scopePeers handler) [handler]
   pure handler
 
@@ -220,10 +224,24 @@ claimBindingOwner value name slot = coordinated (scopeFamily slot) $ do
 rememberUse :: ScopeUser environment cause -> ScopeInstance environment cause -> IO ()
 rememberUse user slot = do
   users <- readIORef (scopeUsers slot)
+  used <- readIORef (scopeUserInstances user)
+  -- 注册关系只给出候选；保留的是同一受控入口实际使用的父实例。
+  -- requests 可以先于 Input，故后来取得父实例时也须补齐此前子实例的引用。
+  forM_ used $ \other -> do
+    rememberParent slot other
+    rememberParent other slot
   when (scopeUserIdentity user `notElem` map fst users) $ do
     writeIORef (scopeUsers slot) ((scopeUserIdentity user, scopeUserExecution user) : users)
     atomicModifyIORef' (scopeUserInstances user) $ \slots ->
       (if any ((== scopeRecord slot) . scopeRecord) slots then slots else slot : slots, ())
+
+rememberParent :: ScopeInstance environment cause -> ScopeInstance environment cause -> IO ()
+rememberParent child parent = do
+  candidates <- readIORef (scopeParentNames (scopeFamily child))
+  when (scopeName (scopeFamily parent) `elem` candidates) $ do
+    parents <- readIORef (scopeParents child)
+    when (all ((/= scopeRecord parent) . scopeRecord) parents) $
+      writeIORef (scopeParents child) (parent : parents)
 
 -- 预约必须先于等待 opening。retiring 的旧实例不再接纳新使用者。
 useScope :: ScopeUser environment cause -> ScopeInstance environment cause -> IO (Maybe (MVar ()))
@@ -233,35 +251,34 @@ useScope user slot = coordinated (scopeFamily slot) $ do
     Just (_, finished) -> pure (Just finished)
     Nothing -> rememberUse user slot >> pure Nothing
 
-parentClosing :: ScopeHandler environment cause -> IO (Maybe (MVar ()))
-parentClosing handler = do
+parentClosing :: ScopeUser environment cause -> ScopeHandler environment cause -> IO (Maybe (MVar ()))
+parentClosing user handler = do
   parents <- readIORef (scopeParentNames handler)
-  peers <- readIORef (scopePeers handler)
-  states <- fmap concat $ forM (filter ((`elem` parents) . scopeName) peers) $ \parent -> do
-    slots <- readMVar (scopeInstances parent)
-    mapM (readIORef . scopeRetiring) slots
+  used <- readIORef (scopeUserInstances user)
+  states <- mapM (readIORef . scopeRetiring)
+    (filter ((`elem` parents) . scopeName . scopeFamily) used)
   pure $ case [finished | Just (_, finished) <- states] of
     [] -> Nothing
     first : _ -> Just first
 
--- 已关闭的同参实例建立新一轮；旧引用仍指向旧的 Closed 实例。
+-- 实例身份只取实际参数的生产身份；同一次生产的读取和驱动观察不会另开实例。
+-- 归属帧只在创建时保存，后继复用不能把本轮实例提升为外层常驻实例。
 selectScopeInstance :: ScopeUser environment cause -> ScopeHandler environment cause
-                    -> [(ScopeInputAccess, ScopeInput)]
+                    -> ExecutionFrame -> [(ScopeInputAccess, ScopeInput)]
                     -> IO (Either (MVar ()) (ScopeInstance environment cause))
-selectScopeInstance user handler observations = coordinated handler $ do
-  waiting <- parentClosing handler
+selectScopeInstance user handler ownerFrame observations = coordinated handler $ do
+  waiting <- parentClosing user handler
   case waiting of
     Just finished -> pure (Left finished)
     Nothing -> modifyMVar (scopeInstances handler) select
   where
     inputs = map snd observations
-    shared = all ((/= RequestedInput) . fst) observations
     select instances = do
       let source (ScopeInput name _) = name
-          matches slot = shared && scopeShared slot && sortOn source inputs == sortOn source (scopeInputs slot)
+          matches slot = sortOn source inputs == sortOn source (scopeInputs slot)
           create = do
-            slot <- ScopeInstance inputs shared handler <$> newMVar () <*> newMVar () <*> (hashUnique <$> newUnique)
-              <*> newIORef (emptyScope []) <*> newIORef Nothing <*> newIORef [] <*> newIORef Nothing
+            slot <- ScopeInstance inputs ownerFrame handler <$> newMVar () <*> newMVar () <*> (hashUnique <$> newUnique)
+              <*> newIORef (emptyScope []) <*> newIORef Nothing <*> newIORef [] <*> newIORef [] <*> newIORef Nothing
             rememberUse user slot
             pure (slot : instances, Right slot)
       eligible <- fmap concat $ forM (filter matches instances) $ \slot -> do
@@ -278,16 +295,21 @@ selectScopeInstance user handler observations = coordinated handler $ do
             Just (_, finished) -> pure (instances, Left finished)
             Nothing -> rememberUse user slot >> pure (instances, Right slot)
 
--- 失败且尚未发布资源的实例不是活资源；保留故障证据但不挡住父级收尾。
+-- 回调只读取执行帧和当前 publication；在 coordinator 内调用，不能等待或重新取锁。
+pendingUse :: ScopeInstance environment cause -> IO Bool
+pendingUse slot = readIORef (scopeReachable (scopeFamily slot)) >>= ($ slot)
+
+-- 子实例的实际使用、待用关系和未完成的关闭都会保留父级。
 liveInstance :: ScopeInstance environment cause -> IO Bool
 liveInstance slot = do
   phase <- scopePhase <$> readIORef (scopeRecord slot)
   users <- readIORef (scopeUsers slot)
   cleanup <- readIORef (scopeCleanup slot)
   retiring <- readIORef (scopeRetiring slot)
+  pending <- pendingUse slot
   pure $ isJust retiring || case phase of
     ScopeClosed _ -> False
-    _ -> not (null users) || isJust cleanup
+    _ -> not (null users) || pending || isJust cleanup
 
 hasLiveChildren :: ScopeInstance environment cause -> IO Bool
 hasLiveChildren slot = do
@@ -296,7 +318,9 @@ hasLiveChildren slot = do
   children <- fmap concat $ forM peers $ \child -> do
     parents <- readIORef (scopeParentNames child)
     if scopeName handler `elem` parents then readMVar (scopeInstances child) else pure []
-  or <$> mapM liveInstance children
+  or <$> forM children (\child -> do
+    parents <- readIORef (scopeParents child)
+    if any ((== scopeRecord slot) . scopeRecord) parents then liveInstance child else pure False)
 
 -- 关闭预约与自动收尾 -----------------------------------------------------------
 
@@ -310,8 +334,11 @@ reserveScopeClose consumer permit ticket slot = coordinated (scopeFamily slot) $
       phase <- scopePhase <$> readIORef (scopeRecord slot)
       users <- readIORef (scopeUsers slot)
       children <- hasLiveChildren slot
+      pending <- pendingUse slot
+      cleanup <- readIORef (scopeCleanup slot)
       let closed = case phase of ScopeClosed _ -> True; _ -> False
-      if not closed && (any (\(user, _) -> Just user /= consumer) users || children)
+          consumed = consumer == Nothing && permit == Nothing && not (isJust cleanup)
+      if consumed || (not closed && (any (\(user, _) -> Just user /= consumer) users || children || pending))
         then pure False
         else do
           finished <- newEmptyMVar
@@ -325,29 +352,27 @@ finishScopeClose ticket slot = uninterruptibleMask_ $ coordinated (scopeFamily s
     Just (owner, finished) | owner == ticket -> do
       writeIORef (scopeRetiring slot) Nothing
       putMVar finished ()
-      pruneInstance slot
+      void (pruneInstance slot)
     _ -> pure ()
 
--- 运行表只保留还可能被选中或等待清理的实例；调用方持有协调锁。
--- 移出：已关闭的实例，以及没有使用者、没有登记清理的非共享实例（request 开启的实例不会再被选中）。
--- 旧绑定直接持有实例引用，不经运行表，旧引用仍报已关闭；同参共享的失效实例保留，同参 open 继续报原失败。
-pruneInstance :: ScopeInstance environment cause -> IO ()
+-- 没有 close 的实例同样按可达性移出；旧绑定仍直接持有原实例。
+-- 已尝试的 close 不再登记，失败也不会在下一次 sweep 或运行结束时重试。
+-- 调用方持有协调锁。
+pruneInstance :: ScopeInstance environment cause -> IO Bool
 pruneInstance slot = do
   phase <- scopePhase <$> readIORef (scopeRecord slot)
   users <- readIORef (scopeUsers slot)
   cleanup <- readIORef (scopeCleanup slot)
   retiring <- readIORef (scopeRetiring slot)
+  pending <- pendingUse slot
+  children <- hasLiveChildren slot
   let closed = case phase of ScopeClosed _ -> True; _ -> False
-      unreachable = not (scopeShared slot) && null users && not (isJust cleanup)
-  when (not (isJust retiring) && (closed || unreachable)) $
-    modifyMVar_ (scopeInstances (scopeFamily slot))
-      (pure . filter ((/= scopeRecord slot) . scopeRecord))
-
-releaseScopeUser :: ScopeUser environment cause -> Scopes environment cause
-                 -> IO [(Maybe SomeException, Failure cause)]
-releaseScopeUser user handlers = do
-  detachScopeUser user
-  cleanupAvailable handlers
+      unreachable = null users && not pending && not children && not (isJust cleanup)
+  if not (isJust retiring) && (closed || unreachable)
+    then modifyMVar (scopeInstances (scopeFamily slot)) $ \slots -> do
+      let retained = filter ((/= scopeRecord slot) . scopeRecord) slots
+      pure (retained, length retained /= length slots)
+    else pure False
 
 -- 清理动作也可临时借用别的资源；退出只撤销这些借用，由外层 sweep 收尾。
 detachScopeUser :: ScopeUser environment cause -> IO ()
@@ -364,7 +389,7 @@ detachScopeUser user = coordinatedUser user $ do
   slots <- readIORef (scopeUserInstances user)
   forM_ slots $ \slot -> do
     atomicModifyIORef' (scopeUsers slot) (\users -> (filter ((/= scopeUserIdentity user) . fst) users, ()))
-    pruneInstance slot
+    void (pruneInstance slot)
   writeIORef (scopeUserInstances user) []
 
 saveCleanupFailures :: Scopes environment cause -> [(Maybe SomeException, Failure cause)] -> IO ()
@@ -381,31 +406,40 @@ cleanupScopes handlers = do
   failures <- cleanupAvailable handlers
   pure (pending ++ failures)
 
--- 每轮最多尝试每个实例一次。叶实例释放后重扫之前被挡住的祖先；失败留待外层重试。
+-- 叶实例释放后重扫之前被挡住的祖先。一次关闭无论成败都消费登记；
+-- 原生异常保留给执行边界，在其余安全收尾完成后传播，不能继续后续业务。
 cleanupAvailable :: Scopes environment cause -> IO [(Maybe SomeException, Failure cause)]
-cleanupAvailable handlers = mask_ (sweep [] [])
+cleanupAvailable handlers = mask $ \restore -> sweep restore [] []
   where
-    sweep attempted failures = do
+    sweep restore attempted failures = do
       slots <- uninterruptibleMask_ $ concat <$> mapM (readMVar . scopeInstances) (reverse handlers)
       results <- forM [slot | slot <- slots, scopeRecord slot `notElem` attempted] $ \slot -> do
         phase <- scopePhase <$> readIORef (scopeRecord slot)
         cleanup <- readIORef (scopeCleanup slot)
         case (phase, cleanup) of
-          (ScopeClosed _, _) -> pure Nothing
-          (_, Nothing) -> pure Nothing
+          (ScopeClosed _, _) -> prune slot
+          (_, Nothing) -> prune slot
           (_, Just (ScopeCleanup interrupted action)) -> do
             ticket <- newUnique
             ready <- reserveScopeClose Nothing Nothing ticket slot
             if not ready then pure Nothing else do
-              outcome <- try (action ticket) `finally` finishScopeClose ticket slot
-              let reported = case outcome of
-                    Left exception -> [(Just exception, interrupted (displayException exception))]
-                    Right (Left failure) -> [(Nothing, failure)]
-                    Right (Right ()) -> []
+              reported <- (do
+                outcome <- try (restore (action ticket))
+                case outcome of
+                  Left exception -> do
+                    failure <- interrupted ticket exception
+                    pure [(Just exception, failure)]
+                  Right (Left failure) -> pure [(Nothing, failure)]
+                  Right (Right ()) -> pure []) `finally` do
+                    writeIORef (scopeCleanup slot) Nothing
+                    finishScopeClose ticket slot
               pure (Just (scopeRecord slot, reported))
       let completed = [result | Just result <- results]
       if null completed then pure failures
-        else sweep (map fst completed ++ attempted) (failures ++ concatMap snd completed)
+        else sweep restore (map fst completed ++ attempted) (failures ++ concatMap snd completed)
+    prune slot = do
+      removed <- coordinated (scopeFamily slot) (pruneInstance slot)
+      pure (if removed then Just (scopeRecord slot, []) else Nothing)
 
 findScope :: Scopes environment cause -> String -> Maybe (ScopeHandler environment cause)
 findScope scopes selected = find ((== selected) . scopeName) scopes

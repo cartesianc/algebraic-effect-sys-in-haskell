@@ -1,6 +1,6 @@
 # 主设计：Algebraic Effect Sys in Haskell
 
-更新：2026-11-08（Stage 2：原子 handler 与业务 effect 分离，`requires` 不生产、缺值等待；SDK 按“源语言 → gen → 编译产物 → 运行时”重组）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范。
+更新：2026-11-13（scope 改为按参数生产身份共享、按执行帧的剩余可达性回收；close 可选，关闭业务失败单独汇总）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范。
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
@@ -15,7 +15,7 @@
 | Pure、Excu、Scoped、Error、Context；有限 workflow | 当前已实现；原子句柄与 Pure 交出 `[String]`，Pure 是生产链中的值变换（2026-11-12）；Error 的驱动链仍待设计 | [运行语义](LATEST_DESIGN.md#runtime) |
 | 统一 Prototype、运行图、静态来源与缺值等待 | Stage 1/2 已实现 | [图与来源](EFFECT_GRAPH.md) |
 | parallel 兄弟可见、等不到或读不确定的读取在生成期报错、按执行帧的资产 state 与等待的结束 | 已确定，未实现 | [可见范围与等待的结束](#await-visibility) |
-| scope 的单例与多例：`requires` 引用已有的一次生产、`requests` 发起新的生产，由此决定实例的共享与清理；按可达性回收、运行结束关闭、close 可选 | 已确定，未实现 | [单例与多例](#scope-identity)、[按可达性回收](#scope-gc) |
+| scope 的单例与多例：`requires` 引用已有的一次生产、`requests` 发起新的生产，由此决定实例的共享与清理；按可达性回收、运行结束关闭、close 可选 | 已实现（2026-11-13） | [单例与多例](#scope-identity)、[按可达性回收](#scope-gc) |
 | 资产目录与业务模块的顶层白名单 | 当前已实现（Stage 2 取代普通函数的资产检查与构造器归属） | [源码资产](ASSETS.md) |
 | Stream 与挂在它下面的解析器 Context、持续资产的历史视图与 lifelong | 已实现（Stage 3）；lifelong 中的失败暂按临时规则终止整次运行 | [第 7 章](#stream)及[完整规范](STREAM_LIFELONG.md) |
 | 原子 handler 复用、前驱与驱动装配、按标签路由 | 已实现（Stage 2，2026-11-08）；本文第 4 章即当前协议 | [Next stages](NEXT_STAGES.md#stage-2) |
@@ -191,7 +191,7 @@ ScopeTree 单独构造并保持无环，供依赖清理和 Error 祖先导航使
 
 规则按“输入前提 → 推导结构 → 运行行为 → 无法判定时的诊断”书写。能力去重不等于实际调用去重，结构可达不等于本次生产或后续持续推进；等待也不能自动解释为失败。
 
-资源的共享与清理同样只凭声明推导，不用 key 或寿命标签：`requests` 发起一次新的生产，`requires` 引用已有的一次生产，开启参数以哪种方式进入 scope，决定这次开启是多例还是单例，也决定实例何时关闭。规则见[单例与多例](#scope-identity)（已确定，未实现）。
+资源的共享与清理同样只凭声明推导，不用 key 或寿命标签：`requests` 发起一次新的生产，`requires` 引用已有的一次生产，开启参数以哪种方式进入 scope，决定这次开启是多例还是单例，也决定实例何时关闭。规则见[单例与多例](#scope-identity)。
 
 Stream 的目标是让原子方法作者只需理解本方法的输入输出。gencode 静态推导 BootPlan，interpreter 执行它；不在运行中猜测业务属于 socket、event 还是 behavior，三种驱动关系目前的写法见 [Stream 第 4.1 节](STREAM_LIFELONG.md#drives)。完整匹配与回调规则作为[主设计第 7 章](LATEST_DESIGN.md#stream)的一部分维护。
 
@@ -235,7 +235,7 @@ Error 的驱动链、Generic Map、跨独立 interpreter 存续、任意逃逸�
 | --- | --- | --- | --- | --- |
 | Pure | handler（必填） | m [String]，Layer 只有 Raw、Raises，不含 MonadIO | run名字 | 只在生产链中：用 raw 读上层交出的 list，结果只交给下面的 Pure 或 Context；不声明 demands，不作为 AST 末端，见 [Pure](#pure) |
 | Excu | handler | m [String] | run名字 | 交出的 list 只交给挂接的 Context（可经 Pure）；入口装配驱动与前驱并承接失败 |
-| Scoped | open、close | 均为 m [String] | open名字、close名字 | 开启参数读取同参共享／驱动 fresh；完整链持有实际实例，末个使用者退出且无子 scope 保留时 once-spare |
+| Scoped | open、close | 均为 m [String] | open名字、close名字 | 开启参数按生产身份共享；无当前使用、待用节点及子 scope 保留时回收，close 可选 |
 | Error | detect、resolve | 均为 m () | detect名字、resolve名字 | 只处理关联 scope 的失败；沿 ScopeTree 祖先顺序检测，Succ 后调用可选 resolve，保存原始与次生失败 |
 | Context | parser | m 表示类型 | getT；`require = True` 时 readT，`stream = True` 时为 streamT | getT 执行前驱与 parser 并包装发布；读取先用 state，无值时等待发布，不生产；失败保留该来源旧值；持续资产见第 7 章 |
 | Stream | handler | m String | next名字 | 只由生产会话驱动；不作为 AST target |
@@ -595,127 +595,76 @@ monitor = lifelong
 <a id="scope"></a>
 ### 4.7 Scope 存续、归属与自动清理
 
-本节记录本轮定案的有限使用闭包协议；运行载体和旧样例按此迁移，不以旧版编译或运行结果宣称本轮已验证。下一步已确定、尚未实现：以 `requires` 与 `requests` 进入 scope 的方式区分[单例与多例](#scope-identity)，并[按可达性回收](#scope-gc)，取代按 Eq 共享实例、once-spare 与 interpreter 退出兜底。
+Scoped 的 open 由入口按 Input 装配，close 由 SDK 在实例不可达时调用，handler 不直接调用它们。两种方法均返回 `m [String]`；close 可写 `Nothing`。同一 interpreter 创建一批 ScopeHandler，由全部末端共享；每个 Scoped 注册持有自己的实例集合，每份实例独立保存生命周期、锁及资源绑定。两个 Scoped 注册即使共用 handler，仍是不同的 scope。
 
-effect 不配置 dependency。SDK 沿 Input 与 requests 收集 Scoped；读取不执行 getT，所读值的生产链已有的资源前提仍纳入清理依赖。open 由入口按 Input 装配，handler 不调用 open／close，二者均为 m [String]；使用闭包撤销使用后由 SDK 按 once-spare 调用登记的 close，interpreter 退出保留兜底。
+实例按开启参数的生产身份共享，按剩余程序的可达性回收。业务不增加 key、位置参数、寿命标签或装配层，也不配置 cleanup policy。完整规则分为下面的[实例身份](#scope-identity)与[回收](#scope-gc)；实现与验证范围记录在 [Next stages](NEXT_STAGES.md#scope-gc)。
 
-同一 interpreter 自动创建一批 ScopeHandler，由所有末端 Target 捕获。每个 Scoped 注册持有实例集合，每份实例独立保存 MVar、生命周期和开启期 Context；实际开启输入是被驱动还是被读取，决定新建还是共享。两个 Scoped 注册共用 open／close handler 时仍是两个独立的 scope。Main、Effects 和 Handlers 不增加 key、位置参数、用户装配或手写 layer，也没有进程全局单例。运行表可跨 Node 共享，但不预约未来 Node 的活资源。运行表只保留还可能被选中或等待清理的实例：已关闭的实例，以及没有使用者、没有登记清理的非共享实例移出运行表；旧绑定直接持有实例引用，旧引用仍报已关闭；同参共享的失效实例保留，同参 open 继续报原失败，显式 close 后移出。
+#### 开启、绑定与归属
 
-当前 App／IO 协议采用已有文件链的结构：Scoped 的 requests 资源 demand 引用资源 Context（如 FileResource），该资源 Context 声明消费的上游 Context（如 FileLocation）及其值前提构成开启参数。SDK 生成观察器，在资源 parser 真正读取这些资产并取得结果时记录原生 ADT 值，按来源、类型和 Eq 比较；参数 ADT 需要 Eq，资源产物不需要 Eq。参数在本次开启中必须保持一致。SDK 不在外部提前执行 Context，不从文件路径字符串、Show 或 Handle 身份猜测参数。
+Scoped 的 `requests` 资源 demand 指向资源 Context；资源 parser 声明消费的上游 Context 及其值前提构成开启参数。SDK 在实际取得参数绑定时观察其生产身份，不提前执行 Context，也不比较参数 ADT 的值。参数齐备后才选定实例、执行资源 IO；缺少参数报 `ScopeInputsMissing`，实例选定后换成另一份参数生产报 `ScopeInputAfterOpen`。参数生产者自己的 IO 可以运行；协议不分析任意 IO 闭包内的隐藏参数，也不自动拆开尚未发布的部分资源获取。
 
-每次 open 按取值声明取得本次参数。作为 scope 匹配参数的开启输入全部实际以读取取得时，可按 Eq 共享同参活实例，跳过资源获取及 open 的剩余方法体；任何这样的输入在本次被驱动重新生产时，本次 open 默认 fresh，即使值相同也创建新实例，同值旧实例保留并存。这里区分的是开启参数取值，Scoped 驱动资源本身的 requests 不一律触发 fresh；没有开启输入的 scope 仍可共享。
+每次成功的 Context 生产在 Binding 中保存本次 `ActivationId`、所属执行帧、不变的 `Execution` 出身，以及共享的 `bindingOwnership`。生产失败不替换旧绑定。读取、alternative 交接、scope 快照与资源认领传递同一份绑定；复用资源保留其原生产身份。无资源 scope 的内部占位绑定没有 Context 生产身份。普通资产仍按 origin 和静态来源表保存、读取，本轮没有改为按帧的资产 state。
 
-需要共享时，业务在当前完整链先由 requests 驱动稳定参数，资源 parser 与 scope 内的 handler 读取该绑定。参数生产者自己的 IO 可以运行；open 范围中其他 IO 必须在参数齐备之后，否则报 ScopeInputsMissing。参数变化发生在选定之后则报 ScopeInputAfterOpen。该协议不分析任意 IO 闭包中的隐藏参数，也不将混在参数生产动作里的资源获取自动拆开。本轮协议限定 App／IO 下受管理的有限完整链。
+本次已捕获的绑定不被其他链的新发布改写。复用实例只交接带 owner 的资源绑定，不从旧 scope 快照补入无 owner 的辅助值；后者照常按来源读取。资源 Context 只能在已经开启其所属 Scoped 的链内读取，由 gen 检查；运行时不再扫描其他仍开着的实例来补资源。close 与 Error 诊断读取自己实例的快照不受影响。
 
-底层 Binding 保存不可变值快照、Execution 出身与共享的 bindingOwnership IORef。每次生产成功产生新绑定；当前捕获、权威表、scope 快照和 alternative 的 Handoff 共用该绑定的归属单元。读取首先使用本次捕获，不因另一条链发布新值而改变。驱动发布并替换当前 origin 的来源绑定。复用实例只接入带 owner 的资源绑定，不把无 owner 辅助快照补入当前调用；后者从按 origin 保存的权威表、按原型许可来源读取。资源关闭后，后续 Node 经 Input 开启新一轮；旧资源绑定不自动换 owner。
+一个资源绑定只有唯一关闭归属。open 在 `scopeCoordinator` 内首次认领无 owner 的共享单元；同实例认领幂等，其他 scope 或同注册的不同实例认领时报 `ScopeContextMismatch`，不覆盖 owner，也不为冲突实例登记 cleanup。认领先于等待生命周期锁，认领到保存资源绑定保持 masked。认领不删除 publication，不改变值、生产身份、执行出身或重新发布；所有捕获副本看见同一归属。
 
-close 不预先选择 scope，也不预执行 Context。生成包装先进入关闭协议，close handler 的读取取得 ContextBinding 后，SDK 从该绑定的归属取得生命周期锁，再继续关闭方法体。找不到绑定／归属即失败；关闭期间不能改用另一份归属。重新开启产生新实例，旧绑定仍指向旧的已关闭实例，不会误关新资源。
+无 owner 的资源绑定在发布／读取返回前登记当前 `ScopeUser`；认领时把仍活跃的持有者接入实例，入口退出在同一协调锁内撤销待认领与实例使用。普通资产不登记待认领使用者。资源快照按共享归属单元去重，不合并独立生产；两次生产私下包装同一底层 Handle 的物理别名不在追踪范围。
 
-一个资源绑定只有唯一关闭归属，普通 require 只读取原绑定，不转移资源归属。open 在 scopeCoordinator 内将共享单元从无 owner 首次认领为实际实例，同一实例重复认领幂等。另一个 scope 或同注册的不同实例认领同一绑定时，SDK 在等待实例生命周期锁之前报告 ScopeContextMismatch，不覆盖 owner，也不为冲突实例登记该资源的 cleanup。所有捕获副本观察同一次认领；有效 scope 复用仍传递原绑定。
+共享实例的并发 open 在等待 opening 前先登记使用。有效实例复用时跳过资源获取及剩余 open 方法体；不同参数生产的实例独立。开启失败／中断后实例失效，不自动恢复或重开；普通下游失败不自动使 scope 失效。资源 producer 返回到发布采用 masked 交接，open 失败／中断时已发布的资源仍纳入清理，未发布的部分获取由原子 IO 负责。
 
-资源 Context 在 open 外产生无 owner 绑定时，发布／require 返回前登记当前 ScopeUser。认领在同一 scopeCoordinator 内把仍活跃的持有者转入实例使用集合；入口退出在该锁内同时撤销待认领与实例使用，防止漏记使用者或复活已经结束的入口。普通资产不保存待认领使用者；open 内正常生产已有 owner 的路径不变。认领到保存资源绑定保持 masked，资源已被认领后不会因这一交接窗口中断而漏掉 cleanup。
-
-认领保留原来的 publication、值和 origin，不删除来源记录或重新发布；因此 Stage 2 的静态来源事实不因 owner 后补而撤回。资源快照按共享归属单元去重，不合并独立生产。两次生产即使私下包装同一个底层 Handle，也仍是不同绑定；SDK 不追踪这种物理别名。不新增用户 key、layer、位置参数或借用／转移协议，不改变 handler 写法和 ScopeTree 算法。
-
-跨链第一次读取尚无本地绑定时，只接受唯一可解析的来源绑定并将其捕获；多份来源且没有明确关联时报 AmbiguousContextBinding。此规则不解决任意历史绑定的用户寻址，不能把同一个无参方法解释成“任选过去第几份值”。同一份已绑定句柄重复读取稳定，与同一注册结构创建多份调用环境是两回事。
-
-选择共享的并发 open 等待同份实例，等待 opening 的调用也先加入使用，不能因另一调用结束而把其即将使用的资源关闭。驱动 fresh 和不同参数实例各自独立。开启失败／中断后失效，close 失败允许再清理，成功关闭后重复 close 跳过。close handler 须先读取已有资源，再做释放 IO；参数／资源生产失败不触发外部补跑。普通下游失败不自动等同于 scope 失效。
-
-现有 demo 按此协议书写：FileDemo 的校验与资源 parser 读取同一路径，Input 先开启文件。ScopeInstancesDemo 的三条使用闭包共用 `checkSelection`，各自由 requests 刷新参数、经 Input 开启实例，闭包退出时关闭，后一条按当前参数开启新实例；它不再演示一条链内重复开启。OpenFilesDemo 观察当前链及 GC 期间的十个文件，检查快照挂在只在最后一段运行的 ReleaseFiles 下，再在 scope 关闭后检查。ScopeReuseDemo 的 writer 先驱动参数、scope 内读取；仅实际重叠时共享，不能固定断言整个 parallel 只开一次。它在全部链清理后读取已有日志和追加输出，不读取旧资源。上述是适配说明，不是新增测试。
-
-状态分配不执行业务。原有有限使用闭包以入口使用登记表达：每个 Node lower 的末端完整 chain 建立一份登记；实际 open／读取选中实例时加入使用，同一闭包对同一实例只加入一次。chain 正常返回、失败或取消后，完成相应诊断和 SDK 受控的结果消费，再撤销这次使用。最后使用者离开且子 scope 不再保留它时，once-spare 执行登记的 close。后续尚未开始的 Node 不占用使用名额，资源不会仅因它可能再次使用而留到 interpreter 末尾。
-
-once-spare 当前是 core 固定策略，不提供 policy 配置，也未实现 next-use、超时保留或运行时切换。策略位于 SDK 生命周期协调层，用户原生 open／close 方法的接口独立于这一选择；interpreter 退出时仍执行兜底清理。
-
-生成器登记原有 close 回调，SDK 为实际实例保存清理动作和绑定。清理服从补全后的 scope 依赖，子 scope 仍保留其前提时不得先关闭前提；相等参数的 fresh 实例仍分别持有和释放。显式切换当前绑定不立即关闭同一闭包已经持有的其他实例。公开 interpreter 完成、失败或取消时的全局清理继续作为兜底，不替代闭包退出时的实际回收。
-
-显式 close 已成功的实例跳过，close 失败的实例仍可在退出时清理。某次清理失败不阻止其余实例，原执行失败与各次清理故障均保留；没有原执行失败时，清理失败也不能报告为成功。资源 producer 返回到 SDK 发布绑定采用 masked 交接，open 失败／中断时已经发布的资源仍纳入清理。不为清理重新执行资源生产者，也不因一次驱动改选参数而关闭仍被其他绑定引用的实例。
-
-可开启的 Scoped 须声明 close，缺失时生成阶段报错。退出清理期间拒绝再次 open，避免收尾中新建未纳入本轮结束范围的资源；此时 close 的 Error 路径由自己的生成入口建立，不沿用开启时的下游调用路径。普通收尾失败附在原 Failure.cleanupFailures；原生异常在其余清理尝试完毕后重新抛出，并报告同时发生的清理故障。
-
-重新创建一批运行句柄不共享状态；跨独立 interpreter 的存续不在当前范围。本轮使用计数只覆盖 SDK 管理的完整链及受控结果消费，不追踪任意逸出 Handle。SDK 的显式关闭协议保留（handler 不再调用 close）：只可排除当前闭包自己的使用，仍有其他使用者或未释放子 scope 时以 ScopeInUse 拒绝，不等待当前调用退出；关闭预约期间不接纳新使用。裸 forkIO 自动追踪、任意业务 IO 内尚未发布的部分获取恢复及 Linear 凭证尚未实现。Error 的同实例检测／处置串行化继续沿用原协议，使用与关闭由本轮使用协议协调。
-
-这使“同一绑定保持同一值与资源归属”成为底层表示和 ContextStore 原语的约束，而不是额外 adaptor 的约定。但架构尚未成为能静态证明所有业务公理的系统：生成包装仍提供运行时协议；App 中的任意 liftIO 不因句柄描述纯而变纯。Pure 的 Layer 不含 MonadIO，但其值管道语义尚未确定。Error 使用用户定义的定位条件，不能用它假定外部执行总是确定。
+close 使用冻结的本实例绑定。其 handler 先读取资源，SDK 据 owner 定位实例并取得生命周期锁，再执行释放 IO；不会预生产 Context、改选其他实例或把旧绑定转给新实例。关闭预约期间不接纳新的使用者，重复成功 close 跳过。关闭只应发生在不可达的实例上；`ScopeInUse` 保留为 SDK 内部不变量故障，不能作为业务关闭控制流。
 
 #### 细化契约与节点身份
 
-当前不同细化资源、开启输入及 Scoped 使用不同注册，ScopeTree 因而以 Scoped 注册识别节点；实例再以输入来源、类型与 Eq 值区分。Stage 2 中两个 Scoped 注册可以共用 open／close handler（FacadeProbe 的 ReportScope、ReplyScope），它们仍是两个节点；同一个 Scoped 注册服务多种细化资源尚无声明形式。
-
-若以后引入该形式，静态节点、实例表、ownership、close、cleanup 与 Error 导航必须共同改用“Scoped 注册＋细化资源类型”，不能只修改资产命名。
+不同细化资源、开启参数及 Scoped 使用不同注册，ScopeTree 以 Scoped 注册识别节点，实例再由参数的生产身份区分。一个 Scoped 注册服务多种细化资源尚无声明形式；将来若引入，静态节点、实例表、ownership、close、cleanup 与 Error 导航须共同改用“Scoped 注册＋细化资源类型”。
 
 <a id="scope-identity"></a>
-#### 单例与多例：require 与 request 进入 scope（已确定，未实现）
+#### 单例与多例：require 与 request 进入 scope
 
-**状态：设计已确认（2026-11-13），尚未实现；实现前以上述当前协议为准。** 这是 scope 资源清理的出发点：实例的身份、共享、存续和关闭时机都由它推出，[按可达性回收](#scope-gc)只是执行它的机制。
+**状态：已实现（2026-11-13）；本轮验证见 [Next stages](NEXT_STAGES.md#scope-gc)。** `requests` 发起新的生产，`requires` 引用已有的一次生产。资产细化固定生产链，`ActivationId` 区分每次实际生产；同一条链两次生产即使值相等也有不同身份。实例身份是 Scoped 注册加各参数来源及其生产 `ActivationId`，参数 ADT 不需要 `Eq`。
 
-scope 的资源怎样清理，取决于开启参数以哪种方式进入 scope。`requests` 与 `requires` 是两种不同的进入方式：
+| 开启参数的实际出处 | 类别 | 共享与归属 | 示例 |
+| --- | --- | --- | --- |
+| 没有开启参数 | 注册级单例 | 同一注册共享实例，归根帧；剩余程序不再使用时回收 | Crawler 的 `CrawlSession`、StreamDemo 的 `SensorLink` |
+| 只引用已有的一组生产 | 单例（按那组生产） | 读到同一组生产的开启共享实例；保留原归属帧 | ScopeReuseDemo 的三个写入 |
+| 当前执行新生产了至少一个开启参数 | 多例 | 新参数生产确定新实例；本次生产的后继仍可共享它 | FileDemo、ScopeInstancesDemo、OpenFilesDemo |
 
-- **`requests` 发起一次新的生产，得到新的身份。** 这次开启要的是属于自己的资源。
-- **`requires` 引用已有的一次生产，身份与它相同。** 这次开启要的是别人已经确定下来的那一份。
+类别描述本次开启与实际参数生产的关系，不是注册或开启位置的固定属性。同一个位置可以在挂接解析成功时使用当前节点的新生产，在注入失败时使用合法前驱的旧生产。gen 保存各参数可能的出处；运行时继续按捕获和来源规则取得唯一实际绑定，由该绑定确定身份和帧归属，不按候选类别强行选择来源。
 
-[资产细化](#refinement)固定的是生产链，不是每一次驱动：同一条生产链的两次驱动是两份不同的东西，即使值相等。scope 实例的身份就是开启参数来自的那一次生产，所以不需要 key，不比较参数值，也不看 Handle。
+多个参数共同确定实例，所属帧取这些实际参数中最内层的执行帧；无参数取根帧。后继读取同一次生产不会把本轮实例提升为外层常驻实例。Scoped 对资源 Context 自身的 `requests` 不决定单例或多例：参数身份相同就复用，资源获取被跳过。
 
-每次实际开启由参数绑定的生产出处归入下面三类之一。同一个开启位置（哪个节点的链在开启哪个 Scoped）可能因执行路径不同而对应不同类别；gen 记录可能的出处，运行时依据实际选中的绑定确定本次类别：
-
-| 开启参数怎样进入 | 类别 | 实例归谁、何时清理 | 业务含义 | 写法见 |
-| --- | --- | --- | --- | --- |
-| 没有开启参数：资源 Context 没有上游，或 Scoped 没有资源 | 注册级单例 | 不属于任何一条链。同一时刻至多一个实例；剩余程序里没有节点还会用这个 Scoped 时关闭 | 整个程序共用的连接、会话 | Crawler 的 `CrawlSession`、StreamDemo 的 `SensorLink` |
-| `requires`：本次开启只读取已有的一次生产 | 单例（按那一次生产） | 属于那一次生产。读到同一次生产的开启共享同一个实例；剩余程序里没有节点还会读到这次生产时关闭 | 连接池、多条链共用的文件 | ScopeReuseDemo 的目标写法 |
-| `requests`：本次开启发起了新的生产，资源 Context 驱动参数，或开启链自己先驱动参数 | 多例 | 属于发起生产的这一次执行。每次开启一个实例；这次执行结束、且没有后续节点读取这次生产时关闭 | 事务、每个请求各自的句柄 | FileDemo、ScopeInstancesDemo、OpenFilesDemo |
-
-- **类别描述本次开启与参数生产的关系，不是 Scoped 注册或开启位置的固定属性。** 同一个 Scoped，在自己驱动参数的链上是多例；后续节点只读取这次驱动时，与它共享同一个实例。若同一位置可能读取本节点的新生产，也可能读取前驱已有的生产，gen 保留这些候选，不能统一硬判为多例或单例。
-- **多个开启参数逐个判断。** 任一参数在本次开启中是新的生产，这次开启就是多例；全部引用已有的生产时，实例由这组生产共同确定。
-- **决定类别的是开启参数，不是 Scoped 自己的 demand。** 开启参数是资源 Context 的 parser 读取的上游 Context。Scoped 对资源 Context 总是写 `requests` 与 `requires`：资源在 open 协议内获取，认领不出现无主的窗口；共享已有实例时这次获取被跳过。
-- **清理的区别。** 多例归属于发起参数生产的那次执行，在该执行结束且没有后续使用时回收；读取同一次生产的后继仍可共享它。lifelong 中，参数来自外层帧或没有参数的实例跨轮保留；参数来自本轮的实例由本轮帧管理，即使本轮后继以单例方式共享，也不因此变成常驻实例。整次运行结束时两类都关闭。
-
-例如，前驱 Prepare 已发布参数 P，当前节点的上游又尝试挂接解析并发布 P，之后开启只读取 P 的 scope。挂接解析成功时，本次开启使用当前节点的新生产；注入失败、原链继续时，本次开启可以读取 Prepare 的旧生产。两条成功路径对应不同类别，仍按已有的捕获和来源规则选择绑定；候选分类不改变取值规则，也不新增第四种类别。
-
-三类写法的节选，声明语法不变：
+声明语法不变，以下为 Effects 的字段节选：
 
 ```haskell
--- 注册级单例：资源 Context 没有上游（Crawler）
+-- 无参数：资源 Context 没有上游（Crawler）
 EffectSpec { name = "SessionContext", typing = Context { asset = Asset @SessionInfo "CrawlSessionInfo", .. }, input = "Root", demands = [] }
 EffectSpec { name = "CrawlSession", typing = Scoped { .. }, input = "Root", demands = [requests "CrawlSessionInfo", requires "CrawlSessionInfo"] }
 
--- 多例：资源 Context 在开启时驱动参数（FileDemo）
+-- 新生产参数：资源 Context 在开启时驱动它（FileDemo）
 EffectSpec { name = "FileResource", typing = Context { asset = Asset @FileHandle "OpenedFile", .. }, input = "Root", demands = [requests "FileName", requires "FileName"] }
 
--- 多例：资源 Context 只读取参数，开启链自己先驱动它（ScopeInstancesDemo）
-EffectSpec { name = "FileResource", typing = Context { asset = Asset @FileHandle "OpenedFile", .. }, input = "Root", demands = [requires "FileName"] }
-EffectSpec { name = "UseFirst", typing = Excu { .. }, input = "FileSession", demands = [requests "FileName", requires "FileName", requires "OpenedFile"] }
-
--- 单例（按一次生产）：资源 Context 只读取参数，开启链也不驱动它，读的是 PrepareProbe 的那次生产（ScopeReuseDemo 的目标写法）
+-- 共享一次生产：前驱驱动参数，资源 parser 与后继只读取（ScopeReuseDemo）
 EffectSpec { name = "PrepareProbe", typing = Excu { .. }, input = "Root", demands = [requests "FilePaths", requires "FilePaths"] }
 EffectSpec { name = "FileResource", typing = Context { asset = Asset @SharedFile "OpenedFile", .. }, input = "Root", demands = [requires "FilePaths"] }
 EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope", demands = [requires "OpenedFile"] }
 ```
 
-SDK 的分工：
-
-- **gen** 在每个开启位置记录各开启参数可能的生产出处（本节点自己的生产，还是哪个节点的生产），写入 Prototype。`--structure` 展示出处及对应的可能类别；只有证据唯一时才展示固定类别。
-- **运行时** 为每次成功生产的绑定保存生产身份；open 用实际选中的参数绑定确定本次类别、所属执行帧及实例身份，不比较值，参数 ADT 不再需要 `Eq`。
-- **清理** 按实际绑定的生产身份及所属帧判断谁还能触达实例，见下一节。
-
 <a id="scope-gc"></a>
-#### 按可达性回收（已确定，未实现）
+#### 按可达性回收
 
-**状态：设计已确认（2026-11-13），尚未实现；实现前以上述当前协议为准。** 推进见 [Next stages](NEXT_STAGES.md#scope-gc)。实例的身份与类别见[单例与多例](#scope-identity)；本节规定实例何时关闭。
+**状态：已实现（2026-11-13）。** SDK 同时观察当前使用者与剩余程序：仍可能触达的实例保留，不可达时同步回收。handler 只实现怎样关闭，AST、Input 与 demands 提供何时不再使用的依据。
 
-once-spare 只数此刻的持有者：前一条链退出、下一条尚未开始时计数归零，资源随即关闭，下一条再重新开启；Crawler 的两次抓取、ScopeReuseDemo 的三个写入是否共享，都取决于它们是否实际重叠。程序只有一个 AST，资源只经 Input 与 demands 到达，引用全部静态声明，ScopeTree 与 effect graph 无环；因此改为按剩余程序的可达性回收：仍可能被触达的实例不关闭，不可达的实例立即关闭。计数仍是 SDK 内部的引用计数，但计的是剩余程序中可能触达实例的节点，由 gen 静态得出、只减不增，归零的时点由程序结构决定；图无环，这样的计数与追踪式回收等价。写法不变：handler 只实现怎样关闭，何时关闭由 SDK 推出，不新增声明、AST 节点、key 或寿命标签。
+- **当前使用**：每次 AST 入口完整 chain 建立一份 `ScopeUser`，open／require 选中的实例加入其中，等待 opening 也计入。同一入口内的 Context 生产继承该登记。业务、Error 诊断和受控结果消费全部结束后才撤销；生产会话跨步骤保留自己的登记。
+- **待用关系**：gen 在 `protoScopeOpenings` 中记录每个开启位置各参数可能的生产节点，包括本节点和 alternative 交接的捕获。执行帧保存待执行、执行中、完成和跳过的节点。有限运行使用根帧，lifelong 单元每轮使用子帧；节点完成、chained 短路及 alternative 排除候选都会撤销相应待用关系，更新幂等。
+- **实际匹配**：运行时将实例的参数生产身份与候选来源的实际绑定比较；普通发布以当前那一份为准，不把 NodeId 当生产身份。lifelong 本轮已领取的普通伴随资产则固定使用交付时的生产身份，不能被后台后续发布替换。ExecutionFrame 只保存这份身份信息，不复制值表；根帧查询同时考虑活动子帧的待用节点，帧结束即清空并从父帧摘除。无参数按 Scoped 注册匹配。进度和预约共用 scope 协调锁；运行时不重建 effect graph，不在业务方法体插入进度语法。
+- **依赖与执行**：没有当前使用者、没有匹配的待用节点、没有仍保留它的子 scope 时执行 close。ScopeTree 提供父子候选，运行时由同一受控链实际使用的实例补齐子实例的 `scopeParents`；子实例只保留这些具体父实例，不保留同注册的全部实例。关闭遵守子先父后，在触发不可达的线程中同步完成后才继续后继，不另设清理线程。普通资产快照不延长生产资源的存续。
+- **lifelong**：无参数及参数来自外层的实例由外层帧保留；本轮生产参数的实例归本轮，后继共享不改变归属，本轮结束即回收。会话仍以实际使用登记持有资源，正常 end、历史资源精细释放和持续资产作为开启参数仍是后续工作。
+- **close 可选**：`close = Nothing` 不登记关闭方法。实例不可达时只移出运行表，不执行释放 IO；有 close 的实例保存实际绑定和关闭回调。
+- **close 业务失败**：`raise` 先进入关联 scope 的 Error 诊断，之后记录并在运行结束时汇总；不改变节点或整次运行的业务结果，不短路、不停止其他业务，也不重试该 close。失败实例移出运行表，旧绑定保留原实例及失败证据。
+- **运行结束与取消**：正常结束、失败或取消时，先让受控工作退出、撤销全部待用及使用关系，再按同一规则回收剩余实例。取消落在 close 期间也须向外传播并停止后续启动；被中断的 close 记录后不重试，其他收尾失败不覆盖取消。进程被强制终止时无法保证 close 执行。
 
-- **可达**：下列任一成立时实例可达：正在执行的链捕获或使用它；所属执行帧里仍待用的节点有一个与它身份相同的开启位置（注册级单例按注册，其余按参数的生产出处）；它有可达的子 scope 实例；它的 Error 诊断尚未结束；持续生产会话正在使用它。普通值的快照不是可达边，读取资源生产链产出的普通资产不延长资源的存续。业务自行保存的 Handle 与裸 `forkIO` 不在追踪范围。
-- **资源只在开启它的链内读取**：资源 Context 只能在已经开启其所属 Scoped 的链内读取，否则生成期报错。现有协议在本链没有捕获时由“仍开着的实例”提供资源，读到哪个实例取决于此刻谁还活着；按可达性回收要求先知道谁会读，才能决定谁活着，因此取消这条路径。close 与 Error 诊断读取自己实例的资源不受影响。
-- **静态部分**：来源分析在分析到 open 时，记录这个开启位置各开启参数可能的生产出处：本节点自己的生产，或其他节点的生产，后者包括 alternative 的选择读取交接给候选的捕获。现有来源表只记录没有捕获时的读取，分不清这两种，因此出处作为 Prototype 的新字段写出，同时保留对应的可能类别。每条实际读取路径仍须满足已有的捕获与来源唯一性规则；允许不同合法路径选中不同出处，不把候选集合当成运行时任选来源的许可。
-- **运行部分**：运行时只追踪节点进度，不追踪整张 effect graph。进度按执行帧记录：整次有限运行是一帧，lifelong 单元的每次执行各是一帧。帧开始时帧内每个节点都是待用；节点结束（含诊断与受控结果消费）、被 chained 短路跳过、在 alternative 中未被选中后不再待用，只减不增。实例的待用计数是所属帧里仍待用、且有与它身份相同的开启位置的节点数：参数全部来自帧外的生产或没有参数的实例记在外层帧，lifelong 单元对外层帧的持有不随每轮结束而撤销；参数来自本帧生产的实例记在本帧，随本帧结束而不可达。计数在现有协调锁内更新；归零且没有当前使用者、没有可达的子 scope 实例时关闭。节点进度与[可见范围内的等待](#await-visibility)共用同一份记录，不另建一套。
-- **执行**：close 在使计数归零的事件所在的线程中同步执行，完成后才开始下一个节点；parallel 中由最后减到零的分支执行。沿用关闭预约、子先于父、一份失败不阻止其余实例，不另设后台清理线程。
-- **lifelong**：注册级单例，以及参数来自 lifelong 之外那次生产的单例，记在外层帧，运行期间常驻；多例和参数来自本轮生产的实例属于本轮的帧，本轮执行结束即回收。连接池（参数生产一次、各轮 `requires`）因此跨轮存续，事务（每轮 `requests`）单轮结束，参数变化时不累计历次实例。
-- **运行结束**：整次运行正常结束、失败或取消时没有节点仍待用，全部声明了 close 的实例按依赖逆序关闭，包括 lifelong 用到的单例。这是同一条可达性规则的结果，不是另设的兜底：ScopeTree 只在内存中，重启后为空，留下的外部资源新的运行看不到，状态无法确定。进程被强制终止时 close 无法执行。
-- **close 可选**：Scoped 的 close 不再必填，生成期不再要求可开启的 Scoped 声明 close。没有 close 的实例不可达时只移出运行表，不执行 IO，运行结束时也不关闭。
-- **close 业务失败**：close 的 `raise` 照常进入关联该 scope 的 Error 诊断；之后只记录，运行结束时汇总报告，不改变任何节点的结果，不触发短路，也不停止运行，整次运行的结果仍是业务结果。失败的实例标为失效并移出运行表，不重试 close。close 失败是资源问题，不是作用域问题：实例已经不可达，不会再被任何节点使用。
-- **整次运行取消**：取消是执行尚未自然结束时收到外部停止要求，例如用户按 Ctrl+C，属于执行生命周期。SDK 停止启动后续节点，让受控的在途操作退出，再按同一回收规则处理剩余实例，最终保留取消结果。取消即使发生在同步 close 期间，也不能降为仅报告的关闭业务失败并继续下一节点；被中断的关闭按现有协议记录并诊断，但不重试该 close，也不吞掉整次运行的取消。收尾中的其他失败不覆盖取消结果。此规则不新增业务取消方法、effect 类型或 AST 节点。
-- **取代的部分**：once-spare 及“后续尚未开始的 Node 不占用使用名额”；按 Eq 跨生产共享与参数 ADT 的 `Eq` 要求；本链没有捕获时由仍开着的实例提供资源；可开启的 Scoped 必须声明 close；interpreter 退出兜底作为独立机制，以及 close 失败的实例退出时再清理；面向业务的 ScopeInUse（关闭只发生在不可达的实例上，再出现即可达性分析的内部错误）；close 失败附到节点的 `Failure.cleanupFailures`，以及业务成功而清理失败时把结果报告为失败。
-- **不变的部分**：资源认领、masked 交接、子 scope 先于父关闭、旧绑定仍报已关闭、Error 的实例定位与诊断。关闭预约等内部机制保留：常驻的单例失效后需要作废并重新开启，这留给 Error 的驱动链设计。持续资产作为开启参数仍待 [Stage 5](NEXT_STAGES.md#stage-5) 接通；Stream 会话何时不再使用实例由 [Stage 6](NEXT_STAGES.md#stage-6) 的 end 决定。
-- **demo 的预期变化**：Crawler 的 `CrawlSession` 是注册级单例，两次并行抓取确定共享一个实例，parallel 汇合后关闭。ScopeInstancesDemo 的 UseFirst、UseSecond、ReopenFirst 各自驱动 `FileName`，都是多例，各得一个实例并在本节点结束时关闭，输出不变，依据由时序变为结构。OpenFilesDemo 的每个节点经 HoldFiles 驱动 `FileNames`，同样是多例；FinishInspection 读取的是普通快照，不延长存续。FileDemo 的资源 Context 在开启时驱动参数，是多例。ScopeReuseDemo 的三个写入现在各自 `requests "FilePaths"`，是多例，将得到三个实例；要共享，写入改为只读 PrepareProbe 的那次生产，成为单例，在 parallel 汇合后关闭。StreamDemo 的 `SensorLink` 是注册级单例，运行期间常驻，运行结束时断开。
+关闭预约、masked 交接、唯一 ownership、旧绑定不自动换 owner，以及 Error 的实例定位保持。SDK 不主动轮询资源健康，不自动 invalidate、reopen 或重放业务；常驻单例的恢复仍待 Error 驱动链设计。裸 `forkIO`、任意逸出 Handle、未发布的部分获取恢复、Linear 凭证与跨独立 interpreter 存续不在当前保证内。[可见范围内的等待](#await-visibility)将复用生产身份和执行帧，但其资产 state 与等待结束尚未实现。
 
 <a id="error"></a>
 ### 4.8 Error 检测、处置与失败传播
@@ -734,7 +683,7 @@ SDK 的 `caughtFailure :: m (Maybe (Failure cause))` 仍保存当前诊断上下
 
 open／close 内部持锁时延后诊断，退到生命周期锁外再执行；同实例用独立 MVar 串行化检测和处置，生命周期锁不跨回调持有。检测与普通业务 IO 不自动互斥。被业务在锁内 catch 后消化、没有继续传播到安全 Root 边界的故障，不承诺进入自动诊断；任意未转换为 Failure 的 IO 异常也不由此协议捕获。
 
-Error 是另一条驱动链：resolve 不调用 close，也不重放业务方法，设计确定前 FileDemo 的 resolve 为 `pure ()`（TODO）。Error 协议不因定位成功自动 invalidate、close、reopen 或重放业务方法。定位成功只表示用户的检测条件成立，实际 scope 状态仍由生命周期操作决定。完整链的 once-spare 及 interpreter 退出兜底独立于是否配置 Error 检测；撤销链的使用须等待本次诊断结束。现有 ExceptT 的失败短路仍保留，不自动恢复已展开的 continuation，也不因业务 Failure 取消其他已经运行的并行分支。
+Error 是另一条驱动链：resolve 不调用 close，也不重放业务方法，设计确定前 FileDemo 的 resolve 为 `pure ()`（TODO）。Error 协议不因定位成功自动 invalidate、close、reopen 或重放业务方法。定位成功只表示用户的检测条件成立，实际 scope 状态仍由生命周期操作决定。按可达性回收独立于是否配置 Error 检测；撤销链的使用须等待本次诊断结束。现有 ExceptT 的失败短路仍保留，不自动恢复已展开的 continuation，也不因业务 Failure 取消其他已经运行的并行分支。
 
 FileDemo 的 FileRecovery 演示：handles 写 `RaisedBy "readFileContent"` 等 handler 名；detect 读取文件句柄，用 hIsClosed 检查意外关闭，已关闭时返回 ()，否则 raise 表示未定位；resolve 暂不操作 scope。正常路径不注入故障，文件读写仍由原末端执行。
 
@@ -756,7 +705,7 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 | 绑定 | [Gen.Bind](../sdk/Framework/Gen/Bind.hs)、[Gen.Names](../sdk/Framework/Gen/Names.hs) | PrototypePlan → 每个 handler 绑定的前驱、驱动、raw 来源与读取路由；handler 的方法类型与 Layer | 生成名字冲突；一个 effect 内表示类型重复；同一 handler 的绑定推出不同的签名或 Layer |
 | 形状 | [Gen.Shape](../sdk/Framework/Gen/Shape.hs) | Handlers.hs 的语法树 → 各 handler 方法体的读取形状（`require @T`、`raw`） | handler 调用其他 handler 或 effect 方法；`require` 没有类型应用；读取经不支持的高阶组合传递 |
 | 组成 | Gen.Bind 的 `composeMethods` | 形状 × 绑定 → effect 方法的结构 | 读取的表示类型没有声明；`raw` 用在挂接 parser 与 Pure 之外；声明的读取没有被方法体或控制流使用 |
-| 构图 | [Gen.Build](../sdk/Framework/Gen/Build.hs)、[Build.Graph](../sdk/Framework/Gen/Build/Graph.hs)、[Build.Sources](../sdk/Framework/Gen/Build/Sources.hs) | PrototypePlan + 方法结构 → Prototype：EffectGraph、ScopeTree、链挂载与资产来源 | 注入经 Pure 以外的方法绕到句柄；直接调用 Stream 方法；持续资产的启动环；读取有多个可见来源；Context 没有被驱动 |
+| 构图 | [Gen.Build](../sdk/Framework/Gen/Build.hs)、[Build.Graph](../sdk/Framework/Gen/Build/Graph.hs)、[Build.Sources](../sdk/Framework/Gen/Build/Sources.hs) | PrototypePlan + 方法结构 → Prototype：EffectGraph、ScopeTree、链挂载、资产来源与 scope 开启计划 | 注入经 Pure 以外的方法绕到句柄；直接调用 Stream 方法；持续资产的启动环；读取有多个可见来源；资源在所属 scope 开启前被读取；Context 没有被驱动 |
 | 输出 | `Gen.Emit.*`（[Effects](../sdk/Framework/Gen/Emit/Effects.hs)、[Handlers](../sdk/Framework/Gen/Emit/Handlers.hs)、[Program](../sdk/Framework/Gen/Emit/Program.hs)、[Prototype](../sdk/Framework/Gen/Emit/Prototype.hs)） | 绑定与 Prototype → Generated/Effects、Handlers、Program 的源码 | 只渲染，不再判定 |
 | 类检 | [Gen.Assets](../sdk/Framework/Gen/Assets.hs) | 业务模块与输出副本（在内存中）→ 资产目录 Generated/Assets | GHC 类型错误；顶层白名单 |
 
@@ -771,7 +720,7 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 各 demo 的手写入口、注册、handler 与生成模块分别可 review；
 仍使用的并发辅助函数已并入当前 SDK。
 
-同次 AST 的运行表保留，本轮迁移到有限使用闭包 once-spare、读取共享／驱动 fresh 及补全后的清理依赖，并由使用协议协调显式关闭。App／IO 的 Root Error 祖先导航使用同一 ScopeTree，实例定位、detect／resolve 与原错传播保留，不自动恢复业务。具体实现与普通编译结果须按本轮代码核对，不由旧样例推断已验证；Stream／lifelong 的协议见 [Stream 规范](STREAM_LIFELONG.md)；其他开放项见 [Next stages](NEXT_STAGES.md)。
+同次 AST 共用实例运行表，按开启参数的生产身份共享；执行帧的待用关系、实际使用登记与 ScopeTree 共同决定回收。App／IO 的 Root Error 祖先导航使用同一 ScopeTree，实例定位、detect／resolve 与原错传播保留，不自动恢复业务。具体实现与普通编译结果须按本轮代码核对，不由旧样例推断已验证；Stream／lifelong 的协议见 [Stream 规范](STREAM_LIFELONG.md)；其他开放项见 [Next stages](NEXT_STAGES.md)。
 
 ## 5. 静态原型与动态运行
 
@@ -823,21 +772,22 @@ sdk/Framework/
     Structure.hs            静态结构展示与 scope 祖先投影
   Generated.hs              生成代码门面、程序命令与源码同步适配
   Program.hs                运行入口：原型初始化、workflow 执行与退出收尾
-  Runtime.hs                Target、frame、交接与会话装配
+  Runtime.hs                Target、交付视图、交接与会话装配
   Runtime/
     Protocol.hs             ContextStore／ScopeStore／ErrorStore 协议与协议故障
     Context.hs              取值、分支投影与原子入口包装
-    Binding.hs              绑定身份与共享归属
+    Binding.hs              生产身份、执行帧与共享归属
+    Frame.hs                根帧／轮帧及节点进度
     Scope.hs                scope 实例、使用登记与物理清理
     App.hs                  各存储协议在 App 上的实现
     Identity.hs             Origin、ActivationId、Execution
-    Graph.hs                活动链、发布与发布信号、会话登记
+    Graph.hs                活动链、发布与发布信号、scope 待用查询、会话登记
     Session.hs              发布历史、游标、通知与任务停止
     Execution.hs            执行 algebra、分支组合与调度
   Recursion.hs              Fix、cata、zygo
 ```
 
-改声明语法从 Language.Registration 进入，再沿流水线 Lower → Bind → Build → Emit；改读取路由或入口生成从 Gen.Bind 与 Gen.Emit.Handlers 进入；改取值从 Runtime.Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Runtime.Execution → Runtime → Scope／Session 进入。Gen.Build.Sources 是生成期证明，Runtime.Graph 是本次实际活动关系，Runtime.Scope 独立持有资源生命周期；三者不复制彼此的状态。
+改声明语法从 Language.Registration 进入，再沿流水线 Lower → Bind → Build → Emit；改读取路由或入口生成从 Gen.Bind 与 Gen.Emit.Handlers 进入；改取值从 Runtime.Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Runtime.Execution → Frame／Runtime.Graph → Scope／Session 进入。Gen.Build.Sources 是生成期证明，Runtime.Graph 是本次实际活动关系，Runtime.Scope 独立持有资源生命周期；三者不复制彼此的状态。
 
 模块头说明职责和边界；关键锁、所有权、取消窗口及清理顺序在实现处保留注释。App 仍集中实现共享同一执行 frame 的存储协议，以章节分组，不为行数拆出互相依赖的状态容器。
 

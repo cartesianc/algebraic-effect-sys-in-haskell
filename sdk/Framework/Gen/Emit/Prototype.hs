@@ -25,6 +25,7 @@ renderPrototype prototype = unlines
   , ("protoScopes", renderScopes (P.protoScopes prototype))
   , ("protoScopeNames", list (pair genName show) (P.protoScopeNames prototype))
   , ("protoSources", list (pair renderReadPoint renderSource) (P.protoSources prototype))
+  , ("protoScopeOpenings", list renderScopeOpening (P.protoScopeOpenings prototype))
   ]) ++ "\n"
 
 genName :: String -> String
@@ -251,3 +252,11 @@ renderSource :: P.Source -> String
 renderSource (P.FromChains nodes) = constructor "FromChains" [list show nodes]
 renderSource P.FromOwnChain = "SDK.FromOwnChain"
 renderSource P.FromSession = "SDK.FromSession"
+
+renderScopeOpening :: P.ScopeOpening -> String
+renderScopeOpening opening = record "ScopeOpeningPlan"
+  [ ("openingNode", show (P.openingNode opening))
+  , ("openingScope", show (P.openingScope opening))
+  , ("openingSources", show (P.openingSources opening))
+  , ("openingKinds", list tag (P.openingKinds opening))
+  ]

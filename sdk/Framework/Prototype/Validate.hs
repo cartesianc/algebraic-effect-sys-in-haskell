@@ -115,6 +115,9 @@ validatePrototype prototype = do
   mapM_ validateDefinition chainDefinitions
   valid (unique (map fst (protoSources prototype))) "Duplicate asset read point"
   mapM_ validateSource (protoSources prototype)
+  valid (unique [(openingNode opening, openingScope opening) | opening <- protoScopeOpenings prototype])
+    "Duplicate scope opening position"
+  mapM_ validateOpening (protoScopeOpenings prototype)
   mapM_ (\chain -> do
     valid (unique (chainDrives chain) && all (`elem` contracts) (chainDrives chain)) "Invalid driven asset contracts"
     valid (unique (chainReads chain) && sameSet (chainReads chain)
@@ -131,6 +134,35 @@ validatePrototype prototype = do
     chains = protoChains prototype
     chainDefinitions = protoChainDefinitions prototype
     contracts = [contractType | effect <- effects, Just contractType <- [effectProduces effect]]
+    validateOpening opening = do
+      chain <- lookupChain prototype (openingNode opening)
+      scope <- findEffectProto effects (openingScope opening)
+      valid (effectKind scope == ScopedKind && any
+        (\(role, method) -> role == ScopeOpen && method `elem` chainReaches chain) (effectMethods scope))
+        "Scope opening is not reachable from its mounted chain"
+      valid (unique (map fst (openingSources opening))
+        && map fst (openingSources opening) == effectOpeningInputs scope)
+        "Scope opening parameters differ from the Scoped inputs"
+      mapM_ (\(source, candidates) -> do
+        producer <- findEffectProto effects source
+        valid (not (null candidates) && unique candidates) "Invalid scope parameter source candidates"
+        mapM_ (\node' -> do
+          producing <- lookupChain prototype node'
+          valid (node' == openingNode opening || precedes (protoWorkflow prototype) node' (openingNode opening))
+            "Scope parameter source is not a visible chain"
+          valid (maybe False (`elem` chainDrives producing) (effectProduces producer)
+            || any (\owner -> effectResource owner == Just source
+                && maybe False (`elem` chainReaches producing) (lookup ScopeOpen (effectMethods owner))) effects)
+            "Scope parameter source has no matching production") candidates) (openingSources opening)
+      let kinds = openingKinds opening
+          parameters = openingSources opening
+          resource source = any ((== Just source) . effectResource) effects
+          possible kind = case kind of
+            RegistrationSingleton -> null parameters
+            ProductionSingleton -> not (null parameters)
+              && all (\(source, nodes') -> resource source || any (/= openingNode opening) nodes') parameters
+            ExecutionMultiple -> any ((openingNode opening `elem`) . snd) parameters
+      valid (not (null kinds) && unique kinds && all possible kinds) "Invalid scope opening categories"
     validateSource (point, source) = do
       _ <- lookupChain prototype (readNode point)
       valid (readContract point `elem` contracts) "Read point has no base Context contract"

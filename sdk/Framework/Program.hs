@@ -1,16 +1,17 @@
 -- 已生成程序的执行边界：强制并校验 Prototype，执行 workflow，最后收尾资源。
 -- 不读取命令行、源码文件或项目目录；这些适配属于 Framework.Generated。
--- Workflow.Execution 先停止并等待受管理任务，再返回到这里做 scope 退出兜底。
+-- Execution 先停止受管理任务并撤销执行帧，再沿统一可达性规则回收；这里报告关闭故障。
 module Framework.Program (initializePrototype, runProgram) where
 
-import Framework.Language.Handler (Failure(..), Output(..))
+import Framework.Language.Handler (Output)
 import Framework.Runtime (Target, SessionSteps, cleanupTargets)
 import Framework.Prototype (Prototype, validatePrototype)
 import Framework.Language.AST (AST)
 import Framework.Runtime.Execution (runStructuredAST)
 import Control.DeepSeq (NFData, force)
-import Control.Exception (SomeException, evaluate, mask, throwIO, try)
-import Control.Monad (unless, void)
+import Control.Exception (SomeAsyncException, SomeException, evaluate, fromException, mask, throwIO, try)
+import Control.Monad (unless)
+import Data.Maybe (isJust)
 import System.IO (hPrint, stderr)
 
 -- 生成结果与 --structure 共用的初始化；不运行 handler 或预生产 Context。
@@ -41,28 +42,17 @@ runProgram generated createEntries tree = do
       evaluate (foldr seq () rendered)
       pure (output, rendered)
     failures <- cleanupTargets entries
-    case completed of
-      Left exception -> do
-        unless (null failures) (report (map snd failures))
-        throwIO exception
-      Right (output, rendered) -> do
-        let result = appendCleanup (map snd failures) output
-        case [exception | (Just exception, _) <- failures] of
-          exception : _ -> report result >> throwIO exception
-          -- 有清理故障时按原协议显示合并结果；正常路径保留收尾前的文本。
-          [] -> pure (result, if null failures then rendered else show result)
-
--- 保留原始业务故障；主执行成功时，首个清理故障成为完成失败。
-appendCleanup :: [Failure cause] -> Output cause value -> Output cause value
-appendCleanup [] output = output
-appendCleanup failures (Failed original) =
-  Failed (original { cleanupFailures = cleanupFailures original ++ failures })
-appendCleanup (first : rest) (Succ _) =
-  Failed (first { cleanupFailures = cleanupFailures first ++ rest })
+    reported <- tryAny $ unless (null failures) (hPrint stderr (map snd failures))
+    -- 普通报告故障不盖过业务结果；取消无论发生在执行、关闭或报告中都须传播。
+    let exceptions = either (: []) (const []) completed
+          ++ [exception | (Just exception, _) <- failures]
+          ++ [exception | Left exception <- [reported], isCancellation exception]
+    case filter isCancellation exceptions ++ exceptions of
+      exception : _ -> throwIO exception
+      [] -> either throwIO pure completed
 
 tryAny :: IO value -> IO (Either SomeException value)
 tryAny = try
 
--- 报告失败不能覆盖已经选定的主异常或取消异常。
-report :: Show value => value -> IO ()
-report = void . tryAny . hPrint stderr
+isCancellation :: SomeException -> Bool
+isCancellation exception = isJust (fromException exception :: Maybe SomeAsyncException)

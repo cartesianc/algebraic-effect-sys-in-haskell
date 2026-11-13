@@ -665,4 +665,30 @@ generatedPrototype =
           }
     , SDK.protoScopeNames = [(OpenSensorLinkGen, "SensorLink")]
     , SDK.protoSources = []
+    , SDK.protoScopeOpenings =
+        [ SDK.ScopeOpeningPlan
+            { SDK.openingNode = [-2,0,1]
+            , SDK.openingScope = "SensorLink"
+            , SDK.openingSources = []
+            , SDK.openingKinds = [SDK.RegistrationSingleton]
+            }
+        , SDK.ScopeOpeningPlan
+            { SDK.openingNode = [-2,0,0]
+            , SDK.openingScope = "SensorLink"
+            , SDK.openingSources = []
+            , SDK.openingKinds = [SDK.RegistrationSingleton]
+            }
+        , SDK.ScopeOpeningPlan
+            { SDK.openingNode = [1,-1,0,1]
+            , SDK.openingScope = "SensorLink"
+            , SDK.openingSources = []
+            , SDK.openingKinds = [SDK.RegistrationSingleton]
+            }
+        , SDK.ScopeOpeningPlan
+            { SDK.openingNode = [1,-1,0,0]
+            , SDK.openingScope = "SensorLink"
+            , SDK.openingSources = []
+            , SDK.openingKinds = [SDK.RegistrationSingleton]
+            }
+        ]
     }

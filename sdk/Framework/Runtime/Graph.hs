@@ -3,27 +3,31 @@
 -- 只读 Prototype 的运行实例：活动 chain、Origin 资产表、scope 引用和发布信号。
 -- 同时持有唯一的会话登记表；登记／停止的原子边界在这里，生产线程由 Runtime 启动。
 -- 生命周期：Execution 创建并安装树关系；App 更新调用与发布；Execution 退出时
--- 关闭会话登记并等待任务，Program 随后进行 scope 退出清理。
+-- 关闭会话登记并等待任务，再退休根帧；Program 只报告清理中记录的问题。
 -- 运行不解释图边；业务仍由已经装配的闭包执行。
 module Framework.Runtime.Graph
   ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..)
-  , newRuntimeGraph, configureRuntimeScopes, newOrigin
+  , newRuntimeGraph, configureRuntimeScopes, collectRuntimeScopes, finishRuntime, newOrigin
   , beginActivation, endActivation
   , publishAsset, publicationSignal, readVisibleAsset, resetOrigins
   , installSessionLauncher, obtainSession, stopSessions, currentPublications
   ) where
 
-import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newEmptyMVar, newMVar, putMVar)
-import Control.Exception (evaluate, uninterruptibleMask_)
+import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newEmptyMVar, newMVar, putMVar, readMVar)
+import Control.Exception (SomeAsyncException, evaluate, finally, fromException, throwIO, uninterruptibleMask_)
+import Control.Monad (forM, forM_)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.List (isPrefixOf)
-import Data.Maybe (fromMaybe)
+import Data.List (isPrefixOf, nub)
+import Data.Maybe (fromMaybe, isJust)
 import Framework.Runtime.Protocol (ContextFault(..))
 import Framework.Prototype.Graph (MethodRole(..))
 import Framework.Runtime.Identity
+import Framework.Runtime.Frame
+import Framework.Runtime.Binding (Binding(..))
 import Framework.Runtime.Session (Session, SessionKey, View, newSession, stopSession)
 import Framework.Runtime.Scope
-  ( Scopes, ScopeBinding, ScopeBindings, ScopeUser(..), configureScopeRelations )
+  ( Scopes, ScopeBinding, ScopeBindings, ScopeUser(..), ScopeHandler(..), ScopeInstance(..), ScopeRecord(..), ScopeInput(..)
+  , configureScopeRelations, cleanupAvailable, saveCleanupFailures )
 import Framework.Prototype
 import Framework.Prototype.Structure (scopeRelations)
 
@@ -50,6 +54,7 @@ data Activation environment cause = Activation
 data RuntimeGraph environment cause = RuntimeGraph
   { runtimePrototype :: PrototypeReference
   , runtimeScopes :: Scopes environment cause
+  , runtimeRootFrame :: ExecutionFrame
   -- 发布时无归属的资产按 Origin 分组；后续认领保留同一引用，读取再检查共享 owner。
   -- 同一来源内只替换该入口自己的最新绑定，旧引用不会指向后来的 request 产物。
   , runtimeAssets :: IORef [((Origin, String), ScopeBinding environment cause)]
@@ -71,16 +76,92 @@ data RuntimeGraph environment cause = RuntimeGraph
 newRuntimeGraph
   :: (Eq method, Show method)
   => Prototype method -> Scopes environment cause -> IO (RuntimeGraph environment cause)
-newRuntimeGraph prototype scopes = RuntimeGraph (PrototypeReference prototype) scopes
-  <$> newIORef [] <*> (newEmptyMVar >>= newIORef) <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
-  <*> newMVar (Just []) <*> newIORef (const (ioError (userError "No session launcher is installed")))
-  <*> pure [mount | (_, described) <- workflowLifelongs (protoWorkflow prototype)
-         , session <- lifelongSessions described, mount <- sessionMounts session]
+newRuntimeGraph prototype scopes = do
+  coordinator <- case scopes of
+    first : _ -> readIORef (scopeCoordinator first)
+    [] -> newMVar ()
+  frame <- newExecutionFrame coordinator Nothing
+    [chainNode chain | chain <- protoChains prototype, chainRole chain /= SessionChain]
+  RuntimeGraph (PrototypeReference prototype) scopes frame
+    <$> newIORef [] <*> (newEmptyMVar >>= newIORef) <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
+    <*> newMVar (Just []) <*> newIORef (const (ioError (userError "No session launcher is installed")))
+    <*> pure [mount | (_, described) <- workflowLifelongs (protoWorkflow prototype)
+           , session <- lifelongSessions described, mount <- sessionMounts session]
 
 -- ScopeTree 的独立构建与校验仍在 Prototype；这里只把同一树的关系装入现有控制对象。
 configureRuntimeScopes :: RuntimeGraph environment cause -> IO ()
 configureRuntimeScopes graph = case runtimePrototype graph of
-  PrototypeReference prototype -> configureScopeRelations (scopeRelations prototype) (runtimeScopes graph)
+  PrototypeReference prototype -> do
+    configureScopeRelations (scopeRelations prototype) (runtimeScopes graph)
+    forM_ (runtimeScopes graph) $ \family ->
+      writeIORef (scopeReachable family) (reachableInstance graph)
+
+-- 在 scope 协调锁内只读进度及权威发布。候选记录可能出处，实际生产身份决定匹配；
+-- 同一节点多次发布只留下当前一份，读到同一生产的后继才保留同一个实例。
+reachableInstance :: RuntimeGraph environment cause -> ScopeInstance environment cause -> IO Bool
+reachableInstance graph slot = case runtimePrototype graph of
+  PrototypeReference prototype -> do
+    views <- framePendingViews (scopeFrame slot)
+    origins <- readIORef (runtimeOrigins graph)
+    assets <- readIORef (runtimeAssets graph)
+    instances <- concat <$> mapM (readMVar . scopeInstances) (runtimeScopes graph)
+    snapshots <- forM instances $ \instance' -> do
+      values <- scopeBindings <$> readIORef (scopeRecord instance')
+      pure (instance', values)
+    let candidates = [(opening, delivered) | (pending, delivered) <- views, opening <- protoScopeOpenings prototype
+          , openingNode opening `elem` pending, openingScope opening == scopeName (scopeFamily slot)]
+        matches instance' delivered opening = all (matchesInput delivered opening) (scopeInputs instance')
+        matchesInput delivered opening (ScopeInput source production) = case lookup source (openingSources opening) of
+          Nothing -> False
+          Just nodes
+            | any ((== Just source) . effectResource) (protoEffects prototype) ->
+                -- 参数本身是其他 scope 的资源：复用不重新发布，按资源原生产身份
+                -- 找到父实例，再验证同一待用入口确实会开启它。ScopeTree 已保证无环。
+                or [matches parent delivered parentOpening | (parent, values) <- snapshots
+                   , scopeContextSource (scopeFamily parent) == Just source
+                   , Just value <- [lookup source values], bindingProduction value == Just production
+                   , parentOpening <- protoScopeOpenings prototype
+                   , openingNode parentOpening == openingNode opening
+                   , openingScope parentOpening == scopeName (scopeFamily parent)]
+            | otherwise -> any (matchesPublication delivered source production) nodes
+        matchesPublication delivered source production node =
+          case [captured | (publishedAt, context, captured) <- delivered, publishedAt == node, context == source] of
+            captured : _ -> captured == production
+            [] -> case lookup node origins >>= \origin -> lookup (origin, source) assets of
+              Just value -> bindingProduction value == Just production
+              Nothing -> False
+    pure (any (\(opening, delivered) -> matches slot delivered opening) candidates)
+
+-- 节点退休后只检查其开启位置及 ScopeTree 祖先。预约在进度写入的锁外进行，
+-- 业务 close 失败留作汇总；原生异常（包括取消）仍停止后续执行。
+collectRuntimeScopes :: RuntimeGraph environment cause -> [NodeId] -> IO ()
+collectRuntimeScopes _ [] = pure ()
+collectRuntimeScopes graph retired = case runtimePrototype graph of
+  PrototypeReference prototype -> do
+    let selected = nub [openingScope opening | opening <- protoScopeOpenings prototype
+          , openingNode opening `elem` retired]
+        relations = scopeRelations prototype
+        ancestors names = let expanded = nub (names ++ concat [parents | (name, parents) <- relations, name `elem` names])
+                          in if expanded == names then names else ancestors expanded
+        relevant = ancestors selected
+        handlers = filter ((`elem` relevant) . scopeName) (runtimeScopes graph)
+    collectScopes graph handlers
+
+-- 所有受控任务已退出、根帧已退休；与节点结束使用同一个可达性条件。
+-- 卸下回调，生成句柄不再通过它保留整次已结束运行的资产表。
+finishRuntime :: RuntimeGraph environment cause -> IO ()
+finishRuntime graph = collectScopes graph (runtimeScopes graph) `finally`
+  forM_ (runtimeScopes graph) (\family -> writeIORef (scopeReachable family) (const (pure False)))
+
+collectScopes :: RuntimeGraph environment cause -> Scopes environment cause -> IO ()
+collectScopes graph handlers = do
+  failures <- cleanupAvailable handlers
+  saveCleanupFailures (runtimeScopes graph) failures
+  let exceptions = [exception | (Just exception, _) <- failures]
+      cancellations = filter (isJust . (\exception -> fromException exception :: Maybe SomeAsyncException)) exceptions
+  case cancellations ++ exceptions of
+    exception : _ -> throwIO exception
+    [] -> pure ()
 
 -- 活动身份与来源绑定 -----------------------------------------------------------
 

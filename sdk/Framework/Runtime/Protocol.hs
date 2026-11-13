@@ -1,4 +1,3 @@
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -15,7 +14,7 @@ module Framework.Runtime.Protocol
 import Control.Monad.Except (MonadError, catchError, throwError)
 import Framework.Language.Handler (Failure(..), Output(..), ErrorReport(..))
 import Framework.Language.History (History)
-import Data.Typeable (Typeable, cast)
+import Framework.Runtime.Identity (ActivationId)
 
 -- Context 访问与发布协议 -------------------------------------------------------
 
@@ -35,7 +34,7 @@ class Monad m => ContextStore environment m | m -> environment where
   enterHandler :: String -> m value -> m value
   enterContext :: String -> m value -> m value
   enterContext = enterHandler
-  recordContextInput :: ScopeInputAccess -> ScopeInput -> m ()
+  recordContextInput :: ScopeInputAccess -> String -> m ()
   recordContextInput _ _ = pure ()
   -- require 不生产：读取之前先取等待动作，读不到值时执行它，等之后的一次发布再重读。
   -- 返回 Nothing 表示当前不等待（诊断、收尾，或该来源是 scope 资源），缺值按 ContextNotInitialized 报出。
@@ -77,15 +76,11 @@ data ContextFault = ContextNotInitialized
 
 -- Scope 参数与生命周期能力 ----------------------------------------------------
 
--- 开启参数保留真实 ADT 值；类型相同且 Eq 相等才是同一输入。
--- 这是 SDK 观察记录，不是用户注册的 key 字段。
-data ScopeInput = forall value. (Eq value, Typeable value) => ScopeInput String value
+-- 开启参数以 Context 来源及实际绑定的生产身份匹配，不比较业务值。
+-- 身份由载体从已捕获的 Binding 取得，生成区无需为业务 ADT 引入 Eq。
+data ScopeInput = ScopeInput String ActivationId deriving (Eq, Ord, Show)
 
 data ScopeInputAccess = RequestedInput | RequiredInput deriving (Eq, Show)
-
-instance Eq ScopeInput where
-  ScopeInput leftName left == ScopeInput rightName right =
-    leftName == rightName && maybe False (left ==) (cast right)
 
 -- SDK 内部生命周期能力；业务 instance 仍只实现 open／close。
 data ScopeFault = ScopeNotOpen | ScopeIsClosed | ScopeReentry | ScopeInterrupted String

@@ -188,7 +188,6 @@ nextTemperatureFeed = (FrameworkRuntime.withErrorPath ["SensorLink"] . Framework
 
 getTemperatureSample :: FrameworkGenerated.App FrameworkGenerated.TemperatureSample
 getTemperatureSample = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.callContext "TemperatureParser"
-    Nothing
     (\value bindings -> bindings { FrameworkGenerated.boundTemperatureParser = Just value })) $
   (FrameworkGenerated.TemperatureSample <$> runAt @"TemperatureParser" FrameworkGenerated.parseTemperature)
 
@@ -202,7 +201,6 @@ nextHeartbeatClock = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handl
 
 getBeat :: FrameworkGenerated.App FrameworkGenerated.Beat
 getBeat = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "Heartbeat"
-    Nothing
     (\value bindings -> bindings { FrameworkGenerated.boundHeartbeat = Just value })) $
   (FrameworkGenerated.Beat <$> runAt @"Heartbeat" FrameworkGenerated.parseBeat)
 

@@ -13,7 +13,7 @@ module Framework.Generated
   , readContext, latestContext
   , callContext, projectContext, enterHandler, withAnchoredContexts
   , atomicHandle, atomicScope, readHistory, streamHandle
-  , ScopeInput(..), openScope, closeScope, withScopeDependencies
+  , openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, withScopeCleanups
   , Generic, NFData, interpreter
   ) where
@@ -22,7 +22,7 @@ import Framework.SDK
 import Framework.Runtime.Protocol
   ( failEffect, ErrorStore(handleFailure, withErrorPath, withErrorHandlers), ErrorHandler(..)
   , ContextStore(enterHandler, withAnchoredContexts)
-  , ScopeInput(..), ScopeStore(openScope, closeScope, withScopeDependencies) )
+  , ScopeStore(openScope, closeScope, withScopeDependencies) )
 import Framework.Runtime.Context
   ( readContext, latestContext, callContext
   , projectContext, atomicHandle, atomicScope, readHistory, streamHandle )

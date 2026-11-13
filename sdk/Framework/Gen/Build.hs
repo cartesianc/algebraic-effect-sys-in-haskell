@@ -56,7 +56,7 @@ buildPrototype plan shapes = do
       defaultReaders = [methodIdentity definition | definition <- defaults
         , methodRole definition == ContextRequire, methodIdentity definition `notElem` map fst shapes]
       result = Prototype (plannedRegistrations plan) effects definitions workflow finite
-        (map makeChain mounts) chainDefinitions graph scopes names []
+        (map makeChain mounts) chainDefinitions graph scopes names [] []
   -- Stream 的方法只经会话执行：Stream 单步执行它取得下一份原始输入；挂在该 Stream 下的解析器调用它时，
   -- 由会话本次取得的输入回答，与挂在原子句柄下的 Context 调用句柄相同。其他方法直接调用会绕过会话另取一份。
   let streamMethods = [(effectName effect, method) | effect <- effects, (StreamHandler, method) <- effectMethods effect]

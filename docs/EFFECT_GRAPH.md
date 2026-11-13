@@ -19,7 +19,8 @@
 | 链定义 | `protoChainDefinitions` | 用 `OriginChain` 与 `ContextChain` 区分原始操作链和 Context 生产／读取链；按入口方法识别 |
 | AST 挂载 | `protoWorkflow`、`protoChains` | 每个 node、alternative 选择读取和会话生产步骤各一条挂载记录（`NodeChain`／`SelectorChain`／`SessionChain`），按 `NodeId` 识别 |
 | 持续执行 | `protoWorkflow` 中的 `LifelongAt`、`protoSessions` | lifelong 的单元、订阅与会话；interpreter 托管的会话；见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static) |
-| 运行实例 | 活动 chain、Context 绑定出身、scope 实例与入口使用登记 | 运行图共享静态原型，根据实际调用更新；不反向修改定义 |
+| scope 开启计划 | `protoScopeOpenings` | 每个开启位置的参数候选生产节点及可能类别；不代替实际绑定 |
+| 运行实例 | 活动 chain、Context 生产身份、执行帧、scope 实例与入口使用登记 | 运行图共享静态原型，根据实际调用更新；不反向修改定义 |
 
 `NodeId = [Int]` 是当前原型快照内的 AST 下标路径：根为 `[]`，普通子项从零编号；alternative 的选择读取链使用该分支路径加 `[-1]`；lifelong 的会话步骤使用 lifelong 路径加 `[-1, 会话序号, 步骤]`，interpreter 托管的会话步骤使用 `[-2, 会话序号, 步骤]`。同一个 origin 末端挂载两次会有两个 `NodeId`，共享方法定义。Context 链经 demand 或挂接进入，定义本身没有虚构的 AST 位置。编辑 AST 后重新生成编号；这些路径不充当跨快照稳定 key 或运行调用序号。
 
@@ -27,7 +28,7 @@
 
 ## 运行图与链启动
 
-运行身份由 `Framework.Runtime.Identity` 定义，活动关系由 `Framework.Runtime.Graph` 管理。一次 interpreter 运行共享静态 Prototype 引用及运行图；活动 chain 引用其静态链定义，scope 实例引用其 Scoped 定义，Context 绑定保存产生它时的 `Execution`。
+运行身份由 `Framework.Runtime.Identity` 定义，活动关系由 `Framework.Runtime.Graph` 管理。一次 interpreter 运行共享静态 Prototype 引用及运行图；活动 chain 引用其静态链定义，scope 实例引用其 Scoped 定义，Context 绑定保存产生它时的 `Execution`、生产 `ActivationId` 与执行帧。
 
 ```haskell
 data Origin = Origin { originNode :: NodeId, originSequence :: Integer }
@@ -38,7 +39,7 @@ data Execution
   | CleanupExecution Origin String Int
 ```
 
-`Origin` 区分一次根入口执行（AST 入口或会话生产步骤），`ActivationId` 区分运行图中的一次活动 chain。`RequestBoot` 的字符串是现有 Context effect 注册名；`CleanupExecution` 保存原业务 origin、scope 注册名及现有实例编号，不新增业务 key。Context 的嵌套生产有新的 activation，但普通生产沿用外层业务 origin。
+`Origin` 区分一次根入口执行（AST 入口或会话生产步骤），`ActivationId` 区分运行图中的一次活动 chain，也作为该次 Context 成功生产的身份保存在 Binding。`RequestBoot` 的字符串是现有 Context effect 注册名；`CleanupExecution` 保存原业务 origin、scope 注册名及现有实例编号，不新增业务 key。Context 的嵌套生产有新的 activation，但普通生产沿用外层业务 origin。
 
 `RuntimeGraph` 用存在类型包装保存实际的 `Prototype MethodGen` 和 `ChainDefinition MethodGen`，不把图转换为字符串副本。`runtimeScopes` 引用原有 scope 控制对象；`runtimeAssets` 按 origin 保存发布时无 owner 的业务绑定，后续 claim 保留该 publication 引用；open 内一开始就有 owner 的产物仍只保存在 scope／局部快照。`runtimePublished` 是普通发布的信号：每次写入 `runtimeAssets` 后填满并换新，等待缺值的读取据此醒来重读。活动表中的每条 `Activation` 保存父 activation、启动方式、`Execution`、静态链定义、当前绑定 `IORef` 和 `ScopeUser`；执行器和活动表共享这些运行引用。
 
@@ -51,9 +52,13 @@ Stage 3 复用这两个 Boot 构造：会话的每个生产步骤以 `TargetedBo
 
 这里的“入口使用登记”是原有有限使用闭包的资源含义：一次 AST 入口内，实际 open／require 选中的 scope 计入同一份使用。`ScopeUser` 保留原有 `Unique` 协调身份，并新增 `scopeUserExecution`；同一入口的 ctx chain 使用同一个 `ScopeUser`。`scopeUsers` 同时携带使用者身份与 `Execution`，不以 AST 位置替代并发使用协调。
 
-Context 的生产记录在生产、发布及返回结束后通过 `finally` 删除，失败或中断也撤销活动记录。AST 根活动记录覆盖业务、诊断、受控结果消费、入口使用撤销及其收尾；撤销使用后仍按 once-spare 决定关闭。下一步已确定、尚未实现：实例按 `requires`／`requests` 进入 scope 的方式区分单例与多例，关闭改为按剩余程序的可达性判断，入口使用登记之外，执行帧里仍待用的节点也计入，见[主设计：单例与多例](LATEST_DESIGN.md#scope-identity)与[按可达性回收](LATEST_DESIGN.md#scope-gc)。清理使用独立的 `ScopeUser` 和 `CleanupExecution`，保留原始业务来源但不冒充一次新的业务入口；不会为后续清理复活已经结束的父 activation。活动表只保留当前记录，绑定和资源需要的来源身份可独立保存。
+Context 的生产记录在生产、发布及返回结束后通过 `finally` 删除，失败或中断也撤销活动记录。AST 根活动记录覆盖业务、诊断、受控结果消费与入口使用撤销；执行器随后完成节点进度并同步检查回收。活动表只保留当前记录，绑定单独保存仍需要的生产身份。清理使用独立的 `ScopeUser` 和 `CleanupExecution`，不复活已经结束的父 activation。
 
-`Binding.bindingOrigin :: Execution` 保存不变的执行出身，`bindingOwnership` 是一次成功生产独有的共享 `IORef`，保存可选 owner 与待认领的使用者。当前捕获、权威表、scope 快照和 Handoff 都共享该单元；owner 是实际实例引用。首次认领在 `scopeCoordinator` 内从无 owner 变为唯一实例，同实例重复认领幂等，其他实例拒绝；认领先于等待实例生命周期锁。值、origin 和既有 publication 不因认领改变，不删除来源或重发布。诊断和自动 cleanup 中的生产只更新局部快照，不写入业务 origin 的权威表。
+`Binding.bindingOrigin :: Execution` 保存不变的执行出身，`bindingProduction :: Maybe ActivationId` 保存成功生产身份，`bindingFrame :: ExecutionFrame` 保存归属帧。生产失败不替换旧绑定，无资源 scope 的内部占位绑定没有生产身份。`bindingOwnership` 是该次生产独有的共享 `IORef`，保存可选 owner 与待认领使用者。当前捕获、权威表、scope 快照和 Handoff 保留同一绑定；认领不改变值、生产身份、帧、origin 或 publication，scope 复用也不重新发布。
+
+`Framework.Runtime.Frame` 保存有限运行根帧与 lifelong 每轮子帧，按节点记录待执行、执行中、完成和跳过。节点完成晚于诊断与受控结果消费；chained 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本轮已领取的普通伴随资产的 `(生产节点, Context 来源, ActivationId)`，只保存生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。Runtime 中领取会话交付的 `DeliveryFrame` 仍管理视图领取，和这份执行进度分开。普通资产仍按 origin 保存；按帧资产 state 与等待结束尚未实现。
+
+Scope 实例保存实际参数生产身份与归属帧，Graph 把待用查询装入 ScopeHandler。查询与节点进度、关闭预约共用 scope 协调锁：实例既无实际使用者，也不再被帧内待用节点或子 scope 保留时，Scope 同步清理。完整运行规则见[主设计](LATEST_DESIGN.md#scope-gc)。
 
 无 owner 的资源绑定在发布／读取返回前登记当前 `ScopeUser`；认领把仍活跃的持有者接入实例，入口退出则撤销待认领登记与实例使用，三者共用 `scopeCoordinator`。普通资产不加入待认领集合，open 内正常生产已有 owner 的路径保持原协议。认领到保存绑定保持 masked，确保这段交接不会漏掉 cleanup。资源快照按共享归属单元去重，独立生产不合并；两次生产包装同一物理 Handle 的别名不在此协议内。
 
@@ -82,6 +87,26 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 当前可见性只许可 AST 保证先完成的前驱和本入口自己的发布，parallel 兄弟互不可见；因此在可见范围内没有生产的普通资产，读取会一直等待，注册需要写出驱动它的 `requests`。下一步的来源规则已确定、尚未实现：parallel 兄弟纳入可见范围，来源分析改为判断每个读取点在可见范围内有没有可能的生产者，唯一来源的证明只保留读不确定的部分（彼此无先后的生产者，或先完成的生产者加上与读取并发的生产者；有先后的生产者读最后一次），运行时按执行帧为每份资产保存一个 state（request 直接覆盖，require 读当前值），并在生产者都结束时结束等待，见[主设计：可见范围与等待的结束](LATEST_DESIGN.md#await-visibility)。资源契约即使保留读取点，也仍由 owner 协议定位，缺值时不等待也不生产，报 `ContextNotInitialized`；诊断、自动 cleanup 与 close 期间同样不等待。
 
 scope 的例外只覆盖具有 owner 的绑定，资源仍经实际实例定位和共享。实例快照中的无 owner 辅助值只从按 origin 保存的权威表取用，不通过资源复用绕过可见性。诊断及自动 cleanup 的新产物仅局部可见。现有 App 的 bind 在取得值后继续方法体，handler 写法、AST 语法和 ScopeTree 算法均不因此改变。
+
+## Scope 开启计划与待用查询
+
+`Gen.Build.Sources` 在分析 open 时记录每个参数可能来自的生产节点，包括本链生产、前驱生产和 alternative 交接的捕获，写入同一 Prototype：
+
+```haskell
+data ScopeOpening = ScopeOpeningPlan
+  { openingNode :: NodeId
+  , openingScope :: String
+  , openingSources :: [(String, [NodeId])]
+  , openingKinds :: [ScopeKind]
+  }
+data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
+```
+
+`protoScopeOpenings` 的候选覆盖各条合法路径，不要求每个位置固定一种类别，也不保存另一套分支相关性。每条读取路径继续满足已有的捕获与来源规则，候选不是任选来源的许可。`--structure` 展示候选出处和可能类别；Prototype 校验引用及字段自洽，运行时不重做来源证明。资源在本链对应 scope 开启前被读取时，生成期拒绝；业务读取不再扫描全部活实例来补资源。
+
+运行时的实例身份是 Scoped 注册加各参数的实际 `ActivationId`。对仍待用的开启位置，Graph 用候选节点实际发布的绑定匹配这些身份；普通发布以当前发布为准，已领取的会话普通伴随资产以该轮固定的交付身份为准。后台会话后来发布同一来源，不能改变本轮 A → B 间对原实例的待用关系；尚未领取的交付和完整历史不因此加入保活根。参数本身属于其他 scope 的资源时，按原生产身份找到 owner 快照，再核对同一待用入口的上游开启计划；复用资源没有重新发布，不能假设它来自当前节点。ScopeTree 保持独立且无环。
+
+节点退休后只检查该节点能开启的 scope 及 ScopeTree 祖先，不另建运行索引。close 的业务失败记录并汇总，不改节点结果、不重试；原生异常保留向外传播。没有 close 的实例不可达后只移出表。运行结束先让受控任务退出、撤销根帧待用关系，再按相同条件清理剩余实例。
 
 ## 生成方法身份与纯结构副本
 
@@ -162,11 +187,11 @@ Pred 与由它得到的 `precedes` 只用于 `buildScopeTree` 的内部计算，
 
 生成期从 `EffectProto` 的方法、名字与 `effectScopeParents` 取得每个可开启 scope 的 open 方法身份、运行名字及保守前提。前提包括 `Input`／`requests` 链上的 scope，以及声明的 `requires` 来源可导航到的资源 Context owner 候选。这种结构补全不预执行来源生产者或打开 owner；运行时的读取已有值直接读取，缺值时等待发布、不生产；资源 Context 缺值不等待，按 owner 协议报错。关闭本 scope 自己声明的资源不会形成自依赖。实际实例归属仍由 Context 绑定中的 owner 决定。
 
-生成期合并的是上述前提和 `buildScopeTree` 得到的共同前序，不使用 `scopeCandidates` 的并集。注册前提是依赖：上游 scope 必须比下游活得久，下游的 close 也可能调用上游。观察到的开启顺序是证据：共同前序按完整传递关系逐条补入，与注册前提及已补入的边构成相反方向的不作为父边，例如 handler 先开启 B、后开启 B 的 Input 上游 A 时以 A 为 B 的父节点。被推翻的顺序仍保留在 `scopeCandidates`，`--structure` 单列显示。所有可开启注册 scope 都进入最终树，包括本次结构没有出现 open 的注册；它们没有被执行就不会产生待清理资源。重复身份或名字、缺失映射、未知前提及注册前提自身的环均在生成时报告错误。
+生成期合并的是上述前提和 `buildScopeTree` 得到的共同前序，不使用 `scopeCandidates` 的并集。注册前提是依赖：上游 scope 必须比下游活得久，下游的 close 也可能读取上游资源。观察到的开启顺序是证据：共同前序按完整传递关系逐条补入，与注册前提及已补入的边构成相反方向的不作为父边，例如结构中先开启 B、后开启 B 的 Input 上游 A 时以 A 为 B 的父节点。被推翻的顺序仍保留在 `scopeCandidates`，`--structure` 单列显示。所有可开启注册 scope 都进入最终树，包括本次结构没有出现 open 的注册；它们没有被执行就不会产生待清理资源。重复身份或名字、缺失映射、未知前提及注册前提自身的环均在生成时报告错误。
 
 最终依赖只保存在 `ScopeTree` 的 `parents`／`children`／`layers` 中；`scopePaths`、`scopeCandidates`、`scopeOpposed` 与 `scopeUndetermined` 保留原路径证据，不能误读为新增的注册前提也已由路径证明。`protoScopeNames` 连接生成身份和运行名字；`scopeRelations prototype` 临时投影同一棵树的全部祖先可达关系为运行配置，不另存第二份依赖结构。这样即使 `A → B → C` 中 B 尚无活实例，C 仍会保留 A 的清理前提。
 
-运行层按最终父边先清理子 scope，再清理其前提；独立项延续现有句柄顺序的逆序。是否已经满足清理条件仍由实际实例和受管理使用者决定。`scopePaths` 只包含 open，读已有资源的 require-only chain 可以没有 open；重复 open 在路径中也已去重，因此不能把路径长度或出现次数直接当作使用者引用计数。
+运行层按最终父边先清理子 scope，再清理其前提；独立项延续现有句柄顺序的逆序。ScopeTree 的祖先关系仅作实例关联的候选：同一受控链实际使用父、子实例时，在子实例的 `scopeParents` 中保存具体父引用；先出现子实例、后使用父实例也会补齐。子实例不会因为注册关系而保留该父注册下其他链的全部实例。清理条件同时读取这些实例引用、实际使用和执行帧的待用关系。`scopePaths` 只包含去重后的 open，不能把路径长度或出现次数当作使用计数；待用依据来自 `protoScopeOpenings` 和节点进度，资源业务读取须已在本链开启所属 scope。
 
 ## Error 与清理使用同一棵树
 

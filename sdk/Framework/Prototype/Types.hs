@@ -10,6 +10,7 @@ module Framework.Prototype.Types
   , WorkflowTree(..), AlternativeProto(..), LifelongProto(..), SessionProto(..), BootPlan(..)
   , ChainRole(..), ChainProto(..), ChainKind(..), ChainDefinition(..)
   , ReadPoint(..), Source(..), PrototypeError(..), ResolvedDemand(..)
+  , ScopeOpening(..), ScopeKind(..)
   ) where
 
 import Control.DeepSeq (NFData)
@@ -42,6 +43,7 @@ data Prototype method = Prototype
   , protoScopes :: ScopeTree method
   , protoScopeNames :: [(method, String)]
   , protoSources :: [(ReadPoint, Source)]
+  , protoScopeOpenings :: [ScopeOpening]
   } deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 -- 声明接口先于 Handlers 存在；准备阶段只运行一次，方法解析后补全同一份计划。
@@ -138,6 +140,19 @@ data ReadPoint = ReadPoint { readNode :: NodeId, readContract :: String }
 -- FromSession：Receive 资产在没有本次交付时，由 interpreter 托管的会话交付当前历史。
 data Source = FromChains [NodeId] | FromOwnChain | FromSession
   deriving (Eq, Show, Read, Generic, NFData)
+
+-- 每个挂载链开启各 Scoped 时，参数 Context 的可能生产节点。
+-- 候选包含本链与已经捕获的来源；不是运行时任选来源的许可，也不保存分支相关性。
+data ScopeOpening = ScopeOpeningPlan
+  { openingNode :: NodeId
+  , openingScope :: String
+  , openingSources :: [(String, [NodeId])]
+  , openingKinds :: [ScopeKind]
+  } deriving (Eq, Show, Read, Generic, NFData)
+
+-- 类别是该位置各合法路径的可能结果，实际开启仍由参数绑定的生产身份决定。
+data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
+  deriving (Eq, Ord, Show, Read, Generic, NFData)
 
 data PrototypeError method
   = InvalidPrototype String

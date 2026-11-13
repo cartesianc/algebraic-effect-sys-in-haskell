@@ -1663,4 +1663,18 @@ generatedPrototype =
         , (SDK.ReadPoint ([1,1]) ("ReplyPath"), SDK.FromChains ([[0,1]]))
         , (SDK.ReadPoint ([1,0]) ("ReportPath"), SDK.FromChains ([[0,0]]))
         ]
+    , SDK.protoScopeOpenings =
+        [ SDK.ScopeOpeningPlan
+            { SDK.openingNode = [0,1]
+            , SDK.openingScope = "ReplyScope"
+            , SDK.openingSources = [("ReplyLocation",[[0,1]])]
+            , SDK.openingKinds = [SDK.ExecutionMultiple]
+            }
+        , SDK.ScopeOpeningPlan
+            { SDK.openingNode = [0,0]
+            , SDK.openingScope = "ReportScope"
+            , SDK.openingSources = [("ReportLocation",[[0,0]])]
+            , SDK.openingKinds = [SDK.ExecutionMultiple]
+            }
+        ]
     }

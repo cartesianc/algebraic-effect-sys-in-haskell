@@ -222,23 +222,21 @@ runPrepareFiles = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFa
 
 getFileName :: FrameworkGenerated.App FrameworkGenerated.FileName
 getFileName = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation"
-    (Just (FrameworkRuntime.ScopeInput "FileLocation"))
     (\value bindings -> bindings { FrameworkGenerated.boundFileLocation = Just value })) $
   (FrameworkGenerated.FileName <$> runAt @"FileLocation" FrameworkGenerated.selectedFile)
 
 readFileName :: FrameworkGenerated.App FrameworkGenerated.FileName
 readFileName = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "FileLocation" FrameworkGenerated.ContextBindingError (Just (FrameworkRuntime.ScopeInput "FileLocation")) FrameworkGenerated.boundFileLocation
+  FrameworkRuntime.readContext "FileLocation" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileLocation
 
 getOpenedFile :: FrameworkGenerated.App FrameworkGenerated.OpenedFile
 getOpenedFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource"
-    Nothing
     (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
   (FrameworkGenerated.OpenedFile <$> runAt @"FileResource" FrameworkGenerated.acquireFile)
 
 readOpenedFile :: FrameworkGenerated.App FrameworkGenerated.OpenedFile
 readOpenedFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "FileResource" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundFileResource
+  FrameworkRuntime.readContext "FileResource" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileResource
 
 openFileSession :: FrameworkGenerated.App [String]
 openFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFileSession" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $

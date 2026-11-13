@@ -865,4 +865,18 @@ generatedPrototype =
         [ (SDK.ReadPoint ([1,1]) ("LinkedPageSummary"), SDK.FromChains ([[0,1]]))
         , (SDK.ReadPoint ([1,0]) ("StartPageSummary"), SDK.FromChains ([[0,0]]))
         ]
+    , SDK.protoScopeOpenings =
+        [ SDK.ScopeOpeningPlan
+            { SDK.openingNode = [0,1]
+            , SDK.openingScope = "CrawlSession"
+            , SDK.openingSources = []
+            , SDK.openingKinds = [SDK.RegistrationSingleton]
+            }
+        , SDK.ScopeOpeningPlan
+            { SDK.openingNode = [0,0]
+            , SDK.openingScope = "CrawlSession"
+            , SDK.openingSources = []
+            , SDK.openingKinds = [SDK.RegistrationSingleton]
+            }
+        ]
     }

@@ -5,11 +5,15 @@ module Framework.Runtime.Binding
   ) where
 
 import Data.IORef (IORef, newIORef, readIORef)
-import Framework.Runtime.Identity (Execution)
+import Framework.Runtime.Identity (Execution, ActivationId)
+import Framework.Runtime.Frame (ExecutionFrame)
 
 data Binding environment owner user = Binding
   { bindingValues :: environment
   , bindingOrigin :: Execution
+  -- 成功生产的 activation 与执行帧独立于业务 Origin 和关闭归属；交接不重发身份。
+  , bindingProduction :: Maybe ActivationId
+  , bindingFrame :: ExecutionFrame
   , bindingOwnership :: IORef (BindingOwnership owner user)
   }
 
@@ -22,8 +26,10 @@ data BindingOwnership owner user = BindingOwnership
 
 type Bindings environment owner user = [(String, Binding environment owner user)]
 
-newBinding :: environment -> Execution -> Maybe owner -> IO (Binding environment owner user)
-newBinding values origin owner = Binding values origin <$> newIORef (BindingOwnership owner [])
+newBinding :: environment -> Execution -> Maybe ActivationId -> ExecutionFrame -> Maybe owner
+           -> IO (Binding environment owner user)
+newBinding values origin production frame owner =
+  Binding values origin production frame <$> newIORef (BindingOwnership owner [])
 
 readBindingOwner :: Binding environment owner user -> IO (Maybe owner)
 readBindingOwner = fmap bindingOwner . readIORef . bindingOwnership

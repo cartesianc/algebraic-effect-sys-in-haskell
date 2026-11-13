@@ -122,7 +122,6 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
           -- Pure 是 parser 读取 raw 的中间一段：不改变调用者，挂接句柄因此认得出经它拉取的 Context，不重复注入。
           Pure _ -> scoped
           Context {} -> scoped ++ " . FrameworkRuntime.callContext " ++ show selectedName
-            ++ "\n    " ++ observation selectedName
             ++ "\n    (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"
           _ -> entered
     rootWrapper specification = "FrameworkRuntime.withErrorPath " ++ show (Prototype.effectNearestScopes (protoOf unit (name specification)))
@@ -135,7 +134,7 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
             ++ " FrameworkGenerated.bound" ++ selectedName)
       | otherwise = definition method ("FrameworkGenerated." ++ contractType) (rootWrapper specification)
           ("FrameworkRuntime.readContext " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError "
-            ++ observation selectedName ++ " FrameworkGenerated.bound" ++ selectedName)
+             ++ "FrameworkGenerated.bound" ++ selectedName)
       where
         selectedName = name specification
         contractType = maybe "" contractOf (contextAsset (typing specification))
@@ -149,11 +148,6 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       [ Prototype.effectScopes effect ++ [Prototype.effectName effect | Prototype.effectKind effect == ScopedKind]
       | effect <- effectPrototypes unit ])
     openingInputs = Prototype.effectOpeningInputs . protoOf unit . name
-    comparedInputs = nub (concatMap openingInputs
-      [specification | specification <- specifications unit, effectKind (typing specification) == ScopedKind])
-    observation selectedName
-      | selectedName `elem` comparedInputs = "(Just (FrameworkRuntime.ScopeInput " ++ show selectedName ++ "))"
-      | otherwise = "Nothing"
 
     -- 控制对象由生成的 handler 模块创建；不同链引用同份对象，不预执行 open。
     scopeHandlers = unlines

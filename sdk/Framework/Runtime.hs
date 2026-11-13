@@ -1,23 +1,25 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- 执行装配：把生成的 Target lower 到 App，并为持续执行连接 Frame 和生产步骤。
--- Target 只保存末端句柄与共享 scope；Handoff 交接捕获值；Frame 固定一轮的交付。
+-- 执行装配：把生成的 Target lower 到 App，并为持续执行连接 DeliveryFrame 和生产步骤。
+-- Target 只保存末端句柄与共享 scope；Handoff 交接捕获值；DeliveryFrame 固定一轮的交付。
 -- sessionLauncher 负责生产线程，Runtime/Session 保存交付日志并停止线程，
 -- Runtime/Graph 负责唯一会话登记，Workflow/Execution 负责消费单元和整次运行监督。
 -- 程序只经 AST 启动，业务方法不管理这些线程、游标和交接对象。
 module Framework.Runtime
   ( App, Target, targetApp
   , targetName, lowerTarget, Handoff, noHandoff, scopeHandlers, cleanupTargets
-  , Frame, newFrame, frameDelivery, boundarySession
+  , DeliveryFrame, newDeliveryFrame, frameDelivery, boundarySession
   , SessionSteps, receiveSteps, sessionLauncher
   ) where
 
 import Framework.Language.Handler (Failure)
 import Framework.Runtime.App (App, Launch(..), runAppWith)
 import Framework.Runtime.Graph
-  (RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, newOrigin, obtainSession, currentPublications)
-import Framework.Runtime.Identity (Execution(..))
+  (RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, runtimeRootFrame, newOrigin, obtainSession, currentPublications)
+import Framework.Runtime.Identity (Execution(..), Origin(..), executionOrigin)
+import Framework.Runtime.Frame (ExecutionFrame, captureFrameDeliveries)
+import Framework.Runtime.Binding (Binding(..))
 import Framework.Runtime.Session
 import Framework.Runtime.Scope
 import Framework.Prototype
@@ -53,13 +55,13 @@ noHandoff = Handoff [] []
 -- lifelong 单元的一次执行：本 lifelong 的各会话及该单元的游标。每个会话资产在一次执行中只领取一次，
 -- 第一个需要它的调用领取，其余调用（包括同一执行内并行的节点）共享同一份固定视图与伴随发布；
 -- 单元内对这些资产的显式 request 发布进入对应会话。
-data Frame environment cause = Frame
+data DeliveryFrame environment cause = DeliveryFrame
   { frameSessions :: [(String, (Session environment cause, Cursor))]
   , frameTaken :: MVar [(String, MVar (Either (Broken cause) (Delivery environment cause)))]
   }
 
-newFrame :: [(String, (Session environment cause, Cursor))] -> IO (Frame environment cause)
-newFrame sessions = Frame sessions <$> newMVar []
+newDeliveryFrame :: [(String, (Session environment cause, Cursor))] -> IO (DeliveryFrame environment cause)
+newDeliveryFrame sessions = DeliveryFrame sessions <$> newMVar []
 
 -- 进入 lifelong 时取得本边界的会话：生产步骤从进入时的交接开始，与来源分析给会话挂载的环境一致。
 boundarySession :: RuntimeGraph environment cause -> NodeId -> String -> Handoff environment cause
@@ -67,10 +69,10 @@ boundarySession :: RuntimeGraph environment cause -> NodeId -> String -> Handoff
 boundarySession graph boundary source (Handoff given views) = obtainSession graph (Just boundary, source) given views
 
 -- 不是本 lifelong 的会话资产时为 Nothing。没有新发布时挂起；有积压时立即领取下一条。
-frameDelivery :: Frame environment cause -> String -> Maybe (IO (Either (Broken cause) (View environment cause)))
+frameDelivery :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Broken cause) (View environment cause)))
 frameDelivery frame source = fmap (fmap fst) <$> frameTake frame source
 
-frameTake :: Frame environment cause -> String -> Maybe (IO (Either (Broken cause) (Delivery environment cause)))
+frameTake :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Broken cause) (Delivery environment cause)))
 frameTake frame source = do
   (session, cursor) <- lookup source (frameSessions frame)
   pure $ do
@@ -81,11 +83,11 @@ frameTake frame source = do
         pure ((source, slot) : taken, (slot, True))
     if not fresh then readMVar slot else mask $ \restore -> do
       outcome <- try (restore (takeDelivery session cursor))
-      -- 领取被取消时也填入结果，同一 frame 的其他等待方不会悬挂。
+      -- 领取被取消时也填入结果，同一 DeliveryFrame 的其他等待方不会悬挂。
       putMVar slot (either (Left . Left) id outcome)
       either throwIO pure outcome
 
-frameDeliveries :: Frame environment cause -> IO [(String, Delivery environment cause)]
+frameDeliveries :: DeliveryFrame environment cause -> IO [(String, Delivery environment cause)]
 frameDeliveries frame = do
   taken <- readMVar (frameTaken frame)
   fmap concat $ forM taken $ \(source, slot) -> do
@@ -95,19 +97,26 @@ frameDeliveries frame = do
 -- Node algebra 只 lower 末端；scope 引用已绑定在句柄中。
 -- 受控结果消费在撤销入口使用登记前完成，惰性读取不会落在自动 close 之后。
 -- 末端共享同一次 interpreter 运行的资产 state，使 require 可读取先前 Node 产出的资产。
--- 在 lifelong 单元的 frame 中，已领取的交付优先于交接视图，尚未领取的会话资产在第一次读取时领取。
+-- 在 lifelong 单元的 DeliveryFrame 中，已领取的交付优先于交接视图，尚未领取的会话资产在第一次读取时领取。
 -- 已领取交付的伴随发布作为已捕获绑定交给本次调用，交接中已经捕获的值优先（与来源分析一致）；
 -- 生成期保证读取伴随资产的位置在调用前已经领取了对应会话的交付。
 -- 单元内显式 request 产生的交付没有会话生产步骤，不带伴随发布。
-lowerTarget :: RuntimeGraph environment cause -> NodeId -> Maybe (Frame environment cause) -> Handoff environment cause
+lowerTarget :: RuntimeGraph environment cause -> NodeId -> ExecutionFrame -> Maybe (DeliveryFrame environment cause) -> Handoff environment cause
             -> Target environment cause value -> IO (Either (Failure cause) value, Handoff environment cause)
-lowerTarget graph location frame (Handoff given views) target = do
+lowerTarget graph location executionFrame frame (Handoff given views) target = do
   taken <- maybe (pure []) frameDeliveries frame
   let merged = [(source, view) | (source, (view, _)) <- taken]
         ++ [entry | entry@(source, _) <- views, source `notElem` map fst taken]
       companions = [entry | (_, (_, published)) <- taken, entry@(source, _) <- published, source `notElem` map fst given]
       sinks = [(source, appendDelivery session []) | Just current <- [frame], (source, (session, _)) <- frameSessions current]
-      launch = Launch (given ++ companions) merged Nothing sinks (\source -> frame >>= (`frameDelivery` source)) Nothing
+      launch = Launch
+        { launchBindings = given ++ companions, launchViews = merged, launchInput = Nothing
+        , launchSinks = sinks, launchDeliver = \source -> frame >>= (`frameDelivery` source)
+        , launchUser = Nothing, launchFrame = executionFrame }
+  captureFrameDeliveries executionFrame
+    [(originNode (executionOrigin (bindingOrigin value)), source, production)
+      | (source, value) <- companions, Just production <- [bindingProduction value]
+      , source `notElem` [resource | family <- runtimeScopes graph, Just resource <- [scopeContextSource family]]]
   (outcome, captured, delivered) <- lowerWith graph location launch target
   pure (outcome, Handoff captured delivered)
 
@@ -139,7 +148,7 @@ receiveSteps = ReceiveSteps
 
 -- 为新会话启动生产任务：按原型找到该边界的会话挂载，逐次执行生产步骤，把发布写入会话历史。
 -- 每条交付带上本次生产步骤（各挂载当前一次执行）已经发布的普通资产，作为伴随发布。
--- 各步骤共用会话的 scope 使用登记，生产资源跨步骤保持；会话停止时撤销登记，资源交给退出清理。
+-- 各步骤共用会话的 scope 使用登记，生产资源跨步骤保持；会话停止时撤销登记，根帧退休后统一回收。
 -- 生产失败（已经过 Error 协议诊断）或原生异常使会话失败并停止，并通知运行监督；
 -- 取消只结束任务，步骤内照常收尾。
 -- 启动到登记在不可中断区内完成，取消不会落在任务已启动、尚未登记之间。任务继承这一屏蔽，只在生产时解除：
@@ -175,7 +184,10 @@ sessionLauncher graph steps onBroken session = uninterruptibleMask_ $ do
       companions <- currentPublications graph (maybe [] id mounts)
       appendDelivery session companions value)]
     -- 每一步从边界交接的新副本开始，共用会话的使用登记。
-    step owner input sinks = Launch (sessionBindings session) (sessionViews session) input sinks noDelivery (Just owner)
+    step owner input sinks = Launch
+      { launchBindings = sessionBindings session, launchViews = sessionViews session, launchInput = input
+      , launchSinks = sinks, launchDeliver = noDelivery, launchUser = Just owner
+      , launchFrame = runtimeRootFrame graph }
     noDelivery = const Nothing
     first (outcome, _, _) = outcome
     broken reason = breakSession session reason >> onBroken reason

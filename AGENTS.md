@@ -22,7 +22,7 @@
 - 每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；同一资产可声明多种合法访问方式，一个消费者可依赖多个资产。读取按“表示类型 + effect”路由到唯一资产，一个 effect 内表示类型不重复，见[资产来源与访问约束](docs/LATEST_DESIGN.md#demand-contract)；不新增位置参数或提前取值。
 - Error 只指向 scope：`RaisedBy` 写 handler 名，必须关联恰好一个 scope；resolve 暂不操作 scope（Error 驱动链待定）。
 - Context 通过 demands 接入。区分 original chain、Context chain、静态 NodeId、运行 Origin／ActivationId 与 Binding ownership。
-- 取值的捕获、来源可见性、缺值等待（require 不生产）、资源认领和 scope 回收保证（当前为 once-spare；已确定改为按 `requires`／`requests` 区分[单例与多例](docs/LATEST_DESIGN.md#scope-identity)并[按可达性回收](docs/LATEST_DESIGN.md#scope-gc)，尚未实现）不能在重构中弱化。完整规则按下表阅读，不在本文件复制协议。
+- 取值的捕获、来源可见性、缺值等待（require 不生产）、资源认领和 scope 回收保证（按实际参数生产身份区分[单例与多例](docs/LATEST_DESIGN.md#scope-identity)，结合当前使用与执行帧的待用关系[按可达性回收](docs/LATEST_DESIGN.md#scope-gc)）不能在重构中弱化。完整规则按下表阅读，不在本文件复制协议。
 - gen 是这个 EDSL 的编译器。SDK 分为源语言（`Framework/Language/`）、gen（`Framework/Gen/`）、编译产物（`Framework/Prototype/`、Generated）与运行时（`Framework/Runtime/`）四层，依赖只从上往下：gen 不导入运行时，运行时不导入 gen。能在生成期判定的组合、读取路由与合法性问题由 gen 报错，不留给运行时；新增检查放进流水线的对应阶段，见 [gen 是编译器](docs/LATEST_DESIGN.md#compiler)与[编译流水线](docs/LATEST_DESIGN.md#generation)。
 - Prototype 是纯结构，RuntimeGraph 保存活动关系，ScopeTree 独立且无环。生成、执行、展示共享同一静态模型。
 - Generated 是派生产物；修改手写输入后显式生成，不在构建中隐式修改源码，不把手改生成结果当作持久权威。
@@ -57,7 +57,7 @@
 | 运行时：协议、Context 与绑定 | [Protocol](sdk/Framework/Runtime/Protocol.hs)、[Context](sdk/Framework/Runtime/Context.hs)、[Binding](sdk/Framework/Runtime/Binding.hs) |
 | 运行时：实际执行、运行身份与图 | [App](sdk/Framework/Runtime/App.hs)、[Identity](sdk/Framework/Runtime/Identity.hs)、[Graph](sdk/Framework/Runtime/Graph.hs) |
 | 运行时：scope | [Scope](sdk/Framework/Runtime/Scope.hs) |
-| 运行时：执行 algebra、会话与单元调度 | [Execution](sdk/Framework/Runtime/Execution.hs)、[Runtime.hs](sdk/Framework/Runtime.hs)、[Session](sdk/Framework/Runtime/Session.hs) |
+| 运行时：执行 algebra、执行帧、会话与单元调度 | [Execution](sdk/Framework/Runtime/Execution.hs)、[Frame](sdk/Framework/Runtime/Frame.hs)、[Runtime.hs](sdk/Framework/Runtime.hs)、[Session](sdk/Framework/Runtime/Session.hs) |
 
 完整目录与阅读路线见[主设计：SDK 分工](docs/LATEST_DESIGN.md#sdk-layout)。
 

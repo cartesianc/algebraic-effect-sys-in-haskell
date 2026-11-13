@@ -227,23 +227,21 @@ instance FrameworkRuntime.Raw (At "ExtractLinkedPage") where
 
 getStartURL :: FrameworkGenerated.App FrameworkGenerated.StartURL
 getStartURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "StartPage"
-    Nothing
     (\value bindings -> bindings { FrameworkGenerated.boundStartPage = Just value })) $
   (FrameworkGenerated.StartURL <$> runAt @"StartPage" FrameworkGenerated.startURL)
 
 readStartURL :: FrameworkGenerated.App FrameworkGenerated.StartURL
 readStartURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "StartPage" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundStartPage
+  FrameworkRuntime.readContext "StartPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundStartPage
 
 getLinkedURL :: FrameworkGenerated.App FrameworkGenerated.LinkedURL
 getLinkedURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "LinkedPage"
-    Nothing
     (\value bindings -> bindings { FrameworkGenerated.boundLinkedPage = Just value })) $
   (FrameworkGenerated.LinkedURL <$> runAt @"LinkedPage" FrameworkGenerated.linkedURL)
 
 readLinkedURL :: FrameworkGenerated.App FrameworkGenerated.LinkedURL
 readLinkedURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "LinkedPage" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundLinkedPage
+  FrameworkRuntime.readContext "LinkedPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundLinkedPage
 
 runFetchPage :: FrameworkGenerated.App [String]
 runFetchPage = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runFetchPage" . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FetchPage") $
@@ -255,13 +253,12 @@ runKeepPageBody = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRu
 
 getStartPageSummary :: FrameworkGenerated.App FrameworkGenerated.StartPageSummary
 getStartPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractPage"
-    Nothing
     (\value bindings -> bindings { FrameworkGenerated.boundExtractPage = Just value })) $
   (FrameworkGenerated.StartPageSummary <$> runAt @"ExtractPage" FrameworkGenerated.extractSummary)
 
 readStartPageSummary :: FrameworkGenerated.App FrameworkGenerated.StartPageSummary
 readStartPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ExtractPage" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundExtractPage
+  FrameworkRuntime.readContext "ExtractPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundExtractPage
 
 runPrintPage :: FrameworkGenerated.App [String]
 runPrintPage = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrintPage" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrintPage") $
@@ -277,13 +274,12 @@ runKeepLinkedPageBody = (FrameworkRuntime.withErrorPath ["CrawlSession"] . Frame
 
 getLinkedPageSummary :: FrameworkGenerated.App FrameworkGenerated.LinkedPageSummary
 getLinkedPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractLinkedPage"
-    Nothing
     (\value bindings -> bindings { FrameworkGenerated.boundExtractLinkedPage = Just value })) $
   (FrameworkGenerated.LinkedPageSummary <$> runAt @"ExtractLinkedPage" FrameworkGenerated.extractSummary)
 
 readLinkedPageSummary :: FrameworkGenerated.App FrameworkGenerated.LinkedPageSummary
 readLinkedPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ExtractLinkedPage" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundExtractLinkedPage
+  FrameworkRuntime.readContext "ExtractLinkedPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundExtractLinkedPage
 
 runPrintLinkedPage :: FrameworkGenerated.App [String]
 runPrintLinkedPage = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrintLinkedPage" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrintLinkedPage") $
@@ -291,13 +287,12 @@ runPrintLinkedPage = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handl
 
 getCrawlSessionInfo :: FrameworkGenerated.App FrameworkGenerated.CrawlSessionInfo
 getCrawlSessionInfo = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "SessionContext"
-    Nothing
     (\value bindings -> bindings { FrameworkGenerated.boundSessionContext = Just value })) $
   (FrameworkGenerated.CrawlSessionInfo <$> runAt @"SessionContext" FrameworkGenerated.sessionInfo)
 
 readCrawlSessionInfo :: FrameworkGenerated.App FrameworkGenerated.CrawlSessionInfo
 readCrawlSessionInfo = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "SessionContext" FrameworkGenerated.ContextBindingError Nothing FrameworkGenerated.boundSessionContext
+  FrameworkRuntime.readContext "SessionContext" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundSessionContext
 
 openCrawlSession :: FrameworkGenerated.App [String]
 openCrawlSession = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openCrawlSession" . FrameworkRuntime.openScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $

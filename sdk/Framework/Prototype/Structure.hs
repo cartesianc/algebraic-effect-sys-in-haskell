@@ -56,6 +56,13 @@ renderStructure prototype workflowAST = do
          | (point, source) <- protoSources prototype]
       ++ ["  Unowned assets follow the missing-value request rule; resource, diagnostic and cleanup exceptions remain."
          ,"  Where cross-chain lookup is needed, generation proves at most one visible source; runtime checks actual uniqueness."]
+      ++ ["", "Scope openings (parameter production candidates; actual bindings determine the category)"]
+      ++ concat
+         [ ["  " ++ show (openingNode opening) ++ " " ++ openingScope opening
+              ++ ": " ++ intercalate " / " (map scopeKindDescription (openingKinds opening))]
+           ++ ["    " ++ source ++ " <- " ++ intercalate ", " (map describeNode nodes)
+              | (source, nodes) <- openingSources opening]
+         | opening <- protoScopeOpenings prototype]
       ++ ["", "Effect methods"]
       ++ ["  " ++ show (methodIdentity method) ++ " [" ++ show (methodRole method)
            ++ ", effect=" ++ show (methodEffect method) ++ "]"
@@ -83,6 +90,9 @@ renderStructure prototype workflowAST = do
     sourceDescription FromOwnChain = "own chain (request when missing)"
     sourceDescription FromSession = "interpreter session (current history)"
     sourceDescription (FromChains nodes) = "visible candidates " ++ intercalate ", " (map describeNode nodes)
+    scopeKindDescription RegistrationSingleton = "registration singleton"
+    scopeKindDescription ProductionSingleton = "production singleton"
+    scopeKindDescription ExecutionMultiple = "execution multiple"
     describeNode node = case lookupChain prototype node of
       Right chain -> show node ++ " " ++ chainTerminal chain
       Left _ -> show node

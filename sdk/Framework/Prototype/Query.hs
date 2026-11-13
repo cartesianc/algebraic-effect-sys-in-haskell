@@ -3,7 +3,7 @@
 module Framework.Prototype.Query
   ( workflowNode, workflowChildren, workflowTerminals, workflowLifelongs, workflowSelectors
   , allWorkflow, lookupChain, lookupWorkflow, precedes, exclusive, visibleFrom
-  , driveSet, readPoints, bootPlan, sessionSteps
+  , driveSet, readPoints, scopeOpeningsAt, bootPlan, sessionSteps
   , finiteSessions, candidateCase, findEffectProto, ordinaryEntry, selectorMethod, calledMethods, reachableMethods
   ) where
 
@@ -90,6 +90,9 @@ driveSet prototype selected = chainDrives <$> lookupChain prototype selected
 
 readPoints :: Prototype method -> [ReadPoint]
 readPoints = map fst . protoSources
+
+scopeOpeningsAt :: Prototype method -> NodeId -> [ScopeOpening]
+scopeOpeningsAt prototype node = filter ((== node) . openingNode) (protoScopeOpenings prototype)
 
 -- 持续资产的 Input 一定是 Stream（注册校验保证）；会话从它接收。
 bootPlan :: [EffectProto method] -> EffectProto method -> BootPlan

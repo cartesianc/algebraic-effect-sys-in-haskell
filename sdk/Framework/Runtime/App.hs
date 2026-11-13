@@ -19,17 +19,18 @@ import Framework.Runtime.Protocol
 import Framework.Runtime.Scope
 import Framework.Runtime.Graph
 import Framework.Runtime.Identity
+import Framework.Runtime.Frame (ExecutionFrame, owningFrame)
 import Framework.Language.History (History, historyView)
 import Framework.Runtime.Session (Broken, View, awaitHistory)
 import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
-import Control.Exception (Exception, SomeException, fromException, mask, mask_, throwIO, try, finally)
+import Control.Exception (Exception, SomeException, displayException, fromException, mask, mask_, throwIO, try, finally)
 import Control.Monad (filterM, forM, forM_, when)
 import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Reader (ReaderT, ask, asks, local, runReaderT)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.List (find, nub, nubBy)
+import Data.List (find, nub)
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
 import Data.Sequence ((|>))
 import Data.Unique (Unique, newUnique)
@@ -59,6 +60,7 @@ data Environment env cause = Environment
   , runtimeGraph :: RuntimeGraph env cause
   , activeActivation :: Maybe ActivationId
   , execution :: Execution
+  , currentFrame :: ExecutionFrame
   -- 原子句柄方法名 → 挂在它下面的 Context 生产入口，由生成区安装。
   , anchoredEntries :: [(String, [(String, App env cause ())])]
   -- 注入期间各原子句柄的本次输出。
@@ -75,7 +77,7 @@ data Environment env cause = Environment
   }
 
 -- 一次末端调用的起点：交接的绑定与视图；会话步骤另带原始输入，lifelong 单元另带本次 frame。
--- 会话步骤共用会话的使用登记：生产资源跨步骤保持，不因一次步骤结束按 once-spare 关闭。
+-- 会话步骤共用会话的使用登记：生产资源跨步骤保持，停止会话时才撤销这份使用。
 data Launch env cause = Launch
   { launchBindings :: ScopeBindings env cause
   , launchViews :: [(String, View env cause)]
@@ -83,12 +85,14 @@ data Launch env cause = Launch
   , launchSinks :: [(String, Bound env cause -> IO ())]
   , launchDeliver :: String -> Maybe (IO (Either (Broken cause) (View env cause)))
   , launchUser :: Maybe (ScopeUser env cause)
+  , launchFrame :: ExecutionFrame
   }
 
 data Opening env cause = Opening
   { family :: ScopeHandler env cause
   , wrapFault :: ScopeFault -> cause
   , observed :: IORef [(ScopeInputAccess, ScopeInput)]
+  , observedFrames :: IORef [(String, ExecutionFrame)]
   , produced :: IORef (ScopeBindings env cause)
   , holding :: IORef (Maybe (ScopeInstance env cause))
   , token :: Unique
@@ -177,7 +181,7 @@ publishBinding environment source value = do
             Nothing -> publishAsset (runtimeGraph environment) origin source value
     _ -> pure ()
 
--- 已合法捕获的绑定保持快照。资源按实例归属解析，普通值只读静态来源指定的 Origin。
+-- 已合法捕获的绑定保持快照。资源只能来自本链 open 的捕获；不从仍活着的其他实例猜测。
 -- scope 保存的无 owner 辅助值不能绕过来源表，也不能盖过同一 Origin 后来的 request。
 resolveBinding :: Environment env cause -> String -> IO (Either ContextFault (Maybe (Bound env cause)))
 resolveBinding environment source = do
@@ -185,39 +189,16 @@ resolveBinding environment source = do
   case current of
     Just value -> pure (Right (Just value))
     Nothing | isJust (originalFailure environment) -> pure (Right Nothing)
+    Nothing | cleaningScopes environment
+      || any ((== source) . resourceSource) (scopes environment) -> pure (Right Nothing)
     Nothing -> do
-      let visible = nub (ownedNames environment ++ dependencies environment)
-      candidates <- fmap concat $ forM visible $ \name -> case findScope (scopes environment) name of
-        Nothing -> pure []
-        Just handler -> do
-          instances <- readMVar (scopeInstances handler)
-          fmap catMaybes $ forM instances $ \slot -> do
-            value <- lookup source . scopeBindings <$> readIORef (scopeRecord slot)
-            case value of
-              Nothing -> pure Nothing
-              Just bound -> do
-                owner <- readBindingOwner bound
-                case owner of
-                  Nothing -> pure Nothing
-                  Just (_, slotOwner) -> do
-                    phase <- scopePhase <$> readIORef (scopeRecord slotOwner)
-                    pure (if closed phase then Nothing else Just bound)
-      -- 同一共享绑定可同时保存在多个 scope 快照中；重复引用不构成多个资源。
-      case nubBy (\left right -> bindingOwnership left == bindingOwnership right) candidates of
-        [] | cleaningScopes environment -> pure (Right Nothing)
-        [] -> do
-          asset <- readVisibleAsset (runtimeGraph environment) (executionOrigin (execution environment)) source
-          case asset of
-            Left problem -> pure (Left problem)
-            Right Nothing -> pure (Right Nothing)
-            Right (Just value) -> do
-              captureBinding environment source value
-              pure (Right (Just value))
-        [value] -> captureBinding environment source value >> pure (Right (Just value))
-        _ -> pure (Left (AmbiguousContextBinding source))
-  where
-    closed (ScopeClosed _) = True
-    closed _ = False
+      asset <- readVisibleAsset (runtimeGraph environment) (executionOrigin (execution environment)) source
+      case asset of
+        Left problem -> pure (Left problem)
+        Right Nothing -> pure (Right Nothing)
+        Right (Just value) -> do
+          captureBinding environment source value
+          pure (Right (Just value))
 
 owns :: Environment env cause -> ScopeInstance env cause -> IO Bool
 owns environment slot = do
@@ -285,7 +266,7 @@ saveBinding slot source value = atomicModifyIORef' (scopeRecord slot) $ \record 
   (record { scopeBindings = bind source value (scopeBindings record) }, ())
 
 -- 复用只交接带实例归属的资源绑定。普通值在实际 require 时按 Origin 查询权威资产表，
--- 不从 scope 的旧快照预先捕获；开启参数同值的共享规则保持不变。
+-- 不从 scope 的旧快照预先捕获；实例共享只依据参数的生产身份。
 reuseBindings :: Environment env cause -> ScopeInstance env cause -> IO ()
 reuseBindings environment slot = do
   saved <- scopeBindings <$> readIORef (scopeRecord slot)
@@ -307,8 +288,10 @@ ensureOpen environment attempt = do
       if not (null missing)
         then pure (Left (fault name (wrapFault attempt) (ScopeInputsMissing missing)))
         else do
+          parameterFrames <- map snd <$> readIORef (observedFrames attempt)
+          let ownerFrame = owningFrame (runtimeRootFrame (runtimeGraph environment)) parameterFrames
           let acquire = mask $ \_ -> do
-                selected <- selectScopeInstance (consumer environment) handler inputs
+                selected <- selectScopeInstance (consumer environment) handler ownerFrame inputs
                 case selected of
                   Left finished -> readMVar finished >> acquire
                   Right slot -> do
@@ -330,7 +313,8 @@ ensureOpen environment attempt = do
                             (record { scopePhase = ScopeOpening, scopeBindings = values }, ())
                           when (scopeContextSource handler == Nothing) $ do
                             let source = resourceSource handler
-                            value <- newBinding (emptyValues environment) (execution environment) (Just (name, slot))
+                            value <- newBinding (emptyValues environment) (execution environment)
+                              Nothing (scopeFrame slot) (Just (name, slot))
                             saveBinding slot source value
                             publishBinding environment source value
                           pure (Right ())
@@ -456,7 +440,8 @@ instance ContextStore env (App env cause) where
         selected <- rawIO (readIORef (holding attempt))
         pure (fmap (\slot -> (scopeName (family attempt), slot)) selected)
       _ -> pure Nothing
-    value <- rawIO (newBinding (update (emptyValues environment)) (execution environment) owner)
+    value <- rawIO (newBinding (update (emptyValues environment)) (execution environment)
+      (activeActivation environment) (maybe (currentFrame environment) (scopeFrame . snd) owner) owner)
     rawIO (publishBinding environment source value)
     case openings environment of
       attempt : _ -> do
@@ -506,20 +491,27 @@ instance ContextStore env (App env cause) where
       session <- rawIO (obtainSession (runtimeGraph environment) (Nothing, source) [] [])
       Just <$> captureDelivery environment source select (rawIO (awaitHistory session))
   streamRawInput = AppRun (asks streamRaw)
-  recordContextInput access value = do
+  recordContextInput access source = do
     environment <- AppRun ask
     case openings environment of
-      attempt : _ | inputName value `elem` scopeInputSources (family attempt) -> do
+      attempt : _ | source `elem` scopeInputSources (family attempt) -> do
+        captured <- rawIO (lookup source <$> readIORef (bindings environment))
+        (value, frame) <- case captured of
+          Just bound | Just production <- bindingProduction bound ->
+            pure (ScopeInput source production, bindingFrame bound)
+          _ -> throwError (fault (scopeName (family attempt)) (wrapFault attempt) (ScopeInputsMissing [source]))
         previous <- rawIO (readIORef (observed attempt))
         started <- rawIO (readIORef (holding attempt))
         case started of
-          Just _ | value `notElem` map snd previous || access == RequestedInput -> throwError
+          Just _ | value `notElem` map snd previous -> throwError
             (fault (scopeName (family attempt)) (wrapFault attempt) (ScopeInputAfterOpen (inputName value)))
           _ -> pure ()
         let wasRequested = any (\(mode, old) -> inputName old == inputName value && mode == RequestedInput) previous
             mode = if wasRequested then RequestedInput else access
             updated = (mode, value) : filter ((/= inputName value) . inputName . snd) previous
         rawIO $ writeIORef (observed attempt) updated
+        rawIO $ atomicModifyIORef' (observedFrames attempt) $ \frames ->
+          ((source, frame) : filter ((/= source) . fst) frames, ())
         let missing = filter (`notElem` map (inputName . snd) updated) (scopeInputSources (family attempt))
         when (null missing) $ rawIO (ensureOpen environment attempt) >>= either throwError pure
       _ -> pure ()
@@ -657,7 +649,7 @@ captureDelivery environment source select deliver = do
         ((source, view) : filter ((/= source) . fst) current, ())
       pure (historyOf source select view)
 
--- 此证据只描述这次失败所涉及的实例，不参与开启参数的 Eq 匹配。
+-- 此证据只描述这次失败所涉及的实例，不参与开启参数的生产身份匹配。
 scopeFailureTarget :: String -> Maybe (ScopeInstance env cause) -> Failure cause -> Failure cause
 scopeFailureTarget selected owner problem
   | Nothing <- owner, isJust (lookup selected (scopeTargets problem)) = problem
@@ -674,7 +666,7 @@ withScopeCleanups callbacks (AppRun action) = AppRun $ local
 
 -- 在本次 open 退出前冻结绑定。后续 request、其他参数实例或重开都不会改变收尾目标。
 -- open 已失败但资源已经发布时，同样保存清理动作；未发布的部分获取由原子获取操作负责。
-captureScopeCleanup :: Environment env cause -> Opening env cause -> ScopeInstance env cause -> IO ()
+captureScopeCleanup :: forall env cause. Environment env cause -> Opening env cause -> ScopeInstance env cause -> IO ()
 captureScopeCleanup environment attempt slot =
   case lookup name (scopeCleanups environment) of
     Nothing -> pure ()
@@ -684,7 +676,7 @@ captureScopeCleanup environment attempt slot =
       when matched $ do
         captured <- readIORef (bindings environment)
         let snapshot = foldr (\(source, value) values -> bind source value values) captured saved
-            cleanup permit = mask $ \restore -> do
+            isolated permit action = mask $ \restore -> do
               values <- newIORef snapshot
               let cleanupExecution = CleanupExecution (executionOrigin (execution environment)) name (scopeIdentity slot)
               cleanupUser <- newScopeUser (scopes environment) cleanupExecution
@@ -696,9 +688,19 @@ captureScopeCleanup environment attempt slot =
                     , consumer = cleanupUser, cleanupPermit = Just (permit, slot)
                     , activeActivation = Nothing, execution = cleanupExecution
                     , cleanupBusy = Just (fault name (wrapFault attempt) ScopeInUse) }
-              restore (runExceptT (runReaderT close inside)) `finally` detachScopeUser cleanupUser
-            interrupted description = scopeFailureTarget name (Just slot)
-              (fault name (wrapFault attempt) (ScopeCleanupInterrupted description))
+              restore (action inside) `finally` detachScopeUser cleanupUser
+            cleanup permit = isolated permit (runExceptT . runReaderT close)
+            -- 生命周期锁已在 runClose 中释放；关闭预约仍保持到本次诊断完成。
+            -- 诊断失败不能吞掉原来的取消，外层继续保存并传播该 SomeException。
+            interrupted permit exception = isolated permit $ \inside -> do
+              let problem = scopeFailureTarget name (Just slot)
+                    (fault name (wrapFault attempt) (ScopeCleanupInterrupted (displayException exception)))
+                  AppRun diagnosing = handleFailure (throwError problem :: App env cause ())
+              result <- try (runExceptT (runReaderT diagnosing inside))
+              pure $ case result of
+                Left (_ :: SomeException) -> problem
+                Right (Left diagnosed) -> diagnosed
+                Right (Right ()) -> problem
         writeIORef (scopeCleanup slot) (Just (ScopeCleanup interrupted cleanup))
   where name = scopeName (family attempt)
 
@@ -710,7 +712,7 @@ runOpen name wrap (AppRun action) = AppRun $ do
   when (name `elem` ownedNames environment) (throwError (fault name wrap ScopeReentry))
   result <- liftIO $ mask $ \restore -> do
     handler <- getScope (scopes environment) name
-    attempt <- Opening handler wrap <$> newIORef [] <*> newIORef [] <*> newIORef Nothing <*> newUnique
+    attempt <- Opening handler wrap <$> newIORef [] <*> newIORef [] <*> newIORef [] <*> newIORef Nothing <*> newUnique
     let inside = environment { openings = attempt : openings environment }
         execute = do
           when (null (scopeInputSources handler)) $
@@ -822,6 +824,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         , scopeCleanups = [], cleaningScopes = False, consumer = user
         , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
         , activeActivation = Just (activationId activation), execution = currentExecution
+        , currentFrame = launchFrame launch
         , anchoredEntries = [], replays = []
         , views = delivered, streamRaw = launchInput launch, sessionSinks = launchSinks launch
         , frameDeliver = launchDeliver launch }
@@ -831,20 +834,10 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         consume outcome
         pure outcome
       -- 会话的使用登记在会话停止时才撤销。
-      failures <- maybe (releaseScopeUser user handlers) (const (pure [])) (launchUser launch)
+      -- 节点进度由 Execution 在本调用（含交接）返回后完成，再回收相关 Scoped。
+      -- 此处只撤销实际使用，避免重复扫描整批实例或早于进度更新进行关闭。
+      maybe (detachScopeUser user) (const (pure ())) (launchUser launch)
       case completed of
-        Left (exception :: SomeException) -> do
-          saveCleanupFailures handlers failures
-          throwIO exception
-        Right outcome -> case [exception | (Just exception, _) <- failures] of
-          exception : _ -> do
-            let preserved = case outcome of
-                  Left original -> [(Just exception, original { cleanupFailures = cleanupFailures original ++ map snd failures })]
-                  Right _ -> failures
-            saveCleanupFailures handlers preserved
-            throwIO exception
-          [] -> pure $ case (outcome, map snd failures) of
-            (Left original, problems) -> Left original { cleanupFailures = cleanupFailures original ++ problems }
-            (Right _, first : rest) -> Left first { cleanupFailures = cleanupFailures first ++ rest }
-            (Right value, []) -> Right value)
+        Left (exception :: SomeException) -> throwIO exception
+        Right outcome -> pure outcome)
     `finally` endActivation graph (activationId activation)

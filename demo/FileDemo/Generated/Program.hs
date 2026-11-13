@@ -710,4 +710,24 @@ generatedPrototype =
           }
     , SDK.protoScopeNames = [(OpenFileSessionGen, "FileSession")]
     , SDK.protoSources = []
+    , SDK.protoScopeOpenings =
+        [ SDK.ScopeOpeningPlan
+            { SDK.openingNode = [1]
+            , SDK.openingScope = "FileSession"
+            , SDK.openingSources = [("FileLocation",[[1]])]
+            , SDK.openingKinds = [SDK.ExecutionMultiple]
+            }
+        , SDK.ScopeOpeningPlan
+            { SDK.openingNode = [0]
+            , SDK.openingScope = "FileSession"
+            , SDK.openingSources = [("FileLocation",[[0]])]
+            , SDK.openingKinds = [SDK.ExecutionMultiple]
+            }
+        , SDK.ScopeOpeningPlan
+            { SDK.openingNode = [-1]
+            , SDK.openingScope = "FileSession"
+            , SDK.openingSources = [("FileLocation",[[-1]])]
+            , SDK.openingKinds = [SDK.ExecutionMultiple]
+            }
+        ]
     }

@@ -7,7 +7,7 @@ module Framework.Runtime.Context
   ) where
 
 import Framework.Runtime.Protocol
-  (ContextStore(..), ContextFault(..), ScopeInput, ScopeInputAccess(..), RawOutput(..), failEffect)
+  (ContextStore(..), ContextFault(..), ScopeInputAccess(..), RawOutput(..), failEffect)
 import Framework.Language.Handler (Failure(..))
 import Control.Monad (forM_, when)
 import Control.Monad.Except (MonadError, catchError, throwError)
@@ -18,9 +18,8 @@ import Framework.Language.History (History, latest)
 -- 载体在诊断、收尾或 scope 资源时不等待，缺值按 ContextNotInitialized 报出。
 readContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> (ContextFault -> cause) -> Maybe (value -> ScopeInput)
-  -> (environment -> Maybe value) -> m value
-readContext contextName wrap compareValue select = awaitBound
+  => String -> (ContextFault -> cause) -> (environment -> Maybe value) -> m value
+readContext contextName wrap select = awaitBound
   where
     awaitBound = do
       -- 先取等待动作再读：读取之后、开始等待之前的发布也会唤醒这次等待。
@@ -33,14 +32,9 @@ readContext contextName wrap compareValue select = awaitBound
       resolved <- readContextBinding contextName select
       either (\problem -> failEffect contextName (wrap problem) (show problem)) pure resolved
     observed value = do
-      observeInput RequiredInput compareValue value
+      recordContextInput RequiredInput contextName
       pure value
     notInitialized = failEffect contextName (wrap ContextNotInitialized) (show ContextNotInitialized)
-
--- 只观察 instance 实际取得的值，不触发任何生产动作。
-observeInput :: ContextStore environment m => ScopeInputAccess -> Maybe (value -> ScopeInput) -> value -> m ()
-observeInput _ Nothing _ = pure ()
-observeInput access (Just observe) value = recordContextInput access (observe value)
 
 -- 同一个成功值先交给绑定回调再返回；生产失败不会触发回调或再次执行生产。
 requestContext
@@ -56,11 +50,11 @@ requestContext selected synchronize produce = enterRequest selected $
 -- 挂接注入和会话步骤调用它；require 读取走 readContext，不经这里。
 callContext
   :: ContextStore environment m
-  => String -> Maybe (value -> ScopeInput) -> (value -> environment -> environment)
+  => String -> (value -> environment -> environment)
   -> m value -> m value
-callContext selected compareValue synchronize produce = do
+callContext selected synchronize produce = do
   value <- requestContext selected synchronize (enterContext selected produce)
-  observeInput RequestedInput compareValue value
+  recordContextInput RequestedInput selected
   pure value
 
 -- 和类型资产的分支契约是基础契约的投影：读取基础契约，资产当前是该构造器时取出其字段，

@@ -127,8 +127,8 @@ buildEffectProtos specifications sumTypes = do
       checkScope selected = do
         specification <- findSpec selected
         case typing specification of
-          Scoped (Just _) (Just _) -> pure ()
-          _ -> Left (InvalidPrototype ("Input scope needs Scoped.open and Scoped.close: " ++ selected))
+          Scoped (Just _) _ -> pure ()
+          _ -> Left (InvalidPrototype ("Input scope needs Scoped.open: " ++ selected))
       boundHandlers = nub (concatMap (map snd . handlerBindings) specifications)
       checkHandled (RaisedBy selected) = valid (selected `elem` boundHandlers)
         ("RaisedBy must name a registered handler: " ++ selected)
@@ -147,9 +147,8 @@ buildEffectProtos specifications sumTypes = do
             ("Input cannot reference Error " ++ name predecessor ++ " in " ++ name specification ++ "; Error runs only for scope failures")
         mapM_ checkScope (upstream specification)
         case typing specification of
-          Scoped opening closing -> do
+          Scoped {} -> do
             valid (length (requested specification) <= 1) ("Scoped requests at most one resource Context: " ++ name specification)
-            valid (opening == Nothing || closing /= Nothing) ("Scoped.open needs Scoped.close for automatic cleanup: " ++ name specification)
           Context { asset = declared, parser = parsing, require = requiring, stream = streaming } -> do
             -- 持续交付只由上游 Stream 驱动：stream 当且仅当 input 是 Stream，持续资产也缓存最新值。
             valid (parsing /= Nothing) ("Context needs a parser handler: " ++ name specification)

@@ -50,6 +50,7 @@ executable crawler-demo
       Framework.Runtime.Binding
       Framework.Runtime.Scope
       Framework.Runtime.App
+      Framework.Runtime.Frame
       Framework.Runtime.Identity
       Framework.Runtime.Graph
       Framework.Runtime.Session
@@ -98,6 +99,7 @@ executable file-demo
       Framework.Runtime.Binding
       Framework.Runtime.Scope
       Framework.Runtime.App
+      Framework.Runtime.Frame
       Framework.Runtime.Identity
       Framework.Runtime.Graph
       Framework.Runtime.Session
@@ -145,6 +147,7 @@ executable open-files-demo
       Framework.Runtime.Binding
       Framework.Runtime.Scope
       Framework.Runtime.App
+      Framework.Runtime.Frame
       Framework.Runtime.Identity
       Framework.Runtime.Graph
       Framework.Runtime.Session
@@ -194,6 +197,7 @@ executable scope-reuse-demo
       Framework.Runtime.Binding
       Framework.Runtime.Scope
       Framework.Runtime.App
+      Framework.Runtime.Frame
       Framework.Runtime.Identity
       Framework.Runtime.Graph
       Framework.Runtime.Session
@@ -242,6 +246,7 @@ executable scope-instances-demo
       Framework.Runtime.Binding
       Framework.Runtime.Scope
       Framework.Runtime.App
+      Framework.Runtime.Frame
       Framework.Runtime.Identity
       Framework.Runtime.Graph
       Framework.Runtime.Session
@@ -290,6 +295,7 @@ executable stream-demo
       Framework.Runtime.Binding
       Framework.Runtime.Scope
       Framework.Runtime.App
+      Framework.Runtime.Frame
       Framework.Runtime.Identity
       Framework.Runtime.Graph
       Framework.Runtime.Session
