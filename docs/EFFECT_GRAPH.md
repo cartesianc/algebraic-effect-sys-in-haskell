@@ -51,7 +51,7 @@ Stage 3 复用这两个 Boot 构造：会话的每个生产步骤以 `TargetedBo
 
 这里的“入口使用登记”是原有有限使用闭包的资源含义：一次 AST 入口内，实际 open／require 选中的 scope 计入同一份使用。`ScopeUser` 保留原有 `Unique` 协调身份，并新增 `scopeUserExecution`；同一入口的 ctx chain 使用同一个 `ScopeUser`。`scopeUsers` 同时携带使用者身份与 `Execution`，不以 AST 位置替代并发使用协调。
 
-Context 的生产记录在生产、发布及返回结束后通过 `finally` 删除，失败或中断也撤销活动记录。AST 根活动记录覆盖业务、诊断、受控结果消费、入口使用撤销及其收尾；撤销使用后仍按 once-spare 决定关闭。下一步已确定、尚未实现：关闭改为按剩余程序的可达性判断，入口使用登记之外，AST 中尚未结束的节点按 gen 算出的键计入待用，见[主设计：按可达性回收](LATEST_DESIGN.md#scope-gc)。清理使用独立的 `ScopeUser` 和 `CleanupExecution`，保留原始业务来源但不冒充一次新的业务入口；不会为后续清理复活已经结束的父 activation。活动表只保留当前记录，绑定和资源需要的来源身份可独立保存。
+Context 的生产记录在生产、发布及返回结束后通过 `finally` 删除，失败或中断也撤销活动记录。AST 根活动记录覆盖业务、诊断、受控结果消费、入口使用撤销及其收尾；撤销使用后仍按 once-spare 决定关闭。下一步已确定、尚未实现：实例按 `requires`／`requests` 进入 scope 的方式区分单例与多例，关闭改为按剩余程序的可达性判断，入口使用登记之外，执行帧里仍待用的节点也计入，见[主设计：单例与多例](LATEST_DESIGN.md#scope-identity)与[按可达性回收](LATEST_DESIGN.md#scope-gc)。清理使用独立的 `ScopeUser` 和 `CleanupExecution`，保留原始业务来源但不冒充一次新的业务入口；不会为后续清理复活已经结束的父 activation。活动表只保留当前记录，绑定和资源需要的来源身份可独立保存。
 
 `Binding.bindingOrigin :: Execution` 保存不变的执行出身，`bindingOwnership` 是一次成功生产独有的共享 `IORef`，保存可选 owner 与待认领的使用者。当前捕获、权威表、scope 快照和 Handoff 都共享该单元；owner 是实际实例引用。首次认领在 `scopeCoordinator` 内从无 owner 变为唯一实例，同实例重复认领幂等，其他实例拒绝；认领先于等待实例生命周期锁。值、origin 和既有 publication 不因认领改变，不删除来源或重发布。诊断和自动 cleanup 中的生产只更新局部快照，不写入业务 origin 的权威表。
 
