@@ -1089,5 +1089,5 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 - **持续执行的延期项**：没有正常结束（EOF）、Stream close、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；完整历史一直保留，持续运行时内存随发布增长。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
 - **Stage 3 已知实现限制**：持续资产作为 scope 开启参数尚未接通。见 [Next stages](NEXT_STAGES.md#current-limits)。
 - **handler 复用的边界**：同一个 handler 可以注册到多个 effect，但各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能读一份资产。Stream 的驱动方式和 Error 的驱动链仍待确定，见 [Stage 2：本阶段不处理](NEXT_STAGES.md#stage-2-later)。
-- **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。
+- **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。实例的共享与关闭时机将改为按驱动区分实例、按剩余程序的可达性回收（已确定，尚未实现，见[主设计](LATEST_DESIGN.md#scope-gc)）；本指南描述当前行为。
 - **构建方式**：SDK 目前随仓库内的示例一起编译，不能作为独立依赖引入。
