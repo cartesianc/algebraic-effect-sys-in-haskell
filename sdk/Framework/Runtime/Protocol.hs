@@ -7,7 +7,7 @@
 -- 通用 Context 组合在 Runtime/Context.hs，IO 解释在 Runtime/App.hs。
 module Framework.Runtime.Protocol
   ( failEffect, ErrorHandler(..), ErrorStore(..), runErrorHandler
-  , ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault(..), ScopeInput(..), ScopeInputAccess(..)
+  , ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault(..), ScopeInput(..)
   , RawOutput(..)
   ) where
 
@@ -34,8 +34,9 @@ class Monad m => ContextStore environment m | m -> environment where
   enterHandler :: String -> m value -> m value
   enterContext :: String -> m value -> m value
   enterContext = enterHandler
-  recordContextInput :: ScopeInputAccess -> String -> m ()
-  recordContextInput _ _ = pure ()
+  -- 读取或驱动取得某个 Context 后报告来源名；正在 open 时，载体据此记录开启参数的生产身份。
+  recordContextInput :: String -> m ()
+  recordContextInput _ = pure ()
   -- require 不生产：读取之前先取等待动作，读不到值时执行它。
   -- True 表示发布或执行进度已变化，需要重读；False 表示已证明生产机会耗尽，
   -- 调用方最后重读一次绑定，仍缺值才报错，避免漏掉退出前的成功发布。
@@ -81,8 +82,6 @@ data ContextFault = ContextNotInitialized
 -- 开启参数以 Context 来源及实际绑定的生产身份匹配，不比较业务值。
 -- 身份由载体从已捕获的 Binding 取得，生成区无需为业务 ADT 引入 Eq。
 data ScopeInput = ScopeInput String ActivationId deriving (Eq, Ord, Show)
-
-data ScopeInputAccess = RequestedInput | RequiredInput deriving (Eq, Show)
 
 -- SDK 内部生命周期能力；业务 instance 仍只实现 open／close。
 data ScopeFault = ScopeNotOpen | ScopeIsClosed | ScopeReentry | ScopeInterrupted String

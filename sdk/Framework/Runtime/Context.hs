@@ -7,7 +7,7 @@ module Framework.Runtime.Context
   ) where
 
 import Framework.Runtime.Protocol
-  (ContextStore(..), ContextFault(..), ScopeInputAccess(..), RawOutput(..), failEffect)
+  (ContextStore(..), ContextFault(..), RawOutput(..), failEffect)
 import Framework.Language.Handler (Failure(..))
 import Control.Monad (forM_, when)
 import Control.Monad.Except (MonadError, catchError, throwError)
@@ -41,7 +41,7 @@ readContext contextName wrap select = awaitBound
       resolved <- readContextBinding contextName select
       either (\problem -> failEffect contextName (wrap problem) (show problem)) pure resolved
     observed value = do
-      recordContextInput RequiredInput contextName
+      recordContextInput contextName
       pure value
     notInitialized = failEffect contextName (wrap ContextNotInitialized) (show ContextNotInitialized)
 
@@ -63,7 +63,7 @@ callContext
   -> m value -> m value
 callContext selected synchronize produce = do
   value <- requestContext selected synchronize (enterContext selected produce)
-  recordContextInput RequestedInput selected
+  recordContextInput selected
   pure value
 
 -- 和类型资产的分支契约是基础契约的投影：读取基础契约，资产当前是该构造器时取出其字段，

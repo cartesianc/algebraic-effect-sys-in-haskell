@@ -350,10 +350,12 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 - **生产身份与帧**：Binding 保存 Context 生产的 `ActivationId` 和执行帧，读取、交接、scope 复用与 ownership 认领保留原身份。`Runtime.Frame` 提供有限运行根帧及 lifelong 每轮子帧；Execution 登记节点的执行、完成和跳过，完成晚于业务、诊断与受控结果消费。领取会话交付的对象与执行帧分开。
 - **静态开启计划**：gen 的来源分析把每个开启位置的参数候选出处存入 `protoScopeOpenings`，`--structure` 展示候选和可能类别。同一位置可按实际路径使用本节点新生产或前驱旧生产；不固定一种类别，不保留另一套分支相关性。gen 拒绝资源在所属 scope 开启前被读取，允许 `close = Nothing`；原型校验与生成缓存同步。
 - **实例匹配与待用**：Scoped 注册加各参数的实际生产身份决定实例，不比较 ADT 的 `Eq`。Graph 安装待用查询，结合所属帧及活动子帧的节点进度、候选发布和本轮已领取普通伴随资产的固定生产身份判断可达性；帧只增加身份记录，不复制值，结束即清空并摘除。Scope 同时检查当前使用者和实际父子实例引用，静态 ScopeTree 只约束候选关系。无参数实例归根帧，参数来自本轮的实例归本轮，后继复用不提升其归属。
-- **关闭结果**：不可达时同步执行一次 close；无 close 时只移出实例。业务失败经 Error 诊断后记录，运行结束汇总，不改业务结果，也不重试。原生异常保留向外传播，取消发生在 close 中也停止后续启动；其余收尾不覆盖取消结果。关闭预约、资源认领与 masked 交接保持。
+- **关闭结果**：不可达时同步执行一次 close；无 close 时只移出实例。`raise` 与 close 中未转换的普通 IO 异常都经 Error 诊断后记录，运行结束汇总，不改业务结果、不停止后续，也不重试；只有取消向外传播，取消发生在 close 中也停止后续启动，其余收尾不覆盖取消结果（2026-11-13 补齐：此前普通 IO 异常会向外抛出并终止运行）。关闭预约、资源认领与 masked 交接保持。
 - **示例与文档**：ScopeReuseDemo 的 writer 读取 PrepareProbe 的那次参数生产以共享；其余示例沿实际参数身份解释。主设计、指南、图、Stream 专题与工作约定同步当前协议。
 
 **本轮验证（2026-11-13）：** FileDemo、Crawler、OpenFilesDemo、ScopeInstancesDemo、ScopeReuseDemo、StreamDemo、FacadeProbe 均重新生成并通过生成器自带的源码／类型检查；`cabal build all --offline -j1` 通过，退出码 0。构建使用临时 builddir 和临时 Cabal 配置，将构建摘要写入临时目录，避免全局日志目录的写入权限问题。未新增测试、负例或额外检查门槛，也未运行业务 demo；条件注入、同节点多次生产、多个参数、分支跳过／取消、lifelong 帧归属及 close 取消等运行边界未逐项实测，不能以编译通过或历史结果代替。
+
+**关闭失败补齐（2026-11-13）：** close 中未转换为 `raise` 的普通 IO 异常改为与 `raise` 一样只记录、汇总，只有取消向外传播；同时移除开启参数观察中已不参与匹配的读取／驱动标记（SDK 内部协议，生成代码不受影响）。`cabal build all --offline -j1` 通过；ScopeReuseDemo、ScopeInstancesDemo、OpenFilesDemo、FileDemo 运行均为 `Succ`。临时让 ScopeReuseDemo 的 close 抛出 `userError` 并重新生成：close 故障以 `ScopeCleanupInterrupted` 汇总输出，其后的 VerifyReuse 照常执行，整次运行仍为 `Succ`、退出码 0；该临时改动已还原。close 中的取消未在本次实测。
 
 本次没有引入按位置的读取计划、业务方法体内的进度登记或 STM 资产 state。普通资产的来源可见性、捕获和缺值等待保持；[可见范围内的等待](#stage-2-await)在此之后单独推进，复用生产身份和执行帧。持续资产作为 scope 开启参数、Stream 正常 end、历史资源精细释放、容量背压和 Error 驱动重开仍由后续阶段收敛。
 

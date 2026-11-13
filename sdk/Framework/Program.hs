@@ -43,9 +43,10 @@ runProgram generated createEntries tree = do
       pure (output, rendered)
     failures <- cleanupTargets entries
     reported <- tryAny $ unless (null failures) (hPrint stderr (map snd failures))
-    -- 普通报告故障不盖过业务结果；取消无论发生在执行、关闭或报告中都须传播。
+    -- 关闭失败（raise 或普通 IO 异常）只报告，不盖过业务结果；
+    -- 取消无论发生在执行、关闭或报告中都须传播。
     let exceptions = either (: []) (const []) completed
-          ++ [exception | (Just exception, _) <- failures]
+          ++ [exception | (Just exception, _) <- failures, isCancellation exception]
           ++ [exception | Left exception <- [reported], isCancellation exception]
     case filter isCancellation exceptions ++ exceptions of
       exception : _ -> throwIO exception

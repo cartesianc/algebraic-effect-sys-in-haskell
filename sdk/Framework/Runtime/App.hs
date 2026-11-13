@@ -91,7 +91,7 @@ data Launch env cause = Launch
 data Opening env cause = Opening
   { family :: ScopeHandler env cause
   , wrapFault :: ScopeFault -> cause
-  , observed :: IORef [(ScopeInputAccess, ScopeInput)]
+  , observed :: IORef [ScopeInput]
   , observedFrames :: IORef [(String, ExecutionFrame)]
   , produced :: IORef (ScopeBindings env cause)
   , holding :: IORef (Maybe (ScopeInstance env cause))
@@ -284,7 +284,7 @@ ensureOpen environment attempt = do
       inputs <- readIORef (observed attempt)
       let handler = family attempt
           name = scopeName handler
-          missing = filter (`notElem` map (inputName . snd) inputs) (scopeInputSources handler)
+          missing = filter (`notElem` map inputName inputs) (scopeInputSources handler)
       if not (null missing)
         then pure (Left (fault name (wrapFault attempt) (ScopeInputsMissing missing)))
         else do
@@ -495,7 +495,7 @@ instance ContextStore env (App env cause) where
       session <- rawIO (obtainSession (runtimeGraph environment) (Nothing, source) [] [])
       Just <$> captureDelivery environment source select (rawIO (awaitHistory session))
   streamRawInput = AppRun (asks streamRaw)
-  recordContextInput access source = do
+  recordContextInput source = do
     environment <- AppRun ask
     case openings environment of
       attempt : _ | source `elem` scopeInputSources (family attempt) -> do
@@ -507,16 +507,14 @@ instance ContextStore env (App env cause) where
         previous <- rawIO (readIORef (observed attempt))
         started <- rawIO (readIORef (holding attempt))
         case started of
-          Just _ | value `notElem` map snd previous -> throwError
+          Just _ | value `notElem` previous -> throwError
             (fault (scopeName (family attempt)) (wrapFault attempt) (ScopeInputAfterOpen (inputName value)))
           _ -> pure ()
-        let wasRequested = any (\(mode, old) -> inputName old == inputName value && mode == RequestedInput) previous
-            mode = if wasRequested then RequestedInput else access
-            updated = (mode, value) : filter ((/= inputName value) . inputName . snd) previous
+        let updated = value : filter ((/= inputName value) . inputName) previous
         rawIO $ writeIORef (observed attempt) updated
         rawIO $ atomicModifyIORef' (observedFrames attempt) $ \frames ->
           ((source, frame) : filter ((/= source) . fst) frames, ())
-        let missing = filter (`notElem` map (inputName . snd) updated) (scopeInputSources (family attempt))
+        let missing = filter (`notElem` map inputName updated) (scopeInputSources (family attempt))
         when (null missing) $ rawIO (ensureOpen environment attempt) >>= either throwError pure
       _ -> pure ()
 

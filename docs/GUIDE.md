@@ -977,7 +977,7 @@ EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope
 - **lifelong**：无参数或参数来自外层的实例跨轮保留；本轮新生产参数的实例属于本轮，轮内后继共享不改变归属，本轮结束回收。
 - **资源读取**：消费资源的链须先经 Input 开启其所属 Scoped，否则生成期报错；不能因为别的链还开着某个实例就直接读取它。
 - **close 可选**：handler 不手动调用 close。`close = Nothing` 时，不可达实例只移出运行表，不执行释放 IO。整次运行结束时同样遵守这条规则。
-- **关闭失败**：close 的业务失败经 Error 诊断后单独记录、运行结束汇总，不改变业务结果，也不重试。取消发生在 close 中仍会停止后续工作，完成其余收尾后向外传播。
+- **关闭失败**：close 里的 `raise`，以及没有转换成 `raise` 的普通 IO 异常，都经 Error 诊断后单独记录、运行结束汇总，不改变业务结果，不停止后续工作，也不重试。只有取消发生在 close 中时，才会停止后续工作，完成其余收尾后向外传播。
 
 SDK 不主动检查健康，不自动恢复或重开失效实例。资源共享只交接带 owner 的绑定，scope 快照中的普通辅助值仍按来源表读取。诊断和 cleanup 中的新产物只留局部快照。
 
@@ -1022,7 +1022,7 @@ close 由 SDK 的自动收尾调用，handler 不直接调用；下表中的 clo
 | `ScopeInUse` | SDK 内部使用、依赖或关闭预约不变量冲突；自动 close 应只处理不可达实例 | 按 SDK 问题报告，并附注册、workflow 与故障信息；不要据此添加业务重试 |
 | `ScopeIsClosed` | 实例 close 之后，又读取本次调用早先捕获的、属于它的资源绑定 | 只在 scope 的使用范围内读取资源 |
 | `ScopeInterrupted 原因` | open 或 close 被原生异常打断，实例失效；尚保留的同生产实例继续携带原失败 | 检查 IO；可预期错误用 `raise`，外部取消照常传播 |
-| `ScopeCleanupInterrupted 原因` | 自动 close 被原生异常打断；记录后不重试，取消仍向外传播 | 检查 close 中的 IO，不将外部取消改成业务重试 |
+| `ScopeCleanupInterrupted 原因` | 自动 close 被原生异常打断（普通 IO 异常或取消）；记录、汇总后不重试。普通异常不改变业务结果，只有取消向外传播 | 检查 close 中的 IO，把可预期的错误转换成 `raise` |
 | `ScopeNotOpen` | close 遇到从未开启的实例 | 自动收尾只为开启过的实例登记 close，正常写法不会触发；出现时按 SDK 问题报告 |
 
 open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实例继续报告那次原失败。close 的失败只汇总报告，不重试已尝试的关闭。

@@ -19,7 +19,7 @@ module Framework.Runtime.Scope
 
 import Framework.Runtime.Binding (Binding(..), BindingOwnership(..), Bindings)
 import Framework.Language.Handler (Failure(..))
-import Framework.Runtime.Protocol (ScopeFault(..), ScopeInput(..), ScopeInputAccess)
+import Framework.Runtime.Protocol (ScopeFault(..), ScopeInput(..))
 import Framework.Runtime.Identity (Execution)
 import Framework.Runtime.Frame (ExecutionFrame)
 import Control.Concurrent.MVar (MVar, newMVar, newEmptyMVar, modifyMVar, readMVar, withMVar, putMVar)
@@ -264,15 +264,14 @@ parentClosing user handler = do
 -- 实例身份只取实际参数的生产身份；同一次生产的读取和驱动观察不会另开实例。
 -- 归属帧只在创建时保存，后继复用不能把本轮实例提升为外层常驻实例。
 selectScopeInstance :: ScopeUser environment cause -> ScopeHandler environment cause
-                    -> ExecutionFrame -> [(ScopeInputAccess, ScopeInput)]
+                    -> ExecutionFrame -> [ScopeInput]
                     -> IO (Either (MVar ()) (ScopeInstance environment cause))
-selectScopeInstance user handler ownerFrame observations = coordinated handler $ do
+selectScopeInstance user handler ownerFrame inputs = coordinated handler $ do
   waiting <- parentClosing user handler
   case waiting of
     Just finished -> pure (Left finished)
     Nothing -> modifyMVar (scopeInstances handler) select
   where
-    inputs = map snd observations
     select instances = do
       let source (ScopeInput name _) = name
           matches slot = sortOn source inputs == sortOn source (scopeInputs slot)
@@ -398,7 +397,7 @@ saveCleanupFailures (handler : _) failures =
   atomicModifyIORef' (scopePendingFailures handler) (\saved -> (saved ++ failures, ()))
 
 -- interpreter 已等待全部受管理任务退出。按依赖的逆序收尾，一份失败不跳过其余实例。
--- 保留原生异常，边界在收尾完成后重新抛出；失败不能伪装成成功的资源释放。
+-- 返回此前记录与本次的关闭故障供汇总报告；其中只有取消由边界重新抛出。
 cleanupScopes :: Scopes environment cause -> IO [(Maybe SomeException, Failure cause)]
 cleanupScopes handlers = do
   pending <- fmap concat $ forM handlers $ \handler ->
@@ -407,7 +406,7 @@ cleanupScopes handlers = do
   pure (pending ++ failures)
 
 -- 叶实例释放后重扫之前被挡住的祖先。一次关闭无论成败都消费登记；
--- 原生异常保留给执行边界，在其余安全收尾完成后传播，不能继续后续业务。
+-- 原生异常连同诊断结果一并返回，其余实例照常收尾；是否传播（只传播取消）由调用方决定。
 cleanupAvailable :: Scopes environment cause -> IO [(Maybe SomeException, Failure cause)]
 cleanupAvailable handlers = mask $ \restore -> sweep restore [] []
   where

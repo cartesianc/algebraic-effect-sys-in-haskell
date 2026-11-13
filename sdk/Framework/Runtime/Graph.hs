@@ -155,9 +155,10 @@ collectScopes :: RuntimeGraph environment cause -> Scopes environment cause -> I
 collectScopes graph handlers = do
   failures <- cleanupAvailable handlers
   saveCleanupFailures (runtimeScopes graph) failures
-  let exceptions = [exception | (Just exception, _) <- failures]
-      cancellations = filter (isJust . (\exception -> fromException exception :: Maybe SomeAsyncException)) exceptions
-  case cancellations ++ exceptions of
+  -- 关闭失败是资源问题：raise 与普通 IO 异常都已经过 Error 诊断并记录，由运行结束汇总，
+  -- 不改变节点结果，也不停止后续执行。只有取消向外传播。
+  case [exception | (Just exception, _) <- failures
+       , isJust (fromException exception :: Maybe SomeAsyncException)] of
     exception : _ -> throwIO exception
     [] -> pure ()
 
