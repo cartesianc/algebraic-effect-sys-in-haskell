@@ -519,7 +519,7 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 | 枚举 | handler 中 | 含义 |
 | --- | --- | --- |
 | `requests "T"` | 不写 | 驱动：入口在 Input 之前重新生产一次 `T`，结果保存为当前绑定。单独的 `requests` 不带来读取权限 |
-| `requires "T"` | `x <- require @表示类型` | 读取已有的值，不在入口驱动，也不在读取处生产；还没有值时等待之后的发布 |
+| `requires "T"` | `x <- require @表示类型` | 读取已有的值，不在入口驱动，也不在读取处生产；缺值时等待，已确定生产耗尽则报缺值 |
 | `streams "T"` | `xs <- require @(History 表示类型)` | 由持续资产 `T` 的新交付驱动，同时取得读取权限；只在 `lifelong` 内使用，见[持续资产与 lifelong](#stream) |
 
 - **驱动与读取分开写**：既要刷新又要读取的资产写两项，例如 Crawler 的 `[requests "StartURL", requires "StartURL"]`。入口顺序是驱动 → Input → handler，因此 `requests` 驱动的值在前驱和 handler 中都已就绪。
@@ -608,7 +608,7 @@ Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，
 
 | 写法 | 作用 |
 | --- | --- |
-| `x <- require @T`（普通资产） | 读取绑定的 effect 所声明、表示类型为 `T` 的资产；还没有值时等待发布，不生产 |
+| `x <- require @T`（普通资产） | 读取绑定的 effect 所声明、表示类型为 `T` 的资产；缺值时等待发布，不生产；已确定生产耗尽则报缺值 |
 | `xs <- require @(History T)`（持续资产） | 取得本次交付为止的历史，用 `latest`／`historyEntries`／`historySize` 读取；须声明 `streams` |
 | `output <- raw` | 挂接的 parser 或 Pure 读取直接 Input 本次交出的 `[String]`，句柄不再执行一遍；挂在 Stream 下时是会话本次取得的那份原始输入（单元素 list） |
 | `raise (ReadFileContentError "message")` | 以本 handler 的错误失败；错误类型是 handler 名首字母大写加 `Error` |
@@ -937,17 +937,17 @@ reading #2: 24.0 C
 ### 驱动与读取：`requests` 与 `require`
 
 - **`requests` 驱动**：入口在 Input 之前执行资产的 `getT`，每次重新生产，成功后以当前入口的 origin 保存并替换该 origin 的绑定；生产失败时不覆盖旧值，原失败继续传播。
-- **`require` 读取**：handler 的 `require @T` 经路由进入资产的 `readT`：先读当前调用已捕获的绑定，再查原型许可的唯一可见来源。读取不生产：仍没有值时，像 await 一样阻塞这条链，等之后的发布再读，不报错。第一次读取后绑定固定，其他调用的发布不原地改写它。
+- **`require` 读取**：handler 的 `require @T` 经路由进入资产的 `readT`：先读当前调用已捕获的绑定，再查原型许可的唯一可见来源。读取不生产：缺值时等待发布或节点退休通知，再检查绑定与生产是否耗尽。第一次读取后绑定固定，其他调用的发布不原地改写它。
 - **值从哪里来**：`requests` 驱动、alternative 的选择读取、挂接句柄的注入，以及 Stream 会话。要读的值必须有人驱动；例如 FileDemo 的 `FileResource` 写了 `[requests "FileName", requires "FileName"]`，取得文件前先驱动文件名的生产链（`LocateFile` → `ValidateFileName` → `FileLocation`），`acquireFile` 再读取它。
 - **跨 node 保存**：发布时无资源 owner 的值按 origin 保存，后补 owner 保留原发布记录；open 内一开始就有 owner 的产物只留在 scope／当前调用。一个来源在 AST 中保证先于当前节点完成，或属于当前入口时才可见；并行兄弟互不可见。需要跨链解析的读取路径若有多个同时可见来源，就需细化契约或调整编排，生成器不会选“最后写入”的那个。
-- **可见范围内没人生产就一直等**：并行兄弟互不可见，前驱已经完成；所以一个读取在可见范围内没有 `requests` 或会话生产时，这条链会一直等待，SDK 不替它补产，也不报错。资源、Error 诊断、自动收尾与 close 期间不等待，缺值时报 `ContextNotInitialized`。
+- **已确定等不到时结束等待**：SDK 只作保守判断：已知候选生产节点全部退休，且本链没有继续生产目标的可能时，再读一次仍缺值就报 `ContextNotInitialized`，沿现有 Error 协议传播。未知来源、会话及仍可能生产的运行链继续等待，不按超时判断。parallel 兄弟仍互不可见；本轮没有提供完整等待环检查。资源、Error 诊断、自动收尾与 close 期间仍不等待，缺值直接报同一故障。
 - **部分路径已取值合法**：已经捕获值的分支直接使用该绑定，只有尚未取值的路径需要解析唯一来源。alternative 或可选生产的条件可证明这些路径的来源唯一；已捕获路径上允许多个节点共同发布，由已有快照确定读取值。
 
 <a id="runtime-anchored"></a>
 
 ### 挂在句柄下的 Context
 
-- **句柄在操作链里执行时**：句柄返回后，SDK 自动用这次的输出运行挂在下面的 parser（`raw` 由本次输出回答），产出的值保存起来，不会再执行一次句柄。调用句柄的那条链照常继续，不受影响；解析失败只留在这次注入里，值没有发布，之后读取它的位置等待下一次发布。
+- **句柄在操作链里执行时**：句柄返回后，SDK 自动用这次的输出运行挂在下面的 parser（`raw` 由本次输出回答），产出的值保存起来，不会再执行一次句柄。调用句柄的那条链照常继续，不受影响；解析失败只留在这次注入里，值没有发布，之后读取按当前等待规则处理：仍可能发布则等待，已确定耗尽则报缺值。
 - **被驱动时**：`requests` 或 alternative 的选择读取进入 Context 的 `getT`，parser 的 `raw` 执行所挂句柄的入口，由此启动生产链。
 - **中间有一串 Pure 时**：挂接点是最上面的句柄，句柄的输出依次经过每个 Pure 再交给 parser。注入时 Pure 读到的是本次输出，不重新执行句柄；被驱动时 Pure 的 `raw` 执行句柄入口。Pure 的 `raise` 按解析失败处理：注入时留在注入里，被驱动时向上传播。
 
@@ -1003,7 +1003,7 @@ SDK 不主动检查健康，不自动恢复或重开失效实例。资源共享�
 
 | 故障 | 什么时候报 | 怎么改 |
 | --- | --- | --- |
-| `ContextNotInitialized` | 在不等待的场合缺值：Error 诊断、自动收尾与 close 期间；读取 scope 的资源 Context，却没有本链已开启实例的绑定；持续资产在不能启动会话的场合（诊断、收尾）没有本次视图。普通业务读取缺值时等待发布，不报这个故障 | 在读取之前的链上用 `requests` 驱动它；资源只在 scope 内读取（Input 链上有对应的 Scoped） |
+| `ContextNotInitialized` | 普通读取已确定生产耗尽，重读后仍缺值；或在不等待的场合缺值：Error 诊断、自动收尾与 close 期间、资源 Context 没有本链已开启实例的绑定、持续资产在不能启动会话时没有本次视图。未知或仍可能生产的普通读取继续等待 | 在读取之前的链上用 `requests` 驱动它，并检查生产失败；资源只在 scope 内读取（Input 链上有对应的 Scoped） |
 | `AmbiguousContextBinding` | 普通资产有多个已发布的可见来源，运行时无法确定唯一绑定；生成期通常已拦下 | 细化资产或调整 AST，确保实际来源唯一 |
 | `CaseNotSelected 契约` | 读取和类型资产的分支契约（例如 `FileTextBlank`），资产当前却是另一个构造器 | 分支契约只在选中对应构造器的 alternative 候选中读取；其他地方读取基础资产再 `case` |
 

@@ -3,13 +3,14 @@
 module Framework.Runtime.Frame
   ( ExecutionFrame, NodeProgress(..), newExecutionFrame, newChildFrame, frameParent, frameDepth
   , frameNodes, framePendingNodes, framePendingViews, captureFrameDeliveries, DeliveryIdentity, owningFrame
+  , frameNodeProgress, frameSignal, notifyFrame
   , startFrameNode, completeFrameNode, skipFrameSubtree, finishExecutionFrame
   ) where
 
-import Control.Concurrent.MVar (MVar, withMVar)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, withMVar)
 import Control.Exception (uninterruptibleMask_)
 import Control.Monad (forM_, when)
-import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (isPrefixOf, nub, nubBy)
 import Framework.Prototype (NodeId)
 import Framework.Runtime.Identity (ActivationId)
@@ -27,6 +28,8 @@ data ExecutionFrame = ExecutionFrame
   , frameProgress :: IORef [(NodeId, NodeProgress)]
   , frameDelivered :: IORef [DeliveryIdentity]
   , frameChildren :: IORef [ExecutionFrame]
+  -- 根帧和子帧共用一个变化信号；普通发布与节点退休都叫醒缺值读取。
+  , frameChanged :: IORef (MVar ())
   }
 
 instance Eq ExecutionFrame where
@@ -34,9 +37,10 @@ instance Eq ExecutionFrame where
 
 newExecutionFrame :: MVar () -> Maybe ExecutionFrame -> [NodeId] -> IO ExecutionFrame
 newExecutionFrame coordinator parent nodes = uninterruptibleMask_ $ do
+  changed <- maybe (newEmptyMVar >>= newIORef) (pure . frameChanged) parent
   frame <- ExecutionFrame parent (maybe 0 ((+ 1) . frameDepth) parent) coordinator
     <$> newIORef [(node, Pending) | node <- nub nodes]
-    <*> newIORef [] <*> newIORef []
+    <*> newIORef [] <*> newIORef [] <*> pure changed
   withMVar coordinator $ \_ ->
     forM_ parent $ \ancestor -> modifyIORef' (frameChildren ancestor) (frame :)
   pure frame
@@ -50,6 +54,29 @@ frameNodes = readIORef . frameProgress
 
 framePendingNodes :: ExecutionFrame -> IO [NodeId]
 framePendingNodes frame = map fst . filter (pending . snd) <$> frameNodes frame
+
+-- 等待读取从实际子帧向外查找，先命中本轮节点；根帧的 lifelong 常驻预约不能覆盖它。
+-- 未知位置保持 Nothing，调用方不能把它当作已经完成。
+frameNodeProgress :: ExecutionFrame -> NodeId -> IO (Maybe NodeProgress)
+frameNodeProgress frame node = uninterruptibleMask_ $
+  withMVar (frameCoordinator frame) $ \_ -> lookupIn frame
+  where
+    lookupIn current = do
+      progress <- lookup node <$> frameNodes current
+      case progress of
+        Just found -> pure (Just found)
+        Nothing -> maybe (pure Nothing) lookupIn (frameParent current)
+
+-- 等待者先取信号再读取绑定及进度；此后的变化都填满这份信号，不丢失唤醒。
+frameSignal :: ExecutionFrame -> IO (MVar ())
+frameSignal = readIORef . frameChanged
+
+-- 不获取协调锁，既可在节点退休的锁内调用，也可在普通资产发布后调用。
+notifyFrame :: ExecutionFrame -> IO ()
+notifyFrame frame = uninterruptibleMask_ $ do
+  fresh <- newEmptyMVar
+  previous <- atomicModifyIORef' (frameChanged frame) (\current -> (fresh, current))
+  putMVar previous ()
 
 -- 根帧的常驻位置描述未来轮次；活动子帧另带本轮已经固定的交付身份。
 -- 与 frameNodes 一样只读，调用者在 scope 协调锁内取得一致视图。
@@ -89,6 +116,7 @@ updateFrame frame advance = uninterruptibleMask_ $
         retired = [node | ((node, old), (_, new)) <- zip previous updated, pending old, not (pending new)]
     foldr (\(_, progress) rest -> progress `seq` rest) () updated `seq`
       writeIORef (frameProgress frame) updated
+    when (not (null retired)) (notifyFrame frame)
     pure retired
 
 startFrameNode :: ExecutionFrame -> NodeId -> IO ()
@@ -117,4 +145,5 @@ finishExecutionFrame frame = uninterruptibleMask_ $
     forM_ (frameParent frame) $ \parent -> do
       siblings <- filter (/= frame) <$> readIORef (frameChildren parent)
       length siblings `seq` writeIORef (frameChildren parent) siblings
+    notifyFrame frame
     pure [node | (node, progress) <- previous, pending progress]

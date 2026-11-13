@@ -1,6 +1,6 @@
 # 主设计：Algebraic Effect Sys in Haskell
 
-更新：2026-11-13（scope 改为按参数生产身份共享、按执行帧的剩余可达性回收；close 可选，关闭业务失败单独汇总）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范。
+更新：2026-11-13（scope 按参数生产身份共享、按执行帧的剩余可达性回收；普通 require 增加保守的等待耗尽判断，完整可见性与资产 state 迁移仍待实现）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范。
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | Pure、Excu、Scoped、Error、Context；有限 workflow | 当前已实现；原子句柄与 Pure 交出 `[String]`，Pure 是生产链中的值变换（2026-11-12）；Error 的驱动链仍待设计 | [运行语义](LATEST_DESIGN.md#runtime) |
 | 统一 Prototype、运行图、静态来源与缺值等待 | Stage 1/2 已实现 | [图与来源](EFFECT_GRAPH.md) |
-| parallel 兄弟可见、等不到或读不确定的读取在生成期报错、按执行帧的资产 state 与等待的结束 | 已确定，未实现 | [可见范围与等待的结束](#await-visibility) |
+| 普通 require 的等待结束；parallel 兄弟可见、完整生成期等待检查及按帧资产 state | 最低限度的保守等待结束已实现；其余已确定、未实现 | [可见范围与等待的结束](#await-visibility) |
 | scope 的单例与多例：`requires` 引用已有的一次生产、`requests` 发起新的生产，由此决定实例的共享与清理；按可达性回收、运行结束关闭、close 可选 | 已实现（2026-11-13） | [单例与多例](#scope-identity)、[按可达性回收](#scope-gc) |
 | 资产目录与业务模块的顶层白名单 | 当前已实现（Stage 2 取代普通函数的资产检查与构造器归属） | [源码资产](ASSETS.md) |
 | Stream 与挂在它下面的解析器 Context、持续资产的历史视图与 lifelong | 已实现（Stage 3）；lifelong 中的失败暂按临时规则终止整次运行 | [第 7 章](#stream)及[完整规范](STREAM_LIFELONG.md) |
@@ -425,7 +425,9 @@ Gen.Demand 保存唯一来源、访问解析与结果形态的纯规则；Protot
 
 #### 驱动与读取的运行协议
 
-驱动（requests）每次重新生产，成功后将同一个值发布为当前 origin 的新绑定。读取先使用当前捕获，再按 protoSources 查本次唯一已发布的可见来源。读取不生产：仍没有值时，它像 await 一样阻塞当前链，等之后的一次普通发布再按同一来源表重读，不报错。值只来自 `requests` 驱动、alternative 的选择读取（见 [workflow](#workflow)）、挂接注入与 Stream 会话。当前可见范围只有 AST 保证先完成的前驱与本入口自己的发布，parallel 兄弟互不可见，所以可见范围内没有生产的读取会一直等待，注册需要写出驱动它的 `requests`。诊断、自动 cleanup、close 期间及 scope 资源 Context 缺值不等待，报 `ContextNotInitialized`；这些阶段的显式生产仅更新局部快照。生产的值按 request 被 scope 开启参数观察，读取到的值按读取观察。
+驱动（requests）每次重新生产，成功后将同一个值发布为当前 origin 的新绑定。读取先使用当前捕获，再按 protoSources 查本次唯一已发布的可见来源。读取不生产：仍没有值时，根据现有来源候选与执行帧进度判断是否还能等到发布。只有已知候选全部退休、并且当前链没有继续生产目标资产的可能时，才判为耗尽；随后再次读取绑定，仍缺值才报 `ContextNotInitialized`，沿现有 Error 协议传播。来源未知、会话来源或仍可能生产的运行链继续等待，不推断超时或方法内部尚未执行的条件分支。资产发布与节点退休都通知等待者重新检查。
+
+值只来自 `requests` 驱动、alternative 的选择读取（见 [workflow](#workflow)）、挂接注入与 Stream 会话。当前可见范围仍只有 AST 保证先完成的前驱与本入口自己的发布，parallel 兄弟互不可见；上述耗尽判断没有扩大来源范围，也没有把普通资产改为按帧存储。诊断、自动 cleanup、close 期间及 scope 资源 Context 缺值不等待，报 `ContextNotInitialized`；这些阶段的显式生产仅更新局部快照。生产的值按 request 被 scope 开启参数观察，读取到的值按读取观察。
 
 刷新失败不覆盖旧绑定，错误原样传播，已完成操作不回滚。普通无 owner 绑定按 origin 保存在一次 interpreter 的权威表，current capture 固定已读取值。scope 例外只覆盖资源 owner 绑定；实例快照里的无 owner 辅助值不能通过资源复用绕过静态来源路由。
 
@@ -443,7 +445,7 @@ AST 组织链的启动次序，也为跨链来源提供因果可见性。Crawler
 
 #### 原子输出挂接与失败隔离
 
-Excu.handler／Scoped.open 成功后，SDK 以根调用身份执行挂接 Context 的 getT；parser 的 raw 由本次输出回答（中间可以经过一串 Pure，见 [Pure](#pure)），不重复执行句柄。挂在 Stream 下的 parser 沿用同一写法：会话每取得一份原始输入调用一次 parser，raw 由这份输入回答（见第 7 章）。注入失败留在注入内部，不进入原链也不触发 Error；资产没有发布，之后读取它的位置等待下一次发布。
+Excu.handler／Scoped.open 成功后，SDK 以根调用身份执行挂接 Context 的 getT；parser 的 raw 由本次输出回答（中间可以经过一串 Pure，见 [Pure](#pure)），不重复执行句柄。挂在 Stream 下的 parser 沿用同一写法：会话每取得一份原始输入调用一次 parser，raw 由这份输入回答（见第 7 章）。注入失败留在注入内部，不进入原链也不触发 Error；资产没有发布，之后读取它的位置按上述等待规则处理：仍可能发布则等待，已确定耗尽则报缺值。
 
 parser 被 requests 驱动或被选择读取驱动时，raw 直接执行句柄入口，不再次注入；复用 open、重复 close、诊断与自动收尾不产生新的挂接注入。close 没有挂接点；scope 的资源 Context 不能挂在请求它的 Scoped 下。生成入口通过 atomicHandle／atomicScope 包装，挂接目录为 contextInjections。
 
@@ -505,9 +507,9 @@ instance ParseFileNameLayer m => ParseFileNameHandler m where
 **不在本次范围**：带类型的原子输出（需要注册声明输出类型）、交出嵌套结构（森林）、Pure 挂在 Stream 下，都需要另行设计。
 
 <a id="await-visibility"></a>
-#### 可见范围与等待的结束（已确定，未实现）
+#### 可见范围与等待的结束（保守结束已实现，完整迁移待实施）
 
-**状态：设计已确认（2026-11-08，读不确定的报错于 2026-11-12 补充），尚未实现；实现前以上述当前协议为准。** 推进见 [Next stages](NEXT_STAGES.md#stage-2-await)。
+**状态：最低限度的保守等待结束已实现（2026-11-13）；下列完整方案仍待实施。** 当前实现复用 `protoSources`、执行帧和发布通知，保留按 origin 的存储与读取；没有加入方法体插桩、STM 资产 state、新语法或新的生成期等待检查。parallel 兄弟可见、按帧存储及更细的生产机会分析尚未实现。以下描述完整目标，当前执行以上述协议为准；推进与验证边界见 [Next stages](NEXT_STAGES.md#stage-2-await)。
 
 资产是细化的，每份资产只有一个生产方，又与消费链分离。细化固定的是生产链，不是每一次驱动：同一条生产链可以被多处驱动，每次驱动是一次独立的激活，值可能不同（生产链读外部状态，或它自己的读取按驱动方的捕获解析）；同一资产的两次生产能否互换，gen 看不出来。require 读的是 request 的 state：request 的回调写入它，require 把它分离出来读取，运行时不在多份发布之间挑选。生成期回答两件事：这次读取能不能等到值，以及读到的是不是确定的一次驱动。
 
@@ -664,7 +666,7 @@ EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope
 - **close 业务失败**：`raise` 先进入关联 scope 的 Error 诊断，之后记录并在运行结束时汇总；不改变节点或整次运行的业务结果，不短路、不停止其他业务，也不重试该 close。失败实例移出运行表，旧绑定保留原实例及失败证据。
 - **运行结束与取消**：正常结束、失败或取消时，先让受控工作退出、撤销全部待用及使用关系，再按同一规则回收剩余实例。取消落在 close 期间也须向外传播并停止后续启动；被中断的 close 记录后不重试，其他收尾失败不覆盖取消。进程被强制终止时无法保证 close 执行。
 
-关闭预约、masked 交接、唯一 ownership、旧绑定不自动换 owner，以及 Error 的实例定位保持。SDK 不主动轮询资源健康，不自动 invalidate、reopen 或重放业务；常驻单例的恢复仍待 Error 驱动链设计。裸 `forkIO`、任意逸出 Handle、未发布的部分获取恢复、Linear 凭证与跨独立 interpreter 存续不在当前保证内。[可见范围内的等待](#await-visibility)将复用生产身份和执行帧，但其资产 state 与等待结束尚未实现。
+关闭预约、masked 交接、唯一 ownership、旧绑定不自动换 owner，以及 Error 的实例定位保持。SDK 不主动轮询资源健康，不自动 invalidate、reopen 或重放业务；常驻单例的恢复仍待 Error 驱动链设计。裸 `forkIO`、任意逸出 Handle、未发布的部分获取恢复、Linear 凭证与跨独立 interpreter 存续不在当前保证内。[可见范围内的等待](#await-visibility)已复用执行帧实现保守的耗尽判断，绑定的生产身份保持；按帧资产 state 与完整等待分析仍待实施。
 
 <a id="error"></a>
 ### 4.8 Error 检测、处置与失败传播

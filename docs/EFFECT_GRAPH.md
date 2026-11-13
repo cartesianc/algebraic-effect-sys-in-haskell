@@ -41,7 +41,7 @@ data Execution
 
 `Origin` 区分一次根入口执行（AST 入口或会话生产步骤），`ActivationId` 区分运行图中的一次活动 chain，也作为该次 Context 成功生产的身份保存在 Binding。`RequestBoot` 的字符串是现有 Context effect 注册名；`CleanupExecution` 保存原业务 origin、scope 注册名及现有实例编号，不新增业务 key。Context 的嵌套生产有新的 activation，但普通生产沿用外层业务 origin。
 
-`RuntimeGraph` 用存在类型包装保存实际的 `Prototype MethodGen` 和 `ChainDefinition MethodGen`，不把图转换为字符串副本。`runtimeScopes` 引用原有 scope 控制对象；`runtimeAssets` 按 origin 保存发布时无 owner 的业务绑定，后续 claim 保留该 publication 引用；open 内一开始就有 owner 的产物仍只保存在 scope／局部快照。`runtimePublished` 是普通发布的信号：每次写入 `runtimeAssets` 后填满并换新，等待缺值的读取据此醒来重读。活动表中的每条 `Activation` 保存父 activation、启动方式、`Execution`、静态链定义、当前绑定 `IORef` 和 `ScopeUser`；执行器和活动表共享这些运行引用。
+`RuntimeGraph` 用存在类型包装保存实际的 `Prototype MethodGen` 和 `ChainDefinition MethodGen`，不把图转换为字符串副本。`runtimeScopes` 引用原有 scope 控制对象；`runtimeAssets` 按 origin 保存发布时无 owner 的业务绑定，后续 claim 保留该 publication 引用；open 内一开始就有 owner 的产物仍只保存在 scope／局部快照。普通发布写入 `runtimeAssets` 后通知 Frame 的共享信号；`publicationSignal` 取得同一信号，等待缺值的读取据此醒来重读，节点退休也发送通知。活动表中的每条 `Activation` 保存父 activation、启动方式、`Execution`、静态链定义、当前绑定 `IORef` 和 `ScopeUser`；执行器和活动表共享这些运行引用。
 
 有限 workflow 使用以下两种启动边界：
 
@@ -56,7 +56,7 @@ Context 的生产记录在生产、发布及返回结束后通过 `finally` 删�
 
 `Binding.bindingOrigin :: Execution` 保存不变的执行出身，`bindingProduction :: Maybe ActivationId` 保存成功生产身份，`bindingFrame :: ExecutionFrame` 保存归属帧。生产失败不替换旧绑定，无资源 scope 的内部占位绑定没有生产身份。`bindingOwnership` 是该次生产独有的共享 `IORef`，保存可选 owner 与待认领使用者。当前捕获、权威表、scope 快照和 Handoff 保留同一绑定；认领不改变值、生产身份、帧、origin 或 publication，scope 复用也不重新发布。
 
-`Framework.Runtime.Frame` 保存有限运行根帧与 lifelong 每轮子帧，按节点记录待执行、执行中、完成和跳过。节点完成晚于诊断与受控结果消费；chained 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本轮已领取的普通伴随资产的 `(生产节点, Context 来源, ActivationId)`，只保存生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。Runtime 中领取会话交付的 `DeliveryFrame` 仍管理视图领取，和这份执行进度分开。普通资产仍按 origin 保存；按帧资产 state 与等待结束尚未实现。
+`Framework.Runtime.Frame` 保存有限运行根帧与 lifelong 每轮子帧，按节点记录待执行、执行中、完成和跳过。节点完成晚于诊断与受控结果消费；chained 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本轮已领取的普通伴随资产的 `(生产节点, Context 来源, ActivationId)`，只保存生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。Runtime 中领取会话交付的 `DeliveryFrame` 仍管理视图领取，和这份执行进度分开。Frame 的根与子帧共享发布通知，`frameSignal` 取得当前信号，`notifyFrame` 在普通发布或节点退休后唤醒等待者；Graph 的 `publicationSignal` 转发到同一通知。普通资产仍按 origin 保存；保守等待结束复用这些进度事实，按帧资产 state 与完整等待分析尚未实现。
 
 Scope 实例保存实际参数生产身份与归属帧，Graph 把待用查询装入 ScopeHandler。查询与节点进度、关闭预约共用 scope 协调锁：实例既无实际使用者，也不再被帧内待用节点或子 scope 保留时，Scope 同步清理。完整运行规则见[主设计](LATEST_DESIGN.md#scope-gc)。
 
@@ -82,9 +82,9 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 这样可消除独立、后续无人读取的可选发布造成的 `2^N` 状态组合；仍同时相关的契约保留原有路径关联，最坏状态数仍可能指数增长。本次优化不声称整体分析具有线性复杂度。lifelong 按原型的 `lifelongUnits` 分别分析消费单元：生产挂载以该单元的读取集合为后续需求，仍保留生产链自身的读取依赖；各成功出口再投影到单元相关契约，Receive 的步骤及不同会话逐步组合并去重。无关会话的差异在组合前消除；同一出口内相关资产的来源身份与缺值路径保留。单个单元或生产链自身同时相关的状态仍可能指数增长。
 
-无 owner 资产运行时依次查当前捕获与静态许可的实际发布。仍没有值时读取不生产：它在读取之前取得 `runtimePublished` 的当前信号，读不到就等之后的一次普通发布，醒来后按同一来源表重读，像 await 一样阻塞当前链，不报错。值只来自 `requests` 驱动、alternative 的选择读取、挂接注入与 Stream 会话；显式驱动每次执行，不参与合并。生成期的来源分析与此一致：没有可见发布的路径停在这次读取，不从读取返回。
+无 owner 资产运行时依次查当前捕获与静态许可的实际发布。读取不生产：在读取前取得共享通知，缺值时由 `contextMayPublish` 根据 `protoSources`、候选节点进度及本链潜在生产事实判断是否继续等待。只有已知候选都已退休、且本链没有继续生产目标的可能时，才判为耗尽；Context 随后再次读取绑定，仍缺值才报 `ContextNotInitialized`。未知来源、会话来源及仍可能生产的运行链继续等待；普通发布和节点退休都唤醒等待者重查。值仍只来自 `requests` 驱动、alternative 的选择读取、挂接注入与 Stream 会话；显式驱动每次执行，不参与合并。生成期来源证明本轮不变，没有新增生产机会或方法体位置的分析。
 
-当前可见性只许可 AST 保证先完成的前驱和本入口自己的发布，parallel 兄弟互不可见；因此在可见范围内没有生产的普通资产，读取会一直等待，注册需要写出驱动它的 `requests`。下一步的来源规则已确定、尚未实现：parallel 兄弟纳入可见范围，来源分析改为判断每个读取点在可见范围内有没有可能的生产者，唯一来源的证明只保留读不确定的部分（彼此无先后的生产者，或先完成的生产者加上与读取并发的生产者；有先后的生产者读最后一次），运行时按执行帧为每份资产保存一个 state（request 直接覆盖，require 读当前值），并在生产者都结束时结束等待，见[主设计：可见范围与等待的结束](LATEST_DESIGN.md#await-visibility)。资源契约即使保留读取点，也仍由 owner 协议定位，缺值时不等待也不生产，报 `ContextNotInitialized`；诊断、自动 cleanup 与 close 期间同样不等待。
+当前可见性仍只许可 AST 保证先完成的前驱和本入口自己的发布，parallel 兄弟互不可见；保守耗尽判断没有放宽来源或改写存储。下一步的完整方案尚未实现：parallel 兄弟纳入可见范围，来源分析检查等待进展与读取确定性，运行时迁移到按执行帧的资产 state，见[主设计：可见范围与等待的结束](LATEST_DESIGN.md#await-visibility)。资源契约即使保留读取点，也仍由 owner 协议定位，缺值时不等待也不生产，报 `ContextNotInitialized`；诊断、自动 cleanup 与 close 期间同样不等待。
 
 scope 的例外只覆盖具有 owner 的绑定，资源仍经实际实例定位和共享。实例快照中的无 owner 辅助值只从按 origin 保存的权威表取用，不通过资源复用绕过可见性。诊断及自动 cleanup 的新产物仅局部可见。现有 App 的 bind 在取得值后继续方法体，handler 写法、AST 语法和 ScopeTree 算法均不因此改变。
 

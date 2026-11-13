@@ -14,7 +14,8 @@ import Control.Monad.Except (MonadError, catchError, throwError)
 import Framework.Language.History (History, latest)
 
 -- require 是一次读取：值只来自 requests 驱动的生产或 Stream 会话，读取本身不生产。
--- 已有值时直接返回；尚无值时像 await 一样阻塞这条链，等之后的发布再按同一来源表重读，不报错。
+-- 已有值时直接返回；尚无值时等发布或节点进度变化，再按同一来源表重读。
+-- 只在已证明合法生产机会耗尽时结束等待；无法证明的路径继续等待。
 -- 载体在诊断、收尾或 scope 资源时不等待，缺值按 ContextNotInitialized 报出。
 readContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
@@ -27,7 +28,15 @@ readContext contextName wrap select = awaitBound
       bound <- lookupBound
       case bound of
         Just value -> observed value
-        Nothing -> maybe notInitialized (>> awaitBound) waiting
+        Nothing -> case waiting of
+          Nothing -> notInitialized
+          Just wait -> do
+            changed <- wait
+            if changed then awaitBound else do
+              -- 初次读空之后，生产者仍可能先发布再退出；耗尽证据确定后最后重读，
+              -- 不能把这份已经发布的值误报为 ContextNotInitialized。
+              final <- lookupBound
+              maybe notInitialized observed final
     lookupBound = do
       resolved <- readContextBinding contextName select
       either (\problem -> failEffect contextName (wrap problem) (show problem)) pure resolved

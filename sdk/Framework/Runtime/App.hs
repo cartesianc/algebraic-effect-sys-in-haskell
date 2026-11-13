@@ -454,7 +454,8 @@ instance ContextStore env (App env cause) where
   enterContext name (AppRun action) = AppRun $ local
     (\env -> env { caller = Just name, contexts = name : contexts env }) action
   -- 诊断、收尾与 scope 资源不等待：资源只能经 open 取得，诊断与收尾期间没有新的业务发布。
-  -- 其余缺值读取在读之前取得发布信号；读不到就等下一次发布，醒来后按同一来源表重读。
+  -- 其余缺值读取在读之前取得共享信号；发布与节点退休都会唤醒。
+  -- 只用已知来源和本次执行帧证明耗尽，证据不足时保留等待，不改变来源可见性。
   awaitContext source = AppRun $ do
     environment <- ask
     let resource = any ((== Just source) . scopeContextSource) (scopes environment)
@@ -462,13 +463,16 @@ instance ContextStore env (App env cause) where
           && not (cleaningScopes environment) && null (closings environment)
     if not allowed then pure Nothing else do
       signal <- liftIO (publicationSignal (runtimeGraph environment))
-      pure (Just (rawIO (readMVar signal)))
+      pure (Just (rawIO $ do
+        possible <- contextMayPublish (runtimeGraph environment) (currentFrame environment)
+          (executionOrigin (execution environment)) source
+        if possible then readMVar signal >> pure True else pure False))
   withAnchoredContexts entries (AppRun action) = AppRun $ local
     (\environment -> environment { anchoredEntries = entries }) action
   anchoredContexts method = AppRun (asks (fromMaybe [] . lookup method . anchoredEntries))
   replayedOutput method = AppRun (asks (lookup method . replays))
   -- 诊断与收尾期间不注入。注入以根调用身份运行，失败只留在注入内：资产不发布，
-  -- 原链照常继续；之后 require 该资产时等待它的发布，不在读取处补产。
+  -- 原链照常继续；之后 require 按等待／耗尽协议处理缺值，不在读取处补产。
   injectOutput method raw (AppRun action) = AppRun $ do
     environment <- ask
     let allowed = not (isJust (originalFailure environment)) && not (cleaningScopes environment)

@@ -9,11 +9,11 @@ module Framework.Runtime.Graph
   ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..)
   , newRuntimeGraph, configureRuntimeScopes, collectRuntimeScopes, finishRuntime, newOrigin
   , beginActivation, endActivation
-  , publishAsset, publicationSignal, readVisibleAsset, resetOrigins
+  , publishAsset, publicationSignal, readVisibleAsset, contextMayPublish, resetOrigins
   , installSessionLauncher, obtainSession, stopSessions, currentPublications
   ) where
 
-import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newEmptyMVar, newMVar, putMVar, readMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
 import Control.Exception (SomeAsyncException, evaluate, finally, fromException, throwIO, uninterruptibleMask_)
 import Control.Monad (forM, forM_)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
@@ -58,8 +58,6 @@ data RuntimeGraph environment cause = RuntimeGraph
   -- 发布时无归属的资产按 Origin 分组；后续认领保留同一引用，读取再检查共享 owner。
   -- 同一来源内只替换该入口自己的最新绑定，旧引用不会指向后来的 request 产物。
   , runtimeAssets :: IORef [((Origin, String), ScopeBinding environment cause)]
-  -- 每次普通发布后填满并换新：缺值的 require 先取当前信号再读取，读不到就等它。
-  , runtimePublished :: IORef (MVar ())
   -- 有限 AST 每个挂载只启动一次；完成后只保留身份，供后继读取，不保留其 activation。
   , runtimeOrigins :: IORef [(NodeId, Origin)]
   , runtimeActivations :: MVar [(ActivationId, Activation environment cause)]
@@ -83,7 +81,7 @@ newRuntimeGraph prototype scopes = do
   frame <- newExecutionFrame coordinator Nothing
     [chainNode chain | chain <- protoChains prototype, chainRole chain /= SessionChain]
   RuntimeGraph (PrototypeReference prototype) scopes frame
-    <$> newIORef [] <*> (newEmptyMVar >>= newIORef) <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
+    <$> newIORef [] <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
     <*> newMVar (Just []) <*> newIORef (const (ioError (userError "No session launcher is installed")))
     <*> pure [mount | (_, described) <- workflowLifelongs (protoWorkflow prototype)
            , session <- lifelongSessions described, mount <- sessionMounts session]
@@ -242,16 +240,42 @@ publishAsset graph origin source value = uninterruptibleMask_ $ do
     let key = (origin, source)
         updated = (key, value) : filter ((/= key) . fst) assets
     in length updated `seq` (updated, ())
-  fresh <- newEmptyMVar
-  previous <- atomicModifyIORef' (runtimePublished graph) (\current -> (fresh, current))
-  putMVar previous ()
+  notifyFrame (runtimeRootFrame graph)
 
--- 读取之前取得的信号；此后的任何普通发布都会填满它。
+-- 读取之前取得的信号；普通发布和执行帧退休都会填满它。
 publicationSignal :: RuntimeGraph environment cause -> IO (MVar ())
-publicationSignal = readIORef . runtimePublished
+publicationSignal = frameSignal . runtimeRootFrame
+
+-- 最低限度的耗尽证明：许可来源都已退休，且本链没有仍可能生产该资产的入口。
+-- 本链可能生产只取静态上界，不推断方法体已经走过哪个条件分支；证据不足继续等待。
+-- 会话来源与未知位置不能按有限 AST 的退休判定，仍保持原交付／等待协议。
+contextMayPublish :: RuntimeGraph environment cause -> ExecutionFrame -> Origin -> String -> IO Bool
+contextMayPublish graph frame origin source = case runtimePrototype graph of
+  PrototypeReference prototype -> case
+    [effect | effect <- protoEffects prototype, effectName effect == source] of
+    [producer] -> case lookupChain prototype (originNode origin) of
+      Left _ -> pure True
+      Right current -> do
+        let ownProduction = maybe False (`elem` chainDrives current) (effectProduces producer)
+              || any (\(role, method) -> role `elem` [ContextRequest, ContextStream]
+                && method `elem` chainReaches current) (effectMethods producer)
+            candidates = case sourcePlan (runtimePrototype graph) (originNode origin) source of
+              FromOwnChain -> Just []
+              FromChains nodes -> Just nodes
+              FromSession -> Nothing
+            canPublish node = case lookupChain prototype node of
+              Right chain | chainRole chain /= SessionChain -> do
+                progress <- frameNodeProgress frame node
+                pure (maybe True (\status -> status == Pending || status == Running) progress)
+              _ -> pure True
+        case candidates of
+          Nothing -> pure True
+          Just nodes -> or <$> mapM canPublish
+            (nub (nodes ++ [originNode origin | ownProduction]))
+    _ -> pure True
 
 -- 先按生成表定位来源入口，再读取本次实际发布；不按完成时序或全局最新值挑选。
--- 缺少发布只返回空值，由当前 require 等待之后的发布再重读。
+-- 缺少发布只返回空值，由 Context 协议继续等待或在已证明耗尽后报缺值。
 readVisibleAsset :: RuntimeGraph environment cause -> Origin -> String
                  -> IO (Either ContextFault (Maybe (ScopeBinding environment cause)))
 readVisibleAsset graph origin source = do

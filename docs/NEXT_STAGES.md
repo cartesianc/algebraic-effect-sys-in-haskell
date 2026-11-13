@@ -1,6 +1,6 @@
 # Next stages
 
-更新：2026-11-13。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已确定、尚未实现；[Pure 的值管道与 list 原子输出](#pure-pipeline)已实现（2026-11-12）；[scope 的单例与多例、按可达性回收](#scope-gc)已实现（2026-11-13，生成与普通编译通过）；Stage 3–7 继续逐阶段收敛。**
+更新：2026-11-13。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已完成最低限度的保守结束，完整迁移仍待实施；[Pure 的值管道与 list 原子输出](#pure-pipeline)已实现（2026-11-12）；[scope 的单例与多例、按可达性回收](#scope-gc)已实现（2026-11-13，生成与普通编译通过）；Stage 3–7 继续逐阶段收敛。**
 
 本轮目标是在框架现有概念内，先分离原子 handler 与业务 effect，使 handler 可以复用、前驱由声明装配；再统一 Stream effect 与 lifelong 的持续执行协议，完成正常结束、停止传播和资源收尾。每阶段先收敛设计与代码形态，再实现；本文记录推进顺序、待确认事项及开放边界，不替代[主设计](LATEST_DESIGN.md)和[当前 Stream 规范](STREAM_LIFELONG.md)。
 
@@ -265,18 +265,31 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 - Stream 的背压与资源释放不在本次范围；并发交错、长时间内存与 Windows 以外的取消仍未观察。
 
 <a id="stage-2-await"></a>
-#### 可见范围内的等待（已确定，未实现）
+#### 可见范围内的等待（保守结束已实现，完整迁移待实施）
 
-**状态：设计已确认（2026-11-08，读不确定的报错于 2026-11-12 补充），尚未实现。** 规则见[主设计：可见范围与等待的结束](LATEST_DESIGN.md#await-visibility)。
+**状态：最低限度的保守等待结束已实现（2026-11-13）；parallel 可见性、完整生成期等待检查及按帧资产 state 尚未实现。** 规则见[主设计：可见范围与等待的结束](LATEST_DESIGN.md#await-visibility)。
 
-现在 `requires` 缺值时已经等待发布，但可见范围只有先完成的前驱与本入口自己，parallel 兄弟互不可见：可见范围内没人生产的读取会一直等，兄弟的发布也叫不醒它。确认的分工是：
+**本轮已实现：** `requires` 保持现有捕获与 `protoSources` 路由。缺值时以许可来源的执行帧进度和当前链的潜在生产事实作保守判断：已知候选全部退休，且本链没有继续生产目标的可能时，判为耗尽；再读一次仍缺值，才报 `ContextNotInitialized` 并进入现有 Error 协议。未知来源、会话及仍可能生产的运行链继续等待；不解释方法内部条件，也不保证所有不可进展的等待都能结束。
+
+实现复用 `Runtime.Frame` 根帧与子帧共享的 `frameSignal`／`notifyFrame`：普通发布和节点退休都唤醒等待者，Graph 的 `publicationSignal` 保留为转发入口。生产身份、scope 待用与回收规则不变，普通资产仍按 origin 保存；没有新增 STM、方法体插桩、用户语法或生成期检查。
+
+**本轮验证（2026-11-13）：** `cabal build all --offline -j1` 使用既有临时 builddir 与 Cabal 配置通过，退出码 0。本轮未修改生成器、Prototype 或业务接口，现有生成产物无需变化。随后按用户要求实际测试：
+
+- 临时原生 workflow 经完整 gencode 与 GHC 编译：前一节点成功、挂接解析失败时，后一节点返回 `ContextNotInitialized`，生产与解析各一次，消费方法体未执行；正常发布时消费取得 42，三者各一次并返回 `Succ`。两个进程均正常退出，未触发 15 秒超时；临时 namespace 已从仓库清除。
+- 七项协议探针通过：首次读取为空后恰好发布并退休，最后重读仍返回 42；无发布的退休唤醒缺值读取；活跃来源保持等待、发布后返回值；阻塞的 require 保留 `UserInterrupt`；子帧完成不被根帧预约覆盖；跳过来源发送通知并结束等待；未知来源和本链潜在生产保持保守。探针使用实际 Context／Graph／Frame 和受控存储载体，不解释为所有交错的证明。
+- 现有 ScopeReuseDemo、ScopeInstancesDemo、OpenFilesDemo、FileDemo 各运行两次，全部 `Succ`。ScopeReuseDemo 每次实际开／关 1/1，三个 writer 各写一次；ScopeInstancesDemo 每次文件1开／关 2/2、文件2为 1/1；OpenFilesDemo 的十个句柄在持有期间及 GC 后均打开，最终全部关闭；FileDemo 依次选择首行写入和追加。
+- StreamDemo 运行 2.4 秒后通过 `throwTo UserInterrupt` 受控取消并等待退出：观察到三次读数、一次心跳、一次断开，原取消异常传播。现有 demo 测试通过 `runProgram`、生成的原型／入口及 AST 执行，在临时目录隔离文件，没有走 Main 的源码快照校验入口，也没有强杀进程。
+
+临时探针未加入仓库的永久测试设施。未运行依赖外网的 Crawler 业务，未穷举并发交错、方法内部条件或所有会话组合；本轮不声称覆盖全部不可进展等待。
+
+**完整目标仍待实施。** 可见范围目前仍只有先完成的前驱与本入口自己，parallel 兄弟互不可见；以下分工与实现落点描述后续迁移，不是本轮能力：
 
 - **唯一性**：细化保证生产链唯一，不保证每次驱动的值相同。require 读的是 request 的 state；生成期保留“有多个可见来源”报错中读不确定的部分（彼此无先后的生产者，或先完成的生产者加上与读取并发的生产者），有先后的生产者读最后一次。
 - **可见性**在生成期判断这次等待能不能等到、读到的是不是确定的一次；parallel 兄弟纳入可见范围。运行时的隔离由执行帧负责。
 - **生成期**报“永远等不到”与“读不确定”：读取点在可见范围内没有可能的生产者，或兄弟之间互等；或者可见的生产者不能确定读到哪一次。
 - **运行时**按执行帧为每份资产保存一个 state：request 直接覆盖，require 读当前值，不在多份发布之间挑选；可能的生产者都已结束仍没有值时，结束等待并报 `ContextNotInitialized`。
 
-**实现落点：**
+**后续实现落点：**
 
 - gen：Query 的可见关系纳入 parallel 兄弟；来源分析记录每个读取点在可见范围内的可能生产者。顺序节点上后一次发布取代前一次，parallel 合并时各分支的发布并存；“有多个可见来源”的报错改为只拦读不确定的读取，另检查等不到的读取与兄弟互等。
 - 运行时：普通发布从按 Origin 分组的整张表，改为每个执行帧、每份资产一个 `TVar`。request 用一次 `writeTVar` 直接覆盖，写入即唤醒，去掉整表的 `atomicModifyIORef'`、`uninterruptibleMask_` 与全局发布信号；require 依次读本帧和外层帧，都空时 `retry`。普通发布不再按来源表挑选 Origin，去掉普通发布的 `AmbiguousContextBinding`（资源实例的歧义检查保留）。lifelong 单元每次执行建立新帧，取代 `resetOrigins`；会话挂载的发布照旧作为伴随发布交付。等待的结束：可能的生产者的结束记录与 state 在同一次 `retry` 中检查。cabal 加入 GHC 自带的 `stm`。
@@ -431,7 +444,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 | --- | --- | --- |
 | 每个资产唯一来源与显式接收形态 | Stage 1（已确认，接收形态由 Stage 2 取代） | Effects、类签名、instance 和检查规则 |
 | handler 复用、前驱装配与读取路由 | Stage 2（已实现） | 注册、生成契约、handler、生成装配与检查规则 |
-| 可见范围内的等待：parallel 兄弟可见、等不到的读取、按执行帧的资产 state 与等待结束 | Stage 2（已确定，未实现） | 可见关系、来源分析与运行时读取规则 |
+| 可见范围内的等待：parallel 兄弟可见、等不到的读取、按执行帧的资产 state 与等待结束 | Stage 2（保守等待结束已实现，完整迁移待实施） | 可见关系、来源分析与运行时读取规则 |
 | scope 的单例与多例（`requires`／`requests` 进入 scope）、按可达性回收、运行结束关闭、close 可选 | 独立于阶段（已实现；生成与普通编译通过） | 实际生产身份、执行帧与待用查询，见[实现落点](#scope-gc) |
 | 共同执行协议与两种入口的对应 | Stage 3 | 单步、推进、发布和边界的关系 |
 | 当前值、历史与显式刷新 | Stage 4 | 访问权限、视图位置与发布规则 |
@@ -448,7 +461,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 | --- | --- |
 | 多个资产／访问方式合法；方法体主动取值，检查显式接收形态，不添加位置参数 | Stage 1，接收形态由 Stage 2 取代 |
 | handler 绑定在 Input 链上：方法体显式调用上游，同一操作按 effect 重复书写 | Stage 2（已解决：handler 可复用，前驱由 gencode 装配） |
-| parallel 兄弟互不可见，读取不能被并发发布唤醒；可见范围内没人生产的读取一直等待 | Stage 2（[已确定，未实现](#stage-2-await)） |
+| parallel 兄弟互不可见；只有已确定生产耗尽的缺值读取结束，未知或仍可能生产的运行链继续等待 | Stage 2（[保守结束已实现，完整迁移待实施](#stage-2-await)） |
 | 持续资产的当前值与历史读取 | Stage 2 已实现缓存语义（requires 读最新值，streams 读历史）；Stage 4 收敛视图与读取写法 |
 | readHistory 未经过 scope 开启参数观察，可能报 ScopeInputsMissing | Stage 4–5 |
 | 会话步骤共用 scope 使用登记；停止后撤销使用并按可达性回收 | Stage 5、7 继续收敛正常 end 与历史资源；当前回收见[按可达性回收](#scope-gc) |

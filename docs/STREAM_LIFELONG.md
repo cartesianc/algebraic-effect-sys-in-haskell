@@ -28,7 +28,7 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 | Stream effect | 第六种 typing；绑定的 handler 每次取得一份原始输入（`String`），只由生产会话驱动 |
 | parser | 挂在 Stream 下的 Context 绑定的 handler：用 `raw` 读取会话本次取得的原始输入，返回表示类型的值 |
 | Context.stream | `True` 声明持续资产，缓存发布历史；只能挂在 Stream 下，且须同时 `require = True` |
-| Context.require | `True` 缓存最新值；读取已有绑定或交付视图，不生产，普通资产还没有值时等待发布 |
+| Context.require | `True` 缓存最新值；读取已有绑定或交付视图，不生产；普通资产缺值按[Context 的等待与结束规则](LATEST_DESIGN.md#context)处理，持续交付沿用本专题协议 |
 | 持续资产 | `stream = True` 的资产：`streams` 读取 `History`，`requires` 读取最新一条，可以被 `streams` 订阅 |
 | `streams "T"` | 消费方声明以资产 T 的新交付驱动，同时取得读取权限；不是调用 parser 的语法 |
 | lifelong | 为其单元订阅会话，在交付就绪时 boot original target |

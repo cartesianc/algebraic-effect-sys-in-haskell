@@ -36,9 +36,11 @@ class Monad m => ContextStore environment m | m -> environment where
   enterContext = enterHandler
   recordContextInput :: ScopeInputAccess -> String -> m ()
   recordContextInput _ _ = pure ()
-  -- require 不生产：读取之前先取等待动作，读不到值时执行它，等之后的一次发布再重读。
+  -- require 不生产：读取之前先取等待动作，读不到值时执行它。
+  -- True 表示发布或执行进度已变化，需要重读；False 表示已证明生产机会耗尽，
+  -- 调用方最后重读一次绑定，仍缺值才报错，避免漏掉退出前的成功发布。
   -- 返回 Nothing 表示当前不等待（诊断、收尾，或该来源是 scope 资源），缺值按 ContextNotInitialized 报出。
-  awaitContext :: String -> m (Maybe (m ()))
+  awaitContext :: String -> m (Maybe (m Bool))
   awaitContext _ = pure Nothing
   -- 生成区按原子句柄方法名安装挂在它下面的 Context 生产入口。
   withAnchoredContexts :: [(String, [(String, m ())])] -> m value -> m value
