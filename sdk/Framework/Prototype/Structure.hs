@@ -87,7 +87,7 @@ renderStructure prototype workflowAST = do
       direct : _ -> nub (direct ++ concatMap ancestors direct)
       [] -> []
     edge (before, after) = "  " ++ show before ++ " -> " ++ show after
-    sourceDescription FromOwnChain = "own chain (request when missing)"
+    sourceDescription FromOwnChain = "own chain (no external candidates)"
     sourceDescription FromSession = "interpreter session (current history)"
     sourceDescription (FromChains nodes) = "visible candidates " ++ intercalate ", " (map describeNode nodes)
     scopeKindDescription RegistrationSingleton = "registration singleton"
