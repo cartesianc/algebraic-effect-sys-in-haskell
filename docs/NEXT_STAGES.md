@@ -269,7 +269,7 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 
 **状态：最低限度的保守等待结束已实现（2026-11-13）；parallel 可见性、完整生成期等待检查及按帧资产 state 尚未实现。** 规则见[主设计：可见范围与等待的结束](LATEST_DESIGN.md#await-visibility)。
 
-**本轮已实现：** `requires` 保持现有捕获与 `protoSources` 路由。缺值时以许可来源的执行帧进度和当前链的潜在生产事实作保守判断：已知候选全部退休，且本链没有继续生产目标的可能时，判为耗尽；再读一次仍缺值，才报 `ContextNotInitialized` 并进入现有 Error 协议。未知来源、会话及仍可能生产的运行链继续等待；不解释方法内部条件，也不保证所有不可进展的等待都能结束。
+**本轮已实现：** `requires` 保持现有捕获与 `protoSources` 路由。缺值时以许可来源的执行帧进度作保守判断：已知候选全部退休时判为耗尽；再读一次仍缺值，才报 `ContextNotInitialized` 并进入现有 Error 协议。本链自己的潜在生产不算继续等待的理由（2026-11-14 补齐，见下）。未知来源、会话来源、会话链上的等待及其他仍可能生产的运行链继续等待；不解释方法内部条件，也不保证所有不可进展的等待都能结束。
 
 实现复用 `Runtime.Frame` 根帧与子帧共享的 `frameSignal`／`notifyFrame`：普通发布和节点退休都唤醒等待者，Graph 的 `publicationSignal` 保留为转发入口。生产身份、scope 待用与回收规则不变，普通资产仍按 origin 保存；没有新增 STM、方法体插桩、用户语法或生成期检查。
 
@@ -281,6 +281,10 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 - StreamDemo 运行 2.4 秒后通过 `throwTo UserInterrupt` 受控取消并等待退出：观察到三次读数、一次心跳、一次断开，原取消异常传播。现有 demo 测试通过 `runProgram`、生成的原型／入口及 AST 执行，在临时目录隔离文件，没有走 Main 的源码快照校验入口，也没有强杀进程。
 
 临时探针未加入仓库的永久测试设施。未运行依赖外网的 Crawler 业务，未穷举并发交错、方法内部条件或所有会话组合；本轮不声称覆盖全部不可进展等待。
+
+**本链潜在生产（2026-11-14）：** 上面探针记录的“本链潜在生产保持保守”已由本次取代。原判断把等待者自己所在的节点列为候选，而它必然处于 `Running`，于是本链静态上可能生产目标资产时永远等待。一个节点的链在 App 载体里顺序执行，`require` 缺值时阻塞当前线程、不让出执行权：读取之前的本链生产已经结束，之后的要等这次读取返回，等待期间都不可能发布。因此有限链上不再把本节点列为候选，其他候选退休后即判为耗尽。等待者在会话链上时保持原判断，待 Stream 的结束与失败语义确定；载体若改为可让出执行权，或节点内出现并发驱动，这条判断须重新核对。只改 `contextMayPublish`，生成器、Prototype 和业务接口不变。
+
+`cabal build all --offline -j1` 通过；FileDemo、ScopeReuseDemo、ScopeInstancesDemo、OpenFilesDemo 运行均为 `Succ`。临时改 FileDemo 并重新生成：`FileResource` 只 `requires "FileName"`，`ExtractFileText` 改为 `requests "FileName"`，AST 先执行 `ReadFile`，使 `acquireFile` 的读取排在本链的驱动之前（`--structure` 显示该读取来源为本链）。新判断下运行返回 `Failed`（`ContextNotInitialized`，origin 为 `FileLocation`）并正常退出；临时换回原判断重新编译，同一程序以 `BlockedIndefinitelyOnMVar` 终止，即原来的自锁。临时改动已还原。未覆盖：会话链上的等待、可选生产未发布的路径，以及这类自锁的生成期检查（属于完整等待分析）。
 
 **完整目标仍待实施。** 可见范围目前仍只有先完成的前驱与本入口自己，parallel 兄弟互不可见；以下分工与实现落点描述后续迁移，不是本轮能力：
 

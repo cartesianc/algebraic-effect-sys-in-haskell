@@ -247,9 +247,12 @@ publishAsset graph origin source value = uninterruptibleMask_ $ do
 publicationSignal :: RuntimeGraph environment cause -> IO (MVar ())
 publicationSignal = frameSignal . runtimeRootFrame
 
--- 最低限度的耗尽证明：许可来源都已退休，且本链没有仍可能生产该资产的入口。
--- 本链可能生产只取静态上界，不推断方法体已经走过哪个条件分支；证据不足继续等待。
--- 会话来源与未知位置不能按有限 AST 的退休判定，仍保持原交付／等待协议。
+-- 最低限度的耗尽证明：许可来源都已退休。
+-- 本链自己的潜在生产不算继续等待的理由：一个节点的链在 App 载体里顺序执行，
+-- require 缺值时阻塞当前线程、不让出执行权；读取之前的生产已经结束，之后的生产要等这次读取返回。
+-- 载体若改为可让出执行权，或节点内出现并发驱动，这条判断须重新核对。
+-- 会话来源与未知位置不能按有限 AST 的退休判定，仍保持原交付／等待协议；
+-- 等待者自己在会话链上时保留本链的静态生产上界，待 Stream 的结束与失败语义确定。
 contextMayPublish :: RuntimeGraph environment cause -> ExecutionFrame -> Origin -> String -> IO Bool
 contextMayPublish graph frame origin source = case runtimePrototype graph of
   PrototypeReference prototype -> case
@@ -257,9 +260,10 @@ contextMayPublish graph frame origin source = case runtimePrototype graph of
     [producer] -> case lookupChain prototype (originNode origin) of
       Left _ -> pure True
       Right current -> do
-        let ownProduction = maybe False (`elem` chainDrives current) (effectProduces producer)
-              || any (\(role, method) -> role `elem` [ContextRequest, ContextStream]
-                && method `elem` chainReaches current) (effectMethods producer)
+        let ownProduction = chainRole current == SessionChain
+              && (maybe False (`elem` chainDrives current) (effectProduces producer)
+                || any (\(role, method) -> role `elem` [ContextRequest, ContextStream]
+                  && method `elem` chainReaches current) (effectMethods producer))
             candidates = case sourcePlan (runtimePrototype graph) (originNode origin) source of
               FromOwnChain -> Just []
               FromChains nodes -> Just nodes
