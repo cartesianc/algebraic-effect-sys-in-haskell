@@ -17,7 +17,7 @@
 - 代码的书写形态属于架构契约。新增功能先展示受影响的资产、注册、instance 与 workflow 写法，再说明装配语义；重构保持关系的源码可见性与可提取性。同步实际接口、示例与设计说明，目标接口标明未实现；详见[代码即文档](docs/LATEST_DESIGN.md#code-as-documentation)。
 - 程序只有 workflow 入口，保持 `main = interpreter ast effects`；不提供绕过 AST 的单末端业务入口。
 - Handlers 在生成前保持原生 Haskell。先生成同步的契约接口，再写 instance；手写和 Generated/Handlers 分别加载，避免重复 instance。
-- handler 是不带参数的原子类方法，写作 `instance XxxLayer m => XxxHandler m`：按表示类型 `require`，挂接的 parser 与 Pure 用 `raw` 读上层交出的 `[String]`，失败用本 handler 的 `raise`。一个 handler 可注册到多个 effect。Input 前驱与 `requests` 驱动由 gencode 装配进 effect 入口；方法体不调用上游、其他 handler 或 effect 方法，SDK 不补跑未声明的上游。
+- handler 是不带参数的原子类方法，写作 `instance XxxLayer m => XxxHandler m`：按表示类型 `require`，挂接的 parser 与 Pure 用 `raw` 读上层交出的 `[String]`，失败用本 handler 的 `raise`，Stream handler 在来源没有下一份输入时用 `end` 正常结束。一个 handler 可注册到多个 effect。Input 前驱与 `requests` 驱动由 gencode 装配进 effect 入口；方法体不调用上游、其他 handler 或 effect 方法，SDK 不补跑未声明的上游。
 - 业务模块顶层只允许类型声明、instance、`effects`、具名 AST 与 `main`，禁止顶层普通函数；值操作写在 handler 方法体内，方法体内的局部函数与 lambda 不限制。规则见 [ASSETS](docs/ASSETS.md)。
 - 每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；同一资产可声明多种合法访问方式，一个消费者可依赖多个资产。读取按“表示类型 + effect”路由到唯一资产，一个 effect 内表示类型不重复，见[资产来源与访问约束](docs/LATEST_DESIGN.md#demand-contract)；不新增位置参数或提前取值。
 - Error 只指向 scope：`RaisedBy` 写 handler 名，必须关联恰好一个 scope；resolve 暂不操作 scope（Error 驱动链待定）。
@@ -26,7 +26,7 @@
 - gen 是这个 EDSL 的编译器。SDK 分为源语言（`Framework/Language/`）、gen（`Framework/Gen/`）、编译产物（`Framework/Prototype/`、Generated）与运行时（`Framework/Runtime/`）四层，依赖只从上往下：gen 不导入运行时，运行时不导入 gen。能在生成期判定的组合、读取路由与合法性问题由 gen 报错，不留给运行时；新增检查放进流水线的对应阶段，见 [gen 是编译器](docs/LATEST_DESIGN.md#compiler)与[编译流水线](docs/LATEST_DESIGN.md#generation)。
 - Prototype 是纯结构，RuntimeGraph 保存活动关系，ScopeTree 独立且无环。生成、执行、展示共享同一静态模型。
 - Generated 是派生产物；修改手写输入后显式生成，不在构建中隐式修改源码，不把手改生成结果当作持久权威。
-- 当前实现六类 effect（含 Stream）与 lifelong。lifelong 中的失败采用临时规则（终止整次运行）；EOF、Stream close、局部结束等延期项不得描述成已提供的能力。本轮已完成输入契约及 SDK 分工整理（Stage 1）、handler 复用（Stage 2），以及 Pure 作为生产链中的值变换与原子句柄的 list 输出；Stream 的驱动方式（event／behavior／socket）与 Error 的驱动链待定，持续执行同构、资产访问、scope 边界、结束与清理仍按阶段确认；Middleware 保留为后续专题，均不得写成当前能力。
+- 当前实现六类 effect（含 Stream）与 lifelong。lifelong 中的失败采用临时规则（终止整次运行）。Stream 的正常结束（`end`、排空、单元结束、lifelong 返回）已实现；来源结束后的资源清理、Stream close、后继读取 lifelong 内部的发布、局部失败等延期项不得描述成已提供的能力。本轮已完成输入契约及 SDK 分工整理（Stage 1）、handler 复用（Stage 2），以及 Pure 作为生产链中的值变换与原子句柄的 list 输出；Stream 的驱动方式（event／behavior／socket）与 Error 的驱动链待定，持续执行同构、资产访问、scope 边界、结束后的清理仍按阶段确认；Middleware 保留为后续专题，均不得写成当前能力。
 
 ## 按任务读取规范
 

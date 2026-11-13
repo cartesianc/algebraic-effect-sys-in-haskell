@@ -233,6 +233,8 @@ layerOf :: Unit -> EffectSpec -> String -> [String]
 layerOf unit specification method = sort (nub ["SDK.Reads (" ++ readType unit "SDK.History" resolved ++ ") m"
     | resolved <- readDemands unit (name specification)])
   ++ ["SDK.Raw m" | readsRaw specification method, Just _ <- [rawSource unit specification]]
+  -- end 只属于 Stream handler：来源自己在取下一份输入时报告结束。
+  ++ ["SDK.Ends m" | effectKind (typing specification) == StreamKind]
   ++ [if effectKind (typing specification) == PureKind then "Monad m" else "MonadIO m"]
 
 signatureOf :: Unit -> String -> Either String Signature

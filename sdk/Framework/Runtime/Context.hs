@@ -94,7 +94,7 @@ readHistory contextName wrap select = do
     Nothing -> do
       delivered <- awaitContextHistory contextName select
       maybe (failEffect contextName (wrap ContextNotInitialized)
-        (contextName ++ ": no stream session can deliver here")) pure delivered
+        (contextName ++ ": no delivery here (no stream session can deliver, or the stream ended without publishing)")) pure delivered
 
 -- Stream 的生成入口。会话调用 parser 时安装了本次原始输入：parser 的 raw 由这份输入回答，
 -- 不再执行 handler 另取一份，与挂在原子句柄下的 Context 相同。Stream 单步没有安装输入，执行 handler 取得下一份。

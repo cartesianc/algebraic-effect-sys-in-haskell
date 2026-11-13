@@ -9,12 +9,12 @@ module Framework.Runtime.Execution (runStructuredAST) where
 import Framework.Language.Handler (Failure, Output(..))
 import Framework.Runtime
   ( Target, Handoff, SessionSteps, DeliveryFrame, noHandoff, targetName, lowerTarget, scopeHandlers
-  , newDeliveryFrame, frameDelivery, boundarySession, sessionLauncher )
+  , newDeliveryFrame, frameDelivery, haltFrame, frameStopping, boundarySession, sessionLauncher )
 import Framework.Runtime.Graph
   ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, installSessionLauncher
   , stopSessions, resetOrigins, runtimeRootFrame, collectRuntimeScopes, finishRuntime )
 import Framework.Runtime.Frame
-import Framework.Runtime.Session (Broken, newCursor)
+import Framework.Runtime.Session (Broken, Stopped(..), DeliveryDrained(..), newCursor, stopSession, endSession)
 import Framework.Prototype
 import Framework.Recursion (Algebra)
 import Framework.Language.AST (AST, WorkflowF(..), foldAST)
@@ -34,9 +34,14 @@ data Run environment cause = Run
   , runFatal :: Broken cause -> IO ()
   }
 
+-- 执行树内部的两种提前退出。Problem 是业务失败，沿现有协议传播并报告监督。
+-- Finished 是 lifelong 单元的正常结束：本次执行所需的来源已结束并排空。它停止本次执行中尚未启动的后继，
+-- 只传到单元边界，不进入 Error 协议，也不通知监督；lifelong 之外不会出现。
+data Halt cause = Finished | Problem (Failure cause)
+
 -- Handoff 是已经捕获的绑定；alternative 的候选承接选择阶段的同一份值。
 type Execution environment cause value =
-  Run environment cause -> Handoff environment cause -> ExceptT (Failure cause) IO [value]
+  Run environment cause -> Handoff environment cause -> ExceptT (Halt cause) IO [value]
 
 -- 作为 lifelong 子项时的单元划分：直接子项是 parallel 时拆这一层，其余子树整体是一个单元。
 data Compiled environment cause value = Compiled
@@ -101,31 +106,53 @@ withFrameNode graph run node action = mask $ \restore -> do
     retired <- completeFrameNode (runExecutionFrame run) node
     restore (collectRuntimeScopes graph retired)
 
--- 失败照常向上传播，同时报告监督；取消不是失败。
-supervised :: Run environment cause -> IO (Either (Failure cause) value) -> IO (Either (Failure cause) value)
+-- 失败照常向上传播，同时报告监督；取消与单元的正常结束都不是失败。
+supervised :: Run environment cause -> IO (Either (Halt cause) value) -> IO (Either (Halt cause) value)
 supervised run action = do
   outcome <- try action
   case outcome of
     Left (exception :: SomeException)
       | Just (_ :: SomeAsyncException) <- fromException exception -> throwIO exception
       | otherwise -> runFatal run (Left exception) >> throwIO exception
-    Right (Left problem) -> runFatal run (Right problem) >> pure (Left problem)
+    Right (Left (Problem problem)) -> runFatal run (Right problem) >> pure (Left (Problem problem))
     Right value -> pure value
 
 -- 回调 boot 的就绪条件：本次 frame 已有该位置所订阅资产的交付。
 -- 已有积压时立即领取，没有新发布时挂起；不通过反复调用 handler 试探数据。
-awaitDeliveries :: Run environment cause -> [String] -> IO (Either (Failure cause) ())
+-- 来源已结束并排空时不 boot 这个位置：通知本单元（唤醒仍在等其他来源、尚未启动的并行路径），
+-- 以 Finished 结束本次执行。单元已在结束时，尚未启动的位置同样不再 boot。
+awaitDeliveries :: Run environment cause -> [String] -> IO (Either (Halt cause) ())
 awaitDeliveries run sources = case runDeliveryFrame run of
   Nothing -> pure (Right ())
-  Just frame -> go [deliver | source <- sources, Just deliver <- [frameDelivery frame source]]
+  Just frame -> do
+    stopping <- frameStopping frame
+    if stopping then pure (Left Finished)
+      else go frame [deliver | source <- sources, Just deliver <- [frameDelivery frame source]]
   where
-    go [] = pure (Right ())
-    go (deliver : rest) = do
+    go _ [] = pure (Right ())
+    go frame (deliver : rest) = do
       outcome <- deliver
       case outcome of
-        Left (Left exception) -> throwIO exception
-        Left (Right problem) -> pure (Left problem)
-        Right _ -> go rest
+        Left (Broke (Left exception)) -> throwIO exception
+        Left (Broke (Right problem)) -> pure (Left (Problem problem))
+        Left Drained -> haltFrame frame >> pure (Left Finished)
+        Right _ -> go frame rest
+
+-- 已经 boot 的调用在第一次读取时才领取交付、而来源已结束并排空：这次调用放弃，单元正常结束。
+-- 调用自身的收尾已由 App 完成；这里只把内部信号换成 Finished 并通知本单元。
+draining :: Run environment cause -> IO (Either (Failure cause) value) -> IO (Either (Halt cause) value)
+draining run action = do
+  outcome <- try action
+  case outcome of
+    Left DeliveryDrained -> mapM_ haltFrame (runDeliveryFrame run) >> pure (Left Finished)
+    Right result -> pure (either (Left . Problem) Right result)
+
+-- 并行分支汇合：失败优先；没有失败而某一路正常结束时，整组按正常结束返回。
+joined :: [Either (Halt cause) value] -> Either (Halt cause) [value]
+joined outcomes = case ([problem | Left (Problem problem) <- outcomes], [() | Left Finished <- outcomes]) of
+  (problem : _, _) -> Left (Problem problem)
+  ([], _ : _) -> Left Finished
+  ([], []) -> Right [value | Right value <- outcomes]
 
 -- 一次 cata 得到等待原型位置的装配函数：同一层同时核对 AST 骨架和装配动作。
 -- 父节点把已经生成的子树描述交给各子闭包；运行时没有另一份链展开或 alternative 推导。
@@ -162,8 +189,8 @@ executionAlgebra prototype store entries selectors layer expected = do
       single $ \run handoff -> ExceptT $ withFrameNode store run location $ do
         ready <- awaitDeliveries run subscribed
         case ready of
-          Left problem -> pure (Left problem)
-          Right () -> fmap (: []) . fst <$>
+          Left halt -> pure (Left halt)
+          Right () -> draining run $ fmap (: []) . fst <$>
             lowerTarget store location (runExecutionFrame run) (runDeliveryFrame run) handoff entry
     (Chained _, _) -> do
       parts <- map compiledRun <$> compiledChildren
@@ -172,7 +199,7 @@ executionAlgebra prototype store entries selectors layer expected = do
       parts <- map compiledRun <$> compiledChildren
       let execution run handoff = ExceptT $ do
             outcomes <- runParalleled [runExceptT (part run handoff) | part <- parts]
-            pure (concat <$> sequence outcomes)
+            pure (concat <$> joined outcomes)
       pure (Compiled (managed execution) (zip (map workflowNode expectedChildren) parts))
     (Alternative _, AlternativeAt _ description _) -> do
       parts <- map compiledRun <$> compiledChildren
@@ -189,13 +216,14 @@ executionAlgebra prototype store entries selectors layer expected = do
         chosen <- withFrameNode store run (alternativeSelector description) $ do
           ready <- awaitDeliveries run [source]
           case ready of
-            Left problem -> pure (Left problem)
-            Right () -> do
+            Left halt -> pure (Left halt)
+            Right () -> draining run $ do
               (selected, captured) <- lowerTarget store (alternativeSelector description)
                 (runExecutionFrame run) (runDeliveryFrame run) handoff selector
               pure (fmap (\constructor -> (constructor, captured)) selected)
         case chosen of
-          Left problem -> pure (Left problem)
+          -- 选择读取失败或来源耗尽时不启动候选。
+          Left halt -> pure (Left halt)
           Right (constructor, captured) -> case lookup constructor candidates of
             Just (selectedNode, candidate) -> do
               retired <- concat <$> mapM (skipFrameSubtree (runExecutionFrame run))
@@ -204,15 +232,19 @@ executionAlgebra prototype store entries selectors layer expected = do
               runExceptT (candidate run captured)
             Nothing -> ioError (userError ("No alternative candidate for case " ++ constructor
               ++ "; regenerate with the SDK effect-codegen command"))
-    -- 进入 lifelong 时取得本边界的会话（按需启动生产），各单元并发、互不等待地重复执行；
-    -- lifelong 没有正常结束，只会随失败或取消退出。
+    -- 进入 lifelong 时取得本边界的会话（按需启动生产），各单元并发、互不等待地重复执行。
+    -- 单元在所需来源结束并排空后各自正常结束；全部单元结束后，停止本边界的生产任务并等待其收尾，
+    -- lifelong 才成功返回，外层后继继续执行。执行结果不累积，成功时不带结果。
+    -- 失败与取消保持原规则：失败在发生处已经报告监督，随整次运行终止。
     (Lifelong _, LifelongAt _ description _) -> do
       units <- concatMap compiledUnits <$> compiledChildren
       sources <- mapM (producerOf . sessionAsset) (lifelongSessions description)
       single $ \run handoff -> ExceptT $ do
         sessions <- mapM (\source -> (,) source <$> boundarySession store location source handoff) sources
         outcomes <- runParalleled [repeatUnit run handoff sessions unit | unit <- units]
-        pure (concat <$> sequence outcomes)
+        -- 仍在生产的会话已经没有消费者；已结束的会话只需等待任务退出。此后不再接受发布。
+        mapM_ (\(_, session) -> stopSession session >> endSession session) sessions
+        pure (either (Left . Problem) Right (concat <$> sequence outcomes))
     _ -> Left PrototypeWorkflowMismatch
   where
     resolve compiled selected =
@@ -226,7 +258,8 @@ executionAlgebra prototype store entries selectors layer expected = do
       _ -> Left (UnknownPrototypeTarget asset)
     -- 单元的游标属于（单元，会话），进入 lifelong 时从会话首条开始。
     -- 每次执行是新的 frame：先移出该单元上一次执行的 Origin，执行结果不累积；
-    -- 同一单元逐次处理，本次结束后才领取下一条。
+    -- 同一单元逐次处理，本次结束后才领取下一条。所需来源结束并排空时单元正常结束，不再开始下一次执行；
+    -- 发生在一次执行中途时，已完成的部分不回滚，尚未启动的部分放弃。
     repeatUnit run handoff sessions (unit, execute) = do
       cursors <- mapM (\(source, session) -> (,) source . (,) session <$> newCursor) sessions
       let loop = do
@@ -241,7 +274,8 @@ executionAlgebra prototype store entries selectors layer expected = do
                   retired <- finishExecutionFrame frame
                   restore (collectRuntimeScopes store retired)
             case outcome of
-              Left problem -> pure (Left problem)
+              Left (Problem problem) -> pure (Left problem)
+              Left Finished -> pure (Right [])
               Right _ -> loop
       loop
 
@@ -264,8 +298,8 @@ runStructuredAST prototype tree entries selectors sessions = do
   retireAfter (if null (workflowLifelongs (protoWorkflow prototype))
     then do
       installSessionLauncher store (sessionLauncher store sessions (const (pure ())))
-      either Failed Succ <$> runExceptT
-        (compiledRun prepared (Run (runtimeRootFrame store) Nothing (const (pure ()))) noHandoff)
+      runExceptT (compiledRun prepared (Run (runtimeRootFrame store) Nothing (const (pure ()))) noHandoff)
+        >>= completed
     else do
       -- 第一个失败或原生异常结束整次运行：取消 AST 中的全部任务并等待其收尾，再停止会话，
       -- 最后以最初的那个失败报告；AST 未进入 lifelong 而正常结束时照常返回。
@@ -280,11 +314,15 @@ runStructuredAST prototype tree entries selectors sessions = do
       case result of
         Left (Left exception) -> throwIO exception
         Left (Right problem) -> pure (Failed problem)
-        Right (Left problem) -> pure (Failed problem)
-        Right (Right values) -> pure (Succ values))
+        Right outcome -> completed outcome)
     (\_ -> stopSessions store `finally` do
       _ <- finishExecutionFrame (runtimeRootFrame store)
       finishRuntime store)
   where
     compiled = [(targetName entry, entry) | entry <- entries]
     readers = [(targetName entry, entry) | entry <- selectors]
+    -- Finished 只在 lifelong 单元内产生，并在单元边界换成单元的正常结束；到达这里说明装配与原型不一致。
+    completed (Right values) = pure (Succ values)
+    completed (Left (Problem problem)) = pure (Failed problem)
+    completed (Left Finished) = ioError (userError
+      "A stream delivery ended outside a lifelong unit; regenerate with the SDK effect-codegen command")

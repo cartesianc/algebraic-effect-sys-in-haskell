@@ -21,7 +21,7 @@ import Framework.Runtime.Graph
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame (ExecutionFrame, owningFrame)
 import Framework.Language.History (History, historyView)
-import Framework.Runtime.Session (Broken, View, awaitHistory)
+import Framework.Runtime.Session (Stopped(..), SourceEnded(..), DeliveryDrained(..), View, awaitHistory)
 import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, fromException, mask, mask_, throwIO, try, finally)
@@ -73,7 +73,7 @@ data Environment env cause = Environment
   -- 会话步骤的本资产，以及 lifelong 单元内对该 lifelong 会话资产的显式 request。
   , sessionSinks :: [(String, Bound env cause -> IO ())]
   -- lifelong 单元执行中：本次 frame 对会话资产的领取（同一 frame 只领取一次，各调用共享）。
-  , frameDeliver :: String -> Maybe (IO (Either (Broken cause) (View env cause)))
+  , frameDeliver :: String -> Maybe (IO (Either (Stopped cause) (View env cause)))
   }
 
 -- 一次末端调用的起点：交接的绑定与视图；会话步骤另带原始输入，lifelong 单元另带本次 frame。
@@ -83,7 +83,7 @@ data Launch env cause = Launch
   , launchViews :: [(String, View env cause)]
   , launchInput :: Maybe String
   , launchSinks :: [(String, Bound env cause -> IO ())]
-  , launchDeliver :: String -> Maybe (IO (Either (Broken cause) (View env cause)))
+  , launchDeliver :: String -> Maybe (IO (Either (Stopped cause) (View env cause)))
   , launchUser :: Maybe (ScopeUser env cause)
   , launchFrame :: ExecutionFrame
   }
@@ -480,21 +480,25 @@ instance ContextStore env (App env cause) where
                              , replays = (method, raw) : replays environment }
     when allowed $ () <$ liftIO (runExceptT (runReaderT action inside))
   -- 本次已有视图时直接读取；lifelong 单元中尚未领取的会话资产在第一次读取时领取本次 frame 的交付。
+  -- 这时才发现来源已结束并排空：本次调用无法继续，以内部信号交回单元调度，由它正常结束单元。
   readContextHistory source select = do
     environment <- AppRun ask
     captured <- rawIO (lookup source <$> readIORef (views environment))
     case captured of
       Just view -> pure (Just (historyOf source select view))
       Nothing | deliveryAllowed environment, Just deliver <- frameDeliver environment source ->
-        Just <$> captureDelivery environment source select (rawIO deliver)
+        captureDelivery environment source select (rawIO deliver)
+          >>= maybe (rawIO (throwIO DeliveryDrained)) (pure . Just)
       Nothing -> pure Nothing
   -- 诊断、收尾与 close 期间不启动会话；读到的历史捕获为本次视图。
+  -- 会话已结束时读到最后的完整历史，不重新启动来源；一条都没有发布就结束时没有视图，按缺值报出。
   awaitContextHistory source select = do
     environment <- AppRun ask
     if not (deliveryAllowed environment) then pure Nothing else do
       session <- rawIO (obtainSession (runtimeGraph environment) (Nothing, source) [] [])
-      Just <$> captureDelivery environment source select (rawIO (awaitHistory session))
+      captureDelivery environment source select (rawIO (awaitHistory session))
   streamRawInput = AppRun (asks streamRaw)
+  endStream = rawIO (throwIO SourceEnded)
   recordContextInput source = do
     environment <- AppRun ask
     case openings environment of
@@ -639,17 +643,19 @@ deliveryAllowed environment = isNothing (originalFailure environment) && not (cl
   && null (closings environment)
 
 -- 会话失败时传播它的原失败或原生异常；取得的视图捕获为本次视图，之后的发布不改写它。
+-- Nothing：来源已正常结束且没有可交付的视图，由调用方按各自的协议处理。
 captureDelivery :: Environment env cause -> String -> (env -> Maybe value)
-                -> App env cause (Either (Broken cause) (View env cause)) -> App env cause (History value)
+                -> App env cause (Either (Stopped cause) (View env cause)) -> App env cause (Maybe (History value))
 captureDelivery environment source select deliver = do
   delivered <- deliver
   case delivered of
-    Left (Left exception) -> rawIO (throwIO exception)
-    Left (Right problem) -> throwError problem
+    Left (Broke (Left exception)) -> rawIO (throwIO exception)
+    Left (Broke (Right problem)) -> throwError problem
+    Left Drained -> pure Nothing
     Right view -> do
       rawIO $ atomicModifyIORef' (views environment) $ \current ->
         ((source, view) : filter ((/= source) . fst) current, ())
-      pure (historyOf source select view)
+      pure (Just (historyOf source select view))
 
 -- 此证据只描述这次失败所涉及的实例，不参与开启参数的生产身份匹配。
 scopeFailureTarget :: String -> Maybe (ScopeInstance env cause) -> Failure cause -> Failure cause

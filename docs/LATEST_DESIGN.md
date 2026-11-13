@@ -282,9 +282,10 @@ Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必�
 | `Reads (History T) m` | 绑定它的 effect streams 了持续资产 | `require @(History T)` |
 | `Raw m` | 绑定成挂接的 parser 或 Pure | `raw :: m [String]` |
 | `Raises XxxError m` | 总是 | `raise (XxxError "...")` |
+| `Ends m` | 绑定成 Stream 的 handler | `end`：来源没有下一份输入，正常结束 |
 | `MonadIO m` | Pure 以外总是 | `liftIO` |
 
-Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 handler 的类或 request；单独的 requests 不带来 Reads。一个 handler 只有一份 Layer，各绑定推出的方法类型与 Layer 必须一致，否则 gencode 报错。`Reads`、`Raw`、`Raises` 定义在 Framework.Language.Handler，由 Framework.SDK 导出；`Raw`、`Raises` 是暂定名。
+Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 handler 的类或 request；单独的 requests 不带来 Reads。一个 handler 只有一份 Layer，各绑定推出的方法类型与 Layer 必须一致，否则 gencode 报错。`Reads`、`Raw`、`Raises`、`Ends` 定义在 Framework.Language.Handler，由 Framework.SDK 导出；`Raw`、`Raises` 是暂定名。
 
 失败属于 handler：raise 的错误类型由 handler 名决定，不随绑定改变，Errors 中的分类是 `XxxFailure`；发生在哪个 effect 由 SDK 记为 Failure.origin，只是诊断位置。原始 Failure 保存 origin、detail 分类和 message，传播或次生失败不覆盖原故障；不要求用户声明错误 ADT。
 
@@ -298,7 +299,7 @@ Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 
 newtype At (effect :: Symbol) value = At { runAt :: App value }
 ```
 
-handler 方法体原样复制，在 `At "名字"` 上实例化。Reads、Raw、Raises 按标签生成 instance：`Reads T (At "E")` 把读取路由到 E 的 demands 中表示类型为 T 的那份细化资产，普通资产解包 readT，分支契约经 projectContext 投影当前构造器，持续资产解包 streamT，只 requires 一个持续资产时经 latestContext 取最新一条；`Raw (At "E")` 由 E 的直接 Input 回答；`Raises XxxError (At "E")` 转成 Errors 中的 XxxFailure。GHC 在编译期按标签选定读取，运行时不按调用者查表。
+handler 方法体原样复制，在 `At "名字"` 上实例化。Reads、Raw、Raises 按标签生成 instance：`Reads T (At "E")` 把读取路由到 E 的 demands 中表示类型为 T 的那份细化资产，普通资产解包 readT，分支契约经 projectContext 投影当前构造器，持续资产解包 streamT，只 requires 一个持续资产时经 latestContext 取最新一条；`Raw (At "E")` 由 E 的直接 Input 回答；`Raises XxxError (At "E")` 转成 Errors 中的 XxxFailure；`Ends (At "E")` 只为 Stream effect 生成，结束 E 所在的生产会话。GHC 在编译期按标签选定读取，运行时不按调用者查表。
 
 ```haskell
 instance FrameworkRuntime.Reads (FileHandle) (At "WriteFirstLine") where
@@ -583,7 +584,7 @@ monitor = lifelong
 
 - **单元**：直接子项各为一个单元，直接子项是 parallel 时只拆这一层；单元之间独立推进、互不等待。拆分写入 Prototype，运行时不推测。
 - **一次执行**：单元逐次执行，每次执行是一个 frame。控制流到达 target 时先领取其订阅资产的一条新交付（有积压立即领取，没有就挂起），再 boot target；同一 frame 内每个资产只领取一次，各调用共享这份视图。target 调用按上文的有限完成规则结束，本次执行结束后才开始下一次，上一次的普通产物不带入下一次。
-- **没有正常结束**：lifelong 不返回 Succ。`chained [setup, monitor]` 先完成 setup；`chained [monitor, after]` 中 after 不执行；`parallel [monitor, otherWork]` 两者同时运行。
+- **正常结束**：Stream handler 以 `end` 报告来源结束；会话封住发布，已发布的交付仍可领取。单元在所需来源结束并排空后正常结束，全部单元结束后 lifelong 返回一次 Succ（不带结果）。`chained [setup, monitor]` 先完成 setup；`chained [monitor, after]` 中 after 在 monitor 结束后执行，有来源始终不结束时不执行；`parallel [monitor, otherWork]` 两者同时运行。后继可读进入 lifelong 之前可见的资产，读取 lifelong 内部的发布尚未实现（生成期拒绝）；结束后的资源清理另行设计。规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
 - **失败**：含 lifelong 的程序中，任何失败按临时规则终止整次运行（[Stream 第 9 节](STREAM_LIFELONG.md#failures)），不同于有限 parallel 不取消其他分支的规则。lifelong 的局部结束属于本轮[结束传播阶段](NEXT_STAGES.md#stage-6)，其与故障传播的关系仍需确认。
 - **合法性**：lifelong 不嵌套、不含空分支；其中每个 target 恰好用 `streams` 订阅一个持续资产，见 [Stream 第 5.2 节](STREAM_LIFELONG.md#static)。
 
@@ -661,7 +662,7 @@ EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope
 - **待用关系**：gen 在 `protoScopeOpenings` 中记录每个开启位置各参数可能的生产节点，包括本节点和 alternative 交接的捕获。执行帧保存待执行、执行中、完成和跳过的节点。有限运行使用根帧，lifelong 单元每轮使用子帧；节点完成、chained 短路及 alternative 排除候选都会撤销相应待用关系，更新幂等。
 - **实际匹配**：运行时将实例的参数生产身份与候选来源的实际绑定比较；普通发布以当前那一份为准，不把 NodeId 当生产身份。lifelong 本轮已领取的普通伴随资产则固定使用交付时的生产身份，不能被后台后续发布替换。ExecutionFrame 只保存这份身份信息，不复制值表；根帧查询同时考虑活动子帧的待用节点，帧结束即清空并从父帧摘除。无参数按 Scoped 注册匹配。进度和预约共用 scope 协调锁；运行时不重建 effect graph，不在业务方法体插入进度语法。
 - **依赖与执行**：没有当前使用者、没有匹配的待用节点、没有仍保留它的子 scope 时执行 close。ScopeTree 提供父子候选，运行时由同一受控链实际使用的实例补齐子实例的 `scopeParents`；子实例只保留这些具体父实例，不保留同注册的全部实例。关闭遵守子先父后，在触发不可达的线程中同步完成后才继续后继，不另设清理线程。普通资产快照不延长生产资源的存续。
-- **lifelong**：无参数及参数来自外层的实例由外层帧保留；本轮生产参数的实例归本轮，后继共享不改变归属，本轮结束即回收。会话仍以实际使用登记持有资源，正常 end、历史资源精细释放和持续资产作为开启参数仍是后续工作。
+- **lifelong**：无参数及参数来自外层的实例由外层帧保留；本轮生产参数的实例归本轮，后继共享不改变归属，本轮结束即回收。会话仍以实际使用登记持有资源：来源正常结束（`end`）后登记保留到会话被停止，只在生产会话中开启的 scope 仍在运行结束时关闭。结束后的清理、历史资源精细释放和持续资产作为开启参数仍是后续工作。
 - **close 可选**：`close = Nothing` 不登记关闭方法。实例不可达时只移出运行表，不执行释放 IO；有 close 的实例保存实际绑定和关闭回调。
 - **close 失败**：close 的 `raise`，以及 close 中没有转换为 `raise` 的普通 IO 异常（记为 `ScopeCleanupInterrupted`），都先进入关联 scope 的 Error 诊断，之后记录并在运行结束时汇总；不改变节点或整次运行的业务结果，不短路、不停止其他业务，也不重试该 close。关闭失败是资源问题：实例已经不可达，不会再被使用。失败实例移出运行表，旧绑定保留原实例及失败证据。
 - **运行结束与取消**：正常结束、失败或取消时，先让受控工作退出、撤销全部待用及使用关系，再按同一规则回收剩余实例。关闭失败中只有取消向外传播：取消落在 close 或其故障诊断期间时，保留原关闭故障的诊断信息并单独保存取消，完成其余收尾后传播、停止后续启动；close 不重试，已经收到的原 close 取消不被后续诊断异常覆盖。进程被强制终止时无法保证 close 执行。
@@ -745,7 +746,7 @@ sdk/Framework/
   Language/                 源语言
     Registration.hs         注册 ADT：EffectSpec、EffectTyping、Asset、Demand、Handles、EffectKind
     AST.hs                  workflow 组合子与 WorkflowF
-    Handler.hs              handler 能力类（Reads、Raw、Raises）与完成结果（Failure、Output）
+    Handler.hs              handler 能力类（Reads、Raw、Raises、Ends）与完成结果（Failure、Output）
     History.hs              持续资产的历史视图
   Gen.hs                    编译器：按阶段执行的流水线
   Gen/
@@ -822,7 +823,7 @@ sdk/Framework/
 
 1. Stream effect 提供持续来源；挂在它下面的 Context 声明 `stream = True`，会话每取得一份原始输入就调用一次 parser 逐条解析（Receive），写法与挂在原子句柄下的 Context 相同。`stream = True` 当且仅当 Input 是 Stream，且须同时 `require = True`；RepeatRequest 已取消，持续交付只由上游 Stream 驱动。生产方式只看资产自己的注册，不靠识别方法体里是 socket、event 还是 behavior，也不随别处是否有节点产出同一资产而改变。
 2. 持续资产按访问方式读取：`streams "T"` 声明持续消费并授予读取权限，handler 以 `require @(History 表示类型)` 取得本次交付为止的历史；`requires "T"` 只读最新一条（`require @表示类型`），不由交付驱动。`stream` 缓存历史，`require` 缓存最新值。读取本身不领取下一个增量。
-3. lifelong 的每个单元在本次执行领到订阅资产的新交付后 boot original-chain target；每次 target 调用仍有限完成，单元逐次重复，lifelong 本身没有正常结束。含 lifelong 的程序中任何失败暂按临时规则终止整次运行。
+3. lifelong 的每个单元在本次执行领到订阅资产的新交付后 boot original-chain target；每次 target 调用仍有限完成，单元逐次重复；所需来源以 `end` 结束并排空后单元正常结束，全部单元结束后 lifelong 成功返回。含 lifelong 的程序中任何失败暂按临时规则终止整次运行。
 
 | 主题 | 本章所属规范 |
 | --- | --- |
@@ -835,7 +836,7 @@ sdk/Framework/
 | 失败的临时规则、取消与 close 延期边界 | [Stream 第 9 节](STREAM_LIFELONG.md#failures) |
 | socket、event、behavior 各自的写法 | [Stream 第 4.1 节](STREAM_LIFELONG.md#drives) |
 
-当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，持续资产作为 scope 开启参数尚未接通。本轮先收敛资产来源与接收契约、分离原子 handler 与业务 effect，再处理 Stream effect 与 lifelong 的共同运行协议、资产访问、scope 使用、结束传播与清理，见[阶段计划](NEXT_STAGES.md#stages)。唯一资产来源与访问约束见[资产来源与访问约束](#demand-contract)；require 缓存最新值、stream 缓存历史已随 Stage 2 实现，Stream 的驱动方式（event、behavior、socket）仍待确定，正常 end 仍属后续设计；是否调整临时失败规则须在结束传播阶段确认。来源分析按消费单元提前裁剪再组合，相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
+当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，持续资产作为 scope 开启参数尚未接通。本轮先收敛资产来源与接收契约、分离原子 handler 与业务 effect，再处理 Stream effect 与 lifelong 的共同运行协议、资产访问、scope 使用、结束传播与清理，见[阶段计划](NEXT_STAGES.md#stages)。唯一资产来源与访问约束见[资产来源与访问约束](#demand-contract)；require 缓存最新值、stream 缓存历史已随 Stage 2 实现，Stream 的驱动方式（event、behavior、socket）仍待确定；正常 end 已实现到 lifelong 返回为止，结束后的清理、后继读取 lifelong 内部的发布仍属后续设计；是否调整临时失败规则须在结束传播阶段确认。来源分析按消费单元提前裁剪再组合，相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
 
 这次扩展继续使用 Prototype、RuntimeGraph 和独立 ScopeTree。业务方法不新增游标、yield、调度器或无限递归写法；声明不成立时生成期诊断，不在运行中猜测生产方式。
 

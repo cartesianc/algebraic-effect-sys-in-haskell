@@ -2,7 +2,7 @@
 
 本文通过引用构成[主设计第 7 章](LATEST_DESIGN.md#stream)的完整规范。主设计负责架构地图，本页唯一维护 Stream 的匹配、交付和调度规则；实施记录在 [Next stages](NEXT_STAGES.md)，写法示例在[使用指南第五节](GUIDE.md#stream)。
 
-更新：2026-11-08。状态：已实现（Stage 3 第 1–6 批；Stage 2 改为 Stream 加 parser、取消 RepeatRequest）；当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，延期项见[第 11 节](#deferred)。
+更新：2026-11-14。状态：已实现（Stage 3 第 1–6 批；Stage 2 改为 Stream 加 parser、取消 RepeatRequest；Stage 6 第一步：Stream 的正常结束 `end`、排空、单元结束与 lifelong 返回，见[第 9.4 节](#end)）；当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，延期项见[第 11 节](#deferred)。
 
 本文手工记录 Stream、Context 与 lifelong 的匹配规则，作为代码生成、解释器和开发文档共同遵守的规范。下列规则与当前 SDK 一致；标明“延期”或“临时”的部分不是最终设计。
 
@@ -15,7 +15,7 @@
     → 生成唯一装配及其依据
     → interpreter 执行已经装配的闭包
 
-业务作者需要知道本地输入输出、`require`、`raw` 和 `raise`，不需要知道 BootPlan、会话、游标或调度循环。
+业务作者需要知道本地输入输出、`require`、`raw`、`raise`，以及 Stream handler 报告来源结束的 `end`，不需要知道 BootPlan、会话、游标或调度循环。
 
 自动装配只依赖明确契约，不从任意 IO 恢复作者意图。匹配不成立时生成期诊断，不按方法名相似度、运行速度或最后写入猜选。原子化约束保证组合可观察，不证明任意方法体足够细、无副作用或必然返回。
 
@@ -25,7 +25,7 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 
 | 结构 | 职责 |
 | --- | --- |
-| Stream effect | 第六种 typing；绑定的 handler 每次取得一份原始输入（`String`），只由生产会话驱动 |
+| Stream effect | 第六种 typing；绑定的 handler 每次取得一份原始输入（`String`），只由生产会话驱动；来源没有下一份输入时以 `end` 结束（[9.4](#end)） |
 | parser | 挂在 Stream 下的 Context 绑定的 handler：用 `raw` 读取会话本次取得的原始输入，返回表示类型的值 |
 | Context.stream | `True` 声明持续资产，缓存发布历史；只能挂在 Stream 下，且须同时 `require = True` |
 | Context.require | `True` 缓存最新值；读取已有绑定或交付视图，不生产；普通资产缺值按[Context 的等待与结束规则](LATEST_DESIGN.md#context)处理，持续交付沿用本专题协议 |
@@ -39,7 +39,7 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 | 游标 | 单元在某会话中已经领取的条数 |
 | frame | 单元一次执行的交付视图与普通来源解析范围 |
 
-Stream 不进入 original chain，也不作为 AST target；只通过它下面的 parser Context 进入生产。original target 始终代表一条完整消费链的末端。
+Stream 不进入 original chain，也不作为 AST target；只通过它下面的 parser Context 进入生产。original target 始终代表一条完整消费链的末端。这条限制是确定的：持续资产的生产始终在会话里，与消费并发；Stream 不向 AST 返回 Succ，它的结束只由等待交付的单元和 lifelong 观察。
 
 socket、event、behavior 用来解释不同的驱动关系，但不是类型标签；它们在 SDK 中如何区分仍待确定，目前的写法见 [4.1 节](#drives)。挂在 Stream 下的 Context 与挂在原子句柄下的 Context 写法相同：parser 用 `raw` 取得本次输入。
 
@@ -98,7 +98,7 @@ History 是从会话首条发布到确定交付位置的有限、不可变序列
 
 Stream handler 一次返回一个原始输入，parser 一次解析一个。parser 的 `raw` 由会话本次取得的输入回答，不再执行 Stream handler 另取一份；Stream handler 由会话驱动，其他 handler 不能取得原始输入。Stream 有自己的数据结构：handler 仍是每次一份 `String`，不改成原子句柄的 list 输出，下面也不挂 Pure（[主设计：Pure](LATEST_DESIGN.md#pure)）。Stream 自己的 Input（例如传感器连接的 Scoped）作为前驱在 handler 之前执行，跨生产步骤保持（见 8.1）。业务只写原生 instance、读取、ADT、局部计算和 raise，不手写 yield、递归连接、publish、subscribe、acknowledge 或回调参数；顶层白名单继续适用（[ASSETS](ASSETS.md)）。
 
-Excu／Scoped 交出的 `[String]` 是原子句柄的输出，不能把空 list 释为 EOF；正常结束协议本版延期。
+Excu／Scoped 交出的 `[String]` 是原子句柄的输出，不能把空 list 释为 EOF。来源的结束只由 Stream handler 用 `end` 报告，见 [9.4 节](#end)。
 
 <a id="bootplan"></a>
 ## 4. 生产方式（BootPlan）
@@ -166,7 +166,7 @@ lifelong 写入统一 Prototype，运行装配、来源分析与 `--structure` �
 
 - 会话挂载 NodeId 为 lifelong 路径加 `[-1, 会话序号, 步骤]`：步骤 0 是 Stream 单步、步骤 1 是 parser。挂载以 `SessionChain` 角色进入 `protoChains`，参与构图与 ScopeTree。
 - `protoSessions` 为每个 Receive 资产登记一份 interpreter 托管的会话，挂载为 `[-2, 序号, 步骤]`；它不属于 AST，不是任何读取点的可见前驱。
-- 可见性：lifelong 的会话挂载先于它的全部单元。来源分析中，会话挂载按各消费单元的后续读取需求分别作为根分析，以进入 lifelong 时的交接（例如外层 alternative 选择时捕获的值）为已捕获绑定；运行时每个生产步骤也从这份交接开始（见 8.1）。单元的执行以订阅资产的交付作为已捕获绑定，出身是会话的生产步骤；单元读取生产步骤的其他普通发布时，读到的是所处理交付那一步的发布（伴随发布，见 7）。会话挂载的各个成功出口不合并：一条交付的伴随发布对应一次成功的生产步骤（Stream 单步与 parser 各一个成功出口），单元按每种交付状态分别分析。Stage 2 取消 lifelong 内的显式 request 后，不再出现“没有伴随发布”的交付状态。某条交付的伴随发布中没有辅助资产 X 时，单元中读取 X 的位置不补产，等待它的发布；需要这个值时按第 5.2 节第 7 条，由该会话的资产驱动读取位置，或在 lifelong 之前生产它。lifelong 之后的后继按“没有正常结束”处理。
+- 可见性：lifelong 的会话挂载先于它的全部单元。来源分析中，会话挂载按各消费单元的后续读取需求分别作为根分析，以进入 lifelong 时的交接（例如外层 alternative 选择时捕获的值）为已捕获绑定；运行时每个生产步骤也从这份交接开始（见 8.1）。单元的执行以订阅资产的交付作为已捕获绑定，出身是会话的生产步骤；单元读取生产步骤的其他普通发布时，读到的是所处理交付那一步的发布（伴随发布，见 7）。会话挂载的各个成功出口不合并：一条交付的伴随发布对应一次成功的生产步骤（Stream 单步与 parser 各一个成功出口），单元按每种交付状态分别分析。Stage 2 取消 lifelong 内的显式 request 后，不再出现“没有伴随发布”的交付状态。某条交付的伴随发布中没有辅助资产 X 时，单元中读取 X 的位置不补产，等待它的发布；需要这个值时按第 5.2 节第 7 条，由该会话的资产驱动读取位置，或在 lifelong 之前生产它。lifelong 有一个正常出口：进入 lifelong 之前可见的发布照常交给后继。lifelong 内部的发布（单元的普通产物、持续资产本身）交给后继读取尚未实现；后继的读取没有其他可见来源时，生成期报 `InvalidLifelong`，不留到运行时缺值或另行启动来源。
 - 分析裁剪：以 `lifelongUnits` 确定单元，不穿透单元内的 chained、alternative 或 parallel。每个生产挂载保留本单元可能读取的契约及生产链自身的读取依赖，成功出口再按单元相关契约投影、去重，然后逐步组合 Receive 的步骤和各会话状态。仍分析全部会话，避免遗漏其他会话造成的来源冲突；不把成功出口取并集。生产链的 read／drive 事实独立累计。
 - 读取点来源新增 `FromSession`：持续资产在没有本次交付时由 interpreter 托管的会话交付，不查询普通来源表。
 - `--structure` 在 Workflow 中列出每个 lifelong 的单元、会话（生产方式与挂载）和订阅，并单独列出 interpreter 会话。
@@ -191,9 +191,9 @@ lifelong 的直接子项分别形成独立单元；直接子项为 parallel 时�
 | 对象 | 完成含义 |
 | --- | --- |
 | 一次 target 调用 | 既有成功／失败协议；本次 original chain 完成，有自己的 Origin |
-| 持续订阅／lifelong | 本版没有正常 Succ，只因失败或取消退出 |
+| 持续订阅／lifelong | 全部单元正常结束后返回一次 Succ，不带结果；来源不结束时不返回，另因失败或取消退出 |
 
-lifelong 安装订阅后不冒充整个 branch 的 Succ，否则外部 chained 无法表达完成依赖。
+lifelong 安装订阅后不冒充整个 branch 的 Succ，否则外部 chained 无法表达完成依赖。两个 Succ 各管一层：一次执行的 Succ 决定单元内的后继是否执行，lifelong 的 Succ 决定外层的后继是否执行。Stream 自己不给 Succ。
 
 ### 6.3 就绪与一次执行
 
@@ -203,6 +203,7 @@ lifelong 安装订阅后不冒充整个 branch 的 Succ，否则外部 chained �
 - **每个资产只领取一次**：同一 frame 中后续 target、alternative 的选择读取与候选、内部 parallel 中同时需要它的节点，都共享第一次领取的视图。alternative 的转折资产若是本 lifelong 的会话资产，选择读取先领取，候选共享；持续的和类型资产按本次交付的最新条目选择候选。lifelong 外的 alternative 以持续资产为转折时，同样按选择读取取得的视图的最新条目分派。
 - **首次读取领取**：frame 中尚未领取的本 lifelong 会话资产，在第一次读取时领取（例如被生产链读取）。
 - **结束**：单元的一次执行结束后，下一次执行开始前清除该单元子树上一次执行的 Origin 及其普通发布；本次没有执行到的位置不会读到上一次的普通产物。执行结果不累积。
+- **来源耗尽**：领取时来源已结束且积压已领完，这个位置不 boot，单元正常结束，见 [9.4 节](#end)。
 
 因为每个单元顺序推进，“数据在前驱执行期间已经到达”时，前驱完成后后继直接领取积压；同一位置在一个 frame 内只 boot 一次。
 
@@ -212,7 +213,7 @@ lifelong 安装订阅后不冒充整个 branch 的 Succ，否则外部 chained �
 | --- | --- |
 | `parallel [monitor, otherWork]` | 两者同时运行；monitor 等待增量不阻止 otherWork |
 | `chained [setup, monitor]` | setup 成功后进入 monitor |
-| `chained [monitor, after]` | after 等待 monitor 结束；本版 monitor 没有正常完成，after 不执行 |
+| `chained [monitor, after]` | after 等待 monitor 结束：monitor 的全部单元正常结束后 after 执行；有来源始终不结束时 after 不执行 |
 | `chained [parallel [monitor, otherWork], after]` | 内层分支的完成仍是 after 的前提 |
 
 monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同概念。
@@ -246,7 +247,7 @@ monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同
 
 parser 的包装发布一次；会话不再次发布返回值，也不再调用一次 parser。每一步是一次独立的受控调用（自己的 Origin 与捕获环境），会话以发布写入历史。lifelong 的会话保存进入 lifelong 时的交接，每一步从它的新副本开始：外层已经捕获的值（例如 alternative 选择时读到的配置）在生产端与消费端一致，生产步骤不会另行生产一份。interpreter 托管的会话没有交接。
 
-生产会话的各步骤共用会话的 scope 使用登记，一步结束不撤销会话对资源的使用。无开启参数的连接 scope 因此跨步骤共享。会话停止时撤销登记；运行结束撤销全部待用关系，按 ScopeTree 清理不可达且声明了 close 的实例，没有 close 的实例只移出运行表，见[主设计：按可达性回收](LATEST_DESIGN.md#scope-gc)。正常 end 何时停止会话仍待后续阶段。
+生产会话的各步骤共用会话的 scope 使用登记，一步结束不撤销会话对资源的使用。无开启参数的连接 scope 因此跨步骤共享。会话停止时撤销登记；运行结束撤销全部待用关系，按 ScopeTree 清理不可达且声明了 close 的实例，没有 close 的实例只移出运行表，见[主设计：按可达性回收](LATEST_DESIGN.md#scope-gc)。来源正常结束（`end`）后，会话不再生产，但使用登记保留到会话被停止：lifelong 的会话在 lifelong 返回时停止，interpreter 托管的会话在运行结束时停止，见 [9.4 节](#end)。
 
 lifelong 单元每次执行建立独立的 ExecutionFrame。参数来自外层或没有参数的 scope 由外层帧保留；参数来自本轮的实例归本轮，轮内后继共享不改变归属，本轮结束回收。DeliveryFrame 仍负责本轮会话视图的领取；ExecutionFrame 只记录已经领取的普通伴随资产的生产身份，不复制值。根实例的待用查询包含活动子帧：即使后台会话已经发布下一步，本轮后继仍按固定交付身份保留同一实例。轮帧结束后清空并从父帧摘除。这不保留尚未领取的历史资源，也不接通持续资产直接作为 scope 参数的观察协议。
 
@@ -261,6 +262,8 @@ lifelong 外的普通驱动按原有 origin 发布，不因类型相同就广播
 ### 8.3 lifelong 外的有限读取
 
 普通 `requires "T"` 只执行一次消费，不进入 lifelong，handler 取得最新一条。本次调用已有视图时读取它；否则由 interpreter 托管的会话（`protoSessions`）交付：会话在第一次需要时启动，读取至少等到一条发布，取得当时的历史并捕获为本次视图，再取其最新一条。会话保持到 interpreter 退出；后续调用取得当时的历史，同一调用已经捕获的视图保持不变。
+
+来源已经结束时，读取取得最后的完整历史，再取其最新一条，不重新启动来源；来源一条都没有发布就结束时没有可读的值，报 `ContextNotInitialized`，不继续等待。
 
 诊断、自动收尾与 close 期间不启动会话。
 
@@ -286,11 +289,74 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 
 ### 9.3 close 延期的含义
 
-不新增 Stream close、next-use 或历史资源按元素关闭协议。没有增量表示等待，不表示 EOF、故障或关闭。
+不新增 Stream close、next-use 或历史资源按元素关闭协议。没有增量表示等待，不表示结束、故障或关闭；结束只由 Stream handler 的 `end` 报告（9.4）。
 
-Stream close、lifelong 的局部结束、会话生产资源与历史资源的存续，以及持续资产作为 scope 开启参数，纳入本轮[七阶段计划](NEXT_STAGES.md#stages)。计划以 Stream effect 与 lifelong 的共同运行协议为基础；require 缓存最新值、stream 缓存历史已随 Stage 2 实现，正常 end 尚未实现，本页记录当前协议。
+来源结束后的资源清理（会话用过的 scope 何时关闭、历史中的资源引用、后继待用关系的交接）、lifelong 的局部失败、会话生产资源与历史资源的存续，以及持续资产作为 scope 开启参数，仍纳入本轮[七阶段计划](NEXT_STAGES.md#stages)，尚未实现。require 缓存最新值、stream 缓存历史已随 Stage 2 实现；正常 end 已实现，本页记录当前协议。
 
 完整历史保留不等于可以把多份资源 owner 合成一个，也不能复活已关闭的资源。通用的历史资源选择／关闭语义尚未设计。会话历史在运行期间持续增长，不承诺有界内存。持续资产作为 scope 开启参数尚未接通 History 的参数观察协议，可能报 `ScopeInputsMissing`；现有跨轮 scope 复用不代表支持该用法，跟踪见 [Next stages](NEXT_STAGES.md#current-limits)。
+
+<a id="end"></a>
+### 9.4 正常结束（end）
+
+**代码长什么样。** Stream handler 的签名不变，仍是 `m String`。gen 只在 Stream handler 的 Layer 里加入 `Ends`，方法体多一个出口 `end`：
+
+    -- Generated/Effects.hs（生成）
+    type NextLineLayer m = (SDK.Ends m, SDK.Raises NextLineError m, MonadIO m)
+    class NextLineHandler m where
+      nextLine :: m String
+
+    -- Handlers.hs（手写）
+    instance NextLineLayer m => NextLineHandler m where
+      nextLine = do
+        finished <- liftIO (hIsEOF stdin)
+        if finished then end else liftIO getLine
+
+注册、parser、消费方的 handler 与 AST 的写法都不变；不调用 `end` 的 Stream 行为与此前相同。parser、Excu、Scoped 的 Layer 里没有 `Ends`，在它们的方法体里写 `end` 由 GHC 拒绝。
+
+**三个出口。** Stream handler 的方法体有三个出口：返回一份原始输入、`raise` 失败、`end` 正常结束。结束由来源在取下一份输入的这一步自己报告，不另设“是否结束”的查询方法。`raw` 不在其中：它是下一层（parser）读取第一种出口的方式。
+
+| 出口 | 之后发生什么 |
+| --- | --- |
+| 返回值 | 会话把它交给 parser，解析后发布一条交付 |
+| `raise` | 经 Error 协议诊断，按 9.1 的规则处理 |
+| `end` | 本步没有原始输入，parser 不执行，不发布；会话正常结束 |
+
+`end` 不是失败：不进入 Error 诊断，不通知运行监督，也不被方法体内的 `catchError` 接住。已经完成的 IO 和此前的发布不回滚。它只结束当前绑定所在的会话；同一个 handler 注册给其他 Stream 时，各自的会话互不影响。
+
+**会话。** 会话记录“已结束”并封住发布，这两件事在同一临界区内完成，然后唤醒等待者。会话的历史就是这个持续资产的值：结束之前它随发布增长，`end` 之后它是一个完整、不再变化的有限序列，仍然保留。正常结束、失败、取消三者保持区别。
+
+**排空。** 结束后已经发布的交付仍可领取：
+
+| 状态 | 领取结果 |
+| --- | --- |
+| 还有未领取的交付 | 返回下一条，以及到这一条为止的历史视图 |
+| 暂无交付，来源仍在运行 | 等待 |
+| 来源已结束，游标到达末尾 | “已耗尽”（内部结果，不是失败） |
+| 来源失败或运行被取消 | 沿原有的故障／取消协议 |
+
+排空指会话保留并允许交付全部积压；同一会话的多个单元各自排空、各自结束。它不承诺每个单元都消费完所有来源的积压：多来源单元可能因为另一个来源先耗尽而退出。游标前进只表示领取，不表示处理完成。
+
+**单元结束。** 单元要领取某个资产的交付、而它已耗尽时，这个位置不 boot，也不伪造一次节点成功，单元正常结束：
+
+- chained：尚未执行的后继不再执行，已完成的前缀不回滚。
+- alternative：选择读取耗尽时不启动候选。
+- 单元内部的 parallel：某一路耗尽时通知本单元，唤醒尚未 boot、仍在等其他来源的路径并让它们退出；已经 boot 的有限链执行完再汇合。这项通知只针对等待交付的位置，不强制结束不返回的业务 IO。
+- 已经 boot 的调用在方法体第一次读取时才领取交付、而它已耗尽：这次调用放弃，单元同样正常结束。
+
+这种结束只传到单元边界，不进入 Error 协议，也不通知监督。
+
+**lifelong 返回。** 全部单元正常结束后，SDK 停止本边界的生产任务（仍在生产的会话已经没有消费者；已结束的会话只需等待任务退出）并等待其收尾，lifelong 才返回一次 Succ，不带结果，外层后继继续执行。有来源始终不结束时 lifelong 不返回，这是该 workflow 的正常含义。单元全部退出之前，不提前停止个别已经无人订阅的生产任务。
+
+**lifelong 之后的读取。** 后继可以读取进入 lifelong 之前就可见的资产。读取 lifelong 内部发布的资产尚未实现，生成期拒绝（见 5.3）。读到哪一份（最后一次执行的产物，或各来源各自的最后一次发布）尚未确定。
+
+**资源。** 本步不改变任何清理规则，结束后的清理另行设计：
+
+- 来源结束后，会话的使用登记保留到会话被停止，排空期间不会因为来源结束而提前关闭资源。
+- 只在生产会话中开启的 scope（例如 StreamDemo 的 `SensorLink`）仍在整次运行结束时关闭：它的开启位置是会话挂载，不随任何节点退休而被检查。
+- 单元自己开启的 scope 在 lifelong 的节点退休时，由现有的可达性回收照常处理；这是节点结束的既有规则，不是为 end 新增的清理。
+- 历史条目中资源引用的生命周期没有保证。
+
+**失败与取消。** 不变：含 lifelong 的程序中的失败仍按 9.1 终止整次运行。
 
 <a id="implementation"></a>
 ## 10. 实现位置
@@ -308,6 +374,11 @@ Stream close、lifelong 的局部结束、会话生产资源与历史资源的�
 | 视图读取、最新值投影（`latestContext`）、parser 输入、会话发布路由 | [App.hs](../sdk/Framework/Runtime/App.hs)、[Context.hs](../sdk/Framework/Runtime/Context.hs) |
 | 单元调度、就绪检查、运行监督 | [Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
 | 根帧／轮帧与节点进度、scope 待用查询 | [Frame.hs](../sdk/Framework/Runtime/Frame.hs)、[Graph.hs](../sdk/Framework/Runtime/Graph.hs) |
+| `end` 能力类与 Stream Layer、标签实例 | [Handler.hs](../sdk/Framework/Language/Handler.hs)、[Gen/Bind.hs](../sdk/Framework/Gen/Bind.hs)、[Gen/Emit/Handlers.hs](../sdk/Framework/Gen/Emit/Handlers.hs) |
+| 会话的已结束状态、排空与耗尽、等待者唤醒 | [Session.hs](../sdk/Framework/Runtime/Session.hs) |
+| 生产任务识别 `end`、单元结束通知 | [Runtime.hs](../sdk/Framework/Runtime.hs)、[App.hs](../sdk/Framework/Runtime/App.hs) |
+| 单元正常结束、并行汇合、lifelong 返回 | [Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
+| lifelong 的正常出口与后继读取的拒绝 | [Gen/Build/Sources.hs](../sdk/Framework/Gen/Build/Sources.hs) |
 | 生成的读取方法与路由、Stream 入口的会话包装、`Raw` 实例、会话步骤登记 | [Gen/Emit/Handlers.hs](../sdk/Framework/Gen/Emit/Handlers.hs)、[Gen/Emit/Program.hs](../sdk/Framework/Gen/Emit/Program.hs)、[Context.hs](../sdk/Framework/Runtime/Context.hs)（`streamHandle`） |
 
 ScopeTree 独立构建并保持无环；订阅与回调关系不作为 scope 父边。运行时不累计完整方法调用历史或无限 workflow 结果。
@@ -317,4 +388,4 @@ ScopeTree 独立构建并保持无环；订阅与回调关系不作为 scope 父
 
 本仓库按约定只做普通编译、生成结果审阅和示例观察，不新增测试框架、负例或穷举门槛。已有验证范围概述见 [Next stages](NEXT_STAGES.md#baseline)，逐次观察记录保留在 Git 历史。LSP 仓库的外部穷举模型尚未扩展到 Stream／lifelong。
 
-本版明确延期：正常 EOF／Done、Stream close、lifelong 的局部结束（当前由 9.1 的临时规则代替）、历史资源精细关闭与回收、嵌套 lifelong、多个持续来源组合触发一个 target、自动重试、时间周期声明、容量背压、任意外部 push callback 注册和跨 interpreter 存续。已有阻塞事件／队列读取、socket 接收及主动采样可作为单步来源（写法见 [4.1 节](#drives)）；不据此宣称自动适配所有外部回调 API。其中与结束和资源存续相关的项目转入[下一阶段](NEXT_STAGES.md#stages)。
+本版明确延期：来源结束后的资源清理与 Stream close、后继读取 lifelong 内部的发布、消费方提前退出（例如只取前若干条）、lifelong 的局部失败（当前由 9.1 的临时规则代替）、历史资源精细关闭与回收、嵌套 lifelong、多个持续来源组合触发一个 target、自动重试、时间周期声明、容量背压、任意外部 push callback 注册和跨 interpreter 存续。已有阻塞事件／队列读取、socket 接收及主动采样可作为单步来源（写法见 [4.1 节](#drives)）；不据此宣称自动适配所有外部回调 API。其中与结束和资源存续相关的项目转入[下一阶段](NEXT_STAGES.md#stages)。

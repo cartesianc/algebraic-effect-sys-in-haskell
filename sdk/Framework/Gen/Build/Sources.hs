@@ -69,11 +69,26 @@ resolveSources definitions defaultReaders prototype = do
         , chainReads = sort (nub [readContract point | (point, _) <- reads, readNode point == chainNode chain])
         }
   mapM_ companionRead reads
+  mapM_ (successorRead (assetDrives facts)) reads
   pure prototype { protoChains = map annotate (protoChains prototype), protoSources = reads
     , protoScopeOpenings = assetScopeOpenings facts }
   where
     effects = protoEffects prototype
     lifelongs = workflowLifelongs (protoWorkflow prototype)
+    -- lifelong 正常结束后后继继续执行，但把 lifelong 内部的发布交给后继尚未实现：
+    -- 单元的普通产物每次执行都会替换，持续资产属于本边界已经结束的会话。
+    -- 没有其他可见来源的读取在这里明确拒绝，不让它在运行时缺值，或为持续资产另行启动一次来源。
+    successorRead drives (point, plan) = case plan of
+      FromChains _ -> pure ()
+      _ -> case [boundary | (boundary, described) <- lifelongs
+                 , precedes (protoWorkflow prototype) boundary (readNode point)
+                 , readContract point `elem` map sessionAsset (lifelongSessions described)
+                     ++ [contractType | (node', contractType) <- drives, boundary `isPrefixOf` node']] of
+        boundary : _ -> Left (InvalidLifelong (readNode point) ("Asset " ++ readContract point
+          ++ " is published inside the lifelong at " ++ show boundary
+          ++ "; reading it after that lifelong ends is not implemented yet."
+          ++ " Its successors can read assets that were visible before the lifelong"))
+        [] -> pure ()
     -- 会话生产步骤的其他普通发布随交付读取（伴随发布），每一步都会替换。读取位置必须在调用前
     -- 已经领取该会话的交付：由该资产驱动的 Node，或以它为转折资产的选择读取；否则读到哪一步取决于调度。
     companionRead (point, FromChains nodes) = do
@@ -396,8 +411,9 @@ resolveSources definitions defaultReaders prototype = do
                     , node' `notElem` mounts, contractType `elem` map sessionAsset sessions]
               unless (all (`elem` requested) now) (analyzeUnits (nub (requested ++ now)))
         analyzeUnits []
-        -- lifelong 没有正常结束：排在它后面的后继不会执行。
-        pure [(False, [])]
+        -- 全部单元正常结束后 lifelong 成功返回，后继继续执行；来源不结束时后继不会开始。
+        -- 进入 lifelong 之前的发布照常交给后继；内部发布尚不外传（见 successorRead）。
+        pure [(True, retainPublications future publications), (False, [])]
     workflowSequence :: [WorkflowTree] -> [String] -> [(Bool, [(NodeId, String)])] -> [(String, Maybe NodeId)]
                      -> AssetAnalysis [(Bool, [(NodeId, String)])]
     workflowSequence children future states handoff = go positioned states

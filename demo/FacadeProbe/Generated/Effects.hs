@@ -202,7 +202,7 @@ newtype DescribeFilledError = DescribeFilledError String
   deriving (Eq, Show, Read)
 
 -- handler nextA：绑定到 FeedA。
-type NextALayer m = (SDK.Raises NextAError m, MonadIO m)
+type NextALayer m = (SDK.Ends m, SDK.Raises NextAError m, MonadIO m)
 class NextAHandler m where
   nextA :: m String
 
@@ -211,7 +211,7 @@ newtype NextAError = NextAError String
   deriving (Eq, Show, Read)
 
 -- handler nextB：绑定到 FeedB。
-type NextBLayer m = (SDK.Raises NextBError m, MonadIO m)
+type NextBLayer m = (SDK.Ends m, SDK.Raises NextBError m, MonadIO m)
 class NextBHandler m where
   nextB :: m String
 

@@ -4,14 +4,15 @@
 -- 会话按（lifelong 边界，生产该资产的 Context 注册名）区分；注册名与运行时绑定来源同名。
 -- Nothing 边界是 interpreter 托管的会话。
 module Framework.Runtime.Session
-  ( SessionKey, View, Delivery, Broken, Session, sessionKey, sessionBindings, sessionViews
-  , newSession, appendDelivery, breakSession, setSessionWorker, stopSession
+  ( SessionKey, View, Delivery, Broken, Stopped(..), SourceEnded(..), DeliveryDrained(..)
+  , Session, sessionKey, sessionBindings, sessionViews
+  , newSession, appendDelivery, breakSession, endSession, wakeSession, setSessionWorker, stopSession
   , awaitHistory, Cursor, newCursor, takeDelivery
   ) where
 
 import Control.Concurrent (ThreadId, killThread)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, modifyMVar_, putMVar, readMVar, swapMVar)
-import Control.Exception (SomeException, uninterruptibleMask_)
+import Control.Exception (Exception, SomeException, uninterruptibleMask_)
 import Control.Monad (void)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Sequence (Seq, (|>))
@@ -32,11 +33,28 @@ type Delivery environment cause = (View environment cause, ScopeBindings environ
 -- 生产失败（Error 协议诊断后的 Failure）或生产任务的原生异常；会话不再产出。
 type Broken cause = Either SomeException (Failure cause)
 
+-- 领取不到交付的原因。Drained：来源已正常结束，且已发布的交付都已领取（或所在单元正在结束）；
+-- 这是正常终止，不是失败。Broke：会话失败。
+data Stopped cause = Drained | Broke (Broken cause)
+
+-- SDK 内部的正常结束信号，以异常形式越过方法体；不是业务 Failure，不进入 Error 协议，
+-- 也不被方法体内的 catchError 接住。
+-- SourceEnded：Stream handler 调用 end，由生产任务接住并结束会话。
+data SourceEnded = SourceEnded
+instance Show SourceEnded where show _ = "SDK stream source ended"
+instance Exception SourceEnded
+
+-- DeliveryDrained：调用内第一次读取才领取交付，而会话已结束并排空；由单元调度接住并结束单元。
+data DeliveryDrained = DeliveryDrained
+instance Show DeliveryDrained where show _ = "SDK stream delivery drained"
+instance Exception DeliveryDrained
+
 data SessionState environment cause = SessionState
   { stateEntries :: Seq (ScopeBinding environment cause)
   -- 与 stateEntries 逐条对应。
   , stateCompanions :: Seq (ScopeBindings environment cause)
-  , stateBroken :: Maybe (Broken cause)
+  -- 会话不再接受新发布：来源正常结束（Drained）或失败（Broke）。已有条目保留。
+  , stateStopped :: Maybe (Stopped cause)
   -- 下一次变化时填入；等待方读到后重新取状态。每次变化换上新的空信号。
   , stateSignal :: MVar ()
   }
@@ -57,17 +75,26 @@ newSession key bindings views = do
   signal <- newEmptyMVar
   Session key bindings views <$> newMVar (SessionState Seq.empty Seq.empty Nothing signal) <*> newMVar Nothing
 
--- 两次相等的值仍是两条发布；会话已经失败时不再接受新条目。
+-- 两次相等的值仍是两条发布；会话已经结束或失败时不再接受新条目。
 appendDelivery :: Session environment cause -> ScopeBindings environment cause -> ScopeBinding environment cause -> IO ()
-appendDelivery session companions value = changeState session $ \state -> case stateBroken state of
+appendDelivery session companions value = changeState session $ \state -> case stateStopped state of
   Just _ -> Nothing
   Nothing -> Just state { stateEntries = stateEntries state |> value
                         , stateCompanions = stateCompanions state |> companions }
 
 breakSession :: Session environment cause -> Broken cause -> IO ()
-breakSession session reason = changeState session $ \state -> case stateBroken state of
+breakSession session reason = stopState session (Broke reason)
+
+-- 来源正常结束：封住发布并唤醒等待者。登记结束与禁止追加在同一临界区；
+-- 已发布的条目仍可领取，领取方排空后才得到 Drained。
+endSession :: Session environment cause -> IO ()
+endSession session = stopState session Drained
+
+-- 第一个原因生效：已经结束或失败的会话不改写原因。
+stopState :: Session environment cause -> Stopped cause -> IO ()
+stopState session reason = changeState session $ \state -> case stateStopped state of
   Just _ -> Nothing
-  Nothing -> Just state { stateBroken = Just reason }
+  Nothing -> Just state { stateStopped = Just reason }
 
 changeState :: Session environment cause
             -> (SessionState environment cause -> Maybe (SessionState environment cause)) -> IO ()
@@ -78,19 +105,30 @@ changeState session update = modifyMVar_ (sessionState session) $ \state -> case
     putMVar (stateSignal state) ()
     pure changed { stateSignal = fresh }
 
--- 等到状态满足条件；会话失败且条件仍不满足时返回失败。
-awaitState :: Session environment cause -> (SessionState environment cause -> Maybe result)
-           -> IO (Either (Broken cause) result)
-awaitState session ready = do
+-- 状态不变，只让等待者重新检查自己的打断条件（所在单元正在结束）。
+wakeSession :: Session environment cause -> IO ()
+wakeSession session = changeState session Just
+
+-- 等到状态满足条件。条件优先：结束或失败的会话仍先交出已有的结果；
+-- 条件不满足且会话已停止时返回原因。interrupted 是等待方自己的打断条件，
+-- 每次等待前检查，由 wakeSession 唤醒后生效，按 Drained 返回。
+awaitState :: Session environment cause -> IO Bool -> (SessionState environment cause -> Maybe result)
+           -> IO (Either (Stopped cause) result)
+awaitState session interrupted ready = do
   state <- readMVar (sessionState session)
-  case (ready state, stateBroken state) of
+  case (ready state, stateStopped state) of
     (Just result, _) -> pure (Right result)
     (Nothing, Just reason) -> pure (Left reason)
-    (Nothing, Nothing) -> readMVar (stateSignal state) >> awaitState session ready
+    (Nothing, Nothing) -> do
+      -- 状态快照先于检查：之后的 wakeSession 要么填入这份快照的信号，要么发生在检查之前。
+      halted <- interrupted
+      if halted then pure (Left Drained)
+        else readMVar (stateSignal state) >> awaitState session interrupted ready
 
 -- lifelong 外的有限读取：至少有一条发布后取当时的完整历史；之后的发布不改写这次视图。
-awaitHistory :: Session environment cause -> IO (Either (Broken cause) (View environment cause))
-awaitHistory session = awaitState session $ \state ->
+-- 来源结束后仍读到最后的完整历史；一条都没有发布就结束时返回 Drained。
+awaitHistory :: Session environment cause -> IO (Either (Stopped cause) (View environment cause))
+awaitHistory session = awaitState session (pure False) $ \state ->
   if Seq.null (stateEntries state) then Nothing else Just (stateEntries state)
 
 -- 消费游标属于（单元，会话）：记录已经交付的条数，每次交付推进一条。
@@ -102,11 +140,13 @@ newCursor :: IO Cursor
 newCursor = Cursor <$> newIORef 0
 
 -- 领取下一条尚未交付的发布；视图是到这一条为止的历史，另带这一条的伴随发布。
--- 有积压时立即返回，没有时挂起等待。
-takeDelivery :: Session environment cause -> Cursor -> IO (Either (Broken cause) (Delivery environment cause))
-takeDelivery session (Cursor position) = do
+-- 有积压时立即返回，没有时挂起等待；来源结束后先排空积压，游标到达末尾才返回 Drained。
+-- 游标前进只表示领取，不表示处理完成。
+takeDelivery :: Session environment cause -> Cursor -> IO Bool
+             -> IO (Either (Stopped cause) (Delivery environment cause))
+takeDelivery session (Cursor position) interrupted = do
   delivered <- readIORef position
-  outcome <- awaitState session $ \state ->
+  outcome <- awaitState session interrupted $ \state ->
     if Seq.length (stateEntries state) > delivered
       then Just (Seq.take (delivered + 1) (stateEntries state), Seq.index (stateCompanions state) delivered)
       else Nothing
@@ -116,6 +156,7 @@ takeDelivery session (Cursor position) = do
   pure outcome
 
 -- 运行层启动生产任务后登记；停止时取消并等待它退出，包括其中步骤的受控收尾。
+-- 任务已经自行结束时只等待它的完成信号。
 setSessionWorker :: Session environment cause -> ThreadId -> MVar () -> IO ()
 setSessionWorker session thread finished = void (swapMVar (sessionWorker session) (Just (thread, finished)))
 

@@ -93,7 +93,7 @@ instance WriteFirstLineLayer m => WriteFirstLineHandler m where
     pure []
 ```
 
-`XxxLayer m => XxxHandler m` 由 handler 名生成，Layer 是方法体可用能力的边界：按表示类型的读取 `Reads T`、挂接 parser 与 Pure 的 `raw`、本 handler 的 `raise` 和 `MonadIO`。方法体里没有上游、scope 或资产名：`FileSession` 由 gen 在方法体之前开启；`require @FileHandle` 读的是 `OpenedFile`，这由绑定它的 effect 的 demands 决定。同一个 handler 可以注册到多个 effect，各自读到不同的资产。IO 和解析写在 handler 方法体内。
+`XxxLayer m => XxxHandler m` 由 handler 名生成，Layer 是方法体可用能力的边界：按表示类型的读取 `Reads T`、挂接 parser 与 Pure 的 `raw`、本 handler 的 `raise`、Stream handler 的 `end` 和 `MonadIO`。方法体里没有上游、scope 或资产名：`FileSession` 由 gen 在方法体之前开启；`require @FileHandle` 读的是 `OpenedFile`，这由绑定它的 effect 的 demands 决定。同一个 handler 可以注册到多个 effect，各自读到不同的资产。IO 和解析写在 handler 方法体内。
 
 [完整 Handlers.hs](../demo/FileDemo/Handlers.hs) · [handler、读取与错误写法](#handlers)
 
@@ -569,7 +569,7 @@ import FileDemo.Types
 ```
 
 - `-Werror=missing-methods` 保证每个声明的方法都有实现。
-- `Reads(..)`、`Raw(..)`、`Raises(..)` 按类导入：`require` 同时是注册字段名，按名字单独导入会产生歧义。只用到其中一部分时只导入需要的类；读取持续资产时另导入 `History` 与 `latest`、`historyEntries`、`historySize`。
+- `Reads(..)`、`Raw(..)`、`Raises(..)` 按类导入：`require` 同时是注册字段名，按名字单独导入会产生歧义。只用到其中一部分时只导入需要的类；Stream handler 要报告来源结束时另导入 `Ends(..)`；读取持续资产时另导入 `History` 与 `latest`、`historyEntries`、`historySize`。
 
 ### instance 头
 
@@ -586,6 +586,7 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
 | `Reads (History T) m` | 绑定它的 effect `streams` 了持续资产 | `require @(History T)` |
 | `Raw m` | 绑定成挂接的 parser 或 Pure | `raw` |
 | `Raises 名字Error m` | 总是 | `raise (名字Error "...")` |
+| `Ends m` | 绑定成 Stream 的 handler | `end` |
 | `MonadIO m` | Pure 以外总是 | `liftIO` |
 
 - **对载体 `m` 泛型**：Layer 不含 Input 的 effect 类、细化资产或其他 handler 的类，方法体只能使用上表的能力；越过 Layer 的读取，GHC 直接报错。单独的 `requests` 不带来 `Reads`。
@@ -725,7 +726,7 @@ ast = operateFile
 | `chained` | 按顺序逐个执行 | 立即停止，后面的子项不执行 | 各子项结果按顺序拼接 |
 | `parallel` | 同时执行 | 等全部子项结束，按声明顺序取第一个失败 | 全部成功时按声明顺序拼接 |
 | `alternative` | 只执行一个候选 | 候选的失败原样传播 | 只有被选中候选的结果 |
-| `lifelong` | 各单元独立重复执行，到达 target 时等待其订阅资产的交付 | 终止整次运行（临时规则） | 没有正常结束 |
+| `lifelong` | 各单元独立重复执行，到达 target 时等待其订阅资产的交付 | 终止整次运行（临时规则） | 全部单元在来源结束并排空后结束时成功返回，不带结果；来源不结束时不返回 |
 
 程序里含 `lifelong` 时，`parallel` 中任何子项失败也立即终止整次运行，不再等待其他子项结束。
 
@@ -767,7 +768,7 @@ monitor = lifelong
 
 - **单元**：直接子项各是一个独立推进的单元，上例的读数单元和心跳单元互不等待。
 - **一次执行**：每个末端用 `streams` 订阅一个持续资产；执行到它时先领取一条新交付（没有就等待），本次执行完成后才开始下一次。
-- **不会正常结束**：放在 lifelong 后面的 branch 不会执行；含 lifelong 的程序中任何失败都会结束整次运行（临时规则）。
+- **结束**：Stream handler 用 `end` 报告来源结束后，各单元处理完已发布的交付就结束，lifelong 成功返回，放在它后面的 branch 接着执行；来源不结束时后面的 branch 不会执行。含 lifelong 的程序中任何失败都会结束整次运行（临时规则）。
 
 单元划分、交付、会话与失败的完整写法见[持续资产与 lifelong](#stream)。
 
@@ -874,7 +875,7 @@ instance ShowTemperatureLayer m => ShowTemperatureHandler m where
     pure []
 ```
 
-- **Stream handler**一次返回一份原始输入；节奏由方法体自己的阻塞或等待决定，SDK 不加间隔，立即返回的方法会持续高频运行。它的 Input（这里是 `SensorLink`）由 gen 作为前驱装配：传感器连接在第一次读数时开启，并在会话的各步骤间保持。
+- **Stream handler**一次返回一份原始输入；节奏由方法体自己的阻塞或等待决定，SDK 不加间隔，立即返回的方法会持续高频运行。来源没有下一份输入时用 `end` 退出（见下面的“结束与失败”）；StreamDemo 的两个来源不会结束。它的 Input（这里是 `SensorLink`）由 gen 作为前驱装配：传感器连接在第一次读数时开启，并在会话的各步骤间保持。
 - **parser** 和挂在 Excu 下的 Context 写法相同：`raw` 是会话本次取得的那份原始输入（单元素 list，这里用 `concat` 取出），不会再执行 Stream handler 另取一份。发布、历史和交付都由 SDK 完成，方法体里不写循环、发布或回调。
 - **`History T`**：从会话首条发布到本次交付为止的不可变序列。`latest` 取本次交付的那一条，`historyEntries` 取全部，`historySize` 取条数；相等的两次发布是两条。
 
@@ -898,13 +899,26 @@ ast = chained [setup, monitor]
 - **每次执行互相隔离**：上一次执行中产生的普通资产不会被这一次读到。
 - **订阅规则**：lifelong 里的每个末端（连同它的 Input 链）恰好订阅一个持续资产，并且不再读取别的持续资产；`streams` 不能用在 lifelong 外的末端。lifelong 不能嵌套，内部不能有空分支。
 - **会话**：同一个 lifelong 里订阅同一资产的单元共享一个生产会话，各自独立推进；不同 lifelong 的会话互相独立。会话在进入 lifelong 时启动；生产步骤用到的资源（例如 `SensorLink` 开启的连接）在各步骤间保持，退出时关闭。持续资产的生产不能依赖另一个持续资产。
-- **外部组合**：`chained [setup, monitor]` 先执行 setup；lifelong 没有正常结束，排在它后面的节点不会执行；`parallel [monitor, otherWork]` 两者同时运行。
+- **外部组合**：`chained [setup, monitor]` 先执行 setup；`chained [monitor, after]` 中 after 等 monitor 的全部单元结束后执行，来源不结束时不会执行；`parallel [monitor, otherWork]` 两者同时运行。
 
 ### 结束与失败
 
-- **没有正常结束**：持续程序运行到被取消（Ctrl-C）为止。取消时 SDK 停止全部单元和会话，等它们收尾，再按 ScopeTree 关闭资源；StreamDemo 会打印 `[sensor] disconnected`。
+- **正常结束**：Stream handler 在来源没有下一份输入时调用 `end`。它和返回值、`raise` 并列，是方法体的第三个出口；签名仍是 `m String`，只有 Stream handler 的 Layer 里有它：
+
+  ```haskell
+  -- 示意，不在 StreamDemo 中；需要 import Framework.SDK (Ends(..))
+  instance NextLineLayer m => NextLineHandler m where
+    nextLine = do
+      finished <- liftIO (hIsEOF stdin)
+      if finished then end else liftIO getLine
+  ```
+
+  `end` 不是失败，不进入 Error 诊断。这一步不交出输入，parser 不执行；已经发布的交付仍会被各单元领取完。单元在它要领取的来源已经结束并领完时结束：尚未执行的后继放弃，已完成的部分不回滚。全部单元结束后 lifelong 成功返回（不带结果），排在后面的节点继续执行。
+- **结束后能读什么**：lifelong 后面的节点可以读取进入 lifelong 之前就可见的资产。读取 lifelong 内部发布的资产（单元的产物、持续资产本身）尚未实现，gencode 会报 `InvalidLifelong`。
+- **结束后的资源**：这一步没有改变清理规则。只在生产会话中开启的资源（例如 `SensorLink` 的连接）仍在整次运行结束时关闭，所以后面的节点执行完之后才会看到 `[sensor] disconnected`。
+- **不结束的来源**：StreamDemo 的来源不调用 `end`，持续程序运行到被取消（Ctrl-C）为止。取消时 SDK 停止全部单元和会话，等它们收尾，再按 ScopeTree 关闭资源；StreamDemo 会打印 `[sensor] disconnected`。
 - **失败（临时规则）**：程序里含 lifelong 时，结构化失败（生产、解析、某个单元或任何 branch）在完成 Error 诊断后终止整次运行：取消全部任务、等待收尾，最后报告最初的那个失败；原生异常直接进入监督并在收尾后重新抛出。lifelong 的 close 语义设计后再改为局部结束。
-- **lifelong 外读取持续资产**：普通 `requires "T"` 只读取一次，取得最新一条。没有交付时，由 interpreter 托管的会话产出（至少等到一条）；这个会话保持到程序退出。
+- **lifelong 外读取持续资产**：普通 `requires "T"` 只读取一次，取得最新一条。没有交付时，由 interpreter 托管的会话产出（至少等到一条）；这个会话保持到程序退出。来源已经 `end` 时读到最后一条，不重新启动来源；一条都没有发布就结束时报 `ContextNotInitialized`。
 
 ### 运行与查看
 
@@ -1003,7 +1017,7 @@ SDK 不主动检查健康，不自动恢复或重开失效实例。资源共享�
 
 | 故障 | 什么时候报 | 怎么改 |
 | --- | --- | --- |
-| `ContextNotInitialized` | 普通读取已确定生产耗尽，重读后仍缺值；或在不等待的场合缺值：Error 诊断、自动收尾与 close 期间、资源 Context 没有本链已开启实例的绑定、持续资产在不能启动会话时没有本次视图。未知或仍可能生产的普通读取继续等待 | 在读取之前的链上用 `requests` 驱动它，并检查生产失败；资源只在 scope 内读取（Input 链上有对应的 Scoped） |
+| `ContextNotInitialized` | 普通读取已确定生产耗尽，重读后仍缺值；或在不等待的场合缺值：Error 诊断、自动收尾与 close 期间、资源 Context 没有本链已开启实例的绑定、持续资产在不能启动会话时没有本次视图，或来源没有发布就已经 `end`。未知或仍可能生产的普通读取继续等待 | 在读取之前的链上用 `requests` 驱动它，并检查生产失败；资源只在 scope 内读取（Input 链上有对应的 Scoped） |
 | `AmbiguousContextBinding` | 普通资产有多个已发布的可见来源，运行时无法确定唯一绑定；生成期通常已拦下 | 细化资产或调整 AST，确保实际来源唯一 |
 | `CaseNotSelected 契约` | 读取和类型资产的分支契约（例如 `FileTextBlank`），资产当前却是另一个构造器 | 分支契约只在选中对应构造器的 alternative 候选中读取；其他地方读取基础资产再 `case` |
 
@@ -1104,8 +1118,8 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 ## 当前限制
 
 - **未实现的能力**：middleware、通用结构适配尚未实现。Stream／lifelong 的结束与清理进入本轮[六阶段计划](NEXT_STAGES.md#stages)，middleware 保留为[后续专题](NEXT_STAGES.md#middleware)。本指南只描述当前写法。
-- **持续执行的延期项**：没有正常结束（EOF）、Stream close、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；完整历史一直保留，持续运行时内存随发布增长。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
+- **持续执行的延期项**：来源结束后的资源清理与 Stream close、后继读取 lifelong 内部的发布、消费方提前退出、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；完整历史一直保留，持续运行时内存随发布增长。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
 - **Stage 3 已知实现限制**：持续资产作为 scope 开启参数尚未接通。见 [Next stages](NEXT_STAGES.md#current-limits)。
 - **handler 复用的边界**：同一个 handler 可以注册到多个 effect，但各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能读一份资产。Stream 的驱动方式和 Error 的驱动链仍待确定，见 [Stage 2：本阶段不处理](NEXT_STAGES.md#stage-2-later)。
-- **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。实例按参数生产身份共享、按剩余程序可达性回收，见[主设计](LATEST_DESIGN.md#scope-identity)；持续资产作为开启参数、历史资源精细释放与正常 end 仍待后续阶段。
+- **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。实例按参数生产身份共享、按剩余程序可达性回收，见[主设计](LATEST_DESIGN.md#scope-identity)；持续资产作为开启参数、历史资源精细释放与来源结束后的清理仍待后续阶段。
 - **构建方式**：SDK 目前随仓库内的示例一起编译，不能作为独立依赖引入。

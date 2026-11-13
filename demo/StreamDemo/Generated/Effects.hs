@@ -49,7 +49,7 @@ newtype DisconnectSensorError = DisconnectSensorError String
   deriving (Eq, Show, Read)
 
 -- handler nextReading：绑定到 TemperatureFeed。
-type NextReadingLayer m = (SDK.Raises NextReadingError m, MonadIO m)
+type NextReadingLayer m = (SDK.Ends m, SDK.Raises NextReadingError m, MonadIO m)
 class NextReadingHandler m where
   nextReading :: m String
 
@@ -67,7 +67,7 @@ newtype ParseTemperatureError = ParseTemperatureError String
   deriving (Eq, Show, Read)
 
 -- handler nextBeat：绑定到 HeartbeatClock。
-type NextBeatLayer m = (SDK.Raises NextBeatError m, MonadIO m)
+type NextBeatLayer m = (SDK.Ends m, SDK.Raises NextBeatError m, MonadIO m)
 class NextBeatHandler m where
   nextBeat :: m String
 

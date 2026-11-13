@@ -9,7 +9,7 @@
 module Framework.Runtime
   ( App, Target, targetApp
   , targetName, lowerTarget, Handoff, noHandoff, scopeHandlers, cleanupTargets
-  , DeliveryFrame, newDeliveryFrame, frameDelivery, boundarySession
+  , DeliveryFrame, newDeliveryFrame, frameDelivery, haltFrame, frameStopping, boundarySession
   , SessionSteps, receiveSteps, sessionLauncher
   ) where
 
@@ -23,11 +23,12 @@ import Framework.Runtime.Binding (Binding(..))
 import Framework.Runtime.Session
 import Framework.Runtime.Scope
 import Framework.Prototype
-import Control.Concurrent (forkIOWithUnmask)
+import Control.Concurrent (forkIOWithUnmask, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar, newEmptyMVar, newMVar, putMVar, readMVar, tryReadMVar)
 import Control.Exception
   (SomeAsyncException, SomeException, evaluate, finally, fromException, mask, throwIO, try, uninterruptibleMask_)
-import Control.Monad (forM)
+import Control.Monad (forM, forever, void)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (nubBy)
 
 -- 末端句柄与调用交接 -----------------------------------------------------------
@@ -57,11 +58,23 @@ noHandoff = Handoff [] []
 -- 单元内对这些资产的显式 request 发布进入对应会话。
 data DeliveryFrame environment cause = DeliveryFrame
   { frameSessions :: [(String, (Session environment cause, Cursor))]
-  , frameTaken :: MVar [(String, MVar (Either (Broken cause) (Delivery environment cause)))]
+  , frameTaken :: MVar [(String, MVar (Either (Stopped cause) (Delivery environment cause)))]
+  -- 本次执行所需的某个来源已结束并排空：单元正在结束，不再领取新的交付。
+  , frameHalted :: IORef Bool
   }
 
 newDeliveryFrame :: [(String, (Session environment cause, Cursor))] -> IO (DeliveryFrame environment cause)
-newDeliveryFrame sessions = DeliveryFrame sessions <$> newMVar []
+newDeliveryFrame sessions = DeliveryFrame sessions <$> newMVar [] <*> newIORef False
+
+-- 单元结束通知：先置位，再唤醒本 frame 各会话上的等待者重新检查。
+-- 同一单元内仍在等另一个来源的并行路径由此退出等待；其他单元的等待者只是重查后继续等待。
+haltFrame :: DeliveryFrame environment cause -> IO ()
+haltFrame frame = do
+  writeIORef (frameHalted frame) True
+  mapM_ (wakeSession . fst . snd) (frameSessions frame)
+
+frameStopping :: DeliveryFrame environment cause -> IO Bool
+frameStopping = readIORef . frameHalted
 
 -- 进入 lifelong 时取得本边界的会话：生产步骤从进入时的交接开始，与来源分析给会话挂载的环境一致。
 boundarySession :: RuntimeGraph environment cause -> NodeId -> String -> Handoff environment cause
@@ -69,23 +82,30 @@ boundarySession :: RuntimeGraph environment cause -> NodeId -> String -> Handoff
 boundarySession graph boundary source (Handoff given views) = obtainSession graph (Just boundary, source) given views
 
 -- 不是本 lifelong 的会话资产时为 Nothing。没有新发布时挂起；有积压时立即领取下一条。
-frameDelivery :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Broken cause) (View environment cause)))
+-- 来源结束并排空，或单元正在结束而本 frame 尚未领取该资产时，返回 Drained。
+frameDelivery :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Stopped cause) (View environment cause)))
 frameDelivery frame source = fmap (fmap fst) <$> frameTake frame source
 
-frameTake :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Broken cause) (Delivery environment cause)))
+frameTake :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Stopped cause) (Delivery environment cause)))
 frameTake frame source = do
   (session, cursor) <- lookup source (frameSessions frame)
   pure $ do
-    (slot, fresh) <- modifyMVar (frameTaken frame) $ \taken -> case lookup source taken of
-      Just slot -> pure (taken, (slot, False))
+    halted <- frameStopping frame
+    claimed <- modifyMVar (frameTaken frame) $ \taken -> case lookup source taken of
+      Just slot -> pure (taken, Just (slot, False))
+      -- 单元正在结束：不再开始新的领取，已经领取的视图仍由本次执行共享。
+      Nothing | halted -> pure (taken, Nothing)
       Nothing -> do
         slot <- newEmptyMVar
-        pure ((source, slot) : taken, (slot, True))
-    if not fresh then readMVar slot else mask $ \restore -> do
-      outcome <- try (restore (takeDelivery session cursor))
-      -- 领取被取消时也填入结果，同一 DeliveryFrame 的其他等待方不会悬挂。
-      putMVar slot (either (Left . Left) id outcome)
-      either throwIO pure outcome
+        pure ((source, slot) : taken, Just (slot, True))
+    case claimed of
+      Nothing -> pure (Left Drained)
+      Just (slot, False) -> readMVar slot
+      Just (slot, True) -> mask $ \restore -> do
+        outcome <- try (restore (takeDelivery session cursor (frameStopping frame)))
+        -- 领取被取消时也填入结果，同一 DeliveryFrame 的其他等待方不会悬挂。
+        putMVar slot (either (Left . Broke . Left) id outcome)
+        either throwIO pure outcome
 
 frameDeliveries :: DeliveryFrame environment cause -> IO [(String, Delivery environment cause)]
 frameDeliveries frame = do
@@ -150,6 +170,7 @@ receiveSteps = ReceiveSteps
 -- 每条交付带上本次生产步骤（各挂载当前一次执行）已经发布的普通资产，作为伴随发布。
 -- 各步骤共用会话的 scope 使用登记，生产资源跨步骤保持；会话停止时撤销登记，根帧退休后统一回收。
 -- 生产失败（已经过 Error 协议诊断）或原生异常使会话失败并停止，并通知运行监督；
+-- Stream handler 的 end 正常结束会话：封住发布、唤醒等待者，不通知监督，已发布的交付仍可领取；
 -- 取消只结束任务，步骤内照常收尾。
 -- 启动到登记在不可中断区内完成，取消不会落在任务已启动、尚未登记之间。任务继承这一屏蔽，只在生产时解除：
 -- 报告失败、撤销使用登记和填写完成信号都不会被停止请求打断，stopSession 一定等得到完成信号。
@@ -167,17 +188,25 @@ sessionLauncher graph steps onBroken session = uninterruptibleMask_ $ do
       Left (exception :: SomeException)
         | Just (_ :: SomeAsyncException) <- fromException exception -> pure ()
         | otherwise -> broken (Left exception)
-      Right problem -> broken (Right problem)
+      Right (Just problem) -> broken (Right problem)
+      -- 正常结束后任务留在原地，直到会话被停止（lifelong 返回或运行结束）：
+      -- 排空期间继续持有会话的使用登记，资源释放的时机与结束之前相同；结束后的清理另行设计。
+      Right Nothing -> do
+        endSession session
+        void (try (unmask (forever (threadDelay 3600000000))) :: IO (Either SomeException ()))
   setSessionWorker session thread finished
   where
     (boundary, source) = sessionKey session
     mounts = sessionMountsOf (runtimePrototype graph) boundary source
     produce owner = case (lookup source steps, mounts) of
       (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ do
-        (raw, _, _) <- lowerWith graph streamMount (step owner Nothing []) stream
-        case raw of
-          Left problem -> pure (Left problem)
-          Right text -> first <$> lowerWith graph parserMount (step owner (Just text) sink) parser
+        -- end 只来自 Stream 单步：这一步没有原始输入，parser 不执行，也不发布。
+        taken <- try (lowerWith graph streamMount (step owner Nothing []) stream)
+        case taken of
+          Left SourceEnded -> pure (Just Nothing)
+          Right (Left problem, _, _) -> pure (Just (Just problem))
+          Right (Right text, _, _) ->
+            either (Just . Just) (const Nothing) . first <$> lowerWith graph parserMount (step owner (Just text) sink) parser
       _ -> ioError (userError ("Session steps differ from the prototype mounts for " ++ source
         ++ "; regenerate with the SDK effect-codegen command"))
     sink = [(source, \value -> do
@@ -191,8 +220,8 @@ sessionLauncher graph steps onBroken session = uninterruptibleMask_ $ do
     noDelivery = const Nothing
     first (outcome, _, _) = outcome
     broken reason = breakSession session reason >> onBroken reason
-    -- 逐次执行直到第一次失败；失败交回不可中断区报告。
-    loop step = step >>= either pure (const (loop step))
+    -- 逐次执行直到来源结束（Nothing）或第一次失败（Just problem）；结果交回不可中断区登记。
+    loop step = step >>= maybe (loop step) pure
 
 -- 会话挂载只来自同一份原型：lifelong 边界的会话，或 interpreter 托管的会话；原型按资产名记录。
 sessionMountsOf :: PrototypeReference -> Maybe NodeId -> String -> Maybe [NodeId]

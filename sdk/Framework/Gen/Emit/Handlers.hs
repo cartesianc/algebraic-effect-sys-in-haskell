@@ -44,7 +44,7 @@ renderHandlers unit loaded = do
 -- 生成区的装配：effect 标签、handler 能力的实例与 effect 方法。
 support :: Unit -> String
 support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers unit) ++ routeInstances ++ rawInstances
-    ++ concatMap entryDefinitions (specifications unit))
+    ++ endInstances ++ concatMap entryDefinitions (specifications unit))
     ++ scopeHandlers ++ scopeCleanups ++ errorHandlers ++ injectionTable
   where
     supportHeader =
@@ -91,6 +91,12 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
         , "  raw = At (" ++ expression ++ ")"
         , "" ]
       | specification <- specifications unit, Just expression <- [rawExpression unit specification] ]
+    -- end 只在 Stream 的标签下有实例：结束这个 effect 所在的生产会话，同一 handler 的其他绑定不受影响。
+    endInstances = concat
+      [ [ "instance FrameworkRuntime.Ends (At " ++ show (name specification) ++ ") where"
+        , "  end = At FrameworkRuntime.endStream"
+        , "" ]
+      | specification <- specifications unit, Stream _ <- [typing specification] ]
 
     -- effect 方法：外层包装由类别决定；方法体先驱动、再执行 Input 前驱，最后在本 effect 的标签下执行 handler。
     entryDefinitions specification =

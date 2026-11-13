@@ -291,6 +291,12 @@ instance FrameworkRuntime.Raw (At "ParserA") where
 instance FrameworkRuntime.Raw (At "ParserB") where
   raw = At ((: []) <$> nextFeedB)
 
+instance FrameworkRuntime.Ends (At "FeedA") where
+  end = At FrameworkRuntime.endStream
+
+instance FrameworkRuntime.Ends (At "FeedB") where
+  end = At FrameworkRuntime.endStream
+
 getReportPath :: FrameworkGenerated.App FrameworkGenerated.ReportPath
 getReportPath = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ReportLocation"
     (\value bindings -> bindings { FrameworkGenerated.boundReportLocation = Just value })) $

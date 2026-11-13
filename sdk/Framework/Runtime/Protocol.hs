@@ -64,6 +64,9 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 解析器本次的原始输入；只有会话调用解析器时才安装。
   streamRawInput :: m (Maybe String)
   streamRawInput = pure Nothing
+  -- Stream handler 的 end：退出本次生产步骤，由生产任务接住并正常结束会话。
+  -- 不是 Failure，不经过 Error 诊断，也不被方法体内的 catchError 接住。
+  endStream :: m value
 
 -- 原子句柄（Excu.handler、Scoped.open／close）的统一输出：是否成功，附带方法体交出的 list。
 -- 只在 SDK 内部交给挂在该句柄下（可经一串 Pure）的 Context；没有挂接时被丢弃，注册与 handler 签名都看不到它。
