@@ -23,11 +23,11 @@ import Framework.Runtime.Protocol (ScopeFault(..), ScopeInput(..))
 import Framework.Runtime.Identity (Execution)
 import Framework.Runtime.Frame (ExecutionFrame)
 import Control.Concurrent.MVar (MVar, newMVar, newEmptyMVar, modifyMVar, readMVar, withMVar, putMVar)
-import Control.Exception (SomeException, displayException, mask, try, finally, uninterruptibleMask_)
+import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, mask, try, finally, uninterruptibleMask_)
 import Control.Monad (forM, forM_, when, void)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef')
 import Data.List (find, sortOn, nub)
-import Data.Maybe (isJust)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Unique (Unique, hashUnique, newUnique)
 
 -- 生命周期状态 ---------------------------------------------------------------
@@ -139,8 +139,9 @@ newScopeUser handlers execution = do
   ScopeUser <$> newUnique <*> pure execution <*> newIORef [] <*> newIORef [] <*> pure coordinator
 
 -- 捕获一次实际开启的实例和绑定；业务仍只实现原来的 close 方法。
+-- 诊断回调同时交回可能收到的取消，由收尾边界在其余实例处理完后传播。
 data ScopeCleanup cause = ScopeCleanup
-  (Unique -> SomeException -> IO (Failure cause))
+  (Unique -> SomeException -> IO (Failure cause, Maybe SomeException))
   (Unique -> IO (Either (Failure cause) ()))
 
 newScopeHandler :: String -> [String] -> Maybe String -> IO (ScopeHandler environment cause)
@@ -426,8 +427,12 @@ cleanupAvailable handlers = mask $ \restore -> sweep restore [] []
                 outcome <- try (restore (action ticket))
                 case outcome of
                   Left exception -> do
-                    failure <- interrupted ticket exception
-                    pure [(Just exception, failure)]
+                    (failure, cancellation) <- interrupted ticket exception
+                    -- 原 close 已取消时保留第一次取消；否则传播诊断期间收到的取消。
+                    let propagated = case fromException exception :: Maybe SomeAsyncException of
+                          Just _ -> exception
+                          Nothing -> fromMaybe exception cancellation
+                    pure [(Just propagated, failure)]
                   Right (Left failure) -> pure [(Nothing, failure)]
                   Right (Right ()) -> pure []) `finally` do
                     writeIORef (scopeCleanup slot) Nothing

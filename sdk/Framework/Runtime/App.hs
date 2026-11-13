@@ -24,7 +24,7 @@ import Framework.Language.History (History, historyView)
 import Framework.Runtime.Session (Broken, View, awaitHistory)
 import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
-import Control.Exception (Exception, SomeException, displayException, fromException, mask, mask_, throwIO, try, finally)
+import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, fromException, mask, mask_, throwIO, try, finally)
 import Control.Monad (filterM, forM, forM_, when)
 import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO(..))
@@ -693,16 +693,18 @@ captureScopeCleanup environment attempt slot =
               restore (action inside) `finally` detachScopeUser cleanupUser
             cleanup permit = isolated permit (runExceptT . runReaderT close)
             -- 生命周期锁已在 runClose 中释放；关闭预约仍保持到本次诊断完成。
-            -- 诊断失败不能吞掉原来的取消，外层继续保存并传播该 SomeException。
+            -- 诊断中的取消单独交回收尾层，保留原关闭故障，等其余实例收尾后再传播。
             interrupted permit exception = isolated permit $ \inside -> do
               let problem = scopeFailureTarget name (Just slot)
                     (fault name (wrapFault attempt) (ScopeCleanupInterrupted (displayException exception)))
                   AppRun diagnosing = handleFailure (throwError problem :: App env cause ())
               result <- try (runExceptT (runReaderT diagnosing inside))
               pure $ case result of
-                Left (_ :: SomeException) -> problem
-                Right (Left diagnosed) -> diagnosed
-                Right (Right ()) -> problem
+                Left diagnostic
+                  | Just (_ :: SomeAsyncException) <- fromException diagnostic -> (problem, Just diagnostic)
+                  | otherwise -> (problem, Nothing)
+                Right (Left diagnosed) -> (diagnosed, Nothing)
+                Right (Right ()) -> (problem, Nothing)
         writeIORef (scopeCleanup slot) (Just (ScopeCleanup interrupted cleanup))
   where name = scopeName (family attempt)
 

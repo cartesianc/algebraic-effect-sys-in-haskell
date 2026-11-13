@@ -357,6 +357,8 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 
 **关闭失败补齐（2026-11-13）：** close 中未转换为 `raise` 的普通 IO 异常改为与 `raise` 一样只记录、汇总，只有取消向外传播；同时移除开启参数观察中已不参与匹配的读取／驱动标记（SDK 内部协议，生成代码不受影响）。`cabal build all --offline -j1` 通过；ScopeReuseDemo、ScopeInstancesDemo、OpenFilesDemo、FileDemo 运行均为 `Succ`。临时让 ScopeReuseDemo 的 close 抛出 `userError` 并重新生成：close 故障以 `ScopeCleanupInterrupted` 汇总输出，其后的 VerifyReuse 照常执行，整次运行仍为 `Succ`、退出码 0；该临时改动已还原。close 中的取消未在本次实测。
 
+**关闭诊断中的取消（2026-11-13）：** 诊断回调单独交回其间收到的取消，收尾层保留原关闭故障信息，继续清理其他实例，再由现有边界传播取消；原 close 已取消时保留第一次取消，不被诊断中的第二次取消覆盖。handler、注册和生成代码不变。`cabal build all --offline -j1` 通过。按用户要求运行临时 SDK 集成探针，复用 ScopeReuseDemo 的 Prototype／AST，以受控 target 动作经过真实 App、Error、Scope、Graph 和 `runProgram`，用 MVar 握手将取消准确送到诊断线程。六项均通过：普通 close 异常后分别在 detect／resolve 中取消、普通诊断异常、原 close 取消后诊断普通异常、原 close 取消后诊断再次取消，以及正常关闭；确认取消时后继不执行、普通异常时后继继续、其他 scope 完成收尾、close 不重试、原关闭故障信息保留。用 `aff3d3d` 的两份运行时源码临时覆盖编译，前两项均复现旧版吞掉取消并继续后继。探针未加入仓库；本次未复跑完整业务 demo、未重新生成 facade，也未穷举并发交错。
+
 本次没有引入按位置的读取计划、业务方法体内的进度登记或 STM 资产 state。普通资产的来源可见性、捕获和缺值等待保持；[可见范围内的等待](#stage-2-await)在此之后单独推进，复用生产身份和执行帧。持续资产作为 scope 开启参数、Stream 正常 end、历史资源精细释放、容量背压和 Error 驱动重开仍由后续阶段收敛。
 
 <a id="stage-3"></a>
