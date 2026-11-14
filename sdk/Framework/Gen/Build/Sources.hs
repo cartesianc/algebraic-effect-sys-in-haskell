@@ -69,26 +69,35 @@ resolveSources definitions defaultReaders prototype = do
         , chainReads = sort (nub [readContract point | (point, _) <- reads, readNode point == chainNode chain])
         }
   mapM_ companionRead reads
-  mapM_ (successorRead (assetDrives facts)) reads
+  mapM_ successorRead reads
   pure prototype { protoChains = map annotate (protoChains prototype), protoSources = reads
     , protoScopeOpenings = assetScopeOpenings facts }
   where
     effects = protoEffects prototype
     lifelongs = workflowLifelongs (protoWorkflow prototype)
-    -- lifelong 正常结束后后继继续执行，但把 lifelong 内部的发布交给后继尚未实现：
-    -- 单元的普通产物每次执行都会替换，持续资产属于本边界已经结束的会话。
-    -- 没有其他可见来源的读取在这里明确拒绝，不让它在运行时缺值，或为持续资产另行启动一次来源。
-    successorRead drives (point, plan) = case plan of
-      FromChains _ -> pure ()
-      _ -> case [boundary | (boundary, described) <- lifelongs
-                 , precedes (protoWorkflow prototype) boundary (readNode point)
-                 , readContract point `elem` map sessionAsset (lifelongSessions described)
-                     ++ [contractType | (node', contractType) <- drives, boundary `isPrefixOf` node']] of
-        boundary : _ -> Left (InvalidLifelong (readNode point) ("Asset " ++ readContract point
-          ++ " is published inside the lifelong at " ++ show boundary
-          ++ "; reading it after that lifelong ends is not implemented yet."
-          ++ " Its successors can read assets that were visible before the lifelong"))
+    -- lifelong 之后读取持续资产：读已经结束的那个 lifelong 会话的最新一条，不另行启动来源。
+    -- 先后排列的多个 lifelong 有同一会话时读最近结束的那个；互不先后（例如并行）时“最近”取决于调度，拒绝。
+    successorRead (point, FromSession) =
+      let ended = [boundary | (boundary, described) <- lifelongs
+            , precedes (protoWorkflow prototype) boundary (readNode point)
+            , readContract point `elem` map sessionAsset (lifelongSessions described)]
+          unordered = [(left, right) | left <- ended, right <- ended, left < right
+            , not (precedes (protoWorkflow prototype) left right || precedes (protoWorkflow prototype) right left)]
+      in case unordered of
+        (left, right) : _ -> Left (InvalidLifelong (readNode point) ("Asset " ++ readContract point
+          ++ " is streamed by the lifelongs at " ++ show left ++ " and " ++ show right
+          ++ ", which are not ordered; which one ended last depends on scheduling. Order them, or refine the contract"))
         [] -> pure ()
+    successorRead _ = pure ()
+    -- 后继读取 lifelong 内部发布的资产：资产按来源保留最新一次发布（require 读最新值）。
+    -- 同一单元内互斥位置（不同 alternative 候选）在不同轮发布同一契约时，按轮次先后取最新，不是并发写入；
+    -- 来自不同单元、同一轮可能都发布、或与 lifelong 之外的来源并存时，仍按来源唯一规则拒绝。
+    unitsAll = concat [lifelongUnits described | (_, described) <- lifelongs]
+    retainedChoice reader sources = case nub [unit | source' <- sources, unit <- unitsAll, unit `isPrefixOf` source'] of
+      [unit] -> all (unit `isPrefixOf`) sources
+        && not (any (`isPrefixOf` reader) [boundary | (boundary, _) <- lifelongs, boundary `isPrefixOf` unit])
+        && and [exclusive (protoWorkflow prototype) left right | left <- sources, right <- sources, left /= right]
+      _ -> False
     -- 会话生产步骤的其他普通发布随交付读取（伴随发布），每一步都会替换。读取位置必须在调用前
     -- 已经领取该会话的交付：由该资产驱动的 Node，或以它为转折资产的选择读取；否则读到哪一步取决于调度。
     companionRead (point, FromChains nodes) = do
@@ -237,6 +246,9 @@ resolveSources definitions defaultReaders prototype = do
             -- 失败出口由 method 统一补上。
             [] -> pure []
             [source] -> pure [AssetExit True (capture contractType (Just source) state), AssetExit False state]
+            -- lifelong 之后：同一单元的互斥位置各自保留最新发布，运行时取轮次最新的那个；每个候选是一条路径。
+            _ | retainedChoice (assetRoot call) sources ->
+                pure (AssetExit False state : [AssetExit True (capture contractType (Just source) state) | source <- sources])
             _ -> lift (Left (InvalidPrototype ("Asset " ++ contractType ++ " read at " ++ show (assetRoot call)
               ++ " has several visible sources " ++ show sources ++ "; refine the contract or the workflow")))
     publish :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis AssetState
@@ -412,8 +424,12 @@ resolveSources definitions defaultReaders prototype = do
               unless (all (`elem` requested) now) (analyzeUnits (nub (requested ++ now)))
         analyzeUnits []
         -- 全部单元正常结束后 lifelong 成功返回，后继继续执行；仍有消费单元未结束时后继不会开始。
-        -- 进入 lifelong 之前的发布照常交给后继；内部发布尚不外传（见 successorRead）。
-        pure [(True, retainPublications future publications), (False, [])]
+        -- 进入 lifelong 之前的发布照常交给后继；单元内可能发布的位置也交给后继：每个来源保留它最新一次发布，
+        -- 零轮或从未发布时运行时缺值，按已有的耗尽协议报出。会话挂载的发布只作为交付的伴随发布，不外传。
+        drives <- gets assetDrives
+        let inside = [(node', contractType) | (node', contractType) <- drives, boundary `isPrefixOf` node'
+              , node' `notElem` mounts, contractType `elem` future]
+        pure [(True, sort (nub (retainPublications future publications ++ inside))), (False, [])]
     workflowSequence :: [WorkflowTree] -> [String] -> [(Bool, [(NodeId, String)])] -> [(String, Maybe NodeId)]
                      -> AssetAnalysis [(Bool, [(NodeId, String)])]
     workflowSequence children future states handoff = go positioned states

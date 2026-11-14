@@ -584,7 +584,7 @@ monitor = lifelong
 
 - **单元**：直接子项各为一个单元，直接子项是 parallel 时只拆这一层；单元之间独立推进、互不等待。拆分写入 Prototype，运行时不推测。
 - **一次执行**：单元逐次执行，每次执行是一个 frame。控制流到达 target 时先领取其订阅资产的一条新交付（有积压立即领取，没有就挂起），再 boot target；同一 frame 内每个资产只领取一次，各调用共享这份视图。target 调用按上文的有限完成规则结束，本次执行结束后才开始下一次，上一次的普通产物不带入下一次。
-- **正常结束**：Stream handler 以 `end` 报告来源结束；会话封住发布，已发布的交付仍可领取。单元在所需来源结束并排空后正常结束，全部单元结束后 lifelong 返回一次 Succ（不带结果）。`chained [setup, monitor]` 先完成 setup；`chained [monitor, after]` 中 after 在 monitor 结束后执行，仍有消费单元未结束时不执行；`parallel [monitor, otherWork]` 两者同时运行。后继可读进入 lifelong 之前可见的资产，读取 lifelong 内部的发布尚未实现（生成期拒绝）；结束后的资源清理另行设计。规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
+- **正常结束**：Stream handler 以 `end` 报告来源结束；会话封住发布，已发布的交付仍可领取。单元在所需来源结束并排空后正常结束，全部单元结束后 lifelong 返回一次 Succ（不带结果）。`chained [setup, monitor]` 先完成 setup；`chained [monitor, after]` 中 after 在 monitor 结束后执行，仍有消费单元未结束时不执行；`parallel [monitor, otherWork]` 两者同时运行。后继 `require` 读每个来源最新一次发布（含 lifelong 内部的发布与已结束会话的最后一条），单元内仍逐轮隔离；结束后的资源清理另行设计。规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
 - **失败**：含 lifelong 的程序中，任何失败按临时规则终止整次运行（[Stream 第 9 节](STREAM_LIFELONG.md#failures)），不同于有限 parallel 不取消其他分支的规则。lifelong 的局部结束属于本轮[结束传播阶段](NEXT_STAGES.md#stage-6)，其与故障传播的关系仍需确认。
 - **合法性**：lifelong 不嵌套、不含空分支；其中每个 target 恰好用 `streams` 订阅一个持续资产，见 [Stream 第 5.2 节](STREAM_LIFELONG.md#static)。
 
@@ -836,7 +836,7 @@ sdk/Framework/
 | 失败的临时规则、取消与 close 延期边界 | [Stream 第 9 节](STREAM_LIFELONG.md#failures) |
 | socket、event、behavior 各自的写法 | [Stream 第 4.1 节](STREAM_LIFELONG.md#drives) |
 
-当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，持续资产作为 scope 开启参数尚未接通。本轮先收敛资产来源与接收契约、分离原子 handler 与业务 effect，再处理 Stream effect 与 lifelong 的共同运行协议、资产访问、scope 使用、结束传播与清理，见[阶段计划](NEXT_STAGES.md#stages)。唯一资产来源与访问约束见[资产来源与访问约束](#demand-contract)；require 缓存最新值、stream 缓存历史已随 Stage 2 实现，Stream 的驱动方式（event、behavior、socket）仍待确定；正常 end 已实现到 lifelong 返回为止，结束后的清理、后继读取 lifelong 内部的发布仍属后续设计；是否调整临时失败规则须在结束传播阶段确认。来源分析按消费单元提前裁剪再组合，相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
+当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，持续资产作为 scope 开启参数尚未接通。本轮先收敛资产来源与接收契约、分离原子 handler 与业务 effect，再处理 Stream effect 与 lifelong 的共同运行协议、资产访问、scope 使用、结束传播与清理，见[阶段计划](NEXT_STAGES.md#stages)。唯一资产来源与访问约束见[资产来源与访问约束](#demand-contract)；require 缓存最新值、stream 缓存历史已随 Stage 2 实现，Stream 的驱动方式（event、behavior、socket）仍待确定；正常 end 与后继读取 lifelong 内部的发布已实现，结束后的清理仍属后续设计；是否调整临时失败规则须在结束传播阶段确认。来源分析按消费单元提前裁剪再组合，相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
 
 这次扩展继续使用 Prototype、RuntimeGraph 和独立 ScopeTree。业务方法不新增游标、yield、调度器或无限递归写法；声明不成立时生成期诊断，不在运行中猜测生产方式。
 

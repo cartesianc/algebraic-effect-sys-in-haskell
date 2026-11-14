@@ -10,7 +10,7 @@ module Framework.Runtime.Graph
   , newRuntimeGraph, configureRuntimeScopes, collectRuntimeScopes, finishRuntime, newOrigin
   , beginActivation, endActivation
   , publishAsset, publicationSignal, readVisibleAsset, contextMayPublish, resetOrigins
-  , installSessionLauncher, obtainSession, stopSessions, currentPublications
+  , installSessionLauncher, obtainSession, endedSession, stopSessions, currentPublications
   ) where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
@@ -69,6 +69,9 @@ data RuntimeGraph environment cause = RuntimeGraph
   , runtimeLauncher :: IORef (Session environment cause -> IO ())
   -- lifelong 会话的生产挂载：其普通发布只作为交付的伴随发布读取。
   , runtimeSessionMounts :: [NodeId]
+  -- lifelong 单元各位置在先前各轮的最新发布（每个位置、每个来源一份）。新一轮开始时，
+  -- 上一轮的发布移到这里，轮内读取看不到它；只有 lifelong 之外的读取（后继）才查这里。
+  , runtimeRetained :: IORef [((NodeId, String), ScopeBinding environment cause)]
   }
 
 newRuntimeGraph
@@ -85,6 +88,7 @@ newRuntimeGraph prototype scopes = do
     <*> newMVar (Just []) <*> newIORef (const (ioError (userError "No session launcher is installed")))
     <*> pure [mount | (_, described) <- workflowLifelongs (protoWorkflow prototype)
            , session <- lifelongSessions described, mount <- sessionMounts session]
+    <*> newIORef []
 
 -- ScopeTree 的独立构建与校验仍在 Prototype；这里只把同一树的关系装入现有控制对象。
 configureRuntimeScopes :: RuntimeGraph environment cause -> IO ()
@@ -179,11 +183,17 @@ newOrigin graph node = do
   pure origin
 
 -- 新 frame 开始前移出该子树上一次执行的 Origin：本次没有执行的位置不能读到上一次的普通产物。
+-- 移出的发布按位置与来源保留最新一份，供 lifelong 结束后的后继读取（require 读最新值）。
 resetOrigins :: RuntimeGraph environment cause -> NodeId -> IO ()
 resetOrigins graph prefix = do
   removed <- atomicModifyIORef' (runtimeOrigins graph) $ \origins ->
     let (dropped, kept) = (filter selected origins, filter (not . selected) origins)
     in length kept `seq` (kept, map snd dropped)
+  assets <- readIORef (runtimeAssets graph)
+  let carried = [((originNode origin, source), value) | ((origin, source), value) <- assets, origin `elem` removed]
+  atomicModifyIORef' (runtimeRetained graph) $ \retained ->
+    let updated = carried ++ [entry | entry@(key, _) <- retained, key `notElem` map fst carried]
+    in length updated `seq` (updated, ())
   dropPublications graph removed
   where selected = (prefix `isPrefixOf`) . fst
 
@@ -279,25 +289,40 @@ contextMayPublish graph frame origin source = case runtimePrototype graph of
             (nub (nodes ++ [originNode origin | ownProduction]))
     _ -> pure True
 
--- 先按生成表定位来源入口，再读取本次实际发布；不按完成时序或全局最新值挑选。
+-- 先按生成表定位来源入口，再读取本次实际发布；不按并发完成时序或全局最新值挑选。
 -- 缺少发布只返回空值，由 Context 协议继续等待或在已证明耗尽后报缺值。
+-- lifelong 之外的读取（后继）对单元内的位置读它最新一次发布：本轮没有执行到时取先前各轮保留的那份。
+-- 生成期只在同一单元的互斥位置之间允许多个候选；它们按轮次先后发布，取 Origin 序号最大的一份。
 readVisibleAsset :: RuntimeGraph environment cause -> Origin -> String
                  -> IO (Either ContextFault (Maybe (ScopeBinding environment cause)))
 readVisibleAsset graph origin source = do
   origins <- readIORef (runtimeOrigins graph)
   assets <- readIORef (runtimeAssets graph)
-  let selected = case sourcePlan (runtimePrototype graph) (originNode origin) source of
-        FromOwnChain -> [origin]
+  retained <- readIORef (runtimeRetained graph)
+  let reader = originNode origin
+      current node = lookup node origins >>= \produced -> lookup (produced, source) assets
+      carried node
+        | outsideLifelong node = lookup (node, source) retained
+        | otherwise = Nothing
+      outsideLifelong node = case runtimePrototype graph of
+        PrototypeReference prototype -> or [not (boundary `isPrefixOf` reader)
+          | (boundary, _) <- workflowLifelongs (protoWorkflow prototype), boundary `isPrefixOf` node]
+      candidates = case sourcePlan (runtimePrototype graph) reader source of
+        FromOwnChain -> [value | Just value <- [lookup (origin, source) assets]]
         -- 会话生产步骤反复执行，挂载的当前 Origin 不对应消费者所处理的交付；
         -- 这些发布随交付作为伴随发布交给单元，这里不再读取。
-        FromChains nodes -> [produced | node <- nodes, node `notElem` runtimeSessionMounts graph
-          , Just produced <- [lookup node origins]]
+        FromChains nodes -> [value | node <- nodes, node `notElem` runtimeSessionMounts graph
+          , Just value <- [maybe (carried node) Just (current node)]]
         -- 会话交付不经普通来源表。
         FromSession -> []
-      candidates = [value | produced <- selected, Just value <- [lookup (produced, source) assets]]
+      sequenceOf = originSequence . executionOrigin . bindingOrigin
   pure $ case candidates of
     [] -> Right Nothing
     [value] -> Right (Just value)
+    many | all (outsideLifelong . originNode . executionOrigin . bindingOrigin) many ->
+      Right (Just (snd (maximumOn many)))
+      where maximumOn values = foldr1 (\left right -> if fst left >= fst right then left else right)
+              [(sequenceOf value, value) | value <- values]
     _ -> Left (AmbiguousContextBinding source)
 
 sourcePlan :: PrototypeReference -> NodeId -> String -> Source
@@ -330,6 +355,17 @@ obtainSession graph key bindings views = uninterruptibleMask_ $ modifyMVar (runt
       launch <- readIORef (runtimeLauncher graph)
       launch session
       pure (Just ((key, session) : sessions), session)
+
+-- lifelong 之后读取持续资产：取已经结束、且在 AST 中先于读取位置的那个 lifelong 的会话，不另行启动来源。
+-- 生成期保证这样的 lifelong 彼此先后；登记表按创建先后倒序，第一个即最近结束的。
+endedSession :: RuntimeGraph environment cause -> NodeId -> String -> IO (Maybe (Session environment cause))
+endedSession graph reader source = case runtimePrototype graph of
+  PrototypeReference prototype -> do
+    registry <- readMVar (runtimeSessions graph)
+    pure $ case [session | ((Just boundary, selected), session) <- fromMaybe [] registry
+                 , selected == source, precedes (protoWorkflow prototype) boundary reader] of
+      session : _ -> Just session
+      [] -> Nothing
 
 -- interpreter 退出前关闭登记并取消全部生产任务，等待步骤内的受控收尾完成。
 -- 关闭与取出在同一临界区，此后尚未停止的会话不能再创建依赖会话；后创建的排在前面，依赖方先停止。

@@ -420,7 +420,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 <a id="stage-6"></a>
 ### Stage 6：实现 end 与终止传播
 
-**状态：第一步已实现（2026-11-14）——来源正常结束到 lifelong 返回；结束后的清理、后继读取 lifelong 内部的发布、失败的局部化尚未实现。** 规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
+**状态：第一步已实现（2026-11-14）——来源正常结束到 lifelong 返回；第二步已实现（2026-11-14）——后继读取 lifelong 内部的发布；结束后的清理、失败的局部化尚未实现。** 规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
 
 区分来源正常结束、失败、取消和消费者退出。确定停止发布、处理已接受增量、结束消费单元、结束派生输出之间的顺序，以及等待数据的任务如何被唤醒。
 
@@ -440,7 +440,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 - **单元结束**：所需来源耗尽时不 boot 该位置，单元正常结束；已完成的前缀不回滚。单元内部的 parallel 由单元级通知唤醒尚未 boot、仍在等其他来源的路径。
 - **lifelong 返回**：全部单元结束后停止本边界的生产任务并等待其收尾，返回一次 Succ，不带结果；每次执行的 Succ／Failed 不变。
 - **lifelong 外的读取**：来源已结束时读到最后一条，不重新启动来源；零发布时报 `ContextNotInitialized`。
-- **来源分析**：lifelong 有正常出口，后继可读进入 lifelong 之前可见的资产；读取 lifelong 内部的发布由生成期拒绝（`InvalidLifelong`）。
+- **来源分析**：lifelong 有正常出口，后继可读进入 lifelong 之前可见的资产；读取 lifelong 内部发布的资产在第一步由生成期拒绝，已由第二步取代。
 - **不变**：失败与取消的规则；资源清理的规则（来源结束后会话的使用登记保留到会话被停止，只在生产会话中开启的 scope 仍在运行结束时关闭）。
 
 实现上，执行树内部以独立于 Failure 的 `Finished` 表示单元的正常结束，只传到单元边界，不进入 Error 协议和运行监督；handler 的 `end`，以及调用内首次读取才发现耗尽的情况，各用一个 SDK 内部异常越过方法体，分别由生产任务和单元调度接住。gen 的方法体形状提取不需要认识 `end`：它和 `raise` 一样不是读取。
@@ -467,9 +467,25 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 **示例（2026-11-14）：** 新增 [LinesDemo](../demo/LinesDemo)（`cabal run lines-demo`）：输入文件是无开启参数的 Scoped 资源，Stream handler 逐行读取、读到末尾时 `end`。生成、编译通过；运行输出四行后执行 `Report`，随后关闭文件，结果 `Succ [AnnounceResult (),ReportResult ()]`；`--structure` 显示一个 lifelong 单元和 `TextLine` 的会话。它是仓库中第一个会正常结束的 lifelong 程序，也是 Stream 声明 `requires` 读取上游 scope 资源的第一个示例。
 
+#### 第二步：后继读取 lifelong 内部的发布（2026-11-14）
+
+已确认的语义：`require` 读的是来源当前最新的值，像 State monad 的 state，每次生产覆盖为最新；要看历史用持续资产（stream），它的结构本身就是全部历史。lifelong 正常结束不新增隔离边界。
+
+- **运行时**：单元每轮开始前，上一轮的发布从可见的资产表移出，按（位置，来源）保留最新一份（`runtimeRetained`）；单元内的读取不查它，仍逐轮隔离。lifelong 之外的读取对单元内的位置取当前一轮的发布，没有时取保留的那份；生成期允许的多个候选（同一单元的互斥位置）按 Origin 序号取最新。持续资产由 `endedSession` 定位先于读取位置、已经结束的 lifelong 会话，读它最后的历史，不启动 interpreter 会话。
+- **生成期**：lifelong 的成功出口带上单元内可能发布后继所读契约的位置；同一单元内互斥的多个位置作为并存候选（每个候选一条路径）；不同单元、同一轮可能都发布、或与 lifelong 外的来源并存时仍报“several visible sources”；两个互不先后的 lifelong 都有后继所读的持续资产时报 `InvalidLifelong`。
+- **不变**：单元内逐轮隔离；资源资产不经普通来源表；清理规则；handler、注册与 AST 写法。
+
+**验证（2026-11-14）：** `cabal build all --offline -j1` 通过；八个程序重新生成，生成结果均无变化；LinesDemo 与四个有限 demo 为 `Succ`，StreamDemo 持续运行。临时改写 LinesDemo（四行输入，前三行长、最后一行短；单元是 alternative，两个候选都驱动 `SeenLine`，只有长行候选驱动 `LongLine`；后继读 `SeenLine`、`LongLine` 与持续资产 `TextLine`），逐项观察后已还原：
+
+- 后继读到 `SeenLine = last line`（第 4 轮，短行候选）、`LongLine = third line`（第 3 轮；第 4 轮没有发布它）、`TextLine = Short "last line"`；输入文件只打开一次，来源没有重启。
+- 空输入（零轮）：后继读 `SeenLine` 报 `ContextNotInitialized`，没有挂起。
+- 单元内在 alternative 之后读 `LongLine`：前三轮读到本轮的值；第 4 轮本轮没有发布，报缺值，没有读到第 3 轮的值。
+- 两个并行单元都驱动 `SeenLine`、后继读它：gencode 报 several visible sources。两个并行的 lifelong 都订阅 `TextLine`、后继读它：gencode 报 `InvalidLifelong`。
+
+未覆盖：后继以单元内发布的资产作为 scope 开启参数时的待用交接（属于结束后的清理）；先后排列的多个 lifelong 都有同一会话时取最近结束者的路径只按登记顺序实现，没有实测。
+
 #### 尚未确定或尚未实现
 
-- **后继读取 lifelong 内部的发布**：已确定后继按现有可见性读取，不因正常结束新增隔离边界；读到哪一份尚未确定——最后一次执行留下的发布，还是每个来源各自的最后一次发布。后者能读到最后一轮没有产出的资产，但后继拿到跨轮拼接的值，原本互斥的来源会并存，按轮回收的实例需要保留更久。实现还须改 `repeatUnit` 在领取下一轮之前清除上一轮产物的顺序，并把持续资产的读取路由到已结束的会话。
 - **结束后的清理**：单独设计。已知的事实：只在生产会话中开启的 scope 没有回收入口（根帧不含会话挂载，节点退休只检查在退休节点上开启的 scope），目前只能等到运行结束；历史条目中的资源引用没有持有登记；最后资产关联的资源需要在轮帧撤销前接到后继的待用关系上。
 - **更细的停止时机**：目前在 lifelong 返回时才停止无人订阅的生产任务；最后一个订阅单元退出时即停止需要按单元的订阅集合计数。
 - **消费方提前退出**（只取前若干条等）与**失败的局部化**（跳过坏元素、重试、只结束局部）。
@@ -519,7 +535,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 | 持续资产的当前值与历史读取 | Stage 2 已实现缓存语义（requires 读最新值，streams 读历史）；Stage 4 收敛视图与读取写法 |
 | readHistory 未经过 scope 开启参数观察，可能报 ScopeInputsMissing | Stage 4–5 |
 | 会话步骤共用 scope 使用登记；停止后撤销使用并按可达性回收；来源正常结束后登记保留到会话被停止，只在会话中开启的 scope 到运行结束才关闭 | Stage 5、7 继续收敛结束后的清理与历史资源；当前回收见[按可达性回收](#scope-gc) |
-| 来源可用 `end` 正常结束，lifelong 随之返回；后继不能读取 lifelong 内部的发布，消费方不能提前退出 | Stage 6（第一步已实现，其余待定） |
+| 来源可用 `end` 正常结束，lifelong 随之返回，后继读取每个来源最新一次发布；消费方不能提前退出 | Stage 6（第一步已实现，其余待定） |
 | 含 lifelong 程序的失败使用整次运行终止的临时规则 | Stage 6 明确保留或调整范围 |
 | 历史资源缺少精细持有和释放协议 | Stage 4、5、7 |
 | 完整历史持续增长，没有容量背压 | 本轮只明确退出与资源释放；容量和历史策略另议 |

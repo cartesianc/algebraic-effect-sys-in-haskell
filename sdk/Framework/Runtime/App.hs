@@ -492,10 +492,13 @@ instance ContextStore env (App env cause) where
       Nothing -> pure Nothing
   -- 诊断、收尾与 close 期间不启动会话；读到的历史捕获为本次视图。
   -- 会话已结束时读到最后的完整历史，不重新启动来源；一条都没有发布就结束时没有视图，按缺值报出。
+  -- 先于本位置结束的 lifelong 有这个会话时读它最后的历史（lifelong 之后的后继），否则用 interpreter 托管的会话。
   awaitContextHistory source select = do
     environment <- AppRun ask
     if not (deliveryAllowed environment) then pure Nothing else do
-      session <- rawIO (obtainSession (runtimeGraph environment) (Nothing, source) [] [])
+      let graph = runtimeGraph environment
+      ended <- rawIO (endedSession graph (originNode (executionOrigin (execution environment))) source)
+      session <- maybe (rawIO (obtainSession graph (Nothing, source) [] [])) pure ended
       captureDelivery environment source select (rawIO (awaitHistory session))
   streamRawInput = AppRun (asks streamRaw)
   endStream = rawIO (throwIO SourceEnded)
