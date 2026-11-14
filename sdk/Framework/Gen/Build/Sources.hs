@@ -411,7 +411,7 @@ resolveSources definitions defaultReaders prototype = do
                     , node' `notElem` mounts, contractType `elem` map sessionAsset sessions]
               unless (all (`elem` requested) now) (analyzeUnits (nub (requested ++ now)))
         analyzeUnits []
-        -- 全部单元正常结束后 lifelong 成功返回，后继继续执行；来源不结束时后继不会开始。
+        -- 全部单元正常结束后 lifelong 成功返回，后继继续执行；仍有消费单元未结束时后继不会开始。
         -- 进入 lifelong 之前的发布照常交给后继；内部发布尚不外传（见 successorRead）。
         pure [(True, retainPublications future publications), (False, [])]
     workflowSequence :: [WorkflowTree] -> [String] -> [(Bool, [(NodeId, String)])] -> [(String, Maybe NodeId)]

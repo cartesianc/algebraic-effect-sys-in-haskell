@@ -59,7 +59,7 @@ noHandoff = Handoff [] []
 data DeliveryFrame environment cause = DeliveryFrame
   { frameSessions :: [(String, (Session environment cause, Cursor))]
   , frameTaken :: MVar [(String, MVar (Either (Stopped cause) (Delivery environment cause)))]
-  -- 本次执行所需的某个来源已结束并排空：单元正在结束，不再领取新的交付。
+  -- 本次执行所需的某个来源已结束并排空：单元正在结束，不再允许新的位置启动。
   , frameHalted :: IORef Bool
   }
 

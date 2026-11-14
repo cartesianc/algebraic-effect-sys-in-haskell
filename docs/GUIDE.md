@@ -726,7 +726,7 @@ ast = operateFile
 | `chained` | 按顺序逐个执行 | 立即停止，后面的子项不执行 | 各子项结果按顺序拼接 |
 | `parallel` | 同时执行 | 等全部子项结束，按声明顺序取第一个失败 | 全部成功时按声明顺序拼接 |
 | `alternative` | 只执行一个候选 | 候选的失败原样传播 | 只有被选中候选的结果 |
-| `lifelong` | 各单元独立重复执行，到达 target 时等待其订阅资产的交付 | 终止整次运行（临时规则） | 全部单元在来源结束并排空后结束时成功返回，不带结果；来源不结束时不返回 |
+| `lifelong` | 各单元独立重复执行，到达 target 时等待其订阅资产的交付 | 终止整次运行（临时规则） | 全部单元因所需来源耗尽而正常结束后成功返回，不带结果；仍有消费单元未结束时不正常返回 |
 
 程序里含 `lifelong` 时，`parallel` 中任何子项失败也立即终止整次运行，不再等待其他子项结束。
 
@@ -768,7 +768,7 @@ monitor = lifelong
 
 - **单元**：直接子项各是一个独立推进的单元，上例的读数单元和心跳单元互不等待。
 - **一次执行**：每个末端用 `streams` 订阅一个持续资产；执行到它时先领取一条新交付（没有就等待），本次执行完成后才开始下一次。
-- **结束**：Stream handler 用 `end` 报告来源结束后，各单元处理完已发布的交付就结束，lifelong 成功返回，放在它后面的 branch 接着执行；来源不结束时后面的 branch 不会执行。含 lifelong 的程序中任何失败都会结束整次运行（临时规则）。
+- **结束**：Stream handler 用 `end` 报告来源结束，已发布的交付仍可领取。单元在所需来源耗尽时结束；全部单元正常结束后 lifelong 成功返回，放在它后面的 branch 接着执行；仍有消费单元未结束时后面的 branch 不会执行。含 lifelong 的程序中任何失败都会结束整次运行（临时规则）。
 
 单元划分、交付、会话与失败的完整写法见[持续资产与 lifelong](#stream)。
 
@@ -899,7 +899,7 @@ ast = chained [setup, monitor]
 - **每次执行互相隔离**：上一次执行中产生的普通资产不会被这一次读到。
 - **订阅规则**：lifelong 里的每个末端（连同它的 Input 链）恰好订阅一个持续资产，并且不再读取别的持续资产；`streams` 不能用在 lifelong 外的末端。lifelong 不能嵌套，内部不能有空分支。
 - **会话**：同一个 lifelong 里订阅同一资产的单元共享一个生产会话，各自独立推进；不同 lifelong 的会话互相独立。会话在进入 lifelong 时启动；生产步骤用到的资源（例如 `SensorLink` 开启的连接）在各步骤间保持，退出时关闭。持续资产的生产不能依赖另一个持续资产。
-- **外部组合**：`chained [setup, monitor]` 先执行 setup；`chained [monitor, after]` 中 after 等 monitor 的全部单元结束后执行，来源不结束时不会执行；`parallel [monitor, otherWork]` 两者同时运行。
+- **外部组合**：`chained [setup, monitor]` 先执行 setup；`chained [monitor, after]` 中 after 等 monitor 的全部单元结束后执行，仍有消费单元未结束时不会执行；`parallel [monitor, otherWork]` 两者同时运行。
 
 ### 结束与失败
 
@@ -923,7 +923,7 @@ ast = chained [setup, monitor]
     ]
   ```
 
-  `end` 不是失败，不进入 Error 诊断。这一步不交出输入，parser 不执行；已经发布的交付仍会被各单元领取完。单元在它要领取的来源已经结束并领完时结束：尚未执行的后继放弃，已完成的部分不回滚。全部单元结束后 lifelong 成功返回（不带结果），排在后面的节点继续执行。
+  `end` 不是失败，不进入 Error 诊断。这一步不交出输入，parser 不执行；已经发布的交付仍可领取。单元在它要领取的来源已经结束并领完时结束：尚未执行的后继放弃，已完成的部分不回滚。全部单元结束后 lifelong 成功返回（不带结果），排在后面的节点继续执行。
 - **结束后能读什么**：lifelong 后面的节点可以读取进入 lifelong 之前就可见的资产。读取 lifelong 内部发布的资产（单元的产物、持续资产本身）尚未实现，gencode 会报 `InvalidLifelong`。
 - **结束后的资源**：这一步没有改变清理规则。只在生产会话中开启的资源（StreamDemo 的 `SensorLink`、LinesDemo 的输入文件）仍在整次运行结束时关闭，所以 LinesDemo 在 `Report` 执行之后才打印 `[close]`。
 - **不结束的来源**：StreamDemo 的来源不调用 `end`，持续程序运行到被取消（Ctrl-C）为止。取消时 SDK 停止全部单元和会话，等它们收尾，再按 ScopeTree 关闭资源；StreamDemo 会打印 `[sensor] disconnected`。

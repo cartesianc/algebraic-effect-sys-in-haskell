@@ -191,7 +191,7 @@ lifelong 的直接子项分别形成独立单元；直接子项为 parallel 时�
 | 对象 | 完成含义 |
 | --- | --- |
 | 一次 target 调用 | 既有成功／失败协议；本次 original chain 完成，有自己的 Origin |
-| 持续订阅／lifelong | 全部单元正常结束后返回一次 Succ，不带结果；来源不结束时不返回，另因失败或取消退出 |
+| 持续订阅／lifelong | 全部单元正常结束后返回一次 Succ，不带结果；仍有消费单元未结束时不正常返回，另因失败或取消退出 |
 
 lifelong 安装订阅后不冒充整个 branch 的 Succ，否则外部 chained 无法表达完成依赖。两个 Succ 各管一层：一次执行的 Succ 决定单元内的后继是否执行，lifelong 的 Succ 决定外层的后继是否执行。Stream 自己不给 Succ。
 
@@ -213,7 +213,7 @@ lifelong 安装订阅后不冒充整个 branch 的 Succ，否则外部 chained �
 | --- | --- |
 | `parallel [monitor, otherWork]` | 两者同时运行；monitor 等待增量不阻止 otherWork |
 | `chained [setup, monitor]` | setup 成功后进入 monitor |
-| `chained [monitor, after]` | after 等待 monitor 结束：monitor 的全部单元正常结束后 after 执行；有来源始终不结束时 after 不执行 |
+| `chained [monitor, after]` | after 等待 monitor 结束：monitor 的全部单元正常结束后 after 执行；仍有消费单元未结束时 after 不执行 |
 | `chained [parallel [monitor, otherWork], after]` | 内层分支的完成仍是 after 的前提 |
 
 monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同概念。
@@ -362,7 +362,7 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 
 这种结束只传到单元边界，不进入 Error 协议，也不通知监督。
 
-**lifelong 返回。** 全部单元正常结束后，SDK 停止本边界的生产任务（仍在生产的会话已经没有消费者；已结束的会话只需等待任务退出）并等待其收尾，lifelong 才返回一次 Succ，不带结果，外层后继继续执行。有来源始终不结束时 lifelong 不返回，这是该 workflow 的正常含义。单元全部退出之前，不提前停止个别已经无人订阅的生产任务。
+**lifelong 返回。** 全部单元正常结束后，SDK 停止本边界的生产任务（仍在生产的会话已经没有消费者；已结束的会话只需等待任务退出）并等待其收尾，lifelong 才返回一次 Succ，不带结果，外层后继继续执行。仍有消费单元等待交付或执行时，lifelong 不正常返回；多来源单元可因其中一个所需来源耗尽而结束，无须等待所有来源自行 end。单元全部退出之前，不提前停止个别已经无人订阅的生产任务。
 
 **lifelong 之后的读取。** 后继可以读取进入 lifelong 之前就可见的资产。读取 lifelong 内部发布的资产尚未实现，生成期拒绝（见 5.3）。读到哪一份（最后一次执行的产物，或各来源各自的最后一次发布）尚未确定。
 
