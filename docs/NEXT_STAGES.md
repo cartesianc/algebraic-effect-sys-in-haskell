@@ -508,7 +508,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 - 第一版只按 lifelong 的订阅判断谁读取历史，漏掉了 Context 生产链内声明 `streams` 的 effect（生成期当时接受这种声明）。lifelong 的后继 `requests` 一份由这种 Excu 生产的资产时，改动前读到全部历史，第一版只读到最新一条。已确认的语义是生产链不应有 stream 类型的 demand：生成期现在拒绝声明 `streams` 的 effect 出现在任何 Context 的 Input 链上（`Gen/Lower` 的注册检查，按已有的 Input 祖先表判定，不做图搜索）。运行时不为这种写法保留特例。
 - `changeState` 先填入通知信号、再计算保留范围；取消落在两者之间时，旧状态带着已经填入的信号被恢复，之后的结束或唤醒会卡在这个信号上。改为先算完新状态，再在屏蔽区内通知并写回。这个窗口原先就有，第一版增加的计算把它扩大了。
 - 验证：`cabal build all` 通过，无警告。临时在 LinesDemo 加入 `Digest`（Excu，`streams "TextLine"`）、挂在它下面的 Context 与 `requests` 该资产的 `Report`：改动前的运行时读到 4 条，第一版读到 1 条；加入规则后生成期报错并指出 `Digest` 在 `Summary` 的生产链上，探针已还原。八个 demo 目录重新生成均无文件变化。LinesDemo 与四个有限 demo 为 `Succ`。取消窗口没有复现手段，只经代码审阅。
-- 这条规则的范围：声明 `streams` 的 effect 下面不能再挂 Context，即由历史驱动的节点不能把自己的输出解析成资产。现有 demo 与文档示例没有这种写法。
+- 这条规则禁止的正是：声明 `streams` 的 effect 下面挂 Context，即由持续资产驱动的节点把自己的输出解析成资产。规则按结构判定（生产者不带 stream 类型的 demand），不按读取发生的位置区分情况。现有 demo 与文档示例没有这种写法。
 
 未覆盖：只读最新一条的单元读取方（以会话资产为转折资产的选择读取）没有示例，只经过上述模型核对；没有做堆占用测量，验收标准是 SDK 不再持有没有读取义务的引用，不承诺进程占用立即下降。
 

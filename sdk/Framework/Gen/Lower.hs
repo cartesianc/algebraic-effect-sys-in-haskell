@@ -203,8 +203,8 @@ buildEffectProtos specifications sumTypes = do
         valid (null [() | demand <- demands specification, access demand == StreamAccess]
           || Registration.effectKind (typing specification) `elem` [ExcuKind, ScopedKind])
           ("Only original-chain effects may subscribe with streams: " ++ name specification)
-        -- 生产链不读历史：声明 streams 的 effect 不能在某个 Context 的 Input 链上。
-        -- 历史只交给 lifelong 中由该资产驱动的 target；生产链按 demand 进入，不是订阅。
+        -- 生产者不带 stream 类型的 demand：streams 标出被持续资产驱动的消费侧 effect，
+        -- 它下面不能挂 Context，也不能在任何 Context 的 Input 链上；按结构判定，不看读取发生的位置。
         case [name holder | not (null [() | demand <- demands specification, access demand == StreamAccess])
               , holder <- specifications, Registration.effectKind (typing holder) == ContextKind
               , name specification `elem` inputAncestors (input holder)] of

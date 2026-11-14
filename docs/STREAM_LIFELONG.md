@@ -88,7 +88,7 @@ parser 没有另外的输入方法：`raw` 由会话本次取得的输入回答�
 
 - 只有持续资产的基础资产可以被订阅；订阅分支契约时报错，应订阅其基础资产。
 - 只有 Excu、Scoped 可以声明 streams。
-- 生产链不读历史：声明 streams 的 effect 不能在任何 Context 的 Input 链上（包括直接挂在它下面的 Context），生成期拒绝。历史只交给 lifelong 中由该资产驱动的 target；生产链按 demand 进入，不是订阅，需要持续资产时用 `requires` 读最新一条。
+- 生产者不带 stream 类型的 demand：streams 是消费侧的标记，标出被持续资产驱动的普通 effect。下面挂着 Context 的 effect 是生产链的一环，所以声明 streams 的 effect 下面不能挂 Context，也不能出现在任何 Context 的 Input 链上，生成期拒绝。资产是 parser 从这一步的 raw 得到的值；由持续资产驱动的节点若再产出资产，就成了一份没有声明为 stream 的持续资产。生产链需要持续资产时用 `requires` 读最新一条。
 - `requires "T"` 读取持续资产时，handler 用 `require @表示类型` 取得最新一条，不由交付驱动。
 
 读取类型按访问方式确定：streams 返回 `History 表示类型`，requires 返回最新一条；普通资产保持单值读取。`stream` 缓存历史，`require` 缓存最新值；两者是同一资产的不同结果形态，不是两个来源。若需要两个独立来源或独立持续能力，再细化为两个资产。分支契约投影本次交付的最新条目。读取历史另设方法（gen 已生成 `streamT`）的写法待定。
@@ -242,7 +242,7 @@ monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同
 <a id="retention"></a>
 ### 7.1 会话保留多少发布
 
-历史只通过持续资产读取：`streams` 取得 `History`，`requires` 只取最新一条。`streams` 只能声明在 lifelong 内挂载的 target 的 original chain 上（生产链不读历史，见 [3.3 节](#contracts)），所以历史的存续不超过订阅它的单元。会话据此只保留仍有读取义务的发布，任何一次读取的结果都不因此改变：
+历史只通过持续资产读取：`streams` 取得 `History`，`requires` 只取最新一条。`streams` 只能声明在 lifelong 内挂载的 target 的 original chain 上（生产者不带 stream 类型的 demand，见 [3.3 节](#contracts)），所以历史的存续不超过订阅它的单元。会话据此只保留仍有读取义务的发布，任何一次读取的结果都不因此改变：
 
 | 会话的读取方 | 会话保留 |
 | --- | --- |
