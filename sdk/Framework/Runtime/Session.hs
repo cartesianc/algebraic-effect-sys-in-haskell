@@ -1,6 +1,7 @@
 -- 生产会话的发布历史、广播通知、消费游标及停止句柄。
 -- 会话只保留仍有读取义务的发布：历史只为按历史读取（streams）且尚未离开的读取方保留，
 -- 其余情况只留尚未领取的积压和最新一条。保留多少由读取方登记决定，不改变任何一次读取的结果。
+-- 不经单元登记的历史读取（Context 生产链内声明 streams 的 effect）没有离开的时刻，这样的会话保留全部发布。
 -- Runtime 启动并登记生产线程；本模块不执行生产方法，只保存交付并取消／等待该线程。
 -- Runtime/Graph 控制会话的唯一登记和整体停止；Workflow/Execution 持有各单元游标。
 -- 会话按（lifelong 边界，生产该资产的 Context 注册名）区分；注册名与运行时绑定来源同名。
@@ -13,8 +14,8 @@ module Framework.Runtime.Session
   ) where
 
 import Control.Concurrent (ThreadId, killThread)
-import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, swapMVar)
-import Control.Exception (Exception, SomeException, uninterruptibleMask_)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, swapMVar, takeMVar)
+import Control.Exception (Exception, SomeException, mask, onException, uninterruptibleMask_)
 import Control.Monad (forM, void)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Sequence (Seq, (|>))
@@ -67,6 +68,8 @@ data SessionState environment cause = SessionState
   -- 仍可能领取交付的游标。Nothing：读取方尚未登记（lifelong 的会话在进入边界时启动，
   -- 各单元随后登记），此前的发布全部保留。interpreter 托管的会话没有游标，从创建起就是空表。
   , stateReaders :: Maybe [Cursor]
+  -- 原型中有不经单元登记的历史读取（Context 生产链内的 streams）：它随时可能读取全部历史，条目始终全部保留。
+  , stateUnregistered :: Bool
   }
 
 -- 边界的交接：进入 lifelong 时已经捕获的绑定与视图（例如外层 alternative 选择时读到的值）。
@@ -79,12 +82,14 @@ data Session environment cause = Session
   , sessionWorker :: MVar (Maybe (ThreadId, MVar ()))
   }
 
-newSession :: SessionKey -> ScopeBindings environment cause -> [(String, View environment cause)]
+-- unregistered：这份资产在原型中有不经单元登记的历史读取，见 stateUnregistered。
+newSession :: SessionKey -> Bool -> ScopeBindings environment cause -> [(String, View environment cause)]
            -> IO (Session environment cause)
-newSession key bindings views = do
+newSession key unregistered bindings views = do
   signal <- newEmptyMVar
   let readers = maybe (Just []) (const Nothing) (fst key)
-  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Nothing signal readers) <*> newMVar Nothing
+  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Nothing signal readers unregistered)
+    <*> newMVar Nothing
 
 -- 两次相等的值仍是两条发布；会话已经结束或失败时不再接受新条目。
 appendDelivery :: Session environment cause -> ScopeBindings environment cause -> ScopeBinding environment cause -> IO ()
@@ -107,16 +112,22 @@ stopState session reason = changeState session $ \state -> case stateStopped sta
   Just _ -> Nothing
   Nothing -> Just state { stateStopped = Just reason }
 
+-- 新状态（含保留范围）先算完，再在屏蔽区内通知并写回：两个 putMVar 的目标此时都是空的，不会阻塞，
+-- 取消不能落在二者之间。否则旧状态带着已经填入的信号被恢复，下一次变化会卡在同一个信号上。
 changeState :: Session environment cause
             -> (SessionState environment cause -> Maybe (SessionState environment cause)) -> IO ()
-changeState session update = modifyMVar_ (sessionState session) $ \state -> case update state of
-  Nothing -> pure state
-  Just changed -> do
-    fresh <- newEmptyMVar
-    putMVar (stateSignal state) ()
-    release changed { stateSignal = fresh }
+changeState session update = mask $ \restore -> do
+  state <- takeMVar (sessionState session)
+  settled <- restore (traverse settle (update state)) `onException` putMVar (sessionState session) state
+  case settled of
+    Nothing -> putMVar (sessionState session) state
+    Just changed -> putMVar (stateSignal state) () >> putMVar (sessionState session) changed
+  where
+    settle changed = do
+      fresh <- newEmptyMVar
+      release changed { stateSignal = fresh }
 
--- 放掉没有读取义务的发布。按历史读取的读取方还在时条目全部保留；否则只留最早一个尚未领取的
+-- 放掉没有读取义务的发布。按历史读取的读取方还在（或有不经登记的历史读取）时条目全部保留；否则只留最早一个尚未领取的
 -- 位置之后的积压，以及最新一条（lifelong 之外的 require 与 lifelong 的后继读它）。
 -- 伴随发布只随交付领取：全部读取方都领取过的那些换成空值，与条目是否保留无关。
 -- 游标由各读取方自己推进，这里读到的位置只会偏早，保留的只会偏多。
@@ -131,7 +142,7 @@ release state = case stateReaders state of
     let base = stateBase state
         total = base + Seq.length (stateEntries state)
         pending = minimum (total : map snd positions)
-        kept | any fst positions = base
+        kept | stateUnregistered state || any fst positions = base
              | otherwise = max base (min pending (total - 1))
         cleared = max (stateCleared state) pending
         blanked = max kept (stateCleared state)
