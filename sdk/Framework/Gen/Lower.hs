@@ -203,6 +203,15 @@ buildEffectProtos specifications sumTypes = do
         valid (null [() | demand <- demands specification, access demand == StreamAccess]
           || Registration.effectKind (typing specification) `elem` [ExcuKind, ScopedKind])
           ("Only original-chain effects may subscribe with streams: " ++ name specification)
+        -- 生产链不读历史：声明 streams 的 effect 不能在某个 Context 的 Input 链上。
+        -- 历史只交给 lifelong 中由该资产驱动的 target；生产链按 demand 进入，不是订阅。
+        case [name holder | not (null [() | demand <- demands specification, access demand == StreamAccess])
+              , holder <- specifications, Registration.effectKind (typing holder) == ContextKind
+              , name specification `elem` inputAncestors (input holder)] of
+          [] -> pure ()
+          holders -> Left (InvalidPrototype ("Effect " ++ name specification
+            ++ " subscribes with streams but is on the production chain of Context " ++ intercalate ", " holders
+            ++ "; a production chain reads no history. Read the latest value with requires, or subscribe in a lifelong target that has no Context below it"))
       handled specification = case typing specification of Error { handles = matched } -> matched; _ -> []
   mapM_ check specifications
   let generatedMethods = concatMap (map snd . effectMethods) prototypes

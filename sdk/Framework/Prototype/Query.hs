@@ -3,13 +3,13 @@
 module Framework.Prototype.Query
   ( workflowNode, workflowChildren, workflowTerminals, workflowLifelongs, workflowSelectors
   , allWorkflow, lookupChain, lookupWorkflow, precedes, exclusive, visibleFrom
-  , driveSet, readPoints, readsHistoryInChains, scopeOpeningsAt, bootPlan, sessionSteps
+  , driveSet, readPoints, scopeOpeningsAt, bootPlan, sessionSteps
   , finiteSessions, candidateCase, findEffectProto, ordinaryEntry, selectorMethod, calledMethods, reachableMethods
   ) where
 
 import Data.List (isPrefixOf, nub)
 import Data.Maybe (listToMaybe)
-import Framework.Language.Registration (Access(..), EffectKind(..))
+import Framework.Language.Registration (Access(..))
 import Framework.Prototype.Graph
 import Framework.Prototype.Types
 
@@ -90,16 +90,6 @@ driveSet prototype selected = chainDrives <$> lookupChain prototype selected
 
 readPoints :: Prototype method -> [ReadPoint]
 readPoints = map fst . protoSources
-
--- 这个来源的持续资产是否有不在挂载末端 original chain 上的历史读取：声明 streams 的 effect
--- 位于某个 Context／Pure／Stream／Error 的 Input 链上，由 demand 或协议进入执行。
--- 它不是 lifelong 的订阅，没有单元可以登记，也不随单元结束；参数是生产该资产的 Context 注册名。
-readsHistoryInChains :: Prototype method -> String -> Bool
-readsHistoryInChains prototype producer = or
-  [ effectName reader `elem` effectInputChain holder
-  | reader <- protoEffects prototype, demand <- effectDemands reader
-  , demandAccess demand == StreamAccess, demandProvider demand == producer
-  , holder <- protoEffects prototype, effectKind holder `notElem` [ExcuKind, ScopedKind] ]
 
 scopeOpeningsAt :: Prototype method -> NodeId -> [ScopeOpening]
 scopeOpeningsAt prototype node = filter ((== node) . openingNode) (protoScopeOpenings prototype)
