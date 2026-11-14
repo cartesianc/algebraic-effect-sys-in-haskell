@@ -26,7 +26,7 @@
 - gen 是这个 EDSL 的编译器。SDK 分为源语言（`Framework/Language/`）、gen（`Framework/Gen/`）、编译产物（`Framework/Prototype/`、Generated）与运行时（`Framework/Runtime/`）四层，依赖只从上往下：gen 不导入运行时，运行时不导入 gen。能在生成期判定的组合、读取路由与合法性问题由 gen 报错，不留给运行时；新增检查放进流水线的对应阶段，见 [gen 是编译器](docs/LATEST_DESIGN.md#compiler)与[编译流水线](docs/LATEST_DESIGN.md#generation)。
 - Prototype 是纯结构，RuntimeGraph 保存活动关系，ScopeTree 独立且无环。生成、执行、展示共享同一静态模型。
 - Generated 是派生产物；修改手写输入后显式生成，不在构建中隐式修改源码，不把手改生成结果当作持久权威。
-- 当前实现六类 effect（含 Stream）与 lifelong。lifelong 中的失败采用临时规则（终止整次运行）。Stream 的正常结束（`end`、排空、单元结束、lifelong 返回）与后继读取 lifelong 内部的发布（`require` 读每个来源最新一次发布）已实现；来源结束后的资源清理、Stream close、局部失败等延期项不得描述成已提供的能力。本轮已完成输入契约及 SDK 分工整理（Stage 1）、handler 复用（Stage 2），以及 Pure 作为生产链中的值变换与原子句柄的 list 输出；Stream 的驱动方式（event／behavior／socket）与 Error 的驱动链待定，持续执行同构、资产访问、scope 边界、结束后的清理仍按阶段确认；Middleware 保留为后续专题，均不得写成当前能力。
+- 当前实现六类 effect（含 Stream）与 lifelong。lifelong 中的失败采用临时规则（终止整次运行）。Stream 的正常结束（`end`、排空、单元结束、lifelong 返回）、后继读取 lifelong 内部的发布（`require` 读每个来源最新一次发布）与会话历史按读取义务保留（历史只为运行中的 `streams` 订阅单元保留）已实现；来源结束后的资源清理、Stream close、局部失败等延期项不得描述成已提供的能力。本轮已完成输入契约及 SDK 分工整理（Stage 1）、handler 复用（Stage 2），以及 Pure 作为生产链中的值变换与原子句柄的 list 输出；Stream 的驱动方式（event／behavior／socket）与 Error 的驱动链待定，持续执行同构、资产访问、scope 边界、结束后的清理仍按阶段确认；Middleware 保留为后续专题，均不得写成当前能力。
 
 ## 按任务读取规范
 

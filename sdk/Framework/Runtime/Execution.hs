@@ -14,7 +14,7 @@ import Framework.Runtime.Graph
   ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, installSessionLauncher
   , stopSessions, resetOrigins, runtimeRootFrame, collectRuntimeScopes, finishRuntime )
 import Framework.Runtime.Frame
-import Framework.Runtime.Session (Broken, Stopped(..), DeliveryDrained(..), newCursor, stopSession, endSession)
+import Framework.Runtime.Session (Broken, Stopped(..), DeliveryDrained(..), admitReaders, leaveSession, stopSession, endSession)
 import Framework.Prototype
 import Framework.Recursion (Algebra)
 import Framework.Language.AST (AST, WorkflowF(..), foldAST)
@@ -245,14 +245,33 @@ executionAlgebra prototype store entries selectors layer expected = do
     -- 单元在所需来源结束并排空后各自正常结束；全部单元结束后，停止本边界的生产任务并等待其收尾，
     -- lifelong 才成功返回，外层后继继续执行。执行结果不累积，成功时不带结果。
     -- 失败与取消保持原规则：失败在发生处已经报告监督，随整次运行终止。
+    -- 每个会话在进入时登记它的读取方（各单元的游标与读取方式），会话据此决定保留多少发布；
+    -- 单元结束即离开。全部单元离开后会话只剩最新一条，留给 lifelong 的后继读取。
     (Lifelong _, LifelongAt _ description _) -> do
       units <- concatMap compiledUnits <$> compiledChildren
-      sources <- mapM (producerOf . sessionAsset) (lifelongSessions description)
+      sources <- mapM (\session -> (,) (sessionAsset session) <$> producerOf (sessionAsset session))
+        (lifelongSessions description)
+      let selections = [(alternativeSelector choice, source)
+            | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype)
+            , Right source <- [producerOf (alternativeContract choice)]]
+          -- 单元对会话资产的读取方式：订阅（streams）按历史读取；其余静态读取点与转折资产的选择读取只读最新一条。
+          access asset source unit
+            | or [unit `isPrefixOf` mounted | (mounted, subscribed) <- lifelongSubscriptions description
+                 , subscribed == asset] = Just True
+            | or [unit `isPrefixOf` readNode point | (point, FromSession) <- protoSources prototype
+                 , readContract point == asset]
+              || or [unit `isPrefixOf` selector | (selector, selected) <- selections, selected == source] = Just False
+            | otherwise = Nothing
       single $ \run handoff -> ExceptT $ do
-        sessions <- mapM (\source -> (,) source <$> boundarySession store location source handoff) sources
-        outcomes <- runParalleled [repeatUnit run handoff sessions unit | unit <- units]
+        sessions <- forM sources $ \(asset, source) -> do
+          session <- boundarySession store location source handoff
+          cursors <- admitReaders session [access asset source unit | (unit, _) <- units]
+          pure (source, session, cursors)
+        outcomes <- runParalleled
+          [ repeatUnit run handoff [(source, (session, cursors !! index)) | (source, session, cursors) <- sessions] unit
+          | (index, unit) <- zip [0 ..] units ]
         -- 仍在生产的会话已经没有消费者；已结束的会话只需等待任务退出。此后不再接受发布。
-        mapM_ (\(_, session) -> stopSession session >> endSession session) sessions
+        mapM_ (\(_, session, _) -> stopSession session >> endSession session) sessions
         pure (either (Left . Problem) Right (concat <$> sequence outcomes))
     _ -> Left PrototypeWorkflowMismatch
   where
@@ -266,11 +285,11 @@ executionAlgebra prototype store entries selectors layer expected = do
       [source] -> Right source
       _ -> Left (UnknownPrototypeTarget asset)
     -- 单元的游标属于（单元，会话），进入 lifelong 时从会话首条开始。
+    -- 单元结束（正常结束、失败或取消）时离开各会话：会话不再为它保留历史与积压。
     -- 每次执行是新的 frame：先移出该单元上一次执行的 Origin，执行结果不累积；
     -- 同一单元逐次处理，本次结束后才领取下一条。所需来源结束并排空时单元正常结束，不再开始下一次执行；
     -- 发生在一次执行中途时，已完成的部分不回滚，尚未启动的部分放弃。
-    repeatUnit run handoff sessions (unit, execute) = do
-      cursors <- mapM (\(source, session) -> (,) source . (,) session <$> newCursor) sessions
+    repeatUnit run handoff cursors (unit, execute) = do
       let loop = do
             resetOrigins store unit
             delivery <- newDeliveryFrame cursors
@@ -286,7 +305,7 @@ executionAlgebra prototype store entries selectors layer expected = do
               Left (Problem problem) -> pure (Left problem)
               Left Finished -> pure (Right [])
               Right _ -> loop
-      loop
+      loop `finally` mapM_ (\(_, (session, cursor)) -> leaveSession session cursor) cursors
 
 -- Prototype 已在 SDK 入口完整求值并校验；这里一次 fold 核对当前 AST 并装配全部入口。
 -- 所有 Either 分支完成后才安装独立 ScopeTree 的关系、执行业务。

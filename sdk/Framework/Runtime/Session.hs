@@ -1,4 +1,6 @@
 -- 生产会话的发布历史、广播通知、消费游标及停止句柄。
+-- 会话只保留仍有读取义务的发布：历史只为按历史读取（streams）且尚未离开的读取方保留，
+-- 其余情况只留尚未领取的积压和最新一条。保留多少由读取方登记决定，不改变任何一次读取的结果。
 -- Runtime 启动并登记生产线程；本模块不执行生产方法，只保存交付并取消／等待该线程。
 -- Runtime/Graph 控制会话的唯一登记和整体停止；Workflow/Execution 持有各单元游标。
 -- 会话按（lifelong 边界，生产该资产的 Context 注册名）区分；注册名与运行时绑定来源同名。
@@ -7,13 +9,13 @@ module Framework.Runtime.Session
   ( SessionKey, View, Delivery, Broken, Stopped(..), SourceEnded(..), DeliveryDrained(..)
   , Session, sessionKey, sessionBindings, sessionViews
   , newSession, appendDelivery, breakSession, endSession, wakeSession, setSessionWorker, stopSession
-  , awaitHistory, Cursor, newCursor, takeDelivery
+  , awaitHistory, Cursor, admitReaders, leaveSession, takeDelivery
   ) where
 
 import Control.Concurrent (ThreadId, killThread)
-import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, modifyMVar_, putMVar, readMVar, swapMVar)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, swapMVar)
 import Control.Exception (Exception, SomeException, uninterruptibleMask_)
-import Control.Monad (void)
+import Control.Monad (forM, void)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Sequence (Seq, (|>))
 import qualified Data.Sequence as Seq
@@ -23,7 +25,8 @@ import Framework.Prototype (NodeId)
 
 type SessionKey = (Maybe NodeId, String)
 
--- 交付视图：从会话首条发布到交付位置的绑定序列；每条保留自己的出身与共享归属。
+-- 交付视图：到交付位置为止的绑定序列；每条保留自己的出身与共享归属。
+-- 交给按历史读取的读取方时从会话首条发布开始；其余读取只用它的最新一条，较早的条目可能已经放掉。
 type View environment cause = Seq (ScopeBinding environment cause)
 
 -- 一次交付：到这一条为止的视图，以及产生这一条的生产步骤的其他普通发布（伴随发布）。
@@ -50,13 +53,20 @@ instance Show DeliveryDrained where show _ = "SDK stream delivery drained"
 instance Exception DeliveryDrained
 
 data SessionState environment cause = SessionState
-  { stateEntries :: Seq (ScopeBinding environment cause)
-  -- 与 stateEntries 逐条对应。
+  -- 已经放掉的条目数：stateEntries 的首条是会话的第 stateBase 条发布。游标记录的是不随之变化的发布序号。
+  { stateBase :: Int
+  , stateEntries :: Seq (ScopeBinding environment cause)
+  -- 与 stateEntries 逐条对应，只在领取那一条交付时使用。
+  -- 发布序号小于 stateCleared 的伴随发布已被全部读取方领取，换成了空值。
   , stateCompanions :: Seq (ScopeBindings environment cause)
+  , stateCleared :: Int
   -- 会话不再接受新发布：来源正常结束（Drained）或失败（Broke）。已有条目保留。
   , stateStopped :: Maybe (Stopped cause)
   -- 下一次变化时填入；等待方读到后重新取状态。每次变化换上新的空信号。
   , stateSignal :: MVar ()
+  -- 仍可能领取交付的游标。Nothing：读取方尚未登记（lifelong 的会话在进入边界时启动，
+  -- 各单元随后登记），此前的发布全部保留。interpreter 托管的会话没有游标，从创建起就是空表。
+  , stateReaders :: Maybe [Cursor]
   }
 
 -- 边界的交接：进入 lifelong 时已经捕获的绑定与视图（例如外层 alternative 选择时读到的值）。
@@ -73,7 +83,8 @@ newSession :: SessionKey -> ScopeBindings environment cause -> [(String, View en
            -> IO (Session environment cause)
 newSession key bindings views = do
   signal <- newEmptyMVar
-  Session key bindings views <$> newMVar (SessionState Seq.empty Seq.empty Nothing signal) <*> newMVar Nothing
+  let readers = maybe (Just []) (const Nothing) (fst key)
+  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Nothing signal readers) <*> newMVar Nothing
 
 -- 两次相等的值仍是两条发布；会话已经结束或失败时不再接受新条目。
 appendDelivery :: Session environment cause -> ScopeBindings environment cause -> ScopeBinding environment cause -> IO ()
@@ -103,7 +114,35 @@ changeState session update = modifyMVar_ (sessionState session) $ \state -> case
   Just changed -> do
     fresh <- newEmptyMVar
     putMVar (stateSignal state) ()
-    pure changed { stateSignal = fresh }
+    release changed { stateSignal = fresh }
+
+-- 放掉没有读取义务的发布。按历史读取的读取方还在时条目全部保留；否则只留最早一个尚未领取的
+-- 位置之后的积压，以及最新一条（lifelong 之外的 require 与 lifelong 的后继读它）。
+-- 伴随发布只随交付领取：全部读取方都领取过的那些换成空值，与条目是否保留无关。
+-- 游标由各读取方自己推进，这里读到的位置只会偏早，保留的只会偏多。
+-- 新状态在写回前求值，不让旧序列挂在未求值的计算上。
+release :: SessionState environment cause -> IO (SessionState environment cause)
+release state = case stateReaders state of
+  Nothing -> pure state
+  Just readers -> do
+    positions <- forM readers $ \reader -> case reader of
+      Reading history position -> (,) history <$> readIORef position
+      Idle -> pure (False, maxBound)
+    let base = stateBase state
+        total = base + Seq.length (stateEntries state)
+        pending = minimum (total : map snd positions)
+        kept | any fst positions = base
+             | otherwise = max base (min pending (total - 1))
+        cleared = max (stateCleared state) pending
+        blanked = max kept (stateCleared state)
+        entries = Seq.drop (kept - base) (stateEntries state)
+        companions = Seq.drop (kept - base) (stateCompanions state)
+        emptied
+          | cleared <= blanked = companions
+          | otherwise = Seq.take (blanked - kept) companions
+              <> Seq.replicate (cleared - blanked) [] <> Seq.drop (cleared - kept) companions
+    kept `seq` cleared `seq` entries `seq` emptied `seq` (pure $! state
+      { stateBase = kept, stateEntries = entries, stateCompanions = emptied, stateCleared = cleared })
 
 -- 状态不变，只让等待者重新检查自己的打断条件（所在单元正在结束）。
 wakeSession :: Session environment cause -> IO ()
@@ -127,8 +166,8 @@ awaitState session interrupted ready = do
       if halted then pure (Left Drained)
         else readMVar (stateSignal state) >> awaitState session interrupted ready
 
--- lifelong 外的有限读取：至少有一条发布后取当时的完整历史；之后的发布不改写这次视图。
--- 来源结束后仍读到最后的完整历史；一条都没有发布就结束时返回 Drained。
+-- lifelong 外的有限读取：至少有一条发布后取当时保留的视图，读取方只用它的最新一条；之后的发布不改写这次视图。
+-- 来源结束后仍读到最后一条；一条都没有发布就结束时返回 Drained。
 awaitHistory :: Session environment cause -> IO (Either (Stopped cause) (View environment cause))
 awaitHistory session = awaitState session (pure False) $ \state ->
   if Seq.null (stateEntries state) then Nothing else Just (stateEntries state)
@@ -136,24 +175,49 @@ awaitHistory session = awaitState session (pure False) $ \state ->
 -- 消费游标属于（单元，会话）：记录已经交付的条数，每次交付推进一条。
 -- 单元逐轮推进同一个游标；一轮内并发读取由 Runtime.Frame 的领取槽合并，
 -- 不能绕过 Frame 并发调用同一游标的 takeDelivery。
-newtype Cursor = Cursor (IORef Int)
+-- Reading 带上读取方式：True 是按历史读取（该单元有 streams 订阅），False 只读交付的最新一条。
+-- Idle 属于原型中不读取这个会话的单元：它不占用保留，也不能领取。
+data Cursor = Reading Bool (IORef Int) | Idle
 
-newCursor :: IO Cursor
-newCursor = Cursor <$> newIORef 0
+instance Eq Cursor where
+  Reading _ left == Reading _ right = left == right
+  Idle == Idle = True
+  _ == _ = False
 
--- 领取下一条尚未交付的发布；视图是到这一条为止的历史，另带这一条的伴随发布。
+-- 进入 lifelong 时一次登记本会话的全部读取方，每个单元一项：Nothing 表示该单元不读取这个会话。
+-- 游标从会话首条开始；登记之前的发布都还保留着。
+admitReaders :: Session environment cause -> [Maybe Bool] -> IO [Cursor]
+admitReaders session accesses = modifyMVar (sessionState session) $ \state -> do
+  cursors <- forM accesses (maybe (pure Idle) (\history -> Reading history <$> newIORef 0))
+  settled <- release state { stateReaders = Just [cursor | cursor@(Reading _ _) <- cursors] }
+  pure (settled, cursors)
+
+-- 读取方离开：它不会再领取这个会话的交付，为它保留的历史与积压可以放掉。
+-- 目前在单元结束时调用（所需来源结束并排空、失败或取消）；消费方主动结束单元时走同一个入口。
+-- 这里只决定保留多少数据，不停止生产：没有读取方的来源是否停止属于消费方结束的规则，尚未确定。
+leaveSession :: Session environment cause -> Cursor -> IO ()
+leaveSession session cursor = modifyMVar_ (sessionState session) $ \state ->
+  release state { stateReaders = filter (/= cursor) <$> stateReaders state }
+
+-- 领取下一条尚未交付的发布；视图是到这一条为止保留的条目（按历史读取时是完整历史），另带这一条的伴随发布。
 -- 有积压时立即返回，没有时挂起等待；来源结束后先排空积压，游标到达末尾才返回 Drained。
 -- 游标前进只表示领取，不表示处理完成。
 takeDelivery :: Session environment cause -> Cursor -> IO Bool
              -> IO (Either (Stopped cause) (Delivery environment cause))
-takeDelivery session (Cursor position) interrupted = do
+takeDelivery session Idle _ = ioError (userError ("A lifelong unit takes a delivery of " ++ snd (sessionKey session)
+  ++ " without a read point in the prototype; regenerate with the SDK effect-codegen command"))
+takeDelivery session (Reading _ position) interrupted = do
   delivered <- readIORef position
   outcome <- awaitState session interrupted $ \state ->
-    if Seq.length (stateEntries state) > delivered
-      then Just (Seq.take (delivered + 1) (stateEntries state), Seq.index (stateCompanions state) delivered)
+    let offset = delivered - stateBase state
+    in if Seq.length (stateEntries state) > offset
+      then Just (Seq.take (offset + 1) (stateEntries state), Seq.index (stateCompanions state) offset)
       else Nothing
   case outcome of
-    Right _ -> atomicModifyIORef' position (\current -> (current + 1, ()))
+    -- 视图与伴随发布先求值，不让这次交付挂住整份会话状态；游标前进后放掉不再需要的部分。
+    Right (view, companions) -> view `seq` companions `seq` do
+      atomicModifyIORef' position (\current -> (current + 1, ()))
+      modifyMVar_ (sessionState session) release
     Left _ -> pure ()
   pure outcome
 

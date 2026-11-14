@@ -24,7 +24,7 @@ import Framework.Language.History (History, historyView)
 import Framework.Runtime.Session (Stopped(..), SourceEnded(..), DeliveryDrained(..), View, awaitHistory)
 import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
-import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, fromException, mask, mask_, throwIO, try, finally)
+import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, evaluate, fromException, mask, mask_, throwIO, try, finally)
 import Control.Monad (filterM, forM, forM_, when)
 import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO(..))
@@ -440,7 +440,10 @@ instance ContextStore env (App env cause) where
         selected <- rawIO (readIORef (holding attempt))
         pure (fmap (\slot -> (scopeName (family attempt), slot)) selected)
       _ -> pure Nothing
-    value <- rawIO (newBinding (update (emptyValues environment)) (execution environment)
+    -- 记录更新在发布前求值到记录本身：未求值时它挂住这次调用的整个环境，直到有读取方读到这一条。
+    -- 只求值 SDK 的绑定记录，资产值本身保持调用方交出的样子。
+    values <- rawIO (evaluate (update (emptyValues environment)))
+    value <- rawIO (newBinding values (execution environment)
       (activeActivation environment) (maybe (currentFrame environment) (scopeFrame . snd) owner) owner)
     rawIO (publishBinding environment source value)
     case openings environment of

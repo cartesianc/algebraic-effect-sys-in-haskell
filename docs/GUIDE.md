@@ -1129,7 +1129,7 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 ## 当前限制
 
 - **未实现的能力**：middleware、通用结构适配尚未实现。Stream／lifelong 的结束与清理进入本轮[六阶段计划](NEXT_STAGES.md#stages)，middleware 保留为[后续专题](NEXT_STAGES.md#middleware)。本指南只描述当前写法。
-- **持续执行的延期项**：来源结束后的资源清理与 Stream close、消费方提前退出、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；完整历史一直保留，持续运行时内存随发布增长。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
+- **持续执行的延期项**：来源结束后的资源清理与 Stream close、消费方提前退出、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；被 `streams` 订阅的来源在订阅单元运行期间保留完整历史，内存随发布增长；没有订阅的来源只保留最新一条。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
 - **Stage 3 已知实现限制**：持续资产作为 scope 开启参数尚未接通。见 [Next stages](NEXT_STAGES.md#current-limits)。
 - **handler 复用的边界**：同一个 handler 可以注册到多个 effect，但各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能读一份资产。Stream 的驱动方式和 Error 的驱动链仍待确定，见 [Stage 2：本阶段不处理](NEXT_STAGES.md#stage-2-later)。
 - **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。实例按参数生产身份共享、按剩余程序可达性回收，见[主设计](LATEST_DESIGN.md#scope-identity)；持续资产作为开启参数、历史资源精细释放与来源结束后的清理仍待后续阶段。
