@@ -109,9 +109,11 @@ changeState session update = modifyMVar_ (sessionState session) $ \state -> case
 wakeSession :: Session environment cause -> IO ()
 wakeSession session = changeState session Just
 
--- 等到状态满足条件。条件优先：结束或失败的会话仍先交出已有的结果；
--- 条件不满足且会话已停止时返回原因。interrupted 是等待方自己的打断条件，
--- 每次等待前检查，由 wakeSession 唤醒后生效，按 Drained 返回。
+-- 等到状态满足条件。条件优先：结束或失败的会话仍先交出已有的结果（来源结束后的排空）；
+-- 条件不满足且会话已停止时返回原因。interrupted 是等待方自己的打断条件（所在单元正在结束），
+-- 只在需要等待时检查，由 wakeSession 唤醒后生效，按 Drained 返回。
+-- 它只让等待退出，不决定拿到交付的位置能否启动：被新数据唤醒的等待者仍会取得交付，
+-- 是否 boot 由调用方在交付到手后另行判定（Runtime.frameAdmits）。
 awaitState :: Session environment cause -> IO Bool -> (SessionState environment cause -> Maybe result)
            -> IO (Either (Stopped cause) result)
 awaitState session interrupted ready = do

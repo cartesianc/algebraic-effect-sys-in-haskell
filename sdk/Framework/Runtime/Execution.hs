@@ -9,7 +9,7 @@ module Framework.Runtime.Execution (runStructuredAST) where
 import Framework.Language.Handler (Failure, Output(..))
 import Framework.Runtime
   ( Target, Handoff, SessionSteps, DeliveryFrame, noHandoff, targetName, lowerTarget, scopeHandlers
-  , newDeliveryFrame, frameDelivery, haltFrame, frameStopping, boundarySession, sessionLauncher )
+  , newDeliveryFrame, frameDelivery, haltFrame, frameStopping, frameAdmits, boundarySession, sessionLauncher )
 import Framework.Runtime.Graph
   ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, installSessionLauncher
   , stopSessions, resetOrigins, runtimeRootFrame, collectRuntimeScopes, finishRuntime )
@@ -120,14 +120,23 @@ supervised run action = do
 -- 回调 boot 的就绪条件：本次 frame 已有该位置所订阅资产的交付。
 -- 已有积压时立即领取，没有新发布时挂起；不通过反复调用 handler 试探数据。
 -- 来源已结束并排空时不 boot 这个位置：通知本单元（唤醒仍在等其他来源、尚未启动的并行路径），
--- 以 Finished 结束本次执行。单元已在结束时，尚未启动的位置同样不再 boot。
+-- 以 Finished 结束本次执行。
+-- 单元结束与来源结束是两件事：来源结束后已发布的交付继续交付；单元结束后不再启动新的位置，
+-- 即使它等的来源随后又发布了数据。交付到手之后还要取得启动许可（frameAdmits）才 boot：
+-- 等待者无论被结束通知还是被新数据唤醒，都在这里重新判定；通过的视作已启动，单元等它完成。
 awaitDeliveries :: Run environment cause -> [String] -> IO (Either (Halt cause) ())
 awaitDeliveries run sources = case runDeliveryFrame run of
   Nothing -> pure (Right ())
   Just frame -> do
+    -- 已经在结束的单元不必再领取；这只是提前返回，判定以下面的启动许可为准。
     stopping <- frameStopping frame
-    if stopping then pure (Left Finished)
-      else go frame [deliver | source <- sources, Just deliver <- [frameDelivery frame source]]
+    if stopping then pure (Left Finished) else do
+      claimed <- go frame [deliver | source <- sources, Just deliver <- [frameDelivery frame source]]
+      case claimed of
+        Left halt -> pure (Left halt)
+        Right () -> do
+          admitted <- frameAdmits frame
+          pure (if admitted then Right () else Left Finished)
   where
     go _ [] = pure (Right ())
     go frame (deliver : rest) = do

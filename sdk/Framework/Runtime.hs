@@ -9,7 +9,7 @@
 module Framework.Runtime
   ( App, Target, targetApp
   , targetName, lowerTarget, Handoff, noHandoff, scopeHandlers, cleanupTargets
-  , DeliveryFrame, newDeliveryFrame, frameDelivery, haltFrame, frameStopping, boundarySession
+  , DeliveryFrame, newDeliveryFrame, frameDelivery, haltFrame, frameStopping, frameAdmits, boundarySession
   , SessionSteps, receiveSteps, sessionLauncher
   ) where
 
@@ -68,6 +68,7 @@ newDeliveryFrame sessions = DeliveryFrame sessions <$> newMVar [] <*> newIORef F
 
 -- 单元结束通知：先置位，再唤醒本 frame 各会话上的等待者重新检查。
 -- 同一单元内仍在等另一个来源的并行路径由此退出等待；其他单元的等待者只是重查后继续等待。
+-- 置位之后不再有位置取得启动许可（frameAdmits）。
 haltFrame :: DeliveryFrame environment cause -> IO ()
 haltFrame frame = do
   writeIORef (frameHalted frame) True
@@ -76,13 +77,20 @@ haltFrame frame = do
 frameStopping :: DeliveryFrame environment cause -> IO Bool
 frameStopping = readIORef . frameHalted
 
+-- 启动许可：“单元结束”与“启动一个位置”之间唯一的判定点，在交付到手之后、boot 之前读取一次。
+-- 读到尚未结束即视作已启动，之后的结束通知不撤回它，单元等它完成；结束通知在先则不启动，
+-- 即使其他来源恰好在这时发布了新交付。来源结束后的排空不经过这里：那只取决于会话里是否还有积压。
+frameAdmits :: DeliveryFrame environment cause -> IO Bool
+frameAdmits frame = not <$> frameStopping frame
+
 -- 进入 lifelong 时取得本边界的会话：生产步骤从进入时的交接开始，与来源分析给会话挂载的环境一致。
 boundarySession :: RuntimeGraph environment cause -> NodeId -> String -> Handoff environment cause
                 -> IO (Session environment cause)
 boundarySession graph boundary source (Handoff given views) = obtainSession graph (Just boundary, source) given views
 
 -- 不是本 lifelong 的会话资产时为 Nothing。没有新发布时挂起；有积压时立即领取下一条。
--- 来源结束并排空，或单元正在结束而本 frame 尚未领取该资产时，返回 Drained。
+-- 来源结束并排空时返回 Drained。单元正在结束时：已有交付照常取得（已经启动的调用继续用它完成），
+-- 需要等待才返回 Drained。是否允许启动新的位置不在这里决定，见 frameAdmits。
 frameDelivery :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Stopped cause) (View environment cause)))
 frameDelivery frame source = fmap (fmap fst) <$> frameTake frame source
 
@@ -90,22 +98,16 @@ frameTake :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Sto
 frameTake frame source = do
   (session, cursor) <- lookup source (frameSessions frame)
   pure $ do
-    halted <- frameStopping frame
-    claimed <- modifyMVar (frameTaken frame) $ \taken -> case lookup source taken of
-      Just slot -> pure (taken, Just (slot, False))
-      -- 单元正在结束：不再开始新的领取，已经领取的视图仍由本次执行共享。
-      Nothing | halted -> pure (taken, Nothing)
+    (slot, fresh) <- modifyMVar (frameTaken frame) $ \taken -> case lookup source taken of
+      Just slot -> pure (taken, (slot, False))
       Nothing -> do
         slot <- newEmptyMVar
-        pure ((source, slot) : taken, Just (slot, True))
-    case claimed of
-      Nothing -> pure (Left Drained)
-      Just (slot, False) -> readMVar slot
-      Just (slot, True) -> mask $ \restore -> do
-        outcome <- try (restore (takeDelivery session cursor (frameStopping frame)))
-        -- 领取被取消时也填入结果，同一 DeliveryFrame 的其他等待方不会悬挂。
-        putMVar slot (either (Left . Broke . Left) id outcome)
-        either throwIO pure outcome
+        pure ((source, slot) : taken, (slot, True))
+    if not fresh then readMVar slot else mask $ \restore -> do
+      outcome <- try (restore (takeDelivery session cursor (frameStopping frame)))
+      -- 领取被取消时也填入结果，同一 DeliveryFrame 的其他等待方不会悬挂。
+      putMVar slot (either (Left . Broke . Left) id outcome)
+      either throwIO pure outcome
 
 frameDeliveries :: DeliveryFrame environment cause -> IO [(String, Delivery environment cause)]
 frameDeliveries frame = do
