@@ -463,6 +463,8 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 未覆盖：从主线程投递的取消（Ctrl-C）与 `end` 的各种交错、同一持续资产被先后两个 lifelong 订阅；探针没有加入仓库。
 
+**示例（2026-11-14）：** 新增 [LinesDemo](../demo/LinesDemo)（`cabal run lines-demo`）：输入文件是无开启参数的 Scoped 资源，Stream handler 逐行读取、读到末尾时 `end`。生成、编译通过；运行输出四行后执行 `Report`，随后关闭文件，结果 `Succ [AnnounceResult (),ReportResult ()]`；`--structure` 显示一个 lifelong 单元和 `TextLine` 的会话。它是仓库中第一个会正常结束的 lifelong 程序，也是 Stream 声明 `requires` 读取上游 scope 资源的第一个示例。
+
 #### 尚未确定或尚未实现
 
 - **后继读取 lifelong 内部的发布**：已确定后继按现有可见性读取，不因正常结束新增隔离边界；读到哪一份尚未确定——最后一次执行留下的发布，还是每个来源各自的最后一次发布。后者能读到最后一轮没有产出的资产，但后继拿到跨轮拼接的值，原本互斥的来源会并存，按轮回收的实例需要保留更久。实现还须改 `repeatUnit` 在领取下一轮之前清除上一轮产物的顺序，并把持续资产的读取路由到已结束的会话。

@@ -906,16 +906,26 @@ ast = chained [setup, monitor]
 - **正常结束**：Stream handler 在来源没有下一份输入时调用 `end`。它和返回值、`raise` 并列，是方法体的第三个出口；签名仍是 `m String`，只有 Stream handler 的 Layer 里有它：
 
   ```haskell
-  -- 示意，不在 StreamDemo 中；需要 import Framework.SDK (Ends(..))
+  -- demo/LinesDemo/Handlers.hs（节选）；需要 import Framework.SDK (Ends(..))
   instance NextLineLayer m => NextLineHandler m where
     nextLine = do
-      finished <- liftIO (hIsEOF stdin)
-      if finished then end else liftIO getLine
+      InputFile _ file <- require @InputFile
+      finished <- liftIO (hIsEOF file)
+      if finished then end else liftIO (hGetLine file)
+  ```
+
+  ```haskell
+  -- demo/LinesDemo/AST.hs：来源结束、已发布的行处理完后，Report 才执行
+  ast = chained
+    [ chained [node "Announce"]
+    , lifelong [chained [node "PrintLine"]]
+    , chained [node "Report"]
+    ]
   ```
 
   `end` 不是失败，不进入 Error 诊断。这一步不交出输入，parser 不执行；已经发布的交付仍会被各单元领取完。单元在它要领取的来源已经结束并领完时结束：尚未执行的后继放弃，已完成的部分不回滚。全部单元结束后 lifelong 成功返回（不带结果），排在后面的节点继续执行。
 - **结束后能读什么**：lifelong 后面的节点可以读取进入 lifelong 之前就可见的资产。读取 lifelong 内部发布的资产（单元的产物、持续资产本身）尚未实现，gencode 会报 `InvalidLifelong`。
-- **结束后的资源**：这一步没有改变清理规则。只在生产会话中开启的资源（例如 `SensorLink` 的连接）仍在整次运行结束时关闭，所以后面的节点执行完之后才会看到 `[sensor] disconnected`。
+- **结束后的资源**：这一步没有改变清理规则。只在生产会话中开启的资源（StreamDemo 的 `SensorLink`、LinesDemo 的输入文件）仍在整次运行结束时关闭，所以 LinesDemo 在 `Report` 执行之后才打印 `[close]`。
 - **不结束的来源**：StreamDemo 的来源不调用 `end`，持续程序运行到被取消（Ctrl-C）为止。取消时 SDK 停止全部单元和会话，等它们收尾，再按 ScopeTree 关闭资源；StreamDemo 会打印 `[sensor] disconnected`。
 - **失败（临时规则）**：程序里含 lifelong 时，结构化失败（生产、解析、某个单元或任何 branch）在完成 Error 诊断后终止整次运行：取消全部任务、等待收尾，最后报告最初的那个失败；原生异常直接进入监督并在收尾后重新抛出。lifelong 的 close 语义设计后再改为局部结束。
 - **lifelong 外读取持续资产**：普通 `requires "T"` 只读取一次，取得最新一条。没有交付时，由 interpreter 托管的会话产出（至少等到一条）；这个会话保持到程序退出。来源已经 `end` 时读到最后一条，不重新启动来源；一条都没有发布就结束时报 `ContextNotInitialized`。
@@ -1109,6 +1119,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | [ScopeInstancesDemo](../demo/ScopeInstancesDemo) | 三条使用闭包共用一个 handler，按当前参数各自开启实例，退出时关闭，后一条重新开启 | `cabal run scope-instances-demo` |
 | [ScopeReuseDemo](../demo/ScopeReuseDemo) | 并行的链共享同一个资源实例 | `cabal run scope-reuse-demo` |
 | [StreamDemo](../demo/StreamDemo) | 持续读数与心跳（各为 Stream＋parser）、lifelong 的两个独立单元；会话跨步骤保持传感器连接 | `cabal run stream-demo`（持续运行，Ctrl-C 结束） |
+| [LinesDemo](../demo/LinesDemo) | 会结束的 Stream：逐行读取文本文件，读到末尾时 handler 调用 `end`；已发布的行处理完后 lifelong 返回，后面的节点继续执行 | `cabal run lines-demo` |
 | [FacadeProbe](../demo/FacadeProbe) | 原子 handler 复用：同一套打开、写入、读取、解析和打印 handler 服务报表与回复两条业务；不进入 Cabal 构建 | 见 [README](../demo/FacadeProbe/README.md) |
 
 Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各自目录下，已加入 Git 忽略。

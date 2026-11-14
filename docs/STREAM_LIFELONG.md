@@ -300,18 +300,26 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 
 **代码长什么样。** Stream handler 的签名不变，仍是 `m String`。gen 只在 Stream handler 的 Layer 里加入 `Ends`，方法体多一个出口 `end`：
 
-    -- Generated/Effects.hs（生成）
-    type NextLineLayer m = (SDK.Ends m, SDK.Raises NextLineError m, MonadIO m)
+    -- demo/LinesDemo/Generated/Effects.hs（生成）
+    type NextLineLayer m = (SDK.Reads (InputFile) m, SDK.Ends m, SDK.Raises NextLineError m, MonadIO m)
     class NextLineHandler m where
       nextLine :: m String
 
-    -- Handlers.hs（手写）
+    -- demo/LinesDemo/Handlers.hs（手写）
     instance NextLineLayer m => NextLineHandler m where
       nextLine = do
-        finished <- liftIO (hIsEOF stdin)
-        if finished then end else liftIO getLine
+        InputFile _ file <- require @InputFile
+        finished <- liftIO (hIsEOF file)
+        if finished then end else liftIO (hGetLine file)
 
-注册、parser、消费方的 handler 与 AST 的写法都不变；不调用 `end` 的 Stream 行为与此前相同。parser、Excu、Scoped 的 Layer 里没有 `Ends`，在它们的方法体里写 `end` 由 GHC 拒绝。
+    -- demo/LinesDemo/AST.hs
+    ast = chained
+      [ chained [node "Announce"]
+      , lifelong [chained [node "PrintLine"]]
+      , chained [node "Report"]
+      ]
+
+注册、parser、消费方的 handler 与 AST 的写法都不变；不调用 `end` 的 Stream 行为与此前相同。LinesDemo 读完四行后 `end`，`PrintLine` 处理完这四行，`Report` 执行，输入文件在运行结束时关闭。parser、Excu、Scoped 的 Layer 里没有 `Ends`，在它们的方法体里写 `end` 由 GHC 拒绝。
 
 **三个出口。** Stream handler 的方法体有三个出口：返回一份原始输入、`raise` 失败、`end` 正常结束。结束由来源在取下一份输入的这一步自己报告，不另设“是否结束”的查询方法。`raw` 不在其中：它是下一层（parser）读取第一种出口的方式。
 

@@ -311,6 +311,52 @@ executable stream-demo
     , transformers >= 0.6 && < 0.7
   default-language: Haskell2010
 
+executable lines-demo
+  main-is: LinesDemo/Main.hs
+  hs-source-dirs: demo, sdk
+  other-modules:
+      LinesDemo.AST
+      LinesDemo.Effects
+      LinesDemo.Types
+      LinesDemo.Generated.Effects
+      LinesDemo.Generated.Program
+      LinesDemo.Generated.Handlers
+      Framework.SDK
+      Framework.Generated
+      Framework.Program
+      Framework.Recursion
+      Framework.Language.AST
+      Framework.Language.Handler
+      Framework.Language.History
+      Framework.Language.Registration
+      Framework.Prototype
+      Framework.Prototype.Types
+      Framework.Prototype.Graph
+      Framework.Prototype.Query
+      Framework.Prototype.Validate
+      Framework.Prototype.Structure
+      Framework.Runtime
+      Framework.Runtime.Protocol
+      Framework.Runtime.Context
+      Framework.Runtime.Binding
+      Framework.Runtime.Scope
+      Framework.Runtime.App
+      Framework.Runtime.Frame
+      Framework.Runtime.Identity
+      Framework.Runtime.Graph
+      Framework.Runtime.Session
+      Framework.Runtime.Execution
+  ghc-options: -main-is LinesDemo.Main -threaded
+  build-depends:
+      base >= 4.21 && < 5
+    , containers
+    , deepseq
+    , mtl >= 2.3 && < 2.4
+    , filepath
+    , process >= 1.6 && < 1.7
+    , transformers >= 0.6 && < 0.7
+  default-language: Haskell2010
+
 executable effect-codegen
   main-is: Framework/Gen/Main.hs
   hs-source-dirs: sdk
