@@ -5,8 +5,8 @@
 module Framework.Gen.Emit.Program (renderProgram) where
 
 import Data.List (intercalate, nub)
+import Framework.Gen.Assembly
 import Framework.Gen.Bind
-import Framework.Gen.Names (contextProducer, contextReader, entryMethod)
 import Framework.Language.Registration (EffectSpec(..))
 import qualified Framework.Prototype as Prototype
 
@@ -16,6 +16,7 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
     namespace = unitNamespace unit
     selected = map fst (unitTerminals unit)
     workflow = Prototype.plannedWorkflow (unitPlan unit)
+    mounts = assemblyMounts (unitAssembly unit)
     programHeader =
       [ "{-# LANGUAGE DuplicateRecordFields #-}"
       , ""
@@ -29,12 +30,9 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
       , "import " ++ namespace ++ ".Types"
       , ""
       ]
-    selectorContracts = nub (Prototype.workflowSelectors workflow)
-    -- 选择读取自己驱动转折资产（相当于 requests）；持续资产由会话驱动，选择读取领取本次交付。
-    selectorOfContract contractType =
-      [ selector | AssetDeclaration declared _ owner <- unitAssets unit, declared == contractType
-      , Just selector <- [(if continuousContract unit contractType then contextReader else contextProducer)
-          (typing (specOf unit owner))] ]
+    selectors = nub [(mountTerminal mount, mountMethod mount) | mount <- mounts
+      , mountRole mount == Prototype.SelectorChain]
+    selectorContracts = map fst selectors
     branchesOf contractType = [branchConstructor branch | branch <- unitBranches unit, branchBase branch == contractType]
     astInterpreter =
       [ ""
@@ -55,7 +53,7 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
           | (terminal, method) <- unitTerminals unit ]
       , "    , " ++ renderList "      "
           [ wrapTarget contractType ("caseOf" ++ contractType ++ " <$> Handlers." ++ selector)
-          | contractType <- selectorContracts, selector <- selectorOfContract contractType ]
+          | (contractType, selector) <- selectors ]
       , "    , " ++ renderList "      " sessionSteps
       , "    )"
       , ""
@@ -80,19 +78,19 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
       ]
     -- 按 Context 注册名登记（与运行时绑定来源同名）。Receive：Stream 单步取得原始输入，parser 解析它并发布。
     -- Derive：领取一条上游交付后只执行 parser，它沿 Input 链执行被驱动的句柄并发布。
-    sessionSteps =
+    sessionSteps = nub
       [ "(" ++ show (name specification) ++ ", " ++ steps ++ ")"
-      | specification <- contextSpecs unit, Prototype.effectContinuous (protoOf unit (name specification))
-      , Just parsing <- [contextProducer (typing specification)]
-      , let parser = wrapTarget (name specification) ("() <$ Handlers." ++ parsing)
-      , plan <- nub [Prototype.sessionPlan session | session <- sessions
-          , Just (Prototype.sessionAsset session) == Prototype.effectProduces (protoOf unit (name specification))]
-      , steps <- case plan of
-          Prototype.Receive _ ->
-            [ "SDK.receiveSteps (" ++ wrapTarget (input specification) ("Handlers." ++ handle) ++ ") (" ++ parser ++ ")"
-            | Just handle <- [entryMethod (specOf unit (input specification))] ]
-          Prototype.Derive _ -> ["SDK.deriveSteps (" ++ parser ++ ")"]
-          Prototype.ReuseOutput _ -> [] ]
+      | specification <- contextSpecs unit
+      , session <- sessions
+      , Just (Prototype.sessionAsset session) == Prototype.effectProduces (protoOf unit (name specification))
+      , let entries = [mount | position <- Prototype.sessionMounts session
+                , mount <- mounts, mountNode mount == position]
+            action entry prefix = wrapTarget (mountTarget entry) (prefix ++ "Handlers." ++ mountMethod entry)
+      , steps <- case (Prototype.sessionPlan session, entries) of
+          (Prototype.Receive _, [source, parser]) ->
+            ["SDK.receiveSteps (" ++ action source "" ++ ") (" ++ action parser "() <$ " ++ ")"]
+          (Prototype.Derive _, [parser]) -> ["SDK.deriveSteps (" ++ action parser "() <$ " ++ ")"]
+          _ -> [] ]
     sessions = concatMap (Prototype.lifelongSessions . snd) (Prototype.workflowLifelongs workflow)
       ++ Prototype.finiteSessions (effectPrototypes unit)
     wrapTarget label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"

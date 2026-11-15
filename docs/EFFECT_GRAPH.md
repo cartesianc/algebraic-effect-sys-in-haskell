@@ -3,7 +3,7 @@
 本文是[主设计第 5 章](LATEST_DESIGN.md)引用的详细规范，负责 Prototype、来源分析、RuntimeGraph、ScopeTree 与缓存。范围为 Stage 1/2 的协议；Stream／lifelong 在原型中的表示（`LifelongAt`、会话挂载、`protoSessions`、`FromSession`）见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static)，运行接入见[第 7 节](STREAM_LIFELONG.md#sessions)。
 
 
-业务入口仍为 `main = interpreter ast effects`，手写 handler 仍使用原生 Haskell 的 `instance`、`do`、模式匹配和读取（`require @T`、`raw`）。gen 的降级与构图阶段（`Framework.Gen.Lower`、`Framework.Gen.Build`）统一构建注册、方法、workflow、链定义与挂载、effect graph 和 ScopeTree，输出唯一的 `generatedPrototype :: SDK.Prototype MethodGen` 显式 ADT 常量；数据模型在 `Framework.Prototype`。运行时校验并直接使用这份原型，不预执行 Context 或资源 IO。
+业务入口仍为 `main = interpreter ast effects`，手写 handler 仍使用原生 Haskell 的 `instance`、`do`、模式匹配和读取（`require @T`、`raw`）。gen 的降级、装配与构图阶段（`Framework.Gen.Lower`、`Framework.Gen.Assembly`、`Framework.Gen.Build`）统一构建注册、方法、workflow、链定义与挂载、effect graph 和 ScopeTree，输出唯一的 `generatedPrototype :: SDK.Prototype MethodGen` 显式 ADT 常量；数据模型在 `Framework.Prototype`。运行时校验并直接使用这份原型，不预执行 Context 或资源 IO。
 
 生成前可由 GHC／HLS 检查手写模块是[核心设计约束](LATEST_DESIGN.md#beforegen)。已有契约接口提供类方法与 ADT 类型关系；生成器从合法 Haskell 中提取支持的结构，不要求先把业务源码转换成另一种语法。宿主语言类型正确与静态 effect 结构可提取需要分别满足。
 
@@ -135,8 +135,8 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 生成阶段的依赖如下，与[八阶段流水线](LATEST_DESIGN.md#generation)对应：
 
 1. **降级声明与挂载。** `Gen.Lower.preparePrototype` 解析注册、资产与 Input。AST 已用 `node` 指定末端，`numberWorkflow` 为每次挂载编号；这里检查 alternative 的分支契约及覆盖，并由 `Gen.Sessions` 定下持续会话与输出复用位置。末端不是从全图寻找的叶子。
-2. **组成 effect 方法。** `Gen.Bind` 确定每个绑定的 requests 驱动、Input 前驱与读取路由；`Gen.Shape` 提取同一 Handlers 快照，再由 `composeMethods` 组成纯方法结构。一个 handler 的不同绑定保留各自的入口与路由。
-3. **构建方法图。** `Gen.Build.buildPrototype` 收集 AST、选择读取与独立会话的挂载，合并挂接注入；注入副本只消去对同次原子输出的再次索取。随后 `expandChain` 展开方法结构，`zygo` 同时汇总 EffectGraph 与 scope 路径证据。
+2. **装配入口并组成 effect 方法。** `Gen.Assembly` 将已编号的 AST、选择器、会话步骤与输出连接解析一次；`Gen.Bind` 保存带角色的 requests 驱动、Input 前驱、raw 来源与读取路由；`Gen.Shape` 提取同一 Handlers 快照，再由 `composeMethods` 组成纯方法结构。一个 handler 的不同绑定保留各自的入口与路由。
+3. **构建方法图。** `Gen.Build.buildPrototype` 直接读取同一 Assembly 的挂载与输出连接，合并挂接注入；注入副本只消去对同次原子输出的再次索取。`Build.Graph` 用方法索引与活动栈检查引用，完成一个方法后缓存它的 scope 路径与图摘要。仍由原来 zygo 的辅助／主 algebra 组合两份结果，但不再先展开按调用次数复制的 Fix 树。
 4. **推导 scope 关系。** `buildScopeTree` 从方法图的路径求共同必经前序，`completeScopeTree` 补入注册前提并检查环。因此先有方法图及路径，再有 ScopeTree。scope 实例的共享与关闭仍由运行时的生产身份、实际使用和待用关系决定。
 5. **证明来源并校验。** `Gen.Build.Sources` 结合方法结构、链挂载和 workflow，形成读取来源与 scope 开启计划；保留相关路径差异，裁剪无关状态。原型校验与 Context 驱动检查完成后才可发布。
 6. **发射与类检。** 输出普通 Haskell 的契约、入口与 `generatedPrototype`，在内存中完成 GHC 类型检查和源码资产检查，再写回 Generated；`Generated/Assets.hs` 是独立的源码资产目录。生成失败不发布新的结构。
@@ -156,7 +156,23 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 环也分层处理：方法调用递归和持续启动环报错；scope 先求路径的共同必经前序，再补不可删除的注册前提，只舍弃与前提冲突的观察边。没有一个统一的“删除环中任意边”阶段。
 
-算法注释以“算法说明 v1（2026-11-15）”标记，版本表示说明中的契约；阶段、复用条件或证明边界变化时同步更新。它不代替源码缓存键或 Git 历史。复杂度需要分别观察调用展开大小、scope 路径数和相关来源状态数：即使注册图无环，路径组合和相关状态仍可能指数增长；列表查询、去重、传递约简及未记忆化的祖先展开还会增加开销。按消费单元先裁剪再组合减少无关状态，不能据此宣称整体线性。这里是源码分析，未做性能实测。
+装配与方法归约的算法注释更新为“算法说明 v2（2026-11-16）”；未变的 scope 关系证明保留 v1。版本表示说明中的契约，不代替源码缓存键或 Git 历史。方法目录用 Map、活动栈用 Set，每个可达方法体只分析一次；缓存完成态，不以“已经见过”掩盖递归回边。设 N 为方法数、E 为入口与可达方法体的结构位置数，索引与引用检查约为 O((N+E) log(N+1))，不包含摘要合并和路径计算。Sequence 中重复的 Call 仍分别参与路径组合，顺序不变。
+
+这只消除了按调用展开的重复分析。scope 路径数和相关来源状态数仍可能指数增长；摘要的列表去重、传递约简及未记忆化的 scope 祖先遍历也仍有开销。来源分析依赖挂载、捕获与前态，不能使用“只按方法身份”的缓存。按消费单元先裁剪再组合减少无关状态，不能据此宣称整体线性。这里是源码分析，未做性能实测。
+
+### 编译期装配计划与运行边界
+
+Assembly 是 gen 内部的解析结果，不是第二份业务注册或 RuntimeGraph，也不作为新的运行时表加载。现有 Prototype、生成入口与注入表共同承载它的降级结果；业务的资产、注册、instance、AST 和 Main 写法均不变。
+
+| 解析结果 | 使用方 | 保留的含义 |
+| --- | --- | --- |
+| `EntryMount` | Build 的 ChainProto、Emit.Program 的入口登记 | NodeId、入口角色、结构末端、运行诊断标签、方法身份；相同方法的多个挂载仍独立 |
+| `EntryStep` | Bind.composeMethods、Emit.Handlers | 有序 RequestStep／InputStep；两处都使用 bindingBefore，不重新推导或去重 |
+| `RawSource` | 结构中的 raw 引用、生成的 Raw 实例 | 直接输入的方法；Stream 的 String 包成单元素 list，其余保持 list |
+| `OutputConnection` | Build 的注入结构与驱动检查、Sources 的发布分析、Emit 的注入表 | 当前 anchor → parser，以及普通／持续注入角色；保持原有注入顺序和错误协议 |
+| `BootPlan.ReuseOutput` | Assembly、Prototype 与现有 runtime | 由 Lower／Sessions 确定的具体 AST 输出位置，不新增独立生产步骤 |
+
+完整方法结构仍保留顺序、分支和每次调用；最终方法目录共享定义，方法摘要在 gen 内共享。alternative 仍按契约选择并交接捕获，没有把公共前段提升到候选之外。runtime 只取得本次输出、Binding 与活 scope 实例，不重新寻找共线或尾部。scope 仍按参数生产身份匹配，本次不增加 Eq 约束或同值复用。
 
 ### 运行时初始化与执行
 
@@ -166,7 +182,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 `Chained` 和 `Parallel` 可以汇总 Node 的结构，但不把不同 Node 的链拼成一条 scope 启动路径。尤其不能从 AST 中“Node A 先执行、Node B 后执行”推导其 scope 存在依赖。方法结构中的路径与 workflow 的节点调度是不同层级。
 
-这里要求完成的是有限纯结构，不是提前强制业务产物或获取资源。生成期的 `zygo` 共享辅助归约与主归约的递归过程，不新增一套业务执行器。
+这里要求完成的是有限纯结构，不是提前强制业务产物或获取资源。生成期保留 zygo 的辅助／主归约关系，按方法缓存完成的两份结果，不新增一套业务执行器。
 
 ## ScopeTree 的内部构树规则
 
@@ -244,7 +260,7 @@ generatedPrototype :: SDK.Prototype MethodGen
 
 ## 内容缓存与重跑边界
 
-每次 gencode 仍加载声明并读取 Handlers 快照；结构分析和执行副本共用该快照，顶层检查与资产目录另用 GHC 名称解析同一快照，每次执行。`Generated/.scope-cache` 保存三项：输入 key、纯 `Prototype String`、已经渲染的 Haskell 源码。key 精确比较完整 `PrototypePlan`、规范化方法结构及构图相关的 SDK 源码：`Prototype.hs` 与 `Prototype/` 下的 Types、Graph、Query、Validate，`Gen/` 下的 Lower、Sessions、Demand、Names、Bind、Build、Build/Graph、Build/Sources、Emit/Prototype，`Language/Registration.hs`、`Language/AST.hs` 和 `Recursion.hs`；列表在 [Framework.Gen](../sdk/Framework/Gen.hs) 的 `structureSources`。不用 mtime 判断命中，也不加载或执行 `Generated.Program` 读取缓存。
+每次 gencode 仍加载声明并读取 Handlers 快照；结构分析和执行副本共用该快照，顶层检查与资产目录另用 GHC 名称解析同一快照，每次执行。`Generated/.scope-cache` 保存三项：输入 key、纯 `Prototype String`、已经渲染的 Haskell 源码。key 精确比较完整 `PrototypePlan`、`Assembly`、规范化方法结构及构图相关的 SDK 源码：`Prototype.hs` 与 `Prototype/` 下的 Types、Graph、Query、Validate，`Gen/` 下的 Lower、Sessions、Demand、Names、Bind、Assembly、Build、Build/Graph、Build/Sources、Emit/Prototype，`Language/Registration.hs`、`Language/AST.hs` 和 `Recursion.hs`；列表在 [Framework.Gen](../sdk/Framework/Gen.hs) 的 `structureSources`。不用 mtime 判断命中，也不加载或执行 `Generated.Program` 读取缓存。
 
 key 未变时复用纯原型和渲染文本，仍运行 `validatePrototype`、`checkDriven` 及源码资产检查；首次没有 Handlers 时仍按原协议跳过驱动检查、先提供契约。原子业务 IO 的修改若不改变方法结构，可复用原型，同时更新业务包装副本及源码指纹。每份生成文件都先比较完整内容，内容相同就不写回；这减少结构重算和无变化文件写入，不等于跳过整条生成命令，也不是逐方法热点生成、文件监听或运行中热重载。
 

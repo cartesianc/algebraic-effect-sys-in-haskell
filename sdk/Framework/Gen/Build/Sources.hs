@@ -1,5 +1,7 @@
 -- 生成期的资产来源分析：输入是已解析方法体与统一 Prototype，
 -- 输出补全 chainDrives、chainReads、protoSources 和 scope 开启出处，不运行业务或修改 ScopeTree。
+-- v2（2026-11-16）：注入关系读取同一 Assembly 的 OutputConnection，顺序与 Emit／Build 一致；
+-- 下面的路径状态与裁剪规则维持 v1，不能用方法图的缓存替代带捕获和前态的来源分析。
 -- 每个候选状态保留发布/捕获的相关性；先按消费单元及后续读取裁剪，再组合状态。
 -- Query 提供同一套 AST 可见性关系；runtime 只使用分析结果，不重新执行本分析。
 -- 算法说明 v1（2026-11-15）：裁剪的是不可观察的静态分析事实，不删除运行时发布或业务调用。
@@ -11,6 +13,7 @@ module Framework.Gen.Build.Sources (resolveSources) where
 import Control.Monad (unless)
 import Control.Monad.State.Strict (StateT, execStateT, gets, lift, modify')
 import Data.List (intercalate, isPrefixOf, nub, sort)
+import Framework.Gen.Assembly (OutputConnection(..))
 import Framework.Language.Registration (EffectKind(..))
 import Framework.Prototype.Graph (MethodDefinition(..), MethodRole(..), MethodShape(..), GraphError(..))
 import Framework.Prototype.Types
@@ -58,9 +61,9 @@ type AssetAnalysis = StateT AssetFacts (Either (PrototypeError String))
 -- require 不生产：没有可见发布的路径停在这次读取，不从读取返回。状态按有限事实去重，不展开任何业务 IO。
 -- 只保留本链或后续 workflow 可能读取的契约；在方法出口就裁剪，避免无关注入
 -- 的成功／失败组合先指数展开。仍保留活跃契约之间的相关性，不退化为 may-set。
-resolveSources :: [MethodDefinition String] -> [String] -> Prototype String
+resolveSources :: [OutputConnection String] -> [MethodDefinition String] -> [String] -> Prototype String
                -> Either (PrototypeError String) (Prototype String)
-resolveSources definitions defaultReaders prototype = do
+resolveSources connections definitions defaultReaders prototype = do
   facts <- flip execStateT (AssetFacts [] [] []) $ do
     _ <- workflow (protoWorkflow prototype) [] [] []
     -- interpreter 托管的会话各自从空环境启动，不是任何读取点的可见前驱。
@@ -362,13 +365,10 @@ resolveSources definitions defaultReaders prototype = do
           pure (nub (map (retainExit (assetRelevant call)) (withFailures state exits)))
     inject :: AssetCall -> String -> [AssetExit] -> AssetAnalysis [AssetExit]
     inject call anchor exits = do
-      let anchored = [(effectName effect, method', role') | role' <- [ContextRequest, ContextStream], effect <- effects
-            , Just anchorName <- [effectAnchor effect]
-            , owner <- effects, effectName owner == anchorName
-            , (role, anchoredMethod) <- effectMethods owner
-            , role `elem` [HandlerMethod, ScopeOpen], anchoredMethod == anchor
-            , Just method' <- [lookup role' (effectMethods effect)]
-            , role' == ContextRequest || role' == ContextStream && reusedHere call effect]
+      let anchored = [(outputProducer connection, outputParser connection, outputRole connection)
+            | connection <- connections, outputAnchor connection == anchor
+            , outputRole connection == ContextRequest || outputRole connection == ContextStream
+                && reusedHere call (outputProducer connection)]
           producing = [entry | entry@(_, _, role) <- anchored
             , maybe True (`notElem` [owner | (owner, _, selected) <- anchored, selected == role]) (assetCaller call)]
       successes (\state -> do
@@ -379,9 +379,10 @@ resolveSources definitions defaultReaders prototype = do
               pure (if role == ContextStream then results
                 else nub [AssetExit True after | AssetExit _ after <- results])
         sequential injectOne producing [AssetExit True state]) exits
-    reusedHere call effect = or
+    reusedHere call producer = or
       [ effectProduces effect == Just (sessionAsset session) && assetRoot call `elem` nodes
-      | (_, described) <- lifelongs, session <- lifelongSessions described
+      | effect <- effects, effectName effect == producer
+      , (_, described) <- lifelongs, session <- lifelongSessions described
       , ReuseOutput nodes <- [sessionPlan session] ]
     root :: NodeId -> [String] -> [(String, Maybe NodeId)] -> [(NodeId, String)] -> AssetAnalysis [AssetExit]
     root node' future handoff publications = do

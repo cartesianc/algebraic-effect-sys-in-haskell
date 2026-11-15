@@ -7,6 +7,7 @@ module Framework.Gen.Emit.Handlers (renderHandlers, handlerExports) where
 
 import Data.List (intercalate, nub, sortOn)
 import Data.Maybe (isJust)
+import Framework.Gen.Assembly
 import Framework.Gen.Bind
 import Framework.Gen.Names (contextProducer, contextReader, entryMethod, handlerBindings, handlerError, handlerFailure)
 import Framework.Gen.Source (HandlerSource(..), sourceOffset)
@@ -92,7 +93,9 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       [ [ "instance FrameworkRuntime.Raw (At " ++ show (name specification) ++ ") where"
         , "  raw = At (" ++ expression ++ ")"
         , "" ]
-      | specification <- specifications unit, Just expression <- [rawExpression unit specification] ]
+      | binding <- unitBindings unit, Just source <- [bindingRaw binding]
+      , let expression = rawExpression source
+            specification = specOf unit (bindingEffect binding) ]
     -- end 只在 Stream 的标签下有实例：结束这个 effect 所在的生产会话，同一 handler 的其他绑定不受影响。
     endInstances = concat
       [ [ "instance FrameworkRuntime.Ends (At " ++ show (name specification) ++ ") where"
@@ -103,9 +106,11 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
     -- effect 方法：外层包装由类别决定；方法体先驱动、再执行 Input 前驱，最后在本 effect 的标签下执行 handler。
     entryDefinitions specification =
       [ line
-      | (method, handler') <- handlerBindings specification
+      | binding <- unitBindings unit, bindingEffect binding == name specification
+      , let method = bindingMethod binding
+            handler' = bindingHandler binding
       , line <- definition method (resultType method) (wrapper method)
-          (intercalate " >> " (beforeOf unit specification method ++ [handlerCall method handler'])) ]
+          (intercalate " >> " (bindingCalls binding ++ [handlerCall method handler'])) ]
       ++ concat [ readerDefinition specification method | Just method <- [contextReader (typing specification)] ]
       where
         selectedName = name specification
@@ -194,17 +199,12 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       , "  ]"
       ]
       where
+        connections = [connection | connection <- assemblyOutputs (unitAssembly unit), outputRole connection == role]
         entries =
-          [ "(" ++ show entry ++ ", [" ++ intercalate ", "
-              ["(" ++ show (Prototype.effectName context) ++ ", () <$ " ++ producing ++ ")" | (context, producing) <- anchored] ++ "])"
-          | specification <- specifications unit
-          , Just entry <- [entryMethod specification]
-          , let anchored =
-                  [ (context, producing)
-                  | context <- effectPrototypes unit
-                  , Prototype.effectAnchor context == Just (name specification)
-                  , (registeredRole, producing) <- Prototype.effectMethods context, registeredRole == role ]
-          , not (null anchored) ]
+          [ "(" ++ show anchor ++ ", [" ++ intercalate ", "
+              ["(" ++ show (outputProducer connection) ++ ", () <$ " ++ outputParser connection ++ ")"
+              | connection <- connections, outputAnchor connection == anchor] ++ "])"
+          | anchor <- nub (map outputAnchor connections) ]
     -- Error 只指向 scope：按 handles 匹配故障，detect／resolve 是生成的 effect 方法。
     errorHandlers = unlines
       [ ""
@@ -229,6 +229,11 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
         matchCase (ScopeFaultIn selectedEffect) = "(" ++ show selectedEffect ++ ", FrameworkGenerated.ScopeBindingError _) -> True"
         matchCase (ContextFaultIn selectedEffect) = "(" ++ show selectedEffect ++ ", FrameworkGenerated.ContextBindingError _) -> True"
 
+
+-- 只渲染绑定中已解析的 raw 形状，不重新查询 Input 注册。
+rawExpression :: RawSource String -> String
+rawExpression (RawList method) = method
+rawExpression (RawStream method) = "(: []) <$> " ++ method
 
 -- 追加代码需要的扩展；手写文件自己的扩展照常生效。
 copyExtensions :: [String]

@@ -1,10 +1,25 @@
 # Next stages
 
-更新：2026-11-15。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已完成最低限度的保守结束，完整迁移仍待实施；[Pure 的值管道与 list 原子输出](#pure-pipeline)已实现（2026-11-12）；[scope 的单例与多例、按可达性回收](#scope-gc)已实现（2026-11-13，生成与普通编译通过）；[Stage 6 的第一步](#stage-6)（Stream 的正常结束到 lifelong 返回）已实现（2026-11-14），会话历史[按读取义务保留](#stage-6-retention)已实现（2026-11-14），[由持续资产驱动的持续资产](#stage-6-derive)与[消费原子输出的持续发布](#stage-6-reuse)已实现（2026-11-15）；Stage 3–7 的其余部分继续逐阶段收敛。**
+更新：2026-11-16。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已完成最低限度的保守结束，完整迁移仍待实施；[Pure 的值管道与 list 原子输出](#pure-pipeline)已实现（2026-11-12）；[scope 的单例与多例、按可达性回收](#scope-gc)已实现（2026-11-13，生成与普通编译通过）；[Stage 6 的第一步](#stage-6)（Stream 的正常结束到 lifelong 返回）已实现（2026-11-14），会话历史[按读取义务保留](#stage-6-retention)已实现（2026-11-14），[由持续资产驱动的持续资产](#stage-6-derive)与[消费原子输出的持续发布](#stage-6-reuse)已实现（2026-11-15）；Stage 3–7 的其余部分继续逐阶段收敛。**
 
 本轮目标是在框架现有概念内，先分离原子 handler 与业务 effect，使 handler 可以复用、前驱由声明装配；再统一 Stream effect 与 lifelong 的持续执行协议，完成正常结束、停止传播和资源收尾。每阶段先收敛设计与代码形态，再实现；本文记录推进顺序、待确认事项及开放边界，不替代[主设计](LATEST_DESIGN.md)和[当前 Stream 规范](STREAM_LIFELONG.md)。
 
 本文件是唯一的阶段计划与开放项入口。以下 Stage 1–7 是本轮编号，与已经完成的 Prototype／RuntimeGraph、来源可见性、Stream 初版三个历史阶段区分。
+
+<a id="gen-assembly-sharing"></a>
+## gen 装配与共享分析整理
+
+**状态：已实现（2026-11-16）；本轮显式生成与普通编译通过。** 本项承接 gen／runtime 边界核对，不改变 Stage 1–7 的语义，也不引入新 facade。
+
+- **第一批：装配同源。** Gen.Assembly 解析 AST 末端、选择器、独立会话步骤和 anchor → parser 输出连接；Binding 保存有序 RequestStep／InputStep 与 RawSource。Build、Sources、Emit 使用同一结果，保持调用顺序、raw 交接与普通／持续注入的错误规则。
+- **第二批：共享结构分析。** 方法图归约使用 Map／Set 索引，完成一个方法后缓存 scope 路径与图摘要，活动栈独立检查递归。Sequence 每次 Call 和各 NodeId 都保留；不缓存业务输出，不提升 alternative 公共操作，不合并 Excu／Pure 调用。scope 路径与来源状态的指数上界仍未消除。
+- **后续单独做。** scope 按参数值复用未实现；当前继续以生产身份匹配，没有增加 Eq 约束，runtime、归属和回收规则不变。
+
+当前细则见[装配与复用边界](EFFECT_GRAPH.md#reuse-boundary)，源码分工见[主设计](LATEST_DESIGN.md#sdk-layout)。
+
+**本轮验证：** FileDemo、Crawler、OpenFilesDemo、ScopeInstancesDemo、ScopeReuseDemo、StreamDemo、LinesDemo、FacadeProbe 八个命名空间均显式重新生成，通过生成器自带的源码／类型检查；全部报告 `0 files updated; structure rebuilt`，现有 Generated 的契约、入口代码、资产目录和 Prototype 均未变化。使用临时 Cabal 配置与 builddir 执行 `cabal build all --offline -j1`，退出码 0；最后的模块分工整理再次普通编译通过。
+
+**未覆盖：** 未新增测试、负例或检查门槛；未运行业务 demo，未做性能或内存实测。生成产物一致和编译通过不能替代全部并发、业务分支及大规模图的验证。scope 路径和相关来源状态仍可能指数增长。
 
 <a id="scope"></a>
 ## 本轮收敛什么
@@ -674,6 +689,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 - 2026-11-12：Pure 改为生产链中的值变换，Excu／Scoped 的输出改为 `[String]`，见 [Pure 的值管道与 list 原子输出](#pure-pipeline)。验证：`cabal build all` 通过；七个程序重新生成，与 main 对照运行，行为一致（Crawler 只差随请求变化的链接签名，FacadeProbe 只差 parallel 交错顺序）。Crawler 随后在抓取与解析之间加入 Pure，经 Pure 的注入在运行中走通。未覆盖：Pure 的 `raise` 与交出多项 list 的 handler。
 - 2026-11-15：整理构建与文件保留边界。七个 Cabal 示例共用 `common runtime-program` 的 25 个 SDK 运行模块与 7 项依赖，生成器保留独立清单；Cabal 文件由 402 行缩为 208 行。沿入口核对的 43 个 SDK 模块均仍被引用，保留源码及 Generated 中的四类编译源码；清理未跟踪的旧构建目录、结构缓存与示例输出。修正 Context.stream 的过时注释和构图缓存文件清单，指南明确手写源码、生成源码与临时产物的区别。验证：使用临时 builddir 的 `cabal build all --offline -j1` 退出 0；本轮未改运行语义、未新增测试或运行业务 demo。
 - 2026-11-15：核对 gen 的阶段依赖与复用边界，在流水线、绑定、挂载、同次输出回放、持续会话、ScopeTree 和来源分析旁补充“算法说明 v1”注释，注明无环依据与复杂度限制。图规范修正过时的构建函数名并区分结构共享、输出复用和实例共享；没有新增通用调用去重或改变运行语义。验证：使用临时 builddir 的 `cabal build effect-codegen --offline -j1`，以及合并前的 `cabal build all --offline -j1` 均退出 0；本轮仅改注释与文档，未重新生成示例、未运行 demo 或做性能实测。
+- 2026-11-16：完成 [gen 装配与共享分析整理](#gen-assembly-sharing)前两批。新增编译期 Assembly，Build／Sources／Emit 共用挂载与输出连接；Binding 保留有角色的有序前驱及 raw 来源；方法图按定义缓存辅助／主归约结果，不再复制全部调用展开树。八个命名空间重新生成均无文件变化，`cabal build all --offline -j1` 退出 0；未修改 facade、runtime 或 scope 实例规则，未进行性能实测。
 - 历史验证未系统枚举全部并发交错，未观察长时间内存；Stream 外部模型未完成；取消只记录过 Windows Ctrl-Break。已通过编译和示例不能扩大资源逃逸、任意底层 IO 或所有调度的保证。
 
 <a id="maintenance"></a>

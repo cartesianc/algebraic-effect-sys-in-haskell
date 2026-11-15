@@ -1,18 +1,22 @@
 {-# LANGUAGE DeriveFunctor #-}
 
--- 构图：把方法结构展开为 EffectGraph，再由开启顺序与注册前提得到独立的 ScopeTree。
+-- 构图：按共享方法定义归约 EffectGraph，再由开启顺序与注册前提得到独立的 ScopeTree。
 -- 只读方法结构，不调用 handler；结果是 Prototype 的 protoGraph 与 protoScopes。
--- 算法说明 v1（2026-11-15）：EffectGraph 共享方法定义，ScopeTree 共享 scope 定义；
+-- 算法说明 v2（2026-11-16）：EffectGraph 共享方法定义，ScopeTree 共享 scope 定义；
 -- 两者都不表示运行次数或活实例数，也不授权跳过普通 Excu。实际复用由输出/实例协议决定。
 module Framework.Gen.Build.Graph
-  ( ExpandedF(..), expandChain, buildEffectGraph, buildScopeTree, completeScopeTree
+  ( buildEffectGraph, buildScopeTree, completeScopeTree
   ) where
 
+import Control.Monad (foldM)
+import Control.Monad.State.Strict (StateT, evalStateT, gets, lift, modify')
 import Data.List (inits, intersect, nub, nubBy, sort, (\\))
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Framework.Prototype.Graph
-import Framework.Recursion (Algebra, Fix(..), zygo)
+import Framework.Recursion (Algebra)
 
-data ExpandedF method next
+data AnalysisF method next
   = EmptyLayer
   | MethodLayer (MethodDefinition method) next
   | SequenceLayer [next]
@@ -20,57 +24,66 @@ data ExpandedF method next
   | RecoverLayer next next
   deriving Functor
 
--- 只展开表中已解析到来源的方法引用；require 的读取方法不连到生产方法，不启动生产。
--- Choice 保留各分支路径，Sequence 组合路径；有限分支的路径数可能呈指数增长。
--- scope 记在其 open 方法体之后，即开启完成的位置：open 内部开启的 scope 排在它前面，
--- 嵌套 open 的方向与注册前提一致。同一 scope 在一条路径中只保留首次完成。
+-- v2：保留 zygo 的两份 algebra，但在方法引用上共享归约结果，不先建立按调用次数复制的 Fix 树。
+-- 缓存只含纯结构摘要；Sequence 的每个 Call 仍按原顺序参与组合，业务执行没有去重。
+-- require 的读取方法不连到生产方法。scope 记在 open 方法体之后，同一路径只留首次完成。
+type Summary method = ([[method]], EffectGraph method)
+type GraphAnalysis method = StateT (Map.Map method (Summary method)) (Either (GraphError method))
+
 buildEffectGraph
   :: Ord method
   => [MethodDefinition method]
   -> MethodShape method
   -> Either (GraphError method) (EffectGraph method)
 buildEffectGraph definitions shape = do
-  expanded <- expandChain definitions shape
-  pure (zygo scopeAlgebra graphAlgebra expanded)
-
--- 所有静态链分析共用这一展开器；调用次数与分支结构原样保留。
--- active 是当前递归栈，不是全局 visited：不同位置再次调用同一方法合法，当前栈回边才报错。
--- 目前没有按方法记忆化展开。N 个定义、K 个展开结构节点、最大调用深度 D，
--- 仅此展开的列表查询开销可达 O(N^2 + K*(N+D))；K 本身可能远大于注册规模。
--- 后续 Sequence 对 scope 路径做笛卡尔积，Choice 合并路径，Recover 枚举失败前缀；
--- 即使方法依赖无环，独立条件也可带来指数路径数，不能把整个 zygo 算作 O(N)。
-expandChain
-  :: Eq method
-  => [MethodDefinition method]
-  -> MethodShape method
-  -> Either (GraphError method) (Fix (ExpandedF method))
-expandChain definitions shape = do
-  uniqueDefinitions [] definitions
-  expand [] shape
+  table <- foldM insertDefinition Map.empty definitions
+  snd <$> evalStateT (analyzeShape table Set.empty shape) Map.empty
   where
-    uniqueDefinitions _ [] = Right ()
-    uniqueDefinitions seen (definition : rest)
-      | selected `elem` seen = Left (DuplicateMethod selected)
-      | otherwise = uniqueDefinitions (selected : seen) rest
+    insertDefinition table definition
+      | Map.member selected table = Left (DuplicateMethod selected)
+      | otherwise = Right (Map.insert selected definition table)
       where selected = methodIdentity definition
 
-    expand _ Empty = Right (Fix EmptyLayer)
-    expand active (Call selected) =
-      case lookup selected [(methodIdentity entry, entry) | entry <- definitions] of
-        Nothing -> Left (UnknownMethod selected)
-        Just entry
-          | selected `elem` active -> Left (RecursiveMethod selected)
-          | otherwise -> do
-              body <- expand (selected : active) (methodBody entry)
-              pure (Fix (MethodLayer entry body))
-    expand active (Sequence children) = Fix . SequenceLayer <$> mapM (expand active) children
-    expand active (Choice children) = Fix . ChoiceLayer <$> mapM (expand active) children
-    expand active (Recover body recovery) = do
-      before <- expand active body
-      after <- expand active recovery
-      pure (Fix (RecoverLayer before after))
+-- active 是当前栈，memo 只含已经完成的定义：共享前段可复用摘要，递归回边仍必须拒绝。
+-- N 个定义、E 个可达方法体结构位置，索引与引用检查约 O((N+E) log(N+1))；
+-- 这不包含摘要的合并、nub 和 scope 路径组合。独立条件仍可能形成指数路径族。
+-- 资产来源分析依赖入口、捕获和前态，不得套用这里“只按方法身份”的缓存。
+analyzeShape
+  :: Ord method
+  => Map.Map method (MethodDefinition method)
+  -> Set.Set method
+  -> MethodShape method
+  -> GraphAnalysis method (Summary method)
+analyzeShape definitions active shape = case shape of
+  Empty -> pure (summarize EmptyLayer)
+  Call selected
+    | Set.member selected active -> lift (Left (RecursiveMethod selected))
+    | otherwise -> do
+        cached <- gets (Map.lookup selected)
+        case cached of
+          Just summary -> pure summary
+          Nothing -> case Map.lookup selected definitions of
+            Nothing -> lift (Left (UnknownMethod selected))
+            Just definition -> do
+              body <- analyzeShape definitions (Set.insert selected active) (methodBody definition)
+              let summary = summarize (MethodLayer definition body)
+              modify' (Map.insert selected summary)
+              pure summary
+  Sequence children -> summarize . SequenceLayer <$> mapM next children
+  Choice children -> summarize . ChoiceLayer <$> mapM next children
+  Recover body recovery -> do
+    before <- next body
+    after <- next recovery
+    pure (summarize (RecoverLayer before after))
+  where
+    next = analyzeShape definitions active
 
-scopeAlgebra :: Eq method => Algebra (ExpandedF method) [[method]]
+-- 辅助结果和主结果共用本层的 scope 路径；主 algebra 不再重复调用辅助 algebra。
+summarize :: Eq method => AnalysisF method (Summary method) -> Summary method
+summarize layer = (scopePathsHere, graphAlgebra scopePathsHere layer)
+  where scopePathsHere = scopeAlgebra (fmap fst layer)
+
+scopeAlgebra :: Eq method => Algebra (AnalysisF method) [[method]]
 scopeAlgebra EmptyLayer = [[]]
 scopeAlgebra (MethodLayer definition body)
   | methodRole definition == ScopeOpen = paths (map (++ [methodIdentity definition]) body)
@@ -89,9 +102,10 @@ scopeAlgebra (RecoverLayer body recovery) = paths
 -- scope 路径按定义只留首次完成，是构树投影；不能据其长度判断 open 次数或实际使用计数。
 graphAlgebra
   :: Eq method
-  => ExpandedF method ([[method]], EffectGraph method)
+  => [[method]]
+  -> AnalysisF method ([[method]], EffectGraph method)
   -> EffectGraph method
-graphAlgebra layer = EffectGraph
+graphAlgebra scopePathsHere layer = EffectGraph
   { graphMethods = nubBy sameMethod (localMethods ++ concatMap graphMethods children)
   , graphRoots = nub roots
   , graphReferences = nub (localReferences ++ concatMap graphReferences children)
@@ -103,7 +117,6 @@ graphAlgebra layer = EffectGraph
   , graphScopeOrder = pathOrder scopePathsHere
   }
   where
-    scopePathsHere = scopeAlgebra (fmap fst layer)
     (localMethods, roots, localReferences, children) = case layer of
       EmptyLayer -> ([], [], [], [])
       MethodLayer definition (_, body) ->

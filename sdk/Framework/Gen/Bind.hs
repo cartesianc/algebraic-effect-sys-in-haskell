@@ -7,7 +7,7 @@
 module Framework.Gen.Bind
   ( Unit(..), Binding(..), Signature(..), AssetDeclaration(..), BranchContract(..), bindProgram
   , specifications, effectPrototypes, specOf, protoOf, resolvedOf, contextSpecs, allMethods
-  , readDemands, readType, readerOf, continuousContract, beforeOf, rawExpression, readsRaw, resultOf, reference, parenthesized
+  , readDemands, readType, readerOf, continuousContract, unitTerminals, bindingCalls, readsRaw, resultOf, reference, parenthesized
   , composeMethods, normalizeType
   ) where
 
@@ -15,6 +15,7 @@ import Control.Monad (unless, when)
 import Data.Char (isAlphaNum, isLower, isSpace, isUpper)
 import Data.List (intercalate, nub, sort)
 import Data.Maybe (maybeToList)
+import Framework.Gen.Assembly
 import Framework.Gen.Demand (readsAccess)
 import Framework.Gen.Names
 import Framework.Language.Registration
@@ -23,14 +24,14 @@ import Framework.Prototype.Types (PrototypePlan, ResolvedDemand(..), SumTypes)
 import qualified Framework.Prototype as Prototype
 
 -- 一次绑定：handler 在某个 effect 方法中执行。
--- before 是入口在 handler 之前调用的 effect 方法（先驱动，后 Input）；raw 是回答 raw 的直接 Input 方法；
+-- before 保存有角色的有序步骤（先驱动，后 Input），raw 保存直接 Input 及其输出形状；
 -- routes 把规范化的表示类型映射到 (契约, 读取方法)。结构分析据此把 handler 方法体换成 effect 方法的结构。
 data Binding = Binding
   { bindingEffect :: String
   , bindingMethod :: String
   , bindingHandler :: String
-  , bindingBefore :: [String]
-  , bindingRaw :: Maybe String
+  , bindingBefore :: [EntryStep String]
+  , bindingRaw :: Maybe (RawSource String)
   , bindingRoutes :: [(String, (String, String))]
   } deriving (Eq, Show, Read)
 
@@ -69,21 +70,20 @@ data Unit = Unit
   , unitHandlers :: [String]
   , unitSignatures :: [Signature]
   , unitBindings :: [Binding]
-  -- (末端 effect, 原始入口方法)；顺序即 AST 中首次出现的顺序。
-  , unitTerminals :: [(String, String)]
+  -- 已解析的挂载与输出连接；构图、来源分析与输出共用。
+  , unitAssembly :: Assembly String
   -- effect → handler 方法体必须读取的契约（requires／streams 中没有被 workflow 控制流使用的部分）。
   , unitReads :: [(String, [String])]
   }
 
 -- 绑定阶段的入口：推出全部事实，再按原顺序检查生成名字、末端、表示类型与签名。
-bindProgram :: String -> PrototypePlan -> SumTypes -> Either String Unit
-bindProgram namespace prepared sumTypes = do
+bindProgram :: String -> PrototypePlan -> Assembly String -> SumTypes -> Either String Unit
+bindProgram namespace prepared assembly sumTypes = do
   checkGenerated unit
-  when (null terminals) (Left "Select at least one terminal effect for generation")
-  entries <- mapM (findEntry unit) terminals
+  when (null (unitTerminals unit)) (Left "Select at least one terminal effect for generation")
   mapM_ (checkRepresentations unit) (specifications unit)
   signatures <- mapM (signatureOf unit) (unitHandlers unit)
-  pure unit { unitTerminals = zip terminals entries, unitSignatures = signatures }
+  pure unit { unitSignatures = signatures }
   where
     unit = Unit
       { unitNamespace = namespace
@@ -98,14 +98,13 @@ bindProgram namespace prepared sumTypes = do
               [ (normalizeType (readType unit "History" resolved), (demandContract resolved, readerOf unit (demandProvider resolved)))
               | resolved <- readDemands unit (name specification) ]
           | specification <- specifications unit, (method, handler') <- handlerBindings specification ]
-      , unitTerminals = []
+      , unitAssembly = assembly
       , unitReads =
           [ (name specification, nub
               [ demandContract resolved | resolved <- resolvedOf unit (name specification), readsAccess (demandAccess resolved)
               , (name specification, demandContract resolved) `notElem` controlled ])
           | specification <- specifications unit ]
       }
-    terminals = nub (Prototype.workflowTerminals (Prototype.plannedWorkflow prepared))
     controlled = controlReads (Prototype.plannedEffects prepared) (Prototype.plannedWorkflow prepared)
     assets =
       [ AssetDeclaration (contractOf declared) (representation declared) (name specification)
@@ -179,13 +178,13 @@ drives unit specification =
 
 -- 挂接的 parser 与 Pure 用 raw 读取直接 Input 的输出，不把 Input 当前驱执行：
 -- Input 是 Excu、Scoped、Pure 时读它交出的 list，是 Stream 时读会话本次取得的一份输入。
-rawSource :: Unit -> EffectSpec -> Maybe String
+rawSource :: Unit -> EffectSpec -> Maybe (RawSource String)
 rawSource unit specification
   | rawKind (typing specification), input specification /= "Root" = case typing (specOf unit (input specification)) of
-      Excu _ -> entryMethod (specOf unit (input specification))
-      Scoped {} -> entryMethod (specOf unit (input specification))
-      Pure _ -> entryMethod (specOf unit (input specification))
-      Stream _ -> entryMethod (specOf unit (input specification))
+      Excu _ -> RawList <$> entryMethod (specOf unit (input specification))
+      Scoped {} -> RawList <$> entryMethod (specOf unit (input specification))
+      Pure _ -> RawList <$> entryMethod (specOf unit (input specification))
+      Stream _ -> RawStream <$> entryMethod (specOf unit (input specification))
       _ -> Nothing
   | otherwise = Nothing
   where
@@ -200,12 +199,6 @@ readsRaw specification method = case typing specification of
   Pure _ -> Just method == entryMethod specification
   _ -> False
 
--- Stream 一次交出一份 String；raw 统一是 list，所以读作单元素 list。
-rawExpression :: Unit -> EffectSpec -> Maybe String
-rawExpression unit specification = case rawSource unit specification of
-  Just method | Stream {} <- typing (specOf unit (input specification)) -> Just ("(: []) <$> " ++ method)
-  other -> other
-
 -- 其他 Input 是前驱：在 handler 之前执行一次，输出不交给 handler。
 predecessor :: Unit -> EffectSpec -> [String]
 predecessor unit specification
@@ -213,15 +206,24 @@ predecessor unit specification
   | Just _ <- rawSource unit specification = []
   | otherwise = maybeToList (entryMethod (specOf unit (input specification)))
 
--- 算法说明 v1（2026-11-15）：这是实际入口的执行序列，同时供 composeMethods 和 Emit 使用。
+-- 算法说明 v2（2026-11-16）：绑定时计算一次，composeMethods 与 Emit 都读取 bindingBefore。
 -- 先 requests 驱动，再 Input 前驱，最后 handler；close 与 Error 方法只执行 handler。
 -- 即使驱动链与 Input 链包含相同方法，也不能在这里 nub：两个声明的调用仍是两次执行。
 -- raw 的同次输出回放与 scope 的活实例共享在各自协议中判定，不由方法名相同推出。
 -- handler 绑定复用只复用实现，不合并不同 effect 的路由或不同挂载的调用。
-beforeOf :: Unit -> EffectSpec -> String -> [String]
+beforeOf :: Unit -> EffectSpec -> String -> [EntryStep String]
 beforeOf unit specification method
-  | Just method == entryMethod specification = drives unit specification ++ predecessor unit specification
+  | Just method == entryMethod specification =
+      map RequestStep (drives unit specification) ++ map InputStep (predecessor unit specification)
   | otherwise = []
+
+bindingCalls :: Binding -> [String]
+bindingCalls = map stepMethod . bindingBefore
+
+-- Target 的实现可共用，挂载身份仍全部保存在 assemblyMounts；这里只投影生成的入口目录。
+unitTerminals :: Unit -> [(String, String)]
+unitTerminals unit = nub [(mountTerminal mount, mountMethod mount)
+  | mount <- assemblyMounts (unitAssembly unit), mountRole mount == Prototype.NodeChain]
 
 -- 绑定类别决定方法类型：原子句柄与 Pure 都交出 [String]。
 resultOf :: EffectSpec -> String
@@ -260,14 +262,6 @@ checkRepresentations unit specification = do
       ++ representation' ++ " (" ++ intercalate ", " [contractType | (key, contractType) <- keys, key == representation']
       ++ "); one effect reads each representation type at most once")
     [] -> pure ()
-
--- 降级已验证挂载；这里只取原型指定的原始入口。
-findEntry :: Unit -> String -> Either String String
-findEntry unit selectedName = case
-  [method | (role, method) <- Prototype.effectMethods (protoOf unit selectedName)
-          , role `elem` [HandlerMethod, ScopeOpen]] of
-  [method] -> Right method
-  _ -> Left ("Prototype has no origin entry: " ++ selectedName)
 
 -- 资产名与 handler 派生名都进入生成区的同一命名空间，不能重名或与固定名冲突。
 checkGenerated :: Unit -> Either String ()
@@ -376,7 +370,7 @@ composeMethods checkReads bindings required handlerShapes = do
     compose binding = do
       let body = maybe Empty id (lookup (bindingHandler binding) handlerShapes)
       (mapped, contracts) <- resolve binding body
-      pure (binding, sequenceShape (map Call (bindingBefore binding) ++ [mapped]), contracts)
+      pure (binding, sequenceShape (map Call (bindingCalls binding) ++ [mapped]), contracts)
     resolve binding shape = case shape of
       Empty -> pure (Empty, [])
       Call ('@' : typeText) -> case lookup (normalizeType typeText) (bindingRoutes binding) of
@@ -385,7 +379,7 @@ composeMethods checkReads bindings required handlerShapes = do
           ++ ", whose demands give " ++ describe (bindingRoutes binding)
           ++ "; declare requires/streams for an asset of that representation")
       Call "%raw" -> case bindingRaw binding of
-        Just method -> pure (Call method, [])
+        Just source -> pure (Call (rawMethod source), [])
         Nothing -> Left ("Handler " ++ bindingHandler binding ++ " uses raw in " ++ bindingEffect binding
           ++ "; only a Context parser or a Pure hanging below an Excu, Scoped, Pure or Stream reads raw")
       Call other -> pure (Call other, [])

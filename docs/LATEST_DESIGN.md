@@ -222,6 +222,8 @@ Error 的驱动链、Generic Map、跨独立 interpreter 存续、任意逃逸�
 
 能在生成期判定的组合、读取路由与合法性问题，都由 gen 报错，不留给运行时。运行时启动前只核对编译产物与当前源码是同一份——注册快照、Handlers 指纹、AST 的层级——并校验 Prototype 自洽，不重新推导结构。读取同样只执行编译结果：按生成的来源表取值，缺值时等待发布而不生产；读取权限在生成期确定，运行时不查声明表。
 
+装配阶段以 `Gen.Assembly` 统一解析末端、选择器、会话步骤与原子输出连接；绑定的驱动／前驱步骤与 raw 来源计算一次，结构分析和代码输出共用。构图对共享方法缓存纯结构摘要，运行时仍逐挂载、逐调用执行；缓存不包含业务值或活实例。Assembly 只在 gen 内存在，其结果降级为现有 Prototype 与生成代码，不增加运行时注册表。
+
 gen 分开处理结构共享、同次输出复用与 scope 实例共享。相同上游出现在多个挂载中，不自动省略它的业务调用；AST 先给出末端，方法图及路径先于 ScopeTree，来源分析再证明各读取的合法装配。具体判定及复杂度边界见[结构共享与执行复用](EFFECT_GRAPH.md#reuse-boundary)。
 
 流水线的阶段、输入输出与各阶段的检查见 [4.9 编译流水线](#generation)，源码目录见 [SDK 分工](#sdk-layout)。
@@ -710,14 +712,14 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 | --- | --- | --- | --- |
 | 读取 | [Gen.Source](../sdk/Framework/Gen/Source.hs) | Types.hs → 和类型；在独立的 ghci 进程中求值 `effects` 与 `ast` | 声明不能加载或求值 |
 | 降级 | [Gen.Lower](../sdk/Framework/Gen/Lower.hs)、[Gen.Demand](../sdk/Framework/Gen/Demand.hs)、[Gen.Sessions](../sdk/Framework/Gen/Sessions.hs) | 注册与 workflow → PrototypePlan：effect 原型（含 Context 经 Pure 链的挂接句柄）、每个 demand 的唯一生产方、WorkflowTree 与会话连接 | 资产来源与访问方式；Input、Pure、Scoped、Context、Stream、Error 的注册规则；AST 末端、alternative 候选、lifelong 订阅、输出复用位置与启动依赖 |
-| 绑定 | [Gen.Bind](../sdk/Framework/Gen/Bind.hs)、[Gen.Names](../sdk/Framework/Gen/Names.hs) | PrototypePlan → 每个 handler 绑定的前驱、驱动、raw 来源与读取路由；handler 的方法类型与 Layer | 生成名字冲突；一个 effect 内表示类型重复；同一 handler 的绑定推出不同的签名或 Layer |
+| 绑定 | [Gen.Assembly](../sdk/Framework/Gen/Assembly.hs)、[Gen.Bind](../sdk/Framework/Gen/Bind.hs)、[Gen.Names](../sdk/Framework/Gen/Names.hs) | PrototypePlan → 已解析挂载与输出连接；每个 handler 绑定的有序驱动／前驱步骤、raw 来源与读取路由；方法类型与 Layer | 生成名字冲突；一个 effect 内表示类型重复；同一 handler 的绑定推出不同的签名或 Layer |
 | 形状 | [Gen.Shape](../sdk/Framework/Gen/Shape.hs) | Handlers.hs 的语法树 → 各 handler 方法体的读取形状（`require @T`、`raw`） | handler 调用其他 handler 或 effect 方法；`require` 没有类型应用；读取经不支持的高阶组合传递 |
 | 组成 | Gen.Bind 的 `composeMethods` | 形状 × 绑定 → effect 方法的结构 | 读取的表示类型没有声明；`raw` 用在挂接 parser 与 Pure 之外；声明的读取没有被方法体或控制流使用 |
-| 构图 | [Gen.Build](../sdk/Framework/Gen/Build.hs)、[Build.Graph](../sdk/Framework/Gen/Build/Graph.hs)、[Build.Sources](../sdk/Framework/Gen/Build/Sources.hs) | PrototypePlan + 方法结构 → Prototype：EffectGraph、ScopeTree、链挂载、资产来源与 scope 开启计划 | 注入经 Pure 以外的方法绕到句柄；直接调用 Stream 方法；持续资产的启动环；读取有多个可见来源；资源在所属 scope 开启前被读取；Context 没有被驱动 |
+| 构图 | [Gen.Build](../sdk/Framework/Gen/Build.hs)、[Build.Graph](../sdk/Framework/Gen/Build/Graph.hs)、[Build.Sources](../sdk/Framework/Gen/Build/Sources.hs) | PrototypePlan + Assembly + 方法结构 → Prototype：EffectGraph、ScopeTree、链挂载、资产来源与 scope 开启计划 | 注入经 Pure 以外的方法绕到句柄；直接调用 Stream 方法；持续资产的启动环；读取有多个可见来源；资源在所属 scope 开启前被读取；Context 没有被驱动 |
 | 输出 | `Gen.Emit.*`（[Effects](../sdk/Framework/Gen/Emit/Effects.hs)、[Handlers](../sdk/Framework/Gen/Emit/Handlers.hs)、[Program](../sdk/Framework/Gen/Emit/Program.hs)、[Prototype](../sdk/Framework/Gen/Emit/Prototype.hs)） | 绑定与 Prototype → Generated/Effects、Handlers、Program 的源码 | 只渲染，不再判定 |
 | 类检 | [Gen.Assets](../sdk/Framework/Gen/Assets.hs) | 业务模块与输出副本（在内存中）→ 资产目录 Generated/Assets | GHC 类型错误；顶层白名单 |
 
-只有降级在独立的 ghci 进程里执行：`effects` 与 `ast` 是 Haskell 值，必须加载业务模块才能求值；PrototypePlan 经 Show/Read 交回，之后的阶段都在生成器进程内读取这份计划。Handlers.hs 只解析，不加载；类检阶段把业务模块与刚输出的副本放在内存中，交给 GHC 无代码生成模式检查。构图结果按 PrototypePlan、方法结构与构图相关的 SDK 源码缓存在 Generated/.scope-cache，命中时仍校验 Prototype；驱动检查每次执行。
+只有降级在独立的 ghci 进程里执行：`effects` 与 `ast` 是 Haskell 值，必须加载业务模块才能求值；PrototypePlan 经 Show/Read 交回，之后的阶段都在生成器进程内读取这份计划。Handlers.hs 只解析，不加载；类检阶段把业务模块与刚输出的副本放在内存中，交给 GHC 无代码生成模式检查。构图结果按 PrototypePlan、Assembly、方法结构与构图相关的 SDK 源码缓存在 Generated/.scope-cache，命中时仍校验 Prototype；驱动检查每次执行。
 
 首次没有 Handlers.hs 时，形状为空，不检查读取与驱动，只生成契约和空的 Handlers 模块；填写 handler 后再次生成并编译 Main，命令与使用顺序见[指南：命令行与执行阶段](GUIDE.md#commands)。业务执行编译 Generated/Handlers：handler 方法体原样复制到按 effect 的类型标签上，后接 gen 生成的入口与路由；不回写手写源码或新增业务类型类。手写实现变更后须重新生成。
 
@@ -761,6 +763,7 @@ sdk/Framework/
     Lower.hs / Demand.hs    降级：注册与 workflow → PrototypePlan；demand 解析与资产来源规则
     Sessions.hs             持续会话装配：独立来源、派生、AST 输出复用与启动依赖检查
     Names.hs                gen 派生的全部名字
+    Assembly.hs             绑定阶段的静态装配：挂载、输出连接、驱动／前驱与 raw 的角色
     Bind.hs                 绑定与组成：前驱、驱动、raw、读取路由、签名与 Layer；effect 方法结构
     Shape.hs                形状：handler 方法体的读取结构
     Build.hs                构图：Prototype 构建与驱动检查
@@ -797,7 +800,7 @@ sdk/Framework/
   Recursion.hs              Fix、cata、zygo
 ```
 
-改声明语法从 Language.Registration 进入，再沿流水线 Lower → Bind → Build → Emit；改读取路由或入口生成从 Gen.Bind 与 Gen.Emit.Handlers 进入；改取值从 Runtime.Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Runtime.Execution → Frame／Runtime.Graph → Scope／Session 进入。Gen.Build.Sources 是生成期证明，Runtime.Graph 是本次实际活动关系，Runtime.Scope 独立持有资源生命周期；三者不复制彼此的状态。
+改声明语法从 Language.Registration 进入，再沿流水线 Lower → Assembly／Bind → Build → Emit；改读取路由或入口生成从 Gen.Bind 与 Gen.Emit.Handlers 进入；改取值从 Runtime.Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Runtime.Execution → Frame／Runtime.Graph → Scope／Session 进入。Gen.Build.Sources 是生成期证明，Runtime.Graph 是本次实际活动关系，Runtime.Scope 独立持有资源生命周期；三者不复制彼此的状态。
 
 模块头说明职责和边界；关键锁、所有权、取消窗口及清理顺序在实现处保留注释。App 仍集中实现共享同一执行 frame 的存储协议，以章节分组，不为行数拆出互相依赖的状态容器。
 

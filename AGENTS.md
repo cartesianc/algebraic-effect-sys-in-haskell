@@ -50,7 +50,7 @@
 | 源语言：手写业务门面、注册、AST、handler 能力类与历史视图 | [SDK.hs](sdk/Framework/SDK.hs)、[Registration](sdk/Framework/Language/Registration.hs)、[AST](sdk/Framework/Language/AST.hs)、[Handler](sdk/Framework/Language/Handler.hs)、[History](sdk/Framework/Language/History.hs) |
 | gen 流水线与命令行 | [Gen.hs](sdk/Framework/Gen.hs)、[Main](sdk/Framework/Gen/Main.hs) |
 | gen：读取、降级、持续执行装配、资产来源规则与派生名字 | [Source](sdk/Framework/Gen/Source.hs)、[Lower](sdk/Framework/Gen/Lower.hs)、[Sessions](sdk/Framework/Gen/Sessions.hs)、[Demand](sdk/Framework/Gen/Demand.hs)、[Names](sdk/Framework/Gen/Names.hs) |
-| gen：绑定、方法体形状与组成 | [Bind](sdk/Framework/Gen/Bind.hs)、[Shape](sdk/Framework/Gen/Shape.hs) |
+| gen：入口／输出装配、绑定、方法体形状与组成 | [Assembly](sdk/Framework/Gen/Assembly.hs)、[Bind](sdk/Framework/Gen/Bind.hs)、[Shape](sdk/Framework/Gen/Shape.hs) |
 | gen：构图与来源证明 | [Build](sdk/Framework/Gen/Build.hs)、[Build/Graph](sdk/Framework/Gen/Build/Graph.hs)、[Build/Sources](sdk/Framework/Gen/Build/Sources.hs) |
 | gen：输出与类检 | [Emit/Effects](sdk/Framework/Gen/Emit/Effects.hs)、[Emit/Handlers](sdk/Framework/Gen/Emit/Handlers.hs)、[Emit/Program](sdk/Framework/Gen/Emit/Program.hs)、[Emit/Prototype](sdk/Framework/Gen/Emit/Prototype.hs)、[Assets](sdk/Framework/Gen/Assets.hs)、[Catalog](sdk/Framework/Gen/Catalog.hs) |
 | 编译产物：Prototype 模型、查询、校验与展示 | [Prototype.hs](sdk/Framework/Prototype.hs)、[Types](sdk/Framework/Prototype/Types.hs)、[Graph](sdk/Framework/Prototype/Graph.hs)、[Query](sdk/Framework/Prototype/Query.hs)、[Validate](sdk/Framework/Prototype/Validate.hs)、[Structure](sdk/Framework/Prototype/Structure.hs) |
