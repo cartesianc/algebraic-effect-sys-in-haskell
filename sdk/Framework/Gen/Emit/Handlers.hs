@@ -22,7 +22,7 @@ import GHC.Types.SrcLoc
 
 -- Generated/Handlers 导出的名字：全部 effect 方法与登记表。
 handlerExports :: Unit -> [String]
-handlerExports unit = allMethods unit ++ ["newScopeHandlers", "scopeCleanups", "errorHandlers", "contextInjections"]
+handlerExports unit = allMethods unit ++ ["newScopeHandlers", "scopeCleanups", "errorHandlers", "contextInjections", "streamContextInjections"]
 
 -- 首次生成尚无 Handlers.hs 时只给出指纹，编写 Handlers.hs 后重新生成；原文件始终保留，只有副本进入运行导入链。
 renderHandlers :: Unit -> Maybe HandlerSource -> Either String String
@@ -45,7 +45,9 @@ renderHandlers unit loaded = do
 support :: Unit -> String
 support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers unit) ++ routeInstances ++ rawInstances
     ++ endInstances ++ concatMap entryDefinitions (specifications unit))
-    ++ scopeHandlers ++ scopeCleanups ++ errorHandlers ++ injectionTable
+    ++ scopeHandlers ++ scopeCleanups ++ errorHandlers
+    ++ injectionTable ContextRequest "contextInjections"
+    ++ injectionTable ContextStream "streamContextInjections"
   where
     supportHeader =
       [ ""
@@ -183,11 +185,11 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
           , effect <- effectPrototypes unit, Prototype.effectName effect == selectedScope
           , (ScopeClose, closing) <- Prototype.effectMethods effect ]
     -- 原子句柄的输出交给挂在它下面的 parser：键是句柄的 effect 方法名。
-    injectionTable = unlines
+    injectionTable role tableName = unlines
       [ ""
       , "-- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。"
-      , "contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]"
-      , "contextInjections ="
+      , tableName ++ " :: [(String, [(String, FrameworkGenerated.App ())])]"
+      , tableName ++ " ="
       , "  [" ++ (if null entries then "" else " " ++ intercalate "\n  , " entries)
       , "  ]"
       ]
@@ -201,7 +203,7 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
                   [ (context, producing)
                   | context <- effectPrototypes unit
                   , Prototype.effectAnchor context == Just (name specification)
-                  , (ContextRequest, producing) <- Prototype.effectMethods context ]
+                  , (registeredRole, producing) <- Prototype.effectMethods context, registeredRole == role ]
           , not (null anchored) ]
     -- Error 只指向 scope：按 handles 匹配故障，detect／resolve 是生成的 effect 方法。
     errorHandlers = unlines

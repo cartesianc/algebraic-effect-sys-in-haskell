@@ -8,7 +8,7 @@ module Framework.Prototype.Validate
   ) where
 
 import Control.Monad (unless)
-import Data.List (nub, sort, (\\))
+import Data.List (isPrefixOf, nub, sort, (\\))
 import Framework.Language.AST (AST, WorkflowF(..), foldAST)
 import Framework.Language.Registration (EffectKind(..), EffectSpec(..))
 import qualified Framework.Language.Registration as Registration
@@ -227,16 +227,33 @@ validatePrototype prototype = do
               _ -> [workflowNode child] | child <- children])) "Lifelong units differ from its children"
           valid (sameSet (map fst (lifelongSubscriptions described)) (map fst mounted)
             && unique (map fst (lifelongSubscriptions described))) "Lifelong subscriptions differ from its targets"
-          valid (map sessionAsset (lifelongSessions described)
-              == sessionAssets effects (nub (map snd (lifelongSubscriptions described))))
-            "Lifelong sessions differ from the subscribed assets and their upstream assets"
-          valid (and [ [sessionPlan session] == [bootPlan effects producer | producer <- effects
-              , effectProduces producer == Just (sessionAsset session)]
-            | session <- lifelongSessions described ]) "Lifelong session differs from its boot plan"
-          valid (and [ sessionMounts session == [identifier ++ [-1, index, step] | step <- [0 .. steps - 1]]
-            | (index, session) <- zip [0 ..] (lifelongSessions described)
-            , let steps = sessionSteps (sessionPlan session) ])
-            "Lifelong session mounts have invalid NodeIds"
+          let positions producer = [node' | Just anchor <- [effectAnchor producer], (node', terminal) <- mounted
+                , target <- effects, effectName target == terminal
+                , anchor `elem` (terminal : effectInputChain target)]
+              outputs = [asset | producer <- effects, effectContinuous producer
+                , Just asset <- [effectProduces producer], not (null (positions producer))]
+              sessions = lifelongSessions described
+              unitOf node' = [unit | unit <- lifelongUnits described, unit `isPrefixOf` node']
+          valid (map sessionAsset sessions
+              == sessionAssets effects (nub (map snd (lifelongSubscriptions described) ++ outputs)))
+            "Lifelong sessions differ from subscriptions, attached outputs and upstream assets"
+          mapM_ (\(index, session) -> do
+            producer <- case [effect | effect <- effects, effectContinuous effect
+                , effectProduces effect == Just (sessionAsset session)] of
+              [effect] -> pure effect
+              _ -> Left (InvalidPrototype "Session asset has no continuous producer")
+            case sessionPlan session of
+              ReuseOutput nodes -> do
+                valid (not (null nodes) && nodes == positions producer)
+                  "Reused output positions differ from the mounted atomic handles"
+                valid (and [unitOf left == unitOf right && exclusive selected left right
+                    | (offset, left) <- zip [0 :: Int ..] nodes, right <- drop (offset + 1) nodes])
+                  "Reused output positions must be mutually exclusive within one unit"
+              other -> valid (null (positions producer) && other == bootPlan effects producer)
+                "Independent production duplicates an AST output or differs from the registration"
+            valid (sessionMounts session == [identifier ++ [-1, index, step]
+                | step <- [0 .. sessionSteps (sessionPlan session) - 1]])
+              "Lifelong session mounts have invalid NodeIds") (zip [0 ..] sessions)
           valid (and [ any (\effect -> effectContinuous effect && effectProduces effect == Just contractType) effects
             | (_, contractType) <- lifelongSubscriptions described ]) "Lifelong subscribes to a non-continuous asset"
         _ -> pure ()
@@ -277,6 +294,7 @@ validatePrototype prototype = do
                   Receive source -> [method | effect <- effects, effectName effect == source
                     , (StreamHandler, method) <- effectMethods effect]
                   Derive _ -> []
+                  ReuseOutput _ -> []
                 expected = maybe streamEntries (\role -> [method | (role', method) <- effectMethods producer, role' == role]) expectedRole
             valid (sessionAsset session == chainTerminal chain && expected == [chainEntry chain])
               "Session chain differs from its boot plan"

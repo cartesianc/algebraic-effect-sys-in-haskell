@@ -10,7 +10,7 @@ module Framework.Runtime.Graph
   , newRuntimeGraph, configureRuntimeScopes, collectRuntimeScopes, finishRuntime, newOrigin
   , beginActivation, endActivation
   , publishAsset, publicationSignal, readVisibleAsset, contextMayPublish, resetOrigins
-  , installSessionLauncher, obtainSession, endedSession, stopSessions, currentPublications
+  , installSessionLauncher, obtainSession, endedSession, stopSessions, currentPublications, reusesOutputAt
   ) where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
@@ -69,6 +69,8 @@ data RuntimeGraph environment cause = RuntimeGraph
   , runtimeLauncher :: IORef (Session environment cause -> IO ())
   -- lifelong 会话的生产挂载：其普通发布只作为交付的伴随发布读取。
   , runtimeSessionMounts :: [NodeId]
+  -- 已装配的原始链输出路由；从 Prototype 投影一次，发布时不重新遍历整张图。
+  , runtimeOutputSites :: [(NodeId, String)]
   -- lifelong 单元各位置在先前各轮的最新发布（每个位置、每个来源一份）。新一轮开始时，
   -- 上一轮的发布移到这里，轮内读取看不到它；只有 lifelong 之外的读取（后继）才查这里。
   , runtimeRetained :: IORef [((NodeId, String), ScopeBinding environment cause)]
@@ -88,6 +90,9 @@ newRuntimeGraph prototype scopes = do
     <*> newMVar (Just []) <*> newIORef (const (ioError (userError "No session launcher is installed")))
     <*> pure [mount | (_, described) <- workflowLifelongs (protoWorkflow prototype)
            , session <- lifelongSessions described, mount <- sessionMounts session]
+    <*> pure [(node, effectName effect) | (_, described) <- workflowLifelongs (protoWorkflow prototype)
+           , session <- lifelongSessions described, ReuseOutput nodes <- [sessionPlan session], node <- nodes
+           , effect <- protoEffects prototype, effectProduces effect == Just (sessionAsset session)]
     <*> newIORef []
 
 -- ScopeTree 的独立构建与校验仍在 Prototype；这里只把同一树的关系装入现有控制对象。
@@ -381,3 +386,7 @@ currentPublications graph nodes = do
   assets <- readIORef (runtimeAssets graph)
   let current = [origin | node <- nodes, Just origin <- [lookup node origins]]
   pure [(source, value) | ((origin, source), value) <- assets, origin `elem` current]
+
+-- 同一 effect 的其他挂载不因此成为这份会话的发布者。会话接线已经由 gen 固定到 NodeId。
+reusesOutputAt :: RuntimeGraph environment cause -> NodeId -> String -> Bool
+reusesOutputAt graph node source = (node, source) `elem` runtimeOutputSites graph

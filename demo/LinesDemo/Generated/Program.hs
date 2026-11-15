@@ -11,7 +11,7 @@ import LinesDemo.Types
 
 
 -- 仅汇总所选末端的成功结果，不保存共享绑定或增加完成包装。
-data Results = AnnounceResult () | PrintLineResult () | ShowTotalResult () | ReportResult ()
+data Results = AnnounceResult () | PrintLineResult () | TextCounterResult () | ShowTotalResult () | ReportResult ()
   deriving Show
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
@@ -22,14 +22,14 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "Announce" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (AnnounceResult <$> (() <$ Handlers.runAnnounce)))))
-      , SDK.targetApp "PrintLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrintLineResult <$> (() <$ Handlers.runPrintLine)))))
-      , SDK.targetApp "ShowTotal" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowTotalResult <$> (() <$ Handlers.runShowTotal)))))
-      , SDK.targetApp "Report" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReportResult <$> (() <$ Handlers.runReport)))))
+    ( [ SDK.targetApp "Announce" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (AnnounceResult <$> (() <$ Handlers.runAnnounce))))))
+      , SDK.targetApp "PrintLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrintLineResult <$> (() <$ Handlers.runPrintLine))))))
+      , SDK.targetApp "TextCounter" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (TextCounterResult <$> (() <$ Handlers.runTextCounter))))))
+      , SDK.targetApp "ShowTotal" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowTotalResult <$> (() <$ Handlers.runShowTotal))))))
+      , SDK.targetApp "Report" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReportResult <$> (() <$ Handlers.runReport))))))
       ]
     , []
-    , [ ("LineParser", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextLineFeed))))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getTextLine))))))
-      , ("TallyParser", SDK.deriveSteps (SDK.targetApp "TallyParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getRunningTotal))))))
+    , [ ("LineParser", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextLineFeed)))))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getTextLine)))))))
       ]
     )
 
@@ -86,20 +86,20 @@ generatedPrototype =
             , SDK.demands = [SDK.Demand (SDK.StreamAccess) ("TextLine")]
             }
         , SDK.EffectSpec
-            { SDK.name = "Tally"
-            , SDK.typing = SDK.Excu (Just "tally")
+            { SDK.name = "TextCounter"
+            , SDK.typing = SDK.Excu (Just "countText")
             , SDK.input = "Root"
             , SDK.demands = [SDK.Demand (SDK.StreamAccess) ("TextLine")]
             }
         , SDK.EffectSpec
-            { SDK.name = "TallyParser"
+            { SDK.name = "CountParser"
             , SDK.typing =
                 SDK.Context
                   (SDK.AssetDecl ("RunningTotal") (SDK.TypeRef ("Total")))
                   (Just "parseTotal")
                   (True)
                   (True)
-            , SDK.input = "Tally"
+            , SDK.input = "TextCounter"
             , SDK.demands = []
             }
         , SDK.EffectSpec
@@ -237,10 +237,10 @@ generatedPrototype =
             , SDK.effectContinuous = False
             }
         , SDK.EffectProto
-            { SDK.effectName = "Tally"
+            { SDK.effectName = "TextCounter"
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunTallyGen)]
+            , SDK.effectMethods = [(SDK.HandlerMethod, RunTextCounterGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand (SDK.StreamAccess) ("TextLine") ("LineParser")]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
@@ -256,18 +256,18 @@ generatedPrototype =
             , SDK.effectContinuous = False
             }
         , SDK.EffectProto
-            { SDK.effectName = "TallyParser"
+            { SDK.effectName = "CountParser"
             , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Tally"
+            , SDK.effectInput = "TextCounter"
             , SDK.effectMethods =
                 [(SDK.ContextStream, GetRunningTotalGen), (SDK.ContextRequire, StreamRunningTotalGen)]
             , SDK.effectDemands = []
             , SDK.effectProduces = Just "RunningTotal"
             , SDK.effectBranches = []
-            , SDK.effectAnchor = Just "Tally"
+            , SDK.effectAnchor = Just "TextCounter"
             , SDK.effectScopes = []
             , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = ["Tally"]
+            , SDK.effectInputChain = ["TextCounter"]
             , SDK.effectScopeParents = []
             , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = []
@@ -280,7 +280,7 @@ generatedPrototype =
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "Root"
             , SDK.effectMethods = [(SDK.HandlerMethod, RunShowTotalGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand (SDK.StreamAccess) ("RunningTotal") ("TallyParser")]
+            , SDK.effectDemands = [SDK.ResolvedDemand (SDK.StreamAccess) ("RunningTotal") ("CountParser")]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
             , SDK.effectAnchor = Nothing
@@ -291,7 +291,7 @@ generatedPrototype =
             , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = ["InputResource","LineParser","TallyParser"]
+            , SDK.effectContextDependencies = ["InputResource","LineParser","CountParser"]
             , SDK.effectContinuous = False
             }
         , SDK.EffectProto
@@ -299,7 +299,7 @@ generatedPrototype =
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "Root"
             , SDK.effectMethods = [(SDK.HandlerMethod, RunReportGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("RunningTotal") ("TallyParser")]
+            , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("RunningTotal") ("CountParser")]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
             , SDK.effectAnchor = Nothing
@@ -310,7 +310,7 @@ generatedPrototype =
             , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = ["InputResource","LineParser","TallyParser"]
+            , SDK.effectContextDependencies = ["InputResource","LineParser","CountParser"]
             , SDK.effectContinuous = False
             }
         ]
@@ -344,12 +344,16 @@ generatedPrototype =
             (RunPrintLineGen)
             (SDK.HandlerMethod)
             (SDK.Call (StreamTextLineGen))
-        , SDK.MethodDefinition (RunTallyGen) (RunTallyGen) (SDK.HandlerMethod) (SDK.Call (StreamTextLineGen))
+        , SDK.MethodDefinition
+            (RunTextCounterGen)
+            (RunTextCounterGen)
+            (SDK.HandlerMethod)
+            (SDK.Sequence ([SDK.Call (StreamTextLineGen), SDK.Choice ([SDK.Empty, SDK.Sequence ([SDK.Empty])])]))
         , SDK.MethodDefinition
             (GetRunningTotalGen)
             (GetRunningTotalGen)
             (SDK.ContextStream)
-            (SDK.Call (RunTallyGen))
+            (SDK.Call (RunTextCounterGen))
         , SDK.MethodDefinition (StreamRunningTotalGen) (GetRunningTotalGen) (SDK.ContextRequire) (SDK.Empty)
         , SDK.MethodDefinition
             (RunShowTotalGen)
@@ -376,8 +380,9 @@ generatedPrototype =
                 ([1])
                 (
                   SDK.LifelongProto
-                    { SDK.lifelongUnits = [[1,0]]
-                    , SDK.lifelongSubscriptions = [([1,0,0],"TextLine"),([1,0,1],"RunningTotal")]
+                    { SDK.lifelongUnits = [[1,0,0],[1,0,1]]
+                    , SDK.lifelongSubscriptions =
+                        [([1,0,0,0],"TextLine"),([1,0,0,1],"TextLine"),([1,0,1,0],"RunningTotal")]
                     , SDK.lifelongSessions =
                         [ SDK.SessionProto
                             { SDK.sessionAsset = "TextLine"
@@ -386,18 +391,29 @@ generatedPrototype =
                             }
                         , SDK.SessionProto
                             { SDK.sessionAsset = "RunningTotal"
-                            , SDK.sessionPlan = SDK.Derive ("TextLine")
-                            , SDK.sessionMounts = [[1,-1,1,0]]
+                            , SDK.sessionPlan = SDK.ReuseOutput ([[1,0,0,1]])
+                            , SDK.sessionMounts = []
                             }
                         ]
                     }
                 )
                 (
-                  [ SDK.ChainedAt
+                  [ SDK.ParallelAt
                       ([1,0])
                       (
-                        [ SDK.NodeAt ([1,0,0]) ("PrintLine")
-                        , SDK.NodeAt ([1,0,1]) ("ShowTotal")
+                        [ SDK.ChainedAt
+                            ([1,0,0])
+                            (
+                              [ SDK.NodeAt ([1,0,0,0]) ("PrintLine")
+                              , SDK.NodeAt ([1,0,0,1]) ("TextCounter")
+                              ]
+                            )
+                        , SDK.ChainedAt
+                            ([1,0,1])
+                            (
+                              [ SDK.NodeAt ([1,0,1,0]) ("ShowTotal")
+                              ]
+                            )
                         ]
                       )
                   ]
@@ -429,7 +445,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,0,0]
+            { SDK.chainNode = [1,0,0,0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "PrintLine"
             , SDK.chainEntry = RunPrintLineGen
@@ -439,13 +455,23 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,0,1]
+            { SDK.chainNode = [1,0,0,1]
+            , SDK.chainRole = SDK.NodeChain
+            , SDK.chainTerminal = "TextCounter"
+            , SDK.chainEntry = RunTextCounterGen
+            , SDK.chainReaches = [RunTextCounterGen, StreamTextLineGen, GetRunningTotalGen]
+            , SDK.chainDrives = ["RunningTotal"]
+            , SDK.chainReads = []
+            , SDK.chainScopePaths = [[]]
+            }
+        , SDK.ChainProto
+            { SDK.chainNode = [1,0,1,0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ShowTotal"
             , SDK.chainEntry = RunShowTotalGen
             , SDK.chainReaches = [RunShowTotalGen, StreamRunningTotalGen]
             , SDK.chainDrives = []
-            , SDK.chainReads = []
+            , SDK.chainReads = ["RunningTotal"]
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
@@ -478,16 +504,6 @@ generatedPrototype =
             , SDK.chainDrives = ["TextLine"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenInputSessionGen]]
-            }
-        , SDK.ChainProto
-            { SDK.chainNode = [1,-1,1,0]
-            , SDK.chainRole = SDK.SessionChain
-            , SDK.chainTerminal = "RunningTotal"
-            , SDK.chainEntry = GetRunningTotalGen
-            , SDK.chainReaches = [GetRunningTotalGen, RunTallyGen, StreamTextLineGen]
-            , SDK.chainDrives = ["RunningTotal"]
-            , SDK.chainReads = ["TextLine"]
-            , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [-2,0,0]
@@ -564,19 +580,19 @@ generatedPrototype =
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
-            , SDK.definitionEffect = "Tally"
-            , SDK.definitionEntry = RunTallyGen
-            , SDK.definitionReaches = [RunTallyGen, StreamTextLineGen]
+            , SDK.definitionEffect = "TextCounter"
+            , SDK.definitionEntry = RunTextCounterGen
+            , SDK.definitionReaches = [RunTextCounterGen, StreamTextLineGen, GetRunningTotalGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
-            , SDK.definitionEffect = "TallyParser"
+            , SDK.definitionEffect = "CountParser"
             , SDK.definitionEntry = GetRunningTotalGen
-            , SDK.definitionReaches = [GetRunningTotalGen, RunTallyGen, StreamTextLineGen]
+            , SDK.definitionReaches = [GetRunningTotalGen, RunTextCounterGen, StreamTextLineGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
-            , SDK.definitionEffect = "TallyParser"
+            , SDK.definitionEffect = "CountParser"
             , SDK.definitionEntry = StreamRunningTotalGen
             , SDK.definitionReaches = [StreamRunningTotalGen]
             }
@@ -603,6 +619,11 @@ generatedPrototype =
                   (SDK.HandlerMethod)
                   (SDK.Call (StreamTextLineGen))
               , SDK.MethodDefinition (StreamTextLineGen) (GetTextLineGen) (SDK.ContextRequire) (SDK.Empty)
+              , SDK.MethodDefinition
+                  (RunTextCounterGen)
+                  (RunTextCounterGen)
+                  (SDK.HandlerMethod)
+                  (SDK.Sequence ([SDK.Call (StreamTextLineGen), SDK.Choice ([SDK.Empty, SDK.Sequence ([SDK.Empty])])]))
               , SDK.MethodDefinition
                   (RunShowTotalGen)
                   (RunShowTotalGen)
@@ -631,24 +652,19 @@ generatedPrototype =
                   (GetTextLineGen)
                   (SDK.ContextStream)
                   (SDK.Call (NextLineFeedGen))
-              , SDK.MethodDefinition
-                  (GetRunningTotalGen)
-                  (GetRunningTotalGen)
-                  (SDK.ContextStream)
-                  (SDK.Call (RunTallyGen))
-              , SDK.MethodDefinition (RunTallyGen) (RunTallyGen) (SDK.HandlerMethod) (SDK.Call (StreamTextLineGen))
               ]
           , SDK.graphRoots =
               [ RunAnnounceGen
               , RunPrintLineGen
+              , RunTextCounterGen
               , RunShowTotalGen
               , RunReportGen
               , NextLineFeedGen
               , GetTextLineGen
-              , GetRunningTotalGen
               ]
           , SDK.graphReferences =
               [ (RunPrintLineGen, StreamTextLineGen)
+              , (RunTextCounterGen, StreamTextLineGen)
               , (RunShowTotalGen, StreamRunningTotalGen)
               , (RunReportGen, StreamRunningTotalGen)
               , (NextLineFeedGen, OpenInputSessionGen)
@@ -656,19 +672,17 @@ generatedPrototype =
               , (OpenInputSessionGen, GetOpenedInputGen)
               , (OpenInputSessionGen, ReadOpenedInputGen)
               , (GetTextLineGen, NextLineFeedGen)
-              , (GetRunningTotalGen, RunTallyGen)
-              , (RunTallyGen, StreamTextLineGen)
               ]
           , SDK.graphScopes = [OpenInputSessionGen]
           , SDK.graphScopePaths = [[], [OpenInputSessionGen]]
           , SDK.graphRootPaths =
               [ (RunAnnounceGen, [[]])
               , (RunPrintLineGen, [[]])
+              , (RunTextCounterGen, [[]])
               , (RunShowTotalGen, [[]])
               , (RunReportGen, [[]])
               , (NextLineFeedGen, [[OpenInputSessionGen]])
               , (GetTextLineGen, [[OpenInputSessionGen]])
-              , (GetRunningTotalGen, [[]])
               ]
           , SDK.graphScopeOrder = []
           }
@@ -691,7 +705,7 @@ generatedPrototype =
     , SDK.protoScopeNames = [(OpenInputSessionGen, "InputSession")]
     , SDK.protoSources =
         [ (SDK.ReadPoint ([2,0]) ("RunningTotal"), SDK.FromSession)
-        , (SDK.ReadPoint ([1,-1,1,0]) ("TextLine"), SDK.FromSession)
+        , (SDK.ReadPoint ([1,0,1,0]) ("RunningTotal"), SDK.FromSession)
         ]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan

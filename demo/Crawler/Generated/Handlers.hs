@@ -19,7 +19,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module Crawler.Generated.Handlers (handlerSourceFingerprint, getStartURL, readStartURL, getLinkedURL, readLinkedURL, runFetchPage, runKeepPageBody, getStartPageSummary, readStartPageSummary, runPrintPage, runFetchLinkedPage, runKeepLinkedPageBody, getLinkedPageSummary, readLinkedPageSummary, runPrintLinkedPage, getCrawlSessionInfo, readCrawlSessionInfo, openCrawlSession, closeCrawlSession, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
+module Crawler.Generated.Handlers (handlerSourceFingerprint, getStartURL, readStartURL, getLinkedURL, readLinkedURL, runFetchPage, runKeepPageBody, getStartPageSummary, readStartPageSummary, runPrintPage, runFetchLinkedPage, runKeepLinkedPageBody, getLinkedPageSummary, readLinkedPageSummary, runPrintLinkedPage, getCrawlSessionInfo, readCrawlSessionInfo, openCrawlSession, closeCrawlSession, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections, streamContextInjections) where
 
 import qualified Framework.Generated as FrameworkRuntime
 import qualified Crawler.Generated.Effects as FrameworkGenerated
@@ -325,4 +325,10 @@ contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
 contextInjections =
   [ ("runFetchPage", [("ExtractPage", () <$ getStartPageSummary)])
   , ("runFetchLinkedPage", [("ExtractLinkedPage", () <$ getLinkedPageSummary)])
+  ]
+
+-- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。
+streamContextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
+streamContextInjections =
+  [
   ]

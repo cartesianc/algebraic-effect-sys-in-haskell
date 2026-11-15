@@ -1,6 +1,6 @@
 # Next stages
 
-更新：2026-11-15。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已完成最低限度的保守结束，完整迁移仍待实施；[Pure 的值管道与 list 原子输出](#pure-pipeline)已实现（2026-11-12）；[scope 的单例与多例、按可达性回收](#scope-gc)已实现（2026-11-13，生成与普通编译通过）；[Stage 6 的第一步](#stage-6)（Stream 的正常结束到 lifelong 返回）已实现（2026-11-14），会话历史[按读取义务保留](#stage-6-retention)已实现（2026-11-14），[由持续资产驱动的持续资产](#stage-6-derive)已实现（2026-11-15）；Stage 3–7 的其余部分继续逐阶段收敛。**
+更新：2026-11-15。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已完成最低限度的保守结束，完整迁移仍待实施；[Pure 的值管道与 list 原子输出](#pure-pipeline)已实现（2026-11-12）；[scope 的单例与多例、按可达性回收](#scope-gc)已实现（2026-11-13，生成与普通编译通过）；[Stage 6 的第一步](#stage-6)（Stream 的正常结束到 lifelong 返回）已实现（2026-11-14），会话历史[按读取义务保留](#stage-6-retention)已实现（2026-11-14），[由持续资产驱动的持续资产](#stage-6-derive)与[消费原子输出的持续发布](#stage-6-reuse)已实现（2026-11-15）；Stage 3–7 的其余部分继续逐阶段收敛。**
 
 本轮目标是在框架现有概念内，先分离原子 handler 与业务 effect，使 handler 可以复用、前驱由声明装配；再统一 Stream effect 与 lifelong 的持续执行协议，完成正常结束、停止传播和资源收尾。每阶段先收敛设计与代码形态，再实现；本文记录推进顺序、待确认事项及开放边界，不替代[主设计](LATEST_DESIGN.md)和[当前 Stream 规范](STREAM_LIFELONG.md)。
 
@@ -523,6 +523,8 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 要解决的是表达缺口：被持续资产驱动的 effect 此前只能是消费方，由历史算出的结果不能成为资产，也不能在进程内交给 lifelong 的后继。规则与写法见 [Stream 规范 4.2 节](STREAM_LIFELONG.md#derive)。
 
+以下记录首次独立 Derive 实现及当时的验证。它禁止对应 Excu 同时挂入 AST 的限制已由[第五步](#stage-6-reuse)替代；示例的 `Tally`／`TallyParser` 也在第五步改名并改为原子输出复用。历史运行结果不代表新连接已经验证。
+
 已确认的语义：链上有 stream 类型的 demand，这条链就由那份持续资产驱动，每次交付产出一个新值，产出只能是持续资产，不可能是普通资产；驱动也不会再变回消费方驱动。所以不新增 effect 类别、关键字或 handler 能力，只把两条规则（持续资产只能挂在 Stream 下；生产者不带 stream 类型的 demand）合成一条：Context 的 `stream` 与它的 Input 链是否被持续驱动一致。
 
 - **gen**：`BootPlan` 增加 `Derive`，由生产方 Input 链上的 `streams` 推出；lifelong 的会话集合是被订阅的资产加上它们的上游，上游在前；持续资产的生产入口一律由会话调用，不能 `requests`；生产链上声明 `streams` 的 effect 不能挂载到 AST；Derive 资产的读取点必须在有它的 lifelong 之内或之后；启动依赖检查放过驱动它的那份资产。派生关系成环由已有的 Input／demand 环检查拒绝，没有新增图遍历。
@@ -543,6 +545,28 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 - 上游历史在 Derive 会话运行期间全部保留，加上派生资产自己的历史，只做映射的派生也是如此。
 - 被驱动的句柄连同它 Input 链上的 scope 在会话的各步骤间保持，与 Stream 的 Input 相同；结束后的清理同样未设计。
 - 上游生产步骤的伴随发布只交给由该资产驱动的读取位置；Derive 的生产链不在其中，按现有检查读取伴随发布应被生成期拒绝，未单独验证。
+
+<a id="stage-6-reuse"></a>
+#### 第五步：消费原子输出复用为持续资产（2026-11-15）
+
+**状态：已实现。** 首次 Derive 只支持在独立会话中执行操作，不能让 AST 上已经执行的消费操作同时产出持续资产。禁止这类 Excu 挂入 AST 混淆了操作的消费与生产关系；本步恢复其业务组合能力，gen 分链时保留同一次输出的连接。
+
+统一规则是：首次需求建立运行，后续增量驱动有限执行。持续资产 B 发布后，订阅 B 的独立生产链 A 与 lifelong 消费节点都按交付推进；它们执行后也能经 Context 发布资产。缺值等待不再次请求上游。Stream 来源的持续生命周期仍由生产会话托管，不进入 AST original chain。取消、需求撤销与未来的背压可以向上游传播，不混为新的生产驱动。
+
+本步实现落点：
+
+- **gen／Prototype**：保留 Receive 和独立 Derive；同一 lifelong 内沿 target 自身和 original Input 链确定挂接句柄的位置，生成 `ReuseOutput [NodeId]`，`sessionMounts = []`，不扫描任意 requests 链里的同名操作。AST 持续副产物均纳入会话集合，包括仅供后继读取的产物。多个发布位置只允许同单元、两两 alternative 互斥；`Gen.Sessions` 检查订阅、chained 前置与持续 alternative 选择读取形成的启动图，保守拒绝有环组合。原子输出挂接继续进入 effect graph 与 ScopeTree，不新建一套运行图。
+- **等待前提**：同单元直接订阅或经 Derive 间接依赖自身产物时，逐条 workflow 路径检查已有供值或同轮并行必经供值，不能用 alternative 其他候选可能发布代替当前路径；跨单元条件发布不要求逐轮产出。ReuseOutput parser 及其 requests 路径不得读取驱动资产以外的持续资产，普通读取保持原协议。
+- **scope 输出限制**：Scoped.open 复用实例时没有新的原子输出，故同单元直接或经 Derive 等待这种 ReuseOutput 保守拒绝；跨单元等待和独立 Derive 保持可用。精确识别必定 fresh 的开启后放行未做，不虚构 open 输出。
+- **输出与交付**：ReuseOutput 会话不启动独立 worker。原 AST 操作成功后，挂接 parser 的 `raw` 沿用本次输出，成功资产进入对应会话；不重跑原操作。parser 继承原节点的 Origin、执行帧与 ScopeUser，仍有自己的 Context activation。交付只含该持续资产，普通副产物仍留在实际 Origin、由合法后继按静态来源表读取，不借持续交付跨越 parallel 的普通资产可见性；独立 Receive／Derive 的既有伴随发布协议不变。
+- **失败**：持续挂接 parser 的失败沿现有 Stream 诊断／监督协议传播；普通 Context 注入失败只留在注入内的规则不变。已完成操作不回滚，不增加重试。
+- **结束**：按负责发布的重复单元登记。全部发布单元正常结束后封住会话并唤醒领取方，已发布交付仍可排空。单次 target 返回或单轮完成不封口，也不等整个 lifelong 返回才封口。失败与取消继续走现有运行收尾，不新增无人订阅时提前停止的策略。
+- **facade 与示例**：没有新的声明字段或 handler 能力。LinesDemo 将 `Tally`／`tally` 改为 `TextCounter`／`countText`，parser 注册名改为 `CountParser`，表示类型 `Total`、资产 `RunningTotal` 与 `parseTotal` 不变。AST 改为 `lifelong [parallel [chained [node "PrintLine", node "TextCounter"], chained [node "ShowTotal"]]]`：两个单元独立推进，统计执行一次、同次输出成为持续资产；发布单元结束封口，显示单元排空后退出，后继读取最终统计。行文本与统计显示可以交错。
+- **范围**：不增加新的资源使用登记，不改 scope close；历史资源保活、无人消费停产、消费方主动结束、背压和容量仍待后续阶段。
+
+**验证（2026-11-15）：** 八个 namespace 均生成通过；`cabal build all --offline -j1` 退出 0。FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo、LinesDemo 五个现有有限 demo 均退出 0，结果为 `Succ`。LinesDemo 的两个并发单元处理四行，统计依次为 1 行／10 字符、2／21、3／31、4／40；`Report` 读到最终 4／40，最后正常 close。`--structure` 显示 `TextLine` 为 Receive，`RunningTotal` 为 `ReuseOutput at [[1,0,0,1]] (no separate producer)`，其 `mounts` 为 `[]`。最终再次生成 LinesDemo 为 `0 files updated; structure reused`。
+
+本轮未新增测试或负例，未运行无限 StreamDemo（仅构建）。取消窗口、失败交错、Scoped 同单元拒绝以及独立 Derive 没有另做新探针；本次编译和有限示例结果不扩大这些边界的保证。来源结束后的 scope 清理、消费方主动结束、无人读取停产、背压与历史资源保活继续延期。
 
 #### 尚未确定或尚未实现
 
@@ -594,6 +618,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 | parallel 兄弟互不可见；只有已确定生产耗尽的缺值读取结束，未知或仍可能生产的运行链继续等待 | Stage 2（[保守结束已实现，完整迁移待实施](#stage-2-await)） |
 | 持续资产的当前值与历史读取 | Stage 2 已实现缓存语义（requires 读最新值，streams 读历史）；Stage 4 收敛视图与读取写法 |
 | readHistory 未经过 scope 开启参数观察，可能报 ScopeInputsMissing | Stage 4–5 |
+| 同单元等待 Scoped.open 的 ReuseOutput 保守拒绝，因复用实例会跳过输出；跨单元等待及独立 Derive 可用 | Stage 6 输出复用的已知边界；必定 fresh 的精确放行尚未实现 |
 | 会话步骤共用 scope 使用登记；停止后撤销使用并按可达性回收；来源正常结束后登记保留到会话被停止，只在会话中开启的 scope 到运行结束才关闭 | Stage 5、7 继续收敛结束后的清理与历史资源；当前回收见[按可达性回收](#scope-gc) |
 | 来源可用 `end` 正常结束，lifelong 随之返回，后继读取每个来源最新一次发布；消费方不能提前退出 | Stage 6（第一步已实现，其余待定） |
 | 含 lifelong 程序的失败使用整次运行终止的临时规则 | Stage 6 明确保留或调整范围 |

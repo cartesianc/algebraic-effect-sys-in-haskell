@@ -85,14 +85,20 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
       | specification <- contextSpecs unit, Prototype.effectContinuous (protoOf unit (name specification))
       , Just parsing <- [contextProducer (typing specification)]
       , let parser = wrapTarget (name specification) ("() <$ Handlers." ++ parsing)
-      , steps <- case Prototype.bootPlan (effectPrototypes unit) (protoOf unit (name specification)) of
+      , plan <- nub [Prototype.sessionPlan session | session <- sessions
+          , Just (Prototype.sessionAsset session) == Prototype.effectProduces (protoOf unit (name specification))]
+      , steps <- case plan of
           Prototype.Receive _ ->
             [ "SDK.receiveSteps (" ++ wrapTarget (input specification) ("Handlers." ++ handle) ++ ") (" ++ parser ++ ")"
             | Just handle <- [entryMethod (specOf unit (input specification))] ]
-          Prototype.Derive _ -> ["SDK.deriveSteps (" ++ parser ++ ")"] ]
+          Prototype.Derive _ -> ["SDK.deriveSteps (" ++ parser ++ ")"]
+          Prototype.ReuseOutput _ -> [] ]
+    sessions = concatMap (Prototype.lifelongSessions . snd) (Prototype.workflowLifelongs workflow)
+      ++ Prototype.finiteSessions (effectPrototypes unit)
     wrapTarget label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
       ++ " (SDK.withErrorHandlers Handlers.errorHandlers"
       ++ " (SDK.withAnchoredContexts Handlers.contextInjections"
-      ++ " (SDK.withScopeCleanups Handlers.scopeCleanups (" ++ action ++ "))))"
+      ++ " (SDK.withStreamContexts Handlers.streamContextInjections"
+      ++ " (SDK.withScopeCleanups Handlers.scopeCleanups (" ++ action ++ ")))))"
     renderList _ [] = "[]"
     renderList indent items = "[ " ++ intercalate ("\n" ++ indent ++ ", ") items ++ "\n" ++ indent ++ "]"

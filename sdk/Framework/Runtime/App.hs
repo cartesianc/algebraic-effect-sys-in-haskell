@@ -63,6 +63,8 @@ data Environment env cause = Environment
   , currentFrame :: ExecutionFrame
   -- 原子句柄方法名 → 挂在它下面的 Context 生产入口，由生成区安装。
   , anchoredEntries :: [(String, [(String, App env cause ())])]
+  -- 持续 parser 的挂接目录；实际可执行项由当前 Origin 对应的静态发布位置筛选。
+  , streamEntries :: [(String, [(String, App env cause ())])]
   -- 注入期间各原子句柄的本次输出。
   , replays :: [(String, RawOutput)]
   -- 持续资产在本次调用的历史视图：lifelong 交付或此前的会话读取；其他调用之后的发布不改写它。
@@ -70,7 +72,7 @@ data Environment env cause = Environment
   -- 解析器本次的原始输入，只在会话调用解析器时安装。
   , streamRaw :: Maybe String
   -- 这些来源的发布进入会话历史，而不是按 Origin 的业务资产表：
-  -- 会话步骤的本资产，以及 lifelong 单元内对该 lifelong 会话资产的显式 request。
+  -- 会话步骤的本资产，以及原始链沿用本次输出的持续 parser 产物。
   , sessionSinks :: [(String, Bound env cause -> IO ())]
   -- lifelong 单元执行中：本次 frame 对会话资产的领取（同一 frame 只领取一次，各调用共享）。
   , frameDeliver :: String -> Maybe (IO (Either (Stopped cause) (View env cause)))
@@ -473,6 +475,14 @@ instance ContextStore env (App env cause) where
   withAnchoredContexts entries (AppRun action) = AppRun $ local
     (\environment -> environment { anchoredEntries = entries }) action
   anchoredContexts method = AppRun (asks (fromMaybe [] . lookup method . anchoredEntries))
+  withStreamContexts entries (AppRun action) = AppRun $ local
+    (\environment -> environment { streamEntries = entries }) action
+  streamContexts method = AppRun $ do
+    environment <- ask
+    let node = originNode (executionOrigin (execution environment))
+    pure [entry | entry@(source, _) <- fromMaybe [] (lookup method (streamEntries environment))
+      , source `elem` map fst (sessionSinks environment)
+      , reusesOutputAt (runtimeGraph environment) node source]
   replayedOutput method = AppRun (asks (lookup method . replays))
   -- 诊断与收尾期间不注入。注入以根调用身份运行，失败只留在注入内：资产不发布，
   -- 原链照常继续；之后 require 按等待／耗尽协议处理缺值，不在读取处补产。
@@ -482,6 +492,13 @@ instance ContextStore env (App env cause) where
         inside = environment { caller = Nothing, errorHandlers = []
                              , replays = (method, raw) : replays environment }
     when allowed $ () <$ liftIO (runExceptT (runReaderT action inside))
+  -- 仍在原始操作的执行帧与资源使用登记内解析；只覆盖 raw，不另外 lower 一次生产链。
+  -- 持续 parser 的失败保留原来的诊断和监督路径，不能套用普通挂接的吞错规则。
+  injectStreamOutput method raw (AppRun action) = AppRun $ do
+    environment <- ask
+    let allowed = not (isJust (originalFailure environment)) && not (cleaningScopes environment)
+    when allowed $ local (\inside -> inside
+      { caller = Nothing, replays = (method, raw) : replays inside }) action
   -- 本次已有视图时直接读取；lifelong 单元中尚未领取的会话资产在第一次读取时领取本次 frame 的交付。
   -- 这时才发现来源已结束并排空：本次调用无法继续，以内部信号交回单元调度，由它正常结束单元。
   readContextHistory source select = do
@@ -841,7 +858,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
         , activeActivation = Just (activationId activation), execution = currentExecution
         , currentFrame = launchFrame launch
-        , anchoredEntries = [], replays = []
+        , anchoredEntries = [], streamEntries = [], replays = []
         , views = delivered, streamRaw = launchInput launch, sessionSinks = launchSinks launch
         , frameDeliver = launchDeliver launch }
   (do

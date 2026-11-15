@@ -48,12 +48,21 @@ class Monad m => ContextStore environment m | m -> environment where
   withAnchoredContexts _ = id
   anchoredContexts :: String -> m [(String, m ())]
   anchoredContexts _ = pure []
+  -- 持续 Context 沿用原始链这次输出。只有原型指定的发布位置会取得这些入口；
+  -- 普通注入和持续注入分别保持各自的失败协议。
+  withStreamContexts :: [(String, [(String, m ())])] -> m value -> m value
+  withStreamContexts _ = id
+  streamContexts :: String -> m [(String, m ())]
+  streamContexts _ = pure []
   -- 注入期间，挂接 Context 对该句柄的调用由本次 RawOutput 回答，不重复执行。
   replayedOutput :: String -> m (Maybe RawOutput)
   replayedOutput _ = pure Nothing
   -- 以根调用身份运行一次注入；失败留在注入内，不进入原链，也不触发 Error 诊断。
   injectOutput :: String -> RawOutput -> m () -> m ()
   injectOutput _ _ _ = pure ()
+  -- 同次输出交接给持续 parser，失败按持续执行协议传播，不吞掉。
+  injectStreamOutput :: String -> RawOutput -> m () -> m ()
+  injectStreamOutput _ _ = id
   -- 持续资产：本次调用已经取得的历史视图（lifelong 交付，或本次先前的会话读取），按发布顺序。
   readContextHistory :: String -> (environment -> Maybe value) -> m (Maybe (History value))
   readContextHistory _ _ = pure Nothing

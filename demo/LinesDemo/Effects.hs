@@ -10,8 +10,8 @@ import LinesDemo.Types
 -- 输入文件是 InputSession 的资源：没有开启参数，只开启一次，在生产会话的各步骤间保持。
 -- LineFeed 每次取得一行原始文本；挂在它下面的 LineParser 把它解析成持续资产 TextLine。
 -- PrintLine 以 TextLine 的新交付驱动；Report 排在 lifelong 之后，来源结束、交付处理完才执行。
--- Tally 也由 TextLine 驱动，但它下面挂着 Context：每来一行重新统计一次，产出另一份持续资产 RunningTotal。
--- Tally 不挂载到 AST，它是 RunningTotal 的生产链，由订阅它的 ShowTotal 启动；Report 读它结束时的最新一条。
+-- TextCounter 在消费 workflow 中每来一行统计一次，CountParser 沿用这次输出发布 RunningTotal。
+-- ShowTotal 订阅统计资产，不再独立执行一遍 TextCounter；Report 读它结束时的最新一条。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
@@ -51,15 +51,15 @@ effects =
       , demands = [streams "TextLine"]
       }
   , EffectSpec
-      { name = "Tally"
-      , typing = Excu { handler = Just "tally" }
+      { name = "TextCounter"
+      , typing = Excu { handler = Just "countText" }
       , input = "Root"
       , demands = [streams "TextLine"]
       }
   , EffectSpec
-      { name = "TallyParser"
+      { name = "CountParser"
       , typing = Context { asset = Asset @Total "RunningTotal", parser = Just "parseTotal", require = True, stream = True }
-      , input = "Tally"
+      , input = "TextCounter"
       , demands = []
       }
   , EffectSpec

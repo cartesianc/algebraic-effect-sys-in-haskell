@@ -63,8 +63,8 @@ instance PrintLineLayer m => PrintLineHandler m where
     pure []
 
 -- 由 TextLine 驱动：每来一行执行一次，读到这一行为止的全部行，交出行数与字符总数。
-instance TallyLayer m => TallyHandler m where
-  tally = do
+instance CountTextLayer m => CountTextHandler m where
+  countText = do
     received <- require @(History Line)
     let sizes = [length text | Line text <- historyEntries received]
     pure [show (length sizes), show (sum sizes)]
@@ -74,7 +74,7 @@ instance ParseTotalLayer m => ParseTotalHandler m where
     fields <- raw
     case fields of
       [count, size] -> pure (Total (read count) (read size))
-      _ -> raise (ParseTotalError "the tally gives a line count and a character count")
+      _ -> raise (ParseTotalError "the counter gives a line count and a character count")
 
 instance ShowTotalLayer m => ShowTotalHandler m where
   showTotal = do

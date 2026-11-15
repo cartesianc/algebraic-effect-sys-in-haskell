@@ -48,7 +48,13 @@ data Execution
 1. **AST 启动**：Node 或 alternative 的选择读取启动选定入口，建立本次 origin 及入口使用登记。
 2. **Context 启动**：实际生产（`requests` 驱动的 getT）建立 ctx chain 记录，包住生产、成功发布和返回。嵌套 ctx 启动继承外层 origin 和入口使用登记；返回只结束本次生产记录，不撤销整个入口对 scope 的使用。读取不生产，也没有新 activation；选择读取驱动转折资产、挂接注入实际生产时经过同一启动边界。
 
-Stage 3 复用这两个 Boot 构造：会话的每个生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。会话步骤共用会话的 ScopeUser，lifelong 的消费 target 则每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
+Stage 3 复用这两个 Boot 构造：Receive／Derive 的每个独立生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。独立会话步骤共用会话的 ScopeUser，lifelong 的消费 target 则每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
+
+本轮 ReuseOutput 连接沿用已有 AST 执行：`SessionProto.sessionPlan` 保存 `ReuseOutput [NodeId]`，指向同一 lifelong 内的具体原子输出发布位置，`sessionMounts` 为空。gen 沿 target 自身与 original Input 链定位挂接句柄；所有这些持续副产物都进入会话集合，包括仅供后继读取的产物。gen 仍保留 original chain 与 Context chain 的独立定义；执行时挂接 parser 用同次 raw，不另建根调用或生产 worker。parser 的 `RequestBoot` 继承原节点的 Origin、执行帧和 ScopeUser。其交付只含持续资产，原 AST 调用的普通产物继续按真实 Origin 和来源表读取，不作为伴随发布跨单元透传。多个发布位置只允许同单元、两两 alternative 互斥；不按调度选取，不合并同名 handler 的独立调用。`Gen.Sessions` 以订阅、chained 前置和持续 alternative 选择读取建立启动依赖，拒绝有环组合。完整规则见 [Stream 第 4.2 节](STREAM_LIFELONG.md#derive)，实现状态见 [Next stages](NEXT_STAGES.md#stage-6-reuse)。
+
+启动图之外还检查同单元的路径覆盖：直接订阅或经独立 Derive 间接依赖自身输出时，每条到达订阅的 workflow 路径都须先经过发布位置，或同轮有并行且必经的发布路径；alternative 取各候选的必经交集。跨单元可以条件发布，无须每轮都产出。ReuseOutput parser 及其 requests 路径只允许读取原操作的驱动持续资产，避免挂接过程中再等待其他持续来源；普通资产读取仍按原来源协议检查。
+
+Scoped.open 可能复用实例而不交出新 raw，因此它的 AST 位置不能单独证明本轮必有发布。同单元直接或经 Derive 等待这种 ReuseOutput 时，gen 当前保守拒绝；跨单元等待与独立 Derive 仍保留。精确证明某次开启必为 fresh 后放行尚未实现。
 
 这里的“入口使用登记”是原有有限使用闭包的资源含义：一次 AST 入口内，实际 open／require 选中的 scope 计入同一份使用。`ScopeUser` 保留原有 `Unique` 协调身份，并新增 `scopeUserExecution`；同一入口的 ctx chain 使用同一个 `ScopeUser`。`scopeUsers` 同时携带使用者身份与 `Execution`，不以 AST 位置替代并发使用协调。
 
@@ -74,7 +80,7 @@ ScopeTree 仍是独立的静态构树结果，保留路径分析、注册前提�
 data Source = FromOwnChain | FromChains [NodeId] | FromSession
 ```
 
-`FromSession` 只用于持续资产：没有本次交付时由会话交付，不查询普通来源。lifelong 之外是 interpreter 托管的会话；由持续资产驱动的资产没有托管会话，读取位置限于有它的 lifelong 之内或之后。`FromOwnChain` 表示没有其他可见来源，只读当前入口自己的发布；`FromChains` 保存许可的可见前驱候选。前驱必须由 AST 保证先于当前入口完成，alternative 选择读取先于其候选；parallel 兄弟互不可见。候选可有多个，生成期只要求在需要跨链解析的缺值路径上，同时可见的实际来源至多一个。已捕获绑定的其他路径上，这些节点可以共同发布，由当前快照确定读取值。证明考虑 alternative 与可选生产的条件关系；不能以最后完成、距离最近或最后写入替代唯一性。
+`FromSession` 只用于持续资产：没有本次交付时由会话交付，不查询普通来源。lifelong 之外可启动 interpreter 托管的 Receive 会话；Derive／ReuseOutput 没有托管会话，读取位置限于提供它的 lifelong 之内或之后。ReuseOutput 的会话收到原 AST 输出的挂接发布后再交付，不能把 `FromSession` 解释成读取时调用生产节点。`FromOwnChain` 表示没有其他可见来源，只读当前入口自己的发布；`FromChains` 保存许可的可见前驱候选。前驱必须由 AST 保证先于当前入口完成，alternative 选择读取先于其候选；parallel 兄弟互不可见。候选可有多个，生成期只要求在需要跨链解析的缺值路径上，同时可见的实际来源至多一个。已捕获绑定的其他路径上，这些节点可以共同发布，由当前快照确定读取值。证明考虑 alternative 与可选生产的条件关系；不能以最后完成、距离最近或最后写入替代唯一性。
 
 方法已经捕获绑定的路径不需要跨链解析；某些路径已捕获、其他路径尚未捕获是合法的。只对后者检查唯一来源。`Recover` 保留可能失败前缀，不假定正文生产全部完成。`Source` 只保存最终候选集合，不把路径证明伪装成已保存的数据；运行校验检查引用和可见性等字段自洽，不重跑来源分析，runtime 再核对本次实际已发布来源的唯一性。
 

@@ -19,8 +19,8 @@ belowStream specifications specification = case typing specification of
   Context {} -> not (null [() | source <- specifications, name source == input specification, Stream {} <- [typing source]])
   _ -> False
 
--- 持续资产：stream = True，缓存历史，可以被 streams 订阅。它只由会话生产：
--- 挂在 Stream 下的由 Stream 单步驱动，Input 链上有 streams demand 的由上游持续资产的交付驱动。
+-- 持续资产：stream = True，缓存历史，可以被 streams 订阅。
+-- 挂在 Stream 下的由会话单步驱动；Input 链上有 streams 的由上游交付驱动，已挂载的操作沿用本次输出。
 continuousContext :: EffectSpec -> Bool
 continuousContext specification = case typing specification of
   Context { stream = streaming } -> streaming

@@ -55,7 +55,7 @@ noHandoff = Handoff [] []
 
 -- lifelong 单元的一次执行：本 lifelong 的各会话及该单元的游标。每个会话资产在一次执行中只领取一次，
 -- 第一个需要它的调用领取，其余调用（包括同一执行内并行的节点）共享同一份固定视图与伴随发布；
--- 单元内对这些资产的显式 request 发布进入对应会话。
+-- 单元内挂接的持续 parser 将本次输出的产物发布到对应会话。
 data DeliveryFrame environment cause = DeliveryFrame
   { frameSessions :: [(String, (Session environment cause, Cursor))]
   , frameTaken :: MVar [(String, MVar (Either (Stopped cause) (Delivery environment cause)))]
@@ -122,7 +122,7 @@ frameDeliveries frame = do
 -- 在 lifelong 单元的 DeliveryFrame 中，已领取的交付优先于交接视图，尚未领取的会话资产在第一次读取时领取。
 -- 已领取交付的伴随发布作为已捕获绑定交给本次调用，交接中已经捕获的值优先（与来源分析一致）；
 -- 生成期保证读取伴随资产的位置在调用前已经领取了对应会话的交付。
--- 单元内显式 request 产生的交付没有会话生产步骤，不带伴随发布。
+-- 原始链挂接只交付持续资产自身；普通产物保持其 AST Origin 的既有来源可见性，不随流跨链透传。
 lowerTarget :: RuntimeGraph environment cause -> NodeId -> ExecutionFrame -> Maybe (DeliveryFrame environment cause) -> Handoff environment cause
             -> Target environment cause value -> IO (Either (Failure cause) value, Handoff environment cause)
 lowerTarget graph location executionFrame frame (Handoff given views) target = do
@@ -184,28 +184,33 @@ deriveSteps = DeriveSteps
 -- 报告失败、撤销使用登记和填写完成信号都不会被停止请求打断，stopSession 一定等得到完成信号。
 sessionLauncher :: RuntimeGraph environment cause -> [(String, SessionSteps environment cause)]
                 -> (Broken cause -> IO ()) -> Session environment cause -> IO ()
-sessionLauncher graph steps onBroken session = uninterruptibleMask_ $ do
-  finished <- newEmptyMVar
-  owner <- case mounts of
-    Just (mount : _) -> newOrigin graph mount >>= newScopeUser (runtimeScopes graph) . BusinessExecution
-    _ -> ioError (userError ("No session steps for " ++ source ++ " at " ++ show boundary
-      ++ "; regenerate with the SDK effect-codegen command"))
-  thread <- forkIOWithUnmask $ \unmask -> (`finally` putMVar finished ()) $ (`finally` detachScopeUser owner) $ do
-    outcome <- try (unmask (produce owner))
-    case outcome of
-      Left (exception :: SomeException)
-        | Just (_ :: SomeAsyncException) <- fromException exception -> pure ()
-        | otherwise -> broken (Left exception)
-      Right (Just problem) -> broken (Right problem)
-      -- 正常结束后任务留在原地，直到会话被停止（lifelong 返回或运行结束）：
-      -- 排空期间继续持有会话的使用登记，资源释放的时机与结束之前相同；结束后的清理另行设计。
-      Right Nothing -> do
-        endSession session
-        void (try (unmask (forever (threadDelay 3600000000))) :: IO (Either SomeException ()))
-  setSessionWorker session thread finished
+sessionLauncher graph steps onBroken session
+  -- 已挂载的原始链提供输出：只登记会话的交付状态，不创建第二个驱动或资源使用者。
+  | Just (ReuseOutput _) <- sessionPlan <$> description = pure ()
+  | otherwise = launch
   where
+    launch = uninterruptibleMask_ $ do
+      finished <- newEmptyMVar
+      owner <- case mounts of
+        Just (mount : _) -> newOrigin graph mount >>= newScopeUser (runtimeScopes graph) . BusinessExecution
+        _ -> ioError (userError ("No session steps for " ++ source ++ " at " ++ show boundary
+          ++ "; regenerate with the SDK effect-codegen command"))
+      thread <- forkIOWithUnmask $ \unmask -> (`finally` putMVar finished ()) $ (`finally` detachScopeUser owner) $ do
+        outcome <- try (unmask (produce owner))
+        case outcome of
+          Left (exception :: SomeException)
+            | Just (_ :: SomeAsyncException) <- fromException exception -> pure ()
+            | otherwise -> broken (Left exception)
+          Right (Just problem) -> broken (Right problem)
+          -- 正常结束后任务留在原地，直到会话被停止（lifelong 返回或运行结束）：
+          -- 排空期间继续持有会话的使用登记，资源释放的时机与结束之前相同；结束后的清理另行设计。
+          Right Nothing -> do
+            endSession session
+            void (try (unmask (forever (threadDelay 3600000000))) :: IO (Either SomeException ()))
+      setSessionWorker session thread finished
     (boundary, source) = sessionKey session
-    mounts = sessionMountsOf (runtimePrototype graph) boundary source
+    description = sessionDescriptionOf (runtimePrototype graph) boundary source
+    mounts = sessionMounts <$> description
     produce owner = case (lookup source steps, mounts) of
       (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ do
         -- end 只来自 Stream 单步：这一步没有原始输入，parser 不执行，也不发布。
@@ -247,12 +252,12 @@ sessionLauncher graph steps onBroken session = uninterruptibleMask_ $ do
     -- 逐次执行直到来源结束（Nothing）或第一次失败（Just problem）；结果交回不可中断区登记。
     loop step = step >>= maybe (loop step) pure
 
--- 会话挂载只来自同一份原型：lifelong 边界的会话，或 interpreter 托管的会话；原型按资产名记录。
-sessionMountsOf :: PrototypeReference -> Maybe NodeId -> String -> Maybe [NodeId]
-sessionMountsOf (PrototypeReference prototype) boundary source =
-  case [sessionMounts session | session <- candidates
+-- 会话计划与挂载只来自同一份原型；复用原始链输出的会话没有独立生产挂载。
+sessionDescriptionOf :: PrototypeReference -> Maybe NodeId -> String -> Maybe SessionProto
+sessionDescriptionOf (PrototypeReference prototype) boundary source =
+  case [session | session <- candidates
        , Just (sessionAsset session) == lookup source produced] of
-    [mounts] -> Just mounts
+    [description] -> Just description
     _ -> Nothing
   where
     produced = [(effectName effect, contractType) | effect <- protoEffects prototype

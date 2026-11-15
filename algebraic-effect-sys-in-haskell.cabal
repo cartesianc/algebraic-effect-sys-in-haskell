@@ -364,6 +364,7 @@ executable effect-codegen
       Framework.Gen
       Framework.Gen.Source
       Framework.Gen.Lower
+      Framework.Gen.Sessions
       Framework.Gen.Demand
       Framework.Gen.Names
       Framework.Gen.Bind

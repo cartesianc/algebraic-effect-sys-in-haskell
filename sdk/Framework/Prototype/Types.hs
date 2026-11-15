@@ -70,7 +70,7 @@ data EffectProto method = EffectProto
   , effectNearestScopes :: [String]
   , effectResource :: Maybe String
   , effectContextDependencies :: [String]
-  -- 持续资产：stream = True，只能挂在 Stream 下；streams 读取 History，requires 读取最新一条。
+  -- 持续资产：stream = True，Input 链由 Stream 或增量驱动；streams 读取 History，requires 读取最新一条。
   , effectContinuous :: Bool
   } deriving (Eq, Show, Read, Functor, Generic, NFData)
 
@@ -89,7 +89,7 @@ data AlternativeProto = AlternativeProto
   } deriving (Eq, Show, Read, Generic, NFData)
 
 -- lifelong 的静态装配：消费单元、每个挂载 target 的驱动资产，以及按资产共享的生产会话。
--- 会话以 lifelong 边界为出身，挂载路径为 lifelong 路径加 [-1, 会话序号, 步骤序号]，先于全部单元。
+-- 会话以 lifelong 边界为出身；独立生产挂载为边界路径加 [-1, 会话序号, 步骤序号]，沿用 AST 输出的不再造挂载。
 data LifelongProto = LifelongProto
   { lifelongUnits :: [NodeId]
   , lifelongSubscriptions :: [(NodeId, String)]
@@ -102,10 +102,11 @@ data SessionProto = SessionProto
   , sessionMounts :: [NodeId]
   } deriving (Eq, Show, Read, Generic, NFData)
 
--- 持续资产的生产方式，由生产方的注册决定。
+-- 持续资产的生产方式，由注册与本 lifelong 的实际挂载共同决定。
 -- Receive：直接 input 是 Stream，记它的注册名；两步挂载依次为 Stream 单步与 parser。
 -- Derive：Input 链上有 streams demand，记驱动它的持续资产；上游每交付一条，一步挂载（parser 及其 Input 链）执行一次。
-data BootPlan = Receive String | Derive String
+-- ReuseOutput：原子句柄已由这些 AST 入口执行；parser 沿用本次输出，只登记交付会话，不另建执行挂载。
+data BootPlan = Receive String | Derive String | ReuseOutput [NodeId]
   deriving (Eq, Show, Read, Generic, NFData)
 
 data ChainRole = NodeChain | SelectorChain | SessionChain

@@ -69,4 +69,4 @@ reservedTypes = ["App", "At", "ContextValues", "Errors", "MethodGen", "Results",
 
 reservedValues :: [String]
 reservedValues = ["runAt", "emptyContexts", "handlerSourceFingerprint", "newScopeHandlers", "scopeCleanups"
-  , "errorHandlers", "contextInjections", "interpreter", "compiledEntries", "generatedPrototype"]
+  , "errorHandlers", "contextInjections", "streamContextInjections", "interpreter", "compiledEntries", "generatedPrototype"]

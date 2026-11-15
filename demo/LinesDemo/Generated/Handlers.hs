@@ -19,7 +19,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module LinesDemo.Generated.Handlers (handlerSourceFingerprint, runAnnounce, getOpenedInput, readOpenedInput, openInputSession, closeInputSession, nextLineFeed, getTextLine, streamTextLine, runPrintLine, runTally, getRunningTotal, streamRunningTotal, runShowTotal, runReport, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
+module LinesDemo.Generated.Handlers (handlerSourceFingerprint, runAnnounce, getOpenedInput, readOpenedInput, openInputSession, closeInputSession, nextLineFeed, getTextLine, streamTextLine, runPrintLine, runTextCounter, getRunningTotal, streamRunningTotal, runShowTotal, runReport, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections, streamContextInjections) where
 
 import qualified Framework.Generated as FrameworkRuntime
 import qualified LinesDemo.Generated.Effects as FrameworkGenerated
@@ -80,8 +80,8 @@ instance PrintLineLayer m => PrintLineHandler m where
     pure []
 
 -- 由 TextLine 驱动：每来一行执行一次，读到这一行为止的全部行，交出行数与字符总数。
-instance TallyLayer m => TallyHandler m where
-  tally = do
+instance CountTextLayer m => CountTextHandler m where
+  countText = do
     received <- require @(History Line)
     let sizes = [length text | Line text <- historyEntries received]
     pure [show (length sizes), show (sum sizes)]
@@ -91,7 +91,7 @@ instance ParseTotalLayer m => ParseTotalHandler m where
     fields <- raw
     case fields of
       [count, size] -> pure (Total (read count) (read size))
-      _ -> raise (ParseTotalError "the tally gives a line count and a character count")
+      _ -> raise (ParseTotalError "the counter gives a line count and a character count")
 
 instance ShowTotalLayer m => ShowTotalHandler m where
   showTotal = do
@@ -109,7 +109,7 @@ instance ReportLayer m => ReportHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "e10227e1d128249e026db70ab986de61"
+handlerSourceFingerprint = Just "53253b422378ab2536aec11dfb846588"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -144,9 +144,9 @@ instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkG
   raise (FrameworkGenerated.PrintLineError description) = At (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.PrintLineFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.TallyError (At effect) where
-  raise (FrameworkGenerated.TallyError description) = At (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.TallyFailure description)
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CountTextError (At effect) where
+  raise (FrameworkGenerated.CountTextError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CountTextFailure description)
 
 instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseTotalError (At effect) where
   raise (FrameworkGenerated.ParseTotalError description) = At (FrameworkRuntime.failEffect
@@ -169,20 +169,20 @@ instance FrameworkRuntime.Reads (InputFile) (At "LineFeed") where
 instance FrameworkRuntime.Reads (FrameworkRuntime.History (Line)) (At "PrintLine") where
   require = At (fmap (\(FrameworkGenerated.TextLine value) -> value) <$> streamTextLine)
 
-instance FrameworkRuntime.Reads (FrameworkRuntime.History (Line)) (At "Tally") where
+instance FrameworkRuntime.Reads (FrameworkRuntime.History (Line)) (At "TextCounter") where
   require = At (fmap (\(FrameworkGenerated.TextLine value) -> value) <$> streamTextLine)
 
 instance FrameworkRuntime.Reads (FrameworkRuntime.History (Total)) (At "ShowTotal") where
   require = At (fmap (\(FrameworkGenerated.RunningTotal value) -> value) <$> streamRunningTotal)
 
 instance FrameworkRuntime.Reads (Total) (At "Report") where
-  require = At ((\(FrameworkGenerated.RunningTotal value) -> value) <$> FrameworkRuntime.latestContext "TallyParser" FrameworkGenerated.ContextBindingError streamRunningTotal)
+  require = At ((\(FrameworkGenerated.RunningTotal value) -> value) <$> FrameworkRuntime.latestContext "CountParser" FrameworkGenerated.ContextBindingError streamRunningTotal)
 
 instance FrameworkRuntime.Raw (At "LineParser") where
   raw = At ((: []) <$> nextLineFeed)
 
-instance FrameworkRuntime.Raw (At "TallyParser") where
-  raw = At (runTally)
+instance FrameworkRuntime.Raw (At "CountParser") where
+  raw = At (runTextCounter)
 
 instance FrameworkRuntime.Ends (At "LineFeed") where
   end = At FrameworkRuntime.endStream
@@ -225,18 +225,18 @@ runPrintLine :: FrameworkGenerated.App [String]
 runPrintLine = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrintLine" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrintLine") $
   runAt @"PrintLine" FrameworkGenerated.printLine
 
-runTally :: FrameworkGenerated.App [String]
-runTally = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runTally" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "Tally") $
-  runAt @"Tally" FrameworkGenerated.tally
+runTextCounter :: FrameworkGenerated.App [String]
+runTextCounter = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runTextCounter" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "TextCounter") $
+  runAt @"TextCounter" FrameworkGenerated.countText
 
 getRunningTotal :: FrameworkGenerated.App FrameworkGenerated.RunningTotal
-getRunningTotal = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "TallyParser"
-    (\value bindings -> bindings { FrameworkGenerated.boundTallyParser = Just value })) $
-  (FrameworkGenerated.RunningTotal <$> runAt @"TallyParser" FrameworkGenerated.parseTotal)
+getRunningTotal = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "CountParser"
+    (\value bindings -> bindings { FrameworkGenerated.boundCountParser = Just value })) $
+  (FrameworkGenerated.RunningTotal <$> runAt @"CountParser" FrameworkGenerated.parseTotal)
 
 streamRunningTotal :: FrameworkGenerated.App (FrameworkRuntime.History FrameworkGenerated.RunningTotal)
 streamRunningTotal = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readHistory "TallyParser" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundTallyParser
+  FrameworkRuntime.readHistory "CountParser" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundCountParser
 
 runShowTotal :: FrameworkGenerated.App [String]
 runShowTotal = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runShowTotal" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowTotal") $
@@ -268,4 +268,10 @@ errorHandlers =
 contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
 contextInjections =
   [
+  ]
+
+-- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。
+streamContextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
+streamContextInjections =
+  [ ("runTextCounter", [("CountParser", () <$ getRunningTotal)])
   ]

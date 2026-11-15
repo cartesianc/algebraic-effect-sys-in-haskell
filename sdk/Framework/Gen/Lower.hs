@@ -12,6 +12,7 @@ import Data.Char (isAlphaNum, isUpper)
 import Data.List (intercalate, intersect, nub, sort)
 import Data.Maybe (listToMaybe, maybeToList)
 import Framework.Gen.Demand (resolveDemands, contextNames, validateAssetSources, belowStream, continuousContext)
+import Framework.Gen.Sessions (planSessions)
 import Framework.Gen.Names (contextProducer, contextReader, effectMethodName, entryMethod, handlerBindings)
 import Framework.Language.AST (WorkflowF(..))
 import Framework.Language.Registration hiding (effectKind)
@@ -250,8 +251,7 @@ registeredMethods specifications specification = case typing specification of
   Excu method -> named HandlerMethod "run" method
   Scoped opening closing -> named ScopeOpen "open" opening ++ named ScopeClose "close" closing
   Error detecting resolving _ -> named ErrorDetect "detect" detecting ++ named ErrorResolve "resolve" resolving
-  -- 持续资产的 getT 只由会话调用，不是可请求的生产入口：挂在 Stream 下时在取得一份原始输入后调用，
-  -- 由上游持续资产驱动时在领取一条上游交付后调用。
+  -- 持续资产的 getT 由会话步骤或 AST 输出挂接调用，不是可请求的生产入口。
   selected@Context {} ->
     [ (if continuousContext specification then ContextStream else ContextRequest, method)
     | method <- maybeToList (contextProducer selected) ]
@@ -279,15 +279,6 @@ numberWorkflow effects tree = cata number tree [] False
       let subscribed = streamedAssets effects selected
       unless (inside || null subscribed) $ Left (InvalidLifelong path ("Node " ++ selected
         ++ " subscribes to " ++ intercalate ", " subscribed ++ " with streams; mount it inside lifelong"))
-      -- 被持续资产驱动的 effect 要么是消费链的一环，要么是持续资产生产链的一环：
-      -- 生产链在该资产的会话里执行，由订阅启动，不挂载到 AST。
-      let derived = nub [contractType | origin <- originEffects effects selected
-            , StreamAccess `elem` map demandAccess (effectDemands origin)
-            , producer <- effects, effectContinuous producer, effectName origin `elem` effectInputChain producer
-            , Just contractType <- [effectProduces producer]]
-      unless (null derived) $ Left (InvalidLifelong path ("Node " ++ selected
-        ++ " is on the production chain of continuous asset " ++ intercalate ", " derived
-        ++ "; that chain runs in the asset's session, started by its subscribers, and is not mounted in the AST"))
       pure (NodeAt path selected)
     number (Chained children) path inside = do
       nonEmpty path inside children
@@ -304,8 +295,8 @@ numberWorkflow effects tree = cata number tree [] False
             ParallelAt _ inner -> map workflowNode inner
             _ -> [workflowNode part] | part <- parts]
       subscriptions <- mapM subscription [(node', selected) | part <- parts, NodeAt node' selected <- allWorkflow part]
-      -- 被订阅的资产各一份会话；由另一份持续资产驱动的，连同它的上游一起进入本边界，上游在前。
-      sessions <- mapM (session path) (zip [0 ..] (sessionAssets effects (nub (map snd subscriptions))))
+      -- 先沿用本边界已经挂载的操作输出，再为其余订阅建立独立生产；副产物也登记为会话资产。
+      sessions <- planSessions effects path parts subscriptions
       pure (LifelongAt path (LifelongProto units subscriptions sessions) parts)
     number (Alternative children) path inside = do
       nonEmpty path inside children
@@ -337,14 +328,6 @@ numberWorkflow effects tree = cata number tree [] False
         ++ " inside lifelong must subscribe to exactly one continuous asset with streams"))
       several -> Left (InvalidLifelong node' ("Node " ++ selected ++ " subscribes to several continuous assets "
         ++ intercalate ", " several ++ "; one lifelong target is driven by one asset"))
-    -- 生产方式由生产方的注册决定：Stream 单步加 parser，或上游交付驱动的一步。
-    session path (index, contractType) = do
-      producer <- case [effect | effect <- effects, effectProduces effect == Just contractType] of
-        [effect] -> pure effect
-        _ -> Left (UnknownPrototypeTarget contractType)
-      let plan = bootPlan effects producer
-      pure (SessionProto contractType plan [path ++ [-1, index, step] | step <- [0 .. sessionSteps plan - 1]])
-
 -- 一条 original chain 由末端及其 Input 祖先组成；只看这些 effect 自己声明的 streams，
 -- 不汇总 Context 生产链内部的依赖。
 originEffects :: [EffectProto method] -> String -> [EffectProto method]

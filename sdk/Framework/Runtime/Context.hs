@@ -109,7 +109,7 @@ atomicHandle method = atomicScope method . fmap Just
 
 -- 原子句柄（Excu、Scoped.open／close）的统一出口。handler 交出的 list 与是否成功
 -- 组成 RawOutput，只交给挂在该句柄下（可经一串 Pure）的 Context parser 解析并作为资产发布；没有挂接时直接丢弃。
--- 以它为 Input 的入口照常继续，不读取这份输出，注入的成败也不影响它。
+-- 以它为 Input 的入口不读取这份输出；普通挂接的失败留在注入内，持续挂接的失败按持续执行协议传播。
 -- 外层 Nothing 表示 handler 没有执行（复用的 scope 实例、重复 close），此时没有新的输出。
 atomicScope
   :: (ContextStore environment m, MonadError (Failure cause) m)
@@ -134,3 +134,6 @@ atomicScope method body = do
       anchored <- anchoredContexts method
       when (maybe True (`notElem` map fst anchored) consumer) $
         forM_ anchored $ \(_, produce) -> injectOutput method raw produce
+      continuous <- streamContexts method
+      when (maybe True (`notElem` map fst continuous) consumer) $
+        forM_ continuous $ \(_, produce) -> injectStreamOutput method raw produce

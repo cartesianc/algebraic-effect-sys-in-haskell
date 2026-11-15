@@ -20,7 +20,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module FileDemo.Generated.Handlers (handlerSourceFingerprint, runLocateFile, runValidateFileName, getFileName, readFileName, getOpenedFile, readOpenedFile, openFileSession, closeFileSession, detectFileRecovery, resolveFileRecovery, runReadFile, getFileText, readFileText, runWriteFirstLine, runAppendLine, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections) where
+module FileDemo.Generated.Handlers (handlerSourceFingerprint, runLocateFile, runValidateFileName, getFileName, readFileName, getOpenedFile, readOpenedFile, openFileSession, closeFileSession, detectFileRecovery, resolveFileRecovery, runReadFile, getFileText, readFileText, runWriteFirstLine, runAppendLine, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections, streamContextInjections) where
 
 import qualified Framework.Generated as FrameworkRuntime
 import qualified FileDemo.Generated.Effects as FrameworkGenerated
@@ -336,4 +336,10 @@ contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
 contextInjections =
   [ ("runLocateFile", [("FileLocation", () <$ getFileName)])
   , ("runReadFile", [("ExtractFileText", () <$ getFileText)])
+  ]
+
+-- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。
+streamContextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
+streamContextInjections =
+  [
   ]

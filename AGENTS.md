@@ -22,6 +22,7 @@
 - 每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；同一资产可声明多种合法访问方式，一个消费者可依赖多个资产。读取按“表示类型 + effect”路由到唯一资产，一个 effect 内表示类型不重复，见[资产来源与访问约束](docs/LATEST_DESIGN.md#demand-contract)；不新增位置参数或提前取值。
 - Error 只指向 scope：`RaisedBy` 写 handler 名，必须关联恰好一个 scope；resolve 暂不操作 scope（Error 驱动链待定）。
 - Context 通过 demands 接入。区分 original chain、Context chain、静态 NodeId、运行 Origin／ActivationId 与 Binding ownership。
+- 持续执行由首次需求建立运行，之后按增量驱动。lifelong 内的原子操作可通过挂接的持续 Context 发布资产；gen 将输出连接绑定到实际 AST 挂载，同次输出不再另起派生操作。Stream 来源仍不进入原始消费链。普通资产保留原来的 AST 可见性，不随持续交付隐式透传；详见 Stream 规范。
 - 取值的捕获、来源可见性、缺值等待（require 不生产）、资源认领和 scope 回收保证（按实际参数生产身份区分[单例与多例](docs/LATEST_DESIGN.md#scope-identity)，结合当前使用与执行帧的待用关系[按可达性回收](docs/LATEST_DESIGN.md#scope-gc)）不能在重构中弱化。完整规则按下表阅读，不在本文件复制协议。
 - gen 是这个 EDSL 的编译器。SDK 分为源语言（`Framework/Language/`）、gen（`Framework/Gen/`）、编译产物（`Framework/Prototype/`、Generated）与运行时（`Framework/Runtime/`）四层，依赖只从上往下：gen 不导入运行时，运行时不导入 gen。能在生成期判定的组合、读取路由与合法性问题由 gen 报错，不留给运行时；新增检查放进流水线的对应阶段，见 [gen 是编译器](docs/LATEST_DESIGN.md#compiler)与[编译流水线](docs/LATEST_DESIGN.md#generation)。
 - Prototype 是纯结构，RuntimeGraph 保存活动关系，ScopeTree 独立且无环。生成、执行、展示共享同一静态模型。
@@ -48,7 +49,7 @@
 | --- | --- |
 | 源语言：手写业务门面、注册、AST、handler 能力类与历史视图 | [SDK.hs](sdk/Framework/SDK.hs)、[Registration](sdk/Framework/Language/Registration.hs)、[AST](sdk/Framework/Language/AST.hs)、[Handler](sdk/Framework/Language/Handler.hs)、[History](sdk/Framework/Language/History.hs) |
 | gen 流水线与命令行 | [Gen.hs](sdk/Framework/Gen.hs)、[Main](sdk/Framework/Gen/Main.hs) |
-| gen：读取、降级、资产来源规则与派生名字 | [Source](sdk/Framework/Gen/Source.hs)、[Lower](sdk/Framework/Gen/Lower.hs)、[Demand](sdk/Framework/Gen/Demand.hs)、[Names](sdk/Framework/Gen/Names.hs) |
+| gen：读取、降级、持续执行装配、资产来源规则与派生名字 | [Source](sdk/Framework/Gen/Source.hs)、[Lower](sdk/Framework/Gen/Lower.hs)、[Sessions](sdk/Framework/Gen/Sessions.hs)、[Demand](sdk/Framework/Gen/Demand.hs)、[Names](sdk/Framework/Gen/Names.hs) |
 | gen：绑定、方法体形状与组成 | [Bind](sdk/Framework/Gen/Bind.hs)、[Shape](sdk/Framework/Gen/Shape.hs) |
 | gen：构图与来源证明 | [Build](sdk/Framework/Gen/Build.hs)、[Build/Graph](sdk/Framework/Gen/Build/Graph.hs)、[Build/Sources](sdk/Framework/Gen/Build/Sources.hs) |
 | gen：输出与类检 | [Emit/Effects](sdk/Framework/Gen/Emit/Effects.hs)、[Emit/Handlers](sdk/Framework/Gen/Emit/Handlers.hs)、[Emit/Program](sdk/Framework/Gen/Emit/Program.hs)、[Emit/Prototype](sdk/Framework/Gen/Emit/Prototype.hs)、[Assets](sdk/Framework/Gen/Assets.hs)、[Catalog](sdk/Framework/Gen/Catalog.hs) |

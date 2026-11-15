@@ -98,6 +98,7 @@ structureSources =
   , "sdk/Framework/Prototype/Query.hs"
   , "sdk/Framework/Prototype/Validate.hs"
   , "sdk/Framework/Gen/Lower.hs"
+  , "sdk/Framework/Gen/Sessions.hs"
   , "sdk/Framework/Gen/Demand.hs"
   , "sdk/Framework/Gen/Names.hs"
   , "sdk/Framework/Gen/Bind.hs"

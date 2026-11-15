@@ -1,12 +1,17 @@
 module LinesDemo.AST (ast) where
 
-import Framework.SDK (AST, chained, lifelong, node)
+import Framework.SDK (AST, chained, lifelong, node, parallel)
 
--- 先说明要读的文件，再逐行处理：每一轮先打印这一行，再打印到这一行为止的统计。
--- 来源结束、已发布的行都处理完后 lifelong 返回，Report 才执行。
+-- 一个单元逐行打印并统计，同次输出经 parser 发布；另一个单元按统计增量显示。
+-- 打印与显示可以交错。发布单元结束后统计来源封口，显示单元排空，Report 才执行。
 ast :: AST
 ast = chained
   [ chained [node "Announce"]
-  , lifelong [chained [node "PrintLine", node "ShowTotal"]]
+  , lifelong
+      [ parallel
+          [ chained [node "PrintLine", node "TextCounter"]
+          , chained [node "ShowTotal"]
+          ]
+      ]
   , chained [node "Report"]
   ]

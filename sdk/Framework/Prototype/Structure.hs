@@ -54,7 +54,7 @@ renderStructure prototype workflowAST = do
       ++ ["", "Asset sources (for paths without a captured binding)"]
       ++ ["  " ++ show (readNode point) ++ " " ++ readContract point ++ " <- " ++ sourceDescription source
          | (point, source) <- protoSources prototype]
-      ++ ["  Unowned assets follow the missing-value request rule; resource, diagnostic and cleanup exceptions remain."
+      ++ ["  Missing require values wait for permitted publications; exhausted known sources report a missing value."
          ,"  Where cross-chain lookup is needed, generation proves at most one visible source; runtime checks actual uniqueness."]
       ++ ["", "Scope openings (parameter production candidates; actual bindings determine the category)"]
       ++ concat
@@ -88,7 +88,7 @@ renderStructure prototype workflowAST = do
       [] -> []
     edge (before, after) = "  " ++ show before ++ " -> " ++ show after
     sourceDescription FromOwnChain = "own chain (no external candidates)"
-    sourceDescription FromSession = "interpreter session (current history)"
+    sourceDescription FromSession = "session delivery / retained publication"
     sourceDescription (FromChains nodes) = "visible candidates " ++ intercalate ", " (map describeNode nodes)
     scopeKindDescription RegistrationSingleton = "registration singleton"
     scopeKindDescription ProductionSingleton = "production singleton"
@@ -119,3 +119,4 @@ renderStructure prototype workflowAST = do
             ++ concatMap (renderWorkflow (depth + 1)) children
     describePlan (Receive source) = "Receive from " ++ source
     describePlan (Derive upstream) = "Derive from " ++ upstream
+    describePlan (ReuseOutput nodes) = "ReuseOutput at " ++ show nodes ++ " (no separate producer)"

@@ -72,7 +72,7 @@ buildPrototype plan shapes = do
   -- 驱动它的那份上游资产除外：每一步在领取一条上游交付之后才执行，读到的就是这条交付。
   let continuousMethods = [(contractType, method) | effect <- effects, effectContinuous effect
         , Just contractType <- [effectProduces effect], (role, method) <- effectMethods effect
-        , role `elem` [ContextRequest, ContextRequire, ContextStream]]
+        , role == ContextRequire]
       drivenBy terminal = concat [drivingAssets effects producer
         | producer <- effects, effectProduces producer == Just terminal]
   mapM_ (\chain -> do
@@ -83,6 +83,25 @@ buildPrototype plan shapes = do
         ++ chainTerminal chain ++ " depends on continuous assets " ++ intercalate ", " others
         ++ "; its first delivery would wait for another stream")))
     [makeChain mount | mount <- sessions]
+  -- 沿用 AST 输出的 parser 没有独立会话挂载，但仍须遵守相同的读取边界。
+  -- 只分析交接后的 parser（raw 对 anchor 的调用已抹去），避免把合法下游消费算进来。
+  mapM_ (\(session, nodes) -> do
+      producer <- case [effect | effect <- effects, effectProduces effect == Just (sessionAsset session)] of
+        [effect] -> pure effect
+        _ -> Left (UnknownPrototypeTarget (sessionAsset session))
+      parser <- maybe (Left (InvalidPrototype "Reused output has no parser")) Right
+        (lookup ContextStream (effectMethods producer))
+      anchor <- maybe (Left (InvalidPrototype "Reused output has no atomic anchor")) (findEffectProto effects)
+        (effectAnchor producer) >>= ordinaryEntry
+      let reached = reachableMethods logical
+            (calledMethods (replayedBody effects bodyOf anchor (bodyOf parser)))
+          others = nub [contractType | (contractType, method) <- continuousMethods
+            , method `elem` reached, contractType `notElem` drivingAssets effects producer]
+          position = case nodes of first : _ -> first; [] -> []
+      unless (null others) $ Left (InvalidLifelong position ("Parser for reused output " ++ sessionAsset session
+        ++ " reads other continuous assets " ++ intercalate ", " others
+        ++ "; it may read only the asset driving the original operation")))
+    [(session, nodes) | session <- lifelongSessionsOf, ReuseOutput nodes <- [sessionPlan session]]
   analyzed <- resolveSources written defaultReaders result
   validatePrototype analyzed
   pure analyzed
@@ -134,13 +153,15 @@ buildPrototype plan shapes = do
           parser <- roleOf producer ContextStream
           pure [handle, parser]
         Derive _ -> (: []) <$> roleOf producer ContextStream
+        ReuseOutput _ -> pure []
       valid (length methods == length (sessionMounts described)) ("Session steps differ for " ++ sessionAsset described)
       pure [(mount, SessionChain, sessionAsset described, method) | (mount, method) <- zip (sessionMounts described) methods]
 
 anchors :: [EffectProto method] -> [(method, method)]
 anchors effects = [(anchorMethod, produced)
-  | effect <- effects, Just anchorName <- [effectAnchor effect]
-  , Just produced <- [lookup ContextRequest (effectMethods effect)]
+  | producerRole <- [ContextRequest, ContextStream]
+  , effect <- effects, Just anchorName <- [effectAnchor effect]
+  , Just produced <- [lookup producerRole (effectMethods effect)]
   , anchor <- effects, effectName anchor == anchorName
   , (role, anchorMethod) <- effectMethods anchor, role `elem` [HandlerMethod, ScopeOpen]]
 

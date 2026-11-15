@@ -196,6 +196,7 @@ renderSession session = record "SessionProto"
 renderBootPlan :: P.BootPlan -> String
 renderBootPlan (P.Receive source) = constructor "Receive" [show source]
 renderBootPlan (P.Derive upstream) = constructor "Derive" [show upstream]
+renderBootPlan (P.ReuseOutput nodes) = constructor "ReuseOutput" [show nodes]
 
 renderChain :: P.ChainProto String -> String
 renderChain chain = record "ChainProto"

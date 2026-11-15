@@ -30,7 +30,7 @@ deriving instance Eq (Total) => Eq RunningTotal
 deriving instance Show (Total) => Show RunningTotal
 
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = RunAnnounceGen | GetOpenedInputGen | ReadOpenedInputGen | OpenInputSessionGen | CloseInputSessionGen | NextLineFeedGen | GetTextLineGen | StreamTextLineGen | RunPrintLineGen | RunTallyGen | GetRunningTotalGen | StreamRunningTotalGen | RunShowTotalGen | RunReportGen
+data MethodGen = RunAnnounceGen | GetOpenedInputGen | ReadOpenedInputGen | OpenInputSessionGen | CloseInputSessionGen | NextLineFeedGen | GetTextLineGen | StreamTextLineGen | RunPrintLineGen | RunTextCounterGen | GetRunningTotalGen | StreamRunningTotalGen | RunShowTotalGen | RunReportGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
@@ -97,16 +97,16 @@ class PrintLineHandler m where
 newtype PrintLineError = PrintLineError String
   deriving (Eq, Show, Read)
 
--- handler tally：绑定到 Tally。
-type TallyLayer m = (SDK.Reads (SDK.History (Line)) m, SDK.Raises TallyError m, MonadIO m)
-class TallyHandler m where
-  tally :: m [String]
+-- handler countText：绑定到 TextCounter。
+type CountTextLayer m = (SDK.Reads (SDK.History (Line)) m, SDK.Raises CountTextError m, MonadIO m)
+class CountTextHandler m where
+  countText :: m [String]
 
--- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "tally" 匹配。
-newtype TallyError = TallyError String
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "countText" 匹配。
+newtype CountTextError = CountTextError String
   deriving (Eq, Show, Read)
 
--- handler parseTotal：绑定到 TallyParser。
+-- handler parseTotal：绑定到 CountParser。
 type ParseTotalLayer m = (SDK.Raw m, SDK.Raises ParseTotalError m, MonadIO m)
 class ParseTotalHandler m where
   parseTotal :: m Total
@@ -134,14 +134,14 @@ newtype ReportError = ReportError String
   deriving (Eq, Show, Read)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
-data Errors = AnnounceFailure | AcquireInputFailure | OpenInputFailure | CloseInputFailure | NextLineFailure | ParseLineFailure | PrintLineFailure | TallyFailure | ParseTotalFailure | ShowTotalFailure | ReportFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+data Errors = AnnounceFailure | AcquireInputFailure | OpenInputFailure | CloseInputFailure | NextLineFailure | ParseLineFailure | PrintLineFailure | CountTextFailure | ParseTotalFailure | ShowTotalFailure | ReportFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。
 data ContextValues = ContextValues
   { boundInputResource :: Maybe OpenedInput
   , boundLineParser :: Maybe TextLine
-  , boundTallyParser :: Maybe RunningTotal
+  , boundCountParser :: Maybe RunningTotal
   }
 
 emptyContexts :: ContextValues

@@ -323,7 +323,7 @@ resolveSources definitions defaultReaders prototype = do
                 published <- publish call effect after
                 observed <- observeOpeningInput call effect published
                 pure [AssetExit True observed]) body
-            -- 持续资产的生产入口只由会话挂载调用（Receive 的 parser 步骤，或 Derive 的一步）；成功即发布一次交付。
+            -- 持续入口由会话步骤或被许可 AST 输出的挂接调用；成功即发布一次交付。
             ContextStream -> do
               body <- shape entered (methodBody definition) state
               successes (\after -> do
@@ -358,21 +358,27 @@ resolveSources definitions defaultReaders prototype = do
           pure (nub (map (retainExit (assetRelevant call)) (withFailures state exits)))
     inject :: AssetCall -> String -> [AssetExit] -> AssetAnalysis [AssetExit]
     inject call anchor exits = do
-      let producing = [(effectName effect, method') | effect <- effects
+      let anchored = [(effectName effect, method', role') | role' <- [ContextRequest, ContextStream], effect <- effects
             , Just anchorName <- [effectAnchor effect]
             , owner <- effects, effectName owner == anchorName
             , (role, anchoredMethod) <- effectMethods owner
             , role `elem` [HandlerMethod, ScopeOpen], anchoredMethod == anchor
-            , Just method' <- [lookup ContextRequest (effectMethods effect)]]
-      if maybe False (`elem` map fst producing) (assetCaller call)
-        then pure exits
-        else successes (\state -> do
-          let injectOne (_, produced) before = do
-                results <- method (call { assetCaller = Nothing
-                  , assetReplays = anchor : assetReplays call }) produced before
-                -- 每个 parser 的失败都留在注入内，先前成功发布不会回滚。
-                pure (nub [AssetExit True after | AssetExit _ after <- results])
-          sequential injectOne producing [AssetExit True state]) exits
+            , Just method' <- [lookup role' (effectMethods effect)]
+            , role' == ContextRequest || role' == ContextStream && reusedHere call effect]
+          producing = [entry | entry@(_, _, role) <- anchored
+            , maybe True (`notElem` [owner | (owner, _, selected) <- anchored, selected == role]) (assetCaller call)]
+      successes (\state -> do
+        let injectOne (_, produced, role) before = do
+              results <- method (call { assetCaller = Nothing
+                , assetReplays = anchor : assetReplays call }) produced before
+              -- 普通注入保留原吞错协议；持续解析失败沿既有会话失败协议传播。
+              pure (if role == ContextStream then results
+                else nub [AssetExit True after | AssetExit _ after <- results])
+        sequential injectOne producing [AssetExit True state]) exits
+    reusedHere call effect = or
+      [ effectProduces effect == Just (sessionAsset session) && assetRoot call `elem` nodes
+      | (_, described) <- lifelongs, session <- lifelongSessions described
+      , ReuseOutput nodes <- [sessionPlan session] ]
     root :: NodeId -> [String] -> [(String, Maybe NodeId)] -> [(NodeId, String)] -> AssetAnalysis [AssetExit]
     root node' future handoff publications = do
       chain <- lift (lookupChain prototype node')

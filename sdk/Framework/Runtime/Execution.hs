@@ -15,13 +15,14 @@ import Framework.Runtime.Graph
   , stopSessions, resetOrigins, runtimeRootFrame, collectRuntimeScopes, finishRuntime )
 import Framework.Runtime.Frame
 import Framework.Runtime.Session
-  (Broken, Stopped(..), DeliveryDrained(..), admitReaders, leaveSession, feedSession, stopSession, endSession)
+  (Broken, Stopped(..), DeliveryDrained(..), admitReaders, leaveSession, feedSession, stopSession, endSession, breakSession)
 import Framework.Prototype
 import Framework.Recursion (Algebra)
 import Framework.Language.AST (AST, WorkflowF(..), foldAST)
 import Control.Concurrent (MVar, ThreadId, forkIOWithUnmask, killThread, newEmptyMVar, putMVar, readMVar, tryPutMVar)
+import Control.Concurrent.MVar (newMVar, modifyMVar)
 import Control.Exception (SomeAsyncException, SomeException, finally, fromException, mask, throwIO, try, uninterruptibleMask_)
-import Control.Monad (forM, unless, void)
+import Control.Monad (forM, forM_, unless, void)
 import Control.Monad.Except (ExceptT(..), runExceptT)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (isPrefixOf)
@@ -274,8 +275,27 @@ executionAlgebra prototype store entries selectors layer expected = do
             ([access asset source unit | (unit, _) <- units] ++ map (const (Just True)) driven)
           sequence_ (zipWith (\dependent -> feedSession dependent session) driven (drop (length units) cursors))
           pure (source, session, take (length units) cursors)
+        -- 接收原始链输出的会话随发布单元结束，不等所有下游一起结束：
+        -- 否则下游正在等本会话的 end，整个 lifelong 就永远无法汇合。
+        -- 同一单元内的多个发布位置只算一份存续，逐轮完成不能提前封口。
+        publishers <- forM [(nodes, session) | (_, ReuseOutput nodes, _, session) <- opened] $ \(nodes, session) -> do
+          let owners = [unit | (unit, _) <- units, any (unit `isPrefixOf`) nodes]
+          pending <- newMVar owners
+          pure (session, pending)
+        let completed unit result = forM_ publishers $ \(session, pending) -> do
+              remaining <- modifyMVar pending $ \owners ->
+                if unit `elem` owners then let rest = filter (/= unit) owners in pure (rest, Just rest)
+                else pure (owners, Nothing)
+              case (remaining, result) of
+                (Just _, Left problem) -> breakSession session (Right problem)
+                (Just [], Right _) -> endSession session
+                _ -> pure ()
         outcomes <- runParalleled
-          [ repeatUnit run handoff [(source, (session, cursors !! index)) | (source, session, cursors) <- sessions] unit
+          [ do
+              outcome <- repeatUnit run handoff
+                [(source, (session, cursors !! index)) | (source, session, cursors) <- sessions] unit
+              completed (fst unit) outcome
+              pure outcome
           | (index, unit) <- zip [0 ..] units ]
         -- 仍在生产的会话已经没有消费者；已结束的会话只需等待任务退出。此后不再接受发布。
         -- 上游排在前面，逆序停止：被驱动的会话先停并离开上游。

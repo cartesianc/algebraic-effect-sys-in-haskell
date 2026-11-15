@@ -829,11 +829,11 @@ EffectSpec
   }
 ```
 
-持续交付来自持续的驱动。上面是第一种：会话反复执行 Stream 的 handler 取得原始输入，交给挂在下面的 parser 解析并发布。第二种是由另一份持续资产驱动，见下面的“由持续资产驱动的持续资产”。声明规则：
+持续交付来自持续的驱动。上面是来源单步：会话反复执行 Stream 的 handler 取得原始输入，交给挂在下面的 parser 解析并发布。由另一份持续资产驱动时，可以独立派生，也可以直接解析 lifelong 消费节点本次操作的输出，见下面的“由持续资产驱动的持续资产”。声明规则：
 
 - **`stream = True` 当且仅当 Context 的 Input 链被持续驱动**：直接 Input 是 Stream，或链上有 `streams` demand；必须同时 `require = True`。被驱动的链不能声明成普通资产，没有驱动的链也不能声明成持续资产。
 - **一个 Stream 恰好有一个 Context 以它为 `input`**，作为它的 parser。
-- **持续资产只由会话生产**：消费方不能 `requests` 它。
+- **持续资产经会话发布与交付**：消费方不能 `requests` 它；已有消费操作的输出可交给挂接 Context 发布，不必另开生产任务。
 - **订阅**：消费方写 `streams "T"`，表示由 T 的新交付驱动，同时取得读取权限，handler 用 `require @(History 表示类型)` 读取到本次交付为止的历史。
 - **只读最新值**：`requires "T"` 读取持续资产时，handler 用 `require @表示类型` 取得最新一条，不由交付驱动。`stream` 缓存历史，`require` 缓存最新值。
 
@@ -898,26 +898,26 @@ ast = chained [setup, monitor]
 - **一次执行**：控制流到达 target 时领取其订阅资产的交付，再 boot 该 target；单元本轮完整结束后才开始下一轮。有积压时立即领取，没有就挂起等待，不反复调用 handler 试探数据。一个单元内不同 target 可以由不同资产驱动，各自到达时等待对应交付。同一次执行里，每个资产只领取一次，后面的节点（包括并行节点、alternative 的选择与候选）读到同一份视图；StreamDemo 中 `ShowTemperature` 和 `CheckTrend` 看到的是同一条读数。
 - **每次执行互相隔离**：上一次执行中产生的普通资产不会被这一次读到。
 - **订阅规则**：lifelong 里的每个末端（连同它的 Input 链）恰好订阅一个持续资产，并且不再读取别的持续资产；`streams` 不能用在 lifelong 外的末端。lifelong 不能嵌套，内部不能有空分支。
-- **会话**：同一个 lifelong 里订阅同一资产的单元共享一个生产会话，各自独立推进；不同 lifelong 的会话互相独立。会话在进入 lifelong 时启动；生产步骤用到的资源（例如 `SensorLink` 开启的连接）在各步骤间保持，退出时关闭。持续资产的生产链不能读取别的持续资产，驱动它的那一份除外。
+- **会话**：同一个 lifelong 里订阅同一资产的单元共享会话，各自独立推进；不同 lifelong 的会话互相独立。启动时建立会话与读取关系，登记期间已产生的发布完整保留；AST 单元在登记完成后启动。已有 AST 输出的会话不另起任务。独立生产步骤用到的资源（例如 `SensorLink` 开启的连接）跨步骤持有，结束后的即时清理仍待设计。持续资产的生产链不能读取别的持续资产，驱动它的那一份除外。
 - **外部组合**：`chained [setup, monitor]` 先执行 setup；`chained [monitor, after]` 中 after 等 monitor 的全部单元结束后执行，仍有消费单元未结束时不会执行；`parallel [monitor, otherWork]` 两者同时运行。
 
 ### 由持续资产驱动的持续资产
 
-被持续资产驱动的 effect 下面可以挂 Context，产出另一份持续资产。LinesDemo 中 `Tally` 每来一行统计一次，产出 `RunningTotal`：
+被持续资产驱动的 effect 下面可以挂 Context，产出另一份持续资产。LinesDemo 中 `TextCounter` 每次执行统计已收到的行数与字符数，Context 沿用这次输出产出 `RunningTotal`。本轮输出复用的完成与验证状态见 [Next stages](NEXT_STAGES.md#stage-6-reuse)。
 
 ```haskell
 -- demo/LinesDemo/Effects.hs（节选）
 EffectSpec
-  { name = "Tally"
-  , typing = Excu { handler = Just "tally" }
+  { name = "TextCounter"
+  , typing = Excu { handler = Just "countText" }
   , input = "Root"
   , demands = [streams "TextLine"]
   }
 
 EffectSpec
-  { name = "TallyParser"
+  { name = "CountParser"
   , typing = Context { asset = Asset @Total "RunningTotal", parser = Just "parseTotal", require = True, stream = True }
-  , input = "Tally"
+  , input = "TextCounter"
   , demands = []
   }
 
@@ -931,8 +931,8 @@ EffectSpec
 
 ```haskell
 -- demo/LinesDemo/Handlers.hs（节选）
-instance TallyLayer m => TallyHandler m where
-  tally = do
+instance CountTextLayer m => CountTextHandler m where
+  countText = do
     received <- require @(History Line)
     let sizes = [length text | Line text <- historyEntries received]
     pure [show (length sizes), show (sum sizes)]
@@ -942,25 +942,35 @@ instance ParseTotalLayer m => ParseTotalHandler m where
     fields <- raw
     case fields of
       [count, size] -> pure (Total (read count) (read size))
-      _ -> raise (ParseTotalError "the tally gives a line count and a character count")
+      _ -> raise (ParseTotalError "the counter gives a line count and a character count")
 ```
 
 ```haskell
--- demo/LinesDemo/AST.hs：只挂载消费方
+-- demo/LinesDemo/AST.hs：消费操作同时把输出交给挂接的 parser
 ast = chained
   [ chained [node "Announce"]
-  , lifelong [chained [node "PrintLine", node "ShowTotal"]]
+  , lifelong
+      [ parallel
+          [ chained [node "PrintLine", node "TextCounter"]
+          , chained [node "ShowTotal"]
+          ]
+      ]
   , chained [node "Report"]
   ]
 ```
 
-- **写法没有新东西**：`tally` 是普通的 Excu handler，`parseTotal` 是普通的 parser。过滤、映射、累计都写在 handler 方法体里。
-- **必须声明 `stream = True`**：链上有 `streams`，这条链就由那份资产驱动，每来一条产出一个新值，产出只能是持续资产；写成 `False` 由 gencode 拒绝。
-- **不挂载到 AST**：`Tally` 是 `RunningTotal` 的生产链，由订阅它的 `ShowTotal` 启动，在会话里执行，和 `LineFeed` 一样。把它写进 AST 会被拒绝。
-- **一条换一条**：上游每交付一条，恰好产出一条。没有“这一步不产出”，需要过滤时让表示类型自己带上（例如 `Maybe`）。一条生产链只由一份持续资产驱动；可以逐级派生，不能成环。
-- **结束**：上游结束并处理完后，派生的资产跟着结束，订阅它的单元再结束。被驱动的 handler 不能自己 `end`。
+- **写法没有新东西**：`countText` 是普通的 Excu handler，`parseTotal` 是普通的 parser。原子计算和解析仍写在各自的 handler 内。
+- **必须声明 `stream = True`**：链上有 `streams`，执行机会来自那份资产的交付，连续成功执行形成增量，产出声明为持续资产；写成 `False` 由 gencode 拒绝。
+- **同次输出复用**：AST 执行 `TextCounter` 后，`CountParser` 的 `raw` 读取这次统计输出，发布 `RunningTotal`；`ShowTotal` 领取它，不再执行一次统计。gen 在本 lifelong 内记录具体发布位置，输出会话不另起生产任务。Stream 来源 `LineFeed` 仍不能挂入 AST。
+- **两个单元各自推进**：一个单元按顺序打印并统计，另一个单元领取统计增量并显示；行文本与统计的输出可以交错。发布单元结束时统计会话封口，显示单元排空后，lifelong 才返回并执行 `Report`。
+- **交付范围不扩大**：`ShowTotal` 收到的是 `RunningTotal`，不会自动收到打印／统计链上的其他普通资产。普通副产物仍按已有的静态来源和 AST 可见性读取。
+- **独立派生仍可用**：没有可复用的 AST 发布位置时，gen 用独立会话逐次领取上游交付并执行 parser 及其 Input 链。一条生产链只由一份持续资产驱动；可以逐级派生，来源歧义或启动环在生成期报错。
+- **同单元不等待自己将来的产物**：读取自己发布的持续资产时，每条到达读取的控制路径都要已有供值位置，或同轮有并行且必经的供值路径。alternative 另一候选可能供值不够；parser 及其 requests 路径也不能另等其他持续资产。
+- **Scoped.open 例外**：复用已有 scope 时 open 没有新输出，所以当前拒绝在同单元直接或经派生链等待这份复用输出。跨单元可以等实际发布或结束；这不禁止 Scoped 本身进入 lifelong，也不禁止独立派生。
+- **实际执行才发布**：一次原子操作成功且 parser 成功才形成交付；未选中的 alternative 位置不发布。不会为等待中的下游补跑原操作，独立调用也不按相等值合并。
+- **结束**：独立派生在上游结束并处理完后结束；复用输出的会话在负责发布的重复单元全部结束后封口，已发布增量仍可排空。单轮结束不封口，被驱动的 Excu handler 不能自己 `end`。
 - **读取**：可以 `streams` 订阅，也可以 `requires` 读最新一条。它只在订阅它的 lifelong 里生产，所以读取位置必须在那个 lifelong 之内或之后。LinesDemo 的 `Report` 在 lifelong 之后 `requires "RunningTotal"`，读到最终的统计。
-- **内存**：上游的历史在派生资产生产期间全部保留，再加上派生资产自己的历史。
+- **内存**：上游历史由实际的读取方保留；复用输出沿用消费单元的读取，不新增一份派生任务的上游游标。输出资产也按自己的读取义务保留历史，当前不设容量上限。
 
 完整规则见 [Stream 规范 4.2 节](STREAM_LIFELONG.md#derive)。
 
@@ -1034,9 +1044,9 @@ reading #2: 24.0 C
 
 ### 挂在句柄下的 Context
 
-- **句柄在操作链里执行时**：句柄返回后，SDK 自动用这次的输出运行挂在下面的 parser（`raw` 由本次输出回答），产出的值保存起来，不会再执行一次句柄。调用句柄的那条链照常继续，不受影响；解析失败只留在这次注入里，值没有发布，之后读取按当前等待规则处理：仍可能发布则等待，已确定耗尽则报缺值。
+- **句柄在操作链里执行时**：句柄返回后，SDK 自动用这次的输出运行挂在下面的 parser（`raw` 由本次输出回答），产出的值保存起来，不会再执行一次句柄。普通 Context 的解析失败只留在这次注入里，不改变原链结果；值没有发布，之后读取按当前等待规则处理：仍可能发布则等待，已确定耗尽则报缺值。持续 Context 的输出复用走 Stream 失败协议，见[持续资产与 lifelong](#stream)。
 - **被驱动时**：`requests` 或 alternative 的选择读取进入 Context 的 `getT`，parser 的 `raw` 执行所挂句柄的入口，由此启动生产链。
-- **中间有一串 Pure 时**：挂接点是最上面的句柄，句柄的输出依次经过每个 Pure 再交给 parser。注入时 Pure 读到的是本次输出，不重新执行句柄；被驱动时 Pure 的 `raw` 执行句柄入口。Pure 的 `raise` 按解析失败处理：注入时留在注入里，被驱动时向上传播。
+- **中间有一串 Pure 时**：挂接点是最上面的句柄，句柄的输出依次经过每个 Pure 再交给 parser。注入时 Pure 读到的是本次输出，不重新执行句柄；被驱动时 Pure 的 `raw` 执行句柄入口。Pure 的 `raise` 按解析失败处理：普通 Context 注入时留在注入里，显式驱动时向上传播，持续 Context 的输出复用走 Stream 失败协议。
 
 所以 Crawler 先并行抓取，打印时直接 `require` 解析好的摘要，不再重新抓取。
 
@@ -1156,9 +1166,10 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | 挂接的 Context 经别的方法、而不是直接或经 Pure 用 `raw` 到达它挂接的句柄 | parser 用 `raw` 读取挂接句柄，中间只经过 Pure |
 | 某个 Context 从 AST 出发永远到不了：没有挂接句柄、`requests` 驱动或选择读取，也没有 lifelong 订阅生产会话带起它（只被 `requires` 读取不算） | 在读取它的链上写 `requests` 驱动它，或把带起它的消费链加进 AST，或删掉这个 Context |
 | 尚未取值的读取路径上，同一资产有多个可能同时发布的可见来源 | 细化资产或调整 AST；alternative 和可选生产的条件可证明互斥时允许多个候选 |
-| 持续资产的声明不成立：`stream = True` 的 Context 不在 Stream 下，或没有同时 `require = True`；Stream 下的 Context 没写 `stream = True`；Stream 下不是恰好一个 Context，或 parser 以外的 effect 以 Stream 为 `input`；`streams` 订阅了普通资产或分支契约，或由 Excu、Scoped 以外的 effect 声明 | 按[持续资产的声明规则](#stream)修正 |
+| 持续资产的声明不成立：Context 的 `stream` 与 Input 链是否持续驱动不一致，或 `stream = True` 却没有 `require = True`；Stream 下不是恰好一个 Context，或 parser 以外的 effect 以 Stream 为 `input`；`streams` 订阅了普通资产或分支契约，或由 Excu、Scoped 以外的 effect 声明 | 按[持续资产的声明规则](#stream)修正 |
 | `streams` 写在 lifelong 外的末端上；lifelong 嵌套或含空分支；lifelong 里的末端没有恰好订阅一个持续资产，或另外读取了别的持续资产 | 按 [lifelong 的规则](#stream)调整注册或 AST |
-| lifelong 中持续资产的生产链依赖另一个持续资产 | 首次交付会等待另一个 stream；改用普通资产作为生产前提 |
+| lifelong 中持续资产的生产链读取驱动资产以外的持续资产，或输出复用的位置产生启动环 | 一条链只由一份持续资产驱动；保证负责发布的位置可以先执行，不先等待它自己将来才会产生的交付 |
+| 同一持续资产的 AST 输出发布位置存在歧义 | 在同一个 lifelong 内保持静态可确定的发布关系，不依赖并行完成顺序；重复使用 handler 不会自动合并独立执行 |
 | lifelong 中读取生产会话步骤发布的普通资产（伴随发布），读取它的末端却不由这个持续资产驱动 | 只在由该持续资产驱动的末端读取，或在 lifelong 之前生产它 |
 
 这些规则保证：组合关系总能从注册与 AST 中静态读出来，不会藏在任意函数里。生成器打印的英文消息给出具体的 effect、资产和位置；运行时才能发现的问题见 [SDK 协议故障](#sdk-faults)。
