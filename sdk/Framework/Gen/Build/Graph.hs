@@ -2,6 +2,8 @@
 
 -- 构图：把方法结构展开为 EffectGraph，再由开启顺序与注册前提得到独立的 ScopeTree。
 -- 只读方法结构，不调用 handler；结果是 Prototype 的 protoGraph 与 protoScopes。
+-- 算法说明 v1（2026-11-15）：EffectGraph 共享方法定义，ScopeTree 共享 scope 定义；
+-- 两者都不表示运行次数或活实例数，也不授权跳过普通 Excu。实际复用由输出/实例协议决定。
 module Framework.Gen.Build.Graph
   ( ExpandedF(..), expandChain, buildEffectGraph, buildScopeTree, completeScopeTree
   ) where
@@ -32,6 +34,11 @@ buildEffectGraph definitions shape = do
   pure (zygo scopeAlgebra graphAlgebra expanded)
 
 -- 所有静态链分析共用这一展开器；调用次数与分支结构原样保留。
+-- active 是当前递归栈，不是全局 visited：不同位置再次调用同一方法合法，当前栈回边才报错。
+-- 目前没有按方法记忆化展开。N 个定义、K 个展开结构节点、最大调用深度 D，
+-- 仅此展开的列表查询开销可达 O(N^2 + K*(N+D))；K 本身可能远大于注册规模。
+-- 后续 Sequence 对 scope 路径做笛卡尔积，Choice 合并路径，Recover 枚举失败前缀；
+-- 即使方法依赖无环，独立条件也可带来指数路径数，不能把整个 zygo 算作 O(N)。
 expandChain
   :: Eq method
   => [MethodDefinition method]
@@ -78,6 +85,8 @@ scopeAlgebra (RecoverLayer body recovery) = paths
 
 -- zygo 的辅助结果是子结构的 scope 路径，主结果汇总方法图和顺序证据。
 -- 图信息不依赖业务值，构图期间不会调用 handler。
+-- nubBy/nub 只规范化方法目录、引用边和路径证据；MethodDefinition 内的 Sequence/Call 未去重。
+-- scope 路径按定义只留首次完成，是构树投影；不能据其长度判断 open 次数或实际使用计数。
 graphAlgebra
   :: Eq method
   => ExpandedF method ([[method]], EffectGraph method)
@@ -118,6 +127,11 @@ pathOrder = nub . concatMap orderedPairs
 -- A precedes B 当且仅当每条包含 B 的路径都包含更早的 A。
 -- 这给出共同必经前序的 DAG，不证明资源依赖，也不证明未确定的节点彼此独立。
 -- 相反方向证据来自单条路径内的顺序，不能由跨路径的传递闭包代替。
+-- 无环依据（v1）：A≺B 且 B≺C 时，每条含 C 的路径必依次含 A、B，故 A≺C；
+-- 路径已按定义去重，A 不可能先于自身。关系传递且反自反，才能做传递约简与分层。
+-- 只对出现过的 B 求交，避免空路径族上的全称判断；不是对候选边并集删 SCC。
+-- 复杂度包含路径扫描、每条路径的成对顺序和传递约简；当前约简枚举关系边×中介节点，
+-- 并用列表做成员查询，nub 也有二次比较开销，不能等同于一次线性图遍历。
 buildScopeTree :: Ord method => EffectGraph method -> ScopeTree method
 buildScopeTree graph = ScopeTree
   { scopeRoots = [selected | selected <- nodes, null (parents selected)]
@@ -150,10 +164,14 @@ buildScopeTree graph = ScopeTree
     layers remaining = ready : layers (remaining \\ ready)
       where ready = [selected | selected <- remaining, all (`notElem` remaining) (parents selected)]
 
--- 注册前提补入同一份树。注册前提是依赖：上游 scope 必须比下游活得久，下游的 close 也可能调用上游。
+-- 注册前提补入同一份树。注册前提是依赖：上游 scope 必须比下游活得久，关闭下游时仍可能读取上游资源。
 -- 观察到的开启顺序是证据：逐条补入，与注册前提及已补入的边构成相反方向的不作为父边。
 -- 路径、候选与反向证据仍保持原观察结果，被推翻的顺序仍在 scopeCandidates 中；不把路径候选的并集当依赖。
 -- 声明顺序保留给独立 scope；运行清理使用最终父边的逆拓扑顺序。
+-- 环处理（v1）：声明前提不能删除，若自身有环，layers 报 CyclicScopeRelations。
+-- 观察边只在 child 不能到达 parent 时加入；放弃的是不相容的观察证据，不是声明的业务依赖。
+-- ancestors/observedAncestors 当前递归展开后才 nub，未按节点记忆化；共享祖先很多的 DAG
+-- 也可能重复遍历，性能估算须连同路径数量计算，不能仅引用拓扑排序的复杂度。
 completeScopeTree
   :: Ord method
   => [(method, [method])]

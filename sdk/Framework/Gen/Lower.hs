@@ -266,6 +266,11 @@ preparePrototype specifications sumTypes tree = do
   workflow <- numberWorkflow effects tree
   pure (PrototypePlan specifications effects workflow)
 
+-- 算法说明 v1（2026-11-15）：末端来自 node 的显式选择，不从全图寻找出度为零的节点。
+-- cata 给每次挂载分配 AST 路径；同一 effect 重复挂载仍保留不同 NodeId，不能按名字合并。
+-- alternative 根据候选 Input 链的分支契约定位同一资产与构造器，检查完整覆盖后登记选择入口。
+-- 此处不提取候选的最长公共前缀，也不改写它们的 Input；选择绑定的交接由运行协议完成。
+-- 编号遍历本身随 AST 大小增长，但每处的注册查询、候选检查与 Sessions 分析另计。
 numberWorkflow :: [EffectProto String] -> Fix WorkflowF -> Either (PrototypeError String) WorkflowTree
 numberWorkflow effects tree = cata number tree [] False
   where

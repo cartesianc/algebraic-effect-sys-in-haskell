@@ -17,6 +17,10 @@ import Framework.Prototype.Query
 import Framework.Prototype.Types
 import Framework.Prototype.Validate (valid, unique, validatePrototype)
 
+-- 算法说明 v1（2026-11-15）：依赖顺序是“已编号挂载 + 已组成方法”→ EffectGraph
+-- → 路径 ScopeTree + 注册前提 → 链事实上的来源/开启计划 → 自洽与驱动检查。
+-- 挂载表保留每个 NodeId；entries 的 nub 只避免从相同静态方法重复建根，运行仍逐挂载启动。
+-- logical 另含挂接生产的可达边，供驱动/读取查询；不能把它当作执行顺序或 scope 路径。
 buildPrototype :: PrototypePlan -> [(String, MethodShape String)]
                        -> Either (PrototypeError String) (Prototype String)
 buildPrototype plan shapes = do
@@ -180,8 +184,11 @@ writtenBody defaults shapes selected = case lookup selected shapes of
   Just shape -> shape
   Nothing -> maybe Empty methodBody (listToMaybe [definition | definition <- defaults, methodIdentity definition == selected])
 
--- 注入副本：挂接 Context 的生产方法体里，对句柄的调用由本次输出回答（Empty）；
--- 中间的 Pure 入口就地展开，同样回答到句柄为止。注入副本因此不再调用句柄或 Pure，图中不成环。
+-- 同次输出复用（算法说明 v1）：仅改写注入副本，原生产方法仍可因独立驱动执行句柄。
+-- 挂接 Context 的 raw 到达 anchor 时由已有输出回答，所以该调用在副本中是 Empty；
+-- 中间 Pure 的结构就地展开，以便保留其读取/控制结构，同时消去对 anchor 的重复执行边。
+-- 这只消除“句柄输出交给自己的 parser，parser 又索取同次输出”的结构回边；
+-- 不是寻找任意公共前缀，也不任意断开业务依赖。其他回到 anchor 的路径由前面的检查拒绝。
 replayedBody :: [EffectProto String] -> (String -> MethodShape String) -> String -> MethodShape String -> MethodShape String
 replayedBody effects bodyOf anchor = replay []
   where

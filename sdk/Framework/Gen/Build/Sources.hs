@@ -2,6 +2,10 @@
 -- 输出补全 chainDrives、chainReads、protoSources 和 scope 开启出处，不运行业务或修改 ScopeTree。
 -- 每个候选状态保留发布/捕获的相关性；先按消费单元及后续读取裁剪，再组合状态。
 -- Query 提供同一套 AST 可见性关系；runtime 只使用分析结果，不重新执行本分析。
+-- 算法说明 v1（2026-11-15）：裁剪的是不可观察的静态分析事实，不删除运行时发布或业务调用。
+-- 必须先按后续读取/消费单元投影，再做笛卡尔积；不同状态不能先取并集，否则会丢掉缺值路径。
+-- k 个仍相关的独立可选发布可形成 2^k 个状态；nub 只能合并相等状态，比较次数最坏为二次。
+-- 当前投影解决无关状态膨胀，不保证多项式复杂度；scope 路径展开是 Graph 中另一处独立的开销。
 module Framework.Gen.Build.Sources (resolveSources) where
 
 import Control.Monad (unless)

@@ -132,12 +132,33 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 ## 生成期构图，运行期初始化与执行
 
-生成阶段按以下顺序推进：
+生成阶段的依赖如下，与[八阶段流水线](LATEST_DESIGN.md#generation)对应：
 
-1. 加载注册、表示类型的和类型信息与完整 AST，由 `preparePrototype` 形成 `PrototypePlan`，集中解析声明关系并为 workflow 编号；同一次 Handlers 快照提供方法纯结构及业务包装副本。
-2. `buildPreparedPrototype` 合并显式方法、默认读取和挂接注入，构建 origin／ctx 链定义及 AST 挂载。方法展开使用共享的 `expandChain`，图与 scope 路径通过 `zygo` 汇总。
-3. 汇合独立入口的路径证据，把保守注册前提补入同一份 `ScopeTree`，完成原型自洽校验、Context 驱动检查和 alternative 覆盖检查。
-4. 在内存中的候选接口上完成源码资产检查，再把整个 `generatedPrototype` 写入 `Generated.Program`；`Generated/Assets.hs` 仍是独立的源码资产目录。生成失败不发布新的结构。
+1. **降级声明与挂载。** `Gen.Lower.preparePrototype` 解析注册、资产与 Input。AST 已用 `node` 指定末端，`numberWorkflow` 为每次挂载编号；这里检查 alternative 的分支契约及覆盖，并由 `Gen.Sessions` 定下持续会话与输出复用位置。末端不是从全图寻找的叶子。
+2. **组成 effect 方法。** `Gen.Bind` 确定每个绑定的 requests 驱动、Input 前驱与读取路由；`Gen.Shape` 提取同一 Handlers 快照，再由 `composeMethods` 组成纯方法结构。一个 handler 的不同绑定保留各自的入口与路由。
+3. **构建方法图。** `Gen.Build.buildPrototype` 收集 AST、选择读取与独立会话的挂载，合并挂接注入；注入副本只消去对同次原子输出的再次索取。随后 `expandChain` 展开方法结构，`zygo` 同时汇总 EffectGraph 与 scope 路径证据。
+4. **推导 scope 关系。** `buildScopeTree` 从方法图的路径求共同必经前序，`completeScopeTree` 补入注册前提并检查环。因此先有方法图及路径，再有 ScopeTree。scope 实例的共享与关闭仍由运行时的生产身份、实际使用和待用关系决定。
+5. **证明来源并校验。** `Gen.Build.Sources` 结合方法结构、链挂载和 workflow，形成读取来源与 scope 开启计划；保留相关路径差异，裁剪无关状态。原型校验与 Context 驱动检查完成后才可发布。
+6. **发射与类检。** 输出普通 Haskell 的契约、入口与 `generatedPrototype`，在内存中完成 GHC 类型检查和源码资产检查，再写回 Generated；`Generated/Assets.hs` 是独立的源码资产目录。生成失败不发布新的结构。
+
+<a id="reuse-boundary"></a>
+### 结构共享与执行复用
+
+| 机制 | 复用依据 | 保留的执行语义 |
+| --- | --- | --- |
+| 方法目录、链定义共享 | 同一静态注册／方法身份 | 每个 AST 挂载仍有自己的 NodeId，每次调用仍执行 |
+| 原子输出的挂接解析 | parser 正在接收这次调用的 raw | 解析不重新执行句柄；另一次独立驱动仍可执行句柄 |
+| 持续资产的 ReuseOutput | 同一 lifelong 内已挂载的原子输出位置；多个位置须属于同一单元且互斥 | 保留原 AST 调用，不为订阅再启动派生生产 |
+| alternative 的交接 | 选择阶段确定的一份转折资产及其构造器 | 只启动选中候选并交接捕获；候选自身的 Input／requests 照常执行 |
+| scope 实例共享 | 同一 Scoped 注册及相同参数生产身份，实例仍可用 | 由运行协议复用实例，ScopeTree 提供依赖与清理顺序 |
+
+当前没有通用的“寻找最长公共前缀，然后只执行一次”的优化。两条链共有一个 Excu 上游，也可能要求各执行一次 IO；没有 requests 或 close 不构成幂等或可合并的证据。例如 A、B 都以 AppendAudit 为 Input，分别启动 A、B 会追加两次日志，按方法名去重会改变行为。即使某个外部操作幂等，省略调用也仍需保证返回值、失败和可观察时序符合原契约。
+
+环也分层处理：方法调用递归和持续启动环报错；scope 先求路径的共同必经前序，再补不可删除的注册前提，只舍弃与前提冲突的观察边。没有一个统一的“删除环中任意边”阶段。
+
+算法注释以“算法说明 v1（2026-11-15）”标记，版本表示说明中的契约；阶段、复用条件或证明边界变化时同步更新。它不代替源码缓存键或 Git 历史。复杂度需要分别观察调用展开大小、scope 路径数和相关来源状态数：即使注册图无环，路径组合和相关状态仍可能指数增长；列表查询、去重、传递约简及未记忆化的祖先展开还会增加开销。按消费单元先裁剪再组合减少无关状态，不能据此宣称整体线性。这里是源码分析，未做性能实测。
+
+### 运行时初始化与执行
 
 运行时先核对注册与源码快照，执行 `evaluate (force generatedPrototype)` 和 `validatePrototype`，检查身份、引用、挂载、父子关系、层次与无环性；随后对当前 AST 做一次 `cata`，逐位置匹配 `protoWorkflow`，按 `NodeId` 读取入口和 alternative 对应关系，并装配尚未执行的 action。所有分支及挂载核对通过后，才安装 scope 关系并执行业务。`ProgramStructure`、`initializeGeneratedStructure` 和旧的分散结构常量已删除。运行时不重新展开方法、运行 `zygo` 或推导父边；AST 的位置或结构变化也须重新生成。
 

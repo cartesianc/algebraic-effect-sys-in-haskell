@@ -1,5 +1,8 @@
 -- 持续会话的生成期装配：先定位已挂载的原子输出，再安排独立生产，并检查启动依赖。
 -- 只产生 Prototype 数据；运行时按该计划安装交付关系，不重新分链或选择生产者。
+-- 算法说明 v1（2026-11-15）：ReuseOutput 的证据是同一 lifelong 内实际挂载的 anchor 位置，
+-- 不是 handler 同名或任意生产链可达。没有这种位置才选择独立的 Receive/Derive。
+-- 复用保留原 AST 执行及其 Origin，只把该次 raw 接给 parser；不新增生产挂载，也不跳过 AST 调用。
 module Framework.Gen.Sessions (planSessions) where
 
 import Control.Monad (unless)
@@ -26,6 +29,7 @@ planSessions effects boundary children subscriptions = do
     workflow = LifelongAt boundary (LifelongProto units subscriptions []) children
     mounted = [(node', effect) | NodeAt node' selected <- concatMap allWorkflow children
       , effect <- effects, effectName effect == selected]
+    -- 匹配 original chain 的 target/Input，不扫描它请求的独立 Context 链。
     positions producer = [node' | Just anchor <- [effectAnchor producer], (node', target) <- mounted
       , anchor `elem` (effectName target : effectInputChain target)]
     outputs = [contractType | producer <- effects, effectContinuous producer
@@ -37,6 +41,8 @@ planSessions effects boundary children subscriptions = do
         [effect] -> pure effect
         _ -> Left (UnknownPrototypeTarget contractType)
       let nodes = positions producer
+      -- p 个位置要做 p*(p-1)/2 次同单元/互斥检查；exclusive 自身还遍历 workflow。
+      -- 并行或顺序中都可能发生的两次输出不能靠“谁先生产”合并成同一个来源。
       unless (and [unitOf left == unitOf right && exclusive workflow left right
           | (offset, left) <- zip [0 :: Int ..] nodes, right <- drop (offset + 1) nodes]) $
         Left (InvalidLifelong boundary ("Continuous asset " ++ contractType
@@ -48,6 +54,8 @@ planSessions effects boundary children subscriptions = do
     -- 订阅边之外，还要计入 workflow 的启动前置。否则 chained [读 A, 产 A]
     -- 虽然注册关系无环，第一条增量仍只能由正在等待它的后继产生。
     -- 保守地纳入所有候选前驱：不依赖运行时恰好选中某个分支才具有进展。
+    -- SCC 只检测这份启动依赖图；发现环就拒绝，不删边来强行安排运行。
+    -- 纯 SCC 阶段与图规模相关，构边前的 precedes/selectors 查询和后面的覆盖遍历另计。
     checkStartup sessions = case [cycle' | CyclicSCC cycle' <- stronglyConnComp graph] of
       [] -> pure ()
       cycle' : _ -> Left (InvalidLifelong boundary ("Continuous startup cycle: "

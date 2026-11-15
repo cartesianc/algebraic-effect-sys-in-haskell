@@ -1,3 +1,6 @@
+-- 算法说明 v1（2026-11-15）。版本标记用于维护注释中的算法契约，不是 ABI 或缓存版本；
+-- 改变阶段依赖、复用条件或证明边界时同步更新，缓存仍精确比较 structureSources 中的源码。
+--
 -- gen：这个 EDSL 的编译器。源程序是一个 demo 命名空间下的 Types、Effects、AST 与 Handlers；
 -- 产物是 Generated/ 下交给 GHC 编译的 Haskell（中间表示）和其中的 Prototype（静态结构）。
 -- 链的组合、读取路由与合法性都在这里定下来，运行时只执行产物，不再推导。
@@ -12,6 +15,15 @@
 --   6 构图  Framework.Gen.Build       EffectGraph、ScopeTree、链挂载与资产来源，得到 Prototype；驱动检查
 --   7 输出  Framework.Gen.Emit.*      Generated/Effects、Handlers、Program 的源码
 --   8 类检  Framework.Gen.Assets      GHC 类型检查业务模块与输出，顶层白名单，资产目录 Generated/Assets
+--
+-- 阶段依赖与复用边界（v1）：
+-- * AST 已指定末端；Lower 为每次挂载编号，并从注册与位置推出持续会话连接。
+-- * Bind 先确定驱动、前驱和读取路由，Build 才能展开方法、构图并从路径推导 ScopeTree。
+-- * Sources 另按 workflow 路径证明资产来源；方法图共享定义不等于各次调用共享结果。
+-- * 注入的 raw 与 ReuseOutput 只复用同一次原子输出；scope 是否复用实例由运行时参数生产身份决定。
+-- * 不做任意 effect 的公共子表达式消除：没有 requests 或 close 也不证明两次 IO 可合并。
+-- 复杂度按展开后的调用、scope 路径与相关来源状态计算，不能只按注册节点数估算；
+-- 展开与路径规则见 Build.Graph，来源投影见 Build.Sources，持续连接的合法性见 Sessions。
 --
 -- 不执行 handler 业务；构图结果按输入与 SDK 源码缓存在 Generated/.scope-cache。
 module Framework.Gen (compileWorkflow) where

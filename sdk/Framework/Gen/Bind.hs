@@ -213,7 +213,11 @@ predecessor unit specification
   | Just _ <- rawSource unit specification = []
   | otherwise = maybeToList (entryMethod (specOf unit (input specification)))
 
--- handler 之前调用的 effect 方法：入口方法先驱动再执行 Input；close 与 Error 方法只执行 handler。
+-- 算法说明 v1（2026-11-15）：这是实际入口的执行序列，同时供 composeMethods 和 Emit 使用。
+-- 先 requests 驱动，再 Input 前驱，最后 handler；close 与 Error 方法只执行 handler。
+-- 即使驱动链与 Input 链包含相同方法，也不能在这里 nub：两个声明的调用仍是两次执行。
+-- raw 的同次输出回放与 scope 的活实例共享在各自协议中判定，不由方法名相同推出。
+-- handler 绑定复用只复用实现，不合并不同 effect 的路由或不同挂载的调用。
 beforeOf :: Unit -> EffectSpec -> String -> [String]
 beforeOf unit specification method
   | Just method == entryMethod specification = drives unit specification ++ predecessor unit specification
