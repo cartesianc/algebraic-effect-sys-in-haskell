@@ -150,11 +150,25 @@ buildEffectProtos specifications sumTypes = do
           Scoped {} -> do
             valid (length (requested specification) <= 1) ("Scoped requests at most one resource Context: " ++ name specification)
           Context { asset = declared, parser = parsing, require = requiring, stream = streaming } -> do
-            -- 持续交付只由上游 Stream 驱动：stream 当且仅当 input 是 Stream，持续资产也缓存最新值。
+            -- stream 与 Input 链必须一致：链被持续驱动时，每次驱动产出一个新值，结果就是一份持续资产。
+            -- 驱动有两种：直接 input 是 Stream（自己驱动），或 Input 链上有 streams demand（由那份持续资产的交付驱动）。
+            -- 被驱动的链不能产出普通资产，普通链也不能声明成持续资产；持续资产也缓存最新值。
             valid (parsing /= Nothing) ("Context needs a parser handler: " ++ name specification)
-            valid (streaming == belowStream specifications specification)
-              (if streaming then "Context " ++ name specification ++ " declares stream = True but its input is not a Stream"
-               else "Context " ++ name specification ++ " hangs below a Stream and needs stream = True")
+            let below = belowStream specifications specification
+                driving = nub [contract demand | ancestor <- specifications
+                  , name ancestor `elem` inputAncestors (input specification)
+                  , demand <- demands ancestor, access demand == StreamAccess]
+            valid (not below || null driving) ("Context " ++ name specification
+              ++ " hangs below a Stream, which drives itself; its Input chain cannot also subscribe to "
+              ++ intercalate ", " driving)
+            valid (length driving <= 1) ("Context " ++ name specification ++ " is driven by several continuous assets "
+              ++ intercalate ", " driving ++ "; one production chain is driven by one asset")
+            valid (streaming == (below || not (null driving)))
+              (if streaming then "Context " ++ name specification ++ " declares stream = True but nothing drives it continuously;"
+                 ++ " hang it below a Stream, or below an effect that subscribes with streams"
+               else if below then "Context " ++ name specification ++ " hangs below a Stream and needs stream = True"
+               else "Context " ++ name specification ++ " is driven by continuous asset " ++ intercalate ", " driving
+                 ++ " (streams on its Input chain) and produces one value per delivery; declare stream = True")
             valid (not streaming || requiring) ("Context " ++ name specification ++ " declares stream = True and needs require = True")
             valid (validContractName (contractOf declared))
               ("Asset name must be a type name such as StartURL: " ++ contractOf declared ++ " in " ++ name specification)
@@ -202,16 +216,7 @@ buildEffectProtos specifications sumTypes = do
           contract demand `elem` map fst branchTable]) ("Branch contracts can only be required: " ++ name specification)
         valid (null [() | demand <- demands specification, access demand == StreamAccess]
           || Registration.effectKind (typing specification) `elem` [ExcuKind, ScopedKind])
-          ("Only original-chain effects may subscribe with streams: " ++ name specification)
-        -- 生产者不带 stream 类型的 demand：streams 标出被持续资产驱动的消费侧 effect，
-        -- 它下面不能挂 Context，也不能在任何 Context 的 Input 链上；按结构判定，不看读取发生的位置。
-        case [name holder | not (null [() | demand <- demands specification, access demand == StreamAccess])
-              , holder <- specifications, Registration.effectKind (typing holder) == ContextKind
-              , name specification `elem` inputAncestors (input holder)] of
-          [] -> pure ()
-          holders -> Left (InvalidPrototype ("Effect " ++ name specification
-            ++ " subscribes with streams but is on the production chain of Context " ++ intercalate ", " holders
-            ++ "; a production chain reads no history. Read the latest value with requires, or subscribe in a lifelong target that has no Context below it"))
+          ("Only Excu and Scoped effects may subscribe with streams: " ++ name specification)
       handled specification = case typing specification of Error { handles = matched } -> matched; _ -> []
   mapM_ check specifications
   let generatedMethods = concatMap (map snd . effectMethods) prototypes
@@ -245,9 +250,10 @@ registeredMethods specifications specification = case typing specification of
   Excu method -> named HandlerMethod "run" method
   Scoped opening closing -> named ScopeOpen "open" opening ++ named ScopeClose "close" closing
   Error detecting resolving _ -> named ErrorDetect "detect" detecting ++ named ErrorResolve "resolve" resolving
-  -- 挂在 Stream 下时 getT 是 parser：只由会话在取得一份原始输入后调用，不是可请求的生产入口。
+  -- 持续资产的 getT 只由会话调用，不是可请求的生产入口：挂在 Stream 下时在取得一份原始输入后调用，
+  -- 由上游持续资产驱动时在领取一条上游交付后调用。
   selected@Context {} ->
-    [ (if belowStream specifications specification then ContextStream else ContextRequest, method)
+    [ (if continuousContext specification then ContextStream else ContextRequest, method)
     | method <- maybeToList (contextProducer selected) ]
     ++ [(ContextRequire, method) | method <- maybeToList (contextReader selected)]
   Stream method -> named StreamHandler "next" method
@@ -273,6 +279,15 @@ numberWorkflow effects tree = cata number tree [] False
       let subscribed = streamedAssets effects selected
       unless (inside || null subscribed) $ Left (InvalidLifelong path ("Node " ++ selected
         ++ " subscribes to " ++ intercalate ", " subscribed ++ " with streams; mount it inside lifelong"))
+      -- 被持续资产驱动的 effect 要么是消费链的一环，要么是持续资产生产链的一环：
+      -- 生产链在该资产的会话里执行，由订阅启动，不挂载到 AST。
+      let derived = nub [contractType | origin <- originEffects effects selected
+            , StreamAccess `elem` map demandAccess (effectDemands origin)
+            , producer <- effects, effectContinuous producer, effectName origin `elem` effectInputChain producer
+            , Just contractType <- [effectProduces producer]]
+      unless (null derived) $ Left (InvalidLifelong path ("Node " ++ selected
+        ++ " is on the production chain of continuous asset " ++ intercalate ", " derived
+        ++ "; that chain runs in the asset's session, started by its subscribers, and is not mounted in the AST"))
       pure (NodeAt path selected)
     number (Chained children) path inside = do
       nonEmpty path inside children
@@ -289,7 +304,8 @@ numberWorkflow effects tree = cata number tree [] False
             ParallelAt _ inner -> map workflowNode inner
             _ -> [workflowNode part] | part <- parts]
       subscriptions <- mapM subscription [(node', selected) | part <- parts, NodeAt node' selected <- allWorkflow part]
-      sessions <- mapM (session path) (zip [0 ..] (nub (map snd subscriptions)))
+      -- 被订阅的资产各一份会话；由另一份持续资产驱动的，连同它的上游一起进入本边界，上游在前。
+      sessions <- mapM (session path) (zip [0 ..] (sessionAssets effects (nub (map snd subscriptions))))
       pure (LifelongAt path (LifelongProto units subscriptions sessions) parts)
     number (Alternative children) path inside = do
       nonEmpty path inside children
@@ -321,7 +337,7 @@ numberWorkflow effects tree = cata number tree [] False
         ++ " inside lifelong must subscribe to exactly one continuous asset with streams"))
       several -> Left (InvalidLifelong node' ("Node " ++ selected ++ " subscribes to several continuous assets "
         ++ intercalate ", " several ++ "; one lifelong target is driven by one asset"))
-    -- 持续资产只由上游 Stream 驱动。
+    -- 生产方式由生产方的注册决定：Stream 单步加 parser，或上游交付驱动的一步。
     session path (index, contractType) = do
       producer <- case [effect | effect <- effects, effectProduces effect == Just contractType] of
         [effect] -> pure effect

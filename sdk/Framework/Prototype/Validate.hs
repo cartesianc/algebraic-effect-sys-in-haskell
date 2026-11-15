@@ -168,8 +168,9 @@ validatePrototype prototype = do
       valid (readContract point `elem` contracts) "Read point has no base Context contract"
       case source of
         FromOwnChain -> pure ()
-        FromSession -> valid (readContract point `elem` [sessionAsset session | session <- protoSessions prototype])
-          "Session source has no interpreter session"
+        FromSession -> valid (any (\effect -> effectContinuous effect
+            && effectProduces effect == Just (readContract point)) effects)
+          "Session source is not a continuous asset"
         FromChains selected -> do
           valid (not (null selected) && unique selected) "Invalid asset source alternatives"
           mapM_ (\node' -> do
@@ -226,8 +227,12 @@ validatePrototype prototype = do
               _ -> [workflowNode child] | child <- children])) "Lifelong units differ from its children"
           valid (sameSet (map fst (lifelongSubscriptions described)) (map fst mounted)
             && unique (map fst (lifelongSubscriptions described))) "Lifelong subscriptions differ from its targets"
-          valid (sameSet (map sessionAsset (lifelongSessions described)) (nub (map snd (lifelongSubscriptions described)))
-            && unique (map sessionAsset (lifelongSessions described))) "Lifelong sessions differ from subscribed assets"
+          valid (map sessionAsset (lifelongSessions described)
+              == sessionAssets effects (nub (map snd (lifelongSubscriptions described))))
+            "Lifelong sessions differ from the subscribed assets and their upstream assets"
+          valid (and [ [sessionPlan session] == [bootPlan effects producer | producer <- effects
+              , effectProduces producer == Just (sessionAsset session)]
+            | session <- lifelongSessions described ]) "Lifelong session differs from its boot plan"
           valid (and [ sessionMounts session == [identifier ++ [-1, index, step] | step <- [0 .. steps - 1]]
             | (index, session) <- zip [0 ..] (lifelongSessions described)
             , let steps = sessionSteps (sessionPlan session) ])
@@ -267,10 +272,11 @@ validatePrototype prototype = do
               _ -> Left (InvalidPrototype "Session asset has no producer")
             let expectedRole = case (sessionPlan session, step) of
                   (Receive _, 0) -> Nothing
-                  (Receive _, _) -> Just ContextStream
+                  _ -> Just ContextStream
                 streamEntries = case sessionPlan session of
                   Receive source -> [method | effect <- effects, effectName effect == source
                     , (StreamHandler, method) <- effectMethods effect]
+                  Derive _ -> []
                 expected = maybe streamEntries (\role -> [method | (role', method) <- effectMethods producer, role' == role]) expectedRole
             valid (sessionAsset session == chainTerminal chain && expected == [chainEntry chain])
               "Session chain differs from its boot plan"

@@ -421,7 +421,7 @@ typing = Context { asset = Asset @PageURL "StartURL", parser = Just "startURL", 
 - **`asset = Asset @表示类型 "资产名"`**：把表示类型细化为资产，生成器产出 `newtype StartURL = StartURL PageURL`；表示类型怎么写见[资产书写](#types)。
 - **`parser`**（必填）：产出表示类型值的 handler，签名 `m 表示类型`，直接返回 `pure (PageURL ...)`，不包资产构造器。gen 生成 `getStartURL`：执行 Input 前驱和 parser，再包成资产发布。parser 是细化 parser：挂在句柄或 Pure 下时，它把 `raw` 读到的 list 解析成表示类型，作用类似 tokenize；值的变换交给 Pure。
 - **`require`**：`True` 时 SDK 缓存最新值并生成读取方法 `readStartURL`，消费方才能 `requires` 它；`False` 不缓存，消费方不能 `requires`。
-- **`stream`**：`True` 声明持续资产，SDK 缓存历史，读取方法是 `streamStartURL`。只能在 Input 是 Stream 时声明，且必须同时 `require = True`；挂在 Stream 下的 Context 必须 `stream = True`。见[持续资产与 lifelong](#stream)。
+- **`stream`**：`True` 声明持续资产，SDK 缓存历史，读取方法是 `streamStartURL`。当且仅当它的 Input 链被持续驱动时声明（挂在 Stream 下，或链上有 `streams` demand），且必须同时 `require = True`。见[持续资产与 lifelong](#stream)。
 - **不能作为 AST 末端**：Context 在它挂接的句柄执行时产出，被 `requests` 驱动或被 alternative 的选择读取驱动时产出；被读取时不产出。
 - **命名**：资产名决定资产类型和入口方法名，要按业务含义起名（`StartURL`，而不是 `LoadStartURL`），不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
 
@@ -520,13 +520,13 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 | --- | --- | --- |
 | `requests "T"` | 不写 | 驱动：入口在 Input 之前重新生产一次 `T`，结果保存为当前绑定。单独的 `requests` 不带来读取权限 |
 | `requires "T"` | `x <- require @表示类型` | 读取已有的值，不在入口驱动，也不在读取处生产；缺值时等待，已确定生产耗尽则报缺值 |
-| `streams "T"` | `xs <- require @(History 表示类型)` | 由持续资产 `T` 的新交付驱动，同时取得读取权限；只在 `lifelong` 内使用，见[持续资产与 lifelong](#stream) |
+| `streams "T"` | `xs <- require @(History 表示类型)` | 由持续资产 `T` 的新交付驱动，同时取得读取权限；写在 `lifelong` 内的末端上，或另一份持续资产的生产链上，见[持续资产与 lifelong](#stream) |
 
 - **驱动与读取分开写**：既要刷新又要读取的资产写两项，例如 Crawler 的 `[requests "StartURL", requires "StartURL"]`。入口顺序是驱动 → Input → handler，因此 `requests` 驱动的值在前驱和 handler 中都已就绪。
 - **来源自动确定**：每个资产恰好由一个 Context 声明，生成器按资产名自动接上，不用指名生产方。
 - **读取按表示类型路由**：handler 的 `require @T` 由 gen 按“表示类型 + effect”路由到这个 effect 声明的那份细化资产；一个 effect 的 demands 里同一表示类型只能出现一次。同一种数据有不同含义时，声明成不同的资产，例如 Crawler 的 `StartURL` 和 `LinkedURL`，再由各自的 effect 选择。
 - **同一资产可以声明多种合法访问方式**：同一资产的同一种方式只能声明一次。
-- **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见[资产书写](#types)）只能 `requires`；`requires` 需要生产方 `require = True`；挂在 Stream 下的资产不能 `requests`；`streams` 只能由 Excu、Scoped 声明，只能订阅持续资产的基础资产（`stream = True`）。
+- **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见[资产书写](#types)）只能 `requires`；`requires` 需要生产方 `require = True`；持续资产不能 `requests`；`streams` 只能由 Excu、Scoped 声明，只能订阅持续资产的基础资产（`stream = True`）。
 - **同一资产只有一个 Context 来源**：访问方式不改变资产的 ADT 或生产方；不限制一个消费者只能声明一个资产。
 - **声明须有读取依据**：每个 `requires`／`streams` 的资产须在绑定的 handler 中读取，或参与现有 alternative 选择／streams 交付。
 - **声明即权限**：handler 读取了 effect 没有声明的表示类型，生成器报错；读取实例只为声明了 `requires`／`streams` 的 effect 生成，运行时不再查声明表。
@@ -829,11 +829,11 @@ EffectSpec
   }
 ```
 
-持续交付只由上游 Stream 驱动：会话反复执行 Stream 的 handler 取得原始输入，交给挂在下面的 parser 解析并发布。声明规则：
+持续交付来自持续的驱动。上面是第一种：会话反复执行 Stream 的 handler 取得原始输入，交给挂在下面的 parser 解析并发布。第二种是由另一份持续资产驱动，见下面的“由持续资产驱动的持续资产”。声明规则：
 
-- **`stream = True` 当且仅当 Input 是 Stream**，且必须同时 `require = True`；挂在 Stream 下的 Context 必须声明 `stream = True`。
+- **`stream = True` 当且仅当 Context 的 Input 链被持续驱动**：直接 Input 是 Stream，或链上有 `streams` demand；必须同时 `require = True`。被驱动的链不能声明成普通资产，没有驱动的链也不能声明成持续资产。
 - **一个 Stream 恰好有一个 Context 以它为 `input`**，作为它的 parser。
-- **挂在 Stream 下的资产只由会话生产**：消费方不能 `requests` 它。
+- **持续资产只由会话生产**：消费方不能 `requests` 它。
 - **订阅**：消费方写 `streams "T"`，表示由 T 的新交付驱动，同时取得读取权限，handler 用 `require @(History 表示类型)` 读取到本次交付为止的历史。
 - **只读最新值**：`requires "T"` 读取持续资产时，handler 用 `require @表示类型` 取得最新一条，不由交付驱动。`stream` 缓存历史，`require` 缓存最新值。
 
@@ -898,8 +898,71 @@ ast = chained [setup, monitor]
 - **一次执行**：控制流到达 target 时领取其订阅资产的交付，再 boot 该 target；单元本轮完整结束后才开始下一轮。有积压时立即领取，没有就挂起等待，不反复调用 handler 试探数据。一个单元内不同 target 可以由不同资产驱动，各自到达时等待对应交付。同一次执行里，每个资产只领取一次，后面的节点（包括并行节点、alternative 的选择与候选）读到同一份视图；StreamDemo 中 `ShowTemperature` 和 `CheckTrend` 看到的是同一条读数。
 - **每次执行互相隔离**：上一次执行中产生的普通资产不会被这一次读到。
 - **订阅规则**：lifelong 里的每个末端（连同它的 Input 链）恰好订阅一个持续资产，并且不再读取别的持续资产；`streams` 不能用在 lifelong 外的末端。lifelong 不能嵌套，内部不能有空分支。
-- **会话**：同一个 lifelong 里订阅同一资产的单元共享一个生产会话，各自独立推进；不同 lifelong 的会话互相独立。会话在进入 lifelong 时启动；生产步骤用到的资源（例如 `SensorLink` 开启的连接）在各步骤间保持，退出时关闭。持续资产的生产不能依赖另一个持续资产。
+- **会话**：同一个 lifelong 里订阅同一资产的单元共享一个生产会话，各自独立推进；不同 lifelong 的会话互相独立。会话在进入 lifelong 时启动；生产步骤用到的资源（例如 `SensorLink` 开启的连接）在各步骤间保持，退出时关闭。持续资产的生产链不能读取别的持续资产，驱动它的那一份除外。
 - **外部组合**：`chained [setup, monitor]` 先执行 setup；`chained [monitor, after]` 中 after 等 monitor 的全部单元结束后执行，仍有消费单元未结束时不会执行；`parallel [monitor, otherWork]` 两者同时运行。
+
+### 由持续资产驱动的持续资产
+
+被持续资产驱动的 effect 下面可以挂 Context，产出另一份持续资产。LinesDemo 中 `Tally` 每来一行统计一次，产出 `RunningTotal`：
+
+```haskell
+-- demo/LinesDemo/Effects.hs（节选）
+EffectSpec
+  { name = "Tally"
+  , typing = Excu { handler = Just "tally" }
+  , input = "Root"
+  , demands = [streams "TextLine"]
+  }
+
+EffectSpec
+  { name = "TallyParser"
+  , typing = Context { asset = Asset @Total "RunningTotal", parser = Just "parseTotal", require = True, stream = True }
+  , input = "Tally"
+  , demands = []
+  }
+
+EffectSpec
+  { name = "ShowTotal"
+  , typing = Excu { handler = Just "showTotal" }
+  , input = "Root"
+  , demands = [streams "RunningTotal"]
+  }
+```
+
+```haskell
+-- demo/LinesDemo/Handlers.hs（节选）
+instance TallyLayer m => TallyHandler m where
+  tally = do
+    received <- require @(History Line)
+    let sizes = [length text | Line text <- historyEntries received]
+    pure [show (length sizes), show (sum sizes)]
+
+instance ParseTotalLayer m => ParseTotalHandler m where
+  parseTotal = do
+    fields <- raw
+    case fields of
+      [count, size] -> pure (Total (read count) (read size))
+      _ -> raise (ParseTotalError "the tally gives a line count and a character count")
+```
+
+```haskell
+-- demo/LinesDemo/AST.hs：只挂载消费方
+ast = chained
+  [ chained [node "Announce"]
+  , lifelong [chained [node "PrintLine", node "ShowTotal"]]
+  , chained [node "Report"]
+  ]
+```
+
+- **写法没有新东西**：`tally` 是普通的 Excu handler，`parseTotal` 是普通的 parser。过滤、映射、累计都写在 handler 方法体里。
+- **必须声明 `stream = True`**：链上有 `streams`，这条链就由那份资产驱动，每来一条产出一个新值，产出只能是持续资产；写成 `False` 由 gencode 拒绝。
+- **不挂载到 AST**：`Tally` 是 `RunningTotal` 的生产链，由订阅它的 `ShowTotal` 启动，在会话里执行，和 `LineFeed` 一样。把它写进 AST 会被拒绝。
+- **一条换一条**：上游每交付一条，恰好产出一条。没有“这一步不产出”，需要过滤时让表示类型自己带上（例如 `Maybe`）。一条生产链只由一份持续资产驱动；可以逐级派生，不能成环。
+- **结束**：上游结束并处理完后，派生的资产跟着结束，订阅它的单元再结束。被驱动的 handler 不能自己 `end`。
+- **读取**：可以 `streams` 订阅，也可以 `requires` 读最新一条。它只在订阅它的 lifelong 里生产，所以读取位置必须在那个 lifelong 之内或之后。LinesDemo 的 `Report` 在 lifelong 之后 `requires "RunningTotal"`，读到最终的统计。
+- **内存**：上游的历史在派生资产生产期间全部保留，再加上派生资产自己的历史。
+
+完整规则见 [Stream 规范 4.2 节](STREAM_LIFELONG.md#derive)。
 
 ### 结束与失败
 
@@ -918,7 +981,7 @@ ast = chained [setup, monitor]
   -- demo/LinesDemo/AST.hs：来源结束、已发布的行处理完后，Report 才执行
   ast = chained
     [ chained [node "Announce"]
-    , lifelong [chained [node "PrintLine"]]
+    , lifelong [chained [node "PrintLine", node "ShowTotal"]]
     , chained [node "Report"]
     ]
   ```
@@ -928,7 +991,7 @@ ast = chained [setup, monitor]
 - **结束后的资源**：这一步没有改变清理规则。只在生产会话中开启的资源（StreamDemo 的 `SensorLink`、LinesDemo 的输入文件）仍在整次运行结束时关闭，所以 LinesDemo 在 `Report` 执行之后才打印 `[close]`。
 - **不结束的来源**：StreamDemo 的来源不调用 `end`，持续程序运行到被取消（Ctrl-C）为止。取消时 SDK 停止全部单元和会话，等它们收尾，再按 ScopeTree 关闭资源；StreamDemo 会打印 `[sensor] disconnected`。
 - **失败（临时规则）**：程序里含 lifelong 时，结构化失败（生产、解析、某个单元或任何 branch）在完成 Error 诊断后终止整次运行：取消全部任务、等待收尾，最后报告最初的那个失败；原生异常直接进入监督并在收尾后重新抛出。lifelong 的 close 语义设计后再改为局部结束。
-- **lifelong 外读取持续资产**：普通 `requires "T"` 只读取一次，取得最新一条。没有交付时，由 interpreter 托管的会话产出（至少等到一条）；这个会话保持到程序退出。来源已经 `end` 时读到最后一条，不重新启动来源；一条都没有发布就结束时报 `ContextNotInitialized`。
+- **lifelong 外读取持续资产**：普通 `requires "T"` 只读取一次，取得最新一条。由持续资产驱动的资产除外，它只能在订阅它的 lifelong 之内或之后读取。没有交付时，由 interpreter 托管的会话产出（至少等到一条）；这个会话保持到程序退出。来源已经 `end` 时读到最后一条，不重新启动来源；一条都没有发布就结束时报 `ContextNotInitialized`。
 
 ### 运行与查看
 
@@ -1076,7 +1139,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | Context、Pure 或 Stream 没有绑定 handler；作为 Input 的 Scoped 没有同时声明 `open` 和 `close` | 补上 handler 名 |
 | Scoped `requests` 了多个资源 Context；资源 Context 的 `input` 挂在请求它的 Scoped 下 | 一个 Scoped 至多一个资源 Context；资源 Context 不挂在自己所属的 scope 下 |
 | `input`／`demands` 形成环；handler 方法之间的调用成环；scope 之间的依赖成环 | 拆开环，让前驱、驱动和资源依赖只沿一个方向 |
-| `requires` 了 `require = False` 的资产；`requests` 了挂在 Stream 下的资产 | 在生产方打开 `require`，或去掉这项 demand；持续资产由会话生产 |
+| `requires` 了 `require = False` 的资产；`requests` 了持续资产 | 在生产方打开 `require`，或去掉这项 demand；持续资产由会话生产 |
 | 一个 effect 的 demands 里有两个表示类型相同的资产 | 用不同的表示类型（角色类型）区分，或拆成两个 effect |
 | handler 读取了绑定它的某个 effect 没有声明的表示类型；或非挂接的 handler 使用 `raw` | 在该 effect 的 demands 里补上声明；`raw` 只给挂接的 parser 与 Pure |
 | Pure 写了 demands、`input` 是 Root 或 Stream、下面没有 Context 或 Pure，或被 Excu／Scoped／Stream／Error 当作 `input` | Pure 只在生产链中：值从上层句柄或 Pure 的 `raw` 来，交给下面的 Pure 或 Context |
@@ -1119,7 +1182,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | [ScopeInstancesDemo](../demo/ScopeInstancesDemo) | 三条使用闭包共用一个 handler，按当前参数各自开启实例，退出时关闭，后一条重新开启 | `cabal run scope-instances-demo` |
 | [ScopeReuseDemo](../demo/ScopeReuseDemo) | 并行的链共享同一个资源实例 | `cabal run scope-reuse-demo` |
 | [StreamDemo](../demo/StreamDemo) | 持续读数与心跳（各为 Stream＋parser）、lifelong 的两个独立单元；会话跨步骤保持传感器连接 | `cabal run stream-demo`（持续运行，Ctrl-C 结束） |
-| [LinesDemo](../demo/LinesDemo) | 会结束的 Stream：逐行读取文本文件，读到末尾时 handler 调用 `end`；已发布的行处理完后 lifelong 返回，后面的节点继续执行 | `cabal run lines-demo` |
+| [LinesDemo](../demo/LinesDemo) | 会结束的 Stream：逐行读取文本文件，读到末尾时 handler 调用 `end`；已发布的行处理完后 lifelong 返回，后面的节点继续执行。另有一份由行驱动的持续资产（逐行累计的统计），lifelong 之后读它的最终值 | `cabal run lines-demo` |
 | [FacadeProbe](../demo/FacadeProbe) | 原子 handler 复用：同一套打开、写入、读取、解析和打印 handler 服务报表与回复两条业务；不进入 Cabal 构建 | 见 [README](../demo/FacadeProbe/README.md) |
 
 Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各自目录下，已加入 Git 忽略。

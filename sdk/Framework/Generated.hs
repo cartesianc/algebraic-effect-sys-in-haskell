@@ -8,7 +8,7 @@ module Framework.Generated
   , module Framework.Prototype
   , module Framework.Prototype.Structure
   , App, TypeRef(..)
-  , Target, targetApp, SessionSteps, receiveSteps
+  , Target, targetApp, SessionSteps, receiveSteps, deriveSteps
   , failEffect, handleFailure, withErrorPath, withErrorHandlers, ErrorHandler(..)
   , readContext, latestContext
   , callContext, projectContext, enterHandler, withAnchoredContexts
@@ -27,7 +27,7 @@ import Framework.Runtime.Context
   ( readContext, latestContext, callContext
   , projectContext, atomicHandle, atomicScope, readHistory, streamHandle )
 import Framework.Language.Registration (TypeRef(..))
-import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps)
+import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, deriveSteps)
 import Framework.Runtime.App (withScopeCleanups)
 import Framework.Runtime.Scope (ScopeHandler, newScopeHandler)
 import Framework.Program (initializePrototype, runProgram)

@@ -118,3 +118,4 @@ renderStructure prototype workflowAST = do
                | (target, asset) <- lifelongSubscriptions description]
             ++ concatMap (renderWorkflow (depth + 1)) children
     describePlan (Receive source) = "Receive from " ++ source
+    describePlan (Derive upstream) = "Derive from " ++ upstream

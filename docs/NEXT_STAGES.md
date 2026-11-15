@@ -1,6 +1,6 @@
 # Next stages
 
-更新：2026-11-14。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已完成最低限度的保守结束，完整迁移仍待实施；[Pure 的值管道与 list 原子输出](#pure-pipeline)已实现（2026-11-12）；[scope 的单例与多例、按可达性回收](#scope-gc)已实现（2026-11-13，生成与普通编译通过）；[Stage 6 的第一步](#stage-6)（Stream 的正常结束到 lifelong 返回）已实现（2026-11-14），会话历史[按读取义务保留](#stage-6-retention)已实现（2026-11-14）；Stage 3–7 的其余部分继续逐阶段收敛。**
+更新：2026-11-15。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已完成最低限度的保守结束，完整迁移仍待实施；[Pure 的值管道与 list 原子输出](#pure-pipeline)已实现（2026-11-12）；[scope 的单例与多例、按可达性回收](#scope-gc)已实现（2026-11-13，生成与普通编译通过）；[Stage 6 的第一步](#stage-6)（Stream 的正常结束到 lifelong 返回）已实现（2026-11-14），会话历史[按读取义务保留](#stage-6-retention)已实现（2026-11-14），[由持续资产驱动的持续资产](#stage-6-derive)已实现（2026-11-15）；Stage 3–7 的其余部分继续逐阶段收敛。**
 
 本轮目标是在框架现有概念内，先分离原子 handler 与业务 effect，使 handler 可以复用、前驱由声明装配；再统一 Stream effect 与 lifelong 的持续执行协议，完成正常结束、停止传播和资源收尾。每阶段先收敛设计与代码形态，再实现；本文记录推进顺序、待确认事项及开放边界，不替代[主设计](LATEST_DESIGN.md)和[当前 Stream 规范](STREAM_LIFELONG.md)。
 
@@ -420,7 +420,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 <a id="stage-6"></a>
 ### Stage 6：实现 end 与终止传播
 
-**状态：第一步已实现（2026-11-14）——来源正常结束到 lifelong 返回；第二步已实现（2026-11-14）——后继读取 lifelong 内部的发布；第三步已实现（2026-11-14）——会话历史按读取义务保留；结束后的资源清理、消费方结束、失败的局部化尚未实现。** 规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
+**状态：第一步已实现（2026-11-14）——来源正常结束到 lifelong 返回；第二步已实现（2026-11-14）——后继读取 lifelong 内部的发布；第三步已实现（2026-11-14）——会话历史按读取义务保留；第四步已实现（2026-11-15）——由持续资产驱动的持续资产；结束后的资源清理、消费方结束、失败的局部化尚未实现。** 规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
 
 区分来源正常结束、失败、取消和消费者退出。确定停止发布、处理已接受增量、结束消费单元、结束派生输出之间的顺序，以及等待数据的任务如何被唤醒。
 
@@ -505,10 +505,10 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 **审查后的修正（2026-11-14）：**
 
-- 第一版只按 lifelong 的订阅判断谁读取历史，漏掉了 Context 生产链内声明 `streams` 的 effect（生成期当时接受这种声明）。lifelong 的后继 `requests` 一份由这种 Excu 生产的资产时，改动前读到全部历史，第一版只读到最新一条。已确认的语义是生产链不应有 stream 类型的 demand：生成期现在拒绝声明 `streams` 的 effect 出现在任何 Context 的 Input 链上（`Gen/Lower` 的注册检查，按已有的 Input 祖先表判定，不做图搜索）。运行时不为这种写法保留特例。
+- 第一版只按 lifelong 的订阅判断谁读取历史，漏掉了 Context 生产链内声明 `streams` 的 effect（生成期当时接受这种声明）。lifelong 的后继 `requests` 一份由这种 Excu 生产的资产时，改动前读到全部历史，第一版只读到最新一条。已确认的语义是生产链不应有 stream 类型的 demand：生成期现在拒绝声明 `streams` 的 effect 出现在任何 Context 的 Input 链上（`Gen/Lower` 的注册检查，按已有的 Input 祖先表判定，不做图搜索）。运行时不为这种写法保留特例。（2026-11-15：这条拒绝改为要求 Context 声明 `stream = True`，见[第四步](#stage-6-derive)。）
 - `changeState` 先填入通知信号、再计算保留范围；取消落在两者之间时，旧状态带着已经填入的信号被恢复，之后的结束或唤醒会卡在这个信号上。改为先算完新状态，再在屏蔽区内通知并写回。这个窗口原先就有，第一版增加的计算把它扩大了。
 - 验证：`cabal build all` 通过，无警告。临时在 LinesDemo 加入 `Digest`（Excu，`streams "TextLine"`）、挂在它下面的 Context 与 `requests` 该资产的 `Report`：改动前的运行时读到 4 条，第一版读到 1 条；加入规则后生成期报错并指出 `Digest` 在 `Summary` 的生产链上，探针已还原。八个 demo 目录重新生成均无文件变化。LinesDemo 与四个有限 demo 为 `Succ`。取消窗口没有复现手段，只经代码审阅。
-- 这条规则禁止的正是：声明 `streams` 的 effect 下面挂 Context，即由持续资产驱动的节点把自己的输出解析成资产。规则按结构判定（生产者不带 stream 类型的 demand），不按读取发生的位置区分情况。现有 demo 与文档示例没有这种写法。
+- 这条规则禁止的正是：声明 `streams` 的 effect 下面挂 Context，即由持续资产驱动的节点把自己的输出解析成资产。规则按结构判定，不按读取发生的位置区分情况。2026-11-15 起，这种结构在 Context 声明 `stream = True` 时合法（产出的是持续资产），声明 `False` 仍被拒绝。
 
 未覆盖：只读最新一条的单元读取方（以会话资产为转折资产的选择读取）没有示例，只经过上述模型核对；没有做堆占用测量，验收标准是 SDK 不再持有没有读取义务的引用，不承诺进程占用立即下降。
 
@@ -517,6 +517,32 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 - 资产值本身不求值。资产是 parser 从本步的 raw 得到的值，绑定里不含生产链；值里尚未求值的部分最多引用这一步的原始输入，不引用更早的资产值，所以不随时间累积。只有 handler 读取旧的资产值并把它惰性地嵌进新值时才会串起旧值，目前没有这种写法，不作处理。
 - 来源 `end` 之后，生产任务仍停在原地直到会话被停止。让它提前退出会提前撤销会话的 scope 使用登记，属于资源清理，不在这一步。
 - scope 关闭失败的记录累积到运行结束才随最终结果报告；只有关闭持续失败时才增长。当场抛出没有调用者可以接住，会终止整次运行，保持现状。
+
+<a id="stage-6-derive"></a>
+#### 第四步：由持续资产驱动的持续资产（2026-11-15）
+
+要解决的是表达缺口：被持续资产驱动的 effect 此前只能是消费方，由历史算出的结果不能成为资产，也不能在进程内交给 lifelong 的后继。规则与写法见 [Stream 规范 4.2 节](STREAM_LIFELONG.md#derive)。
+
+已确认的语义：链上有 stream 类型的 demand，这条链就由那份持续资产驱动，每次交付产出一个新值，产出只能是持续资产，不可能是普通资产；驱动也不会再变回消费方驱动。所以不新增 effect 类别、关键字或 handler 能力，只把两条规则（持续资产只能挂在 Stream 下；生产者不带 stream 类型的 demand）合成一条：Context 的 `stream` 与它的 Input 链是否被持续驱动一致。
+
+- **gen**：`BootPlan` 增加 `Derive`，由生产方 Input 链上的 `streams` 推出；lifelong 的会话集合是被订阅的资产加上它们的上游，上游在前；持续资产的生产入口一律由会话调用，不能 `requests`；生产链上声明 `streams` 的 effect 不能挂载到 AST；Derive 资产的读取点必须在有它的 lifelong 之内或之后；启动依赖检查放过驱动它的那份资产。派生关系成环由已有的 Input／demand 环检查拒绝，没有新增图遍历。
+- **运行时**：Derive 会话的一步是“领取一条上游交付，执行 parser 及其 Input 链，发布一条”，与单元的一轮同构。它登记为上游会话的按历史读取的读取方，游标在进入 lifelong 时交给生产任务；上游结束并排空时它正常结束并离开，上游失败时以同一原因失败。lifelong 返回时逆序停止会话。保留规则本身没有改。
+- **有意不提供**：跳过（一条上游交付恰好产出一条）、提前结束（被驱动的句柄没有 `end`）、多份资产合并驱动、缓冲策略与窗口、“被驱动但只读最新一条”的声明、lifelong 之外的派生会话。
+- **示例**：LinesDemo 增加 `Tally`／`TallyParser`（`RunningTotal`，由 `TextLine` 驱动）与订阅它的 `ShowTotal`，`Report` 在 lifelong 之后读它的最新一条。
+
+**验证（2026-11-15）：** `cabal build all` 通过，无警告；八个程序重新生成，除 LinesDemo 外只有一行注释变化。LinesDemo 每一轮先打印这一行、再打印到这一行为止的行数与字符数（1/10、2/21、3/31、4/40），来源 `end` 后 `Report` 读到 4 行 40 字符，结果 `Succ`；`--structure` 列出 `session RunningTotal Derive from TextLine`。四个有限 demo 与 crawler-demo 为 `Succ`，StreamDemo 运行 8 秒输出正常。临时改写 LinesDemo 逐项观察后已还原：
+
+- 拒绝：派生 Context 写 `stream = False`（之前被禁止的写法，报错提示声明 `stream = True`）；`requests` 派生资产；把 `Tally` 挂载到 AST；在 lifelong 之前 `requires` 派生资产。
+- 运行：单元只订阅派生资产、不订阅上游时结果相同；两级派生（再由 `RunningTotal` 派生一份）逐轮结果正确，结果 `Succ`。
+- 保留：在保留计算处临时打印，`TextLine` 会话登记了两个按历史读取的读取方（单元与 `RunningTotal` 会话），运行期间 4 条全部保留；读取方都离开后两个会话各剩 1 条。
+
+未覆盖：没有不结束的派生来源示例；没有持续驱动的 Context 写 `stream = True`、一条链由多份资产驱动、Stream 的 Input 链上有 `streams` 这三条拒绝没有单独触发；上游失败传给 Derive 会话、取消落在游标交接之前这两条路径只经代码审阅；没有堆占用测量。
+
+已知边界，均未处理：
+
+- 上游历史在 Derive 会话运行期间全部保留，加上派生资产自己的历史，只做映射的派生也是如此。
+- 被驱动的句柄连同它 Input 链上的 scope 在会话的各步骤间保持，与 Stream 的 Input 相同；结束后的清理同样未设计。
+- 上游生产步骤的伴随发布只交给由该资产驱动的读取位置；Derive 的生产链不在其中，按现有检查读取伴随发布应被生成期拒绝，未单独验证。
 
 #### 尚未确定或尚未实现
 

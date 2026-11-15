@@ -3,7 +3,7 @@
 module Framework.Prototype.Query
   ( workflowNode, workflowChildren, workflowTerminals, workflowLifelongs, workflowSelectors
   , allWorkflow, lookupChain, lookupWorkflow, precedes, exclusive, visibleFrom
-  , driveSet, readPoints, scopeOpeningsAt, bootPlan, sessionSteps
+  , driveSet, readPoints, scopeOpeningsAt, drivingAssets, bootPlan, sessionSteps, sessionAssets
   , finiteSessions, candidateCase, findEffectProto, ordinaryEntry, selectorMethod, calledMethods, reachableMethods
   ) where
 
@@ -94,22 +94,44 @@ readPoints = map fst . protoSources
 scopeOpeningsAt :: Prototype method -> NodeId -> [ScopeOpening]
 scopeOpeningsAt prototype node = filter ((== node) . openingNode) (protoScopeOpenings prototype)
 
--- 持续资产的 Input 一定是 Stream（注册校验保证）；会话从它接收。
+-- 驱动这个持续资产生产的持续资产：生产方 Input 链上的 streams demand。
+-- 注册校验保证至多一个，且与直接挂在 Stream 下互斥。
+drivingAssets :: [EffectProto method] -> EffectProto method -> [String]
+drivingAssets effects producer = nub
+  [ demandContract demand | effect <- effects, effectName effect `elem` effectInputChain producer
+  , demand <- effectDemands effect, demandAccess demand == StreamAccess ]
+
+-- 生产方式只看生产方自己的注册：Input 链被另一份持续资产驱动时是 Derive，否则直接 input 是 Stream。
 bootPlan :: [EffectProto method] -> EffectProto method -> BootPlan
-bootPlan _ producer = Receive (effectInput producer)
+bootPlan effects producer = case drivingAssets effects producer of
+  upstream : _ -> Derive upstream
+  [] -> Receive (effectInput producer)
 
 sessionSteps :: BootPlan -> Int
 sessionSteps (Receive _) = 2
+sessionSteps (Derive _) = 1
+
+-- 一个 lifelong 需要的会话：被订阅的资产，以及驱动它们的上游资产，上游排在前面。
+-- 注册校验已经拒绝派生关系成环；seen 只防止不一致的原型使遍历不终止。
+sessionAssets :: [EffectProto method] -> [String] -> [String]
+sessionAssets effects = nub . concatMap (visit [])
+  where
+    visit seen asset
+      | asset `elem` seen = []
+      | otherwise = concat [ visit (asset : seen) upstream
+          | producer <- effects, effectProduces producer == Just asset
+          , Derive upstream <- [bootPlan effects producer] ] ++ [asset]
 
 -- 每个 Receive 资产一份 interpreter 托管的会话，挂载为 [-2, 序号, 步骤]；不属于 AST，
 -- 不作为任何读取点的可见前驱，只在 lifelong 外的有限 require 缺少交付时惰性启动。
+-- Derive 资产没有托管会话：驱动它的是订阅，只在订阅它的 lifelong 内生产。
 finiteSessions :: [EffectProto method] -> [SessionProto]
 finiteSessions effects =
   [ SessionProto contractType plan [[-2, index, step] | step <- [0 .. sessionSteps plan - 1]]
   | (index, (contractType, plan)) <- zip [0 ..] receiving ]
   where
     receiving = [(contractType, plan) | effect <- effects, effectContinuous effect
-      , Just contractType <- [effectProduces effect], let plan = bootPlan effects effect]
+      , Just contractType <- [effectProduces effect], plan@(Receive _) <- [bootPlan effects effect]]
 
 -- 候选对应只读 effect 原型中的 requires 与 Input 祖先；生成和加载校验共用。
 candidateCase :: [EffectProto method] -> NodeId -> WorkflowTree

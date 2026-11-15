@@ -102,8 +102,10 @@ data SessionProto = SessionProto
   , sessionMounts :: [NodeId]
   } deriving (Eq, Show, Read, Generic, NFData)
 
--- 持续资产只由上游 Stream 驱动：两步挂载依次为 Stream 单步与 parser。
-data BootPlan = Receive String
+-- 持续资产的生产方式，由生产方的注册决定。
+-- Receive：直接 input 是 Stream，记它的注册名；两步挂载依次为 Stream 单步与 parser。
+-- Derive：Input 链上有 streams demand，记驱动它的持续资产；上游每交付一条，一步挂载（parser 及其 Input 链）执行一次。
+data BootPlan = Receive String | Derive String
   deriving (Eq, Show, Read, Generic, NFData)
 
 data ChainRole = NodeChain | SelectorChain | SessionChain

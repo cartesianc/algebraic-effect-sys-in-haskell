@@ -21,8 +21,8 @@ data MethodRole
   | ScopeClose
   | ErrorDetect
   | ErrorResolve
-  -- StreamHandler 取得单步原始输入；ContextStream 标记挂在 Stream 下的 getT 解析器。
-  -- 解析器仍调用 Stream 方法；运行包装用本次原始输入回答，不再获取一次。
+  -- StreamHandler 取得单步原始输入；ContextStream 标记持续资产的 getT：只由会话调用，不是可请求的生产入口。
+  -- 挂在 Stream 下的解析器仍调用 Stream 方法；运行包装用本次原始输入回答，不再获取一次。
   | StreamHandler
   | ContextStream
   deriving (Eq, Ord, Show, Read, Generic, NFData)

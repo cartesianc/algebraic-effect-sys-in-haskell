@@ -10,7 +10,7 @@
 
 module LinesDemo.Handlers () where
 
-import Framework.SDK (Ends(..), History, Raises(..), Raw(..), Reads(..), historySize, latest)
+import Framework.SDK (Ends(..), History, Raises(..), Raw(..), Reads(..), historyEntries, historySize, latest)
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
 import Control.Monad.IO.Class (liftIO)
@@ -62,7 +62,30 @@ instance PrintLineLayer m => PrintLineHandler m where
       Nothing -> pure ()
     pure []
 
+-- 由 TextLine 驱动：每来一行执行一次，读到这一行为止的全部行，交出行数与字符总数。
+instance TallyLayer m => TallyHandler m where
+  tally = do
+    received <- require @(History Line)
+    let sizes = [length text | Line text <- historyEntries received]
+    pure [show (length sizes), show (sum sizes)]
+
+instance ParseTotalLayer m => ParseTotalHandler m where
+  parseTotal = do
+    fields <- raw
+    case fields of
+      [count, size] -> pure (Total (read count) (read size))
+      _ -> raise (ParseTotalError "the tally gives a line count and a character count")
+
+instance ShowTotalLayer m => ShowTotalHandler m where
+  showTotal = do
+    received <- require @(History Total)
+    case latest received of
+      Just (Total count size) -> liftIO (putStrLn ("  so far: " ++ show count ++ " lines, " ++ show size ++ " characters"))
+      Nothing -> pure ()
+    pure []
+
 instance ReportLayer m => ReportHandler m where
   report = do
-    liftIO (putStrLn "The input ended and every line was handled.")
+    Total count size <- require @Total
+    liftIO (putStrLn ("The input ended and every line was handled: " ++ show count ++ " lines, " ++ show size ++ " characters."))
     pure []

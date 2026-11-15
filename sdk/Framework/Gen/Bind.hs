@@ -333,8 +333,12 @@ normalizeType = unwords . concatMap expand . filter (`notElem` ["(", ")"]) . tok
 -- workflow 控制流已经使用的读取：lifelong 订阅的 streams，以及 alternative 候选选择所依据的分支契约。
 -- 输入链上的声明参与选择／交付，因此这些 demand 不要求 handler 方法体再读一次。
 controlReads :: [Prototype.EffectProto method] -> Prototype.WorkflowTree -> [(String, String)]
-controlReads effects tree = nub (walk tree)
+controlReads effects tree = nub (walk tree ++ driven)
   where
+    -- 持续资产生产链上的 streams 由上游交付驱动这条链，同样已被控制流使用。
+    driven = [ (Prototype.effectName effect, demandContract demand) | producer <- effects, Prototype.effectContinuous producer
+      , effect <- effects, Prototype.effectName effect `elem` Prototype.effectInputChain producer
+      , demand <- Prototype.effectDemands effect, demandAccess demand == StreamAccess ]
     inherited selectedName = selectedName : concat
       [Prototype.effectInputChain effect | effect <- effects, Prototype.effectName effect == selectedName]
     demandsOf selectedName = [(Prototype.effectName effect, demand) | effect <- effects

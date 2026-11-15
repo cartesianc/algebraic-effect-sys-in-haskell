@@ -70,6 +70,7 @@ resolveSources definitions defaultReaders prototype = do
         }
   mapM_ companionRead reads
   mapM_ successorRead reads
+  mapM_ derivedRead reads
   pure prototype { protoChains = map annotate (protoChains prototype), protoSources = reads
     , protoScopeOpenings = assetScopeOpenings facts }
   where
@@ -89,6 +90,18 @@ resolveSources definitions defaultReaders prototype = do
           ++ ", which are not ordered; which one ended last depends on scheduling. Order them, or refine the contract"))
         [] -> pure ()
     successorRead _ = pure ()
+    -- 由另一份持续资产驱动的资产没有 interpreter 托管的会话：驱动它的是订阅，只在订阅它的 lifelong 内生产。
+    -- 读取位置必须在有这份会话的 lifelong 之内，或排在它之后（读它结束时的最新一条）。
+    derivedRead (point, FromSession)
+      | readContract point `elem` [contractType | effect <- effects, effectContinuous effect
+          , Just contractType <- [effectProduces effect], Derive _ <- [bootPlan effects effect]]
+      , null [() | (boundary, described) <- lifelongs
+          , readContract point `elem` map sessionAsset (lifelongSessions described)
+          , boundary `isPrefixOf` readNode point || precedes (protoWorkflow prototype) boundary (readNode point)] =
+          Left (InvalidLifelong (readNode point) ("Asset " ++ readContract point
+            ++ " is driven by another continuous asset and is produced only inside a lifelong that subscribes to it;"
+            ++ " read it inside that lifelong or after it"))
+    derivedRead _ = pure ()
     -- 后继读取 lifelong 内部发布的资产：资产按来源保留最新一次发布（require 读最新值）。
     -- 同一单元内互斥位置（不同 alternative 候选）在不同轮发布同一契约时，按轮次先后取最新，不是并发写入；
     -- 来自不同单元、同一轮可能都发布、或与 lifelong 之外的来源并存时，仍按来源唯一规则拒绝。
@@ -230,7 +243,7 @@ resolveSources definitions defaultReaders prototype = do
       where
       readContractAsset contractType = case lookup contractType (assetCaptures state) of
         Just _ -> pure [AssetExit True state, AssetExit False state]
-        -- Receive 资产只由会话生产：没有本次交付时由 interpreter 托管的会话交付，不查询普通来源。
+        -- 持续资产只由会话生产：没有本次交付时由会话交付，不查询普通来源。
         Nothing | contractType `elem` receiving -> do
           recordRead (assetRoot call) contractType []
           pure [AssetExit True (capture contractType Nothing state), AssetExit False state]
@@ -310,7 +323,7 @@ resolveSources definitions defaultReaders prototype = do
                 published <- publish call effect after
                 observed <- observeOpeningInput call effect published
                 pure [AssetExit True observed]) body
-            -- 解析器只由 Receive 会话挂载调用；成功即发布一次交付。
+            -- 持续资产的生产入口只由会话挂载调用（Receive 的 parser 步骤，或 Derive 的一步）；成功即发布一次交付。
             ContextStream -> do
               body <- shape entered (methodBody definition) state
               successes (\after -> do

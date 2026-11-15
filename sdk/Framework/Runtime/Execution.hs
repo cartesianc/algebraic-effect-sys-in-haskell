@@ -14,7 +14,8 @@ import Framework.Runtime.Graph
   ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, installSessionLauncher
   , stopSessions, resetOrigins, runtimeRootFrame, collectRuntimeScopes, finishRuntime )
 import Framework.Runtime.Frame
-import Framework.Runtime.Session (Broken, Stopped(..), DeliveryDrained(..), admitReaders, leaveSession, stopSession, endSession)
+import Framework.Runtime.Session
+  (Broken, Stopped(..), DeliveryDrained(..), admitReaders, leaveSession, feedSession, stopSession, endSession)
 import Framework.Prototype
 import Framework.Recursion (Algebra)
 import Framework.Language.AST (AST, WorkflowF(..), foldAST)
@@ -247,9 +248,11 @@ executionAlgebra prototype store entries selectors layer expected = do
     -- 失败与取消保持原规则：失败在发生处已经报告监督，随整次运行终止。
     -- 每个会话在进入时登记它的读取方（各单元的游标与读取方式），会话据此决定保留多少发布；
     -- 单元结束即离开。全部单元离开后会话只剩最新一条，留给 lifelong 的后继读取。
+    -- 由某份资产驱动的会话也是它的读取方：按历史读取，与单元一同登记，游标交给那份会话的生产任务，
+    -- 它在上游结束并排空后结束并离开。
     (Lifelong _, LifelongAt _ description _) -> do
       units <- concatMap compiledUnits <$> compiledChildren
-      sources <- mapM (\session -> (,) (sessionAsset session) <$> producerOf (sessionAsset session))
+      sources <- mapM (\session -> (,,) (sessionAsset session) (sessionPlan session) <$> producerOf (sessionAsset session))
         (lifelongSessions description)
       let selections = [(alternativeSelector choice, source)
             | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype)
@@ -263,15 +266,20 @@ executionAlgebra prototype store entries selectors layer expected = do
               || or [unit `isPrefixOf` selector | (selector, selected) <- selections, selected == source] = Just False
             | otherwise = Nothing
       single $ \run handoff -> ExceptT $ do
-        sessions <- forM sources $ \(asset, source) -> do
-          session <- boundarySession store location source handoff
-          cursors <- admitReaders session [access asset source unit | (unit, _) <- units]
-          pure (source, session, cursors)
+        opened <- forM sources $ \(asset, plan, source) ->
+          (,,,) asset plan source <$> boundarySession store location source handoff
+        sessions <- forM opened $ \(asset, _, source, session) -> do
+          let driven = [dependent | (_, Derive upstream, _, dependent) <- opened, upstream == asset]
+          cursors <- admitReaders session
+            ([access asset source unit | (unit, _) <- units] ++ map (const (Just True)) driven)
+          sequence_ (zipWith (\dependent -> feedSession dependent session) driven (drop (length units) cursors))
+          pure (source, session, take (length units) cursors)
         outcomes <- runParalleled
           [ repeatUnit run handoff [(source, (session, cursors !! index)) | (source, session, cursors) <- sessions] unit
           | (index, unit) <- zip [0 ..] units ]
         -- 仍在生产的会话已经没有消费者；已结束的会话只需等待任务退出。此后不再接受发布。
-        mapM_ (\(_, session, _) -> stopSession session >> endSession session) sessions
+        -- 上游排在前面，逆序停止：被驱动的会话先停并离开上游。
+        mapM_ (\(_, session, _) -> stopSession session >> endSession session) (reverse sessions)
         pure (either (Left . Problem) Right (concat <$> sequence outcomes))
     _ -> Left PrototypeWorkflowMismatch
   where

@@ -69,12 +69,16 @@ buildPrototype plan shapes = do
         ++ called ++ " directly; only its session and the parser Context hanging below that Stream may call it")))
     [definition | definition <- definitions, methodRole definition /= StreamHandler]
   -- 启动环：会话的生产链不能依赖其他持续资产，否则首次生产就要先等待另一份增量。
+  -- 驱动它的那份上游资产除外：每一步在领取一条上游交付之后才执行，读到的就是这条交付。
   let continuousMethods = [(contractType, method) | effect <- effects, effectContinuous effect
         , Just contractType <- [effectProduces effect], (role, method) <- effectMethods effect
         , role `elem` [ContextRequest, ContextRequire, ContextStream]]
+      drivenBy terminal = concat [drivingAssets effects producer
+        | producer <- effects, effectProduces producer == Just terminal]
   mapM_ (\chain -> do
       let others = nub [contractType | (contractType, method) <- continuousMethods
-            , method `elem` chainReaches chain, contractType /= chainTerminal chain]
+            , method `elem` chainReaches chain, contractType /= chainTerminal chain
+            , contractType `notElem` drivenBy (chainTerminal chain)]
       unless (null others) $ Left (InvalidLifelong (chainNode chain) ("Production of continuous asset "
         ++ chainTerminal chain ++ " depends on continuous assets " ++ intercalate ", " others
         ++ "; its first delivery would wait for another stream")))
@@ -116,7 +120,7 @@ buildPrototype plan shapes = do
       [method] -> pure (alternativeSelector selected, SelectorChain, alternativeContract selected, method)
       _ -> Left (UnknownPrototypeTarget (alternativeContract selected))
     mountedSelector _ = Left (InvalidPrototype "Expected alternative selector")
-    -- 会话挂载依次为 Stream 单步与 parser；终端名记资产名。
+    -- 会话挂载：Receive 依次为 Stream 单步与 parser，Derive 只有 parser（它沿 Input 链执行被驱动的句柄）；终端名记资产名。
     mountedSession described = do
       producer <- case [effect | effect <- effects, effectProduces effect == Just (sessionAsset described)] of
         [effect] -> pure effect
@@ -129,6 +133,7 @@ buildPrototype plan shapes = do
           handle <- roleOf streamEffect StreamHandler
           parser <- roleOf producer ContextStream
           pure [handle, parser]
+        Derive _ -> (: []) <$> roleOf producer ContextStream
       valid (length methods == length (sessionMounts described)) ("Session steps differ for " ++ sessionAsset described)
       pure [(mount, SessionChain, sessionAsset described, method) | (mount, method) <- zip (sessionMounts described) methods]
 

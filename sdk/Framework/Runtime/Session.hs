@@ -9,11 +9,12 @@ module Framework.Runtime.Session
   ( SessionKey, View, Delivery, Broken, Stopped(..), SourceEnded(..), DeliveryDrained(..)
   , Session, sessionKey, sessionBindings, sessionViews
   , newSession, appendDelivery, breakSession, endSession, wakeSession, setSessionWorker, stopSession
-  , awaitHistory, Cursor, admitReaders, leaveSession, takeDelivery
+  , awaitHistory, Cursor, admitReaders, leaveSession, takeDelivery, feedSession, awaitUpstream
   ) where
 
 import Control.Concurrent (ThreadId, killThread)
-import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, swapMVar, takeMVar)
+import Control.Concurrent.MVar
+  (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, swapMVar, takeMVar, tryPutMVar)
 import Control.Exception (Exception, SomeException, mask, onException, uninterruptibleMask_)
 import Control.Monad (forM, void)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -77,6 +78,9 @@ data Session environment cause = Session
   , sessionViews :: [(String, View environment cause)]
   , sessionState :: MVar (SessionState environment cause)
   , sessionWorker :: MVar (Maybe (ThreadId, MVar ()))
+  -- 由另一份持续资产驱动的会话：上游会话，以及本会话在其中的游标。上游在进入 lifelong 时登记读取方，
+  -- 之后才交来；生产任务取得它之前不执行。由 Stream 驱动的会话不使用。
+  , sessionUpstream :: MVar (Session environment cause, Cursor)
   }
 
 newSession :: SessionKey -> ScopeBindings environment cause -> [(String, View environment cause)]
@@ -85,6 +89,7 @@ newSession key bindings views = do
   signal <- newEmptyMVar
   let readers = maybe (Just []) (const Nothing) (fst key)
   Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Nothing signal readers) <*> newMVar Nothing
+    <*> newEmptyMVar
 
 -- 两次相等的值仍是两条发布；会话已经结束或失败时不再接受新条目。
 appendDelivery :: Session environment cause -> ScopeBindings environment cause -> ScopeBinding environment cause -> IO ()
@@ -226,6 +231,14 @@ takeDelivery session (Reading _ position) interrupted = do
       modifyMVar_ (sessionState session) release
     Left _ -> pure ()
   pure outcome
+
+-- 把上游会话和已经登记的游标交给由它驱动的会话；只交一次。
+feedSession :: Session environment cause -> Session environment cause -> Cursor -> IO ()
+feedSession session upstream cursor = void (tryPutMVar (sessionUpstream session) (upstream, cursor))
+
+-- 由上游驱动的生产任务在第一步之前等待交接。
+awaitUpstream :: Session environment cause -> IO (Session environment cause, Cursor)
+awaitUpstream = readMVar . sessionUpstream
 
 -- 运行层启动生产任务后登记；停止时取消并等待它退出，包括其中步骤的受控收尾。
 -- 任务已经自行结束时只等待它的完成信号。

@@ -13,6 +13,13 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
+      { assetType = AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "RunningTotal", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "RunningTotal", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 24}
+          ]
+      , assetFields = []
+      }
+  , Asset
       { assetType = AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "TextLine", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 24, assetColumn = 1}
       , assetConstructors =
           [ AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "TextLine", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 24, assetColumn = 20}
@@ -30,6 +37,13 @@ generatedAssets =
       { assetType = AssetSymbol {assetModule = "LinesDemo.Types", assetName = "Line", assetFile = "demo/LinesDemo/Types.hs", assetLine = 11, assetColumn = 1}
       , assetConstructors =
           [ AssetSymbol {assetModule = "LinesDemo.Types", assetName = "Line", assetFile = "demo/LinesDemo/Types.hs", assetLine = 11, assetColumn = 16}
+          ]
+      , assetFields = []
+      }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "LinesDemo.Types", assetName = "Total", assetFile = "demo/LinesDemo/Types.hs", assetLine = 15, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "LinesDemo.Types", assetName = "Total", assetFile = "demo/LinesDemo/Types.hs", assetLine = 15, assetColumn = 14}
           ]
       , assetFields = []
       }

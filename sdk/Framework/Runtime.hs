@@ -10,7 +10,7 @@ module Framework.Runtime
   ( App, Target, targetApp
   , targetName, lowerTarget, Handoff, noHandoff, scopeHandlers, cleanupTargets
   , DeliveryFrame, newDeliveryFrame, frameDelivery, haltFrame, frameStopping, frameAdmits, boundarySession
-  , SessionSteps, receiveSteps, sessionLauncher
+  , SessionSteps, receiveSteps, deriveSteps, sessionLauncher
   ) where
 
 import Framework.Language.Handler (Failure)
@@ -160,19 +160,25 @@ cleanupTargets = cleanupScopes . scopeHandlers
 
 -- 持续生产的装配与退出 ---------------------------------------------------------
 
--- 生成区按资产登记的生产步骤：Stream 单步与 parser。parser 的入口发布一次资产；会话不再次发布返回值。
--- 持续交付只由上游 Stream 驱动。
+-- 生成区按资产登记的生产步骤。parser 的入口发布一次资产；会话不再次发布返回值。
+-- ReceiveSteps：Stream 单步取得原始输入，再由 parser 解析。
+-- DeriveSteps：领取一条上游持续资产的交付后执行 parser，它沿 Input 链执行被驱动的句柄。
 data SessionSteps environment cause
   = ReceiveSteps (Target environment cause String) (Target environment cause ())
+  | DeriveSteps (Target environment cause ())
 
 receiveSteps :: Target environment cause String -> Target environment cause () -> SessionSteps environment cause
 receiveSteps = ReceiveSteps
+
+deriveSteps :: Target environment cause () -> SessionSteps environment cause
+deriveSteps = DeriveSteps
 
 -- 为新会话启动生产任务：按原型找到该边界的会话挂载，逐次执行生产步骤，把发布写入会话历史。
 -- 每条交付带上本次生产步骤（各挂载当前一次执行）已经发布的普通资产，作为伴随发布。
 -- 各步骤共用会话的 scope 使用登记，生产资源跨步骤保持；会话停止时撤销登记，根帧退休后统一回收。
 -- 生产失败（已经过 Error 协议诊断）或原生异常使会话失败并停止，并通知运行监督；
 -- Stream handler 的 end 正常结束会话：封住发布、唤醒等待者，不通知监督，已发布的交付仍可领取；
+-- 由上游驱动的会话在上游结束并排空时同样正常结束，上游失败时以同一个原因失败；
 -- 取消只结束任务，步骤内照常收尾。
 -- 启动到登记在不可中断区内完成，取消不会落在任务已启动、尚未登记之间。任务继承这一屏蔽，只在生产时解除：
 -- 报告失败、撤销使用登记和填写完成信号都不会被停止请求打断，stopSession 一定等得到完成信号。
@@ -209,6 +215,19 @@ sessionLauncher graph steps onBroken session = uninterruptibleMask_ $ do
           Right (Left problem, _, _) -> pure (Just (Just problem))
           Right (Right text, _, _) ->
             either (Just . Just) (const Nothing) . first <$> lowerWith graph parserMount (step owner (Just text) sink) parser
+      -- 每一步先领取一条上游交付，把到这一条为止的历史作为本步的视图；上游结束并排空即正常结束。
+      -- 任务退出时离开上游会话，上游不再为它保留历史。
+      (Just (DeriveSteps parser), Just [mount]) -> do
+        (upstream, cursor) <- awaitUpstream session
+        loop (do
+          taken <- takeDelivery upstream cursor (pure False)
+          case taken of
+            Left Drained -> pure (Just Nothing)
+            Left (Broke (Right problem)) -> pure (Just (Just problem))
+            Left (Broke (Left exception)) -> throwIO exception
+            Right (view, _) -> either (Just . Just) (const Nothing) . first
+              <$> lowerWith graph mount (driven owner (snd (sessionKey upstream)) view) parser)
+          `finally` leaveSession upstream cursor
       _ -> ioError (userError ("Session steps differ from the prototype mounts for " ++ source
         ++ "; regenerate with the SDK effect-codegen command"))
     sink = [(source, \value -> do
@@ -219,6 +238,9 @@ sessionLauncher graph steps onBroken session = uninterruptibleMask_ $ do
       { launchBindings = sessionBindings session, launchViews = sessionViews session, launchInput = input
       , launchSinks = sinks, launchDeliver = noDelivery, launchUser = Just owner
       , launchFrame = runtimeRootFrame graph }
+    -- 被驱动的一步：上游这条交付的视图盖过交接中同一来源的视图。
+    driven owner upstream view = (step owner Nothing sink)
+      { launchViews = (upstream, view) : filter ((/= upstream) . fst) (sessionViews session) }
     noDelivery = const Nothing
     first (outcome, _, _) = outcome
     broken reason = breakSession session reason >> onBroken reason

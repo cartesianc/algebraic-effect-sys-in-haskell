@@ -19,7 +19,8 @@ belowStream specifications specification = case typing specification of
   Context {} -> not (null [() | source <- specifications, name source == input specification, Stream {} <- [typing source]])
   _ -> False
 
--- 持续资产：stream = True，缓存历史，可以被 streams 订阅。
+-- 持续资产：stream = True，缓存历史，可以被 streams 订阅。它只由会话生产：
+-- 挂在 Stream 下的由 Stream 单步驱动，Input 链上有 streams demand 的由上游持续资产的交付驱动。
 continuousContext :: EffectSpec -> Bool
 continuousContext specification = case typing specification of
   Context { stream = streaming } -> streaming
@@ -80,12 +81,12 @@ resolveDemands branches specifications consumer = do
           ++ "; a contract is the asset name declared by its producer Context")
         _ -> Left ("Several Context effects produce contract " ++ producedContract)
       case (access demand, typing provider) of
-        (RequestAccess, _) | belowStream specifications provider -> Left ("Contract " ++ contract demand
-          ++ " is parsed from Stream input by its session, so " ++ name consumer ++ " cannot request it")
+        (RequestAccess, _) | continuousContext provider -> Left ("Contract " ++ contract demand
+          ++ " is a continuous asset produced by its session, so " ++ name consumer ++ " cannot request it")
         (RequireAccess, Context { require = False }) -> Left ("Contract " ++ contract demand
           ++ " is not cached (require = False), so " ++ name consumer ++ " cannot require it")
         (StreamAccess, _) | not (continuousContext provider) -> Left ("Contract " ++ contract demand
-          ++ " is not a continuous asset (hang its Context below a Stream with stream = True), so "
+          ++ " is not a continuous asset (its Context declares stream = False), so "
           ++ name consumer ++ " cannot subscribe to it")
         (StreamAccess, _) | producedContract /= contract demand -> Left ("Branch contract " ++ contract demand
           ++ " cannot be subscribed; subscribe to " ++ producedContract ++ " in " ++ name consumer)

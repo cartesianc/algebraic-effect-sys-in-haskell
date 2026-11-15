@@ -44,7 +44,7 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
       , ""
       , "-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。"
       , "-- 第二个列表是各转折契约的选择末端：驱动资产（持续资产领取本次交付），返回它当前的构造器名。"
-      , "-- 第三个列表是各持续资产的生产步骤：会话按需启动，Stream 单步取得原始输入，parser 发布一次资产。"
+      , "-- 第三个列表是各持续资产的生产步骤：会话按需启动，Stream 单步取得原始输入（或领取一条上游交付），parser 发布一次资产。"
       , "compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]"
       , "                     , [(String, SDK.SessionSteps ContextValues Errors)])"
       , "compiledEntries = do"
@@ -78,14 +78,18 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
           ++ " " ++ show ("demo/" ++ map (\character -> if character == '.' then '/' else character) namespace ++ "/Handlers.hs")
           ++ " Handlers.handlerSourceFingerprint generatedPrototype compiledEntries"
       ]
-    -- 按 Context 注册名登记（与运行时绑定来源同名）：Stream 单步取得原始输入，parser 解析它并发布。
+    -- 按 Context 注册名登记（与运行时绑定来源同名）。Receive：Stream 单步取得原始输入，parser 解析它并发布。
+    -- Derive：领取一条上游交付后只执行 parser，它沿 Input 链执行被驱动的句柄并发布。
     sessionSteps =
-      [ "(" ++ show (name specification) ++ ", SDK.receiveSteps ("
-          ++ wrapTarget (input specification) ("Handlers." ++ handle) ++ ") ("
-          ++ wrapTarget (name specification) ("() <$ Handlers." ++ parsing) ++ "))"
+      [ "(" ++ show (name specification) ++ ", " ++ steps ++ ")"
       | specification <- contextSpecs unit, Prototype.effectContinuous (protoOf unit (name specification))
       , Just parsing <- [contextProducer (typing specification)]
-      , Just handle <- [entryMethod (specOf unit (input specification))] ]
+      , let parser = wrapTarget (name specification) ("() <$ Handlers." ++ parsing)
+      , steps <- case Prototype.bootPlan (effectPrototypes unit) (protoOf unit (name specification)) of
+          Prototype.Receive _ ->
+            [ "SDK.receiveSteps (" ++ wrapTarget (input specification) ("Handlers." ++ handle) ++ ") (" ++ parser ++ ")"
+            | Just handle <- [entryMethod (specOf unit (input specification))] ]
+          Prototype.Derive _ -> ["SDK.deriveSteps (" ++ parser ++ ")"] ]
     wrapTarget label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
       ++ " (SDK.withErrorHandlers Handlers.errorHandlers"
       ++ " (SDK.withAnchoredContexts Handlers.contextInjections"

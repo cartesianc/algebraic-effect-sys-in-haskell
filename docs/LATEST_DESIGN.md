@@ -266,7 +266,7 @@ typing = Stream { handler = Just "nextReading" }
 
 Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必填；`require :: Bool` 决定是否缓存最新值并生成 readT；`stream :: Bool` 声明持续资产，缓存历史，读取方法为 streamT。`stream = True` 当且仅当 Input 是 Stream，且必须同时 `require = True`。Context 的 request 角色与 RepeatRequest 已取消：驱动由消费方的 requests 或上游 Stream 表达。
 
-消费方 demands 以 requests／requires／streams "资产名" 引用资产，访问方式须对应生产方的声明：requires 需要 `require = True`，streams 需要 `stream = True`，挂在 Stream 下的资产不能 requests。Error 以 handles 声明处理的故障：RaisedBy 写 handler 名，ScopeFaultIn／ContextFaultIn 写 effect 名；关联 scope 沿 Input／requests 推导最近的 Scoped，必须恰好一个。Error 由 Root 的故障协议调用，不作为 Node target，其他 effect 的 Input 不能指向 Error。
+消费方 demands 以 requests／requires／streams "资产名" 引用资产，访问方式须对应生产方的声明：requires 需要 `require = True`，streams 需要 `stream = True`，持续资产不能 requests。Error 以 handles 声明处理的故障：RaisedBy 写 handler 名，ScopeFaultIn／ContextFaultIn 写 effect 名；关联 scope 沿 Input／requests 推导最近的 Scoped，必须恰好一个。Error 由 Root 的故障协议调用，不作为 Node target，其他 effect 的 Input 不能指向 Error。
 
 注册中的 EffectTyping 保存 handler 绑定，关联 Typing 只保存 SDK 的 EffectKind 类别标签，不把运行时 String 搬入类型级。只有 Context 的 asset 声明业务产物；原子句柄与 Pure 交出的 `[String]`、Stream 的原始输入 String 都不是业务产物。完成边界由 SDK 返回 Succ value 或 Failed failure，不含 Pending。
 
@@ -442,7 +442,7 @@ AST 组织链的启动次序，也为跨链来源提供因果可见性。Crawler
 
 #### 消费声明与读取权限
 
-同一消费者对同一资产的同一访问方式只能声明一次。requires "T" 或 streams "T" 授予读取权限，读取本身不刷新；requests "T" 只驱动，不授予读取权限；挂在 Stream 下的资产只由会话生产，不能 requests。Scoped 至多 requests 一个资源 Context。声明检查由生成器执行。
+同一消费者对同一资产的同一访问方式只能声明一次。requires "T" 或 streams "T" 授予读取权限，读取本身不刷新；requests "T" 只驱动，不授予读取权限；持续资产只由会话生产，不能 requests。Scoped 至多 requests 一个资源 Context。声明检查由生成器执行。
 
 #### 原子输出挂接与失败隔离
 
@@ -564,7 +564,7 @@ chained 按声明顺序执行，遇失败停止；parallel 并发执行，等待
 
 AST 只列候选，不写条件。gencode 将转折契约、选择读取路径和候选 NodeId 到构造器的关系保存为 WorkflowTree 的 AlternativeProto；分支契约目录保存在 EffectProto。
 
-选择读取自己驱动转折资产，相当于写了 `requests`：运行时先执行它的生产链并发布，再只启动匹配构造器的候选，其他候选不执行。挂在 Stream 下的持续资产由会话驱动，选择读取领取本次交付。选择阶段捕获的无 owner 绑定经 Handoff 交给候选，两段读取同一快照，其他调用的驱动不改写它。执行只在已装配的闭包间选择，不在链中间重组。
+选择读取自己驱动转折资产，相当于写了 `requests`：运行时先执行它的生产链并发布，再只启动匹配构造器的候选，其他候选不执行。持续资产由会话驱动，选择读取领取本次交付。选择阶段捕获的无 owner 绑定经 Handoff 交给候选，两段读取同一快照，其他调用的驱动不改写它。执行只在已装配的闭包间选择，不在链中间重组。
 
 选择读取有独立入口使用登记，以契约名登记末端，NodeId 为 alternative 路径加 [-1]，参与构图与 ScopeTree。validatePrototype 核对转折契约、构造器唯一及覆盖完整；执行 fold 与 --structure 使用同一原型匹配当前 AST，不一致时在业务前拒绝。
 
@@ -821,14 +821,14 @@ sdk/Framework/
 
 增加的语义集中在三处：
 
-1. Stream effect 提供持续来源；挂在它下面的 Context 声明 `stream = True`，会话每取得一份原始输入就调用一次 parser 逐条解析（Receive），写法与挂在原子句柄下的 Context 相同。`stream = True` 当且仅当 Input 是 Stream，且须同时 `require = True`；RepeatRequest 已取消，持续交付只由上游 Stream 驱动。生产方式只看资产自己的注册，不靠识别方法体里是 socket、event 还是 behavior，也不随别处是否有节点产出同一资产而改变。
+1. Stream effect 提供持续来源；挂在它下面的 Context 声明 `stream = True`，会话每取得一份原始输入就调用一次 parser 逐条解析（Receive），写法与挂在原子句柄下的 Context 相同。`stream = True` 当且仅当 Context 的 Input 链被持续驱动：直接 input 是 Stream（Receive），或链上有 `streams` demand、由那份持续资产的交付驱动（Derive，每条上游交付产出一条，生产链不挂载到 AST）；须同时 `require = True`。被驱动的链不能产出普通资产。RepeatRequest 已取消。生产方式只看资产自己的注册，不靠识别方法体里是 socket、event 还是 behavior，也不随别处是否有节点产出同一资产而改变。
 2. 持续资产按访问方式读取：`streams "T"` 声明持续消费并授予读取权限，handler 以 `require @(History 表示类型)` 取得本次交付为止的历史；`requires "T"` 只读最新一条（`require @表示类型`），不由交付驱动。`stream` 缓存历史，`require` 缓存最新值。读取本身不领取下一个增量。
 3. lifelong 的每个单元在本次执行领到订阅资产的新交付后 boot original-chain target；每次 target 调用仍有限完成，单元逐次重复；所需来源以 `end` 结束并排空后单元正常结束，全部单元结束后 lifelong 成功返回。含 lifelong 的程序中任何失败暂按临时规则终止整次运行。
 
 | 主题 | 本章所属规范 |
 | --- | --- |
 | 资产命名、Context 声明匹配、读取类型与 beforegen | [Stream 第 3 节](STREAM_LIFELONG.md#contracts) |
-| Receive 的推导与启动依赖 | [Stream 第 4 节](STREAM_LIFELONG.md#bootplan) |
+| Receive／Derive 的推导与启动依赖 | [Stream 第 4 节](STREAM_LIFELONG.md#bootplan) |
 | 消费摘要、lifelong 合法性与原型中的表示 | [Stream 第 5 节](STREAM_LIFELONG.md#static) |
 | 单元、就绪检查与有限完成边界 | [Stream 第 6 节](STREAM_LIFELONG.md#scheduling) |
 | 会话、完整历史、独立游标与 frame | [Stream 第 7 节](STREAM_LIFELONG.md#sessions) |

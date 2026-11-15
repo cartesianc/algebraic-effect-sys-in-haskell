@@ -2,7 +2,7 @@
 
 本文通过引用构成[主设计第 7 章](LATEST_DESIGN.md#stream)的完整规范。主设计负责架构地图，本页唯一维护 Stream 的匹配、交付和调度规则；实施记录在 [Next stages](NEXT_STAGES.md)，写法示例在[使用指南第五节](GUIDE.md#stream)。
 
-更新：2026-11-14。状态：已实现（Stage 3 第 1–6 批；Stage 2 改为 Stream 加 parser、取消 RepeatRequest；Stage 6 第一步：Stream 的正常结束 `end`、排空、单元结束与 lifelong 返回，见[第 9.4 节](#end)；会话历史按读取义务保留，见[第 7.1 节](#retention)）；当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，延期项见[第 11 节](#deferred)。
+更新：2026-11-15。状态：已实现（Stage 3 第 1–6 批；Stage 2 改为 Stream 加 parser、取消 RepeatRequest；Stage 6 第一步：Stream 的正常结束 `end`、排空、单元结束与 lifelong 返回，见[第 9.4 节](#end)；会话历史按读取义务保留，见[第 7.1 节](#retention)；由持续资产驱动的持续资产，见[第 4.2 节](#derive)）；当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，延期项见[第 11 节](#deferred)。
 
 本文手工记录 Stream、Context 与 lifelong 的匹配规则，作为代码生成、解释器和开发文档共同遵守的规范。下列规则与当前 SDK 一致；标明“延期”或“临时”的部分不是最终设计。
 
@@ -27,12 +27,12 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 | --- | --- |
 | Stream effect | 第六种 typing；绑定的 handler 每次取得一份原始输入（`String`），只由生产会话驱动；来源没有下一份输入时以 `end` 结束（[9.4](#end)） |
 | parser | 挂在 Stream 下的 Context 绑定的 handler：用 `raw` 读取会话本次取得的原始输入，返回表示类型的值 |
-| Context.stream | `True` 声明持续资产，缓存发布历史；只能挂在 Stream 下，且须同时 `require = True` |
+| Context.stream | `True` 声明持续资产，缓存发布历史；当且仅当它的 Input 链被持续驱动（挂在 Stream 下，或链上有 `streams` demand），且须同时 `require = True` |
 | Context.require | `True` 缓存最新值；读取已有绑定或交付视图，不生产；普通资产缺值按[Context 的等待与结束规则](LATEST_DESIGN.md#context)处理，持续交付沿用本专题协议 |
 | 持续资产 | `stream = True` 的资产：`streams` 读取 `History`，`requires` 读取最新一条，可以被 `streams` 订阅 |
-| `streams "T"` | 消费方声明以资产 T 的新交付驱动，同时取得读取权限；不是调用 parser 的语法 |
+| `streams "T"` | 声明以资产 T 的新交付驱动，同时取得读取权限；不是调用 parser 的语法。声明它的 effect 在 lifelong 挂载的消费链上，或在另一份持续资产的生产链上 |
 | lifelong | 为其单元订阅会话，在交付就绪时 boot original target |
-| BootPlan | 生成器按生产方注册推导的生产方式：当前只有 Receive，不是手写标签 |
+| BootPlan | 生成器按生产方注册推导的生产方式：Receive（Stream 驱动）或 Derive（另一份持续资产驱动），不是手写标签 |
 | 会话 | 一个边界内某持续资产的生产任务与完整发布历史 |
 | publication | 一次成功发布；保留值、出身和共享归属引用 |
 | 消费单元 | lifelong 下独立推进的有限控制程序 |
@@ -70,17 +70,21 @@ parser 没有另外的输入方法：`raw` 由会话本次取得的输入回答�
 
 ### 3.2 Context 声明的匹配表
 
-生产方式只看 Context 自己的注册：
+生产方式只看 Context 自己的注册。`stream` 必须与它的 Input 链一致：链被持续驱动时，每次驱动产出一个新值，结果就是一份持续资产；没有被持续驱动的链只产出普通资产。持续驱动有两种：直接 input 是 Stream（来源自己驱动），或 Input 链上某个 effect 声明了 `streams`（由那份持续资产的交付驱动，见 [4.2 节](#derive)）。
 
-| Context.input | stream | require | 结果 |
+| Context 的 Input 链 | stream | require | 结果 |
 | --- | --- | --- | --- |
-| Stream effect | `True` | `True` | 持续资产，Receive：Stream 单步＋parser |
-| Stream effect | `False` | 任意 | 报错：挂在 Stream 下的 Context 须声明 `stream = True` |
-| Stream effect | `True` | `False` | 报错：`stream = True` 需要 `require = True` |
-| Root 或普通 effect | `True` | 任意 | 报错：`stream = True` 只能挂在 Stream 下 |
-| Root 或普通 effect | `False` | 任意 | 普通单值资产 |
+| 直接 input 是 Stream | `True` | `True` | 持续资产，Receive：Stream 单步＋parser |
+| 直接 input 是 Stream | `False` | 任意 | 报错：挂在 Stream 下的 Context 须声明 `stream = True` |
+| 链上有 `streams "U"`（恰好一份资产） | `True` | `True` | 持续资产，Derive：U 每交付一条，执行一次 parser 及其 Input 链 |
+| 链上有 `streams "U"` | `False` | 任意 | 报错：被持续资产驱动的链每次交付产出一个值，须声明 `stream = True` |
+| 链上的 `streams` 指向多份资产 | 任意 | 任意 | 报错：一条生产链只由一份资产驱动 |
+| 直接 input 是 Stream，它的 Input 链上又有 `streams` | 任意 | 任意 | 报错：Stream 自己驱动，它的 Input 链不能再订阅 |
+| 没有 Stream，也没有 `streams` | `True` | 任意 | 报错：没有持续驱动，不能声明 `stream = True` |
+| 没有 Stream，也没有 `streams` | `False` | 任意 | 普通单值资产 |
+| 以上任一持续资产 | `True` | `False` | 报错：`stream = True` 需要 `require = True` |
 
-另外：Context 必须声明 parser；Stream 必须声明 handler；以 Stream 为 input 的必须恰好是一个 Context（它的 parser），其他 effect 不能直接取得原始输入。挂在 Stream 下的资产只由会话生产，消费方不能声明 `requests "T"`。只有直接 input 算数；Stream 下的 parser 不把 Stream 当作前驱执行。
+另外：Context 必须声明 parser；Stream 必须声明 handler；以 Stream 为 input 的必须恰好是一个 Context（它的 parser），其他 effect 不能直接取得原始输入。持续资产只由会话生产，消费方不能声明 `requests "T"`。Stream 下的 parser 不把 Stream 当作前驱执行；Derive 的 parser 与挂在原子句柄下的 Context 相同，`raw` 读取句柄本次交出的 list。
 
 ### 3.3 消费权限与读取类型
 
@@ -88,7 +92,7 @@ parser 没有另外的输入方法：`raw` 由会话本次取得的输入回答�
 
 - 只有持续资产的基础资产可以被订阅；订阅分支契约时报错，应订阅其基础资产。
 - 只有 Excu、Scoped 可以声明 streams。
-- 生产者不带 stream 类型的 demand：streams 是消费侧的标记，标出被持续资产驱动的普通 effect。下面挂着 Context 的 effect 是生产链的一环，所以声明 streams 的 effect 下面不能挂 Context，也不能出现在任何 Context 的 Input 链上，生成期拒绝。资产是 parser 从这一步的 raw 得到的值；由持续资产驱动的节点若再产出资产，就成了一份没有声明为 stream 的持续资产。生产链需要持续资产时用 `requires` 读最新一条。
+- 声明 streams 的 effect 被那份持续资产驱动，它的位置只有两种：在 lifelong 挂载的 target 的 original chain 上（消费，产出是副作用），或在一个 `stream = True` 的 Context 的 Input 链上（生产，产出是另一份持续资产，见 [4.2 节](#derive)）。被驱动的链不能产出普通资产：那会得到一份没有声明为 stream 的持续资产，生成期拒绝并提示声明 `stream = True`。同一个 effect 不能两种位置都占：生产链上的 effect 不挂载到 AST。普通资产的生产链需要持续资产时用 `requires` 读最新一条。
 - `requires "T"` 读取持续资产时，handler 用 `require @表示类型` 取得最新一条，不由交付驱动。
 
 读取类型按访问方式确定：streams 返回 `History 表示类型`，requires 返回最新一条；普通资产保持单值读取。`stream` 缓存历史，`require` 缓存最新值；两者是同一资产的不同结果形态，不是两个来源。若需要两个独立来源或独立持续能力，再细化为两个资产。分支契约投影本次交付的最新条目。读取历史另设方法（gen 已生成 `streamT`）的写法待定。
@@ -107,14 +111,15 @@ Excu／Scoped 交出的 `[String]` 是原子句柄的输出，不能把空 list 
 | BootPlan | 前提（只看生产方注册） | 生产步骤 |
 | --- | --- | --- |
 | Receive | Context 的直接 input 是 Stream，`stream = True` 且 `require = True` | Stream 单步取得原始输入 → parser 解析并发布 |
+| Derive | Context 的 Input 链上有 `streams "U"`，`stream = True` 且 `require = True` | 领取一条 U 的交付 → parser 沿 Input 链执行被驱动的句柄，解析并发布（见 [4.2 节](#derive)） |
 
-Stage 2 取消了 RepeatRequest：不在 Stream 下的 Context 不能声明持续资产，持续交付只由上游 Stream 驱动。原先用 RepeatRequest 表达的采样（StreamDemo 的心跳）改为 Stream 加 parser。
+Stage 2 取消了 RepeatRequest：持续交付只由持续的驱动产生，即上游 Stream，或（2026-11-15 起）另一份持续资产的交付；没有持续驱动的 Context 不能声明持续资产。原先用 RepeatRequest 表达的采样（StreamDemo 的心跳）改为 Stream 加 parser。
 
 不推导“观察既有原链”的生产方式：被观察的原链要持续产出，只能与 lifelong 并行，而并行兄弟互不可见；若改为观察排在前面的有限前驱，它只发布有限次。更重要的是，“是否已有别的原链生产 T”是全局事实，别处新增一个驱动节点就会让这里的生产方式悄悄改变。生产方式因此只看资产自己的注册，任何别处的改动都不会改变它。
 
 不成立的组合在生成期按 3.2 的匹配表报错，不在运行中猜测或退化为轮询。
 
-**启动依赖**：lifelong 会话的生产链（Stream 单步、parser 及其读取可达的方法）不能读取其他持续资产，否则首次交付要先等待另一个 stream，生成期拒绝。interpreter 托管的会话（8.3）不受此限。
+**启动依赖**：lifelong 会话的生产链（Stream 单步、parser 及其读取可达的方法）不能读取其他持续资产，否则首次交付要先等待另一个 stream，生成期拒绝。Derive 的生产链读取驱动它的那份资产除外：每一步在领取一条上游交付之后才执行。interpreter 托管的会话（8.3）不受此限。
 
 <a id="drives"></a>
 ### 4.1 socket、event、behavior 的写法
@@ -132,6 +137,71 @@ Stage 2 取消了 RepeatRequest：不在 Stream 下的 Context 不能声明持�
 - 外部 push callback 不能直接注册给 SDK，需要先转换成可阻塞读取的队列，再作为单步来源；通用回调适配本版延期（见第 11 节）。
 - StreamDemo 中，`TemperatureFeed`＋`TemperatureParser` 是 socket 写法，`HeartbeatClock`＋`Heartbeat` 是 behavior 写法。
 
+<a id="derive"></a>
+### 4.2 由持续资产驱动的持续资产（Derive）
+
+**代码长什么样。** LinesDemo 中，`Tally` 由 `TextLine` 驱动，下面挂着声明了 `stream = True` 的 Context，产出另一份持续资产 `RunningTotal`：
+
+    -- demo/LinesDemo/Effects.hs（节选）
+    EffectSpec
+      { name = "Tally"
+      , typing = Excu { handler = Just "tally" }
+      , input = "Root"
+      , demands = [streams "TextLine"]
+      }
+    EffectSpec
+      { name = "TallyParser"
+      , typing = Context { asset = Asset @Total "RunningTotal", parser = Just "parseTotal", require = True, stream = True }
+      , input = "Tally"
+      , demands = []
+      }
+    EffectSpec
+      { name = "ShowTotal"
+      , typing = Excu { handler = Just "showTotal" }
+      , input = "Root"
+      , demands = [streams "RunningTotal"]
+      }
+    EffectSpec
+      { name = "Report"
+      , typing = Excu { handler = Just "report" }
+      , input = "Root"
+      , demands = [requires "RunningTotal"]
+      }
+
+    -- demo/LinesDemo/Handlers.hs（节选）
+    instance TallyLayer m => TallyHandler m where
+      tally = do
+        received <- require @(History Line)
+        let sizes = [length text | Line text <- historyEntries received]
+        pure [show (length sizes), show (sum sizes)]
+
+    instance ParseTotalLayer m => ParseTotalHandler m where
+      parseTotal = do
+        fields <- raw
+        case fields of
+          [count, size] -> pure (Total (read count) (read size))
+          _ -> raise (ParseTotalError "the tally gives a line count and a character count")
+
+    -- demo/LinesDemo/AST.hs
+    ast = chained
+      [ chained [node "Announce"]
+      , lifelong [chained [node "PrintLine", node "ShowTotal"]]
+      , chained [node "Report"]
+      ]
+
+`tally` 与 `parseTotal` 是普通的 Excu handler 与 parser，没有新的 effect 类别、关键字或 handler 能力。`Tally` 不挂载到 AST：它是 `RunningTotal` 的生产链，由订阅它的 `ShowTotal` 启动，与 `LineFeed` 不挂载到 AST 相同。
+
+**为什么产出只能是持续资产。** 链上有 `streams` demand，这条链就由那份资产的交付驱动：每来一条执行一次，每次产出一个新值，结果是一串增量。它不能同时由消费方的 `requests` 驱动；若把产出当作普通资产，`streams` 的“被驱动”就落空，只剩下在被请求的时刻读一眼当时的历史，结果取决于时机。所以 `stream = True` 在这里是结构的结果，写出来是为了在源码里看得见，写成 `False` 由生成期拒绝。
+
+**规则。**
+
+- **生产**：进入 lifelong 时，被订阅的资产连同驱动它们的上游资产各得到一份会话。Derive 会话每领取一条上游交付执行一步：parser 沿 Input 链执行被驱动的句柄（句柄读到到这一条为止的上游历史），解析它交出的 list 并发布一条。一条上游交付恰好产出一条，没有“这一步不产出”；需要过滤时让表示类型自己带上（例如 `Maybe`），由下游判断。
+- **驱动**：一条生产链只由一份持续资产驱动，不再读取其他持续资产（与 target 的规则相同，见 [5.2 节](#static)）；派生关系成环时由 Input 与 demand 的环检查拒绝。可以逐级派生。
+- **结束**：只从上游往下传。上游结束并排空后，Derive 会话正常结束，订阅它的单元再排空、结束。被驱动的句柄是 Excu／Scoped，没有 `end`，不能自己提前结束；上游失败时它以同一个原因失败。
+- **读取**：`streams` 订阅与 `requires` 读最新一条都与 Receive 资产相同；不能 `requests`。Derive 资产没有 interpreter 托管的会话：驱动它的是订阅，它只在订阅它的 lifelong 内生产。读取位置必须在有这份会话的 lifelong 之内或之后，否则生成期拒绝。lifelong 之后读到它结束时的最新一条；逐条累积的派生资产因此可以把完整的结果交给后继。
+- **保留**：Derive 会话是上游会话的读取方，按历史读取，结束时离开（见 [7.1 节](#retention)）。上游的历史在它运行期间全部保留，另加派生资产自己的历史；没有“被驱动但只读最新一条”的声明。
+- **不提供**：跳过、提前结束、多份持续资产合并驱动一条链、缓冲策略与窗口。
+
 <a id="static"></a>
 ## 5. 静态结构与合法性
 
@@ -144,7 +214,7 @@ Stage 2 取消了 RepeatRequest：不在 Stream 下的 Context 不能声明持�
 1. lifelong 内每个挂载的 target 恰好订阅一个持续资产。
 2. 这些 target 的 original chain 不再读取（requires／streams）其他持续资产；否则执行结果取决于读取时刻。分支契约按其基础契约计入：读取所订阅资产的分支是同一资产，读取其他持续资产的分支同样被拒绝。多个来源的触发组合另行设计。
 3. 只有普通 requests／requires 的末端不能进入 lifelong；一次性准备放在外部 chained。streams 末端不能出现在 lifelong 之外。
-4. Stream、Context 不作为 target。
+4. Stream、Context 不作为 target；持续资产生产链上声明 streams 的 effect（Derive 的被驱动句柄）也不挂载到 AST，它在该资产的会话里执行。
 5. lifelong 不嵌套；lifelong 内不能有空分支。因为每个 target 都订阅，单元每条成功路径都至少领取一条新交付。
 6. 合法 Haskell 不自动等于结构可提取；未知高阶 effect、隐藏的 effect 循环等继续使用现有诊断。
 7. 会话生产步骤顺带发布的普通资产（例如 parser 链上 `requests` 驱动的辅助资产 X）随每条交付保存为伴随发布（见 7）。lifelong 内以生产步骤为来源读取这类资产的位置，必须由该会话的资产驱动：订阅它的 target，或以它为转折资产的选择读取；否则生成期拒绝，因为读到哪一步的产物将取决于调度。需要各单元共享同一个值时，在 lifelong 之前生产它。
@@ -160,16 +230,16 @@ lifelong 写入统一 Prototype，运行装配、来源分析与 `--structure` �
     LifelongProto
       { lifelongUnits         :: [NodeId]            -- 单元：直接子项；直接子项是 parallel 时为它的子项
       , lifelongSubscriptions :: [(NodeId, String)]  -- 每个挂载 target 订阅的资产
-      , lifelongSessions      :: [SessionProto] }    -- 被订阅的每个资产一份会话
+      , lifelongSessions      :: [SessionProto] }    -- 被订阅的资产及驱动它们的上游资产各一份会话，上游在前
 
     SessionProto { sessionAsset :: String, sessionPlan :: BootPlan, sessionMounts :: [NodeId] }
-    BootPlan = Receive String                       -- 记录 Stream 的注册名；RepeatRequest 已取消
+    BootPlan = Receive String | Derive String       -- Receive 记 Stream 的注册名，Derive 记驱动它的持续资产
 
-- 会话挂载 NodeId 为 lifelong 路径加 `[-1, 会话序号, 步骤]`：步骤 0 是 Stream 单步、步骤 1 是 parser。挂载以 `SessionChain` 角色进入 `protoChains`，参与构图与 ScopeTree。
-- `protoSessions` 为每个 Receive 资产登记一份 interpreter 托管的会话，挂载为 `[-2, 序号, 步骤]`；它不属于 AST，不是任何读取点的可见前驱。
+- 会话挂载 NodeId 为 lifelong 路径加 `[-1, 会话序号, 步骤]`：步骤 0 是 Stream 单步、步骤 1 是 parser；Derive 只有步骤 0（parser）。挂载以 `SessionChain` 角色进入 `protoChains`，参与构图与 ScopeTree。
+- `protoSessions` 为每个 Receive 资产登记一份 interpreter 托管的会话，挂载为 `[-2, 序号, 步骤]`；它不属于 AST，不是任何读取点的可见前驱。Derive 资产没有托管会话。
 - 可见性：lifelong 的会话挂载先于它的全部单元。来源分析中，会话挂载按各消费单元的后续读取需求分别作为根分析，以进入 lifelong 时的交接（例如外层 alternative 选择时捕获的值）为已捕获绑定；运行时每个生产步骤也从这份交接开始（见 8.1）。单元的执行以订阅资产的交付作为已捕获绑定，出身是会话的生产步骤；单元读取生产步骤的其他普通发布时，读到的是所处理交付那一步的发布（伴随发布，见 7）。会话挂载的各个成功出口不合并：一条交付的伴随发布对应一次成功的生产步骤（Stream 单步与 parser 各一个成功出口），单元按每种交付状态分别分析。Stage 2 取消 lifelong 内的显式 request 后，不再出现“没有伴随发布”的交付状态。某条交付的伴随发布中没有辅助资产 X 时，单元中读取 X 的位置不补产，等待它的发布；需要这个值时按第 5.2 节第 7 条，由该会话的资产驱动读取位置，或在 lifelong 之前生产它。lifelong 有一个正常出口：进入 lifelong 之前可见的发布，以及单元内可能发布后继所读契约的位置，都交给后继。后继按每个来源最新一次发布读取（见 9.4）；同一单元内互斥位置发布同一契约时作为并存候选，运行时按轮次取最新，其余多来源情形仍按来源唯一规则报错。
 - 分析裁剪：以 `lifelongUnits` 确定单元，不穿透单元内的 chained、alternative 或 parallel。每个生产挂载保留本单元可能读取的契约及生产链自身的读取依赖，成功出口再按单元相关契约投影、去重，然后逐步组合 Receive 的步骤和各会话状态。仍分析全部会话，避免遗漏其他会话造成的来源冲突；不把成功出口取并集。生产链的 read／drive 事实独立累计。
-- 读取点来源新增 `FromSession`：持续资产在没有本次交付时由 interpreter 托管的会话交付，不查询普通来源表。
+- 读取点来源新增 `FromSession`：持续资产在没有本次交付时由 interpreter 托管的会话交付，不查询普通来源表。Derive 资产的读取点必须在有这份会话的 lifelong 之内或之后。
 - `--structure` 在 Workflow 中列出每个 lifelong 的单元、会话（生产方式与挂载）和订阅，并单独列出 interpreter 会话。
 
 <a id="scheduling"></a>
@@ -242,16 +312,16 @@ monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同
 <a id="retention"></a>
 ### 7.1 会话保留多少发布
 
-历史只通过持续资产读取：`streams` 取得 `History`，`requires` 只取最新一条。`streams` 只能声明在 lifelong 内挂载的 target 的 original chain 上（生产者不带 stream 类型的 demand，见 [3.3 节](#contracts)），所以历史的存续不超过订阅它的单元。会话据此只保留仍有读取义务的发布，任何一次读取的结果都不因此改变：
+历史只通过持续资产读取：`streams` 取得 `History`，`requires` 只取最新一条。`streams` 只出现在 lifelong 挂载的 target 的 original chain 上，或同一个 lifelong 里 Derive 会话的生产链上（见 [3.3 节](#contracts)），所以历史的存续不超过这个 lifelong 里读取它的单元与会话。会话据此只保留仍有读取义务的发布，任何一次读取的结果都不因此改变：
 
 | 会话的读取方 | 会话保留 |
 | --- | --- |
-| 还有按历史读取（`streams` 订阅）的单元在运行 | 全部发布 |
+| 还有按历史读取的读取方在运行：`streams` 订阅的单元，或由它驱动的 Derive 会话 | 全部发布 |
 | 只剩读最新一条的单元（例如以它为转折资产的选择读取） | 这些单元尚未领取的积压，加上最新一条 |
 | 没有单元读取：订阅它的单元都已结束、lifelong 已返回，或 lifelong 之外用 `requires` 读取的来源 | 最新一条 |
 
-- **读取方登记**：进入 lifelong 时，每个会话按 Prototype 登记它的读取方：单元内有 `streams` 订阅的按历史读取，只有其他静态读取点或选择读取的只读最新一条，没有读取点的单元不登记，也不能从这个会话领取。登记完成之前的发布全部保留。
-- **离开**：单元结束（所需来源结束并排空、失败或取消）时离开它的各个会话，为它保留的历史与积压随即放掉。这是“读取方不再读取”的唯一入口，消费方主动结束单元时也经过它。
+- **读取方登记**：进入 lifelong 时，每个会话按 Prototype 登记它的读取方：单元内有 `streams` 订阅的按历史读取，只有其他静态读取点或选择读取的只读最新一条，没有读取点的单元不登记，也不能从这个会话领取。由这份资产驱动的 Derive 会话同样登记为按历史读取的读取方，游标交给它的生产任务。登记完成之前的发布全部保留。
+- **离开**：单元结束（所需来源结束并排空、失败或取消）时离开它的各个会话，为它保留的历史与积压随即放掉。这是“读取方不再读取”的唯一入口，消费方主动结束单元时也经过它。Derive 会话在生产任务退出时（上游结束并排空、失败或被停止）离开上游。
 - **不停止生产**：离开只决定保留多少数据。读取方都已离开的来源仍照常生产到 lifelong 返回，每次发布覆盖为最新一条；是否提前停止它属于消费方结束的规则，尚未确定。
 - **伴随发布**只随交付领取：全部读取方都领取过的那一条，其伴随发布不再保留，与条目是否保留无关。
 - **积压不合并**：每条发布仍然交付一次，保留规则不丢弃尚未领取的交付。
@@ -264,6 +334,7 @@ monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同
 ### 8.1 生产路径
 
     Receive：Stream 单步取得原始输入 → 安装为 parser 的本次输入（raw） → parser 解析并发布一次 → 下一步
+    Derive：领取一条上游交付 → 到这一条为止的上游历史作为本步视图 → parser 沿 Input 链执行被驱动的句柄，解析并发布一次 → 下一步
 
 parser 的包装发布一次；会话不再次发布返回值，也不再调用一次 parser。每一步是一次独立的受控调用（自己的 Origin 与捕获环境），会话以发布写入历史。lifelong 的会话保存进入 lifelong 时的交接，每一步从它的新副本开始：外层已经捕获的值（例如 alternative 选择时读到的配置）在生产端与消费端一致，生产步骤不会另行生产一份。interpreter 托管的会话没有交接。
 
@@ -284,6 +355,8 @@ lifelong 外的普通驱动按原有 origin 发布，不因类型相同就广播
 普通 `requires "T"` 只执行一次消费，不进入 lifelong，handler 取得最新一条。本次调用已有视图时读取它；否则由 interpreter 托管的会话（`protoSessions`）交付：会话在第一次需要时启动，读取至少等到一条发布，把当时的最新一条捕获为本次视图。会话保持到 interpreter 退出，并一直生产；它没有按历史读取的读取方，只保留最新一条（见 [7.1 节](#retention)）。后续调用取得当时的最新一条，同一调用已经捕获的视图保持不变。
 
 来源已经结束时，读取取得最后一条，不重新启动来源；来源一条都没有发布就结束时没有可读的值，报 `ContextNotInitialized`，不继续等待。
+
+Derive 资产没有托管会话，不能在没有它的 lifelong 之外读取（见 [4.2 节](#derive)）。
 
 诊断、自动收尾与 close 期间不启动会话。
 
@@ -335,11 +408,11 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
     -- demo/LinesDemo/AST.hs
     ast = chained
       [ chained [node "Announce"]
-      , lifelong [chained [node "PrintLine"]]
+      , lifelong [chained [node "PrintLine", node "ShowTotal"]]
       , chained [node "Report"]
       ]
 
-注册、parser、消费方的 handler 与 AST 的写法都不变；不调用 `end` 的 Stream 行为与此前相同。LinesDemo 读完四行后 `end`，`PrintLine` 处理完这四行，`Report` 执行，输入文件在运行结束时关闭。parser、Excu、Scoped 的 Layer 里没有 `Ends`，在它们的方法体里写 `end` 由 GHC 拒绝。
+注册、parser、消费方的 handler 与 AST 的写法都不变；不调用 `end` 的 Stream 行为与此前相同。LinesDemo 读完四行后 `end`，`PrintLine` 与 `ShowTotal`（由派生资产驱动，见 [4.2 节](#derive)）处理完这四行，`Report` 执行，输入文件在运行结束时关闭。parser、Excu、Scoped 的 Layer 里没有 `Ends`，在它们的方法体里写 `end` 由 GHC 拒绝。
 
 **三个出口。** Stream handler 的方法体有三个出口：返回一份原始输入、`raise` 失败、`end` 正常结束。结束由来源在取下一份输入的这一步自己报告，不另设“是否结束”的查询方法。`raw` 不在其中：它是下一层（parser）读取第一种出口的方式。
 
@@ -362,7 +435,7 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 | 来源已结束，游标到达末尾 | “已耗尽”（内部结果，不是失败） |
 | 来源失败或运行被取消 | 沿原有的故障／取消协议 |
 
-排空指会话保留并允许交付全部积压；同一会话的多个单元各自排空、各自结束。它不承诺每个单元都消费完所有来源的积压：多来源单元可能因为另一个来源先耗尽而退出。游标前进只表示领取，不表示处理完成。
+排空指会话保留并允许交付全部积压；同一会话的多个单元各自排空、各自结束。它不承诺每个单元都消费完所有来源的积压：多来源单元可能因为另一个来源先耗尽而退出。Derive 会话是上游的一个读取方：上游结束后它照常排空，然后自己正常结束，订阅它的单元由此继续排空。游标前进只表示领取，不表示处理完成。
 
 **单元结束。** 单元要领取某个资产的交付、而它已耗尽时，这个位置不 boot，也不伪造一次节点成功，单元正常结束：
 
@@ -414,6 +487,7 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 | `protoSessions`、启动环检查、来源分析 | [Gen/Build.hs](../sdk/Framework/Gen/Build.hs)、[Gen/Build/Sources.hs](../sdk/Framework/Gen/Build/Sources.hs)、[Prototype/Query.hs](../sdk/Framework/Prototype/Query.hs)（`finiteSessions`、`bootPlan`） |
 | History 视图 | [History.hs](../sdk/Framework/Language/History.hs) |
 | 会话状态、历史、游标、读取方登记与保留范围 | [Session.hs](../sdk/Framework/Runtime/Session.hs) |
+| Derive 的推导、会话集合、生产步骤与上游游标的交接 | [Prototype/Query.hs](../sdk/Framework/Prototype/Query.hs)（`drivingAssets`、`bootPlan`、`sessionAssets`）、[Gen/Lower.hs](../sdk/Framework/Gen/Lower.hs)、[Runtime.hs](../sdk/Framework/Runtime.hs)（`DeriveSteps`）、[Session.hs](../sdk/Framework/Runtime/Session.hs)（`feedSession`）、[Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
 | 会话登记、Origin 清除 | [Graph.hs](../sdk/Framework/Runtime/Graph.hs) |
 | 生产任务、DeliveryFrame、交付视图的交接 | [Runtime.hs](../sdk/Framework/Runtime.hs) |
 | 视图读取、最新值投影（`latestContext`）、parser 输入、会话发布路由 | [App.hs](../sdk/Framework/Runtime/App.hs)、[Context.hs](../sdk/Framework/Runtime/Context.hs) |
@@ -433,4 +507,4 @@ ScopeTree 独立构建并保持无环；订阅与回调关系不作为 scope 父
 
 本仓库按约定只做普通编译、生成结果审阅和示例观察，不新增测试框架、负例或穷举门槛。已有验证范围概述见 [Next stages](NEXT_STAGES.md#baseline)，逐次观察记录保留在 Git 历史。LSP 仓库的外部穷举模型尚未扩展到 Stream／lifelong。
 
-本版明确延期：来源结束后的资源清理与 Stream close、消费方提前退出（例如只取前若干条）及由此提前停止无人读取的来源、历史的窗口与容量上限、lifelong 的局部失败（当前由 9.1 的临时规则代替）、历史资源精细关闭与回收、嵌套 lifelong、多个持续来源组合触发一个 target、自动重试、时间周期声明、容量背压、任意外部 push callback 注册和跨 interpreter 存续。已有阻塞事件／队列读取、socket 接收及主动采样可作为单步来源（写法见 [4.1 节](#drives)）；不据此宣称自动适配所有外部回调 API。其中与结束和资源存续相关的项目转入[下一阶段](NEXT_STAGES.md#stages)。
+本版明确延期：来源结束后的资源清理与 Stream close、消费方提前退出（例如只取前若干条）及由此提前停止无人读取的来源、历史的窗口与容量上限、派生持续资产的跳过与提前结束、“被驱动但只读最新一条”的声明、lifelong 之外的派生会话、lifelong 的局部失败（当前由 9.1 的临时规则代替）、历史资源精细关闭与回收、嵌套 lifelong、多个持续来源组合触发一个 target、自动重试、时间周期声明、容量背压、任意外部 push callback 注册和跨 interpreter 存续。已有阻塞事件／队列读取、socket 接收及主动采样可作为单步来源（写法见 [4.1 节](#drives)）；不据此宣称自动适配所有外部回调 API。其中与结束和资源存续相关的项目转入[下一阶段](NEXT_STAGES.md#stages)。
