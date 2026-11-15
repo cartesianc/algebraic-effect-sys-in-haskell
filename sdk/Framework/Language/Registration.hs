@@ -36,7 +36,7 @@ data EffectTyping
   -- handles 按错误类型匹配；作用的 scope 由 Input 链上最近的 Scoped 推导，不手写连接。
   | Error { detect :: Maybe String, resolve :: Maybe String, handles :: [Handles] }
   -- Context 只有一个 parser handler，产出资产的表示类型。require = True 缓存最新值，
-  -- stream = True 还缓存历史；stream 当且仅当 input 是 Stream，并且要求 require = True。
+  -- stream = True 还缓存历史；Input 链由 Stream 或 streams demand 持续驱动时必须为 True，且要求 require = True。
   -- gen 按资产名生成 getT（驱动 parser）、readT 或 streamT（读取缓存）。
   | Context { asset :: Asset, parser :: Maybe String, require :: Bool, stream :: Bool }
   -- 持续生产节点。handler 每次调用取得一份原始输入（String），SDK 负责反复调用；

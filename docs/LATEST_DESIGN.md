@@ -741,7 +741,8 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 <a id="sdk-layout"></a>
 ### SDK 的职责与阅读顺序
 
-SDK 按[四层](#compiler)组织，gen 居中：
+SDK 按[四层](#compiler)组织，gen 居中。Cabal 的 `common runtime-program` 集中维护各示例共用的运行模块与依赖；`effect-codegen` 保留独立的编译器模块清单，避免每个示例复制一份 SDK 目录。生成源码与临时产物的保留边界见[指南](GUIDE.md#commands)。
+
 
 ```text
 sdk/Framework/

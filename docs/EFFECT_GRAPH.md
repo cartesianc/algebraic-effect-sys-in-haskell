@@ -223,7 +223,7 @@ generatedPrototype :: SDK.Prototype MethodGen
 
 ## 内容缓存与重跑边界
 
-每次 gencode 仍加载声明并读取 Handlers 快照；结构分析和执行副本共用该快照，顶层检查与资产目录另用 GHC 名称解析同一快照，每次执行。`Generated/.scope-cache` 保存三项：输入 key、纯 `Prototype String`、已经渲染的 Haskell 源码。key 精确比较完整 `PrototypePlan`、规范化方法结构及构图相关的 SDK 源码：`Prototype.hs` 与 `Prototype/` 下的 Types、Graph、Query、Validate，`Gen/` 下的 Lower、Demand、Names、Bind、Build、Build/Graph、Build/Sources、Emit/Prototype，`Language/Registration.hs`、`Language/AST.hs` 和 `Recursion.hs`；列表在 [Framework.Gen](../sdk/Framework/Gen.hs) 的 `structureSources`。不用 mtime 判断命中，也不加载或执行 `Generated.Program` 读取缓存。
+每次 gencode 仍加载声明并读取 Handlers 快照；结构分析和执行副本共用该快照，顶层检查与资产目录另用 GHC 名称解析同一快照，每次执行。`Generated/.scope-cache` 保存三项：输入 key、纯 `Prototype String`、已经渲染的 Haskell 源码。key 精确比较完整 `PrototypePlan`、规范化方法结构及构图相关的 SDK 源码：`Prototype.hs` 与 `Prototype/` 下的 Types、Graph、Query、Validate，`Gen/` 下的 Lower、Sessions、Demand、Names、Bind、Build、Build/Graph、Build/Sources、Emit/Prototype，`Language/Registration.hs`、`Language/AST.hs` 和 `Recursion.hs`；列表在 [Framework.Gen](../sdk/Framework/Gen.hs) 的 `structureSources`。不用 mtime 判断命中，也不加载或执行 `Generated.Program` 读取缓存。
 
 key 未变时复用纯原型和渲染文本，仍运行 `validatePrototype`、`checkDriven` 及源码资产检查；首次没有 Handlers 时仍按原协议跳过驱动检查、先提供契约。原子业务 IO 的修改若不改变方法结构，可复用原型，同时更新业务包装副本及源码指纹。每份生成文件都先比较完整内容，内容相同就不写回；这减少结构重算和无变化文件写入，不等于跳过整条生成命令，也不是逐方法热点生成、文件监听或运行中热重载。
 

@@ -223,6 +223,18 @@ cabal run effect-codegen -- workflow FileDemo
 
 gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提取 handler 方法体的读取形状、构图、输出源码，最后用 GHC 类型检查业务模块与输出并检查顶层白名单；任何一步报错都不写回 Generated，也不调用业务 handler。各阶段做什么、报告哪些错误见[编译流水线](LATEST_DESIGN.md#generation)。缓存命中只复用纯构图结果，其余阶段仍会执行，内容未变的文件不会重写。详见[生成缓存边界](EFFECT_GRAPH.md#内容缓存与重跑边界)。
 
+### 哪些文件需要保留
+
+| 文件 | 用途与清理边界 |
+| --- | --- |
+| Types、Effects、Handlers、AST／Workflow、Main | 手写业务源码，持续维护 |
+| `Generated/Effects.hs`、`Handlers.hs`、`Program.hs`、`Assets.hs` | gen 输出的可审查源码，随项目提交，供编译、HLS 和结构查看使用；不作为临时文件删除 |
+| `Generated/.scope-cache` | 可删除的结构缓存；下次 gencode 重建，不影响已生成源码 |
+| `dist-newstyle/` | 可删除的 Cabal 构建产物和缓存；下次构建重建 |
+| 各 demo 在 `.gitignore` 中列出的输出文件／目录 | 示例运行产物，可删除后重跑；输入样例和源码不是输出 |
+
+Cabal 中七个可执行示例通过 `common runtime-program` 共用 SDK 运行模块与依赖清单，各 executable 只列自己的业务模块和附加依赖。`effect-codegen` 单独列编译器模块，保持 gen 与 runtime 的分工。目录职责与源码入口见[SDK 的职责与阅读顺序](LATEST_DESIGN.md#sdk-layout)。
+
 ### runtime：执行已经生成的程序
 
 ```sh
