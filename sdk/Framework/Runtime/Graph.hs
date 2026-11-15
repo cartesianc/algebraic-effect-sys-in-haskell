@@ -83,7 +83,7 @@ newRuntimeGraph prototype scopes = do
   coordinator <- case scopes of
     first : _ -> readIORef (scopeCoordinator first)
     [] -> newMVar ()
-  frame <- newExecutionFrame coordinator Nothing
+  frame <- newExecutionFrame coordinator Nothing Nothing
     [chainNode chain | chain <- protoChains prototype, chainRole chain /= SessionChain]
   RuntimeGraph (PrototypeReference prototype) scopes frame
     <$> newIORef [] <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
@@ -103,19 +103,26 @@ configureRuntimeScopes graph = case runtimePrototype graph of
     forM_ (runtimeScopes graph) $ \family ->
       writeIORef (scopeReachable family) (reachableInstance graph)
 
--- 在 scope 协调锁内只读进度及权威发布。候选记录可能出处，实际生产身份决定匹配；
--- 同一节点多次发布只留下当前一份，读到同一生产的后继才保留同一个实例。
+-- 待用查询 v2（2026-11-16）：在 scope 协调锁内只读进度、发布及保留视图。
+-- 本帧/子帧继续按已领取的身份匹配；轮帧另考虑所属 lifelong 之外的合法后继。
+-- 根帧中的同边界未来轮次不是旧轮实例的保活理由，scopeFrame 和参数生产身份不提升。
 reachableInstance :: RuntimeGraph environment cause -> ScopeInstance environment cause -> IO Bool
 reachableInstance graph slot = case runtimePrototype graph of
   PrototypeReference prototype -> do
-    views <- framePendingViews (scopeFrame slot)
-    origins <- readIORef (runtimeOrigins graph)
-    assets <- readIORef (runtimeAssets graph)
+    local <- framePendingViews (scopeFrame slot)
+    following <- case frameBoundary (scopeFrame slot) of
+      Nothing -> pure []
+      Just boundary -> do
+        root <- framePendingViews (runtimeRootFrame graph)
+        pure [(filter (precedes (protoWorkflow prototype) boundary) pending, delivered)
+          | (pending, delivered) <- root]
+    publications <- readPublications graph
     instances <- concat <$> mapM (readMVar . scopeInstances) (runtimeScopes graph)
     snapshots <- forM instances $ \instance' -> do
       values <- scopeBindings <$> readIORef (scopeRecord instance')
       pure (instance', values)
-    let candidates = [(opening, delivered) | (pending, delivered) <- views, opening <- protoScopeOpenings prototype
+    let candidates = [(opening, delivered) | (pending, delivered) <- local ++ following
+          , opening <- protoScopeOpenings prototype
           , openingNode opening `elem` pending, openingScope opening == scopeName (scopeFamily slot)]
         matches instance' delivered opening = all (matchesInput delivered opening) (scopeInputs instance')
         matchesInput delivered opening (ScopeInput source production) = case lookup source (openingSources opening) of
@@ -130,17 +137,26 @@ reachableInstance graph slot = case runtimePrototype graph of
                    , parentOpening <- protoScopeOpenings prototype
                    , openingNode parentOpening == openingNode opening
                    , openingScope parentOpening == scopeName (scopeFamily parent)]
-            | otherwise -> any (matchesPublication delivered source production) nodes
-        matchesPublication delivered source production node =
+            | all (outsideLifelong (runtimePrototype graph) (openingNode opening)) nodes ->
+                -- 后继的跨轮互斥候选先沿真实读取规则选最新，再比 ActivationId；
+                -- 不能逐候选 any 匹配，让早先分支已被覆盖的参数继续保活。
+                case selectPublication (runtimePrototype graph) (openingNode opening) source
+                  [value | node <- nodes
+                    , Just value <- [publicationAt (runtimePrototype graph) publications (openingNode opening) source node]] of
+                  Right (Just value) -> bindingProduction value == Just production
+                  _ -> False
+            | otherwise -> any (matchesPublication delivered (openingNode opening) source production) nodes
+        -- 本链生产与已有捕获的候选仍保守匹配；本轮固定交付优先于后台的新发布。
+        matchesPublication delivered reader source production node =
           case [captured | (publishedAt, context, captured) <- delivered, publishedAt == node, context == source] of
             captured : _ -> captured == production
-            [] -> case lookup node origins >>= \origin -> lookup (origin, source) assets of
+            [] -> case publicationAt (runtimePrototype graph) publications reader source node of
               Just value -> bindingProduction value == Just production
               Nothing -> False
     pure (any (\(opening, delivered) -> matches slot delivered opening) candidates)
 
 -- 节点退休后只检查其开启位置及 ScopeTree 祖先。预约在进度写入的锁外进行，
--- 业务 close 失败留作汇总；原生异常（包括取消）仍停止后续执行。
+-- 业务 close 失败和普通 IO 异常留作汇总；只有取消停止后续执行。
 collectRuntimeScopes :: RuntimeGraph environment cause -> [NodeId] -> IO ()
 collectRuntimeScopes _ [] = pure ()
 collectRuntimeScopes graph retired = case runtimePrototype graph of
@@ -179,7 +195,7 @@ nextSequence counter = atomicModifyIORef' counter (\previous -> (previous + 1, p
 -- 同一挂载的执行彼此先后（有限 AST 只执行一次，重复单元与会话步骤逐次执行）；
 -- 被替换的 Origin 不再能经来源表读到，其无归属发布随之移出，避免重复执行累积。
 newOrigin :: RuntimeGraph environment cause -> NodeId -> IO Origin
-newOrigin graph node = do
+newOrigin graph node = withFrameLock (runtimeRootFrame graph) $ do
   origin <- Origin node <$> nextSequence (runtimeOriginSequence graph)
   replaced <- atomicModifyIORef' (runtimeOrigins graph) $ \origins ->
     let updated = (node, origin) : filter ((/= node) . fst) origins
@@ -190,17 +206,19 @@ newOrigin graph node = do
 -- 新 frame 开始前移出该子树上一次执行的 Origin：本次没有执行的位置不能读到上一次的普通产物。
 -- 移出的发布按位置与来源保留最新一份，供 lifelong 结束后的后继读取（require 读最新值）。
 resetOrigins :: RuntimeGraph environment cause -> NodeId -> IO ()
-resetOrigins graph prefix = do
-  removed <- atomicModifyIORef' (runtimeOrigins graph) $ \origins ->
-    let (dropped, kept) = (filter selected origins, filter (not . selected) origins)
-    in length kept `seq` (kept, map snd dropped)
+resetOrigins graph prefix = withFrameLock (runtimeRootFrame graph) $ do
+  origins <- readIORef (runtimeOrigins graph)
   assets <- readIORef (runtimeAssets graph)
-  let carried = [((originNode origin, source), value) | ((origin, source), value) <- assets, origin `elem` removed]
+  let removed = [origin | (node, origin) <- origins, prefix `isPrefixOf` node]
+      kept = [(node, origin) | (node, origin) <- origins, not (prefix `isPrefixOf` node)]
+      carried = [((originNode origin, source), value) | ((origin, source), value) <- assets, origin `elem` removed]
+  -- 先建立后继保留，再撤销当前来源；整个交接与 scope 关闭预约共用协调锁。
+  -- Binding / ActivationId / owner 不变，也不使单元内读取看到上一轮。
   atomicModifyIORef' (runtimeRetained graph) $ \retained ->
     let updated = carried ++ [entry | entry@(key, _) <- retained, key `notElem` map fst carried]
     in length updated `seq` (updated, ())
+  length kept `seq` writeIORef (runtimeOrigins graph) kept
   dropPublications graph removed
-  where selected = (prefix `isPrefixOf`) . fst
 
 dropPublications :: RuntimeGraph environment cause -> [Origin] -> IO ()
 dropPublications _ [] = pure ()
@@ -251,7 +269,7 @@ resolveDefinition (PrototypeReference prototype) boot = do
 -- 先写资产表再换信号：等待者醒来重新读取时一定能看到这次发布。
 publishAsset :: RuntimeGraph environment cause -> Origin -> String
              -> ScopeBinding environment cause -> IO ()
-publishAsset graph origin source value = uninterruptibleMask_ $ do
+publishAsset graph origin source value = withFrameLock (runtimeRootFrame graph) $ do
   atomicModifyIORef' (runtimeAssets graph) $ \assets ->
     let key = (origin, source)
         updated = (key, value) : filter ((/= key) . fst) assets
@@ -300,35 +318,56 @@ contextMayPublish graph frame origin source = case runtimePrototype graph of
 -- 生成期只在同一单元的互斥位置之间允许多个候选；它们按轮次先后发布，取 Origin 序号最大的一份。
 readVisibleAsset :: RuntimeGraph environment cause -> Origin -> String
                  -> IO (Either ContextFault (Maybe (ScopeBinding environment cause)))
-readVisibleAsset graph origin source = do
-  origins <- readIORef (runtimeOrigins graph)
-  assets <- readIORef (runtimeAssets graph)
-  retained <- readIORef (runtimeRetained graph)
+readVisibleAsset graph origin source = withFrameLock (runtimeRootFrame graph) $ do
+  publications@(Publications _ assets _) <- readPublications graph
   let reader = originNode origin
-      current node = lookup node origins >>= \produced -> lookup (produced, source) assets
-      carried node
-        | outsideLifelong node = lookup (node, source) retained
-        | otherwise = Nothing
-      outsideLifelong node = case runtimePrototype graph of
-        PrototypeReference prototype -> or [not (boundary `isPrefixOf` reader)
-          | (boundary, _) <- workflowLifelongs (protoWorkflow prototype), boundary `isPrefixOf` node]
       candidates = case sourcePlan (runtimePrototype graph) reader source of
         FromOwnChain -> [value | Just value <- [lookup (origin, source) assets]]
-        -- 会话生产步骤反复执行，挂载的当前 Origin 不对应消费者所处理的交付；
-        -- 这些发布随交付作为伴随发布交给单元，这里不再读取。
+        -- 会话普通伴随值只由固定交付读取，不能从后台步骤的最新 Origin 读取。
         FromChains nodes -> [value | node <- nodes, node `notElem` runtimeSessionMounts graph
-          , Just value <- [maybe (carried node) Just (current node)]]
-        -- 会话交付不经普通来源表。
+          , Just value <- [publicationAt (runtimePrototype graph) publications reader source node]]
         FromSession -> []
-      sequenceOf = originSequence . executionOrigin . bindingOrigin
-  pure $ case candidates of
-    [] -> Right Nothing
-    [value] -> Right (Just value)
-    many | all (outsideLifelong . originNode . executionOrigin . bindingOrigin) many ->
-      Right (Just (snd (maximumOn many)))
-      where maximumOn values = foldr1 (\left right -> if fst left >= fst right then left else right)
-              [(sequenceOf value, value) | value <- values]
-    _ -> Left (AmbiguousContextBinding source)
+  pure (selectPublication (runtimePrototype graph) reader source candidates)
+
+-- 只在共同协调锁内取得一致的发布快照；scope 待用回调已持锁，不重复获取。
+-- 这是本次查询的视图，不另建资产表，也不保留完整历史。
+data Publications environment cause = Publications
+  [(NodeId, Origin)]
+  [((Origin, String), ScopeBinding environment cause)]
+  [((NodeId, String), ScopeBinding environment cause)]
+
+readPublications :: RuntimeGraph environment cause -> IO (Publications environment cause)
+readPublications graph = Publications <$> readIORef (runtimeOrigins graph)
+  <*> readIORef (runtimeAssets graph) <*> readIORef (runtimeRetained graph)
+
+-- 实际读取与待用判断共用：本位置当前发布优先，只有 lifelong 外的合法读取才用保留值。
+-- 来源许可由调用方的 protoSources / openingSources 给出；本函数不放宽可见性。
+publicationAt :: PrototypeReference -> Publications environment cause -> NodeId -> String -> NodeId
+              -> Maybe (ScopeBinding environment cause)
+publicationAt prototype (Publications origins assets retained) reader source node =
+  case lookup node origins >>= \origin -> lookup (origin, source) assets of
+    Just value -> Just value
+    Nothing | outsideLifelong prototype reader node -> lookup (node, source) retained
+    Nothing -> Nothing
+
+outsideLifelong :: PrototypeReference -> NodeId -> NodeId -> Bool
+outsideLifelong (PrototypeReference prototype) reader node =
+  any (\(boundary, _) -> boundary `isPrefixOf` node && not (boundary `isPrefixOf` reader))
+    (workflowLifelongs (protoWorkflow prototype))
+
+-- 只在已证明可并存的跨轮候选中选最新的 Origin；不能让“还有旧候选”保活已被替换的实例。
+-- 普通并存来源仍报歧义；不会按并行完成时序任选一个。
+selectPublication :: PrototypeReference -> NodeId -> String -> [ScopeBinding environment cause]
+                  -> Either ContextFault (Maybe (ScopeBinding environment cause))
+selectPublication _ _ _ [] = Right Nothing
+selectPublication _ _ _ [value] = Right (Just value)
+selectPublication prototype reader source values
+  | all (outsideLifelong prototype reader . originNode . executionOrigin . bindingOrigin) values =
+      Right (Just (foldr1 newer values))
+  | otherwise = Left (AmbiguousContextBinding source)
+  where
+    sequenceOf = originSequence . executionOrigin . bindingOrigin
+    newer left right = if sequenceOf left >= sequenceOf right then left else right
 
 sourcePlan :: PrototypeReference -> NodeId -> String -> Source
 sourcePlan (PrototypeReference prototype) node source = case
@@ -381,7 +420,7 @@ stopSessions graph = uninterruptibleMask_ $ do
 
 -- 这些挂载当前一次执行已经发布的普通资产；会话在交付时把它们存为伴随发布。
 currentPublications :: RuntimeGraph environment cause -> [NodeId] -> IO (ScopeBindings environment cause)
-currentPublications graph nodes = do
+currentPublications graph nodes = withFrameLock (runtimeRootFrame graph) $ do
   origins <- readIORef (runtimeOrigins graph)
   assets <- readIORef (runtimeAssets graph)
   let current = [origin | node <- nodes, Just origin <- [lookup node origins]]

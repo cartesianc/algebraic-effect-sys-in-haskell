@@ -1,7 +1,7 @@
 -- 一次有限执行的节点进度；交付游标由 Runtime 的 DeliveryFrame 单独保存。
 -- 本模块不依赖 Scope 或 Graph，scope 在同一协调锁内只读这些事实。
 module Framework.Runtime.Frame
-  ( ExecutionFrame, NodeProgress(..), newExecutionFrame, newChildFrame, frameParent, frameDepth
+  ( ExecutionFrame, NodeProgress(..), newExecutionFrame, newChildFrame, frameParent, frameDepth, frameBoundary, withFrameLock
   , frameNodes, framePendingNodes, framePendingViews, captureFrameDeliveries, DeliveryIdentity, owningFrame
   , frameNodeProgress, frameSignal, notifyFrame
   , startFrameNode, completeFrameNode, skipFrameSubtree, finishExecutionFrame
@@ -24,6 +24,8 @@ type DeliveryIdentity = (NodeId, String, ActivationId)
 data ExecutionFrame = ExecutionFrame
   { frameParent :: Maybe ExecutionFrame
   , frameDepth :: Int
+  -- 轮帧的所属 lifelong 挂载；退休后仍可定位合法外部后继，不把实例提升到根帧。
+  , frameBoundary :: Maybe NodeId
   , frameCoordinator :: MVar ()
   , frameProgress :: IORef [(NodeId, NodeProgress)]
   , frameDelivered :: IORef [DeliveryIdentity]
@@ -35,18 +37,24 @@ data ExecutionFrame = ExecutionFrame
 instance Eq ExecutionFrame where
   left == right = frameProgress left == frameProgress right
 
-newExecutionFrame :: MVar () -> Maybe ExecutionFrame -> [NodeId] -> IO ExecutionFrame
-newExecutionFrame coordinator parent nodes = uninterruptibleMask_ $ do
+newExecutionFrame :: MVar () -> Maybe ExecutionFrame -> Maybe NodeId -> [NodeId] -> IO ExecutionFrame
+newExecutionFrame coordinator parent boundary nodes = uninterruptibleMask_ $ do
   changed <- maybe (newEmptyMVar >>= newIORef) (pure . frameChanged) parent
-  frame <- ExecutionFrame parent (maybe 0 ((+ 1) . frameDepth) parent) coordinator
+  frame <- ExecutionFrame parent (maybe 0 ((+ 1) . frameDepth) parent) boundary coordinator
     <$> newIORef [(node, Pending) | node <- nub nodes]
     <*> newIORef [] <*> newIORef [] <*> pure changed
   withMVar coordinator $ \_ ->
     forM_ parent $ \ancestor -> modifyIORef' (frameChildren ancestor) (frame :)
   pure frame
 
-newChildFrame :: ExecutionFrame -> [NodeId] -> IO ExecutionFrame
-newChildFrame parent = newExecutionFrame (frameCoordinator parent) (Just parent)
+newChildFrame :: ExecutionFrame -> NodeId -> [NodeId] -> IO ExecutionFrame
+newChildFrame parent boundary = newExecutionFrame (frameCoordinator parent) (Just parent) (Just boundary)
+
+-- 执行帧与 scope 归属共用的内存协调锁。Graph 的发布/保留交接也在这里串行化，
+-- 不能只屏蔽取消而让另一线程的回收看见交接空窗。锁内不执行 IO handler、不等任务。
+withFrameLock :: ExecutionFrame -> IO value -> IO value
+withFrameLock frame action = uninterruptibleMask_ $
+  withMVar (frameCoordinator frame) (const action)
 
 -- 只读，不再获取协调锁；scope 的可达性检查在锁内调用。
 frameNodes :: ExecutionFrame -> IO [(NodeId, NodeProgress)]

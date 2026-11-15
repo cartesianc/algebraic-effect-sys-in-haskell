@@ -1,6 +1,6 @@
 # Next stages
 
-更新：2026-11-16。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已完成最低限度的保守结束，完整迁移仍待实施；[Pure 的值管道与 list 原子输出](#pure-pipeline)已实现（2026-11-12）；[scope 的单例与多例、按可达性回收](#scope-gc)已实现（2026-11-13，生成与普通编译通过）；[Stage 6 的第一步](#stage-6)（Stream 的正常结束到 lifelong 返回）已实现（2026-11-14），会话历史[按读取义务保留](#stage-6-retention)已实现（2026-11-14），[由持续资产驱动的持续资产](#stage-6-derive)与[消费原子输出的持续发布](#stage-6-reuse)已实现（2026-11-15）；Stage 3–7 的其余部分继续逐阶段收敛。**
+更新：2026-11-16。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已完成最低限度的保守结束，完整迁移仍待实施；[Pure 的值管道与 list 原子输出](#pure-pipeline)已实现（2026-11-12）；[scope 的单例与多例、按可达性回收](#scope-gc)已实现（2026-11-13，生成与普通编译通过）；[Stage 6 的第一步](#stage-6)（Stream 的正常结束到 lifelong 返回）已实现（2026-11-14），会话历史[按读取义务保留](#stage-6-retention)已实现（2026-11-14），[由持续资产驱动的持续资产](#stage-6-derive)与[消费原子输出的持续发布](#stage-6-reuse)已实现（2026-11-15）；[Stage 5 的持有与停止基础](#stage-5-foundation)已实现（2026-11-16）；Stage 3–7 的其余部分继续逐阶段收敛。**
 
 本轮目标是在框架现有概念内，先分离原子 handler 与业务 effect，使 handler 可以复用、前驱由声明装配；再统一 Stream effect 与 lifelong 的持续执行协议，完成正常结束、停止传播和资源收尾。每阶段先收敛设计与代码形态，再实现；本文记录推进顺序、待确认事项及开放边界，不替代[主设计](LATEST_DESIGN.md)和[当前 Stream 规范](STREAM_LIFELONG.md)。
 
@@ -362,7 +362,7 @@ instance FrameworkRuntime.Raw (At "ReportCounter") where
 <a id="scope-gc"></a>
 ### Scope 的单例与多例、按可达性回收
 
-**状态：已实现（2026-11-13）；本轮生成与普通编译通过，验证边界见下文。** 当前规则统一见[主设计：单例与多例](LATEST_DESIGN.md#scope-identity)和[按可达性回收](LATEST_DESIGN.md#scope-gc)。这一项不占 Stage 1–7 的编号，已经提供 [Stage 5](#stage-5) 的持有依据与 [Stage 7](#stage-7) 的关闭条件；Stream 的 end、历史资源和背压仍未实现。
+**状态：已实现（2026-11-13）；本轮生成与普通编译通过，验证边界见下文。** 当前规则统一见[主设计：单例与多例](LATEST_DESIGN.md#scope-identity)和[按可达性回收](LATEST_DESIGN.md#scope-gc)。这一项不占 Stage 1–7 的编号，已经提供 [Stage 5](#stage-5) 的持有依据与 [Stage 7](#stage-7) 的关闭条件；Stream 的正常 end 随后已实现，历史资源保活与背压仍未实现。
 
 **实现落点：**
 
@@ -422,15 +422,33 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 <a id="stage-5"></a>
 ### Stage 5：建立持续边界与 scope 的使用关系
 
+**状态：持有与停止基础已实现（2026-11-16），本轮普通编译通过；历史资源保活、持续资产作为开启参数及提前回收仍未实现。**
+
 生产会话的使用登记、lifelong 单元执行帧及有限调用已经接入 scope 可达性。本阶段继续确定持续交付和历史视图怎样持有实际资源。ScopeTree 独立维护无环资源依赖；订阅和 callback 关系不能直接变成 scope 父子边。
 
 确定持续交付与历史资源的使用何时建立、跨越哪些阶段、何时撤销。demand 表达资产依赖，不自动授予整个生产会话的关闭权；多个订阅者共享来源时分别撤销使用。scope 与持续执行的联动沿用已有资产依赖，不要求新增资源寿命标签。
 
-连接池跨轮存续与事务单次结束已由[单例与多例](#scope-gc)实现：参数只生产一次、各轮 `requires` 的开启是单例，常驻；每轮 `requests` 的开启是多例，本轮结束即回收，参数变化时不累计历次实例。当前会话使用登记与 lifelong 执行帧已接入可达性；本阶段继续收敛持续交付和历史资源的持有，不靠运行时猜测或新增寿命标签。
+连接池跨轮存续与事务单次结束已由[单例与多例](#scope-gc)实现：参数只生产一次、各轮 `requires` 的开启是单例，常驻；每轮 `requests` 的开启是多例，本轮结束且没有合法后继待用时回收，参数变化不使旧实例无条件常驻。当前会话使用登记与 lifelong 执行帧已接入可达性；本阶段继续收敛持续交付和历史资源的持有，不靠运行时猜测或新增寿命标签。
 
 同时接通持续资产作为 scope 开启参数的观察路径，修复可能出现的 ScopeInputsMissing。
 
 **交付：** 补齐共享会话、实际实例、排队交付与历史资源的持有和撤销规则，再接入已经实现的可达性回收。
+
+<a id="stage-5-foundation"></a>
+#### 本轮：普通后继待用与停止交接基础（2026-11-16）
+
+**代码形态不变。** 资产、注册、instance、AST 与 Main 不增加字段或能力；gen 与 Prototype 格式保持。此次沿已有读取语义修补待用判断，不新增历史资源策略或回收触发点。
+
+- **后继待用**：ExecutionFrame 记录所属 lifelong 的既有 NodeId，实例保留原归属帧。Graph 保留本轮发布与固定伴随身份的规则，并纳入静态 precedes 许可的外部后继；普通资产的当前／retained 绑定选择与实际读取共用，同单元互斥来源取实际 Origin 最新一份后再比较 ActivationId，不能按旧候选误保留实例。轮次隔离、来源可见性与 Binding owner 不变。
+- **发布交接**：resetOrigins 在 scope／frame 协调锁内先保存 retained 再撤销 current，防止待用检查看到中间空窗。轮帧清空进度及摘除不提升 scopeFrame，合法外部后继仍按原生产身份保留实例。
+- **会话停止**：Session 的 NoWorker／RunningWorker／StoppingWorker 内部状态保留同一完成信号；并发或重复 stopSession 都等待 worker finally 撤销 ScopeUser 完成，取消与等待在目录锁外进行。endSession 封口、leaveSession 撤销读取方和 stopSession 等待执行收尾保持分工，停止时机不变。
+- **本轮不做**：end 后提前撤销会话持有、历史条目资源 lease、持续资产作为 scope 参数、无人订阅停产、消费侧 end、scope 同值复用和背压。正常 end 后 worker 仍保留使用登记，直到现有停止边界。仅保存 Binding 引用不自动证明其内资源可操作。
+
+详细规则分别维护在[图与来源](EFFECT_GRAPH.md#scope-opening-retention)和[Stream 的会话／取消协议](STREAM_LIFELONG.md#sessions)，不增加另一份 runtime 图。
+
+**本轮验证：** 使用临时 Cabal 配置与 builddir 执行 `cabal build all --offline -j1`，全部目标通过，退出码 0。首次编译发现轮帧装配的局部作用域错误，显式传入所属 lifelong 位置后完整编译通过。gen、源语言、Prototype 格式与 Generated 源码均未改，本轮未重新生成。源码复核检查了后继选值、轮间隔离、保留交接和协调锁的调用路径。
+
+**未覆盖：** 未新增测试、负例或额外检查门槛；未运行 demo、并发取消探针或内存测量。源码复核与普通编译不代表全部并发交错已验证；历史资源保活、来源 end 后提前清理和持续资产参数仍未实现，不将此前验证视为本次验证。
 
 <a id="stage-6"></a>
 ### Stage 6：实现 end 与终止传播
@@ -585,7 +603,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 #### 尚未确定或尚未实现
 
-- **结束后的清理**：单独设计。已知的事实：只在生产会话中开启的 scope 没有回收入口（根帧不含会话挂载，节点退休只检查在退休节点上开启的 scope），目前只能等到运行结束；历史条目中的资源引用没有持有登记；最后资产关联的资源需要在轮帧撤销前接到后继的待用关系上。
+- **结束后的清理**：单独设计。只在生产会话中开启的 scope 没有回收入口（根帧不含会话挂载，节点退休只检查在退休节点上开启的 scope），目前仍等到运行结束；历史条目中的资源引用没有持有登记。已允许普通资产的后继待用与 retained 交接已由 [Stage 5 基础整理](#stage-5-foundation)补齐，持续资产和历史资源的持有仍未接通。
 - **更细的停止时机**：目前在 lifelong 返回时才停止无人订阅的生产任务。读取方的登记与离开已经存在（第三步），是否在读取方都离开时停止生产属于消费方结束的规则。
 - **消费方提前退出**（只取前若干条等）与**失败的局部化**（跳过坏元素、重试、只结束局部）。
 
@@ -617,8 +635,8 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 | scope 的单例与多例（`requires`／`requests` 进入 scope）、按可达性回收、运行结束关闭、close 可选 | 独立于阶段（已实现；生成与普通编译通过） | 实际生产身份、执行帧与待用查询，见[实现落点](#scope-gc) |
 | 共同执行协议与两种入口的对应 | Stage 3 | 单步、推进、发布和边界的关系 |
 | 当前值、历史与显式刷新 | Stage 4 | 访问权限、视图位置与发布规则 |
-| 持续交付、历史资源与可达性根集 | Stage 5 | 补齐持有和撤销，以及持续资产作为开启参数 |
-| end 接口、退出范围与交付收尾 | Stage 6（`end`、排空、单元结束与 lifelong 返回已实现；后继读取、清理与失败范围待定） | 正常结束、失败、取消和 branch 返回规则 |
+| 持续交付、历史资源与可达性根集 | Stage 5（普通后继待用与停止基础已整理） | 历史资源的持有和撤销，以及持续资产作为开启参数 |
+| end 接口、退出范围与交付收尾 | Stage 6（生产侧 end、排空、lifelong 返回及后继读取已实现；消费侧结束、清理与局部失败待定） | 正常结束、失败、取消和 branch 返回规则 |
 | 历史资源与自动回收 | Stage 7 | 共用的关闭条件及释放顺序 |
 
 这些是待审查的接口与协议，不是已经批准实施的具体语法。线程、锁、等待者唤醒和使用登记的内部实现由 SDK 承担，不要求原子 handler 作者管理调度。
@@ -635,7 +653,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 | readHistory 未经过 scope 开启参数观察，可能报 ScopeInputsMissing | Stage 4–5 |
 | 同单元等待 Scoped.open 的 ReuseOutput 保守拒绝，因复用实例会跳过输出；跨单元等待及独立 Derive 可用 | Stage 6 输出复用的已知边界；必定 fresh 的精确放行尚未实现 |
 | 会话步骤共用 scope 使用登记；停止后撤销使用并按可达性回收；来源正常结束后登记保留到会话被停止，只在会话中开启的 scope 到运行结束才关闭 | Stage 5、7 继续收敛结束后的清理与历史资源；当前回收见[按可达性回收](#scope-gc) |
-| 来源可用 `end` 正常结束，lifelong 随之返回，后继读取每个来源最新一次发布；消费方不能提前退出 | Stage 6（第一步已实现，其余待定） |
+| 来源可用 `end` 正常结束，lifelong 随之返回，后继读取每个来源最新一次发布；消费方不能提前退出 | Stage 6（生产侧结束、后继读取、保留及派生／输出复用已实现；消费侧结束待定） |
 | 含 lifelong 程序的失败使用整次运行终止的临时规则 | Stage 6 明确保留或调整范围 |
 | 历史资源缺少精细持有和释放协议 | Stage 4、5、7 |
 | 被 `streams` 订阅的来源在订阅单元运行期间保留全部历史，没有容量背压；其余情况只保留最新一条与未领取的积压 | 保留规则已实现（Stage 6 第三步）；容量和历史窗口另议 |
@@ -690,6 +708,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 - 2026-11-15：整理构建与文件保留边界。七个 Cabal 示例共用 `common runtime-program` 的 25 个 SDK 运行模块与 7 项依赖，生成器保留独立清单；Cabal 文件由 402 行缩为 208 行。沿入口核对的 43 个 SDK 模块均仍被引用，保留源码及 Generated 中的四类编译源码；清理未跟踪的旧构建目录、结构缓存与示例输出。修正 Context.stream 的过时注释和构图缓存文件清单，指南明确手写源码、生成源码与临时产物的区别。验证：使用临时 builddir 的 `cabal build all --offline -j1` 退出 0；本轮未改运行语义、未新增测试或运行业务 demo。
 - 2026-11-15：核对 gen 的阶段依赖与复用边界，在流水线、绑定、挂载、同次输出回放、持续会话、ScopeTree 和来源分析旁补充“算法说明 v1”注释，注明无环依据与复杂度限制。图规范修正过时的构建函数名并区分结构共享、输出复用和实例共享；没有新增通用调用去重或改变运行语义。验证：使用临时 builddir 的 `cabal build effect-codegen --offline -j1`，以及合并前的 `cabal build all --offline -j1` 均退出 0；本轮仅改注释与文档，未重新生成示例、未运行 demo 或做性能实测。
 - 2026-11-16：完成 [gen 装配与共享分析整理](#gen-assembly-sharing)前两批。新增编译期 Assembly，Build／Sources／Emit 共用挂载与输出连接；Binding 保留有角色的有序前驱及 raw 来源；方法图按定义缓存辅助／主归约结果，不再复制全部调用展开树。八个命名空间重新生成均无文件变化，`cabal build all --offline -j1` 退出 0；未修改 facade、runtime 或 scope 实例规则，未进行性能实测。
+- 2026-11-16：完成 [Stage 5 基础整理](#stage-5-foundation)。轮帧保存所属 lifelong 位置，合法后继的普通绑定按当前／保留来源参与 scope 待用；发布交接与回收共用协调锁；并发／重复停止会话等待同一完成信号。`cabal build all --offline -j1` 退出 0，未改 facade、gen 或生成产物，未运行 demo 或新增测试；没有接入历史资源保活或提前关闭。
 - 历史验证未系统枚举全部并发交错，未观察长时间内存；Stream 外部模型未完成；取消只记录过 Windows Ctrl-Break。已通过编译和示例不能扩大资源逃逸、任意底层 IO 或所有调度的保证。
 
 <a id="maintenance"></a>

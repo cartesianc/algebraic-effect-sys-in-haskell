@@ -14,7 +14,7 @@ module Framework.Runtime.Session
 
 import Control.Concurrent (ThreadId, killThread)
 import Control.Concurrent.MVar
-  (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, swapMVar, takeMVar, tryPutMVar)
+  (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, takeMVar, tryPutMVar)
 import Control.Exception (Exception, SomeException, mask, onException, uninterruptibleMask_)
 import Control.Monad (forM, void)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -70,6 +70,14 @@ data SessionState environment cause = SessionState
   , stateReaders :: Maybe [Cursor]
   }
 
+-- 生产任务的停止状态，与 stateStopped 的“发布已结束”分开。
+-- 首次 stop 取走取消权，但保留同一完成信号；并发 stop 也必须等到任务撤销使用登记。
+-- StoppingWorker 的信号填满后仍保留，重复 stop 只读该信号，不重复取消或持有旧 ThreadId。
+data SessionWorker
+  = NoWorker
+  | RunningWorker ThreadId (MVar ())
+  | StoppingWorker (MVar ())
+
 -- 边界的交接：进入 lifelong 时已经捕获的绑定与视图（例如外层 alternative 选择时读到的值）。
 -- 每个生产步骤都从这份交接开始；interpreter 托管的会话没有交接。
 data Session environment cause = Session
@@ -77,7 +85,7 @@ data Session environment cause = Session
   , sessionBindings :: ScopeBindings environment cause
   , sessionViews :: [(String, View environment cause)]
   , sessionState :: MVar (SessionState environment cause)
-  , sessionWorker :: MVar (Maybe (ThreadId, MVar ()))
+  , sessionWorker :: MVar SessionWorker
   -- 由另一份持续资产驱动的会话：上游会话，以及本会话在其中的游标。上游在进入 lifelong 时登记读取方，
   -- 之后才交来；生产任务取得它之前不执行。由 Stream 驱动的会话不使用。
   , sessionUpstream :: MVar (Session environment cause, Cursor)
@@ -88,7 +96,7 @@ newSession :: SessionKey -> ScopeBindings environment cause -> [(String, View en
 newSession key bindings views = do
   signal <- newEmptyMVar
   let readers = maybe (Just []) (const Nothing) (fst key)
-  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Nothing signal readers) <*> newMVar Nothing
+  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Nothing signal readers) <*> newMVar NoWorker
     <*> newEmptyMVar
 
 -- 两次相等的值仍是两条发布；会话已经结束或失败时不再接受新条目。
@@ -240,14 +248,22 @@ feedSession session upstream cursor = void (tryPutMVar (sessionUpstream session)
 awaitUpstream :: Session environment cause -> IO (Session environment cause, Cursor)
 awaitUpstream = readMVar . sessionUpstream
 
--- 运行层启动生产任务后登记；停止时取消并等待它退出，包括其中步骤的受控收尾。
--- 任务已经自行结束时只等待它的完成信号。
+-- Graph 在会话登记锁与不可中断区内启动并登记任务，再把 Session 交给使用方。
+-- 一个会话只登记一次；ReuseOutput 不登记 worker。finished 由 Runtime 在撤销 ScopeUser 后填满。
 setSessionWorker :: Session environment cause -> ThreadId -> MVar () -> IO ()
-setSessionWorker session thread finished = void (swapMVar (sessionWorker session) (Just (thread, finished)))
+setSessionWorker session thread finished = modifyMVar_ (sessionWorker session) $ \worker -> case worker of
+  NoWorker -> pure (RunningWorker thread finished)
+  _ -> ioError (userError ("Session worker already registered for " ++ show (sessionKey session)))
 
+-- 收尾协议 v1（2026-11-16）：所有调用都等待同一次完成，只有第一个调用负责发送取消。
+-- 不能先清空目录再等待，否则并发 stop 会把“已有人负责停止”误认成“已经收尾”。
+-- 目录锁内只转移取消权；发送取消与等待都在锁外，不持有发布状态锁或 scope 协调锁。
+-- 屏蔽沿用现有停止契约，避免拿到取消权的调用方中断后，其余等待方永远收不到完成信号。
 stopSession :: Session environment cause -> IO ()
 stopSession session = uninterruptibleMask_ $ do
-  worker <- swapMVar (sessionWorker session) Nothing
-  case worker of
-    Nothing -> pure ()
-    Just (thread, finished) -> killThread thread >> readMVar finished
+  finish <- modifyMVar (sessionWorker session) $ \worker -> case worker of
+    NoWorker -> pure (NoWorker, pure ())
+    RunningWorker thread finished ->
+      pure (StoppingWorker finished, killThread thread >> readMVar finished)
+    StoppingWorker finished -> pure (worker, readMVar finished)
+  finish

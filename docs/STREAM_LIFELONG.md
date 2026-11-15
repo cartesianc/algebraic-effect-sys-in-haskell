@@ -2,9 +2,9 @@
 
 本文通过引用构成[主设计第 7 章](LATEST_DESIGN.md#stream)的完整规范。主设计负责架构地图，本页唯一维护 Stream 的匹配、交付和调度规则；实施记录在 [Next stages](NEXT_STAGES.md)，写法示例在[使用指南第五节](GUIDE.md#stream)。
 
-更新：2026-11-15。状态：已实现（Stage 3 第 1–6 批；Stage 2 改为 Stream 加 parser、取消 RepeatRequest；Stage 6 第一步：Stream 的正常结束 `end`、排空、单元结束与 lifelong 返回，见[第 9.4 节](#end)；会话历史按读取义务保留，见[第 7.1 节](#retention)；由持续资产驱动的持续资产，见[第 4.2 节](#derive)）；当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，延期项见[第 11 节](#deferred)。
+更新：2026-11-16。状态：已实现（Stage 3 第 1–6 批；Stage 2 改为 Stream 加 parser、取消 RepeatRequest；Stage 6 第一步：Stream 的正常结束 `end`、排空、单元结束与 lifelong 返回，见[第 9.4 节](#end)；会话历史按读取义务保留，见[第 7.1 节](#retention)；由持续资产驱动的持续资产，见[第 4.2 节](#derive)）；当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，延期项见[第 11 节](#deferred)。
 
-本文手工记录 Stream、Context 与 lifelong 的匹配规则，作为代码生成、解释器和开发文档共同遵守的规范。本轮已补齐消费原子输出的持续发布（`ReuseOutput`），完成与验证范围见 [Next stages](NEXT_STAGES.md#stage-6-reuse)。标明“延期”或“临时”的部分不是最终设计。
+本文手工记录 Stream、Context 与 lifelong 的匹配规则，作为代码生成、解释器和开发文档共同遵守的规范。消费原子输出的持续发布（`ReuseOutput`）已实现；本轮补齐普通后继绑定的待用判断与会话停止的完成交接，范围与验证见 [Stage 5 基础整理](NEXT_STAGES.md#stage-5-foundation)。标明“延期”或“临时”的部分不是最终设计。
 
 ## 1. 目标：让原子方法独立于装配知识
 
@@ -318,6 +318,17 @@ monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同
 | 生产资源的使用登记 | 独立生产任务按会话跨步骤保持；ReuseOutput 沿用原节点的使用登记（见 8.1） |
 | scope 归属 | 既有 Binding ownership 与具体 scope 实例 |
 
+运行时保存值与保留可操作的资源是两种关系，当前各处的职责如下：
+
+| 持有位置 | 保存什么 | 何时撤销 |
+| --- | --- | --- |
+| 调用的 ScopeUser | 本次受控调用实际使用的实例与待认领绑定 | 业务、诊断及受控结果消费结束后 |
+| 独立生产会话的 ScopeUser | Receive／Derive 跨步骤使用的实例 | worker 的收尾完成时；正常 end 本身不撤销 |
+| ExecutionFrame 与静态开启计划 | 节点待用、参数生产身份及允许的后继关系 | 节点退休、来源不再匹配或帧结束；合法外部后继的待用关系单独保留 |
+| 会话历史、伴随发布、后继保留表 | 原 Binding 与已有 ownership 引用 | 按读取义务裁剪、替换或退出运行；仅保存引用不自动增加 scope 使用登记 |
+
+ReuseOutput 沿用原调用的 ScopeUser，没有独立生产任务。此处不把任意 ADT 内嵌资源自动纳入 ownership，也不为历史条目增加尚未确定的保活语义。
+
 - 同一边界同一资产共享会话，不同单元各自推进；不同 lifelong 的会话与进度独立。
 - 进入 lifelong 时建立会话、读取方与输出连接；独立来源在登记期间已经产生的发布完整保留。单元在登记完成后启动，ReuseOutput 只接收实际 AST 执行的输出，不启动另一份任务。单元的游标从会话的第一条发布开始；每次领取推进一条，视图是会话历史到这一条为止的前缀。
 - 每条 publication 保留原始 Binding、生产 ActivationId、执行帧、Execution 与共享 ownership；history 不是一个新的 owner。后台追加不改写已经取得的视图；读取不推进游标。
@@ -357,7 +368,7 @@ parser 的包装发布一次；会话不再次发布返回值，也不再调用�
 
 Receive／Derive 的生产步骤共用会话的 scope 使用登记，一步结束不撤销会话对资源的使用。无开启参数的连接 scope 因此跨步骤共享。会话停止时撤销登记；运行结束撤销全部待用关系，按 ScopeTree 清理不可达且声明了 close 的实例，没有 close 的实例只移出运行表，见[主设计：按可达性回收](LATEST_DESIGN.md#scope-gc)。来源正常结束后，独立会话不再生产，但使用登记保留到会话被停止：lifelong 的会话在 lifelong 返回时停止，interpreter 托管的会话在运行结束时停止，见 [9.4 节](#end)。ReuseOutput 没有额外的会话 ScopeUser，按原消费节点和执行帧的既有规则回收；这不增加历史资源保活或新的 close 策略。
 
-lifelong 单元每次执行建立独立的 ExecutionFrame。参数来自外层或没有参数的 scope 由外层帧保留；参数来自本轮的实例归本轮，轮内后继共享不改变归属，本轮结束回收。DeliveryFrame 仍负责本轮会话视图的领取；ExecutionFrame 只记录已经领取的普通伴随资产的生产身份，不复制值。根实例的待用查询包含活动子帧：即使后台会话已经发布下一步，本轮后继仍按固定交付身份保留同一实例。轮帧结束后清空并从父帧摘除。这不保留尚未领取的历史资源，也不接通持续资产直接作为 scope 参数的观察协议。
+lifelong 单元每次执行建立独立的 ExecutionFrame。参数来自外层或没有参数的 scope 由外层帧保留；参数来自本轮的实例归本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。DeliveryFrame 仍负责本轮会话视图的领取；ExecutionFrame 记录已领取普通伴随资产的生产身份及所属 lifelong 边界，不复制值。根实例的待用查询包含活动子帧：即使后台会话已经发布下一步，本轮后继仍按固定交付身份保留同一实例。轮帧结束后清空进度并从父帧摘除；已经允许的 lifelong 外后继仍按静态来源和实际保留绑定判断待用，具体规则见[图与来源](EFFECT_GRAPH.md#scope-opening-retention)。这不保留尚未领取的历史资源，也不接通持续资产直接作为 scope 参数的观察协议。
 
 Stream handler 的阻塞／等待决定节奏，SDK 不加间隔；立即返回的生产会形成高频生产，被 `streams` 订阅的来源的历史随之增长（保留规则见 [7.1 节](#retention)）。本版不提供容量背压、丢弃或去重。
 
@@ -397,11 +408,13 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 
 创建会话时，启动生产任务与写回会话登记在同一个不可中断区内完成，取消不会落在两者之间。停止会话时先关闭会话登记，并在同一临界区取出全部会话：此后尚未停止的生产步骤不能再启动新会话（例如 interpreter 托管的依赖会话），请求方得到异常并随停止结束，不会留下逃出停止集合的生产任务。生产任务的启动与登记、失败报告、撤销使用登记和完成信号都在不可中断区内完成，生产时解除屏蔽，停止等待任务退出。这保证 SDK 的登记与完成信号交接不会被取消打断；任务能否退出仍依赖业务 IO 响应取消、诊断与收尾能够返回。
 
+`stopSession` 统一使用“无 worker／运行中／停止中”的内部状态。首次停止登记停止中并取得任务，锁外发出取消并等待；并发或重复停止取得同一完成信号，也必须等待 worker 的 `finally` 撤销 ScopeUser 后返回，不能把“已经请求停止”当成“收尾完成”。停止状态只保存完成信号；首次停止方在锁外持有任务句柄直到完成，后续调用不重复取消。停止与等待不持有会话状态锁或 worker 目录锁；`endSession` 的封口、`leaveSession` 的读取方撤销仍是各自独立的事件，不因这个入口整理提前停止生产或执行 close。
+
 ### 9.3 close 延期的含义
 
 不新增 Stream close、next-use 或历史资源按元素关闭协议。没有增量表示等待，不表示结束、故障或关闭；直接来源由 Stream handler 的 `end` 报告结束，Derive 由上游耗尽结束，ReuseOutput 由负责发布的重复单元结束封口（9.4）。
 
-来源结束后的资源清理（会话用过的 scope 何时关闭、历史中的资源引用、后继待用关系的交接）、lifelong 的局部失败、会话生产资源与历史资源的存续，以及持续资产作为 scope 开启参数，仍纳入本轮[七阶段计划](NEXT_STAGES.md#stages)，尚未实现。require 缓存最新值、stream 缓存历史已随 Stage 2 实现；正常 end 已实现，本页记录当前协议。
+会话停止的完成交接与已允许普通资产后继读取的待用判断已在 [Stage 5 基础整理](NEXT_STAGES.md#stage-5-foundation)补齐；这没有新增回收触发点。来源结束后的资源清理（会话用过的 scope 何时关闭、历史中的资源引用）、lifelong 的局部失败、会话生产资源与历史资源的存续，以及持续资产作为 scope 开启参数，仍纳入本轮[七阶段计划](NEXT_STAGES.md#stages)，尚未实现。require 缓存最新值、stream 缓存历史已随 Stage 2 实现；正常 end 已实现，本页记录当前协议。
 
 完整历史保留不等于可以把多份资源 owner 合成一个，也不能复活已关闭的资源。通用的历史资源选择／关闭语义尚未设计。被 `streams` 订阅的会话在订阅单元运行期间保留全部历史，不承诺有界内存；其余情况只保留最新一条与未领取的积压，见 [7.1 节](#retention)。持续资产作为 scope 开启参数尚未接通 History 的参数观察协议，可能报 `ScopeInputsMissing`；现有跨轮 scope 复用不代表支持该用法，跟踪见 [Next stages](NEXT_STAGES.md#current-limits)。
 

@@ -94,6 +94,7 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 scope 的例外只覆盖具有 owner 的绑定，资源仍经实际实例定位和共享。实例快照中的无 owner 辅助值只从按 origin 保存的权威表取用，不通过资源复用绕过可见性。诊断及自动 cleanup 的新产物仅局部可见。现有 App 的 bind 在取得值后继续方法体，handler 写法、AST 语法和 ScopeTree 算法均不因此改变。
 
+<a id="scope-opening-retention"></a>
 ## Scope 开启计划与待用查询
 
 `Gen.Build.Sources` 在分析 open 时记录每个参数可能来自的生产节点，包括本链生产、前驱生产和 alternative 交接的捕获，写入同一 Prototype：
@@ -110,7 +111,11 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 `protoScopeOpenings` 的候选覆盖各条合法路径，不要求每个位置固定一种类别，也不保存另一套分支相关性。每条读取路径继续满足已有的捕获与来源规则，候选不是任选来源的许可。`--structure` 展示候选出处和可能类别；Prototype 校验引用及字段自洽，运行时不重做来源证明。资源在本链对应 scope 开启前被读取时，生成期拒绝；业务读取不再扫描全部活实例来补资源。
 
-运行时的实例身份是 Scoped 注册加各参数的实际 `ActivationId`。对仍待用的开启位置，Graph 用候选节点实际发布的绑定匹配这些身份；普通发布以当前发布为准，已领取的会话普通伴随资产以该轮固定的交付身份为准。后台会话后来发布同一来源，不能改变本轮 A → B 间对原实例的待用关系；尚未领取的交付和完整历史不因此加入保活根。参数本身属于其他 scope 的资源时，按原生产身份找到 owner 快照，再核对同一待用入口的上游开启计划；复用资源没有重新发布，不能假设它来自当前节点。ScopeTree 保持独立且无环。
+运行时的实例身份是 Scoped 注册加各参数的实际 `ActivationId`。对仍待用的开启位置，Graph 用候选节点实际发布的绑定匹配这些身份；所属帧及活动子帧继续使用本轮发布，已领取的会话普通伴随资产使用该轮固定的交付身份。后台会话后来发布同一来源，不能改变本轮 A → B 间对原实例的待用关系；尚未领取的交付和完整历史不因此加入保活根。
+
+轮帧记录所属 lifelong 的既有 `NodeId`，该边界在帧结束后仍可定位，不改变实例的 `scopeFrame`。待用查询还考虑静态 `precedes` 许可的 lifelong 外后继：普通资产的实际读取与待用匹配共用来源选择，先取来源位置的当前发布，没有时取 `runtimeRetained`；同单元互斥来源按实际 Origin 序号选最新一份，再比较生产身份，不能因为候选中存在旧值就保留旧实例。此扩展不让其他轮次或 parallel 兄弟读取旧轮资产，也不把轮内实例提升为根帧常驻实例。`resetOrigins` 在 scope／frame 协调锁内先保存保留绑定，再移出当前来源与发布；回收判断不会观察到交接中的空窗。
+
+参数本身属于其他 scope 的资源时，按原生产身份找到 owner 快照，再核对同一待用入口的上游开启计划；复用资源没有重新发布，不能假设它来自当前节点。这里只补齐已经允许的普通资产后继读取所对应的待用关系，不建立历史资源 lease，也不接通持续资产作为 scope 开启参数。ScopeTree 保持独立且无环。
 
 节点退休后只检查该节点能开启的 scope 及 ScopeTree 祖先，不另建运行索引。close 的 `raise` 与普通 IO 异常都记录并汇总，不改节点结果、不重试；只有取消向外传播。没有 close 的实例不可达后只移出表。运行结束先让受控任务退出、撤销根帧待用关系，再按相同条件清理剩余实例。
 

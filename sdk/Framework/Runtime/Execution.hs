@@ -292,7 +292,7 @@ executionAlgebra prototype store entries selectors layer expected = do
                 _ -> pure ()
         outcomes <- runParalleled
           [ do
-              outcome <- repeatUnit run handoff
+              outcome <- repeatUnit location run handoff
                 [(source, (session, cursors !! index)) | (source, session, cursors) <- sessions] unit
               completed (fst unit) outcome
               pure outcome
@@ -317,12 +317,12 @@ executionAlgebra prototype store entries selectors layer expected = do
     -- 每次执行是新的 frame：先移出该单元上一次执行的 Origin，执行结果不累积；
     -- 同一单元逐次处理，本次结束后才领取下一条。所需来源结束并排空时单元正常结束，不再开始下一次执行；
     -- 发生在一次执行中途时，已完成的部分不回滚，尚未启动的部分放弃。
-    repeatUnit run handoff cursors (unit, execute) = do
+    repeatUnit boundary run handoff cursors (unit, execute) = do
       let loop = do
             resetOrigins store unit
             delivery <- newDeliveryFrame cursors
             outcome <- mask $ \restore -> do
-              frame <- newChildFrame (runExecutionFrame run)
+              frame <- newChildFrame (runExecutionFrame run) boundary
                 [chainNode chain | chain <- protoChains prototype, chainRole chain /= SessionChain
                   , unit `isPrefixOf` chainNode chain]
               retireAfter
