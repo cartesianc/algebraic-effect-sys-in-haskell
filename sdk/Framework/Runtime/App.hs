@@ -21,7 +21,7 @@ import Framework.Runtime.Graph
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame (ExecutionFrame, owningFrame)
 import Framework.Language.History (History, historyView)
-import Framework.Runtime.Session (Stopped(..), SourceEnded(..), DeliveryDrained(..), View, awaitHistory)
+import Framework.Runtime.Session (Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..), View, awaitHistory)
 import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, evaluate, fromException, mask, mask_, throwIO, try, finally)
@@ -521,7 +521,8 @@ instance ContextStore env (App env cause) where
       session <- maybe (rawIO (obtainSession graph (Nothing, source) [] [])) pure ended
       captureDelivery environment source select (rawIO (awaitHistory session))
   streamRawInput = AppRun (asks streamRaw)
-  endStream = rawIO (throwIO SourceEnded)
+  endSource = rawIO (throwIO SourceEnded)
+  endSubscription = rawIO (throwIO SubscriptionEnded)
   recordContextInput source = do
     environment <- AppRun ask
     case openings environment of

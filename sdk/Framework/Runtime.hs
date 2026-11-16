@@ -16,7 +16,8 @@ module Framework.Runtime
 import Framework.Language.Handler (Failure)
 import Framework.Runtime.App (App, Launch(..), runAppWith)
 import Framework.Runtime.Graph
-  (RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, runtimeRootFrame, newOrigin, obtainSession, currentPublications)
+  ( RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, runtimeRootFrame, newOrigin, obtainSession
+  , currentPublications, collectRuntimeScopes )
 import Framework.Runtime.Identity (Execution(..), Origin(..), executionOrigin)
 import Framework.Runtime.Frame (ExecutionFrame, captureFrameDeliveries)
 import Framework.Runtime.Binding (Binding(..))
@@ -26,8 +27,8 @@ import Framework.Prototype
 import Control.Concurrent (forkIOWithUnmask, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar, newEmptyMVar, newMVar, putMVar, readMVar, tryReadMVar)
 import Control.Exception
-  (SomeAsyncException, SomeException, evaluate, finally, fromException, mask, throwIO, try, uninterruptibleMask_)
-import Control.Monad (forM, forever, void)
+  (SomeAsyncException, SomeException, evaluate, finally, fromException, mask, onException, throwIO, try, uninterruptibleMask_)
+import Control.Monad (forM, forM_, forever, void, when)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (nubBy)
 
@@ -177,9 +178,12 @@ deriveSteps = DeriveSteps
 -- 每条交付带上本次生产步骤（各挂载当前一次执行）已经发布的普通资产，作为伴随发布。
 -- 各步骤共用会话的 scope 使用登记，生产资源跨步骤保持；会话停止时撤销登记，根帧退休后统一回收。
 -- 生产失败（已经过 Error 协议诊断）或原生异常使会话失败并停止，并通知运行监督；
--- Stream handler 的 end 正常结束会话：封住发布、唤醒等待者，不通知监督，已发布的交付仍可领取；
--- 由上游驱动的会话在上游结束并排空时同样正常结束，上游失败时以同一个原因失败；
+-- Stream handler 的 streamEnd 正常结束会话：封住发布、唤醒等待者，不通知监督，已发布的交付仍可领取；
+-- 由上游驱动的会话在上游结束并排空、或被驱动链上的 Excu 调用 endStream 时同样正常结束，
+-- 并离开上游（上游的读取方计数减一）；上游失败时以同一个原因失败；
 -- 取消只结束任务，步骤内照常收尾。
+-- lifelong 的会话另外安装退役动作：读取方全部离开（引用计数归零）时停止任务、封住发布，
+-- 撤销会话的使用登记后回收只在会话挂载中开启的 scope；派生会话退役后，上游若也没有读取方，随之退役。
 -- 启动到登记在不可中断区内完成，取消不会落在任务已启动、尚未登记之间。任务继承这一屏蔽，只在生产时解除：
 -- 报告失败、撤销使用登记和填写完成信号都不会被停止请求打断，stopSession 一定等得到完成信号。
 sessionLauncher :: RuntimeGraph environment cause -> [(String, SessionSteps environment cause)]
@@ -202,18 +206,30 @@ sessionLauncher graph steps onBroken session
             | Just (_ :: SomeAsyncException) <- fromException exception -> pure ()
             | otherwise -> broken (Left exception)
           Right (Just problem) -> broken (Right problem)
-          -- 正常结束后任务留在原地，直到会话被停止（lifelong 返回或运行结束）：
-          -- 排空期间继续持有会话的使用登记，资源释放的时机与结束之前相同；结束后的清理另行设计。
+          -- 正常结束后任务留在原地，直到会话退役（读取方全部离开、lifelong 返回）或运行结束：
+          -- 排空期间仍有读取方，会话的使用登记继续持有生产资源；生产停止且计数归零才撤销。
           Right Nothing -> do
             endSession session
             void (try (unmask (forever (threadDelay 3600000000))) :: IO (Either SomeException ()))
       setSessionWorker session thread finished
+      -- interpreter 托管的会话没有读取方登记，不按计数退役，仍由运行结束统一停止。
+      forM_ boundary $ \_ -> setSessionRetirement session retire
+    -- 先停任务再封口：停止等待任务撤销使用登记，此后回收才看得到这些实例已经没有使用者。
+    -- 回收仍按可达性判定，后继还会以同样参数开启的实例保留。
+    retire = do
+      stopSession session
+      endSession session
+      collectRuntimeScopes graph (maybe [] id mounts)
+      upstream <- upstreamOf session
+      forM_ upstream $ \selected -> do
+        idle <- sessionIdle selected
+        when idle (retireSession selected)
     (boundary, source) = sessionKey session
     description = sessionDescriptionOf (runtimePrototype graph) boundary source
     mounts = sessionMounts <$> description
     produce owner = case (lookup source steps, mounts) of
       (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ do
-        -- end 只来自 Stream 单步：这一步没有原始输入，parser 不执行，也不发布。
+        -- streamEnd 只来自 Stream 单步：这一步没有原始输入，parser 不执行，也不发布。
         taken <- try (lowerWith graph streamMount (step owner Nothing []) stream)
         case taken of
           Left SourceEnded -> pure (Just Nothing)
@@ -221,18 +237,24 @@ sessionLauncher graph steps onBroken session
           Right (Right text, _, _) ->
             either (Just . Just) (const Nothing) . first <$> lowerWith graph parserMount (step owner (Just text) sink) parser
       -- 每一步先领取一条上游交付，把到这一条为止的历史作为本步的视图；上游结束并排空即正常结束。
-      -- 任务退出时离开上游会话，上游不再为它保留历史。
+      -- 被驱动链上的 Excu 调用 endStream：这一步放弃，不发布，派生会话不再消费上游，同样正常结束。
+      -- 正常退出时离开上游，计数归零则退役上游；失败或取消只离开，停止交给收尾或本会话的退役。
       (Just (DeriveSteps parser), Just [mount]) -> do
         (upstream, cursor) <- awaitUpstream session
-        loop (do
+        outcome <- loop (do
           taken <- takeDelivery upstream cursor (pure False)
           case taken of
             Left Drained -> pure (Just Nothing)
             Left (Broke (Right problem)) -> pure (Just (Just problem))
             Left (Broke (Left exception)) -> throwIO exception
-            Right (view, _) -> either (Just . Just) (const Nothing) . first
-              <$> lowerWith graph mount (driven owner (snd (sessionKey upstream)) view) parser)
-          `finally` leaveSession upstream cursor
+            Right (view, _) -> do
+              stepped <- try (lowerWith graph mount (driven owner (snd (sessionKey upstream)) view) parser)
+              pure $ case stepped of
+                Left SubscriptionEnded -> Just Nothing
+                Right result -> either (Just . Just) (const Nothing) (first result))
+          `onException` leaveSession upstream cursor
+        departSession upstream cursor
+        pure outcome
       _ -> ioError (userError ("Session steps differ from the prototype mounts for " ++ source
         ++ "; regenerate with the SDK effect-codegen command"))
     sink = [(source, \value -> do

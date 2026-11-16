@@ -49,7 +49,7 @@ newtype DisconnectSensorError = DisconnectSensorError String
   deriving (Eq, Show, Read)
 
 -- handler nextReading：绑定到 TemperatureFeed。
-type NextReadingLayer m = (SDK.Ends m, SDK.Raises NextReadingError m, MonadIO m)
+type NextReadingLayer m = (SDK.StreamEnds m, SDK.Raises NextReadingError m, MonadIO m)
 class NextReadingHandler m where
   nextReading :: m String
 
@@ -67,7 +67,7 @@ newtype ParseTemperatureError = ParseTemperatureError String
   deriving (Eq, Show, Read)
 
 -- handler nextBeat：绑定到 HeartbeatClock。
-type NextBeatLayer m = (SDK.Ends m, SDK.Raises NextBeatError m, MonadIO m)
+type NextBeatLayer m = (SDK.StreamEnds m, SDK.Raises NextBeatError m, MonadIO m)
 class NextBeatHandler m where
   nextBeat :: m String
 
@@ -94,7 +94,7 @@ newtype AnnounceError = AnnounceError String
   deriving (Eq, Show, Read)
 
 -- handler showTemperature：绑定到 ShowTemperature。
-type ShowTemperatureLayer m = (SDK.Reads (SDK.History (Temperature)) m, SDK.Raises ShowTemperatureError m, MonadIO m)
+type ShowTemperatureLayer m = (SDK.Reads (SDK.History (Temperature)) m, SDK.EndsStream m, SDK.Raises ShowTemperatureError m, MonadIO m)
 class ShowTemperatureHandler m where
   showTemperature :: m [String]
 
@@ -103,7 +103,7 @@ newtype ShowTemperatureError = ShowTemperatureError String
   deriving (Eq, Show, Read)
 
 -- handler checkTrend：绑定到 CheckTrend。
-type CheckTrendLayer m = (SDK.Reads (SDK.History (Temperature)) m, SDK.Raises CheckTrendError m, MonadIO m)
+type CheckTrendLayer m = (SDK.Reads (SDK.History (Temperature)) m, SDK.EndsStream m, SDK.Raises CheckTrendError m, MonadIO m)
 class CheckTrendHandler m where
   checkTrend :: m [String]
 
@@ -112,7 +112,7 @@ newtype CheckTrendError = CheckTrendError String
   deriving (Eq, Show, Read)
 
 -- handler reportHeartbeat：绑定到 ReportHeartbeat。
-type ReportHeartbeatLayer m = (SDK.Reads (SDK.History (Int)) m, SDK.Raises ReportHeartbeatError m, MonadIO m)
+type ReportHeartbeatLayer m = (SDK.Reads (SDK.History (Int)) m, SDK.EndsStream m, SDK.Raises ReportHeartbeatError m, MonadIO m)
 class ReportHeartbeatHandler m where
   reportHeartbeat :: m [String]
 

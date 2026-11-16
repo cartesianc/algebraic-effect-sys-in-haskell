@@ -96,12 +96,18 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       | binding <- unitBindings unit, Just source <- [bindingRaw binding]
       , let expression = rawExpression source
             specification = specOf unit (bindingEffect binding) ]
-    -- end 只在 Stream 的标签下有实例：结束这个 effect 所在的生产会话，同一 handler 的其他绑定不受影响。
+    -- streamEnd 只在 Stream 的标签下有实例：结束这个 effect 所在的生产会话，同一 handler 的其他绑定不受影响。
+    -- endStream 只在由持续资产驱动的消费链上的 Excu 标签下有实例（Bind.consumesStream）。
     endInstances = concat
-      [ [ "instance FrameworkRuntime.Ends (At " ++ show (name specification) ++ ") where"
-        , "  end = At FrameworkRuntime.endStream"
+      [ [ "instance FrameworkRuntime.StreamEnds (At " ++ show (name specification) ++ ") where"
+        , "  streamEnd = At FrameworkRuntime.endSource"
         , "" ]
       | specification <- specifications unit, Stream _ <- [typing specification] ]
+      ++ concat
+      [ [ "instance FrameworkRuntime.EndsStream (At " ++ show (name specification) ++ ") where"
+        , "  endStream = At FrameworkRuntime.endSubscription"
+        , "" ]
+      | specification <- specifications unit, consumesStream unit specification ]
 
     -- effect 方法：外层包装由类别决定；方法体先驱动、再执行 Input 前驱，最后在本 effect 的标签下执行 handler。
     entryDefinitions specification =

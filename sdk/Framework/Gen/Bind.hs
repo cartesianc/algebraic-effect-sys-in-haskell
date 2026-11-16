@@ -8,12 +8,13 @@ module Framework.Gen.Bind
   ( Unit(..), Binding(..), Signature(..), AssetDeclaration(..), BranchContract(..), bindProgram
   , specifications, effectPrototypes, specOf, protoOf, resolvedOf, contextSpecs, allMethods
   , readDemands, readType, readerOf, continuousContract, unitTerminals, bindingCalls, readsRaw, resultOf, reference, parenthesized
+  , consumesStream
   , composeMethods, normalizeType
   ) where
 
 import Control.Monad (unless, when)
 import Data.Char (isAlphaNum, isLower, isSpace, isUpper)
-import Data.List (intercalate, nub, sort)
+import Data.List (intercalate, isPrefixOf, nub, sort)
 import Data.Maybe (maybeToList)
 import Framework.Gen.Assembly
 import Framework.Gen.Demand (readsAccess)
@@ -239,9 +240,43 @@ layerOf :: Unit -> EffectSpec -> String -> [String]
 layerOf unit specification method = sort (nub ["SDK.Reads (" ++ readType unit "SDK.History" resolved ++ ") m"
     | resolved <- readDemands unit (name specification)])
   ++ ["SDK.Raw m" | readsRaw specification method, Just _ <- [rawSource unit specification]]
-  -- end 只属于 Stream handler：来源自己在取下一份输入时报告结束。
-  ++ ["SDK.Ends m" | effectKind (typing specification) == StreamKind]
+  -- streamEnd 只属于 Stream handler：来源自己在取下一份输入时报告结束。
+  ++ ["SDK.StreamEnds m" | effectKind (typing specification) == StreamKind]
+  ++ ["SDK.EndsStream m" | consumesStream unit specification]
   ++ [if effectKind (typing specification) == PureKind then "Monad m" else "MonadIO m"]
+
+-- 算法说明 v1（2026-11-16）：endStream 给哪些 effect。
+-- 消费方结束要找到“这次调用属于哪一处订阅”。lifelong 节点的 original chain 恰好由一份持续资产驱动
+-- （Lower 的订阅规则），Derive／ReuseOutput 的被驱动链由它 Input 链上的 streams 驱动，
+-- 所以运行时按当前调用的位置即可确定订阅，不需要业务说明结束哪一份资产。
+-- 只给 Excu：Scoped.open 被打断会使实例失效，Pure 是值变换，Stream 用 streamEnd。
+-- 同一 effect 只要还出现在不被持续驱动的链上（lifelong 外的节点、被 requests 或选择读取的普通 Context、
+-- Stream 的 Input 链），就不给：那里没有可以结束的订阅。
+-- 代价：一次遍历 AST 节点与注册，每个 effect 查一次集合成员，随程序规模线性增长。
+consumesStream :: Unit -> EffectSpec -> Bool
+consumesStream unit specification = effectKind (typing specification) == ExcuKind
+  && selected `elem` driven && selected `notElem` undriven
+  where
+    selected = name specification
+    effects = effectPrototypes unit
+    workflow = Prototype.plannedWorkflow (unitPlan unit)
+    chainOf terminal = terminal : Prototype.effectInputChain (protoOf unit terminal)
+    inputsOf effect = Prototype.effectInputChain effect
+    insideLifelong = [identifier | (boundary, _) <- Prototype.workflowLifelongs workflow
+      , Prototype.NodeAt identifier _ <- Prototype.allWorkflow workflow, boundary `isPrefixOf` identifier]
+    nodes = [(identifier, terminal) | Prototype.NodeAt identifier terminal <- Prototype.allWorkflow workflow]
+    streamedChain effect = or [Prototype.demandAccess demand == StreamAccess
+      | member <- inputsOf effect, demand <- Prototype.effectDemands (protoOf unit member)]
+    driven = concat [chainOf terminal | (identifier, terminal) <- nodes, identifier `elem` insideLifelong]
+      ++ concat [inputsOf effect | effect <- effects, Prototype.effectContinuous effect, streamedChain effect]
+    requested = nub ([Prototype.demandProvider demand | effect <- effects, demand <- Prototype.effectDemands effect
+        , Prototype.demandAccess demand == RequestAccess]
+      ++ concat [[Prototype.effectName effect | effect <- effects
+          , Prototype.effectProduces effect == Just contractType] | contractType <- Prototype.workflowSelectors workflow])
+    undriven = concat [chainOf terminal | (identifier, terminal) <- nodes, identifier `notElem` insideLifelong]
+      ++ concat [inputsOf effect | effect <- effects
+          , Prototype.effectKind effect == StreamKind
+            || (Prototype.effectName effect `elem` requested && not (Prototype.effectContinuous effect))]
 
 signatureOf :: Unit -> String -> Either String Signature
 signatureOf unit handler' = do

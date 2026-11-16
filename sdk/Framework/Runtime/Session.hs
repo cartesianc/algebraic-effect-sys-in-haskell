@@ -6,18 +6,20 @@
 -- 会话按（lifelong 边界，生产该资产的 Context 注册名）区分；注册名与运行时绑定来源同名。
 -- Nothing 边界是 interpreter 托管的会话。
 module Framework.Runtime.Session
-  ( SessionKey, View, Delivery, Broken, Stopped(..), SourceEnded(..), DeliveryDrained(..)
+  ( SessionKey, View, Delivery, Broken, Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..)
   , Session, sessionKey, sessionBindings, sessionViews
   , newSession, appendDelivery, breakSession, endSession, wakeSession, setSessionWorker, stopSession
-  , awaitHistory, Cursor, admitReaders, leaveSession, takeDelivery, feedSession, awaitUpstream
+  , setSessionRetirement, retireSession, departSession, sessionIdle
+  , awaitHistory, Cursor, admitReaders, leaveSession, takeDelivery, feedSession, awaitUpstream, upstreamOf
   ) where
 
 import Control.Concurrent (ThreadId, killThread)
 import Control.Concurrent.MVar
-  (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, takeMVar, tryPutMVar)
-import Control.Exception (Exception, SomeException, mask, onException, uninterruptibleMask_)
-import Control.Monad (forM, void)
+  (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, takeMVar, tryPutMVar, tryReadMVar)
+import Control.Exception (Exception, SomeException, finally, mask, onException, uninterruptibleMask_)
+import Control.Monad (forM, void, when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.Maybe (isJust)
 import Data.Sequence (Seq, (|>))
 import qualified Data.Sequence as Seq
 import Framework.Language.Handler (Failure)
@@ -47,6 +49,12 @@ data Stopped cause = Drained | Broke (Broken cause)
 data SourceEnded = SourceEnded
 instance Show SourceEnded where show _ = "SDK stream source ended"
 instance Exception SourceEnded
+
+-- SubscriptionEnded：消费方 handler 调用 endStream。lifelong 节点由单元调度接住，记为该节点的订阅结束；
+-- Derive 会话的被驱动链由生产任务接住，派生会话不再消费上游并结束自己的发布。
+data SubscriptionEnded = SubscriptionEnded
+instance Show SubscriptionEnded where show _ = "SDK stream subscription ended"
+instance Exception SubscriptionEnded
 
 -- DeliveryDrained：调用内第一次读取才领取交付，而会话已结束并排空；由单元调度接住并结束单元。
 data DeliveryDrained = DeliveryDrained
@@ -78,6 +86,11 @@ data SessionWorker
   | RunningWorker ThreadId (MVar ())
   | StoppingWorker (MVar ())
 
+-- 读取方全部离开后的退役：停止生产任务、封住发布、回收只在会话中开启的 scope。
+-- 动作由 Runtime 在启动生产任务时安装；没有独立生产任务的会话（ReuseOutput、interpreter 托管）不安装，
+-- 退役是空操作。只执行一次：并发或重复的调用等待同一次完成。
+data Retirement = Unretired (IO ()) | Retiring (MVar ())
+
 -- 边界的交接：进入 lifelong 时已经捕获的绑定与视图（例如外层 alternative 选择时读到的值）。
 -- 每个生产步骤都从这份交接开始；interpreter 托管的会话没有交接。
 data Session environment cause = Session
@@ -89,6 +102,7 @@ data Session environment cause = Session
   -- 由另一份持续资产驱动的会话：上游会话，以及本会话在其中的游标。上游在进入 lifelong 时登记读取方，
   -- 之后才交来；生产任务取得它之前不执行。由 Stream 驱动的会话不使用。
   , sessionUpstream :: MVar (Session environment cause, Cursor)
+  , sessionRetirement :: MVar Retirement
   }
 
 newSession :: SessionKey -> ScopeBindings environment cause -> [(String, View environment cause)]
@@ -97,7 +111,7 @@ newSession key bindings views = do
   signal <- newEmptyMVar
   let readers = maybe (Just []) (const Nothing) (fst key)
   Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Nothing signal readers) <*> newMVar NoWorker
-    <*> newEmptyMVar
+    <*> newEmptyMVar <*> newMVar (Unretired (pure ()))
 
 -- 两次相等的值仍是两条发布；会话已经结束或失败时不再接受新条目。
 appendDelivery :: Session environment cause -> ScopeBindings environment cause -> ScopeBinding environment cause -> IO ()
@@ -212,11 +226,43 @@ admitReaders session accesses = modifyMVar (sessionState session) $ \state -> do
   pure (settled, cursors)
 
 -- 读取方离开：它不会再领取这个会话的交付，为它保留的历史与积压可以放掉。
--- 目前在单元结束时调用（所需来源结束并排空、失败或取消）；消费方主动结束单元时走同一个入口。
--- 这里只决定保留多少数据，不停止生产：没有读取方的来源是否停止属于消费方结束的规则，尚未确定。
-leaveSession :: Session environment cause -> Cursor -> IO ()
-leaveSession session cursor = modifyMVar_ (sessionState session) $ \state ->
-  release state { stateReaders = filter (/= cursor) <$> stateReaders state }
+-- 单元不再有读取这个会话的活节点、单元结束、Derive 会话不再消费上游时调用；重复离开不改变状态。
+-- 返回 True 表示这次离开使已登记的读取方从有到无（引用计数归零）：调用方据此在锁外退役会话。
+-- 失败或取消路径只离开、不退役，停止交给 lifelong 返回或运行结束的既有收尾。
+leaveSession :: Session environment cause -> Cursor -> IO Bool
+leaveSession session cursor = modifyMVar (sessionState session) $ \state -> do
+  let before = stateReaders state
+      after = filter (/= cursor) <$> before
+  settled <- release state { stateReaders = after }
+  pure (settled, fmap null before == Just False && fmap null after == Just True)
+
+-- 正常路径上的离开：计数归零时退役会话。退役等待生产任务收尾，不能在会话状态锁内调用。
+departSession :: Session environment cause -> Cursor -> IO ()
+departSession session cursor = do
+  idle <- leaveSession session cursor
+  when idle (retireSession session)
+
+-- 已登记读取方、且全部离开。interpreter 托管的会话不登记读取方，不按计数退役。
+sessionIdle :: Session environment cause -> IO Bool
+sessionIdle session = (\state -> fmap null (stateReaders state) == Just True && isJust (fst (sessionKey session)))
+  <$> readMVar (sessionState session)
+
+setSessionRetirement :: Session environment cause -> IO () -> IO ()
+setSessionRetirement session action = modifyMVar_ (sessionRetirement session) $ \retirement -> case retirement of
+  Unretired _ -> pure (Unretired action)
+  Retiring _ -> pure retirement
+
+-- 第一次调用执行退役动作，其余调用等它完成；动作被取消时也填入完成信号，等待方不会悬挂。
+retireSession :: Session environment cause -> IO ()
+retireSession session = do
+  (action, done) <- modifyMVar (sessionRetirement session) $ \retirement -> case retirement of
+    Unretired action -> do
+      done <- newEmptyMVar
+      pure (Retiring done, (Just action, done))
+    Retiring done -> pure (retirement, (Nothing, done))
+  case action of
+    Just retire -> retire `finally` tryPutMVar done ()
+    Nothing -> readMVar done
 
 -- 领取下一条尚未交付的发布；视图是到这一条为止保留的条目（按历史读取时是完整历史），另带这一条的伴随发布。
 -- 有积压时立即返回，没有时挂起等待；来源结束后先排空积压，游标到达末尾才返回 Drained。
@@ -247,6 +293,10 @@ feedSession session upstream cursor = void (tryPutMVar (sessionUpstream session)
 -- 由上游驱动的生产任务在第一步之前等待交接。
 awaitUpstream :: Session environment cause -> IO (Session environment cause, Cursor)
 awaitUpstream = readMVar . sessionUpstream
+
+-- 退役时查看上游：尚未交接（Stream 驱动或还没进入 lifelong）时为 Nothing。
+upstreamOf :: Session environment cause -> IO (Maybe (Session environment cause))
+upstreamOf session = fmap fst <$> tryReadMVar (sessionUpstream session)
 
 -- Graph 在会话登记锁与不可中断区内启动并登记任务，再把 Session 交给使用方。
 -- 一个会话只登记一次；ReuseOutput 不登记 worker。finished 由 Runtime 在撤销 ScopeUser 后填满。

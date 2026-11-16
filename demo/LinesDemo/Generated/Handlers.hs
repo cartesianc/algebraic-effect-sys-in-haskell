@@ -27,7 +27,7 @@ import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
 import LinesDemo.Types
-import Framework.SDK (Ends(..), History, Raises(..), Raw(..), Reads(..), historyEntries, historySize, latest)
+import Framework.SDK (StreamEnds(..), History, Raises(..), Raw(..), Reads(..), historyEntries, historySize, latest)
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
 import Control.Monad.IO.Class (liftIO)
@@ -58,13 +58,13 @@ instance CloseInputLayer m => CloseInputHandler m where
     liftIO (hClose file >> putStrLn ("[close] " ++ path))
     pure []
 
--- 一次读一行。文件读完时 end：这一步不交出输入，parser 不执行，生产会话正常结束；
+-- 一次读一行。文件读完时 streamEnd：这一步不交出输入，parser 不执行，生产会话正常结束；
 -- 已经发布的行仍会交给 PrintLine 处理完。
 instance NextLineLayer m => NextLineHandler m where
   nextLine = do
     InputFile _ file <- require @InputFile
     finished <- liftIO (hIsEOF file)
-    if finished then end else liftIO (hGetLine file)
+    if finished then streamEnd else liftIO (hGetLine file)
 
 instance ParseLineLayer m => ParseLineHandler m where
   parseLine = do
@@ -109,7 +109,7 @@ instance ReportLayer m => ReportHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "53253b422378ab2536aec11dfb846588"
+handlerSourceFingerprint = Just "8d714bbb28c56022bf155abe0ab864b4"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -184,8 +184,17 @@ instance FrameworkRuntime.Raw (At "LineParser") where
 instance FrameworkRuntime.Raw (At "CountParser") where
   raw = At (runTextCounter)
 
-instance FrameworkRuntime.Ends (At "LineFeed") where
-  end = At FrameworkRuntime.endStream
+instance FrameworkRuntime.StreamEnds (At "LineFeed") where
+  streamEnd = At FrameworkRuntime.endSource
+
+instance FrameworkRuntime.EndsStream (At "PrintLine") where
+  endStream = At FrameworkRuntime.endSubscription
+
+instance FrameworkRuntime.EndsStream (At "TextCounter") where
+  endStream = At FrameworkRuntime.endSubscription
+
+instance FrameworkRuntime.EndsStream (At "ShowTotal") where
+  endStream = At FrameworkRuntime.endSubscription
 
 runAnnounce :: FrameworkGenerated.App [String]
 runAnnounce = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runAnnounce" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "Announce") $

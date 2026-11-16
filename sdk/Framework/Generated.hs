@@ -12,7 +12,7 @@ module Framework.Generated
   , failEffect, handleFailure, withErrorPath, withErrorHandlers, ErrorHandler(..)
   , readContext, latestContext
   , callContext, projectContext, enterHandler, withAnchoredContexts, withStreamContexts
-  , atomicHandle, atomicScope, readHistory, streamHandle, endStream
+  , atomicHandle, atomicScope, readHistory, streamHandle, endSource, endSubscription
   , openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, withScopeCleanups
   , Generic, NFData, interpreter
@@ -21,7 +21,7 @@ module Framework.Generated
 import Framework.SDK
 import Framework.Runtime.Protocol
   ( failEffect, ErrorStore(handleFailure, withErrorPath, withErrorHandlers), ErrorHandler(..)
-  , ContextStore(enterHandler, withAnchoredContexts, withStreamContexts, endStream)
+  , ContextStore(enterHandler, withAnchoredContexts, withStreamContexts, endSource, endSubscription)
   , ScopeStore(openScope, closeScope, withScopeDependencies) )
 import Framework.Runtime.Context
   ( readContext, latestContext, callContext
