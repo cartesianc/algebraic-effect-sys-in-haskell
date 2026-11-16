@@ -1,793 +1,228 @@
 # Next stages
 
-更新：2026-11-16。**状态：Stage 1 已实现，其中接收形态与 Context 的 request 角色由 Stage 2 取代；Stage 2 已实现（2026-11-08），其中[可见范围内的等待](#stage-2-await)已完成最低限度的保守结束，完整迁移仍待实施；[Pure 的值管道与 list 原子输出](#pure-pipeline)已实现（2026-11-12）；[scope 的单例与多例、按可达性回收](#scope-gc)已实现（2026-11-13，生成与普通编译通过）；[Stage 6 的第一步](#stage-6)（Stream 的正常结束到 lifelong 返回）已实现（2026-11-14），会话历史[按读取义务保留](#stage-6-retention)已实现（2026-11-14），[由持续资产驱动的持续资产](#stage-6-derive)与[消费原子输出的持续发布](#stage-6-reuse)已实现（2026-11-15）；[Stage 5 的持有与停止基础](#stage-5-foundation)已实现（2026-11-16）；Stage 3–7 的其余部分继续逐阶段收敛。**
+更新：2026-11-17。本文是阶段计划与开放项的唯一入口，保存各阶段的目标、剩余工作和必要的完成摘要。当前协议在[主设计](LATEST_DESIGN.md)及其专题中维护；历史验证集中在[验证边界](#baseline)，不代表本次重新执行。
 
-本轮目标是在框架现有概念内，先分离原子 handler 与业务 effect，使 handler 可以复用、前驱由声明装配；再统一 Stream effect 与 lifelong 的持续执行协议，完成正常结束、停止传播和资源收尾。每阶段先收敛设计与代码形态，再实现；本文记录推进顺序、待确认事项及开放边界，不替代[主设计](LATEST_DESIGN.md)和[当前 Stream 规范](STREAM_LIFELONG.md)。
+**当前进度：** handler 复用、scope 可达性回收、Stream 的生产侧与消费侧结束、后继读取、历史保留和会话退役已落地。剩余重点是持续交付与历史资源的持有关系，再接通相应回收；不能把已有的会话停止与 scope 回收误列为未实现。
 
-本文件是唯一的阶段计划与开放项入口。以下 Stage 1–7 是本轮编号，与已经完成的 Prototype／RuntimeGraph、来源可见性、Stream 初版三个历史阶段区分。
+<a id="code-shape"></a>
+## 代码长什么样
 
-<a id="gen-assembly-sharing"></a>
-## gen 装配与共享分析整理
+沿[指南的同一业务示例](GUIDE.md#code-shape)查看资产、注册、instance 和 workflow；当前完整写法不在计划中复制。原子 handler 以 `instance XxxLayer m => XxxHandler m` 实现，业务 effect 绑定它并声明 Input／demands，gen 装配前驱和读取路由，入口保持 `main = interpreter ast effects`。
 
-**状态：已实现（2026-11-16）；本轮显式生成与普通编译通过。** 本项承接 gen／runtime 边界核对，不改变 Stage 1–7 的语义，也不引入新 facade。
-
-- **第一批：装配同源。** Gen.Assembly 解析 AST 末端、选择器、独立会话步骤和 anchor → parser 输出连接；Binding 保存有序 RequestStep／InputStep 与 RawSource。Build、Sources、Emit 使用同一结果，保持调用顺序、raw 交接与普通／持续注入的错误规则。
-- **第二批：共享结构分析。** 方法图归约使用 Map／Set 索引，完成一个方法后缓存 scope 路径与图摘要，活动栈独立检查递归。Sequence 每次 Call 和各 NodeId 都保留；不缓存业务输出，不提升 alternative 公共操作，不合并 Excu／Pure 调用。scope 路径与来源状态的指数上界仍未消除。
-- **后续单独做。** scope 按参数值复用未实现；当前继续以生产身份匹配，没有增加 Eq 约束，runtime、归属和回收规则不变。
-
-当前细则见[装配与复用边界](EFFECT_GRAPH.md#reuse-boundary)，源码分工见[主设计](LATEST_DESIGN.md#sdk-layout)。
-
-**本轮验证：** FileDemo、Crawler、OpenFilesDemo、ScopeInstancesDemo、ScopeReuseDemo、StreamDemo、LinesDemo、FacadeProbe 八个命名空间均显式重新生成，通过生成器自带的源码／类型检查；全部报告 `0 files updated; structure rebuilt`，现有 Generated 的契约、入口代码、资产目录和 Prototype 均未变化。使用临时 Cabal 配置与 builddir 执行 `cabal build all --offline -j1`，退出码 0；最后的模块分工整理再次普通编译通过。
-
-**未覆盖：** 未新增测试、负例或检查门槛；未运行业务 demo，未做性能或内存实测。生成产物一致和编译通过不能替代全部并发、业务分支及大规模图的验证。scope 路径和相关来源状态仍可能指数增长。
+持续执行的写法见[指南第五节](GUIDE.md#stream)：Stream handler 用 `streamEnd` 结束来源，自身声明 `streams` 的 Excu 用 `endStream` 结束订阅。后续阶段若调整接口，先给出受影响的 Types、Effects、Handlers 和 AST 代码形态，标明“待确认／未实现”，确认后才更新当前指南。
 
 <a id="scope"></a>
-## 本轮收敛什么
+## 目标与边界
 
-只收敛已提出的输入契约、handler 复用与前驱装配、资产访问、持续执行、结束和资源释放。不新增 effect 类别、boot 类别、手写装配层、资源寿命标签或可选 cleanup policy，不以新增配置掩盖尚未确定的持有关系。Stage 2 的 `XxxLayer` 是生成的约束别名，不是手写装配。
+目标是在现有架构内统一持续执行、资产访问和资源收尾。保持原子 handler、业务 effect、Context 解析与 workflow 驱动的分工，以及 Prototype／RuntimeGraph 和独立无环 ScopeTree；不为实现方便增加 effect 类别、手写装配层、资源寿命标签或 cleanup policy。
 
-保持六类 effect、AST targeted boot 与 Context 资产 boot、原生 instance、独立无环 ScopeTree，以及统一 Prototype／RuntimeGraph。Context 继续承载跨 handler 的业务产值；来源可见性、捕获稳定性和唯一 ownership 不能因重构弱化。Stage 2 起 Input 由生成装配为实际执行的前驱，不再只提供句柄能力。
-
-本轮有接口与协议调整，不等于现有行为不变。Stage 1、Stage 2 的规则已经确认；end 的手写接口等后续接口仍须先确认，再同步生成契约和实现；生成前代码始终能由 GHC／HLS 解析、名称解析和类型检查。
+资产引用的内存回收与 `Scoped.close` 管理的资源释放分别处理。释放引用不能替代关闭资源，保存历史也不能自动保证其中的资源仍然可用。完整设计原则见[主设计](LATEST_DESIGN.md#principles)。
 
 <a id="stages"></a>
-## 七个阶段
+## 阶段地图
 
-    输入契约
-    → handler 复用与前驱装配
-    → 共同执行结构
-    → 资产与发布
-    → 使用边界
-    → 结束传播
-    → 资源清理
+Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可见性、Stream 初版的阶段编号区分。阶段按职责划分，实际交付可以交叉；不是“前一阶段所有事项完成，后一阶段才存在”。
+
+| 阶段 | 目标 | 当前状态 |
+| --- | --- | --- |
+| [1：输入契约](#stage-1) | 资产来源明确，读取可检查 | 已完成；旧接收形态由 Stage 2 取代 |
+| [2：handler 复用](#stage-2) | 原子操作与业务装配分开 | 已完成；[完整等待迁移](#stage-2-await)独立待实施 |
+| [3：共同执行结构](#stage-3) | 对齐 Stream 与 lifelong 的推进、发布和结束边界 | 已有运行对应；持续生命周期的统一继续收敛 |
+| [4：资产访问](#stage-4) | 区分当前值、历史与确定的视图位置 | 当前读取已可用，目标接口与视图拆分待定 |
+| [5：持续使用边界](#stage-5) | 持有实际资源，覆盖交付和后继 | 普通后继、停止交接与持续最新值参数已接通；历史资源待做 |
+| [6：结束传播](#stage-6) | 生产结束、消费退出、排空和 workflow 返回 | 已实现；局部失败仍延期 |
+| [7：自动清理](#stage-7) | 将持续持有接入已有 scope 回收 | 会话退役已接入；历史资源的精细回收待做 |
 
 <a id="stage-1"></a>
-### Stage 1：收敛资产来源与 handler 接收契约
+### Stage 1：资产来源与接收契约
 
-**状态：已实现；接收形态与 Context 的 request 角色由 [Stage 2](#stage-2) 取代。**
+**已完成。** 保留的核心是：每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；访问方式不另造资产身份，一个消费者可以依赖多个资产。当前约束见[资产来源与访问](LATEST_DESIGN.md#demand-contract)。
 
-“单一”约束的是每个 refined asset：同一个资产名对应同一个表示 ADT、唯一一个 Context 生产方。request、require、streams 是访问方式，可以同时声明，不生成另一种资产身份；一个消费者仍可依赖多个不同资产，Scoped 的单资源 request 限制保持。
-
-Effects 以 Asset 声明来源，demands 选择资产和访问权限；空 demands 不产生资产接收义务。生成的 Provides 与方法结果类型约束取得的值；instance 通过原生 `request @T`／`require @T` 取值，并显式匹配生成资产的值构造器。没有新增位置参数，也不提前移动取值。普通单构造器可以直接写 `T value <- require @T`，和类型先取得值，再用原生 case 处理；不要求展开所有字段或证明业务使用字段。
-
-每个声明的资产须有注册 instance 中的显式读取，或 Prototype 中已有的 alternative 选择／streams 交付依据。检查以 instance 与资产为单位，不要求每个协议方法、每一种访问模式或每条运行路径都读取。允许 open request、close require 同一资产；重复的显式 request 仍重复执行。完整规则见[主设计：资产接收契约](LATEST_DESIGN.md#demand-contract)。
-
-本阶段保留当前访问结果：普通 request／require 返回 T；持续资产的 require 返回 History T，streams 授予本次交付视图的 require 权限；尚不增加 `stream @T`，也不改变来源可见性、缺值等待或资源 ownership。
-
-**实现落点：** 纯规则集中在 Gen.Demand；Prototype 保存唯一的静态来源；声明依据由 gen 的绑定阶段（Gen.Bind）检查，接收结构检查已由 Stage 2 取消。SDK 门面与执行入口分开，Prototype 只保存模型、查询与校验，来源分析在 gen 的构图阶段（Gen.Build.Sources）；不新建一套资产或 runtime 图。
-
-**交付：** 一致的声明、生成签名、原生 instance、源码检查、六个示例及文档。生成前仍由 GHC／HLS 检查原生 Haskell；架构接收约束由 gencode 检查。
-
-**由 Stage 2 取代的部分：**
-
-- 显式匹配生成资产的值构造器：handler 改为按表示类型读取，细化资产的构造器只出现在生成代码中，接收形态检查随之取消。
-- Context 的 request 角色：Context 只声明一个 parser，取值方式全部属于 demand 端。
-- 单独声明 requests 也要求读取：requests 表示驱动，不再要求 handler 读取。
-
-保留的部分：每个 refined asset 唯一来源、访问方式须对应生产方已声明的角色、requires／streams 须有读取或 alternative／streams 依据，以及 SDK 门面与 Prototype 的分工。
+早期要求 handler 显式匹配生成资产构造器，后来妨碍同一原子操作在不同来源间复用。该接收检查和 Context 的 request 角色已由 Stage 2 取代，不再把旧写法作为候选接口保留。
 
 <a id="stage-2"></a>
-### Stage 2：分离原子 handler 与业务 effect
+### Stage 2：原子 handler 与业务 effect 分离
 
-**状态：已实现（2026-11-08）。本节写法与当前 SDK 一致（原子句柄的输出已由 [Pure 的值管道](#pure-pipeline) 从 `Maybe String` 改为 `[String]`），完整写法见[指南](GUIDE.md)；实现范围、验证与未覆盖见[实现与验证](#stage-2-status)。**
+**已完成（2026-11-08）。** 原子性落在 handler；多个业务 effect 可以绑定同一 handler，各自决定 Input 和 demands。生成器按“表示类型 + effect”路由读取，业务来源由注册明确指定，不按谁先生产来竞争。
 
-effect 是业务装配，handler 是可复用的原子操作。多个 effect 可以绑定同一个 handler；Input 与 demands 由 gencode 装配，不进入 handler 文本。gencode 是这个 EDSL 的编译器：它把分散的注册关系化成一张图，在生成期解决链的组合、读取路由和合法性检查；生成的 Haskell 是交给 GHC 编译的中间表示，这些问题不留给运行时。SDK 据此分为源语言、gen、编译产物、运行时四层，见[主设计：gen 是编译器](LATEST_DESIGN.md#compiler)。
+这解决了“同一个写入操作因为来源不同而重复实现”的问题。alternative 处理同一资产的构造器分支，不能替代跨 Context 来源的装配；无需为复用新增 `resource`、`oneOf` 或链路 newtype。handler 定义共享不合并实际调用。
 
-<a id="stage-2-history"></a>
-#### 问题如何演变
-
-- **起点：固定 demand 限制了来源复用。** demand 指定具体 refined asset，由资产确定唯一 Context 来源。它保证工厂装配明确，也把消费者绑定到具体生产链：同一个写入操作分别消费报表和回复时，要写两份方法体，固定的 `require @ReportText` 不会因挂到另一条链而改变来源。Input 只描述句柄能力，不携带“本次使用应绑定哪个来源”的信息。
-- **澄清：alternative 不是跨来源装配。** alternative 从同一基础资产的分支投影推导候选，按该资产的构造器选择流程。`FileTextBlank`、`FileTextWritten` 来自同一个 `FileText`、同一个 Context，属于同源状态分派，不能当作跨 Context 来源多态的证据，也不按“谁先生产就选谁”竞争。
-- **曾经的困难：坚持同一个 effect 只注册一次。** 同时复用方法体和 effect 注册，使讨论转向来源参数、模块绑定、链路 newtype 和 `resource`。这些方向都缺少同一份信息：使用处只写 `input = "EffectA"`，没有来源实例化信息，类型兼容、挂载身份和生产时序都不能补出业务选择。
-- **转向：原子性落在 handler，effect 可以业务化。** 原子操作由 handler 实现；effect 是业务装配，可以有不同的 Input、demands 和运行身份；多个 effect 绑定同一个 handler，来源由注册区分。不新增 `resource`、`oneOf` 或链路 newtype。此前“一个原子操作只能对应一个 effect 注册”的要求已被替代。
-
-<a id="stage-2-roles"></a>
-#### 职责边界
-
-| 层次 | 职责 |
-| --- | --- |
-| 原子 handler | 实现操作：按表示类型读取注入的值，交出结果或自身的失败 |
-| 业务 effect | 绑定 handler，声明 Input、具体资产需求及驱动关系 |
-| gencode | 编译：组合链、路由读取、生成契约和静态图，并做生成期检查 |
-| runtime | 执行编译结果，管理绑定、scope、注入与故障 |
-
-共享 handler 不通过模块名、调用时序或链路位置判断业务来源。handler 定义共享不合并实际调用或运行实例。
-
-<a id="stage-2-code"></a>
-#### 代码长什么样
-
-以 [FacadeProbe](../demo/FacadeProbe/README.md) 的报表与回复为例：两者共用打开、写入、读取和解析，只是资产和前驱不同。
-
-`Types.hs` 只写数据结构，不变：
-
-```haskell
-data TextFile = TextFile FilePath Handle deriving Show
-newtype Body = Body String deriving Show
-newtype LineCount = LineCount Int deriving Show
-```
-
-`Effects.hs`：注册里的名字指向 handler；同一个 handler 绑定多次，Input 与 demand 各不相同。
-
-```haskell
-EffectSpec { name = "ReportFile"
-           , typing = Context { asset = Asset @TextFile "OpenedReport", parser = Just "acquireFile", require = True, stream = False }
-           , input = "Root", demands = [requests "ReportPath", requires "ReportPath"] }
-EffectSpec { name = "ReportScope"
-           , typing = Scoped { open = Just "openTextFile", close = Just "closeTextFile" }
-           , input = "Root", demands = [requests "OpenedReport", requires "OpenedReport"] }
-EffectSpec { name = "WriteReport", typing = Excu { handler = Just "writeText" }
-           , input = "ReportScope", demands = [requests "ReportBody", requires "OpenedReport", requires "ReportBody"] }
-EffectSpec { name = "WriteReply", typing = Excu { handler = Just "writeText" }
-           , input = "ReplyScope", demands = [requests "ReplyBody", requires "OpenedReply", requires "ReplyBody"] }
-EffectSpec { name = "ReportCounter"
-           , typing = Context { asset = Asset @LineCount "ReportStats", parser = Just "countLines", require = True, stream = False }
-           , input = "ReadReport", demands = [] }
-```
-
-`Handlers.hs`：每个 handler 一个类。方法体不出现 Input、细化资产、effect 名或 request。
-
-```haskell
-instance WriteTextLayer m => WriteTextHandler m where
-  writeText = do
-    TextFile path file <- require @TextFile
-    Body text <- require @Body
-    liftIO (hPutStr file text >> hFlush file)
-    pure []
-
-instance CountLinesLayer m => CountLinesHandler m where
-  countLines = do
-    output <- raw
-    contents <- case output of
-      [text] -> pure text
-      _ -> raise (CountLinesError "no text")
-    pure (LineCount (length (lines contents)))
-```
-
-`AST.hs` 不变，仍按 effect 名挂节点。
-
-生成的契约与装配：每个 effect 一个类型标签 `At "名字"`，handler 方法体原样复制，读取由按标签区分的 instance 在编译期选定，运行时不按调用者查表。
-
-```haskell
--- Generated/Effects.hs
-type WriteTextLayer m = (SDK.Reads (Body) m, SDK.Reads (TextFile) m, SDK.Raises WriteTextError m, MonadIO m)
-class WriteTextHandler m where
-  writeText :: m [String]
-newtype WriteTextError = WriteTextError String
-
--- Generated/Handlers.hs 入口：驱动 → Input → 方法体；外层是入口包装
-runWriteReport = ⟨入口包装⟩ $
-  openReportScope >> runAt @"WriteReport" FrameworkGenerated.writeText
-getReportStats = ⟨入口包装⟩ $
-  (FrameworkGenerated.ReportStats <$> runAt @"ReportCounter" FrameworkGenerated.countLines)
-
--- 路由：表示类型 + effect → 唯一的细化资产
-instance FrameworkRuntime.Reads (TextFile) (At "WriteReport") where
-  require = At ((\(FrameworkGenerated.OpenedReport value) -> value) <$> readOpenedReport)
-
--- raw：直接 Input 的入口；注入时由本次输出回答，被驱动时执行该入口
-instance FrameworkRuntime.Raw (At "ReportCounter") where
-  raw = At (runReadReport)
-```
-
-2026-11-08 的标签探针先确认：两个 effect 共用一份 `writeText`、两个 parser 共用一份 `countLines` 时，GHC 按标签选出各自的读取，方法体不改写；实现后 FacadeProbe 以生成代码得到同样的结果。
-
-<a id="stage-2-decisions"></a>
-#### 已确认的决定
-
-| 主题 | 决定 |
-| --- | --- |
-| handler | 类方法，不带参数，写作 `instance XxxLayer m => XxxHandler m`；类名、Layer、错误类型和方法类型由 gen 从 handler 名与绑定方式推出 |
-| Input | gen 在入口中把 Input 装配为前驱，在方法体之前执行；方法体不调用上游，也不捕获 Input 的失败，失败后的改道用 AST 的 alternative |
-| 挂接 parser | Input 是 Excu、Scoped.open 或 Stream 时，parser 以 `raw` 读取直接 Input 的本次输出，沿用现有注入与回放协议；`raw` 现为 `m [String]`，Pure 同样用它，见 [Pure 的值管道](#pure-pipeline) |
-| 驱动 | `requests` 驱动对应资产沿 Input 的整条 Context 链；`requires` 只读取，不驱动，也不在读取处生产，还没有值时等待发布；alternative 的选择读取驱动转折资产，相当于 `requests`；`streams` 由持续交付驱动。入口顺序是驱动 → Input → 方法体；handler 只写 `require` |
-| 读取 | handler 按表示类型读取；gen 按“表示类型 + effect”路由到唯一的细化资产，一个 effect 内表示类型不重复；需要两个同类型值的操作用角色类型区分 |
-| 值传递 | 值只经资产流动；原子句柄和 Stream 的输出只交给挂在其下的 parser |
-| Context | `Context { asset, parser, require :: Bool, stream :: Bool }`；`getT`、`readT`、`streamT` 由 gen 按资产名生成；`require` 缓存最新值，`stream` 缓存历史 |
-| 持续资产 | `stream = True` 当且仅当 Input 是 Stream，且必须同时 `require = True`；持续交付只由上游 Stream 驱动，RepeatRequest 取消 |
-| 注册名字 | Pure、Excu、Scoped、Stream、Context.parser、Error.detect／resolve 都写 handler 名；effect 方法名由 gen 内部生成，用户不写也不调用 |
-| 失败 | 属于 handler：`raise (XxxError "...")`，不随绑定改变；发生在哪个节点只是诊断位置 |
-| Error | 只指向 scope；`RaisedBy` 写 handler 名，`ScopeFaultIn`／`ContextFaultIn` 仍写 effect 名；没有关联 scope 时由 gen 报错；普通 effect 的错误靠提前 mock 排除 |
-| scope | 实例跟随注册：两个 Scoped 注册共用 open／close，仍是两个独立 scope |
-| 普通函数 | 禁止用户在顶层定义普通函数，所有值操作写成类方法并注册；方法体内的局部函数与 lambda 不限制 |
-| 替换 | 全面替换旧写法，不保留兼容层 |
-
-<a id="stage-2-layer"></a>
-#### Layer 包含什么
-
-| 约束 | 什么时候有 | 方法体可写 |
-| --- | --- | --- |
-| `Reads T m` | 绑定它的 effect `requires` 了表示类型为 T 的资产 | `require @T` |
-| `Reads (History T) m` | 绑定它的 effect `streams` 了持续资产 | `require @(History T)` |
-| `Raw m` | 绑成挂接的 parser 或 Pure | `raw` |
-| `Raises XxxError m` | 总是 | `raise (XxxError "...")` |
-| `MonadIO m` | Pure 以外总是 | `liftIO` |
-
-单独的 `requests` 不带来 `Reads`。Layer 不含 Input 的 effect 类、effect 自身的能力标记、细化资产、其他 handler 的类或 request。一个 handler 只有一份 Layer，各绑定推出的内容必须一致。`Raw`、`Raises` 是暂定名。
-
-| 绑定方式 | 方法类型 |
-| --- | --- |
-| Pure | `m [String]`（见 [Pure 的值管道](#pure-pipeline)） |
-| Excu、Scoped.open／close | `m [String]`（Stage 2 时为 `m (Maybe String)`） |
-| Context.parser | `m T`，T 是 `Asset @T` 的表示类型 |
-| Stream | `m String` |
-| Error.detect／resolve | `m ()` |
-
-<a id="stage-2-checks"></a>
-#### 生成期检查
-
-以下都是编译错误，由 gencode 在生成前报告：
-
-- 每个读取在每个绑定下解析到唯一的细化资产；一个 effect 的 demands 里同一表示类型只出现一次。
-- 同一个 handler 的各个绑定推出相同的方法类型与 Layer。
-- handler 方法体不调用其他 handler 或 effect 的方法；FacadeProbe 实测中 GHC 放过的“调用另一个 handler 的类方法”也由 gencode 拒绝。
-- requires 需要的资产能沿已有来源分析得到驱动依据。
-- 顶层只允许类型声明、instance、`effects`、`ast` 与 `main`。
-- Context 的 `stream`、`require` 与 Input 组合合法；挂在 Stream 下的资产不能 `requests`。
-- Error 必须关联一个 scope。
-- handler 名推出的类、Layer、错误类型与其他生成名字冲突。
-- 沿用 Stage 1：每个细化资产唯一来源；访问方式对应生产方已声明的角色；requires／streams 须有读取或 alternative／streams 依据。
-
-<a id="stage-2-migration"></a>
-#### 迁移与取代
-
-| 现有写法 | 新写法 |
-| --- | --- |
-| 方法体第一行调用 Input | gen 在入口装配 |
-| 方法体里的 `request`，包括只为刷新的 `_ <- request @T` | 注册里的 `requests` |
-| 按 effect 生成的 `raise (XxxError ...)` | 按 handler 生成 |
-| parser 调用 Input 的方法 | `raw` |
-| `finishInspection`、`checkIndependent`、`checkReopen` 在方法体中间或重复开关资源 | 拆成多个 effect，由 AST 安排顺序；`FinishInspection` 声明的 Input 是 `InspectFiles`，方法体却只调用 `holdFiles`，迁移时按实际依赖改声明，不悄悄新增执行 |
-| FileDemo 的 `validateFileName` 作为守卫 | Stage 2 时仍是 `FileResource` 的 Input；现在是挂在 `LocateFile` 下的 Pure，见 [Pure 的值管道](#pure-pipeline) |
-| StreamDemo 的 `Beat`（不在 Stream 下的持续资产） | Stream effect 加 parser |
-| FileDemo 的 `resolveFileSession` 调用 `closeFileSession` | resolve 暂不操作 scope，见下文 Error 驱动链 |
-| Crawler 两个抓取、两个打印的重复方法体 | 共享 handler |
-
-取消的现行规则：Stage 1 的接收形态检查；Context 的 request 角色；RepeatRequest；没有关联 scope 的全局 Error 处置；Pure 的旧候选名单协议；普通函数的资产检查与具名局部函数限制（改为顶层白名单）；AGENTS.md 中“业务 instance 写作 `instance XInputs m => XEffect m`，方法体显式调用 Input”与“不恢复全面禁止普通函数”两条。以上迁移与取消已于 2026-11-08 全部完成，见[实现与验证](#stage-2-status)。
+当前写法与检查分别见[指南：handler](GUIDE.md#handlers)、[注册契约](LATEST_DESIGN.md#registration)、[入口装配](LATEST_DESIGN.md#calls)和[源码资产约束](ASSETS.md)。SDK 四层分工见 [gen 是编译器](LATEST_DESIGN.md#compiler)。
 
 <a id="stage-2-later"></a>
-#### 本阶段不处理
-
-- **Pure 的语义**：Stage 2 只定了方向（没有外部性的值管道，值直接进入下一个 effect）；返回类型、下游读取方式与能否 raise 已由 [Pure 的值管道](#pure-pipeline) 确定并实现（2026-11-12）。
-- **Stream 的驱动方式**：event、behavior（轮询）与 socket 三种方式待定；持续资产的读取类型是继续用 `History` 还是直接暴露标准序列待定。
-- **Error 驱动链**：Error 是另一条驱动链，resolve 不应调用 close；Error 如何驱动 scope 的修复待定。
-- **读取历史的写法**：`streamT` 由 gen 生成；handler 中暂沿用 `require @(History T)`，是否另设读取方法待定。
-
-<a id="stage-2-delivery"></a>
-**交付（已完成）：** 一致的注册、生成契约、原生 handler、生成装配与检查；六个 demo 与 FacadeProbe 全部迁移并与迁移前输出对照；同步主设计、指南、ASSETS、EFFECT_GRAPH、STREAM_LIFELONG、AGENTS 与 README。
-
-<a id="stage-2-status"></a>
-#### 实现与验证（2026-11-08）
-
-全面替换旧写法，不保留兼容层：
-
-- **注册与检查**：`Context { asset, parser, require, stream }`；删除 Context 的 request 角色、RepeatRequest、没有关联 scope 的全局 Error 与 Stage 1 的接收形态检查。降级阶段（Gen.Lower）新增：Input 不能指向 Error、Error 恰好关联一个 scope、`RaisedBy` 写已注册的 handler 名；Gen.Demand 新增 `requires` 需要 `require = True`、`streams` 只订阅持续资产等访问规则；绑定阶段（Gen.Bind）拒绝与生成的入口重名的 handler 名。
-- **生成**：每个 handler 一份 `XxxLayer`／`XxxHandler`／`XxxError`；运行副本在 `At "名字"` 标签上原样复制方法体，生成按标签的 `Reads`／`Raw`／`Raises` 实例与“驱动 → Input → 方法体”的入口。结构分析提取 `require @T`／`raw` 的原子形状，按绑定代换后组成 effect 方法结构，并检查读取路由、同一 handler 各绑定的签名与 Layer、读取依据与 handler 互调。资产检查（Gen.Assets）改为顶层白名单与资产目录。
-- **读取**：`requires` 不生产。读取先用本次捕获，再查静态来源表；还没有值时阻塞当前链，等之后的发布再重读，不报错。资源、诊断、自动收尾与 close 期间不等待，缺值报 `ContextNotInitialized`。alternative 的选择读取驱动转折资产，相当于 `requests`；持续资产领取会话交付。读取权限只在生成期检查，运行时没有读取声明表。
-- **demo**：六个 demo 与 FacadeProbe 全部迁移。Crawler 两条链共用 `fetchPage`、`extractSummary`、`printSummary`；StreamDemo 的心跳改为 `HeartbeatClock`（Stream）＋`Heartbeat`（parser）；OpenFilesDemo 增加 `ReleaseFiles`（绑定 `holdFiles`）与挂在它下面的 `InspectionSnapshot`，`FinishInspection` 改为 Input Root、requires 快照，按实际依赖声明；ScopeInstancesDemo 拆成共用 `checkSelection` 的 `UseFirst`／`UseSecond`／`ReopenFirst`，以及 `SelectSecond`／`SelectFirst` 与 `CheckJournal`；FileDemo 的 `resolveFileSession` 改为 `pure ()`（TODO）；FacadeProbe 改为真实注册与 handler，删除手写的 Contracts.hs、Facade.hs。
-
-**验证**（本次实际执行）：
-
-- `cabal build all --offline -j1` 通过；七个程序均用 `effect-codegen` 重新生成；FacadeProbe 按其 README 的 ghc 命令编译。
-- 与迁移前代码的输出对照（迁移前的输出在同日、动手前从干净输出目录采集；FacadeProbe 用 2026-11-07 的原型程序）。有限 demo 从干净输出目录各运行两次：FileDemo、ScopeReuseDemo 输出相同，ScopeReuseDemo 的 `shared.txt` 行序随并行写入变化，迁移前两次运行也不同；Crawler 的结构与结果相同，只有页面中随请求变化的链接参数不同。StreamDemo 在终端运行约 11 秒后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾和迁移前一致。
-- 预期的输出变化：OpenFilesDemo 的检查行由 “after explicit close” 改为 “after the scope closed”，结果多一项 `ReleaseFilesResult ()`；ScopeInstancesDemo 改为三条使用闭包，检查日志的逐条顺序与开关计数（文件 1 为 2/2，文件 2 为 1/1）；FacadeProbe 的失败 `detail` 由 `ShowAFailure` 变为 handler 的 `ShowLevelFailure`，`origin` 仍为 `"ShowA"`，两个 lifelong 单元的交错顺序随时序变化，写出的文件内容相同。
-
-**未覆盖**：
-
-- 没有新增测试或负例；生成期检查只在七个程序的合法写法上运行过，各条报错路径没有逐一触发。
-- 七个程序中没有真正进入等待的读取。parallel 兄弟互不可见，可见范围内没人生产的读取会一直等待；对应的设计已确定、尚未实现，见[可见范围内的等待](#stage-2-await)。
-- detect／resolve 的 Layer 不含 `caughtFailure`，handler 读不到原失败；Error 驱动链待定。
-- Pure 当时仍是 `m ()` 守卫，已由 [Pure 的值管道](#pure-pipeline) 取代；Stream 的驱动方式未区分；lifelong 内的显式反馈随 RepeatRequest 取消，没有替代写法；`streamT` 已生成，handler 读取历史仍写 `require @(History T)`。
-- Stream 的背压与资源释放不在本次范围；并发交错、长时间内存与 Windows 以外的取消仍未观察。
-
-<a id="stage-2-await"></a>
-#### 可见范围内的等待（保守结束已实现，完整迁移待实施）
-
-**状态：最低限度的保守等待结束已实现（2026-11-13）；parallel 可见性、完整生成期等待检查及按帧资产 state 尚未实现。** 规则见[主设计：可见范围与等待的结束](LATEST_DESIGN.md#await-visibility)。
-
-**本轮已实现：** `requires` 保持现有捕获与 `protoSources` 路由。缺值时以许可来源的执行帧进度作保守判断：已知候选全部退休时判为耗尽；再读一次仍缺值，才报 `ContextNotInitialized` 并进入现有 Error 协议。本链自己的潜在生产不算继续等待的理由（2026-11-14 补齐，见下）。未知来源、会话来源、会话链上的等待及其他仍可能生产的运行链继续等待；不解释方法内部条件，也不保证所有不可进展的等待都能结束。
-
-实现复用 `Runtime.Frame` 根帧与子帧共享的 `frameSignal`／`notifyFrame`：普通发布和节点退休都唤醒等待者，Graph 的 `publicationSignal` 保留为转发入口。生产身份、scope 待用与回收规则不变，普通资产仍按 origin 保存；没有新增 STM、方法体插桩、用户语法或生成期检查。
-
-**本轮验证（2026-11-13）：** `cabal build all --offline -j1` 使用既有临时 builddir 与 Cabal 配置通过，退出码 0。本轮未修改生成器、Prototype 或业务接口，现有生成产物无需变化。随后按用户要求实际测试：
-
-- 临时原生 workflow 经完整 gencode 与 GHC 编译：前一节点成功、挂接解析失败时，后一节点返回 `ContextNotInitialized`，生产与解析各一次，消费方法体未执行；正常发布时消费取得 42，三者各一次并返回 `Succ`。两个进程均正常退出，未触发 15 秒超时；临时 namespace 已从仓库清除。
-- 七项协议探针通过：首次读取为空后恰好发布并退休，最后重读仍返回 42；无发布的退休唤醒缺值读取；活跃来源保持等待、发布后返回值；阻塞的 require 保留 `UserInterrupt`；子帧完成不被根帧预约覆盖；跳过来源发送通知并结束等待；未知来源和本链潜在生产保持保守。探针使用实际 Context／Graph／Frame 和受控存储载体，不解释为所有交错的证明。
-- 现有 ScopeReuseDemo、ScopeInstancesDemo、OpenFilesDemo、FileDemo 各运行两次，全部 `Succ`。ScopeReuseDemo 每次实际开／关 1/1，三个 writer 各写一次；ScopeInstancesDemo 每次文件1开／关 2/2、文件2为 1/1；OpenFilesDemo 的十个句柄在持有期间及 GC 后均打开，最终全部关闭；FileDemo 依次选择首行写入和追加。
-- StreamDemo 运行 2.4 秒后通过 `throwTo UserInterrupt` 受控取消并等待退出：观察到三次读数、一次心跳、一次断开，原取消异常传播。现有 demo 测试通过 `runProgram`、生成的原型／入口及 AST 执行，在临时目录隔离文件，没有走 Main 的源码快照校验入口，也没有强杀进程。
-
-临时探针未加入仓库的永久测试设施。未运行依赖外网的 Crawler 业务，未穷举并发交错、方法内部条件或所有会话组合；本轮不声称覆盖全部不可进展等待。
-
-**本链潜在生产（2026-11-14）：** 上面探针记录的“本链潜在生产保持保守”已由本次取代。原判断把等待者自己所在的节点列为候选，而它必然处于 `Running`，于是本链静态上可能生产目标资产时永远等待。一个节点的链在 App 载体里顺序执行，`require` 缺值时阻塞当前线程、不让出执行权：读取之前的本链生产已经结束，之后的要等这次读取返回，等待期间都不可能发布。因此有限链上不再把本节点列为候选，其他候选退休后即判为耗尽。等待者在会话链上时保持原判断，待 Stream 的结束与失败语义确定；载体若改为可让出执行权，或节点内出现并发驱动，这条判断须重新核对。只改 `contextMayPublish`，生成器、Prototype 和业务接口不变。
-
-`cabal build all --offline -j1` 通过；FileDemo、ScopeReuseDemo、ScopeInstancesDemo、OpenFilesDemo 运行均为 `Succ`。临时改 FileDemo 并重新生成：`FileResource` 只 `requires "FileName"`，`ExtractFileText` 改为 `requests "FileName"`，AST 先执行 `ReadFile`，使 `acquireFile` 的读取排在本链的驱动之前（`--structure` 显示该读取来源为本链）。新判断下运行返回 `Failed`（`ContextNotInitialized`，origin 为 `FileLocation`）并正常退出；临时换回原判断重新编译，同一程序以 `BlockedIndefinitelyOnMVar` 终止，即原来的自锁。临时改动已还原。未覆盖：会话链上的等待、可选生产未发布的路径，以及这类自锁的生成期检查（属于完整等待分析）。
-
-**完整目标仍待实施。** 可见范围目前仍只有先完成的前驱与本入口自己，parallel 兄弟互不可见；以下分工与实现落点描述后续迁移，不是本轮能力：
-
-- **唯一性**：细化保证生产链唯一，不保证每次驱动的值相同。require 读的是 request 的 state；生成期保留“有多个可见来源”报错中读不确定的部分（彼此无先后的生产者，或先完成的生产者加上与读取并发的生产者），有先后的生产者读最后一次。
-- **可见性**在生成期判断这次等待能不能等到、读到的是不是确定的一次；parallel 兄弟纳入可见范围。运行时的隔离由执行帧负责。
-- **生成期**报“永远等不到”与“读不确定”：读取点在可见范围内没有可能的生产者，或兄弟之间互等；或者可见的生产者不能确定读到哪一次。
-- **运行时**按执行帧为每份资产保存一个 state：request 直接覆盖，require 读当前值，不在多份发布之间挑选；可能的生产者都已结束仍没有值时，结束等待并报 `ContextNotInitialized`。
-
-**后续实现落点：**
-
-- gen：Query 的可见关系纳入 parallel 兄弟；来源分析记录每个读取点在可见范围内的可能生产者。顺序节点上后一次发布取代前一次，parallel 合并时各分支的发布并存；“有多个可见来源”的报错改为只拦读不确定的读取，另检查等不到的读取与兄弟互等。
-- 运行时：普通发布从按 Origin 分组的整张表，改为每个执行帧、每份资产一个 `TVar`。request 用一次 `writeTVar` 直接覆盖，写入即唤醒，去掉整表的 `atomicModifyIORef'`、`uninterruptibleMask_` 与全局发布信号；require 依次读本帧和外层帧，都空时 `retry`。普通发布不再按来源表挑选 Origin，去掉普通发布的 `AmbiguousContextBinding`（资源实例的歧义检查保留）。lifelong 单元每次执行建立新帧，取代 `resetOrigins`；会话挂载的发布照旧作为伴随发布交付。等待的结束：可能的生产者的结束记录与 state 在同一次 `retry` 中检查。cabal 加入 GHC 自带的 `stm`。
-- 文档：主设计 4.3 节与 EFFECT_GRAPH 的来源一节改为当前协议，GUIDE 补充兄弟之间读取的写法。
-
-<a id="pure-pipeline"></a>
-### Pure 的值管道与 list 原子输出
-
-**状态：已实现（2026-11-12）。** 规则与代码形态见[主设计：Pure](LATEST_DESIGN.md#pure)，写法见[指南](GUIDE.md#pure)。这一项不属于 Stage 1–7 的持续执行计划，是 Stage 2 留下的 Pure 语义的收敛。
-
-**确认的决定：**
-
-| 主题 | 决定 |
-| --- | --- |
-| 原子输出 | Excu、Scoped.open／close 交出 `[String]`，取代 `Maybe String`：没有信息是 `[]`，一项是 `[x]`，一串操作或递归的结果用 `:`、`concat` 组合。list 是自由幺半群，只承诺顺序与拼接，不保留嵌套 |
-| Pure | 生产链中的纯值变换，对上层输出做 fmap：签名 `m [String]`，用 `raw` 读直接 Input；Layer 只有 `Raw`、`Raises`，没有 `MonadIO`；可以 `raise`；不声明 demands，不作为 AST 末端，必须绑定 handler |
-| 位置 | Pure 的 input 是 Excu、Scoped 或 Pure；以 Pure 为 input 的只能是 Context 或 Pure，且至少一个，一串 Pure 总是落到一个 Context |
-| Context | 细化 parser，作用类似 tokenize：把 raw 解析成表示类型；即使结果仍是 list，也要经过 Context 才成为资产。值的变换写在 Pure 里 |
-| 取值 | Pure 与 Context 都从直接 Input 的 raw 取值，不走 demands，避免 demands 的循环依赖 |
-| Stream | 有自己的数据结构：handler 仍是 `m String`，parser 的 raw 读作单元素 list；下面不挂 Pure |
-
-**实现：**
-
-- **源语言**：`Raw` 的 `raw :: m [String]`。
-- **降级（Gen.Lower）**：Pure 的注册规则；Context 的挂接句柄沿一串 Pure 向上找到 Excu 或 Scoped；"资源 Context 不能挂在请求它的 scope 下"按这个句柄检查；`streams` 只由 Excu、Scoped 声明；AST 末端不能是 Pure。
-- **绑定（Gen.Bind）**：Context 的 parser 与 Pure 读 raw，由直接 Input 的入口回答，Input 不作为前驱执行；Excu、Scoped、Pure 的方法类型为 `[String]`；Stream 下的 raw 为 `(: []) <$> next名字`。
-- **构图（Gen.Build、Build.Sources）**：注入副本把中间的 Pure 就地展开到句柄为止，图中不成环；"注入经其他方法绕到句柄"的检查允许经 Pure；来源分析中 Pure 不改变调用者。
-- **输出（Emit.Handlers）**：Pure 的入口没有原子句柄包装，也不进入 handler 身份，因此不改变调用者；Raw 实例也为 Pure 生成。
-- **运行时**：`RawOutput` 的 `info` 为 `[String]`；`atomicHandle`／`atomicScope` 交出 list，handler 没有执行（复用实例、重复 close）时为 `[]`。
-
-**迁移：**
-
-- 七个程序中 Excu／Scoped 的 handler 改为 `pure []`／`pure [x]`（43 处），六个读 `raw` 的 parser 改为匹配 list；Stream 下的 parser 用 `concat <$> raw`。
-- FileDemo：`locateFile` 改为 Excu `LocateFile`，交出路径；`ValidateFileName` 改为挂在它下面的 Pure，检查后原样交出；新增 parser `parseFileName`，`FileLocation` 挂在 Pure 下；`FileResource`、`FileSession` 的 input 改为 Root，文件名仍由 `FileResource` 的 `requests "FileName"` 驱动，经过检查后才打开文件。
-- Crawler：`FetchPage`、`FetchLinkedPage` 与各自的解析 Context 之间加入 Pure `KeepPageBody`、`KeepLinkedPageBody`，共用 `dropBlankBodies`，去掉空白正文；抓取在 AST 中执行，解析经 Pure 注入，覆盖经 Pure 的注入路径。正文全是空白时，解析现在报 `ExtractSummaryError`（此前会解析出空摘要）。
-- 顺带修正 Crawler、FileDemo 中两处仍写"require 时驱动"的旧注释，以及 GUIDE 中 `requires` 仍写"生产一次并记住"的旧描述。
-
-**验证**（本次实际执行）：
-
-- `cabal build all` 通过；七个程序均用 `effect-codegen` 重新生成；FacadeProbe 按其 README 的 ghc 命令编译。
-- 与改动前（main，0651829）对照：在 `dist-newstyle/bl` 的 worktree 中编译 main，两边从同一份 `output.txt` 开始各运行一次。FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 输出相同，FileDemo 写出的文件相同；Crawler 除随请求变化的链接签名外相同；StreamDemo 两版同时在终端运行到第 56 条读数左右，读数、趋势与心跳节奏一致，新版另运行一次，Ctrl-C 后以 `[sensor] disconnected` 收尾；FacadeProbe 输出行相同（parallel 的交错顺序不同），写出的文件相同，仍以 `ShowLevelFailure` 结束。
-- Crawler 加入 Pure 后再次 `cabal build all`、重新生成并运行：两页摘要都由经 Pure 的注入发布并打印，输出共 100 行，与之前的运行相比只有网页本身随时间变化的链接不同（Google 的链接签名、百度的热搜链接）。
-
-**未覆盖：**
-
-- 没有新增测试或负例；Pure 的各条生成期报错没有逐一触发。
-- Pure 的 `raise` 没有触发过；经 Pure 的注入只在 Crawler 的成功路径上运行过，注入中的 Pure 失败没有观察。
-- 没有 handler 交出多于一项的 list；递归组合、去重与排序只在文档示例中出现。
-- 带类型的原子输出、嵌套结构（森林）与 Pure 挂在 Stream 下待另行设计。
-
-<a id="scope-gc"></a>
-### Scope 的单例与多例、按可达性回收
-
-**状态：已实现（2026-11-13）；本轮生成与普通编译通过，验证边界见下文。** 当前规则统一见[主设计：单例与多例](LATEST_DESIGN.md#scope-identity)和[按可达性回收](LATEST_DESIGN.md#scope-gc)。这一项不占 Stage 1–7 的编号，已经提供 [Stage 5](#stage-5) 的持有依据与 [Stage 7](#stage-7) 的关闭条件；Stream 的正常 end 随后已实现，历史资源保活与背压仍未实现。
-
-**实现落点：**
-
-- **生产身份与帧**：Binding 保存 Context 生产的 `ActivationId` 和执行帧，读取、交接、scope 复用与 ownership 认领保留原身份。`Runtime.Frame` 提供有限运行根帧及 lifelong 每轮子帧；Execution 登记节点的执行、完成和跳过，完成晚于业务、诊断与受控结果消费。领取会话交付的对象与执行帧分开。
-- **静态开启计划**：gen 的来源分析把每个开启位置的参数候选出处存入 `protoScopeOpenings`，`--structure` 展示候选和可能类别。同一位置可按实际路径使用本节点新生产或前驱旧生产；不固定一种类别，不保留另一套分支相关性。gen 拒绝资源在所属 scope 开启前被读取，允许 `close = Nothing`；原型校验与生成缓存同步。
-- **实例匹配与待用**：Scoped 注册加各参数的实际生产身份决定实例，不比较 ADT 的 `Eq`。Graph 安装待用查询，结合所属帧及活动子帧的节点进度、候选发布和本轮已领取普通伴随资产的固定生产身份判断可达性；帧只增加身份记录，不复制值，结束即清空并摘除。Scope 同时检查当前使用者和实际父子实例引用，静态 ScopeTree 只约束候选关系。无参数实例归根帧，参数来自本轮的实例归本轮，后继复用不提升其归属。
-- **关闭结果**：不可达时同步执行一次 close；无 close 时只移出实例。`raise` 与 close 中未转换的普通 IO 异常都经 Error 诊断后记录，运行结束汇总，不改业务结果、不停止后续，也不重试；只有取消向外传播，取消发生在 close 中也停止后续启动，其余收尾不覆盖取消结果（2026-11-13 补齐：此前普通 IO 异常会向外抛出并终止运行）。关闭预约、资源认领与 masked 交接保持。
-- **示例与文档**：ScopeReuseDemo 的 writer 读取 PrepareProbe 的那次参数生产以共享；其余示例沿实际参数身份解释。主设计、指南、图、Stream 专题与工作约定同步当前协议。
-
-**本轮验证（2026-11-13）：** FileDemo、Crawler、OpenFilesDemo、ScopeInstancesDemo、ScopeReuseDemo、StreamDemo、FacadeProbe 均重新生成并通过生成器自带的源码／类型检查；`cabal build all --offline -j1` 通过，退出码 0。构建使用临时 builddir 和临时 Cabal 配置，将构建摘要写入临时目录，避免全局日志目录的写入权限问题。未新增测试、负例或额外检查门槛，也未运行业务 demo；条件注入、同节点多次生产、多个参数、分支跳过／取消、lifelong 帧归属及 close 取消等运行边界未逐项实测，不能以编译通过或历史结果代替。
-
-**关闭失败补齐（2026-11-13）：** close 中未转换为 `raise` 的普通 IO 异常改为与 `raise` 一样只记录、汇总，只有取消向外传播；同时移除开启参数观察中已不参与匹配的读取／驱动标记（SDK 内部协议，生成代码不受影响）。`cabal build all --offline -j1` 通过；ScopeReuseDemo、ScopeInstancesDemo、OpenFilesDemo、FileDemo 运行均为 `Succ`。临时让 ScopeReuseDemo 的 close 抛出 `userError` 并重新生成：close 故障以 `ScopeCleanupInterrupted` 汇总输出，其后的 VerifyReuse 照常执行，整次运行仍为 `Succ`、退出码 0；该临时改动已还原。close 中的取消未在本次实测。
-
-**关闭诊断中的取消（2026-11-13）：** 诊断回调单独交回其间收到的取消，收尾层保留原关闭故障信息，继续清理其他实例，再由现有边界传播取消；原 close 已取消时保留第一次取消，不被诊断中的第二次取消覆盖。handler、注册和生成代码不变。`cabal build all --offline -j1` 通过。按用户要求运行临时 SDK 集成探针，复用 ScopeReuseDemo 的 Prototype／AST，以受控 target 动作经过真实 App、Error、Scope、Graph 和 `runProgram`，用 MVar 握手将取消准确送到诊断线程。六项均通过：普通 close 异常后分别在 detect／resolve 中取消、普通诊断异常、原 close 取消后诊断普通异常、原 close 取消后诊断再次取消，以及正常关闭；确认取消时后继不执行、普通异常时后继继续、其他 scope 完成收尾、close 不重试、原关闭故障信息保留。用 `aff3d3d` 的两份运行时源码临时覆盖编译，前两项均复现旧版吞掉取消并继续后继。探针未加入仓库；本次未复跑完整业务 demo、未重新生成 facade，也未穷举并发交错。
-
-本次没有引入按位置的读取计划、业务方法体内的进度登记或 STM 资产 state。普通资产的来源可见性、捕获和缺值等待保持；[可见范围内的等待](#stage-2-await)在此之后单独推进，复用生产身份和执行帧。持续资产作为 scope 开启参数、来源结束后的清理、历史资源精细释放、容量背压和 Error 驱动重开仍由后续阶段收敛（Stream 的正常 end 已于 2026-11-14 实现第一步，见 [Stage 6](#stage-6)）。
+剩余的历史读取形态归 [Stage 4](#stage-4)；Error 驱动链、来源调度扩展等归[开放事项](#deferred)。现有 socket／event／behavior 的单步写法见 [Stream 规范](STREAM_LIFELONG.md#drives)，不把自动分类或外部回调适配说成当前能力。
 
 <a id="stage-3"></a>
-### Stage 3：确定 Stream 与 lifelong 的共同执行结构
+### Stage 3：Stream 与 lifelong 的共同执行结构
 
-统一 lower 后的持续执行模型：等待执行条件、完成一次有限操作、发布本次实际产生的资产、继续或进入结束协议。这里的“同构”指共同运行协议的对应，不先宣称两种前端 ADT 已有一一同构证明。
+**已有对应，生命周期边界继续收敛。** Stream 的生产步骤与 lifelong 单元都可以按“等待推进条件 → 有限执行 → 发布 → 继续或结束”理解。前者从 Context 需求启动，后者从 AST 启动；它们通过 Context 资产连接。
 
-| 共同环节 | Stream effect 所在生产链 | lifelong 中的重复执行单元 |
-| --- | --- | --- |
-| 启动来源 | Context 资产 boot | AST boot |
-| 推进条件 | 来源获取操作就绪 | 所依赖的 Context 增量就绪 |
-| 一次有限执行 | 原始输入获取与 Context 解析 | 一次有限 workflow 及其挂接解析 |
-| 业务产值 | Context 发布 | Context 发布 |
-| 持续状态 | 生产进度、绑定和资源使用 | 消费进度、绑定和资源使用 |
-| 结束与收尾 | 停止推进、结束发布、撤销使用 | 停止推进、结束发布、撤销使用 |
+保留这项工作的理由是让结束、使用撤销和回收沿共同边界衔接。不能为统一实现把生产与消费压成一个串行循环，也不预设两种前端 ADT 已有一一同构证明。现行对应见[生产连接](STREAM_LIFELONG.md#bootplan)、[单元调度](STREAM_LIFELONG.md#scheduling)与[会话](STREAM_LIFELONG.md#sessions)。
 
-生产和消费继续独立推进。lifelong 可以承载完整 workflow；它的各重复单元遵守共同协议，branch 保留现有组合关系和并发，不能为统一实现把整个 lifelong 压成一个串行生产循环。单次成功和某轮没有产值，都不等于持续执行结束。
-
-**交付：** 共同执行协议、两种入口的映射，以及有限调用与持续推进的边界。后续阶段基于这一协议处理状态与清理，不分别维护两套生命周期。
+**剩余交付：** 配合 Stage 5／7 明确两种入口的持续状态、在途执行与资源持有如何衔接；只提取真正相同的协议，保留原有 workflow 并发关系。
 
 <a id="stage-4"></a>
-### Stage 4：统一生产、当前值和历史
+### Stage 4：当前值、历史和视图位置
 
-收敛目标访问语义：
+**部分已实现，接口尚待收敛。** 当前 `requests` 写在注册中驱动生产；handler 用 `require @T` 读当前值，用 `require @(History T)` 读持续交付的历史。权限与类型以 [Context 协议](LATEST_DESIGN.md#context)和 [Stream 契约](STREAM_LIFELONG.md#contracts)为准。
 
-| 访问 | 目标含义 |
-| --- | --- |
-| request | 有主动生产能力时，生产一次并返回本次值 |
-| require | 读取当前调用确定的值 |
-| stream | 读取截至同一确定位置的历史 |
+剩余工作：
 
-Stage 2 已确定：request 是消费链对生产链的驱动，写在注册里；Context 的 `require` 缓存最新值、`stream` 缓存历史。本阶段在此基础上收敛发布与视图位置。
+- 确定是否另设历史读取写法。gen 已生成 `streamT`，它尚不是手写 handler 的读取接口；是否保留 `History` 或改用标准序列也未定。
+- 明确当前值与历史是否共享同一确定位置，以及显式驱动怎样更新当前调用的视图；后台发布不得悄悄改写已捕获的值。
+- 区分普通历史数据、伴随发布与有资源归属的绑定，为 Stage 5／7 提供持有依据。
 
-本轮交付后，后台的新发布不改写当前调用的值或历史视图。显式 request 是否以及怎样更新当前视图，须与已有刷新、来源和捕获协议一起确认；有持续来源不意味着它一定支持消费方主动 request。
-
-Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context 发布。lifelong 内节点既可消费也可产值；已有 workflow 产生的输出不能再被另起的生产循环重复执行。发布沿用合法来源与会话身份，不因资产同名变成全局广播。
-
-**当前差异：** Stage 2 后 `streams` 读取 History、`requires` 读取最新一条；handler 读取历史仍写 `require @(History T)`，gen 已生成的 `streamT` 尚未作为 handler 的读取写法，视图位置的拆分尚未实现。读取历史的目标是读到确定位置为止的历史，不是每调用一次就领取下一条增量。
-
-**交付：** 统一的发布、当前值与历史协议，明确每次读取的出身和视图。区分普通历史数据、伴随发布和有资源归属的绑定，为后续释放建立依据。
+有持续来源不代表消费方可以 `requests` 它。新读取接口先确认代码形态；不能用内部重构名义扩大现有读取语义。
 
 <a id="stage-5"></a>
-### Stage 5：建立持续边界与 scope 的使用关系
+### Stage 5：持续边界与 scope 使用
 
-**状态：持有与停止基础已实现（2026-11-16），本轮普通编译通过；历史资源保活、持续资产作为开启参数及提前回收仍未实现。**
+**基础与持续最新值参数已实现，历史资源待做。** 当前会话使用登记、轮执行帧及普通后继待用已接入 scope 可达性。ScopeTree 继续独立表示资源依赖，订阅和回调关系不直接成为其父子边。
 
-生产会话的使用登记、lifelong 单元执行帧及有限调用已经接入 scope 可达性。本阶段继续确定持续交付和历史视图怎样持有实际资源。ScopeTree 独立维护无环资源依赖；订阅和 callback 关系不能直接变成 scope 父子边。
+剩余工作：
 
-确定持续交付与历史资源的使用何时建立、跨越哪些阶段、何时撤销。demand 表达资产依赖，不自动授予整个生产会话的关闭权；多个订阅者共享来源时分别撤销使用。scope 与持续执行的联动沿用已有资产依赖，不要求新增资源寿命标签。
+- 为待交付条目、已领取视图与历史中的资源建立明确的持有和撤销条件；多个订阅者共享来源时分别撤销使用。
+- 完整历史作为开启参数的含义另行设计；持续资产最新值的参数观察已接通，不能把二者混同。
+- 明确历史中的资源跨越来源结束、订阅离开和后继读取时是否仍可操作；demand 不自动赋予整份会话的关闭权。
 
-连接池跨轮存续与事务单次结束已由[单例与多例](#scope-gc)实现：参数只生产一次、各轮 `requires` 的开启是单例，常驻；每轮 `requests` 的开启是多例，本轮结束且没有合法后继待用时回收，参数变化不使旧实例无条件常驻。当前会话使用登记与 lifelong 执行帧已接入可达性；本阶段继续收敛持续交付和历史资源的持有，不靠运行时猜测或新增寿命标签。
-
-同时接通持续资产作为 scope 开启参数的观察路径，修复可能出现的 ScopeInputsMissing。
-
-**交付：** 补齐共享会话、实际实例、排队交付与历史资源的持有和撤销规则，再接入已经实现的可达性回收。
+目的不是另建 GC，而是补足现有回收器尚看不到的资源使用者。实例身份继续依据参数的实际生产，不比较业务值；当前规则见[scope 协议](LATEST_DESIGN.md#scope)。
 
 <a id="stage-5-foundation"></a>
-#### 本轮：普通后继待用与停止交接基础（2026-11-16）
+**持续最新值参数（2026-11-17）：** gen 为会话参数保存显式开启计划；runtime 登记实际选中 Binding 的 `ActivationId` 与原生产帧，固定交付与后继读取按相同来源规则参与回收。handler、demand、AST 写法不变。完整规范见[开启计划与待用](EFFECT_GRAPH.md#scope-opening-retention)。整段历史和历史资源的持有没有因此实现。
 
-**代码形态不变。** 资产、注册、instance、AST 与 Main 不增加字段或能力；gen 与 Prototype 格式保持。此次沿已有读取语义修补待用判断，不新增历史资源策略或回收触发点。
-
-- **后继待用**：ExecutionFrame 记录所属 lifelong 的既有 NodeId，实例保留原归属帧。Graph 保留本轮发布与固定伴随身份的规则，并纳入静态 precedes 许可的外部后继；普通资产的当前／retained 绑定选择与实际读取共用，同单元互斥来源取实际 Origin 最新一份后再比较 ActivationId，不能按旧候选误保留实例。轮次隔离、来源可见性与 Binding owner 不变。
-- **发布交接**：resetOrigins 在 scope／frame 协调锁内先保存 retained 再撤销 current，防止待用检查看到中间空窗。轮帧清空进度及摘除不提升 scopeFrame，合法外部后继仍按原生产身份保留实例。
-- **会话停止**：Session 的 NoWorker／RunningWorker／StoppingWorker 内部状态保留同一完成信号；并发或重复 stopSession 都等待 worker finally 撤销 ScopeUser 完成，取消与等待在目录锁外进行。endSession 封口、leaveSession 撤销读取方和 stopSession 等待执行收尾保持分工，停止时机不变。
-- **本轮不做**：end 后提前撤销会话持有、历史条目资源 lease、持续资产作为 scope 参数、无人订阅停产、消费侧 end、scope 同值复用和背压。正常 end 后 worker 仍保留使用登记，直到现有停止边界。仅保存 Binding 引用不自动证明其内资源可操作。
-
-详细规则分别维护在[图与来源](EFFECT_GRAPH.md#scope-opening-retention)和[Stream 的会话／取消协议](STREAM_LIFELONG.md#sessions)，不增加另一份 runtime 图。
-
-**本轮验证：** 使用临时 Cabal 配置与 builddir 执行 `cabal build all --offline -j1`，全部目标通过，退出码 0。首次编译发现轮帧装配的局部作用域错误，显式传入所属 lifelong 位置后完整编译通过。gen、源语言、Prototype 格式与 Generated 源码均未改，本轮未重新生成。源码复核检查了后继选值、轮间隔离、保留交接和协调锁的调用路径。
-
-**未覆盖：** 未新增测试、负例或额外检查门槛；未运行 demo、并发取消探针或内存测量。源码复核与普通编译不代表全部并发交错已验证；历史资源保活、来源 end 后提前清理和持续资产参数仍未实现，不将此前验证视为本次验证。
+**已完成的基础（2026-11-16）：** 普通后继按实际当前／保留绑定参与待用判断；轮间发布交接与回收共用协调锁；并发停止会话等待同一收尾完成信号。详细规则见[开启计划与待用](EFFECT_GRAPH.md#scope-opening-retention)和[会话协议](STREAM_LIFELONG.md#sessions)。这不等于已经提供历史资源保活。
 
 <a id="stage-6"></a>
-### Stage 6：实现 end 与终止传播
+### Stage 6：结束与终止传播
 
-**状态：第一步已实现（2026-11-14）——来源正常结束到 lifelong 返回；第二步已实现（2026-11-14）——后继读取 lifelong 内部的发布；第三步已实现（2026-11-14）——会话历史按读取义务保留；第四步已实现（2026-11-15）——由持续资产驱动的持续资产；第五步已实现（2026-11-15）——消费原子输出复用为持续资产；第六步已实现（2026-11-16）——消费方结束 `endStream` 与按读取方计数停产，生产方的 `end` 改名 `streamEnd`；历史资源的清理、失败的局部化尚未实现。** 第一至第五步的记录保留当时的名字 `end`／`Ends`。 规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
+**生产侧结束、消费侧结束及以下配套已实现（2026-11-14 至 17）。** 这解决了持续程序只能靠失败或取消退出的问题；正常结束可以让外层 workflow 继续。当前失败仍采用整次运行终止的临时规则，局部恢复未实现。
 
-区分来源正常结束、失败、取消和消费者退出。确定停止发布、处理已接受增量、结束消费单元、结束派生输出之间的顺序，以及等待数据的任务如何被唤醒。
-
-定义 lifelong 结束后如何向外层 chained／parallel 返回；一个消费者退出时，其他消费者仍在使用的来源应保持存续。
-
-当前含 lifelong 程序的失败仍按临时规则终止整次运行。是否改动故障传播范围须在本阶段明确；增加正常结束不自动意味着已经具备局部故障恢复、回滚或自动重试。
-
-**交付：** 正常结束、失败和取消各自的完整传播路径。持续程序能够正常结束，外层 workflow 可以按定义继续；暂时无数据、单次成功和整条流结束有明确区别。
-
-#### 已确认并实现（第一步）
-
-    来源结束 → 会话结束 → 各单元领完已发布的交付后结束 → lifelong 返回 Succ → 外层后继继续执行
-
-- **接口**：Stream handler 的方法体多一个出口 `end`，与返回值、`raise` 并列；签名保持 `m String`。`Ends` 只进入 Stream handler 的 Layer，只为 Stream effect 生成标签实例。`end` 不是失败，只结束当前绑定所在的会话。Stream 不返回 Succ，也不进入消费链。
-- **会话**：记录“已结束”并封住发布，唤醒等待者；历史保留，是这个持续资产完整、不再变化的值。
-- **排空**：已发布的交付仍可领取，游标到达末尾才得到“已耗尽”。排空指会话允许交付全部积压，不承诺每个单元消费完所有来源的积压。
-- **单元结束**：所需来源耗尽时不 boot 该位置，单元正常结束；已完成的前缀不回滚。单元内部的 parallel 由单元级通知唤醒尚未 boot、仍在等其他来源的路径。
-- **lifelong 返回**：全部单元结束后停止本边界的生产任务并等待其收尾，返回一次 Succ，不带结果；每次执行的 Succ／Failed 不变。
-- **lifelong 外的读取**：来源已结束时读到最后一条，不重新启动来源；零发布时报 `ContextNotInitialized`。
-- **来源分析**：lifelong 有正常出口，后继可读进入 lifelong 之前可见的资产；读取 lifelong 内部发布的资产在第一步由生成期拒绝，已由第二步取代。
-- **不变**：失败与取消的规则；资源清理的规则（来源结束后会话的使用登记保留到会话被停止，只在生产会话中开启的 scope 仍在运行结束时关闭）。
-
-实现上，执行树内部以独立于 Failure 的 `Finished` 表示单元的正常结束，只传到单元边界，不进入 Error 协议和运行监督；handler 的 `end`，以及调用内首次读取才发现耗尽的情况，各用一个 SDK 内部异常越过方法体，分别由生产任务和单元调度接住。gen 的方法体形状提取不需要认识 `end`：它和 `raise` 一样不是读取。
-
-**本步验证（2026-11-14）：** `cabal build all --offline -j1` 通过。七个程序重新生成：只有 StreamDemo 与 FacadeProbe 的生成结果变化（两个 Stream handler 的 Layer 各多 `SDK.Ends m`，各多一个 `Ends (At …)` 实例），其余五个没有变化。FileDemo、ScopeReuseDemo、ScopeInstancesDemo、OpenFilesDemo 运行均为 `Succ`；未改动的 StreamDemo 启动后持续运行，6 秒时由时限终止，未提前退出。临时改写 StreamDemo（来源按次数 `end`，后面接一个后继节点）并重新生成，逐项观察后已用 git 还原：
-
-- 读数来源发布 6 条后 `end`，消费单元当时只处理到第 2 条：其余 4 条依次处理完，心跳来源另行 `end`，随后后继执行，结果 `Succ [AnnounceResult (),SummarizeResult ()]`；连接在后继之后、运行结束时关闭。
-- 一个单元内 `parallel` 两路订阅不同来源：读数来源 `end` 后，仍在等第 3 次心跳（来源停在 3000 秒的等待中）的一路被唤醒，单元结束，lifelong 返回，停住的心跳生产任务被停止，后继执行，`Succ`。
-- lifelong 外的两次有限读取：第二次发生在来源 `end` 之后，读到最后一条，来源的调用次数没有增加；来源零发布即 `end` 时返回 `Failed`（`ContextNotInitialized`），没有挂起。
-- 后继 `requires` 持续资产，或 `requires` 单元节点下挂接的资产：gencode 均报 `InvalidLifelong`。后继 `requires` lifelong 之前发布的资产：生成通过，运行 `Succ`。
-- 单元内 handler `raise`：仍返回 `Failed` 并终止整次运行，后继未执行。
-
-补测（2026-11-14，同样用临时改写的 StreamDemo，已还原）：
-
-- 一个单元 `chained [A(x), B(y), C(x)]`，y 先结束：第 3 次执行中 A 已完成，B 领取时耗尽，C 不再执行，单元结束；lifelong 返回时停止仍在生产的 x，后继执行，`Succ`。
-- 连续两个 lifelong：第一个结束后第二个才进入并启动自己的会话，结束后后继执行，`Succ`。
-- lifelong 内的 alternative 以持续的和类型资产为转折：前三次按构造器选中候选，选择读取耗尽后不启动候选，单元结束，`Succ`。
-- 转折资产是普通资产、其生产链在调用内才第一次读取持续资产：耗尽时这次调用放弃，单元结束，`Succ`。
-- 排空期间取消：来源已结束、单元仍在处理积压时由方法体抛出 `UserInterrupt`，会话被停止，连接关闭，后继没有执行，进程以该取消退出，没有挂起。这次取消是在单元内同步抛出的，不是从主线程投递；另有永不结束的单元时，同步抛出的取消会等它汇合，这是此前已有的行为。
-
-未覆盖：从主线程投递的取消（Ctrl-C）与 `end` 的各种交错、同一持续资产被先后两个 lifelong 订阅；探针没有加入仓库。
-
-**启动许可修补（2026-11-14）：** 单元决定结束后，仍在等另一个来源的位置可能被随后到来的数据唤醒并启动：领取只在需要等待时才检查结束标记，交付到手后没有再次判定。修补在调度入口增加启动许可——交付到手之后、boot 之前检查一次单元是否已在结束，作为“单元结束”与“启动一个位置”之间唯一的判定点；来源结束后的排空不变，已启动的调用及其交付视图不受影响，handler、注册与 AST 不变。同时取消了“单元结束后一律拒绝新的领取”：已启动的调用在方法体内第一次读取另一来源时，有现成交付就继续，需要等待才放弃。验证：窗口只有微秒级，无法直接复现，临时在结束通知的置位与唤醒之间插入 0.6 秒延时，并让另一个来源在此期间发布一条：启用启动许可时该位置没有启动；临时关掉这项检查（其余不变）时它被启动，多执行一次 handler。延时与对照改动已去掉。`cabal build all --offline -j1` 通过；LinesDemo 与四个有限 demo 均为 `Succ`；“另一个来源停住不出数据”的探针仍然正常结束。
-
-**示例（2026-11-14）：** 新增 [LinesDemo](../demo/LinesDemo)（`cabal run lines-demo`）：输入文件是无开启参数的 Scoped 资源，Stream handler 逐行读取、读到末尾时 `end`。生成、编译通过；运行输出四行后执行 `Report`，随后关闭文件，结果 `Succ [AnnounceResult (),ReportResult ()]`；`--structure` 显示一个 lifelong 单元和 `TextLine` 的会话。它是仓库中第一个会正常结束的 lifelong 程序，也是 Stream 声明 `requires` 读取上游 scope 资源的第一个示例。
-
-#### 第二步：后继读取 lifelong 内部的发布（2026-11-14）
-
-已确认的语义：`require` 读的是来源当前最新的值，像 State monad 的 state，每次生产覆盖为最新；要看历史用持续资产（stream），它的结构本身就是全部历史。lifelong 正常结束不新增隔离边界。
-
-- **运行时**：单元每轮开始前，上一轮的发布从可见的资产表移出，按（位置，来源）保留最新一份（`runtimeRetained`）；单元内的读取不查它，仍逐轮隔离。lifelong 之外的读取对单元内的位置取当前一轮的发布，没有时取保留的那份；生成期允许的多个候选（同一单元的互斥位置）按 Origin 序号取最新。持续资产由 `endedSession` 定位先于读取位置、已经结束的 lifelong 会话，读它最后的历史，不启动 interpreter 会话。
-- **生成期**：lifelong 的成功出口带上单元内可能发布后继所读契约的位置；同一单元内互斥的多个位置作为并存候选（每个候选一条路径）；不同单元、同一轮可能都发布、或与 lifelong 外的来源并存时仍报“several visible sources”；两个互不先后的 lifelong 都有后继所读的持续资产时报 `InvalidLifelong`。
-- **不变**：单元内逐轮隔离；资源资产不经普通来源表；清理规则；handler、注册与 AST 写法。
-
-**验证（2026-11-14）：** `cabal build all --offline -j1` 通过；八个程序重新生成，生成结果均无变化；LinesDemo 与四个有限 demo 为 `Succ`，StreamDemo 持续运行。临时改写 LinesDemo（四行输入，前三行长、最后一行短；单元是 alternative，两个候选都驱动 `SeenLine`，只有长行候选驱动 `LongLine`；后继读 `SeenLine`、`LongLine` 与持续资产 `TextLine`），逐项观察后已还原：
-
-- 后继读到 `SeenLine = last line`（第 4 轮，短行候选）、`LongLine = third line`（第 3 轮；第 4 轮没有发布它）、`TextLine = Short "last line"`；输入文件只打开一次，来源没有重启。
-- 空输入（零轮）：后继读 `SeenLine` 报 `ContextNotInitialized`，没有挂起。
-- 单元内在 alternative 之后读 `LongLine`：前三轮读到本轮的值；第 4 轮本轮没有发布，报缺值，没有读到第 3 轮的值。
-- 两个并行单元都驱动 `SeenLine`、后继读它：gencode 报 several visible sources。两个并行的 lifelong 都订阅 `TextLine`、后继读它：gencode 报 `InvalidLifelong`。
-
-未覆盖：后继以单元内发布的资产作为 scope 开启参数时的待用交接（属于结束后的清理）；先后排列的多个 lifelong 都有同一会话时取最近结束者的路径只按登记顺序实现，没有实测。
+- **来源结束与 workflow 返回**：`streamEnd`、排空、单元结束和 lifelong 返回；规则见[正常结束](STREAM_LIFELONG.md#end)。
+- **后继读取**：后继按既有可见性读取每个来源最新一次发布，单元内保持轮次隔离；规则仍见[正常结束](STREAM_LIFELONG.md#end)中的后继读取部分。
 
 <a id="stage-6-retention"></a>
-#### 第三步：会话历史按读取义务保留（2026-11-14）
-
-要解决的是进程内的内存：会话的发布历史此前只增不减，并且在 lifelong 返回后一直留到运行结束。scope 的关闭管理的是进程外的资源，不在这一步之内。规则见 [Stream 规范：会话保留多少发布](STREAM_LIFELONG.md#retention)。
-
-已确认的语义前提：`require` 只有一个最新值，历史只通过持续资产由 `streams` 读取，`streams` 只存在于 lifelong 内。由此，历史只为仍在运行的订阅单元保留，其余情况只留最新一条与未领取的积压；不为历史设上限，因为那会新增语义。
-
-- **运行时**：会话状态带起始偏移，游标记录发布序号。进入 lifelong 时按 Prototype 登记每个会话的读取方（`admitReaders`：订阅为按历史读取，其他静态读取点与选择读取为只读最新，没有读取点的单元不登记）；单元结束时离开（`leaveSession`）；每次发布、领取和离开后重新计算保留范围。伴随发布在全部读取方领取后换成空值。绑定记录在发布前求值，不再让未读取的条目挂住生产步骤的整个调用环境。
-- **不变**：每一次读取的结果；来源的停止时机（自己 `end`、lifelong 返回、运行结束）；scope 的关闭时机；handler、注册与 AST 写法；生成结果。
-- **留给消费方结束的入口**：`leaveSession` 是“读取方不再读取”的唯一入口，目前只决定保留多少数据。读取方都离开时是否停止生产，留到设计消费方结束时在同一入口上决定。
-
-**验证（2026-11-14）：** `cabal build all` 通过，没有重新生成（生成期未改）。LinesDemo 与四个有限 demo 为 `Succ`，输出与改动前一致；StreamDemo 改动前后各运行 8 秒，输出结构逐行一致（读数取自时钟，数值不同）。crawler-demo 因外网请求超时失败，与本次改动无关。临时在保留计算处打印并改写 StreamDemo，逐项观察后已还原：
-
-- LinesDemo：订阅单元运行期间 4 条全部保留；单元离开后会话只剩 1 条。
-- StreamDemo：两个会话各只登记读取它的那个单元，订阅期间条目随发布增长、无一丢失。
-- lifelong 之外的节点 `requires "Beat"`：interpreter 托管的会话持续生产，累计发布增长而保留始终是 1 条。
-- 两个来源先后 `end`、lifelong 之后的节点读 `TemperatureSample` 与 `Beat`：单元离开后各会话只剩 1 条，后继读到最后一次发布（第 10 个读数），来源没有重启，结果 `Succ`。
-- 保留计算（偏移、积压、伴随发布置空）另用独立脚本对照朴素模型做了随机序列核对，脚本不入库。
-
-**审查后的修正（2026-11-14）：**
-
-- 第一版只按 lifelong 的订阅判断谁读取历史，漏掉了 Context 生产链内声明 `streams` 的 effect（生成期当时接受这种声明）。lifelong 的后继 `requests` 一份由这种 Excu 生产的资产时，改动前读到全部历史，第一版只读到最新一条。已确认的语义是生产链不应有 stream 类型的 demand：生成期现在拒绝声明 `streams` 的 effect 出现在任何 Context 的 Input 链上（`Gen/Lower` 的注册检查，按已有的 Input 祖先表判定，不做图搜索）。运行时不为这种写法保留特例。（2026-11-15：这条拒绝改为要求 Context 声明 `stream = True`，见[第四步](#stage-6-derive)。）
-- `changeState` 先填入通知信号、再计算保留范围；取消落在两者之间时，旧状态带着已经填入的信号被恢复，之后的结束或唤醒会卡在这个信号上。改为先算完新状态，再在屏蔽区内通知并写回。这个窗口原先就有，第一版增加的计算把它扩大了。
-- 验证：`cabal build all` 通过，无警告。临时在 LinesDemo 加入 `Digest`（Excu，`streams "TextLine"`）、挂在它下面的 Context 与 `requests` 该资产的 `Report`：改动前的运行时读到 4 条，第一版读到 1 条；加入规则后生成期报错并指出 `Digest` 在 `Summary` 的生产链上，探针已还原。八个 demo 目录重新生成均无文件变化。LinesDemo 与四个有限 demo 为 `Succ`。取消窗口没有复现手段，只经代码审阅。
-- 这条规则禁止的正是：声明 `streams` 的 effect 下面挂 Context，即由持续资产驱动的节点把自己的输出解析成资产。规则按结构判定，不按读取发生的位置区分情况。2026-11-15 起，这种结构在 Context 声明 `stream = True` 时合法（产出的是持续资产），声明 `False` 仍被拒绝。
-
-未覆盖：只读最新一条的单元读取方（以会话资产为转折资产的选择读取）没有示例，只经过上述模型核对；没有做堆占用测量，验收标准是 SDK 不再持有没有读取义务的引用，不承诺进程占用立即下降。
-
-已知边界，均未处理：
-
-- 资产值本身不求值。资产是 parser 从本步的 raw 得到的值，绑定里不含生产链；值里尚未求值的部分最多引用这一步的原始输入，不引用更早的资产值，所以不随时间累积。只有 handler 读取旧的资产值并把它惰性地嵌进新值时才会串起旧值，目前没有这种写法，不作处理。
-- 来源 `end` 之后，生产任务仍停在原地直到会话被停止。让它提前退出会提前撤销会话的 scope 使用登记，属于资源清理，不在这一步。
-- scope 关闭失败的记录累积到运行结束才随最终结果报告；只有关闭持续失败时才增长。当场抛出没有调用者可以接住，会终止整次运行，保持现状。
+**历史保留（2026-11-14）：** 只保留仍有读取义务的数据，解决退出后完整历史仍被 SDK 引用的问题；不改变活跃历史读取方的完整前缀。保留表与复杂度见[会话保留](STREAM_LIFELONG.md#retention)，不在计划中复制另一套策略。
 
 <a id="stage-6-derive"></a>
-#### 第四步：由持续资产驱动的持续资产（2026-11-15）
-
-要解决的是表达缺口：被持续资产驱动的 effect 此前只能是消费方，由历史算出的结果不能成为资产，也不能在进程内交给 lifelong 的后继。规则与写法见 [Stream 规范 4.2 节](STREAM_LIFELONG.md#derive)。
-
-以下记录首次独立 Derive 实现及当时的验证。它禁止对应 Excu 同时挂入 AST 的限制已由[第五步](#stage-6-reuse)替代；示例的 `Tally`／`TallyParser` 也在第五步改名并改为原子输出复用。历史运行结果不代表新连接已经验证。
-
-已确认的语义：链上有 stream 类型的 demand，这条链就由那份持续资产驱动，每次交付产出一个新值，产出只能是持续资产，不可能是普通资产；驱动也不会再变回消费方驱动。所以不新增 effect 类别、关键字或 handler 能力，只把两条规则（持续资产只能挂在 Stream 下；生产者不带 stream 类型的 demand）合成一条：Context 的 `stream` 与它的 Input 链是否被持续驱动一致。
-
-- **gen**：`BootPlan` 增加 `Derive`，由生产方 Input 链上的 `streams` 推出；lifelong 的会话集合是被订阅的资产加上它们的上游，上游在前；持续资产的生产入口一律由会话调用，不能 `requests`；生产链上声明 `streams` 的 effect 不能挂载到 AST；Derive 资产的读取点必须在有它的 lifelong 之内或之后；启动依赖检查放过驱动它的那份资产。派生关系成环由已有的 Input／demand 环检查拒绝，没有新增图遍历。
-- **运行时**：Derive 会话的一步是“领取一条上游交付，执行 parser 及其 Input 链，发布一条”，与单元的一轮同构。它登记为上游会话的按历史读取的读取方，游标在进入 lifelong 时交给生产任务；上游结束并排空时它正常结束并离开，上游失败时以同一原因失败。lifelong 返回时逆序停止会话。保留规则本身没有改。
-- **有意不提供**：跳过（一条上游交付恰好产出一条）、提前结束（被驱动的句柄没有 `end`）、多份资产合并驱动、缓冲策略与窗口、“被驱动但只读最新一条”的声明、lifelong 之外的派生会话。
-- **示例**：LinesDemo 增加 `Tally`／`TallyParser`（`RunningTotal`，由 `TextLine` 驱动）与订阅它的 `ShowTotal`，`Report` 在 lifelong 之后读它的最新一条。
-
-**验证（2026-11-15）：** `cabal build all` 通过，无警告；八个程序重新生成，除 LinesDemo 外只有一行注释变化。LinesDemo 每一轮先打印这一行、再打印到这一行为止的行数与字符数（1/10、2/21、3/31、4/40），来源 `end` 后 `Report` 读到 4 行 40 字符，结果 `Succ`；`--structure` 列出 `session RunningTotal Derive from TextLine`。四个有限 demo 与 crawler-demo 为 `Succ`，StreamDemo 运行 8 秒输出正常。临时改写 LinesDemo 逐项观察后已还原：
-
-- 拒绝：派生 Context 写 `stream = False`（之前被禁止的写法，报错提示声明 `stream = True`）；`requests` 派生资产；把 `Tally` 挂载到 AST；在 lifelong 之前 `requires` 派生资产。
-- 运行：单元只订阅派生资产、不订阅上游时结果相同；两级派生（再由 `RunningTotal` 派生一份）逐轮结果正确，结果 `Succ`。
-- 保留：在保留计算处临时打印，`TextLine` 会话登记了两个按历史读取的读取方（单元与 `RunningTotal` 会话），运行期间 4 条全部保留；读取方都离开后两个会话各剩 1 条。
-
-未覆盖：没有不结束的派生来源示例；没有持续驱动的 Context 写 `stream = True`、一条链由多份资产驱动、Stream 的 Input 链上有 `streams` 这三条拒绝没有单独触发；上游失败传给 Derive 会话、取消落在游标交接之前这两条路径只经代码审阅；没有堆占用测量。
-
-已知边界，均未处理：
-
-- 上游历史在 Derive 会话运行期间全部保留，加上派生资产自己的历史，只做映射的派生也是如此。
-- 被驱动的句柄连同它 Input 链上的 scope 在会话的各步骤间保持，与 Stream 的 Input 相同；结束后的清理同样未设计。
-- 上游生产步骤的伴随发布只交给由该资产驱动的读取位置；Derive 的生产链不在其中，按现有检查读取伴随发布应被生成期拒绝，未单独验证。
+**独立派生（2026-11-15）：** 由持续资产驱动的操作可以经 parser 产生另一份持续资产，补上消费结果再次成为资产的表达。原先禁止这类操作挂入 AST 的限制已由下一项输出复用取代。规则见[派生与输出复用](STREAM_LIFELONG.md#derive)。
 
 <a id="stage-6-reuse"></a>
-#### 第五步：消费原子输出复用为持续资产（2026-11-15）
-
-**状态：已实现。** 首次 Derive 只支持在独立会话中执行操作，不能让 AST 上已经执行的消费操作同时产出持续资产。禁止这类 Excu 挂入 AST 混淆了操作的消费与生产关系；本步恢复其业务组合能力，gen 分链时保留同一次输出的连接。
-
-统一规则是：首次需求建立运行，后续增量驱动有限执行。持续资产 B 发布后，订阅 B 的独立生产链 A 与 lifelong 消费节点都按交付推进；它们执行后也能经 Context 发布资产。缺值等待不再次请求上游。Stream 来源的持续生命周期仍由生产会话托管，不进入 AST original chain。取消、需求撤销与未来的背压可以向上游传播，不混为新的生产驱动。
-
-本步实现落点：
-
-- **gen／Prototype**：保留 Receive 和独立 Derive；同一 lifelong 内沿 target 自身和 original Input 链确定挂接句柄的位置，生成 `ReuseOutput [NodeId]`，`sessionMounts = []`，不扫描任意 requests 链里的同名操作。AST 持续副产物均纳入会话集合，包括仅供后继读取的产物。多个发布位置只允许同单元、两两 alternative 互斥；`Gen.Sessions` 检查订阅、chained 前置与持续 alternative 选择读取形成的启动图，保守拒绝有环组合。原子输出挂接继续进入 effect graph 与 ScopeTree，不新建一套运行图。
-- **等待前提**：同单元直接订阅或经 Derive 间接依赖自身产物时，逐条 workflow 路径检查已有供值或同轮并行必经供值，不能用 alternative 其他候选可能发布代替当前路径；跨单元条件发布不要求逐轮产出。ReuseOutput parser 及其 requests 路径不得读取驱动资产以外的持续资产，普通读取保持原协议。
-- **scope 输出限制**：Scoped.open 复用实例时没有新的原子输出，故同单元直接或经 Derive 等待这种 ReuseOutput 保守拒绝；跨单元等待和独立 Derive 保持可用。精确识别必定 fresh 的开启后放行未做，不虚构 open 输出。
-- **输出与交付**：ReuseOutput 会话不启动独立 worker。原 AST 操作成功后，挂接 parser 的 `raw` 沿用本次输出，成功资产进入对应会话；不重跑原操作。parser 继承原节点的 Origin、执行帧与 ScopeUser，仍有自己的 Context activation。交付只含该持续资产，普通副产物仍留在实际 Origin、由合法后继按静态来源表读取，不借持续交付跨越 parallel 的普通资产可见性；独立 Receive／Derive 的既有伴随发布协议不变。
-- **失败**：持续挂接 parser 的失败沿现有 Stream 诊断／监督协议传播；普通 Context 注入失败只留在注入内的规则不变。已完成操作不回滚，不增加重试。
-- **结束**：按负责发布的重复单元登记。全部发布单元正常结束后封住会话并唤醒领取方，已发布交付仍可排空。单次 target 返回或单轮完成不封口，也不等整个 lifelong 返回才封口。失败与取消继续走现有运行收尾，不新增无人订阅时提前停止的策略。
-- **facade 与示例**：没有新的声明字段或 handler 能力。LinesDemo 将 `Tally`／`tally` 改为 `TextCounter`／`countText`，parser 注册名改为 `CountParser`，表示类型 `Total`、资产 `RunningTotal` 与 `parseTotal` 不变。AST 改为 `lifelong [parallel [chained [node "PrintLine", node "TextCounter"], chained [node "ShowTotal"]]]`：两个单元独立推进，统计执行一次、同次输出成为持续资产；发布单元结束封口，显示单元排空后退出，后继读取最终统计。行文本与统计显示可以交错。
-- **范围**：不增加新的资源使用登记，不改 scope close；历史资源保活、无人消费停产、消费方主动结束、背压和容量仍待后续阶段。
-
-**验证（2026-11-15）：** 八个 namespace 均生成通过；`cabal build all --offline -j1` 退出 0。FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo、LinesDemo 五个现有有限 demo 均退出 0，结果为 `Succ`。LinesDemo 的两个并发单元处理四行，统计依次为 1 行／10 字符、2／21、3／31、4／40；`Report` 读到最终 4／40，最后正常 close。`--structure` 显示 `TextLine` 为 Receive，`RunningTotal` 为 `ReuseOutput at [[1,0,0,1]] (no separate producer)`，其 `mounts` 为 `[]`。最终再次生成 LinesDemo 为 `0 files updated; structure reused`。
-
-本轮未新增测试或负例，未运行无限 StreamDemo（仅构建）。取消窗口、失败交错、Scoped 同单元拒绝以及独立 Derive 没有另做新探针；本次编译和有限示例结果不扩大这些边界的保证。来源结束后的 scope 清理、消费方主动结束、无人读取停产、背压与历史资源保活继续延期。
+**同次输出复用（2026-11-15）：** gen 将消费操作的实际 AST 发布位置连接到挂接 parser，保留生产与消费分链，同时避免为解析重跑原操作。LinesDemo 的 `TextCounter`／`RunningTotal` 展示这一组合；完整写法见[指南](GUIDE.md#stream)，合法性见[生产连接](STREAM_LIFELONG.md#bootplan)。
 
 <a id="stage-6-consumer-end"></a>
-#### 第六步：消费方结束与按读取方计数停产（2026-11-16）
+**消费结束与退役（2026-11-16 至 17）：** `endStream` 撤销当前订阅，按节点、单元和会话的读取关系协调停产；会话退役接入现有 scope 回收。规则与代码形态见[消费方结束](STREAM_LIFELONG.md#consumer-end)。
 
-**已确认的语义（2026-11-16）：**
-
-1. **两个出口分开**：生产方 `streamEnd`（原 `end` 改名）直接作用于资产，不看 AST 上有哪些消费方，消费方排空后各自结束；消费方 `endStream` 只撤销自己的读取。
-2. **谁拿到 `endStream`**（2026-11-17 修订）：自己以 `streams` 订阅持续资产的 effect（实现只给 Excu）；运行时按当前调用的位置找到它的订阅。同链的 Input 前驱和 lifelong 里不订阅的普通节点不给：它们是原子操作，handler 不因所处的控制流改变签名。派生链里调用它，表示派生会话不再消费上游。
-3. **按引用计数分三层停止**：节点的订阅结束 → 该节点之后各轮跳过；单元里不再有活节点读取某会话 → 单元离开它；会话的读取方全部离开 → 停止生产。parallel 的分支互不影响；`require` 的读取与订阅无关。
-4. **资源释放**：生产已停止且读取方计数归零，才撤销会话的使用登记，回收只在会话中开启的 scope。
-5. **`chained [A, D]`**：不加新规则。D 有自己的订阅，自己驱动；D 若只 `require` A 这一轮的普通产物，A 结束后按缺值确定失败，要每轮有值就用 `requests`。
-6. **复杂度**：计数判断随离开一起做，O(R)；节点结束后的重新计算每轮最多一次。
-7. **同单元的发布与读取**（2026-11-17 修订）：节点 `endStream` 时立即撤下发布位置，最后位置撤下即封口。直接或经 Derive 读取本单元产物的位置，等待本轮发布位置退休和派生处理追平，确定本轮无新增量后才跳过；封口排空后这些位置的订阅结束。同单元 `require` 在该条件下读已有的值，一条都没有则按缺值处理。
-
-**代码长什么样。** 注册、AST、Main 不变。能力类改为两个：`StreamEnds m`／`streamEnd`（Stream handler）与 `EndsStream m`／`endStream`（以 `streams` 订阅的 Excu）。生成的 Layer 与实例：
-
-    type NextLineLayer m = (SDK.Reads (InputFile) m, SDK.StreamEnds m, SDK.Raises NextLineError m, MonadIO m)
-    type PrintLineLayer m = (SDK.Reads (SDK.History (Line)) m, SDK.EndsStream m, SDK.Raises PrintLineError m, MonadIO m)
-
-    instance FrameworkRuntime.StreamEnds (At "LineFeed") where
-      streamEnd = At FrameworkRuntime.endSource
-    instance FrameworkRuntime.EndsStream (At "PrintLine") where
-      endStream = At FrameworkRuntime.endSubscription
-
-规则与写法见 [Stream 规范 9.5 节](STREAM_LIFELONG.md#consumer-end)。
-
-**实现落点：**
-
-- **gen**：`Gen/Bind.consumesStream` 判定哪些 effect 拿到 `EndsStream`：自己的 demands 里有 `streams` 的 Excu（2026-11-17 起；此前按“出现在持续驱动的链上、不出现在其他链上”判定，会让同链的 Input 前驱也带上它，妨碍 handler 复用）。只给 Excu 是实现时的收窄：Scoped.open 被打断会使实例失效，Pure 是值变换。Emit 按此生成实例；没有专门的 Shape 诊断，越界调用由 GHC 类检拒绝。
-- **运行时**：`endStream` 以内部信号 `SubscriptionEnded` 越过方法体。lifelong 节点由单元调度接住，记入本单元的已结束节点；之后各轮跳过它，候选全部结束的 alternative 不再做选择读取。接住结束信号时立即撤下它的 ReuseOutput 发布位置（发布位置按节点计），两轮之间离开不再有活读取位置的会话；本单元只经它发布、不读取的会话保留在 frame 中作为发布出口。Derive 生产任务接住后结束本会话并离开上游。`leaveSession` 返回计数是否从有到无；正常路径上归零时调用会话的协调退役动作（停止任务 → 封口 → 按可达性回收会话挂载上开启的 scope → 上游也无读取方时随之退役）。lifelong 返回改为逆序退役其余会话。interpreter 托管的会话与 ReuseOutput 不按计数退役。
-
-**验证（2026-11-16）：** 八个 namespace 重新生成：FacadeProbe、LinesDemo、StreamDemo 的生成结果变化（Stream handler 的 Layer 由 `Ends` 换成 `StreamEnds`，lifelong 节点链上的 Excu 多 `EndsStream` 及其实例），其余五个无变化。`cabal build all --offline -j1` 通过，无警告。FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo、LinesDemo、crawler-demo 均为 `Succ`；LinesDemo 输出与此前相同，只是 `[close]` 提前到 `Report` 之前（`TextLine` 会话退役时回收输入文件）。StreamDemo 在终端运行十余秒，读数与心跳正常。临时改写示例逐项观察后已还原：
-
-- LinesDemo，`PrintLine` 在第 3 行 `endStream`：只打印前两行；同单元的 `TextCounter` 照常统计到 4 行，`Report` 读到 4 行 40 字符，`Succ`。首轮实现在这里只统计到 3 行：单元离开会话时把本单元只发布、不读取的 `RunningTotal` 也移出了 frame，第 4 轮的统计没有出口；已改为只离开本单元登记为读取方的会话。
-- LinesDemo，`CountText` 在第 3 行 `endStream`：`PrintLine` 打印全部 4 行；`RunningTotal` 在两条后封口，`ShowTotal` 排空后结束，`Report` 读到 2 行 21 字符，`Succ`。
-- LinesDemo，两者都结束：单元结束，`ShowTotal` 排空后结束，lifelong 返回，`Succ`。
-- LinesDemo，`ShowTotal` 在第 2 条统计 `endStream`：它的单元结束，打印与统计单元不受影响，`Report` 读到 4 行 40 字符。
-- StreamDemo（来源永不结束），三个消费方都 `endStream`：温度会话计数归零后退役，打印 `[sensor] disconnected`；心跳会话随后退役，lifelong 返回，程序以 `Succ [AnnounceResult ()]` 结束（改动前一直运行）。
-- StreamDemo，只有温度的两个消费方结束：温度会话退役并断开传感器，心跳单元继续每两秒输出。
-
-**未覆盖：** 没有独立 Derive 的示例，被驱动链上的 `endStream`、派生会话退役后连带上游退役两条路径只经代码审阅；`EndsStream` 的 gen 规则没有单独触发拒绝（effect 同时出现在 lifelong 外）；取消与退役的交错、多个单元同时离开同一会话的并发只经代码审阅；没有新增测试或负例，探针没有入库。
-
-**已知边界：** 读取方的历史读取方式在登记时确定，按历史读取的节点结束后，剩下只读最新一条的读取方仍让会话保留全部历史，直到单元离开；历史条目中的资源引用仍无持有登记；停止生产用取消，生产步骤执行到一半时被取消，与 lifelong 返回时的停止相同。
-
-**首轮复核记录（2026-11-17，历史实现与验证）：** 对 f1b1ed8 的复核处理了以下四处。这里的“同单元一律不等待”与退役完成处理仍不完整，后续复核发现了并行、派生和取消边界，修正见下文；本段探针只作为当时的验证记录：
-
-- **同单元发布节点结束后挂住**：`chained [PrintLine, TextCounter, ShowTotal]` 同在一个单元、`CountText` 在第 3 行 `endStream` 时，`ShowTotal` 在本轮阻塞等待 `RunningTotal` 的新发布，而发布位置要到下一轮开始前才撤下，形成等待环，程序挂住。当时用同单元不等待绕开该等待环：DeliveryFrame 记下发布位置在本单元的会话（`frameLocal`），领取它们不等待（`takeDelivery` 的等待原因为 `Undriven`）：节点与选择读取本轮跳过（`Quiet`），会话封口排空后订阅结束（`Exhausted`），方法体内的 `require` 读已有的一条（`frameRead`／`currentHistory`），一条都没有时按缺值报出。这次处理未覆盖必经并行发布和经 Derive 的间接依赖，已由下文的本轮稳定协议替代。
-- **`retireSession` 的取消窗口**：取得执行权到装上收尾之间被取消，会留下永远不填的完成信号；两步改在同一屏蔽区内。
-- **Derive 失败时先退役上游**：生产任务失败后仍走“离开并在计数归零时退役上游”，会同步停掉上游、回收资源后才报告监督；改为成功时才退役，失败只离开。
-- **`EndsStream` 妨碍 handler 复用**：按上面 gen 一条的新规则只给自己 `streams` 的 Excu。
-
-验证：`cabal build all --offline -j1` 通过，无警告；八个 namespace 重新生成，生成结果无变化（示例里拿到 `EndsStream` 的 effect 都自己声明了 `streams`）。FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo、LinesDemo、crawler-demo 均为 `Succ`，输出与此前相同。临时改写示例逐项观察后已还原：
-
-- LinesDemo 改为同一单元 `chained [PrintLine, TextCounter, ShowTotal]`：不结束时每行之后打印当轮统计，`Report` 读到 4 行 40 字符；`CountText` 在第 3 行 `endStream` 时打印全部 4 行、统计两条，`Report` 读到 2 行 21 字符，`Succ`（修正前挂住）；`PrintLine` 在第 3 行结束时统计照常到 4 行；两者都结束时单元结束，`Succ`。
-- LinesDemo 原布局，`CountText` 在第 3 行 `endStream`：与此前相同，`Report` 读到 2 行 21 字符。
-- StreamDemo 三个消费方都 `endStream`：与此前相同，传感器断开后程序以 `Succ [AnnounceResult ()]` 结束。
-
-未覆盖：同单元 `require` 读已有值、一条都没有时按缺值报出、多候选发布时本轮跳过这三条路径只经代码审阅；Derive 失败路径、取消窗口的修正同样只经代码审阅。
-
-**再次复核修正（2026-11-17）：** 当前修复保持 facade、注册和 handler 写法不变，沿用 Prototype 的会话关系与实际执行帧：
-
-- **同单元并行与派生等待**：gen 原本允许同轮必经的并行发布，不能把“同单元”当作“发布已经完成”。DeliveryFrame 只把根为本单元 ReuseOutput 的直接及单上游派生来源归为本地；全部发布位置在实际轮帧中 `Completed`／`Skipped` 后，再逐级检查 Derive 的成功步骤完成水位是否追平上游累计发布数。游标已领取不表示 parser 已完成。会话提交变化后与节点退休通知同一共享信号；本轮稳定后重读会话状态，优先交付数据或传播真实终态，仍无数据才跳过本轮。外部来源的等待不变。
-- **及时封口与派生退出**：节点 `endStream` 立即撤下发布位置，最后一个位置撤下即封口，不等下一轮。Derive 正常结束先封住自己的发布，再离开和按需退役上游；异常保护覆盖处理和离开的全过程，取消仍撤销上游读取登记。
-- **退役完成不能由取消伪造**：只有退役动作完整成功才记为 `Retired`。取消或异常恢复 `Unretired` 并唤醒等待方，后续调用可重新完成退役；业务 close 仍按现有协议执行，不重试。
-
-- **领取与内部计数**：领取槽的登记到安装异常收尾在同一取消屏蔽区内；首个领取方被取消也会填写结果，其他读取方不会遗留空槽。派生完成水位为严格的内部计数，不积累计算链，也不强制业务资产求值。
-
-**本次验证（4e33914）：** `cabal build all --offline -j1` 通过，无警告；八个 namespace 重新生成，生成结果无变化。FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo、LinesDemo、crawler-demo 均为 `Succ`。临时改写示例逐项观察后已还原，对照组在修正前的 6c40004 上运行同一探针：
-
-- **同单元并行发布**：LinesDemo 改为 `chained [parallel [chained [PrintLine, TextCounter], ShowTotal]]`。当前实现运行 5 次，每次统计 4 条，`Report` 读到 4 行 40 字符；6c40004 运行 5 次，有 1 次只统计到 3 条（漏消费）。`CountText` 在第 3 行 `endStream` 时，当前实现 5 次都统计 2 条后正常结束。
-- **经 Derive 的间接依赖**：LinesDemo 临时加入派生链 `RunningTotal` → `DescribeTotal`／`LabelParser` → `TotalLabel`（`BootPlan` 为 Derive），同一单元 `chained [PrintLine, TextCounter, ShowLabel]` 中 `ShowLabel` 订阅 `TotalLabel`。不结束时 3 次都逐行打印统计与标签，`Succ`；`CountText` 在第 3 行 `endStream` 时，当前实现 3 次都打印两条标签后正常结束，`Report` 读到 2 行 21 字符；6c40004 挂住，30 秒超时退出。
-- **同单元串行**：`chained [PrintLine, TextCounter, ShowTotal]` 不结束、`CountText` 结束、两者都结束，各运行 5 次，结果与首轮复核记录相同。
-- **StreamDemo**：三个消费方都 `endStream`，传感器断开后以 `Succ [AnnounceResult ()]` 结束。
-
-未覆盖：退役被取消后由后续调用接续完成，只经源码审查，没有探针复现取消时机；会话变化通过共享信号唤醒整次运行的等待者，正确但读取方很多时有多余唤醒，未做性能测量；同单元 `require` 读取位置排在其发布节点之前的写法，gen 的启动依赖检查不覆盖 `require`，是否会被其他检查拒绝尚未确认（main 上同样存在）；没有新增测试或负例，探针没有入库。
-
-#### 尚未确定或尚未实现
-
-- **结束后的清理**：只在生产会话中开启的 scope 已在会话退役时按可达性回收（[第六步](#stage-6-consumer-end)）；历史条目中的资源引用仍没有持有登记。已允许普通资产的后继待用与 retained 交接已由 [Stage 5 基础整理](#stage-5-foundation)补齐，持续资产和历史资源的持有仍未接通。
-- **失败的局部化**（跳过坏元素、重试、只结束局部）。消费方提前退出与读取方计数归零时停产已由[第六步](#stage-6-consumer-end)实现。
+最后一轮修正的理由也保留在这里：同单元不证明生产已经完成，可能还有并行发布或尚未处理完的 Derive。因此只在本轮发布与派生处理稳定后跳过；发布节点结束须及时封口；取消不能把未完成的退役记为完成。完整判定维护在上述规范中，旧的“同单元一律不等待”方案已删除。
 
 <a id="stage-7"></a>
-### Stage 7：接通自动清理
+### Stage 7：持续资源的自动清理
 
-有限节点、轮帧与整次运行退出已经使用[按可达性回收](#scope-gc)。本阶段把 Stage 6 的正常 end 及 Stage 5 的持续持有关系接回同一 Scoped.close 和 ScopeTree：
+**会话退役已接入，历史资源回收待做。** 有限节点、轮帧、运行退出及会话退役都使用现有的 [scope 可达性回收](LATEST_DESIGN.md#scope-gc)。剩余工作是在 Stage 5 明确持有关系后，把排队交付、历史视图及其后继使用一并纳入。
 
-    停止新增执行
-    → 协调在途工作
-    → 撤销订阅与资源持有
-    → 减去不再可达的待用计数
-    → 执行 close
+需要定清“停止新增执行 → 协调在途工作 → 撤销持有 → 判断待用 → close”的交接。关闭依据仍是实际使用、待用与父子实例关系；不能因为来源结束就假设历史中的资源无人使用，也不能在退役回调中等待包含自身的全部工作退出。
 
-统一处理共享资源、待交付绑定、历史中的资源引用与关闭失败。会话停止与物理释放的调用关系须明确，不能在回调内等待包含自身的全部回调退出。
-
-历史保存引用不自动证明底层资源仍可操作。可用历史资源的持有、释放后旧绑定的行为，以及普通数据历史的保留须分别明确。某个 scope 释放失败时，仍处理其余可安全清理的资源；失败只记录并报告，不改变业务结果。
-
-**交付：** Stream effect 与 lifelong 共用按可达性回收的收尾协议，不提前释放。同步所属规范、生成结果、结构展示和 demo。
+**交付：** 共用 Scoped.close 与 ScopeTree 的释放规则，明确资源释放后旧绑定的行为，沿用关闭失败只报告、不重试的协议。普通数据的引用释放与资源 close 分开说明；不新增手写 cleanup 层。
 
 <a id="review"></a>
-## 实现前需要收敛的接口
+## 下一步需要确认什么
 
-| 事项 | 所属阶段 | 审查产物 |
-| --- | --- | --- |
-| 每个资产唯一来源与显式接收形态 | Stage 1（已确认，接收形态由 Stage 2 取代） | Effects、类签名、instance 和检查规则 |
-| handler 复用、前驱装配与读取路由 | Stage 2（已实现） | 注册、生成契约、handler、生成装配与检查规则 |
-| 可见范围内的等待：parallel 兄弟可见、等不到的读取、按执行帧的资产 state 与等待结束 | Stage 2（保守等待结束已实现，完整迁移待实施） | 可见关系、来源分析与运行时读取规则 |
-| scope 的单例与多例（`requires`／`requests` 进入 scope）、按可达性回收、运行结束关闭、close 可选 | 独立于阶段（已实现；生成与普通编译通过） | 实际生产身份、执行帧与待用查询，见[实现落点](#scope-gc) |
-| 共同执行协议与两种入口的对应 | Stage 3 | 单步、推进、发布和边界的关系 |
-| 当前值、历史与显式刷新 | Stage 4 | 访问权限、视图位置与发布规则 |
-| 持续交付、历史资源与可达性根集 | Stage 5（普通后继待用与停止基础已整理） | 历史资源的持有和撤销，以及持续资产作为开启参数 |
-| end 接口、退出范围与交付收尾 | Stage 6（生产侧 end、排空、lifelong 返回及后继读取已实现；消费侧结束、清理与局部失败待定） | 正常结束、失败、取消和 branch 返回规则 |
-| 历史资源与自动回收 | Stage 7 | 共用的关闭条件及释放顺序 |
+先收敛 Stage 5／7 的历史资源使用边界，再实现缺失的持有和撤销。需要确认的实质问题是：历史条目是否承诺资源仍可操作、哪些读取义务保留实例、撤销后旧绑定如何表现，以及整段历史用作开启参数的含义。持续最新值的生产身份已沿用 Binding，无须新增身份规则。不能仅以“History 还在内存中”推断资源存续。
 
-这些是待审查的接口与协议，不是已经批准实施的具体语法。线程、锁、等待者唤醒和使用登记的内部实现由 SDK 承担，不要求原子 handler 作者管理调度。
+Stage 4 的读取写法、普通等待的完整迁移和下面的开放专题分别处理；本文件整理不构成新接口或清理策略的批准。
 
 <a id="current-limits"></a>
-## 当前限制如何纳入本轮
+## 当前限制与检查边界
 
-| 当前事实或缺口 | 本轮处理位置 |
+| 限制或未覆盖边界 | 归属 |
 | --- | --- |
-| 多个资产／访问方式合法；方法体主动取值，检查显式接收形态，不添加位置参数 | Stage 1，接收形态由 Stage 2 取代 |
-| handler 绑定在 Input 链上：方法体显式调用上游，同一操作按 effect 重复书写 | Stage 2（已解决：handler 可复用，前驱由 gencode 装配） |
-| parallel 兄弟互不可见；只有已确定生产耗尽的缺值读取结束，未知或仍可能生产的运行链继续等待 | Stage 2（[保守结束已实现，完整迁移待实施](#stage-2-await)） |
-| 持续资产的当前值与历史读取 | Stage 2 已实现缓存语义（requires 读最新值，streams 读历史）；Stage 4 收敛视图与读取写法 |
-| readHistory 未经过 scope 开启参数观察，可能报 ScopeInputsMissing | Stage 4–5 |
-| 同单元等待 Scoped.open 的 ReuseOutput 保守拒绝，因复用实例会跳过输出；跨单元等待及独立 Derive 可用 | Stage 6 输出复用的已知边界；必定 fresh 的精确放行尚未实现 |
-| 会话步骤共用 scope 使用登记；会话退役（生产停止且读取方计数归零，或 lifelong 返回）后撤销使用，并按可达性回收只在会话中开启的 scope | Stage 5、7 继续收敛结束后的清理与历史资源；当前回收见[按可达性回收](#scope-gc) |
-| 来源可用 `streamEnd` 正常结束，消费方可用 `endStream` 结束订阅、读取方全部离开时停产；lifelong 随之返回，后继读取每个来源最新一次发布 | Stage 6（生产侧与消费侧结束、后继读取、保留及派生／输出复用已实现） |
-| 含 lifelong 程序的失败使用整次运行终止的临时规则 | Stage 6 明确保留或调整范围 |
-| 历史资源缺少精细持有和释放协议 | Stage 4、5、7 |
-| 被 `streams` 订阅的来源在订阅单元运行期间保留全部历史，没有容量背压；其余情况只保留最新一条与未领取的积压 | 保留规则已实现（Stage 6 第三步）；容量和历史窗口另议 |
+| 普通资产的 parallel 兄弟仍互不可见；保守等待结束不证明所有等待都可结束 | [完整等待迁移](#stage-2-await) |
+| 持续最新值已可作 scope 开启参数；整段历史的参数身份与历史资源持有仍待定 | Stage 4／5／7 |
+| 同单元直接或经 Derive 等待 Scoped.open 的复用输出被保守拒绝：复用实例不产生新输出；必定 fresh 的精确放行未做 | [输出复用规范](STREAM_LIFELONG.md#derive) |
+| 历史读取方式在登记时确定；部分节点结束后，剩余只读最新值的节点仍可能使单元继续保留完整历史 | [消费结束的当前边界](STREAM_LIFELONG.md#consumer-end) |
+| 活跃的历史读取方保留全部历史，容量与背压没有上限协议；interpreter 托管会话和 ReuseOutput 不按读取方计数退役 | [历史保留](STREAM_LIFELONG.md#retention)、[退役规则](STREAM_LIFELONG.md#consumer-end) |
+| 含 lifelong 程序的失败仍终止整次运行 | [临时失败协议](STREAM_LIFELONG.md#failures) |
+| 同单元 `require` 位于其发布节点之前的写法：启动依赖检查不覆盖 `require`，其他检查是否拒绝尚未确认 | 后续等待分析；不据此宣称已无等待环 |
+| 来源状态与 scope 路径仍可能指数增长；共享通知存在多余唤醒，尚无大规模性能与长期堆占用实测 | [图与来源](EFFECT_GRAPH.md)、[会话复杂度](STREAM_LIFELONG.md#retention-cost) |
+
+<a id="stage-2-await"></a>
+## 普通 require 的完整等待迁移
+
+**最低限度的保守结束已实现；完整迁移已定方向、未实施。** 当前仍按 origin 保存普通资产，使用捕获与静态来源表；规则见[Context](LATEST_DESIGN.md#context)。目标可见性、确定性与帧语义仅在[完整等待方案](LATEST_DESIGN.md#await-visibility)维护。
+
+后续实施落点：
+
+1. gen 的可见关系纳入合法的 parallel 兄弟；来源分析按读取点检查可能生产者、无法取得值的等待和互等，保留对“读到哪次生产取决于调度”的拒绝。有先后关系的发布选择最后一次，不以合并来源集合牺牲确定性。
+2. 普通发布迁到每执行帧、每资产一个 `TVar`，本次捕获仍优先；缺值沿本帧及外层帧读取，发布与来源结束在同一次 STM 等待中观察。lifelong 每轮新帧取代普通发布的 `resetOrigins`，会话伴随发布与资源 owner 定位保持各自协议。
+3. 移除普通发布对多份 Origin 的运行时挑选，保留资源实例的歧义检查；同步生成期诊断、来源规范与指南。`stm`、更细的读取计划均属于这次后续迁移，尚未加入。
+
+该工作不要求给 handler 方法体插桩，也不把最低限度的耗尽判断扩大为任意 IO 进展证明。现有生产身份与执行帧继续复用。
+
+## 已完成的共用基础
+
+<a id="gen-assembly-sharing"></a>
+### gen 装配与共享分析（2026-11-16）
+
+Assembly 统一末端、选择器、会话步骤和输出连接；Build／Sources／Emit 共用装配结果，方法图按定义缓存归约摘要。它消除重复的结构推导，未引入通用调用去重、业务结果缓存或 scope 同值复用。规则见[装配与复用边界](EFFECT_GRAPH.md#reuse-boundary)。
+
+<a id="pure-pipeline"></a>
+### Pure 与 list 原子输出（2026-11-12）
+
+Pure 成为生产链中的值变换，Excu／Scoped 的原子输出统一为 `[String]`；parser 继续负责把输出变成资产。它分开了值变换与细化解析的职责，取代旧守卫接口。当前写法、位置限制和失败协议见[主设计：Pure](LATEST_DESIGN.md#pure)，不重复迁移清单。
+
+<a id="scope-gc"></a>
+### scope 身份、回收与关闭诊断（2026-11-13）
+
+Binding 的生产身份与执行帧支持单例／多例匹配和待用分析；ScopeTree 保持独立无环。close 可选，普通关闭失败只报告，取消在其余收尾后传播。当前规则见[实例身份](LATEST_DESIGN.md#scope-identity)与[可达性回收](LATEST_DESIGN.md#scope-gc)。这些已是持续执行清理的基础，后续不另建一套实例或回收器。
 
 <a id="deferred"></a>
-## 本轮之外保留的开放事项
+## 保留的开放专题
 
-以下从原计划迁入，不作为本轮实现的前置条件，也不因记录在此就视为决定新增语义。
+以下不作为历史资源清理的前置条件，也不因列在此处就批准新增语义。
 
-| 专题 | 保留的问题 |
+| 专题 | 仍需确定 |
 | --- | --- |
-| 背压与历史容量 | 容量、溢出策略、历史窗口、慢消费者、无订阅者行为，以及同步 request 回馈与有界队列的进展问题；订阅中的完整历史不承诺有界内存 |
-| workflow 扩展 | 嵌套 lifelong、多个持续来源组合触发一个 target |
-| 来源与调度 | Stream 的 event、behavior（轮询）、socket 三种驱动方式；自动重试、时间周期声明、通用外部 push callback 注册；阻塞单步来源可用不代表任意回调 API 已自动适配 |
-| Pure 与原子输出 | Pure 作为生产链中的值变换已实现（[Pure 的值管道](#pure-pipeline)）；带类型的原子输出（注册声明输出类型）、交出嵌套结构（森林）、Pure 挂在 Stream 下仍待设计 |
-| Generic Map | 适配范围、失败接口和接入；当前没有可用自动适配 |
-| 多细化资产 | 同一个 handler 服务多种细化资产已由 Stage 2 以多份注册解决；同一个注册服务多种细化资产仍不支持 |
-| 同类二元操作 | 一次操作需要两个同表示类型的值时，Stage 2 先用角色类型区分；是否需要其他写法待定 |
-| 模块与接口 | 多方法 effect 的入口与结果契约、独立生成模块组合、跨语言 schema |
-| 资源协议扩展 | 其他 cleanup policy、Linear 关闭凭证、任意逸出资源跟踪、未发布部分获取恢复、跨独立 interpreter 存续 |
-| 故障恢复 | Error 驱动链：resolve 如何驱动 scope 修复（Stage 2 起 resolve 不调用 close）；已展开 continuation 的恢复、跨调用诊断范围；当前 Error 处置成功仍传播原失败 |
+| 背压与历史容量 | 容量、溢出策略、历史窗口、慢消费者及反馈与有界队列的进展；完整历史不承诺有界内存 |
+| 来源与调度 | 是否区分或自动推导 event／behavior／socket；自动重试、时间周期声明、通用外部 push callback 适配；已有单步写法见 [Stream](STREAM_LIFELONG.md#drives) |
+| 持续组合 | 嵌套 lifelong、多来源组合触发同一 target、派生步骤跳过、被持续驱动但只读最新值、lifelong 外派生和显式反馈 |
+| 值操作与适配 | 带类型的原子输出、嵌套输出结构、Pure 挂在 Stream 下、Generic Map；同注册多细化来源及同表示类型二元操作的其他写法 |
+| 资源协议 | 历史资源之外的 Stream close 接口是否需要；scope 同值复用、其他 cleanup policy、Linear 凭证、任意逸出资源、未发布的部分获取恢复、跨 interpreter 存续 |
+| 故障恢复 | Error 驱动链、常驻 scope 失效与修复、局部失败、已展开 continuation 恢复及跨调用诊断；当前 resolve 不调用 close，处置成功仍传播原失败 |
+| 内存与诊断 | 业务惰性状态链是否需要处理，以及关闭失败记录长期累积的报告策略；强制求值或改变报告时机须另行确认 |
+| 模块与接口 | 多方法 effect 的入口／结果契约、独立生成模块组合、跨语言 schema |
 
 <a id="middleware"></a>
 ### Middleware 与 Hanging
 
-独立 Middleware typing、装卸策略及其与 [Root 入口包装](LATEST_DESIGN.md#calls)的关系，保留为后续独立专题。Hanging 随之确认；不沿用旧 loop 说明替代 lifelong 规范。本轮七个阶段不以新增 Middleware 类别为前提。
+独立 Middleware typing、装卸策略及其与 [Root 入口包装](LATEST_DESIGN.md#calls)的关系单独设计，Hanging 随之确认。本轮不以新增 Middleware 类别为前提。
 
 <a id="external-tools"></a>
-### 外部工具与后续观察
+### 外部工具与观察
 
-- 将 LSP 仓库已有的来源可见性穷举模型扩展到 Stream／lifelong，覆盖订阅、会话可见性和单元划分。
-- 外部 LSP 按自身需要消费 SDK 原型与诊断；协议和展示格式在工具侧设计，不为其增加 SDK 专用导出。
-- 读取点来源、资产细化建议与模块引用索引的可视化。
-- 并发交错、认领与使用交接、长时间内存及跨平台取消仍有观察边界，不把这些开放项转成未经确认的新测试门槛。
+LSP 仓库的来源可见性穷举模型尚未扩展到 Stream／lifelong；订阅、会话可见性、单元划分及来源可视化留在工具侧推进，不为其增加 SDK 专用导出。并发交错、资源认领交接、长期内存与跨平台取消的证据仍有限，不将这些观察项变成未经确认的新测试门槛。
 
 <a id="baseline"></a>
-## 已有基础与验证边界
+## 完成与验证摘要
 
-以下压缩自原计划的历史记录，不代表本次重新执行。逐次修复与探针细节保留在 Git 历史。
+以下是整理前已有的记录，**不是本次重跑结果**。保留影响判断的结论与未覆盖范围；逐次探针、临时接口和被后续修复取代的方案查 Git 历史。历史编译与有限示例不能证明全部调度、任意业务 IO 或资源逃逸安全。
 
-- 原 Stage 1/2 已实现统一 Prototype、RuntimeGraph、来源路由和 ownership 修复；原 Stage 3 已实现 Stream／lifelong 初版，当前保证见 [STREAM_LIFELONG](STREAM_LIFELONG.md)。
-- 2026-11-01：Stage 2 外部来源可见性穷举模型已完成既有基线核对；尚未扩展到 Stream／lifelong。原计划中更早的“Stage 2 外部模型未完成”已被此记录取代。
-- 2026-11-01：会话启动登记、完成信号、停止期间新建会话与伴随发布等修复已记录验证；来源分析按消费单元裁剪再组合的修复通过生成与普通编译。相关状态组合仍可能指数增长，没有整体线性复杂度保证。
-- 2026-11-02：资产声明改为 Asset @表示类型 "资产名"；Stream 下的解析器以 getT 直接引用原始 Stream 方法，由会话提供本次输入。原计划记录普通编译、六个程序生成、五个有限 demo 及 StreamDemo 中断观察通过。
-- 2026-11-04：本轮 Stage 1 落地每个 refined asset 的唯一来源、统一访问结果规则与 GHC 源码接收检查；整理 SDK／Generated／Program 门面和 Prototype 内部分工，六个 demo 已重新生成，`cabal build all --offline -j1` 通过。生成包含手写模块的 GHC 类型检查与资产接收检查；未新增测试、未运行业务 demo，未验证全部 GADT 匹配或并发交错。现有来源分析与 runtime 调度算法保持。
-- 2026-11-07：[FacadeProbe](../demo/FacadeProbe/README.md) 以手写的生成结果验证共享 handler：同一 handler 配不同 Input 与 demand、共享 Scoped 开关、挂接 parser、Stream parser 与 lifelong 消费者均可运行，非交错输出与显式写法一致。这次验证没有修改生成器；Stage 2 的读取路由改为编译期标签。
-- 2026-11-08：Stage 2 设计确认；独立的标签探针以 GHC 9.12 编译运行，确认按 effect 标签选择读取与 `raw` 时方法体无需改写。
-- 2026-11-08：Stage 2 实现并全面替换旧写法；`cabal build all --offline -j1` 通过，七个程序重新生成并与迁移前输出对照，详见[实现与验证](#stage-2-status)。
-- 2026-11-08：SDK 按[源语言、gen、编译产物、运行时四层](LATEST_DESIGN.md#compiler)重组，生成拆为读取、降级、绑定、形状、组成、构图、输出、类检八个阶段，[流水线](LATEST_DESIGN.md#generation)在 `Framework.Gen`；声明加载进程只执行降级，绑定与输出改在生成器进程内读取 PrototypePlan；生成代码只经 `Framework.Generated` 引用 SDK。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，除生成代码的模块别名与资产目录的导入外，Generated 与重组前逐字相同；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和重组前相同，StreamDemo 在终端运行到第 33 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾和重组前一致，Crawler 除随请求变化的链接行外相同；FacadeProbe 按 README 编译运行，仍以 `ShowLevelFailure` 结束。重组不改运行行为。
-- 2026-11-08：`requires` 改为不生产、缺值等待，读取权限只在生成期检查，规则见 Stage 2 [实现与验证](#stage-2-status)的“读取”。gen 侧读取方法不连到生产方法，来源分析中没有可见发布的读取路径不返回，生产入口每次调用都生产；运行时以发布信号唤醒等待的读取。FileDemo 的 `FileResource` 补 `requests "FileName"`，FacadeProbe 的 `ReportFile`／`ReplyFile` 补 `requests` 路径、`WriteReport`／`WriteReply` 补 `requests` 正文。验证：`cabal build all --offline -j1` 通过；七个程序重新生成，生成的来源表中没有 `FromOwnChain` 读取；FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo 各运行两次，输出与写出的文件和本次改动前相同；Crawler 除随请求变化的链接行外相同；StreamDemo 在终端运行到第 48 条读数后 Ctrl-C，读数、趋势、心跳节奏与 `[sensor] disconnected` 收尾一致；FacadeProbe 按 README 编译运行，输出行相同（parallel 的交错顺序不同），写出的文件相同，仍以 `ShowLevelFailure` 结束。未覆盖：没有触发过真正等待的读取；兄弟间可见与等待的结束见[可见范围内的等待](#stage-2-await)。
-- 2026-11-12：Pure 改为生产链中的值变换，Excu／Scoped 的输出改为 `[String]`，见 [Pure 的值管道与 list 原子输出](#pure-pipeline)。验证：`cabal build all` 通过；七个程序重新生成，与 main 对照运行，行为一致（Crawler 只差随请求变化的链接签名，FacadeProbe 只差 parallel 交错顺序）。Crawler 随后在抓取与解析之间加入 Pure，经 Pure 的注入在运行中走通。未覆盖：Pure 的 `raise` 与交出多项 list 的 handler。
-- 2026-11-15：整理构建与文件保留边界。七个 Cabal 示例共用 `common runtime-program` 的 25 个 SDK 运行模块与 7 项依赖，生成器保留独立清单；Cabal 文件由 402 行缩为 208 行。沿入口核对的 43 个 SDK 模块均仍被引用，保留源码及 Generated 中的四类编译源码；清理未跟踪的旧构建目录、结构缓存与示例输出。修正 Context.stream 的过时注释和构图缓存文件清单，指南明确手写源码、生成源码与临时产物的区别。验证：使用临时 builddir 的 `cabal build all --offline -j1` 退出 0；本轮未改运行语义、未新增测试或运行业务 demo。
-- 2026-11-15：核对 gen 的阶段依赖与复用边界，在流水线、绑定、挂载、同次输出回放、持续会话、ScopeTree 和来源分析旁补充“算法说明 v1”注释，注明无环依据与复杂度限制。图规范修正过时的构建函数名并区分结构共享、输出复用和实例共享；没有新增通用调用去重或改变运行语义。验证：使用临时 builddir 的 `cabal build effect-codegen --offline -j1`，以及合并前的 `cabal build all --offline -j1` 均退出 0；本轮仅改注释与文档，未重新生成示例、未运行 demo 或做性能实测。
-- 2026-11-16：完成 [gen 装配与共享分析整理](#gen-assembly-sharing)前两批。新增编译期 Assembly，Build／Sources／Emit 共用挂载与输出连接；Binding 保留有角色的有序前驱及 raw 来源；方法图按定义缓存辅助／主归约结果，不再复制全部调用展开树。八个命名空间重新生成均无文件变化，`cabal build all --offline -j1` 退出 0；未修改 facade、runtime 或 scope 实例规则，未进行性能实测。
-- 2026-11-16：完成 [Stage 5 基础整理](#stage-5-foundation)。轮帧保存所属 lifelong 位置，合法后继的普通绑定按当前／保留来源参与 scope 待用；发布交接与回收共用协调锁；并发／重复停止会话等待同一完成信号。`cabal build all --offline -j1` 退出 0，未改 facade、gen 或生成产物，未运行 demo 或新增测试；没有接入历史资源保活或提前关闭。
-- 历史验证未系统枚举全部并发交错，未观察长时间内存；Stream 外部模型未完成；取消只记录过 Windows Ctrl-Break。已通过编译和示例不能扩大资源逃逸、任意底层 IO 或所有调度的保证。
+| 日期／工作 | 已有验证记录 | 仍需留意 |
+| --- | --- | --- |
+| 2026-11-01，早期 Prototype／来源基础 | 外部有限来源模型完成既有基线核对；会话登记、ownership 与来源裁剪等修复记录了生成和编译结果 | 外部模型未覆盖 Stream；来源状态仍可能指数增长 |
+| 2026-11-04 至 08，Stage 1／2 与四层分工 | 生成契约、HLS/GHC 类型检查、普通编译；七个程序生成并与迁移前输出对照 | 旧接收形态已被取代；业务输出对照不证明全部错误路径 |
+| 2026-11-12，Pure／list 输出 | 生成与编译通过；有限示例、Stream 中断和 Crawler 经 Pure 注入记录了运行结果 | 当时未触发 Pure 的 raise、多项 list 及全部生成期拒绝 |
+| 2026-11-13 至 14，scope GC／关闭诊断／保守等待 | 生成、编译、有限 demo；受控探针覆盖缺值唤醒、取消、close 普通异常及诊断期间取消；旧版对照复现吞取消与本链自锁 | 未穷举并发交错、所有多参数与条件发布组合；会话链等待未完整迁移 |
+| 2026-11-14，来源 end／后继读取／历史保留 | 编译、生成、LinesDemo 和有限 demo；临时探针观察排空、半截执行、启动许可、零发布、后继最新值及历史保留 | 没有堆测量；早期仅来源 end 的资源时机已被会话退役取代 |
+| 2026-11-15，Derive／ReuseOutput | 八个命名空间生成、编译；派生与两级派生观察，LinesDemo 四行统计及最终 4 行／40 字符，结构显示无独立 ReuseOutput worker | 当时未逐项实测失败、取消及 Scoped 同单元拒绝 |
+| 2026-11-15 至 16，构建整理／gen 装配共享 | 普通编译；装配重构后八个命名空间重新生成均无文件更新 | 未做性能实测，不宣称消除指数上界 |
+| 2026-11-16，普通后继待用／停止交接 | `cabal build all --offline -j1` 通过；源码核对来源、帧归属与协调锁 | 当次未运行 demo 或取消探针，未加入历史资源保活 |
+| 2026-11-16 至 17，消费结束／会话退役 | 生成、编译与有限 demo；临时探针观察部分节点退出、全部退出和持续来源停产；LinesDemo 的 close 提前到 Report 之前 | interpreter 托管会话与 ReuseOutput 有各自停止规则，不扩大为全局无人读取即停产 |
+| 2026-11-17，`4e33914` 及后续复核记录 | 编译和八个命名空间生成无变化；同单元并行、串行与经 Derive 依赖的探针对照旧版漏消费／挂住，修复版正常结束 | 取消退役的接续只经源码审查；共享唤醒代价与 require 在发布之前的边界未实测确认 |
+
+**本次实现验证（2026-11-17）：** 持续资产最新值的 scope 参数登记、会话开启计划及待用匹配已接通。八个现有命名空间显式重新生成；最终 `cabal build all --offline -j1` 通过，退出码 0，`git diff --check` 通过。未改手写业务模块，未新增测试或负例，未运行业务 demo 或并发探针；交接窗口与锁顺序仅做源码核对。整份 History 的参数含义、历史资源持有及长期堆占用仍未覆盖。
 
 <a id="maintenance"></a>
-## 阶段推进时怎样维护
+## 怎样维护这份计划
 
-每阶段先确认受影响的代码形态与协议，再实施；本文件更新状态和必要完成摘要，当前能力写回所属规范，GUIDE 随实际接口更新。不要将计划直接覆盖成当前运行保证，也不要另建重复的阶段清单。
+每阶段先确认代码形态与协议；完成后将详细规则写回所属规范，GUIDE 只展示当前接口。这里保留状态、未完成项、必要理由和一条验证摘要；被取代的方案与探针过程交给 Git 历史，不另建归档文件或复制阶段清单。
 
-只记录实际执行过的验证、日期和未覆盖范围，沿用仓库对普通编译及验证工作的约定。Stage 1、Stage 2 的结果见上方记录；历史验证不代表本次已经重跑。
+2026-11-17 前一轮仅整理文档：收敛计划、改用规范引用、修正指南过期描述，并核对引用与改动范围。没有修改 SDK、生成产物或 demo，没有重新编译或运行业务；上表均为历史记录。

@@ -143,25 +143,39 @@ validatePrototype prototype = do
       valid (unique (map fst (openingSources opening))
         && map fst (openingSources opening) == effectOpeningInputs scope)
         "Scope opening parameters differ from the Scoped inputs"
-      mapM_ (\(source, candidates) -> do
+      mapM_ (\(source, selected) -> do
         producer <- findEffectProto effects source
-        valid (not (null candidates) && unique candidates) "Invalid scope parameter source candidates"
-        mapM_ (\node' -> do
-          producing <- lookupChain prototype node'
-          valid (node' == openingNode opening || precedes (protoWorkflow prototype) node' (openingNode opening))
-            "Scope parameter source is not a visible chain"
-          valid (maybe False (`elem` chainDrives producing) (effectProduces producer)
-            || any (\owner -> effectResource owner == Just source
-                && maybe False (`elem` chainReaches producing) (lookup ScopeOpen (effectMethods owner))) effects)
-            "Scope parameter source has no matching production") candidates) (openingSources opening)
+        case selected of
+          FromSession -> valid (effectContinuous producer)
+            "Scope session parameter is not a continuous asset"
+          FromOwnChain -> valid False "Scope parameter needs explicit production candidates"
+          FromChains candidates -> do
+            valid (not (effectContinuous producer) && not (null candidates) && unique candidates)
+              "Invalid scope parameter source candidates"
+            mapM_ (\node' -> do
+              producing <- lookupChain prototype node'
+              valid (node' == openingNode opening || precedes (protoWorkflow prototype) node' (openingNode opening))
+                "Scope parameter source is not a visible chain"
+              valid (maybe False (`elem` chainDrives producing) (effectProduces producer)
+                || any (\owner -> effectResource owner == Just source
+                    && maybe False (`elem` chainReaches producing) (lookup ScopeOpen (effectMethods owner))) effects)
+                "Scope parameter source has no matching production") candidates) (openingSources opening)
       let kinds = openingKinds opening
           parameters = openingSources opening
           resource source = any ((== Just source) . effectResource) effects
+          singleton (source, selected) = resource source || case selected of
+            FromSession -> True
+            FromChains nodes' -> any (/= openingNode opening) nodes'
+            FromOwnChain -> False
+          multiple (_, selected) = case selected of
+            FromSession -> True
+            FromChains nodes' -> openingNode opening `elem` nodes'
+            FromOwnChain -> False
           possible kind = case kind of
             RegistrationSingleton -> null parameters
             ProductionSingleton -> not (null parameters)
-              && all (\(source, nodes') -> resource source || any (/= openingNode opening) nodes') parameters
-            ExecutionMultiple -> any ((openingNode opening `elem`) . snd) parameters
+              && all singleton parameters
+            ExecutionMultiple -> any multiple parameters
       valid (not (null kinds) && unique kinds && all possible kinds) "Invalid scope opening categories"
     validateSource (point, source) = do
       _ <- lookupChain prototype (readNode point)

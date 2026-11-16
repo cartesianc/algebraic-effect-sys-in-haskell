@@ -140,16 +140,17 @@ data ReadPoint = ReadPoint { readNode :: NodeId, readContract :: String }
 
 -- FromChains 保存保证先完成的静态候选；运行时仍须核对本次实际发布的唯一来源。
 -- FromOwnChain 没有外部候选，沿用本次捕获与缺值协议，不意味着每次都生产。
--- FromSession：Receive 资产在没有本次交付时，由 interpreter 托管的会话交付当前历史。
+-- FromSession：持续资产按本轮交付、合法先前边界或 interpreter 托管会话读取。
 data Source = FromChains [NodeId] | FromOwnChain | FromSession
   deriving (Eq, Show, Read, Generic, NFData)
 
--- 每个挂载链开启各 Scoped 时，参数 Context 的可能生产节点。
+-- 每个挂载链开启各 Scoped 时，参数 Context 的生产节点或会话来源。
+-- FromSession 固定为所选交付，不把它伪装成没有候选的普通发布。FromOwnChain 不用于开启计划。
 -- 候选包含本链与已经捕获的来源；不是运行时任选来源的许可，也不保存分支相关性。
 data ScopeOpening = ScopeOpeningPlan
   { openingNode :: NodeId
   , openingScope :: String
-  , openingSources :: [(String, [NodeId])]
+  , openingSources :: [(String, Source)]
   , openingKinds :: [ScopeKind]
   } deriving (Eq, Show, Read, Generic, NFData)
 

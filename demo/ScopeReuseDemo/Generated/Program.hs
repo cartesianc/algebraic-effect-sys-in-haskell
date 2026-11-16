@@ -558,19 +558,19 @@ generatedPrototype =
         [ SDK.ScopeOpeningPlan
             { SDK.openingNode = [1,2]
             , SDK.openingScope = "SharedFileScope"
-            , SDK.openingSources = [("FileLocations",[[0,0]])]
+            , SDK.openingSources = [("FileLocations", SDK.FromChains ([[0,0]]))]
             , SDK.openingKinds = [SDK.ProductionSingleton]
             }
         , SDK.ScopeOpeningPlan
             { SDK.openingNode = [1,1]
             , SDK.openingScope = "SharedFileScope"
-            , SDK.openingSources = [("FileLocations",[[0,0]])]
+            , SDK.openingSources = [("FileLocations", SDK.FromChains ([[0,0]]))]
             , SDK.openingKinds = [SDK.ProductionSingleton]
             }
         , SDK.ScopeOpeningPlan
             { SDK.openingNode = [1,0]
             , SDK.openingScope = "SharedFileScope"
-            , SDK.openingSources = [("FileLocations",[[0,0]])]
+            , SDK.openingSources = [("FileLocations", SDK.FromChains ([[0,0]]))]
             , SDK.openingKinds = [SDK.ProductionSingleton]
             }
         ]

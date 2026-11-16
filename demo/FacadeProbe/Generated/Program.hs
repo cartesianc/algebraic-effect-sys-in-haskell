@@ -1667,13 +1667,13 @@ generatedPrototype =
         [ SDK.ScopeOpeningPlan
             { SDK.openingNode = [0,1]
             , SDK.openingScope = "ReplyScope"
-            , SDK.openingSources = [("ReplyLocation",[[0,1]])]
+            , SDK.openingSources = [("ReplyLocation", SDK.FromChains ([[0,1]]))]
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         , SDK.ScopeOpeningPlan
             { SDK.openingNode = [0,0]
             , SDK.openingScope = "ReportScope"
-            , SDK.openingSources = [("ReportLocation",[[0,0]])]
+            , SDK.openingSources = [("ReportLocation", SDK.FromChains ([[0,0]]))]
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         ]

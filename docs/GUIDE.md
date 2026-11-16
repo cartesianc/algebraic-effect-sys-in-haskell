@@ -916,7 +916,7 @@ ast = chained [setup, monitor]
 
 ### 由持续资产驱动的持续资产
 
-被持续资产驱动的 effect 下面可以挂 Context，产出另一份持续资产。LinesDemo 中 `TextCounter` 每次执行统计已收到的行数与字符数，Context 沿用这次输出产出 `RunningTotal`。本轮输出复用的完成与验证状态见 [Next stages](NEXT_STAGES.md#stage-6-reuse)。
+被持续资产驱动的 effect 下面可以挂 Context，产出另一份持续资产。LinesDemo 中 `TextCounter` 每次执行统计已收到的行数与字符数，Context 沿用这次输出产出 `RunningTotal`。这样既保留操作与解析的分工，也不用为解析再执行一次统计。
 
 ```haskell
 -- demo/LinesDemo/Effects.hs（节选）
@@ -972,24 +972,18 @@ ast = chained
   ]
 ```
 
-- **写法没有新东西**：`countText` 是普通的 Excu handler，`parseTotal` 是普通的 parser。原子计算和解析仍写在各自的 handler 内。
-- **必须声明 `stream = True`**：链上有 `streams`，执行机会来自那份资产的交付，连续成功执行形成增量，产出声明为持续资产；写成 `False` 由 gencode 拒绝。
-- **同次输出复用**：AST 执行 `TextCounter` 后，`CountParser` 的 `raw` 读取这次统计输出，发布 `RunningTotal`；`ShowTotal` 领取它，不再执行一次统计。gen 在本 lifelong 内记录具体发布位置，输出会话不另起生产任务。Stream 来源 `LineFeed` 仍不能挂入 AST。
-- **两个单元各自推进**：一个单元按顺序打印并统计，另一个单元领取统计增量并显示；行文本与统计的输出可以交错。发布单元结束时统计会话封口，显示单元排空后，lifelong 才返回并执行 `Report`。
-- **交付范围不扩大**：`ShowTotal` 收到的是 `RunningTotal`，不会自动收到打印／统计链上的其他普通资产。普通副产物仍按已有的静态来源和 AST 可见性读取。
-- **独立派生仍可用**：没有可复用的 AST 发布位置时，gen 用独立会话逐次领取上游交付并执行 parser 及其 Input 链。一条生产链只由一份持续资产驱动；可以逐级派生，来源歧义或启动环在生成期报错。
-- **同单元不等待自己将来的产物**：读取自己发布的持续资产时，每条到达读取的控制路径都要已有供值位置，或同轮有并行且必经的供值路径。alternative 另一候选可能供值不够；parser 及其 requests 路径也不能另等其他持续资产。
-- **Scoped.open 例外**：复用已有 scope 时 open 没有新输出，所以当前拒绝在同单元直接或经派生链等待这份复用输出。跨单元可以等实际发布或结束；这不禁止 Scoped 本身进入 lifelong，也不禁止独立派生。
-- **实际执行才发布**：一次原子操作成功且 parser 成功才形成交付；未选中的 alternative 位置不发布。不会为等待中的下游补跑原操作，独立调用也不按相等值合并。
-- **结束**：独立派生在上游结束并处理完后结束，被驱动链上以 `streams` 订阅的 Excu 调用 `endStream` 时也结束；复用输出的会话在发布节点都结束订阅或所在单元结束后封口，已发布增量仍可排空。单轮结束不封口。
-- **读取**：可以 `streams` 订阅，也可以 `requires` 读最新一条。它只在订阅它的 lifelong 里生产，所以读取位置必须在那个 lifelong 之内或之后。LinesDemo 的 `Report` 在 lifelong 之后 `requires "RunningTotal"`，读到最终的统计。
-- **内存**：上游历史由实际的读取方保留；复用输出沿用消费单元的读取，不新增一份派生任务的上游游标。输出资产也按自己的读取义务保留历史，当前不设容量上限。
+- **声明持续产出**：Input 链上有 `streams` 时，下面的 Context 必须声明 `stream = True`；原子操作与 parser 的写法不变。
+- **复用同次输出**：`CountParser` 的 `raw` 接到 AST 本次执行的统计输出，`ShowTotal` 领取结果，输出会话不另起统计任务。Stream 来源 `LineFeed` 仍不能挂入 AST。
+- **按单元推进**：打印／统计与显示是两个独立单元，可以交错；发布位置全部结束后，显示方领完积压，lifelong 才返回。`Report` 以 `requires "RunningTotal"` 读到最终统计。
+- **保留普通资产可见性**：交付统计不隐式交付打印／统计链上的其他普通资产。普通副产物仍按静态来源读取。
+- **没有 AST 发布位置时独立派生**：gen 改用会话领取上游交付并执行生产链；可以逐级派生。派生资产只在所属 lifelong 之内或之后读取。
+- **同单元读取须有供值路径**：gen 检查先行发布或同轮必经的并行发布；运行时会等并行发布及派生处理完成，不能因暂时无值就跳过。同单元等待 Scoped.open 的复用输出目前被保守拒绝，因为复用实例不会产生新输出。
 
-完整规则见 [Stream 规范 4.2 节](STREAM_LIFELONG.md#derive)。
+具体的路径检查、结束传播与边界见[派生与输出复用规范](STREAM_LIFELONG.md#derive)；历史的保留范围见[会话保留](STREAM_LIFELONG.md#retention)。
 
 ### 结束与失败
 
-- **正常结束**：Stream handler 在来源没有下一份输入时调用 `streamEnd`（2026-11-16 前名为 `end`）。它和返回值、`raise` 并列，是方法体的第三个出口；签名仍是 `m String`，只有 Stream handler 的 Layer 里有它：
+- **正常结束**：Stream handler 在来源没有下一份输入时调用 `streamEnd`。它和返回值、`raise` 并列，是方法体的第三个出口；签名仍是 `m String`，只有 Stream handler 的 Layer 里有它：
 
   ```haskell
   -- demo/LinesDemo/Handlers.hs（节选）；需要 import Framework.SDK (StreamEnds(..))
@@ -1000,18 +994,11 @@ ast = chained
       if finished then streamEnd else liftIO (hGetLine file)
   ```
 
-  ```haskell
-  -- demo/LinesDemo/AST.hs：来源结束、已发布的行处理完后，Report 才执行
-  ast = chained
-    [ chained [node "Announce"]
-    , lifelong [chained [node "PrintLine", node "ShowTotal"]]
-    , chained [node "Report"]
-    ]
-  ```
+  上面的 LinesDemo AST 将 `Report` 放在 lifelong 之后；单元处理完所需交付并结束，才会继续执行它。
 
-  `streamEnd` 不是失败，不进入 Error 诊断。它直接结束这份资产，不看有哪些消费方。这一步不交出输入，parser 不执行；已经发布的交付仍可领取。单元在它要领取的来源已经结束并领完时结束：尚未执行的后继放弃，已完成的部分不回滚。全部单元结束后 lifelong 成功返回（不带结果），排在后面的节点继续执行。
+  `streamEnd` 不是失败，不进入 Error 诊断。它结束当前绑定的生产会话，不依赖消费方是否已经完成。这一步不交出输入，parser 不执行；已经发布的交付仍可领取。单元在它要领取的来源已经结束并领完时结束：尚未执行的后继放弃，已完成的部分不回滚。全部单元结束后 lifelong 成功返回（不带结果），排在后面的节点继续执行。
 - **结束后能读什么**：`require` 像 State 一样只保留每个来源最新的值。lifelong 后面的节点 `requires` 单元里发布的资产，读到的是它最新一次发布：最后一轮没有发布它时，读更早那一轮的值；一次都没有发布时报 `ContextNotInitialized`。读持续资产时读到它最后一条，不会重新启动来源。单元内部仍然每轮隔离，读不到上一轮的产物。两个并行单元都发布同一资产、或两个并行的 lifelong 都有同一个持续资产时，“最新”取决于调度，gencode 报错。
-- **消费方结束**：以 `streams` 订阅持续资产的 Excu 可以调用 `endStream`，表示之后不再被这份资产驱动。本次调用放弃，不交出结果；这个节点之后各轮跳过，同一轮里排在它后面的节点照常执行。同一单元里读取它发布的资产的位置不等待：订阅它的节点本轮没有新发布就跳过，`require` 读已有的值。它不直接停产：单元里读取这份资产的节点都结束后单元离开会话，会话的读取方全部离开后才停止生产。parallel 的其他单元不受影响。
+- **消费方结束**：自身以 `streams` 订阅的 Excu 可以调用 `endStream`。本次调用放弃、不交出结果，该节点之后各轮跳过；本轮 chained 的后继和其他单元继续按各自依赖执行。同单元直接或经派生读取它产物的位置，仍等待本轮可能完成的发布；确定本轮稳定且无新交付时才跳过，封口排空后结束相应订阅。只 `require` 这份本地持续资产时可读已有值，一次都没有发布则报缺值。会话是否停产由剩余读取方决定，详细规则见[消费方结束](STREAM_LIFELONG.md#consumer-end)。
 
   ```haskell
   -- 示意：PrintLine 只打印前 10 行；需要 import Framework.SDK (EndsStream(..))
@@ -1022,11 +1009,10 @@ ast = chained
       ...
   ```
 
-  规则与计数见 [Stream 规范 9.5 节](STREAM_LIFELONG.md#consumer-end)。同一 `chained` 里后面的节点若只 `require` 被结束节点这一轮的普通产物，之后会按缺值报 `ContextNotInitialized`；要每轮都有值，用 `requests` 自己驱动。
-- **结束后的资源**：会话的读取方全部离开（或 lifelong 返回）时会话退役：停止生产任务，再回收只在会话中开启的资源（StreamDemo 的 `SensorLink`、LinesDemo 的输入文件）。所以 LinesDemo 在 `Report` 执行之前就打印 `[close]`。
-- **不结束的来源**：StreamDemo 的来源不调用 `streamEnd`，消费方也不调用 `endStream`，持续程序运行到被取消（Ctrl-C）为止。取消时 SDK 停止全部单元和会话，等它们收尾，再按 ScopeTree 关闭资源；StreamDemo 会打印 `[sensor] disconnected`。
-- **失败（临时规则）**：程序里含 lifelong 时，结构化失败（生产、解析、某个单元或任何 branch）在完成 Error 诊断后终止整次运行：取消全部任务、等待收尾，最后报告最初的那个失败；原生异常直接进入监督并在收尾后重新抛出。lifelong 的 close 语义设计后再改为局部结束。
-- **lifelong 外读取持续资产**：普通 `requires "T"` 只读取一次，取得最新一条。由持续资产驱动的资产除外，它只能在订阅它的 lifelong 之内或之后读取。没有交付时，由 interpreter 托管的会话产出（至少等到一条）；这个会话保持到程序退出。来源已经 `streamEnd` 时读到最后一条，不重新启动来源；一条都没有发布就结束时报 `ContextNotInitialized`。
+  同一 `chained` 里后面的节点若只 `require` 被结束节点这一轮的普通产物，之后会按缺值报 `ContextNotInitialized`；要每轮都有值，用 `requests` 自己驱动。
+- **结束后的资源**：正常路径上，登记的读取方全部离开（或 lifelong 返回）时，独立生产会话退役并把只在会话中开启的 scope 交给现有回收器；仍有合法待用的实例保留。LinesDemo 因而在 `Report` 之前打印 `[close]`。历史中的资源引用尚无持有保证；interpreter 托管会话、ReuseOutput 的区别见[退役规则](STREAM_LIFELONG.md#consumer-end)。
+- **取消与失败**：不结束的来源可由 Ctrl-C 取消，SDK 停止受控工作、等待收尾并回收资源。含 lifelong 的程序发生失败时仍终止整次运行；局部失败另行设计，详见[故障与取消协议](STREAM_LIFELONG.md#failures)。
+- **lifelong 外读取**：普通 `requires` 只读一次最新值；需要启动的 Receive 会话由 interpreter 托管到运行结束。读取已结束的合法前驱会话不重启来源，零发布时报缺值。派生资产的位置限制与具体路由见[有限读取](STREAM_LIFELONG.md#production)。
 
 ### 运行与查看
 
@@ -1135,7 +1121,7 @@ close 由 SDK 的自动收尾调用，handler 不直接调用；下表中的 clo
 
 | 故障 | 什么时候报 | 怎么改 |
 | --- | --- | --- |
-| `ScopeInputsMissing [参数]` | 带开启参数的 scope 要在参数齐备后才能选定实例；资源发布或 open 结束时仍有参数没读到，例如资源 parser 先获取资源、后读取参数。持续资产作为开启参数时也会报，这是当前限制（见 [Stream 规范 9.3](STREAM_LIFELONG.md#failures)） | 先安排参数生产；资源 parser 先读参数，再获取资源。共享时读取前驱的同一次生产 |
+| `ScopeInputsMissing [参数]` | 带开启参数的 scope 要在参数齐备后才能选定实例；资源发布或 open 结束时仍有参数没读到，例如资源 parser 先获取资源、后读取参数。持续资产的最新值已支持；整份 History 的开启参数含义仍未定义（见 [scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention)） | 先安排参数生产；资源 parser 先读参数，再获取资源。共享时读取前驱的同一次生产 |
 | `ScopeInputAfterOpen 参数` | 实例选定之后，这次开启读到另一份参数生产；即使新旧值相等也不同 | 选定实例前确定全部参数；open 范围内不再刷新参数 |
 | `ScopeContextMismatch 资源` | 一份资源绑定只能归一个实例：open 要认领的资源已属于另一个 scope 或同注册的另一个实例；或 close 读到的资源属于别的实例 | 不同实例各自驱动自己的资源，不共用同一次生产 |
 | `ScopeContextMissing 资源` | open 结束时，选中的实例里没有资源绑定；或 close 定位不到要关闭的实例：本次调用没有这个 scope 的资源绑定，或 close 的 handler 没有读取资源 | Scoped 在 demands 里 `requests` 并 `requires` 资源；open／close 的 handler 用 `require` 读取资源 |
@@ -1227,9 +1213,8 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 
 ## 当前限制
 
-- **未实现的能力**：middleware、通用结构适配尚未实现。Stream／lifelong 的结束与清理进入本轮[六阶段计划](NEXT_STAGES.md#stages)，middleware 保留为[后续专题](NEXT_STAGES.md#middleware)。本指南只描述当前写法。
-- **持续执行的延期项**：来源结束后的资源清理与 Stream close、消费方提前退出、嵌套 lifelong、自动重试和背压；lifelong 中的失败暂时终止整次运行；被 `streams` 订阅的来源在订阅单元运行期间保留完整历史，内存随发布增长；没有订阅的来源只保留最新一条。见 [Stream 规范的延期项](STREAM_LIFELONG.md#deferred)。
-- **Stage 3 已知实现限制**：持续资产作为 scope 开启参数尚未接通。见 [Next stages](NEXT_STAGES.md#current-limits)。
-- **handler 复用的边界**：同一个 handler 可以注册到多个 effect，但各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能读一份资产。Stream 的驱动方式和 Error 的驱动链仍待确定，见 [Stage 2：本阶段不处理](NEXT_STAGES.md#stage-2-later)。
-- **资源清理范围**：自动清理覆盖交给 SDK 管理的资源；业务代码自己 `forkIO` 出的线程，或在 IO 中途获取、尚未交给 SDK 的资源，需要自行处理。实例按参数生产身份共享、按剩余程序可达性回收，见[主设计](LATEST_DESIGN.md#scope-identity)；持续资产作为开启参数、历史资源精细释放与来源结束后的清理仍待后续阶段。
-- **构建方式**：SDK 目前随仓库内的示例一起编译，不能作为独立依赖引入。
+- **handler 复用**：各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能路由到一份资产。完整约束见[注册契约](LATEST_DESIGN.md#registration)。
+- **持续资源与内存**：生产侧结束、消费侧结束和会话退役已实现。持续资产最新值已可作为 scope 开启参数；整份 History 的参数身份与历史资源持有仍有缺口；活跃历史读取方保留完整历史，不承诺有界内存。边界与剩余阶段见 [Next stages](NEXT_STAGES.md#current-limits)。
+- **资源管理范围**：SDK 只管理已交给它的资源。业务自行 `forkIO` 的线程、未发布的部分获取和逸出资源由原子实现负责，见[scope 保证](LATEST_DESIGN.md#scope-gc)。
+- **其他扩展**：背压、局部失败、嵌套 lifelong、Middleware 和通用适配等统一跟踪在[开放专题](NEXT_STAGES.md#deferred)，本指南不列另一份状态清单。
+- **构建方式**：SDK 目前随仓库内示例一起编译，尚不能作为独立依赖引入。

@@ -739,19 +739,19 @@ generatedPrototype =
         [ SDK.ScopeOpeningPlan
             { SDK.openingNode = [1,4]
             , SDK.openingScope = "FileSession"
-            , SDK.openingSources = [("FileLocation",[[1,4]])]
+            , SDK.openingSources = [("FileLocation", SDK.FromChains ([[1,4]]))]
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         , SDK.ScopeOpeningPlan
             { SDK.openingNode = [1,2]
             , SDK.openingScope = "FileSession"
-            , SDK.openingSources = [("FileLocation",[[1,2]])]
+            , SDK.openingSources = [("FileLocation", SDK.FromChains ([[1,2]]))]
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         , SDK.ScopeOpeningPlan
             { SDK.openingNode = [1,0]
             , SDK.openingScope = "FileSession"
-            , SDK.openingSources = [("FileLocation",[[1,0]])]
+            , SDK.openingSources = [("FileLocation", SDK.FromChains ([[1,0]]))]
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         ]

@@ -104,6 +104,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | 在需要的链上开启 | Scoped 放在链的 Input 上 | 入口的前驱步骤 | 进入入口时先开启；已开启的实例复用，跳过 open 的方法体 | [入口装配](LATEST_DESIGN.md#calls) |
 | 注册级单例 | Scoped 的资源 Context 没有开启参数 | scope 开启计划，类别为注册级单例 | 同一注册共享实例，归根帧 | [单例与多例](LATEST_DESIGN.md#scope-identity) |
 | 按一次生产共享 | 开启参数只经 `requires` 引用已有的生产 | 各参数可能的生产节点（`protoScopeOpenings`） | 读到同一次生产的开启共享同一实例，保留原归属帧 | 同上 |
+| 持续最新值作开启参数 | 资源 parser 声明 `requires` 并读 `require @T` | `FromSession` 开启计划 | 固定交付末条沿用原生产身份与帧，按交付／游标与后继读取位置判断待用 | [开启计划](EFFECT_GRAPH.md#scope-opening-retention) |
 | 每次新开（多例） | 当前执行用 `requests` 新生产了开启参数 | 同上 | 新的参数生产确定新实例；本次生产的后继仍共享它 | 同上 |
 | 实例属于哪一层 | 无需写法 | 参数生产所在的执行帧 | 取参数中最内层的帧，无参数取根帧；lifelong 本轮生产参数的实例归本轮 | 同上、[按可达性回收](LATEST_DESIGN.md#scope-gc) |
 | 一份资源只有一个关闭者 | Scoped `requests` 资源 Context | open 认领资源绑定 | 首次 open 认领为 owner，所有副本看到同一归属；其他实例认领报 `ScopeContextMismatch` | [scope](LATEST_DESIGN.md#scope) |
@@ -116,7 +117,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 <a id="scope-missing"></a>
 ### 尚未覆盖
 
-持续资产作为 scope 的开启参数、历史条目中资源的持有登记、一个 Scoped 注册服务多种细化资源，目前都没有对应的组合（见 [Next stages](NEXT_STAGES.md)）。
+整份 History 的参数身份、历史条目中资源的持有登记、一个 Scoped 注册服务多种细化资源，仍未实现（见 [Next stages](NEXT_STAGES.md)）。
 
 <a id="stream"></a>
 ## 6. 持续执行（Stream 与 lifelong）

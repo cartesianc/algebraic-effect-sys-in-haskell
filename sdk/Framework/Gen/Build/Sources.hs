@@ -1,5 +1,6 @@
 -- 生成期的资产来源分析：输入是已解析方法体与统一 Prototype，
 -- 输出补全 chainDrives、chainReads、protoSources 和 scope 开启出处，不运行业务或修改 ScopeTree。
+-- v3（2026-11-17）：会话读取也记录开启参数，保持 FromSession 路由及实际交付身份。
 -- v2（2026-11-16）：注入关系读取同一 Assembly 的 OutputConnection，顺序与 Emit／Build 一致；
 -- 下面的路径状态与裁剪规则维持 v1，不能用方法图的缓存替代带捕获和前态的来源分析。
 -- 每个候选状态保留发布/捕获的相关性；先按消费单元及后续读取裁剪，再组合状态。
@@ -190,10 +191,10 @@ resolveSources connections definitions defaultReaders prototype = do
       { assetDrives = nub ((node', contractType) : assetDrives facts) }
     -- 只从本路径已捕获的参数记录出处，保留 alternative 的交接；不能用 chainDrives
     -- 把条件生产的位置一律判成多例。跨路径只合并候选及已观察到的类别。
-    openingInputs :: EffectProto String -> AssetState -> Maybe [(String, NodeId)]
+    openingInputs :: EffectProto String -> AssetState -> Maybe [(String, Maybe NodeId)]
     openingInputs effect state = sequence
       [ do observed <- lookup (effectName effect) (assetInputs state)
-           Just origin <- lookup source observed
+           origin <- lookup source observed
            pure (source, origin)
       | source <- effectOpeningInputs effect ]
     recordOpening :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis ()
@@ -203,14 +204,19 @@ resolveSources connections definitions defaultReaders prototype = do
         let node' = assetRoot call
             same opening = openingNode opening == node' && openingScope opening == effectName effect
             previous = filter same (assetScopeOpenings facts)
-            sources = [(source, sort (nub (origin : concat
-                [old | opening <- previous, (selected, old) <- openingSources opening, selected == source])))
+            sources = [(source, if continuous source then FromSession else FromChains
+                (sort (nub ([node | Just node <- [origin]] ++ concat
+                  [old | opening <- previous, (selected, FromChains old) <- openingSources opening, selected == source]))))
               | (source, origin) <- inputs]
+            continuous source = any (\producer -> effectName producer == source && effectContinuous producer) effects
             possible | null inputs = [RegistrationSingleton]
-                     | any (\(source, origin) -> origin == node' && source `notElem` resources) inputs = [ExecutionMultiple]
-                     -- owner 的本链 open 也可能复用前驱实例；资源自身不进入普通来源表，
-                     -- 实际生产身份沿 owner 的开启参数确定，不能据此硬判一次新生产。
-                     | any ((== node') . snd) inputs = [ProductionSingleton, ExecutionMultiple]
+                     | any (\(source, origin) -> origin == Just node' && source `notElem` resources
+                         && not (continuous source)) inputs = [ExecutionMultiple]
+                     -- 会话可交接本轮输出，也可交付独立生产的值；运行时按实际 Binding 判定，
+                     -- 不能因为没有普通 NodeId 捕获就漏掉整个开启位置。
+                     | any (continuous . fst) inputs = [ProductionSingleton, ExecutionMultiple]
+                     -- owner 的本链 open 也可能复用前驱实例；资源自身不进入普通来源表。
+                     | any ((== Just node') . snd) inputs = [ProductionSingleton, ExecutionMultiple]
                      | otherwise = [ProductionSingleton]
             kinds = sort (nub (possible ++ concatMap openingKinds previous))
             opening = ScopeOpeningPlan node' (effectName effect) sources kinds

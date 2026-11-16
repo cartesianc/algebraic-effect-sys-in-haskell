@@ -4,6 +4,7 @@ module Framework.Runtime.Frame
   ( ExecutionFrame, NodeProgress(..), newExecutionFrame, newChildFrame, frameParent, frameDepth, frameBoundary, withFrameLock
   , frameNodes, framePendingNodes, framePendingViews, captureFrameDeliveries, DeliveryIdentity, owningFrame
   , frameNodeProgress, frameSignal, notifyFrame
+  , installSessionInputs, pendingSessionInput, captureSessionInput, capturedSessionInputs
   , startFrameNode, completeFrameNode, skipFrameSubtree, finishExecutionFrame
   ) where
 
@@ -18,7 +19,8 @@ import Framework.Runtime.Identity (ActivationId)
 data NodeProgress = Pending | Running | Completed | Skipped
   deriving (Eq, Show)
 
--- 只有已领取普通伴随资产的生产身份；不保存值、资源引用或未领取的历史。
+-- 身份记录，不保存值、资源引用或历史。frameDelivered 的 NodeId 是普通伴随资产的
+-- 发布位置；frameSessionCaptures 的 NodeId 是固定该视图的读取位置，两张表不混用。
 type DeliveryIdentity = (NodeId, String, ActivationId)
 
 data ExecutionFrame = ExecutionFrame
@@ -30,6 +32,11 @@ data ExecutionFrame = ExecutionFrame
   , frameProgress :: IORef [(NodeId, NodeProgress)]
   , frameDelivered :: IORef [DeliveryIdentity]
   , frameChildren :: IORef [ExecutionFrame]
+  -- v1（2026-11-17）：本轮会话的已选/下一条身份查询；不领取、不启动来源。
+  -- 查询只读领取槽与会话状态，不能获取帧协调锁或运行 handler。
+  , frameSessionInputs :: IORef (String -> ActivationId -> IO (Maybe Bool))
+  -- 本次调用与 alternative 交接已经固定的最新值；只保留身份，不保留历史。
+  , frameSessionCaptures :: IORef [DeliveryIdentity]
   -- 根帧和子帧共用一个变化信号；普通发布与节点退休都叫醒缺值读取。
   , frameChanged :: IORef (MVar ())
   }
@@ -40,9 +47,12 @@ instance Eq ExecutionFrame where
 newExecutionFrame :: MVar () -> Maybe ExecutionFrame -> Maybe NodeId -> [NodeId] -> IO ExecutionFrame
 newExecutionFrame coordinator parent boundary nodes = uninterruptibleMask_ $ do
   changed <- maybe (newEmptyMVar >>= newIORef) (pure . frameChanged) parent
+  -- 子帧先进入父帧目录、随后安装交付查询；这段装配窗口保守持有持续参数，
+  -- 避免并行回收把“尚未安装”误判为“本轮不会读取”。根帧沿 Graph 的有限读取路由。
+  let preparing _ _ = pure (case parent of Nothing -> Nothing; Just _ -> Just True)
   frame <- ExecutionFrame parent (maybe 0 ((+ 1) . frameDepth) parent) boundary coordinator
     <$> newIORef [(node, Pending) | node <- nub nodes]
-    <*> newIORef [] <*> newIORef [] <*> pure changed
+    <*> newIORef [] <*> newIORef [] <*> newIORef preparing <*> newIORef [] <*> pure changed
   withMVar coordinator $ \_ ->
     forM_ parent $ \ancestor -> modifyIORef' (frameChildren ancestor) (frame :)
   pure frame
@@ -88,13 +98,30 @@ notifyFrame frame = uninterruptibleMask_ $ do
 
 -- 根帧的常驻位置描述未来轮次；活动子帧另带本轮已经固定的交付身份。
 -- 与 frameNodes 一样只读，调用者在 scope 协调锁内取得一致视图。
-framePendingViews :: ExecutionFrame -> IO [([NodeId], [DeliveryIdentity])]
+framePendingViews :: ExecutionFrame -> IO [(ExecutionFrame, [NodeId], [DeliveryIdentity])]
 framePendingViews frame = do
   nodes <- framePendingNodes frame
   delivered <- readIORef (frameDelivered frame)
   children <- readIORef (frameChildren frame)
   descendants <- concat <$> mapM framePendingViews children
-  pure ((nodes, delivered) : descendants)
+  pure ((frame, nodes, delivered) : descendants)
+
+-- 安装发生在本轮启动前；查询在 scope 协调锁内执行，结束时清掉闭包。
+installSessionInputs :: ExecutionFrame -> (String -> ActivationId -> IO (Maybe Bool)) -> IO ()
+installSessionInputs frame = writeIORef (frameSessionInputs frame)
+
+pendingSessionInput :: ExecutionFrame -> String -> ActivationId -> IO (Maybe Bool)
+pendingSessionInput frame source production = do
+  query <- readIORef (frameSessionInputs frame)
+  query source production
+
+capturedSessionInputs :: ExecutionFrame -> IO [DeliveryIdentity]
+capturedSessionInputs = readIORef . frameSessionCaptures
+
+captureSessionInput :: ExecutionFrame -> NodeId -> String -> ActivationId -> IO ()
+captureSessionInput frame node source production = withFrameLock frame $
+  modifyIORef' (frameSessionCaptures frame) $ \current ->
+    (node, source, production) : filter (\(at, context, _) -> at /= node || context /= source) current
 
 -- 同一轮的交付固定不变；重复 lower 只补入此前尚未领取的来源。
 captureFrameDeliveries :: ExecutionFrame -> [DeliveryIdentity] -> IO ()
@@ -149,6 +176,8 @@ finishExecutionFrame frame = uninterruptibleMask_ $
     previous <- frameNodes frame
     writeIORef (frameProgress frame) []
     writeIORef (frameDelivered frame) []
+    writeIORef (frameSessionInputs frame) (\_ _ -> pure Nothing)
+    writeIORef (frameSessionCaptures frame) []
     writeIORef (frameChildren frame) []
     forM_ (frameParent frame) $ \parent -> do
       siblings <- filter (/= frame) <$> readIORef (frameChildren parent)

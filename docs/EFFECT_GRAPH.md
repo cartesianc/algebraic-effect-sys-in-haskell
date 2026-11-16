@@ -19,7 +19,7 @@
 | 链定义 | `protoChainDefinitions` | 用 `OriginChain` 与 `ContextChain` 区分原始操作链和 Context 生产／读取链；按入口方法识别 |
 | AST 挂载 | `protoWorkflow`、`protoChains` | 每个 node、alternative 选择读取和会话生产步骤各一条挂载记录（`NodeChain`／`SelectorChain`／`SessionChain`），按 `NodeId` 识别 |
 | 持续执行 | `protoWorkflow` 中的 `LifelongAt`、`protoSessions` | lifelong 的单元、订阅与会话；interpreter 托管的会话；见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static) |
-| scope 开启计划 | `protoScopeOpenings` | 每个开启位置的参数候选生产节点及可能类别；不代替实际绑定 |
+| scope 开启计划 | `protoScopeOpenings` | 每个开启位置的参数生产节点／会话来源及可能类别；不代替实际绑定 |
 | 运行实例 | 活动 chain、Context 生产身份、执行帧、scope 实例与入口使用登记 | 运行图共享静态原型，根据实际调用更新；不反向修改定义 |
 
 `NodeId = [Int]` 是当前原型快照内的 AST 下标路径：根为 `[]`，普通子项从零编号；alternative 的选择读取链使用该分支路径加 `[-1]`；lifelong 的会话步骤使用 lifelong 路径加 `[-1, 会话序号, 步骤]`，interpreter 托管的会话步骤使用 `[-2, 会话序号, 步骤]`。同一个 origin 末端挂载两次会有两个 `NodeId`，共享方法定义。Context 链经 demand 或挂接进入，定义本身没有虚构的 AST 位置。编辑 AST 后重新生成编号；这些路径不充当跨快照稳定 key 或运行调用序号。
@@ -105,19 +105,27 @@ scope 的例外只覆盖具有 owner 的绑定，资源仍经实际实例定位�
 data ScopeOpening = ScopeOpeningPlan
   { openingNode :: NodeId
   , openingScope :: String
-  , openingSources :: [(String, [NodeId])]
+  , openingSources :: [(String, Source)]
   , openingKinds :: [ScopeKind]
   }
 data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 ```
 
+`openingSources` 用 `FromChains` 记录普通参数的候选节点，用 `FromSession` 记录持续参数；后者不能伪装成空候选并漏掉开启位置。
+
 `protoScopeOpenings` 的候选覆盖各条合法路径，不要求每个位置固定一种类别，也不保存另一套分支相关性。每条读取路径继续满足已有的捕获与来源规则，候选不是任选来源的许可。`--structure` 展示候选出处和可能类别；Prototype 校验引用及字段自洽，运行时不重做来源证明。资源在本链对应 scope 开启前被读取时，生成期拒绝；业务读取不再扫描全部活实例来补资源。
 
-运行时的实例身份是 Scoped 注册加各参数的实际 `ActivationId`。对仍待用的开启位置，Graph 用候选节点实际发布的绑定匹配这些身份；所属帧及活动子帧继续使用本轮发布，已领取的会话普通伴随资产使用该轮固定的交付身份。后台会话后来发布同一来源，不能改变本轮 A → B 间对原实例的待用关系；尚未领取的交付和完整历史不因此加入保活根。
+运行时的实例身份是 Scoped 注册加各参数的实际 `ActivationId`。对仍待用的开启位置，Graph 用候选节点实际发布的绑定匹配这些身份；所属帧及活动子帧继续使用本轮发布，已领取的会话普通伴随资产使用该轮固定的交付身份。后台会话后来发布同一来源，不能改变本轮 A → B 间对原实例的待用关系；完整历史不因此加入保活根。
 
 轮帧记录所属 lifelong 的既有 `NodeId`，该边界在帧结束后仍可定位，不改变实例的 `scopeFrame`。待用查询还考虑静态 `precedes` 许可的 lifelong 外后继：普通资产的实际读取与待用匹配共用来源选择，先取来源位置的当前发布，没有时取 `runtimeRetained`；同单元互斥来源按实际 Origin 序号选最新一份，再比较生产身份，不能因为候选中存在旧值就保留旧实例。此扩展不让其他轮次或 parallel 兄弟读取旧轮资产，也不把轮内实例提升为根帧常驻实例。`resetOrigins` 在 scope／frame 协调锁内先保存保留绑定，再移出当前来源与发布；回收判断不会观察到交接中的空窗。
 
-参数本身属于其他 scope 的资源时，按原生产身份找到 owner 快照，再核对同一待用入口的上游开启计划；复用资源没有重新发布，不能假设它来自当前节点。这里只补齐已经允许的普通资产后继读取所对应的待用关系，不建立历史资源 lease，也不接通持续资产作为 scope 开启参数。ScopeTree 保持独立且无环。
+参数本身属于其他 scope 的资源时，按原生产身份找到 owner 快照，再核对同一待用入口的上游开启计划；复用资源没有重新发布，不能假设它来自当前节点。这沿用普通资产与持续资产最新值的参数身份，不建立历史资源 lease。ScopeTree 保持独立且无环。
+
+**持续参数（2026-11-17）。** 资源 parser 以现有 `requires "T"` 声明读取持续资产，方法体仍写 `require @T`。最新值读取登记固定视图末条 Binding 的生产身份及原生产帧；后台更新不改写它，相等值的两次生产仍是不同身份。`History T` 的整体读取不登记“整份历史”的参数身份，也不承诺其中的资源保活。
+
+持续参数的待用匹配分两步：活动轮内先用本次调用或 alternative 交接的捕获，再用单元的固定交付；尚未领取时只预览该单元游标的下一条，既不推进也不生产。同单元本地来源的只读回退仍按会话现有最新值规则。领取正在交接时保守保留；跨单元广播按各自的实际游标比较生产身份。根帧对未来轮次的预约不保留旧交付实例；有限后继与真实读取共用“最近许可的先前 lifelong 会话，否则 interpreter 会话”的路由，只匹配所选最新值。
+
+执行帧只记录身份和本轮只读查询，不另建历史或值表；轮结束时撤销查询和捕获。查询在 scope 协调锁内，不能等正在启动的会话目录锁；目录暂忙时保守保留。会话状态锁内不执行 handler、也不反向获取该协调锁。实例仍使用原 Binding 的生产帧，跨单元或后继共享不提升归属。
 
 节点退休后只检查该节点能开启的 scope 及 ScopeTree 祖先，不另建运行索引。close 的 `raise` 与普通 IO 异常都记录并汇总，不改节点结果、不重试；只有取消向外传播。没有 close 的实例不可达后只移出表。运行结束先让受控任务退出、撤销根帧待用关系，再按相同条件清理剩余实例。
 

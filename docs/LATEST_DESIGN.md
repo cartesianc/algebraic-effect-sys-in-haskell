@@ -1,6 +1,6 @@
 # 主设计：Algebraic Effect Sys in Haskell
 
-更新：2026-11-16（gen 装配与共享分析已整理；本轮补齐普通后继绑定待用与会话停止的基础交接，验证范围见 Next stages）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范。
+更新：2026-11-17（文档状态与引用整理；当前运行协议不变）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范；阶段进度与验证边界见 [Next stages](NEXT_STAGES.md)。
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
@@ -21,7 +21,7 @@
 | lifelong 消费原子输出复用为持续资产 | 已实现（2026-11-15）；不新增 facade 语法或 handler 能力 | [输出复用](STREAM_LIFELONG.md#derive)、[实施记录](NEXT_STAGES.md#stage-6-reuse) |
 | 原子 handler 复用、前驱与驱动装配、按标签路由 | 已实现（Stage 2，2026-11-08）；本文第 4 章即当前协议 | [Next stages](NEXT_STAGES.md#stage-2) |
 | gen 作为编译器：SDK 分为源语言、gen、编译产物、运行时四层，生成按阶段执行 | 已实现（2026-11-08） | [gen 是编译器](#compiler)、[编译流水线](#generation)、[SDK 分工](#sdk-layout) |
-| 输入契约、持续执行同构、资产访问、结束与资源清理 | Stage 1、2 已实现；后续阶段继续收敛 | [Next stages](NEXT_STAGES.md#stages) |
+| 持续执行与资源收尾 | 两侧结束、后继读取、历史保留、会话退役及持续最新值参数已实现；历史资源等继续收敛 | [阶段状态](NEXT_STAGES.md#stages)、[当前限制](NEXT_STAGES.md#current-limits) |
 | 嵌套 lifelong、背压与历史容量等 | 后续专题，本轮不扩展 | [开放事项](NEXT_STAGES.md#deferred) |
 | Middleware、Generic Map、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [开放事项](NEXT_STAGES.md#deferred) |
 
@@ -667,10 +667,10 @@ EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope
 **状态：已实现（2026-11-13）。** SDK 同时观察当前使用者与剩余程序：仍可能触达的实例保留，不可达时同步回收。handler 只实现怎样关闭，AST、Input 与 demands 提供何时不再使用的依据。
 
 - **当前使用**：每次 AST 入口完整 chain 建立一份 `ScopeUser`，open／require 选中的实例加入其中，等待 opening 也计入。同一入口内的 Context 生产继承该登记。业务、Error 诊断和受控结果消费全部结束后才撤销；生产会话跨步骤保留自己的登记。
-- **待用关系**：gen 在 `protoScopeOpenings` 中记录每个开启位置各参数可能的生产节点，包括本节点和 alternative 交接的捕获。执行帧保存待执行、执行中、完成和跳过的节点。有限运行使用根帧，lifelong 单元每轮使用子帧；节点完成、chained 短路及 alternative 排除候选都会撤销相应待用关系，更新幂等。
+- **待用关系**：gen 在 `protoScopeOpenings` 中记录每个开启位置各参数可能的生产节点或会话来源，包括本节点和 alternative 交接的捕获。执行帧保存待执行、执行中、完成和跳过的节点。有限运行使用根帧，lifelong 单元每轮使用子帧；节点完成、chained 短路及 alternative 排除候选都会撤销相应待用关系，更新幂等。
 - **实际匹配**：运行时将实例的参数生产身份与候选来源的实际绑定比较，不把 NodeId 当生产身份。lifelong 本轮已领取的普通伴随资产固定使用交付时的生产身份，不能被后台后续发布替换；合法外部后继的普通资产选择与实际读取共用当前／保留绑定的来源规则，选出实际最新来源后才比较生产身份。ExecutionFrame 保存身份与所属 lifelong 边界，不复制值表；根帧查询包含活动子帧，轮帧结束清空进度并摘除，但允许的外部后继待用仍可定位，不改变实例归属。普通发布转入后继保留表与回收判断共用协调锁。完整规则见[Scope 开启计划与待用查询](EFFECT_GRAPH.md#scope-opening-retention)。无参数按 Scoped 注册匹配，运行时不重建 effect graph，也不在业务方法体插入进度语法。
 - **依赖与执行**：没有当前使用者、没有匹配的待用节点、没有仍保留它的子 scope 时执行 close。ScopeTree 提供父子候选，运行时由同一受控链实际使用的实例补齐子实例的 `scopeParents`；子实例只保留这些具体父实例，不保留同注册的全部实例。关闭遵守子先父后，在触发不可达的线程中同步完成后才继续后继，不另设清理线程。仅保存普通资产快照不自动延长生产资源的存续；仍需实际使用或匹配的后继待用依据。
-- **lifelong**：无参数及参数来自外层的实例由外层帧保留；本轮生产参数的实例归本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。会话仍以实际使用登记持有资源：来源正常结束（`streamEnd`）后登记保留到会话退役，重复停止同样等待撤销完成；会话退役（生产停止且读取方计数归零，或 lifelong 返回）后按可达性回收只在会话中开启的 scope。历史资源精细释放和持续资产作为开启参数仍是后续工作。
+- **lifelong**：无参数及参数来自外层的实例由外层帧保留；本轮生产参数的实例归本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。会话仍以实际使用登记持有资源：来源正常结束（`streamEnd`）后登记保留到会话退役，重复停止同样等待撤销完成；会话退役（生产停止且读取方计数归零，或 lifelong 返回）后按可达性回收只在会话中开启的 scope。持续资产的最新值已可作为开启参数：登记所选交付原有的生产身份和帧，活动轮次与合法后继按真实读取位置参与待用判断。完整历史作为参数、历史资源精细持有与释放仍待设计。
 - **close 可选**：`close = Nothing` 不登记关闭方法。实例不可达时只移出运行表，不执行释放 IO；有 close 的实例保存实际绑定和关闭回调。
 - **close 失败**：close 的 `raise`，以及 close 中没有转换为 `raise` 的普通 IO 异常（记为 `ScopeCleanupInterrupted`），都先进入关联 scope 的 Error 诊断，之后记录并在运行结束时汇总；不改变节点或整次运行的业务结果，不短路、不停止其他业务，也不重试该 close。关闭失败是资源问题：实例已经不可达，不会再被使用。失败实例移出运行表，旧绑定保留原实例及失败证据。
 - **运行结束与取消**：正常结束、失败或取消时，先让受控工作退出、撤销全部待用及使用关系，再按同一规则回收剩余实例。关闭失败中只有取消向外传播：取消落在 close 或其故障诊断期间时，保留原关闭故障的诊断信息并单独保存取消，完成其余收尾后传播、停止后续启动；close 不重试，已经收到的原 close 取消不被后续诊断异常覆盖。进程被强制终止时无法保证 close 执行。
@@ -824,6 +824,8 @@ sdk/Framework/
 
 新语义先更新所属规范，GUIDE 随实际可用接口更新；明确区分当前实现、已确定但未实现、待设计和历史证据。冲突按用户已确认的语义核对，不能靠文件日期或旧 demo 的一次成功裁决。
 
+完成的阶段只在 Next stages 保留目标、必要理由、结果及验证边界，详细现行规则改为引用所属规范；被取代的接口和逐次探针过程留在 Git 历史。阅读入口的代码形态与解释保留，避免为了缩短文档而让读者失去具体写法。
+
 文档保持 docs/*.md 平铺，与当前 Cabal 源码包清单一致。
 
 <a id="stream"></a>
@@ -831,11 +833,9 @@ sdk/Framework/
 
 **[STREAM_LIFELONG.md](STREAM_LIFELONG.md)是本章的完整规范，通过引用并入主设计。** 本章不重新维护另一份匹配表或调度规则；写法示例见[使用指南第五节](GUIDE.md#stream)。
 
-增加的语义集中在三处：
+Stream 提供持续来源，Context 将每次原子输出解析成资产，lifelong 按增量 boot 有限消费链。同一消费操作也能经挂接 Context 发布持续资产；gen 根据已有 AST 发布位置决定复用输出还是独立派生，运行时执行这份连接。
 
-1. Stream effect 提供持续来源；挂在它下面的 Context 声明 `stream = True`，每份原始输入由 parser 解析发布（Receive）。Context 的 Input 链上有 `streams` demand 时也须声明 `stream = True`，由上游交付持续驱动：没有 AST 发布位置时独立派生（Derive），同一 lifelong 已有合法发布位置时沿用该原子输出（ReuseOutput）。后者不启动额外生产任务、不重复执行句柄。三种连接均须 `require = True`；具体位置、来源唯一与启动依赖由 gen 检查，不按 IO 内容猜测 socket、event 或 behavior。Stream 本身不进入 original chain，消费 Excu 可以同时承担资产生产关系。RepeatRequest 保持取消。
-2. 持续资产按访问方式读取：`streams "T"` 声明持续消费并授予读取权限，handler 以 `require @(History 表示类型)` 取得本次交付为止的历史；`requires "T"` 只读最新一条（`require @表示类型`），不由交付驱动。`stream` 缓存历史，`require` 缓存最新值。读取本身不领取下一个增量。
-3. lifelong 的每个单元在本次执行领到订阅资产的新交付后 boot original-chain target；每次 target 调用仍有限完成，单元逐次重复；所需来源以 `streamEnd` 结束并排空、或单元的节点都以 `endStream` 结束订阅后单元正常结束，全部单元结束后 lifelong 成功返回。含 lifelong 的程序中任何失败暂按临时规则终止整次运行。
+来源结束、订阅结束、会话退役和 scope 关闭是不同边界。现行接口为生产方的 `streamEnd` 与消费方的 `endStream`；历史条目资源的持有保证仍待收敛。读取、排空、停止顺序及资源限制分别在下列专题维护。
 
 | 主题 | 本章所属规范 |
 | --- | --- |
@@ -848,7 +848,7 @@ sdk/Framework/
 | 失败的临时规则、取消与 close 延期边界 | [Stream 第 9 节](STREAM_LIFELONG.md#failures) |
 | socket、event、behavior 各自的写法 | [Stream 第 4.1 节](STREAM_LIFELONG.md#drives) |
 
-当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，持续资产作为 scope 开启参数尚未接通。本轮先收敛资产来源与接收契约、分离原子 handler 与业务 effect，再处理 Stream effect 与 lifelong 的共同运行协议、资产访问、scope 使用、结束传播与清理，见[阶段计划](NEXT_STAGES.md#stages)。唯一资产来源与访问约束见[资产来源与访问约束](#demand-contract)；require 缓存最新值、stream 缓存历史已随 Stage 2 实现，Stream 的驱动方式（event、behavior、socket）仍待确定；正常 end 与后继读取 lifelong 内部的发布已实现，结束后的清理仍属后续设计；是否调整临时失败规则须在结束传播阶段确认。来源分析按消费单元提前裁剪再组合，相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
+剩余工作与实现限制统一见 [Next stages](NEXT_STAGES.md#current-limits)。已有 socket、event、behavior 的单步来源写法不代表 SDK 会自动识别或适配任意外部回调；来源分析的相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。
 
 这次扩展继续使用 Prototype、RuntimeGraph 和独立 ScopeTree。业务方法不新增游标、yield、调度器或无限递归写法；声明不成立时生成期诊断，不在运行中猜测生产方式。
 

@@ -259,6 +259,6 @@ renderScopeOpening :: P.ScopeOpening -> String
 renderScopeOpening opening = record "ScopeOpeningPlan"
   [ ("openingNode", show (P.openingNode opening))
   , ("openingScope", show (P.openingScope opening))
-  , ("openingSources", show (P.openingSources opening))
+  , ("openingSources", list (pair show renderSource) (P.openingSources opening))
   , ("openingKinds", list tag (P.openingKinds opening))
   ]

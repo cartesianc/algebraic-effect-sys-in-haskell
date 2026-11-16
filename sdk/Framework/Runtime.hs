@@ -18,8 +18,8 @@ import Framework.Runtime.App (App, Launch(..), runAppWith)
 import Framework.Runtime.Graph
   ( RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, runtimeRootFrame, newOrigin, obtainSession
   , currentPublications, collectRuntimeScopes )
-import Framework.Runtime.Identity (Execution(..), Origin(..), executionOrigin)
-import Framework.Runtime.Frame (ExecutionFrame, NodeProgress(..), captureFrameDeliveries, frameNodeProgress, frameSignal)
+import Framework.Runtime.Identity (ActivationId, Execution(..), Origin(..), executionOrigin)
+import Framework.Runtime.Frame (ExecutionFrame, NodeProgress(..), captureFrameDeliveries, frameNodeProgress, frameSignal, installSessionInputs)
 import Framework.Runtime.Binding (Binding(..))
 import Framework.Runtime.Session
 import Framework.Runtime.Scope
@@ -31,6 +31,7 @@ import Control.Exception
 import Control.Monad (forM, forM_, forever, void, when)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (nubBy)
+import qualified Data.Sequence as Seq
 
 -- 末端句柄与调用交接 -----------------------------------------------------------
 
@@ -75,7 +76,43 @@ data DeliveryFrame environment cause = DeliveryFrame
 
 newDeliveryFrame :: ExecutionFrame -> [(String, LocalSource)] -> [(String, Session environment cause)]
                  -> [(String, (Session environment cause, Cursor))] -> IO (DeliveryFrame environment cause)
-newDeliveryFrame execution local sources sessions = DeliveryFrame local execution sources sessions <$> newMVar [] <*> newIORef False
+newDeliveryFrame execution local sources sessions = do
+  frame <- DeliveryFrame local execution sources sessions <$> newMVar [] <*> newIORef False
+  installSessionInputs execution (pendingInput frame)
+  pure frame
+
+-- 本轮已领取时比较固定视图；尚未领取时查看自己的游标，不看别的单元的进度。
+-- 领取进行中（槽尚空）保守持有，覆盖游标已推进、交付尚未填槽的交接窗口。
+-- 两把被读取的锁中都不运行 handler，也不获取 scope 协调锁。
+pendingInput :: DeliveryFrame environment cause -> String -> ActivationId -> IO (Maybe Bool)
+pendingInput frame source production = case lookup source (frameSessions frame) of
+  Nothing -> pure Nothing
+  Just (session, cursor) -> do
+    taken <- readMVar (frameTaken frame)
+    case lookup source taken of
+      Just slot -> do
+        filled <- tryReadMVar slot
+        case filled of
+          Nothing -> pure (Just True)
+          Just (Right (view, _)) -> pure (Just (matchesView view))
+          Just (Left _) -> fallback session
+      Nothing -> do
+        next <- pendingDelivery session cursor
+        -- 预览期间可能刚登记了首次领取；它随后才推进游标。重新检查槽，
+        -- 避免把“游标已经前进”误解成旧交付已无人使用。
+        now <- readMVar (frameTaken frame)
+        case lookup source now of
+          Just _ -> pendingInput frame source production
+          Nothing -> case next of
+            Just value -> pure (Just (bindingProduction value == Just production))
+            Nothing -> fallback session
+  where
+    matchesView view = case Seq.viewr view of
+      Seq.EmptyR -> False
+      _ Seq.:> value -> bindingProduction value == Just production
+    fallback session
+      | framePublishes frame source = Just . maybe False matchesView <$> currentHistory session
+      | otherwise = pure (Just False)
 
 -- 本单元直接或经 Derive 发布的会话：耗尽只结束订阅该来源的位置，不结束整个单元。
 framePublishes :: DeliveryFrame environment cause -> String -> Bool

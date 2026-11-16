@@ -13,18 +13,19 @@ module Framework.Runtime.Graph
   , installSessionLauncher, obtainSession, endedSession, stopSessions, currentPublications, reusesOutputAt
   ) where
 
-import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar, tryReadMVar)
 import Control.Exception (SomeAsyncException, evaluate, finally, fromException, throwIO, uninterruptibleMask_)
 import Control.Monad (forM, forM_)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (isPrefixOf, nub)
 import Data.Maybe (fromMaybe, isJust)
+import qualified Data.Sequence as Seq
 import Framework.Runtime.Protocol (ContextFault(..))
 import Framework.Prototype.Graph (MethodRole(..))
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame
 import Framework.Runtime.Binding (Binding(..))
-import Framework.Runtime.Session (Session, SessionKey, View, newSession, stopSession)
+import Framework.Runtime.Session (Session, SessionKey, View, newSession, stopSession, currentHistory)
 import Framework.Runtime.Scope
   ( Scopes, ScopeBinding, ScopeBindings, ScopeUser(..), ScopeHandler(..), ScopeInstance(..), ScopeRecord(..), ScopeInput(..)
   , configureScopeRelations, cleanupAvailable, saveCleanupFailures )
@@ -103,57 +104,100 @@ configureRuntimeScopes graph = case runtimePrototype graph of
     forM_ (runtimeScopes graph) $ \family ->
       writeIORef (scopeReachable family) (reachableInstance graph)
 
--- 待用查询 v2（2026-11-16）：在 scope 协调锁内只读进度、发布及保留视图。
--- 本帧/子帧继续按已领取的身份匹配；轮帧另考虑所属 lifelong 之外的合法后继。
--- 根帧中的同边界未来轮次不是旧轮实例的保活理由，scopeFrame 和参数生产身份不提升。
+-- 待用查询 v3（2026-11-17）：普通参数沿发布表匹配；持续参数沿固定视图/游标匹配。
+-- 查询在 scope 协调锁内，不领取、不生产。会话目录正在启动时保守保留，不能等目录锁：
+-- 启动步骤会取得同一帧协调锁。会话状态锁内没有反向取得帧锁或执行业务的操作。
 reachableInstance :: RuntimeGraph environment cause -> ScopeInstance environment cause -> IO Bool
 reachableInstance graph slot = case runtimePrototype graph of
   PrototypeReference prototype -> do
     local <- framePendingViews (scopeFrame slot)
-    following <- case frameBoundary (scopeFrame slot) of
-      Nothing -> pure []
-      Just boundary -> do
-        root <- framePendingViews (runtimeRootFrame graph)
-        pure [(filter (precedes (protoWorkflow prototype) boundary) pending, delivered)
-          | (pending, delivered) <- root]
+    root <- framePendingViews (runtimeRootFrame graph)
+    let following = case frameBoundary (scopeFrame slot) of
+          Nothing -> []
+          Just boundary -> [(frame, filter (precedes (protoWorkflow prototype) boundary) pending, delivered)
+            | (frame, pending, delivered) <- root]
+        -- 同一持续交付可以被多个单元领取；沿各自的游标判断，不把资源归属提升到根帧。
+        continuous source = any (\effect -> effectName effect == source && effectContinuous effect) (protoEffects prototype)
+        -- 资源参数沿已有 owner 开启计划追到持续输入；子 scope 与父实例使用同一查询范围。
+        fromSession seen source
+          | continuous source = True
+          | source `elem` seen = False
+          | otherwise = or [any (fromSession (source : seen)) (effectOpeningInputs owner)
+              | owner <- protoEffects prototype, effectResource owner == Just source]
+        shared = if any (\(ScopeInput source _) -> fromSession [] source) (scopeInputs slot)
+          then [view | view@(frame, _, _) <- root, isJust (frameParent frame)] else []
     publications <- readPublications graph
+    registry <- tryReadMVar (runtimeSessions graph)
     instances <- concat <$> mapM (readMVar . scopeInstances) (runtimeScopes graph)
     snapshots <- forM instances $ \instance' -> do
       values <- scopeBindings <$> readIORef (scopeRecord instance')
       pure (instance', values)
-    let candidates = [(opening, delivered) | (pending, delivered) <- local ++ following
+    let candidates = [(frame, opening, delivered) | (frame, pending, delivered) <- nub (local ++ following ++ shared)
           , opening <- protoScopeOpenings prototype
           , openingNode opening `elem` pending, openingScope opening == scopeName (scopeFamily slot)]
-        matches instance' delivered opening = all (matchesInput delivered opening) (scopeInputs instance')
-        matchesInput delivered opening (ScopeInput source production) = case lookup source (openingSources opening) of
-          Nothing -> False
-          Just nodes
+        matches instance' frame delivered opening =
+          and <$> mapM (matchesInput frame delivered opening) (scopeInputs instance')
+        matchesInput frame delivered opening (ScopeInput source production) = case lookup source (openingSources opening) of
+          Nothing -> pure False
+          Just FromSession -> matchesSession frame opening source production
+          Just FromOwnChain -> pure False -- 原型校验拒绝不明确的开启来源。
+          Just (FromChains nodes)
             | any ((== Just source) . effectResource) (protoEffects prototype) ->
-                -- 参数本身是其他 scope 的资源：复用不重新发布，按资源原生产身份
-                -- 找到父实例，再验证同一待用入口确实会开启它。ScopeTree 已保证无环。
-                or [matches parent delivered parentOpening | (parent, values) <- snapshots
+                -- 资源复用不重新发布：按原生产身份找到 owner，再验证同一入口会开启它。
+                -- ScopeTree 已保证无环，不能用同注册的其他实例代替这个 owner。
+                or <$> sequence [matches parent frame delivered parentOpening | (parent, values) <- snapshots
                    , scopeContextSource (scopeFamily parent) == Just source
                    , Just value <- [lookup source values], bindingProduction value == Just production
                    , parentOpening <- protoScopeOpenings prototype
                    , openingNode parentOpening == openingNode opening
                    , openingScope parentOpening == scopeName (scopeFamily parent)]
             | all (outsideLifelong (runtimePrototype graph) (openingNode opening)) nodes ->
-                -- 后继的跨轮互斥候选先沿真实读取规则选最新，再比 ActivationId；
-                -- 不能逐候选 any 匹配，让早先分支已被覆盖的参数继续保活。
-                case selectPublication (runtimePrototype graph) (openingNode opening) source
+                -- 后继先按真实读取规则选最新候选，再比较身份；不能让已被覆盖的旧值保活。
+                pure $ case selectPublication (runtimePrototype graph) (openingNode opening) source
                   [value | node <- nodes
                     , Just value <- [publicationAt (runtimePrototype graph) publications (openingNode opening) source node]] of
                   Right (Just value) -> bindingProduction value == Just production
                   _ -> False
-            | otherwise -> any (matchesPublication delivered (openingNode opening) source production) nodes
-        -- 本链生产与已有捕获的候选仍保守匹配；本轮固定交付优先于后台的新发布。
+            | otherwise -> pure (any (matchesPublication delivered (openingNode opening) source production) nodes)
         matchesPublication delivered reader source production node =
           case [captured | (publishedAt, context, captured) <- delivered, publishedAt == node, context == source] of
             captured : _ -> captured == production
             [] -> case publicationAt (runtimePrototype graph) publications reader source node of
               Just value -> bindingProduction value == Just production
               Nothing -> False
-    pure (any (\(opening, delivered) -> matches slot delivered opening) candidates)
+        matchesSession frame opening source production = do
+          captured <- capturedSessionInputs frame
+          let reader = openingNode opening
+              -- 只有 alternative 把捕获交给候选；chained 不隐式传递前一调用的视图。
+              selectors = [alternativeSelector choice
+                | AlternativeAt _ choice children <- allWorkflow (protoWorkflow prototype)
+                , any (\child -> workflowNode child `isPrefixOf` reader) children]
+              selected = [value | at <- reader : reverse selectors
+                , (node, context, value) <- captured, node == at, context == source]
+          case selected of
+            value : _ -> pure (value == production)
+            [] -> do
+              pending <- pendingSessionInput frame source production
+              case pending of
+                Just result -> pure result
+                Nothing
+                  -- 根帧里的未来轮次不是旧交付的读取方；实际活动轮帧有自己的游标。
+                  | any (\(boundary, _) -> boundary `isPrefixOf` reader)
+                      (workflowLifelongs (protoWorkflow prototype)) -> pure False
+                  | otherwise -> case registry of
+                      Nothing -> pure True
+                      Just registered -> case sessionForReader prototype (fromMaybe [] registered) reader source of
+                        Nothing -> pure False
+                        Just session -> do
+                          view <- currentHistory session
+                          pure $ case view >>= lastProduction of
+                            Just current -> current == production
+                            Nothing -> False
+    or <$> mapM (\(frame, opening, delivered) -> matches slot frame delivered opening) candidates
+  where
+    lastProduction view = case Seq.viewr view of
+      Seq.EmptyR -> Nothing
+      _ Seq.:> value -> bindingProduction value
 
 -- 节点退休后只检查其开启位置及 ScopeTree 祖先。预约在进度写入的锁外进行，
 -- 业务 close 失败和普通 IO 异常留作汇总；只有取消停止后续执行。
@@ -406,10 +450,23 @@ endedSession :: RuntimeGraph environment cause -> NodeId -> String -> IO (Maybe 
 endedSession graph reader source = case runtimePrototype graph of
   PrototypeReference prototype -> do
     registry <- readMVar (runtimeSessions graph)
-    pure $ case [session | ((Just boundary, selected), session) <- fromMaybe [] registry
-                 , selected == source, precedes (protoWorkflow prototype) boundary reader] of
-      session : _ -> Just session
-      [] -> Nothing
+    pure (priorSession prototype (fromMaybe [] registry) reader source)
+
+-- 实际读取与 scope 待用共用同一个会话选择：最近合法的已结束边界优先；
+-- 没有此前边界时才考虑 interpreter 托管会话。查询从不创建会话。
+priorSession :: Prototype method -> [(SessionKey, Session environment cause)] -> NodeId -> String
+             -> Maybe (Session environment cause)
+priorSession prototype registry reader source = case
+  [session | ((Just boundary, selected), session) <- registry
+    , selected == source, precedes (protoWorkflow prototype) boundary reader] of
+  session : _ -> Just session
+  [] -> Nothing
+
+sessionForReader :: Prototype method -> [(SessionKey, Session environment cause)] -> NodeId -> String
+                 -> Maybe (Session environment cause)
+sessionForReader prototype registry reader source = case priorSession prototype registry reader source of
+  Just session -> Just session
+  Nothing -> lookup (Nothing, source) registry
 
 -- interpreter 退出前关闭登记并取消全部生产任务，等待步骤内的受控收尾完成。
 -- 关闭与取出在同一临界区，此后尚未停止的会话不能再创建依赖会话；后创建的排在前面，依赖方先停止。

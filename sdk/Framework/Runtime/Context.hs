@@ -79,8 +79,11 @@ projectContext producer contract wrap project readBase = do
 latestContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
   => String -> (ContextFault -> cause) -> m (History value) -> m value
-latestContext producer wrap readHistory' = readHistory' >>= maybe
-  (failEffect producer (wrap ContextNotInitialized) (producer ++ ": no delivery yet")) pure . latest
+latestContext producer wrap readHistory' = do
+  history <- readHistory'
+  case latest history of
+    Nothing -> failEffect producer (wrap ContextNotInitialized) (producer ++ ": no delivery yet")
+    Just value -> recordContextInput producer >> pure value
 
 -- streamT 的生成入口：先用本次调用已经取得的视图（lifelong 交付或此前的会话读取）。
 -- 没有视图时，由 interpreter 托管的会话交付当前历史。

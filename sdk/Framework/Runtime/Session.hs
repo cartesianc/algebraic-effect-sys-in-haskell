@@ -10,7 +10,7 @@ module Framework.Runtime.Session
   , Session, sessionKey, sessionBindings, sessionViews
   , newSession, appendDelivery, breakSession, endSession, wakeSession, setSessionWorker, stopSession
   , setSessionRetirement, retireSession, departSession, sessionIdle
-  , awaitHistory, currentHistory, Cursor, admitReaders, leaveSession, takeDelivery, takeDeliveryOn, completeSessionStep, sessionCaughtUp, feedSession, awaitUpstream, upstreamOf
+  , awaitHistory, currentHistory, pendingDelivery, Cursor, admitReaders, leaveSession, takeDelivery, takeDeliveryOn, completeSessionStep, sessionCaughtUp, feedSession, awaitUpstream, upstreamOf
   ) where
 
 import Control.Concurrent (ThreadId, killThread)
@@ -252,6 +252,15 @@ instance Eq Cursor where
   Reading _ left == Reading _ right = left == right
   Idle == Idle = True
   _ == _ = False
+
+-- 待用查询 v1（2026-11-17）：只看游标下一条，不推进游标、不等待新发布。
+-- scope 回收使用同一读取位置；不能以会话全局最新值覆盖尚未领取的积压。
+pendingDelivery :: Session environment cause -> Cursor -> IO (Maybe (ScopeBinding environment cause))
+pendingDelivery _ Idle = pure Nothing
+pendingDelivery session (Reading _ position) = do
+  delivered <- readIORef position
+  state <- readMVar (sessionState session)
+  pure (Seq.lookup (delivered - stateBase state) (stateEntries state))
 
 -- 进入 lifelong 时一次登记本会话的全部读取方，每个单元一项：Nothing 表示该单元不读取这个会话。
 -- 游标从会话首条开始；登记之前的发布都还保留着。

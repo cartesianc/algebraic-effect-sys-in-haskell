@@ -60,8 +60,8 @@ renderStructure prototype workflowAST = do
       ++ concat
          [ ["  " ++ show (openingNode opening) ++ " " ++ openingScope opening
               ++ ": " ++ intercalate " / " (map scopeKindDescription (openingKinds opening))]
-           ++ ["    " ++ source ++ " <- " ++ intercalate ", " (map describeNode nodes)
-              | (source, nodes) <- openingSources opening]
+           ++ ["    " ++ source ++ " <- " ++ sourceDescription selected
+              | (source, selected) <- openingSources opening]
          | opening <- protoScopeOpenings prototype]
       ++ ["", "Effect methods"]
       ++ ["  " ++ show (methodIdentity method) ++ " [" ++ show (methodRole method)

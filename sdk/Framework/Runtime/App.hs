@@ -19,7 +19,7 @@ import Framework.Runtime.Protocol
 import Framework.Runtime.Scope
 import Framework.Runtime.Graph
 import Framework.Runtime.Identity
-import Framework.Runtime.Frame (ExecutionFrame, owningFrame)
+import Framework.Runtime.Frame (ExecutionFrame, owningFrame, captureSessionInput)
 import Framework.Language.History (History, historyView)
 import Framework.Runtime.Session (Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..), View, awaitHistory)
 import Framework.Prototype (NodeId)
@@ -33,6 +33,7 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (find, nub)
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
 import Data.Sequence ((|>))
+import qualified Data.Sequence as Seq
 import Data.Unique (Unique, newUnique)
 
 -- 调用环境与生命周期尝试 -------------------------------------------------------
@@ -506,7 +507,7 @@ instance ContextStore env (App env cause) where
     environment <- AppRun ask
     captured <- rawIO (lookup source <$> readIORef (views environment))
     case captured of
-      Just view -> pure (Just (historyOf source select view))
+      Just view -> rememberView environment source view >> pure (Just (historyOf source select view))
       Nothing | deliveryAllowed environment, Just deliver <- frameDeliver environment source -> do
         delivered <- rawIO deliver
         case delivered of
@@ -531,7 +532,11 @@ instance ContextStore env (App env cause) where
     environment <- AppRun ask
     case openings environment of
       attempt : _ | source `elem` scopeInputSources (family attempt) -> do
-        captured <- rawIO (lookup source <$> readIORef (bindings environment))
+        captured <- rawIO $ do
+          history <- lookup source <$> readIORef (views environment)
+          case history >>= lastBinding of
+            Just bound -> pure (Just bound)
+            Nothing -> lookup source <$> readIORef (bindings environment)
         (value, frame) <- case captured of
           Just bound | Just production <- bindingProduction bound ->
             pure (ScopeInput source production, bindingFrame bound)
@@ -670,6 +675,20 @@ deliveryAllowed :: Environment env cause -> Bool
 deliveryAllowed environment = isNothing (originalFailure environment) && not (cleaningScopes environment)
   && null (closings environment)
 
+-- 当前值的身份来自固定视图最后一条，既不新建生产身份，也不重读后台会话。
+lastBinding :: View env cause -> Maybe (Bound env cause)
+lastBinding view = case Seq.viewr view of
+  Seq.EmptyR -> Nothing
+  _ Seq.:> value -> Just value
+
+-- latest 与 History 共用视图捕获，但只有 latestContext 登记 scope 开启参数。
+-- 这里只登记调用/alternative 的固定身份，不能据此承诺历史内全部资源仍然可用。
+rememberView :: Environment env cause -> String -> View env cause -> App env cause ()
+rememberView environment source view = when (deliveryAllowed environment) $
+  forM_ (lastBinding view >>= bindingProduction) $ \production ->
+    rawIO (captureSessionInput (currentFrame environment)
+      (originNode (executionOrigin (execution environment))) source production)
+
 -- 会话失败时传播它的原失败或原生异常；取得的视图捕获为本次视图，之后的发布不改写它。
 -- Nothing：来源已正常结束且没有可交付的视图，由调用方按各自的协议处理。
 captureDelivery :: Environment env cause -> String -> (env -> Maybe value)
@@ -682,6 +701,7 @@ captureDelivery environment source select deliver = do
     Left Drained -> pure Nothing
     Left Undriven -> pure Nothing
     Right view -> do
+      rememberView environment source view
       rawIO $ atomicModifyIORef' (views environment) $ \current ->
         ((source, view) : filter ((/= source) . fst) current, ())
       pure (Just (historyOf source select view))
