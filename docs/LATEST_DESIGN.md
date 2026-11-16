@@ -290,7 +290,7 @@ Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必�
 | `Raw m` | 绑定成挂接的 parser 或 Pure | `raw :: m [String]` |
 | `Raises XxxError m` | 总是 | `raise (XxxError "...")` |
 | `StreamEnds m` | 绑定成 Stream 的 handler | `streamEnd`：来源没有下一份输入，正常结束 |
-| `EndsStream m` | 持续消费链上的 Excu（规则见 [Stream 9.5](STREAM_LIFELONG.md#consumer-end)） | `endStream`：结束本处订阅，按读取方计数停产 |
+| `EndsStream m` | 以 `streams` 订阅持续资产的 Excu（规则见 [Stream 9.5](STREAM_LIFELONG.md#consumer-end)） | `endStream`：结束本处订阅，按读取方计数停产 |
 | `MonadIO m` | Pure 以外总是 | `liftIO` |
 
 Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 handler 的类或 request；单独的 requests 不带来 Reads。一个 handler 只有一份 Layer，各绑定推出的方法类型与 Layer 必须一致，否则 gencode 报错。`Reads`、`Raw`、`Raises`、`StreamEnds`、`EndsStream` 定义在 Framework.Language.Handler，由 Framework.SDK 导出；`Raw`、`Raises` 是暂定名。
@@ -592,7 +592,7 @@ monitor = lifelong
 
 - **单元**：直接子项各为一个单元，直接子项是 parallel 时只拆这一层；单元之间独立推进、互不等待。拆分写入 Prototype，运行时不推测。
 - **一次执行**：单元逐次执行，每次执行是一个 frame。控制流到达 target 时先领取其订阅资产的一条新交付（有积压立即领取，没有就挂起），再 boot target；同一 frame 内每个资产只领取一次，各调用共享这份视图。target 调用按上文的有限完成规则结束，本次执行结束后才开始下一次，上一次的普通产物不带入下一次。
-- **正常结束**：Stream handler 以 `streamEnd` 报告来源结束；会话封住发布，已发布的交付仍可领取。消费方 handler 以 `endStream` 结束自己的订阅：节点之后各轮跳过，单元不再有活读取位置时离开会话，会话的读取方全部离开时停止生产并回收只在会话中开启的 scope（[消费方结束](STREAM_LIFELONG.md#consumer-end)）。单元在所需来源结束并排空、或节点都结束订阅后正常结束，全部单元结束后 lifelong 返回一次 Succ（不带结果）。`chained [setup, monitor]` 先完成 setup；`chained [monitor, after]` 中 after 在 monitor 结束后执行，仍有消费单元未结束时不执行；`parallel [monitor, otherWork]` 两者同时运行。后继 `require` 读每个来源最新一次发布（含 lifelong 内部的发布与已结束会话的最后一条），单元内仍逐轮隔离；历史资源的清理另行设计。规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
+- **正常结束**：Stream handler 以 `streamEnd` 报告来源结束；会话封住发布，已发布的交付仍可领取。消费方 handler 以 `endStream` 结束自己的订阅：节点之后各轮跳过，同单元读取它所发布资产的位置本轮不被驱动、不等待，单元不再有活读取位置时离开会话，会话的读取方全部离开时停止生产并回收只在会话中开启的 scope（[消费方结束](STREAM_LIFELONG.md#consumer-end)）。单元在所需来源结束并排空、或节点都结束订阅后正常结束，全部单元结束后 lifelong 返回一次 Succ（不带结果）。`chained [setup, monitor]` 先完成 setup；`chained [monitor, after]` 中 after 在 monitor 结束后执行，仍有消费单元未结束时不执行；`parallel [monitor, otherWork]` 两者同时运行。后继 `require` 读每个来源最新一次发布（含 lifelong 内部的发布与已结束会话的最后一条），单元内仍逐轮隔离；历史资源的清理另行设计。规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
 - **失败**：含 lifelong 的程序中，任何失败按临时规则终止整次运行（[Stream 第 9 节](STREAM_LIFELONG.md#failures)），不同于有限 parallel 不取消其他分支的规则。lifelong 的局部结束属于本轮[结束传播阶段](NEXT_STAGES.md#stage-6)，其与故障传播的关系仍需确认。
 - **合法性**：lifelong 不嵌套、不含空分支；其中每个 target 恰好用 `streams` 订阅一个持续资产，见 [Stream 第 5.2 节](STREAM_LIFELONG.md#static)。
 

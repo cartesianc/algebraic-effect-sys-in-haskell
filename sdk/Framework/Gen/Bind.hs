@@ -245,38 +245,17 @@ layerOf unit specification method = sort (nub ["SDK.Reads (" ++ readType unit "S
   ++ ["SDK.EndsStream m" | consumesStream unit specification]
   ++ [if effectKind (typing specification) == PureKind then "Monad m" else "MonadIO m"]
 
--- 算法说明 v1（2026-11-16）：endStream 给哪些 effect。
--- 消费方结束要找到“这次调用属于哪一处订阅”。lifelong 节点的 original chain 恰好由一份持续资产驱动
--- （Lower 的订阅规则），Derive／ReuseOutput 的被驱动链由它 Input 链上的 streams 驱动，
--- 所以运行时按当前调用的位置即可确定订阅，不需要业务说明结束哪一份资产。
+-- 算法说明 v2（2026-11-17）：endStream 给哪些 effect。
+-- 只给自己以 streams 订阅持续资产的 Excu：它是被持续资产驱动的消费方，endStream 结束的是它自己的订阅。
+-- 同一条链上的其他 effect（Input 前驱）和 lifelong 里不订阅的普通节点是原子操作，lifelong 只是插入它们的控制流，
+-- handler 的签名不随所处的控制流改变，因而可以在持续链与有限链之间复用。
+-- streams 只出现在被驱动的位置（lifelong 节点的订阅、持续 Context 被驱动的 Input 链），
+-- 运行时按当前调用的位置确定订阅，不需要业务说明结束哪一份资产。
 -- 只给 Excu：Scoped.open 被打断会使实例失效，Pure 是值变换，Stream 用 streamEnd。
--- 同一 effect 只要还出现在不被持续驱动的链上（lifelong 外的节点、被 requests 或选择读取的普通 Context、
--- Stream 的 Input 链），就不给：那里没有可以结束的订阅。
--- 代价：一次遍历 AST 节点与注册，每个 effect 查一次集合成员，随程序规模线性增长。
+-- 代价：每个 effect 查一次自己的 demand。
 consumesStream :: Unit -> EffectSpec -> Bool
 consumesStream unit specification = effectKind (typing specification) == ExcuKind
-  && selected `elem` driven && selected `notElem` undriven
-  where
-    selected = name specification
-    effects = effectPrototypes unit
-    workflow = Prototype.plannedWorkflow (unitPlan unit)
-    chainOf terminal = terminal : Prototype.effectInputChain (protoOf unit terminal)
-    inputsOf effect = Prototype.effectInputChain effect
-    insideLifelong = [identifier | (boundary, _) <- Prototype.workflowLifelongs workflow
-      , Prototype.NodeAt identifier _ <- Prototype.allWorkflow workflow, boundary `isPrefixOf` identifier]
-    nodes = [(identifier, terminal) | Prototype.NodeAt identifier terminal <- Prototype.allWorkflow workflow]
-    streamedChain effect = or [Prototype.demandAccess demand == StreamAccess
-      | member <- inputsOf effect, demand <- Prototype.effectDemands (protoOf unit member)]
-    driven = concat [chainOf terminal | (identifier, terminal) <- nodes, identifier `elem` insideLifelong]
-      ++ concat [inputsOf effect | effect <- effects, Prototype.effectContinuous effect, streamedChain effect]
-    requested = nub ([Prototype.demandProvider demand | effect <- effects, demand <- Prototype.effectDemands effect
-        , Prototype.demandAccess demand == RequestAccess]
-      ++ concat [[Prototype.effectName effect | effect <- effects
-          , Prototype.effectProduces effect == Just contractType] | contractType <- Prototype.workflowSelectors workflow])
-    undriven = concat [chainOf terminal | (identifier, terminal) <- nodes, identifier `notElem` insideLifelong]
-      ++ concat [inputsOf effect | effect <- effects
-          , Prototype.effectKind effect == StreamKind
-            || (Prototype.effectName effect `elem` requested && not (Prototype.effectContinuous effect))]
+  && or [Prototype.demandAccess demand == StreamAccess | demand <- Prototype.effectDemands (protoOf unit (name specification))]
 
 signatureOf :: Unit -> String -> Either String Signature
 signatureOf unit handler' = do

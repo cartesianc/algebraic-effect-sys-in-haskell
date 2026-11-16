@@ -607,13 +607,14 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 **已确认的语义（2026-11-16）：**
 
 1. **两个出口分开**：生产方 `streamEnd`（原 `end` 改名）直接作用于资产，不看 AST 上有哪些消费方，消费方排空后各自结束；消费方 `endStream` 只撤销自己的读取。
-2. **谁拿到 `endStream`**：由持续资产驱动的消费链上的 effect；运行时按当前调用的位置找到它唯一的订阅。被 `requests` 拉起的生产链、同时出现在其他链上的 effect 不给。派生链里调用它，表示派生会话不再消费上游。
+2. **谁拿到 `endStream`**（2026-11-17 修订）：自己以 `streams` 订阅持续资产的 effect（实现只给 Excu）；运行时按当前调用的位置找到它的订阅。同链的 Input 前驱和 lifelong 里不订阅的普通节点不给：它们是原子操作，handler 不因所处的控制流改变签名。派生链里调用它，表示派生会话不再消费上游。
 3. **按引用计数分三层停止**：节点的订阅结束 → 该节点之后各轮跳过；单元里不再有活节点读取某会话 → 单元离开它；会话的读取方全部离开 → 停止生产。parallel 的分支互不影响；`require` 的读取与订阅无关。
 4. **资源释放**：生产已停止且读取方计数归零，才撤销会话的使用登记，回收只在会话中开启的 scope。
 5. **`chained [A, D]`**：不加新规则。D 有自己的订阅，自己驱动；D 若只 `require` A 这一轮的普通产物，A 结束后按缺值确定失败，要每轮有值就用 `requests`。
 6. **复杂度**：计数判断随离开一起做，O(R)；节点结束后的重新计算每轮最多一次。
+7. **同单元的发布与读取**（2026-11-17）：stream 是驱动关系。发布节点 `endStream` 后，同单元订阅它所发布会话的位置本轮没有被驱动，跳过而不等待；会话封口排空后这些位置的订阅结束。同单元 `require` 它的位置读已有的值：`require` 读当作不变的值，不要求最新，只在有新交付时对齐。
 
-**代码长什么样。** 注册、AST、Main 不变。能力类改为两个：`StreamEnds m`／`streamEnd`（Stream handler）与 `EndsStream m`／`endStream`（持续消费链上的 Excu）。生成的 Layer 与实例：
+**代码长什么样。** 注册、AST、Main 不变。能力类改为两个：`StreamEnds m`／`streamEnd`（Stream handler）与 `EndsStream m`／`endStream`（以 `streams` 订阅的 Excu）。生成的 Layer 与实例：
 
     type NextLineLayer m = (SDK.Reads (InputFile) m, SDK.StreamEnds m, SDK.Raises NextLineError m, MonadIO m)
     type PrintLineLayer m = (SDK.Reads (SDK.History (Line)) m, SDK.EndsStream m, SDK.Raises PrintLineError m, MonadIO m)
@@ -627,7 +628,7 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 **实现落点：**
 
-- **gen**：`Gen/Bind.consumesStream` 判定哪些 effect 拿到 `EndsStream`：Excu，出现在 lifelong 节点的 original chain 或持续 Context 的被驱动 Input 链上，且不出现在 lifelong 外的节点、被 `requests`／选择读取的普通 Context、Stream 的 Input 链上。只给 Excu 是实现时的收窄：Scoped.open 被打断会使实例失效，Pure 是值变换。Emit 按此生成实例；没有专门的 Shape 诊断，越界调用由 GHC 类检拒绝。
+- **gen**：`Gen/Bind.consumesStream` 判定哪些 effect 拿到 `EndsStream`：自己的 demands 里有 `streams` 的 Excu（2026-11-17 起；此前按“出现在持续驱动的链上、不出现在其他链上”判定，会让同链的 Input 前驱也带上它，妨碍 handler 复用）。只给 Excu 是实现时的收窄：Scoped.open 被打断会使实例失效，Pure 是值变换。Emit 按此生成实例；没有专门的 Shape 诊断，越界调用由 GHC 类检拒绝。
 - **运行时**：`endStream` 以内部信号 `SubscriptionEnded` 越过方法体。lifelong 节点由单元调度接住，记入本单元的已结束节点；之后各轮跳过它，候选全部结束的 alternative 不再做选择读取。两轮之间撤下它的 ReuseOutput 发布位置（发布位置改为按节点计），并离开不再有活读取位置的会话；本单元只经它发布、不读取的会话保留在 frame 中作为发布出口。Derive 生产任务接住后结束本会话并离开上游。`leaveSession` 返回计数是否从有到无；正常路径上归零时调用会话的一次性退役动作（停止任务 → 封口 → 按可达性回收会话挂载上开启的 scope → 上游也无读取方时随之退役）。lifelong 返回改为逆序退役其余会话。interpreter 托管的会话与 ReuseOutput 不按计数退役。
 
 **验证（2026-11-16）：** 八个 namespace 重新生成：FacadeProbe、LinesDemo、StreamDemo 的生成结果变化（Stream handler 的 Layer 由 `Ends` 换成 `StreamEnds`，lifelong 节点链上的 Excu 多 `EndsStream` 及其实例），其余五个无变化。`cabal build all --offline -j1` 通过，无警告。FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo、LinesDemo、crawler-demo 均为 `Succ`；LinesDemo 输出与此前相同，只是 `[close]` 提前到 `Report` 之前（`TextLine` 会话退役时回收输入文件）。StreamDemo 在终端运行十余秒，读数与心跳正常。临时改写示例逐项观察后已还原：
@@ -642,6 +643,21 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 **未覆盖：** 没有独立 Derive 的示例，被驱动链上的 `endStream`、派生会话退役后连带上游退役两条路径只经代码审阅；`EndsStream` 的 gen 规则没有单独触发拒绝（effect 同时出现在 lifelong 外）；取消与退役的交错、多个单元同时离开同一会话的并发只经代码审阅；没有新增测试或负例，探针没有入库。
 
 **已知边界：** 读取方的历史读取方式在登记时确定，按历史读取的节点结束后，剩下只读最新一条的读取方仍让会话保留全部历史，直到单元离开；历史条目中的资源引用仍无持有登记；停止生产用取消，生产步骤执行到一半时被取消，与 lifelong 返回时的停止相同。
+
+**复核修正（2026-11-17）：** 对 f1b1ed8 的复核确认了四个问题，已修正：
+
+- **同单元发布节点结束后挂住**：`chained [PrintLine, TextCounter, ShowTotal]` 同在一个单元、`CountText` 在第 3 行 `endStream` 时，`ShowTotal` 在本轮阻塞等待 `RunningTotal` 的新发布，而发布位置要到下一轮开始前才撤下，形成等待环，程序挂住。原因是同单元的订阅被实现成“本轮主动领取，领不到就等”，违背了驱动语义。现在 DeliveryFrame 记下发布位置在本单元的会话（`frameLocal`），领取它们不等待（`takeDelivery` 的等待原因为 `Undriven`）：节点与选择读取本轮跳过（`Quiet`），会话封口排空后订阅结束（`Exhausted`），方法体内的 `require` 读已有的一条（`frameRead`／`currentHistory`），一条都没有时按缺值报出。多个 alternative 候选发布的情况随之解决，不需要另加封口或拒绝规则。
+- **`retireSession` 的取消窗口**：取得执行权到装上收尾之间被取消，会留下永远不填的完成信号；两步改在同一屏蔽区内。
+- **Derive 失败时先退役上游**：生产任务失败后仍走“离开并在计数归零时退役上游”，会同步停掉上游、回收资源后才报告监督；改为成功时才退役，失败只离开。
+- **`EndsStream` 妨碍 handler 复用**：按上面 gen 一条的新规则只给自己 `streams` 的 Excu。
+
+验证：`cabal build all --offline -j1` 通过，无警告；八个 namespace 重新生成，生成结果无变化（示例里拿到 `EndsStream` 的 effect 都自己声明了 `streams`）。FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo、LinesDemo、crawler-demo 均为 `Succ`，输出与此前相同。临时改写示例逐项观察后已还原：
+
+- LinesDemo 改为同一单元 `chained [PrintLine, TextCounter, ShowTotal]`：不结束时每行之后打印当轮统计，`Report` 读到 4 行 40 字符；`CountText` 在第 3 行 `endStream` 时打印全部 4 行、统计两条，`Report` 读到 2 行 21 字符，`Succ`（修正前挂住）；`PrintLine` 在第 3 行结束时统计照常到 4 行；两者都结束时单元结束，`Succ`。
+- LinesDemo 原布局，`CountText` 在第 3 行 `endStream`：与此前相同，`Report` 读到 2 行 21 字符。
+- StreamDemo 三个消费方都 `endStream`：与此前相同，传感器断开后程序以 `Succ [AnnounceResult ()]` 结束。
+
+未覆盖：同单元 `require` 读已有值、一条都没有时按缺值报出、多候选发布时本轮跳过这三条路径只经代码审阅；Derive 失败路径、取消窗口的修正同样只经代码审阅。
 
 #### 尚未确定或尚未实现
 

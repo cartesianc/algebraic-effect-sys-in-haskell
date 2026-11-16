@@ -9,7 +9,7 @@
 module Framework.Runtime
   ( App, Target, targetApp
   , targetName, lowerTarget, Handoff, noHandoff, scopeHandlers, cleanupTargets
-  , DeliveryFrame, newDeliveryFrame, frameDelivery, haltFrame, frameStopping, frameAdmits, boundarySession
+  , DeliveryFrame, newDeliveryFrame, frameDelivery, framePublishes, haltFrame, frameStopping, frameAdmits, boundarySession
   , SessionSteps, receiveSteps, deriveSteps, sessionLauncher
   ) where
 
@@ -57,15 +57,23 @@ noHandoff = Handoff [] []
 -- lifelong 单元的一次执行：本 lifelong 的各会话及该单元的游标。每个会话资产在一次执行中只领取一次，
 -- 第一个需要它的调用领取，其余调用（包括同一执行内并行的节点）共享同一份固定视图与伴随发布；
 -- 单元内挂接的持续 parser 将本次输出的产物发布到对应会话。
+-- 发布位置在本单元的会话（frameLocal）不等待：生成期保证每条路径上发布位置先于读取位置，
+-- 轮到读取时本轮的发布要么已经在会话里，要么不会再有（发布节点已经 endStream）。
+-- 等待外部会话是单元被驱动的方式；等待本单元自己的发布只会等到下一轮，而下一轮要等这一轮结束。
 data DeliveryFrame environment cause = DeliveryFrame
-  { frameSessions :: [(String, (Session environment cause, Cursor))]
+  { frameLocal :: [String]
+  , frameSessions :: [(String, (Session environment cause, Cursor))]
   , frameTaken :: MVar [(String, MVar (Either (Stopped cause) (Delivery environment cause)))]
   -- 本次执行所需的某个来源已结束并排空：单元正在结束，不再允许新的位置启动。
   , frameHalted :: IORef Bool
   }
 
-newDeliveryFrame :: [(String, (Session environment cause, Cursor))] -> IO (DeliveryFrame environment cause)
-newDeliveryFrame sessions = DeliveryFrame sessions <$> newMVar [] <*> newIORef False
+newDeliveryFrame :: [String] -> [(String, (Session environment cause, Cursor))] -> IO (DeliveryFrame environment cause)
+newDeliveryFrame local sessions = DeliveryFrame local sessions <$> newMVar [] <*> newIORef False
+
+-- 这个会话的发布位置在本单元：领取不等待，没有新发布时得到 Undriven。
+framePublishes :: DeliveryFrame environment cause -> String -> Bool
+framePublishes frame source = source `elem` frameLocal frame
 
 -- 单元结束通知：先置位，再唤醒本 frame 各会话上的等待者重新检查。
 -- 同一单元内仍在等另一个来源的并行路径由此退出等待；其他单元的等待者只是重查后继续等待。
@@ -92,6 +100,7 @@ boundarySession graph boundary source (Handoff given views) = obtainSession grap
 -- 不是本 lifelong 的会话资产时为 Nothing。没有新发布时挂起；有积压时立即领取下一条。
 -- 来源结束并排空时返回 Drained。单元正在结束时：已有交付照常取得（已经启动的调用继续用它完成），
 -- 需要等待才返回 Drained。是否允许启动新的位置不在这里决定，见 frameAdmits。
+-- 本单元发布的会话不挂起：没有新发布、会话也未结束时返回 Undriven，本轮读取它的位置没有被驱动。
 frameDelivery :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Stopped cause) (View environment cause)))
 frameDelivery frame source = fmap (fmap fst) <$> frameTake frame source
 
@@ -105,10 +114,29 @@ frameTake frame source = do
         slot <- newEmptyMVar
         pure ((source, slot) : taken, (slot, True))
     if not fresh then readMVar slot else mask $ \restore -> do
-      outcome <- try (restore (takeDelivery session cursor (frameStopping frame)))
+      outcome <- try (restore (takeDelivery session cursor waiting))
       -- 领取被取消时也填入结果，同一 DeliveryFrame 的其他等待方不会悬挂。
       putMVar slot (either (Left . Broke . Left) id outcome)
       either throwIO pure outcome
+  where
+    waiting
+      | framePublishes frame source = pure (Just Undriven)
+      | otherwise = (\halted -> if halted then Just Drained else Nothing) <$> frameStopping frame
+
+-- 方法体内第一次读取时领取（require 等不在节点订阅中的读取）。本单元发布的会话本轮没有新发布、
+-- 或已封口并排空时，读已有的那一条：require 读的是当作不变的值，不要求本轮更新，也不推进游标。
+-- 一条都没有发布过时为 Undriven，读取方按缺值处理。
+frameRead :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Stopped cause) (View environment cause)))
+frameRead frame source = do
+  deliver <- frameDelivery frame source
+  (session, _) <- lookup source (frameSessions frame)
+  pure $ do
+    outcome <- deliver
+    case outcome of
+      Left Undriven -> existing session
+      Left Drained | framePublishes frame source -> existing session
+      _ -> pure outcome
+  where existing session = maybe (Left Undriven) Right <$> currentHistory session
 
 frameDeliveries :: DeliveryFrame environment cause -> IO [(String, Delivery environment cause)]
 frameDeliveries frame = do
@@ -134,7 +162,7 @@ lowerTarget graph location executionFrame frame (Handoff given views) target = d
       sinks = [(source, appendDelivery session []) | Just current <- [frame], (source, (session, _)) <- frameSessions current]
       launch = Launch
         { launchBindings = given ++ companions, launchViews = merged, launchInput = Nothing
-        , launchSinks = sinks, launchDeliver = \source -> frame >>= (`frameDelivery` source)
+        , launchSinks = sinks, launchDeliver = \source -> frame >>= (`frameRead` source)
         , launchUser = Nothing, launchFrame = executionFrame }
   captureFrameDeliveries executionFrame
     [(originNode (executionOrigin (bindingOrigin value)), source, production)
@@ -242,9 +270,10 @@ sessionLauncher graph steps onBroken session
       (Just (DeriveSteps parser), Just [mount]) -> do
         (upstream, cursor) <- awaitUpstream session
         outcome <- loop (do
-          taken <- takeDelivery upstream cursor (pure False)
+          taken <- takeDelivery upstream cursor (pure Nothing)
           case taken of
             Left Drained -> pure (Just Nothing)
+            Left Undriven -> pure (Just Nothing)
             Left (Broke (Right problem)) -> pure (Just (Just problem))
             Left (Broke (Left exception)) -> throwIO exception
             Right (view, _) -> do
@@ -253,7 +282,8 @@ sessionLauncher graph steps onBroken session
                 Left SubscriptionEnded -> Just Nothing
                 Right result -> either (Just . Just) (const Nothing) (first result))
           `onException` leaveSession upstream cursor
-        departSession upstream cursor
+        -- 失败只离开：退役会同步停掉上游、回收资源，失败要先交给生产任务报告监督。
+        maybe (departSession upstream cursor) (const (void (leaveSession upstream cursor))) outcome
         pure outcome
       _ -> ioError (userError ("Session steps differ from the prototype mounts for " ++ source
         ++ "; regenerate with the SDK effect-codegen command"))

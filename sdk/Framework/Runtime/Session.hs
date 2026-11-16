@@ -10,7 +10,7 @@ module Framework.Runtime.Session
   , Session, sessionKey, sessionBindings, sessionViews
   , newSession, appendDelivery, breakSession, endSession, wakeSession, setSessionWorker, stopSession
   , setSessionRetirement, retireSession, departSession, sessionIdle
-  , awaitHistory, Cursor, admitReaders, leaveSession, takeDelivery, feedSession, awaitUpstream, upstreamOf
+  , awaitHistory, currentHistory, Cursor, admitReaders, leaveSession, takeDelivery, feedSession, awaitUpstream, upstreamOf
   ) where
 
 import Control.Concurrent (ThreadId, killThread)
@@ -41,7 +41,8 @@ type Broken cause = Either SomeException (Failure cause)
 
 -- 领取不到交付的原因。Drained：来源已正常结束，且已发布的交付都已领取（或所在单元正在结束）；
 -- 这是正常终止，不是失败。Broke：会话失败。
-data Stopped cause = Drained | Broke (Broken cause)
+-- Undriven：不等待的领取（本单元发布的会话）没有新发布，会话也未结束：读取位置本轮没有被驱动。
+data Stopped cause = Drained | Broke (Broken cause) | Undriven
 
 -- SDK 内部的正常结束信号，以异常形式越过方法体；不是业务 Failure，不进入 Error 协议，
 -- 也不被方法体内的 catchError 接住。
@@ -182,11 +183,11 @@ wakeSession :: Session environment cause -> IO ()
 wakeSession session = changeState session Just
 
 -- 等到状态满足条件。条件优先：结束或失败的会话仍先交出已有的结果（来源结束后的排空）；
--- 条件不满足且会话已停止时返回原因。interrupted 是等待方自己的打断条件（所在单元正在结束），
--- 只在需要等待时检查，由 wakeSession 唤醒后生效，按 Drained 返回。
+-- 条件不满足且会话已停止时返回原因。interrupted 是等待方自己的不再等待的原因：所在单元正在结束（Drained），
+-- 或这次领取本来就不等待（Undriven）。只在需要等待时检查；单元结束由 wakeSession 唤醒后生效。
 -- 它只让等待退出，不决定拿到交付的位置能否启动：被新数据唤醒的等待者仍会取得交付，
 -- 是否 boot 由调用方在交付到手后另行判定（Runtime.frameAdmits）。
-awaitState :: Session environment cause -> IO Bool -> (SessionState environment cause -> Maybe result)
+awaitState :: Session environment cause -> IO (Maybe (Stopped cause)) -> (SessionState environment cause -> Maybe result)
            -> IO (Either (Stopped cause) result)
 awaitState session interrupted ready = do
   state <- readMVar (sessionState session)
@@ -196,14 +197,21 @@ awaitState session interrupted ready = do
     (Nothing, Nothing) -> do
       -- 状态快照先于检查：之后的 wakeSession 要么填入这份快照的信号，要么发生在检查之前。
       halted <- interrupted
-      if halted then pure (Left Drained)
-        else readMVar (stateSignal state) >> awaitState session interrupted ready
+      case halted of
+        Just reason -> pure (Left reason)
+        Nothing -> readMVar (stateSignal state) >> awaitState session interrupted ready
 
 -- lifelong 外的有限读取：至少有一条发布后取当时保留的视图，读取方只用它的最新一条；之后的发布不改写这次视图。
 -- 来源结束后仍读到最后一条；一条都没有发布就结束时返回 Drained。
 awaitHistory :: Session environment cause -> IO (Either (Stopped cause) (View environment cause))
-awaitHistory session = awaitState session (pure False) $ \state ->
+awaitHistory session = awaitState session (pure Nothing) $ \state ->
   if Seq.null (stateEntries state) then Nothing else Just (stateEntries state)
+
+-- 不等待地取当前保留的视图：一条都没有发布时为 Nothing。本单元发布的会话本轮没有新发布时，
+-- 只读最新一条的读取（require）用它读已有的一条，不推进游标。
+currentHistory :: Session environment cause -> IO (Maybe (View environment cause))
+currentHistory session = (\state -> if Seq.null (stateEntries state) then Nothing else Just (stateEntries state))
+  <$> readMVar (sessionState session)
 
 -- 消费游标属于（单元，会话）：记录已经交付的条数，每次交付推进一条。
 -- 单元逐轮推进同一个游标；一轮内并发读取由 Runtime.Frame 的领取槽合并，
@@ -253,21 +261,22 @@ setSessionRetirement session action = modifyMVar_ (sessionRetirement session) $ 
   Retiring _ -> pure retirement
 
 -- 第一次调用执行退役动作，其余调用等它完成；动作被取消时也填入完成信号，等待方不会悬挂。
+-- 取得执行权到装上收尾在同一屏蔽区内：取消不能落在二者之间，留下永远不填的完成信号。
 retireSession :: Session environment cause -> IO ()
-retireSession session = do
+retireSession session = mask $ \restore -> do
   (action, done) <- modifyMVar (sessionRetirement session) $ \retirement -> case retirement of
     Unretired action -> do
       done <- newEmptyMVar
       pure (Retiring done, (Just action, done))
     Retiring done -> pure (retirement, (Nothing, done))
   case action of
-    Just retire -> retire `finally` tryPutMVar done ()
-    Nothing -> readMVar done
+    Just retire -> restore retire `finally` tryPutMVar done ()
+    Nothing -> restore (readMVar done)
 
 -- 领取下一条尚未交付的发布；视图是到这一条为止保留的条目（按历史读取时是完整历史），另带这一条的伴随发布。
--- 有积压时立即返回，没有时挂起等待；来源结束后先排空积压，游标到达末尾才返回 Drained。
--- 游标前进只表示领取，不表示处理完成。
-takeDelivery :: Session environment cause -> Cursor -> IO Bool
+-- 有积压时立即返回，没有时挂起等待（interrupted 给出原因时不等待，返回该原因）；
+-- 来源结束后先排空积压，游标到达末尾才返回 Drained。游标前进只表示领取，不表示处理完成。
+takeDelivery :: Session environment cause -> Cursor -> IO (Maybe (Stopped cause))
              -> IO (Either (Stopped cause) (Delivery environment cause))
 takeDelivery session Idle _ = ioError (userError ("A lifelong unit takes a delivery of " ++ snd (sessionKey session)
   ++ " without a read point in the prototype; regenerate with the SDK effect-codegen command"))

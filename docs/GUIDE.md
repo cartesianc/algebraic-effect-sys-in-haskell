@@ -93,7 +93,7 @@ instance WriteFirstLineLayer m => WriteFirstLineHandler m where
     pure []
 ```
 
-`XxxLayer m => XxxHandler m` 由 handler 名生成，Layer 是方法体可用能力的边界：按表示类型的读取 `Reads T`、挂接 parser 与 Pure 的 `raw`、本 handler 的 `raise`、Stream handler 的 `streamEnd`、持续消费链上 Excu 的 `endStream` 和 `MonadIO`。方法体里没有上游、scope 或资产名：`FileSession` 由 gen 在方法体之前开启；`require @FileHandle` 读的是 `OpenedFile`，这由绑定它的 effect 的 demands 决定。同一个 handler 可以注册到多个 effect，各自读到不同的资产。IO 和解析写在 handler 方法体内。
+`XxxLayer m => XxxHandler m` 由 handler 名生成，Layer 是方法体可用能力的边界：按表示类型的读取 `Reads T`、挂接 parser 与 Pure 的 `raw`、本 handler 的 `raise`、Stream handler 的 `streamEnd`、以 `streams` 订阅的 Excu 的 `endStream` 和 `MonadIO`。方法体里没有上游、scope 或资产名：`FileSession` 由 gen 在方法体之前开启；`require @FileHandle` 读的是 `OpenedFile`，这由绑定它的 effect 的 demands 决定。同一个 handler 可以注册到多个 effect，各自读到不同的资产。IO 和解析写在 handler 方法体内。
 
 [完整 Handlers.hs](../demo/FileDemo/Handlers.hs) · [handler、读取与错误写法](#handlers)
 
@@ -599,7 +599,7 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
 | `Raw m` | 绑定成挂接的 parser 或 Pure | `raw` |
 | `Raises 名字Error m` | 总是 | `raise (名字Error "...")` |
 | `StreamEnds m` | 绑定成 Stream 的 handler | `streamEnd` |
-| `EndsStream m` | 绑定成 lifelong 节点 original chain、或持续 Context 被驱动链上的 Excu，且不出现在其他链上 | `endStream` |
+| `EndsStream m` | 自己以 `streams` 订阅持续资产的 Excu | `endStream` |
 | `MonadIO m` | Pure 以外总是 | `liftIO` |
 
 - **对载体 `m` 泛型**：Layer 不含 Input 的 effect 类、细化资产或其他 handler 的类，方法体只能使用上表的能力；越过 Layer 的读取，GHC 直接报错。单独的 `requests` 不带来 `Reads`。
@@ -981,7 +981,7 @@ ast = chained
 - **同单元不等待自己将来的产物**：读取自己发布的持续资产时，每条到达读取的控制路径都要已有供值位置，或同轮有并行且必经的供值路径。alternative 另一候选可能供值不够；parser 及其 requests 路径也不能另等其他持续资产。
 - **Scoped.open 例外**：复用已有 scope 时 open 没有新输出，所以当前拒绝在同单元直接或经派生链等待这份复用输出。跨单元可以等实际发布或结束；这不禁止 Scoped 本身进入 lifelong，也不禁止独立派生。
 - **实际执行才发布**：一次原子操作成功且 parser 成功才形成交付；未选中的 alternative 位置不发布。不会为等待中的下游补跑原操作，独立调用也不按相等值合并。
-- **结束**：独立派生在上游结束并处理完后结束，被驱动链上的 Excu 调用 `endStream` 时也结束；复用输出的会话在发布节点都结束订阅或所在单元结束后封口，已发布增量仍可排空。单轮结束不封口。
+- **结束**：独立派生在上游结束并处理完后结束，被驱动链上以 `streams` 订阅的 Excu 调用 `endStream` 时也结束；复用输出的会话在发布节点都结束订阅或所在单元结束后封口，已发布增量仍可排空。单轮结束不封口。
 - **读取**：可以 `streams` 订阅，也可以 `requires` 读最新一条。它只在订阅它的 lifelong 里生产，所以读取位置必须在那个 lifelong 之内或之后。LinesDemo 的 `Report` 在 lifelong 之后 `requires "RunningTotal"`，读到最终的统计。
 - **内存**：上游历史由实际的读取方保留；复用输出沿用消费单元的读取，不新增一份派生任务的上游游标。输出资产也按自己的读取义务保留历史，当前不设容量上限。
 
@@ -1011,7 +1011,7 @@ ast = chained
 
   `streamEnd` 不是失败，不进入 Error 诊断。它直接结束这份资产，不看有哪些消费方。这一步不交出输入，parser 不执行；已经发布的交付仍可领取。单元在它要领取的来源已经结束并领完时结束：尚未执行的后继放弃，已完成的部分不回滚。全部单元结束后 lifelong 成功返回（不带结果），排在后面的节点继续执行。
 - **结束后能读什么**：`require` 像 State 一样只保留每个来源最新的值。lifelong 后面的节点 `requires` 单元里发布的资产，读到的是它最新一次发布：最后一轮没有发布它时，读更早那一轮的值；一次都没有发布时报 `ContextNotInitialized`。读持续资产时读到它最后一条，不会重新启动来源。单元内部仍然每轮隔离，读不到上一轮的产物。两个并行单元都发布同一资产、或两个并行的 lifelong 都有同一个持续资产时，“最新”取决于调度，gencode 报错。
-- **消费方结束**：lifelong 节点链上的 Excu 可以调用 `endStream`，表示不再消费这个节点订阅的持续资产。本次调用放弃，不交出结果；这个节点之后各轮跳过，同一轮里排在它后面的节点照常执行。它不直接停产：单元里读取这份资产的节点都结束后单元离开会话，会话的读取方全部离开后才停止生产。parallel 的其他单元不受影响。
+- **消费方结束**：以 `streams` 订阅持续资产的 Excu 可以调用 `endStream`，表示之后不再被这份资产驱动。本次调用放弃，不交出结果；这个节点之后各轮跳过，同一轮里排在它后面的节点照常执行。同一单元里读取它发布的资产的位置不等待：订阅它的节点本轮没有新发布就跳过，`require` 读已有的值。它不直接停产：单元里读取这份资产的节点都结束后单元离开会话，会话的读取方全部离开后才停止生产。parallel 的其他单元不受影响。
 
   ```haskell
   -- 示意：PrintLine 只打印前 10 行；需要 import Framework.SDK (EndsStream(..))
