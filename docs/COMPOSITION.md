@@ -155,7 +155,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | 处理时看到此前的全部交付 | `streams "T"`，方法体 `require @(History T)` | 该读取方按历史读取 | 每条交付附带到这一条为止的历史；累计值由 handler 从历史重算，不是增量状态 | [3.3](STREAM_LIFELONG.md#contracts)、[7.1](STREAM_LIFELONG.md#retention) | 有点像 `scan` 能看到的范围 |
 | 只读当作不变的值 | 单元内 `requires "T"` | 该读取方只读最新一条 | 不订阅；本轮第一次读取时领取一条交付，同一轮共享；本单元发布的资产则读已有的一条 | [6.3](STREAM_LIFELONG.md#scheduling)、[9.5](STREAM_LIFELONG.md#consumer-end) | — |
 | 按每条交付的状态选择分支 | lifelong 内的 alternative，转折资产是本 lifelong 的持续资产 | `AlternativeProto`；选择读取领取交付 | 每条交付按最新条目的构造器只启动一个候选 | [6.3](STREAM_LIFELONG.md#scheduling) | 在逐条处理里做 `Match` |
-| 同一单元里既发布又读取 | 单元里一个节点发布、后面的节点订阅同一份 ReuseOutput 资产 | 发布节点所在的单元 | 只驱动读取位置、不让单元等待：本轮没有新发布则跳过，封口排空后其订阅结束 | [9.5](STREAM_LIFELONG.md#consumer-end) | — |
+| 同一单元里既发布又读取 | 单元中已先行或必经并行的节点发布，其他位置直接或经 Derive 订阅该产物 | 发布位置、单一派生上游与实际轮帧 | 等本轮发布和派生处理稳定；仍无新交付才跳过本轮，封口排空后其订阅结束 | [9.5](STREAM_LIFELONG.md#consumer-end) | — |
 | 消费方不再消费 | 订阅方的 handler 按条件调用 `endStream` | 自己声明 `streams` 的 Excu，其 Layer 带 `EndsStream` | 节点之后各轮跳过；按读取方计数逐层离开（节点 → 单元 → 会话） | [9.5](STREAM_LIFELONG.md#consumer-end) | `take`、`takeWhile` |
 | 结束向下游传播并排空 | 无需写法 | — | 封口后读取方领完积压才结束；单元在所需来源排空或节点都结束订阅时结束；全部单元结束后 lifelong 返回 | [9.4](STREAM_LIFELONG.md#end) | 流的完成 |
 | 结束后或在外部读最新的值 | lifelong 的后继或 lifelong 外写 `requires "T"` | 静态来源表；后继读取的来源保留 | 后继读每个来源最新一次发布；lifelong 外由托管会话交付，至少等到一条 | [9.4](STREAM_LIFELONG.md#end)、[8.3](STREAM_LIFELONG.md#production) | `runLast` |
@@ -170,7 +170,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | `sessionPlan` | Receive 和 Derive 启动生产任务并按步骤循环；ReuseOutput 不启动任务，只登记交付状态 | `Runtime.sessionLauncher` |
 | 读取方式（单元内是否有 `streams` 订阅、读取点或选择读取） | 登记为按历史读取或只读最新一条；会话据此决定保留多少条 | `Execution` 的 `access`、`Session.release` |
 | 发布节点（`ReuseOutput` 的节点表） | 发布位置按节点计，节点结束或单元结束时撤下，全部撤下才封口 | `Execution` 的 `withdraw` |
-| 发布节点所在的单元 | 单元读取自己发布的会话时不等待；读取外部会话时阻塞等待，那是单元被驱动的方式 | `DeliveryFrame.frameLocal`、`awaitDeliveries`、`frameRead` |
+| 发布节点所在的单元与派生上游 | 本单元直接或间接发布的来源，等节点退休和派生处理追平后才判断本轮无交付；外部来源继续等待后续增量 | `DeliveryFrame.frameLocal`、`frameStable`、`Session.sessionCaughtUp` |
 | 节点的订阅是否结束 | 已结束的节点跳过；单元不再有活读取位置时离开会话；计数归零时退役 | `Execution.repeatUnit`、`Session.departSession` |
 
 <a id="stream-missing"></a>

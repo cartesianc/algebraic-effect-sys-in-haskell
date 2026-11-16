@@ -8,7 +8,7 @@ module Framework.Runtime.Execution (runStructuredAST) where
 
 import Framework.Language.Handler (Failure, Output(..))
 import Framework.Runtime
-  ( Target, Handoff, SessionSteps, DeliveryFrame, noHandoff, targetName, lowerTarget, scopeHandlers
+  ( Target, Handoff, SessionSteps, DeliveryFrame, LocalSource(..), noHandoff, targetName, lowerTarget, scopeHandlers
   , newDeliveryFrame, frameDelivery, framePublishes, haltFrame, frameStopping, frameAdmits, boundarySession, sessionLauncher )
 import Framework.Runtime.Graph
   ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, installSessionLauncher
@@ -23,7 +23,7 @@ import Framework.Language.AST (AST, WorkflowF(..), foldAST)
 import Control.Concurrent (MVar, ThreadId, forkIOWithUnmask, killThread, newEmptyMVar, putMVar, readMVar, tryPutMVar)
 import Control.Concurrent.MVar (newMVar, modifyMVar)
 import Control.Exception
-  (SomeAsyncException, SomeException, finally, fromException, mask, onException, throwIO, try, uninterruptibleMask_)
+  (SomeAsyncException, SomeException, finally, fromException, mask, mask_, onException, throwIO, try, uninterruptibleMask_)
 import Control.Monad (forM, forM_, unless, void)
 import Control.Monad.Except (ExceptT(..), runExceptT)
 import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
@@ -39,6 +39,8 @@ data Run environment cause = Run
   , runFatal :: Broken cause -> IO ()
   -- lifelong 单元中已经结束订阅（endStream）的节点；之后各轮跳过它们。lifelong 之外为 Nothing。
   , runEnded :: Maybe (IORef [NodeId])
+  -- 订阅永久结束时立即撤下发布位置，不能等到下一轮才通知当前轮的等待者。
+  , runWithdraw :: [NodeId] -> IO ()
   }
 
 endedNodes :: Run environment cause -> IO [NodeId]
@@ -134,7 +136,7 @@ supervised run action = do
 -- 单元结束与来源结束是两件事：来源结束后已发布的交付继续交付；单元结束后不再启动新的位置，
 -- 即使它等的来源随后又发布了数据。交付到手之后还要取得启动许可（frameAdmits）才 boot：
 -- 等待者无论被结束通知还是被新数据唤醒，都在这里重新判定；通过的视作已启动，单元等它完成。
--- 发布位置在本单元的会话只驱动、不等待：本轮没有新发布时位置本轮不执行（Quiet），
+-- 发布位置在本单元（含派生）的会话等待本轮稳定：确定没有新发布时位置本轮不执行（Quiet），
 -- 已封口并排空时只结束这个位置的订阅（Exhausted），不结束单元。
 awaitDeliveries :: Run environment cause -> [String] -> IO (Either (Halt cause) Drive)
 awaitDeliveries run sources = case runDeliveryFrame run of
@@ -165,9 +167,11 @@ awaitDeliveries run sources = case runDeliveryFrame run of
 -- 位置本轮不执行；Exhausted：本单元发布的会话已封口并排空，位置的订阅随之结束。
 data Drive = Driven | Quiet | Exhausted
 
--- 把节点记为本单元已结束订阅：之后各轮跳过，两轮之间由 repeatUnit 撤下发布位置、离开不再读取的会话。
+-- 把节点记为本单元已结束订阅并立即撤下发布位置；之后各轮跳过，两轮之间离开不再读取的会话。
 endNodes :: Run environment cause -> [NodeId] -> IO ()
-endNodes run nodes = forM_ (runEnded run) $ \ended -> atomicModifyIORef' ended (\current -> (nodes ++ current, ()))
+endNodes run nodes = mask_ $ forM_ (runEnded run) $ \ended -> do
+  atomicModifyIORef' ended (\current -> (nodes ++ current, ()))
+  runWithdraw run nodes
 
 -- 已经 boot 的调用在第一次读取时才领取交付、而来源已结束并排空：这次调用放弃，单元正常结束。
 -- 调用自身的收尾已由 App 完成；这里只把内部信号换成 Finished 并通知本单元。
@@ -179,8 +183,8 @@ draining run action = do
     Right result -> pure (either (Left . Problem) Right result)
 
 -- 节点的调用中 endStream：本次调用放弃、不交出结果，本节点的订阅结束；同一轮中其余位置照常执行。
--- endStream 表示之后不再被驱动：本轮它没有发布，同单元读取它发布的会话的位置本轮没有被驱动（Quiet），
--- 不等待。之后各轮跳过该节点；两轮之间由 repeatUnit 撤下它的发布位置、离开不再有活节点读取的会话。
+-- endStream 表示之后不再被驱动：立即撤下发布位置，最后一个位置退出则封口，派生会话可随之排空。
+-- 同单元读取还会等待其他并行发布位置及派生处理；两轮之间离开不再有活节点读取的会话。
 subscribing :: Run environment cause -> NodeId -> IO (Either (Halt cause) [value]) -> IO (Either (Halt cause) [value])
 subscribing run location action = do
   outcome <- try action
@@ -345,8 +349,17 @@ executionAlgebra prototype store entries selectors layer expected = do
                 (Just _, Left problem) -> breakSession session (Right problem)
                 (Just [], Right ()) -> endSession session
                 _ -> pure ()
-        -- 发布位置在该单元的会话：单元读取它们时不等待（见 DeliveryFrame）。
-        let local prefix = [source | (_, ReuseOutput nodes, source, _) <- opened, any (prefix `isPrefixOf`) nodes]
+        -- 本地来源来自同一份 gen 会话计划：沿唯一 Derive 上游回溯，Receive/其他单元继续等待。
+        -- gen 已拒绝启动环和跨单元多发布者；这里仅投影关系，不重新判断合法性。
+        let rooted prefix asset = case [plan | (selected, plan, _, _) <- opened, selected == asset] of
+              [ReuseOutput nodes] -> not (null nodes) && all (prefix `isPrefixOf`) nodes
+              [Derive upstream] -> rooted prefix upstream
+              _ -> False
+            local prefix = [(source, described) | (asset, plan, source, _) <- opened, rooted prefix asset
+              , described <- case plan of
+                  ReuseOutput nodes -> [PublishedAt nodes]
+                  Derive upstream -> [DerivedFrom parent | (selected, _, parent, _) <- opened, selected == upstream]
+                  Receive _ -> []]
         outcomes <- runParalleled
           [ do
               outcome <- repeatUnit location run handoff
@@ -374,11 +387,11 @@ executionAlgebra prototype store entries selectors layer expected = do
     -- 每次执行是新的 frame：先移出该单元上一次执行的 Origin，执行结果不累积；
     -- 同一单元逐次处理，本次结束后才领取下一条。所需来源结束并排空时单元正常结束，不再开始下一次执行；
     -- 发生在一次执行中途时，已完成的部分不回滚，尚未启动的部分放弃。
-    -- 消费方结束按引用计数逐层传递：节点 endStream 后各轮跳过它；两轮之间撤下它的发布位置，
+    -- 消费方结束按引用计数逐层传递：节点 endStream 时立即撤下发布位置，之后各轮跳过它；
     -- 单元不再有活节点读取的会话立即离开（计数归零的会话随之退役），之后的 frame 不再领取它；
     -- 单元的节点全部结束订阅时单元正常结束。parallel 的其他单元不受影响。
-    -- 本单元发布的会话（local）只驱动读取它的位置，不让本单元等待：发布节点结束后，
-    -- 读取位置本轮跳过，会话封口并排空后读取位置的订阅随之结束。
+    -- 本地会话（local）包含 Derive 间接依赖；等待实际轮帧及派生完成水位，
+    -- 本轮稳定后没有新发布才跳过，会话封口并排空后读取位置的订阅随之结束。
     -- 单元正常结束时离开仍持有的会话并按计数退役；失败或取消只离开，停止交给 lifelong 返回或运行结束。
     repeatUnit boundary run handoff cursors local needed withdraw (unit, execute) = do
       ended <- newIORef []
@@ -388,7 +401,6 @@ executionAlgebra prototype store entries selectors layer expected = do
             current <- readIORef ended
             let fresh = filter (`notElem` seen) current
             unless (null fresh) $ do
-              withdraw fresh
               taken <- readIORef held
               -- 只离开本单元登记为读取方的会话；不读取的会话仍留在 frame 中，作为本单元发布位置的出口。
               let (kept, left) = partition (\(source, _) -> needed current source || not (needed [] source)) taken
@@ -399,14 +411,14 @@ executionAlgebra prototype store entries selectors layer expected = do
             current <- settle seen
             if all (`elem` current) members then pure (Right []) else do
               resetOrigins store unit
-              delivery <- readIORef held >>= newDeliveryFrame local
               outcome <- mask $ \restore -> do
                 frame <- newChildFrame (runExecutionFrame run) boundary
                   [chainNode chain | chain <- protoChains prototype, chainRole chain /= SessionChain
                     , unit `isPrefixOf` chainNode chain]
+                delivery <- readIORef held >>= newDeliveryFrame frame local [(source, session) | (source, (session, _)) <- cursors]
                 retireAfter
                   (restore (runExceptT (execute run { runExecutionFrame = frame, runDeliveryFrame = Just delivery
-                                                    , runEnded = Just ended } handoff))) $ \_ -> do
+                                                    , runEnded = Just ended, runWithdraw = withdraw } handoff))) $ \_ -> do
                     retired <- finishExecutionFrame frame
                     restore (collectRuntimeScopes store retired)
               case outcome of
@@ -439,14 +451,14 @@ runStructuredAST prototype tree entries selectors sessions = do
   retireAfter (if null (workflowLifelongs (protoWorkflow prototype))
     then do
       installSessionLauncher store (sessionLauncher store sessions (const (pure ())))
-      runExceptT (compiledRun prepared (Run (runtimeRootFrame store) Nothing (const (pure ())) Nothing) noHandoff)
+      runExceptT (compiledRun prepared (Run (runtimeRootFrame store) Nothing (const (pure ())) Nothing (const (pure ()))) noHandoff)
         >>= completed
     else do
       -- 第一个失败或原生异常结束整次运行：取消 AST 中的全部任务并等待其收尾，再停止会话，
       -- 最后以最初的那个失败报告；AST 未进入 lifelong 而正常结束时照常返回。
       settled <- newEmptyMVar
       let settle = void . tryPutMVar settled
-          run = Run (runtimeRootFrame store) Nothing (settle . Left) Nothing
+          run = Run (runtimeRootFrame store) Nothing (settle . Left) Nothing (const (pure ()))
           work = do
             outcome <- try (runExceptT (compiledRun prepared run noHandoff))
             settle (either (Left . Left) Right outcome)
