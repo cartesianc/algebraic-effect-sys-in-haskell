@@ -49,11 +49,12 @@
 
 | 列 | 内容 |
 | --- | --- |
-| 行为 | 想得到的运行效果；可以对照其他框架的操作名 |
+| 行为 | 想得到的运行效果，用本框架的词描述 |
 | 组合 | 业务要写的声明与 AST；“无需写法”表示由其他组合自动得到 |
 | 推导 | gen 写入 Prototype 或生成代码的事实 |
 | 驱动 | 运行时据此做什么 |
 | 规范 | 完整规则所在的章节 |
+| 或可类比为 | 可选；帮助理解的粗略类比，不表示语义或实现相同 |
 
 维护规则：
 
@@ -94,29 +95,29 @@
 - lifelong 怎样拆成单元，哪个节点订阅哪份资产，发布位置在哪个单元；
 - 每个 effect 自己是否声明了 `streams`。
 
-<a id="stream-effect-ts"></a>
-### 6.1 与 Effect-TS Stream 的对照
+<a id="stream-analogy"></a>
+### 6.1 持续执行的行为
 
-下表左列是 Effect-TS 中语义相当的 Stream 操作，便于有流库经验的读者定位。相当指的是行为，不是接口：这里没有对应的方法，行为由右侧的组合推出。
+下表按行为列出持续执行目前能做的事。熟悉流处理库的读者，也许可以把其中一些行为粗略地看成 Effect-TS 中某些 Stream 操作，最后一列给出这样的类比，只为方便理解。框架并不以任何流库为参照，也没有对应的方法；深究起来，实现与语义都不相同，阅读时请以本文和 Stream 规范为准。
 
-| 行为（Effect-TS） | 组合 | 推导 | 驱动 | 规范 |
-| --- | --- | --- | --- | --- |
-| 拉取式来源，取不到时结束（`Stream.repeatEffectOption`） | Stream effect，加挂在它下面、`stream = True` 的 Context；来源没有下一份输入时 handler 调用 `streamEnd` | `BootPlan` 为 Receive；Stream handler 的 Layer 带 `StreamEnds` | 会话的生产任务循环执行 Stream 单步与 parser，每步发布一条；`streamEnd` 使会话封口 | [4](STREAM_LIFELONG.md#bootplan)、[9.4](STREAM_LIFELONG.md#end) |
-| 惰性启动 | 无需写法 | 会话描述 | 进入 lifelong 时启动本边界的会话；lifelong 外第一次 `require` 时启动托管会话 | [7](STREAM_LIFELONG.md#sessions)、[8.3](STREAM_LIFELONG.md#production) |
-| 逐条变换（`Stream.mapEffect`） | Context `stream = True`，Input 链上有 `streams "U"`，本 lifelong 没有它的发布位置 | `BootPlan` 为 Derive | 领取一条 U 的交付 → 执行被驱动的 Input 链 → parser 发布一条；可以逐级串联 | [4.2](STREAM_LIFELONG.md#derive)、[8.1](STREAM_LIFELONG.md#production) |
-| 消费步骤的结果再成流，不重跑该步骤（`Stream.mapEffect` 后共享结果） | Context 挂在 lifelong 节点的原子句柄下 | `BootPlan` 为 `ReuseOutput [发布节点]` | 节点执行后由挂接 parser 发布，不另开任务；发布节点都结束或所在单元结束后封口 | [4.2](STREAM_LIFELONG.md#derive) |
-| 多播（`Stream.broadcast`、`Stream.share`） | 多个单元或派生会话 `streams` 同一资产 | 同一 lifelong 中一份资产一个会话；读取方登记 | 每个读取方独立游标；保留量由读取义务决定，按历史读取时保留全部，没有背压 | [7](STREAM_LIFELONG.md#sessions)、[7.1](STREAM_LIFELONG.md#retention) |
-| 逐条执行副作用（`Stream.runForEach`） | lifelong 中订阅该资产的节点 | `lifelongUnits`、`lifelongSubscriptions` | 单元逐条领取，每条一个 frame，同一单元的调用不重叠 | [6](STREAM_LIFELONG.md#scheduling) |
-| 多个消费者并发 | `lifelong [parallel [...]]` 的各子项 | 单元拆分 | 各单元并发推进、互不等待 | [6.1](STREAM_LIFELONG.md#scheduling) |
-| 带前缀历史的处理（`Stream.scan` 的可见范围） | `streams "T"`，方法体 `require @(History T)` | 该读取方按历史读取 | 每条交付附带到这一条为止的历史；累计值由 handler 从历史重算，不是增量状态 | [3.3](STREAM_LIFELONG.md#contracts)、[7.1](STREAM_LIFELONG.md#retention) |
-| 按元素分派（`Stream.mapEffect` 中 `Match`） | lifelong 内的 alternative，转折资产是本 lifelong 的持续资产 | `AlternativeProto`；选择读取领取交付 | 每条交付按最新条目的构造器只启动一个候选 | [6.3](STREAM_LIFELONG.md#scheduling) |
-| 消费方提前结束（`Stream.take`、`takeWhile`、`takeUntil`） | 订阅方的 handler 按条件调用 `endStream` | 自己声明 `streams` 的 Excu，其 Layer 带 `EndsStream` | 节点之后各轮跳过；同单元里由它发布的资产不再驱动读取位置；按读取方计数逐层离开 | [9.5](STREAM_LIFELONG.md#consumer-end) |
-| 没有消费者时停止上游（`share` 的引用计数） | 无需写法 | 读取方登记 | 读取方全部离开时会话退役：停止生产任务 → 封口 → 回收只在会话中开启的 scope → 派生会话的上游也无人读取时一并退役 | [9.5](STREAM_LIFELONG.md#consumer-end) |
-| 资源随流存续（`Stream.acquireRelease`、`Stream.scoped`） | 来源的 Input 上游放 Scoped（如 StreamDemo 的 `SensorLink`） | scope 开启计划、会话挂载 | 会话的使用登记跨步骤持有资源；会话退役后按可达性关闭 | [8.1](STREAM_LIFELONG.md#production)、[9.5](STREAM_LIFELONG.md#consumer-end) |
-| 结束向下游传播并排空 | 无需写法 | — | 封口后读取方领完积压才结束；单元在所需来源排空或节点都结束订阅时结束；全部单元结束后 lifelong 返回 | [9.4](STREAM_LIFELONG.md#end) |
-| 取最后一条（`Stream.runLast`），或随时读最新值 | lifelong 的后继或 lifelong 外写 `requires "T"` | 静态来源表 | 后继读每个来源最新一次发布；lifelong 外由托管会话交付，至少等到一条 | [9.4](STREAM_LIFELONG.md#end)、[8.3](STREAM_LIFELONG.md#production) |
+| 行为 | 组合 | 推导 | 驱动 | 规范 | 或可类比为 |
+| --- | --- | --- | --- | --- | --- |
+| 持续来源，取不到下一份输入时结束 | Stream effect，加挂在它下面、`stream = True` 的 Context；来源没有下一份输入时 handler 调用 `streamEnd` | `BootPlan` 为 Receive；Stream handler 的 Layer 带 `StreamEnds` | 会话的生产任务循环执行 Stream 单步与 parser，每步发布一条；`streamEnd` 使会话封口 | [4](STREAM_LIFELONG.md#bootplan)、[9.4](STREAM_LIFELONG.md#end) | `repeatEffectOption` |
+| 首次需要时才开始生产 | 无需写法 | 会话描述 | 进入 lifelong 时启动本边界的会话；lifelong 外第一次 `require` 时启动托管会话 | [7](STREAM_LIFELONG.md#sessions)、[8.3](STREAM_LIFELONG.md#production) | 流的惰性 |
+| 由上游每条交付驱动产出一条 | Context `stream = True`，Input 链上有 `streams "U"`，本 lifelong 没有它的发布位置 | `BootPlan` 为 Derive | 领取一条 U 的交付 → 执行被驱动的 Input 链 → parser 发布一条；可以逐级串联 | [4.2](STREAM_LIFELONG.md#derive)、[8.1](STREAM_LIFELONG.md#production) | `mapEffect` |
+| 消费步骤的输出成为新的持续资产，不重跑该步骤 | Context 挂在 lifelong 节点的原子句柄下 | `BootPlan` 为 `ReuseOutput [发布节点]` | 节点执行后由挂接 parser 发布，不另开任务；发布节点都结束或所在单元结束后封口 | [4.2](STREAM_LIFELONG.md#derive) | `mapEffect` 的结果再被共享 |
+| 一份资产有多个消费方 | 多个单元或派生会话 `streams` 同一资产 | 同一 lifelong 中一份资产一个会话；读取方登记 | 每个读取方独立游标；保留量由读取义务决定，按历史读取时保留全部，没有背压 | [7](STREAM_LIFELONG.md#sessions)、[7.1](STREAM_LIFELONG.md#retention) | `broadcast`、`share` |
+| 每条交付执行一次消费 | lifelong 中订阅该资产的节点 | `lifelongUnits`、`lifelongSubscriptions` | 单元逐条领取，每条一个 frame，同一单元的调用不重叠 | [6](STREAM_LIFELONG.md#scheduling) | `runForEach` |
+| 多个消费单元并发推进 | `lifelong [parallel [...]]` 的各子项 | 单元拆分 | 各单元并发推进、互不等待 | [6.1](STREAM_LIFELONG.md#scheduling) | 多播后分别运行 |
+| 处理时看到此前的全部交付 | `streams "T"`，方法体 `require @(History T)` | 该读取方按历史读取 | 每条交付附带到这一条为止的历史；累计值由 handler 从历史重算，不是增量状态 | [3.3](STREAM_LIFELONG.md#contracts)、[7.1](STREAM_LIFELONG.md#retention) | 有点像 `scan` 能看到的范围 |
+| 按每条交付的状态选择分支 | lifelong 内的 alternative，转折资产是本 lifelong 的持续资产 | `AlternativeProto`；选择读取领取交付 | 每条交付按最新条目的构造器只启动一个候选 | [6.3](STREAM_LIFELONG.md#scheduling) | 在逐条处理里做 `Match` |
+| 消费方不再消费 | 订阅方的 handler 按条件调用 `endStream` | 自己声明 `streams` 的 Excu，其 Layer 带 `EndsStream` | 节点之后各轮跳过；同单元里由它发布的资产不再驱动读取位置；按读取方计数逐层离开 | [9.5](STREAM_LIFELONG.md#consumer-end) | `take`、`takeWhile` |
+| 没有消费方时停止生产 | 无需写法 | 读取方登记 | 读取方全部离开时会话退役：停止生产任务 → 封口 → 回收只在会话中开启的 scope → 派生会话的上游也无人读取时一并退役 | [9.5](STREAM_LIFELONG.md#consumer-end) | 按引用计数共享的流 |
+| 资源随生产存续 | 来源的 Input 上游放 Scoped（如 StreamDemo 的 `SensorLink`） | scope 开启计划、会话挂载 | 会话的使用登记跨步骤持有资源；会话退役后按可达性关闭 | [8.1](STREAM_LIFELONG.md#production)、[9.5](STREAM_LIFELONG.md#consumer-end) | `acquireRelease` |
+| 结束向下游传播并排空 | 无需写法 | — | 封口后读取方领完积压才结束；单元在所需来源排空或节点都结束订阅时结束；全部单元结束后 lifelong 返回 | [9.4](STREAM_LIFELONG.md#end) | 流的完成 |
+| 结束后或在外部读最新的值 | lifelong 的后继或 lifelong 外写 `requires "T"` | 静态来源表 | 后继读每个来源最新一次发布；lifelong 外由托管会话交付，至少等到一条 | [9.4](STREAM_LIFELONG.md#end)、[8.3](STREAM_LIFELONG.md#production) | `runLast` |
 
-与 Effect-TS 的主要差别：消费按单元逐条拉取，同一单元不并发处理多条；历史为读取方保留，没有容量与背压；含 lifelong 的程序中任何失败暂按临时规则终止整次运行（[9.1](STREAM_LIFELONG.md#failures)）。
+类比在许多地方并不成立，例如：资产是有唯一来源、按名字细化的业务值，不是匿名的元素序列；消费按单元逐条推进，同一单元不并发处理多条；历史为读取方保留，没有容量与背压；`require` 读的是当作不变的值，不是订阅；含 lifelong 的程序中任何失败暂按临时规则终止整次运行（[9.1](STREAM_LIFELONG.md#failures)）。
 
 <a id="stream-drive"></a>
 ### 6.2 运行时据哪些事实选择驱动
@@ -132,15 +133,14 @@
 <a id="stream-missing"></a>
 ### 6.3 尚未覆盖
 
-下列流操作目前没有对应的组合，延期理由见 [Stream 第 11 节](STREAM_LIFELONG.md#deferred)：
+下列行为目前没有对应的组合，延期理由见 [Stream 第 11 节](STREAM_LIFELONG.md#deferred)：
 
-- 过滤（`filter`、`filterMap`）：派生持续资产的跳过；
-- 一条产出多条（`mapConcat`、`flatMap`）；
-- 多个持续来源共同触发一个 target（`merge`、`zip`、`zipLatest`）；
-- 窗口、容量与背压（`buffer`、`grouped`、`sliding`）；
-- 时间（`debounce`、`throttle`、`schedule`）；
-- 分组（`groupByKey`）；
-- 局部失败与重试（`catchAll`、`retry`），以及嵌套 lifelong。
+- 跳过某些交付，不产出（派生持续资产的跳过）；
+- 一条交付产出多条；
+- 多个持续来源共同触发一个 target；
+- 历史的窗口、容量与背压；
+- 按时间节奏驱动（时间周期声明）；
+- 局部失败与重试，以及嵌套 lifelong。
 
 <a id="layer"></a>
 ## 7. handler 的能力也由组合推出
