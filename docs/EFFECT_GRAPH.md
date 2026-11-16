@@ -54,6 +54,8 @@ Stage 3 复用这两个 Boot 构造：Receive／Derive 的每个独立生产步�
 
 启动图之外还检查同单元的路径覆盖：直接订阅或经独立 Derive 间接依赖自身输出时，每条到达订阅的 workflow 路径都须先经过发布位置，或同轮有并行且必经的发布路径；alternative 取各候选的必经交集。跨单元可以条件发布，无须每轮都产出。ReuseOutput parser 及其 requests 路径只允许读取原操作的驱动持续资产，避免挂接过程中再等待其他持续来源；普通资产读取仍按原来源协议检查。
 
+运行时依照同一份会话计划，把根为本单元 ReuseOutput 的直接及单上游 Derive 来源关联到实际轮帧。全部发布位置已完成或跳过、且派生成功步骤已追平上游累计发布数时，才能确认本轮不会再有交付；领取游标不证明处理完成。未知位置继续等待，其他单元及 Receive 来源不使用本轮耗尽判断。会话提交和节点退休共用通知，判断后再次读取会话，避免漏掉刚完成的发布。
+
 Scoped.open 可能复用实例而不交出新 raw，因此它的 AST 位置不能单独证明本轮必有发布。同单元直接或经 Derive 等待这种 ReuseOutput 时，gen 当前保守拒绝；跨单元等待与独立 Derive 仍保留。精确证明某次开启必为 fresh 后放行尚未实现。
 
 这里的“入口使用登记”是原有有限使用闭包的资源含义：一次 AST 入口内，实际 open／require 选中的 scope 计入同一份使用。`ScopeUser` 保留原有 `Unique` 协调身份，并新增 `scopeUserExecution`；同一入口的 ctx chain 使用同一个 `ScopeUser`。`scopeUsers` 同时携带使用者身份与 `Execution`，不以 AST 位置替代并发使用协调。
@@ -62,7 +64,7 @@ Context 的生产记录在生产、发布及返回结束后通过 `finally` 删�
 
 `Binding.bindingOrigin :: Execution` 保存不变的执行出身，`bindingProduction :: Maybe ActivationId` 保存成功生产身份，`bindingFrame :: ExecutionFrame` 保存归属帧。生产失败不替换旧绑定，无资源 scope 的内部占位绑定没有生产身份。`bindingOwnership` 是该次生产独有的共享 `IORef`，保存可选 owner 与待认领使用者。当前捕获、权威表、scope 快照和 Handoff 保留同一绑定；认领不改变值、生产身份、帧、origin 或 publication，scope 复用也不重新发布。
 
-`Framework.Runtime.Frame` 保存有限运行根帧与 lifelong 每轮子帧，按节点记录待执行、执行中、完成和跳过。节点完成晚于诊断与受控结果消费；chained 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本轮已领取的普通伴随资产的 `(生产节点, Context 来源, ActivationId)`，只保存生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。Runtime 中领取会话交付的 `DeliveryFrame` 仍管理视图领取，和这份执行进度分开。Frame 的根与子帧共享发布通知，`frameSignal` 取得当前信号，`notifyFrame` 在普通发布或节点退休后唤醒等待者；Graph 的 `publicationSignal` 转发到同一通知。普通资产仍按 origin 保存；保守等待结束复用这些进度事实，按帧资产 state 与完整等待分析尚未实现。
+`Framework.Runtime.Frame` 保存有限运行根帧与 lifelong 每轮子帧，按节点记录待执行、执行中、完成和跳过。节点完成晚于诊断与受控结果消费；chained 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本轮已领取的普通伴随资产的 `(生产节点, Context 来源, ActivationId)`，只保存生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。Runtime 中领取会话交付的 `DeliveryFrame` 仍管理视图领取，和这份执行进度分开。Frame 的根与子帧共享发布通知，`frameSignal` 取得当前信号，`notifyFrame` 在普通发布、会话状态提交或节点退休后唤醒等待者；Graph 的 `publicationSignal` 转发到同一通知。普通资产仍按 origin 保存；保守等待结束复用这些进度事实，按帧资产 state 与完整等待分析尚未实现。
 
 Scope 实例保存实际参数生产身份与归属帧，Graph 把待用查询装入 ScopeHandler。查询与节点进度、关闭预约共用 scope 协调锁：实例既无实际使用者，也不再被帧内待用节点或子 scope 保留时，Scope 同步清理。完整运行规则见[主设计](LATEST_DESIGN.md#scope-gc)。
 

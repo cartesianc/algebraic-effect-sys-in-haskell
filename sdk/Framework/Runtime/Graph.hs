@@ -395,7 +395,7 @@ obtainSession graph key bindings views = uninterruptibleMask_ $ modifyMVar (runt
   Just sessions -> case lookup key sessions of
     Just session -> pure (registry, session)
     Nothing -> do
-      session <- newSession key bindings views
+      session <- newSession (notifyFrame (runtimeRootFrame graph)) key bindings views
       launch <- readIORef (runtimeLauncher graph)
       launch session
       pure (Just ((key, session) : sessions), session)

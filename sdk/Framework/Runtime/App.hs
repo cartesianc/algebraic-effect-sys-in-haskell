@@ -21,7 +21,7 @@ import Framework.Runtime.Graph
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame (ExecutionFrame, owningFrame)
 import Framework.Language.History (History, historyView)
-import Framework.Runtime.Session (Stopped(..), SourceEnded(..), DeliveryDrained(..), View, awaitHistory)
+import Framework.Runtime.Session (Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..), View, awaitHistory)
 import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, evaluate, fromException, mask, mask_, throwIO, try, finally)
@@ -501,27 +501,32 @@ instance ContextStore env (App env cause) where
       { caller = Nothing, replays = (method, raw) : replays inside }) action
   -- 本次已有视图时直接读取；lifelong 单元中尚未领取的会话资产在第一次读取时领取本次 frame 的交付。
   -- 这时才发现来源已结束并排空：本次调用无法继续，以内部信号交回单元调度，由它正常结束单元。
+  -- 本单元发布、一条都还没有发布过的会话（Undriven）：没有可读的值，按缺值处理（awaitContextHistory 不另找来源）。
   readContextHistory source select = do
     environment <- AppRun ask
     captured <- rawIO (lookup source <$> readIORef (views environment))
     case captured of
       Just view -> pure (Just (historyOf source select view))
-      Nothing | deliveryAllowed environment, Just deliver <- frameDeliver environment source ->
-        captureDelivery environment source select (rawIO deliver)
-          >>= maybe (rawIO (throwIO DeliveryDrained)) (pure . Just)
+      Nothing | deliveryAllowed environment, Just deliver <- frameDeliver environment source -> do
+        delivered <- rawIO deliver
+        case delivered of
+          Left Undriven -> pure Nothing
+          _ -> captureDelivery environment source select (pure delivered)
+            >>= maybe (rawIO (throwIO DeliveryDrained)) (pure . Just)
       Nothing -> pure Nothing
   -- 诊断、收尾与 close 期间不启动会话；读到的历史捕获为本次视图。
   -- 会话已结束时读到最后的完整历史，不重新启动来源；一条都没有发布就结束时没有视图，按缺值报出。
   -- 先于本位置结束的 lifelong 有这个会话时读它最后的历史（lifelong 之后的后继），否则用 interpreter 托管的会话。
   awaitContextHistory source select = do
     environment <- AppRun ask
-    if not (deliveryAllowed environment) then pure Nothing else do
+    if not (deliveryAllowed environment) || isJust (frameDeliver environment source) then pure Nothing else do
       let graph = runtimeGraph environment
       ended <- rawIO (endedSession graph (originNode (executionOrigin (execution environment))) source)
       session <- maybe (rawIO (obtainSession graph (Nothing, source) [] [])) pure ended
       captureDelivery environment source select (rawIO (awaitHistory session))
   streamRawInput = AppRun (asks streamRaw)
-  endStream = rawIO (throwIO SourceEnded)
+  endSource = rawIO (throwIO SourceEnded)
+  endSubscription = rawIO (throwIO SubscriptionEnded)
   recordContextInput source = do
     environment <- AppRun ask
     case openings environment of
@@ -675,6 +680,7 @@ captureDelivery environment source select deliver = do
     Left (Broke (Left exception)) -> rawIO (throwIO exception)
     Left (Broke (Right problem)) -> throwError problem
     Left Drained -> pure Nothing
+    Left Undriven -> pure Nothing
     Right view -> do
       rawIO $ atomicModifyIORef' (views environment) $ \current ->
         ((source, view) : filter ((/= source) . fst) current, ())

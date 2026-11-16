@@ -8,12 +8,13 @@ module Framework.Gen.Bind
   ( Unit(..), Binding(..), Signature(..), AssetDeclaration(..), BranchContract(..), bindProgram
   , specifications, effectPrototypes, specOf, protoOf, resolvedOf, contextSpecs, allMethods
   , readDemands, readType, readerOf, continuousContract, unitTerminals, bindingCalls, readsRaw, resultOf, reference, parenthesized
+  , consumesStream
   , composeMethods, normalizeType
   ) where
 
 import Control.Monad (unless, when)
 import Data.Char (isAlphaNum, isLower, isSpace, isUpper)
-import Data.List (intercalate, nub, sort)
+import Data.List (intercalate, isPrefixOf, nub, sort)
 import Data.Maybe (maybeToList)
 import Framework.Gen.Assembly
 import Framework.Gen.Demand (readsAccess)
@@ -239,9 +240,22 @@ layerOf :: Unit -> EffectSpec -> String -> [String]
 layerOf unit specification method = sort (nub ["SDK.Reads (" ++ readType unit "SDK.History" resolved ++ ") m"
     | resolved <- readDemands unit (name specification)])
   ++ ["SDK.Raw m" | readsRaw specification method, Just _ <- [rawSource unit specification]]
-  -- end 只属于 Stream handler：来源自己在取下一份输入时报告结束。
-  ++ ["SDK.Ends m" | effectKind (typing specification) == StreamKind]
+  -- streamEnd 只属于 Stream handler：来源自己在取下一份输入时报告结束。
+  ++ ["SDK.StreamEnds m" | effectKind (typing specification) == StreamKind]
+  ++ ["SDK.EndsStream m" | consumesStream unit specification]
   ++ [if effectKind (typing specification) == PureKind then "Monad m" else "MonadIO m"]
+
+-- 算法说明 v2（2026-11-17）：endStream 给哪些 effect。
+-- 只给自己以 streams 订阅持续资产的 Excu：它是被持续资产驱动的消费方，endStream 结束的是它自己的订阅。
+-- 同一条链上的其他 effect（Input 前驱）和 lifelong 里不订阅的普通节点是原子操作，lifelong 只是插入它们的控制流，
+-- handler 的签名不随所处的控制流改变，因而可以在持续链与有限链之间复用。
+-- streams 只出现在被驱动的位置（lifelong 节点的订阅、持续 Context 被驱动的 Input 链），
+-- 运行时按当前调用的位置确定订阅，不需要业务说明结束哪一份资产。
+-- 只给 Excu：Scoped.open 被打断会使实例失效，Pure 是值变换，Stream 用 streamEnd。
+-- 代价：每个 effect 查一次自己的 demand。
+consumesStream :: Unit -> EffectSpec -> Bool
+consumesStream unit specification = effectKind (typing specification) == ExcuKind
+  && or [Prototype.demandAccess demand == StreamAccess | demand <- Prototype.effectDemands (protoOf unit (name specification))]
 
 signatureOf :: Unit -> String -> Either String Signature
 signatureOf unit handler' = do

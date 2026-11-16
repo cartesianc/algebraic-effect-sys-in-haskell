@@ -71,7 +71,7 @@ newtype CloseInputError = CloseInputError String
   deriving (Eq, Show, Read)
 
 -- handler nextLine：绑定到 LineFeed。
-type NextLineLayer m = (SDK.Reads (InputFile) m, SDK.Ends m, SDK.Raises NextLineError m, MonadIO m)
+type NextLineLayer m = (SDK.Reads (InputFile) m, SDK.StreamEnds m, SDK.Raises NextLineError m, MonadIO m)
 class NextLineHandler m where
   nextLine :: m String
 
@@ -89,7 +89,7 @@ newtype ParseLineError = ParseLineError String
   deriving (Eq, Show, Read)
 
 -- handler printLine：绑定到 PrintLine。
-type PrintLineLayer m = (SDK.Reads (SDK.History (Line)) m, SDK.Raises PrintLineError m, MonadIO m)
+type PrintLineLayer m = (SDK.Reads (SDK.History (Line)) m, SDK.EndsStream m, SDK.Raises PrintLineError m, MonadIO m)
 class PrintLineHandler m where
   printLine :: m [String]
 
@@ -98,7 +98,7 @@ newtype PrintLineError = PrintLineError String
   deriving (Eq, Show, Read)
 
 -- handler countText：绑定到 TextCounter。
-type CountTextLayer m = (SDK.Reads (SDK.History (Line)) m, SDK.Raises CountTextError m, MonadIO m)
+type CountTextLayer m = (SDK.Reads (SDK.History (Line)) m, SDK.EndsStream m, SDK.Raises CountTextError m, MonadIO m)
 class CountTextHandler m where
   countText :: m [String]
 
@@ -116,7 +116,7 @@ newtype ParseTotalError = ParseTotalError String
   deriving (Eq, Show, Read)
 
 -- handler showTotal：绑定到 ShowTotal。
-type ShowTotalLayer m = (SDK.Reads (SDK.History (Total)) m, SDK.Raises ShowTotalError m, MonadIO m)
+type ShowTotalLayer m = (SDK.Reads (SDK.History (Total)) m, SDK.EndsStream m, SDK.Raises ShowTotalError m, MonadIO m)
 class ShowTotalHandler m where
   showTotal :: m [String]
 

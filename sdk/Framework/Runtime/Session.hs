@@ -6,18 +6,20 @@
 -- 会话按（lifelong 边界，生产该资产的 Context 注册名）区分；注册名与运行时绑定来源同名。
 -- Nothing 边界是 interpreter 托管的会话。
 module Framework.Runtime.Session
-  ( SessionKey, View, Delivery, Broken, Stopped(..), SourceEnded(..), DeliveryDrained(..)
+  ( SessionKey, View, Delivery, Broken, Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..)
   , Session, sessionKey, sessionBindings, sessionViews
   , newSession, appendDelivery, breakSession, endSession, wakeSession, setSessionWorker, stopSession
-  , awaitHistory, Cursor, admitReaders, leaveSession, takeDelivery, feedSession, awaitUpstream
+  , setSessionRetirement, retireSession, departSession, sessionIdle
+  , awaitHistory, currentHistory, Cursor, admitReaders, leaveSession, takeDelivery, takeDeliveryOn, completeSessionStep, sessionCaughtUp, feedSession, awaitUpstream, upstreamOf
   ) where
 
 import Control.Concurrent (ThreadId, killThread)
 import Control.Concurrent.MVar
-  (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, takeMVar, tryPutMVar)
-import Control.Exception (Exception, SomeException, mask, onException, uninterruptibleMask_)
-import Control.Monad (forM, void)
+  (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, takeMVar, tryPutMVar, tryReadMVar)
+import Control.Exception (Exception, SomeException, finally, mask, onException, uninterruptibleMask_)
+import Control.Monad (forM, void, when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.Maybe (isJust)
 import Data.Sequence (Seq, (|>))
 import qualified Data.Sequence as Seq
 import Framework.Language.Handler (Failure)
@@ -39,14 +41,21 @@ type Broken cause = Either SomeException (Failure cause)
 
 -- 领取不到交付的原因。Drained：来源已正常结束，且已发布的交付都已领取（或所在单元正在结束）；
 -- 这是正常终止，不是失败。Broke：会话失败。
-data Stopped cause = Drained | Broke (Broken cause)
+-- Undriven：本轮发布位置及其派生处理已稳定，没有未领取的发布；不是暂时缺值。
+data Stopped cause = Drained | Broke (Broken cause) | Undriven
 
 -- SDK 内部的正常结束信号，以异常形式越过方法体；不是业务 Failure，不进入 Error 协议，
 -- 也不被方法体内的 catchError 接住。
--- SourceEnded：Stream handler 调用 end，由生产任务接住并结束会话。
+-- SourceEnded：Stream handler 调用 streamEnd，由生产任务接住并结束会话。
 data SourceEnded = SourceEnded
 instance Show SourceEnded where show _ = "SDK stream source ended"
 instance Exception SourceEnded
+
+-- SubscriptionEnded：消费方 handler 调用 endStream。lifelong 节点由单元调度接住，记为该节点的订阅结束；
+-- Derive 会话的被驱动链由生产任务接住，派生会话不再消费上游并结束自己的发布。
+data SubscriptionEnded = SubscriptionEnded
+instance Show SubscriptionEnded where show _ = "SDK stream subscription ended"
+instance Exception SubscriptionEnded
 
 -- DeliveryDrained：调用内第一次读取才领取交付，而会话已结束并排空；由单元调度接住并结束单元。
 data DeliveryDrained = DeliveryDrained
@@ -61,6 +70,8 @@ data SessionState environment cause = SessionState
   -- 发布序号小于 stateCleared 的伴随发布已被全部读取方领取，换成了空值。
   , stateCompanions :: Seq (ScopeBindings environment cause)
   , stateCleared :: Int
+  -- Derive 已完整处理的上游交付数。领取游标在业务执行前推进，不能充当完成水位。
+  , stateProcessed :: !Int
   -- 会话不再接受新发布：来源正常结束（Drained）或失败（Broke）。已有条目保留。
   , stateStopped :: Maybe (Stopped cause)
   -- 下一次变化时填入；等待方读到后重新取状态。每次变化换上新的空信号。
@@ -78,6 +89,11 @@ data SessionWorker
   | RunningWorker ThreadId (MVar ())
   | StoppingWorker (MVar ())
 
+-- 读取方全部离开后的退役：停止生产任务、封住发布、回收只在会话中开启的 scope。
+-- 动作由 Runtime 在启动生产任务时安装；没有独立生产任务的会话（ReuseOutput、interpreter 托管）不安装，
+-- 退役是空操作。成功完成后不再执行；并发调用等待当前尝试，未完成的尝试可以接续重试。
+data Retirement = Unretired (IO ()) | Retiring (MVar ()) | Retired
+
 -- 边界的交接：进入 lifelong 时已经捕获的绑定与视图（例如外层 alternative 选择时读到的值）。
 -- 每个生产步骤都从这份交接开始；interpreter 托管的会话没有交接。
 data Session environment cause = Session
@@ -89,15 +105,18 @@ data Session environment cause = Session
   -- 由另一份持续资产驱动的会话：上游会话，以及本会话在其中的游标。上游在进入 lifelong 时登记读取方，
   -- 之后才交来；生产任务取得它之前不执行。由 Stream 驱动的会话不使用。
   , sessionUpstream :: MVar (Session environment cause, Cursor)
+  , sessionRetirement :: MVar Retirement
+  -- 同一次运行的执行帧通知：发布、派生完成与节点退休共用它，局部等待不会丢失进度变化。
+  , sessionNotify :: IO ()
   }
 
-newSession :: SessionKey -> ScopeBindings environment cause -> [(String, View environment cause)]
+newSession :: IO () -> SessionKey -> ScopeBindings environment cause -> [(String, View environment cause)]
            -> IO (Session environment cause)
-newSession key bindings views = do
+newSession notify key bindings views = do
   signal <- newEmptyMVar
   let readers = maybe (Just []) (const Nothing) (fst key)
-  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Nothing signal readers) <*> newMVar NoWorker
-    <*> newEmptyMVar
+  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 0 Nothing signal readers) <*> newMVar NoWorker
+    <*> newEmptyMVar <*> newMVar (Unretired (pure ())) <*> pure notify
 
 -- 两次相等的值仍是两条发布；会话已经结束或失败时不再接受新条目。
 appendDelivery :: Session environment cause -> ScopeBindings environment cause -> ScopeBinding environment cause -> IO ()
@@ -129,7 +148,10 @@ changeState session update = mask $ \restore -> do
   settled <- restore (traverse settle (update state)) `onException` putMVar (sessionState session) state
   case settled of
     Nothing -> putMVar (sessionState session) state
-    Just changed -> putMVar (stateSignal state) () >> putMVar (sessionState session) changed
+    Just changed -> do
+      putMVar (stateSignal state) ()
+      putMVar (sessionState session) changed
+      sessionNotify session
   where
     settle changed = do
       fresh <- newEmptyMVar
@@ -167,29 +189,57 @@ release state = case stateReaders state of
 wakeSession :: Session environment cause -> IO ()
 wakeSession session = changeState session Just
 
--- 等到状态满足条件。条件优先：结束或失败的会话仍先交出已有的结果（来源结束后的排空）；
--- 条件不满足且会话已停止时返回原因。interrupted 是等待方自己的打断条件（所在单元正在结束），
--- 只在需要等待时检查，由 wakeSession 唤醒后生效，按 Drained 返回。
--- 它只让等待退出，不决定拿到交付的位置能否启动：被新数据唤醒的等待者仍会取得交付，
--- 是否 boot 由调用方在交付到手后另行判定（Runtime.frameAdmits）。
-awaitState :: Session environment cause -> IO Bool -> (SessionState environment cause -> Maybe result)
+-- 等待协议 v2（2026-11-17）：先取得变化信号，再检查发布和停止条件。局部交付使用执行帧
+-- 的共享信号，同时观察节点退休与派生完成；普通会话读取仍只等自己的状态变化。
+-- 稳定判据可能晚于第一次状态快照，返回 Undriven 前必须重读：判据已经看到的发布不能被跳过。
+-- 交付优先于终态，终态优先于等待方的退出原因；启动许可仍由 Runtime.frameAdmits 判定。
+awaitState :: Session environment cause -> IO (Maybe (Stopped cause)) -> (SessionState environment cause -> Maybe result)
            -> IO (Either (Stopped cause) result)
-awaitState session interrupted ready = do
+awaitState session = awaitStateOn (stateSignal <$> readMVar (sessionState session)) session
+
+awaitStateOn :: IO (MVar ()) -> Session environment cause -> IO (Maybe (Stopped cause))
+             -> (SessionState environment cause -> Maybe result) -> IO (Either (Stopped cause) result)
+awaitStateOn signal session interrupted ready = do
+  changed <- signal
   state <- readMVar (sessionState session)
-  case (ready state, stateStopped state) of
-    (Just result, _) -> pure (Right result)
-    (Nothing, Just reason) -> pure (Left reason)
-    (Nothing, Nothing) -> do
-      -- 状态快照先于检查：之后的 wakeSession 要么填入这份快照的信号，要么发生在检查之前。
+  case select state of
+    Just outcome -> pure outcome
+    Nothing -> do
       halted <- interrupted
-      if halted then pure (Left Drained)
-        else readMVar (stateSignal state) >> awaitState session interrupted ready
+      case halted of
+        Just reason -> do
+          latest <- readMVar (sessionState session)
+          pure (maybe (Left reason) id (select latest))
+        Nothing -> readMVar changed >> awaitStateOn signal session interrupted ready
+  where
+    select state = case (ready state, stateStopped state) of
+      (Just result, _) -> Just (Right result)
+      (Nothing, Just reason) -> Just (Left reason)
+      (Nothing, Nothing) -> Nothing
+
+-- 仅在 Derive 一步成功返回后推进；失败和 endStream 走封口/失败协议，不提前宣告处理完成。
+completeSessionStep :: Session environment cause -> IO ()
+completeSessionStep session = changeState session $ \state ->
+  Just state { stateProcessed = stateProcessed state + 1 }
+
+-- 调用方先证明上游本轮稳定，再读取上游累计发布数，最后比较本会话的完成水位。
+-- stateBase + 长度不受历史裁剪影响；不能把“已领取”误作“解析和发布已经完成”。
+sessionCaughtUp :: Session environment cause -> Session environment cause -> IO Bool
+sessionCaughtUp session upstream = do
+  total <- (\state -> stateBase state + Seq.length (stateEntries state)) <$> readMVar (sessionState upstream)
+  (\state -> stateProcessed state >= total) <$> readMVar (sessionState session)
 
 -- lifelong 外的有限读取：至少有一条发布后取当时保留的视图，读取方只用它的最新一条；之后的发布不改写这次视图。
 -- 来源结束后仍读到最后一条；一条都没有发布就结束时返回 Drained。
 awaitHistory :: Session environment cause -> IO (Either (Stopped cause) (View environment cause))
-awaitHistory session = awaitState session (pure False) $ \state ->
+awaitHistory session = awaitState session (pure Nothing) $ \state ->
   if Seq.null (stateEntries state) then Nothing else Just (stateEntries state)
+
+-- 不等待地取当前保留的视图：一条都没有发布时为 Nothing。本单元发布的会话本轮没有新发布时，
+-- 只读最新一条的读取（require）用它读已有的一条，不推进游标。
+currentHistory :: Session environment cause -> IO (Maybe (View environment cause))
+currentHistory session = (\state -> if Seq.null (stateEntries state) then Nothing else Just (stateEntries state))
+  <$> readMVar (sessionState session)
 
 -- 消费游标属于（单元，会话）：记录已经交付的条数，每次交付推进一条。
 -- 单元逐轮推进同一个游标；一轮内并发读取由 Runtime.Frame 的领取槽合并，
@@ -212,22 +262,69 @@ admitReaders session accesses = modifyMVar (sessionState session) $ \state -> do
   pure (settled, cursors)
 
 -- 读取方离开：它不会再领取这个会话的交付，为它保留的历史与积压可以放掉。
--- 目前在单元结束时调用（所需来源结束并排空、失败或取消）；消费方主动结束单元时走同一个入口。
--- 这里只决定保留多少数据，不停止生产：没有读取方的来源是否停止属于消费方结束的规则，尚未确定。
-leaveSession :: Session environment cause -> Cursor -> IO ()
-leaveSession session cursor = modifyMVar_ (sessionState session) $ \state ->
-  release state { stateReaders = filter (/= cursor) <$> stateReaders state }
+-- 单元不再有读取这个会话的活节点、单元结束、Derive 会话不再消费上游时调用；重复离开不改变状态。
+-- 返回 True 表示这次离开使已登记的读取方从有到无（引用计数归零）：调用方据此在锁外退役会话。
+-- 失败或取消路径只离开、不退役，停止交给 lifelong 返回或运行结束的既有收尾。
+leaveSession :: Session environment cause -> Cursor -> IO Bool
+leaveSession session cursor = modifyMVar (sessionState session) $ \state -> do
+  let before = stateReaders state
+      after = filter (/= cursor) <$> before
+  settled <- release state { stateReaders = after }
+  pure (settled, fmap null before == Just False && fmap null after == Just True)
+
+-- 正常路径上的离开：计数归零时退役会话。退役等待生产任务收尾，不能在会话状态锁内调用。
+departSession :: Session environment cause -> Cursor -> IO ()
+departSession session cursor = do
+  idle <- leaveSession session cursor
+  when idle (retireSession session)
+
+-- 已登记读取方、且全部离开。interpreter 托管的会话不登记读取方，不按计数退役。
+sessionIdle :: Session environment cause -> IO Bool
+sessionIdle session = (\state -> fmap null (stateReaders state) == Just True && isJust (fst (sessionKey session)))
+  <$> readMVar (sessionState session)
+
+setSessionRetirement :: Session environment cause -> IO () -> IO ()
+setSessionRetirement session action = modifyMVar_ (sessionRetirement session) $ \retirement -> case retirement of
+  Unretired _ -> pure (Unretired action)
+  _ -> pure retirement
+
+-- 只有成功跑完退役才标记 Retired；取消或异常恢复待退役状态，等待方醒来后重新争取执行权。
+-- 取得执行权到装上收尾在同一屏蔽区内；状态提交与唤醒不可中断，不把“尝试退出”当成“退役完成”。
+-- 退役动作可接续重试：stop/end 幂等，scope 回收在每次 close 尝试后消费登记，不重试该 close。
+retireSession :: Session environment cause -> IO ()
+retireSession session = mask $ \restore -> do
+  selected <- modifyMVar (sessionRetirement session) $ \retirement -> case retirement of
+    Unretired action -> do
+      done <- newEmptyMVar
+      pure (Retiring done, Just (Just action, done))
+    Retiring done -> pure (retirement, Just (Nothing, done))
+    Retired -> pure (Retired, Nothing)
+  case selected of
+    Nothing -> pure ()
+    Just (Just retire, done) -> do
+      restore retire `onException` complete (Unretired retire) done
+      complete Retired done
+    Just (Nothing, done) -> restore (readMVar done >> retireSession session)
+  where
+    complete retirement done = uninterruptibleMask_ $ do
+      modifyMVar_ (sessionRetirement session) (const (pure retirement))
+      void (tryPutMVar done ())
 
 -- 领取下一条尚未交付的发布；视图是到这一条为止保留的条目（按历史读取时是完整历史），另带这一条的伴随发布。
--- 有积压时立即返回，没有时挂起等待；来源结束后先排空积压，游标到达末尾才返回 Drained。
--- 游标前进只表示领取，不表示处理完成。
-takeDelivery :: Session environment cause -> Cursor -> IO Bool
+-- 有积压时立即返回，没有时挂起等待（interrupted 给出原因时不等待，返回该原因）；
+-- 来源结束后先排空积压，游标到达末尾才返回 Drained。游标前进只表示领取，不表示处理完成。
+takeDelivery :: Session environment cause -> Cursor -> IO (Maybe (Stopped cause))
              -> IO (Either (Stopped cause) (Delivery environment cause))
-takeDelivery session Idle _ = ioError (userError ("A lifelong unit takes a delivery of " ++ snd (sessionKey session)
+takeDelivery session = takeDeliveryOn (stateSignal <$> readMVar (sessionState session)) session
+
+-- DeliveryFrame 用同一执行帧的通知同时等待发布、派生步骤完成和本轮节点退休。
+takeDeliveryOn :: IO (MVar ()) -> Session environment cause -> Cursor -> IO (Maybe (Stopped cause))
+               -> IO (Either (Stopped cause) (Delivery environment cause))
+takeDeliveryOn _ session Idle _ = ioError (userError ("A lifelong unit takes a delivery of " ++ snd (sessionKey session)
   ++ " without a read point in the prototype; regenerate with the SDK effect-codegen command"))
-takeDelivery session (Reading _ position) interrupted = do
+takeDeliveryOn signal session (Reading _ position) interrupted = do
   delivered <- readIORef position
-  outcome <- awaitState session interrupted $ \state ->
+  outcome <- awaitStateOn signal session interrupted $ \state ->
     let offset = delivered - stateBase state
     in if Seq.length (stateEntries state) > offset
       then Just (Seq.take (offset + 1) (stateEntries state), Seq.index (stateCompanions state) offset)
@@ -247,6 +344,10 @@ feedSession session upstream cursor = void (tryPutMVar (sessionUpstream session)
 -- 由上游驱动的生产任务在第一步之前等待交接。
 awaitUpstream :: Session environment cause -> IO (Session environment cause, Cursor)
 awaitUpstream = readMVar . sessionUpstream
+
+-- 退役时查看上游：尚未交接（Stream 驱动或还没进入 lifelong）时为 Nothing。
+upstreamOf :: Session environment cause -> IO (Maybe (Session environment cause))
+upstreamOf session = fmap fst <$> tryReadMVar (sessionUpstream session)
 
 -- Graph 在会话登记锁与不可中断区内启动并登记任务，再把 Session 交给使用方。
 -- 一个会话只登记一次；ReuseOutput 不登记 worker。finished 由 Runtime 在撤销 ScopeUser 后填满。

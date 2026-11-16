@@ -10,7 +10,7 @@
 
 module LinesDemo.Handlers () where
 
-import Framework.SDK (Ends(..), History, Raises(..), Raw(..), Reads(..), historyEntries, historySize, latest)
+import Framework.SDK (StreamEnds(..), History, Raises(..), Raw(..), Reads(..), historyEntries, historySize, latest)
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
 import Control.Monad.IO.Class (liftIO)
@@ -41,13 +41,13 @@ instance CloseInputLayer m => CloseInputHandler m where
     liftIO (hClose file >> putStrLn ("[close] " ++ path))
     pure []
 
--- 一次读一行。文件读完时 end：这一步不交出输入，parser 不执行，生产会话正常结束；
+-- 一次读一行。文件读完时 streamEnd：这一步不交出输入，parser 不执行，生产会话正常结束；
 -- 已经发布的行仍会交给 PrintLine 处理完。
 instance NextLineLayer m => NextLineHandler m where
   nextLine = do
     InputFile _ file <- require @InputFile
     finished <- liftIO (hIsEOF file)
-    if finished then end else liftIO (hGetLine file)
+    if finished then streamEnd else liftIO (hGetLine file)
 
 instance ParseLineLayer m => ParseLineHandler m where
   parseLine = do

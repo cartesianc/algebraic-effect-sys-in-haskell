@@ -174,11 +174,20 @@ instance FrameworkRuntime.Raw (At "TemperatureParser") where
 instance FrameworkRuntime.Raw (At "Heartbeat") where
   raw = At ((: []) <$> nextHeartbeatClock)
 
-instance FrameworkRuntime.Ends (At "TemperatureFeed") where
-  end = At FrameworkRuntime.endStream
+instance FrameworkRuntime.StreamEnds (At "TemperatureFeed") where
+  streamEnd = At FrameworkRuntime.endSource
 
-instance FrameworkRuntime.Ends (At "HeartbeatClock") where
-  end = At FrameworkRuntime.endStream
+instance FrameworkRuntime.StreamEnds (At "HeartbeatClock") where
+  streamEnd = At FrameworkRuntime.endSource
+
+instance FrameworkRuntime.EndsStream (At "ShowTemperature") where
+  endStream = At FrameworkRuntime.endSubscription
+
+instance FrameworkRuntime.EndsStream (At "CheckTrend") where
+  endStream = At FrameworkRuntime.endSubscription
+
+instance FrameworkRuntime.EndsStream (At "ReportHeartbeat") where
+  endStream = At FrameworkRuntime.endSubscription
 
 openSensorLink :: FrameworkGenerated.App [String]
 openSensorLink = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openSensorLink" . FrameworkRuntime.openScope "SensorLink" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
