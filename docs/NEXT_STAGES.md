@@ -667,7 +667,14 @@ Stream 生产链和 lifelong 中反复执行的 original chain 均通过 Context
 
 - **领取与内部计数**：领取槽的登记到安装异常收尾在同一取消屏蔽区内；首个领取方被取消也会填写结果，其他读取方不会遗留空槽。派生完成水位为严格的内部计数，不积累计算链，也不强制业务资产求值。
 
-**本次验证：`cabal build all --offline -j1` 通过，退出码 0。** 未运行 demo，未新增或执行探针、测试；以上并行调度、派生处理与取消边界依据源码审查，先前示例和临时探针的结果不作为此次验证。
+**本次验证（4e33914）：** `cabal build all --offline -j1` 通过，无警告；八个 namespace 重新生成，生成结果无变化。FileDemo、OpenFilesDemo、ScopeReuseDemo、ScopeInstancesDemo、LinesDemo、crawler-demo 均为 `Succ`。临时改写示例逐项观察后已还原，对照组在修正前的 6c40004 上运行同一探针：
+
+- **同单元并行发布**：LinesDemo 改为 `chained [parallel [chained [PrintLine, TextCounter], ShowTotal]]`。当前实现运行 5 次，每次统计 4 条，`Report` 读到 4 行 40 字符；6c40004 运行 5 次，有 1 次只统计到 3 条（漏消费）。`CountText` 在第 3 行 `endStream` 时，当前实现 5 次都统计 2 条后正常结束。
+- **经 Derive 的间接依赖**：LinesDemo 临时加入派生链 `RunningTotal` → `DescribeTotal`／`LabelParser` → `TotalLabel`（`BootPlan` 为 Derive），同一单元 `chained [PrintLine, TextCounter, ShowLabel]` 中 `ShowLabel` 订阅 `TotalLabel`。不结束时 3 次都逐行打印统计与标签，`Succ`；`CountText` 在第 3 行 `endStream` 时，当前实现 3 次都打印两条标签后正常结束，`Report` 读到 2 行 21 字符；6c40004 挂住，30 秒超时退出。
+- **同单元串行**：`chained [PrintLine, TextCounter, ShowTotal]` 不结束、`CountText` 结束、两者都结束，各运行 5 次，结果与首轮复核记录相同。
+- **StreamDemo**：三个消费方都 `endStream`，传感器断开后以 `Succ [AnnounceResult ()]` 结束。
+
+未覆盖：退役被取消后由后续调用接续完成，只经源码审查，没有探针复现取消时机；会话变化通过共享信号唤醒整次运行的等待者，正确但读取方很多时有多余唤醒，未做性能测量；同单元 `require` 读取位置排在其发布节点之前的写法，gen 的启动依赖检查不覆盖 `require`，是否会被其他检查拒绝尚未确认（main 上同样存在）；没有新增测试或负例，探针没有入库。
 
 #### 尚未确定或尚未实现
 
