@@ -194,7 +194,7 @@ ScopeTree 单独构造并保持无环，供依赖清理和 Error 祖先导航使
 
 规则按“输入前提 → 推导结构 → 运行行为 → 无法判定时的诊断”书写。能力去重不等于实际调用去重，结构可达不等于本次生产或后续持续推进；等待也不能自动解释为失败。
 
-资源的共享与清理同样只凭声明推导，不用 key 或寿命标签：`requests` 发起一次新的生产，`requires` 引用已有的一次生产，开启参数以哪种方式进入 scope，决定这次开启是多例还是单例，也决定实例何时关闭。规则见[单例与多例](#scope-identity)。
+框架因此不按行为提供操作名，全部由组合推导出的行为登记在[组合推导](COMPOSITION.md)。资源的共享与清理同样只凭声明推导，不用 key 或寿命标签：`requests` 发起一次新的生产，`requires` 引用已有的一次生产，开启参数以哪种方式进入 scope，决定这次开启是多例还是单例，也决定实例何时关闭。规则见[单例与多例](#scope-identity)。
 
 Stream 的目标是让原子方法作者只需理解本方法的输入输出。gencode 静态推导 BootPlan，interpreter 执行它；不在运行中猜测业务属于 socket、event 还是 behavior，三种驱动关系目前的写法见 [Stream 第 4.1 节](STREAM_LIFELONG.md#drives)。完整匹配与回调规则作为[主设计第 7 章](LATEST_DESIGN.md#stream)的一部分维护。
 
@@ -817,6 +817,7 @@ sdk/Framework/
 | [EFFECT_GRAPH](EFFECT_GRAPH.md) | Prototype、来源分析、运行图、ScopeTree 和缓存 |
 | [ASSETS](ASSETS.md) | 源码资产集合、顶层白名单和资产目录 |
 | [STREAM_LIFELONG](STREAM_LIFELONG.md) | 第 7 章引用的持续执行完整规范 |
+| [COMPOSITION](COMPOSITION.md) | 组合推导的对照：业务组合 → gen 推出的事实 → 运行时驱动，按主题逐行登记并链接各专题；随由组合推导的行为增加而增长，不维护协议本身 |
 | [Next stages](NEXT_STAGES.md) | 唯一阶段计划入口，保存待审查摘要、开放项与必要的完成摘要 |
 
 新手从 README 和 GUIDE 进入；维护者或 LLM 从 AGENTS 按任务进入本页章节及相关专题。不要为同一规则另建摘要文件或复制一份规范。

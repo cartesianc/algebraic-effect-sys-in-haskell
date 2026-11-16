@@ -1,6 +1,6 @@
 # Stream 与 lifelong：资产驱动的自动装配
 
-本文通过引用构成[主设计第 7 章](LATEST_DESIGN.md#stream)的完整规范。主设计负责架构地图，本页唯一维护 Stream 的匹配、交付和调度规则；实施记录在 [Next stages](NEXT_STAGES.md)，写法示例在[使用指南第五节](GUIDE.md#stream)。
+本文通过引用构成[主设计第 7 章](LATEST_DESIGN.md#stream)的完整规范。主设计负责架构地图，本页唯一维护 Stream 的匹配、交付和调度规则；实施记录在 [Next stages](NEXT_STAGES.md)，写法示例在[使用指南第五节](GUIDE.md#stream)。SDK 没有流操作 API，各种流行为由组合推出；它们与 Effect-TS Stream 操作的对照及运行时的分支依据见[组合推导第 6 节](COMPOSITION.md#stream)。
 
 更新：2026-11-17。状态：已实现（Stage 3 第 1–6 批；Stage 2 改为 Stream 加 parser、取消 RepeatRequest；Stage 6 第一步：Stream 的正常结束 `streamEnd`、排空、单元结束与 lifelong 返回，见[第 9.4 节](#end)；消费方结束 `endStream` 与读取方计数归零时停产，见[第 9.5 节](#consumer-end)；会话历史按读取义务保留，见[第 7.1 节](#retention)；由持续资产驱动的持续资产，见[第 4.2 节](#derive)）；当前实现限制见 [Next stages](NEXT_STAGES.md#current-limits)，延期项见[第 11 节](#deferred)。
 

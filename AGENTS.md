@@ -41,6 +41,7 @@
 | 改 Stream／lifelong | [主设计第 7 章](docs/LATEST_DESIGN.md#stream)、[完整规范](docs/STREAM_LIFELONG.md)、[Next stages](docs/NEXT_STAGES.md)，以及将修改的当前协议 |
 | 设计持续执行的结束与清理 | [六阶段计划](docs/NEXT_STAGES.md#stages)、[主设计第 7 章](docs/LATEST_DESIGN.md#stream)、[运行语义：scope](docs/LATEST_DESIGN.md#scope) |
 | 设计 Middleware 与 Hanging | [后续专题](docs/NEXT_STAGES.md#middleware)、[Root 入口包装](docs/LATEST_DESIGN.md#calls) |
+| 新增或查找由组合推导的行为（不新增方法名或 tag，由 Prototype 组合决定运行驱动） | [组合推导](docs/COMPOSITION.md)、所属专题；新行为先写专题规则，再在组合推导中登记一行 |
 | 修改文档 | [文档职责与维护规则](docs/LATEST_DESIGN.md#documents)，只在所属专题维护详细规范 |
 
 ## 源码定位
