@@ -1,6 +1,6 @@
 # Next stages
 
-更新：2026-11-18。本文是阶段计划与开放项的唯一入口，保存各阶段的目标、剩余工作和必要的完成摘要。当前协议在[主设计](LATEST_DESIGN.md)及其专题中维护；历史验证集中在[验证边界](#baseline)，不代表本次重新执行。
+更新：2026-11-18。本文是阶段计划与开放项的唯一入口，保存各阶段的目标、剩余工作和必要的完成摘要。当前协议在[主设计](CORE_DESIGN.md)及其专题中维护；历史验证集中在[验证边界](#baseline)，不代表本次重新执行。
 
 **当前进度：** handler 复用、scope 可达性回收、Stream 两侧结束、后继读取、交付保留和会话退役已落地。持续生产与有限取值的组合边界已经补齐，生成期无来源诊断、签名报错与组合设计收尾已完成；Receive 来源到 parser 的资源交接及示例 close 已修复，验证见[本轮记录](#receive-resource-verification)。[静态协议检查收口](#protocol-checks)已完成本轮范围，已补上既有 Binding ownership 的交付与执行保留，并进一步按会话待用帧回收不再使用的具体实例。Stage 5／7 本轮范围与验证见[阶段说明](#stage-5)；任意业务 ADT 内嵌资源转为独立开放专题。
 
@@ -16,7 +16,7 @@
 
 目标是在现有架构内统一持续执行、资产访问和资源收尾。保持原子 handler、业务 effect、Context 解析与 workflow 驱动的分工，以及 Prototype／RuntimeGraph 和独立无环 ScopeTree；不为实现方便增加 effect 类别、手写装配层、资源寿命标签或 cleanup policy。
 
-资产引用的内存回收与 `Scoped.close` 管理的资源释放分别处理。释放引用不能替代关闭资源，业务资产保存记录也不能自动保证其中引用的资源仍然可用。完整设计原则见[主设计](LATEST_DESIGN.md#principles)。
+资产引用的内存回收与 `Scoped.close` 管理的资源释放分别处理。释放引用不能替代关闭资源，业务资产保存记录也不能自动保证其中引用的资源仍然可用。完整设计原则见[主设计](CORE_DESIGN.md#principles)。
 
 <a id="stages"></a>
 ## 阶段地图
@@ -84,7 +84,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 <a id="stage-1"></a>
 ### Stage 1：资产来源与接收契约
 
-**已完成。** 保留的核心是：每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；访问方式不另造资产身份，一个消费者可以依赖多个资产。当前约束见[资产来源与访问](LATEST_DESIGN.md#demand-contract)。
+**已完成。** 保留的核心是：每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；访问方式不另造资产身份，一个消费者可以依赖多个资产。当前约束见[资产来源与访问](CORE_DESIGN.md#demand-contract)。
 
 早期要求 handler 显式匹配生成资产构造器，后来妨碍同一原子操作在不同来源间复用。该接收检查和 Context 的 request 角色已由 Stage 2 取代，不再把旧写法作为候选接口保留。
 
@@ -95,7 +95,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 
 这解决了“同一个写入操作因为来源不同而重复实现”的问题。alternative 处理同一资产的构造器分支，不能替代跨 Context 来源的装配；无需为复用新增 `resource`、`oneOf` 或链路 newtype。handler 定义共享不合并实际调用。
 
-当前写法与检查分别见[指南：handler](GUIDE.md#handlers)、[注册契约](LATEST_DESIGN.md#registration)、[入口装配](LATEST_DESIGN.md#calls)和[源码资产约束](ASSETS.md)。SDK 四层分工见 [gen 是编译器](LATEST_DESIGN.md#compiler)。
+当前写法与检查分别见[指南：handler](GUIDE.md#handlers)、[注册契约](CORE_DESIGN.md#registration)、[入口装配](CORE_DESIGN.md#calls)和[源码资产约束](ASSETS.md)。SDK 四层分工见 [gen 是编译器](CORE_DESIGN.md#compiler)。
 
 <a id="stage-2-later"></a>
 持续资产的取值与驱动归 [Stage 4](#stage-4)；Error 驱动链、来源调度扩展等归[开放事项](#deferred)。现有 socket／event／behavior 的单步写法见 [Stream 规范](STREAM_LIFELONG.md#drives)，不把自动分类或外部回调适配说成当前能力。
@@ -194,7 +194,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 <a id="stage-2-await"></a>
 ## 普通 require 的完整等待迁移
 
-**最低限度的保守结束已实现；静态无来源拒绝在[本轮收尾](#composition-review)补齐，完整迁移已定方向、未实施。** 当前仍按 origin 保存普通资产，使用捕获与静态来源表；规则见[Context](LATEST_DESIGN.md#context)。目标可见性、确定性与帧语义仅在[完整等待方案](LATEST_DESIGN.md#await-visibility)维护。
+**最低限度的保守结束已实现；静态无来源拒绝在[本轮收尾](#composition-review)补齐，完整迁移已定方向、未实施。** 当前仍按 origin 保存普通资产，使用捕获与静态来源表；规则见[Context](CORE_DESIGN.md#context)。目标可见性、确定性与帧语义仅在[完整等待方案](CORE_DESIGN.md#await-visibility)维护。
 
 后续实施落点：
 
@@ -214,12 +214,12 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 <a id="pure-pipeline"></a>
 ### Pure 与 list 原子输出（2026-11-12）
 
-Pure 成为生产链中的值变换，Excu／Scoped 的原子输出统一为 `[String]`；parser 继续负责把输出变成资产。它分开了值变换与细化解析的职责，取代旧守卫接口。当前写法、位置限制和失败协议见[主设计：Pure](LATEST_DESIGN.md#pure)，不重复迁移清单。
+Pure 成为生产链中的值变换，Excu／Scoped 的原子输出统一为 `[String]`；parser 继续负责把输出变成资产。它分开了值变换与细化解析的职责，取代旧守卫接口。当前写法、位置限制和失败协议见[主设计：Pure](CORE_DESIGN.md#pure)，不重复迁移清单。
 
 <a id="scope-gc"></a>
 ### scope 身份、回收与关闭诊断（2026-11-13）
 
-Binding 的生产身份与执行帧支持单例／多例匹配和待用分析；ScopeTree 保持独立无环。close 可选，普通关闭失败只报告，取消在其余收尾后传播。当前规则见[实例身份](LATEST_DESIGN.md#scope-identity)与[可达性回收](LATEST_DESIGN.md#scope-gc)。这些已是持续执行清理的基础，后续不另建一套实例或回收器。
+Binding 的生产身份与执行帧支持单例／多例匹配和待用分析；ScopeTree 保持独立无环。close 可选，普通关闭失败只报告，取消在其余收尾后传播。当前规则见[实例身份](CORE_DESIGN.md#scope-identity)与[可达性回收](CORE_DESIGN.md#scope-gc)。这些已是持续执行清理的基础，后续不另建一套实例或回收器。
 
 <a id="deferred"></a>
 ## 保留的开放专题
@@ -240,7 +240,7 @@ Binding 的生产身份与执行帧支持单例／多例匹配和待用分析；
 <a id="middleware"></a>
 ### Middleware 与 Hanging
 
-独立 Middleware typing、装卸策略及其与 [Root 入口包装](LATEST_DESIGN.md#calls)的关系单独设计，Hanging 随之确认。本轮不以新增 Middleware 类别为前提。
+独立 Middleware typing、装卸策略及其与 [Root 入口包装](CORE_DESIGN.md#calls)的关系单独设计，Hanging 随之确认。本轮不以新增 Middleware 类别为前提。
 
 <a id="external-tools"></a>
 ### 外部工具与观察

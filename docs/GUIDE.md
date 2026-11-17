@@ -2,7 +2,7 @@
 
 状态：本文说明当前 SDK 可运行的接口，包括持续资产（Stream、`streams`、`lifelong`，见[第五节](#stream)）。完整的持续执行规则见 [Stream 与 lifelong](STREAM_LIFELONG.md)，尚未设计的部分见[当前限制](#limitations)。
 
-从“代码长什么样”进入：先看到资产、注册、handler 和 workflow 的代码块，再按链接深入对应模块。想直接运行时可跳到快速开始。完整语义见[主设计](LATEST_DESIGN.md)，源码约束见[ASSETS](ASSETS.md)。
+从“代码长什么样”进入：先看到资产、注册、handler 和 workflow 的代码块，再按链接深入对应模块。想直接运行时可跳到快速开始。完整语义见[主设计](CORE_DESIGN.md)，源码约束见[ASSETS](ASSETS.md)。
 
 | 任务 | 阅读位置 |
 | --- | --- |
@@ -221,7 +221,7 @@ cabal run effect-codegen -- workflow FileDemo
 
 `--generate` 只是已有 Main 的快捷入口：Main 的导入链必须先能编译，interpreter 才能转调同一个生成器。它不会在生成后继续执行业务；下一次运行会编译更新后的代码。日常统一使用独立 `effect-codegen` 即可，不需要把两个生成入口都执行一遍。
 
-gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提取 handler 方法体的读取形状、构图、输出源码，最后用 GHC 类型检查业务模块与输出并检查顶层白名单；任何一步报错都不写回 Generated，也不调用业务 handler。各阶段做什么、报告哪些错误见[编译流水线](LATEST_DESIGN.md#generation)。缓存命中只复用纯构图结果，其余阶段仍会执行，内容未变的文件不会重写。详见[生成缓存边界](EFFECT_GRAPH.md#内容缓存与重跑边界)。
+gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提取 handler 方法体的读取形状、构图、输出源码，最后用 GHC 类型检查业务模块与输出并检查顶层白名单；任何一步报错都不写回 Generated，也不调用业务 handler。各阶段做什么、报告哪些错误见[编译流水线](CORE_DESIGN.md#generation)。缓存命中只复用纯构图结果，其余阶段仍会执行，内容未变的文件不会重写。详见[生成缓存边界](EFFECT_GRAPH.md#内容缓存与重跑边界)。
 
 ### 哪些文件需要保留
 
@@ -233,7 +233,7 @@ gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提
 | `dist-newstyle/` | 可删除的 Cabal 构建产物和缓存；下次构建重建 |
 | 各 demo 在 `.gitignore` 中列出的输出文件／目录 | 示例运行产物，可删除后重跑；输入样例和源码不是输出 |
 
-Cabal 中七个可执行示例通过 `common runtime-program` 共用 SDK 运行模块与依赖清单，各 executable 只列自己的业务模块和附加依赖。`effect-codegen` 单独列编译器模块，保持 gen 与 runtime 的分工。目录职责与源码入口见[SDK 的职责与阅读顺序](LATEST_DESIGN.md#sdk-layout)。
+Cabal 中七个可执行示例通过 `common runtime-program` 共用 SDK 运行模块与依赖清单，各 executable 只列自己的业务模块和附加依赖。`effect-codegen` 单独列编译器模块，保持 gen 与 runtime 的分工。目录职责与源码入口见[SDK 的职责与阅读顺序](CORE_DESIGN.md#sdk-layout)。
 
 ### runtime：执行已经生成的程序
 
@@ -344,7 +344,7 @@ data TextState = Blank | Written String            -- 和类型
 newtype StartURL = StartURL PageURL
 ```
 
-- **为什么要细化**：同一个表示类型可能有几个来源，例如 Crawler 的起始页和链接页摘要都是 `PageSummary`。细化成 `StartPageSummary`、`LinkedPageSummary` 两个资产后，每个名字只对应一条生产链。消费方在注册里按资产名声明读取（`requires "StartPageSummary"`），handler 只写表示类型 `require @PageSummary`；gen 按“表示类型 + effect”把这次读取路由到唯一的细化资产，所以同一个 `printSummary` 注册到两个 effect 时各读各的摘要。原理见[主设计：细化资产](LATEST_DESIGN.md#refinement)。
+- **为什么要细化**：同一个表示类型可能有几个来源，例如 Crawler 的起始页和链接页摘要都是 `PageSummary`。细化成 `StartPageSummary`、`LinkedPageSummary` 两个资产后，每个名字只对应一条生产链。消费方在注册里按资产名声明读取（`requires "StartPageSummary"`），handler 只写表示类型 `require @PageSummary`；gen 按“表示类型 + effect”把这次读取路由到唯一的细化资产，所以同一个 `printSummary` 注册到两个 effect 时各读各的摘要。原理见[主设计：细化资产](CORE_DESIGN.md#refinement)。
 - **一个 effect 内表示类型不重复**：同一个 effect 的 demands 里不能有两个表示类型相同的资产；需要两个同类型值的操作，用不同的表示类型（角色类型）区分。
 - **只在生成区使用**：细化资产类型由 Generated 的存储、路由和入口使用，handler 不写它。字段和构造器仍是 `Types.hs` 里的表示类型；要看结构就看 `Types.hs`，或 `Generated/Assets.hs` 的资产目录。
 
@@ -450,7 +450,7 @@ typing = Pure { handler = Just "validateFileName" }
 - **不能当 AST 末端**，必须绑定 handler。
 - **不挂在 Stream 下**：Stream 有自己的数据结构，下面只挂它的 parser Context。
 
-写法与执行见[挂在句柄下的 Context](#runtime-anchored) 和[主设计：Pure](LATEST_DESIGN.md#pure)。
+写法与执行见[挂在句柄下的 Context](#runtime-anchored) 和[主设计：Pure](CORE_DESIGN.md#pure)。
 
 #### `Excu`
 
@@ -1061,7 +1061,7 @@ reading #2: 24.0 C
 
 ## 运行时行为
 
-以下是使用时需要了解的概述；完整协议及例外见[当前运行协议](LATEST_DESIGN.md#runtime)，来源与可见性见[EffectGraph](EFFECT_GRAPH.md)。
+以下是使用时需要了解的概述；完整协议及例外见[当前运行协议](CORE_DESIGN.md#runtime)，来源与可见性见[EffectGraph](EFFECT_GRAPH.md)。
 
 ### 驱动与读取：`requests` 与 `require`
 
@@ -1104,14 +1104,14 @@ EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope
 ```
 
 - **自动关闭**：SDK 等当前调用的业务、诊断和结果消费结束，再撤销使用；同时检查后续仍待用的节点及子 scope。全部不再触达实例时同步执行 close，完成后继续后继。嵌套 Context 生产返回不会提前关闭资源。
-- **lifelong**：无参数或参数来自外层的实例跨轮保留；本轮新生产参数的实例属于本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。lifelong 外的后继若按现有可见性读取同一次普通资产生产，待用判断保留对应实例；这不增加业务资产内嵌资源的保活，详见[按可达性回收](LATEST_DESIGN.md#scope-gc)。
+- **lifelong**：无参数或参数来自外层的实例跨轮保留；本轮新生产参数的实例属于本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。lifelong 外的后继若按现有可见性读取同一次普通资产生产，待用判断保留对应实例；这不增加业务资产内嵌资源的保活，详见[按可达性回收](CORE_DESIGN.md#scope-gc)。
 - **资源读取**：消费资源的链须先经 Input 开启其所属 Scoped，否则生成期报错；不能因为别的链还开着某个实例就直接读取它。
 - **close 可选**：handler 不手动调用 close。`close = Nothing` 时，不可达实例只移出运行表，不执行释放 IO。整次运行结束时同样遵守这条规则。
 - **关闭失败**：close 里的 `raise`，以及没有转换成 `raise` 的普通 IO 异常，都经 Error 诊断后单独记录、运行结束汇总，不改变业务结果，不停止后续工作，也不重试。只有取消发生在 close 中时，才会停止后续工作，完成其余收尾后向外传播。
 
 SDK 不主动检查健康，不自动恢复或重开失效实例。资源共享只交接带 owner 的绑定，scope 快照中的普通辅助值仍按来源表读取。诊断和 cleanup 中的新产物只留局部快照。
 
-每次生产的绑定保留自己的值、生产身份、出身和共享 ownership。资源被 scope 首次认领后，已有引用看见同一个 owner；其他实例不能再次认领。SDK 同时接入仍活跃的使用者，防止认领后提前关闭；两次生产私下包装同一个底层 Handle 的物理别名仍不追踪。完整规则见[主设计：scope](LATEST_DESIGN.md#scope)。
+每次生产的绑定保留自己的值、生产身份、出身和共享 ownership。资源被 scope 首次认领后，已有引用看见同一个 owner；其他实例不能再次认领。SDK 同时接入仍活跃的使用者，防止认领后提前关闭；两次生产私下包装同一个底层 Handle 的物理别名仍不追踪。完整规则见[主设计：scope](CORE_DESIGN.md#scope)。
 
 ### 失败与 Error 处置
 
@@ -1127,7 +1127,7 @@ SDK 不主动检查健康，不自动恢复或重开失效实例。资源共享�
 - **`ContextBindingError ContextFault`**：取值协议故障。`origin` 是生产这份资产的 Context 注册名（不是契约名），Error 用 `ContextFaultIn "该 Context"` 匹配。
 - **`ScopeBindingError ScopeFault`**：资源协议故障。`origin` 是 Scoped 的注册名，Error 用 `ScopeFaultIn "该 Scoped"` 匹配。
 
-它们按 scope 进入 Error 处置；发生在业务调用中时沿链传播并以 `Failed` 返回，发生在自动 close 中时只进入关闭报告。完整协议见[主设计：Context](LATEST_DESIGN.md#context)与 [scope](LATEST_DESIGN.md#scope)。
+它们按 scope 进入 Error 处置；发生在业务调用中时沿链传播并以 `Failed` 返回，发生在自动 close 中时只进入关闭报告。完整协议见[主设计：Context](CORE_DESIGN.md#context)与 [scope](CORE_DESIGN.md#scope)。
 
 **取值故障（`ContextFault`）**
 
@@ -1236,8 +1236,8 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 
 ## 当前限制
 
-- **handler 复用**：各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能路由到一份资产。完整约束见[注册契约](LATEST_DESIGN.md#registration)。
+- **handler 复用**：各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能路由到一份资产。完整约束见[注册契约](CORE_DESIGN.md#registration)。
 - **持续资源与内存**：生产侧结束、消费侧结束和会话退役已实现。持续值可作为 scope 开启参数；待交付值与业务资产内嵌资源的持有仍有缺口。交付队列保留未领取值和最新值，没有硬容量或背压保证；业务自行保存的记录不由 SDK 裁剪。边界与剩余阶段见 [Next stages](NEXT_STAGES.md#current-limits)。
-- **资源管理范围**：SDK 只管理已交给它的资源。业务自行 `forkIO` 的线程、未发布的部分获取和逸出资源由原子实现负责，见[scope 保证](LATEST_DESIGN.md#scope-gc)。
+- **资源管理范围**：SDK 只管理已交给它的资源。业务自行 `forkIO` 的线程、未发布的部分获取和逸出资源由原子实现负责，见[scope 保证](CORE_DESIGN.md#scope-gc)。
 - **其他扩展**：背压、局部失败、嵌套 lifelong、Middleware 和通用适配等统一跟踪在[开放专题](NEXT_STAGES.md#deferred)，本指南不列另一份状态清单。
 - **构建方式**：SDK 目前随仓库内示例一起编译，尚不能作为独立依赖引入。
