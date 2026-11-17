@@ -168,8 +168,9 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 
 本轮 Stage 5／7 不再等待新的业务选项。既有 ownership、执行使用、持续待用及关闭后的原绑定检查沿已确认协议实施；持有只能延长合法资源的使用期，不能扩大读取许可或替代首次获取。
 
-下面这些改变保证范围，仍作为[开放专题](#deferred)处理：
+下面这些涉及尚未区分的使用关系或新的保证范围，需要单独设计：
 
+- **父子实例引用的撤销。** 下一阶段开始时先核对[长期子实例保留历史父实例](EFFECT_GRAPH.md#scope-parent-retention)的边界：哪些引用是获取或 close 所需的真实依赖，哪些只代表此前一次共同使用。当前 `scopeParents` 不随步骤结束撤销；不能直接清空或以新参数替换旧引用。这是既有保守保留的收尾，不是本分支新增的行为。
 - **任意业务 ADT 内嵌资源与外部别名。** 资产读取关系不证明字段实际保存了哪些句柄；当前不沿 parser 或 Pure 的输入自动继承资源依赖，也不默认保护已逸出 SDK 的裸句柄。
 - **更早停止或更早释放的策略。** interpreter 托管会话的停止时机、来源 end 后绕过现有退役边界的提前释放，以及新 cleanup policy，均不包含在此次内部回收修正中。
 - **持续调度与恢复。** 背压、自动重试、event／behavior／socket 的业务分类，以及 lifelong 局部失败分别收敛，不作为准确撤销已有使用关系的前置条件。
@@ -183,6 +184,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 | --- | --- |
 | 普通资产的 parallel 兄弟仍互不可见；保守等待结束不证明所有等待都可结束 | [完整等待迁移](#stage-2-await) |
 | 持续值参数、已有 ownership 保留和会话实例待用已接通；任意 ADT 内嵌资源及外部别名未保证 | [资源开放专题](#deferred) |
+| 长期子实例可能保留历次共同使用的父实例，尚未区分可撤销的历史父引用 | [父引用边界](EFFECT_GRAPH.md#scope-parent-retention)、[待设计项](#review) |
 | 同单元直接或经 Derive 等待 Scoped.open 的复用输出被保守拒绝：复用实例不产生新输出；必定 fresh 的精确放行未做 | [输出复用规范](STREAM_LIFELONG.md#derive) |
 | 未领取交付没有硬容量与背压上限；interpreter 托管会话和 ReuseOutput 不按读取方计数退役 | [交付保留](STREAM_LIFELONG.md#retention)、[退役规则](STREAM_LIFELONG.md#consumer-end) |
 | 含 lifelong 程序的失败仍终止整次运行 | [临时失败协议](STREAM_LIFELONG.md#failures) |
@@ -288,6 +290,8 @@ LSP 仓库的来源可见性穷举模型尚未扩展到 Stream／lifelong；订�
 
 <a id="maintenance"></a>
 ## 怎样维护这份计划
+
+2026-11-18 合并收尾只补充父实例引用的保留边界和后续设计项，未修改 SDK，未重复编译或运行业务示例。外部审查者提供的运行结果不记作本轮执行记录。
 
 每阶段先确认代码形态与协议；完成后将详细规则写回所属规范，GUIDE 只展示当前接口。这里保留状态、未完成项、必要理由和一条验证摘要；被取代的方案与探针过程交给 Git 历史，不另建归档文件或复制阶段清单。
 
