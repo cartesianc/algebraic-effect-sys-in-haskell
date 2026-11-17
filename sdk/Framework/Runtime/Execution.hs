@@ -12,7 +12,7 @@ import Framework.Runtime
   , newDeliveryFrame, frameDelivery, framePublishes, haltFrame, frameStopping, frameAdmits, boundarySession, sessionLauncher )
 import Framework.Runtime.Graph
   ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, installSessionLauncher
-  , stopSessions, resetOrigins, runtimeRootFrame, collectRuntimeScopes, finishRuntime )
+  , stopSessions, resetOrigins, runtimeRootFrame, collectRuntimeScopes, finishRuntime, withRuntimeRetention )
 import Framework.Runtime.Frame
 import Framework.Runtime.Session
   ( Broken, Stopped(..), DeliveryDrained(..), SubscriptionEnded(..), admitReaders, leaveSession, departSession
@@ -243,8 +243,9 @@ executionAlgebra prototype store entries selectors layer expected = do
             Left halt -> pure (Left halt)
             Right Quiet -> pure (Right [])
             Right Exhausted -> endNodes run [location] >> pure (Right [])
-            Right Driven -> subscribing run location $ draining run $ fmap (: []) . fst <$>
-              lowerTarget store location (runExecutionFrame run) (runDeliveryFrame run) handoff entry
+            Right Driven -> withRuntimeRetention store $ \retention ->
+              subscribing run location $ draining run $ fmap (: []) . fst <$>
+                lowerTarget store retention location (runExecutionFrame run) (runDeliveryFrame run) handoff entry
     (Chained _, _) -> do
       parts <- map compiledRun <$> compiledChildren
       single (\run handoff -> concat <$> sequence [part run handoff | part <- parts])
@@ -268,7 +269,7 @@ executionAlgebra prototype store entries selectors layer expected = do
       -- 转折资产是本 lifelong 的会话资产时，选择读取先领取本次交付，候选共享这次领取。
       -- 候选中的节点都已结束订阅时，选择读取不再执行，整个 alternative 跳过。
       -- 转折资产由本单元发布时：本轮没有新发布则本轮跳过；已封口并排空则候选都不会再被选中，记为结束。
-      single $ \run handoff -> ExceptT $ do
+      single $ \run handoff -> ExceptT $ withRuntimeRetention store $ \retention -> do
        ended <- endedNodes run
        if not (null members) && all (`elem` ended) members then pure (Right []) else do
         chosen <- withFrameNode store run (alternativeSelector description) $ do
@@ -278,7 +279,7 @@ executionAlgebra prototype store entries selectors layer expected = do
             Right Quiet -> pure (Right Nothing)
             Right Exhausted -> endNodes run members >> pure (Right Nothing)
             Right Driven -> draining run $ do
-              (selected, captured) <- lowerTarget store (alternativeSelector description)
+              (selected, captured) <- lowerTarget store retention (alternativeSelector description)
                 (runExecutionFrame run) (runDeliveryFrame run) handoff selector
               pure (fmap (\constructor -> Just (constructor, captured)) selected)
         case chosen of
@@ -410,11 +411,11 @@ executionAlgebra prototype store entries selectors layer expected = do
             current <- settle seen
             if all (`elem` current) members then pure (Right []) else do
               resetOrigins store unit
-              outcome <- mask $ \restore -> do
+              outcome <- withRuntimeRetention store $ \retention -> mask $ \restore -> do
                 frame <- newChildFrame (runExecutionFrame run) boundary
                   [chainNode chain | chain <- protoChains prototype, chainRole chain /= SessionChain
                     , unit `isPrefixOf` chainNode chain]
-                delivery <- readIORef held >>= newDeliveryFrame frame local [(source, session) | (source, (session, _)) <- cursors]
+                delivery <- readIORef held >>= newDeliveryFrame retention frame local [(source, session) | (source, (session, _)) <- cursors]
                 retireAfter
                   (restore (runExceptT (execute run { runExecutionFrame = frame, runDeliveryFrame = Just delivery
                                                     , runEnded = Just ended, runWithdraw = withdraw } handoff))) $ \_ -> do

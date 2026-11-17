@@ -14,6 +14,7 @@
 module Framework.Runtime.App (App, Launch(..), runAppWith, withScopeCleanups) where
 
 import Framework.Runtime.Binding
+import Framework.Runtime.Retention (Retention, keepBindings)
 import Framework.Language.Handler
 import Framework.Runtime.Protocol
 import Framework.Runtime.Scope
@@ -24,10 +25,11 @@ import Framework.Runtime.Session (Stopped(..), SourceEnded(..), SubscriptionEnde
 import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, evaluate, fromException, mask, mask_, throwIO, try, finally)
-import Control.Monad (forM, forM_, when)
+import Control.Monad (filterM, forM, forM_, when)
 import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Reader (ReaderT, ask, asks, local, runReaderT)
+import Data.Foldable (toList)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (find, nub)
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
@@ -61,6 +63,7 @@ data Environment env cause = Environment
   , activeActivation :: Maybe ActivationId
   , execution :: Execution
   , currentFrame :: ExecutionFrame
+  , bindingRetention :: Retention env cause
   -- 原子句柄方法名 → 挂在它下面的 Context 生产入口，由生成区安装。
   , anchoredEntries :: [(String, [(String, App env cause ())])]
   -- 持续 parser 的挂接目录；实际可执行项由当前 Origin 对应的静态发布位置筛选。
@@ -88,6 +91,7 @@ data Launch env cause = Launch
   , launchDeliver :: String -> Maybe (IO (Either (Stopped cause) (View env cause)))
   , launchUser :: Maybe (ScopeUser env cause)
   , launchFrame :: ExecutionFrame
+  , launchRetention :: Retention env cause
   }
 
 data Opening env cause = Opening
@@ -316,7 +320,7 @@ ensureOpen environment attempt = do
                           when (scopeContextSource handler == Nothing) $ do
                             let source = resourceSource handler
                             value <- newBinding (emptyValues environment) (execution environment)
-                              Nothing (scopeFrame slot) (Just (name, slot))
+                              Nothing (scopeFrame slot) True (Just (name, slot))
                             saveBinding slot source value
                             publishBinding environment source value
                           pure (Right ())
@@ -446,7 +450,8 @@ instance ContextStore env (App env cause) where
     -- 只求值 SDK 的绑定记录，资产值本身保持调用方交出的样子。
     values <- rawIO (evaluate (update (emptyValues environment)))
     value <- rawIO (newBinding values (execution environment)
-      (activeActivation environment) (maybe (currentFrame environment) (scopeFrame . snd) owner) owner)
+      (activeActivation environment) (maybe (currentFrame environment) (scopeFrame . snd) owner)
+      (any ((== Just source) . scopeContextSource) (scopes environment)) owner)
     rawIO (publishBinding environment source value)
     case openings environment of
       attempt : _ -> do
@@ -523,7 +528,7 @@ instance ContextStore env (App env cause) where
       let graph = runtimeGraph environment
       ended <- rawIO (endedSession graph (originNode (executionOrigin (execution environment))) source)
       session <- maybe (rawIO (obtainSession graph (Nothing, source) [] [])) pure ended
-      captureDelivery environment source select (rawIO (awaitView session))
+      captureDelivery environment source select (rawIO (awaitView session (bindingRetention environment)))
   streamRawInput = AppRun (asks streamRaw)
   endSource = rawIO (throwIO SourceEnded)
   endSubscription = rawIO (throwIO SubscriptionEnded)
@@ -881,7 +886,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         , scopeCleanups = [], cleaningScopes = False, consumer = user
         , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
         , activeActivation = Just (activationId activation), execution = currentExecution
-        , currentFrame = launchFrame launch
+        , currentFrame = launchFrame launch, bindingRetention = launchRetention launch
         , anchoredEntries = [], streamEntries = [], replays = []
         , views = delivered, streamRaw = launchInput launch, sessionSinks = launchSinks launch
         , frameDeliver = launchDeliver launch }
@@ -890,6 +895,11 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         outcome <- runExceptT (runReaderT action environment)
         consume outcome
         pure outcome
+      -- 先把可交接的捕获加入调用方保留根，再撤销实际使用。alternative 的保留根
+      -- 覆盖选择和候选；普通节点在结果消费后释放。scope 自己的资源快照不成为外部根。
+      captured <- readIORef values >>= filterM (fmap isNothing . readBindingOwner . snd)
+      capturedViews <- readIORef delivered
+      keepBindings (launchRetention launch) (map snd captured ++ concatMap (toList . snd) capturedViews)
       -- 会话的使用登记在会话停止时才撤销。
       -- 节点进度由 Execution 在本调用（含交接）返回后完成，再回收相关 Scoped。
       -- 此处只撤销实际使用，避免重复扫描整批实例或早于进度更新进行关闭。

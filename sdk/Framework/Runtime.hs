@@ -17,10 +17,11 @@ import Framework.Language.Handler (Failure)
 import Framework.Runtime.App (App, Launch(..), runAppWith)
 import Framework.Runtime.Graph
   ( RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, runtimeRootFrame, newOrigin, obtainSession
-  , currentPublications, collectRuntimeScopes )
+  , currentPublications, collectRuntimeScopes, withRuntimeRetention )
 import Framework.Runtime.Identity (ActivationId, Execution(..), Origin(..), executionOrigin)
 import Framework.Runtime.Frame (ExecutionFrame, NodeProgress(..), captureFrameDeliveries, frameNodeProgress, frameSignal, installSessionInputs)
 import Framework.Runtime.Binding (Binding(..), readBindingOwner)
+import Framework.Runtime.Retention (Retention, keepBindings)
 import Framework.Runtime.Session
 import Framework.Runtime.Scope
 import Framework.Prototype
@@ -29,6 +30,7 @@ import Control.Concurrent.MVar (MVar, modifyMVar, newEmptyMVar, newMVar, putMVar
 import Control.Exception
   (SomeAsyncException, SomeException, evaluate, finally, fromException, mask, onException, throwIO, try, uninterruptibleMask_)
 import Control.Monad (filterM, forM, forM_, forever, void, when)
+import Data.Foldable (toList)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (nubBy)
 import Data.Maybe (isJust, isNothing)
@@ -67,6 +69,7 @@ data LocalSource = PublishedAt [NodeId] | DerivedFrom String
 data DeliveryFrame environment cause = DeliveryFrame
   { frameLocal :: [(String, LocalSource)]
   , frameExecution :: ExecutionFrame
+  , frameRetention :: Retention environment cause
   -- 稳定性查询保留本边界的会话引用；单元撤销自己的游标后，派生 worker 仍可能读取该上游。
   , frameSources :: [(String, Session environment cause)]
   , frameSessions :: [(String, (Session environment cause, Cursor))]
@@ -75,10 +78,10 @@ data DeliveryFrame environment cause = DeliveryFrame
   , frameHalted :: IORef Bool
   }
 
-newDeliveryFrame :: ExecutionFrame -> [(String, LocalSource)] -> [(String, Session environment cause)]
+newDeliveryFrame :: Retention environment cause -> ExecutionFrame -> [(String, LocalSource)] -> [(String, Session environment cause)]
                  -> [(String, (Session environment cause, Cursor))] -> IO (DeliveryFrame environment cause)
-newDeliveryFrame execution local sources sessions = do
-  frame <- DeliveryFrame local execution sources sessions <$> newMVar [] <*> newIORef False
+newDeliveryFrame retention execution local sources sessions = do
+  frame <- DeliveryFrame local execution retention sources sessions <$> newMVar [] <*> newIORef False
   installSessionInputs execution (pendingInput frame)
   pure frame
 
@@ -175,7 +178,7 @@ frameTake frame source = do
         slot <- newEmptyMVar
         pure ((source, slot) : taken, (slot, True))
     if not fresh then restore (readMVar slot) else do
-      outcome <- try (restore (takeDeliveryOn (frameSignal (frameExecution frame)) session cursor waiting))
+      outcome <- try (restore (takeDeliveryOn (frameSignal (frameExecution frame)) session cursor (frameRetention frame) waiting))
       -- 领取被取消时也填入结果，同一 DeliveryFrame 的其他等待方不会悬挂。
       putMVar slot (either (Left . Broke . Left) id outcome)
       either throwIO pure outcome
@@ -199,7 +202,7 @@ frameRead frame source = do
       Left Undriven -> existing session
       Left Drained | framePublishes frame source -> existing session
       _ -> pure outcome
-  where existing session = maybe (Left Undriven) Right <$> currentView session
+  where existing session = maybe (Left Undriven) Right <$> retainedView session (frameRetention frame)
 
 frameDeliveries :: DeliveryFrame environment cause -> IO [(String, Delivery environment cause)]
 frameDeliveries frame = do
@@ -215,9 +218,9 @@ frameDeliveries frame = do
 -- 已领取交付的伴随发布作为已捕获绑定交给本次调用，交接中已经捕获的值优先（与来源分析一致）；
 -- 生成期保证读取伴随资产的位置在调用前已经领取了对应会话的交付。
 -- 原始链挂接只交付持续资产自身；普通产物保持其 AST Origin 的既有来源可见性，不随流跨链透传。
-lowerTarget :: RuntimeGraph environment cause -> NodeId -> ExecutionFrame -> Maybe (DeliveryFrame environment cause) -> Handoff environment cause
+lowerTarget :: RuntimeGraph environment cause -> Retention environment cause -> NodeId -> ExecutionFrame -> Maybe (DeliveryFrame environment cause) -> Handoff environment cause
             -> Target environment cause value -> IO (Either (Failure cause) value, Handoff environment cause)
-lowerTarget graph location executionFrame frame (Handoff given views) target = do
+lowerTarget graph retention location executionFrame frame (Handoff given views) target = do
   taken <- maybe (pure []) frameDeliveries frame
   let merged = [(source, view) | (source, (view, _)) <- taken]
         ++ [entry | entry@(source, _) <- views, source `notElem` map fst taken]
@@ -226,7 +229,8 @@ lowerTarget graph location executionFrame frame (Handoff given views) target = d
       launch = Launch
         { launchBindings = given ++ companions, launchViews = merged, launchInput = Nothing
         , launchSinks = sinks, launchDeliver = \source -> frame >>= (`frameRead` source)
-        , launchUser = Nothing, launchFrame = executionFrame }
+        , launchUser = Nothing, launchFrame = executionFrame, launchRetention = retention }
+  keepBindings retention (map snd (given ++ companions) ++ concatMap (toList . snd) merged)
   captureFrameDeliveries executionFrame
     [(originNode (executionOrigin (bindingOrigin value)), source, production)
       | (source, value) <- companions, Just production <- [bindingProduction value]
@@ -321,9 +325,9 @@ sessionLauncher graph steps onBroken session
     description = sessionDescriptionOf (runtimePrototype graph) boundary source
     mounts = sessionMounts <$> description
     produce owner = case (lookup source steps, mounts) of
-      (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ do
+      (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ withRuntimeRetention graph $ \retention -> do
         -- streamEnd 只来自 Stream 单步：这一步没有原始输入，parser 不执行，也不发布。
-        taken <- try (lowerWith graph streamMount (step owner Nothing []) stream)
+        taken <- try (lowerWith graph streamMount (step owner retention Nothing []) stream)
         case taken of
           Left SourceEnded -> pure (Just Nothing)
           Right (Left problem, _, _) -> pure (Just (Just problem))
@@ -332,7 +336,7 @@ sessionLauncher graph steps onBroken session
             -- parser 因此需要本次已捕获的资源 Binding；共用 owner 保活，保留原生产身份。
             -- 只交接资源，不带入来源的普通捕获或交付视图，不写回会话或跨轮复用。
             resources <- filterM (fmap isJust . readBindingOwner . snd) captured
-            let parseStep = (step owner (Just text) sink)
+            let parseStep = (step owner retention (Just text) sink)
                   { launchBindings = resources ++ [entry | entry@(name, _) <- sessionBindings session
                     , name `notElem` map fst resources] }
             either (Just . Just) (const Nothing) . first <$> lowerWith graph parserMount parseStep parser
@@ -343,15 +347,15 @@ sessionLauncher graph steps onBroken session
         (upstream, cursor) <- awaitUpstream session
         -- 游标的撤销覆盖整个生产/退役过程，取消不能落在正常结束与离开上游之间。
         restore (do
-          outcome <- loop $ do
-            taken <- takeDelivery upstream cursor (pure Nothing)
+          outcome <- loop $ withRuntimeRetention graph $ \retention -> do
+            taken <- takeDelivery upstream cursor retention (pure Nothing)
             case taken of
               Left Drained -> pure (Just Nothing)
               Left Undriven -> pure (Just Nothing)
               Left (Broke (Right problem)) -> pure (Just (Just problem))
               Left (Broke (Left exception)) -> throwIO exception
               Right (view, _) -> do
-                stepped <- try (lowerWith graph mount (driven owner (snd (sessionKey upstream)) view) parser)
+                stepped <- try (lowerWith graph mount (driven owner retention (snd (sessionKey upstream)) view) parser)
                 case stepped of
                   Left SubscriptionEnded -> pure (Just Nothing)
                   Right result -> case first result of
@@ -369,12 +373,12 @@ sessionLauncher graph steps onBroken session
       companions <- currentPublications graph (maybe [] id mounts)
       appendDelivery session companions value)]
     -- 每一步从边界交接的新副本开始，共用会话的使用登记。
-    step owner input sinks = Launch
+    step owner retention input sinks = Launch
       { launchBindings = sessionBindings session, launchViews = sessionViews session, launchInput = input
       , launchSinks = sinks, launchDeliver = noDelivery, launchUser = Just owner
-      , launchFrame = runtimeRootFrame graph }
+      , launchFrame = runtimeRootFrame graph, launchRetention = retention }
     -- 被驱动的一步：上游这条交付的视图盖过交接中同一来源的视图。
-    driven owner upstream view = (step owner Nothing sink)
+    driven owner retention upstream view = (step owner retention Nothing sink)
       { launchViews = (upstream, view) : filter ((/= upstream) . fst) (sessionViews session) }
     noDelivery = const Nothing
     first (outcome, _, _) = outcome

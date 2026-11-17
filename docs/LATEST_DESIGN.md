@@ -682,8 +682,9 @@ EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope
 - **当前使用**：每次 AST 入口完整 chain 建立一份 `ScopeUser`，open／require 选中的实例加入其中，等待 opening 也计入。同一入口内的 Context 生产继承该登记。业务、Error 诊断和受控结果消费全部结束后才撤销；生产会话跨步骤保留自己的登记。
 - **待用关系**：gen 在 `protoScopeOpenings` 中记录每个开启位置各参数可能的生产节点或会话来源，包括本节点和 alternative 交接的捕获。执行帧保存待执行、执行中、完成和跳过的节点。有限运行使用根帧，lifelong 单元每轮使用子帧；节点完成、chained 短路及 alternative 排除候选都会撤销相应待用关系，更新幂等。
 - **实际匹配**：运行时将实例的参数生产身份与候选来源的实际绑定比较，不把 NodeId 当生产身份。lifelong 本轮已领取的普通伴随资产固定使用交付时的生产身份，不能被后台后续发布替换；合法外部后继的普通资产选择与实际读取共用当前／保留绑定的来源规则，选出实际最新来源后才比较生产身份。ExecutionFrame 保存身份与所属 lifelong 边界，不复制值表；根帧查询包含活动子帧，轮帧结束清空进度并摘除，但允许的外部后继待用仍可定位，不改变实例归属。普通发布转入后继保留表与回收判断共用协调锁。完整规则见[Scope 开启计划与待用查询](EFFECT_GRAPH.md#scope-opening-retention)。无参数按 Scoped 注册匹配，运行时不重建 effect graph，也不在业务方法体插入进度语法。
-- **依赖与执行**：没有当前使用者、没有匹配的待用节点、没有仍保留它的子 scope 时执行 close。ScopeTree 提供父子候选，运行时由同一受控链实际使用的实例补齐子实例的 `scopeParents`；子实例只保留这些具体父实例，不保留同注册的全部实例。关闭遵守子先父后，在触发不可达的线程中同步完成后才继续后继，不另设清理线程。仅保存普通资产快照不自动延长生产资源的存续；仍需实际使用或匹配的后继待用依据。
-- **lifelong**：无参数及参数来自外层的实例由外层帧保留；本轮生产参数的实例归本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。会话仍以实际使用登记持有资源：来源正常结束（`streamEnd`）后登记保留到会话退役，重复停止同样等待撤销完成；会话退役（生产停止且读取方计数归零，或 lifelong 返回）后按可达性回收只在会话中开启的 scope。持续资产的最新值已可作为开启参数：登记所选交付原有的生产身份和帧，活动轮次与合法后继按真实读取位置参与待用判断。交付及业务资产内嵌资源的精细持有与释放仍待设计。
+- **值保留**：待交付、已捕获和合法后继可读的 Binding，按已有 ownership 参与回收判断；领取先登记执行持有，再撤销队列持有。资源范围、撤销边界及未覆盖的业务内嵌引用见[Stream 资源边界](STREAM_LIFELONG.md#binding-retention)。
+- **依赖与执行**：没有当前使用者、没有匹配的待用节点或值保留、没有仍保留它的子 scope 时执行 close。ScopeTree 提供父子候选，运行时由同一受控链实际使用的实例补齐子实例的 `scopeParents`；子实例只保留这些具体父实例，不保留同注册的全部实例。关闭遵守子先父后，在触发不可达的线程中同步完成后才继续后继，不另设清理线程。仅保存普通资产快照不自动延长生产资源的存续；仍需实际使用或匹配的后继待用依据。
+- **lifelong**：无参数及参数来自外层的实例由外层帧保留；本轮生产参数的实例归本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。会话仍以实际使用登记持有资源：来源正常结束（`streamEnd`）后登记保留到会话退役，重复停止同样等待撤销完成；会话退役（生产停止且读取方计数归零，或 lifelong 返回）后按可达性回收只在会话中开启的 scope。持续资产的最新值已可作为开启参数：登记所选交付原有的生产身份和帧，活动轮次与合法后继按真实读取位置参与待用判断。交付已按已有 ownership 保留资源；业务资产内嵌资源的识别与保证仍待设计。
 - **close 可选**：`close = Nothing` 不登记关闭方法。实例不可达时只移出运行表，不执行释放 IO；有 close 的实例保存实际绑定和关闭回调。
 - **close 失败**：close 的 `raise`，以及 close 中没有转换为 `raise` 的普通 IO 异常（记为 `ScopeCleanupInterrupted`），都先进入关联 scope 的 Error 诊断，之后记录并在运行结束时汇总；不改变节点或整次运行的业务结果，不短路、不停止其他业务，也不重试该 close。关闭失败是资源问题：实例已经不可达，不会再被使用。失败实例移出运行表，旧绑定保留原实例及失败证据。
 - **运行结束与取消**：正常结束、失败或取消时，先让受控工作退出、撤销全部待用及使用关系，再按同一规则回收剩余实例。关闭失败中只有取消向外传播：取消落在 close 或其故障诊断期间时，保留原关闭故障的诊断信息并单独保存取消，完成其余收尾后传播、停止后续启动；close 不重试，已经收到的原 close 取消不被后续诊断异常覆盖。进程被强制终止时无法保证 close 执行。
@@ -814,6 +815,7 @@ sdk/Framework/
     Binding.hs              生产身份、执行帧与共享归属
     Frame.hs                根帧／轮帧及节点进度
     Scope.hs                scope 实例、使用登记与物理清理
+    Retention.hs            已知资源 Binding 的执行保留根与撤销
     App.hs                  各存储协议在 App 上的实现
     Identity.hs             Origin、ActivationId、Execution
     Graph.hs                活动链、发布与发布信号、scope 待用查询、会话登记
@@ -822,7 +824,7 @@ sdk/Framework/
   Recursion.hs              Fix、cata、zygo
 ```
 
-改声明语法从 Language.Registration 进入，再读 Gen.Composition 的状态与对应运算；改读取路由、类型能力或入口装配，也先改 Composition 的计算结果，再由 Gen.Emit 渲染。方法体语法提取在 Gen.Shape；改取值从 Runtime.Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Runtime.Execution → Frame／Runtime.Graph → Scope／Session 进入。组合机器保存编译工作状态和证明结果，Runtime.Graph 保存本次实际活动关系，Runtime.Scope 独立持有资源生命周期。
+改声明语法从 Language.Registration 进入，再读 Gen.Composition 的状态与对应运算；改读取路由、类型能力或入口装配，也先改 Composition 的计算结果，再由 Gen.Emit 渲染。方法体语法提取在 Gen.Shape；改取值从 Runtime.Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Runtime.Execution → Frame／Runtime.Graph → Scope／Session／Retention 进入。组合机器保存编译工作状态和证明结果，Runtime.Graph 保存本次实际活动关系，Runtime.Scope 独立持有资源生命周期。
 
 模块头说明职责和边界；关键锁、所有权、取消窗口及清理顺序在实现处保留注释。App 仍集中实现共享同一执行 frame 的存储协议，以章节分组，不为行数拆出互相依赖的状态容器。
 
@@ -856,7 +858,7 @@ sdk/Framework/
 
 Stream 提供持续来源，Context 将每次原子输出解析成资产，lifelong 按增量 boot 有限消费链。普通链也可读取派生持续资产的一次固定值；组合计算为来源建立持续生产计划，不让普通取值自动变成重复启动。同一消费操作也能经挂接 Context 发布持续资产；gen 根据已有 AST 发布位置决定复用输出还是独立派生，运行时执行这份连接。
 
-来源结束、订阅结束、会话退役和 scope 关闭是不同边界。现行接口为生产方的 `streamEnd` 与消费方的 `endStream`；交付与业务资产内嵌资源的持有保证仍待收敛。读取、排空、停止顺序及资源限制分别在下列专题维护。
+来源结束、订阅结束、会话退役和 scope 关闭是不同边界。现行接口为生产方的 `streamEnd` 与消费方的 `endStream`；交付已按既有 ownership 保留资源，业务资产内嵌资源的保证仍待收敛。读取、排空、停止顺序及资源限制分别在下列专题维护。
 
 | 主题 | 本章所属规范 |
 | --- | --- |

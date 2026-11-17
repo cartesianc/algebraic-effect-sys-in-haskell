@@ -14,6 +14,9 @@ data Binding environment owner user = Binding
   -- 成功生产的 activation 与执行帧独立于业务 Origin 和关闭归属；交接不重发身份。
   , bindingProduction :: Maybe ActivationId
   , bindingFrame :: ExecutionFrame
+  -- 注册已指定的资源 Context（也含无资源 scope 的内部绑定）；认领前也可识别。
+  -- 不是对任意业务 ADT 内嵌句柄的推断。
+  , bindingResource :: !Bool
   , bindingOwnership :: IORef (BindingOwnership owner user)
   }
 
@@ -26,10 +29,10 @@ data BindingOwnership owner user = BindingOwnership
 
 type Bindings environment owner user = [(String, Binding environment owner user)]
 
-newBinding :: environment -> Execution -> Maybe ActivationId -> ExecutionFrame -> Maybe owner
+newBinding :: environment -> Execution -> Maybe ActivationId -> ExecutionFrame -> Bool -> Maybe owner
            -> IO (Binding environment owner user)
-newBinding values origin production frame owner =
-  Binding values origin production frame <$> newIORef (BindingOwnership owner [])
+newBinding values origin production frame resource owner =
+  Binding values origin production frame resource <$> newIORef (BindingOwnership owner [])
 
 readBindingOwner :: Binding environment owner user -> IO (Maybe owner)
 readBindingOwner = fmap bindingOwner . readIORef . bindingOwnership

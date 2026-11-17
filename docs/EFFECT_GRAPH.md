@@ -174,7 +174,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 执行帧只记录身份和本轮只读查询，不另建历史或值表；轮结束时撤销查询和捕获。查询在 scope 协调锁内，不能等正在启动的会话目录锁；目录暂忙时保守保留。会话状态锁内不执行 handler、也不反向获取该协调锁。实例仍使用原 Binding 的生产帧，跨单元或后继共享不提升归属。
 
-节点退休后只检查该节点能开启的 scope 及 ScopeTree 祖先，不另建运行索引。close 的 `raise` 与普通 IO 异常都记录并汇总，不改节点结果、不重试；只有取消向外传播。没有 close 的实例不可达后只移出表。运行结束先让受控任务退出、撤销根帧待用关系，再按相同条件清理剩余实例。
+节点退休后检查该节点能开启的 scope 及 ScopeTree 祖先。已知资源 Binding 的保留撤销还会按实际 owner 触发同一回收器，覆盖调用 Input 链外的交接；保留范围见[Stream 资源边界](STREAM_LIFELONG.md#binding-retention)。后继的值保留继续读取 protoSources 和执行帧进度，并与实际读取共用 publicationAt／会话选择，不能把目录中存在某值当成合法读取依据。Binding 的资源标志来自注册已指定的资源 Context，不分析业务字段。close 的 `raise` 与普通 IO 异常都记录并汇总，不改节点结果、不重试；只有取消向外传播。没有 close 的实例不可达后只移出表。运行结束先让受控任务退出、撤销根帧待用关系，再按相同条件清理剩余实例。
 
 ## 生成方法身份与纯结构副本
 

@@ -8,13 +8,13 @@
 module Framework.Runtime.Graph
   ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..)
   , newRuntimeGraph, configureRuntimeScopes, collectRuntimeScopes, finishRuntime, newOrigin
-  , beginActivation, endActivation
+  , beginActivation, endActivation, withRuntimeRetention, collectRetainedScopes
   , publishAsset, publicationSignal, readVisibleAsset, contextMayPublish, resetOrigins
   , installSessionLauncher, obtainSession, endedSession, stopSessions, currentPublications, reusesOutputAt
   ) where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar, tryReadMVar)
-import Control.Exception (SomeAsyncException, SomeException, evaluate, finally, fromException, onException, throwIO, try, uninterruptibleMask_)
+import Control.Exception (SomeAsyncException, SomeException, evaluate, finally, fromException, mask, onException, throwIO, try, uninterruptibleMask_)
 import Control.Monad (forM, forM_, void)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (isPrefixOf, nub)
@@ -24,9 +24,10 @@ import Framework.Runtime.Protocol (ContextFault(..))
 import Framework.Prototype.Graph (MethodRole(..))
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame
-import Framework.Runtime.Binding (Binding(..))
+import Framework.Runtime.Binding (Binding(..), readBindingOwner)
+import Framework.Runtime.Retention
 import Framework.Runtime.Session (Session, SessionKey, View, newSession, stopSession, currentView
-  , attachReader, leaveSession, feedSession, breakSession, upstreamOf, awaitUpstream)
+  , attachReader, leaveSession, feedSession, breakSession, upstreamOf, awaitUpstream, pendingBindings)
 import Framework.Runtime.Scope
   ( Scopes, ScopeBinding, ScopeBindings, ScopeUser(..), ScopeHandler(..), ScopeInstance(..), ScopeRecord(..), ScopeInput(..)
   , configureScopeRelations, cleanupAvailable, saveCleanupFailures )
@@ -57,6 +58,7 @@ data RuntimeGraph environment cause = RuntimeGraph
   { runtimePrototype :: PrototypeReference
   , runtimeScopes :: Scopes environment cause
   , runtimeRootFrame :: ExecutionFrame
+  , runtimeRetentions :: Retentions environment cause
   -- 发布时无归属的资产按 Origin 分组；后续认领保留同一引用，读取再检查共享 owner。
   -- 同一来源内只替换该入口自己的最新绑定，旧引用不会指向后来的 request 产物。
   , runtimeAssets :: IORef [((Origin, String), ScopeBinding environment cause)]
@@ -87,7 +89,8 @@ newRuntimeGraph prototype scopes = do
     [] -> newMVar ()
   frame <- newExecutionFrame coordinator Nothing Nothing
     [chainNode chain | chain <- protoChains prototype, chainRole chain /= SessionChain]
-  RuntimeGraph (PrototypeReference prototype) scopes frame
+  retentions <- newRetentions coordinator
+  RuntimeGraph (PrototypeReference prototype) scopes frame retentions
     <$> newIORef [] <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
     <*> newMVar (Just []) <*> newIORef (const (ioError (userError "No session launcher is installed")))
     <*> pure [mount | (_, described) <- workflowLifelongs (protoWorkflow prototype)
@@ -103,7 +106,83 @@ configureRuntimeScopes graph = case runtimePrototype graph of
   PrototypeReference prototype -> do
     configureScopeRelations (scopeRelations prototype) (runtimeScopes graph)
     forM_ (runtimeScopes graph) $ \family ->
-      writeIORef (scopeReachable family) (reachableInstance graph)
+      writeIORef (scopeReachable family) $ \slot -> do
+        held <- retainedInstance graph slot
+        if held then pure True else reachableInstance graph slot
+
+-- Binding 保留 v1（2026-11-18）：实际交付/捕获、未领取队列、仍合法可读的最新值。
+-- 仅检查共享 ownership，既不解释业务字段，也不把持有关系加入 ScopeTree。
+-- 调用方已经持有 scope/frame 协调锁；会话目录忙时保守保留，不反向等待启动锁。
+retainedInstance :: RuntimeGraph environment cause -> ScopeInstance environment cause -> IO Bool
+retainedInstance graph slot = case runtimePrototype graph of
+  PrototypeReference prototype -> do
+    active <- retainedBindings (runtimeRetentions graph)
+    held <- ownsAny active
+    if held then pure True else do
+      registry <- tryReadMVar (runtimeSessions graph)
+      case registry of
+        Nothing -> pure True
+        Just registered -> do
+          let sessions = fromMaybe [] registered
+          queued <- concat <$> mapM (pendingBindings . snd) sessions
+          inQueue <- ownsAny queued
+          if inQueue then pure True else do
+            frames <- framePendingViews (runtimeRootFrame graph)
+            publications@(Publications origins assets _) <- readPublications graph
+            let selected frame point source plan = case plan of
+                  FromSession
+                    -- 根帧的 lifelong 预约代表未来轮次，不能拿最新一条代替尚未领取的交付。
+                    | frameParent frame == Nothing
+                    , any (\(boundary, _) -> boundary `isPrefixOf` readNode point)
+                        (workflowLifelongs (protoWorkflow prototype)) -> pure []
+                    | otherwise -> do
+                        let session = case frameBoundary frame >>= \boundary -> lookup (Just boundary, source) sessions of
+                              Just local -> Just local
+                              Nothing -> sessionForReader prototype sessions (readNode point) source
+                        case session of
+                          Nothing -> pure []
+                          Just found -> do
+                            value <- currentView found
+                            case value >>= lastBinding of
+                              Nothing -> pure []
+                              Just bound -> do
+                                pending <- maybe (pure Nothing) (pendingSessionInput frame source) (bindingProduction bound)
+                                pure [bound | pending /= Just False]
+                  FromOwnChain -> pure [value | Just origin <- [lookup (readNode point) origins]
+                    , Just value <- [lookup (origin, source) assets]]
+                  FromChains nodes -> pure $ case selectPublication (runtimePrototype graph) (readNode point) source
+                    [value | node <- nodes, node `notElem` runtimeSessionMounts graph
+                      , Just value <- [publicationAt (runtimePrototype graph) publications (readNode point) source node]] of
+                    Right (Just value) -> [value]
+                    _ -> []
+            future <- concat <$> sequence [selected frame point source plan
+              | (frame, pending, _) <- frames, (point, plan) <- protoSources prototype, readNode point `elem` pending
+              , effect <- protoEffects prototype, effectProduces effect == Just (readContract point)
+              , let source = effectName effect]
+            ownsAny future
+  where
+    ownsAny values = or <$> mapM (fmap (maybe False ((== scopeRecord slot) . scopeRecord . snd)) . readBindingOwner) values
+    lastBinding view = case Seq.viewr view of
+      Seq.EmptyR -> Nothing
+      _ Seq.:> value -> Just value
+
+-- 保留根的寿命由调用/轮帧/派生步骤包围，不由 Haskell 对象何时 GC 决定。
+withRuntimeRetention :: RuntimeGraph environment cause -> (Retention environment cause -> IO value) -> IO value
+withRuntimeRetention graph = withRetention (runtimeRetentions graph) (collectRetainedScopes graph)
+
+-- 释放交付可能涉及本节点 Input 链外的已知 owner，不能只检查该节点的开启计划。
+-- 仍复用既有 close 预约、父子顺序、错误报告与取消协议。
+collectRetainedScopes :: RuntimeGraph environment cause -> [ScopeBinding environment cause] -> IO ()
+collectRetainedScopes _ [] = pure ()
+collectRetainedScopes graph values = case runtimePrototype graph of
+  PrototypeReference prototype -> do
+    owners <- mapM readBindingOwner values
+    let selected = nub [name | Just (name, _) <- owners]
+        relations = scopeRelations prototype
+        ancestors names = let expanded = nub (names ++ concat [parents | (name, parents) <- relations, name `elem` names])
+                          in if expanded == names then names else ancestors expanded
+        relevant = ancestors selected
+    collectScopes graph (filter ((`elem` relevant) . scopeName) (runtimeScopes graph))
 
 -- 待用查询 v3（2026-11-17）：普通参数沿发布表匹配；持续参数沿固定视图/游标匹配。
 -- 查询在 scope 协调锁内，不领取、不生产。会话目录正在启动时保守保留，不能等目录锁：
@@ -218,7 +297,7 @@ collectRuntimeScopes graph retired = case runtimePrototype graph of
 -- 所有受控任务已退出、根帧已退休；与节点结束使用同一个可达性条件。
 -- 卸下回调，生成句柄不再通过它保留整次已结束运行的资产表。
 finishRuntime :: RuntimeGraph environment cause -> IO ()
-finishRuntime graph = collectScopes graph (runtimeScopes graph) `finally`
+finishRuntime graph = (clearRetentions (runtimeRetentions graph) >> collectScopes graph (runtimeScopes graph)) `finally`
   forM_ (runtimeScopes graph) (\family -> writeIORef (scopeReachable family) (const (pure False)))
 
 collectScopes :: RuntimeGraph environment cause -> Scopes environment cause -> IO ()
@@ -240,36 +319,44 @@ nextSequence counter = atomicModifyIORef' counter (\previous -> (previous + 1, p
 -- 同一挂载的执行彼此先后（有限 AST 只执行一次，重复单元与会话步骤逐次执行）；
 -- 被替换的 Origin 不再能经来源表读到，其无归属发布随之移出，避免重复执行累积。
 newOrigin :: RuntimeGraph environment cause -> NodeId -> IO Origin
-newOrigin graph node = withFrameLock (runtimeRootFrame graph) $ do
-  origin <- Origin node <$> nextSequence (runtimeOriginSequence graph)
-  replaced <- atomicModifyIORef' (runtimeOrigins graph) $ \origins ->
-    let updated = (node, origin) : filter ((/= node) . fst) origins
-    in length updated `seq` (updated, lookup node origins)
-  mapM_ (dropPublications graph . (: [])) replaced
+newOrigin graph node = mask $ \restore -> do
+  (origin, released) <- withFrameLock (runtimeRootFrame graph) $ do
+    origin <- Origin node <$> nextSequence (runtimeOriginSequence graph)
+    replaced <- atomicModifyIORef' (runtimeOrigins graph) $ \origins ->
+      let updated = (node, origin) : filter ((/= node) . fst) origins
+      in length updated `seq` (updated, lookup node origins)
+    removed <- maybe (pure []) (dropPublications graph . (: [])) replaced
+    pure (origin, removed)
+  restore (collectRetainedScopes graph released)
   pure origin
 
 -- 新 frame 开始前移出该子树上一次执行的 Origin：本次没有执行的位置不能读到上一次的普通产物。
 -- 移出的发布按位置与来源保留最新一份，供 lifelong 结束后的后继读取（require 读最新值）。
 resetOrigins :: RuntimeGraph environment cause -> NodeId -> IO ()
-resetOrigins graph prefix = withFrameLock (runtimeRootFrame graph) $ do
-  origins <- readIORef (runtimeOrigins graph)
-  assets <- readIORef (runtimeAssets graph)
-  let removed = [origin | (node, origin) <- origins, prefix `isPrefixOf` node]
-      kept = [(node, origin) | (node, origin) <- origins, not (prefix `isPrefixOf` node)]
-      carried = [((originNode origin, source), value) | ((origin, source), value) <- assets, origin `elem` removed]
-  -- 先建立后继保留，再撤销当前来源；整个交接与 scope 关闭预约共用协调锁。
-  -- Binding / ActivationId / owner 不变，也不使单元内读取看到上一轮。
-  atomicModifyIORef' (runtimeRetained graph) $ \retained ->
-    let updated = carried ++ [entry | entry@(key, _) <- retained, key `notElem` map fst carried]
-    in length updated `seq` (updated, ())
-  length kept `seq` writeIORef (runtimeOrigins graph) kept
-  dropPublications graph removed
+resetOrigins graph prefix = mask $ \restore -> do
+  released <- withFrameLock (runtimeRootFrame graph) $ do
+    origins <- readIORef (runtimeOrigins graph)
+    assets <- readIORef (runtimeAssets graph)
+    let removed = [origin | (node, origin) <- origins, prefix `isPrefixOf` node]
+        kept = [(node, origin) | (node, origin) <- origins, not (prefix `isPrefixOf` node)]
+        carried = [((originNode origin, source), value) | ((origin, source), value) <- assets, origin `elem` removed]
+    -- 先建立后继保留，再撤销当前来源；整个交接与 scope 关闭预约共用协调锁。
+    -- Binding / ActivationId / owner 不变，也不使单元内读取看到上一轮。
+    replaced <- atomicModifyIORef' (runtimeRetained graph) $ \retained ->
+      let updated = carried ++ [entry | entry@(key, _) <- retained, key `notElem` map fst carried]
+          previous = [value | (key, value) <- retained, key `elem` map fst carried, bindingResource value]
+      in length updated `seq` (updated, previous)
+    length kept `seq` writeIORef (runtimeOrigins graph) kept
+    _ <- dropPublications graph removed
+    pure replaced
+  restore (collectRetainedScopes graph released)
 
-dropPublications :: RuntimeGraph environment cause -> [Origin] -> IO ()
-dropPublications _ [] = pure ()
+dropPublications :: RuntimeGraph environment cause -> [Origin] -> IO [ScopeBinding environment cause]
+dropPublications _ [] = pure []
 dropPublications graph origins = atomicModifyIORef' (runtimeAssets graph) $ \assets ->
   let kept = filter ((`notElem` origins) . fst . fst) assets
-  in length kept `seq` (kept, ())
+      removed = [value | ((origin, _), value) <- assets, origin `elem` origins, bindingResource value]
+  in length kept `seq` (kept, removed)
 
 -- 活动记录与 App 共享同一个绑定 IORef 和入口使用登记；ctx 不另建 scope 使用者。
 -- parent 只表达启动关系，不参与 ScopeTree 父边或资产可见性推导。
@@ -314,12 +401,16 @@ resolveDefinition (PrototypeReference prototype) boot = do
 -- 先写资产表再换信号：等待者醒来重新读取时一定能看到这次发布。
 publishAsset :: RuntimeGraph environment cause -> Origin -> String
              -> ScopeBinding environment cause -> IO ()
-publishAsset graph origin source value = withFrameLock (runtimeRootFrame graph) $ do
-  atomicModifyIORef' (runtimeAssets graph) $ \assets ->
-    let key = (origin, source)
-        updated = (key, value) : filter ((/= key) . fst) assets
-    in length updated `seq` (updated, ())
-  notifyFrame (runtimeRootFrame graph)
+publishAsset graph origin source value = mask $ \restore -> do
+  released <- withFrameLock (runtimeRootFrame graph) $ do
+    previous <- atomicModifyIORef' (runtimeAssets graph) $ \assets ->
+      let key = (origin, source)
+          updated = (key, value) : filter ((/= key) . fst) assets
+          replaced = [old | Just old <- [lookup key assets], bindingResource old]
+      in length updated `seq` (updated, replaced)
+    notifyFrame (runtimeRootFrame graph)
+    pure previous
+  restore (collectRetainedScopes graph released)
 
 -- 读取之前取得的信号；普通发布和执行帧退休都会填满它。
 publicationSignal :: RuntimeGraph environment cause -> IO (MVar ())
@@ -452,7 +543,7 @@ obtainSession graph key bindings views = uninterruptibleMask_ $ do
                   Just source -> do
                     (updated, previous) <- assemble known (Nothing, source)
                     pure (updated, Just previous)
-                fresh <- newSession (notifyFrame (runtimeRootFrame graph)) selected
+                fresh <- newSession (notifyFrame (runtimeRootFrame graph)) (collectRetainedScopes graph) selected
                   (if selected == key then bindings else []) (if selected == key then views else [])
                 forM_ parent $ \previous -> do
                   cursor <- attachReader previous

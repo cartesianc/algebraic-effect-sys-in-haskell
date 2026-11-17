@@ -9,7 +9,7 @@ module Framework.Runtime.Session
   , Session, sessionKey, sessionBindings, sessionViews
   , newSession, appendDelivery, breakSession, endSession, wakeSession, setSessionWorker, stopSession
   , setSessionRetirement, retireSession, departSession, sessionIdle
-  , awaitView, currentView, pendingDelivery, Cursor, admitReaders, attachReader, leaveSession, takeDelivery, takeDeliveryOn, completeSessionStep, sessionCaughtUp, feedSession, awaitUpstream, upstreamOf
+  , awaitView, currentView, retainedView, pendingBindings, pendingDelivery, Cursor, admitReaders, attachReader, leaveSession, takeDelivery, takeDeliveryOn, completeSessionStep, sessionCaughtUp, feedSession, awaitUpstream, upstreamOf
   ) where
 
 import Control.Concurrent (ThreadId, killThread)
@@ -17,12 +17,15 @@ import Control.Concurrent.MVar
   (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, takeMVar, tryPutMVar, tryReadMVar)
 import Control.Exception (Exception, SomeException, finally, mask, onException, uninterruptibleMask_)
 import Control.Monad (forM, void, when)
+import Data.Foldable (toList)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Maybe (isJust)
 import Data.Sequence (Seq, (|>))
 import qualified Data.Sequence as Seq
 import Framework.Language.Handler (Failure)
+import Framework.Runtime.Binding (Binding(..))
 import Framework.Runtime.Scope (ScopeBinding, ScopeBindings)
+import Framework.Runtime.Retention (Retention, withRetentionLock, keepBindingsLocked)
 import Framework.Prototype (NodeId)
 
 type SessionKey = (Maybe NodeId, String)
@@ -69,6 +72,9 @@ data SessionState environment cause = SessionState
   -- 发布序号小于 stateCleared 的伴随发布已被全部读取方领取，换成了空值。
   , stateCompanions :: Seq (ScopeBindings environment cause)
   , stateCleared :: Int
+  -- 资源保留索引 v1（2026-11-18）：仅索引已声明资源，回收不遍历普通资产的全部积压。
+  -- 位置使用绝对发布序号；领取后的执行持有由 Retention 接手。
+  , stateResources :: Seq (Int, [ScopeBinding environment cause])
   -- Derive 已完整处理的上游交付数。领取游标在业务执行前推进，不能充当完成水位。
   , stateProcessed :: !Int
   -- 会话不再接受新发布：来源正常结束（Drained）或失败（Broke）。已有条目保留。
@@ -107,22 +113,31 @@ data Session environment cause = Session
   , sessionRetirement :: MVar Retirement
   -- 同一次运行的执行帧通知：发布、派生完成与节点退休共用它，局部等待不会丢失进度变化。
   , sessionNotify :: IO ()
+  -- 队列裁剪后的回收入口；只在状态锁外调用，不改变队列的读取语义。
+  , sessionCollect :: [ScopeBinding environment cause] -> IO ()
   }
 
-newSession :: IO () -> SessionKey -> ScopeBindings environment cause -> [(String, View environment cause)]
+newSession :: IO () -> ([ScopeBinding environment cause] -> IO ()) -> SessionKey -> ScopeBindings environment cause -> [(String, View environment cause)]
            -> IO (Session environment cause)
-newSession notify key bindings views = do
+newSession notify collect key bindings views = do
   signal <- newEmptyMVar
   let readers = maybe (Just []) (const Nothing) (fst key)
-  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 0 Nothing signal readers) <*> newMVar NoWorker
-    <*> newEmptyMVar <*> newMVar (Unretired (pure ())) <*> pure notify
+  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Seq.empty 0 Nothing signal readers) <*> newMVar NoWorker
+    <*> newEmptyMVar <*> newMVar (Unretired (pure ())) <*> pure notify <*> pure collect
 
 -- 两次相等的值仍是两条发布；会话已经结束或失败时不再接受新条目。
 appendDelivery :: Session environment cause -> ScopeBindings environment cause -> ScopeBinding environment cause -> IO ()
 appendDelivery session companions value = changeState session $ \state -> case stateStopped state of
   Just _ -> Nothing
-  Nothing -> Just state { stateEntries = stateEntries state |> value
-                        , stateCompanions = stateCompanions state |> companions }
+  Nothing ->
+    let resources = filter bindingResource (value : map snd companions)
+        retained = case resources of
+          [] -> stateResources state
+          _ -> stateResources state |> (stateBase state + Seq.length (stateEntries state), resources)
+    in length resources `seq` retained `seq` Just state
+      { stateEntries = stateEntries state |> value
+      , stateCompanions = stateCompanions state |> companions
+      , stateResources = retained }
 
 breakSession :: Session environment cause -> Broken cause -> IO ()
 breakSession session reason = stopState session (Broke reason)
@@ -147,10 +162,13 @@ changeState session update = mask $ \restore -> do
   settled <- restore (traverse settle (update state)) `onException` putMVar (sessionState session) state
   case settled of
     Nothing -> putMVar (sessionState session) state
-    Just changed -> do
+    Just (changed, released) -> do
       putMVar (stateSignal state) ()
       putMVar (sessionState session) changed
       sessionNotify session
+      -- 被替换的最新资源可能早已不在待交付索引中，也需要重新检查它的后继义务。
+      let previous = filter bindingResource (maybe [] toList (latestView (stateEntries state)))
+      restore (sessionCollect session (released ++ previous))
   where
     settle changed = do
       fresh <- newEmptyMVar
@@ -161,9 +179,9 @@ changeState session update = mask $ \restore -> do
 -- 伴随发布只随交付领取：全部读取方都领取过的那些换成空值，与条目是否保留无关。
 -- 游标由各读取方自己推进，这里读到的位置只会偏早，保留的只会偏多。
 -- 新状态在写回前求值，不让旧序列挂在未求值的计算上。
-release :: SessionState environment cause -> IO (SessionState environment cause)
+release :: SessionState environment cause -> IO (SessionState environment cause, [ScopeBinding environment cause])
 release state = case stateReaders state of
-  Nothing -> pure state
+  Nothing -> pure (state, [])
   Just readers -> do
     positions <- forM readers $ \reader -> case reader of
       Reading position -> readIORef position
@@ -180,8 +198,22 @@ release state = case stateReaders state of
           | cleared <= blanked = companions
           | otherwise = Seq.take (blanked - kept) companions
               <> Seq.replicate (cleared - blanked) [] <> Seq.drop (cleared - kept) companions
-    kept `seq` cleared `seq` entries `seq` emptied `seq` (pure $! state
-      { stateBase = kept, stateEntries = entries, stateCompanions = emptied, stateCleared = cleared })
+        (removed, resources) = Seq.spanl ((< pending) . fst) (stateResources state)
+        released = concatMap snd (toList removed)
+    kept `seq` cleared `seq` entries `seq` emptied `seq` resources `seq` pure
+      (state { stateBase = kept, stateEntries = entries, stateCompanions = emptied
+             , stateCleared = cleared, stateResources = resources }, released)
+
+-- 游标登记、离开与领取后的裁剪共用入口；状态已提交才在锁外回收。
+modifySession :: Session environment cause
+              -> (SessionState environment cause -> IO (SessionState environment cause, value)) -> IO value
+modifySession session update = mask $ \restore -> do
+  (result, released) <- modifyMVar (sessionState session) $ \state -> do
+    (changed, value) <- update state
+    (settled, removed) <- release changed
+    pure (settled, (value, removed))
+  restore (sessionCollect session released)
+  pure result
 
 -- 状态不变，只让等待者重新检查自己的打断条件（所在单元正在结束）。
 wakeSession :: Session environment cause -> IO ()
@@ -191,29 +223,35 @@ wakeSession session = changeState session Just
 -- 的共享信号，同时观察节点退休与派生完成；普通会话读取仍只等自己的状态变化。
 -- 稳定判据可能晚于第一次状态快照，返回 Undriven 前必须重读：判据已经看到的发布不能被跳过。
 -- 交付优先于终态，终态优先于等待方的退出原因；启动许可仍由 Runtime.frameAdmits 判定。
-awaitState :: Session environment cause -> IO (Maybe (Stopped cause)) -> (SessionState environment cause -> Maybe result)
-           -> IO (Either (Stopped cause) result)
+awaitState :: Session environment cause -> Retention environment cause
+           -> IO (Maybe (Stopped cause)) -> (SessionState environment cause -> Maybe result)
+           -> (result -> [ScopeBinding environment cause]) -> IO (Either (Stopped cause) result)
 awaitState session = awaitStateOn (stateSignal <$> readMVar (sessionState session)) session
 
-awaitStateOn :: IO (MVar ()) -> Session environment cause -> IO (Maybe (Stopped cause))
-             -> (SessionState environment cause -> Maybe result) -> IO (Either (Stopped cause) result)
-awaitStateOn signal session interrupted ready = do
+-- 最新值的选择与捕获也共用关闭预约锁；不能取出旧值后才登记，中间允许后台替换并关闭它。
+-- 等待与稳定性查询在锁外，锁内只选择值、登记保留，不执行 handler。
+awaitStateOn :: IO (MVar ()) -> Session environment cause -> Retention environment cause
+             -> IO (Maybe (Stopped cause)) -> (SessionState environment cause -> Maybe result)
+             -> (result -> [ScopeBinding environment cause]) -> IO (Either (Stopped cause) result)
+awaitStateOn signal session retention interrupted ready retained = do
   changed <- signal
-  state <- readMVar (sessionState session)
-  case select state of
+  selected <- select
+  case selected of
     Just outcome -> pure outcome
     Nothing -> do
       halted <- interrupted
       case halted of
-        Just reason -> do
-          latest <- readMVar (sessionState session)
-          pure (maybe (Left reason) id (select latest))
-        Nothing -> readMVar changed >> awaitStateOn signal session interrupted ready
+        Just reason -> maybe (Left reason) id <$> select
+        Nothing -> readMVar changed >> awaitStateOn signal session retention interrupted ready retained
   where
-    select state = case (ready state, stateStopped state) of
-      (Just result, _) -> Just (Right result)
-      (Nothing, Just reason) -> Just (Left reason)
-      (Nothing, Nothing) -> Nothing
+    select = withRetentionLock retention $ do
+      state <- readMVar (sessionState session)
+      case (ready state, stateStopped state) of
+        (Just result, _) -> do
+          keepBindingsLocked retention (retained result)
+          pure (Just (Right result))
+        (Nothing, Just reason) -> pure (Just (Left reason))
+        (Nothing, Nothing) -> pure Nothing
 
 -- 仅在 Derive 一步成功返回后推进；失败和 endStream 走封口/失败协议，不提前宣告处理完成。
 completeSessionStep :: Session environment cause -> IO ()
@@ -229,9 +267,20 @@ sessionCaughtUp session upstream = do
 
 -- lifelong 外的有限读取：至少有一条发布后取最新 Binding；之后的发布不改写本次视图。
 -- 来源结束后仍读到最后一条；一条都没有发布就结束时返回 Drained。
-awaitView :: Session environment cause -> IO (Either (Stopped cause) (View environment cause))
-awaitView session = awaitState session (pure Nothing) $ \state ->
-  latestView (stateEntries state)
+awaitView :: Session environment cause -> Retention environment cause -> IO (Either (Stopped cause) (View environment cause))
+awaitView session retention = awaitState session retention (pure Nothing)
+  (latestView . stateEntries) toList
+
+retainedView :: Session environment cause -> Retention environment cause -> IO (Maybe (View environment cause))
+retainedView session retention = withRetentionLock retention $ do
+  value <- currentView session
+  mapM_ (keepBindingsLocked retention . toList) value
+  pure value
+
+-- 仅未领取的交付和伴随发布构成队列保留根；最新快照是否仍待用由 Graph 的来源规则决定。
+-- 查询在 scope 协调锁内；队列的领取在同一锁内先登记执行保留，随后才推进游标。
+pendingBindings :: Session environment cause -> IO [ScopeBinding environment cause]
+pendingBindings session = concatMap snd . toList . stateResources <$> readMVar (sessionState session)
 
 -- 不等待地取当前保留的视图：一条都没有发布时为 Nothing。本单元发布的会话本轮没有新发布时，
 -- 只读最新一条的读取（require）用它读已有的一条，不推进游标。
@@ -268,31 +317,28 @@ pendingDelivery session (Reading position) = do
 -- 进入 lifelong 时一次登记本会话的全部读取方，每个单元一项：False 表示不读取。
 -- 游标从会话首条开始；登记之前的发布都还保留着。
 admitReaders :: Session environment cause -> [Bool] -> IO [Cursor]
-admitReaders session accesses = modifyMVar (sessionState session) $ \state -> do
+admitReaders session accesses = modifySession session $ \state -> do
   cursors <- forM accesses (\reads -> if reads then Reading <$> newIORef 0 else pure Idle)
-  settled <- release state { stateReaders = Just [cursor | cursor@(Reading _) <- cursors] }
-  pure (settled, cursors)
+  pure (state { stateReaders = Just [cursor | cursor@(Reading _) <- cursors] }, cursors)
 
 -- 有限需求首次建立一个派生关系：原来源若已发布，先交付登记瞬间的最新值，随后逐条推进。
 -- 起点和登记在同一状态锁下；不重放已释放发布，也不把积压误当作新读取方的历史。
 -- 新来源尚未发布时从第 0 条开始。lifelong 的统一登记仍使用 admitReaders。
 attachReader :: Session environment cause -> IO Cursor
-attachReader session = modifyMVar (sessionState session) $ \state -> do
+attachReader session = modifySession session $ \state -> do
   let position = stateBase state + max 0 (Seq.length (stateEntries state) - 1)
   cursor <- Reading <$> newIORef position
-  settled <- release state { stateReaders = Just (cursor : maybe [] id (stateReaders state)) }
-  pure (settled, cursor)
+  pure (state { stateReaders = Just (cursor : maybe [] id (stateReaders state)) }, cursor)
 
 -- 读取方离开：它不会再领取这个会话的交付，为它保留的积压可以放掉。
 -- 单元不再有读取这个会话的活节点、单元结束、Derive 会话不再消费上游时调用；重复离开不改变状态。
 -- 返回 True 表示这次离开使已登记的读取方从有到无（引用计数归零）：调用方据此在锁外退役会话。
 -- 失败或取消路径只离开、不退役，停止交给 lifelong 返回或运行结束的既有收尾。
 leaveSession :: Session environment cause -> Cursor -> IO Bool
-leaveSession session cursor = modifyMVar (sessionState session) $ \state -> do
+leaveSession session cursor = modifySession session $ \state -> do
   let before = stateReaders state
       after = filter (/= cursor) <$> before
-  settled <- release state { stateReaders = after }
-  pure (settled, fmap null before == Just False && fmap null after == Just True)
+  pure (state { stateReaders = after }, fmap null before == Just False && fmap null after == Just True)
 
 -- 正常路径上的离开：计数归零时退役会话。退役等待生产任务收尾，不能在会话状态锁内调用。
 departSession :: Session environment cause -> Cursor -> IO ()
@@ -335,27 +381,28 @@ retireSession session = mask $ \restore -> do
 -- 领取下一条尚未交付的发布，固定为这一条 Binding，并带上同一次生产的伴随发布。
 -- 有积压时立即返回，没有时挂起等待（interrupted 给出原因时不等待，返回该原因）；
 -- 来源结束后先排空积压，游标到达末尾才返回 Drained。游标前进只表示领取，不表示处理完成。
-takeDelivery :: Session environment cause -> Cursor -> IO (Maybe (Stopped cause))
+takeDelivery :: Session environment cause -> Cursor -> Retention environment cause -> IO (Maybe (Stopped cause))
              -> IO (Either (Stopped cause) (Delivery environment cause))
 takeDelivery session = takeDeliveryOn (stateSignal <$> readMVar (sessionState session)) session
 
 -- DeliveryFrame 用同一执行帧的通知同时等待发布、派生步骤完成和本轮节点退休。
-takeDeliveryOn :: IO (MVar ()) -> Session environment cause -> Cursor -> IO (Maybe (Stopped cause))
+takeDeliveryOn :: IO (MVar ()) -> Session environment cause -> Cursor -> Retention environment cause -> IO (Maybe (Stopped cause))
                -> IO (Either (Stopped cause) (Delivery environment cause))
-takeDeliveryOn _ session Idle _ = ioError (userError ("A lifelong unit takes a delivery of " ++ snd (sessionKey session)
+takeDeliveryOn _ session Idle _ _ = ioError (userError ("A lifelong unit takes a delivery of " ++ snd (sessionKey session)
   ++ " without a read point in the prototype; regenerate with the SDK effect-codegen command"))
-takeDeliveryOn signal session (Reading position) interrupted = do
+takeDeliveryOn signal session (Reading position) retention interrupted = do
   delivered <- readIORef position
-  outcome <- awaitStateOn signal session interrupted $ \state ->
-    let offset = delivered - stateBase state
-    in if Seq.length (stateEntries state) > offset
-      then Just (Seq.singleton (Seq.index (stateEntries state) offset), Seq.index (stateCompanions state) offset)
-      else Nothing
+  outcome <- awaitStateOn signal session retention interrupted
+    (\state -> let offset = delivered - stateBase state
+      in if Seq.length (stateEntries state) > offset
+        then Just (Seq.singleton (Seq.index (stateEntries state) offset), Seq.index (stateCompanions state) offset)
+        else Nothing)
+    (\(view, companions) -> toList view ++ map snd companions)
   case outcome of
     -- 视图与伴随发布先求值，不让这次交付挂住整份会话状态；游标前进后放掉不再需要的部分。
     Right (view, companions) -> view `seq` companions `seq` do
       atomicModifyIORef' position (\current -> (current + 1, ()))
-      modifyMVar_ (sessionState session) release
+      modifySession session (\state -> pure (state, ()))
     Left _ -> pure ()
   pure outcome
 

@@ -374,7 +374,7 @@ R 为一个会话当前登记的读取方数量，N 为保留的条目数。会�
 | 登记或离开读取方 | O(R + log N) | 更新游标表并重新计算保留位置 |
 | 取得已经捕获的资产 | 不随队列长度增长 | 复用固定 Binding，不遍历此前发布 |
 
-上述代价只描述 SDK 的交付记录，不包含业务值的解析、求值或累计数据的操作。R 个读取方各领取一次会有 R 次游标扫描，不能将一次发布的全部交付承诺为 O(R)。队列大小由尚未领取的积压决定，窗口、容量与背压另行设计。
+上述代价只描述交付队列的基础操作，不包含资源保留匹配、scope 回收和业务值的解析、求值或累计数据操作。资源保留另有仅包含已声明资源的索引；裁剪只处理移出的资源项，回收查询仍会扫描保留的资源项和活动读取义务，未承诺常数时间。普通资产积压不进入该索引。R 个读取方各领取一次会有 R 次游标扫描，不能将一次发布的全部交付承诺为 O(R)。队列大小由尚未领取的积压决定，窗口、容量与背压另行设计。
 
 <a id="production"></a>
 ## 8. 生产与普通读取
@@ -391,7 +391,7 @@ Receive 在交出原始输入时，也把同一步来源执行已捕获的资源
 
 Receive／Derive 的生产步骤共用会话的 scope 使用登记，单步完成不撤销它；来源正常结束也不立即放掉排空所需的使用。停止与退役时机统一见[第 9.5 节](#consumer-end)，资源释放沿用[scope 可达性回收](LATEST_DESIGN.md#scope-gc)。ReuseOutput 没有额外的会话 ScopeUser，沿原消费节点与执行帧回收；这些机制不自动增加业务资产内嵌资源的保活保证。
 
-lifelong 单元每次执行建立独立的 ExecutionFrame。参数来自外层或没有参数的 scope 由外层帧保留；参数来自本轮的实例归本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。DeliveryFrame 仍负责本轮会话视图的领取；ExecutionFrame 记录已领取普通伴随资产的生产身份及所属 lifelong 边界，不复制值。根实例的待用查询包含活动子帧：即使后台会话已经发布下一步，本轮后继仍按固定交付身份保留同一实例。轮帧结束后清空进度并从父帧摘除；已经允许的 lifelong 外后继仍按静态来源和实际保留绑定判断待用，具体规则见[图与来源](EFFECT_GRAPH.md#scope-opening-retention)。持续值作为 scope 参数的身份观察已接通；待交付及业务数据内嵌资源的额外持有仍待设计。
+lifelong 单元每次执行建立独立的 ExecutionFrame。参数来自外层或没有参数的 scope 由外层帧保留；参数来自本轮的实例归本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。DeliveryFrame 仍负责本轮会话视图的领取；ExecutionFrame 记录已领取普通伴随资产的生产身份及所属 lifelong 边界，不复制值。根实例的待用查询包含活动子帧：即使后台会话已经发布下一步，本轮后继仍按固定交付身份保留同一实例。轮帧结束后清空进度并从父帧摘除；已经允许的 lifelong 外后继仍按静态来源和实际保留绑定判断待用，具体规则见[图与来源](EFFECT_GRAPH.md#scope-opening-retention)。持续值作为 scope 参数的身份观察已接通；已知 Binding ownership 的保留见[资源边界](#binding-retention)，业务数据内嵌资源仍待设计。
 
 Stream handler 的阻塞／等待决定节奏，SDK 不加间隔；立即返回的生产会形成高频生产，慢于来源的读取方可能持续积压（保留规则见 [7.1 节](#retention)）。本版不提供容量背压、丢弃或去重。
 
@@ -439,11 +439,26 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 
 `stopSession` 统一使用“无 worker／运行中／停止中”的内部状态。首次停止登记停止中并取得任务，锁外发出取消并等待；并发或重复停止取得同一完成信号，也必须等待 worker 的 `finally` 撤销 ScopeUser 后返回，不能把“已经请求停止”当成“收尾完成”。停止状态只保存完成信号；首次停止方在锁外持有任务句柄直到完成，后续调用不重复取消。停止与等待不持有会话状态锁或 worker 目录锁；`endSession` 的封口、`leaveSession` 的读取方撤销仍是各自独立的事件；lifelong 独立会话的读取方计数归零时，由离开方在锁外调用已安装的退役动作（停止、封口、回收）；interpreter 托管会话不安装该动作，见 [9.5 节](#consumer-end)。
 
-### 9.3 close 延期的含义
+<a id="binding-retention"></a>
+### 9.3 已知资源的保留与 close 边界
 
 不新增 Stream close、next-use 或业务集合按元素关闭协议。没有增量表示等待，不表示结束、故障或关闭；直接来源由 Stream handler 的 `streamEnd` 报告结束，Derive 由上游耗尽或被驱动链的 `endStream` 结束，ReuseOutput 在发布位置全部撤下后封口（9.4、9.5）。
 
-会话停止的完成交接、普通资产后继待用和持续值作为开启参数已接通。会话退役把只在会话挂载中开启的 scope 交给现有回收器。剩余问题是待交付值和业务资产内嵌资源的持有，以及 lifelong 的局部失败，见[阶段计划](NEXT_STAGES.md#stages)。本轮的队列裁剪只释放 SDK 引用，不替代资源 close。
+**已实现的保证范围（2026-11-18）：** 保留已有 Binding ownership 能定位的资源；注册指定的资源 Context 在认领前也保持同一归属单元。普通业务 ADT 不因此继承生产方法读取过的全部资源。资产、注册、handler 与 workflow 写法不变；保活不扩大来源可见性，不让链外资源读取变得合法。
+
+| 持有者 | 保留到什么时候 |
+| --- | --- |
+| 待交付队列中的资源 Binding 及伴随绑定 | 仍有游标未领取，或初始读取方尚未登记完成；领取前先交给执行持有 |
+| lifelong 本轮的固定交付 | 本轮内部全部受控执行结束，包括等待结束、失败及取消收尾 |
+| Derive 的一次领取 | 本次解析与发布结束；新产物只保留自己已有的 ownership，不推断内嵌字段 |
+| 有限调用取得的固定值 | 调用、诊断和受控结果消费结束；alternative 的选择捕获保留到所选候选结束 |
+| 合法后继可读的最新绑定 | 仍有执行帧待用；值被新发布替换、位置完成或跳过后重新判断 |
+
+领取和有限快照读取在 scope 关闭预约的共同协调锁内先登记保留，再推进游标或返回值。队列裁剪只撤销队列的义务，不把领取当成执行完成。撤销执行保留、裁剪资源条目或替换旧绑定后，在锁外按原 owner 和其 ScopeTree 祖先调用现有回收器。冻结的 cleanup 快照不成为实例自己的保留根；订阅和值持有也不增加 ScopeTree 父子边。
+
+来源 end 不撤销待交付和执行中的保留。生产会话的 ScopeUser 仍按原协议保留到退役；本次没有提前撤销这份登记。退役后，有使用者、合法待用、值保留或子实例的 scope 继续存活，其余按原协议 close。取消会退出受控边界并撤销登记，关闭中的取消仍传播；运行退出等待全部受控工作停止后放弃剩余交付并清理。Haskell GC 释放不可达的内存，资源 close 继续由现有 scope 协议负责。
+
+任意业务 ADT 内嵌资源、外部别名、资源撤销后的新增保证及 lifelong 局部失败仍见[阶段计划](NEXT_STAGES.md#review)，本节不宣称已覆盖它们。
 
 业务资产保存多份数据不等于可以把其中各资源的 owner 合成一个，也不能复活已关闭资源。持续值作为 scope 开启参数沿用本次 Binding 的生产身份和原生产帧；已领取交付、游标下一条与合法后继按读取规则参与待用判断，详见[开启计划与待用](EFFECT_GRAPH.md#scope-opening-retention)。这不自动展开 T 中的资源引用或额外保活其内容。
 
@@ -529,14 +544,14 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 - 零轮或从未发布：缺值按耗尽协议报 `ContextNotInitialized`，不等待。
 - 生成期拒绝：两个并行单元都发布同一资产，同一单元内同一轮可能有两个位置都发布，lifelong 内外的来源并存，或两个互不先后的 lifelong 都有同一个持续资产。这些情形里“最新”要么取决于调度，要么违反来源唯一。
 
-带资源归属的资产不经普通来源表，不能凭上述后继规则在链外读取资源。普通资产作为开启参数时的后继待用已经接入[scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention)；持续值参数已接通；待交付值与业务资产内嵌资源的额外持有仍待设计。
+带资源归属的资产不经普通来源表，不能凭上述后继规则在链外读取资源。普通资产作为开启参数时的后继待用已经接入[scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention)；持续值参数与已知 ownership 的[交付保留](#binding-retention)已接通；业务资产内嵌资源仍待设计。
 
 **资源。**
 
 - 来源结束后，会话的使用登记保留到会话退役，排空期间不会因为来源结束而提前关闭资源。
 - 只在生产会话中开启的 scope（例如 StreamDemo 的 `SensorLink`、LinesDemo 的输入文件）在会话退役时按可达性回收：生产已经停止、读取方计数归零（或 lifelong 返回）；后继还会以同样参数开启的实例保留。见 [9.5 节](#consumer-end)。
 - 单元自己开启的 scope 在 lifelong 的节点退休时，由现有的可达性回收照常处理；这是节点结束的既有规则。
-- 交付和业务数据内嵌资源的额外生命周期没有保证。
+- 交付按[已知 Binding ownership](#binding-retention)保留资源；不承诺任意业务数据内嵌资源的生命周期。
 
 **失败与取消。** 不变：含 lifelong 的程序中的失败仍按 9.1 终止整次运行。
 
@@ -601,7 +616,7 @@ ReuseOutput 的发布位置同样按节点计：节点结束订阅时立即撤�
 
 **代价。** 节点结束后的读取关系重新计算每轮最多一次；发布位置在节点结束时立即撤下。会话的计数判断与离开同在一次 `release` 内，为 O(R)（R 为该会话的读取方个数）。本轮稳定检查沿已生成的单上游关系查询发布节点进度和派生完成水位，只在唤醒后重查，不轮询；新增完成计数不随发布总数分配存储。
 
-**不变与未做。** 读取方的游标只描述领取进度，不替业务定义数据保留方式。交付与业务数据内嵌资源的持有、背压与容量、局部失败仍未设计。
+**不变与未做。** 读取方的游标只描述领取进度，不替业务定义数据保留方式。已有 ownership 的交付保留见[资源边界](#binding-retention)；业务数据内嵌资源的持有、背压与容量、局部失败仍待设计。
 
 <a id="implementation"></a>
 ## 10. 实现位置
@@ -612,6 +627,7 @@ ReuseOutput 的发布位置同样按节点计：节点结束订阅时立即撤�
 | 组合计算：访问权限、声明、lifelong 单元与订阅、持续连接、启动依赖、来源证明 | [Gen/Composition.hs](../sdk/Framework/Gen/Composition.hs) |
 | 静态模型与自洽查询 | [Prototype/Types.hs](../sdk/Framework/Prototype/Types.hs)、[Prototype/Query.hs](../sdk/Framework/Prototype/Query.hs)、[Prototype/Validate.hs](../sdk/Framework/Prototype/Validate.hs) |
 | 会话状态、交付、游标、读取方登记与保留范围 | [Session.hs](../sdk/Framework/Runtime/Session.hs) |
+| 已知资源 Binding 的执行保留与撤销 | [Retention.hs](../sdk/Framework/Runtime/Retention.hs) |
 | Derive 的推导、会话集合、生产步骤与上游游标的交接 | [Gen/Composition.hs](../sdk/Framework/Gen/Composition.hs)、[Runtime.hs](../sdk/Framework/Runtime.hs)（`DeriveSteps`）、[Session.hs](../sdk/Framework/Runtime/Session.hs)（`feedSession`）、[Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
 | ReuseOutput 的发布位置、挂接与单元结束封口 | [Gen/Composition.hs](../sdk/Framework/Gen/Composition.hs)、[Gen/Emit/Handlers.hs](../sdk/Framework/Gen/Emit/Handlers.hs)、[Context.hs](../sdk/Framework/Runtime/Context.hs)、[App.hs](../sdk/Framework/Runtime/App.hs)、[Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
 | 会话登记、Origin 清除 | [Graph.hs](../sdk/Framework/Runtime/Graph.hs) |

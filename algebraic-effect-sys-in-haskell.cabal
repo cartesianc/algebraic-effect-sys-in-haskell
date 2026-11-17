@@ -39,6 +39,7 @@ common runtime-program
       Framework.Runtime.Protocol
       Framework.Runtime.Context
       Framework.Runtime.Binding
+      Framework.Runtime.Retention
       Framework.Runtime.Scope
       Framework.Runtime.App
       Framework.Runtime.Frame
