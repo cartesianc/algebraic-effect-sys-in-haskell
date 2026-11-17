@@ -20,7 +20,7 @@ import Framework.Runtime.Graph
   , currentPublications, collectRuntimeScopes )
 import Framework.Runtime.Identity (ActivationId, Execution(..), Origin(..), executionOrigin)
 import Framework.Runtime.Frame (ExecutionFrame, NodeProgress(..), captureFrameDeliveries, frameNodeProgress, frameSignal, installSessionInputs)
-import Framework.Runtime.Binding (Binding(..))
+import Framework.Runtime.Binding (Binding(..), readBindingOwner)
 import Framework.Runtime.Session
 import Framework.Runtime.Scope
 import Framework.Prototype
@@ -28,9 +28,10 @@ import Control.Concurrent (forkIOWithUnmask, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar, newEmptyMVar, newMVar, putMVar, readMVar, tryReadMVar)
 import Control.Exception
   (SomeAsyncException, SomeException, evaluate, finally, fromException, mask, onException, throwIO, try, uninterruptibleMask_)
-import Control.Monad (forM, forM_, forever, void, when)
+import Control.Monad (filterM, forM, forM_, forever, void, when)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (nubBy)
+import Data.Maybe (isJust, isNothing)
 import qualified Data.Sequence as Seq
 
 -- 末端句柄与调用交接 -----------------------------------------------------------
@@ -231,7 +232,9 @@ lowerTarget graph location executionFrame frame (Handoff given views) target = d
       | (source, value) <- companions, Just production <- [bindingProduction value]
       , source `notElem` [resource | family <- runtimeScopes graph, Just resource <- [scopeContextSource family]]]
   (outcome, captured, delivered) <- lowerWith graph location launch target
-  pure (outcome, Handoff captured delivered)
+  -- 普通跨入口交接仍不传资源；同次 Receive 的内部交接在 sessionLauncher 中处理。
+  handoffBindings <- filterM (fmap isNothing . readBindingOwner . snd) captured
+  pure (outcome, Handoff handoffBindings delivered)
 
 lowerWith :: RuntimeGraph environment cause -> NodeId -> Launch environment cause -> Target environment cause value
           -> IO (Either (Failure cause) value, ScopeBindings environment cause, [(String, View environment cause)])
@@ -324,8 +327,15 @@ sessionLauncher graph steps onBroken session
         case taken of
           Left SourceEnded -> pure (Just Nothing)
           Right (Left problem, _, _) -> pure (Just (Just problem))
-          Right (Right text, _, _) ->
-            either (Just . Just) (const Nothing) . first <$> lowerWith graph parserMount (step owner (Just text) sink) parser
+          Right (Right text, captured, _) -> do
+            -- Receive 资源交接 v1（2026-11-17）：raw 回答本次输入，不重跑来源的 open。
+            -- parser 因此需要本次已捕获的资源 Binding；共用 owner 保活，保留原生产身份。
+            -- 只交接资源，不带入来源的普通捕获或交付视图，不写回会话或跨轮复用。
+            resources <- filterM (fmap isJust . readBindingOwner . snd) captured
+            let parseStep = (step owner (Just text) sink)
+                  { launchBindings = resources ++ [entry | entry@(name, _) <- sessionBindings session
+                    , name `notElem` map fst resources] }
+            either (Just . Just) (const Nothing) . first <$> lowerWith graph parserMount parseStep parser
       -- 每一步先领取一条上游交付，把该 Binding 作为本步的固定视图；上游结束并排空即正常结束。
       -- 被驱动链上的 Excu 调用 endStream：这一步放弃，不发布，派生会话不再消费上游，同样正常结束。
       -- 正常退出时离开上游，计数归零则退役上游；失败或取消只离开，停止交给收尾或本会话的退役。

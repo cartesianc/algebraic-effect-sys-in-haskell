@@ -322,7 +322,11 @@ generatedPrototype =
             (OpenSensorLinkGen)
             (SDK.ScopeOpen)
             (SDK.Sequence ([SDK.Call (GetSensorStateGen), SDK.Call (ReadSensorStateGen)]))
-        , SDK.MethodDefinition (CloseSensorLinkGen) (OpenSensorLinkGen) (SDK.ScopeClose) (SDK.Empty)
+        , SDK.MethodDefinition
+            (CloseSensorLinkGen)
+            (OpenSensorLinkGen)
+            (SDK.ScopeClose)
+            (SDK.Call (ReadSensorStateGen))
         , SDK.MethodDefinition
             (NextTemperatureFeedGen)
             (NextTemperatureFeedGen)

@@ -49,6 +49,7 @@ instance ConnectSensorLayer m => ConnectSensorHandler m where
 
 instance DisconnectSensorLayer m => DisconnectSensorHandler m where
   disconnectSensor = do
+    SensorMemory _ _ <- require @SensorMemory
     liftIO (putStrLn "[sensor] disconnected")
     pure []
 
@@ -119,7 +120,7 @@ instance ReportHeartbeatLayer m => ReportHeartbeatHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "a66d1944ab3d0d04ffc4562c6d2457cb"
+handlerSourceFingerprint = Just "23817ef6e3ebb472659b851b0d2176a8"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。

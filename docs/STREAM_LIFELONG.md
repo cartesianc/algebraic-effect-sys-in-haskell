@@ -387,6 +387,8 @@ R 为一个会话当前登记的读取方数量，N 为保留的条目数。会�
 
 parser 的包装发布一次；会话不再次发布返回值，也不再调用一次 parser。Receive／Derive 的每一步是一次独立的受控调用（自己的 Origin 与捕获环境），从进入 lifelong 时保存的交接新副本开始：外层已经捕获的值（例如 alternative 选择时读到的配置）在生产端与消费端一致。interpreter 托管的会话没有交接。ReuseOutput 的 parser 是原节点内的挂接调用，保留该节点的 Origin、执行帧与 ScopeUser；记录自己的 Context activation，但不另开一个根执行、不重放原子操作。
 
+Receive 在交出原始输入时，也把同一步来源执行已捕获的资源 Binding 交给 parser；parser 的 raw 使用这次输入，因此不重跑来源来恢复资源。交接保留原 Binding 的生产身份、执行帧与共享 ownership，来源与 parser 使用同一会话的 ScopeUser。这是同一生产步骤内的资源交接，不放宽普通跨入口 Handoff 对资源绑定的过滤，也不改变普通资产的 AST 可见性；不能扫描其他打开的实例来补值。资源与开启参数仍按[既有 scope 规则](LATEST_DESIGN.md#scope)区分，不因来源在会话里运行而重分类。
+
 Receive／Derive 的生产步骤共用会话的 scope 使用登记，单步完成不撤销它；来源正常结束也不立即放掉排空所需的使用。停止与退役时机统一见[第 9.5 节](#consumer-end)，资源释放沿用[scope 可达性回收](LATEST_DESIGN.md#scope-gc)。ReuseOutput 没有额外的会话 ScopeUser，沿原消费节点与执行帧回收；这些机制不自动增加业务资产内嵌资源的保活保证。
 
 lifelong 单元每次执行建立独立的 ExecutionFrame。参数来自外层或没有参数的 scope 由外层帧保留；参数来自本轮的实例归本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。DeliveryFrame 仍负责本轮会话视图的领取；ExecutionFrame 记录已领取普通伴随资产的生产身份及所属 lifelong 边界，不复制值。根实例的待用查询包含活动子帧：即使后台会话已经发布下一步，本轮后继仍按固定交付身份保留同一实例。轮帧结束后清空进度并从父帧摘除；已经允许的 lifelong 外后继仍按静态来源和实际保留绑定判断待用，具体规则见[图与来源](EFFECT_GRAPH.md#scope-opening-retention)。持续值作为 scope 参数的身份观察已接通；待交付及业务数据内嵌资源的额外持有仍待设计。

@@ -32,6 +32,7 @@ instance ConnectSensorLayer m => ConnectSensorHandler m where
 
 instance DisconnectSensorLayer m => DisconnectSensorHandler m where
   disconnectSensor = do
+    SensorMemory _ _ <- require @SensorMemory
     liftIO (putStrLn "[sensor] disconnected")
     pure []
 
