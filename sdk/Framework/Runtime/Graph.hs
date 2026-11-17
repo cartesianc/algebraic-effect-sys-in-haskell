@@ -9,7 +9,7 @@ module Framework.Runtime.Graph
   ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..)
   , newRuntimeGraph, configureRuntimeScopes, collectRuntimeScopes, finishRuntime, newOrigin
   , beginActivation, endActivation, withRuntimeRetention, collectRetainedScopes
-  , publishAsset, publicationSignal, readVisibleAsset, contextMayPublish, resetOrigins
+  , publishAsset, publicationSignal, readPublishedAsset, contextMayPublish, resetOrigins
   , installSessionLauncher, obtainSession, endedSession, stopSessions, currentPublications, reusesOutputAt
   ) where
 
@@ -49,6 +49,7 @@ data Activation environment cause = Activation
   , activationParent :: Maybe ActivationId
   , activationBoot :: Boot
   , activationExecution :: Execution
+  , activationFrame :: ExecutionFrame
   , activationDefinition :: ChainReference
   , activationBindings :: IORef (ScopeBindings environment cause)
   , activationUser :: ScopeUser environment cause
@@ -60,7 +61,7 @@ data RuntimeGraph environment cause = RuntimeGraph
   , runtimeRootFrame :: ExecutionFrame
   , runtimeRetentions :: Retentions environment cause
   -- 发布时无归属的资产按 Origin 分组；后续认领保留同一引用，读取再检查共享 owner。
-  -- 同一来源内只替换该入口自己的最新绑定，旧引用不会指向后来的 request 产物。
+  -- 这份按 Origin 的索引服务同一步的交付；普通读取使用下面的 runtimeLatest。
   , runtimeAssets :: IORef [((Origin, String), ScopeBinding environment cause)]
   -- 有限 AST 每个挂载只启动一次；完成后只保留身份，供后继读取，不保留其 activation。
   , runtimeOrigins :: IORef [(NodeId, Origin)]
@@ -74,13 +75,11 @@ data RuntimeGraph environment cause = RuntimeGraph
   -- GC 已持有协调锁，直接读此表，不反向等待会话装配锁。
   , runtimeSessionSnapshot :: IORef [(SessionKey, Session environment cause)]
   , runtimeLauncher :: IORef (Session environment cause -> IO ())
-  -- lifelong 会话的生产挂载：其普通发布只作为交付的伴随发布读取。
-  , runtimeSessionMounts :: [NodeId]
   -- 已装配的原始链输出路由；从 Prototype 投影一次，发布时不重新遍历整张图。
   , runtimeOutputSites :: [(NodeId, String)]
-  -- lifelong 单元各位置在先前各轮的最新发布（每个位置、每个来源一份）。新一轮开始时，
-  -- 上一轮的发布移到这里，轮内读取看不到它；只有 lifelong 之外的读取（后继）才查这里。
-  , runtimeRetained :: IORef [((NodeId, String), ScopeBinding environment cause)]
+  -- 普通资产 v1（2026-11-18）：每个 Context 一份运行级最新发布；帧不是可见性边界。
+  -- Origin 表只保存当前步骤的伴随输出；切轮不撤销这份共享值，不累积历史。
+  , runtimeLatest :: IORef (ScopeBindings environment cause)
   }
 
 newRuntimeGraph
@@ -96,8 +95,6 @@ newRuntimeGraph prototype scopes = do
   RuntimeGraph (PrototypeReference prototype) scopes frame retentions
     <$> newIORef [] <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
     <*> newMVar (Just []) <*> newIORef [] <*> newIORef (const (ioError (userError "No session launcher is installed")))
-    <*> pure [mount | (_, described) <- workflowLifelongs (protoWorkflow prototype)
-           , session <- lifelongSessions described, mount <- sessionMounts session]
     <*> pure [(node, effectName effect) | (_, described) <- workflowLifelongs (protoWorkflow prototype)
            , session <- lifelongSessions described, ReuseOutput nodes <- [sessionPlan session], node <- nodes
            , effect <- protoEffects prototype, effectProduces effect == Just (sessionAsset session)]
@@ -127,7 +124,7 @@ retainedInstance graph slot = case runtimePrototype graph of
       inQueue <- ownsAny queued
       if inQueue then pure True else do
         frames <- framePendingViews (runtimeRootFrame graph)
-        publications@(Publications origins assets _) <- readPublications graph
+        assets <- readIORef (runtimeLatest graph)
         let selected frame point source plan = case plan of
               FromSession
                 -- 根帧的 lifelong 预约代表未来轮次，不能拿最新一条代替尚未领取的交付。
@@ -147,13 +144,8 @@ retainedInstance graph slot = case runtimePrototype graph of
                           Just bound -> do
                             pending <- maybe (pure Nothing) (pendingSessionInput frame source) (bindingProduction bound)
                             pure [bound | pending /= Just False]
-              FromOwnChain -> pure [value | Just origin <- [lookup (readNode point) origins]
-                , Just value <- [lookup (origin, source) assets]]
-              FromChains nodes -> pure $ case selectPublication (runtimePrototype graph) (readNode point) source
-                [value | node <- nodes, node `notElem` runtimeSessionMounts graph
-                  , Just value <- [publicationAt (runtimePrototype graph) publications (readNode point) source node]] of
-                Right (Just value) -> [value]
-                _ -> []
+              FromOwnChain -> pure [value | Just value <- [lookup source assets]]
+              FromChains _ -> pure [value | Just value <- [lookup source assets]]
         future <- concat <$> sequence [selected frame point source plan
           | (frame, pending, _) <- frames, (point, plan) <- protoSources prototype, readNode point `elem` pending
           , effect <- protoEffects prototype, effectProduces effect == Just (readContract point)
@@ -173,52 +165,50 @@ withRuntimeRetention graph = withRetention (runtimeRetentions graph) (collectRet
 -- 仍复用既有 close 预约、父子顺序、错误报告与取消协议。
 collectRetainedScopes :: RuntimeGraph environment cause -> [ScopeBinding environment cause] -> IO ()
 collectRetainedScopes _ [] = pure ()
-collectRetainedScopes graph values = case runtimePrototype graph of
+collectRetainedScopes graph values = do
+  owners <- mapM readBindingOwner values
+  collectNamedScopes graph (nub [name | Just (name, _) <- owners])
+
+-- 原参数被共享新值覆盖，也可能撤销某实例的最后一份待用；复用同一回收入口。
+-- 只检查开启计划明确依赖该参数的 Scoped 及其祖先，不扫描无关实例。
+collectParameterScopes :: RuntimeGraph environment cause -> String -> IO ()
+collectParameterScopes graph source = case runtimePrototype graph of
+  PrototypeReference prototype -> collectNamedScopes graph
+    [openingScope opening | opening <- protoScopeOpenings prototype, source `elem` map fst (openingSources opening)]
+
+collectNamedScopes :: RuntimeGraph environment cause -> [String] -> IO ()
+collectNamedScopes _ [] = pure ()
+collectNamedScopes graph selected = case runtimePrototype graph of
   PrototypeReference prototype -> do
-    owners <- mapM readBindingOwner values
-    let selected = nub [name | Just (name, _) <- owners]
-        relations = scopeRelations prototype
+    let relations = scopeRelations prototype
         ancestors names = let expanded = nub (names ++ concat [parents | (name, parents) <- relations, name `elem` names])
                           in if expanded == names then names else ancestors expanded
-        relevant = ancestors selected
+        relevant = ancestors (nub selected)
     collectScopes graph (filter ((`elem` relevant) . scopeName) (runtimeScopes graph))
 
--- 待用查询 v4（2026-11-18）：普通参数沿发布表匹配；持续参数沿固定视图/游标匹配。
+-- 待用查询 v5（2026-11-18）：普通参数先固定捕获、再共享最新值；持续参数沿固定视图/游标匹配。
 -- 查询在 scope 协调锁内，不领取、不生产；会话沿只读目录快照定位。
 -- 装配先在同一协调锁内写入快照，业务启动在锁外；会话状态锁内不反向取得帧锁。
 reachableInstance :: RuntimeGraph environment cause -> ScopeInstance environment cause -> IO Bool
 reachableInstance graph slot = case runtimePrototype graph of
   PrototypeReference prototype -> do
-    local <- framePendingViews (scopeFrame slot)
-    root <- framePendingViews (runtimeRootFrame graph)
-    let following = case frameBoundary (scopeFrame slot) of
-          Nothing -> []
-          Just boundary -> [(frame, filter (precedes (protoWorkflow prototype) boundary) pending, delivered)
-            | (frame, pending, delivered) <- root]
-        -- 同一持续交付可以被多个单元领取；沿各自的游标判断，不把资源归属提升到根帧。
-        continuous source = any (\effect -> effectName effect == source && effectContinuous effect) (protoEffects prototype)
-        -- 资源参数沿已有 owner 开启计划追到持续输入；子 scope 与父实例使用同一查询范围。
-        fromSession seen source
-          | continuous source = True
-          | source `elem` seen = False
-          | otherwise = or [any (fromSession (source : seen)) (effectOpeningInputs owner)
-              | owner <- protoEffects prototype, effectResource owner == Just source]
-        shared = if any (\(ScopeInput source _) -> fromSession [] source) (scopeInputs slot)
-          then [view | view@(frame, _, _) <- root, isJust (frameParent frame)] else []
-        -- 会话预约 v1（2026-11-18）：已启动的生产帧也会继续使用普通参数，
-        -- 即使参数出自已退休的轮帧。只纳入实际预约的 SessionChain 挂载，
-        -- 再沿原开启计划匹配生产身份；不把其他并行节点加入资产可见范围。
-        producerMounts = [chainNode chain | chain <- protoChains prototype, chainRole chain == SessionChain]
-        reservedSessions = [view | view@(_, pending, _) <- root, any (`elem` producerMounts) pending]
-        isSessionFrame frame = frame `elem` [reserved | (reserved, _, _) <- reservedSessions]
-    publications <- readPublications graph
+    -- 普通参数的使用者可位于任意活动帧；仍按具体 Binding 的生产身份匹配。
+    -- 根帧的常驻预约与实际轮帧共用这些开启计划，不提升实例的归属帧。
+    reservations <- framePendingViews (runtimeRootFrame graph)
+    -- 活动 SessionChain 的业务出身仍是根帧，预约帧只表示未来步骤。
+    -- 同一锁内纳入正在执行的根调用及其捕获，覆盖“已读参数、尚未认领实例”的交接。
+    active <- readMVar (runtimeActivations graph)
+    let pendingFrames = reservations ++ [(activationFrame call, [node], [])
+          | (_, call) <- active, TargetedBoot node <- [activationBoot call]]
+    assets <- readIORef (runtimeLatest graph)
+    let producerMounts = [chainNode chain | chain <- protoChains prototype, chainRole chain == SessionChain]
     sessions <- readIORef (runtimeSessionSnapshot graph)
     instances <- concat <$> mapM (readMVar . scopeInstances) (runtimeScopes graph)
     snapshots <- forM instances $ \instance' -> do
       values <- scopeBindings <$> readIORef (scopeRecord instance')
       pure (instance', values)
     let candidates = [(frame, opening, delivered)
-          | (frame, pending, delivered) <- nub (local ++ following ++ shared ++ reservedSessions)
+          | (frame, pending, delivered) <- pendingFrames
           , opening <- protoScopeOpenings prototype
           , openingNode opening `elem` pending, openingScope opening == scopeName (scopeFamily slot)]
         matches instance' frame delivered opening =
@@ -237,28 +227,23 @@ reachableInstance graph slot = case runtimePrototype graph of
                    , parentOpening <- protoScopeOpenings prototype
                    , openingNode parentOpening == openingNode opening
                    , openingScope parentOpening == scopeName (scopeFamily parent)]
-            | isSessionFrame frame
-            , captured : _ <- [identity | (publishedAt, context, identity) <- delivered
-                              , context == source, publishedAt `elem` nodes] ->
-                -- 会话启动时已固定的普通捕获优先于后来的发布；实际读取也沿用这份绑定。
-                -- 仅在 gen 许可的来源节点内匹配，不能用同类型或同注册的其他生产替代。
-                pure (captured == production)
-            | all (outsideLifelong (runtimePrototype graph) (openingNode opening)) nodes ->
-                -- 后继先按真实读取规则选最新候选，再比较身份；不能让已被覆盖的旧值保活。
-                pure $ case selectPublication (runtimePrototype graph) (openingNode opening) source
-                  [value | node <- nodes
-                    , Just value <- [publicationAt (runtimePrototype graph) publications (openingNode opening) source node]] of
-                  Right (Just value) -> bindingProduction value == Just production
-                  _ -> False
-            | otherwise -> pure (any (matchesPublication delivered (openingNode opening) source production) nodes)
-        matchesPublication delivered reader source production node =
-          case [captured | (publishedAt, context, captured) <- delivered, publishedAt == node, context == source] of
-            captured : _ -> captured == production
-            [] -> case publicationAt (runtimePrototype graph) publications reader source node of
-              Just value -> bindingProduction value == Just production
-              Nothing -> False
+            | otherwise -> do
+                captured <- capturedFrameInputs frame
+                let reader = openingNode opening
+                    selectors = [alternativeSelector choice
+                      | AlternativeAt _ choice children <- allWorkflow (protoWorkflow prototype)
+                      , any (\child -> workflowNode child `isPrefixOf` reader) children]
+                    local = [identity | at <- reader : reverse selectors
+                      , (node, context, identity) <- captured, node == at, context == source]
+                    deliveredHere = [identity | (publishedAt, context, identity) <- delivered
+                      , context == source, publishedAt `elem` nodes]
+                pure $ case local ++ deliveredHere of
+                  identity : _ -> identity == production
+                  -- 必定以新参数开启而尚未捕获的调用，不会复用上一轮的旧参数实例。
+                  [] | openingKinds opening == [ExecutionMultiple] -> False
+                     | otherwise -> maybe False ((== Just production) . bindingProduction) (lookup source assets)
         matchesSession frame opening source production = do
-          captured <- capturedSessionInputs frame
+          captured <- capturedFrameInputs frame
           let reader = openingNode opening
               -- 只有 alternative 把捕获交给候选；chained 不隐式传递前一调用的视图。
               selectors = [alternativeSelector choice
@@ -274,7 +259,7 @@ reachableInstance graph slot = case runtimePrototype graph of
                 Just result -> pure result
                 Nothing
                   -- 根帧里的未来轮次不是旧交付的读取方；实际活动轮帧有自己的游标。
-                  | not (isSessionFrame frame)
+                  | openingNode opening `notElem` producerMounts
                   , any (\(boundary, _) -> boundary `isPrefixOf` reader)
                       (workflowLifelongs (protoWorkflow prototype)) -> pure False
                   -- 会话步骤的普通 requires 沿 App 的有限读取路由，不冒充本单元订阅。
@@ -297,15 +282,8 @@ reachableInstance graph slot = case runtimePrototype graph of
 collectRuntimeScopes :: RuntimeGraph environment cause -> [NodeId] -> IO ()
 collectRuntimeScopes _ [] = pure ()
 collectRuntimeScopes graph retired = case runtimePrototype graph of
-  PrototypeReference prototype -> do
-    let selected = nub [openingScope opening | opening <- protoScopeOpenings prototype
-          , openingNode opening `elem` retired]
-        relations = scopeRelations prototype
-        ancestors names = let expanded = nub (names ++ concat [parents | (name, parents) <- relations, name `elem` names])
-                          in if expanded == names then names else ancestors expanded
-        relevant = ancestors selected
-        handlers = filter ((`elem` relevant) . scopeName) (runtimeScopes graph)
-    collectScopes graph handlers
+  PrototypeReference prototype -> collectNamedScopes graph
+    [openingScope opening | opening <- protoScopeOpenings prototype, openingNode opening `elem` retired]
 
 -- 所有受控任务已退出、根帧已退休；与节点结束使用同一个可达性条件。
 -- 卸下回调，生成句柄不再通过它保留整次已结束运行的资产表。
@@ -330,7 +308,7 @@ nextSequence :: IORef Integer -> IO Integer
 nextSequence counter = atomicModifyIORef' counter (\previous -> (previous + 1, previous))
 
 -- 同一挂载的执行彼此先后（有限 AST 只执行一次，重复单元与会话步骤逐次执行）；
--- 被替换的 Origin 不再能经来源表读到，其无归属发布随之移出，避免重复执行累积。
+-- 被替换的 Origin 移出步骤输出索引；runtimeLatest 保留每份普通资产的最新值。
 newOrigin :: RuntimeGraph environment cause -> NodeId -> IO Origin
 newOrigin graph node = mask $ \restore -> do
   (origin, released) <- withFrameLock (runtimeRootFrame graph) $ do
@@ -343,25 +321,15 @@ newOrigin graph node = mask $ \restore -> do
   restore (collectRetainedScopes graph released)
   pure origin
 
--- 新 frame 开始前移出该子树上一次执行的 Origin：本次没有执行的位置不能读到上一次的普通产物。
--- 移出的发布按位置与来源保留最新一份，供 lifelong 结束后的后继读取（require 读最新值）。
+-- 清除上一步的伴随输出索引，避免交付误用旧步骤；共享最新值和已捕获 Binding 不动。
 resetOrigins :: RuntimeGraph environment cause -> NodeId -> IO ()
 resetOrigins graph prefix = mask $ \restore -> do
   released <- withFrameLock (runtimeRootFrame graph) $ do
     origins <- readIORef (runtimeOrigins graph)
-    assets <- readIORef (runtimeAssets graph)
     let removed = [origin | (node, origin) <- origins, prefix `isPrefixOf` node]
         kept = [(node, origin) | (node, origin) <- origins, not (prefix `isPrefixOf` node)]
-        carried = [((originNode origin, source), value) | ((origin, source), value) <- assets, origin `elem` removed]
-    -- 先建立后继保留，再撤销当前来源；整个交接与 scope 关闭预约共用协调锁。
-    -- Binding / ActivationId / owner 不变，也不使单元内读取看到上一轮。
-    replaced <- atomicModifyIORef' (runtimeRetained graph) $ \retained ->
-      let updated = carried ++ [entry | entry@(key, _) <- retained, key `notElem` map fst carried]
-          previous = [value | (key, value) <- retained, key `elem` map fst carried, bindingResource value]
-      in length updated `seq` (updated, previous)
     length kept `seq` writeIORef (runtimeOrigins graph) kept
-    _ <- dropPublications graph removed
-    pure replaced
+    dropPublications graph removed
   restore (collectRetainedScopes graph released)
 
 dropPublications :: RuntimeGraph environment cause -> [Origin] -> IO [ScopeBinding environment cause]
@@ -374,18 +342,27 @@ dropPublications graph origins = atomicModifyIORef' (runtimeAssets graph) $ \ass
 -- 活动记录与 App 共享同一个绑定 IORef 和入口使用登记；ctx 不另建 scope 使用者。
 -- parent 只表达启动关系，不参与 ScopeTree 父边或资产可见性推导。
 beginActivation
-  :: RuntimeGraph environment cause -> Maybe ActivationId -> Execution -> Boot
+  :: RuntimeGraph environment cause -> Maybe ActivationId -> ExecutionFrame -> Execution -> Boot
   -> IORef (ScopeBindings environment cause) -> ScopeUser environment cause
   -> IO (Activation environment cause)
-beginActivation graph parent execution boot bindings user = do
+beginActivation graph parent frame execution boot bindings user = do
   definition <- either (ioError . userError) pure (resolveDefinition (runtimePrototype graph) boot)
   identifier <- ActivationId <$> nextSequence (runtimeActivationSequence graph)
-  let activation = Activation identifier parent boot execution definition bindings user
-  -- 只在短临界区更新内存引用；取消期间也不留下半登记的活动节点。
-  uninterruptibleMask_ $ modifyMVar_ (runtimeActivations graph) $ \active -> case parent of
-    Just predecessor | predecessor `notElem` map fst active ->
-      ioError (userError "Runtime activation has no active parent")
-    _ -> pure ((identifier, activation) : active)
+  let activation = Activation identifier parent boot execution frame definition bindings user
+      register = modifyMVar_ (runtimeActivations graph) $ \active -> case parent of
+        Just predecessor | predecessor `notElem` map fst active ->
+          ioError (userError "Runtime activation has no active parent")
+        _ -> pure ((identifier, activation) : active)
+  -- 锁序始终是 coordinator -> activation 目录；目录锁内不取得 coordinator。
+  -- 新根调用的初始捕获和活动登记一同提交，Context 嵌套生产不重置调用捕获。
+  case boot of
+    TargetedBoot node -> withFrameLock frame $ do
+      resetFrameInputsLocked frame node
+      captured <- readIORef bindings
+      forM_ captured $ \(source, value) -> forM_ (bindingProduction value) $ \production ->
+        captureFrameInputLocked frame node source production
+      register
+    RequestBoot _ -> uninterruptibleMask_ register
   pure activation
 
 -- 退出即撤销活动记录；不把完成链积累为无限的调用历史。
@@ -415,108 +392,61 @@ resolveDefinition (PrototypeReference prototype) boot = do
 publishAsset :: RuntimeGraph environment cause -> Origin -> String
              -> ScopeBinding environment cause -> IO ()
 publishAsset graph origin source value = mask $ \restore -> do
-  released <- withFrameLock (runtimeRootFrame graph) $ do
+  (released, replacedParameter) <- withFrameLock (runtimeRootFrame graph) $ do
     previous <- atomicModifyIORef' (runtimeAssets graph) $ \assets ->
       let key = (origin, source)
           updated = (key, value) : filter ((/= key) . fst) assets
           replaced = [old | Just old <- [lookup key assets], bindingResource old]
       in length updated `seq` (updated, replaced)
+    -- 资源仍只沿 owner 协议读取；普通值共享同一份 Binding，不重发生产身份。
+    replaced <- if bindingResource value then pure False else do
+      existed <- atomicModifyIORef' (runtimeLatest graph) $ \assets ->
+        let updated = (source, value) : filter ((/= source) . fst) assets
+        in length updated `seq` (updated, isJust (lookup source assets))
+      forM_ (bindingProduction value) $ \production ->
+        captureFrameInputLocked (bindingFrame value) (originNode origin) source production
+      pure existed
     notifyFrame (runtimeRootFrame graph)
-    pure previous
-  restore (collectRetainedScopes graph released)
+    pure (previous, replaced)
+  restore $ do
+    collectRetainedScopes graph released
+    if replacedParameter then collectParameterScopes graph source else pure ()
 
 -- 读取之前取得的信号；普通发布和执行帧退休都会填满它。
 publicationSignal :: RuntimeGraph environment cause -> IO (MVar ())
 publicationSignal = frameSignal . runtimeRootFrame
 
--- 最低限度的耗尽证明：许可来源都已退休。
--- 本链自己的潜在生产不算继续等待的理由：一个节点的链在 App 载体里顺序执行，
--- require 缺值时阻塞当前线程、不让出执行权；读取之前的生产已经结束，之后的生产要等这次读取返回。
--- 载体若改为可让出执行权，或节点内出现并发驱动，这条判断须重新核对。
--- 会话来源与未知位置不能按有限 AST 的退休判定，仍保持原交付／等待协议；
--- 等待者自己在会话链上时保留本链的静态生产上界，待 Stream 的结束与失败语义确定。
+-- 耗尽证明 v2（2026-11-18）：候选是 gen 给出的可启动供值位置，不是 AST 可见前驱。
+-- 当前顺序调用不能在阻塞期间继续生产；其他位置从根帧的全部活动/待用帧查询。
+-- 静态后继也在等当前节点时不提供进展；lifelong 的未来轮次保守保留。
+-- 会话位置的启动/耗尽仍交给会话协议，本项不声称完整等待环检测。
 contextMayPublish :: RuntimeGraph environment cause -> ExecutionFrame -> Origin -> String -> IO Bool
-contextMayPublish graph frame origin source = case runtimePrototype graph of
-  PrototypeReference prototype -> case
-    [effect | effect <- protoEffects prototype, effectName effect == source] of
-    [producer] -> case lookupChain prototype (originNode origin) of
-      Left _ -> pure True
-      Right current -> do
-        let ownProduction = chainRole current == SessionChain
-              && (maybe False (`elem` chainDrives current) (effectProduces producer)
-                || any (\(role, method) -> role `elem` [ContextRequest, ContextStream]
-                  && method `elem` chainReaches current) (effectMethods producer))
-            candidates = case sourcePlan (runtimePrototype graph) (originNode origin) source of
-              FromOwnChain -> Just []
-              FromChains nodes -> Just nodes
-              FromSession -> Nothing
-            canPublish node = case lookupChain prototype node of
-              Right chain | chainRole chain /= SessionChain -> do
-                progress <- frameNodeProgress frame node
-                pure (maybe True (\status -> status == Pending || status == Running) progress)
-              _ -> pure True
-        case candidates of
-          Nothing -> pure True
-          Just nodes -> or <$> mapM canPublish
-            (nub (nodes ++ [originNode origin | ownProduction]))
-    _ -> pure True
+contextMayPublish graph _ origin source = case runtimePrototype graph of
+  PrototypeReference prototype -> withFrameLock (runtimeRootFrame graph) $ do
+    pendingFrames <- framePendingViews (runtimeRootFrame graph)
+    let reader = originNode origin
+        repeated node = any (\(boundary, _) -> boundary `isPrefixOf` node)
+          (workflowLifelongs (protoWorkflow prototype))
+        canPublish node = case lookupChain prototype node of
+          Right chain | chainRole chain == SessionChain -> True
+          Right _ -> any (\(_, pending, _) -> node `elem` pending) pendingFrames
+            && (repeated node || node /= reader && not (precedes (protoWorkflow prototype) reader node)
+                  && not (exclusive (protoWorkflow prototype) reader node))
+          Left _ -> True
+    pure $ case sourcePlan (runtimePrototype graph) reader source of
+      FromOwnChain -> False
+      FromChains nodes -> any canPublish nodes
+      FromSession -> True
 
--- 先按生成表定位来源入口，再读取本次实际发布；不按并发完成时序或全局最新值挑选。
--- 缺少发布只返回空值，由 Context 协议继续等待或在已证明耗尽后报缺值。
--- lifelong 之外的读取（后继）对单元内的位置读它最新一次发布：本轮没有执行到时取先前各轮保留的那份。
--- 生成期只在同一单元的互斥位置之间允许多个候选；它们按轮次先后发布，取 Origin 序号最大的一份。
-readVisibleAsset :: RuntimeGraph environment cause -> Origin -> String
-                 -> IO (Either ContextFault (Maybe (ScopeBinding environment cause)))
-readVisibleAsset graph origin source = withFrameLock (runtimeRootFrame graph) $ do
-  publications@(Publications _ assets _) <- readPublications graph
-  let reader = originNode origin
-      candidates = case sourcePlan (runtimePrototype graph) reader source of
-        FromOwnChain -> [value | Just value <- [lookup (origin, source) assets]]
-        -- 会话普通伴随值只由固定交付读取，不能从后台步骤的最新 Origin 读取。
-        FromChains nodes -> [value | node <- nodes, node `notElem` runtimeSessionMounts graph
-          , Just value <- [publicationAt (runtimePrototype graph) publications reader source node]]
-        FromSession -> []
-  pure (selectPublication (runtimePrototype graph) reader source candidates)
-
--- 只在共同协调锁内取得一致的发布快照；scope 待用回调已持锁，不重复获取。
--- 这是本次查询的视图，不另建资产表，也不保留完整历史。
-data Publications environment cause = Publications
-  [(NodeId, Origin)]
-  [((Origin, String), ScopeBinding environment cause)]
-  [((NodeId, String), ScopeBinding environment cause)]
-
-readPublications :: RuntimeGraph environment cause -> IO (Publications environment cause)
-readPublications graph = Publications <$> readIORef (runtimeOrigins graph)
-  <*> readIORef (runtimeAssets graph) <*> readIORef (runtimeRetained graph)
-
--- 实际读取与待用判断共用：本位置当前发布优先，只有 lifelong 外的合法读取才用保留值。
--- 来源许可由调用方的 protoSources / openingSources 给出；本函数不放宽可见性。
-publicationAt :: PrototypeReference -> Publications environment cause -> NodeId -> String -> NodeId
-              -> Maybe (ScopeBinding environment cause)
-publicationAt prototype (Publications origins assets retained) reader source node =
-  case lookup node origins >>= \origin -> lookup (origin, source) assets of
-    Just value -> Just value
-    Nothing | outsideLifelong prototype reader node -> lookup (node, source) retained
-    Nothing -> Nothing
-
-outsideLifelong :: PrototypeReference -> NodeId -> NodeId -> Bool
-outsideLifelong (PrototypeReference prototype) reader node =
-  any (\(boundary, _) -> boundary `isPrefixOf` node && not (boundary `isPrefixOf` reader))
-    (workflowLifelongs (protoWorkflow prototype))
-
--- 只在已证明可并存的跨轮候选中选最新的 Origin；不能让“还有旧候选”保活已被替换的实例。
--- 普通并存来源仍报歧义；不会按并行完成时序任选一个。
-selectPublication :: PrototypeReference -> NodeId -> String -> [ScopeBinding environment cause]
-                  -> Either ContextFault (Maybe (ScopeBinding environment cause))
-selectPublication _ _ _ [] = Right Nothing
-selectPublication _ _ _ [value] = Right (Just value)
-selectPublication prototype reader source values
-  | all (outsideLifelong prototype reader . originNode . executionOrigin . bindingOrigin) values =
-      Right (Just (foldr1 newer values))
-  | otherwise = Left (AmbiguousContextBinding source)
-  where
-    sequenceOf = originSequence . executionOrigin . bindingOrigin
-    newer left right = if sequenceOf left >= sequenceOf right then left else right
+-- 选中共享最新值与登记本次捕获身份在同一短临界区完成；普通业务 IO 不在锁内。
+-- 没有值只返回 Nothing，Context 继续等待通知。资源不从这张表取得。
+readPublishedAsset :: RuntimeGraph environment cause -> ExecutionFrame -> Origin -> String
+                   -> IO (Either ContextFault (Maybe (ScopeBinding environment cause)))
+readPublishedAsset graph frame origin source = withFrameLock (runtimeRootFrame graph) $ do
+  value <- lookup source <$> readIORef (runtimeLatest graph)
+  forM_ (value >>= bindingProduction) $ \production ->
+    captureFrameInputLocked frame (originNode origin) source production
+  pure (Right value)
 
 sourcePlan :: PrototypeReference -> NodeId -> String -> Source
 sourcePlan (PrototypeReference prototype) node source = case

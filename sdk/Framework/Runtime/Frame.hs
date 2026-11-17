@@ -4,7 +4,7 @@ module Framework.Runtime.Frame
   ( ExecutionFrame, NodeProgress(..), newExecutionFrame, newChildFrame, newSessionFrame, frameParent, frameDepth, frameBoundary, withFrameLock
   , frameNodes, framePendingNodes, framePendingViews, captureFrameDeliveries, DeliveryIdentity, owningFrame
   , frameNodeProgress, frameSignal, notifyFrame
-  , installSessionInputs, pendingSessionInput, captureSessionInput, capturedSessionInputs
+  , installSessionInputs, pendingSessionInput, captureFrameInput, captureFrameInputLocked, resetFrameInputsLocked, capturedFrameInputs
   , startFrameNode, completeFrameNode, skipFrameSubtree, finishExecutionFrame
   ) where
 
@@ -20,7 +20,7 @@ data NodeProgress = Pending | Running | Completed | Skipped
   deriving (Eq, Show)
 
 -- 身份记录，不保存值、资源引用或历史。frameDelivered 的 NodeId 是普通伴随资产的
--- 发布位置；frameSessionCaptures 的 NodeId 是固定该视图的读取位置，两张表不混用。
+-- 发布位置；frameCaptures 的 NodeId 是固定该视图的读取位置，两张表不混用。
 type DeliveryIdentity = (NodeId, String, ActivationId)
 
 data ExecutionFrame = ExecutionFrame
@@ -35,8 +35,8 @@ data ExecutionFrame = ExecutionFrame
   -- v1（2026-11-17）：本轮会话的已选/下一条身份查询；不领取、不启动来源。
   -- 查询只读领取槽与会话状态，不能获取帧协调锁或运行 handler。
   , frameSessionInputs :: IORef (String -> ActivationId -> IO (Maybe Bool))
-  -- 本次调用与 alternative 交接已经固定的最新值；只保留身份，不保留历史。
-  , frameSessionCaptures :: IORef [DeliveryIdentity]
+  -- 普通读取、持续读取与 alternative 交接已固定的值；只保留身份，不保留历史。
+  , frameCaptures :: IORef [DeliveryIdentity]
   -- 根帧和子帧共用一个变化信号；普通发布与节点退休都叫醒缺值读取。
   , frameChanged :: IORef (MVar ())
   }
@@ -127,13 +127,28 @@ pendingSessionInput frame source production = do
   query <- readIORef (frameSessionInputs frame)
   query source production
 
-capturedSessionInputs :: ExecutionFrame -> IO [DeliveryIdentity]
-capturedSessionInputs = readIORef . frameSessionCaptures
+capturedFrameInputs :: ExecutionFrame -> IO [DeliveryIdentity]
+capturedFrameInputs = readIORef . frameCaptures
 
-captureSessionInput :: ExecutionFrame -> NodeId -> String -> ActivationId -> IO ()
-captureSessionInput frame node source production = withFrameLock frame $
-  modifyIORef' (frameSessionCaptures frame) $ \current ->
-    (node, source, production) : filter (\(at, context, _) -> at /= node || context /= source) current
+captureFrameInput :: ExecutionFrame -> NodeId -> String -> ActivationId -> IO ()
+captureFrameInput frame node source production = withFrameLock frame $
+  captureFrameInputLocked frame node source production
+
+-- 普通共享值的选择与捕获在同一协调锁内提交，避免覆盖发布后的回收抢先关闭参数实例。
+captureFrameInputLocked :: ExecutionFrame -> NodeId -> String -> ActivationId -> IO ()
+captureFrameInputLocked frame node source production = do
+  current <- readIORef (frameCaptures frame)
+  let updated = (node, source, production) : filter (\(at, context, _) -> at /= node || context /= source) current
+  -- 会话步骤可反复写同一静态位置；只强制身份表的脊，防止 filter thunk 保留旧身份链。
+  length updated `seq` writeIORef (frameCaptures frame) updated
+
+-- 一个静态会话挂载会重复调用；新根调用安装自己的捕获，不能沿用上一步身份。
+-- 调用者已经持有协调锁。
+resetFrameInputsLocked :: ExecutionFrame -> NodeId -> IO ()
+resetFrameInputsLocked frame node = do
+  current <- readIORef (frameCaptures frame)
+  let kept = filter (\(at, _, _) -> at /= node) current
+  length kept `seq` writeIORef (frameCaptures frame) kept
 
 -- 同一轮的交付固定不变；重复 lower 只补入此前尚未领取的来源。
 captureFrameDeliveries :: ExecutionFrame -> [DeliveryIdentity] -> IO ()
@@ -189,7 +204,7 @@ finishExecutionFrame frame = uninterruptibleMask_ $
     writeIORef (frameProgress frame) []
     writeIORef (frameDelivered frame) []
     writeIORef (frameSessionInputs frame) (\_ _ -> pure Nothing)
-    writeIORef (frameSessionCaptures frame) []
+    writeIORef (frameCaptures frame) []
     writeIORef (frameChildren frame) []
     forM_ (frameParent frame) $ \parent -> do
       siblings <- filter (/= frame) <$> readIORef (frameChildren parent)

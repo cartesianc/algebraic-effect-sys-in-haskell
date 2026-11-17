@@ -550,27 +550,27 @@ generatedPrototype =
           }
     , SDK.protoScopeNames = [(OpenSharedFileScopeGen, "SharedFileScope")]
     , SDK.protoSources =
-        [ (SDK.ReadPoint ([1,2]) ("FilePaths"), SDK.FromChains ([[0,0]]))
-        , (SDK.ReadPoint ([1,1]) ("FilePaths"), SDK.FromChains ([[0,0]]))
-        , (SDK.ReadPoint ([1,0]) ("FilePaths"), SDK.FromChains ([[0,0]]))
+        [ (SDK.ReadPoint ([1,2]) ("FilePaths"), SDK.FromChains ([[0,0], [2,0]]))
+        , (SDK.ReadPoint ([1,1]) ("FilePaths"), SDK.FromChains ([[0,0], [2,0]]))
+        , (SDK.ReadPoint ([1,0]) ("FilePaths"), SDK.FromChains ([[0,0], [2,0]]))
         ]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
             { SDK.openingNode = [1,2]
             , SDK.openingScope = "SharedFileScope"
-            , SDK.openingSources = [("FileLocations", SDK.FromChains ([[0,0]]))]
+            , SDK.openingSources = [("FileLocations", SDK.FromChains ([[0,0], [2,0]]))]
             , SDK.openingKinds = [SDK.ProductionSingleton]
             }
         , SDK.ScopeOpeningPlan
             { SDK.openingNode = [1,1]
             , SDK.openingScope = "SharedFileScope"
-            , SDK.openingSources = [("FileLocations", SDK.FromChains ([[0,0]]))]
+            , SDK.openingSources = [("FileLocations", SDK.FromChains ([[0,0], [2,0]]))]
             , SDK.openingKinds = [SDK.ProductionSingleton]
             }
         , SDK.ScopeOpeningPlan
             { SDK.openingNode = [1,0]
             , SDK.openingScope = "SharedFileScope"
-            , SDK.openingSources = [("FileLocations", SDK.FromChains ([[0,0]]))]
+            , SDK.openingSources = [("FileLocations", SDK.FromChains ([[0,0], [2,0]]))]
             , SDK.openingKinds = [SDK.ProductionSingleton]
             }
         ]

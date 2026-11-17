@@ -8,7 +8,7 @@
 --
 -- 规则定位：buildEffectProtos（资产来源/访问/类别）→ numberWorkflow/planSessions（挂载/驱动）
 -- → bindProgram（类型/能力/路由/入口）→ composeMethods/buildStructure（方法/图）
--- → resolveSources（可见性/捕获/开启）。跨阶段以明确参数及结果连接，不重新解释前一阶段事实。
+-- → resolveSources（供值/捕获/开启）。跨阶段以明确参数及结果连接，不重新解释前一阶段事实。
 -- AwaitingBodies 是 beforegen 的接口检查点；AwaitingGraph 是结构缓存检查点。
 -- 工作表/递归栈是同一计算中的局部证据，不能当作另一套装配结论或运行状态。
 -- 统一入口不降低路径分析的最坏复杂度；保留先投影再组合、缺值路径与分支相关性。
@@ -1718,7 +1718,9 @@ completeScopeTree declared tree = do
 -- 路径状态与来源证明
 -- ========================================================================
 
--- 来源算法 v4（2026-11-17）：在既有来源/开启证明上记录普通读取的供值证据，拒绝可达却必无来源的读取。
+-- 来源算法 v5（2026-11-18）：普通发布按运行共享，有限结构从空供值集求单调固定点。
+-- 一轮只加入已能启动的路径所产生的事实；并行发布可以解开其他读取，读取本身不生产。
+-- 备用会话只参与结构校验，不作为凭空启动的供值证据；实际有限需求才激活其分析。
 -- 证据按 ReadPoint 合并，不增加路径状态；仍先按消费单元/后续读取投影，再组合候选状态。
 -- k 个仍相关的独立可选发布可以形成 2^k 个状态；nub 只合并相等状态，最坏二次比较。
 -- 不以全局发布并集替代路径，不将方法摘要的缓存当作带捕获和前态的来源缓存。
@@ -1744,8 +1746,10 @@ data AssetFacts = AssetFacts
   { assetDrives :: [(NodeId, String)]
   , assetReads :: [(ReadPoint, [NodeId])]
   , assetScopeOpenings :: [ScopeOpening]
-  -- Bool 表示至少有一条到达该读取的路径具有捕获或合法可见发布；False 也记录读取确实可达。
+  -- Bool 表示至少有一条到达该读取的路径具有捕获或可启动的供值；False 也记录读取确实可达。
   , assetReadSupply :: [(ReadPoint, Bool)]
+  -- 上一次结构推演已经找到的生产机会，不表示运行时已发布或必然成功。
+  , assetAvailable :: [(NodeId, String)]
   }
 
 -- 当前分析调用的环境；不表示 runtime 调用对象。重放句柄与活动方法分别防止
@@ -1762,51 +1766,56 @@ data AssetCall = AssetCall
 
 type AssetAnalysis = StateT AssetFacts (Either (PrototypeError String))
 
--- 可选生产保留为状态分支：A 未发布的路径上 B 的 require 只能等待，故 A/B 不会被
--- 简单的 may-set 误报为共存来源。parallel 从相同输入独立分析，随后合并发布。
--- require 不生产：没有可见发布的路径停在这次读取，不从读取返回。状态按有限事实去重，不展开任何业务 IO。
--- 只保留本链或后续 workflow 可能读取的契约；在方法出口就裁剪，避免无关注入
--- 的成功／失败组合先指数展开。仍保留活跃契约之间的相关性，不退化为 may-set。
+-- 保留本次调用的路径捕获与资源开启证明；普通读取另从共享供值固定点取得候选。
+-- 这是最低限度的进展检查：擦除 IO、保留可能分支，不证明所有路径或任意 IO 都会结束。
 resolveSources :: Bool -> [OutputConnection String] -> [MethodDefinition String] -> [String] -> Prototype String
                -> Either (PrototypeError String) (Prototype String)
 resolveSources checked connections definitions defaultReaders prototype = do
-  facts <- flip execStateT (AssetFacts [] [] [] []) $ do
-    _ <- workflow (protoWorkflow prototype) [] [] []
-    -- interpreter 托管的会话各自从空环境启动，不是任何读取点的可见前驱。
-    mapM_ (\mount -> root mount [] [] []) (concatMap sessionMounts (protoSessions prototype))
+  facts <- settle []
   let reads = [(point, if readContract point `elem` receiving then FromSession
-                       else if null sources then FromOwnChain else FromChains (sort (nub sources)))
+                       else let candidates = sort (nub (sources ++ [node | (node, contractType) <- assetAvailable facts
+                                                , contractType == readContract point]))
+                            in if null candidates then FromOwnChain else FromChains candidates)
         | (point, sources) <- assetReads facts]
       annotate chain = chain
-        { chainDrives = sort (nub [contractType | (node', contractType) <- assetDrives facts, node' == chainNode chain])
+        { chainDrives = sort (nub [contractType | (node', contractType) <- assetDrives facts ++ assetAvailable facts, node' == chainNode chain])
         , chainReads = sort (nub [readContract point | (point, _) <- reads, readNode point == chainNode chain])
         }
-  -- 首次只生成契约时方法体尚不可见，不能把缺少形状当作必无供值。
   when checked (mapM_ checkReadSupply (assetReadSupply facts))
-  mapM_ companionRead reads
   mapM_ successorRead reads
   pure prototype { protoChains = map annotate (protoChains prototype), protoSources = reads
     , protoScopeOpenings = assetScopeOpenings facts }
   where
     effects = protoEffects prototype
     lifelongs = workflowLifelongs (protoWorkflow prototype)
-    -- 不把 FromOwnChain 当作缺值证明：它也用于本链捕获。只有分析到达且所有已分析路径均无供值才拒绝。
-    -- 后续位置从调用图定位，不用可能已被前一缺值截断的 assetDrives；这里只作顺序提示，不假定它必然发布。
+    -- 上界是有限的（挂载，资产）对；不模拟业务次数或累积无限轮次。
+    settle available = do
+      found <- analyze available False
+      let expanded = sort (nub (available ++ assetDrives found))
+      if expanded == available then analyze available True else settle expanded
+    analyze available includeDormant = flip execStateT (AssetFacts [] [] [] [] available) $ do
+      _ <- workflow (protoWorkflow prototype) [] [] []
+      activateSessions []
+      when includeDormant $ mapM_ (\mount -> root mount [] [] [])
+        (concatMap sessionMounts (protoSessions prototype))
+    -- 有限 requires 持续资产会启动其托管来源；只有分析已到达这份需求才计入供值。
+    activateSessions started = do
+      reads <- gets assetReads
+      let demanded = sessionAssets effects [readContract point | (point, _) <- reads
+            , readContract point `elem` receiving
+            , not (any (\(boundary, _) -> boundary `isPrefixOf` readNode point) lifelongs)]
+          newly = [session | session <- protoSessions prototype
+            , sessionAsset session `elem` demanded, sessionAsset session `notElem` started]
+      unless (null newly) $ do
+        mapM_ (\mount -> root mount [] [] []) (concatMap sessionMounts newly)
+        activateSessions (map sessionAsset newly ++ started)
     checkReadSupply (_, True) = pure ()
     checkReadSupply (point, False) = do
       chain <- lookupChain prototype (readNode point)
-      let later = [chainNode candidate | candidate <- protoChains prototype
-            , precedes (protoWorkflow prototype) (readNode point) (chainNode candidate)
-            , producer <- effects, effectProduces producer == Just (readContract point)
-            , Just method <- [lookup ContextRequest (effectMethods producer)]
-            , method `elem` chainReaches candidate]
-          hint = case nub later of
-            [] -> "; provide a declared production path visible before this read"
-            nodes -> "; possible production lies later at " ++ show nodes
-              ++ " and is not visible here; order production before the read"
       Left (InvalidPrototype ("Asset " ++ readContract point ++ " read in chain targeting "
         ++ chainTerminal chain ++ " at " ++ show (readNode point)
-        ++ " has no legal capture or visible publication on any analyzed path" ++ hint))
+        ++ " has no reachable publication or capture; declared production is absent or waits on this read"
+        ++ "; start a production path before the wait or in an independent branch"))
     -- lifelong 之后读取持续资产：读已经结束的那个 lifelong 会话的最新一条，不另行启动来源。
     -- 先后排列的多个 lifelong 有同一会话时读最近结束的那个；互不先后（例如并行）时“最近”取决于调度，拒绝。
     successorRead (point, FromSession) =
@@ -1821,33 +1830,6 @@ resolveSources checked connections definitions defaultReaders prototype = do
           ++ ", which are not ordered; which one ended last depends on scheduling. Order them, or refine the contract"))
         [] -> pure ()
     successorRead _ = pure ()
-    -- 有限读取 v1（2026-11-17）：派生来源与直接来源共用托管会话计划。
-    -- 读取边只给本次调用一个固定值；反复执行仍只来自 lifelong 订阅或生产链的 Derive。
-    -- 因而这里不再以“没有相应 lifelong”拒绝派生资产，也不把 require 纳入订阅表。
-    -- 后继读取 lifelong 内部发布的资产：资产按来源保留最新一次发布（require 读最新值）。
-    -- 同一单元内互斥位置（不同 alternative 候选）在不同轮发布同一契约时，按轮次先后取最新，不是并发写入；
-    -- 来自不同单元、同一轮可能都发布、或与 lifelong 之外的来源并存时，仍按来源唯一规则拒绝。
-    unitsAll = concat [lifelongUnits described | (_, described) <- lifelongs]
-    retainedChoice reader sources = case nub [unit | source' <- sources, unit <- unitsAll, unit `isPrefixOf` source'] of
-      [unit] -> all (unit `isPrefixOf`) sources
-        && not (any (`isPrefixOf` reader) [boundary | (boundary, _) <- lifelongs, boundary `isPrefixOf` unit])
-        && and [exclusive (protoWorkflow prototype) left right | left <- sources, right <- sources, left /= right]
-      _ -> False
-    -- 会话生产步骤的其他普通发布随交付读取（伴随发布），每一步都会替换。读取位置必须在调用前
-    -- 已经领取该会话的交付：由该资产驱动的 Node，或以它为转折资产的选择读取；否则读到哪一步取决于调度。
-    companionRead (point, FromChains nodes) = do
-      let producers = nub [sessionAsset session | (_, described) <- lifelongs
-            , session <- lifelongSessions described, any (`elem` sessionMounts session) nodes]
-          taken = [contractType | (_, described) <- lifelongs
-              , (node', contractType) <- lifelongSubscriptions described, node' == readNode point]
-            ++ [alternativeContract choice | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype)
-              , alternativeSelector choice == readNode point]
-          stray = filter (`notElem` taken) producers
-      unless (null stray) $ Left (InvalidLifelong (readNode point) ("Asset " ++ readContract point
-        ++ " is published by the production step of " ++ intercalate ", " stray
-        ++ " and is replaced at every delivery; read it only in targets driven by " ++ intercalate ", " stray
-        ++ ", or produce it before the lifelong"))
-    companionRead _ = pure ()
     resources = [source | effect <- effects, Just source <- [effectResource effect]]
     resourceContracts = [contractType | effect <- effects, effectName effect `elem` resources
       , Just contractType <- [effectProduces effect]]
@@ -1945,12 +1927,14 @@ resolveSources checked connections definitions defaultReaders prototype = do
             continuous source = any (\producer -> effectName producer == source && effectContinuous producer) effects
             possible | null inputs = [RegistrationSingleton]
                      | any (\(source, origin) -> origin == Just node' && source `notElem` resources
-                         && not (continuous source)) inputs = [ExecutionMultiple]
+                         && not (continuous source) && any (\producer -> effectName producer == source
+                           && maybe False (\contractType -> (node', contractType) `elem` assetPublications state)
+                                (effectProduces producer)) effects) inputs = [ExecutionMultiple]
                      -- 会话可交接本轮输出，也可交付独立生产的值；运行时按实际 Binding 判定，
                      -- 不能因为没有普通 NodeId 捕获就漏掉整个开启位置。
                      | any (continuous . fst) inputs = [ProductionSingleton, ExecutionMultiple]
                      -- owner 的本链 open 也可能复用前驱实例；资源自身不进入普通来源表。
-                     | any ((== Just node') . snd) inputs = [ProductionSingleton, ExecutionMultiple]
+                     | any (\(source, origin) -> source `elem` resources && origin == Just node') inputs = [ProductionSingleton, ExecutionMultiple]
                      | otherwise = [ProductionSingleton]
             kinds = sort (nub (possible ++ concatMap openingKinds previous))
             opening = ScopeOpeningPlan node' (effectName effect) sources kinds
@@ -1977,7 +1961,7 @@ resolveSources checked connections definitions defaultReaders prototype = do
       in unless (null owners || assetClosing call || any (`elem` available) owners) $
         lift (Left (InvalidPrototype ("Resource " ++ effectName effect ++ " read at " ++ show (assetRoot call)
           ++ " requires its Scoped to be opened in the same chain: " ++ intercalate ", " owners)))
-    -- 在已经捕获的路径上不查询外部来源；所有缺值路径使用同一静态候选表。
+    -- 已捕获的路径不重新取值；缺值路径从局部发布和共享供值中推导可能捕获。
     readAsset :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis [AssetExit]
     readAsset call effect state = do
       checkResourceRead call effect state
@@ -1989,9 +1973,11 @@ resolveSources checked connections definitions defaultReaders prototype = do
         pure [AssetExit True observed]) exits
       where
       readContractAsset contractType = do
-        let sources = nub [node' | (node', produced) <- assetPublications state, produced == contractType
-              , visibleFrom (protoWorkflow prototype) node' (assetRoot call)]
-            external = filter (/= assetRoot call) sources
+        available <- gets assetAvailable
+        let shared = [pair | pair@(_, produced) <- available, produced == contractType
+              , effectName effect `notElem` resources, not (assetClosing call)]
+            sources = nub [node' | (node', produced) <- assetPublications state ++ shared, produced == contractType]
+            external = sources
         recordReadSupply call effect contractType state sources
         case lookup contractType (assetCaptures state) of
           Just _ -> pure [AssetExit True state, AssetExit False state]
@@ -2008,11 +1994,10 @@ resolveSources checked connections definitions defaultReaders prototype = do
               -- 失败出口由 method 统一补上，Recover 不会抹去这次读取的结构证据。
               [] -> pure []
               [source] -> pure [AssetExit True (capture contractType (Just source) state), AssetExit False state]
-              -- lifelong 之后：同一单元的互斥位置各自保留最新发布，运行时取轮次最新的那个；每个候选是一条路径。
-              _ | retainedChoice (assetRoot call) sources ->
-                  pure (AssetExit False state : [AssetExit True (capture contractType (Just source) state) | source <- sources])
-              _ -> lift (Left (InvalidPrototype ("Asset " ++ contractType ++ " read at " ++ show (assetRoot call)
-                ++ " has several visible sources " ++ show sources ++ "; refine the contract or the workflow")))
+              -- 多处驱动仍是同一 refined asset。运行读取最新发布，结构逐候选保留参数身份，
+              -- 不把参数 ADT 相等当作同一次生产，也不把任一候选解释成必定发生。
+              _ -> pure (AssetExit False state :
+                [AssetExit True (capture contractType (Just source) state) | source <- sources])
     publish :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis AssetState
     publish call effect state = case effectProduces effect of
       Nothing -> lift (Left (InvalidPrototype "Context production has no contract"))
@@ -2140,7 +2125,7 @@ resolveSources checked connections definitions defaultReaders prototype = do
         pure (nub [retainOutcome future (succeeded, assetPublications state) | AssetExit succeeded state <- exits])
       ChainedAt _ children -> workflowSequence children future [(True, publications)] handoff
       ParallelAt _ children -> do
-        -- 兄弟各读同一份前置状态；只把外层后继仍需要的产物交给组合，避免无关笛卡尔积。
+        -- 每个兄弟保留自己的捕获路径；跨兄弟供值由外层固定点传入，出口只组合后续所需事实。
         parts <- mapM (\child -> workflow child future publications handoff) children
         pure (foldl (combine future) [(True, retainPublications future publications)] parts)
       AlternativeAt _ choice children -> do
@@ -2189,9 +2174,8 @@ resolveSources checked connections definitions defaultReaders prototype = do
                     , node' `notElem` mounts, contractType `elem` map sessionAsset sessions]
               unless (all (`elem` requested) now) (analyzeUnits (nub (requested ++ now)))
         analyzeUnits []
-        -- 全部单元正常结束后 lifelong 成功返回，后继继续执行；仍有消费单元未结束时后继不会开始。
-        -- 进入 lifelong 之前的发布照常交给后继；单元内可能发布的位置也交给后继：每个来源保留它最新一次发布，
-        -- 零轮或从未发布时运行时缺值，按已有的耗尽协议报出。会话挂载的发布只作为交付的伴随发布，不外传。
+        -- lifelong 的正常出口使后继可启动；共享供值固定点保留期间可能发布的位置。
+        -- 零轮或条件未发布仍可能缺值，由运行时的保守耗尽协议处理。
         drives <- gets assetDrives
         let inside = [(node', contractType) | (node', contractType) <- drives, boundary `isPrefixOf` node'
               , node' `notElem` mounts, contractType `elem` future]

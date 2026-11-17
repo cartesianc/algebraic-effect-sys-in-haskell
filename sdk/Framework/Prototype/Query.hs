@@ -1,8 +1,8 @@
 -- 只读的原型结构查询。NodeId 的先后与互斥只来自既有 workflow，
--- 不根据线程完成时序推断旁支可见性，也不修改资产、scope 或会话状态。
+-- 先后只约束启动；普通发布的共享不由这些关系过滤，也不在这里修改运行状态。
 module Framework.Prototype.Query
   ( workflowNode, workflowChildren, workflowTerminals, workflowLifelongs, workflowSelectors
-  , allWorkflow, lookupChain, lookupWorkflow, precedes, exclusive, visibleFrom
+  , allWorkflow, lookupChain, lookupWorkflow, precedes, exclusive
   , driveSet, readPoints, scopeOpeningsAt, drivingAssets, bootPlan, sessionSteps, sessionAssets
   , finiteSessions, candidateCase, findEffectProto, ordinaryEntry, selectorMethod, calledMethods, reachableMethods
   ) where
@@ -57,7 +57,7 @@ lookupChain prototype identifier = case filter ((== identifier) . chainNode) (pr
 lookupWorkflow :: WorkflowTree -> NodeId -> Maybe WorkflowTree
 lookupWorkflow tree identifier = listToMaybe [node' | node' <- allWorkflow tree, workflowNode node' == identifier]
 
--- 以下关系只给出结构上的先后、互斥与可见性；实际读取仍须核对本次发布与捕获。
+-- 以下关系给出结构上的启动先后与互斥；不作为普通共享资产的读取许可。
 precedes :: WorkflowTree -> NodeId -> NodeId -> Bool
 precedes tree before after = knownWorkflowPosition tree before && knownWorkflowPosition tree after
   && any orders (allWorkflow tree)
@@ -67,7 +67,7 @@ precedes tree before after = knownWorkflowPosition tree before && knownWorkflowP
       | (index, left) <- zip [0 :: Int ..] children, right <- drop (index + 1) children]
     orders (AlternativeAt _ selected children) = before == alternativeSelector selected
       && any (\child -> workflowNode child `isPrefixOf` after) children
-    -- 会话是 lifelong 的共同上游：会话挂载先于全部单元；单元之间、各次执行之间互不可见。
+    -- 会话是 lifelong 的共同上游；交付与普通共享值分别遵循自己的读取协议。
     orders (LifelongAt identifier _ children) = (identifier ++ [-1]) `isPrefixOf` before
       && any (\child -> workflowNode child `isPrefixOf` after) children
     orders _ = False
@@ -80,10 +80,6 @@ exclusive tree left right = knownWorkflowPosition tree left && knownWorkflowPosi
       [workflowNode first `isPrefixOf` left && workflowNode second `isPrefixOf` right
       | first <- children, second <- children, workflowNode first /= workflowNode second]
     separate _ = False
-
-visibleFrom :: WorkflowTree -> NodeId -> NodeId -> Bool
-visibleFrom tree source target = source == target && knownWorkflowPosition tree source
-  || precedes tree source target
 
 driveSet :: Prototype method -> NodeId -> Either (PrototypeError method) [String]
 driveSet prototype selected = chainDrives <$> lookupChain prototype selected

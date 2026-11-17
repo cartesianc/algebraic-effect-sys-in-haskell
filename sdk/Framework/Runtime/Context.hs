@@ -13,7 +13,7 @@ import Control.Monad (forM_, when)
 import Control.Monad.Except (MonadError, catchError, throwError)
 
 -- require 是一次读取：值只来自 requests 驱动的生产或 Stream 会话，读取本身不生产。
--- 已有值时直接返回；尚无值时等发布或节点进度变化，再按同一来源表重读。
+-- 已有值时直接返回；尚无值时等发布或节点进度变化，再读取同一份运行级最新值。
 -- 只在已证明合法生产机会耗尽时结束等待；无法证明的路径继续等待。
 -- 载体在诊断、收尾或 scope 资源时不等待，缺值按 ContextNotInitialized 报出。
 readContext

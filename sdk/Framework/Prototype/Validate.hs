@@ -154,8 +154,6 @@ validatePrototype prototype = do
               "Invalid scope parameter source candidates"
             mapM_ (\node' -> do
               producing <- lookupChain prototype node'
-              valid (node' == openingNode opening || precedes (protoWorkflow prototype) node' (openingNode opening))
-                "Scope parameter source is not a visible chain"
               valid (maybe False (`elem` chainDrives producing) (effectProduces producer)
                 || any (\owner -> effectResource owner == Just source
                     && maybe False (`elem` chainReaches producing) (lookup ScopeOpen (effectMethods owner))) effects)
@@ -165,7 +163,7 @@ validatePrototype prototype = do
           resource source = any ((== Just source) . effectResource) effects
           singleton (source, selected) = resource source || case selected of
             FromSession -> True
-            FromChains nodes' -> any (/= openingNode opening) nodes'
+            FromChains nodes' -> not (null nodes')
             FromOwnChain -> False
           multiple (_, selected) = case selected of
             FromSession -> True
@@ -189,8 +187,6 @@ validatePrototype prototype = do
           valid (not (null selected) && unique selected) "Invalid asset source alternatives"
           mapM_ (\node' -> do
             chain <- lookupChain prototype node'
-            valid (node' /= readNode point && precedes (protoWorkflow prototype) node' (readNode point))
-              "Asset source is not a completed visible chain"
             valid (readContract point `elem` chainDrives chain) "Asset source has no matching production") selected
     methodIds = map methodIdentity (graphMethods graph)
     observedScopes = graphScopes graph

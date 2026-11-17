@@ -138,8 +138,8 @@ data ChainDefinition method = ChainDefinition
 data ReadPoint = ReadPoint { readNode :: NodeId, readContract :: String }
   deriving (Eq, Show, Read, Generic, NFData)
 
--- FromChains 保存保证先完成的静态候选；运行时仍须核对本次实际发布的唯一来源。
--- FromOwnChain 没有外部候选，沿用本次捕获与缺值协议，不意味着每次都生产。
+-- FromChains 保存结构推演找到的生产机会，供缺值耗尽与开启参数证明使用；不是可见性过滤器。
+-- FromOwnChain 没有已知候选，仍可使用调用捕获；普通值由运行级最新发布回答。
 -- FromSession：持续资产按本轮交付、合法先前边界或 interpreter 托管会话读取。
 data Source = FromChains [NodeId] | FromOwnChain | FromSession
   deriving (Eq, Show, Read, Generic, NFData)
@@ -148,7 +148,8 @@ data Source = FromChains [NodeId] | FromOwnChain | FromSession
 -- FromSession 固定为所选交付，不把它伪装成没有候选的普通发布。FromOwnChain 不用于开启计划。
 -- 候选包含本链与已经捕获的来源；不是运行时任选来源的许可，也不保存分支相关性。
 -- 与 SessionProto.mounts 联合供持续待用使用；无需另一份会话资源图。
--- runtime 只在许可出处内匹配实际生产身份，不用 openingKinds 直接决定何时 close。
+-- runtime 匹配固定捕获或共享最新值的生产身份；必定新生产的未开始开启不保留旧实例。
+-- 类别不独立决定 close，实际使用、待用、子 scope 与 Binding ownership 仍共同决定。
 data ScopeOpening = ScopeOpeningPlan
   { openingNode :: NodeId
   , openingScope :: String

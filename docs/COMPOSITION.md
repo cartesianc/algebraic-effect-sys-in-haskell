@@ -25,7 +25,7 @@ handler 描述一次原子操作；业务含义由它绑定的 effect、Input、
 <a id="determinism"></a>
 ### 确定性：结构决定装配规则
 
-1. **有静态依据。** 解释来自注册、AST 和可提取的 handler 读取关系，不能靠哪个线程先发布来补足来源选择。
+1. **有静态依据。** 解释来自注册、AST 和可提取的 handler 读取关系。refined asset 的生产链静态唯一；同一资产的多次实际发布按已定义的共享最新值规则读取。
 2. **解释明确。** 同一份合法结构得到确定的类型能力、来源规则和执行计划；实际分支、业务值与 IO 成败仍由运行时按计划处理。
 3. **已能证明的结构错误在生成期报告。** 缺少合法解释或存在无法消除的歧义时拒绝；没有证明不等于已经证明安全。已实现的最低限度检查与延期的完整分析分开维护，见[普通读取来源](EFFECT_GRAPH.md#missing-source)与[当前边界](NEXT_STAGES.md#current-limits)。
 
@@ -39,7 +39,7 @@ handler 描述一次原子操作；业务含义由它绑定的 effect、Input、
 - **编译器能够计算关系。** gen 把结构作为数据进行分析，形成类型约束、精细化 DI、来源证明和图；不要求原子方法理解整个调度器。
 - **运行时能够执行关系。** interpreter 消费已经确定的结构，管理实际值、执行进度、会话与资源；业务 IO 的结果不由编译器猜测。
 
-因此，设计新能力时先确定“哪些结构关系对应什么执行含义”，再决定如何生成代码和维护运行状态。没有结构证据的行为应诊断或保留待定，不能以自动装配为名依赖偶然时序。框架对组合的解释有明确适用条件，也不因为引入状态机就自动证明任意业务程序满足代数定律。
+因此，设计新能力时先确定“哪些结构关系对应什么执行含义”，再决定如何生成代码和维护运行状态。没有结构证据的行为应诊断或保留待定，不能以线程先后选择不同的资产契约；同一契约的并发发布则按明确的最新值协议执行。框架对组合的解释有明确适用条件，也不因为引入状态机就自动证明任意业务程序满足代数定律。
 
 ### 代码长什么样
 
@@ -148,7 +148,7 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 | 静态证明普通读取无来源 | 已到达的读取在所有已分析路径均无合法供值或捕获 | gen 在来源证明阶段拒绝，并定位读取点 | 不把结构错误交给运行时缺值处理 | [静态无来源诊断](EFFECT_GRAPH.md#missing-source) |
 | 按类型读取，读到哪份由注册决定 | 同一表示类型细化成多份资产；handler 只写 `require @T` | 每个 effect 按“表示类型 + effect”生成读取实例 | 同一个 handler 绑到不同 effect，各自读到 demands 里那份资产 | [Context](LATEST_DESIGN.md#context) |
 | 按构造器读取和类型的分支 | `requires` 分支契约（如 `FileTextWritten`） | 分支契约目录，投影当前构造器 | 读到构造器的字段；构造器不匹配报 `CaseNotSelected` | [Context](LATEST_DESIGN.md#context) |
-| 读到哪一次发布 | 无需写法，由 AST 的先后决定 | 每个读取点保存许可的来源：本链、AST 保证先完成的前驱，或会话 | parallel 兄弟互不可见；需要跨链读取时同时可见的来源至多一个，否则生成期报错 | [图与来源](EFFECT_GRAPH.md) |
+| 读到哪一次发布 | 无需新写法；refined asset 决定唯一生产链 | 共享供值固定点与生产机会，持续资产另走会话 | 普通读取先用调用捕获，再取运行级最新 Binding；缺值等发布，不按 AST 位置过滤 | [图与来源](EFFECT_GRAPH.md#missing-source) |
 | 等不到值时结束等待 | 无需写法 | 来源候选与执行帧的节点进度 | 候选都已退休仍无值时报 `ContextNotInitialized`；资源 Context 与诊断、收尾、close 期间不等待 | [可见范围与等待](LATEST_DESIGN.md#await-visibility) |
 | 声明的读取都有用处 | 无需写法 | 读取依据：方法体的读取或控制流的读取 | 声明了却没有任何依据的读取，生成期报错 | [资产来源与访问约束](LATEST_DESIGN.md#demand-contract) |
 | 按资产的状态选分支 | `alternative` 的候选各 `requires` 同一资产的一个分支契约；AST 不写条件 | `AlternativeProto`：转折契约、构造器到候选的对应 | 选择读取相当于 `requests`：先生产转折资产，只启动匹配的候选，并把选择时的捕获交给它 | [workflow](LATEST_DESIGN.md#workflow) |
@@ -209,7 +209,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 
 | 行为 | 组合 | 推导 | 驱动 | 规范 | 或可类比为 |
 | --- | --- | --- | --- | --- | --- |
-| 每条交付执行一次消费 | lifelong 中以 `streams` 订阅该资产的节点 | `lifelongUnits`、`lifelongSubscriptions` | 单元逐条领取，每条一个 frame，同一单元的调用不重叠，上一轮的普通产物不带入下一轮 | [6](STREAM_LIFELONG.md#scheduling) | `runForEach` |
+| 每条交付执行一次消费 | lifelong 中以 `streams` 订阅该资产的节点 | `lifelongUnits`、`lifelongSubscriptions` | 单元逐条领取，每条一个 frame，同一单元的调用不重叠，交付逐轮固定，普通资产仍可读取共享最新值 | [6](STREAM_LIFELONG.md#scheduling) | `runForEach` |
 | 多个消费单元并发推进 | `lifelong [parallel [...]]` 的各子项 | 单元拆分 | 各单元并发推进、互不等待 | [6.1](STREAM_LIFELONG.md#scheduling) | 多播后分别运行 |
 | 一份资产有多个消费方 | 多个单元或派生会话 `streams` 同一资产 | 同一边界中一份资产一个会话；读取方登记 | 每个读取方独立游标；保留未领取交付及最新值，目前没有背压 | [7](STREAM_LIFELONG.md#sessions)、[7.1](STREAM_LIFELONG.md#retention) | `broadcast`、`share` |
 | 派生持续资产被普通链读取一次 | A 的 Input 链订阅 B；C 或普通 Context 链 `requires` A | A 的独立 Derive 计划、普通读取路由与托管上游关系 | 首次需求建立 A/B；A 随 B 继续发布，C 取得一次固定 T 后继续，不继承订阅 | [8.3](STREAM_LIFELONG.md#production) | 持续来源的一次采样 |

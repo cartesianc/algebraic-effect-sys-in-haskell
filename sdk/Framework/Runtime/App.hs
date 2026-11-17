@@ -20,7 +20,7 @@ import Framework.Runtime.Protocol
 import Framework.Runtime.Scope
 import Framework.Runtime.Graph
 import Framework.Runtime.Identity
-import Framework.Runtime.Frame (ExecutionFrame, owningFrame, captureSessionInput)
+import Framework.Runtime.Frame (ExecutionFrame, owningFrame, captureFrameInput)
 import Framework.Runtime.Session (Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..), View, awaitView)
 import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
@@ -169,7 +169,7 @@ observeBindingOwner environment source value
       rememberUnownedBinding (consumer environment) value
   | otherwise = readBindingOwner value
 
--- 发布：普通业务的新产物按实际 Origin 保存；诊断与自动收尾只更新隔离的本次快照。
+-- 发布：普通业务更新运行级最新值并保留实际 Origin；诊断与自动收尾只更新隔离快照。
 -- 资源绑定仍归具体 scope 实例；捕获、复用和认领归属不向业务资产表重新发布旧值。
 publishBinding :: Environment env cause -> String -> Bound env cause -> IO ()
 publishBinding environment source value = do
@@ -188,7 +188,7 @@ publishBinding environment source value = do
     _ -> pure ()
 
 -- 已合法捕获的绑定保持快照。资源只能来自本链 open 的捕获；不从仍活着的其他实例猜测。
--- scope 保存的无 owner 辅助值不能绕过来源表，也不能盖过同一 Origin 后来的 request。
+-- scope 保存的无 owner 辅助值不能盖过运行级最新发布。
 resolveBinding :: Environment env cause -> String -> IO (Either ContextFault (Maybe (Bound env cause)))
 resolveBinding environment source = do
   current <- lookup source <$> readIORef (bindings environment)
@@ -198,7 +198,7 @@ resolveBinding environment source = do
     Nothing | cleaningScopes environment
       || any ((== source) . resourceSource) (scopes environment) -> pure (Right Nothing)
     Nothing -> do
-      asset <- readVisibleAsset (runtimeGraph environment) (executionOrigin (execution environment)) source
+      asset <- readPublishedAsset (runtimeGraph environment) (currentFrame environment) (executionOrigin (execution environment)) source
       case asset of
         Left problem -> pure (Left problem)
         Right Nothing -> pure (Right Nothing)
@@ -271,7 +271,7 @@ saveBinding :: ScopeInstance env cause -> String -> Bound env cause -> IO ()
 saveBinding slot source value = atomicModifyIORef' (scopeRecord slot) $ \record ->
   (record { scopeBindings = bind source value (scopeBindings record) }, ())
 
--- 复用只交接带实例归属的资源绑定。普通值在实际 require 时按 Origin 查询权威资产表，
+-- 复用只交接带实例归属的资源绑定。普通值在实际 require 时查询共享最新值，
 -- 不从 scope 的旧快照预先捕获；实例共享只依据参数的生产身份。
 reuseBindings :: Environment env cause -> ScopeInstance env cause -> IO ()
 reuseBindings environment slot = do
@@ -387,7 +387,7 @@ instance ContextStore env (App env cause) where
     environment <- ask
     result <- liftIO $ mask $ \restore -> do
       let graph = runtimeGraph environment
-      activation <- beginActivation graph (activeActivation environment) (execution environment)
+      activation <- beginActivation graph (activeActivation environment) (currentFrame environment) (execution environment)
         (RequestBoot source) (bindings environment) (consumer environment)
       let inside = environment { activeActivation = Just (activationId activation) }
       restore (runExceptT (runReaderT action inside))
@@ -465,7 +465,7 @@ instance ContextStore env (App env cause) where
     (\env -> env { caller = Just name, contexts = name : contexts env }) action
   -- 诊断、收尾与 scope 资源不等待：资源只能经 open 取得，诊断与收尾期间没有新的业务发布。
   -- 其余缺值读取在读之前取得共享信号；发布与节点退休都会唤醒。
-  -- 只用已知来源和本次执行帧证明耗尽，证据不足时保留等待，不改变来源可见性。
+  -- 只用已知来源和本次执行帧证明耗尽，证据不足时保留等待，不隐式驱动生产。
   awaitContext source = AppRun $ do
     environment <- ask
     let resource = any ((== Just source) . scopeContextSource) (scopes environment)
@@ -689,7 +689,7 @@ lastBinding view = case Seq.viewr view of
 rememberView :: Environment env cause -> String -> View env cause -> App env cause ()
 rememberView environment source view = when (deliveryAllowed environment) $
   forM_ (lastBinding view >>= bindingProduction) $ \production ->
-    rawIO (captureSessionInput (currentFrame environment)
+    rawIO (captureFrameInput (currentFrame environment)
       (originNode (executionOrigin (execution environment))) source production)
 
 -- 会话失败时传播它的原失败或原生异常；取得的视图捕获为本次视图，之后的发布不改写它。
@@ -878,7 +878,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
   let currentExecution = BusinessExecution origin
       handlers = runtimeScopes graph
   user <- maybe (newScopeUser handlers currentExecution) pure (launchUser launch)
-  activation <- beginActivation graph Nothing currentExecution (TargetedBoot node) values user
+  activation <- beginActivation graph Nothing (launchFrame launch) currentExecution (TargetedBoot node) values user
   let environment = Environment
         { emptyValues = initial, bindings = values, scopes = handlers
         , caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
