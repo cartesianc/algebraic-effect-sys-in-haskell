@@ -36,7 +36,7 @@ data EffectTyping
   -- handles 按错误类型匹配；作用的 scope 由 Input 链上最近的 Scoped 推导，不手写连接。
   | Error { detect :: Maybe String, resolve :: Maybe String, handles :: [Handles] }
   -- Context 只有一个 parser handler，产出资产的表示类型。require = True 缓存最新值，
-  -- stream = True 还缓存历史；Input 链由 Stream 或 streams demand 持续驱动时必须为 True，且要求 require = True。
+  -- stream = True 表示持续发布；Input 链由 Stream 或 streams demand 持续驱动时必须为 True，且要求 require = True。
   -- gen 按资产名生成 getT（驱动 parser）、readT 或 streamT（读取缓存）。
   | Context { asset :: Asset, parser :: Maybe String, require :: Bool, stream :: Bool }
   -- 持续生产节点。handler 每次调用取得一份原始输入（String），SDK 负责反复调用；
@@ -119,7 +119,8 @@ data EffectSpec = EffectSpec
 -- 消费方以契约名声明需要的值与取值模式；契约名即生产方声明的资产名。
 -- 契约类型由生成器产出，手写声明看不到它，因此以名字引用。
 -- 三种 demand 是驱动关系：requests 沿 Input 驱动资产的整条 Context 链（gen 在入口先调用 getT），
--- requires 只读取最新值，streams 由持续资产的新交付驱动并读取历史。handler 只写 require @表示类型。
+-- requires 只读取本次最新值，streams 在持续驱动位置读取本次交付。两者都按声明表示类型 require；
+-- 记录、统计等数据形状由业务资产决定，不因持续驱动增加 SDK 包装。
 data Access = RequestAccess | RequireAccess | StreamAccess
   deriving (Eq, Show, Read, Generic, NFData)
 

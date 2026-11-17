@@ -20,7 +20,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module FacadeProbe.Generated.Handlers (handlerSourceFingerprint, getReportPath, readReportPath, getReplyPath, readReplyPath, getReportBody, readReportBody, getReplyBody, readReplyBody, getOpenedReport, readOpenedReport, getOpenedReply, readOpenedReply, openReportScope, closeReportScope, openReplyScope, closeReplyScope, runWriteReport, runWriteReply, runMarkReply, runReadReport, runReadReply, getReportStats, readReportStats, getReplyStats, readReplyStats, runShowReport, runShowReply, getReportState, readReportState, runOnBlank, runOnFilled, nextFeedA, nextFeedB, getLevelA, streamLevelA, getLevelB, streamLevelB, runShowA, runShowB, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections, streamContextInjections) where
+module FacadeProbe.Generated.Handlers (handlerSourceFingerprint, getReportPath, readReportPath, getReplyPath, readReplyPath, getReportBody, readReportBody, getReplyBody, readReplyBody, getOpenedReport, readOpenedReport, getOpenedReply, readOpenedReply, openReportScope, closeReportScope, openReplyScope, closeReplyScope, runWriteReport, runWriteReply, runMarkReply, runReadReport, runReadReply, getReportStats, readReportStats, getReplyStats, readReplyStats, runShowReport, runShowReply, getReportState, readReportState, runOnBlank, runOnFilled, getCountA, readCountA, getCountB, readCountB, openFeedScopeA, openFeedScopeB, nextFeedA, nextFeedB, getLevelA, streamLevelA, getLevelB, streamLevelB, runShowA, runShowB, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections, streamContextInjections) where
 
 import qualified Framework.Generated as FrameworkRuntime
 import qualified FacadeProbe.Generated.Effects as FrameworkGenerated
@@ -28,12 +28,13 @@ import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
 import FacadeProbe.Types
-import Framework.SDK (History, Raises(..), Raw(..), Reads(..), historySize, latest)
+import Framework.SDK (Raises(..), Raw(..), Reads(..))
 import FacadeProbe.Generated.Effects
 import FacadeProbe.Types
 import Control.Concurrent (threadDelay)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
+import Data.IORef (atomicModifyIORef', newIORef)
 import System.FilePath ((</>))
 import System.IO (IOMode(WriteMode), hClose, hFlush, hPutStr, openFile, readFile')
 
@@ -116,36 +117,48 @@ instance DescribeFilledLayer m => DescribeFilledHandler m where
     liftIO (putStrLn ("[state] filled, " ++ show (length text) ++ " characters"))
     pure []
 
+instance NewCounterLayer m => NewCounterHandler m where
+  newCounter = liftIO (FeedCounter <$> newIORef 0)
+
+instance OpenCounterLayer m => OpenCounterHandler m where
+  openCounter = do
+    FeedCounter _ <- require @FeedCounter
+    pure []
+
 instance NextALayer m => NextAHandler m where
   nextA = do
+    FeedCounter counter <- require @FeedCounter
     liftIO (threadDelay 40000)
-    pure "10"
+    number <- liftIO $ atomicModifyIORef' counter $ \previous ->
+      let current = previous + 1 in (current, current)
+    pure (show (number, 10 :: Int))
 
 instance NextBLayer m => NextBHandler m where
   nextB = do
+    FeedCounter counter <- require @FeedCounter
     liftIO (threadDelay 60000)
-    pure "20"
+    number <- liftIO $ atomicModifyIORef' counter $ \previous ->
+      let current = previous + 1 in (current, current)
+    pure (show (number, 20 :: Int))
 
 instance ParseLevelLayer m => ParseLevelHandler m where
   parseLevel = do
     reading <- concat <$> raw
     case reads reading of
-      [(value, "")] -> pure (Level value)
+      [((number, value), "")] -> pure (Level number value)
       _ -> raise (ParseLevelError reading)
 
 -- ShowA 与 ShowB 共用；失败按 handler 固定为 ShowLevelError，origin 仍是具体的 effect。
 instance ShowLevelLayer m => ShowLevelHandler m where
   showLevel = do
-    samples <- require @(History Level)
-    case latest samples of
-      Just (Level value) -> liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show (historySize samples)))
-      Nothing -> pure ()
-    when (historySize samples >= 3) (raise (ShowLevelError "enough deliveries"))
+    Level number value <- require @Level
+    liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show number))
+    when (number >= 3) (raise (ShowLevelError "enough deliveries"))
     pure []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "5dd38022f6c14159c9c2acdacd5d2781"
+handlerSourceFingerprint = Just "7a50893a4ee9920737b0ff1ec8675dc8"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -212,6 +225,14 @@ instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkG
   raise (FrameworkGenerated.DescribeFilledError description) = At (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.DescribeFilledFailure description)
 
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NewCounterError (At effect) where
+  raise (FrameworkGenerated.NewCounterError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NewCounterFailure description)
+
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenCounterError (At effect) where
+  raise (FrameworkGenerated.OpenCounterError description) = At (FrameworkRuntime.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.OpenCounterFailure description)
+
 instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextAError (At effect) where
   raise (FrameworkGenerated.NextAError description) = At (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NextAFailure description)
@@ -273,11 +294,23 @@ instance FrameworkRuntime.Reads (()) (At "OnBlank") where
 instance FrameworkRuntime.Reads (Body) (At "OnFilled") where
   require = At (FrameworkRuntime.projectContext "ReportInspect" "ReportStateFilled" FrameworkGenerated.ContextBindingError (\(FrameworkGenerated.ReportState value) -> case value of { Filled field -> Just field; _ -> Nothing }) (readReportState))
 
-instance FrameworkRuntime.Reads (FrameworkRuntime.History (Level)) (At "ShowA") where
-  require = At (fmap (\(FrameworkGenerated.LevelA value) -> value) <$> streamLevelA)
+instance FrameworkRuntime.Reads (FeedCounter) (At "FeedScopeA") where
+  require = At ((\(FrameworkGenerated.CountA value) -> value) <$> readCountA)
 
-instance FrameworkRuntime.Reads (FrameworkRuntime.History (Level)) (At "ShowB") where
-  require = At (fmap (\(FrameworkGenerated.LevelB value) -> value) <$> streamLevelB)
+instance FrameworkRuntime.Reads (FeedCounter) (At "FeedScopeB") where
+  require = At ((\(FrameworkGenerated.CountB value) -> value) <$> readCountB)
+
+instance FrameworkRuntime.Reads (FeedCounter) (At "FeedA") where
+  require = At ((\(FrameworkGenerated.CountA value) -> value) <$> readCountA)
+
+instance FrameworkRuntime.Reads (FeedCounter) (At "FeedB") where
+  require = At ((\(FrameworkGenerated.CountB value) -> value) <$> readCountB)
+
+instance FrameworkRuntime.Reads (Level) (At "ShowA") where
+  require = At ((\(FrameworkGenerated.LevelA value) -> value) <$> streamLevelA)
+
+instance FrameworkRuntime.Reads (Level) (At "ShowB") where
+  require = At ((\(FrameworkGenerated.LevelB value) -> value) <$> streamLevelB)
 
 instance FrameworkRuntime.Raw (At "ReportCounter") where
   raw = At (runReadReport)
@@ -436,31 +469,57 @@ runOnFilled :: FrameworkGenerated.App [String]
 runOnFilled = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runOnFilled" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "OnFilled") $
   runAt @"OnFilled" FrameworkGenerated.describeFilled
 
+getCountA :: FrameworkGenerated.App FrameworkGenerated.CountA
+getCountA = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "CounterA"
+    (\value bindings -> bindings { FrameworkGenerated.boundCounterA = Just value })) $
+  (FrameworkGenerated.CountA <$> runAt @"CounterA" FrameworkGenerated.newCounter)
+
+readCountA :: FrameworkGenerated.App FrameworkGenerated.CountA
+readCountA = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
+  FrameworkRuntime.readContext "CounterA" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundCounterA
+
+getCountB :: FrameworkGenerated.App FrameworkGenerated.CountB
+getCountB = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "CounterB"
+    (\value bindings -> bindings { FrameworkGenerated.boundCounterB = Just value })) $
+  (FrameworkGenerated.CountB <$> runAt @"CounterB" FrameworkGenerated.newCounter)
+
+readCountB :: FrameworkGenerated.App FrameworkGenerated.CountB
+readCountB = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
+  FrameworkRuntime.readContext "CounterB" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundCounterB
+
+openFeedScopeA :: FrameworkGenerated.App [String]
+openFeedScopeA = (FrameworkRuntime.withErrorPath ["FeedScopeA"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFeedScopeA" . FrameworkRuntime.openScope "FeedScopeA" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FeedScopeA") $
+  getCountA >> runAt @"FeedScopeA" FrameworkGenerated.openCounter
+
+openFeedScopeB :: FrameworkGenerated.App [String]
+openFeedScopeB = (FrameworkRuntime.withErrorPath ["FeedScopeB"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFeedScopeB" . FrameworkRuntime.openScope "FeedScopeB" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FeedScopeB") $
+  getCountB >> runAt @"FeedScopeB" FrameworkGenerated.openCounter
+
 nextFeedA :: FrameworkGenerated.App String
-nextFeedA = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FeedA") $
-  runAt @"FeedA" FrameworkGenerated.nextA
+nextFeedA = (FrameworkRuntime.withErrorPath ["FeedScopeA"] . FrameworkRuntime.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies ["FeedScopeA"] . FrameworkRuntime.enterHandler "FeedA") $
+  openFeedScopeA >> runAt @"FeedA" FrameworkGenerated.nextA
 
 nextFeedB :: FrameworkGenerated.App String
-nextFeedB = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FeedB") $
-  runAt @"FeedB" FrameworkGenerated.nextB
+nextFeedB = (FrameworkRuntime.withErrorPath ["FeedScopeB"] . FrameworkRuntime.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies ["FeedScopeB"] . FrameworkRuntime.enterHandler "FeedB") $
+  openFeedScopeB >> runAt @"FeedB" FrameworkGenerated.nextB
 
 getLevelA :: FrameworkGenerated.App FrameworkGenerated.LevelA
-getLevelA = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ParserA"
+getLevelA = (FrameworkRuntime.withErrorPath ["FeedScopeA"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FeedScopeA"] . FrameworkRuntime.callContext "ParserA"
     (\value bindings -> bindings { FrameworkGenerated.boundParserA = Just value })) $
   (FrameworkGenerated.LevelA <$> runAt @"ParserA" FrameworkGenerated.parseLevel)
 
-streamLevelA :: FrameworkGenerated.App (FrameworkRuntime.History FrameworkGenerated.LevelA)
-streamLevelA = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readHistory "ParserA" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundParserA
+streamLevelA :: FrameworkGenerated.App FrameworkGenerated.LevelA
+streamLevelA = (FrameworkRuntime.withErrorPath ["FeedScopeA"] . FrameworkRuntime.handleFailure) $
+  FrameworkRuntime.readStreamContext "ParserA" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundParserA
 
 getLevelB :: FrameworkGenerated.App FrameworkGenerated.LevelB
-getLevelB = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ParserB"
+getLevelB = (FrameworkRuntime.withErrorPath ["FeedScopeB"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FeedScopeB"] . FrameworkRuntime.callContext "ParserB"
     (\value bindings -> bindings { FrameworkGenerated.boundParserB = Just value })) $
   (FrameworkGenerated.LevelB <$> runAt @"ParserB" FrameworkGenerated.parseLevel)
 
-streamLevelB :: FrameworkGenerated.App (FrameworkRuntime.History FrameworkGenerated.LevelB)
-streamLevelB = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readHistory "ParserB" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundParserB
+streamLevelB :: FrameworkGenerated.App FrameworkGenerated.LevelB
+streamLevelB = (FrameworkRuntime.withErrorPath ["FeedScopeB"] . FrameworkRuntime.handleFailure) $
+  FrameworkRuntime.readStreamContext "ParserB" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundParserB
 
 runShowA :: FrameworkGenerated.App [String]
 runShowA = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runShowA" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowA") $
@@ -475,6 +534,8 @@ newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.Context
 newScopeHandlers = sequence
   [ FrameworkRuntime.newScopeHandler "ReportScope" ["ReportLocation"] (Just "ReportFile")
   , FrameworkRuntime.newScopeHandler "ReplyScope" ["ReplyLocation"] (Just "ReplyFile")
+  , FrameworkRuntime.newScopeHandler "FeedScopeA" [] (Just "CounterA")
+  , FrameworkRuntime.newScopeHandler "FeedScopeB" [] (Just "CounterB")
   ]
 
 -- SDK 自动收尾入口；安装时不关闭资源。

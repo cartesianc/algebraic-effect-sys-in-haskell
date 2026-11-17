@@ -35,7 +35,7 @@ data Prototype method = Prototype
   , protoEffects :: [EffectProto method]
   , protoMethods :: [MethodDefinition method]
   , protoWorkflow :: WorkflowTree
-  -- lifelong 外的有限 require 读取 Receive 资产时由 interpreter 托管的会话；按注册确定，惰性启动。
+  -- 有限 require 读取持续资产时由 interpreter 托管的 Receive/Derive 会话；gen 按注册确定，惰性启动。
   , protoSessions :: [SessionProto]
   , protoChains :: [ChainProto method]
   , protoChainDefinitions :: [ChainDefinition method]
@@ -70,7 +70,7 @@ data EffectProto method = EffectProto
   , effectNearestScopes :: [String]
   , effectResource :: Maybe String
   , effectContextDependencies :: [String]
-  -- 持续资产：stream = True，Input 链由 Stream 或增量驱动；streams 读取 History，requires 读取最新一条。
+  -- 持续资产：stream = True，Input 链由 Stream 或增量驱动；读取方是否重复由组合计划决定。
   , effectContinuous :: Bool
   } deriving (Eq, Show, Read, Functor, Generic, NFData)
 

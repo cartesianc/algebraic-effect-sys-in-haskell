@@ -6,7 +6,7 @@ module LinesDemo.Effects (effects) where
 import Framework.SDK (EffectSpec(..), EffectTyping(..), Asset(..), requests, requires, streams)
 import LinesDemo.Types
 
--- 一个会结束的 Stream：逐行读取文本文件，读到末尾时 handler 调用 end。
+-- 一个会结束的 Stream：逐行读取文本文件，读到末尾时 handler 调用 streamEnd。
 -- 输入文件是 InputSession 的资源：没有开启参数，只开启一次，在生产会话的各步骤间保持。
 -- LineFeed 每次取得一行原始文本；挂在它下面的 LineParser 把它解析成持续资产 TextLine。
 -- PrintLine 以 TextLine 的新交付驱动；Report 排在 lifelong 之后，来源结束、交付处理完才执行。
@@ -53,8 +53,8 @@ effects =
   , EffectSpec
       { name = "TextCounter"
       , typing = Excu { handler = Just "countText" }
-      , input = "Root"
-      , demands = [streams "TextLine"]
+      , input = "InputSession"
+      , demands = [streams "TextLine", requires "OpenedInput"]
       }
   , EffectSpec
       { name = "CountParser"

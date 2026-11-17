@@ -30,6 +30,7 @@ compiledEntries = do
       ]
     , []
     , [ ("LineParser", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextLineFeed)))))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getTextLine)))))))
+      , ("CountParser", SDK.deriveSteps (SDK.targetApp "CountParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getRunningTotal)))))))
       ]
     )
 
@@ -88,8 +89,9 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "TextCounter"
             , SDK.typing = SDK.Excu (Just "countText")
-            , SDK.input = "Root"
-            , SDK.demands = [SDK.Demand (SDK.StreamAccess) ("TextLine")]
+            , SDK.input = "InputSession"
+            , SDK.demands =
+                [SDK.Demand (SDK.StreamAccess) ("TextLine"), SDK.Demand (SDK.RequireAccess) ("OpenedInput")]
             }
         , SDK.EffectSpec
             { SDK.name = "CountParser"
@@ -239,18 +241,21 @@ generatedPrototype =
         , SDK.EffectProto
             { SDK.effectName = "TextCounter"
             , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
+            , SDK.effectInput = "InputSession"
             , SDK.effectMethods = [(SDK.HandlerMethod, RunTextCounterGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand (SDK.StreamAccess) ("TextLine") ("LineParser")]
+            , SDK.effectDemands =
+                [ SDK.ResolvedDemand (SDK.StreamAccess) ("TextLine") ("LineParser")
+                , SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedInput") ("InputResource")
+                ]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
             , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
+            , SDK.effectScopes = ["InputSession"]
             , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
+            , SDK.effectInputChain = ["InputSession"]
+            , SDK.effectScopeParents = ["InputSession"]
             , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
+            , SDK.effectNearestScopes = ["InputSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["InputResource","LineParser"]
             , SDK.effectContinuous = False
@@ -265,12 +270,12 @@ generatedPrototype =
             , SDK.effectProduces = Just "RunningTotal"
             , SDK.effectBranches = []
             , SDK.effectAnchor = Just "TextCounter"
-            , SDK.effectScopes = []
+            , SDK.effectScopes = ["InputSession"]
             , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = ["TextCounter"]
-            , SDK.effectScopeParents = []
+            , SDK.effectInputChain = ["TextCounter","InputSession"]
+            , SDK.effectScopeParents = ["InputSession"]
             , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
+            , SDK.effectNearestScopes = ["InputSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["InputResource","LineParser"]
             , SDK.effectContinuous = True
@@ -306,7 +311,7 @@ generatedPrototype =
             , SDK.effectScopes = []
             , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
+            , SDK.effectScopeParents = ["InputSession"]
             , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = []
             , SDK.effectResource = Nothing
@@ -348,7 +353,15 @@ generatedPrototype =
             (RunTextCounterGen)
             (RunTextCounterGen)
             (SDK.HandlerMethod)
-            (SDK.Sequence ([SDK.Call (StreamTextLineGen), SDK.Choice ([SDK.Empty, SDK.Sequence ([SDK.Empty])])]))
+            (
+              SDK.Sequence
+                (
+                  [ SDK.Sequence
+                      ([SDK.Call (OpenInputSessionGen), SDK.Call (StreamTextLineGen), SDK.Call (ReadOpenedInputGen)])
+                  , SDK.Choice ([SDK.Empty, SDK.Sequence ([SDK.Empty])])
+                  ]
+                )
+            )
         , SDK.MethodDefinition
             (GetRunningTotalGen)
             (GetRunningTotalGen)
@@ -432,6 +445,11 @@ generatedPrototype =
             , SDK.sessionPlan = SDK.Receive ("LineFeed")
             , SDK.sessionMounts = [[-2,0,0],[-2,0,1]]
             }
+        , SDK.SessionProto
+            { SDK.sessionAsset = "RunningTotal"
+            , SDK.sessionPlan = SDK.Derive ("TextLine")
+            , SDK.sessionMounts = [[-2,1,0]]
+            }
         ]
     , SDK.protoChains =
         [ SDK.ChainProto
@@ -459,10 +477,17 @@ generatedPrototype =
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "TextCounter"
             , SDK.chainEntry = RunTextCounterGen
-            , SDK.chainReaches = [RunTextCounterGen, StreamTextLineGen, GetRunningTotalGen]
+            , SDK.chainReaches =
+                [ RunTextCounterGen
+                , OpenInputSessionGen
+                , GetOpenedInputGen
+                , ReadOpenedInputGen
+                , StreamTextLineGen
+                , GetRunningTotalGen
+                ]
             , SDK.chainDrives = ["RunningTotal"]
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[]]
+            , SDK.chainScopePaths = [[OpenInputSessionGen]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [1,0,1,0]
@@ -526,6 +551,23 @@ generatedPrototype =
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenInputSessionGen]]
             }
+        , SDK.ChainProto
+            { SDK.chainNode = [-2,1,0]
+            , SDK.chainRole = SDK.SessionChain
+            , SDK.chainTerminal = "RunningTotal"
+            , SDK.chainEntry = GetRunningTotalGen
+            , SDK.chainReaches =
+                [ GetRunningTotalGen
+                , RunTextCounterGen
+                , OpenInputSessionGen
+                , GetOpenedInputGen
+                , ReadOpenedInputGen
+                , StreamTextLineGen
+                ]
+            , SDK.chainDrives = ["RunningTotal"]
+            , SDK.chainReads = ["TextLine"]
+            , SDK.chainScopePaths = [[OpenInputSessionGen]]
+            }
         ]
     , SDK.protoChainDefinitions =
         [ SDK.ChainDefinition
@@ -582,13 +624,27 @@ generatedPrototype =
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "TextCounter"
             , SDK.definitionEntry = RunTextCounterGen
-            , SDK.definitionReaches = [RunTextCounterGen, StreamTextLineGen, GetRunningTotalGen]
+            , SDK.definitionReaches =
+                [ RunTextCounterGen
+                , OpenInputSessionGen
+                , GetOpenedInputGen
+                , ReadOpenedInputGen
+                , StreamTextLineGen
+                , GetRunningTotalGen
+                ]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "CountParser"
             , SDK.definitionEntry = GetRunningTotalGen
-            , SDK.definitionReaches = [GetRunningTotalGen, RunTextCounterGen, StreamTextLineGen]
+            , SDK.definitionReaches =
+                [ GetRunningTotalGen
+                , RunTextCounterGen
+                , OpenInputSessionGen
+                , GetOpenedInputGen
+                , ReadOpenedInputGen
+                , StreamTextLineGen
+                ]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -623,7 +679,22 @@ generatedPrototype =
                   (RunTextCounterGen)
                   (RunTextCounterGen)
                   (SDK.HandlerMethod)
-                  (SDK.Sequence ([SDK.Call (StreamTextLineGen), SDK.Choice ([SDK.Empty, SDK.Sequence ([SDK.Empty])])]))
+                  (
+                    SDK.Sequence
+                      (
+                        [ SDK.Sequence
+                            ([SDK.Call (OpenInputSessionGen), SDK.Call (StreamTextLineGen), SDK.Call (ReadOpenedInputGen)])
+                        , SDK.Choice ([SDK.Empty, SDK.Sequence ([SDK.Empty])])
+                        ]
+                      )
+                  )
+              , SDK.MethodDefinition
+                  (OpenInputSessionGen)
+                  (OpenInputSessionGen)
+                  (SDK.ScopeOpen)
+                  (SDK.Sequence ([SDK.Call (GetOpenedInputGen), SDK.Call (ReadOpenedInputGen)]))
+              , SDK.MethodDefinition (GetOpenedInputGen) (GetOpenedInputGen) (SDK.ContextRequest) (SDK.Empty)
+              , SDK.MethodDefinition (ReadOpenedInputGen) (GetOpenedInputGen) (SDK.ContextRequire) (SDK.Empty)
               , SDK.MethodDefinition
                   (RunShowTotalGen)
                   (RunShowTotalGen)
@@ -641,17 +712,15 @@ generatedPrototype =
                   (SDK.StreamHandler)
                   (SDK.Sequence ([SDK.Call (OpenInputSessionGen), SDK.Call (ReadOpenedInputGen)]))
               , SDK.MethodDefinition
-                  (OpenInputSessionGen)
-                  (OpenInputSessionGen)
-                  (SDK.ScopeOpen)
-                  (SDK.Sequence ([SDK.Call (GetOpenedInputGen), SDK.Call (ReadOpenedInputGen)]))
-              , SDK.MethodDefinition (GetOpenedInputGen) (GetOpenedInputGen) (SDK.ContextRequest) (SDK.Empty)
-              , SDK.MethodDefinition (ReadOpenedInputGen) (GetOpenedInputGen) (SDK.ContextRequire) (SDK.Empty)
-              , SDK.MethodDefinition
                   (GetTextLineGen)
                   (GetTextLineGen)
                   (SDK.ContextStream)
                   (SDK.Call (NextLineFeedGen))
+              , SDK.MethodDefinition
+                  (GetRunningTotalGen)
+                  (GetRunningTotalGen)
+                  (SDK.ContextStream)
+                  (SDK.Call (RunTextCounterGen))
               ]
           , SDK.graphRoots =
               [ RunAnnounceGen
@@ -661,28 +730,33 @@ generatedPrototype =
               , RunReportGen
               , NextLineFeedGen
               , GetTextLineGen
+              , GetRunningTotalGen
               ]
           , SDK.graphReferences =
               [ (RunPrintLineGen, StreamTextLineGen)
+              , (RunTextCounterGen, OpenInputSessionGen)
               , (RunTextCounterGen, StreamTextLineGen)
+              , (RunTextCounterGen, ReadOpenedInputGen)
+              , (OpenInputSessionGen, GetOpenedInputGen)
+              , (OpenInputSessionGen, ReadOpenedInputGen)
               , (RunShowTotalGen, StreamRunningTotalGen)
               , (RunReportGen, StreamRunningTotalGen)
               , (NextLineFeedGen, OpenInputSessionGen)
               , (NextLineFeedGen, ReadOpenedInputGen)
-              , (OpenInputSessionGen, GetOpenedInputGen)
-              , (OpenInputSessionGen, ReadOpenedInputGen)
               , (GetTextLineGen, NextLineFeedGen)
+              , (GetRunningTotalGen, RunTextCounterGen)
               ]
           , SDK.graphScopes = [OpenInputSessionGen]
           , SDK.graphScopePaths = [[], [OpenInputSessionGen]]
           , SDK.graphRootPaths =
               [ (RunAnnounceGen, [[]])
               , (RunPrintLineGen, [[]])
-              , (RunTextCounterGen, [[]])
+              , (RunTextCounterGen, [[OpenInputSessionGen]])
               , (RunShowTotalGen, [[]])
               , (RunReportGen, [[]])
               , (NextLineFeedGen, [[OpenInputSessionGen]])
               , (GetTextLineGen, [[OpenInputSessionGen]])
+              , (GetRunningTotalGen, [[OpenInputSessionGen]])
               ]
           , SDK.graphScopeOrder = []
           }
@@ -704,11 +778,18 @@ generatedPrototype =
           }
     , SDK.protoScopeNames = [(OpenInputSessionGen, "InputSession")]
     , SDK.protoSources =
-        [ (SDK.ReadPoint ([2,0]) ("RunningTotal"), SDK.FromSession)
+        [ (SDK.ReadPoint ([-2,1,0]) ("TextLine"), SDK.FromSession)
+        , (SDK.ReadPoint ([2,0]) ("RunningTotal"), SDK.FromSession)
         , (SDK.ReadPoint ([1,0,1,0]) ("RunningTotal"), SDK.FromSession)
         ]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
+            { SDK.openingNode = [-2,1,0]
+            , SDK.openingScope = "InputSession"
+            , SDK.openingSources = []
+            , SDK.openingKinds = [SDK.RegistrationSingleton]
+            }
+        , SDK.ScopeOpeningPlan
             { SDK.openingNode = [-2,0,1]
             , SDK.openingScope = "InputSession"
             , SDK.openingSources = []
@@ -716,6 +797,12 @@ generatedPrototype =
             }
         , SDK.ScopeOpeningPlan
             { SDK.openingNode = [-2,0,0]
+            , SDK.openingScope = "InputSession"
+            , SDK.openingSources = []
+            , SDK.openingKinds = [SDK.RegistrationSingleton]
+            }
+        , SDK.ScopeOpeningPlan
+            { SDK.openingNode = [1,0,0,1]
             , SDK.openingScope = "InputSession"
             , SDK.openingSources = []
             , SDK.openingKinds = [SDK.RegistrationSingleton]

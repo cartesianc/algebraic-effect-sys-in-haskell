@@ -37,8 +37,12 @@ effects =
   , excu "OnBlank" "describeBlank" "Root" [requires "ReportStateBlank"]
   , excu "OnFilled" "describeFilled" "Root" [requires "ReportStateFilled"]
     -- 同一个 Stream 解析器和消费者；Stream 方法体各不相同
-  , stream "FeedA" "nextA"
-  , stream "FeedB" "nextB"
+  , context "CounterA" (Asset @FeedCounter "CountA") "newCounter" "Root" []
+  , context "CounterB" (Asset @FeedCounter "CountB") "newCounter" "Root" []
+  , feedScope "FeedScopeA" "CountA"
+  , feedScope "FeedScopeB" "CountB"
+  , stream "FeedA" "nextA" "FeedScopeA" "CountA"
+  , stream "FeedB" "nextB" "FeedScopeB" "CountB"
   , continuous "ParserA" (Asset @Level "LevelA") "parseLevel" "FeedA"
   , continuous "ParserB" (Asset @Level "LevelB") "parseLevel" "FeedB"
   , excu "ShowA" "showLevel" "Root" [streams "LevelA"]
@@ -69,9 +73,15 @@ effects =
       , input = "Root"
       , demands = [requests resource, requires resource]
       }
-    stream selected method = EffectSpec
+    feedScope selected resource = EffectSpec
+      { name = selected
+      , typing = Scoped { open = Just "openCounter", close = Nothing }
+      , input = "Root"
+      , demands = [requests resource, requires resource]
+      }
+    stream selected method upstream resource = EffectSpec
       { name = selected
       , typing = Stream { handler = Just method }
-      , input = "Root"
-      , demands = []
+      , input = upstream
+      , demands = [requires resource]
       }

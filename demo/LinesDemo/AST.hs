@@ -1,4 +1,4 @@
-module LinesDemo.AST (ast) where
+module LinesDemo.AST (ast, snapshotAst) where
 
 import Framework.SDK (AST, chained, lifelong, node, parallel)
 
@@ -15,3 +15,9 @@ ast = chained
       ]
   , chained [node "Report"]
   ]
+
+-- 一次性读取同一派生资产：选用 ast = snapshotAst 后重新生成。
+-- CountParser 沿独立生产链订阅 TextLine；Report 只读取本次统计，不因随后增量重复执行。
+-- 这仍由 main = interpreter ast effects 启动，不提供绕过 workflow 的入口。
+snapshotAst :: AST
+snapshotAst = chained [node "Announce", node "Report"]

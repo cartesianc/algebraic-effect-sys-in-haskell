@@ -350,7 +350,7 @@ newtype StartURL = StartURL PageURL
 
 - 资产名须是 Haskell 类型名，按业务含义起名；不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
 - 表示类型有 `Eq`／`Show` 时，资产类型才有 `Eq`／`Show`；不派生 `Read`。
-- 持续资产（`stream = True`）按访问方式读取：`streams` 得到 `require @(History 表示类型)`，`requires` 得到最新一条 `require @表示类型`，见[持续资产与 lifelong](#stream)。
+- 持续资产（`stream = True`）也按声明表示类型写 `require @T`。`streams` 接收增量驱动，`requires` 只取得本次固定值，见[持续资产与 lifelong](#stream)。
 
 ### 分支契约（生成）
 
@@ -433,7 +433,7 @@ typing = Context { asset = Asset @PageURL "StartURL", parser = Just "startURL", 
 - **`asset = Asset @表示类型 "资产名"`**：把表示类型细化为资产，生成器产出 `newtype StartURL = StartURL PageURL`；表示类型怎么写见[资产书写](#types)。
 - **`parser`**（必填）：产出表示类型值的 handler，签名 `m 表示类型`，直接返回 `pure (PageURL ...)`，不包资产构造器。gen 生成 `getStartURL`：执行 Input 前驱和 parser，再包成资产发布。parser 是细化 parser：挂在句柄或 Pure 下时，它把 `raw` 读到的 list 解析成表示类型，作用类似 tokenize；值的变换交给 Pure。
 - **`require`**：`True` 时 SDK 缓存最新值并生成读取方法 `readStartURL`，消费方才能 `requires` 它；`False` 不缓存，消费方不能 `requires`。
-- **`stream`**：`True` 声明持续资产，SDK 缓存历史，读取方法是 `streamStartURL`。当且仅当它的 Input 链被持续驱动时声明（挂在 Stream 下，或链上有 `streams` demand），且必须同时 `require = True`。见[持续资产与 lifelong](#stream)。
+- **`stream`**：`True` 声明持续资产，读取方法是 `streamStartURL`。当且仅当它的 Input 链被持续驱动时声明（挂在 Stream 下，或链上有 `streams` demand），且必须同时 `require = True`。资产值的表示仍由业务声明，见[持续资产与 lifelong](#stream)。
 - **不能作为 AST 末端**：Context 在它挂接的句柄执行时产出，被 `requests` 驱动或被 alternative 的选择读取驱动时产出；被读取时不产出。
 - **命名**：资产名决定资产类型和入口方法名，要按业务含义起名（`StartURL`，而不是 `LoadStartURL`），不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
 
@@ -532,7 +532,7 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 | --- | --- | --- |
 | `requests "T"` | 不写 | 驱动：入口在 Input 之前重新生产一次 `T`，结果保存为当前绑定。单独的 `requests` 不带来读取权限 |
 | `requires "T"` | `x <- require @表示类型` | 读取已有的值，不在入口驱动，也不在读取处生产；缺值时等待，已确定生产耗尽则报缺值 |
-| `streams "T"` | `xs <- require @(History 表示类型)` | 由持续资产 `T` 的新交付驱动，同时取得读取权限；写在 `lifelong` 内的末端上，或另一份持续资产的生产链上，见[持续资产与 lifelong](#stream) |
+| `streams "T"` | `value <- require @表示类型` | 由持续资产 T 的新交付驱动，同时取得读取权限；位于 lifelong 的原始消费链，或另一份持续资产的生产链，见[持续资产与 lifelong](#stream) |
 
 - **驱动与读取分开写**：既要刷新又要读取的资产写两项，例如 Crawler 的 `[requests "StartURL", requires "StartURL"]`。入口顺序是驱动 → Input → handler，因此 `requests` 驱动的值在前驱和 handler 中都已就绪。
 - **来源自动确定**：每个资产恰好由一个 Context 声明，生成器按资产名自动接上，不用指名生产方。
@@ -581,7 +581,7 @@ import FileDemo.Types
 ```
 
 - `-Werror=missing-methods` 保证每个声明的方法都有实现。
-- `Reads(..)`、`Raw(..)`、`Raises(..)` 按类导入：`require` 同时是注册字段名，按名字单独导入会产生歧义。只用到其中一部分时只导入需要的类；Stream handler 要报告来源结束时另导入 `StreamEnds(..)`，消费方要结束订阅时另导入 `EndsStream(..)`；读取持续资产时另导入 `History` 与 `latest`、`historyEntries`、`historySize`。
+- `Reads(..)`、`Raw(..)`、`Raises(..)` 按类导入：`require` 同时是注册字段名，按名字单独导入会产生歧义。只用到其中一部分时只导入需要的类；Stream handler 要报告来源结束时另导入 `StreamEnds(..)`，消费方要结束订阅时另导入 `EndsStream(..)`。持续读取同样使用 `Reads`，不另导入历史包装。
 
 ### instance 头
 
@@ -595,7 +595,7 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
 | 约束 | 什么时候有 | 方法体可写 |
 | --- | --- | --- |
 | `Reads T m` | 绑定它的 effect `requires` 了表示类型为 T 的资产 | `require @T` |
-| `Reads (History T) m` | 绑定它的 effect `streams` 了持续资产 | `require @(History T)` |
+| `Reads T m` | 绑定它的 effect `streams` 了表示类型为 T 的持续资产 | `require @T` |
 | `Raw m` | 绑定成挂接的 parser 或 Pure | `raw` |
 | `Raises 名字Error m` | 总是 | `raise (名字Error "...")` |
 | `StreamEnds m` | 绑定成 Stream 的 handler | `streamEnd` |
@@ -623,7 +623,7 @@ Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，
 | 写法 | 作用 |
 | --- | --- |
 | `x <- require @T`（普通资产） | 读取绑定的 effect 所声明、表示类型为 `T` 的资产；缺值时等待发布，不生产；已确定生产耗尽则报缺值 |
-| `xs <- require @(History T)`（持续资产） | 取得本次交付为止的历史，用 `latest`／`historyEntries`／`historySize` 读取；须声明 `streams` |
+| `value <- require @T`（持续资产） | 声明 streams 时读本次交付，声明 requires 时读本次固定值；不会自动包装此前的全部发布 |
 | `output <- raw` | 挂接的 parser 或 Pure 读取直接 Input 本次交出的 `[String]`，句柄不再执行一遍；挂在 Stream 下时是会话本次取得的那份原始输入（单元素 list） |
 | `raise (ReadFileContentError "message")` | 以本 handler 的错误失败；错误类型是 handler 名首字母大写加 `Error` |
 | `pure [info]`、`pure (x : rest)` | Excu／Scoped／Pure 交出 list，交给挂在下面的 Pure 或 Context |
@@ -817,13 +817,13 @@ EffectSpec
   { name = "TemperatureParser"
   , typing = Context { asset = Asset @Temperature "TemperatureSample", parser = Just "parseTemperature", require = True, stream = True }
   , input = "TemperatureFeed"
-  , demands = []
+  , demands = [requires "SensorState"]
   }
 
 EffectSpec
   { name = "HeartbeatClock"
   , typing = Stream { handler = Just "nextBeat" }
-  , input = "Root"
+  , input = "SensorLink"
   , demands = []
   }
 
@@ -831,7 +831,7 @@ EffectSpec
   { name = "Heartbeat"
   , typing = Context { asset = Asset @Int "Beat", parser = Just "parseBeat", require = True, stream = True }
   , input = "HeartbeatClock"
-  , demands = []
+  , demands = [requires "SensorState"]
   }
 
 EffectSpec
@@ -847,8 +847,8 @@ EffectSpec
 - **`stream = True` 当且仅当 Context 的 Input 链被持续驱动**：直接 Input 是 Stream，或链上有 `streams` demand；必须同时 `require = True`。被驱动的链不能声明成普通资产，没有驱动的链也不能声明成持续资产。
 - **一个 Stream 恰好有一个 Context 以它为 `input`**，作为它的 parser。
 - **持续资产经会话发布与交付**：消费方不能 `requests` 它；已有消费操作的输出可交给挂接 Context 发布，不必另开生产任务。
-- **订阅**：消费方写 `streams "T"`，表示由 T 的新交付驱动，同时取得读取权限，handler 用 `require @(History 表示类型)` 读取到本次交付为止的历史。
-- **只读最新值**：`requires "T"` 读取持续资产时，handler 用 `require @表示类型` 取得最新一条，不由交付驱动。`stream` 缓存历史，`require` 缓存最新值。
+- **订阅**：消费方写 `streams "T"`，表示由 T 的新交付驱动，同时取得读取权限；handler 用 `require @表示类型` 取得本次交付。
+- **只读固定值**：`requires "T"` 的 handler 同样用 `require @表示类型`；已有捕获时复用，没有时取许可来源的最新值。读取不会使当前链反复执行。
 
 ### 驱动方式
 
@@ -864,6 +864,8 @@ EffectSpec
 
 ### handler：每次只处理一份
 
+以下节选 [StreamDemo/Handlers.hs](../demo/StreamDemo/Handlers.hs)，省略 import 和其他 instance。`Temperature`、`SensorMemory` 是业务 Types.hs 中的资产表示；最近五次读数与编号由业务 parser 保存。
+
 ```haskell
 instance NextReadingLayer m => NextReadingHandler m where
   nextReading = do
@@ -874,25 +876,26 @@ instance NextReadingLayer m => NextReadingHandler m where
 instance ParseTemperatureLayer m => ParseTemperatureHandler m where
   parseTemperature = do
     reading <- concat <$> raw
+    SensorMemory samples _ <- require @SensorMemory
     case reads reading of
-      [(value, "")] -> pure (Temperature value)
+      [(value, "")] -> liftIO $ atomicModifyIORef' samples $ \(count, previous) ->
+        let recent = take 5 (value : previous)
+            number = count + 1
+        in number `seq` ((number, recent), Temperature number value recent)
       _ -> raise (ParseTemperatureError ("unreadable sensor output: " ++ reading))
 
 instance ShowTemperatureLayer m => ShowTemperatureHandler m where
   showTemperature = do
-    samples <- require @(History Temperature)
-    case latest samples of
-      Just (Temperature value) ->
-        liftIO (printf "reading #%d: %.1f C\n" (length (historyEntries samples)) value)
-      Nothing -> pure ()
+    Temperature number value _ <- require @Temperature
+    liftIO (printf "reading #%d: %.1f C\n" number value)
     pure []
 ```
 
-- **Stream handler**一次返回一份原始输入；节奏由方法体自己的阻塞或等待决定，SDK 不加间隔，立即返回的方法会持续高频运行。来源没有下一份输入时用 `streamEnd` 退出（见下面的“结束与失败”）；StreamDemo 的两个来源不会结束。它的 Input（这里是 `SensorLink`）由 gen 作为前驱装配：传感器连接在第一次读数时开启，并在会话的各步骤间保持。
-- **parser** 和挂在 Excu 下的 Context 写法相同：`raw` 是会话本次取得的那份原始输入（单元素 list，这里用 `concat` 取出），不会再执行 Stream handler 另取一份。发布、历史和交付都由 SDK 完成，方法体里不写循环、发布或回调。
-- **`History T`**：从会话首条发布到本次交付为止的不可变序列。`latest` 取本次交付的那一条，`historyEntries` 取全部，`historySize` 取条数；相等的两次发布是两条。
+- **Stream handler** 一次返回一份原始输入；节奏由方法体自己的阻塞或等待决定，SDK 不加间隔。来源没有下一份输入时用 `streamEnd` 退出；StreamDemo 的两个来源不会结束。
+- **parser** 用 `raw` 读取会话本次取得的原始输入，不再执行 Stream handler。示例的 `SensorMemory` 是由 `SensorLink` 管理的业务状态，累计规则在 parser 方法体里。
+- **消费方** 直接匹配 `Temperature`。发布与逐条交付由 SDK 装配；编号、窗口和平均值是业务数据，不是 SDK 为 stream 规定的历史形态。
 
-[完整 Effects.hs](../demo/StreamDemo/Effects.hs) · [完整 Handlers.hs](../demo/StreamDemo/Handlers.hs)
+[完整 Effects.hs](../demo/StreamDemo/Effects.hs) · [Types.hs](../demo/StreamDemo/Types.hs)
 
 ### workflow：lifelong
 
@@ -911,7 +914,7 @@ ast = chained [setup, monitor]
 - **一次执行**：控制流到达 target 时领取其订阅资产的交付，再 boot 该 target；单元本轮完整结束后才开始下一轮。有积压时立即领取，没有就挂起等待，不反复调用 handler 试探数据。一个单元内不同 target 可以由不同资产驱动，各自到达时等待对应交付。同一次执行里，每个资产只领取一次，后面的节点（包括并行节点、alternative 的选择与候选）读到同一份视图；StreamDemo 中 `ShowTemperature` 和 `CheckTrend` 看到的是同一条读数。
 - **每次执行互相隔离**：上一次执行中产生的普通资产不会被这一次读到。
 - **订阅规则**：lifelong 里的每个末端（连同它的 Input 链）恰好订阅一个持续资产，并且不再读取别的持续资产；`streams` 不能用在 lifelong 外的末端。lifelong 不能嵌套，内部不能有空分支。
-- **会话**：同一个 lifelong 里订阅同一资产的单元共享会话，各自独立推进；不同 lifelong 的会话互相独立。启动时建立会话与读取关系，登记期间已产生的发布完整保留；AST 单元在登记完成后启动。已有 AST 输出的会话不另起任务。独立生产步骤用到的资源（例如 `SensorLink` 开启的连接）跨步骤持有，结束后的即时清理仍待设计。持续资产的生产链不能读取别的持续资产，驱动它的那一份除外。
+- **会话**：同一个 lifelong 里订阅同一资产的单元共享会话，各自独立推进；不同 lifelong 的会话互相独立。启动时建立会话与读取关系，登记期间已产生的发布完整保留；AST 单元在登记完成后启动。已有 AST 输出的会话不另起任务。独立生产步骤用到的资源（例如 `SensorLink` 开启的连接）跨步骤持有，会话退役后接入现有 scope 回收。持续资产的生产链不能读取别的持续资产，驱动它的那一份除外。
 - **外部组合**：`chained [setup, monitor]` 先执行 setup；`chained [monitor, after]` 中 after 等 monitor 的全部单元结束后执行，仍有消费单元未结束时不会执行；`parallel [monitor, otherWork]` 两者同时运行。
 
 ### 由持续资产驱动的持续资产
@@ -923,8 +926,8 @@ ast = chained [setup, monitor]
 EffectSpec
   { name = "TextCounter"
   , typing = Excu { handler = Just "countText" }
-  , input = "Root"
-  , demands = [streams "TextLine"]
+  , input = "InputSession"
+  , demands = [streams "TextLine", requires "OpenedInput"]
   }
 
 EffectSpec
@@ -943,12 +946,17 @@ EffectSpec
 ```
 
 ```haskell
--- demo/LinesDemo/Handlers.hs（节选）
+-- demo/LinesDemo/Handlers.hs（节选；省略 import）
 instance CountTextLayer m => CountTextHandler m where
   countText = do
-    received <- require @(History Line)
-    let sizes = [length text | Line text <- historyEntries received]
-    pure [show (length sizes), show (sum sizes)]
+    Line text <- require @Line
+    InputFile _ _ counter <- require @InputFile
+    Total count size <- liftIO $ atomicModifyIORef' counter $ \(Total previousCount previousSize) ->
+      let count = previousCount + 1
+          size = previousSize + length text
+          updated = Total count size
+      in count `seq` size `seq` (updated, updated)
+    pure [show count, show size]
 
 instance ParseTotalLayer m => ParseTotalHandler m where
   parseTotal = do
@@ -976,10 +984,23 @@ ast = chained
 - **复用同次输出**：`CountParser` 的 `raw` 接到 AST 本次执行的统计输出，`ShowTotal` 领取结果，输出会话不另起统计任务。Stream 来源 `LineFeed` 仍不能挂入 AST。
 - **按单元推进**：打印／统计与显示是两个独立单元，可以交错；发布位置全部结束后，显示方领完积压，lifelong 才返回。`Report` 以 `requires "RunningTotal"` 读到最终统计。
 - **保留普通资产可见性**：交付统计不隐式交付打印／统计链上的其他普通资产。普通副产物仍按静态来源读取。
-- **没有 AST 发布位置时独立派生**：gen 改用会话领取上游交付并执行生产链；可以逐级派生。派生资产只在所属 lifelong 之内或之后读取。
+- **没有 AST 发布位置时独立派生**：gen 改用会话领取上游交付并执行生产链，可以逐级派生；普通链只 require 派生产物时，按独立托管计划建立所需上游，不继承重复执行。
 - **同单元读取须有供值路径**：gen 检查先行发布或同轮必经的并行发布；运行时会等并行发布及派生处理完成，不能因暂时无值就跳过。同单元等待 Scoped.open 的复用输出目前被保守拒绝，因为复用实例不会产生新输出。
 
-具体的路径检查、结束传播与边界见[派生与输出复用规范](STREAM_LIFELONG.md#derive)；历史的保留范围见[会话保留](STREAM_LIFELONG.md#retention)。
+具体的路径检查、结束传播与边界见[派生与输出复用规范](STREAM_LIFELONG.md#derive)；待交付值的保留范围见[会话保留](STREAM_LIFELONG.md#retention)。
+
+### 普通链只读取派生产物一次
+
+[LinesDemo/AST.hs](../demo/LinesDemo/AST.hs) 另外给出有限 workflow：
+
+```haskell
+snapshotAst :: AST
+snapshotAst = chained [node "Announce", node "Report"]
+```
+
+选用 `ast = snapshotAst` 并按[生成流程](#commands)重新生成后，Report 仍声明 `requires "RunningTotal"`，其 handler 仍读 `require @Total`。gen 计算出 `RunningTotal` 由 TextCounter 的持续消费生产，按 Derive 建立 TextLine 的上游；Report 只取得一次 Total 并返回，不需要挂入 lifelong，也不因上游继续更新而再次执行。读取时可取得的统计取决于已完成的生产，不承诺恰好第一行或全部四行。
+
+同样的 requires 可以写在普通 Context 生产链中：该链消费本次固定值，完成一次自己的解析与发布。生产方仍是持续资产，读取方的有限性质不改变其类型。SDK 根据组合确定这些关系，不根据业务是否叫“记录”或“统计”选择行为。
 
 ### 结束与失败
 
@@ -989,7 +1010,7 @@ ast = chained
   -- demo/LinesDemo/Handlers.hs（节选）；需要 import Framework.SDK (StreamEnds(..))
   instance NextLineLayer m => NextLineHandler m where
     nextLine = do
-      InputFile _ file <- require @InputFile
+      InputFile _ file _ <- require @InputFile
       finished <- liftIO (hIsEOF file)
       if finished then streamEnd else liftIO (hGetLine file)
   ```
@@ -1001,18 +1022,18 @@ ast = chained
 - **消费方结束**：自身以 `streams` 订阅的 Excu 可以调用 `endStream`。本次调用放弃、不交出结果，该节点之后各轮跳过；本轮 chained 的后继和其他单元继续按各自依赖执行。同单元直接或经派生读取它产物的位置，仍等待本轮可能完成的发布；确定本轮稳定且无新交付时才跳过，封口排空后结束相应订阅。只 `require` 这份本地持续资产时可读已有值，一次都没有发布则报缺值。会话是否停产由剩余读取方决定，详细规则见[消费方结束](STREAM_LIFELONG.md#consumer-end)。
 
   ```haskell
-  -- 示意：PrintLine 只打印前 10 行；需要 import Framework.SDK (EndsStream(..))
+  -- 示意：收到业务结束标记后离开；需要 import Framework.SDK (EndsStream(..))
   instance PrintLineLayer m => PrintLineHandler m where
     printLine = do
-      received <- require @(History Line)
-      if historySize received > 10 then endStream else pure ()
-      ...
+      Line text <- require @Line
+      if text == "stop" then endStream else liftIO (putStrLn text)
+      pure []
   ```
 
   同一 `chained` 里后面的节点若只 `require` 被结束节点这一轮的普通产物，之后会按缺值报 `ContextNotInitialized`；要每轮都有值，用 `requests` 自己驱动。
-- **结束后的资源**：正常路径上，登记的读取方全部离开（或 lifelong 返回）时，独立生产会话退役并把只在会话中开启的 scope 交给现有回收器；仍有合法待用的实例保留。LinesDemo 因而在 `Report` 之前打印 `[close]`。历史中的资源引用尚无持有保证；interpreter 托管会话、ReuseOutput 的区别见[退役规则](STREAM_LIFELONG.md#consumer-end)。
+- **结束后的资源**：正常路径上，登记的读取方全部离开（或 lifelong 返回）时，独立生产会话退役并把只在会话中开启的 scope 交给现有回收器；仍有合法待用的实例保留。LinesDemo 因而在 `Report` 之前打印 `[close]`。业务资产内嵌资源的额外持有仍待明确；interpreter 托管会话、ReuseOutput 的区别见[退役规则](STREAM_LIFELONG.md#consumer-end)。
 - **取消与失败**：不结束的来源可由 Ctrl-C 取消，SDK 停止受控工作、等待收尾并回收资源。含 lifelong 的程序发生失败时仍终止整次运行；局部失败另行设计，详见[故障与取消协议](STREAM_LIFELONG.md#failures)。
-- **lifelong 外读取**：普通 `requires` 只读一次最新值；需要启动的 Receive 会话由 interpreter 托管到运行结束。读取已结束的合法前驱会话不重启来源，零发布时报缺值。派生资产的位置限制与具体路由见[有限读取](STREAM_LIFELONG.md#production)。
+- **lifelong 外读取**：普通 `requires` 只读一次固定值；所需 Receive／Derive 会话由 interpreter 托管到运行结束。读取已结束的合法前驱会话不重启来源，零发布时报缺值。具体路由与派生登记起点见[有限读取](STREAM_LIFELONG.md#production)。
 
 ### 运行与查看
 
@@ -1082,7 +1103,7 @@ EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope
 ```
 
 - **自动关闭**：SDK 等当前调用的业务、诊断和结果消费结束，再撤销使用；同时检查后续仍待用的节点及子 scope。全部不再触达实例时同步执行 close，完成后继续后继。嵌套 Context 生产返回不会提前关闭资源。
-- **lifelong**：无参数或参数来自外层的实例跨轮保留；本轮新生产参数的实例属于本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。lifelong 外的后继若按现有可见性读取同一次普通资产生产，待用判断保留对应实例；这不增加历史资源保活，详见[按可达性回收](LATEST_DESIGN.md#scope-gc)。
+- **lifelong**：无参数或参数来自外层的实例跨轮保留；本轮新生产参数的实例属于本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。lifelong 外的后继若按现有可见性读取同一次普通资产生产，待用判断保留对应实例；这不增加业务资产内嵌资源的保活，详见[按可达性回收](LATEST_DESIGN.md#scope-gc)。
 - **资源读取**：消费资源的链须先经 Input 开启其所属 Scoped，否则生成期报错；不能因为别的链还开着某个实例就直接读取它。
 - **close 可选**：handler 不手动调用 close。`close = Nothing` 时，不可达实例只移出运行表，不执行释放 IO。整次运行结束时同样遵守这条规则。
 - **关闭失败**：close 里的 `raise`，以及没有转换成 `raise` 的普通 IO 异常，都经 Error 诊断后单独记录、运行结束汇总，不改变业务结果，不停止后续工作，也不重试。只有取消发生在 close 中时，才会停止后续工作，完成其余收尾后向外传播。
@@ -1121,7 +1142,7 @@ close 由 SDK 的自动收尾调用，handler 不直接调用；下表中的 clo
 
 | 故障 | 什么时候报 | 怎么改 |
 | --- | --- | --- |
-| `ScopeInputsMissing [参数]` | 带开启参数的 scope 要在参数齐备后才能选定实例；资源发布或 open 结束时仍有参数没读到，例如资源 parser 先获取资源、后读取参数。持续资产的最新值已支持；整份 History 的开启参数含义仍未定义（见 [scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention)） | 先安排参数生产；资源 parser 先读参数，再获取资源。共享时读取前驱的同一次生产 |
+| `ScopeInputsMissing [参数]` | 带开启参数的 scope 要在参数齐备后才能选定实例；资源发布或 open 结束时仍有参数没读到，例如资源 parser 先获取资源、后读取参数。持续资产的本次值已支持；业务数据内嵌资源的额外持有仍未定义（见 [scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention)） | 先安排参数生产；资源 parser 先读参数，再获取资源。共享时读取前驱的同一次生产 |
 | `ScopeInputAfterOpen 参数` | 实例选定之后，这次开启读到另一份参数生产；即使新旧值相等也不同 | 选定实例前确定全部参数；open 范围内不再刷新参数 |
 | `ScopeContextMismatch 资源` | 一份资源绑定只能归一个实例：open 要认领的资源已属于另一个 scope 或同注册的另一个实例；或 close 读到的资源属于别的实例 | 不同实例各自驱动自己的资源，不共用同一次生产 |
 | `ScopeContextMissing 资源` | open 结束时，选中的实例里没有资源绑定；或 close 定位不到要关闭的实例：本次调用没有这个 scope 的资源绑定，或 close 的 handler 没有读取资源 | Scoped 在 demands 里 `requests` 并 `requires` 资源；open／close 的 handler 用 `require` 读取资源 |
@@ -1214,7 +1235,7 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 ## 当前限制
 
 - **handler 复用**：各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能路由到一份资产。完整约束见[注册契约](LATEST_DESIGN.md#registration)。
-- **持续资源与内存**：生产侧结束、消费侧结束和会话退役已实现。持续资产最新值已可作为 scope 开启参数；整份 History 的参数身份与历史资源持有仍有缺口；活跃历史读取方保留完整历史，不承诺有界内存。边界与剩余阶段见 [Next stages](NEXT_STAGES.md#current-limits)。
+- **持续资源与内存**：生产侧结束、消费侧结束和会话退役已实现。持续值可作为 scope 开启参数；待交付值与业务资产内嵌资源的持有仍有缺口。交付队列保留未领取值和最新值，没有硬容量或背压保证；业务自行保存的记录不由 SDK 裁剪。边界与剩余阶段见 [Next stages](NEXT_STAGES.md#current-limits)。
 - **资源管理范围**：SDK 只管理已交给它的资源。业务自行 `forkIO` 的线程、未发布的部分获取和逸出资源由原子实现负责，见[scope 保证](LATEST_DESIGN.md#scope-gc)。
 - **其他扩展**：背压、局部失败、嵌套 lifelong、Middleware 和通用适配等统一跟踪在[开放专题](NEXT_STAGES.md#deferred)，本指南不列另一份状态清单。
 - **构建方式**：SDK 目前随仓库内示例一起编译，尚不能作为独立依赖引入。

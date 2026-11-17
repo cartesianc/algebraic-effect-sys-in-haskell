@@ -45,7 +45,7 @@ contextProducer :: EffectTyping -> Maybe String
 contextProducer (Context declared (Just _) _ _) = Just ("get" ++ contractOf declared)
 contextProducer _ = Nothing
 
--- 读取入口：read 加资产名读取最新值；持续资产为 stream 加资产名，读取历史。
+-- 读取入口：read 加资产名读取最新值；持续资产为 stream 加资产名，读取本次固定交付。
 -- 消费方写 requires／streams，handler 按表示类型 require，不直接调用它。
 contextReader :: EffectTyping -> Maybe String
 contextReader (Context declared _ True streaming) =

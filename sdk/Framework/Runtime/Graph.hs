@@ -14,8 +14,8 @@ module Framework.Runtime.Graph
   ) where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar, tryReadMVar)
-import Control.Exception (SomeAsyncException, evaluate, finally, fromException, throwIO, uninterruptibleMask_)
-import Control.Monad (forM, forM_)
+import Control.Exception (SomeAsyncException, SomeException, evaluate, finally, fromException, onException, throwIO, try, uninterruptibleMask_)
+import Control.Monad (forM, forM_, void)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (isPrefixOf, nub)
 import Data.Maybe (fromMaybe, isJust)
@@ -25,7 +25,8 @@ import Framework.Prototype.Graph (MethodRole(..))
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame
 import Framework.Runtime.Binding (Binding(..))
-import Framework.Runtime.Session (Session, SessionKey, View, newSession, stopSession, currentHistory)
+import Framework.Runtime.Session (Session, SessionKey, View, newSession, stopSession, currentView
+  , attachReader, leaveSession, feedSession, breakSession, upstreamOf, awaitUpstream)
 import Framework.Runtime.Scope
   ( Scopes, ScopeBinding, ScopeBindings, ScopeUser(..), ScopeHandler(..), ScopeInstance(..), ScopeRecord(..), ScopeInput(..)
   , configureScopeRelations, cleanupAvailable, saveCleanupFailures )
@@ -189,7 +190,7 @@ reachableInstance graph slot = case runtimePrototype graph of
                       Just registered -> case sessionForReader prototype (fromMaybe [] registered) reader source of
                         Nothing -> pure False
                         Just session -> do
-                          view <- currentHistory session
+                          view <- currentView session
                           pure $ case view >>= lastProduction of
                             Just current -> current == production
                             Nothing -> False
@@ -426,23 +427,82 @@ sourcePlan (PrototypeReference prototype) node source = case
 installSessionLauncher :: RuntimeGraph environment cause -> (Session environment cause -> IO ()) -> IO ()
 installSessionLauncher graph = writeIORef (runtimeLauncher graph)
 
--- 同一边界与资产只创建一份会话并只启动一次生产；在登记表锁内启动，停止时一定能看到它。
--- 交接只在创建时使用：一个 lifelong 在一次运行中只进入一次，interpreter 会话没有交接。
--- 停止开始后不再创建：请求方（正被停止的生产步骤）得到异常，不会留下逃出停止集合的任务。
--- 启动与写回登记表在同一个不可中断区内完成：modifyMVar 的回调会恢复调用方的屏蔽状态，
--- 否则取消可能落在任务已经启动、登记表尚未写回之间，登记表回滚而任务无人停止。
+-- 会话装配协议 v2（2026-11-17）：统一登记下执行 gen 的连接计划。
+-- lifelong 的连接仍由边界统一登记；有限需求只建立所需 Receive/Derive 上游闭包。
+-- 先建会话、接游标，再启动全部新任务，最后提交目录。上游不能在游标接入之前丢掉首条交付。
+-- 目录锁与取消保护覆盖整个提交；失败时仍提交失败的会话，再在锁外停止已启动任务，避免孤儿线程。
+-- 读取者只等待一次当前绑定；下面的派生任务持续运行，不把读取者改造成 lifelong。
 obtainSession :: RuntimeGraph environment cause -> SessionKey -> ScopeBindings environment cause
               -> [(String, View environment cause)] -> IO (Session environment cause)
-obtainSession graph key bindings views = uninterruptibleMask_ $ modifyMVar (runtimeSessions graph) $ \registry -> case registry of
-  Nothing -> ioError (userError ("Sessions have stopped; the session for " ++ snd key
-    ++ " is not started while the run is ending"))
-  Just sessions -> case lookup key sessions of
-    Just session -> pure (registry, session)
-    Nothing -> do
-      session <- newSession (notifyFrame (runtimeRootFrame graph)) key bindings views
-      launch <- readIORef (runtimeLauncher graph)
-      launch session
-      pure (Just ((key, session) : sessions), session)
+obtainSession graph key bindings views = uninterruptibleMask_ $ do
+  (session, created, problem) <- modifyMVar (runtimeSessions graph) $ \registry -> case registry of
+    Nothing -> ioError (userError ("Sessions have stopped; the session for " ++ snd key
+      ++ " is not started while the run is ending"))
+    Just sessions -> case lookup key sessions of
+      Just session -> pure (registry, (session, [], Nothing))
+      Nothing -> do
+        added <- newIORef []
+        attached <- newIORef []
+        let assemble known selected = case lookup selected known of
+              Just existing -> pure (known, existing)
+              Nothing -> do
+                upstream <- either (ioError . userError) pure (sessionUpstreamSource (runtimePrototype graph) selected)
+                (prepared, parent) <- case upstream of
+                  Nothing -> pure (known, Nothing)
+                  Just source -> do
+                    (updated, previous) <- assemble known (Nothing, source)
+                    pure (updated, Just previous)
+                fresh <- newSession (notifyFrame (runtimeRootFrame graph)) selected
+                  (if selected == key then bindings else []) (if selected == key then views else [])
+                forM_ parent $ \previous -> do
+                  cursor <- attachReader previous
+                  modifyIORef attached ((previous, cursor) :)
+                  feedSession fresh previous cursor
+                modifyIORef added (fresh :)
+                pure ((selected, fresh) : prepared, fresh)
+            detach = readIORef attached >>= mapM_ (\(parent, cursor) -> void (leaveSession parent cursor))
+        (updated, selected) <- assemble sessions key `onException` detach
+        created <- readIORef added
+        launch <- readIORef (runtimeLauncher graph)
+        outcome <- trySessionLaunch (mapM_ launch (reverse created))
+        -- 失败会话留在目录内，使其他读取方看到同一个失败；整次运行的停止也仍能找到所有任务。
+        forM_ outcome $ \exception -> mapM_ (\fresh -> breakSession fresh (Left exception)) created
+        pure (Just updated, (selected, created, outcome))
+  case problem of
+    Nothing -> pure session
+    Just exception -> do
+      mapM_ stopSession created
+      -- 没有启动的派生任务不能自行离开上游；停止后的统一撤销是幂等的。
+      forM_ created $ \fresh -> do
+        upstream <- upstreamOf fresh
+        case upstream of
+          Nothing -> pure ()
+          Just _ -> do
+            (parent, cursor) <- awaitUpstream fresh
+            void (leaveSession parent cursor)
+      throwIO exception
+  where
+    modifyIORef reference update = atomicModifyIORef' reference (\current -> (update current, ()))
+    trySessionLaunch action = either Just (const Nothing) <$> (try action :: IO (Either SomeException ()))
+
+-- 只投影已生成计划的上游引用，不从 handler、资产内容或运行时状态推断生产方式。
+-- 有限会话的依赖图已经过 gen 校验；有边界的会话由 Execution 一次连接全部读取方。
+sessionUpstreamSource :: PrototypeReference -> SessionKey -> Either String (Maybe String)
+sessionUpstreamSource _ (Just _, _) = Right Nothing
+sessionUpstreamSource (PrototypeReference prototype) (Nothing, source) = do
+  asset <- case [asset | effect <- protoEffects prototype, effectName effect == source
+      , Just asset <- [effectProduces effect]] of
+    [asset] -> Right asset
+    _ -> Left ("No unique continuous producer for " ++ source)
+  plan <- case [sessionPlan session | session <- protoSessions prototype, sessionAsset session == asset] of
+    [plan] -> Right plan
+    _ -> Left ("No interpreter session plan for " ++ asset ++ "; regenerate the program")
+  case plan of
+    Receive _ -> Right Nothing
+    Derive upstream -> case [effectName effect | effect <- protoEffects prototype, effectProduces effect == Just upstream] of
+      [parent] -> Right (Just parent)
+      _ -> Left ("No unique upstream producer for " ++ upstream)
+    ReuseOutput _ -> Left "An interpreter session cannot reuse an AST output"
 
 -- lifelong 之后读取持续资产：取已经结束、且在 AST 中先于读取位置的那个 lifelong 的会话，不另行启动来源。
 -- 生成期保证这样的 lifelong 彼此先后；登记表按创建先后倒序，第一个即最近结束的。

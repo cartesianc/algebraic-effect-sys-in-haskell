@@ -3,7 +3,7 @@
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Runtime.Context
   ( ContextFault(..), readContext, callContext
-  , projectContext, latestContext, atomicHandle, atomicScope, readHistory, streamHandle
+  , projectContext, atomicHandle, atomicScope, readStreamContext, streamHandle
   ) where
 
 import Framework.Runtime.Protocol
@@ -11,7 +11,6 @@ import Framework.Runtime.Protocol
 import Framework.Language.Handler (Failure(..))
 import Control.Monad (forM_, when)
 import Control.Monad.Except (MonadError, catchError, throwError)
-import Framework.Language.History (History, latest)
 
 -- require 是一次读取：值只来自 requests 驱动的生产或 Stream 会话，读取本身不生产。
 -- 已有值时直接返回；尚无值时等发布或节点进度变化，再按同一来源表重读。
@@ -75,29 +74,21 @@ projectContext producer contract wrap project readBase = do
   base <- readBase
   maybe (failEffect producer (wrap (CaseNotSelected contract)) (show (CaseNotSelected contract))) pure (project base)
 
--- 持续资产的 requires：读取历史视图在本次交付位置的最新条目。
-latestContext
+-- streamT 的生成入口：从本次固定交付或有限读取的捕获值取得业务表示类型。
+-- 是否继续被增量驱动由组合计划决定；这里执行一次读取，不包装或解释业务数据。
+readStreamContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> (ContextFault -> cause) -> m (History value) -> m value
-latestContext producer wrap readHistory' = do
-  history <- readHistory'
-  case latest history of
-    Nothing -> failEffect producer (wrap ContextNotInitialized) (producer ++ ": no delivery yet")
-    Just value -> recordContextInput producer >> pure value
-
--- streamT 的生成入口：先用本次调用已经取得的视图（lifelong 交付或此前的会话读取）。
--- 没有视图时，由 interpreter 托管的会话交付当前历史。
-readHistory
-  :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> (ContextFault -> cause) -> (environment -> Maybe value) -> m (History value)
-readHistory contextName wrap select = do
-  captured <- readContextHistory contextName select
-  case captured of
-    Just history -> pure history
+  => String -> (ContextFault -> cause) -> (environment -> Maybe value) -> m value
+readStreamContext contextName wrap select = do
+  captured <- readContextValue contextName select
+  value <- case captured of
+    Just value -> pure value
     Nothing -> do
-      delivered <- awaitContextHistory contextName select
+      delivered <- awaitContextValue contextName select
       maybe (failEffect contextName (wrap ContextNotInitialized)
         (contextName ++ ": no delivery here (no stream session can deliver, or the stream ended without publishing)")) pure delivered
+  recordContextInput contextName
+  pure value
 
 -- Stream 的生成入口。会话调用 parser 时安装了本次原始输入：parser 的 raw 由这份输入回答，
 -- 不再执行 handler 另取一份，与挂在原子句柄下的 Context 相同。Stream 单步没有安装输入，执行 handler 取得下一份。

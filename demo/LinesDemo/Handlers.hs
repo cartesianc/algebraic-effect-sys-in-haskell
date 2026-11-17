@@ -10,10 +10,11 @@
 
 module LinesDemo.Handlers () where
 
-import Framework.SDK (StreamEnds(..), History, Raises(..), Raw(..), Reads(..), historyEntries, historySize, latest)
+import Framework.SDK (StreamEnds(..), Raises(..), Raw(..), Reads(..))
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
 import Control.Monad.IO.Class (liftIO)
+import Data.IORef (atomicModifyIORef', newIORef)
 import System.FilePath ((</>))
 import System.IO (IOMode(ReadMode), hClose, hGetLine, hIsEOF, openFile)
 
@@ -27,17 +28,18 @@ instance AcquireInputLayer m => AcquireInputHandler m where
   acquireInput = do
     let path = "demo" </> "LinesDemo" </> "input.txt"
     file <- liftIO (openFile path ReadMode)
-    pure (InputFile path file)
+    counter <- liftIO (newIORef (Total 0 0))
+    pure (InputFile path file counter)
 
 instance OpenInputLayer m => OpenInputHandler m where
   openInput = do
-    InputFile path _ <- require @InputFile
+    InputFile path _ _ <- require @InputFile
     liftIO (putStrLn ("[open] " ++ path))
     pure []
 
 instance CloseInputLayer m => CloseInputHandler m where
   closeInput = do
-    InputFile path file <- require @InputFile
+    InputFile path file _ <- require @InputFile
     liftIO (hClose file >> putStrLn ("[close] " ++ path))
     pure []
 
@@ -45,7 +47,7 @@ instance CloseInputLayer m => CloseInputHandler m where
 -- 已经发布的行仍会交给 PrintLine 处理完。
 instance NextLineLayer m => NextLineHandler m where
   nextLine = do
-    InputFile _ file <- require @InputFile
+    InputFile _ file _ <- require @InputFile
     finished <- liftIO (hIsEOF file)
     if finished then streamEnd else liftIO (hGetLine file)
 
@@ -56,18 +58,21 @@ instance ParseLineLayer m => ParseLineHandler m where
 
 instance PrintLineLayer m => PrintLineHandler m where
   printLine = do
-    received <- require @(History Line)
-    case latest received of
-      Just (Line text) -> liftIO (putStrLn ("line " ++ show (historySize received) ++ ": " ++ text))
-      Nothing -> pure ()
+    Line text <- require @Line
+    liftIO (putStrLn ("line: " ++ text))
     pure []
 
--- 由 TextLine 驱动：每来一行执行一次，读到这一行为止的全部行，交出行数与字符总数。
+-- 由 TextLine 驱动：每来一行执行一次。计数是业务状态，SDK 只交付本次 Line。
 instance CountTextLayer m => CountTextHandler m where
   countText = do
-    received <- require @(History Line)
-    let sizes = [length text | Line text <- historyEntries received]
-    pure [show (length sizes), show (sum sizes)]
+    Line text <- require @Line
+    InputFile _ _ counter <- require @InputFile
+    Total count size <- liftIO $ atomicModifyIORef' counter $ \(Total previousCount previousSize) ->
+      let count = previousCount + 1
+          size = previousSize + length text
+          updated = Total count size
+      in count `seq` size `seq` (updated, updated)
+    pure [show count, show size]
 
 instance ParseTotalLayer m => ParseTotalHandler m where
   parseTotal = do
@@ -78,14 +83,12 @@ instance ParseTotalLayer m => ParseTotalHandler m where
 
 instance ShowTotalLayer m => ShowTotalHandler m where
   showTotal = do
-    received <- require @(History Total)
-    case latest received of
-      Just (Total count size) -> liftIO (putStrLn ("  so far: " ++ show count ++ " lines, " ++ show size ++ " characters"))
-      Nothing -> pure ()
+    Total count size <- require @Total
+    liftIO (putStrLn ("  so far: " ++ show count ++ " lines, " ++ show size ++ " characters"))
     pure []
 
 instance ReportLayer m => ReportHandler m where
   report = do
     Total count size <- require @Total
-    liftIO (putStrLn ("The input ended and every line was handled: " ++ show count ++ " lines, " ++ show size ++ " characters."))
+    liftIO (putStrLn ("The selected total is: " ++ show count ++ " lines, " ++ show size ++ " characters."))
     pure []

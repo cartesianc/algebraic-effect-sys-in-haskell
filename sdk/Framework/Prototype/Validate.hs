@@ -103,7 +103,7 @@ validatePrototype prototype = do
   valid (sameSet (scopeCandidates tree) (graphScopeOrder graph)) "Scope candidates differ from the generated graph"
   valid (all (knownPair nodeIds) (scopeOpposed tree ++ scopeUndetermined tree)) "Unknown scope in order evidence"
   checkWorkflow [] (protoWorkflow prototype)
-  valid (protoSessions prototype == finiteSessions effects) "Interpreter sessions differ from the Receive assets"
+  valid (protoSessions prototype == finiteSessions effects) "Interpreter sessions differ from independent continuous production"
   valid (unique (map chainNode chains)) "Duplicate mounted chain NodeId"
   valid (sameSet (map chainNode chains) expectedChainIds) "Mounted chain coverage differs from workflow"
   mapM_ validateChain chains

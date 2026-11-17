@@ -11,12 +11,13 @@
 
 module FacadeProbe.Handlers () where
 
-import Framework.SDK (History, Raises(..), Raw(..), Reads(..), historySize, latest)
+import Framework.SDK (Raises(..), Raw(..), Reads(..))
 import FacadeProbe.Generated.Effects
 import FacadeProbe.Types
 import Control.Concurrent (threadDelay)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
+import Data.IORef (atomicModifyIORef', newIORef)
 import System.FilePath ((</>))
 import System.IO (IOMode(WriteMode), hClose, hFlush, hPutStr, openFile, readFile')
 
@@ -99,29 +100,41 @@ instance DescribeFilledLayer m => DescribeFilledHandler m where
     liftIO (putStrLn ("[state] filled, " ++ show (length text) ++ " characters"))
     pure []
 
+instance NewCounterLayer m => NewCounterHandler m where
+  newCounter = liftIO (FeedCounter <$> newIORef 0)
+
+instance OpenCounterLayer m => OpenCounterHandler m where
+  openCounter = do
+    FeedCounter _ <- require @FeedCounter
+    pure []
+
 instance NextALayer m => NextAHandler m where
   nextA = do
+    FeedCounter counter <- require @FeedCounter
     liftIO (threadDelay 40000)
-    pure "10"
+    number <- liftIO $ atomicModifyIORef' counter $ \previous ->
+      let current = previous + 1 in (current, current)
+    pure (show (number, 10 :: Int))
 
 instance NextBLayer m => NextBHandler m where
   nextB = do
+    FeedCounter counter <- require @FeedCounter
     liftIO (threadDelay 60000)
-    pure "20"
+    number <- liftIO $ atomicModifyIORef' counter $ \previous ->
+      let current = previous + 1 in (current, current)
+    pure (show (number, 20 :: Int))
 
 instance ParseLevelLayer m => ParseLevelHandler m where
   parseLevel = do
     reading <- concat <$> raw
     case reads reading of
-      [(value, "")] -> pure (Level value)
+      [((number, value), "")] -> pure (Level number value)
       _ -> raise (ParseLevelError reading)
 
 -- ShowA 与 ShowB 共用；失败按 handler 固定为 ShowLevelError，origin 仍是具体的 effect。
 instance ShowLevelLayer m => ShowLevelHandler m where
   showLevel = do
-    samples <- require @(History Level)
-    case latest samples of
-      Just (Level value) -> liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show (historySize samples)))
-      Nothing -> pure ()
-    when (historySize samples >= 3) (raise (ShowLevelError "enough deliveries"))
+    Level number value <- require @Level
+    liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show number))
+    when (number >= 3) (raise (ShowLevelError "enough deliveries"))
     pure []

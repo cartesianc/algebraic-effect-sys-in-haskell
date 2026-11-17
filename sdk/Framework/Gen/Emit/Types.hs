@@ -5,10 +5,9 @@ import Framework.Gen.Composition (ValueType(..), Capability(..))
 
 -- 前缀包含末尾的点：源契约中的细化类型可用空前缀，运行副本使用 FrameworkGenerated.。
 renderValueType :: String -> String -> ValueType -> String
-renderValueType runtime generated selected = case selected of
+renderValueType _ generated selected = case selected of
   NativeType source -> source
   RefinedType contract -> generated ++ contract
-  HistoryType value -> runtime ++ "History (" ++ renderValueType runtime generated value ++ ")"
 
 renderCapability :: Capability -> String
 renderCapability capability = case capability of

@@ -124,16 +124,18 @@ sessionAssets effects = nub . concatMap (visit [])
           | producer <- effects, effectProduces producer == Just asset
           , Derive upstream <- [bootPlan effects producer] ] ++ [asset]
 
--- 每个 Receive 资产一份 interpreter 托管的会话，挂载为 [-2, 序号, 步骤]；不属于 AST，
--- 不作为任何读取点的可见前驱，只在 lifelong 外的有限 require 缺少交付时惰性启动。
--- Derive 资产没有托管会话：驱动它的是订阅，只在订阅它的 lifelong 内生产。
+-- 有限读取也能惰性建立持续生产：Receive 或 Derive 的注册关系保持不变，读取方不加入订阅。
+-- 挂载 [-2, 序号, 步骤] 不属于 AST，也不是普通资产的可见前驱。上游排在前面，便于统一登记/逆序收尾。
+-- 此查询只投影已校验的注册关系；gen 将结果写入 Assembly/Prototype，runtime 只执行计划。
 finiteSessions :: [EffectProto method] -> [SessionProto]
 finiteSessions effects =
   [ SessionProto contractType plan [[-2, index, step] | step <- [0 .. sessionSteps plan - 1]]
-  | (index, (contractType, plan)) <- zip [0 ..] receiving ]
+  | (index, (contractType, plan)) <- zip [0 ..] selected ]
   where
-    receiving = [(contractType, plan) | effect <- effects, effectContinuous effect
-      , Just contractType <- [effectProduces effect], plan@(Receive _) <- [bootPlan effects effect]]
+    assets = sessionAssets effects [contractType | effect <- effects, effectContinuous effect
+      , Just contractType <- [effectProduces effect]]
+    selected = [(contractType, bootPlan effects effect) | contractType <- assets, effect <- effects
+      , effectProduces effect == Just contractType]
 
 -- 候选对应只读 effect 原型中的 requires 与 Input 祖先；生成和加载校验共用。
 candidateCase :: [EffectProto method] -> NodeId -> WorkflowTree

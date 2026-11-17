@@ -52,17 +52,10 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
       , "    )"
       , ""
       ] ++ concat
-      [ if selectorHistory selectedSelector
-          -- 持续资产读到交付视图：按本次交付的最新条目分派（交付视图至少有一条）。
-          then [ "caseOf" ++ contractType ++ " :: SDK.History " ++ contractType ++ " -> String"
-               , "caseOf" ++ contractType ++ " history = case SDK.latest history of"
-               , "  Just (" ++ contractType ++ " value) -> case value of" ]
-               ++ [ "    " ++ constructor ++ " {} -> " ++ show constructor | constructor <- selectorConstructors selectedSelector ]
-               ++ [ "  Nothing -> \"\"", "" ]
-          else [ "caseOf" ++ contractType ++ " :: " ++ contractType ++ " -> String"
-               , "caseOf" ++ contractType ++ " (" ++ contractType ++ " value) = case value of" ]
-               ++ [ "  " ++ constructor ++ " {} -> " ++ show constructor | constructor <- selectorConstructors selectedSelector ]
-               ++ [ "" ]
+      [ [ "caseOf" ++ contractType ++ " :: " ++ contractType ++ " -> String"
+        , "caseOf" ++ contractType ++ " (" ++ contractType ++ " value) = case value of" ]
+        ++ [ "  " ++ constructor ++ " {} -> " ++ show constructor | constructor <- selectorConstructors selectedSelector ]
+        ++ [ "" ]
       | selectedSelector <- selectors
       , let contractType = selectorContract selectedSelector ] ++
       [ "-- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。"

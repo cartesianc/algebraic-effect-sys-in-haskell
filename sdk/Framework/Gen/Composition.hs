@@ -129,7 +129,7 @@ completeComposition pending@(PendingComposition unit checked _) cached = do
     _ -> Left "Composition did not complete"
 
 -- 接口结果先有结构，再由 Emit 加 Haskell 模块限定。不能通过已渲染的 typeclass 文本重新选择装配。
-data ValueType = NativeType String | RefinedType String | HistoryType ValueType
+data ValueType = NativeType String | RefinedType String
   deriving (Eq, Ord, Show, Read)
 
 data Capability = ReadsType ValueType | HasRaw | EndsSource | EndsSubscription | PureMonad | IOMonad
@@ -140,9 +140,9 @@ data EntryOperation
   = AtomicOperation | OpenResource | CloseResource | SourceStep | PureOperation | PublishAsset String | ErrorOperation
   deriving (Eq, Show, Read)
 
--- 三种完整读取分别是普通快照、持续历史的最新值、确定的历史视图；
--- 分支投影的 Bool 记录其基础资产是否持续，渲染时无需再次追溯 Context。
-data ReadView = ValueView | LatestView | HistoryView | BranchView BranchContract Bool
+-- 读取结果始终是声明的表示类型。持续来源使用固定交付；是否反复执行由挂载/会话计划决定。
+-- 业务可以把记录或统计声明为普通 ADT，编译器不为这类内容另外包装或选驱动。
+data ReadView = ValueView | ContinuousView | BranchView BranchContract
   deriving (Eq, Show, Read)
 
 data ReadRoute = ReadRoute
@@ -151,12 +151,12 @@ data ReadRoute = ReadRoute
   } deriving (Eq, Show, Read)
 
 data ReaderPlan = ReaderPlan
-  { readerEffect :: String, readerMethod :: String, readerContract :: String, readerHistory :: Bool
+  { readerEffect :: String, readerMethod :: String, readerContract :: String, readerContinuous :: Bool
   } deriving (Eq, Show, Read)
 
 data SelectorPlan = SelectorPlan
   { selectorContract :: String, selectorEntry :: String
-  , selectorHistory :: Bool, selectorConstructors :: [String]
+  , selectorConstructors :: [String]
   } deriving (Eq, Show, Read)
 
 data SessionEntry
@@ -167,13 +167,9 @@ data SessionEntry
 typeSpelling :: ValueType -> String
 typeSpelling (NativeType selected) = selected
 typeSpelling (RefinedType selected) = selected
-typeSpelling (HistoryType selected) = "SDK.History (" ++ typeSpelling selected ++ ")"
 
 readValueType :: Unit -> ResolvedDemand -> ValueType
-readValueType unit resolved = case demandAccess resolved of
-  StreamAccess -> HistoryType value
-  _ -> value
-  where value = NativeType (representationOf unit (demandContract resolved))
+readValueType unit resolved = NativeType (representationOf unit (demandContract resolved))
 
 routeOf :: Unit -> EffectSpec -> ResolvedDemand -> ReadRoute
 routeOf unit specification resolved = ReadRoute (name specification) (readValueType unit resolved)
@@ -181,10 +177,9 @@ routeOf unit specification resolved = ReadRoute (name specification) (readValueT
   where
     contractType = demandContract resolved
     producer = demandProvider resolved
-    view = case (demandAccess resolved, [branch | branch <- unitBranches unit, branchName branch == contractType]) of
-      (StreamAccess, _) -> HistoryView
-      (_, branch : _) -> BranchView branch (continuousContract unit (branchBase branch))
-      _ | continuousContract unit contractType -> LatestView
+    view = case [branch | branch <- unitBranches unit, branchName branch == contractType] of
+      branch : _ -> BranchView branch
+      _ | continuousContract unit contractType -> ContinuousView
         | otherwise -> ValueView
 
 entryResult :: EffectSpec -> ValueType
@@ -233,7 +228,7 @@ belowStream specifications specification = case typing specification of
   Context {} -> not (null [() | source <- specifications, name source == input specification, Stream {} <- [typing source]])
   _ -> False
 
--- 持续资产：stream = True，缓存历史，可以被 streams 订阅。
+-- 持续资产：stream = True，按组合计划持续发布，可以被 streams 订阅。
 -- 挂在 Stream 下的由会话单步驱动；Input 链上有 streams 的由上游交付驱动，已挂载的操作沿用本次输出。
 continuousContext :: EffectSpec -> Bool
 continuousContext specification = case typing specification of
@@ -948,7 +943,7 @@ bindProgram namespace prepared assembly sumTypes = do
           | specification <- contextSpecs unit
           , Just method <- [contextReader (typing specification)]
           , Just declared <- [contextAsset (typing specification)]]
-      , unitSelectors = [SelectorPlan contractType method (continuousContract unit contractType)
+      , unitSelectors = [SelectorPlan contractType method
             [branchConstructor branch | branch <- branches, branchBase branch == contractType]
           | (contractType, method) <- nub [(mountTerminal mount, mountMethod mount)
               | mount <- assemblyMounts assembly, mountRole mount == SelectorChain]]
@@ -1013,14 +1008,13 @@ representationOf unit contractType = case [branch | branch <- unitBranches unit,
     found : _ -> found
     [] -> error ("Validated demand has no asset: " ++ contractType)
 
--- requires 读最新值，streams 读历史。
-readType :: Unit -> String -> ResolvedDemand -> String
-readType unit historyType resolved = case demandAccess resolved of
-  StreamAccess -> historyType ++ " (" ++ representationOf unit (demandContract resolved) ++ ")"
-  _ -> representationOf unit (demandContract resolved)
+-- 读取方式影响驱动关系，不改变资产表示；本轮交付和有限读取都捕获声明的同一个 T。
+readType :: Unit -> ResolvedDemand -> String
+readType unit resolved = representationOf unit (demandContract resolved)
 
 readDemands :: Unit -> String -> [ResolvedDemand]
-readDemands unit selectedName = [resolved | resolved <- resolvedOf unit selectedName, readsAccess (demandAccess resolved)]
+readDemands unit selectedName = nubBy (\left right -> demandContract left == demandContract right)
+  [resolved | resolved <- resolvedOf unit selectedName, readsAccess (demandAccess resolved)]
 
 readerOf :: Unit -> String -> String
 readerOf unit provider = case contextReader (typing (specOf unit provider)) of
@@ -1125,7 +1119,7 @@ signatureOf unit handler' = do
 -- 一个 effect 内每种表示类型至多出现一次；同类型的两个值需要角色类型（待定）。
 checkRepresentations :: Unit -> EffectSpec -> Either String ()
 checkRepresentations unit specification = do
-  let keys = [(normalizeType (readType unit "History" resolved), demandContract resolved) | resolved <- readDemands unit (name specification)]
+  let keys = [(normalizeType (readType unit resolved), demandContract resolved) | resolved <- readDemands unit (name specification)]
   case [representation' | (representation', _) <- keys, length (filter ((== representation') . fst) keys) > 1] of
     representation' : _ -> Left ("Effect " ++ name specification ++ " reads several assets of representation "
       ++ representation' ++ " (" ++ intercalate ", " [contractType | (key, contractType) <- keys, key == representation']
@@ -1687,7 +1681,7 @@ completeScopeTree declared tree = do
 -- 不以全局发布并集替代路径，不将方法摘要的缓存当作带捕获和前态的来源缓存。
 
 -- 生成期只跟踪“已经发布／捕获了哪个 origin”，不求值业务值。
--- Nothing 表示 Receive 交付；资源保留本链的开启位置，但不进入普通资产发布表。
+-- Nothing 表示持续交付；资源保留本链的开启位置，但不进入普通资产发布表。
 data AssetState = AssetState
   -- 可跨链路由的发布位置与资产契约；有 owner 的资源不进入这份普通来源表。
   { assetPublications :: [(NodeId, String)]
@@ -1744,7 +1738,6 @@ resolveSources connections definitions defaultReaders prototype = do
         }
   mapM_ companionRead reads
   mapM_ successorRead reads
-  mapM_ derivedRead reads
   pure prototype { protoChains = map annotate (protoChains prototype), protoSources = reads
     , protoScopeOpenings = assetScopeOpenings facts }
   where
@@ -1764,18 +1757,9 @@ resolveSources connections definitions defaultReaders prototype = do
           ++ ", which are not ordered; which one ended last depends on scheduling. Order them, or refine the contract"))
         [] -> pure ()
     successorRead _ = pure ()
-    -- 由另一份持续资产驱动的资产没有 interpreter 托管的会话：驱动它的是订阅，只在订阅它的 lifelong 内生产。
-    -- 读取位置必须在有这份会话的 lifelong 之内，或排在它之后（读它结束时的最新一条）。
-    derivedRead (point, FromSession)
-      | readContract point `elem` [contractType | effect <- effects, effectContinuous effect
-          , Just contractType <- [effectProduces effect], Derive _ <- [bootPlan effects effect]]
-      , null [() | (boundary, described) <- lifelongs
-          , readContract point `elem` map sessionAsset (lifelongSessions described)
-          , boundary `isPrefixOf` readNode point || precedes (protoWorkflow prototype) boundary (readNode point)] =
-          Left (InvalidLifelong (readNode point) ("Asset " ++ readContract point
-            ++ " is driven by another continuous asset and is produced only inside a lifelong that subscribes to it;"
-            ++ " read it inside that lifelong or after it"))
-    derivedRead _ = pure ()
+    -- 有限读取 v1（2026-11-17）：派生来源与直接来源共用托管会话计划。
+    -- 读取边只给本次调用一个固定值；反复执行仍只来自 lifelong 订阅或生产链的 Derive。
+    -- 因而这里不再以“没有相应 lifelong”拒绝派生资产，也不把 require 纳入订阅表。
     -- 后继读取 lifelong 内部发布的资产：资产按来源保留最新一次发布（require 读最新值）。
     -- 同一单元内互斥位置（不同 alternative 候选）在不同轮发布同一契约时，按轮次先后取最新，不是并发写入；
     -- 来自不同单元、同一轮可能都发布、或与 lifelong 之外的来源并存时，仍按来源唯一规则拒绝。

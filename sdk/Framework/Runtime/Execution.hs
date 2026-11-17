@@ -28,7 +28,6 @@ import Control.Monad (forM, forM_, unless, void)
 import Control.Monad.Except (ExceptT(..), runExceptT)
 import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (isPrefixOf, partition)
-import Data.Maybe (isJust)
 
 -- 执行期环境：lifelong 单元的本次 frame，以及运行监督。
 -- 临时规则（lifelong 的 close 语义设计前）：AST 含 lifelong 时，任何失败（Error 协议诊断之后）
@@ -298,9 +297,9 @@ executionAlgebra prototype store entries selectors layer expected = do
     -- 单元在所需来源结束并排空后各自正常结束；全部单元结束后，停止本边界的生产任务并等待其收尾，
     -- lifelong 才成功返回，外层后继继续执行。执行结果不累积，成功时不带结果。
     -- 失败与取消保持原规则：失败在发生处已经报告监督，随整次运行终止。
-    -- 每个会话在进入时登记它的读取方（各单元的游标与读取方式），会话据此决定保留多少发布；
+    -- 每个会话在进入时登记它的读取方与游标，会话据此保留尚未领取的发布；
     -- 单元结束即离开。全部单元离开后会话只剩最新一条，留给 lifelong 的后继读取。
-    -- 由某份资产驱动的会话也是它的读取方：按历史读取，与单元一同登记，游标交给那份会话的生产任务，
+    -- 由某份资产驱动的会话也是它的读取方，与单元一同登记，游标交给那份会话的生产任务，
     -- 它在上游结束并排空后结束并离开。
     (Lifelong _, LifelongAt _ description _) -> do
       units <- concatMap compiledUnits <$> compiledChildren
@@ -309,29 +308,29 @@ executionAlgebra prototype store entries selectors layer expected = do
       let selections = [(alternativeSelector choice, source)
             | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype)
             , Right source <- [producerOf (alternativeContract choice)]]
-          -- 单元对会话资产的读取方式：订阅（streams）按历史读取；其余静态读取点与转折资产的选择读取只读最新一条。
+          -- 单元是否读取会话资产：订阅、普通读取与选择读取都使用本轮固定的 Binding。
           -- 只计尚未结束订阅的位置：ended 是本单元已经 endStream 的节点，它们链上的读取点不再计入；
           -- 候选节点全部结束的 alternative 不再做选择读取。进入 lifelong 时 ended 为空。
           access ended asset source unit
             | or [unit `isPrefixOf` mounted && live mounted | (mounted, subscribed) <- lifelongSubscriptions description
-                 , subscribed == asset] = Just True
+                 , subscribed == asset] = True
             | or [unit `isPrefixOf` readNode point && live (readNode point) | (point, FromSession) <- protoSources prototype
                  , readContract point == asset]
-              || or [unit `isPrefixOf` selector && liveChoice selector | (selector, selected) <- selections, selected == source] = Just False
-            | otherwise = Nothing
+              || or [unit `isPrefixOf` selector && liveChoice selector | (selector, selected) <- selections, selected == source] = True
+            | otherwise = False
             where
               live position = not (any (`isPrefixOf` position) ended)
               liveChoice selector = or [live identifier | AlternativeAt _ choice children <- allWorkflow (protoWorkflow prototype)
                 , alternativeSelector choice == selector, child <- children, NodeAt identifier _ <- allWorkflow child]
           -- 单元还要不要这个会话：仍有活的读取位置。
-          needs unit ended source = or [isJust (access ended asset source unit) | (asset, _, selected) <- sources, selected == source]
+          needs unit ended source = or [access ended asset source unit | (asset, _, selected) <- sources, selected == source]
       single $ \run handoff -> ExceptT $ do
         opened <- forM sources $ \(asset, plan, source) ->
           (,,,) asset plan source <$> boundarySession store location source handoff
         sessions <- forM opened $ \(asset, _, source, session) -> do
           let driven = [dependent | (_, Derive upstream, _, dependent) <- opened, upstream == asset]
           cursors <- admitReaders session
-            ([access [] asset source unit | (unit, _) <- units] ++ map (const (Just True)) driven)
+            ([access [] asset source unit | (unit, _) <- units] ++ map (const True) driven)
           sequence_ (zipWith (\dependent -> feedSession dependent session) driven (drop (length units) cursors))
           pure (source, session, take (length units) cursors)
         -- 接收原始链输出的会话随发布位置结束，不等所有下游一起结束：

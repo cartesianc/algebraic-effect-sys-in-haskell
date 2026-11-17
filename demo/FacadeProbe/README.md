@@ -12,7 +12,7 @@
 data TextFile = TextFile FilePath Handle deriving Show
 newtype Body = Body String deriving Show
 newtype LineCount = LineCount Int deriving Show
-newtype Level = Level Int deriving Show
+data Level = Level Int Int deriving Show
 data FileState = Blank | Filled Body deriving Show
 ```
 
@@ -74,13 +74,13 @@ instance CountLinesLayer m => CountLinesHandler m where
 
 instance ShowLevelLayer m => ShowLevelHandler m where
   showLevel = do
-    samples <- require @(History Level)
-    case latest samples of
-      Just (Level value) -> liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show (historySize samples)))
-      Nothing -> pure ()
-    when (historySize samples >= 3) (raise (ShowLevelError "enough deliveries"))
+    Level number value <- require @Level
+    liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show number))
+    when (number >= 3) (raise (ShowLevelError "enough deliveries"))
     pure []
 ```
+
+交付编号由每个来源自己的 `FeedCounter` 保存并发布到 `Level`；SDK 不从全量记录推导它。两个来源的 Counter 和 Scoped 注册见 [Effects.hs](Effects.hs)，共用原子获取和消费 handler。
 
 ### 4. AST.hs：不变
 

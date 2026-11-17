@@ -28,7 +28,6 @@ common runtime-program
       Framework.Recursion
       Framework.Language.AST
       Framework.Language.Handler
-      Framework.Language.History
       Framework.Language.Registration
       Framework.Prototype
       Framework.Prototype.Types
@@ -182,7 +181,6 @@ executable effect-codegen
       Framework.Recursion
       Framework.Language.AST
       Framework.Language.Handler
-      Framework.Language.History
       Framework.Language.Registration
       Framework.Prototype
       Framework.Prototype.Types

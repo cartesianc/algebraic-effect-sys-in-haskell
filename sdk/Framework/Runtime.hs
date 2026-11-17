@@ -3,7 +3,7 @@
 
 -- 执行装配：把生成的 Target lower 到 App，并为持续执行连接 DeliveryFrame 和生产步骤。
 -- Target 只保存末端句柄与共享 scope；Handoff 交接捕获值；DeliveryFrame 固定一轮的交付。
--- sessionLauncher 负责生产线程，Runtime/Session 保存交付日志并停止线程，
+-- sessionLauncher 负责生产线程，Runtime/Session 保存待领取交付并停止线程，
 -- Runtime/Graph 负责唯一会话登记，Workflow/Execution 负责消费单元和整次运行监督。
 -- 程序只经 AST 启动，业务方法不管理这些线程、游标和交接对象。
 module Framework.Runtime
@@ -111,7 +111,7 @@ pendingInput frame source production = case lookup source (frameSessions frame) 
       Seq.EmptyR -> False
       _ Seq.:> value -> bindingProduction value == Just production
     fallback session
-      | framePublishes frame source = Just . maybe False matchesView <$> currentHistory session
+      | framePublishes frame source = Just . maybe False matchesView <$> currentView session
       | otherwise = pure (Just False)
 
 -- 本单元直接或经 Derive 发布的会话：耗尽只结束订阅该来源的位置，不结束整个单元。
@@ -198,7 +198,7 @@ frameRead frame source = do
       Left Undriven -> existing session
       Left Drained | framePublishes frame source -> existing session
       _ -> pure outcome
-  where existing session = maybe (Left Undriven) Right <$> currentHistory session
+  where existing session = maybe (Left Undriven) Right <$> currentView session
 
 frameDeliveries :: DeliveryFrame environment cause -> IO [(String, Delivery environment cause)]
 frameDeliveries frame = do
@@ -264,7 +264,7 @@ receiveSteps = ReceiveSteps
 deriveSteps :: Target environment cause () -> SessionSteps environment cause
 deriveSteps = DeriveSteps
 
--- 为新会话启动生产任务：按原型找到该边界的会话挂载，逐次执行生产步骤，把发布写入会话历史。
+-- 为新会话启动生产任务：按原型找到该边界的会话挂载，逐次执行生产步骤，把发布写入会话交付队列。
 -- 每条交付带上本次生产步骤（各挂载当前一次执行）已经发布的普通资产，作为伴随发布。
 -- 各步骤共用会话的 scope 使用登记，生产资源跨步骤保持；会话停止时撤销登记，根帧退休后统一回收。
 -- 生产失败（已经过 Error 协议诊断）或原生异常使会话失败并停止，并通知运行监督；
@@ -326,7 +326,7 @@ sessionLauncher graph steps onBroken session
           Right (Left problem, _, _) -> pure (Just (Just problem))
           Right (Right text, _, _) ->
             either (Just . Just) (const Nothing) . first <$> lowerWith graph parserMount (step owner (Just text) sink) parser
-      -- 每一步先领取一条上游交付，把到这一条为止的历史作为本步的视图；上游结束并排空即正常结束。
+      -- 每一步先领取一条上游交付，把该 Binding 作为本步的固定视图；上游结束并排空即正常结束。
       -- 被驱动链上的 Excu 调用 endStream：这一步放弃，不发布，派生会话不再消费上游，同样正常结束。
       -- 正常退出时离开上游，计数归零则退役上游；失败或取消只离开，停止交给收尾或本会话的退役。
       (Just (DeriveSteps parser), Just [mount]) -> mask $ \restore -> do

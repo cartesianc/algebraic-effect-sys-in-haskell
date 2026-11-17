@@ -9,7 +9,7 @@ handler 描述一次原子操作；业务含义由它绑定的 effect、Input、
 
 这里把这种现象称为**组合产生的特设多态**：相同声明元素在不同的、可静态判定的关系中，获得不同的解释。例如 Context 挂在普通原子句柄下时解析一次输出；挂在 Stream 下时解析持续输入；Input 链受持续资产驱动时，又根据实际挂载位置成为派生生产或复用已有输出。业务无需为每一种组合另写装配代码。
 
-生产与消费也是关系角色。一个 Context 链可以消费上游资产，同时向另一条链生产资产；它不必额外标注自己是生产者还是消费者。持续链 A 从 B 的交付构造历史视图时，每次取得的视图都是固定快照，A 仍可随 B 后续发布继续运行。**固定快照不等于停止生产，也不由“链上没有 Stream”单独推出历史保存语义。** 具体驱动必须符合已有组合规则。
+生产与消费也是关系角色。一个 Context 链可以消费上游资产，同时向另一条链生产资产；它不必额外标注自己是生产者还是消费者。持续链 A 随 B 的增量发布，普通链 C 可以只读取 A 的一次固定结果。**持续生产能力不沿取值依赖自动传播；是否重复启动由组合中的驱动关系决定。** A 若保存记录，C 读到的就是业务记录；A 若做统计，C 读到的就是统计。SDK 不识别这些业务名称，也不给资产增加特殊的历史包装。
 
 这项设计把三件事连在一起：
 
@@ -101,7 +101,7 @@ completeComposition（补入可选的缓存原型）
 
 统一计算也不要求只扫描一次输入。不同阶段需要的方法摘要、来源路径和临时集合属于一次编译的工作状态；内部图 memo 和来源分析的 StateT 是局部计算证据，不是运行时状态机；来源分析保留路径相关性，并在组合前裁剪无关事实。某些路径族仍可能指数增长，状态机不能消除问题本身的复杂度，详见[构图与复用边界](EFFECT_GRAPH.md#reuse-boundary)。
 
-运行时继续只读 Prototype，另行维护 RuntimeGraph、执行帧、资产、会话和 scope 实例。静态计算决定的合法路线与实际发生的生产、取消、资源关闭是两个层面；本轮不改变现有 handler、facade、取值或生命周期协议。推导结果通过[结构查看](GUIDE.md#commands)与 Generated 中的接口、路由共同呈现。
+运行时继续只读 Prototype，另行维护 RuntimeGraph、执行帧、资产、会话和 scope 实例。静态计算决定的合法路线与实际发生的生产、取消、资源关闭是两个层面。持续资产的生产计划与读取方的驱动关系分别由同一计算确定；读取固定值不会替普通链增加订阅。推导结果通过[结构查看](GUIDE.md#commands)与 Generated 中的接口、路由共同呈现。
 
 <a id="maintenance"></a>
 ## 3. 条目格式与维护
@@ -178,7 +178,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 <a id="scope-missing"></a>
 ### 尚未覆盖
 
-整份 History 的参数身份、历史条目中资源的持有登记、一个 Scoped 注册服务多种细化资源，仍未实现（见 [Next stages](NEXT_STAGES.md)）。
+待交付数据和业务资产内嵌资源的持有登记、一个 Scoped 注册服务多种细化资源，仍未实现（见 [Next stages](NEXT_STAGES.md)）。业务资产保存记录不自动合并其中各资源的 owner。
 
 <a id="stream"></a>
 ## 6. 持续执行（Stream 与 lifelong）
@@ -203,7 +203,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | 消费步骤的输出成为新的持续资产，不重跑该步骤 | Context 挂在 lifelong 节点的原子句柄下 | `BootPlan` 为 `ReuseOutput [发布节点]` | 节点执行后由挂接 parser 发布，不另开任务；发布节点都结束或所在单元结束后封口 | [4.2](STREAM_LIFELONG.md#derive) | `mapEffect` 的结果再被共享 |
 | 每步生产带上同一步的辅助产物 | 生产链上的其他 Context 照常发布 | 独立生产任务的伴随发布 | 每条交付附带同一步发布的普通资产，消费方读到的是同一步的产物 | [7](STREAM_LIFELONG.md#sessions) | — |
 | 资源随生产存续 | 来源的 Input 上游放 Scoped（如 StreamDemo 的 `SensorLink`） | scope 开启计划、会话挂载 | 会话的使用登记跨步骤持有资源；会话退役后按可达性关闭 | [8.1](STREAM_LIFELONG.md#production)、[9.5](STREAM_LIFELONG.md#consumer-end) | `acquireRelease` |
-| 没有消费方时停止生产 | 无需写法 | 读取方登记 | 读取方全部离开时会话退役：停止生产任务 → 封口 → 回收只在会话中开启的 scope → 派生会话的上游也无人读取时一并退役 | [9.5](STREAM_LIFELONG.md#consumer-end) | 按引用计数共享的流 |
+| lifelong 的独立来源没有消费方时停止生产 | 无需写法 | lifelong 边界内 Receive／Derive 的读取方登记 | 读取方全部离开时会话退役：停止生产任务 → 封口 → 回收只在会话中开启的 scope；上游同属该边界且无人读取时一并退役。interpreter 托管会话在运行退出时停止，ReuseOutput 按发布位置封口 | [9.5](STREAM_LIFELONG.md#consumer-end) | 按引用计数共享的流 |
 | 生产失败 | 无需写法 | — | 会话失败并通知运行监督；含 lifelong 的程序暂按临时规则终止整次运行 | [9.1](STREAM_LIFELONG.md#failures) | — |
 
 <a id="stream-consume"></a>
@@ -213,8 +213,8 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | --- | --- | --- | --- | --- | --- |
 | 每条交付执行一次消费 | lifelong 中以 `streams` 订阅该资产的节点 | `lifelongUnits`、`lifelongSubscriptions` | 单元逐条领取，每条一个 frame，同一单元的调用不重叠，上一轮的普通产物不带入下一轮 | [6](STREAM_LIFELONG.md#scheduling) | `runForEach` |
 | 多个消费单元并发推进 | `lifelong [parallel [...]]` 的各子项 | 单元拆分 | 各单元并发推进、互不等待 | [6.1](STREAM_LIFELONG.md#scheduling) | 多播后分别运行 |
-| 一份资产有多个消费方 | 多个单元或派生会话 `streams` 同一资产 | 同一 lifelong 中一份资产一个会话；读取方登记 | 每个读取方独立游标；保留量由读取义务决定，按历史读取时保留全部，没有背压 | [7](STREAM_LIFELONG.md#sessions)、[7.1](STREAM_LIFELONG.md#retention) | `broadcast`、`share` |
-| 处理时看到此前的全部交付 | `streams "T"`，方法体 `require @(History T)` | 该读取方按历史读取 | 每条交付附带到这一条为止的历史；累计值由 handler 从历史重算，不是增量状态 | [3.3](STREAM_LIFELONG.md#contracts)、[7.1](STREAM_LIFELONG.md#retention) | 有点像 `scan` 能看到的范围 |
+| 一份资产有多个消费方 | 多个单元或派生会话 `streams` 同一资产 | 同一边界中一份资产一个会话；读取方登记 | 每个读取方独立游标；保留未领取交付及最新值，目前没有背压 | [7](STREAM_LIFELONG.md#sessions)、[7.1](STREAM_LIFELONG.md#retention) | `broadcast`、`share` |
+| 派生持续资产被普通链读取一次 | A 的 Input 链订阅 B；C 或普通 Context 链 `requires` A | A 的独立 Derive 计划、普通读取路由与托管上游关系 | 首次需求建立 A/B；A 随 B 继续发布，C 取得一次固定 T 后继续，不继承订阅 | [8.3](STREAM_LIFELONG.md#production) | 持续来源的一次采样 |
 | 只读当作不变的值 | 单元内 `requires "T"` | 该读取方只读最新一条 | 不订阅；本轮第一次读取时领取一条交付，同一轮共享；本单元发布的资产则读已有的一条 | [6.3](STREAM_LIFELONG.md#scheduling)、[9.5](STREAM_LIFELONG.md#consumer-end) | — |
 | 按每条交付的状态选择分支 | lifelong 内的 alternative，转折资产是本 lifelong 的持续资产 | `AlternativeProto`；选择读取领取交付 | 每条交付按最新条目的构造器只启动一个候选 | [6.3](STREAM_LIFELONG.md#scheduling) | 在逐条处理里做 `Match` |
 | 同一单元里既发布又读取 | 单元中已先行或必经并行的节点发布，其他位置直接或经 Derive 订阅该产物 | 发布位置、单一派生上游与实际轮帧 | 等本轮发布和派生处理稳定；仍无新交付才跳过本轮，封口排空后其订阅结束 | [9.5](STREAM_LIFELONG.md#consumer-end) | — |
@@ -222,7 +222,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | 结束向下游传播并排空 | 无需写法 | — | 封口后读取方领完积压才结束；单元在所需来源排空或节点都结束订阅时结束；全部单元结束后 lifelong 返回 | [9.4](STREAM_LIFELONG.md#end) | 流的完成 |
 | 结束后或在外部读最新的值 | lifelong 的后继或 lifelong 外写 `requires "T"` | 静态来源表；后继读取的来源保留 | 后继读每个来源最新一次发布；lifelong 外由托管会话交付，至少等到一条 | [9.4](STREAM_LIFELONG.md#end)、[8.3](STREAM_LIFELONG.md#production) | `runLast` |
 
-类比在许多地方并不成立，例如：资产是有唯一来源、按名字细化的业务值，不是匿名的元素序列；消费按单元逐条推进，同一单元不并发处理多条；历史为读取方保留，没有容量与背压；`require` 读的是当作不变的值，不是订阅；含 lifelong 的程序中任何失败暂按临时规则终止整次运行。
+类比在许多地方并不成立，例如：资产是有唯一来源、按名字细化的业务值；消费按单元逐条推进，同一单元不并发处理多条；保留未领取交付但没有容量背压；`require` 读的是当作不变的值，不是订阅；含 lifelong 的程序中任何失败暂按临时规则终止整次运行。累计记录、平均值或其他状态由业务 handler 与资产表达。
 
 <a id="stream-drive"></a>
 ### 6.3 运行时据哪些事实选择驱动
@@ -230,10 +230,10 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | 事实 | 运行时的分支 | 位置 |
 | --- | --- | --- |
 | `sessionPlan` | Receive 和 Derive 启动生产任务并按步骤循环；ReuseOutput 不启动任务，只登记交付状态 | `Runtime.sessionLauncher` |
-| 读取方式（单元内是否有 `streams` 订阅、读取点或选择读取） | 登记为按历史读取或只读最新一条；会话据此决定保留多少条 | `Execution` 的 `access`、`Session.release` |
+| 读取关系（单元内的订阅、普通读取点或选择读取） | 登记读取方游标，按未领取位置保留交付；普通有限读取只捕获当前值 | `Execution` 的 `access`、`Session.release` |
 | 发布节点（`ReuseOutput` 的节点表） | 发布位置按节点计，节点结束或单元结束时撤下，全部撤下才封口 | `Execution` 的 `withdraw` |
 | 发布节点所在的单元与派生上游 | 本单元直接或间接发布的来源，等节点退休和派生处理追平后才判断本轮无交付；外部来源继续等待后续增量 | `DeliveryFrame.frameLocal`、`frameStable`、`Session.sessionCaughtUp` |
-| 节点的订阅是否结束 | 已结束的节点跳过；单元不再有活读取位置时离开会话；计数归零时退役 | `Execution.repeatUnit`、`Session.departSession` |
+| 节点的订阅是否结束 | 已结束的节点跳过；单元不再有活读取位置时离开会话；lifelong 独立会话的读取方计数归零时退役 | `Execution.repeatUnit`、`Session.departSession` |
 
 <a id="stream-missing"></a>
 ### 6.4 尚未覆盖
@@ -243,7 +243,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 - 跳过某些交付，不产出（派生持续资产的跳过）；
 - 一条交付产出多条；
 - 多个持续来源共同触发一个 target；
-- 历史的窗口、容量与背压；
+- 交付队列的容量与背压；
 - 按时间节奏驱动（时间周期声明）；
 - 局部失败与重试，以及嵌套 lifelong。
 
@@ -254,7 +254,7 @@ Layer 是方法体可用能力的边界，同样不由业务填写，而是从�
 
 | 能力 | 什么组合给它 |
 | --- | --- |
-| `Reads T` | demands 中 `requires` 的资产；`streams` 时为 `History T`；单独的 `requests` 不带来读取 |
+| `Reads T` | demands 中 `requires` 或 `streams` 的资产，T 为其声明表示类型；单独的 `requests` 不带来读取 |
 | `Raw` | 只有挂接的 parser 与 Pure |
 | `Raises` | 每个 handler 的本地错误，由输出时补入 |
 | `StreamEnds`（`streamEnd`） | 绑定成 Stream 的 handler |

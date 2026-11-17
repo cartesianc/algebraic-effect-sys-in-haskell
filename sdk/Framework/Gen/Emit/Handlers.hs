@@ -64,7 +64,7 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
           ++ handlerFailure handler' ++ " description)"
       , ""
       ]
-    -- demands 按表示类型路由到资产的读取入口；分支契约投影出构造器字段，streams 读历史。
+    -- demands 按表示类型路由到资产的读取入口；持续与有限调用都读声明的 T，分支契约投影构造器字段。
     routeInstances = concat
       [ [ "instance FrameworkRuntime.Reads (" ++ renderValueType "FrameworkRuntime." "FrameworkGenerated." (routeType route) ++ ") (At "
             ++ show (routeEffect route) ++ ") where"
@@ -72,23 +72,18 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
         , "" ]
       | route <- unitRoutes unit ]
     routeExpression route = case routeView route of
-      HistoryView -> "fmap " ++ unwrap contractType ++ " <$> " ++ reader
-      BranchView (BranchContract _ base constructor field _) continuous ->
+      BranchView (BranchContract _ base constructor field _) ->
         "FrameworkRuntime.projectContext " ++ show producer ++ " "
         ++ show contractType ++ " FrameworkGenerated.ContextBindingError (\\(FrameworkGenerated." ++ base
         ++ " value) -> case value of { " ++ constructor ++ maybe " -> Just ()" (const " field -> Just field") field
-        ++ "; _ -> Nothing }) (" ++ current continuous ++ ")"
-      LatestView -> unwrap contractType ++ " <$> " ++ current True
+        ++ "; _ -> Nothing }) (" ++ reader ++ ")"
+      ContinuousView -> unwrap contractType ++ " <$> " ++ reader
       ValueView -> unwrap contractType ++ " <$> " ++ reader
       where
         contractType = routeContract route
         producer = routeProvider route
         reader = routeReader route
         unwrap selectedContract = "(\\(FrameworkGenerated." ++ selectedContract ++ " value) -> value)"
-        current continuous
-          | continuous = "FrameworkRuntime.latestContext " ++ show producer
-              ++ " FrameworkGenerated.ContextBindingError " ++ reader
-          | otherwise = reader
     rawInstances = concat
       [ [ "instance FrameworkRuntime.Raw (At " ++ show (bindingEffect binding) ++ ") where"
         , "  raw = At (" ++ rawExpression source ++ ")"
@@ -142,9 +137,9 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       ++ " . FrameworkRuntime.handleFailure"
     -- readT 与 streamT 的模式由组合计算选定，渲染器只输出相应的读取入口。
     readerDefinition reader
-      | readerHistory reader = definition method
-          ("FrameworkRuntime.History FrameworkGenerated." ++ contractType) (rootWrapper selectedName)
-          ("FrameworkRuntime.readHistory " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError"
+      | readerContinuous reader = definition method
+          ("FrameworkGenerated." ++ contractType) (rootWrapper selectedName)
+          ("FrameworkRuntime.readStreamContext " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError"
             ++ " FrameworkGenerated.bound" ++ selectedName)
       | otherwise = definition method ("FrameworkGenerated." ++ contractType) (rootWrapper selectedName)
           ("FrameworkRuntime.readContext " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError "

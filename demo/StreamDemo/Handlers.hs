@@ -10,17 +10,23 @@
 
 module StreamDemo.Handlers () where
 
-import Framework.SDK (History, Raises(..), Raw(..), Reads(..), historyEntries, latest)
+import Framework.SDK (Raises(..), Raw(..), Reads(..))
 import StreamDemo.Generated.Effects
 import StreamDemo.Types
 import Control.Concurrent (threadDelay)
 import Control.Monad.IO.Class (liftIO)
+import Data.IORef (atomicModifyIORef', newIORef)
 import GHC.Clock (getMonotonicTime)
 import Text.Printf (printf)
+
+-- 两个来源共用同一传感器会话；内存里的累计是业务资源，不是 SDK 的特殊资产。
+instance PrepareSensorLayer m => PrepareSensorHandler m where
+  prepareSensor = liftIO (SensorMemory <$> newIORef (0, []) <*> newIORef 0)
 
 -- 连接在第一次读数时由 Input 打开；生产会话的各步骤共用它，运行退出时由 SDK 关闭。
 instance ConnectSensorLayer m => ConnectSensorHandler m where
   connectSensor = do
+    SensorMemory _ _ <- require @SensorMemory
     liftIO (putStrLn "[sensor] connected")
     pure []
 
@@ -37,12 +43,16 @@ instance NextReadingLayer m => NextReadingHandler m where
     pure (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
 
 -- parser 挂在 Stream 下：raw 是会话本次取得的一份原始读数（单元素 list，不会再读一次），返回一份资产的表示值；
--- 发布、历史和交付由 SDK 完成。
+-- 发布与交付由 SDK 完成；最近五次读数由这个业务 parser 维护。
 instance ParseTemperatureLayer m => ParseTemperatureHandler m where
   parseTemperature = do
     reading <- concat <$> raw
+    SensorMemory samples _ <- require @SensorMemory
     case reads reading of
-      [(value, "")] -> pure (Temperature value)
+      [(value, "")] -> liftIO $ atomicModifyIORef' samples $ \(count, previous) ->
+        let recent = take 5 (value : previous)
+            number = count + 1
+        in number `seq` ((number, recent), Temperature number value recent)
       _ -> raise (ParseTemperatureError ("unreadable sensor output: " ++ reading))
 
 -- 心跳也是 Stream：每两秒交出一次单调时钟的秒数，由挂在它下面的 parser 解析。
@@ -55,8 +65,10 @@ instance NextBeatLayer m => NextBeatHandler m where
 instance ParseBeatLayer m => ParseBeatHandler m where
   parseBeat = do
     tick <- concat <$> raw
-    case reads tick of
-      [(value, "")] -> pure value
+    SensorMemory _ beats <- require @SensorMemory
+    case reads tick :: [(Int, String)] of
+      [(_, "")] -> liftIO $ atomicModifyIORef' beats $ \previous ->
+        let number = previous + 1 in (number, number)
       _ -> raise (ParseBeatError ("unreadable clock output: " ++ tick))
 
 instance AnnounceLayer m => AnnounceHandler m where
@@ -67,20 +79,15 @@ instance AnnounceLayer m => AnnounceHandler m where
 -- 同一单元的一次执行里，ShowTemperature 与 CheckTrend 读到同一份交付视图。
 instance ShowTemperatureLayer m => ShowTemperatureHandler m where
   showTemperature = do
-    samples <- require @(History Temperature)
-    case latest samples of
-      Just (Temperature value) ->
-        liftIO (printf "reading #%d: %.1f C\n" (length (historyEntries samples)) value)
-      Nothing -> pure ()
+    Temperature number value _ <- require @Temperature
+    liftIO (printf "reading #%d: %.1f C\n" number value)
     pure []
 
 instance CheckTrendLayer m => CheckTrendHandler m where
   checkTrend = do
-    samples <- require @(History Temperature)
-    let values = [value | Temperature value <- historyEntries samples]
-        recent = drop (length values - 5) values
-        average = sum recent / fromIntegral (length recent)
-    case reverse recent of
+    Temperature _ _ recent <- require @Temperature
+    let average = sum recent / fromIntegral (length recent)
+    case recent of
       current : previous : _ ->
         liftIO (printf "  trend %s, average of the last %d: %.2f C\n"
           (if current >= previous then "rising" else "falling" :: String) (length recent) average)
@@ -89,6 +96,6 @@ instance CheckTrendLayer m => CheckTrendHandler m where
 
 instance ReportHeartbeatLayer m => ReportHeartbeatHandler m where
   reportHeartbeat = do
-    beats <- require @(History Int)
-    liftIO (putStrLn ("[heartbeat] #" ++ show (length (historyEntries beats))))
+    number <- require @Int
+    liftIO (putStrLn ("[heartbeat] #" ++ show number))
     pure []

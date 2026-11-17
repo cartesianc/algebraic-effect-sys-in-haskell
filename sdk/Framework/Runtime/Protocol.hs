@@ -13,7 +13,6 @@ module Framework.Runtime.Protocol
 
 import Control.Monad.Except (MonadError, catchError, throwError)
 import Framework.Language.Handler (Failure(..), Output(..), ErrorReport(..))
-import Framework.Language.History (History)
 import Framework.Runtime.Identity (ActivationId)
 
 -- Context 访问与发布协议 -------------------------------------------------------
@@ -63,13 +62,13 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 同次输出交接给持续 parser，失败按持续执行协议传播，不吞掉。
   injectStreamOutput :: String -> RawOutput -> m () -> m ()
   injectStreamOutput _ _ = id
-  -- 持续资产：本次调用已经取得的历史视图（lifelong 交付，或本次先前的会话读取），按发布顺序。
-  readContextHistory :: String -> (environment -> Maybe value) -> m (Maybe (History value))
-  readContextHistory _ _ = pure Nothing
-  -- Receive 资产没有本次视图时，从 interpreter 托管的会话取得当前历史（至少一条），并捕获为本次视图。
+  -- 持续资产仍返回声明的表示类型：从本次固定交付或已经捕获的绑定投影。
+  readContextValue :: String -> (environment -> Maybe value) -> m (Maybe value)
+  readContextValue _ _ = pure Nothing
+  -- 没有固定交付时，按已生成的会话计划取得一次当前值；这次读取不会重复启动调用者。
   -- Nothing 表示当前不允许启动会话（诊断、收尾）；会话失败时传播它的原失败。
-  awaitContextHistory :: String -> (environment -> Maybe value) -> m (Maybe (History value))
-  awaitContextHistory _ _ = pure Nothing
+  awaitContextValue :: String -> (environment -> Maybe value) -> m (Maybe value)
+  awaitContextValue _ _ = pure Nothing
   -- 解析器本次的原始输入；只有会话调用解析器时才安装。
   streamRawInput :: m (Maybe String)
   streamRawInput = pure Nothing
