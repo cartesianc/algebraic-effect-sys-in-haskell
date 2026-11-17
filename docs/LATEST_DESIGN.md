@@ -1,10 +1,10 @@
 # 主设计：Algebraic Effect Sys in Haskell
 
-更新：2026-11-17（文档状态与引用整理；当前运行协议不变）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范；阶段进度与验证边界见 [Next stages](NEXT_STAGES.md)。
+更新：2026-11-17（设计原则增加组合产生的特设多态与确定性；当前运行协议不变）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范；阶段进度与验证边界见 [Next stages](NEXT_STAGES.md)。
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
-按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [gen 是编译器](#compiler) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [SDK 分工](#sdk-layout) · [Stream](#stream)。
+按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [组合多态](#composition-polymorphism) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [gen 是编译器](#compiler) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [SDK 分工](#sdk-layout) · [Stream](#stream)。
 
 ## 1. 范围与实现状态
 
@@ -106,8 +106,17 @@ flowchart LR
 <a id="principles"></a>
 ## 3. 设计原则
 
+<a id="composition-polymorphism"></a>
+### 3.1 组合产生的特设多态与确定性
+
+框架的语义核心在 effect 之间的组合，而不在单个 effect 的注册。同一个声明元素放进不同的组合关系，取得不同的解释：Context 接在原子句柄后是对本次输出的一次解析，接在 Stream 下是持续来源，Input 链被 `streams` 驱动时又按 AST 中已有的发布位置成为独立派生或复用已有输出；scope 的开启参数以 `requests` 进入是多例，以 `requires` 进入是单例。程序语言把“同一个名字按使用处的上下文取不同含义、在编译期选定”称为特设多态，Haskell 类型类按类型选择 instance 是常见的形式。本框架借用这一术语：被选择的是声明元素的解释，决定选择的是它所处的组合关系，做选择的是 gen。
+
+原子 handler 则对组合保持不变：它不感知自己处在哪种组合，签名只由绑定类别与读取决定，因此同一个 handler 能在不同业务链之间、持续链与有限链之间复用。
+
+这种多态必须是确定的：解释只由可以静态读出的结构关系决定；gen 接受的组合恰好得到一种解释；没有解释或有多种解释的组合在生成期拒绝，不留给运行时。本章其余原则都服务于这一点：[代码即文档](#code-as-documentation)让组合关系可读、可提取，[声明式组合与原子实现](#declarative-design)划定声明与原子实现的边界，[gen 是编译器](#compiler)负责在生成期完成选择。与类型类的对照、确定性的完整要求、当前尚未满足的已知边界，以及全部组合的对照表见[组合推导](COMPOSITION.md#why)。
+
 <a id="code-as-documentation"></a>
-### 3.1 代码即文档，文档即代码
+### 3.2 代码即文档，文档即代码
 
 代码的书写形态是框架的设计契约。读者应能沿原生 Haskell 的类型、声明、引用和方法体，读出程序的资产词汇、能力边界、取值关系、启动方式与原子操作；人、HLS 和 agent 共同面对这份源码。
 
@@ -132,7 +141,7 @@ flowchart LR
 更新接口时同步其示例、语义说明及相关生成产物。可运行示例优先引用现有源码，节选标明省略范围；设计方案标明未实现状态。接口与文档不一致时明确差异并修正，不用“代码即文档”把偶然实现行为升级为设计决定。
 
 <a id="declarative-design"></a>
-### 3.2 声明式组合与原子实现
+### 3.3 声明式组合与原子实现
 
 声明式设计负责表达业务组合的结构与契约：资产类型描述业务数据，Effects 声明操作类别、绑定的 handler、Input 前驱与 demands 驱动／读取关系，Workflow／AST 描述挂载位置和启动方式。业务作者以固定声明和原生方法引用表达这些关系，生成器提取并检查结构，interpreter 按确定的协议装配和执行。
 
@@ -140,7 +149,7 @@ flowchart LR
 
 例如 `demands = [requires "FileTextWritten"]` 声明读取，handler 中的 `require @String` 经路由读到该分支资产；workflow 再选择该消费链的末端并组织启动。声明可以被静态检查、序列化和第三方工具生成，实际返回值、IO 成败及阻塞行为仍由原子实现和运行协议决定。声明式结构不要求 handler 全部是纯函数；SDK 只执行声明的前驱与驱动。
 
-组合关系是框架的语义核心：SDK 将 effect、资产与 workflow 作为结构数据运算，推出类型能力、精细化装配和执行计划。同一原子 handler 因合法绑定不同获得不同业务解释，生产与消费的角色也由关系确定。设计含义与组合清单见[组合推导](COMPOSITION.md#why)。
+SDK 将 effect、资产与 workflow 作为结构数据运算，推出类型能力、精细化装配和执行计划。同一原子 handler 因合法绑定不同获得不同业务解释，生产与消费的角色也由关系确定；这些解释怎样选定、何时拒绝，见 [3.1](#composition-polymorphism)。
 
 这一原则与另外两项设计相互衔接：“代码即文档”要求组合关系直接可读、可提取；“句柄操作和值操作分离”让前驱与资产依赖分别表达。保持生成前的原生 Haskell，业务作者按本地契约实现原子行为，通用装配、来源路由与生命周期协调由 SDK 提供。
 
@@ -151,7 +160,7 @@ flowchart LR
 现有源码、demo 和历史编译结果是实现证据；不反过来固定新设计。需求不清或与证据冲突时先查缺口；声明语法变更单独确认，不添加未约定的兼容层或特殊情况。
 
 <a id="handles-and-values"></a>
-### 3.3 句柄操作和值操作分离
+### 3.4 句柄操作和值操作分离
 
 框架分别表达“执行哪些操作、按什么前驱组合”和“产生什么业务值、怎样按资产读取”。这里的句柄指原子句柄类 effect（Excu、Scoped）及其 handler；文件、连接等资源对象则由对应资产表达。
 
@@ -170,7 +179,7 @@ AST 挂载完整 original chain 的末端，并规定启动和执行控制。Con
 业务入口保持 `interpreter ast effects`。闭包、Reader、线程和锁属于 SDK 执行装配，不能变成每个业务 handler 的额外装配工作。
 
 <a id="beforegen"></a>
-### 3.4 生成前仍是原生 Haskell
+### 3.5 生成前仍是原生 Haskell
 
 手写 Types、Effects、AST／Workflow 和 Handlers 必须能由 GHC／HLS 直接解析、名称解析和类型检查。类方法调用与 ADT 使用保持原生 Haskell；不依赖字符串调用、专用伪语法或生成器修复类型。
 
@@ -178,13 +187,13 @@ AST 挂载完整 original chain 的末端，并规定启动和执行控制。Con
 
 生成器可以提取读取结构、生成 MethodGen、入口与按标签的路由；运行副本原样保留方法体。HLS 类型检查、gencode 结构提取和顶层白名单检查是不同边界，不能互相替代。
 
-### 3.5 可观察组合与原子方法
+### 3.6 可观察组合与原子方法
 
 组合写在注册与 AST 中，handler 方法体只含读取、raise 与原子计算。纯结构提取识别 `require @T`、`raw`、分支和标准组合，擦除不含读取的业务值计算，再按绑定代换成 effect 方法的读取结构；handler 直接调用其他 handler 或 effect 方法、读取经未知高阶组合传递时必须诊断，不能默认为空图。
 
 所有值操作写成 handler 的类方法并注册，才能被 SDK 驱动和静态分析：业务模块顶层不允许普通函数，方法体内的局部函数与 lambda 不限制。资产集合、顶层白名单与资产目录统一见 [ASSETS](ASSETS.md)。这些约束不追踪值来源，也不证明原子方法的 IO 粒度、业务正确性或所有资源别名。
 
-### 3.6 静态描述与运行状态分开
+### 3.7 静态描述与运行状态分开
 
 Prototype 保存结构和事实，不能保存执行函数、类字典或活资源。运行时共享 Prototype，另保存活动 chain、执行出身、资产绑定和 scope 实例。静态位置、运行调用、资产 publication 与资源 owner 必须区分。
 
@@ -192,7 +201,7 @@ ScopeTree 单独构造并保持无环，供依赖清理和 Error 祖先导航使
 
 声明的可序列化性不意味着运行中的资源也可以序列化。解释器内部使用函数、闭包和 IO 是正常实现方式，不需要把这些内部对象变成 facade 语法。
 
-### 3.7 自动装配必须有明确依据
+### 3.8 自动装配必须有明确依据
 
 规则按“输入前提 → 推导结构 → 运行行为 → 无法判定时的诊断”书写。能力去重不等于实际调用去重，结构可达不等于本次生产或后续持续推进；等待也不能自动解释为失败。
 
@@ -200,7 +209,7 @@ ScopeTree 单独构造并保持无环，供依赖清理和 Error 祖先导航使
 
 Stream 的目标是让原子方法作者只需理解本方法的输入输出。gencode 静态推导 BootPlan，interpreter 执行它；不在运行中猜测业务属于 socket、event 还是 behavior，三种驱动关系目前的写法见 [Stream 第 4.1 节](STREAM_LIFELONG.md#drives)。完整匹配与回调规则作为[主设计第 7 章](LATEST_DESIGN.md#stream)的一部分维护。
 
-### 3.8 约束、保证与开放问题
+### 3.9 约束、保证与开放问题
 
 方法签名、生成期结构检查、运行时协议和外部 IO 保证必须分别说明。绑定稳定性由 ContextStore 及共享 ownership 实现，不能从“描述是纯的”直接推导出重复 IO 幂等或资源安全。
 
@@ -209,7 +218,7 @@ Error 的驱动链、Generic Map、跨独立 interpreter 存续、任意逃逸�
 新增功能先给出 facade、生成契约、runtime 责任及 failure／cleanup 边界，再分批实现。当前探索阶段只做必要普通编译，不自行新增测试、负例或额外检查门槛。
 
 <a id="compiler"></a>
-### 3.9 gen 是这个 EDSL 的编译器
+### 3.10 gen 是这个 EDSL 的编译器
 
 框架分成四层，gen 居中：
 
@@ -813,7 +822,7 @@ sdk/Framework/
 | [EFFECT_GRAPH](EFFECT_GRAPH.md) | Prototype、来源分析、运行图、ScopeTree 和缓存 |
 | [ASSETS](ASSETS.md) | 源码资产集合、顶层白名单和资产目录 |
 | [STREAM_LIFELONG](STREAM_LIFELONG.md) | 第 7 章引用的持续执行完整规范 |
-| [COMPOSITION](COMPOSITION.md) | 组合逻辑的核心设计思想、统一计算边界，以及业务组合 → gen 事实 → 运行驱动的对照；详细协议引用所属专题 |
+| [COMPOSITION](COMPOSITION.md) | 组合产生的特设多态及其确定性要求的完整阐述、统一计算边界，以及业务组合 → gen 事实 → 运行驱动的对照；详细协议引用所属专题 |
 | [Next stages](NEXT_STAGES.md) | 唯一阶段计划入口，保存待审查摘要、开放项与必要的完成摘要 |
 
 新手从 README 和 GUIDE 进入；维护者或 LLM 从 AGENTS 按任务进入本页章节及相关专题。不要为同一规则另建摘要文件或复制一份规范。

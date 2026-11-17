@@ -164,7 +164,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 | 同单元直接或经 Derive 等待 Scoped.open 的复用输出被保守拒绝：复用实例不产生新输出；必定 fresh 的精确放行未做 | [输出复用规范](STREAM_LIFELONG.md#derive) |
 | 未领取交付没有硬容量与背压上限；interpreter 托管会话和 ReuseOutput 不按读取方计数退役 | [交付保留](STREAM_LIFELONG.md#retention)、[退役规则](STREAM_LIFELONG.md#consumer-end) |
 | 含 lifelong 程序的失败仍终止整次运行 | [临时失败协议](STREAM_LIFELONG.md#failures) |
-| 同单元 `require` 位于其发布节点之前的写法：启动依赖检查不覆盖 `require`，其他检查是否拒绝尚未确认 | 后续等待分析；不据此宣称已无等待环 |
+| 同一 lifelong 单元中，`require` 普通资产的节点排在唯一发布它的节点之前：gen 接受，读取点记为本链来源（无外部候选），运行时首轮以 `ContextNotInitialized` 终止整次运行（2026-11-17 在 `bc09c83` 上以临时探针确认，探针已还原）。这违反组合确定性的“不兜底”要求，应改由 gen 拒绝；持续资产不存在这种写法，节点只能读取驱动它的持续资产 | [组合确定性](COMPOSITION.md#determinism)；拒绝规则待设计 |
 | 来源状态与 scope 路径仍可能指数增长；共享通知存在多余唤醒，尚无大规模性能与长期堆占用实测 | [图与来源](EFFECT_GRAPH.md)、[会话复杂度](STREAM_LIFELONG.md#retention-cost) |
 
 <a id="stage-2-await"></a>
@@ -247,6 +247,8 @@ LSP 仓库的来源可见性穷举模型尚未扩展到 Stream／lifelong；订�
 
 <a id="composition-driving-verification"></a>
 **持续生产与固定取值验证（2026-11-17）：** 八个现有命名空间显式重新生成，生成器的 beforegen 与生成副本类型检查通过；五个普通示例的生成文件无变化，StreamDemo、FacadeProbe、LinesDemo 各更新四份生成文件。`cabal build all --offline -j1` 通过，退出码 0。静态交叉复查有限 Derive 的装配、取消、游标交接与 Binding 生产身份。未新增测试或负例，未运行业务 demo，未做并发或内存测量。LinesDemo 的 `snapshotAst` 仅作为声明参与编译，没有选作 `ast` 重新生成或执行；因此本轮编译不作为其运行结果的证明。
+
+**组合多态原则（2026-11-17）：** 只改文档。主设计新增 3.1“组合产生的特设多态与确定性”，原 3.1–3.9 顺延；组合推导第 1 节给出与类型类的对照、确定性的三条要求和当前边界；README 与 AGENTS 同步引入。基线 `bc09c83`：`cabal build all --offline -j1` 通过，八个命名空间重新生成无文件更新，file／open-files／scope-reuse／scope-instances／lines 五个示例为 `Succ`，crawler-demo 因外网连接超时失败。同单元 `require` 位于发布节点之前的边界用临时探针确认（见[当前限制](#current-limits)），对照组（发布节点在前）3 次均 `Succ`。未改代码；handler 签名冲突的诊断仍打印内部构造器（如 `ReadsType (NativeType "Line")`），未在本次处理。
 
 <a id="maintenance"></a>
 ## 怎样维护这份计划
