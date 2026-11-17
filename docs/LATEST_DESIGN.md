@@ -1,10 +1,10 @@
 # 主设计：Algebraic Effect Sys in Haskell
 
-更新：2026-11-17（文档状态与引用整理；当前运行协议不变）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范；阶段进度与验证边界见 [Next stages](NEXT_STAGES.md)。
+更新：2026-11-18（补充业务即 DSL 与 algebraic effect 关系两项设计原则；当前运行协议不变）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范；阶段进度与验证边界见 [Next stages](NEXT_STAGES.md)。
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
-按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [组合多态](#composition-polymorphism) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [gen 是编译器](#compiler) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [SDK 分工](#sdk-layout) · [Stream](#stream)。
+按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [组合多态](#composition-polymorphism) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [gen 是编译器](#compiler) · [业务即 DSL](#business-as-dsl) · [与 algebraic effect](#algebraic-effects) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [SDK 分工](#sdk-layout) · [Stream](#stream)。
 
 ## 1. 范围与实现状态
 
@@ -111,7 +111,7 @@ flowchart LR
 
 框架的语义核心在声明之间的组合关系。同一个 Context 接在原子句柄后解析本次输出，接在 Stream 下持续解析，Input 链受持续资产驱动时再按实际挂载关系独立派生或复用输出。本框架将这种由结构选择解释的设计称为组合产生的特设多态。注册提供可组合的元素，gen 计算这些元素放在一起的含义，原子 handler 不需要知道自己处在哪条业务链。
 
-设计要求是：解释具有明确的静态依据，合法组合得到确定的装配规则，已能证明无合法解释或存在歧义时由 gen 拒绝。它不要求 gen 预知业务值、IO 成败或所有等待是否终止。新增内部协调先核对能否复用已有编译事实；需要新解释才扩展组合计算，运行时只将事实落实为本次身份、执行进度与使用关系。已实现的检查与尚未覆盖的边界必须分别记录；完整原则与规则定位见[组合推导](COMPOSITION.md#why)。[代码即文档](#code-as-documentation)使关系可读、可提取，[声明式组合与原子实现](#declarative-design)划定职责，[gen 作为编译器](#compiler)把关系编译成运行计划。
+设计要求是：解释具有明确的静态依据，合法组合得到确定的装配规则，已能证明无合法解释或存在歧义时由 gen 拒绝。它不要求 gen 预知业务值、IO 成败或所有等待是否终止。新增内部协调先核对能否复用已有编译事实；需要新解释才扩展组合计算，运行时只将事实落实为本次身份、执行进度与使用关系。已实现的检查与尚未覆盖的边界必须分别记录；完整原则与规则定位见[组合推导](COMPOSITION.md#why)。[代码即文档](#code-as-documentation)使关系可读、可提取，[声明式组合与原子实现](#declarative-design)划定职责，[gen 作为编译器](#compiler)把关系编译成运行计划；[业务即 DSL](#business-as-dsl)说明这些原则共同的出发点，[与 algebraic effect 的关系](#algebraic-effects)说明解释机制的取舍。
 
 <a id="code-as-documentation"></a>
 ### 3.2 代码即文档，文档即代码
@@ -236,6 +236,47 @@ Error 的驱动链、Generic Map、跨独立 interpreter 存续、任意逃逸�
 gen 分开处理结构共享、同次输出复用与 scope 实例共享。相同上游出现在多个挂载中，不自动省略它的业务调用；AST 先给出末端，方法图及路径先于 ScopeTree，来源分析再证明各读取的合法装配。具体判定及复杂度边界见[结构共享与执行复用](EFFECT_GRAPH.md#reuse-boundary)。
 
 流水线的阶段、输入输出与各阶段的检查见 [4.9 编译流水线](#generation)，源码目录见 [SDK 分工](#sdk-layout)。
+
+<a id="business-as-dsl"></a>
+### 3.11 业务即 DSL：业务写前端，gen 提供共享后端
+
+从 gen 的角度看，一组业务模块是一门领域语言的定义，加上用这门语言写成的程序。业务作者用固定的元语言（typing 类别、Input、demands 的访问方式）定义词汇与文法，用原子 handler 与 Context parser 定义词元和解析，用 AST 写程序；SDK 提供所有业务共用的编译器中后端与运行时。
+
+| 编译器中的概念 | 框架中的对应 |
+| --- | --- |
+| 词元 | 原子句柄与 Pure 交出的 `[String]`，Stream 的原始输入 |
+| parser 与带类型的语法值 | Context 的 parser 把原子输出解析为资产；资产的表示 ADT 是解析结果的类型 |
+| 词汇表与文法产生式 | 注册：typing 是词类，Input 与 demands 规定它与其他词的连接方式 |
+| 程序 | AST／Workflow |
+| 中后端 | gen：来源解析对应名称解析，demand 契约对应类型检查，生成期拒绝对应语义错误，ScopeTree 与开启计划对应寿命分析，Emit 对应代码生成 |
+| 目标机器 | runtime 执行 Prototype 与生成的入口 |
+
+这一视角是其他原则的共同出发点：
+
+- 语言的语义不能有歧义，因此合法组合只有一种解释，歧义属于文法错误（[组合多态与确定性](#composition-polymorphism)）。
+- 不合法的程序在编译期报告，不由运行时挑选来源或补救（[确定性](COMPOSITION.md#determinism)）。
+- 同一个词的含义由它所在的关系决定，对应编译器的重载解析与语义分析（[组合产生的特设多态](COMPOSITION.md#ad-hoc)）。
+- 资源何时关闭属于编译器的分析职责，业务只写 close，不写寿命标签（[单例与多例](#scope-identity)、[按可达性回收](#scope-gc)）。
+- 元语言保持固定且最小：业务可以定义任意多门领域语言，但不为实现方便扩展 typing 类别，或增加 key、寿命标签与 cleanup policy（[声明式组合与原子实现](#declarative-design)）。
+- 业务代码形态就是语言的定义面：资产 ADT、注册、handler 与 AST 的书写形态改变，会让所有已定义的业务语言随之改变，因此接口变更须单独确认（[代码即文档](#code-as-documentation)）。
+
+通常让用户定义语言的方法，如语言工作台、以库定义语言、程序即数据再写解释器、parser 生成器，一般还要求语言设计者自己实现语义。这里业务作者只写前端，驱动关系、来源接线与资源寿命由同一个后端推导。后端不认识任何一门具体业务语言却能编译它们，原因是前端元素保持参数化，含义只来自组合。
+
+代价是业务作者需要按语言设计的方式工作：先定义资产词汇和连接规则，再写程序。换来的是确定性、生成期拒绝与资源回收对每门业务语言自动成立，不在业务中重复实现。
+
+<a id="algebraic-effects"></a>
+### 3.12 与 algebraic effect 的关系
+
+框架保留 algebraic effect 的核心分离：计算只声明需要的操作，操作怎样解释由所处上下文决定。handler 中的 `require @T`、raise 与 `endStream` 只表达需要什么，不知道值从哪里来、由谁响应；同一个原子 handler 绑定在不同 effect 下得到不同解释（[Stage 2](NEXT_STAGES.md#stage-2)）；生成的 Layer 约束限定方法体可以使用的操作，与 effect 类型限定计算可执行的操作是同一思路。
+
+解释的机制有意不同：
+
+1. **术语。** 本框架的 handler 是叶子位置的原子操作实现，不是捕获 continuation 的 effect handler。解释 require、requests、streams 的部分由 gen 按组合合成、runtime 执行，业务不手写。
+2. **静态唯一解析。** 经典模型由运行时最近的外层 handler 处理操作；这里由 gen 在生成期按结构解析，并要求结果唯一，与类型类实例的一致性要求相近。存在歧义时拒绝，不按动态嵌套就近选择。
+3. **不开放 continuation。** 业务不能让操作恢复多次、不恢复或回溯；依赖 continuation 的控制效果（非确定性、回溯、生成器）当前不能表达。
+4. **scoped 与持续效果由编译器负责。** Scoped 的 open／close、lifelong 与持续订阅在理论上属于 scoped／higher-order effects，不满足操作与后续计算可交换的代数律；本框架不要求业务 handler 处理它们，而由 gen 推导结构、runtime 执行协议。
+
+这一取舍以动态灵活性换取确定性。代价是：运行期才决定的来源与热插拔配置难以表达；控制效果需要另行设计；确定性的分析成本由 gen 承担，来源状态与路径可能指数增长（[当前限制](NEXT_STAGES.md#current-limits)）。后续加入 Middleware、自动重试等能力时，判断标准不变：新能力的解释须由组合在生成期唯一确定；运行时动态注册或拦截会破坏这一点。
 
 <a id="runtime"></a>
 ## 4. 当前运行协议
