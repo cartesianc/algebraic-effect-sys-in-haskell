@@ -4,7 +4,7 @@
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
-按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [gen 是编译器](#compiler) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [SDK 分工](#sdk-layout) · [Stream](#stream)。
+按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [组合多态](#composition-polymorphism) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [gen 是编译器](#compiler) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [SDK 分工](#sdk-layout) · [Stream](#stream)。
 
 ## 1. 范围与实现状态
 
@@ -106,8 +106,15 @@ flowchart LR
 <a id="principles"></a>
 ## 3. 设计原则
 
+<a id="composition-polymorphism"></a>
+### 3.1 组合产生的特设多态与确定性
+
+框架的语义核心在声明之间的组合关系。同一个 Context 接在原子句柄后解析本次输出，接在 Stream 下持续解析，Input 链受持续资产驱动时再按实际挂载关系独立派生或复用输出。本框架将这种由结构选择解释的设计称为组合产生的特设多态。注册提供可组合的元素，gen 计算这些元素放在一起的含义，原子 handler 不需要知道自己处在哪条业务链。
+
+设计要求是：解释具有明确的静态依据，合法组合得到确定的装配规则，已能证明无合法解释或存在歧义时由 gen 拒绝。它不要求 gen 预知业务值、IO 成败或所有等待是否终止。已实现的检查与尚未覆盖的边界必须分别记录；完整原则与规则定位见[组合推导](COMPOSITION.md#why)。[代码即文档](#code-as-documentation)使关系可读、可提取，[声明式组合与原子实现](#declarative-design)划定职责，[gen 作为编译器](#compiler)把关系编译成运行计划。
+
 <a id="code-as-documentation"></a>
-### 3.1 代码即文档，文档即代码
+### 3.2 代码即文档，文档即代码
 
 代码的书写形态是框架的设计契约。读者应能沿原生 Haskell 的类型、声明、引用和方法体，读出程序的资产词汇、能力边界、取值关系、启动方式与原子操作；人、HLS 和 agent 共同面对这份源码。
 
@@ -132,7 +139,7 @@ flowchart LR
 更新接口时同步其示例、语义说明及相关生成产物。可运行示例优先引用现有源码，节选标明省略范围；设计方案标明未实现状态。接口与文档不一致时明确差异并修正，不用“代码即文档”把偶然实现行为升级为设计决定。
 
 <a id="declarative-design"></a>
-### 3.2 声明式组合与原子实现
+### 3.3 声明式组合与原子实现
 
 声明式设计负责表达业务组合的结构与契约：资产类型描述业务数据，Effects 声明操作类别、绑定的 handler、Input 前驱与 demands 驱动／读取关系，Workflow／AST 描述挂载位置和启动方式。业务作者以固定声明和原生方法引用表达这些关系，生成器提取并检查结构，interpreter 按确定的协议装配和执行。
 
@@ -140,7 +147,7 @@ flowchart LR
 
 例如 `demands = [requires "FileTextWritten"]` 声明读取，handler 中的 `require @String` 经路由读到该分支资产；workflow 再选择该消费链的末端并组织启动。声明可以被静态检查、序列化和第三方工具生成，实际返回值、IO 成败及阻塞行为仍由原子实现和运行协议决定。声明式结构不要求 handler 全部是纯函数；SDK 只执行声明的前驱与驱动。
 
-组合关系是框架的语义核心：SDK 将 effect、资产与 workflow 作为结构数据运算，推出类型能力、精细化装配和执行计划。同一原子 handler 因合法绑定不同获得不同业务解释，生产与消费的角色也由关系确定。设计含义与组合清单见[组合推导](COMPOSITION.md#why)。
+SDK 将 effect、资产与 workflow 作为结构数据运算，推出类型能力、精细化装配和执行计划。同一原子 handler 可绑定不同业务关系，生产与消费角色也由关系确定；解释的依据与拒绝要求见[组合多态原则](#composition-polymorphism)。
 
 这一原则与另外两项设计相互衔接：“代码即文档”要求组合关系直接可读、可提取；“句柄操作和值操作分离”让前驱与资产依赖分别表达。保持生成前的原生 Haskell，业务作者按本地契约实现原子行为，通用装配、来源路由与生命周期协调由 SDK 提供。
 
@@ -151,7 +158,7 @@ flowchart LR
 现有源码、demo 和历史编译结果是实现证据；不反过来固定新设计。需求不清或与证据冲突时先查缺口；声明语法变更单独确认，不添加未约定的兼容层或特殊情况。
 
 <a id="handles-and-values"></a>
-### 3.3 句柄操作和值操作分离
+### 3.4 句柄操作和值操作分离
 
 框架分别表达“执行哪些操作、按什么前驱组合”和“产生什么业务值、怎样按资产读取”。这里的句柄指原子句柄类 effect（Excu、Scoped）及其 handler；文件、连接等资源对象则由对应资产表达。
 
@@ -170,7 +177,7 @@ AST 挂载完整 original chain 的末端，并规定启动和执行控制。Con
 业务入口保持 `interpreter ast effects`。闭包、Reader、线程和锁属于 SDK 执行装配，不能变成每个业务 handler 的额外装配工作。
 
 <a id="beforegen"></a>
-### 3.4 生成前仍是原生 Haskell
+### 3.5 生成前仍是原生 Haskell
 
 手写 Types、Effects、AST／Workflow 和 Handlers 必须能由 GHC／HLS 直接解析、名称解析和类型检查。类方法调用与 ADT 使用保持原生 Haskell；不依赖字符串调用、专用伪语法或生成器修复类型。
 
@@ -178,13 +185,13 @@ AST 挂载完整 original chain 的末端，并规定启动和执行控制。Con
 
 生成器可以提取读取结构、生成 MethodGen、入口与按标签的路由；运行副本原样保留方法体。HLS 类型检查、gencode 结构提取和顶层白名单检查是不同边界，不能互相替代。
 
-### 3.5 可观察组合与原子方法
+### 3.6 可观察组合与原子方法
 
 组合写在注册与 AST 中，handler 方法体只含读取、raise 与原子计算。纯结构提取识别 `require @T`、`raw`、分支和标准组合，擦除不含读取的业务值计算，再按绑定代换成 effect 方法的读取结构；handler 直接调用其他 handler 或 effect 方法、读取经未知高阶组合传递时必须诊断，不能默认为空图。
 
 所有值操作写成 handler 的类方法并注册，才能被 SDK 驱动和静态分析：业务模块顶层不允许普通函数，方法体内的局部函数与 lambda 不限制。资产集合、顶层白名单与资产目录统一见 [ASSETS](ASSETS.md)。这些约束不追踪值来源，也不证明原子方法的 IO 粒度、业务正确性或所有资源别名。
 
-### 3.6 静态描述与运行状态分开
+### 3.7 静态描述与运行状态分开
 
 Prototype 保存结构和事实，不能保存执行函数、类字典或活资源。运行时共享 Prototype，另保存活动 chain、执行出身、资产绑定和 scope 实例。静态位置、运行调用、资产 publication 与资源 owner 必须区分。
 
@@ -192,7 +199,7 @@ ScopeTree 单独构造并保持无环，供依赖清理和 Error 祖先导航使
 
 声明的可序列化性不意味着运行中的资源也可以序列化。解释器内部使用函数、闭包和 IO 是正常实现方式，不需要把这些内部对象变成 facade 语法。
 
-### 3.7 自动装配必须有明确依据
+### 3.8 自动装配必须有明确依据
 
 规则按“输入前提 → 推导结构 → 运行行为 → 无法判定时的诊断”书写。能力去重不等于实际调用去重，结构可达不等于本次生产或后续持续推进；等待也不能自动解释为失败。
 
@@ -200,7 +207,7 @@ ScopeTree 单独构造并保持无环，供依赖清理和 Error 祖先导航使
 
 Stream 的目标是让原子方法作者只需理解本方法的输入输出。gencode 静态推导 BootPlan，interpreter 执行它；不在运行中猜测业务属于 socket、event 还是 behavior，三种驱动关系目前的写法见 [Stream 第 4.1 节](STREAM_LIFELONG.md#drives)。完整匹配与回调规则作为[主设计第 7 章](LATEST_DESIGN.md#stream)的一部分维护。
 
-### 3.8 约束、保证与开放问题
+### 3.9 约束、保证与开放问题
 
 方法签名、生成期结构检查、运行时协议和外部 IO 保证必须分别说明。绑定稳定性由 ContextStore 及共享 ownership 实现，不能从“描述是纯的”直接推导出重复 IO 幂等或资源安全。
 
@@ -209,7 +216,7 @@ Error 的驱动链、Generic Map、跨独立 interpreter 存续、任意逃逸�
 新增功能先给出 facade、生成契约、runtime 责任及 failure／cleanup 边界，再分批实现。当前探索阶段只做必要普通编译，不自行新增测试、负例或额外检查门槛。
 
 <a id="compiler"></a>
-### 3.9 gen 是这个 EDSL 的编译器
+### 3.10 gen 是这个 EDSL 的编译器
 
 框架分成四层，gen 居中：
 
@@ -224,7 +231,7 @@ Error 的驱动链、Generic Map、跨独立 interpreter 存续、任意逃逸�
 
 能在生成期判定的组合、读取路由与合法性问题，都由 gen 报错，不留给运行时。运行时启动前只核对编译产物与当前源码是同一份——注册快照、Handlers 指纹、AST 的层级——并校验 Prototype 自洽，不重新推导结构。读取同样只执行编译结果：按生成的来源表取值，缺值时等待发布而不生产；读取权限在生成期确定，运行时不查声明表。
 
-`Gen.Composition` 以统一的编译期状态转换计算组合含义：声明、资产来源、workflow 挂载、会话连接、handler 类型能力、入口装配、方法图和来源证明都在同一模块内收敛。输出阶段读取这些结果生成类型约束、精细化 DI 与 Prototype，不再重新判断组合。内部装配记录只在 gen 存在，不新增运行时注册表。方法摘要缓存只保存纯结构，不包含业务值或活实例；运行时仍逐挂载、逐调用执行。
+`Gen.Composition` 统一编译入口、阶段转换与装配事实：声明、资产来源、workflow 挂载、会话连接、handler 类型能力、入口装配、方法图和来源证明按依赖顺序计算。各阶段仍使用专门算法，没有通用的规则匹配或固定点求解器。输出阶段读取结果生成类型约束、精细化 DI 与 Prototype，不重新选择组合解释。内部装配记录只在 gen 存在；方法摘要缓存只保存纯结构，不包含业务值或活实例，运行时仍逐挂载、逐调用执行。
 
 gen 分开处理结构共享、同次输出复用与 scope 实例共享。相同上游出现在多个挂载中，不自动省略它的业务调用；AST 先给出末端，方法图及路径先于 ScopeTree，来源分析再证明各读取的合法装配。具体判定及复杂度边界见[结构共享与执行复用](EFFECT_GRAPH.md#reuse-boundary)。
 
@@ -438,6 +445,8 @@ Gen.Composition 统一计算唯一来源、访问结果、绑定的读取路由�
 
 驱动（requests）每次重新生产，成功后将同一个值发布为当前 origin 的新绑定。读取先使用当前捕获，再按 protoSources 查本次唯一已发布的可见来源。读取不生产：仍没有值时，根据现有来源候选与执行帧进度判断是否还能等到发布。只有已知候选全部退休时，才判为耗尽；随后再次读取绑定，仍缺值才报 `ContextNotInitialized`，沿现有 Error 协议传播。当前链自己的潜在生产不算继续等待的理由：一个节点的链在载体里顺序执行，`require` 缺值时阻塞当前线程、不让出执行权，读取之前的生产已经结束，之后的要等这次读取返回。这以节点内顺序执行为前提；等待者在会话链上时暂保持原判断，随 Stream 的结束与失败语义确定。来源未知、会话来源或其他仍可能生产的运行链继续等待，不推断超时或方法内部尚未执行的条件分支。资产发布与节点退休都通知等待者重新检查。
 
+对于已到达的普通读取，gen 还拒绝所有已分析路径都没有合法供值或捕获的结构；这项最低限度的检查见[静态无来源诊断](EFFECT_GRAPH.md#missing-source)。有合法生产路径、但本次条件或解析没有发布时，仍使用下述运行时缺值协议。
+
 值只来自 `requests` 驱动、alternative 的选择读取（见 [workflow](#workflow)）、挂接注入与 Stream 会话。当前可见范围仍只有 AST 保证先完成的前驱与本入口自己的发布，parallel 兄弟互不可见；上述耗尽判断没有扩大来源范围，也没有把普通资产改为按帧存储。诊断、自动 cleanup、close 期间及 scope 资源 Context 缺值不等待，报 `ContextNotInitialized`；这些阶段的显式生产仅更新局部快照。生产的值按 request 被 scope 开启参数观察，读取到的值按读取观察。
 
 刷新失败不覆盖旧绑定，错误原样传播，已完成操作不回滚。普通无 owner 绑定按 origin 保存在一次 interpreter 的权威表，current capture 固定已读取值。scope 例外只覆盖资源 owner 绑定；实例快照里的无 owner 辅助值不能通过资源复用绕过静态来源路由。
@@ -520,7 +529,7 @@ instance ParseFileNameLayer m => ParseFileNameHandler m where
 <a id="await-visibility"></a>
 #### 可见范围与等待的结束（保守结束已实现，完整迁移待实施）
 
-**状态：最低限度的保守等待结束已实现（2026-11-13）；下列完整方案仍待实施。** 当前实现复用 `protoSources`、执行帧和发布通知，保留按 origin 的存储与读取；没有加入方法体插桩、STM 资产 state、新语法或新的生成期等待检查。parallel 兄弟可见、按帧存储及更细的生产机会分析尚未实现。以下描述完整目标，当前执行以上述协议为准；推进与验证边界见 [Next stages](NEXT_STAGES.md#stage-2-await)。
+**状态：最低限度的保守等待结束已实现（2026-11-13）；静态无来源诊断见[图规范](EFFECT_GRAPH.md#missing-source)，下列完整方案仍待实施。** 当前实现复用 `protoSources`、执行帧和发布通知，保留按 origin 的存储与读取，没有方法体插桩、STM 资产 state 或新语法。parallel 兄弟可见、按帧存储及更细的生产机会分析尚未实现。以下描述完整目标，当前执行以上述协议为准；推进与验证边界见 [Next stages](NEXT_STAGES.md#stage-2-await)。
 
 资产是细化的，每份资产只有一个生产方，又与消费链分离。细化固定的是生产链，不是每一次驱动：同一条生产链可以被多处驱动，每次驱动是一次独立的激活，值可能不同（生产链读外部状态，或它自己的读取按驱动方的捕获解析）；同一资产的两次生产能否互换，gen 看不出来。require 读的是 request 的 state：request 的回调写入它，require 把它分离出来读取，运行时不在多份发布之间挑选。生成期回答两件事：这次读取能不能等到值，以及读到的是不是确定的一次驱动。
 
@@ -721,9 +730,23 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 | 输出 | `Gen.Emit.*` | 按已计算的接口、装配事实与 Prototype 输出 Haskell；保持方法体原文，不重做组合选择 |
 | 类检 | `Gen.Assets`、`Gen.Catalog` | GHC 在内存中检查业务模块与输出，执行顶层白名单检查并产出资产目录 |
 
-`Source.loadComposition` 在加载了业务模块的 ghci 中调用 `Composition.beginComposition`，返回纯接口检查点 `Unit`（Eq／Show／Read）；不再只返回 PrototypePlan。`prepareComposition` 接收前端提取的可选方法形状，形成 `PendingComposition`；`completeComposition` 完成图与来源证明，或复用匹配缓存，然后校验并交出 `CompositionResult`（Unit 与 Prototype）。具体状态顺序见[组合机器](COMPOSITION.md#pipeline)。
+`advanceComposition` 规定阶段转换及两个接口检查点；状态和检查点的实现说明集中在本节：
 
-机器不依赖 GHC AST、业务 IO 或运行时模块；方法体只解析，不加载。`Prototype.Query` 的纯关系查询由机器和原型校验共用，不另立编译状态。结构缓存按解析计划、装配结果、方法结构与相关 SDK 源码比较；命中仍校验原型，有 handler 时仍检查驱动，详见[缓存边界](EFFECT_GRAPH.md)。
+```text
+beginComposition
+  Declared → Related → Numbered → AwaitingBodies Unit
+
+prepareComposition（补入 Maybe handler 形状）
+  ResolvingBodies → AwaitingGraph PendingComposition
+
+completeComposition（补入可选缓存原型）
+  BuildingStructure → ProvingSources → Checking → Complete
+                                    缓存命中 ──┘
+```
+
+`Source.loadComposition` 在 ghci 中加载声明并调用 `beginComposition`，返回可 Eq／Show／Read 的纯 `Unit`。它保存 `ReadRoute`、`ReaderPlan`、`SelectorPlan`、`SessionEntry`、`Capability` 等接口与装配事实，不包含 GHC AST、类字典或执行函数。首次没有 Handlers 时先交出契约；`prepareComposition` 接收 `Nothing` 表示缺少文件，`Just shapes` 表示已经提取方法体，即使 shapes 为空也不是缺少文件。后者继续进行读取与驱动检查。`completeComposition` 最终交出 `CompositionResult`（Unit 与 Prototype），缓存命中仍经过校验；完整缓存协议只在[图规范的缓存边界](EFFECT_GRAPH.md#cache)维护。
+
+这是按依赖阶段组织的编译状态机。声明合法性、会话连接、接口绑定、图与来源证明各有计算入口；统一的是阶段次序与结果归属，没有将它们变成同一种算法。`Prototype.Query` 保存机器和原型校验共用的纯关系查询；源码提取、资产类检与文本渲染保持原有边界。各组合从哪里进入计算见[规则定位](COMPOSITION.md#pipeline)。
 
 首次没有 Handlers.hs 时，形状为空，不检查读取与驱动，只生成契约和空的 Handlers 模块；填写 handler 后再次生成并编译 Main，命令与使用顺序见[指南：命令行与执行阶段](GUIDE.md#commands)。业务执行编译 Generated/Handlers：handler 方法体原样复制到按 effect 的类型标签上，后接 gen 生成的入口与路由；不回写手写源码或新增业务类型类。手写实现变更后须重新生成。
 
@@ -813,7 +836,7 @@ sdk/Framework/
 | [EFFECT_GRAPH](EFFECT_GRAPH.md) | Prototype、来源分析、运行图、ScopeTree 和缓存 |
 | [ASSETS](ASSETS.md) | 源码资产集合、顶层白名单和资产目录 |
 | [STREAM_LIFELONG](STREAM_LIFELONG.md) | 第 7 章引用的持续执行完整规范 |
-| [COMPOSITION](COMPOSITION.md) | 组合逻辑的核心设计思想、统一计算边界，以及业务组合 → gen 事实 → 运行驱动的对照；详细协议引用所属专题 |
+| [COMPOSITION](COMPOSITION.md) | 组合多态的核心理念、确定性要求、产物和规则定位；业务组合 → gen 事实 → 运行驱动的对照，详细协议引用所属专题 |
 | [Next stages](NEXT_STAGES.md) | 唯一阶段计划入口，保存待审查摘要、开放项与必要的完成摘要 |
 
 新手从 README 和 GUIDE 进入；维护者或 LLM 从 AGENTS 按任务进入本页章节及相关专题。不要为同一规则另建摘要文件或复制一份规范。

@@ -7,9 +7,29 @@
 
 handler 描述一次原子操作；业务含义由它绑定的 effect、Input、demands 和 workflow 共同决定。同一个 handler 可以用于不同业务链，仍只实现自己的取值、解析或 IO。SDK 必须能够从这些声明计算出它应获得哪些能力、资产从哪里进入、谁驱动谁，以及哪些结构组合不成立。这项计算决定框架的表达方式，代码生成和运行调度都服务于它。
 
-这里把这种现象称为**组合产生的特设多态**：相同声明元素在不同的、可静态判定的关系中，获得不同的解释。例如 Context 挂在普通原子句柄下时解析一次输出；挂在 Stream 下时解析持续输入；Input 链受持续资产驱动时，又根据实际挂载位置成为派生生产或复用已有输出。业务无需为每一种组合另写装配代码。
+<a id="ad-hoc"></a>
+### 组合产生的特设多态
+
+同一个声明元素在不同的、可静态判定的关系中获得不同解释，本框架将它称为**组合产生的特设多态**。这个术语借用了程序语言中按使用上下文选择具体实现的思想：Haskell 类型类按类型选择实现，这里由 gen 按声明之间的结构关系选择装配含义。两者并不等同；这里的解释集合由 SDK 规定，业务通过已有声明进行组合。
+
+| 声明元素 | 决定解释的关系 | gen 得到的含义 |
+| --- | --- | --- |
+| Context | Input 是普通句柄、Stream，或其链被持续资产驱动；AST 是否已有对应发布位置 | 一次解析、持续来源、独立派生或同次输出复用 |
+| 资产读取 | 表示类型、refined asset、访问方式及挂载位置 | 唯一来源路由、固定捕获或按交付驱动 |
+| Scoped 的开启参数 | 引用已有生产还是本次驱动新生产 | 实例共享依据与开启类别；实际身份留到运行时匹配 |
+
+原子 handler 对组合保持不变：它只使用绑定契约给出的能力，完成本次读取、解析或 IO。同一份实现能用于不同业务关系，但每个绑定仍必须满足签名与读取约束；复用实现不合并实际调用。
 
 生产与消费也是关系角色。一个 Context 链可以消费上游资产，同时向另一条链生产资产；它不必额外标注自己是生产者还是消费者。持续链 A 随 B 的增量发布，普通链 C 可以只读取 A 的一次固定结果。**持续生产能力不沿取值依赖自动传播；是否重复启动由组合中的驱动关系决定。** A 若保存记录，C 读到的就是业务记录；A 若做统计，C 读到的就是统计。SDK 不识别这些业务名称，也不给资产增加特殊的历史包装。
+
+<a id="determinism"></a>
+### 确定性：结构决定装配规则
+
+1. **有静态依据。** 解释来自注册、AST 和可提取的 handler 读取关系，不能靠哪个线程先发布来补足来源选择。
+2. **解释明确。** 同一份合法结构得到确定的类型能力、来源规则和执行计划；实际分支、业务值与 IO 成败仍由运行时按计划处理。
+3. **已能证明的结构错误在生成期报告。** 缺少合法解释或存在无法消除的歧义时拒绝；没有证明不等于已经证明安全。已实现的最低限度检查与延期的完整分析分开维护，见[普通读取来源](EFFECT_GRAPH.md#missing-source)与[当前边界](NEXT_STAGES.md#current-limits)。
+
+这些是设计要求，不是任意程序的可判定性保证。条件生产可能失败，业务 IO 可能永远阻塞；合法的来源计划不能保证每次执行都有值。`catchError` 可以处理运行失败，也不能为一条没有合法来源的依赖创造结构解释。
 
 这项设计把三件事连在一起：
 
@@ -56,52 +76,25 @@ instance AcquireFileLayer m => AcquireFileHandler m where
 SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` 这样的业务组合方法。组合的能力不能只靠方法名清单呈现，因此后文按“声明组合 → 推导事实 → 运行行为”登记；这些类比不代表与其他框架同名操作的语义完全相同。
 
 <a id="pipeline"></a>
-## 2. 一台组合状态机，产生同一份含义
+## 2. 统一计算的产物与规则定位
 
-[Gen.Composition](../sdk/Framework/Gen/Composition.hs) 是编译期组合计算的统一实现。输入是已加载的 effect／资产／workflow，以及前端提取的 handler 读取形状；状态转换逐步补全关系、检查约束，最终给出接口装配与 Prototype。声明解析、会话推导、绑定、构图和来源证明都在这个模块内计算。
+[Gen.Composition](../sdk/Framework/Gen/Composition.hs) 统一组合计算的入口和结果。它接收声明、workflow 与 handler 读取形状，输出确定的类型能力、路由、装配连接及 Prototype；Emit 渲染这些结果，runtime 执行计划。生产与消费是组合中的关系角色，不另加业务标签。
 
-```text
-声明结构 + handler 读取形状
-        ↓
-组合状态机：解析 → 编号与绑定 → 方法组成 → 图与来源证明
-        ↓
-确定的类型能力、读取路由、入口/输出连接、会话计划、Prototype
-        ↓
-Emit 按结果生成 Haskell；runtime 执行生成结果
-```
+**当前统一到这里：** 原先由 Emit 根据注册再判断的读取形态、入口包装、结束能力和会话入口，已成为组合计算的显式结果。内部仍按依赖阶段使用不同算法，尚未实现逐元素解释表或通用规则求解器；集中在一个模块也不等于这些算法已合成一种。阶段状态、两个检查点和装配流程只在[主设计的编译流水线](LATEST_DESIGN.md#generation)维护，缓存协议只在[图规范](EFFECT_GRAPH.md#cache)维护。
 
-状态机统一的是**语义计算的权威**。局部遍历、路径组合和环检查是它的内部运算，不保留各自对外决定装配行为的分析入口。Emit 可以按产物分文件，但只投影已确定的状态：例如持续来源的 Receive／Derive／ReuseOutput 在组合计算中确定，输出阶段直接使用；类型能力也先形成结构结果，再渲染为 Layer 约束。
+| 组合问题 | 计算入口或关系查询 | 结果交给谁 |
+| --- | --- | --- |
+| 哪份资产、哪种访问合法 | `buildEffectProtos`（内部解析 demands） | effect 原型、后续会话与读取计算 |
+| workflow 怎样挂载并驱动，是否复用已有输出 | `numberWorkflow`、`planSessions`；共享查询 `bootPlan`／`finiteSessions` | 挂载、会话与 `OutputConnection` |
+| handler 获得什么签名和入口 | `bindProgram`，内部形成读取路由、能力与操作类别 | `ReadRoute`、`Capability`、`EntryOperation`、选择器与会话入口；Emit 不再自行选取 |
+| 调用结构怎样进入图与 ScopeTree | `composeMethods`、`buildStructure` | 方法图、链事实、无环 ScopeTree |
+| 一个读取能用哪些生产，何时拒绝 | `resolveSources` | 来源证明、`protoSources`、scope 开启计划与静态诊断 |
 
-这不要求整个 SDK 的算法全部搬进一份文件。`Prototype.Query` 保留供机器和原型校验共用的纯结构关系查询，包括 `bootPlan`、`finiteSessions` 等；它们服务于同一模型，不是另一套拥有编译阶段和装配状态的计算机。GHC 语法提取、源码资产类检、文本渲染和运行期资源管理也各守原有边界。
+阶段专用助手放在相应入口的局部作用域，跨阶段只共享必要的纯查询；这限制了调用边界，不把模块重新拆回旧阶段文件。
 
-| 计算中的事实 | 产物的用途 |
-| --- | --- |
-| 唯一资产来源、访问方式、表示类型和读取视图 | 生成契约、读取路由与 handler 的类型能力 |
-| AST 位置、alternative 候选、lifelong 单元与持续连接 | 生成末端、选择入口、会话启动和订阅计划 |
-| 有序驱动／前驱、raw 来源、原子输出连接 | 生成入口和注入；同一组事实参与方法组成与来源证明 |
-| 方法图、ScopeTree、读取来源和 scope 开启计划 | 静态校验与展示；运行时取值、等待、共享和回收的依据 |
+这些入口是同一编译计算中的职责位置；维护者新增规则应先找到它依赖的事实，在对应计算中产生结果，交给后续步骤消费。不能在 Emit 或 runtime 再判断一遍，也不因“统一”而把取值、取消或资源状态搬到编译器。
 
-实际转换由 `advanceComposition` 统一定义，入口分成两个等待检查点：
-
-```text
-beginComposition
-  Declared → Related → Numbered → AwaitingBodies Unit
-
-prepareComposition（补入 Maybe handler 形状）
-  ResolvingBodies → AwaitingGraph PendingComposition
-
-completeComposition（补入可选的缓存原型）
-  BuildingStructure → ProvingSources → Checking → Complete
-                                    缓存命中 ──┘
-```
-
-`Source.loadComposition` 在 ghci 中调用 `beginComposition`，把具有 Eq／Show／Read 的纯 `Unit` 交回生成器。Unit 保存 `ReadRoute`、`ReaderPlan`、`SelectorPlan`、`SessionEntry` 和 `Capability` 等确定事实；它不包含 GHC AST、类字典或执行函数。最终 `CompositionResult` 同时携带 Unit 与 Prototype。
-
-首次尚无 Handlers 时，`prepareComposition` 接收 `Nothing`；已有文件时接收 `Just shapes`，即使提取结果为空列表，也不按缺少文件处理。机器先完成契约所需的结构计算，供业务写出能通过 HLS 的 instance，再按是否已有方法体决定读取与驱动检查。`completeComposition` 即使命中缓存，也会进入 `Checking` 校验原型；已有 handler 时还执行驱动检查。前端只加载声明和解析形状，不执行业务。
-
-统一计算也不要求只扫描一次输入。不同阶段需要的方法摘要、来源路径和临时集合属于一次编译的工作状态；内部图 memo 和来源分析的 StateT 是局部计算证据，不是运行时状态机；来源分析保留路径相关性，并在组合前裁剪无关事实。某些路径族仍可能指数增长，状态机不能消除问题本身的复杂度，详见[构图与复用边界](EFFECT_GRAPH.md#reuse-boundary)。
-
-运行时继续只读 Prototype，另行维护 RuntimeGraph、执行帧、资产、会话和 scope 实例。静态计算决定的合法路线与实际发生的生产、取消、资源关闭是两个层面。持续资产的生产计划与读取方的驱动关系分别由同一计算确定；读取固定值不会替普通链增加订阅。推导结果通过[结构查看](GUIDE.md#commands)与 Generated 中的接口、路由共同呈现。
+`Prototype.Query` 保留编译器与原型校验共用的纯结构查询；GHC 语法提取、源码资产类检和文本输出仍各守边界。图缓存、路径集合与来源裁剪是内部算法，不等于运行时状态；统一入口没有消除路径分析的指数上界，见[构图与复用](EFFECT_GRAPH.md#reuse-boundary)。
 
 <a id="maintenance"></a>
 ## 3. 条目格式与维护
@@ -120,7 +113,7 @@ completeComposition（补入可选的缓存原型）
 维护规则：
 
 - 新增一种由组合推导的行为时，先在所属专题写完整规则，再在这里加一行，并链接过去。
-- 本文维护组合原则、统一计算边界和行为对应关系；详细协议归所属专题，阶段状态与验证结果归 [Next stages](NEXT_STAGES.md)。
+- 每条规则先说明结构前提、解释与拒绝条件；本文维护组合原则、产物和规则定位，详细协议归所属专题，阶段状态与验证结果归 [Next stages](NEXT_STAGES.md)。
 - 未实现的行为只出现在各节的“尚未覆盖”中，不写成当前能力。
 
 <a id="context"></a>
@@ -148,6 +141,7 @@ completeComposition（补入可选的缓存原型）
 | 行为 | 组合 | 推导 | 驱动 | 规范 |
 | --- | --- | --- | --- | --- |
 | 读取已有的值，不生产 | `requires "T"`，方法体 `require @T` | 读取权限与读取路由；读取点的来源（`protoSources`） | 先用本次捕获，再读许可来源的发布；没有值时等待，不补跑生产 | [Context](LATEST_DESIGN.md#context) |
+| 静态证明普通读取无来源 | 已到达的读取在所有已分析路径均无合法供值或捕获 | gen 在来源证明阶段拒绝，并定位读取点 | 不把结构错误交给运行时缺值处理 | [静态无来源诊断](EFFECT_GRAPH.md#missing-source) |
 | 按类型读取，读到哪份由注册决定 | 同一表示类型细化成多份资产；handler 只写 `require @T` | 每个 effect 按“表示类型 + effect”生成读取实例 | 同一个 handler 绑到不同 effect，各自读到 demands 里那份资产 | [Context](LATEST_DESIGN.md#context) |
 | 按构造器读取和类型的分支 | `requires` 分支契约（如 `FileTextWritten`） | 分支契约目录，投影当前构造器 | 读到构造器的字段；构造器不匹配报 `CaseNotSelected` | [Context](LATEST_DESIGN.md#context) |
 | 读到哪一次发布 | 无需写法，由 AST 的先后决定 | 每个读取点保存许可的来源：本链、AST 保证先完成的前驱，或会话 | parallel 兄弟互不可见；需要跨链读取时同时可见的来源至多一个，否则生成期报错 | [图与来源](EFFECT_GRAPH.md) |

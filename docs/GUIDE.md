@@ -1069,6 +1069,7 @@ reading #2: 24.0 C
 - **`require` 读取**：handler 的 `require @T` 经路由进入资产的 `readT`：先读当前调用已捕获的绑定，再查原型许可的唯一可见来源。读取不生产：缺值时等待发布或节点退休通知，再检查绑定与生产是否耗尽。第一次读取后绑定固定，其他调用的发布不原地改写它。
 - **值从哪里来**：`requests` 驱动、alternative 的选择读取、挂接句柄的注入，以及 Stream 会话。要读的值必须有人驱动；例如 FileDemo 的 `FileResource` 写了 `[requests "FileName", requires "FileName"]`，取得文件前先驱动文件名的生产链（`LocateFile` → `ValidateFileName` → `FileLocation`），`acquireFile` 再读取它。
 - **跨 node 保存**：发布时无资源 owner 的值按 origin 保存，后补 owner 保留原发布记录；open 内一开始就有 owner 的产物只留在 scope／当前调用。一个来源在 AST 中保证先于当前节点完成，或属于当前入口时才可见；并行兄弟互不可见。需要跨链解析的读取路径若有多个同时可见来源，就需细化契约或调整编排，生成器不会选“最后写入”的那个。
+- **结构上没有来源先报错**：如果一个已到达的普通读取在所有已分析路径都得不到合法供值或捕获，gen 会定位该读取并拒绝；例如 R 在 P 前读取只有 P 才驱动的资产。把驱动放到合法前驱或当前入口，`catchError` 不能代替来源声明。条件生产或解析失败造成的运行时缺值仍按下一条处理，完整边界见[静态无来源诊断](EFFECT_GRAPH.md#missing-source)。
 - **已确定等不到时结束等待**：SDK 只作保守判断：已知候选生产节点全部退休时，再读一次仍缺值就报 `ContextNotInitialized`，沿现有 Error 协议传播。本链自己的驱动不算等待的理由：一条链顺序执行，读取等待时，排在它前面的生产已经结束，排在后面的要等它返回；所以读取要写在驱动之后。未知来源、会话来源、会话链上的等待及其他仍可能生产的运行链继续等待，不按超时判断。parallel 兄弟仍互不可见；本轮没有提供完整等待环检查。资源、Error 诊断、自动收尾与 close 期间仍不等待，缺值直接报同一故障。
 - **部分路径已取值合法**：已经捕获值的分支直接使用该绑定，只有尚未取值的路径需要解析唯一来源。alternative 或可选生产的条件可证明这些路径的来源唯一；已捕获路径上允许多个节点共同发布，由已有快照确定读取值。
 
@@ -1186,7 +1187,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | handler 读取了绑定它的某个 effect 没有声明的表示类型；或非挂接的 handler 使用 `raw` | 在该 effect 的 demands 里补上声明；`raw` 只给挂接的 parser 与 Pure |
 | Pure 写了 demands、`input` 是 Root 或 Stream、下面没有 Context 或 Pure，或被 Excu／Scoped／Stream／Error 当作 `input` | Pure 只在生产链中：值从上层句柄或 Pure 的 `raw` 来，交给下面的 Pure 或 Context |
 | `require` 没有写类型应用 | 写成 `require @表示类型` |
-| 同一个 handler 的各个绑定推出不同的签名或 Layer | 只在绑定方式与读取一致处复用 handler，否则拆成两个 handler |
+| 同一个 handler 的各个绑定推出不同的签名或 Layer | 对照诊断列出的 Haskell 结果类型与能力约束，只在绑定方式与读取一致处复用，否则拆成两个 handler |
 | effect 声明的 `requires`／`streams` 资产，绑定的 handler 既不读取，也不参与 alternative 选择／streams 交付 | 读取它，或删掉无用声明 |
 | handler 直接调用另一个 handler 的类方法 | 通过注册（`input`、`demands`）和 AST 组合 |
 | 读取经未知的高阶组合传递；`require`／`raw` 出现在 guard、模式、`let`／`where`、`if` 条件或 `case` 的被匹配值中；混用运算符没加括号；方法体使用 `RebindableSyntax` | 先在 `do` 中用 `x <- require @T` 绑定，再使用；支持 `do`、`if`／`case`、`when`、`catchError` 等常见写法 |
@@ -1197,6 +1198,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | AST 的 node 选中了 Pure、Context、Error 或 Stream；别的方法直接调用到 Stream 的 handler | node 只挂 Excu 或 Scoped；Pure 与 Context 在生产链中由挂接、驱动、合法读取或生产会话带起；Stream 只由生产会话和挂在它下面的 parser 调用，Error 由失败协议调用 |
 | 挂接的 Context 经别的方法、而不是直接或经 Pure 用 `raw` 到达它挂接的句柄 | parser 用 `raw` 读取挂接句柄，中间只经过 Pure |
 | 某个 Context 从 AST 出发永远到不了：没有挂接句柄、`requests` 驱动或选择读取，也没有 lifelong 订阅生产会话带起它（只被 `requires` 读取不算） | 在读取它的链上写 `requests` 驱动它，或把带起它的消费链加进 AST，或删掉这个 Context |
+| 已到达的普通读取在所有已分析路径都没有合法供值或捕获 | 将对应驱动放到可见的前驱或当前入口；不能让它等待 AST 后继或普通 parallel 兄弟。条件生产已有合法路径时，运行失败仍交给 Error 协议 |
 | 尚未取值的读取路径上，同一资产有多个可能同时发布的可见来源 | 细化资产或调整 AST；alternative 和可选生产的条件可证明互斥时允许多个候选 |
 | 持续资产的声明不成立：Context 的 `stream` 与 Input 链是否持续驱动不一致，或 `stream = True` 却没有 `require = True`；Stream 下不是恰好一个 Context，或 parser 以外的 effect 以 Stream 为 `input`；`streams` 订阅了普通资产或分支契约，或由 Excu、Scoped 以外的 effect 声明 | 按[持续资产的声明规则](#stream)修正 |
 | `streams` 写在 lifelong 外的末端上；lifelong 嵌套或含空分支；lifelong 里的末端没有恰好订阅一个持续资产，或另外读取了别的持续资产 | 按 [lifelong 的规则](#stream)调整注册或 AST |

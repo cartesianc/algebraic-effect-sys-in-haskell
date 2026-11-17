@@ -86,11 +86,25 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 方法已经捕获绑定的路径不需要跨链解析；某些路径已捕获、其他路径尚未捕获是合法的。只对后者检查唯一来源。`Recover` 保留可能失败前缀，不假定正文生产全部完成。`Source` 只保存最终候选集合，不把路径证明伪装成已保存的数据；运行校验检查引用和可见性等字段自洽，不重跑来源分析，runtime 再核对本次实际已发布来源的唯一性。
 
+<a id="missing-source"></a>
+### 静态无来源诊断
+
+来源证明对**从 AST 节点或选择入口、沿提取后的 MethodShape 分析到的普通读取点**记录两个事实：是否到达，以及是否至少有一条已分析路径能取得合法供值或已有捕获。这里的到达是结构分析的到达：提取会擦除原子 IO 并枚举条件分支，不证明任意业务条件在实际运行中可达。所有路径都没有这项证据时，gen 拒绝该读取，诊断指出资产、读取节点与位置；仅仅注册了生产者，或生产方法在全图可达，不足以让它对这个读取点可见。
+
+例如有限 `chained` 或同一 lifelong 单元内，R 先读取 X、P 后驱动 X，而 R 自己及合法前驱都不提供 X，这个组合在生成期拒绝。lifelong 的轮次隔离不会拿上一轮的普通发布补足 R。修复应在当前可见性规则内把驱动放到读取之前，或由 R 的入口显式声明 `requests`；不从 AST 后继或普通 parallel 兄弟借值。
+
+该检查保留以下边界：
+
+- 一条路径已有捕获、另一条可能缺值，或挂接解析可能成功也可能失败时，只要同一读取点仍有合法取值证据，就保留运行时缺值处理。不会要求每次生产都成功。
+- `Recover`／`catchError` 保留失败前缀及其发布状态；捕获运行失败不能使一个在所有路径上都无来源的读取合法。
+- 持续资产沿会话协议判断；本项检查也不套用到 `SessionChain` 生产步骤和备用 interpreter 会话挂载。备用计划从空环境分析，不代表实际启动一定没有捕获或前态；不能据此拒绝合法的 lifelong 来源。scope 资源通过既有 owner 与开启位置检查定位，诊断、cleanup 与 close 的局部读取继续按原协议处理。
+- 检查粒度沿用 `ReadPoint NodeId 基础契约`，只对已分析到的读取收集证据，不新增方法体位置身份。它不证明所有路径可成功，不是完整等待环或任意 IO 进展检查。
+
 分析状态只保存本链或后续 workflow 可能读取的基础契约。读取集合从已有 `chainReaches` 推导，即链能到达的读取方法；生产方法每次调用都生产，不按调用方的声明改成读取。每个方法出口先投影发布与捕获状态，再去重；顺序节点向后传递后续仍需的发布，parallel 的各分支仍从同一前置状态分析，结果先投影再组合。`chainDrives`、`chainReads` 与来源候选单独累计，裁剪不删除这些事实，也不改变 runtime 的绑定保存。方法失败仍携带相关状态供 `Recover`／吞错注入继续；workflow 失败没有恢复后继，发布组合可直接丢弃。
 
 这样可消除独立、后续无人读取的可选发布造成的 `2^N` 状态组合；仍同时相关的契约保留原有路径关联，最坏状态数仍可能指数增长。本次优化不声称整体分析具有线性复杂度。lifelong 按原型的 `lifelongUnits` 分别分析消费单元：生产挂载以该单元的读取集合为后续需求，仍保留生产链自身的读取依赖；各成功出口再投影到单元相关契约，Receive 的步骤及不同会话逐步组合并去重。无关会话的差异在组合前消除；同一出口内相关资产的来源身份与缺值路径保留。单个单元或生产链自身同时相关的状态仍可能指数增长。lifelong 有一个正常出口：全部单元结束后后继继续。出口状态除了进入 lifelong 之前的发布，还带上单元内可能发布后继所读契约的位置（取自已累计的驱动事实，不含会话挂载）。每个来源保留它最新一次发布，所以后继读到的是该位置最新的值，最后一轮没有执行到它时取更早的轮次。同一单元内互斥的位置（不同 alternative 候选）发布同一契约时，`retainedChoice` 允许这几个候选并存，每个候选按一条路径分析，运行时按轮次取最新的那个；来自不同单元、同一轮可能都发布、或与 lifelong 之外的来源并存时，仍按来源唯一规则报错。后继读取持续资产时读已结束的 lifelong 会话；有多个先于它、互不先后的 lifelong 都有这个会话时，`successorRead` 报 `InvalidLifelong`。
 
-无 owner 资产运行时依次查当前捕获与静态许可的实际发布。读取不生产：在读取前取得共享通知，缺值时由 `contextMayPublish` 根据 `protoSources` 与候选节点进度判断是否继续等待。只有已知候选都已退休时，才判为耗尽；Context 随后再次读取绑定，仍缺值才报 `ContextNotInitialized`。等待者自己的节点不列为候选：链在载体里顺序执行，读取阻塞期间本链不可能发布；只有等待者在会话链上时仍保留本链的静态生产上界（`chainDrives`、`chainReaches`）。未知来源、会话来源及其他仍可能生产的运行链继续等待；普通发布和节点退休都唤醒等待者重查。值仍只来自 `requests` 驱动、alternative 的选择读取、挂接注入与 Stream 会话；显式驱动每次执行，不参与合并。生成期来源证明本轮不变，没有新增生产机会或方法体位置的分析。
+无 owner 资产运行时依次查当前捕获与静态许可的实际发布。读取不生产：在读取前取得共享通知，缺值时由 `contextMayPublish` 根据 `protoSources` 与候选节点进度判断是否继续等待。只有已知候选都已退休时，才判为耗尽；Context 随后再次读取绑定，仍缺值才报 `ContextNotInitialized`。等待者自己的节点不列为候选：链在载体里顺序执行，读取阻塞期间本链不可能发布；只有等待者在会话链上时仍保留本链的静态生产上界（`chainDrives`、`chainReaches`）。未知来源、会话来源及其他仍可能生产的运行链继续等待；普通发布和节点退休都唤醒等待者重查。值仍只来自 `requests` 驱动、alternative 的选择读取、挂接注入与 Stream 会话；显式驱动每次执行，不参与合并。最低限度的静态拒绝见[无来源诊断](#missing-source)；运行时协议没有增加生产机会或方法体位置的分析。
 
 当前可见性仍只许可 AST 保证先完成的前驱和本入口自己的发布，parallel 兄弟互不可见；保守耗尽判断没有放宽来源或改写存储。下一步的完整方案尚未实现：parallel 兄弟纳入可见范围，来源分析检查等待进展与读取确定性，运行时迁移到按执行帧的资产 state，见[主设计：可见范围与等待的结束](LATEST_DESIGN.md#await-visibility)。资源契约即使保留读取点，也仍由 owner 协议定位，缺值时不等待也不生产，报 `ContextNotInitialized`；诊断、自动 cleanup 与 close 期间同样不等待。
 
@@ -147,7 +161,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 ## 生成期构图，运行期初始化与执行
 
-生成阶段按[组合状态机](COMPOSITION.md#pipeline)的依赖推进，由 `Gen.Composition` 统一确定装配含义；内部步骤可使用 `Prototype.Query` 的共享纯关系查询：
+生成阶段按[主设计的编译流水线](LATEST_DESIGN.md#generation)推进；本节只解释图与来源的产物关系，阶段状态和检查点不在这里另行定义。`Gen.Composition` 内部步骤可以使用 `Prototype.Query` 的共享纯关系查询：
 
 1. **声明与挂载。** 解析注册、资产与 Input。AST 已用 `node` 指定末端，给每次挂载编号；检查 alternative 的分支契约及覆盖，定下持续会话与输出复用位置。末端不是从全图寻找的叶子。
 2. **接口与方法组成。** 计算挂载、选择器、会话步骤、输出连接、有序 requests／Input、raw 来源和读取路由，并据此形成 handler 类型能力。前端 `Gen.Shape` 提取读取形状后，机器把形状代换成对应 effect 方法的结构。一个 handler 的不同绑定仍保留各自入口与路由。
@@ -156,7 +170,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 5. **来源与完成校验。** 结合方法结构、链挂载和 workflow 形成读取来源与 scope 开启计划，保留相关路径差异并裁剪无关状态。原型自洽和 Context 驱动检查完成后，结果才交给输出阶段。
 6. **输出与类检。** Emit 读取结果，生成普通 Haskell 的契约、入口和 `generatedPrototype`。GHC 在内存中完成类型及源码资产检查，再写回 Generated；`Generated/Assets.hs` 是独立资产目录。
 
-这是同一套结构语义计算的阶段，不是多个分析器各自作决定后再拼接。分支路径、方法缓存和来源集合是机器内部的工作数据；状态转换负责规定何时可使用哪些事实。源码加载、语法提取、文件写入和 Haskell 渲染仍各有模块，均不承担第二份组合判定。
+各阶段使用不同的专门算法，按依赖关系消费前一步事实；统一状态转换控制次序，最终装配结果供生成和运行共用。分支路径、方法缓存和来源集合仍是各算法的工作数据。源码加载、语法提取、文件写入和 Haskell 渲染保持各自职责，不重新选择组合解释。
 
 <a id="reuse-boundary"></a>
 ### 结构共享与执行复用
@@ -275,9 +289,10 @@ generatedPrototype :: SDK.Prototype MethodGen
 
 该分支通过纯校验核对当前 AST 与原型快照，以可读格式显示带 `NodeId` 的 workflow、origin／ctx 链定义、链挂载、方法及其 effect 归属、方法引用、scope 层次与共享父节点、各入口路径，以及双向实证和未定关系。它读取同一份原型，不调用 `createEntries`，不创建运行 scope 句柄，也不装配或执行 handler。普通启动在自己的单次执行装配 fold 中核对相同挂载规则。修改注册、AST 或手写 handler 后须重新生成。
 
+<a id="cache"></a>
 ## 内容缓存与重跑边界
 
-每次 gencode 仍加载声明并读取 Handlers 快照；结构分析和执行副本共用该快照，顶层检查与资产目录另用 GHC 名称解析同一快照，每次执行。`Generated/.scope-cache` 保存输入 key、纯 `Prototype String` 与已经渲染的 Haskell 源码。缓存 key 为 `show (compositionKey pending, dependencies)`：`compositionKey` 精确编码 `unitPlan`、`unitAssembly` 与组成后的方法结构，`dependencies` 是相关 SDK 源码的完整文本。统一计算模块 `Gen/Composition.hs` 在其中，完整依赖列表由 [Framework.Gen](../sdk/Framework/Gen.hs) 的 `structureSources` 维护，不在文档复制。缓存命中只替代 `BuildingStructure`／`ProvingSources` 的计算，`completeComposition` 仍进入 `Checking`。它不能按方法名或 mtime 猜测，也不加载 `Generated.Program` 来读取缓存。
+每次 gencode 仍加载声明并读取 Handlers 快照；结构分析和执行副本共用该快照，顶层检查与资产目录另用 GHC 名称解析同一快照，每次执行。`Generated/.scope-cache` 保存输入 key、纯 `Prototype String` 与已经渲染的 Haskell 源码。缓存 key 为 `show (compositionKey pending, dependencies)`：`compositionKey` 精确编码 `unitPlan`、`unitAssembly`、表示是否已有 Handlers 的 `checked` 标记及组成后的方法结构，`dependencies` 是相关 SDK 源码的完整文本。统一计算模块 `Gen/Composition.hs` 在其中，完整依赖列表由 [Framework.Gen](../sdk/Framework/Gen.hs) 的 `structureSources` 维护，不在文档复制。缓存命中只替代 `BuildingStructure`／`ProvingSources` 的计算，`completeComposition` 仍进入 `Checking`。首次尚无 Handlers 与已有 Handlers 的生成使用不同 key，不能以首次契约阶段的缓存绕过已有方法体的来源检查。它不能按方法名或 mtime 猜测，也不加载 `Generated.Program` 来读取缓存。
 
 key 未变时复用纯原型和渲染文本，仍运行 `validatePrototype`、`checkDriven` 及源码资产检查；首次没有 Handlers 时仍按原协议跳过驱动检查、先提供契约。原子业务 IO 的修改若不改变方法结构，可复用原型，同时更新业务包装副本及源码指纹。每份生成文件都先比较完整内容，内容相同就不写回；这减少结构重算和无变化文件写入，不等于跳过整条生成命令，也不是逐方法热点生成、文件监听或运行中热重载。
 

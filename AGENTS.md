@@ -25,7 +25,7 @@
 - 持续执行由首次需求建立运行，之后按增量驱动。持续资产的生产计划与读取方的重复启动分别由组合关系确定；普通 `requires` 捕获一次值，不继承上游订阅。handler 按声明表示类型读取，累计记录等数据由业务资产与原子操作表达，不在 SDK 内设置历史类型特例。lifelong 内的原子操作可通过挂接的持续 Context 发布资产；gen 将输出连接绑定到实际 AST 挂载，同次输出不再另起派生操作。Stream 来源仍不进入原始消费链。普通资产保留原来的 AST 可见性，不随持续交付隐式透传；详见 Stream 规范。
 - 取值的捕获、来源可见性、缺值等待（require 不生产）、资源认领和 scope 回收保证（按实际参数生产身份区分[单例与多例](docs/LATEST_DESIGN.md#scope-identity)，结合当前使用与执行帧的待用关系[按可达性回收](docs/LATEST_DESIGN.md#scope-gc)）不能在重构中弱化。持续资产的最新值也沿用原 Binding 的生产身份与执行帧作为开启参数；待交付值与业务资产内嵌资源的持有仍未定义。完整规则按下表阅读，不在本文件复制协议。
 - gen 是这个 EDSL 的编译器。SDK 分为源语言（`Framework/Language/`）、gen（`Framework/Gen/`）、编译产物（`Framework/Prototype/`、Generated）与运行时（`Framework/Runtime/`）四层，依赖只从上往下：gen 不导入运行时，运行时不导入 gen。能在生成期判定的组合、读取路由与合法性问题由 gen 报错，不留给运行时；新增检查放进流水线的对应阶段，见 [gen 是编译器](docs/LATEST_DESIGN.md#compiler)与[编译流水线](docs/LATEST_DESIGN.md#generation)。
-- 组合含义由 `Gen.Composition` 的统一状态转换计算；新增组合规则进入同一计算，不让 Emit 或运行时重新推断。前端提取结构，输出阶段读取已确定的类型能力、路由与装配事实。哲学原则见[组合推导](docs/COMPOSITION.md#why)。
+- 组合产生的特设多态是框架的语义核心：声明元素由静态组合关系取得解释，handler 保持原子实现。新增规则先明确结构前提、解释与拒绝条件，再进入 `Gen.Composition` 的统一计算；Emit 和 runtime 执行已确定的类型能力、路由与装配事实，不另行推断。统一入口与事实产物已经存在，内部仍按依赖分阶段计算；不把这描述成通用规则求解器。原则见[主设计](docs/LATEST_DESIGN.md#composition-polymorphism)与[组合推导](docs/COMPOSITION.md#why)。
 - Prototype 是纯结构，RuntimeGraph 保存活动关系，ScopeTree 独立且无环。生成、执行、展示共享同一静态模型。
 - Generated 是派生产物；修改手写输入后显式生成，不在构建中隐式修改源码，不把手改生成结果当作持久权威。
 - 当前能力与延期边界以[所属规范](docs/LATEST_DESIGN.md)为准，阶段状态和未完成项集中在 [Next stages](docs/NEXT_STAGES.md#stages)。修改前按下表读取对应协议；不得把历史方案、待设计接口或计划写成当前能力。本文件不复制另一份实现状态清单。

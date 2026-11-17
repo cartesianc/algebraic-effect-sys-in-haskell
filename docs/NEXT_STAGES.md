@@ -2,7 +2,7 @@
 
 更新：2026-11-17。本文是阶段计划与开放项的唯一入口，保存各阶段的目标、剩余工作和必要的完成摘要。当前协议在[主设计](LATEST_DESIGN.md)及其专题中维护；历史验证集中在[验证边界](#baseline)，不代表本次重新执行。
 
-**当前进度：** handler 复用、scope 可达性回收、Stream 两侧结束、后继读取、交付保留和会话退役已落地。本轮补齐持续生产与有限取值的组合边界，纠正 SDK 内的历史类型特例。剩余资源重点是待交付值与业务资产内嵌资源的持有，再接通相应回收。
+**当前进度：** handler 复用、scope 可达性回收、Stream 两侧结束、后继读取、交付保留和会话退役已落地。持续生产与有限取值的组合边界已经补齐；本轮收尾生成期无来源诊断、签名报错、内部封装与组合设计文档。剩余资源重点是待交付值与业务资产内嵌资源的持有，再接通相应回收。
 
 <a id="code-shape"></a>
 ## 代码长什么样
@@ -36,7 +36,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 <a id="composition-machine"></a>
 ### 统一组合计算
 
-**已完成（2026-11-17）。** 将声明关系、会话选择、handler 能力、精细化 DI、图与来源证明收进 `Gen.Composition` 的同一状态转换。它计算结构的含义，Emit 读取确定结果；不保留多个各自判断相同组合的分析入口。设计依据见[组合逻辑的核心意义](COMPOSITION.md#why)，运行和资源协议保持不变。
+**已完成（2026-11-17）。** `Gen.Composition` 统一阶段转换、接口与装配事实，Emit 改为读取确定结果。声明、会话、绑定、构图与来源证明仍使用各自算法；这不是通用规则求解器，也未消除路径复杂度。设计依据见[组合逻辑的核心意义](COMPOSITION.md#why)，运行和资源协议保持不变。
 
 本轮按以下顺序完成：
 
@@ -46,6 +46,18 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 4. 显式重新生成现有示例并做必要普通编译，核对 facade 与生成结果；实际结果记在验证摘要。
 
 这项工作为后续组合判断提供单一落点，不新增用户语法、运行时调度机制、通用 IO 去重或额外资源持有规则。Stage 5／7 的业务边界继续单独收敛。
+
+<a id="composition-review"></a>
+### 当前收尾：组合检查与计算边界
+
+**已完成（2026-11-17）。** 根据分支复查完成以下收尾；本轮生成与普通编译结果见[验证摘要](#baseline)：
+
+1. 对已到达、在所有已分析路径均无合法供值或捕获的普通读取，增加生成期拒绝；条件生产、会话、资源与收尾仍保留原有处理，详细边界见[静态无来源诊断](EFFECT_GRAPH.md#missing-source)。不放宽可见性，也不新增语法。
+2. 共享 handler 签名冲突重新显示业务作者能读懂的类型与能力约束；纯结构的 Show／Read 表示保留。
+3. 将阶段专用助手收进对应计算入口的局部作用域，只保留必要的跨阶段关系查询；统一状态转换与既有阶段次序不变。
+4. 吸收 `docs/composition-polymorphism` 的核心理念补充：README 与设计原则突出组合多态，COMPOSITION 保留理念、产物与规则定位，状态／检查点归主设计流水线，缓存归图规范。文档不把现有阶段机描述成逐元素解释表或通用求解器。
+
+这批收尾不实现 Stage 5／7 的资源持有，也不把历史编译或其他分支的 demo 运行作为本轮验证。
 
 <a id="composition-driving"></a>
 ### 持续生产与固定取值的组合
@@ -164,13 +176,13 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 | 同单元直接或经 Derive 等待 Scoped.open 的复用输出被保守拒绝：复用实例不产生新输出；必定 fresh 的精确放行未做 | [输出复用规范](STREAM_LIFELONG.md#derive) |
 | 未领取交付没有硬容量与背压上限；interpreter 托管会话和 ReuseOutput 不按读取方计数退役 | [交付保留](STREAM_LIFELONG.md#retention)、[退役规则](STREAM_LIFELONG.md#consumer-end) |
 | 含 lifelong 程序的失败仍终止整次运行 | [临时失败协议](STREAM_LIFELONG.md#failures) |
-| 同单元 `require` 位于其发布节点之前的写法：启动依赖检查不覆盖 `require`，其他检查是否拒绝尚未确认 | 后续等待分析；不据此宣称已无等待环 |
+| 生成期无来源诊断只覆盖已分析的普通读取点；合法来源在部分运行路径不发布仍由 runtime 处理，不证明全部等待可结束 | [本轮收尾](#composition-review)、[静态无来源诊断](EFFECT_GRAPH.md#missing-source) |
 | 来源状态与 scope 路径仍可能指数增长；共享通知存在多余唤醒，尚无大规模性能与长期堆占用实测 | [图与来源](EFFECT_GRAPH.md)、[会话复杂度](STREAM_LIFELONG.md#retention-cost) |
 
 <a id="stage-2-await"></a>
 ## 普通 require 的完整等待迁移
 
-**最低限度的保守结束已实现；完整迁移已定方向、未实施。** 当前仍按 origin 保存普通资产，使用捕获与静态来源表；规则见[Context](LATEST_DESIGN.md#context)。目标可见性、确定性与帧语义仅在[完整等待方案](LATEST_DESIGN.md#await-visibility)维护。
+**最低限度的保守结束已实现；静态无来源拒绝在[本轮收尾](#composition-review)补齐，完整迁移已定方向、未实施。** 当前仍按 origin 保存普通资产，使用捕获与静态来源表；规则见[Context](LATEST_DESIGN.md#context)。目标可见性、确定性与帧语义仅在[完整等待方案](LATEST_DESIGN.md#await-visibility)维护。
 
 后续实施落点：
 
@@ -226,7 +238,7 @@ LSP 仓库的来源可见性穷举模型尚未扩展到 Stream／lifelong；订�
 <a id="baseline"></a>
 ## 完成与验证摘要
 
-下表及标为“历史验证”的段落是已有记录，**不是本次重跑结果**；本轮结果单独列在[持续生产与固定取值验证](#composition-driving-verification)。保留影响判断的结论与未覆盖范围，逐次探针、临时接口和被后续修复取代的方案查 Git 历史。历史编译与有限示例不能证明全部调度、任意业务 IO 或资源逃逸安全。
+下表及已有验证段落是历史记录，**不是本次重跑结果**；当前[组合检查收尾](#composition-review)的生成与编译结果尚待回填。保留影响判断的结论与未覆盖范围，逐次探针、临时接口和被后续修复取代的方案查 Git 历史。历史编译与有限示例不能证明全部调度、任意业务 IO 或资源逃逸安全。
 
 | 日期／工作 | 已有验证记录 | 仍需留意 |
 | --- | --- | --- |
@@ -247,6 +259,8 @@ LSP 仓库的来源可见性穷举模型尚未扩展到 Stream／lifelong；订�
 
 <a id="composition-driving-verification"></a>
 **持续生产与固定取值验证（2026-11-17）：** 八个现有命名空间显式重新生成，生成器的 beforegen 与生成副本类型检查通过；五个普通示例的生成文件无变化，StreamDemo、FacadeProbe、LinesDemo 各更新四份生成文件。`cabal build all --offline -j1` 通过，退出码 0。静态交叉复查有限 Derive 的装配、取消、游标交接与 Binding 生产身份。未新增测试或负例，未运行业务 demo，未做并发或内存测量。LinesDemo 的 `snapshotAst` 仅作为声明参与编译，没有选作 `ast` 重新生成或执行；因此本轮编译不作为其运行结果的证明。
+
+**本轮组合检查收尾验证（2026-11-17）：** 新增真实 workflow 读取根的最低限度无来源诊断、可读签名冲突信息及阶段助手的词法封装；同步组合设计与文档分工。八个现有命名空间显式重新生成并通过生成器的类型检查，均为 `0 files updated`；最终 `cabal build all --offline -j1` 通过，退出码 0，补丁格式检查通过。runtime、手写 demo 与生成文件均未修改。未新增或执行负例、测试及业务 demo；缺值与冲突诊断的具体失败路径、本次首次无 Handlers 与缓存路径只做源码核对，不能把普通编译当作这些路径的实测。检查仍按 ReadPoint 聚合，并排除 SessionChain 等既有协议，完整边界见[图规范](EFFECT_GRAPH.md#missing-source)。
 
 <a id="maintenance"></a>
 ## 怎样维护这份计划
