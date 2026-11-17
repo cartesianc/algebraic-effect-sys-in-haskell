@@ -147,6 +147,8 @@ data Source = FromChains [NodeId] | FromOwnChain | FromSession
 -- 每个挂载链开启各 Scoped 时，参数 Context 的生产节点或会话来源。
 -- FromSession 固定为所选交付，不把它伪装成没有候选的普通发布。FromOwnChain 不用于开启计划。
 -- 候选包含本链与已经捕获的来源；不是运行时任选来源的许可，也不保存分支相关性。
+-- 与 SessionProto.mounts 联合供持续待用使用；无需另一份会话资源图。
+-- runtime 只在许可出处内匹配实际生产身份，不用 openingKinds 直接决定何时 close。
 data ScopeOpening = ScopeOpeningPlan
   { openingNode :: NodeId
   , openingScope :: String

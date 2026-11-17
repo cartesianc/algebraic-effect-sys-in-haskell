@@ -858,7 +858,7 @@ runClose name wrap (AppRun action) = AppRun $ do
 -- consumer 覆盖整个末端调用、诊断和结果消费；嵌套方法返回不提前释放借用。
 -- Launch 提供本次调用的初始捕获；返回完整捕获快照，由 Runtime 按交接边界选取。
 -- 普通 Handoff 过滤资源；同一 Receive 步骤的 parser 可接收来源已捕获的资源，
--- 两次调用共用会话的 ScopeUser，原 Binding 的生产身份、归属与关闭责任不变。
+-- 两次调用共用本生产步骤的 ScopeUser，原 Binding 的生产身份、归属与关闭责任不变。
 runAppWith :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> NodeId -> Launch env cause
            -> env -> App env cause value
            -> IO (Either (Failure cause) value, ScopeBindings env cause, [(String, View env cause)])

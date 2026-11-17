@@ -1926,6 +1926,11 @@ resolveSources checked connections definitions defaultReaders prototype = do
            origin <- lookup source observed
            pure (source, origin)
       | source <- effectOpeningInputs effect ]
+    -- 资源组合事实 v2（2026-11-18）：同一计算覆盖 AST、选择读取和 SessionChain。
+    -- openingSources 是允许匹配的参数出处，kinds 是路径上的身份候选，不是 close 策略。
+    -- SessionProto.mounts 与本表共同支持运行时的持续待用帧；实际 Binding/ActivationId
+    -- 决定某个具体实例是否仍可复用。不能在 Emit/runtime 按 request、Stream 或业务 IO
+    -- 重新推导一份寿命分类，也不能把新参数生产解释成旧实例失去全部使用者。
     recordOpening :: AssetCall -> EffectProto String -> AssetState -> AssetAnalysis ()
     recordOpening call effect state = case openingInputs effect state of
       Nothing -> pure ()

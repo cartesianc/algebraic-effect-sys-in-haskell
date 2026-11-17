@@ -116,6 +116,8 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 
 - 新增一种由组合推导的行为时，先在所属专题写完整规则，再在这里加一行，并链接过去。
 - 每条规则先说明结构前提、解释与拒绝条件；本文维护组合原则、产物和规则定位，详细协议归所属专题，阶段状态与验证结果归 [Next stages](NEXT_STAGES.md)。
+- 实现前先列明需要的静态事实与动态状态。已有 Prototype 事实足以表达时直接复用，不为统一入口再造一份计划；确需新增组合解释时，先扩展 `Gen.Composition` 对应计算及其事实产物，Emit 与 runtime 只消费该结果。
+- runtime 依据已有许可关系匹配实际 `ActivationId`、执行帧、使用者与终态，不根据资产内容或 IO 形式重判业务类别。新增资源行为须说明使用了哪些开启计划、来源、会话挂载和 ScopeTree 事实，以及在哪个运行事件撤销使用；不能把生命周期协调写成第二套结构推导。
 - 未实现的行为只出现在各节的“尚未覆盖”中，不写成当前能力。
 
 <a id="context"></a>
@@ -166,15 +168,15 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | 实例属于哪一层 | 无需写法 | 参数生产所在的执行帧 | 取参数中最内层的帧，无参数取根帧；lifelong 本轮生产参数的实例归本轮 | 同上、[按可达性回收](LATEST_DESIGN.md#scope-gc) |
 | 一份资源只有一个关闭者 | Scoped `requests` 资源 Context | open 认领资源绑定 | 首次 open 认领为 owner，所有副本看到同一归属；其他实例认领报 `ScopeContextMismatch` | [scope](LATEST_DESIGN.md#scope) |
 | 只在已开启的链里读资源 | handler `require` 资源 | 资源读取点与所属 scope 的开启位置 | 资源在本链的 scope 开启前被读取，生成期拒绝；运行时不扫描其他活实例来补 | [Scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention) |
-| 不再使用时关闭 | 无需写法；close 写在 Scoped 上，可为 `Nothing` | 执行帧的待用关系、开启计划 | 没有当前使用者、没有匹配的待用节点、没有保留它的子 scope 时同步关闭；`Nothing` 时只移出运行表 | [按可达性回收](LATEST_DESIGN.md#scope-gc) |
+| 不再使用时关闭 | 无需写法；close 写在 Scoped 上，可为 `Nothing` | 执行帧的待用关系、开启计划 | 没有当前使用者、匹配的待用或已有 ownership 保留，也没有保留它的子 scope 时同步关闭；`Nothing` 时只移出运行表 | [按可达性回收](LATEST_DESIGN.md#scope-gc) |
 | 关闭顺序 | 无需写法 | ScopeTree：静态路径上的共同必经前序，加上 Input／requests 链与资源来源给出的注册前提 | 子先父后；实例只保留同一受控链实际使用的父实例 | [图与来源](EFFECT_GRAPH.md) |
-| 资源随持续生产存续 | 来源的 Input 上游放 Scoped | 会话挂载、开启计划 | 会话的使用登记跨生产步骤持有资源；会话退役后按可达性关闭（见[第 6 节](#stream)） | [Stream 8.1](STREAM_LIFELONG.md#production)、[9.5](STREAM_LIFELONG.md#consumer-end) |
+| 持续执行中复用与回收实例 | 来源的 Input 上游放 Scoped，开启参数按既有 demands 取得 | `SessionProto` 的挂载、`ScopeOpening` 的参数来源、`Source` 读取许可与 `ScopeTree` | 每步撤销实际使用；会话待用帧按实际参数身份保留后续所需实例，新 request 不直接关闭旧实例 | [Stream 资源边界](STREAM_LIFELONG.md#binding-retention)、[事实分工](EFFECT_GRAPH.md#scope-opening-retention) |
 | 故障归到资源 | Error 的 `handles`；关联 scope 不写 | 沿 Input／requests 找最近的 Scoped，必须恰好一个 | 在同一棵 ScopeTree 的祖先路径上依次检测、处置 | [Error](LATEST_DESIGN.md#error) |
 
 <a id="scope-missing"></a>
 ### 尚未覆盖
 
-待交付数据和业务资产内嵌资源的持有登记、一个 Scoped 注册服务多种细化资源，仍未实现（见 [Next stages](NEXT_STAGES.md)）。业务资产保存记录不自动合并其中各资源的 owner。
+待交付和已捕获值已有 ownership 的保留见[资源协议](STREAM_LIFELONG.md#binding-retention)。任意业务 ADT 内嵌资源、一个 Scoped 注册服务多种细化资源仍未实现（见 [Next stages](NEXT_STAGES.md#deferred)）；普通解析数据不继承生产资源的寿命，业务资产保存记录也不自动合并其中各资源的 owner。
 
 <a id="stream"></a>
 ## 6. 持续执行（Stream 与 lifelong）
@@ -198,7 +200,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | 由上游每条交付驱动产出一条 | Context `stream = True`，Input 链上有 `streams "U"`，本 lifelong 没有它的发布位置 | `BootPlan` 为 Derive | 领取一条 U 的交付 → 执行被驱动的 Input 链 → parser 发布一条；可以逐级串联 | [4.2](STREAM_LIFELONG.md#derive)、[8.1](STREAM_LIFELONG.md#production) | `mapEffect` |
 | 消费步骤的输出成为新的持续资产，不重跑该步骤 | Context 挂在 lifelong 节点的原子句柄下 | `BootPlan` 为 `ReuseOutput [发布节点]` | 节点执行后由挂接 parser 发布，不另开任务；发布节点都结束或所在单元结束后封口 | [4.2](STREAM_LIFELONG.md#derive) | `mapEffect` 的结果再被共享 |
 | 每步生产带上同一步的辅助产物 | 生产链上的其他 Context 照常发布 | 独立生产任务的伴随发布 | 每条交付附带同一步发布的普通资产，消费方读到的是同一步的产物 | [7](STREAM_LIFELONG.md#sessions) | — |
-| 资源随生产存续 | 来源的 Input 上游放 Scoped（如 StreamDemo 的 `SensorLink`） | scope 开启计划、会话挂载 | 会话的使用登记跨步骤持有资源；会话退役后按可达性关闭 | [8.1](STREAM_LIFELONG.md#production)、[9.5](STREAM_LIFELONG.md#consumer-end) | `acquireRelease` |
+| 资源随生产存续 | 来源的 Input 上游放 Scoped（如 StreamDemo 的 `SensorLink`） | scope 开启计划、会话挂载 | 按[第 5 节](#scope)的同一实例待用规则保持跨步骤复用；退役撤销会话预约 | [9.3](STREAM_LIFELONG.md#binding-retention) | `acquireRelease` |
 | lifelong 的独立来源没有消费方时停止生产 | 无需写法 | lifelong 边界内 Receive／Derive 的读取方登记 | 读取方全部离开时会话退役：停止生产任务 → 封口 → 回收只在会话中开启的 scope；上游同属该边界且无人读取时一并退役。interpreter 托管会话在运行退出时停止，ReuseOutput 按发布位置封口 | [9.5](STREAM_LIFELONG.md#consumer-end) | 按引用计数共享的流 |
 | 生产失败 | 无需写法 | — | 会话失败并通知运行监督；含 lifelong 的程序暂按临时规则终止整次运行 | [9.1](STREAM_LIFELONG.md#failures) | — |
 

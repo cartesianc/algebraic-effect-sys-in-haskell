@@ -7,9 +7,9 @@
 module Framework.Runtime.Session
   ( SessionKey, View, Delivery, Broken, Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..)
   , Session, sessionKey, sessionBindings, sessionViews
-  , newSession, appendDelivery, breakSession, endSession, wakeSession, setSessionWorker, stopSession
+  , newSession, appendDelivery, breakSession, endSession, wakeSession, setSessionWorker, stopSession, sessionStopping
   , setSessionRetirement, retireSession, departSession, sessionIdle
-  , awaitView, currentView, retainedView, pendingBindings, pendingDelivery, Cursor, admitReaders, attachReader, leaveSession, takeDelivery, takeDeliveryOn, completeSessionStep, sessionCaughtUp, feedSession, awaitUpstream, upstreamOf
+  , awaitView, currentView, retainedView, pendingBindings, pendingDelivery, Cursor, admitReaders, attachReader, leaveSession, takeDelivery, takeDeliveryWith, takeDeliveryOn, completeSessionStep, sessionCaughtUp, feedSession, awaitUpstream, upstreamOf
   ) where
 
 import Control.Concurrent (ThreadId, killThread)
@@ -233,7 +233,16 @@ awaitState session = awaitStateOn (stateSignal <$> readMVar (sessionState sessio
 awaitStateOn :: IO (MVar ()) -> Session environment cause -> Retention environment cause
              -> IO (Maybe (Stopped cause)) -> (SessionState environment cause -> Maybe result)
              -> (result -> [ScopeBinding environment cause]) -> IO (Either (Stopped cause) result)
-awaitStateOn signal session retention interrupted ready retained = do
+awaitStateOn signal session retention interrupted ready retained =
+  awaitStateOnWith signal session retention interrupted ready retained (const (pure ()))
+
+-- 已选交付的身份交接与保留登记处在同一协调事务。回调只能更新运行时内存事实，
+-- 不能重新取得 coordinator、运行 handler 或等待；尚无交付时不执行回调。
+awaitStateOnWith :: IO (MVar ()) -> Session environment cause -> Retention environment cause
+                 -> IO (Maybe (Stopped cause)) -> (SessionState environment cause -> Maybe result)
+                 -> (result -> [ScopeBinding environment cause]) -> (result -> IO ())
+                 -> IO (Either (Stopped cause) result)
+awaitStateOnWith signal session retention interrupted ready retained selectedValue = do
   changed <- signal
   selected <- select
   case selected of
@@ -242,13 +251,14 @@ awaitStateOn signal session retention interrupted ready retained = do
       halted <- interrupted
       case halted of
         Just reason -> maybe (Left reason) id <$> select
-        Nothing -> readMVar changed >> awaitStateOn signal session retention interrupted ready retained
+        Nothing -> readMVar changed >> awaitStateOnWith signal session retention interrupted ready retained selectedValue
   where
     select = withRetentionLock retention $ do
       state <- readMVar (sessionState session)
       case (ready state, stateStopped state) of
         (Just result, _) -> do
           keepBindingsLocked retention (retained result)
+          selectedValue result
           pure (Just (Right result))
         (Nothing, Just reason) -> pure (Just (Left reason))
         (Nothing, Nothing) -> pure Nothing
@@ -385,19 +395,31 @@ takeDelivery :: Session environment cause -> Cursor -> Retention environment cau
              -> IO (Either (Stopped cause) (Delivery environment cause))
 takeDelivery session = takeDeliveryOn (stateSignal <$> readMVar (sessionState session)) session
 
+-- 交付交接 v1（2026-11-18）：Derive 在游标前进及队列撤销之前更新确切选择，
+-- 等待期间仍保留旧选择。回调沿上面的协调事务执行，只更新 IORef，不自行取得协调锁。
+takeDeliveryWith :: Session environment cause -> Cursor -> Retention environment cause -> IO (Maybe (Stopped cause))
+                 -> (Delivery environment cause -> IO ()) -> IO (Either (Stopped cause) (Delivery environment cause))
+takeDeliveryWith session = takeDeliveryOnWith (stateSignal <$> readMVar (sessionState session)) session
+
 -- DeliveryFrame 用同一执行帧的通知同时等待发布、派生步骤完成和本轮节点退休。
 takeDeliveryOn :: IO (MVar ()) -> Session environment cause -> Cursor -> Retention environment cause -> IO (Maybe (Stopped cause))
                -> IO (Either (Stopped cause) (Delivery environment cause))
-takeDeliveryOn _ session Idle _ _ = ioError (userError ("A lifelong unit takes a delivery of " ++ snd (sessionKey session)
+takeDeliveryOn signal session cursor retention interrupted =
+  takeDeliveryOnWith signal session cursor retention interrupted (const (pure ()))
+
+takeDeliveryOnWith :: IO (MVar ()) -> Session environment cause -> Cursor -> Retention environment cause -> IO (Maybe (Stopped cause))
+                   -> (Delivery environment cause -> IO ()) -> IO (Either (Stopped cause) (Delivery environment cause))
+takeDeliveryOnWith _ session Idle _ _ _ = ioError (userError ("A lifelong unit takes a delivery of " ++ snd (sessionKey session)
   ++ " without a read point in the prototype; regenerate with the SDK effect-codegen command"))
-takeDeliveryOn signal session (Reading position) retention interrupted = do
+takeDeliveryOnWith signal session (Reading position) retention interrupted selected = do
   delivered <- readIORef position
-  outcome <- awaitStateOn signal session retention interrupted
+  outcome <- awaitStateOnWith signal session retention interrupted
     (\state -> let offset = delivered - stateBase state
       in if Seq.length (stateEntries state) > offset
         then Just (Seq.singleton (Seq.index (stateEntries state) offset), Seq.index (stateCompanions state) offset)
         else Nothing)
     (\(view, companions) -> toList view ++ map snd companions)
+    selected
   case outcome of
     -- 视图与伴随发布先求值，不让这次交付挂住整份会话状态；游标前进后放掉不再需要的部分。
     Right (view, companions) -> view `seq` companions `seq` do
@@ -419,7 +441,7 @@ upstreamOf :: Session environment cause -> IO (Maybe (Session environment cause)
 upstreamOf session = fmap fst <$> tryReadMVar (sessionUpstream session)
 
 -- Graph 在会话登记锁与不可中断区内启动并登记任务，再把 Session 交给使用方。
--- 一个会话只登记一次；ReuseOutput 不登记 worker。finished 由 Runtime 在撤销 ScopeUser 后填满。
+-- 一个会话只登记一次；ReuseOutput 不登记 worker。finished 由 Runtime 在撤销步骤 ScopeUser 和会话待用帧后填满。
 setSessionWorker :: Session environment cause -> ThreadId -> MVar () -> IO ()
 setSessionWorker session thread finished = modifyMVar_ (sessionWorker session) $ \worker -> case worker of
   NoWorker -> pure (RunningWorker thread finished)
@@ -437,3 +459,10 @@ stopSession session = uninterruptibleMask_ $ do
       pure (StoppingWorker finished, killThread thread >> readMVar finished)
     StoppingWorker finished -> pure (worker, readMVar finished)
   finish
+
+-- 只观察停止请求，不等待 worker 完成；用来区分 stopSession 发出的取消与意外取消。
+-- stopSession 先提交 StoppingWorker，再在 worker 锁外发送取消。
+sessionStopping :: Session environment cause -> IO Bool
+sessionStopping session = (\worker -> case worker of
+  StoppingWorker _ -> True
+  _ -> False) <$> readMVar (sessionWorker session)

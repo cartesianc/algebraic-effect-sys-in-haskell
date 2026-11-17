@@ -1,7 +1,7 @@
 -- 一次有限执行的节点进度；交付游标由 Runtime 的 DeliveryFrame 单独保存。
 -- 本模块不依赖 Scope 或 Graph，scope 在同一协调锁内只读这些事实。
 module Framework.Runtime.Frame
-  ( ExecutionFrame, NodeProgress(..), newExecutionFrame, newChildFrame, frameParent, frameDepth, frameBoundary, withFrameLock
+  ( ExecutionFrame, NodeProgress(..), newExecutionFrame, newChildFrame, newSessionFrame, frameParent, frameDepth, frameBoundary, withFrameLock
   , frameNodes, framePendingNodes, framePendingViews, captureFrameDeliveries, DeliveryIdentity, owningFrame
   , frameNodeProgress, frameSignal, notifyFrame
   , installSessionInputs, pendingSessionInput, captureSessionInput, capturedSessionInputs
@@ -45,20 +45,32 @@ instance Eq ExecutionFrame where
   left == right = frameProgress left == frameProgress right
 
 newExecutionFrame :: MVar () -> Maybe ExecutionFrame -> Maybe NodeId -> [NodeId] -> IO ExecutionFrame
-newExecutionFrame coordinator parent boundary nodes = uninterruptibleMask_ $ do
+newExecutionFrame coordinator parent boundary nodes =
+  -- 一般子帧随后安装交付查询；准备期间只对持续参数保守持有。
+  newPreparedFrame coordinator parent boundary nodes []
+    (\_ _ -> pure (case parent of Nothing -> Nothing; Just _ -> Just True))
+
+-- 初始化捕获和查询后才发布到父帧，避免并行回收观察到不完整的会话预约。
+newPreparedFrame :: MVar () -> Maybe ExecutionFrame -> Maybe NodeId -> [NodeId] -> [DeliveryIdentity]
+                 -> (String -> ActivationId -> IO (Maybe Bool)) -> IO ExecutionFrame
+newPreparedFrame coordinator parent boundary nodes delivered query = uninterruptibleMask_ $ do
   changed <- maybe (newEmptyMVar >>= newIORef) (pure . frameChanged) parent
-  -- 子帧先进入父帧目录、随后安装交付查询；这段装配窗口保守持有持续参数，
-  -- 避免并行回收把“尚未安装”误判为“本轮不会读取”。根帧沿 Graph 的有限读取路由。
-  let preparing _ _ = pure (case parent of Nothing -> Nothing; Just _ -> Just True)
   frame <- ExecutionFrame parent (maybe 0 ((+ 1) . frameDepth) parent) boundary coordinator
     <$> newIORef [(node, Pending) | node <- nub nodes]
-    <*> newIORef [] <*> newIORef [] <*> newIORef preparing <*> newIORef [] <*> pure changed
+    <*> newIORef delivered <*> newIORef [] <*> newIORef query <*> newIORef [] <*> pure changed
   withMVar coordinator $ \_ ->
     forM_ parent $ \ancestor -> modifyIORef' (frameChildren ancestor) (frame :)
   pure frame
 
 newChildFrame :: ExecutionFrame -> NodeId -> [NodeId] -> IO ExecutionFrame
 newChildFrame parent boundary = newExecutionFrame (frameCoordinator parent) (Just parent) (Just boundary)
+
+-- 会话待用帧 v1（2026-11-18）：保存 gen 已给出的生产挂载，覆盖步骤之间的复用。
+-- 它只预约未来使用，不作为发布的归属帧；interpreter 托管会话没有 AST 边界。
+-- 生产停止后仍按既有排空规则保留预约，直到会话退役才摘除。
+newSessionFrame :: ExecutionFrame -> Maybe NodeId -> [NodeId] -> [DeliveryIdentity]
+                -> (String -> ActivationId -> IO (Maybe Bool)) -> IO ExecutionFrame
+newSessionFrame parent = newPreparedFrame (frameCoordinator parent) (Just parent)
 
 -- 执行帧与 scope 归属共用的内存协调锁。Graph 的发布/保留交接也在这里串行化，
 -- 不能只屏蔽取消而让另一线程的回收看见交接空窗。锁内不执行 IO handler、不等任务。

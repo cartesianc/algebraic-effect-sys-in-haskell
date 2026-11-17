@@ -19,7 +19,8 @@ import Framework.Runtime.Graph
   ( RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, runtimeRootFrame, newOrigin, obtainSession
   , currentPublications, collectRuntimeScopes, withRuntimeRetention )
 import Framework.Runtime.Identity (ActivationId, Execution(..), Origin(..), executionOrigin)
-import Framework.Runtime.Frame (ExecutionFrame, NodeProgress(..), captureFrameDeliveries, frameNodeProgress, frameSignal, installSessionInputs)
+import Framework.Runtime.Frame (ExecutionFrame, NodeProgress(..), captureFrameDeliveries, frameNodeProgress, frameSignal, installSessionInputs
+  , newSessionFrame, finishExecutionFrame, withFrameLock)
 import Framework.Runtime.Binding (Binding(..), readBindingOwner)
 import Framework.Runtime.Retention (Retention, keepBindings)
 import Framework.Runtime.Session
@@ -273,14 +274,14 @@ deriveSteps = DeriveSteps
 
 -- 为新会话启动生产任务：按原型找到该边界的会话挂载，逐次执行生产步骤，把发布写入会话交付队列。
 -- 每条交付带上本次生产步骤（各挂载当前一次执行）已经发布的普通资产，作为伴随发布。
--- 各步骤共用会话的 scope 使用登记，生产资源跨步骤保持；会话停止时撤销登记，根帧退休后统一回收。
+-- 每步登记实际 scope 使用，会话帧预约后续使用；步骤完成与会话退役都沿现有可达性条件回收。
 -- 生产失败（已经过 Error 协议诊断）或原生异常使会话失败并停止，并通知运行监督；
 -- Stream handler 的 streamEnd 正常结束会话：封住发布、唤醒等待者，不通知监督，已发布的交付仍可领取；
 -- 由上游驱动的会话在上游结束并排空、或被驱动链上的 Excu 调用 endStream 时同样正常结束，
 -- 并离开上游（上游的读取方计数减一）；上游失败时以同一个原因失败；
--- 取消只结束任务，步骤内照常收尾。
+-- 主动停止的取消只结束任务；步骤清理中的意外取消进入既有失败通知，步骤内照常收尾。
 -- lifelong 的会话另外安装退役动作：读取方全部离开（引用计数归零）时停止任务、封住发布，
--- 撤销会话的使用登记后回收只在会话挂载中开启的 scope；派生会话退役后，上游若也没有读取方，随之退役。
+-- 撤销会话的待用预约后回收只在会话挂载中开启的 scope；派生会话退役后，上游若也没有读取方，随之退役。
 -- 启动到登记在不可中断区内完成，取消不会落在任务已启动、尚未登记之间。任务继承这一屏蔽，只在生产时解除：
 -- 报告失败、撤销使用登记和填写完成信号都不会被停止请求打断，stopSession 一定等得到完成信号。
 sessionLauncher :: RuntimeGraph environment cause -> [(String, SessionSteps environment cause)]
@@ -291,26 +292,51 @@ sessionLauncher graph steps onBroken session
   | otherwise = launch
   where
     launch = uninterruptibleMask_ $ do
-      finished <- newEmptyMVar
-      owner <- case mounts of
-        Just (mount : _) -> newOrigin graph mount >>= newScopeUser (runtimeScopes graph) . BusinessExecution
+      (firstMount, locations) <- case mounts of
+        Just nodes@(mount : _) -> pure (mount, nodes)
         _ -> ioError (userError ("No session steps for " ++ source ++ " at " ++ show boundary
           ++ "; regenerate with the SDK effect-codegen command"))
-      thread <- forkIOWithUnmask $ \unmask -> (`finally` putMVar finished ()) $ (`finally` detachScopeUser owner) $ do
-        outcome <- try (unmask (produce owner))
-        case outcome of
-          Left (exception :: SomeException)
-            | Just (_ :: SomeAsyncException) <- fromException exception -> pure ()
-            | otherwise -> broken (Left exception)
-          Right (Just problem) -> broken (Right problem)
-          -- 正常结束后任务留在原地，直到会话退役（读取方全部离开、lifelong 返回）或运行结束：
-          -- 排空期间仍有读取方，会话的使用登记继续持有生产资源；生产停止且计数归零才撤销。
-          Right Nothing -> do
-            endSession session
-            void (try (unmask (forever (threadDelay 3600000000))) :: IO (Either SomeException ()))
-      setSessionWorker session thread finished
-      -- interpreter 托管的会话没有读取方登记，不按计数退役，仍由运行结束统一停止。
-      forM_ boundary $ \_ -> setSessionRetirement session retire
+      execution <- BusinessExecution <$> newOrigin graph firstMount
+      -- 会话待用 v1（2026-11-18）：Composition 已确定挂载与参数来源，运行时只登记
+      -- 固定启动捕获和本步实际身份，不根据业务 IO 猜测 socket、event 或轮询。
+      selected <- newIORef (sessionViews session)
+      upcoming <- newIORef Nothing
+      let captured = [(originNode (executionOrigin (bindingOrigin value)), name, production)
+            | (name, value) <- sessionBindings session, Just production <- [bindingProduction value]]
+          pending name production = do
+            views <- readIORef selected
+            next <- readIORef upcoming >>= maybe (pure Nothing)
+              (\(sourceName, peek) -> if sourceName == name then peek else pure Nothing)
+            let fixed = any ((== Just production) . bindingProduction) . toList <$> lookup name views
+                queued = (== Just production) . bindingProduction <$> next
+            -- 固定的本步身份与游标下一条都是具体义务；等待不把所有旧实例都保活。
+            pure $ case (fixed, queued) of
+              (Nothing, Nothing) -> Nothing
+              _ -> Just (maybe False id fixed || maybe False id queued)
+      future <- newSessionFrame (runtimeRootFrame graph) boundary locations captured pending
+      let withdraw = void (finishExecutionFrame future)
+      (do
+        finished <- newEmptyMVar
+        thread <- forkIOWithUnmask $ \unmask -> (`finally` putMVar finished ()) $ (`finally` withdraw) $ do
+          outcome <- try $ unmask $ do
+            produced <- produce execution future selected upcoming
+            case produced of
+              Just problem -> broken (Right problem)
+              -- end 只封口；最后一份待用仍保留到既有的会话退役边界。
+              -- 不再用跨全部步骤的 ScopeUser 把所有历史实例一起保留。
+              Nothing -> endSession session >> forever (threadDelay 3600000000)
+          case outcome of
+            Left (exception :: SomeException) -> do
+              stopping <- sessionStopping session
+              -- 只有 stopSession 已登记的取消是本会话的正常退役；close/诊断的取消
+              -- 仍须通知监督，不能令生产线程悄悄消失而让消费者永远等待。
+              case fromException exception :: Maybe SomeAsyncException of
+                Just _ | stopping -> pure ()
+                _ -> broken (Left exception)
+            Right () -> pure ()
+        setSessionWorker session thread finished
+        -- interpreter 托管的会话没有读取方登记，仍在运行结束时统一停止。
+        forM_ boundary $ \_ -> setSessionRetirement session retire) `onException` withdraw
     -- 先停任务再封口：停止等待任务撤销使用登记，此后回收才看得到这些实例已经没有使用者。
     -- 回收仍按可达性判定，后继还会以同样参数开启的实例保留。
     retire = do
@@ -324,8 +350,8 @@ sessionLauncher graph steps onBroken session
     (boundary, source) = sessionKey session
     description = sessionDescriptionOf (runtimePrototype graph) boundary source
     mounts = sessionMounts <$> description
-    produce owner = case (lookup source steps, mounts) of
-      (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ withRuntimeRetention graph $ \retention -> do
+    produce execution future selected upcoming = case (lookup source steps, mounts) of
+      (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ withStep execution $ \owner retention -> do
         -- streamEnd 只来自 Stream 单步：这一步没有原始输入，parser 不执行，也不发布。
         taken <- try (lowerWith graph streamMount (step owner retention Nothing []) stream)
         case taken of
@@ -333,7 +359,7 @@ sessionLauncher graph steps onBroken session
           Right (Left problem, _, _) -> pure (Just (Just problem))
           Right (Right text, captured, _) -> do
             -- Receive 资源交接 v1（2026-11-17）：raw 回答本次输入，不重跑来源的 open。
-            -- parser 因此需要本次已捕获的资源 Binding；共用 owner 保活，保留原生产身份。
+            -- parser 因此需要本次已捕获的资源 Binding；同一步共用 owner，保留原生产身份。
             -- 只交接资源，不带入来源的普通捕获或交付视图，不写回会话或跨轮复用。
             resources <- filterM (fmap isJust . readBindingOwner . snd) captured
             let parseStep = (step owner retention (Just text) sink)
@@ -345,10 +371,15 @@ sessionLauncher graph steps onBroken session
       -- 正常退出时离开上游，计数归零则退役上游；失败或取消只离开，停止交给收尾或本会话的退役。
       (Just (DeriveSteps parser), Just [mount]) -> mask $ \restore -> do
         (upstream, cursor) <- awaitUpstream session
+        withFrameLock future $ writeIORef upcoming (Just (snd (sessionKey upstream), pendingDelivery upstream cursor))
         -- 游标的撤销覆盖整个生产/退役过程，取消不能落在正常结束与离开上游之间。
         restore (do
-          outcome <- loop $ withRuntimeRetention graph $ \retention -> do
-            taken <- takeDelivery upstream cursor retention (pure Nothing)
+          outcome <- loop $ withStep execution $ \owner retention -> do
+            -- 在同一领取临界区内先固定身份、再推进游标。等待期间查询具体下一条，
+            -- 不用全称保活填补“游标已前进、身份还没写入”的窗口。
+            taken <- takeDeliveryWith upstream cursor retention (pure Nothing)
+              (\(view, _) -> writeIORef selected ((snd (sessionKey upstream), view) :
+                filter ((/= snd (sessionKey upstream)) . fst) (sessionViews session)))
             case taken of
               Left Drained -> pure (Just Nothing)
               Left Undriven -> pure (Just Nothing)
@@ -372,7 +403,15 @@ sessionLauncher graph steps onBroken session
     sink = [(source, \value -> do
       companions <- currentPublications graph (maybe [] id mounts)
       appendDelivery session companions value)]
-    -- 每一步从边界交接的新副本开始，共用会话的使用登记。
+    -- 每步实际使用 v1（2026-11-18）：Receive 的两个入口共用一次使用登记，Derive
+    -- 每条交付使用一次；诊断与解析完成后撤销，再由现有 GC 核对长期预约及其他使用者。
+    -- 新参数只产生新实例；另一订阅/调用仍持有的旧实例不因本步骤结束而关闭。
+    withStep execution action = mask $ \restore -> do
+      owner <- newScopeUser (runtimeScopes graph) execution
+      restore (withRuntimeRetention graph (action owner)) `finally` (do
+        detachScopeUser owner
+        collectRuntimeScopes graph (maybe [] id mounts))
+    -- 发布的原帧不变；future 只表达后续生产步骤的待用，不改变 Binding 出身。
     step owner retention input sinks = Launch
       { launchBindings = sessionBindings session, launchViews = sessionViews session, launchInput = input
       , launchSinks = sinks, launchDeliver = noDelivery, launchUser = Just owner
@@ -382,7 +421,7 @@ sessionLauncher graph steps onBroken session
       { launchViews = (upstream, view) : filter ((/= upstream) . fst) (sessionViews session) }
     noDelivery = const Nothing
     first (outcome, _, _) = outcome
-    broken reason = breakSession session reason >> onBroken reason
+    broken reason = breakSession session reason `finally` onBroken reason
     -- 逐次执行直到来源结束（Nothing）或第一次失败（Just problem）；结果交回不可中断区登记。
     loop step = step >>= maybe (loop step) pure
 

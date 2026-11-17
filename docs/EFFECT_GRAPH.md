@@ -48,7 +48,7 @@ data Execution
 1. **AST 启动**：Node 或 alternative 的选择读取启动选定入口，建立本次 origin 及入口使用登记。
 2. **Context 启动**：实际生产（`requests` 驱动的 getT）建立 ctx chain 记录，包住生产、成功发布和返回。嵌套 ctx 启动继承外层 origin 和入口使用登记；返回只结束本次生产记录，不撤销整个入口对 scope 的使用。读取不生产，也没有新 activation；选择读取驱动转折资产、挂接注入实际生产时经过同一启动边界。
 
-Stage 3 复用这两个 Boot 构造：Receive／Derive 的每个独立生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。独立会话步骤共用会话的 ScopeUser，lifelong 的消费 target 则每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
+Stage 3 复用这两个 Boot 构造：Receive／Derive 的每个独立生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。独立会话每次生产使用新的 ScopeUser，其中 Receive 的来源与紧接的 parser 共用本步登记；跨步骤的待用由会话执行帧保持。lifelong 的消费 target 同样每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
 
 本轮 ReuseOutput 连接沿用已有 AST 执行：`SessionProto.sessionPlan` 保存 `ReuseOutput [NodeId]`，指向同一 lifelong 内的具体原子输出发布位置，`sessionMounts` 为空。gen 沿 target 自身与 original Input 链定位挂接句柄；所有这些持续副产物都进入会话集合，包括仅供后继读取的产物。gen 仍保留 original chain 与 Context chain 的独立定义；执行时挂接 parser 用同次 raw，不另建根调用或生产 worker。parser 的 `RequestBoot` 继承原节点的 Origin、执行帧和 ScopeUser。其交付只含持续资产，原 AST 调用的普通产物继续按真实 Origin 和来源表读取，不作为伴随发布跨单元透传。多个发布位置只允许同单元、两两 alternative 互斥；不按调度选取，不合并同名 handler 的独立调用。组合机器以订阅、chained 前置和持续 alternative 选择读取建立启动依赖，拒绝有环组合。完整规则见 [Stream 第 4.2 节](STREAM_LIFELONG.md#derive)，实现状态见 [Next stages](NEXT_STAGES.md#stage-6-reuse)。
 
@@ -64,7 +64,7 @@ Context 的生产记录在生产、发布及返回结束后通过 `finally` 删�
 
 `Binding.bindingOrigin :: Execution` 保存不变的执行出身，`bindingProduction :: Maybe ActivationId` 保存成功生产身份，`bindingFrame :: ExecutionFrame` 保存归属帧。生产失败不替换旧绑定，无资源 scope 的内部占位绑定没有生产身份。`bindingOwnership` 是该次生产独有的共享 `IORef`，保存可选 owner 与待认领使用者。当前捕获、权威表、scope 快照和 Handoff 保留同一绑定；认领不改变值、生产身份、帧、origin 或 publication，scope 复用也不重新发布。
 
-`Framework.Runtime.Frame` 保存有限运行根帧与 lifelong 每轮子帧，按节点记录待执行、执行中、完成和跳过。节点完成晚于诊断与受控结果消费；chained 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本轮已领取的普通伴随资产的 `(生产节点, Context 来源, ActivationId)`，只保存生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。Runtime 中领取会话交付的 `DeliveryFrame` 仍管理视图领取，和这份执行进度分开。Frame 的根与子帧共享发布通知，`frameSignal` 取得当前信号，`notifyFrame` 在普通发布、会话状态提交或节点退休后唤醒等待者；Graph 的 `publicationSignal` 转发到同一通知。普通资产仍按 origin 保存；保守等待结束复用这些进度事实，按帧资产 state 与完整等待分析尚未实现。
+`Framework.Runtime.Frame` 保存有限运行根帧、lifelong 每轮子帧及独立生产会话的待用帧。实际执行按节点记录待执行、执行中、完成和跳过；会话帧保留后续生产挂载的待用预约到生产任务退出，不充当业务调用的执行结果。节点完成晚于诊断与受控结果消费；chained 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本轮已领取的普通伴随资产的 `(生产节点, Context 来源, ActivationId)`，只保存生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。Runtime 中领取会话交付的 `DeliveryFrame` 仍管理视图领取，和这份执行进度分开。Frame 的根与子帧共享发布通知，`frameSignal` 取得当前信号，`notifyFrame` 在普通发布、会话状态提交或节点退休后唤醒等待者；Graph 的 `publicationSignal` 转发到同一通知。普通资产仍按 origin 保存；保守等待结束复用这些进度事实，按帧资产 state 与完整等待分析尚未实现。
 
 Scope 实例保存实际参数生产身份与归属帧，Graph 把待用查询装入 ScopeHandler。查询与节点进度、关闭预约共用 scope 协调锁：实例既无实际使用者，也不再被帧内待用节点或子 scope 保留时，Scope 同步清理。完整运行规则见[主设计](LATEST_DESIGN.md#scope-gc)。
 
@@ -172,7 +172,18 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 持续参数的待用匹配分两步：活动轮内先用本次调用或 alternative 交接的捕获，再用单元的固定交付；尚未领取时只预览该单元游标的下一条，既不推进也不生产。同单元本地来源的只读回退仍按会话现有最新值规则。领取正在交接时保守保留；跨单元广播按各自的实际游标比较生产身份。根帧对未来轮次的预约不保留旧交付实例；有限后继与真实读取共用“最近许可的先前 lifelong 会话，否则 interpreter 会话”的路由，只匹配所选最新值。
 
-执行帧只记录身份和本轮只读查询，不另建历史或值表；轮结束时撤销查询和捕获。查询在 scope 协调锁内，不能等正在启动的会话目录锁；目录暂忙时保守保留。会话状态锁内不执行 handler、也不反向获取该协调锁。实例仍使用原 Binding 的生产帧，跨单元或后继共享不提升归属。
+执行帧只记录身份和只读查询，不另建历史或值表；轮结束时撤销查询和捕获。查询在 scope 协调锁内读取已登记会话的只读目录快照，不等待会话装配锁，也不因目录忙而保留所有实例。新会话在 worker 启动前进入快照，停止时与目录一起撤下；快照不改变业务会话的唯一登记与停止协议。会话状态锁内不执行 handler、也不反向获取 scope 协调锁。实例仍使用原 Binding 的生产帧，跨单元或后继共享不提升归属。
+
+**持续资源协调所复用的组合事实。** 本轮未增加组合解释或修改 gen 算法；静态许可与运行状态按下面的边界配合，runtime 不从 IO 识别轮询、event 或 socket。
+
+| 已编译事实 | 决定的结构关系 | runtime 补充的实际信息 |
+| --- | --- | --- |
+| `SessionProto`／`BootPlan` | 哪些位置独立生产、由哪个上游驱动，或复用已有输出 | 活动会话、生产步骤、订阅与结束状态 |
+| `ScopeOpening` | 每个生产／消费挂载可能开启的 scope 及参数候选 | 参数 Binding 的生产身份、原执行帧和实际实例 |
+| `Source` | 哪些生产位置或会话对读取合法 | 本次固定捕获、当前发布与所选交付；不能扩大许可 |
+| `ScopeTree` | scope 注册间的无环父子候选 | 同一受控执行实际使用的父子实例、使用是否耗尽及关闭预约 |
+
+**会话待用（2026-11-18）。** 独立 Receive／Derive 会话复用生成的 `sessionMounts` 建立待用帧；回收候选纳入实际活动的 SessionChain 预约，即使参数最初来自已经结束的轮帧，仍可按许可来源找到使用它的生产位置。匹配继续使用同一 `openingSources`，不会扩大普通读取可见性。会话启动时固定的捕获先按生产身份匹配，再考虑未捕获参数的实际发布；不能用后台最新值覆盖固定捕获。Derive 查询本步固定身份和上游游标下一条；领取选择与固定身份更新共用协调锁，更新完成后才推进游标，不把整个阻塞等待期解释为所有旧实例都待用。业务调用的 ScopeUser 在本步结束时撤销；预约只保留仍与后续使用匹配的实例，因此新参数的产生既不直接关闭旧实例，也不让所有旧实例随会话永久累积。预约在任务退出时摘除，资源 close 条件仍见[主设计](LATEST_DESIGN.md#scope-gc)。
 
 节点退休后检查该节点能开启的 scope 及 ScopeTree 祖先。已知资源 Binding 的保留撤销还会按实际 owner 触发同一回收器，覆盖调用 Input 链外的交接；保留范围见[Stream 资源边界](STREAM_LIFELONG.md#binding-retention)。后继的值保留继续读取 protoSources 和执行帧进度，并与实际读取共用 publicationAt／会话选择，不能把目录中存在某值当成合法读取依据。Binding 的资源标志来自注册已指定的资源 Context，不分析业务字段。close 的 `raise` 与普通 IO 异常都记录并汇总，不改节点结果、不重试；只有取消向外传播。没有 close 的实例不可达后只移出表。运行结束先让受控任务退出、撤销根帧待用关系，再按相同条件清理剩余实例。
 
