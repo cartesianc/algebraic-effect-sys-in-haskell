@@ -2,7 +2,7 @@
 
 更新：2026-11-17。本文是阶段计划与开放项的唯一入口，保存各阶段的目标、剩余工作和必要的完成摘要。当前协议在[主设计](LATEST_DESIGN.md)及其专题中维护；历史验证集中在[验证边界](#baseline)，不代表本次重新执行。
 
-**当前进度：** handler 复用、scope 可达性回收、Stream 两侧结束、后继读取、交付保留和会话退役已落地。持续生产与有限取值的组合边界已经补齐，生成期无来源诊断、签名报错与组合设计收尾已完成；Receive 来源到 parser 的资源交接及示例 close 已修复，验证见[本轮记录](#receive-resource-verification)。剩余资源重点是待交付值与业务资产内嵌资源的持有，再接通相应回收。
+**当前进度：** handler 复用、scope 可达性回收、Stream 两侧结束、后继读取、交付保留和会话退役已落地。持续生产与有限取值的组合边界已经补齐，生成期无来源诊断、签名报错与组合设计收尾已完成；Receive 来源到 parser 的资源交接及示例 close 已修复，验证见[本轮记录](#receive-resource-verification)。[静态协议检查收口](#protocol-checks)已完成本轮范围，下一步处理待交付值与业务资产内嵌资源的持有及回收。
 
 <a id="code-shape"></a>
 ## 代码长什么样
@@ -58,6 +58,15 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 4. 吸收 `docs/composition-polymorphism` 的核心理念补充：README 与设计原则突出组合多态，COMPOSITION 保留理念、产物与规则定位，状态／检查点归主设计流水线，缓存归图规范。文档不把现有阶段机描述成逐元素解释表或通用求解器。
 
 这批收尾不实现 Stage 5／7 的资源持有，也不把历史编译或其他分支的 demo 运行作为本轮验证。
+
+<a id="protocol-checks"></a>
+### 静态协议检查收口
+
+**本轮完成（2026-11-17）。** 在 Stage 5／7 之前补齐既定读取契约的最低限度检查。按触发条件梳理 14 种运行时协议故障，区分结构违规、运行状态和 SDK 不变量；详细归属只在[图规范](EFFECT_GRAPH.md#protocol-faults)维护。
+
+本轮新增：有资源的 Scoped 按 close 的方法绑定检查资源读取，open 或其他方法的读取不代替它。open 入口按 requests 生产并认领资源，方法体为空仍合法。沿用组合计算的类型路由，首次契约生成跳过、已有方法体时在图缓存前检查；无资源 scope 和可选 close 保持现有规则。参数生产身份、IO 顺序、条件路径和运行时防线保持原协议，不扩展 Shape 或引入新语法。
+
+交付以这项检查和 14 种故障的边界说明为限；完整等待与资源保活仍分别推进。实际验证及未覆盖范围见[验证摘要](#protocol-checks-verification)。
 
 <a id="composition-driving"></a>
 ### 持续生产与固定取值的组合
@@ -266,6 +275,9 @@ LSP 仓库的来源可见性穷举模型尚未扩展到 Stream／lifelong；订�
 **Receive 资源交接修复与验证（2026-11-17）：** 来源步骤向紧接的 parser 交接本次已捕获的资源 Binding，保留生产身份与 ownership；两步共用会话使用登记。普通 Handoff 继续过滤资源，来源的普通捕获和交付视图不额外透传，不跨轮缓存。StreamDemo 的 close 在 IO 前读取资源；scope 的单例／多例分类未改变。规则见 [Stream 生产路径](STREAM_LIFELONG.md#81-生产路径)。
 
 本轮显式重新生成 StreamDemo，更新两份生成文件，并通过生成器的 beforegen 与生成副本类型检查；`cabal build all --offline -j1` 通过，退出码 0。file、open-files、scope-reuse、scope-instances、lines、crawler 六个现有有限示例均返回 `Succ`；scope-reuse 记录实际开启／关闭各一次，LinesDemo 在最终报告前关闭文件，后继读到 4 行／40 字符。StreamDemo 输出 24 条温度与 8 次心跳，连接只开启一次；Ctrl-C 后打印一次断开信息，无缺值或关闭失败，取消运行退出码为 1，不记为正常 `Succ`。补丁格式检查通过。未新增测试或负例，未穷举取消交错、多参数实例与解析失败路径，未做长期内存测量。
+
+<a id="protocol-checks-verification"></a>
+**静态协议检查验证（2026-11-17）：** 新增 close 按绑定检查资源读取，并按触发条件归类 3 种 ContextFault 与 11 种 ScopeFault。八个现有命名空间显式重新生成并通过生成器类型检查，均为 `0 files updated`；`cabal build all --offline -j1` 通过，退出码 0。runtime、手写 demo 和生成文件均未修改。现有 FileDemo 的空 open 保持合法；资源的分支投影仍可用于 close 定位。本轮按工作约定未新增测试、负例或运行业务 demo；遗漏 close 读取的拒绝路径、分支资源投影、首次无 Handlers 与缓存检查次序仅作源码核对，不将编译通过记作这些路径的实测。检查不证明所有条件路径或 IO 顺序，亦未实现 Stage 5／7 的资源持有。
 
 <a id="maintenance"></a>
 ## 怎样维护这份计划

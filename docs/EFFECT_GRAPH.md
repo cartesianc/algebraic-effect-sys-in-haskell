@@ -110,6 +110,39 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 scope 的例外只覆盖具有 owner 的绑定，资源仍经实际实例定位和共享。实例快照中的无 owner 辅助值只从按 origin 保存的权威表取用，不通过资源复用绕过可见性。诊断及自动 cleanup 的新产物仅局部可见。现有 App 的 bind 在取得值后继续方法体，handler 写法、AST 语法和 ScopeTree 算法均不因此改变。
 
+<a id="lifecycle-reads"></a>
+### close 方法的资源读取
+
+`composeMethods` 按每个绑定检查有资源 Context 的 Scoped：已声明的 close 方法体必须包含该资源的读取。检查使用 `resolve` 已完成的表示类型到细化资产路由；另一生命周期方法的读取、入口自动装配的 requests、其他资产的读取都不能代替本方法的读取。同一个 handler 绑定到多个 effect 时，分别按各自资源检查；读取该资源的分支契约也计入，因为投影首先读取同一个资源 Binding。诊断包含 Scoped、close 角色、handler、资源资产及 Context 来源。
+
+这落实的是 close 的实例定位契约。open 的资源已由生成入口按 requests 生产并认领，open 方法体可以不读取资源，例如 FileDemo 的 `openSession = pure []`；close 则依赖读取来定位实例和取得关闭锁。无资源 Context 的 scope、未声明的 close 不需要这项读取。首次缺少 Handlers 的契约生成暂不检查；已有方法体时每次在图缓存查询之前检查。
+
+检查只拒绝整个方法都没有该资源读取的情况，不枚举运行条件，不把“出现过 require”当成“所有成功路径都读过”或“读取先于 IO”的证明。Shape 当前擦除普通 IO、业务条件和没有读取的退出表达式；条件路径绕过读取、读取前执行 IO、实际归属缺失或错配继续由 runtime 防守。不为了消除运行时故障而拒绝整个条件分支或引入新的方法体位置标记。
+
+<a id="protocol-faults"></a>
+### 协议故障的判定归属
+
+以下覆盖当前 `Runtime.Protocol` 的 3 个 ContextFault 和 11 个 ScopeFault。归属按触发条件划分，同一构造器可同时承载结构违规、运行状态或 SDK 不变量故障。生成成功只说明已完成这些静态检查；runtime 的防线全部保留。合法结构发生绑定丢失、重复关闭等问题时应修复 SDK，不能用新禁令拒绝业务组合。
+
+| 故障 | gen 已处理的结构条件 | 留在 runtime 的条件与理由 |
+| --- | --- | --- |
+| `ContextNotInitialized` | [无来源诊断](#missing-source)覆盖的普通读取完全没有合法供值；资源读取缺少本链所属 scope；持续启动关系不合法 | 合法生产失败、零发布结束、条件路径未发布；会话／收尾局部快照缺值。已经生产的 Binding 因交接丢失属于 SDK 漏洞 |
+| `AmbiguousContextBinding` | 来源分析拒绝缺捕获路径上多个同时可见来源；后继持续读取拒绝不具先后关系的已结束边界 | 核对本次实际发布与候选来源；静态检查的剩余边界或原型／执行不一致不能按线程完成顺序兜底 |
+| `CaseNotSelected` | alternative 检查分支契约及候选覆盖、读取路由 | 资产实际值的构造器与所读分支契约不符，类型结构不能决定业务值 |
+| `ScopeNotOpen` | 自动 close 只为已取得实例登记，不提供业务直接驱动 close 的方法组合 | 关闭一个未开启实例；正常自动路径出现时检查 SDK 登记与状态不变量 |
+| `ScopeIsClosed` | 资源业务读取要求本链开启所属 scope | 已捕获 Binding 的具体 owner 已关闭；实际存续与实例身份只能运行时检查，资源逃逸的扩展保证仍待设计 |
+| `ScopeReentry` | Input／方法图的递归和 scope 依赖环拒绝；handler 直接调用其他 handler 被拒绝 | 同一实例处于 opening／closing 等不允许重入的状态；保留生命周期锁内的状态防线 |
+| `ScopeInterrupted` | 无法从结构预知取消或原生 IO 异常 | 开启／关闭中断后记录具体实例失效及原因 |
+| `ScopeContextMissing` | [逐方法资源读取](#lifecycle-reads)拒绝有资源的 close 完全未读自己的资源 | 实际路径未读取就做关闭 IO、冻结快照缺资源／owner；open 返回后资源绑定未保存也须防守。合法交接丢失属于 SDK 漏洞 |
+| `ScopeContextMismatch` | 资源读取的本链所属 scope 与路由合法性 | 同一 Binding 被另一 scope 或不同参数实例认领、close 读到错误 owner；实际生产身份与认领不能由类型名代替 |
+| `ScopeInputsMissing` | 检查声明来源、读取路由与声明的读取依据；原型保存所需开启参数 | 在需要选实例／执行资源 IO 时参数尚未观察齐备，或 Binding 没有生产身份；现有 Shape 不保留完整 IO 位置，开启计划本身不是齐备证明 |
+| `ScopeInputAfterOpen` | 注册驱动与读取顺序进入方法结构，但本轮没有据此新增拒绝 | 已选实例后观察到另一份参数生产；当前抽象未表达实例选定时点与每次请求的动态身份，重复 require 同一绑定不能误报 |
+| `ScopeCleanupInterrupted` | 无法预知 close／诊断中的原生 IO 异常或取消 | 记录清理故障；取消仍按现有收尾协议传播，不能由 gen 消除 |
+| `ScopeCleanupInProgress` | close 不装配新的生产前驱，handler 不能直接调用其他 handler | 清理期间尝试开启资源；保留受限环境防线，正常自动路径触发时检查生成与运行协议 |
+| `ScopeInUse` | ScopeTree／开启计划描述后续待用，不证明此刻没有使用者 | 关闭预约时仍有实际使用者、子实例或协调冲突；自动路径出现时按 SDK 不变量故障处理 |
+
+本轮只新增 close 的逐方法资源读取检查；其余行记录既有覆盖与明确边界。参数 IO 顺序、分支必经读取、完整等待与任意 IO 终止不在这次检查中。进一步前移需要补充结构证据并单独评估，不能把“未证明合法”直接当作“已经证明非法”。
+
 <a id="scope-opening-retention"></a>
 ## Scope 开启计划与待用查询
 

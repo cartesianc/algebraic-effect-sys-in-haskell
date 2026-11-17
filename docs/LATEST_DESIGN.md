@@ -635,6 +635,8 @@ Scoped 的 `requests` 资源 demand 指向资源 Context；资源 parser 声明�
 
 共享实例的并发 open 在等待 opening 前先登记使用。有效实例复用时跳过资源获取及剩余 open 方法体；不同参数生产的实例独立。开启失败／中断后实例失效，不自动恢复或重开；普通下游失败不自动使 scope 失效。资源 producer 返回到发布采用 masked 交接，open 失败／中断时已发布的资源仍纳入清理，未发布的部分获取由原子 IO 负责。
 
+有资源 Context 的 Scoped，生成入口在 open 方法体前按 requests 生产并认领资源，open 方法体无需为认领再读一次。close 须自行读取该资源以定位实例；gen 按 close 的方法绑定检查，open 或其他方法的读取不能代替它。检查范围与运行时故障的判定归属见[生命周期读取与协议边界](EFFECT_GRAPH.md#lifecycle-reads)。
+
 close 使用冻结的本实例绑定。其 handler 先读取资源，SDK 据 owner 定位实例并取得生命周期锁，再执行释放 IO；不会预生产 Context、改选其他实例或把旧绑定转给新实例。关闭预约期间不接纳新的使用者，重复成功 close 跳过。关闭只应发生在不可达的实例上；`ScopeInUse` 保留为 SDK 内部不变量故障，不能作为业务关闭控制流。
 
 #### 细化契约与节点身份

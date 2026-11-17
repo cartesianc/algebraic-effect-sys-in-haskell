@@ -467,7 +467,7 @@ typing = Scoped { open = Just "openSession", close = Just "closeSession" }
 ```
 
 - **open 必填，close 可选**：可开启的 scope 声明 open；`close = Nothing` 时不生成关闭方法，实例不可达后只移出运行表。
-- **资源是一个 Context**：Scoped 在 `demands` 里 `requests` 资源 Context（至多一个）并 `requires` 它；gen 在 `open` 之前驱动资源的生产，`open`／`close` 的 handler 用 `require` 读取资源。
+- **资源是一个 Context**：Scoped 在 `demands` 里 `requests` 资源 Context（至多一个）并 `requires` 它；gen 在 open 方法体之前按 requests 生产并认领资源。open 方法体需要操作它时再 `require`，也可以是 `pure []`；close 的 handler 必须用 `require` 读取资源以定位实例。已有方法体时，gen 会拒绝 close 完全没有读取自己资源的写法；读取另一份资产或仅在 open 读取均不满足要求。条件分支与 IO 顺序的检查边界见[生命周期读取](EFFECT_GRAPH.md#lifecycle-reads)。
 - **开启参数**：资源 Context 的 parser 读取的上游 Context 就是开启参数，SDK 按它们决定共享还是新建实例（见「运行时行为」）。
 - **实例跟随注册**：两个 Scoped 注册即使共用 open／close handler，也是两个独立的 scope。
 
@@ -1146,7 +1146,7 @@ close 由 SDK 的自动收尾调用，handler 不直接调用；下表中的 clo
 | `ScopeInputsMissing [参数]` | 带开启参数的 scope 要在参数齐备后才能选定实例；资源发布或 open 结束时仍有参数没读到，例如资源 parser 先获取资源、后读取参数。持续资产的本次值已支持；业务数据内嵌资源的额外持有仍未定义（见 [scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention)） | 先安排参数生产；资源 parser 先读参数，再获取资源。共享时读取前驱的同一次生产 |
 | `ScopeInputAfterOpen 参数` | 实例选定之后，这次开启读到另一份参数生产；即使新旧值相等也不同 | 选定实例前确定全部参数；open 范围内不再刷新参数 |
 | `ScopeContextMismatch 资源` | 一份资源绑定只能归一个实例：open 要认领的资源已属于另一个 scope 或同注册的另一个实例；或 close 读到的资源属于别的实例 | 不同实例各自驱动自己的资源，不共用同一次生产 |
-| `ScopeContextMissing 资源` | open 结束时，选中的实例里没有资源绑定；或 close 定位不到要关闭的实例：本次调用没有这个 scope 的资源绑定，或 close 的 handler 没有读取资源 | Scoped 在 demands 里 `requests` 并 `requires` 资源；open／close 的 handler 用 `require` 读取资源 |
+| `ScopeContextMissing 资源` | open 结束时，选中的实例里没有资源绑定；或 close 定位不到要关闭的实例：本次调用没有这个 scope 的资源绑定，或 close 的 handler 没有读取资源 | Scoped 在 demands 里 `requests` 并 `requires` 资源；核对 open 入口的资源装配与交接，close 的 handler 自行 `require` 资源以定位实例，详见[close 读取检查](EFFECT_GRAPH.md#lifecycle-reads) |
 | `ScopeReentry` | 同一个 scope 在自己的 open 或 close 过程中又被 open 或 close。生成期的环检查通常会先拦下 | 调整 `input`／`demands`，让 scope 不依赖自身 |
 | `ScopeCleanupInProgress` | 自动收尾或 close 执行期间，调用链又要开启 scope | close 经过的链上不开启 scope |
 | `ScopeInUse` | SDK 内部使用、依赖或关闭预约不变量冲突；自动 close 应只处理不可达实例 | 按 SDK 问题报告，并附注册、workflow 与故障信息；不要据此添加业务重试 |
