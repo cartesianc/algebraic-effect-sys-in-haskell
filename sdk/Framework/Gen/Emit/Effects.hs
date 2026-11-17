@@ -6,7 +6,8 @@ module Framework.Gen.Emit.Effects (renderEffects) where
 
 import Data.Char (toUpper)
 import Data.List (intercalate)
-import Framework.Gen.Bind
+import Framework.Gen.Composition
+import Framework.Gen.Emit.Types (renderValueType, renderCapability)
 import Framework.Gen.Names (handlerClass, handlerError, handlerFailure, handlerLayer)
 import Framework.Language.Registration (EffectSpec(..), contextAsset, contractOf)
 
@@ -56,18 +57,19 @@ renderEffects unit = unlines (contractHeader ++ runtimeAliases ++ generatedContr
       , ""
       ]
     -- 每个 handler 一个类：Layer 是它能用的全部能力，来自绑定的 effect 的 demands 与类别。
-    handlerContract (Signature handler' result layer bound) =
+    handlerContract (Signature handler' result capabilities bound) =
       [ "-- handler " ++ handler' ++ "：绑定到 " ++ intercalate "、" bound ++ "。"
       , "type " ++ handlerLayer handler' ++ " m = (" ++ intercalate ", "
           (init layer ++ ["SDK.Raises " ++ handlerError handler' ++ " m", last layer]) ++ ")"
       , "class " ++ handlerClass handler' ++ " m where"
-      , "  " ++ handler' ++ " :: m " ++ parenthesized result
+      , "  " ++ handler' ++ " :: m " ++ parenthesized (renderValueType "SDK." "" result)
       , ""
       , "-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy " ++ show handler' ++ " 匹配。"
       , "newtype " ++ handlerError handler' ++ " = " ++ handlerError handler' ++ " String"
       , "  deriving (Eq, Show, Read)"
       , ""
       ]
+      where layer = map renderCapability capabilities
     errorDeclaration =
       [ "-- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。"
       , "data Errors = " ++ intercalate " | "

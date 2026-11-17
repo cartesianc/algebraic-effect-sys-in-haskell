@@ -4,19 +4,14 @@
 -- 原型本身由 Framework.Gen.Emit.Prototype 渲染并追加在后面。
 module Framework.Gen.Emit.Program (renderProgram) where
 
-import Data.List (intercalate, nub)
-import Framework.Gen.Assembly
-import Framework.Gen.Bind
-import Framework.Language.Registration (EffectSpec(..))
-import qualified Framework.Prototype as Prototype
+import Data.List (intercalate)
+import Framework.Gen.Composition
 
 renderProgram :: Unit -> String
 renderProgram unit = unlines (programHeader ++ astInterpreter)
   where
     namespace = unitNamespace unit
     selected = map fst (unitTerminals unit)
-    workflow = Prototype.plannedWorkflow (unitPlan unit)
-    mounts = assemblyMounts (unitAssembly unit)
     programHeader =
       [ "{-# LANGUAGE DuplicateRecordFields #-}"
       , ""
@@ -30,10 +25,7 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
       , "import " ++ namespace ++ ".Types"
       , ""
       ]
-    selectors = nub [(mountTerminal mount, mountMethod mount) | mount <- mounts
-      , mountRole mount == Prototype.SelectorChain]
-    selectorContracts = map fst selectors
-    branchesOf contractType = [branchConstructor branch | branch <- unitBranches unit, branchBase branch == contractType]
+    selectors = unitSelectors unit
     astInterpreter =
       [ ""
       , "-- 仅汇总所选末端的成功结果，不保存共享绑定或增加完成包装。"
@@ -53,23 +45,26 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
           | (terminal, method) <- unitTerminals unit ]
       , "    , " ++ renderList "      "
           [ wrapTarget contractType ("caseOf" ++ contractType ++ " <$> Handlers." ++ selector)
-          | (contractType, selector) <- selectors ]
+          | selectedSelector <- selectors
+          , let contractType = selectorContract selectedSelector
+                selector = selectorEntry selectedSelector ]
       , "    , " ++ renderList "      " sessionSteps
       , "    )"
       , ""
       ] ++ concat
-      [ if continuousContract unit contractType
+      [ if selectorHistory selectedSelector
           -- 持续资产读到交付视图：按本次交付的最新条目分派（交付视图至少有一条）。
           then [ "caseOf" ++ contractType ++ " :: SDK.History " ++ contractType ++ " -> String"
                , "caseOf" ++ contractType ++ " history = case SDK.latest history of"
                , "  Just (" ++ contractType ++ " value) -> case value of" ]
-               ++ [ "    " ++ constructor ++ " {} -> " ++ show constructor | constructor <- branchesOf contractType ]
+               ++ [ "    " ++ constructor ++ " {} -> " ++ show constructor | constructor <- selectorConstructors selectedSelector ]
                ++ [ "  Nothing -> \"\"", "" ]
           else [ "caseOf" ++ contractType ++ " :: " ++ contractType ++ " -> String"
                , "caseOf" ++ contractType ++ " (" ++ contractType ++ " value) = case value of" ]
-               ++ [ "  " ++ constructor ++ " {} -> " ++ show constructor | constructor <- branchesOf contractType ]
+               ++ [ "  " ++ constructor ++ " {} -> " ++ show constructor | constructor <- selectorConstructors selectedSelector ]
                ++ [ "" ]
-      | contractType <- selectorContracts ] ++
+      | selectedSelector <- selectors
+      , let contractType = selectorContract selectedSelector ] ++
       [ "-- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。"
       , "interpreter :: SDK.AST -> [EffectSpec] -> IO ()"
       , "interpreter = SDK.interpreter " ++ show namespace
@@ -78,21 +73,13 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
       ]
     -- 按 Context 注册名登记（与运行时绑定来源同名）。Receive：Stream 单步取得原始输入，parser 解析它并发布。
     -- Derive：领取一条上游交付后只执行 parser，它沿 Input 链执行被驱动的句柄并发布。
-    sessionSteps = nub
-      [ "(" ++ show (name specification) ++ ", " ++ steps ++ ")"
-      | specification <- contextSpecs unit
-      , session <- sessions
-      , Just (Prototype.sessionAsset session) == Prototype.effectProduces (protoOf unit (name specification))
-      , let entries = [mount | position <- Prototype.sessionMounts session
-                , mount <- mounts, mountNode mount == position]
-            action entry prefix = wrapTarget (mountTarget entry) (prefix ++ "Handlers." ++ mountMethod entry)
-      , steps <- case (Prototype.sessionPlan session, entries) of
-          (Prototype.Receive _, [source, parser]) ->
-            ["SDK.receiveSteps (" ++ action source "" ++ ") (" ++ action parser "() <$ " ++ ")"]
-          (Prototype.Derive _, [parser]) -> ["SDK.deriveSteps (" ++ action parser "() <$ " ++ ")"]
-          _ -> [] ]
-    sessions = concatMap (Prototype.lifelongSessions . snd) (Prototype.workflowLifelongs workflow)
-      ++ Prototype.finiteSessions (effectPrototypes unit)
+    sessionSteps = map renderSession (unitSessionEntries unit)
+    renderSession entry = case entry of
+      ReceiveEntry producer source parser -> "(" ++ show producer ++ ", SDK.receiveSteps ("
+        ++ action source "" ++ ") (" ++ action parser "() <$ " ++ "))"
+      DeriveEntry producer parser -> "(" ++ show producer ++ ", SDK.deriveSteps ("
+        ++ action parser "() <$ " ++ "))"
+      where action mounted prefix = wrapTarget (mountTarget mounted) (prefix ++ "Handlers." ++ mountMethod mounted)
     wrapTarget label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
       ++ " (SDK.withErrorHandlers Handlers.errorHandlers"
       ++ " (SDK.withAnchoredContexts Handlers.contextInjections"

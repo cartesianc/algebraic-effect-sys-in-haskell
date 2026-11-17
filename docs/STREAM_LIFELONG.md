@@ -252,7 +252,7 @@ lifelong 写入统一 Prototype，运行装配、来源分析与 `--structure` �
 
 - 会话挂载 NodeId 为 lifelong 路径加 `[-1, 会话序号, 步骤]`：步骤 0 是 Stream 单步、步骤 1 是 parser；Derive 只有步骤 0（parser）。挂载以 `SessionChain` 角色进入 `protoChains`，参与构图与 ScopeTree。ReuseOutput 的 `sessionMounts = []`，沿用所记录 AST 位置的 `NodeChain`，不为复用输出虚构一个独立执行。
 - `protoSessions` 为每个 Receive 资产登记一份 interpreter 托管的会话，挂载为 `[-2, 序号, 步骤]`；它不属于 AST，不是任何读取点的可见前驱。Derive 与 ReuseOutput 资产没有托管会话。
-- ReuseOutput 的位置来自同一 lifelong 的 original Input 链。即使没有订阅者、只供后继 `requires`，AST 挂接的持续副产物也纳入会话集合。`Gen.Sessions` 在生成期检查供值位置的唯一性以及订阅、顺序前驱、选择读取组成的启动图；运行时直接执行已确定的计划。
+- ReuseOutput 的位置来自同一 lifelong 的 original Input 链。即使没有订阅者、只供后继 `requires`，AST 挂接的持续副产物也纳入会话集合。`Gen.Composition` 在生成期检查供值位置的唯一性以及订阅、顺序前驱、选择读取组成的启动图；运行时直接执行已确定的计划。
 - 可见性：lifelong 的会话挂载先于它的全部单元。来源分析中，会话挂载按各消费单元的后续读取需求分别作为根分析，以进入 lifelong 时的交接（例如外层 alternative 选择时捕获的值）为已捕获绑定；运行时每个生产步骤也从这份交接开始（见 8.1）。单元的执行以订阅资产的交付作为已捕获绑定，出身是会话的生产步骤；单元读取生产步骤的其他普通发布时，读到的是所处理交付那一步的发布（伴随发布，见 7）。会话挂载的各个成功出口不合并：一条交付的伴随发布对应一次成功的生产步骤（Stream 单步与 parser 各一个成功出口），单元按每种交付状态分别分析。Stage 2 取消 lifelong 内的显式 request 后，不再出现“没有伴随发布”的交付状态。某条交付的伴随发布中没有辅助资产 X 时，单元中读取 X 的位置不补产，等待它的发布；需要这个值时按第 5.2 节第 7 条，由该会话的资产驱动读取位置，或在 lifelong 之前生产它。lifelong 有一个正常出口：进入 lifelong 之前可见的发布，以及单元内可能发布后继所读契约的位置，都交给后继。后继按每个来源最新一次发布读取（见 9.4）；同一单元内互斥位置发布同一契约时作为并存候选，运行时按轮次取最新，其余多来源情形仍按来源唯一规则报错。
 - 分析裁剪：以 `lifelongUnits` 确定单元，不穿透单元内的 chained、alternative 或 parallel。每个生产挂载保留本单元可能读取的契约及生产链自身的读取依赖，成功出口再按单元相关契约投影、去重，然后逐步组合 Receive 的步骤和各会话状态。仍分析全部会话，避免遗漏其他会话造成的来源冲突；不把成功出口取并集。生产链的 read／drive 事实独立累计。
 - 读取点来源新增 `FromSession`：持续资产经会话交付，不查询普通来源表。Receive 可由 interpreter 托管的会话回答；Derive 与 ReuseOutput 的读取点必须在有这份会话的 lifelong 之内或之后。ReuseOutput 的生产位置用于输出路由和启动证明，不能被解释为读取时补跑该位置的许可。
@@ -548,7 +548,7 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
         if historySize received > 10 then endStream else pure ()
         ...
 
-**谁拿到 `endStream`。** 自己以 `streams` 订阅持续资产的 Excu（`Gen/Bind.consumesStream`，2026-11-17 修订）。它是被这份资产驱动的消费方，`endStream` 结束的是它自己的订阅。`streams` 只出现在被驱动的位置：lifelong 节点的订阅（[5.2 节](#static)），或独立 Derive／ReuseOutput 被驱动的 Input 链。所以运行时按当前调用的位置就能确定订阅，业务不用说明结束哪一份资产。
+**谁拿到 `endStream`。** 自己以 `streams` 订阅持续资产的 Excu（`Gen.Composition` 的绑定能力规则，2026-11-17 修订）。它是被这份资产驱动的消费方，`endStream` 结束的是它自己的订阅。`streams` 只出现在被驱动的位置：lifelong 节点的订阅（[5.2 节](#static)），或独立 Derive／ReuseOutput 被驱动的 Input 链。所以运行时按当前调用的位置就能确定订阅，业务不用说明结束哪一份资产。
 
 - 同一条链上的其他 effect（Input 前驱）和 lifelong 里不订阅的普通节点不给：它们是原子操作，lifelong 只是插入它们的控制流。handler 的签名不随所处的控制流改变，可以在持续链与有限链之间复用。
 - 只给 Excu：Scoped.open 被打断会使实例失效，Pure 是值变换，Stream 用 `streamEnd`。
@@ -600,23 +600,22 @@ ReuseOutput 的发布位置同样按节点计：节点结束订阅时立即撤�
 | 内容 | 源码 |
 | --- | --- |
 | Stream typing、Context 声明 | [Registration.hs](../sdk/Framework/Language/Registration.hs) |
-| `streams` 与权限检查 | [Gen/Demand.hs](../sdk/Framework/Gen/Demand.hs) |
-| 声明匹配、lifelong 合法性、单元／订阅／会话与启动依赖 | [Gen/Lower.hs](../sdk/Framework/Gen/Lower.hs)、[Gen/Sessions.hs](../sdk/Framework/Gen/Sessions.hs) |
-| `protoSessions`、启动环检查、来源分析 | [Gen/Build.hs](../sdk/Framework/Gen/Build.hs)、[Gen/Build/Sources.hs](../sdk/Framework/Gen/Build/Sources.hs)、[Prototype/Query.hs](../sdk/Framework/Prototype/Query.hs)（`finiteSessions`、`bootPlan`） |
+| 组合计算：访问权限、声明、lifelong 单元与订阅、持续连接、启动依赖、来源证明 | [Gen/Composition.hs](../sdk/Framework/Gen/Composition.hs) |
+| 静态模型与自洽查询 | [Prototype/Types.hs](../sdk/Framework/Prototype/Types.hs)、[Prototype/Query.hs](../sdk/Framework/Prototype/Query.hs)、[Prototype/Validate.hs](../sdk/Framework/Prototype/Validate.hs) |
 | History 视图 | [History.hs](../sdk/Framework/Language/History.hs) |
 | 会话状态、历史、游标、读取方登记与保留范围 | [Session.hs](../sdk/Framework/Runtime/Session.hs) |
-| Derive 的推导、会话集合、生产步骤与上游游标的交接 | [Prototype/Query.hs](../sdk/Framework/Prototype/Query.hs)（`drivingAssets`、`bootPlan`、`sessionAssets`）、[Gen/Lower.hs](../sdk/Framework/Gen/Lower.hs)、[Runtime.hs](../sdk/Framework/Runtime.hs)（`DeriveSteps`）、[Session.hs](../sdk/Framework/Runtime/Session.hs)（`feedSession`）、[Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
-| ReuseOutput 的发布位置、挂接与单元结束封口 | [Gen/Sessions.hs](../sdk/Framework/Gen/Sessions.hs)、[Gen/Build/Sources.hs](../sdk/Framework/Gen/Build/Sources.hs)、[Gen/Emit/Handlers.hs](../sdk/Framework/Gen/Emit/Handlers.hs)、[Context.hs](../sdk/Framework/Runtime/Context.hs)、[App.hs](../sdk/Framework/Runtime/App.hs)、[Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
+| Derive 的推导、会话集合、生产步骤与上游游标的交接 | [Gen/Composition.hs](../sdk/Framework/Gen/Composition.hs)、[Runtime.hs](../sdk/Framework/Runtime.hs)（`DeriveSteps`）、[Session.hs](../sdk/Framework/Runtime/Session.hs)（`feedSession`）、[Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
+| ReuseOutput 的发布位置、挂接与单元结束封口 | [Gen/Composition.hs](../sdk/Framework/Gen/Composition.hs)、[Gen/Emit/Handlers.hs](../sdk/Framework/Gen/Emit/Handlers.hs)、[Context.hs](../sdk/Framework/Runtime/Context.hs)、[App.hs](../sdk/Framework/Runtime/App.hs)、[Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
 | 会话登记、Origin 清除 | [Graph.hs](../sdk/Framework/Runtime/Graph.hs) |
 | 生产任务、DeliveryFrame、交付视图的交接 | [Runtime.hs](../sdk/Framework/Runtime.hs) |
 | 视图读取、最新值投影（`latestContext`）、parser 输入、会话发布路由 | [App.hs](../sdk/Framework/Runtime/App.hs)、[Context.hs](../sdk/Framework/Runtime/Context.hs) |
 | 单元调度、就绪检查、运行监督 | [Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
 | 根帧／轮帧与节点进度、scope 待用查询 | [Frame.hs](../sdk/Framework/Runtime/Frame.hs)、[Graph.hs](../sdk/Framework/Runtime/Graph.hs) |
-| `StreamEnds`／`EndsStream` 能力类、Layer 规则（`consumesStream`）与标签实例 | [Handler.hs](../sdk/Framework/Language/Handler.hs)、[Gen/Bind.hs](../sdk/Framework/Gen/Bind.hs)、[Gen/Emit/Handlers.hs](../sdk/Framework/Gen/Emit/Handlers.hs) |
+| `StreamEnds`／`EndsStream` 能力类、绑定能力规则与标签实例 | [Handler.hs](../sdk/Framework/Language/Handler.hs)、[Gen/Composition.hs](../sdk/Framework/Gen/Composition.hs)、[Gen/Emit/Handlers.hs](../sdk/Framework/Gen/Emit/Handlers.hs) |
 | 会话的已结束状态、排空与耗尽、共享唤醒、派生完成水位、读取方计数与退役完成协议 | [Session.hs](../sdk/Framework/Runtime/Session.hs) |
 | 生产任务识别 `streamEnd`、Derive 识别 `endStream`、会话退役动作、单元结束通知 | [Runtime.hs](../sdk/Framework/Runtime.hs)、[App.hs](../sdk/Framework/Runtime/App.hs) |
 | 单元正常结束、节点订阅结束、单元离开会话、发布位置撤下、并行汇合、lifelong 返回 | [Execution.hs](../sdk/Framework/Runtime/Execution.hs) |
-| lifelong 的正常出口与后继读取的拒绝 | [Gen/Build/Sources.hs](../sdk/Framework/Gen/Build/Sources.hs) |
+| lifelong 的正常出口与后继读取的拒绝 | [Gen/Composition.hs](../sdk/Framework/Gen/Composition.hs) |
 | 生成的读取方法与路由、Stream 入口的会话包装、`Raw` 实例、会话步骤登记 | [Gen/Emit/Handlers.hs](../sdk/Framework/Gen/Emit/Handlers.hs)、[Gen/Emit/Program.hs](../sdk/Framework/Gen/Emit/Program.hs)、[Context.hs](../sdk/Framework/Runtime/Context.hs)（`streamHandle`） |
 
 ScopeTree 独立构建并保持无环；订阅与回调关系不作为 scope 父边。运行时不累计完整方法调用历史或无限 workflow 结果。

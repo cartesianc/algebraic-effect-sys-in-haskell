@@ -1,49 +1,17 @@
--- 算法说明 v2（2026-11-16）。版本标记用于维护注释中的算法契约，不是 ABI 或缓存版本；
--- 改变阶段依赖、复用条件或证明边界时同步更新，缓存仍精确比较 structureSources 中的源码。
---
--- gen：这个 EDSL 的编译器。源程序是一个 demo 命名空间下的 Types、Effects、AST 与 Handlers；
--- 产物是 Generated/ 下交给 GHC 编译的 Haskell（中间表示）和其中的 Prototype（静态结构）。
--- 链的组合、读取路由与合法性都在这里定下来，运行时只执行产物，不再推导。
---
--- 流水线按阶段执行，每个阶段一个模块，失败即停止，生成区只在全部阶段通过后写回：
---
---   1 读取  Framework.Gen.Source      解析 Types.hs 的和类型；在声明加载进程中求值 effects 与 ast
---   2 降级  Framework.Gen.Lower       注册与 workflow → PrototypePlan，注册级与 workflow 结构检查
---   3 绑定  Framework.Gen.Assembly    解析挂载与输出连接，作为 Build／Sources／Emit 的共同依据
---           Framework.Gen.Bind        每个 handler 绑定的前驱、驱动、raw、读取路由、签名与 Layer
---   4 形状  Framework.Gen.Shape       解析 Handlers.hs，提取方法体的读取形状（require @T、raw）
---   5 组成  Framework.Gen.Bind        按绑定把形状换成 effect 方法的结构，检查读取路由与未读声明
---   6 构图  Framework.Gen.Build       EffectGraph、ScopeTree、链挂载与资产来源，得到 Prototype；驱动检查
---   7 输出  Framework.Gen.Emit.*      Generated/Effects、Handlers、Program 的源码
---   8 类检  Framework.Gen.Assets      GHC 类型检查业务模块与输出，顶层白名单，资产目录 Generated/Assets
---
--- 阶段依赖与复用边界（v2）：
--- * AST 已指定末端；Lower 为每次挂载编号，并从注册与位置推出持续会话连接。
--- * Assembly 解析入口与输出连接，Bind 确定有序驱动/前驱、raw 与读取路由；分析和 Emit 共用结果。
--- * Build 按方法缓存纯结构摘要，再从路径推导 ScopeTree；不先复制全部调用展开树。
--- * Sources 另按 workflow 路径证明资产来源；方法图共享定义不等于各次调用共享结果。
--- * 注入的 raw 与 ReuseOutput 只复用同一次原子输出；scope 是否复用实例由运行时参数生产身份决定。
--- * 不做任意 effect 的公共子表达式消除：没有 requests 或 close 也不证明两次 IO 可合并。
--- 复杂度仍包括摘要合并、scope 路径与相关来源状态，不能只按注册节点数估算；
--- 方法记忆化与路径规则见 Build.Graph，来源投影见 Build.Sources，持续连接的合法性见 Sessions。
---
--- 不执行 handler 业务；构图结果按输入与 SDK 源码缓存在 Generated/.scope-cache。
+-- 编译器 IO 驱动：Source/Shape 提供结构，Composition 统一计算，Emit 渲染，Assets 类检。
+-- 流水线说明 v3（2026-11-17）：使用 Gen.Composition 的统一状态转换；本文件负责 IO。
 module Framework.Gen (compileWorkflow) where
 
 import Control.Exception (evaluate)
-import Data.Maybe (isJust)
-import Framework.Gen.Assembly (assembleProgram)
 import Framework.Gen.Assets (checkAssets)
-import Framework.Gen.Bind (Unit(..), AssetDeclaration(..), bindProgram, composeMethods, reference)
-import Framework.Gen.Build (buildPrototype, checkDriven)
+import Framework.Gen.Composition
 import Framework.Gen.Emit.Effects (renderEffects)
 import Framework.Gen.Emit.Handlers (renderHandlers)
 import Framework.Gen.Emit.Program (renderProgram)
 import Framework.Gen.Emit.Prototype (renderPrototype)
 import Framework.Gen.Names (handlerClass)
 import Framework.Gen.Shape (shapeHandlers)
-import Framework.Gen.Source (lowerDeclarations, loadHandlers, loadSumTypes, namespaceDirectory, handlerText)
-import Framework.Prototype (validatePrototype)
+import Framework.Gen.Source (loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, handlerText)
 import Data.List (nub)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Exit (die)
@@ -57,39 +25,32 @@ compileWorkflow :: String -> IO ()
 compileWorkflow namespace = do
   let generated = namespaceDirectory namespace </> "Generated"
       cachePath = generated </> ".scope-cache"
-  -- 1 读取与 2 降级
+  -- 同一组合机器在声明进程中走到接口检查点；首次无 Handlers 也能生成同步契约。
   sumTypes <- loadSumTypes namespace
-  plan <- lowerDeclarations namespace sumTypes
-  -- 3 绑定
-  assembly <- either (die . show) pure (assembleProgram plan)
-  unit <- either die pure (bindProgram namespace plan assembly sumTypes)
-  -- 4 形状：首次生成尚无 Handlers.hs 时没有方法体，只生成契约
+  interface <- loadComposition namespace sumTypes
   source <- loadHandlers namespace
   shapes <- either (ioError . userError) pure
-    (maybe (Right []) (shapeHandlers namespace [(handlerClass handler', handler') | handler' <- unitHandlers unit]) source)
-  handlers <- either (ioError . userError) pure (renderHandlers unit source)
-  -- 5 组成：handler 方法体的结构按每个绑定换成 effect 方法的结构；尚无 Handlers 时不检查读取
-  methods <- either die pure (composeMethods (isJust source) (unitBindings unit) (unitReads unit) shapes)
-  -- 6 构图：缓存只省略纯构图，命中时仍校验；驱动检查每次执行，首次尚无 Handlers 时跳过
+    (traverse (shapeHandlers namespace [(handlerClass handler', handler') | handler' <- unitHandlers interface]) source)
+  pending <- either die pure (prepareComposition interface shapes)
   dependencies <- mapM readUtf8 structureSources
-  let cacheKey = show (plan, assembly, methods, dependencies)
+  let cacheKey = show (compositionKey pending, dependencies)
   cached <- tryIOError (readExisting cachePath)
   let previous = either (const Nothing) (>>= readMaybe) cached
-  (prototype, structure, reused) <- case previous of
+  (result, structure, reused) <- case previous of
     Just (key, value, rendered) | key == cacheKey -> do
-      either (die . show) pure (validatePrototype value)
-      pure (value, rendered, True)
-    _ -> case buildPrototype plan assembly methods of
-      Left problem -> die (show problem)
-      Right value -> pure (value, renderPrototype value, False)
-  case source of
-    Just _ -> either (die . show) pure (checkDriven assembly prototype)
-    Nothing -> pure ()
-  -- 7 输出
+      completed <- either die pure (completeComposition pending (Just value))
+      pure (completed, rendered, True)
+    _ -> do
+      completed <- either die pure (completeComposition pending Nothing)
+      pure (completed, renderPrototype (compositionPrototype completed), False)
+  let unit = compositionUnit result
+      prototype = compositionPrototype result
+  handlers <- either (ioError . userError) pure (renderHandlers unit source)
+  -- 输出只读取机器完成态的接口事实。
   let contracts = renderEffects unit
       program = renderProgram unit ++ structure
   _ <- evaluate (length structure)
-  -- 8 类型检查、顶层白名单与资产目录；通过后才更新生成区，未变文件保留时间戳
+  -- 类型检查、顶层白名单与资产目录；通过后才更新生成区，未变文件保留时间戳
   assets <- checkAssets namespace
     [("Effects", contracts), ("Program", program), ("Handlers", handlers)]
     (nub [reference (assetRepresentation declared) | declared <- unitAssets unit])
@@ -113,16 +74,10 @@ structureSources =
   , "sdk/Framework/Prototype/Graph.hs"
   , "sdk/Framework/Prototype/Query.hs"
   , "sdk/Framework/Prototype/Validate.hs"
-  , "sdk/Framework/Gen/Lower.hs"
-  , "sdk/Framework/Gen/Sessions.hs"
-  , "sdk/Framework/Gen/Demand.hs"
+  , "sdk/Framework/Gen/Composition.hs"
   , "sdk/Framework/Gen/Names.hs"
-  , "sdk/Framework/Gen/Bind.hs"
-  , "sdk/Framework/Gen/Assembly.hs"
-  , "sdk/Framework/Gen/Build.hs"
-  , "sdk/Framework/Gen/Build/Graph.hs"
-  , "sdk/Framework/Gen/Build/Sources.hs"
   , "sdk/Framework/Gen/Emit/Prototype.hs"
+  , "sdk/Framework/Gen/Emit/Types.hs"
   , "sdk/Framework/Language/Registration.hs"
   , "sdk/Framework/Language/AST.hs"
   , "sdk/Framework/Recursion.hs"

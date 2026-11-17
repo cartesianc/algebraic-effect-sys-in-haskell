@@ -10,7 +10,7 @@ extra-source-files:
     AGENTS.md
     hie.yaml
     docs/*.md
-    sdk/Framework/Gen/Lower.hs
+    sdk/Framework/Gen/Composition.hs
     demo/*/Handlers.hs
     demo/*/Generated/Assets.hs
 
@@ -169,16 +169,10 @@ executable effect-codegen
   other-modules:
       Framework.Gen
       Framework.Gen.Source
-      Framework.Gen.Lower
-      Framework.Gen.Sessions
-      Framework.Gen.Demand
+      Framework.Gen.Composition
+      Framework.Gen.Emit.Types
       Framework.Gen.Names
-      Framework.Gen.Bind
-      Framework.Gen.Assembly
       Framework.Gen.Shape
-      Framework.Gen.Build
-      Framework.Gen.Build.Graph
-      Framework.Gen.Build.Sources
       Framework.Gen.Emit.Effects
       Framework.Gen.Emit.Handlers
       Framework.Gen.Emit.Program

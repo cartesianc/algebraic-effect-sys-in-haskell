@@ -10,7 +10,7 @@
 {-# LANGUAGE ViewPatterns #-}
 
 -- 源语言的注册声明：用户在 Effects.hs 中写下的 ADT 与 demand 组合子，不执行 handler。
--- 名字推导、资产来源与访问规则属于编译器：Framework.Gen.Names、Framework.Gen.Demand。
+-- 名字推导、资产来源与访问规则属于编译器：Framework.Gen.Names、Framework.Gen.Composition。
 module Framework.Language.Registration
   ( EffectTyping(..), EffectKind(..), effectKind
   , Asset(.., Asset), contractOf, contextAsset

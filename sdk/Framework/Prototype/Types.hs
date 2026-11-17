@@ -4,7 +4,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 
 -- Prototype 的唯一数据模型，也就是 gen 的编译产物（中间表示）。这里只保存可发射、可校验的静态事实，
--- 不引入执行句柄或资源。构建算法在 Framework.Gen（Lower、Build），执行与展示只读取它。
+-- 不引入执行句柄或资源。构建算法在 Framework.Gen.Composition，执行与展示只读取它。
 module Framework.Prototype.Types
   ( NodeId, SumTypes, Prototype(..), PrototypePlan(..), EffectProto(..)
   , WorkflowTree(..), AlternativeProto(..), LifelongProto(..), SessionProto(..), BootPlan(..)

@@ -7,13 +7,12 @@ module Framework.Gen.Emit.Handlers (renderHandlers, handlerExports) where
 
 import Data.List (intercalate, nub, sortOn)
 import Data.Maybe (isJust)
-import Framework.Gen.Assembly
-import Framework.Gen.Bind
-import Framework.Gen.Names (contextProducer, contextReader, entryMethod, handlerBindings, handlerError, handlerFailure)
+import Framework.Gen.Composition
+import Framework.Gen.Emit.Types (renderValueType)
+import Framework.Gen.Names (handlerError, handlerFailure)
 import Framework.Gen.Source (HandlerSource(..), sourceOffset)
 import Framework.Language.Registration
 import Framework.Prototype.Graph (MethodRole(..))
-import Framework.Prototype.Types (ResolvedDemand(..))
 import qualified Framework.Prototype as Prototype
 import GHC (GhcPs)
 import GHC.Fingerprint (fingerprintString)
@@ -67,47 +66,48 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       ]
     -- demands 按表示类型路由到资产的读取入口；分支契约投影出构造器字段，streams 读历史。
     routeInstances = concat
-      [ [ "instance FrameworkRuntime.Reads (" ++ readType unit "FrameworkRuntime.History" resolved ++ ") (At "
-            ++ show (name specification) ++ ") where"
-        , "  require = At (" ++ routeExpression resolved ++ ")"
+      [ [ "instance FrameworkRuntime.Reads (" ++ renderValueType "FrameworkRuntime." "FrameworkGenerated." (routeType route) ++ ") (At "
+            ++ show (routeEffect route) ++ ") where"
+        , "  require = At (" ++ routeExpression route ++ ")"
         , "" ]
-      | specification <- specifications unit, not (null (handlerBindings specification))
-      , resolved <- readDemands unit (name specification) ]
-    routeExpression resolved = case (demandAccess resolved, [branch | branch <- unitBranches unit, branchName branch == contractType]) of
-      (StreamAccess, _) -> "fmap " ++ unwrap contractType ++ " <$> " ++ reader
-      (_, BranchContract _ base constructor field _ : _) -> "FrameworkRuntime.projectContext " ++ show producer ++ " "
+      | route <- unitRoutes unit ]
+    routeExpression route = case routeView route of
+      HistoryView -> "fmap " ++ unwrap contractType ++ " <$> " ++ reader
+      BranchView (BranchContract _ base constructor field _) continuous ->
+        "FrameworkRuntime.projectContext " ++ show producer ++ " "
         ++ show contractType ++ " FrameworkGenerated.ContextBindingError (\\(FrameworkGenerated." ++ base
         ++ " value) -> case value of { " ++ constructor ++ maybe " -> Just ()" (const " field -> Just field") field
-        ++ "; _ -> Nothing }) (" ++ current base ++ ")"
-      _ -> unwrap contractType ++ " <$> " ++ current contractType
+        ++ "; _ -> Nothing }) (" ++ current continuous ++ ")"
+      LatestView -> unwrap contractType ++ " <$> " ++ current True
+      ValueView -> unwrap contractType ++ " <$> " ++ reader
       where
-        contractType = demandContract resolved
-        producer = demandProvider resolved
-        reader = readerOf unit producer
+        contractType = routeContract route
+        producer = routeProvider route
+        reader = routeReader route
         unwrap selectedContract = "(\\(FrameworkGenerated." ++ selectedContract ++ " value) -> value)"
-        current base
-          | continuousContract unit base = "FrameworkRuntime.latestContext " ++ show producer
+        current continuous
+          | continuous = "FrameworkRuntime.latestContext " ++ show producer
               ++ " FrameworkGenerated.ContextBindingError " ++ reader
           | otherwise = reader
     rawInstances = concat
-      [ [ "instance FrameworkRuntime.Raw (At " ++ show (name specification) ++ ") where"
-        , "  raw = At (" ++ expression ++ ")"
+      [ [ "instance FrameworkRuntime.Raw (At " ++ show (bindingEffect binding) ++ ") where"
+        , "  raw = At (" ++ rawExpression source ++ ")"
         , "" ]
-      | binding <- unitBindings unit, Just source <- [bindingRaw binding]
-      , let expression = rawExpression source
-            specification = specOf unit (bindingEffect binding) ]
-    -- streamEnd 只在 Stream 的标签下有实例：结束这个 effect 所在的生产会话，同一 handler 的其他绑定不受影响。
-    -- endStream 只在由持续资产驱动的消费链上的 Excu 标签下有实例（Bind.consumesStream）。
+      | binding <- unitBindings unit, Just source <- [bindingRaw binding] ]
+    -- 能力已经由组合计算确定；这里只为对应标签输出实例，不重新解释 effect 类别或 demands。
     endInstances = concat
       [ [ "instance FrameworkRuntime.StreamEnds (At " ++ show (name specification) ++ ") where"
         , "  streamEnd = At FrameworkRuntime.endSource"
         , "" ]
-      | specification <- specifications unit, Stream _ <- [typing specification] ]
+      | specification <- specifications unit, hasCapability specification EndsSource ]
       ++ concat
       [ [ "instance FrameworkRuntime.EndsStream (At " ++ show (name specification) ++ ") where"
         , "  endStream = At FrameworkRuntime.endSubscription"
         , "" ]
-      | specification <- specifications unit, consumesStream unit specification ]
+      | specification <- specifications unit, hasCapability specification EndsSubscription ]
+    hasCapability specification capability = or
+      [ capability `elem` bindingCapabilities binding
+      | binding <- unitBindings unit, bindingEffect binding == name specification ]
 
     -- effect 方法：外层包装由类别决定；方法体先驱动、再执行 Input 前驱，最后在本 effect 的标签下执行 handler。
     entryDefinitions specification =
@@ -115,57 +115,51 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       | binding <- unitBindings unit, bindingEffect binding == name specification
       , let method = bindingMethod binding
             handler' = bindingHandler binding
-      , line <- definition method (resultType method) (wrapper method)
-          (intercalate " >> " (bindingCalls binding ++ [handlerCall method handler'])) ]
-      ++ concat [ readerDefinition specification method | Just method <- [contextReader (typing specification)] ]
+      , line <- definition method (renderValueType "FrameworkRuntime." "FrameworkGenerated." (bindingResult binding)) (wrapper binding)
+          (intercalate " >> " (bindingCalls binding ++ [handlerCall binding handler'])) ]
+      ++ concat [ readerDefinition reader | reader <- unitReaders unit, readerEffect reader == name specification ]
       where
         selectedName = name specification
-        resultType method = case typing specification of
-          Context { asset = declared } | Just method == contextProducer (typing specification) -> "FrameworkGenerated." ++ contractOf declared
-          _ -> resultOf specification
-        handlerCall method handler' = case typing specification of
-          Context { asset = declared } | Just method == contextProducer (typing specification) ->
-            "(FrameworkGenerated." ++ contractOf declared ++ " <$> runAt @" ++ show selectedName ++ " FrameworkGenerated." ++ handler' ++ ")"
+        handlerCall binding handler' = case bindingOperation binding of
+          PublishAsset contract ->
+            "(FrameworkGenerated." ++ contract ++ " <$> runAt @" ++ show selectedName ++ " FrameworkGenerated." ++ handler' ++ ")"
           _ -> "runAt @" ++ show selectedName ++ " FrameworkGenerated." ++ handler'
         scoped = "FrameworkRuntime.withScopeDependencies " ++ show (Prototype.effectScopes (protoOf unit selectedName))
         entered = scoped ++ " . FrameworkRuntime.enterHandler " ++ show selectedName
-        wrapper method = rootWrapper specification ++ " . " ++ case typing specification of
+        wrapper binding = rootWrapper selectedName ++ " . " ++ case bindingOperation binding of
           -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
-          Scoped _ _ -> "FrameworkRuntime.atomicScope " ++ show method ++ " . FrameworkRuntime."
-            ++ (if Just method == entryMethod specification then "openScope " else "closeScope ")
-            ++ show selectedName ++ " FrameworkGenerated.ScopeBindingError . " ++ entered
-          -- 原子句柄的输出只交给挂在它下面的 parser，以它为 Input 的方法照常继续。
-          Excu _ -> "FrameworkRuntime.atomicHandle " ++ show method ++ " . " ++ entered
-          -- parser 的 raw 在会话中由本次原始输入回答，不再执行 handler。
-          Stream _ -> "FrameworkRuntime.streamHandle . " ++ entered
-          -- Pure 是 parser 读取 raw 的中间一段：不改变调用者，挂接句柄因此认得出经它拉取的 Context，不重复注入。
-          Pure _ -> scoped
-          Context {} -> scoped ++ " . FrameworkRuntime.callContext " ++ show selectedName
+          OpenResource -> scopeWrapper binding "openScope "
+          CloseResource -> scopeWrapper binding "closeScope "
+          AtomicOperation -> "FrameworkRuntime.atomicHandle " ++ show (bindingMethod binding) ++ " . " ++ entered
+          SourceStep -> "FrameworkRuntime.streamHandle . " ++ entered
+          PureOperation -> scoped
+          PublishAsset _ -> scoped ++ " . FrameworkRuntime.callContext " ++ show selectedName
             ++ "\n    (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"
-          _ -> entered
-    rootWrapper specification = "FrameworkRuntime.withErrorPath " ++ show (Prototype.effectNearestScopes (protoOf unit (name specification)))
+          ErrorOperation -> entered
+        scopeWrapper binding operation = "FrameworkRuntime.atomicScope " ++ show (bindingMethod binding) ++ " . FrameworkRuntime."
+          ++ operation ++ show selectedName ++ " FrameworkGenerated.ScopeBindingError . " ++ entered
+    rootWrapper selectedName = "FrameworkRuntime.withErrorPath " ++ show (Prototype.effectNearestScopes (protoOf unit selectedName))
       ++ " . FrameworkRuntime.handleFailure"
-    -- readT 读最新值：尚无值时等待之后的发布，不调用 getT；streamT 读历史视图，由会话交付。
-    readerDefinition specification method
-      | Prototype.effectContinuous (protoOf unit selectedName) = definition method
-          ("FrameworkRuntime.History FrameworkGenerated." ++ contractType) (rootWrapper specification)
+    -- readT 与 streamT 的模式由组合计算选定，渲染器只输出相应的读取入口。
+    readerDefinition reader
+      | readerHistory reader = definition method
+          ("FrameworkRuntime.History FrameworkGenerated." ++ contractType) (rootWrapper selectedName)
           ("FrameworkRuntime.readHistory " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError"
             ++ " FrameworkGenerated.bound" ++ selectedName)
-      | otherwise = definition method ("FrameworkGenerated." ++ contractType) (rootWrapper specification)
+      | otherwise = definition method ("FrameworkGenerated." ++ contractType) (rootWrapper selectedName)
           ("FrameworkRuntime.readContext " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError "
              ++ "FrameworkGenerated.bound" ++ selectedName)
       where
-        selectedName = name specification
-        contractType = maybe "" contractOf (contextAsset (typing specification))
+        selectedName = readerEffect reader
+        method = readerMethod reader
+        contractType = readerContract reader
     definition method resultType wrapper body =
       [ method ++ " :: FrameworkGenerated.App " ++ parenthesized resultType
       , method ++ " = (" ++ wrapper ++ ") $"
       , "  " ++ body
       , "" ]
 
-    orderedScopes = nub (concat
-      [ Prototype.effectScopes effect ++ [Prototype.effectName effect | Prototype.effectKind effect == ScopedKind]
-      | effect <- effectPrototypes unit ])
+    orderedScopes = unitScopeOrder unit
     openingInputs = Prototype.effectOpeningInputs . protoOf unit . name
 
     -- 控制对象由生成的 handler 模块创建；不同链引用同份对象，不预执行 open。

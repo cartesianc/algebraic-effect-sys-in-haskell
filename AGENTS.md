@@ -25,6 +25,7 @@
 - 持续执行由首次需求建立运行，之后按增量驱动。lifelong 内的原子操作可通过挂接的持续 Context 发布资产；gen 将输出连接绑定到实际 AST 挂载，同次输出不再另起派生操作。Stream 来源仍不进入原始消费链。普通资产保留原来的 AST 可见性，不随持续交付隐式透传；详见 Stream 规范。
 - 取值的捕获、来源可见性、缺值等待（require 不生产）、资源认领和 scope 回收保证（按实际参数生产身份区分[单例与多例](docs/LATEST_DESIGN.md#scope-identity)，结合当前使用与执行帧的待用关系[按可达性回收](docs/LATEST_DESIGN.md#scope-gc)）不能在重构中弱化。持续资产的最新值也沿用原 Binding 的生产身份与执行帧作为开启参数；整份 History 的参数身份及历史资源持有仍未定义。完整规则按下表阅读，不在本文件复制协议。
 - gen 是这个 EDSL 的编译器。SDK 分为源语言（`Framework/Language/`）、gen（`Framework/Gen/`）、编译产物（`Framework/Prototype/`、Generated）与运行时（`Framework/Runtime/`）四层，依赖只从上往下：gen 不导入运行时，运行时不导入 gen。能在生成期判定的组合、读取路由与合法性问题由 gen 报错，不留给运行时；新增检查放进流水线的对应阶段，见 [gen 是编译器](docs/LATEST_DESIGN.md#compiler)与[编译流水线](docs/LATEST_DESIGN.md#generation)。
+- 组合含义由 `Gen.Composition` 的统一状态转换计算；新增组合规则进入同一计算，不让 Emit 或运行时重新推断。前端提取结构，输出阶段读取已确定的类型能力、路由与装配事实。哲学原则见[组合推导](docs/COMPOSITION.md#why)。
 - Prototype 是纯结构，RuntimeGraph 保存活动关系，ScopeTree 独立且无环。生成、执行、展示共享同一静态模型。
 - Generated 是派生产物；修改手写输入后显式生成，不在构建中隐式修改源码，不把手改生成结果当作持久权威。
 - 当前能力与延期边界以[所属规范](docs/LATEST_DESIGN.md)为准，阶段状态和未完成项集中在 [Next stages](docs/NEXT_STAGES.md#stages)。修改前按下表读取对应协议；不得把历史方案、待设计接口或计划写成当前能力。本文件不复制另一份实现状态清单。
@@ -50,9 +51,8 @@
 | --- | --- |
 | 源语言：手写业务门面、注册、AST、handler 能力类与历史视图 | [SDK.hs](sdk/Framework/SDK.hs)、[Registration](sdk/Framework/Language/Registration.hs)、[AST](sdk/Framework/Language/AST.hs)、[Handler](sdk/Framework/Language/Handler.hs)、[History](sdk/Framework/Language/History.hs) |
 | gen 流水线与命令行 | [Gen.hs](sdk/Framework/Gen.hs)、[Main](sdk/Framework/Gen/Main.hs) |
-| gen：读取、降级、持续执行装配、资产来源规则与派生名字 | [Source](sdk/Framework/Gen/Source.hs)、[Lower](sdk/Framework/Gen/Lower.hs)、[Sessions](sdk/Framework/Gen/Sessions.hs)、[Demand](sdk/Framework/Gen/Demand.hs)、[Names](sdk/Framework/Gen/Names.hs) |
-| gen：入口／输出装配、绑定、方法体形状与组成 | [Assembly](sdk/Framework/Gen/Assembly.hs)、[Bind](sdk/Framework/Gen/Bind.hs)、[Shape](sdk/Framework/Gen/Shape.hs) |
-| gen：构图与来源证明 | [Build](sdk/Framework/Gen/Build.hs)、[Build/Graph](sdk/Framework/Gen/Build/Graph.hs)、[Build/Sources](sdk/Framework/Gen/Build/Sources.hs) |
+| gen：前端读取与方法体形状 | [Source](sdk/Framework/Gen/Source.hs)、[Shape](sdk/Framework/Gen/Shape.hs) |
+| gen：统一组合计算（声明、会话、类型能力、装配、构图与来源证明） | [Composition](sdk/Framework/Gen/Composition.hs)；生成名字见 [Names](sdk/Framework/Gen/Names.hs) |
 | gen：输出与类检 | [Emit/Effects](sdk/Framework/Gen/Emit/Effects.hs)、[Emit/Handlers](sdk/Framework/Gen/Emit/Handlers.hs)、[Emit/Program](sdk/Framework/Gen/Emit/Program.hs)、[Emit/Prototype](sdk/Framework/Gen/Emit/Prototype.hs)、[Assets](sdk/Framework/Gen/Assets.hs)、[Catalog](sdk/Framework/Gen/Catalog.hs) |
 | 编译产物：Prototype 模型、查询、校验与展示 | [Prototype.hs](sdk/Framework/Prototype.hs)、[Types](sdk/Framework/Prototype/Types.hs)、[Graph](sdk/Framework/Prototype/Graph.hs)、[Query](sdk/Framework/Prototype/Query.hs)、[Validate](sdk/Framework/Prototype/Validate.hs)、[Structure](sdk/Framework/Prototype/Structure.hs) |
 | 生成代码门面与运行入口 | [Generated.hs](sdk/Framework/Generated.hs)、[Program.hs](sdk/Framework/Program.hs) |

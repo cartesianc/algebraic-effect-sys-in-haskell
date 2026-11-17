@@ -1,46 +1,107 @@
-# 组合推导：声明组合怎样决定运行行为
+# 组合推导：结构怎样成为执行语义
 
-更新：2026-11-17。本文是跨专题的对照入口：列出业务写下的组合会被 gen 推导成什么事实、运行时据此怎样驱动，以及完整规则在哪一份规范里。协议本身仍由各专题唯一维护（[主设计](LATEST_DESIGN.md)、[图与来源](EFFECT_GRAPH.md)、[Stream 规范](STREAM_LIFELONG.md)），本文不复制它们，只给出对应关系；框架每增加一种由组合推导的行为，就在这里增加一条。
+更新：2026-11-17。组合逻辑是这个框架的核心设计原则：业务写下资产、effect、原子 handler 和 workflow 的关系，SDK 对这些结构进行运算，得到可以检查、生成和执行的含义。本文先说明这项原则，再列出各组合的推导依据；详细协议仍由[主设计](LATEST_DESIGN.md)、[图与来源](EFFECT_GRAPH.md)和[Stream 规范](STREAM_LIFELONG.md)分别维护。
 
 <a id="why"></a>
-## 1. 为什么 SDK 里找不到这些行为的名字
+## 1. 组合逻辑为什么是框架核心
 
-框架不按行为提供操作名。SDK 里没有 `map`、`filter`、`take`、`share`、`acquireRelease` 这样的方法，也没有让业务标注的 key、寿命、单例／多例、驱动方式或清理策略。业务只写四类结构：
+handler 描述一次原子操作；业务含义由它绑定的 effect、Input、demands 和 workflow 共同决定。同一个 handler 可以用于不同业务链，仍只实现自己的取值、解析或 IO。SDK 必须能够从这些声明计算出它应获得哪些能力、资产从哪里进入、谁驱动谁，以及哪些结构组合不成立。这项计算决定框架的表达方式，代码生成和运行调度都服务于它。
 
-| 结构 | 写在哪里 | 表达什么 |
-| --- | --- | --- |
-| 资产 | Types.hs 的 ADT 与 `Asset @T "名字"` | 跨操作流动的业务值及其唯一来源 |
-| 注册 | Effects.hs 的 `typing`、`input`、`demands` | 操作类别、前驱、驱动与读取 |
-| 原子方法 | Handlers.hs 的 instance | 一次读取、解析或 IO |
-| workflow | AST 与 `Workflow/*.hs` | 哪些链在什么时候、以什么控制流启动 |
+这里把这种现象称为**组合产生的特设多态**：相同声明元素在不同的、可静态判定的关系中，获得不同的解释。例如 Context 挂在普通原子句柄下时解析一次输出；挂在 Stream 下时解析持续输入；Input 链受持续资产驱动时，又根据实际挂载位置成为派生生产或复用已有输出。业务无需为每一种组合另写装配代码。
 
-同一种声明元素放进不同组合，得到不同的运行行为。例如同一个 `Context` 声明：挂在原子句柄下是一次普通解析；挂在 Stream 下并声明 `stream = True` 是持续来源；Input 链上有 `streams` 时，按 AST 里是否已有发布位置，成为独立派生或沿用已有输出。又如 scope 的开启参数用 `requests` 还是 `requires` 进入，决定这次开启是多例还是单例，也决定实例何时关闭。
+生产与消费也是关系角色。一个 Context 链可以消费上游资产，同时向另一条链生产资产；它不必额外标注自己是生产者还是消费者。持续链 A 从 B 的交付构造历史视图时，每次取得的视图都是固定快照，A 仍可随 B 后续发布继续运行。**固定快照不等于停止生产，也不由“链上没有 Stream”单独推出历史保存语义。** 具体驱动必须符合已有组合规则。
 
-这样设计的理由：
+这项设计把三件事连在一起：
 
-- **组合在源码里可见**：关系写在固定声明里，读者和工具都能沿结构读出（[代码即文档](LATEST_DESIGN.md#code-as-documentation)）。按行为命名的方法会把组合藏进调用链。
-- **判断在生成期完成**：gen 是编译器，能静态判定的组合由它决定并报错，运行时只执行编译结果（[gen 是编译器](LATEST_DESIGN.md#compiler)）。
-- **原子方法不随控制流改变**：handler 只描述一次操作，同一个 handler 可以放进不同的链，签名由它自己的类别与读取决定（见[第 7 节](#layer)）。
+- **代码能够表达关系。** 注册和 workflow 是有限、明确的结构，读者、HLS、生成器和 agent 面对同一份原生 Haskell。关系应能沿源码追溯，见[代码即文档](LATEST_DESIGN.md#code-as-documentation)。
+- **编译器能够计算关系。** gen 把结构作为数据进行分析，形成类型约束、精细化 DI、来源证明和图；不要求原子方法理解整个调度器。
+- **运行时能够执行关系。** interpreter 消费已经确定的结构，管理实际值、执行进度、会话与资源；业务 IO 的结果不由编译器猜测。
 
-代价是：只读 SDK 的 API 无法列出框架能做什么，也看不出不同组合下业务实现的差异。本文补上这一份清单。
+因此，设计新能力时先确定“哪些结构关系对应什么执行含义”，再决定如何生成代码和维护运行状态。没有结构证据的行为应诊断或保留待定，不能以自动装配为名依赖偶然时序。框架对组合的解释有明确适用条件，也不因为引入状态机就自动证明任意业务程序满足代数定律。
+
+### 代码长什么样
+
+下面是 [FileDemo/Effects.hs](../demo/FileDemo/Effects.hs) 的注册节选；省略同文件的其他 effect：
+
+```haskell
+EffectSpec
+  { name = "FileResource"
+  , typing = Context
+      { asset = Asset @FileHandle "OpenedFile"
+      , parser = Just "acquireFile"
+      , require = True
+      , stream = False
+      }
+  , input = "Root"
+  , demands = [requests "FileName", requires "FileName"]
+  }
+```
+
+对应 [FileDemo/Handlers.hs](../demo/FileDemo/Handlers.hs) 的完整 instance 节选（省略模块头与 import）：
+
+```haskell
+instance AcquireFileLayer m => AcquireFileHandler m where
+  acquireFile = do
+    path <- require @FilePath
+    outcome <- liftIO $ tryIOError $
+      bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
+        hSetEncoding file utf8
+        putStrLn ("[open] " ++ path)
+        pure (FileHandle path file)
+    either (raise . AcquireFileError . displayException) pure outcome
+```
+
+这段注册同时表达“驱动 FileName 的生产”和“读取该资产”。gen 据此确定有序生产步骤、唯一读取路由与 `Reads FilePath` 能力；`acquireFile` 不调用生产者。换一个合法绑定可以复用这份原子实现，资产来源仍由那个 effect 的声明确定。完整资产、instance、workflow 和入口沿[指南的代码形态](GUIDE.md#code-shape)阅读。
+
+SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` 这样的业务组合方法。组合的能力不能只靠方法名清单呈现，因此后文按“声明组合 → 推导事实 → 运行行为”登记；这些类比不代表与其他框架同名操作的语义完全相同。
 
 <a id="pipeline"></a>
-## 2. 推导的路径
+## 2. 一台组合状态机，产生同一份含义
 
-每条推导都按[自动装配必须有明确依据](LATEST_DESIGN.md#principles)的格式成立：输入前提 → 推导结构 → 运行行为 → 无法判定时的诊断。
+[Gen.Composition](../sdk/Framework/Gen/Composition.hs) 是编译期组合计算的统一实现。输入是已加载的 effect／资产／workflow，以及前端提取的 handler 读取形状；状态转换逐步补全关系、检查约束，最终给出接口装配与 Prototype。声明解析、会话推导、绑定、构图和来源证明都在这个模块内计算。
 
-    声明组合（注册、AST、handler 的读取结构）
-    → gen 各阶段判定，写入 Prototype 的事实与生成代码
-    → 运行时读取这些事实，选择特定的驱动
-    → 不成立的组合在生成期报错，运行时不猜
+```text
+声明结构 + handler 读取形状
+        ↓
+组合状态机：解析 → 编号与绑定 → 方法组成 → 图与来源证明
+        ↓
+确定的类型能力、读取路由、入口/输出连接、会话计划、Prototype
+        ↓
+Emit 按结果生成 Haskell；runtime 执行生成结果
+```
 
-| gen 阶段 | 推出的事实 | 运行时谁使用 |
-| --- | --- | --- |
-| 降级（Lower、Demand、Sessions） | 每份资产的唯一生产方与访问方式；alternative 的转折契约与候选（`AlternativeProto`）；lifelong 的单元拆分与订阅（`lifelongUnits`、`lifelongSubscriptions`）；每份持续资产的生产方式（`sessionPlan :: BootPlan`） | Execution 的调度、Runtime 的会话启动 |
-| 绑定（Assembly、Bind） | 每个入口的驱动与前驱步骤、raw 来源、按“表示类型 + effect”的读取路由；handler 的 Layer 能力 | 生成的入口与 `At "E"` 实例 |
-| 构图（Build） | 读取点的来源（`protoSources`）、EffectGraph、ScopeTree、scope 开启计划（`protoScopeOpenings`）、驱动可达检查 | 取值与等待、scope 共享与回收、Error 导航 |
+状态机统一的是**语义计算的权威**。局部遍历、路径组合和环检查是它的内部运算，不保留各自对外决定装配行为的分析入口。Emit 可以按产物分文件，但只投影已确定的状态：例如持续来源的 Receive／Derive／ReuseOutput 在组合计算中确定，输出阶段直接使用；类型能力也先形成结构结果，再渲染为 Layer 约束。
 
-运行时的分支只看这些事实，不看方法名，也不解释业务 IO。推导结果可以用 `cabal run 程序 -- --structure` 查看（[命令行](GUIDE.md#commands)），Layer 能力与读取路由在 `Generated/Effects.hs`、`Generated/Handlers.hs` 里。
+这不要求整个 SDK 的算法全部搬进一份文件。`Prototype.Query` 保留供机器和原型校验共用的纯结构关系查询，包括 `bootPlan`、`finiteSessions` 等；它们服务于同一模型，不是另一套拥有编译阶段和装配状态的计算机。GHC 语法提取、源码资产类检、文本渲染和运行期资源管理也各守原有边界。
+
+| 计算中的事实 | 产物的用途 |
+| --- | --- |
+| 唯一资产来源、访问方式、表示类型和读取视图 | 生成契约、读取路由与 handler 的类型能力 |
+| AST 位置、alternative 候选、lifelong 单元与持续连接 | 生成末端、选择入口、会话启动和订阅计划 |
+| 有序驱动／前驱、raw 来源、原子输出连接 | 生成入口和注入；同一组事实参与方法组成与来源证明 |
+| 方法图、ScopeTree、读取来源和 scope 开启计划 | 静态校验与展示；运行时取值、等待、共享和回收的依据 |
+
+实际转换由 `advanceComposition` 统一定义，入口分成两个等待检查点：
+
+```text
+beginComposition
+  Declared → Related → Numbered → AwaitingBodies Unit
+
+prepareComposition（补入 Maybe handler 形状）
+  ResolvingBodies → AwaitingGraph PendingComposition
+
+completeComposition（补入可选的缓存原型）
+  BuildingStructure → ProvingSources → Checking → Complete
+                                    缓存命中 ──┘
+```
+
+`Source.loadComposition` 在 ghci 中调用 `beginComposition`，把具有 Eq／Show／Read 的纯 `Unit` 交回生成器。Unit 保存 `ReadRoute`、`ReaderPlan`、`SelectorPlan`、`SessionEntry` 和 `Capability` 等确定事实；它不包含 GHC AST、类字典或执行函数。最终 `CompositionResult` 同时携带 Unit 与 Prototype。
+
+首次尚无 Handlers 时，`prepareComposition` 接收 `Nothing`；已有文件时接收 `Just shapes`，即使提取结果为空列表，也不按缺少文件处理。机器先完成契约所需的结构计算，供业务写出能通过 HLS 的 instance，再按是否已有方法体决定读取与驱动检查。`completeComposition` 即使命中缓存，也会进入 `Checking` 校验原型；已有 handler 时还执行驱动检查。前端只加载声明和解析形状，不执行业务。
+
+统一计算也不要求只扫描一次输入。不同阶段需要的方法摘要、来源路径和临时集合属于一次编译的工作状态；内部图 memo 和来源分析的 StateT 是局部计算证据，不是运行时状态机；来源分析保留路径相关性，并在组合前裁剪无关事实。某些路径族仍可能指数增长，状态机不能消除问题本身的复杂度，详见[构图与复用边界](EFFECT_GRAPH.md#reuse-boundary)。
+
+运行时继续只读 Prototype，另行维护 RuntimeGraph、执行帧、资产、会话和 scope 实例。静态计算决定的合法路线与实际发生的生产、取消、资源关闭是两个层面；本轮不改变现有 handler、facade、取值或生命周期协议。推导结果通过[结构查看](GUIDE.md#commands)与 Generated 中的接口、路由共同呈现。
 
 <a id="maintenance"></a>
 ## 3. 条目格式与维护
@@ -59,7 +120,7 @@
 维护规则：
 
 - 新增一种由组合推导的行为时，先在所属专题写完整规则，再在这里加一行，并链接过去。
-- 本文只写对应关系，不写协议细节、实现记录或验证结果；后两者在 [Next stages](NEXT_STAGES.md)。
+- 本文维护组合原则、统一计算边界和行为对应关系；详细协议归所属专题，阶段状态与验证结果归 [Next stages](NEXT_STAGES.md)。
 - 未实现的行为只出现在各节的“尚未覆盖”中，不写成当前能力。
 
 <a id="context"></a>

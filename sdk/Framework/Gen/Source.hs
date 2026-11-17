@@ -1,13 +1,14 @@
--- 读取源程序（前端）：在声明加载进程中求值 effects 与 ast 并降级为 PrototypePlan，
+-- 读取源程序（前端）：在声明加载进程中求值 effects 与 ast 并计算到接口检查点 Unit，
 -- 用 GHC 解析器读取 Types.hs 的和类型与 Handlers.hs 的语法树。只解析和求值声明，不加载 handler 或执行业务。
 module Framework.Gen.Source
-  ( HandlerSource(..), lowerDeclarations, loadHandlers, loadSumTypes, namespaceDirectory, sourceOffset
+  ( HandlerSource(..), loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, sourceOffset
   ) where
 
 import Control.Exception (evaluate)
 import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (toList)
-import Framework.Prototype.Types (PrototypePlan, SumTypes)
+import Framework.Prototype.Types (SumTypes)
+import Framework.Gen.Composition (Unit)
 import GHC (GhcPs, getSessionDynFlags, runGhc)
 import GHC.Data.FastString (mkFastString)
 import GHC.Data.StringBuffer (stringToStringBuffer)
@@ -29,18 +30,18 @@ import System.Process (CreateProcess(..), StdStream(..), proc, readProcess, wait
 import Text.Read (readMaybe)
 
 -- effects 与 ast 是 Haskell 值，只有加载业务模块才能求值：在独立的 ghci 进程里调用
--- Framework.Gen.Lower.lowerProgram，打印降级结果再读回。和类型的构造器信息以字面量传入。
-lowerDeclarations :: String -> SumTypes -> IO PrototypePlan
-lowerDeclarations namespace sumTypes = do
+-- Framework.Gen.Composition.beginComposition，打印接口检查点再读回。和类型的构造器信息以字面量传入。
+loadComposition :: String -> SumTypes -> IO Unit
+loadComposition namespace sumTypes = do
   let directory = namespaceDirectory namespace
-      expression = "print (Framework.Gen.Lower.lowerProgram " ++ namespace ++ ".Effects.effects"
+      expression = "print (Framework.Gen.Composition.beginComposition " ++ show namespace ++ " " ++ namespace ++ ".Effects.effects"
         ++ " (Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast) " ++ show sumTypes ++ ")"
   -- GHC 的诊断直接写到本进程的 stderr，不经管道读回：GHC 按自己的区域编码输出，
   -- 读回时的解码可能与之不一致（中文 Windows 上 chcp 65001 后即如此），会把诊断本身变成解码异常。
   -- 只读回打印的结果，它经 show 转义，只含 ASCII。
   let loader = (proc "ghci"
         [ "-ignore-dot-ghci", "-v0", "-XHaskell2010", "-idemo", "-isdk"
-        , "sdk/Framework/Gen/Lower.hs", directory </> "Effects.hs"
+        , "sdk/Framework/Gen/Composition.hs", directory </> "Effects.hs"
         , directory </> "AST.hs", "-e", expression
         ]) { std_in = NoStream, std_out = CreatePipe, std_err = Inherit }
   (result, output) <- withCreateProcess loader $ \_ printed _ process -> case printed of

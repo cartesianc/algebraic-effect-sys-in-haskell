@@ -3,7 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 -- 静态方法引用与 scope 开启顺序的纯数据，是 Prototype 的一部分；不保存执行闭包或活资源。
--- 构图算法在 Framework.Gen.Build.Graph。
+-- 构图算法在 Framework.Gen.Composition。
 module Framework.Prototype.Graph
   ( MethodRole(..), MethodShape(..), MethodDefinition(..)
   , GraphError(..), EffectGraph(..), ScopeNode(..), ScopeTree(..)
