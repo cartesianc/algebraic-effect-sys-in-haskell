@@ -567,8 +567,6 @@ instance ParseFileNameLayer m => ParseFileNameHandler m where
 - **调用者**：Pure 的入口不改变调用者身份，句柄据此认出是被挂接的 Context 自己经 Pure 拉取，不重复注入。生成期的注入副本把中间的 Pure 就地展开，同样回答到句柄为止。
 - **失败**：Pure 的 `raise` 与 parser 失败相同：普通 Context 注入时留在注入内部，资产不发布；显式驱动时沿驱动方传播；持续 Context 的输出复用走 Stream 失败协议。
 
-**不在本次范围**：带类型的原子输出（需要注册声明输出类型）、交出嵌套结构（森林）、Pure 挂在 Stream 下，都需要另行设计。
-
 <a id="await-visibility"></a>
 #### 共享发布、固定捕获与等待结束
 

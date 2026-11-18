@@ -1,6 +1,6 @@
 # Next stages
 
-更新：2026-11-18。本文是阶段计划与开放项的唯一入口，保存各阶段的目标、剩余工作和必要的完成摘要。当前协议在[主设计](CORE_DESIGN.md)及其专题中维护；历史验证集中在[验证边界](#baseline)，不代表本次重新执行。
+更新：2026-11-19。本文是阶段计划与开放项的唯一入口，保存各阶段的目标、剩余工作和必要的完成摘要。当前协议在[主设计](CORE_DESIGN.md)及其专题中维护；历史验证集中在[验证边界](#baseline)，不代表本次重新执行。
 
 **当前进度：** handler 复用、scope 可达性回收、Stream 两侧结束、后继读取、交付保留和会话退役已落地。持续生产与有限取值的组合边界已经补齐，生成期无来源诊断、签名报错与组合设计收尾已完成；Receive 来源到 parser 的资源交接及示例 close 已修复，验证见[本轮记录](#receive-resource-verification)。[静态协议检查收口](#protocol-checks)已完成本轮范围，已补上既有 Binding ownership 的交付与执行保留，并进一步按会话待用帧回收不再使用的具体实例。Stage 5／7 已接通当前资产契约内的资源持有与回收，范围与验证见[阶段说明](#stage-5)；[普通 require 共享供值](#stage-2-await)也已实现。本轮已完成 [gen 决定归位](#gen-classification)，整理前端、Injector／Booter、计划与输出；[Stage 3](#stage-3)已按当前执行协议收尾，明确静态事实与动态生命周期的责任；[容量与背压](#backpressure)保留为延期专题，策略尚未确定。
 
@@ -299,12 +299,13 @@ Binding 的生产身份与执行帧支持单例／多例匹配和待用分析；
 | 专题 | 仍需确定 |
 | --- | --- |
 | 来源与调度 | 是否区分或自动推导 event／behavior／socket；自动重试、时间周期声明、通用外部 push callback 适配；已有单步写法见 [Stream](STREAM_LIFELONG.md#drives) |
-| 持续组合 | 嵌套 lifelong、多来源组合触发同一 target、派生步骤跳过与显式反馈 |
-| 值操作与适配 | 带类型的原子输出、嵌套输出结构、Pure 挂在 Stream 下、Generic Map；同注册多细化来源及同表示类型二元操作的其他写法 |
+| 嵌套 workflow | 单开专题讨论嵌套边界的驱动与结束。当前 `lifelong` 内可组合 `chained`、`parallel` 和 `alternative`；`lifelong` 内再次挂载 `lifelong` 由 gen 拒绝。见[现行规则](STREAM_LIFELONG.md#static)。 |
+| 持续组合 | 多来源组合触发同一 target、派生步骤跳过与显式反馈 |
+| 值操作与适配 | Pure 挂在 Stream 下、Generic Map |
 | 资源协议 | Stream close 接口是否需要；scope 同值复用、其他 cleanup policy、未发布的部分获取恢复、跨 interpreter 存续；均不扩展为普通业务资产内嵌资源的自动追踪 |
 | 故障恢复 | Error 驱动链、常驻 scope 失效与修复、局部失败、已展开 continuation 恢复及跨调用诊断；当前 resolve 不调用 close，处置成功仍传播原失败 |
 | 内存与诊断 | 业务惰性状态链是否需要处理，以及关闭失败记录长期累积的报告策略；强制求值或改变报告时机须另行确认 |
-| 模块与接口 | 多方法 effect 的入口／结果契约、独立生成模块组合、跨语言 schema |
+| 模块与接口 | 独立生成模块组合、跨语言 schema |
 
 <a id="middleware"></a>
 ### Middleware 与 Hanging
