@@ -644,8 +644,8 @@ monitor = lifelong
 
 - **单元**：直接子项各为一个单元，直接子项是 parallel 时只拆这一层；单元之间独立推进、互不等待。拆分写入 Prototype，运行时不推测。
 - **一次执行**：单元逐次执行，每次执行是一个 frame。控制流到达 target 时先领取其订阅资产的一条新交付（有积压立即领取，没有就挂起），再 boot target；同一 frame 内每个资产只领取一次，各调用共享这份视图。target 调用按上文的有限完成规则结束，本次执行结束后才开始下一次，交付与调用捕获逐轮新建，普通资产的共享最新值继续保留。
-- **正常结束**：Stream handler 以 `streamEnd` 报告来源结束；会话封住发布，已发布的交付仍可领取。消费方 handler 以 `endStream` 结束自己的订阅：节点之后各轮跳过，同单元读取它所发布资产的位置本轮不被驱动、不等待，单元不再有活读取位置时离开会话，会话的读取方全部离开时停止生产并回收只在会话中开启的 scope（[消费方结束](STREAM_LIFELONG.md#consumer-end)）。单元在所需来源结束并排空、或节点都结束订阅后正常结束，全部单元结束后 lifelong 返回一次 Succ（不带结果）。`chained [setup, monitor]` 先完成 setup；`chained [monitor, after]` 中 after 在 monitor 结束后执行，仍有消费单元未结束时不执行；`parallel [monitor, otherWork]` 两者同时运行。后继 `require` 读每个来源最新一次发布（含 lifelong 内部的发布与已结束会话的最后一条），单元交付逐轮固定，普通值沿用共享发布；资源持有见既有 scope 协议。规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
-- **失败**：含 lifelong 的程序中，任何失败按临时规则终止整次运行（[Stream 第 9 节](STREAM_LIFELONG.md#failures)），不同于有限 parallel 不取消其他分支的规则。lifelong 的局部结束属于本轮[结束传播阶段](NEXT_STAGES.md#stage-6)，其与故障传播的关系仍需确认。
+- **正常结束**：Stream handler 以 `streamEnd` 报告来源结束；会话封住发布，已发布的交付仍可领取。消费方 handler 以 `endStream` 结束自己的订阅：节点之后各轮跳过，同单元直接或经派生订阅它产物的位置，按本轮发布进度等待、跳过或结束订阅；单元不再有活读取位置时离开会话，会话的读取方全部离开时停止生产并回收只在会话中开启的 scope（[消费方结束](STREAM_LIFELONG.md#consumer-end)）。单元在所需来源结束并排空、或节点都结束订阅后正常结束，全部单元结束后 lifelong 返回一次 Succ（不带结果）。`chained [setup, monitor]` 先完成 setup；`chained [monitor, after]` 中 after 在 monitor 结束后执行，仍有消费单元未结束时不执行；`parallel [monitor, otherWork]` 两者同时运行。后继 `require` 读每个来源最新一次发布（含 lifelong 内部的发布与已结束会话的最后一条），单元交付逐轮固定，普通值沿用共享发布；资源持有见既有 scope 协议。规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
+- **失败**：含 lifelong 的程序中，任何失败按临时规则终止整次运行（[Stream 第 9 节](STREAM_LIFELONG.md#failures)），不同于有限 parallel 不取消其他分支的规则。正常结束与节点订阅结束已由[结束传播阶段](NEXT_STAGES.md#stage-6)实现，不作为 Failure；局部失败恢复仍属开放专题。
 - **合法性**：lifelong 不嵌套、不含空分支；其中每个 target 恰好用 `streams` 订阅一个持续资产，见 [Stream 第 5.2 节](STREAM_LIFELONG.md#static)。
 
 <a id="mapping"></a>
@@ -723,9 +723,9 @@ EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope
 - **当前使用**：每次 AST 入口完整 chain 建立一份 `ScopeUser`，open／require 选中的实例加入其中，等待 opening 也计入。同一入口内的 Context 生产继承该登记。业务、Error 诊断和受控结果消费全部结束后才撤销。Receive 的来源与 parser 共用本步登记，Derive 每次处理独立登记；会话跨步骤复用由待用帧保持，不累积实际使用。
 - **待用关系**：gen 在 `protoScopeOpenings` 中记录每个开启位置各参数可能的生产节点或会话来源，包括本节点和 alternative 交接的捕获。执行帧保存待执行、执行中、完成和跳过的节点。有限运行使用根帧，lifelong 单元每轮使用子帧，独立生产会话另有后续步骤的待用帧；节点完成、chained 短路及 alternative 排除候选都会撤销相应待用关系，更新幂等。
 - **实际匹配**：运行时比较参数 Binding 的生产身份，不把 NodeId 当实例身份。根帧下所有待用帧参与查询，固定捕获和伴随交付优先，未捕获的普通参数使用共享最新值；确定重新生产参数的未开始开启不保留旧实例。最新值被覆盖也会重新检查依赖该参数的 scope。执行帧不复制值表，跨帧读取不改变 Binding 的归属帧；完整规则见[Scope 开启计划与待用查询](EFFECT_GRAPH.md#scope-opening-retention)。
-- **值保留**：待交付、已捕获和合法后继可读的 Binding，按已有 ownership 参与回收判断；领取先登记执行持有，再撤销队列持有。资源范围、撤销边界及未覆盖的业务内嵌引用见[Stream 资源边界](STREAM_LIFELONG.md#binding-retention)。
+- **值保留**：待交付、已捕获和合法后继可读的 Binding，按已有 ownership 参与回收判断；领取先登记执行持有，再撤销队列持有。资源范围与撤销边界见[Stream 资源边界](STREAM_LIFELONG.md#binding-retention)。
 - **依赖与执行**：没有当前使用者、没有匹配的待用节点或值保留、没有仍保留它的子 scope 时执行 close。ScopeTree 提供父子候选，运行时由同一受控链实际使用的实例补齐子实例的 `scopeParents`；子实例只保留这些具体父实例，不保留同注册的全部实例。关闭遵守子先父后，在触发不可达的线程中同步完成后才继续后继，不另设清理线程。仅保存普通资产快照不自动延长生产资源的存续；仍需实际使用或匹配的后继待用依据。
-- **lifelong**：无参数及参数来自外层的实例由外层帧保留；本轮生产参数的实例归本轮，后继共享不改变归属，本轮结束且没有其他匹配待用时回收。会话按实际参数生产身份保留后续仍能触达的实例；新 request 不直接关闭旧实例。来源正常结束（`streamEnd`）后，会话待用帧保留到会话退役，重复停止同样等待本步使用与预约撤销完成；退役后按可达性回收只在会话中开启的 scope，详细边界见[Stream 资源协议](STREAM_LIFELONG.md#binding-retention)。持续资产的最新值已可作为开启参数：登记所选交付原有的生产身份和帧，活动轮次与合法后继按真实读取位置参与待用判断。交付已按已有 ownership 保留资源；普通解析数据不继承生产资源的寿命，任意业务 ADT 内嵌资源是独立开放边界。
+- **lifelong**：无参数及参数来自外层的实例由外层帧保留；本轮生产参数的实例归本轮，后继共享不改变归属，本轮结束且没有其他匹配待用时回收。会话按实际参数生产身份保留后续仍能触达的实例；新 request 不直接关闭旧实例。来源正常结束（`streamEnd`）后，会话待用帧保留到会话退役，重复停止同样等待本步使用与预约撤销完成；退役后按可达性回收只在会话中开启的 scope，详细边界见[Stream 资源协议](STREAM_LIFELONG.md#binding-retention)。持续资产的最新值已可作为开启参数：登记所选交付原有的生产身份和帧，活动轮次与合法后继按真实读取位置参与待用判断。交付按已有 ownership 保留资源，普通解析数据不继承生产资源的寿命，保证范围见[资产契约](STREAM_LIFELONG.md#binding-retention)。
 - **close 可选**：`close = Nothing` 不登记关闭方法。实例不可达时只移出运行表，不执行释放 IO；有 close 的实例保存实际绑定和关闭回调。
 - **close 失败**：close 的 `raise`，以及 close 中没有转换为 `raise` 的普通 IO 异常（记为 `ScopeCleanupInterrupted`），都先进入关联 scope 的 Error 诊断，之后记录并在运行结束时汇总；不改变节点或整次运行的业务结果，不短路、不停止其他业务，也不重试该 close。关闭失败是资源问题：实例已经不可达，不会再被使用。失败实例移出运行表，旧绑定保留原实例及失败证据。
 - **运行结束与取消**：正常结束、失败或取消时，先让受控工作退出、撤销全部待用及使用关系，再按同一规则回收剩余实例。关闭失败中只有取消向外传播：取消落在 close 或其故障诊断期间时，保留原关闭故障的诊断信息并单独保存取消，完成其余收尾后传播、停止后续启动；close 不重试，已经收到的原 close 取消不被后续诊断异常覆盖。进程被强制终止时无法保证 close 执行。
@@ -877,9 +877,12 @@ sdk/Framework/
   Recursion.hs              Fix、cata、zygo
 ```
 
-改声明语法从 Language.Registration 进入，再读 Gen.Composition 的状态与对应运算；改读取路由、类型能力或入口装配，也先改 Composition 的计算结果，再由 Gen.Emit 渲染。方法体语法提取在 Gen.Frontend.Shape；改取值从 Runtime.Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Runtime.Execution → Frame／Runtime.Graph → Scope／Session／Retention 进入。组合机器保存编译工作状态和证明结果，Runtime.Graph 保存本次实际活动关系，Runtime.Scope 独立持有资源生命周期。
+改声明语法从 Language.Registration 进入，再读 Gen.Composition 的状态与对应运算；读取路由、类型能力与单入口装配由它调用 Injector 计算，挂载、订阅、单元及静态驱动关联由它调用 Booter 计算，Gen.Emit 只渲染已确定的结果。方法体语法提取在 Gen.Frontend.Shape；改取值从 Runtime.Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Runtime.Execution → Frame／Runtime.Graph → Scope／Session／Retention 进入。组合机器保存编译工作状态和证明结果，Runtime.Graph 保存本次实际活动关系，Runtime.Scope 独立持有资源生命周期。
 
 模块头说明职责和边界；关键锁、所有权、取消窗口及清理顺序在实现处保留注释。App 仍集中实现共享同一执行 frame 的存储协议，以章节分组，不为行数拆出互相依赖的状态容器。
+
+<a id="sdk-migration"></a>
+**内部接口与生成格式。** 手写业务的 `Framework.SDK`、原子 handler 与 `main = interpreter ast effects` 保持不变。gen 内部的 Source／Shape 迁入 Frontend，Assets 检查迁入 Check，目录模型迁入 Prototype.Catalog；旧路径没有转发模块。直接导入这些内部模块的工具需调整 import。Prototype 新增 `protoDriving`，已有程序应按[生成流程](GUIDE.md#commands)重新生成，不混用旧 Generated 与新 SDK。模块迁移和静态标记重构不增加新的 effect 类别、访问方式或运行时 Booter；与共享供值改动的区别见[版本边界](NEXT_STAGES.md#version-boundaries)。
 
 <a id="documents"></a>
 ## 6. 文档分工与维护
@@ -911,7 +914,7 @@ sdk/Framework/
 
 Stream 提供持续来源，Context 将每次原子输出解析成资产，lifelong 按增量 boot 有限消费链。普通链也可读取派生持续资产的一次固定值；组合计算为来源建立持续生产计划，不让普通取值自动变成重复启动。同一消费操作也能经挂接 Context 发布持续资产；gen 根据已有 AST 发布位置决定复用输出还是独立派生，运行时执行这份连接。
 
-来源结束、订阅结束、会话退役和 scope 关闭是不同边界。现行接口为生产方的 `streamEnd` 与消费方的 `endStream`；交付已按既有 ownership 保留资源，业务资产内嵌资源的保证仍待收敛。读取、排空、停止顺序及资源限制分别在下列专题维护。
+来源结束、订阅结束、会话退役和 scope 关闭是不同边界。现行接口为生产方的 `streamEnd` 与消费方的 `endStream`；交付已按既有 ownership 保留资源，范围以[已声明资源 Binding 的契约](STREAM_LIFELONG.md#binding-retention)为界。读取、排空、停止顺序及资源限制分别在下列专题维护。
 
 | 主题 | 本章所属规范 |
 | --- | --- |
@@ -921,7 +924,8 @@ Stream 提供持续来源，Context 将每次原子输出解析成资产，lifel
 | 单元、就绪检查与有限完成边界 | [Stream 第 6 节](STREAM_LIFELONG.md#scheduling) |
 | 会话、待交付值、独立游标与 frame | [Stream 第 7 节](STREAM_LIFELONG.md#sessions) |
 | 生产路径与 lifelong 外的读取 | [Stream 第 8 节](STREAM_LIFELONG.md#production) |
-| 失败的临时规则、取消与 close 延期边界 | [Stream 第 9 节](STREAM_LIFELONG.md#failures) |
+| 生产步骤与消费轮次的共同责任、SDK 模块边界 | [Stream 第 8.4 节](STREAM_LIFELONG.md#execution-boundaries) |
+| 失败的临时规则、取消与资源回收边界 | [Stream 第 9 节](STREAM_LIFELONG.md#failures) |
 | socket、event、behavior 各自的写法 | [Stream 第 4.1 节](STREAM_LIFELONG.md#drives) |
 
 剩余工作与实现限制统一见 [Next stages](NEXT_STAGES.md#current-limits)。已有 socket、event、behavior 的单步来源写法不代表 SDK 会自动识别或适配任意外部回调；来源分析的相关性与复杂度边界见[图与来源](EFFECT_GRAPH.md)。

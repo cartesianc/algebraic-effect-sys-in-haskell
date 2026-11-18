@@ -2,7 +2,7 @@
 
 更新：2026-11-18。本文是阶段计划与开放项的唯一入口，保存各阶段的目标、剩余工作和必要的完成摘要。当前协议在[主设计](CORE_DESIGN.md)及其专题中维护；历史验证集中在[验证边界](#baseline)，不代表本次重新执行。
 
-**当前进度：** handler 复用、scope 可达性回收、Stream 两侧结束、后继读取、交付保留和会话退役已落地。持续生产与有限取值的组合边界已经补齐，生成期无来源诊断、签名报错与组合设计收尾已完成；Receive 来源到 parser 的资源交接及示例 close 已修复，验证见[本轮记录](#receive-resource-verification)。[静态协议检查收口](#protocol-checks)已完成本轮范围，已补上既有 Binding ownership 的交付与执行保留，并进一步按会话待用帧回收不再使用的具体实例。Stage 5／7 已接通当前资产契约内的资源持有与回收，范围与验证见[阶段说明](#stage-5)；[普通 require 共享供值](#stage-2-await)也已实现。本轮已完成 [gen 决定归位](#gen-classification)，整理前端、Injector／Booter、计划与输出；[容量与背压](#backpressure)保留为延期专题，策略尚未确定。
+**当前进度：** handler 复用、scope 可达性回收、Stream 两侧结束、后继读取、交付保留和会话退役已落地。持续生产与有限取值的组合边界已经补齐，生成期无来源诊断、签名报错与组合设计收尾已完成；Receive 来源到 parser 的资源交接及示例 close 已修复，验证见[本轮记录](#receive-resource-verification)。[静态协议检查收口](#protocol-checks)已完成本轮范围，已补上既有 Binding ownership 的交付与执行保留，并进一步按会话待用帧回收不再使用的具体实例。Stage 5／7 已接通当前资产契约内的资源持有与回收，范围与验证见[阶段说明](#stage-5)；[普通 require 共享供值](#stage-2-await)也已实现。本轮已完成 [gen 决定归位](#gen-classification)，整理前端、Injector／Booter、计划与输出；[Stage 3](#stage-3)已按当前执行协议收尾，明确静态事实与动态生命周期的责任；[容量与背压](#backpressure)保留为延期专题，策略尚未确定。
 
 <a id="code-shape"></a>
 ## 代码长什么样
@@ -18,7 +18,7 @@
 
 资产引用的内存回收与 `Scoped.close` 管理的资源释放分别处理。释放引用不能替代关闭资源。完整设计原则见[主设计](CORE_DESIGN.md#principles)。
 
-**资产边界（2026-11-18 确认）：** 原子操作通过字符串 rawoutput 对接解析侧（当前批量输出为 `[String]`），Context 将其解析为业务资产，Pure 处理数据。不能把原生 Haskell 可定义任意字段的能力，当作框架允许把 Handle、连接等资源对象嵌入业务资产传递的契约。因此，“任意 ADT 内嵌资源的自动追踪与保活”从当前阶段及开放任务中移除；这不改变已声明资源绑定的 ownership、执行持有与 scope close。保留普通解析数据不自动延长生产资源的寿命，现有输出与解析接口见[入口装配](CORE_DESIGN.md#calls)和[Context](CORE_DESIGN.md#context)。
+**资产边界（2026-11-18 确认）：** “任意业务 ADT 内嵌资源的自动追踪与保活”已移出当前阶段及开放任务，既有资源 Binding 的持有与 close 保证保留。详细范围统一维护在[资源契约](STREAM_LIFELONG.md#binding-retention)，字符串 rawoutput 与解析接口见[入口装配](CORE_DESIGN.md#calls)和[Context](CORE_DESIGN.md#context)。
 
 <a id="stages"></a>
 ## 阶段地图
@@ -29,7 +29,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 | --- | --- | --- |
 | [1：输入契约](#stage-1) | 资产来源明确，读取可检查 | 已完成；旧接收形态由 Stage 2 取代 |
 | [2：handler 复用](#stage-2) | 原子操作与业务装配分开 | 已完成；[共享供值与保守等待](#stage-2-await)也已实现 |
-| [3：共同执行结构](#stage-3) | 对齐 Stream 与 lifelong 的推进、发布和结束边界 | Booter 统一静态驱动标记；动态生命周期保持既有协议 |
+| [3：共同执行结构](#stage-3) | 对齐 Stream 与 lifelong 的推进、发布和结束边界 | 当前协议范围已收尾；静态事实与动态责任分别明确，验证范围见下文 |
 | [4：资产访问](#stage-4) | 固定取值与重复启动分别计算 | 已完成；持续资产的资源持有留给 Stage 5／7 |
 | [5／7：持续资产的资源持有与自动回收](#stage-5) | 统一持有、交接、撤销与 scope close | 当前契约范围已接通；不新增业务数据的资源依赖 |
 | [6：结束传播](#stage-6) | 生产结束、消费退出、排空和 workflow 返回 | 已实现；局部失败仍延期 |
@@ -106,11 +106,13 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 <a id="stage-3"></a>
 ### Stage 3：Stream 与 lifelong 的共同执行结构
 
-**已有对应，静态驱动本轮统一，生命周期边界继续收敛。** Stream 的生产步骤与 lifelong 单元都可以按“等待推进条件 → 有限执行 → 发布 → 继续或结束”理解。前者从 Context 需求启动，后者从 AST 启动；它们通过 Context 资产连接。
+**当前协议范围已收尾（2026-11-18）。** Stream 的生产步骤与 lifelong 单元都按“等待推进条件 → 有限执行 → 发布 → 继续或结束”组织；前者从 Context 需求启动，后者从 AST 启动，通过资产连接并独立推进。
 
-保留这项工作的理由是让结束、使用撤销和回收沿共同边界衔接。不能为统一实现把生产与消费压成一个串行循环，也不预设两种前端 ADT 已有一一同构证明。现行对应见[生产连接](STREAM_LIFELONG.md#bootplan)、[单元调度](STREAM_LIFELONG.md#scheduling)与[会话](STREAM_LIFELONG.md#sessions)。
+本阶段的完成标准是：静态驱动事实有唯一来源；两侧实际调用复用身份与固定捕获协议；实际使用、未来待用和 Binding 保留各有撤销边界；结束、失败与取消之后进入既有收尾和 scope GC。Booter 完成第一项，Runtime／Execution 及 Stage 5／7 的共用基础承接后三项。模块与协议的对应只在 [Stream：共同执行结构](STREAM_LIFELONG.md#execution-boundaries) 维护。
 
-**后续衔接：** Stage 5／7 已接通执行使用、持续待用和绑定保留；背压阶段继续明确容量等待与这两种入口的衔接。静态驱动标记已按[本轮清单](#gen-classification)归位；这不等于所有生命周期问题已解决。只提取真正相同的协议，保留原有 workflow 并发关系。
+本轮源码核对后保留已有算法，只修正 Runtime、Execution、App 的职责注释与过期文档；未新增共同调度器，不把两种循环串行化，也不宣称前端 ADT 已有同构证明。当前范围完成不代表背压、局部失败恢复、嵌套 lifelong 或新的释放策略已经实现，它们仍在各自专题中。
+
+**本轮验证边界：** 仅核对既有调用、捕获、结束／退役与回收路径，检查改动范围；没有修改可执行逻辑、facade、demo 或 Generated。未重新编译、运行 demo 或并发探针；源码核对不是全部调度交错的运行证明。
 
 <a id="stage-4"></a>
 ### Stage 4：资产取值与驱动边界
@@ -169,7 +171,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 <a id="gen-classification"></a>
 ## 本轮：gen 决定归位与 Injector／Booter
 
-本轮保持 facade、原子 handler 与现有运行协议。先按下表迁移决定，再整理模块；多个合法运行分支不等于歧义，只拒绝既有语义不能确定解释的组合。
+本节记录 `136c1b8` 相对 `4874ee8` 的编译器重构：保持 facade、原子 handler 与当时已有的运行协议。共享最新值是前一项工作的改变，见[版本边界](#version-boundaries)。先按下表迁移决定，再整理模块；多个合法运行分支不等于歧义，只拒绝既有语义不能确定解释的组合。
 
 | 决定／事实 | 重构前归属 | 本轮归属 | 静态／动态与完成条件 |
 | --- | --- | --- | --- |
@@ -189,7 +191,23 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 
 **实施状态：** 清单中的模块迁移、Injector 装配与 Booter 静态驱动标记已接入，显式生成与全项目普通编译通过；具体范围见[本轮验证](#gen-classification-verification)。内部计划与 Prototype 可以有阶段转换，但不独立维护两份相同决定。静态关联迁移不替换取消、锁、会话退役或 scope 回收协议。
 
-**验收边界：** 必要的显式生成和普通编译；允许模块路径、元数据与计划接线改变生成文本，不把字节变化等同于语义变化。不新增测试或负例。Stage 3 只记录静态驱动统一的实际完成范围，不宣称生命周期和背压已全部统一。
+**验收边界：** 必要的显式生成和普通编译；允许模块路径、元数据与计划接线改变生成文本，不把字节变化等同于语义变化。不新增测试或负例。该次重构只完成 Stage 3 的静态驱动部分；后续的生命周期核对与完成范围见 [Stage 3](#stage-3)，不把 Booter 重构当作全部运行协议的实现。
+
+<a id="version-boundaries"></a>
+### 与共享供值之前版本的边界对照
+
+比较基线为 `aadc8be`；共享供值由 `4874ee8` 引入，编译器重构为 `136c1b8`，`1255849` 合入 main 文档并明确确定性的范围。
+
+| 范围 | 变化及保留 |
+| --- | --- |
+| 业务写法与能力 | 六种 effect、workflow、handler 复用、beforegen 接口与运行入口保持；本轮没有移除这些能力 |
+| 普通资产 | 从 AST 许可来源改为运行级共享最新值；普通值跨 AST 位置与轮次共享，调用捕获仍固定。具体版本可受调度影响，见[共享供值](CORE_DESIGN.md#await-visibility) |
+| scope | 关闭条件与生产身份不变；待用匹配改为固定捕获或共享最新参数，因此实例保留时间可随实际使用改变，见[可达性回收](CORE_DESIGN.md#scope-gc) |
+| 持续交付与资源 | 会话、游标、结束、退役及 owner 定位保留；普通共享供值没有取消持续会话的选择约束，也没有开放链外资源读取 |
+| gen 与 runtime | Injector／Booter 接管静态决定，runtime 读取 Prototype 标记；实际交付、取消、使用与回收仍由 runtime 执行 |
+| 内部接口 | 部分 gen 模块路径和 Prototype 格式改变；工具调整 import、程序重新生成，见[内部接口迁移](CORE_DESIGN.md#sdk-migration) |
+
+按帧 TVar 迁移不再是共享供值的实施前提，它此前属于计划而非已交付能力。背压、嵌套 lifelong、局部失败等仍按[开放专题](#deferred)管理。此表记录语义与结构边界；运行验证的覆盖范围以各提交记录为准。
 
 <a id="gen-classification-verification"></a>
 **本轮验证（2026-11-18）：** 八个命名空间已显式重新生成，最终 `cabal build all --offline -j1 -v0` 通过，退出码 0。对照本轮修改前保存的生成产物，八份 `Generated/Effects.hs` 和八份 `Generated/Handlers.hs` 均未变化；`Generated/Program.hs` 仅增加 `protoDriving`，`Generated/Assets.hs` 仅改为导入 `Prototype.Catalog`。手写 facade 与业务 handler 未修改。按工作约定未新增测试、负例或运行业务 demo；运行关系的迁移做了源码对照，取消交错、会话退役及 scope 回收未做本次运行实测，普通编译不能代替这些验证。
@@ -353,3 +371,5 @@ LSP 仓库的来源可见性穷举模型尚未扩展到 Stream／lifelong；订�
 2026-11-17 前一轮仅整理文档：收敛计划、改用规范引用、修正指南过期描述，并核对引用与改动范围。没有修改 SDK、生成产物或 demo，没有重新编译或运行业务；上表均为历史记录。
 
 2026-11-18 文档同步：合入 main 的 `5b10644`，保留主设计改名 `CORE_DESIGN.md`、“业务即 DSL”及 algebraic effect 两节，同时保留本分支的共享供值、Injector／Booter 与阶段边界。按用户确认统一确定性的含义；本次仅修改文档，未改 SDK、生成产物或 facade，未重复编译或运行业务示例。
+
+2026-11-18 文档收尾：补充共享供值与编译器重构的版本边界、SDK 职责与内部迁移说明；把任意业务 ADT 内嵌资源的过期待办统一改为资产契约的范围说明，修正指南中待交付 ownership 尚有缺口、消费节点结束后必定缺少本轮普通值的旧表述，并让主设计的订阅结束摘要引用现行协议。仅修改文档，未修改 SDK 或生成产物，未重新编译或运行业务示例。

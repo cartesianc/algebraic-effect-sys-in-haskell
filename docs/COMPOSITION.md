@@ -181,7 +181,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 <a id="scope-missing"></a>
 ### 尚未覆盖
 
-待交付和已捕获值已有 ownership 的保留见[资源协议](STREAM_LIFELONG.md#binding-retention)。任意业务 ADT 内嵌资源、一个 Scoped 注册服务多种细化资源仍未实现（见 [Next stages](NEXT_STAGES.md#deferred)）；普通解析数据不继承生产资源的寿命，业务资产保存记录也不自动合并其中各资源的 owner。
+待交付和已捕获值已有 ownership 的保留见[资源协议](STREAM_LIFELONG.md#binding-retention)。一个 Scoped 注册服务多种细化资源仍未实现（见 [Next stages](NEXT_STAGES.md#deferred)）。普通解析数据不继承生产资源的寿命；任意业务 ADT 内嵌资源的自动追踪不属于当前[资产契约](STREAM_LIFELONG.md#binding-retention)，不作为本轮待办。
 
 <a id="stream"></a>
 ## 6. 持续执行（Stream 与 lifelong）

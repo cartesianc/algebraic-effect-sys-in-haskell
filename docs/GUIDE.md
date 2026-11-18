@@ -1030,8 +1030,8 @@ snapshotAst = chained [node "Announce", node "Report"]
       pure []
   ```
 
-  同一 `chained` 里后面的节点若只 `require` 被结束节点这一轮的普通产物，之后会按缺值报 `ContextNotInitialized`；要每轮都有值，用 `requests` 自己驱动。
-- **结束后的资源**：正常路径上，登记的读取方全部离开（或 lifelong 返回）时，独立生产会话退役并把只在会话中开启的 scope 交给现有回收器；仍有合法待用的实例保留。LinesDemo 因而在 `Report` 之前打印 `[close]`。业务资产内嵌资源的额外持有仍待明确；interpreter 托管会话、ReuseOutput 的区别见[退役规则](STREAM_LIFELONG.md#consumer-end)。
+  普通 `require` 不要求本轮重新发布：已有固定捕获就读捕获，否则读取共享最新值，即使该值来自上一轮；尚无值时按[缺值等待与耗尽规则](CORE_DESIGN.md#await-visibility)处理。持续资产的订阅读取仍遵循上面的会话规则。
+- **结束后的资源**：正常路径上，登记的读取方全部离开（或 lifelong 返回）时，独立生产会话退役并把只在会话中开启的 scope 交给现有回收器；仍有合法待用的实例保留。LinesDemo 因而在 `Report` 之前打印 `[close]`。已知 ownership 的保留范围见[资源契约](STREAM_LIFELONG.md#binding-retention)；interpreter 托管会话、ReuseOutput 的区别见[退役规则](STREAM_LIFELONG.md#consumer-end)。
 - **取消与失败**：不结束的来源可由 Ctrl-C 取消，SDK 停止受控工作、等待收尾并回收资源。含 lifelong 的程序发生失败时仍终止整次运行；局部失败另行设计，详见[故障与取消协议](STREAM_LIFELONG.md#failures)。
 - **lifelong 外读取**：普通 `requires` 只读一次固定值；所需 Receive／Derive 会话由 interpreter 托管到运行结束。读取已结束的合法前驱会话不重启来源，零发布时报缺值。具体路由与派生登记起点见[有限读取](STREAM_LIFELONG.md#production)。
 
@@ -1144,7 +1144,7 @@ close 由 SDK 的自动收尾调用，handler 不直接调用；下表中的 clo
 
 | 故障 | 什么时候报 | 怎么改 |
 | --- | --- | --- |
-| `ScopeInputsMissing [参数]` | 带开启参数的 scope 要在参数齐备后才能选定实例；资源发布或 open 结束时仍有参数没读到，例如资源 parser 先获取资源、后读取参数。持续资产的本次值已支持；业务数据内嵌资源的额外持有仍未定义（见 [scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention)） | 先安排参数生产；资源 parser 先读参数，再获取资源。共享时读取前驱的同一次生产 |
+| `ScopeInputsMissing [参数]` | 带开启参数的 scope 要在参数齐备后才能选定实例；资源发布或 open 结束时仍有参数没读到，例如资源 parser 先获取资源、后读取参数。持续资产的本次值已支持（见 [scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention)） | 先安排参数生产；资源 parser 先读参数，再获取资源。共享时读取前驱的同一次生产 |
 | `ScopeInputAfterOpen 参数` | 实例选定之后，这次开启读到另一份参数生产；即使新旧值相等也不同 | 选定实例前确定全部参数；open 范围内不再刷新参数 |
 | `ScopeContextMismatch 资源` | 一份资源绑定只能归一个实例：open 要认领的资源已属于另一个 scope 或同注册的另一个实例；或 close 读到的资源属于别的实例 | 不同实例各自驱动自己的资源，不共用同一次生产 |
 | `ScopeContextMissing 资源` | open 结束时，选中的实例里没有资源绑定；或 close 定位不到要关闭的实例：本次调用没有这个 scope 的资源绑定，或 close 的 handler 没有读取资源 | Scoped 在 demands 里 `requests` 并 `requires` 资源；核对 open 入口的资源装配与交接，close 的 handler 自行 `require` 资源以定位实例，详见[close 读取检查](EFFECT_GRAPH.md#lifecycle-reads) |
@@ -1238,7 +1238,7 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 ## 当前限制
 
 - **handler 复用**：各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能路由到一份资产。完整约束见[注册契约](CORE_DESIGN.md#registration)。
-- **持续资源与内存**：生产侧结束、消费侧结束和会话退役已实现。持续值可作为 scope 开启参数；待交付值与业务资产内嵌资源的持有仍有缺口。交付队列保留未领取值和最新值，没有硬容量或背压保证；业务自行保存的记录不由 SDK 裁剪。边界与剩余阶段见 [Next stages](NEXT_STAGES.md#current-limits)。
+- **持续资源与内存**：生产侧结束、消费侧结束和会话退役已实现。持续值可作为 scope 开启参数，待交付值与固定捕获已按[既有 Binding ownership](STREAM_LIFELONG.md#binding-retention)保留资源。交付队列保留未领取值和最新值，没有硬容量或背压保证；业务自行保存的记录不由 SDK 裁剪。边界与剩余阶段见 [Next stages](NEXT_STAGES.md#current-limits)。
 - **资源管理范围**：SDK 只管理已交给它的资源。业务自行 `forkIO` 的线程、未发布的部分获取和逸出资源由原子实现负责，见[scope 保证](CORE_DESIGN.md#scope-gc)。
 - **其他扩展**：背压、局部失败、嵌套 lifelong、Middleware 和通用适配等统一跟踪在[开放专题](NEXT_STAGES.md#deferred)，本指南不列另一份状态清单。
 - **构建方式**：SDK 目前随仓库内示例一起编译，尚不能作为独立依赖引入。

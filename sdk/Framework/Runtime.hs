@@ -4,7 +4,7 @@
 -- 执行装配：把生成的 Target lower 到 App，并为持续执行连接 DeliveryFrame 和生产步骤。
 -- Target 只保存末端句柄与共享 scope；Handoff 交接捕获值；DeliveryFrame 固定一轮的交付。
 -- sessionLauncher 负责生产线程，Runtime/Session 保存待领取交付并停止线程，
--- Runtime/Graph 负责唯一会话登记，Workflow/Execution 负责消费单元和整次运行监督。
+-- Runtime/Graph 负责唯一会话登记，Runtime/Execution 负责消费单元和整次运行监督。
 -- 程序只经 AST 启动，业务方法不管理这些线程、游标和交接对象。
 module Framework.Runtime
   ( App, Target, targetApp
@@ -217,7 +217,7 @@ frameDeliveries frame = do
 -- 在 lifelong 单元的 DeliveryFrame 中，已领取的交付优先于交接视图，尚未领取的会话资产在第一次读取时领取。
 -- 已领取交付的伴随发布作为已捕获绑定交给本次调用，交接中已经捕获的值优先（与来源分析一致）；
 -- 生成期保证读取伴随资产的位置在调用前已经领取了对应会话的交付。
--- 原始链挂接只交付持续资产自身；普通产物保持其 AST Origin 的既有来源可见性，不随流跨链透传。
+-- 原始链挂接只交付持续资产自身；普通产物仍写入运行级共享最新值，不作为该交付的伴随捕获。
 lowerTarget :: RuntimeGraph environment cause -> Retention environment cause -> NodeId -> ExecutionFrame -> Maybe (DeliveryFrame environment cause) -> Handoff environment cause
             -> Target environment cause value -> IO (Either (Failure cause) value, Handoff environment cause)
 lowerTarget graph retention location executionFrame frame (Handoff given views) target = do
@@ -257,6 +257,12 @@ cleanupTargets :: [Target environment cause value] -> IO [(Maybe SomeException, 
 cleanupTargets = cleanupScopes . scopeHandlers
 
 -- 持续生产的装配与退出 ---------------------------------------------------------
+
+-- Stage 3 执行边界 v1（2026-11-18）：Booter 只提供生产挂载和驱动关系。
+-- 本模块管理独立生产步骤，Execution.repeatUnit 管理消费轮次；两者独立推进，
+-- 共用 App 的调用身份与捕获、Retention 的绑定保留、Frame 的待用以及 Graph 的 scope GC。
+-- 一步结束只撤销本步实际使用；source end 封口并允许排空，会话退役才撤销未来使用预约。
+-- ReuseOutput 已属于原消费轮次，不建立第二份循环、ScopeUser 或会话待用帧。
 
 -- 生成区按资产登记的生产步骤。parser 的入口发布一次资产；会话不再次发布返回值。
 -- ReceiveSteps：Stream 单步取得原始输入，再由 parser 解析。

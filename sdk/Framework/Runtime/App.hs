@@ -900,7 +900,8 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
       captured <- readIORef values >>= filterM (fmap isNothing . readBindingOwner . snd)
       capturedViews <- readIORef delivered
       keepBindings (launchRetention launch) (map snd captured ++ concatMap (toList . snd) capturedViews)
-      -- 会话的使用登记在会话停止时才撤销。
+      -- 显式 launchUser 由外层生产步骤负责撤销；Receive 的来源与 parser 共用本步登记。
+      -- 跨步骤待用由会话执行帧保持，不把本步 ScopeUser 留到会话停止。
       -- 节点进度由 Execution 在本调用（含交接）返回后完成，再回收相关 Scoped。
       -- 此处只撤销实际使用，避免重复扫描整批实例或早于进度更新进行关闭。
       maybe (detachScopeUser user) (const (pure ())) (launchUser launch)

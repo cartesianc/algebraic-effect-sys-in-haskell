@@ -2,7 +2,7 @@
 
 -- Node 按原型中的挂载位置 lower 末端句柄；branch 组合执行闭包。
 -- Workflow 执行与受管理任务边界。这里装配 branch、重复消费单元并监督整次运行；
--- Runtime 负责末端及生产任务，Session 负责交付日志，App 负责单次调用的资源协议。
+-- Runtime 负责末端及生产任务，Session 负责待交付队列，App 负责单次调用的资源协议。
 -- 退出先取消并等待 AST 子任务，再停止生产会话，最后撤销根帧并回收不可达实例。
 module Framework.Runtime.Execution (runStructuredAST) where
 
@@ -30,7 +30,7 @@ import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef,
 import Data.List (isPrefixOf, partition)
 
 -- 执行期环境：lifelong 单元的本次 frame，以及运行监督。
--- 临时规则（lifelong 的 close 语义设计前）：AST 含 lifelong 时，任何失败（Error 协议诊断之后）
+-- 临时规则（局部失败恢复尚未实现）：AST 含 lifelong 时，任何失败（Error 协议诊断之后）
 -- 或原生异常都在发生处报告监督，终止整次运行；不含 lifelong 时监督不做任何事。
 data Run environment cause = Run
   { runExecutionFrame :: ExecutionFrame
@@ -375,6 +375,10 @@ executionAlgebra prototype store entries selectors layer expected = do
     -- 本地会话（local）包含 Derive 间接依赖；等待实际轮帧及派生完成水位，
     -- 本轮稳定后没有新发布才跳过，会话封口并排空后读取位置的订阅随之结束。
     -- 单元正常结束时离开仍持有的会话并按计数退役；失败或取消只离开，停止交给 lifelong 返回或运行结束。
+    -- Stage 3 执行边界 v1（2026-11-18）：每轮的 ExecutionFrame 表达有限待用，
+    -- DeliveryFrame 固定本轮领取，Retention 覆盖整轮交接；退出依次撤销，再调用既有 scope GC。
+    -- 与 Runtime.withStep 共用底层协议，但不共用循环：消费等待交付，生产按自己的来源推进。
+    -- Finished 结束单元，endStream 只撤销相应节点；来源封口和生产任务退役由 Session 协调。
     repeatUnit boundary run handoff cursors local needed withdraw (unit, execute) = do
       ended <- newIORef []
       held <- newIORef cursors

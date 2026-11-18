@@ -322,7 +322,7 @@ monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同
 | 本次固定视图 | 单元执行 frame＋资产 |
 | target 执行 | NodeId＋新的 Origin |
 | 独立生产步骤执行 | Receive／Derive 的会话挂载 NodeId＋每步新的 Origin；ReuseOutput 沿用原 AST 执行 |
-| 生产资源的使用登记 | 独立生产任务按会话跨步骤保持；ReuseOutput 沿用原节点的使用登记（见 8.1） |
+| 生产资源的使用登记 | Receive 的来源与 parser 共用本步 ScopeUser，Derive 每步独立登记；跨步骤待用由会话 ExecutionFrame 保持；ReuseOutput 沿用原节点（见 8.1） |
 | scope 归属 | 既有 Binding ownership 与具体 scope 实例 |
 
 运行时保存值与保留可操作的资源是两种关系，当前各处的职责如下：
@@ -330,11 +330,12 @@ monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同
 | 持有位置 | 保存什么 | 何时撤销 |
 | --- | --- | --- |
 | 调用的 ScopeUser | 本次受控调用实际使用的实例与待认领绑定 | 业务、诊断及受控结果消费结束后 |
-| 独立生产会话的 ScopeUser | Receive／Derive 跨步骤使用的实例 | worker 的收尾完成时：会话退役（读取方计数归零或 lifelong 返回）或运行结束；`streamEnd` 本身不撤销 |
+| 独立生产步骤的 ScopeUser | Receive／Derive 本步实际使用的实例；Receive 两个入口共用 | 本步业务、诊断与受控结果消费结束后，失败或取消也撤销 |
+| 独立生产会话的 ExecutionFrame | 后续步骤的待用预约及固定／下一条参数身份查询 | worker 退出时摘除；来源封口不直接撤销，仍沿既有会话退役边界 |
 | ExecutionFrame 与静态开启计划 | 节点待用、参数生产身份及允许的后继关系 | 节点退休、来源不再匹配或帧结束；合法外部后继的待用关系单独保留 |
-| 交付队列、伴随发布、后继保留表 | 原 Binding 与已有 ownership 引用 | 按读取义务裁剪、替换或退出运行；仅保存引用不自动增加 scope 使用登记 |
+| 交付队列、固定捕获与合法后继的待用 | 原 Binding；已声明资源的 ownership 参与保留查询 | 按领取、执行结束、替换及待用耗尽撤销；先交接后撤销，详细规则见 [9.3](#binding-retention) |
 
-ReuseOutput 沿用原调用的 ScopeUser，没有独立生产任务。此处不把任意 ADT 内嵌资源自动纳入 ownership，也不为业务资产内嵌资源增加尚未确定的保活语义。
+ReuseOutput 沿用原调用的 ScopeUser，没有独立生产任务；资源按[已登记的 Binding ownership](#binding-retention)保留。
 
 - 同一边界同一资产共享会话，不同单元各自推进；不同 lifelong 的会话与进度独立。
 - 进入 lifelong 时建立会话、读取方与输出连接；独立来源在登记期间已经产生的发布完整保留。单元在登记完成后启动，ReuseOutput 只接收实际 AST 执行的输出，不启动另一份任务。单元的游标从会话的第一条发布开始，每次领取一条固定交付。
@@ -391,7 +392,7 @@ Receive 在交出原始输入时，也把同一步来源执行已捕获的资源
 
 Receive 的来源与 parser 共用本步使用登记，Derive 每次解析使用独立登记；本步的业务、诊断与受控结果消费结束后撤销。跨步骤的复用由会话的待用执行帧保持，按实际参数生产身份匹配实例，不再让一份 ScopeUser 累积持有全部历次实例。来源正常结束时仍保留会话待用预约到退役；详细边界见[第 9.3 节](#binding-retention)，停止与退役时机见[第 9.5 节](#consumer-end)。ReuseOutput 沿原消费节点与执行帧回收，没有额外生产任务或会话预约。
 
-lifelong 单元每次执行建立独立的 ExecutionFrame。参数来自外层或没有参数的 scope 由外层帧保留；参数来自本轮的实例归本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。DeliveryFrame 仍负责本轮会话视图的领取；ExecutionFrame 记录已领取普通伴随资产的生产身份及所属 lifelong 边界，不复制值。根实例的待用查询包含活动子帧：即使后台会话已经发布下一步，本轮后继仍按固定交付身份保留同一实例。轮帧结束后清空进度并从父帧摘除；已经允许的 lifelong 外后继仍按静态来源和实际保留绑定判断待用，具体规则见[图与来源](EFFECT_GRAPH.md#scope-opening-retention)。持续值作为 scope 参数的身份观察已接通；已知 Binding ownership 的保留见[资源边界](#binding-retention)，业务数据内嵌资源仍待设计。
+lifelong 单元每次执行建立独立的 ExecutionFrame。参数来自外层或没有参数的 scope 由外层帧保留；参数来自本轮的实例归本轮，后继共享不改变归属，本轮结束且没有合法后继待用时回收。DeliveryFrame 仍负责本轮会话视图的领取；ExecutionFrame 记录已领取普通伴随资产的生产身份及所属 lifelong 边界，不复制值。根实例的待用查询包含活动子帧：即使后台会话已经发布下一步，本轮后继仍按固定交付身份保留同一实例。轮帧结束后清空进度并从父帧摘除；已经允许的 lifelong 外后继仍按静态来源和实际保留绑定判断待用，具体规则见[图与来源](EFFECT_GRAPH.md#scope-opening-retention)。持续值作为 scope 参数的身份观察已接通；已知 Binding ownership 的保留及资产契约的范围见[资源边界](#binding-retention)。
 
 Stream handler 的阻塞／等待决定节奏，SDK 不加间隔；立即返回的生产会形成高频生产，慢于来源的读取方可能持续积压（保留规则见 [7.1 节](#retention)）。本版不提供容量背压、丢弃或去重。
 
@@ -417,12 +418,29 @@ gen 为独立 Receive／Derive 生产关系生成 interpreter 托管计划。首
 
 这项组合只把生产计划与读取方的启动关系分开；不放开对持续资产的 `requests`，不把普通链的 `streams` 自动解释成有限读取，也不新增 history 类别。
 
+<a id="execution-boundaries"></a>
+### 8.4 共同执行结构与模块边界
+
+Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条件满足后启动有限调用，再决定继续或结束。Stage 3 统一的是这些调用的身份、捕获和收尾责任；生产与消费仍各自推进，不等待对方整轮完成，也不要求两者使用同一个循环或状态 ADT。
+
+| 共同责任 | 独立生产步骤 | lifelong 消费轮次 | SDK 落点 |
+| --- | --- | --- | --- |
+| 使用已确定的驱动关系 | Receive／Derive 挂载；ReuseOutput 直接复用原节点 | 单元、订阅节点、本地发布与派生关系 | Composition 组织计算；Booter 输出 Prototype 驱动事实；Injector 给出入口装配 |
+| 为实际调用建立身份与固定捕获 | 每次 lower 创建 Origin／Activation；Receive 在本步交接 raw 和资源 | 交付由 DeliveryFrame 固定，各 target 有各自的调用身份 | Runtime、Runtime.App；Binding 的原生产身份不因交接改变 |
+| 区分实际使用、未来待用与绑定保留 | 本步 ScopeUser／Retention，会话未来使用帧 | 调用 ScopeUser、本轮 Retention／ExecutionFrame 及外层待用 | Runtime.Frame、Retention、Graph 与 Scope，详见 [8.1](#production)、[9.3](#binding-retention) |
+| 结束只影响其所属边界 | 来源封口后仍可排空；退役才撤销会话预约 | 节点结束订阅、单元结束、lifelong 返回各自处理 | Runtime.sessionLauncher、Execution.repeatUnit、Session；详见 [正常结束](#end)、[消费方结束](#consumer-end) |
+| 退出后再判断资源是否不可达 | 步骤撤销实际使用，退役停止并等待 worker | 受控子任务汇合，轮帧结束，撤销执行保留 | 两侧均进入现有 Graph／Scope 回收；失败、取消见 [第 9 节](#failures) |
+
+`streamEnd`、`endStream`、正常返回和失败不合并成同一种结果。来源封口不等于生产线程已退出，生产线程退出也不意味着所有消费者持有的资源可以关闭。当前独立来源封口后保留会话预约，等待既定退役或运行退出；ReuseOutput 没有独立 worker 或会话预约。
+
+本节是当前协议的实现对照。Source／Shape 读取 Haskell 结构，Emit 渲染已定计划；它们不决定上述动态状态。容量等待、局部失败恢复和新的提前释放策略仍按 [Next stages](NEXT_STAGES.md#deferred) 单独设计，不属于 Stage 3 的完成条件。
+
 <a id="failures"></a>
 ## 9. 故障、取消与资源边界
 
 ### 9.1 失败：临时规则
 
-lifelong 的 close 语义设计之前，采用下面的临时规则：
+现有资源回收已接通；局部失败恢复尚未实现，继续采用下面的临时规则：
 
 1. **适用范围**：只在 AST 中包含 lifelong 时生效；不包含 lifelong 的程序，失败处理保持现状（interpreter 会话的生产失败只传给等待它的读取方）。
 2. **触发**：生产失败、解析失败、消费单元失败、AST 中任何 node 或 alternative 选择读取的失败，以及上述任务中的原生异常。
@@ -446,6 +464,8 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 
 **保证范围（2026-11-18 修订）：** 保留实际执行、持续待用和已有 Binding ownership 能定位的资源；注册指定的资源 Context 在认领前也保持同一归属单元。Context／Pure 把本次原子输出解析或变换成普通业务数据，不因此让新 ADT 继承生产方法用过的全部资源。资产、注册、handler 与 workflow 写法不变；保活不让链外资源读取变得合法；普通共享供值遵循独立的 Context 协议。
 
+**资产契约的边界。** 普通业务数据经原子操作的字符串 rawoutput（当前批量接口为 `[String]`）、Pure 变换与 Context 解析进入资产。已声明资源 Context 的 Binding 另由 SDK 的 ownership 协议管理。任意业务 ADT 内嵌资源的自动追踪与保活不属于当前资产契约，也不列为待实现能力；这不减少已登记资源 Binding 的交付、捕获和 close 保证。Haskell 类型允许定义字段，不等于 SDK 承诺追踪其中任意资源对象的寿命。
+
 | 持有者 | 保留到什么时候 |
 | --- | --- |
 | Receive 的来源与 parser、Derive 的本次处理 | 本步的业务、诊断和受控结果消费结束；Receive 两个入口之间保留同一实际使用 |
@@ -466,7 +486,7 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 
 轮询、event 与 socket 都使用这组结构规则：一次采样或收到一条消息不代表来源结束，暂时没有输入也不表示可以 close。BootPlan 决定驱动装配；SDK 不从原子 IO 推断这三个业务名称，也不按它们另选清理策略。现有写法见[第 4.1 节](#drives)。
 
-资源关闭后的受控读取继续检查原 Binding 的 owner 与关闭／失败状态，不自动换 owner、重开或重放生产。任意业务 ADT 内嵌资源、外部别名和 lifelong 局部失败属于[独立开放专题](NEXT_STAGES.md#deferred)，不作为本节既定保证的前置条件。
+资源关闭后的受控读取继续检查原 Binding 的 owner 与关闭／失败状态，不自动换 owner、重开或重放生产。外部别名不在本节保留保证内；lifelong 局部失败属于[独立开放专题](NEXT_STAGES.md#deferred)，不作为本节既定保证的前置条件。
 
 业务资产保存多份数据不等于可以把其中各资源的 owner 合成一个，也不能复活已关闭资源。持续值作为 scope 开启参数沿用本次 Binding 的生产身份和原生产帧；已领取交付、游标下一条与合法后继按读取规则参与待用判断，详见[开启计划与待用](EFFECT_GRAPH.md#scope-opening-retention)。这不自动展开 T 中的资源引用或额外保活其内容。
 
@@ -552,7 +572,7 @@ lifelong 的 close 语义设计之前，采用下面的临时规则：
 - 零轮或从未发布：缺值按耗尽协议报 `ContextNotInitialized`，不等待。
 - 生成期仍拒绝后继在两个互不先后的 lifelong 会话之间选择持续资产；这条会话路由规则不用于普通资产的多处发布。
 
-带资源归属的资产不经普通来源表，不能凭上述后继规则在链外读取资源。普通资产作为开启参数时的后继待用已经接入[scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention)；持续值参数与已知 ownership 的[交付保留](#binding-retention)已接通；业务资产内嵌资源仍待设计。
+带资源归属的资产不经普通来源表，不能凭上述后继规则在链外读取资源。普通资产作为开启参数时的后继待用已经接入[scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention)；持续值参数与已知 ownership 的[交付保留](#binding-retention)已接通，保证范围遵循该节的资产契约。
 
 **资源。**
 
@@ -624,7 +644,7 @@ ReuseOutput 的发布位置同样按节点计：节点结束订阅时立即撤�
 
 **代价。** 节点结束后的读取关系重新计算每轮最多一次；发布位置在节点结束时立即撤下。会话的计数判断与离开同在一次 `release` 内，为 O(R)（R 为该会话的读取方个数）。本轮稳定检查沿已生成的单上游关系查询发布节点进度和派生完成水位，只在唤醒后重查，不轮询；新增完成计数不随发布总数分配存储。
 
-**不变与未做。** 读取方的游标只描述领取进度，不替业务定义数据保留方式。已有 ownership 的交付保留见[资源边界](#binding-retention)；业务数据内嵌资源的持有、背压与容量、局部失败仍待设计。
+**不变与未做。** 读取方的游标只描述领取进度，不替业务定义数据保留方式。已有 ownership 的交付保留见[资源边界](#binding-retention)；背压与容量、局部失败仍待设计。
 
 <a id="implementation"></a>
 ## 10. 实现位置
@@ -657,4 +677,4 @@ ScopeTree 独立构建并保持无环；订阅与回调关系不作为 scope 父
 
 本仓库按约定只做普通编译、生成结果审阅和示例观察，不新增测试框架、负例或穷举门槛。已有验证范围概述见 [Next stages](NEXT_STAGES.md#baseline)，逐次观察记录保留在 Git 历史。LSP 仓库的外部穷举模型尚未扩展到 Stream／lifelong。
 
-当前缺口统一记录在 [Next stages 的限制与开放专题](NEXT_STAGES.md#current-limits)。持续值参数、既有 ownership 的交接与会话实例的待用回收已接通；任意业务 ADT 内嵌资源仍属独立开放专题。容量背压、局部失败及控制流扩展分别收敛。已有单步来源的写法见[第 4.1 节](#drives)，不据此宣称已提供通用外部回调适配。
+当前缺口统一记录在 [Next stages 的限制与开放专题](NEXT_STAGES.md#current-limits)。持续值参数、既有 ownership 的交接与会话实例的待用回收已接通；保留范围以[资产契约](#binding-retention)为界。容量背压、局部失败及控制流扩展分别收敛。已有单步来源的写法见[第 4.1 节](#drives)，不据此宣称已提供通用外部回调适配。
