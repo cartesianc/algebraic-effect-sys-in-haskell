@@ -1,6 +1,6 @@
 # Next stages
 
-更新：2026-11-18。本文是阶段计划与开放项的唯一入口，保存各阶段的目标、剩余工作和必要的完成摘要。当前协议在[主设计](LATEST_DESIGN.md)及其专题中维护；历史验证集中在[验证边界](#baseline)，不代表本次重新执行。
+更新：2026-11-18。本文是阶段计划与开放项的唯一入口，保存各阶段的目标、剩余工作和必要的完成摘要。当前协议在[主设计](CORE_DESIGN.md)及其专题中维护；历史验证集中在[验证边界](#baseline)，不代表本次重新执行。
 
 **当前进度：** handler 复用、scope 可达性回收、Stream 两侧结束、后继读取、交付保留和会话退役已落地。持续生产与有限取值的组合边界已经补齐，生成期无来源诊断、签名报错与组合设计收尾已完成；Receive 来源到 parser 的资源交接及示例 close 已修复，验证见[本轮记录](#receive-resource-verification)。[静态协议检查收口](#protocol-checks)已完成本轮范围，已补上既有 Binding ownership 的交付与执行保留，并进一步按会话待用帧回收不再使用的具体实例。Stage 5／7 已接通当前资产契约内的资源持有与回收，范围与验证见[阶段说明](#stage-5)；[普通 require 共享供值](#stage-2-await)也已实现。本轮已完成 [gen 决定归位](#gen-classification)，整理前端、Injector／Booter、计划与输出；[容量与背压](#backpressure)保留为延期专题，策略尚未确定。
 
@@ -16,9 +16,9 @@
 
 目标是在现有架构内统一持续执行、资产访问和资源收尾。保持原子 handler、业务 effect、Context 解析与 workflow 驱动的分工，以及 Prototype／RuntimeGraph 和独立无环 ScopeTree；不为实现方便增加 effect 类别、手写装配层、资源寿命标签或 cleanup policy。
 
-资产引用的内存回收与 `Scoped.close` 管理的资源释放分别处理。释放引用不能替代关闭资源。完整设计原则见[主设计](LATEST_DESIGN.md#principles)。
+资产引用的内存回收与 `Scoped.close` 管理的资源释放分别处理。释放引用不能替代关闭资源。完整设计原则见[主设计](CORE_DESIGN.md#principles)。
 
-**资产边界（2026-11-18 确认）：** 原子操作通过字符串 rawoutput 对接解析侧（当前批量输出为 `[String]`），Context 将其解析为业务资产，Pure 处理数据。不能把原生 Haskell 可定义任意字段的能力，当作框架允许把 Handle、连接等资源对象嵌入业务资产传递的契约。因此，“任意 ADT 内嵌资源的自动追踪与保活”从当前阶段及开放任务中移除；这不改变已声明资源绑定的 ownership、执行持有与 scope close。保留普通解析数据不自动延长生产资源的寿命，现有输出与解析接口见[入口装配](LATEST_DESIGN.md#calls)和[Context](LATEST_DESIGN.md#context)。
+**资产边界（2026-11-18 确认）：** 原子操作通过字符串 rawoutput 对接解析侧（当前批量输出为 `[String]`），Context 将其解析为业务资产，Pure 处理数据。不能把原生 Haskell 可定义任意字段的能力，当作框架允许把 Handle、连接等资源对象嵌入业务资产传递的契约。因此，“任意 ADT 内嵌资源的自动追踪与保活”从当前阶段及开放任务中移除；这不改变已声明资源绑定的 ownership、执行持有与 scope close。保留普通解析数据不自动延长生产资源的寿命，现有输出与解析接口见[入口装配](CORE_DESIGN.md#calls)和[Context](CORE_DESIGN.md#context)。
 
 <a id="stages"></a>
 ## 阶段地图
@@ -87,7 +87,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 <a id="stage-1"></a>
 ### Stage 1：资产来源与接收契约
 
-**已完成。** 保留的核心是：每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；访问方式不另造资产身份，一个消费者可以依赖多个资产。当前约束见[资产来源与访问](LATEST_DESIGN.md#demand-contract)。
+**已完成。** 保留的核心是：每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；访问方式不另造资产身份，一个消费者可以依赖多个资产。当前约束见[资产来源与访问](CORE_DESIGN.md#demand-contract)。
 
 早期要求 handler 显式匹配生成资产构造器，后来妨碍同一原子操作在不同来源间复用。该接收检查和 Context 的 request 角色已由 Stage 2 取代，不再把旧写法作为候选接口保留。
 
@@ -98,7 +98,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 
 这解决了“同一个写入操作因为来源不同而重复实现”的问题。alternative 处理同一资产的构造器分支，不能替代跨 Context 来源的装配；无需为复用新增 `resource`、`oneOf` 或链路 newtype。handler 定义共享不合并实际调用。
 
-当前写法与检查分别见[指南：handler](GUIDE.md#handlers)、[注册契约](LATEST_DESIGN.md#registration)、[入口装配](LATEST_DESIGN.md#calls)和[源码资产约束](ASSETS.md)。SDK 四层分工见 [gen 是编译器](LATEST_DESIGN.md#compiler)。
+当前写法与检查分别见[指南：handler](GUIDE.md#handlers)、[注册契约](CORE_DESIGN.md#registration)、[入口装配](CORE_DESIGN.md#calls)和[源码资产约束](ASSETS.md)。SDK 四层分工见 [gen 是编译器](CORE_DESIGN.md#compiler)。
 
 <a id="stage-2-later"></a>
 持续资产的取值与驱动归 [Stage 4](#stage-4)；Error 驱动链、来源调度扩展等归[开放事项](#deferred)。现有 socket／event／behavior 的单步写法见 [Stream 规范](STREAM_LIFELONG.md#drives)，不把自动分类或外部回调适配说成当前能力。
@@ -248,7 +248,9 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 <a id="stage-2-await"></a>
 ## 普通 require 的共享供值与等待
 
-**已实现（2026-11-18）。** 根据本轮确认，任意位置实际生产的同一 refined asset 都可供普通 require 使用。gen 以有限供值固定点替代 AST 可见性过滤，保留最低限度的无来源／无法启动诊断；RuntimeGraph 维护每资产最新 Binding，调用捕获优先。执行帧继续支撑进度、参数生产身份与 scope 待用，切轮不清空共享普通值。详细协议与算法只在[主设计](LATEST_DESIGN.md#await-visibility)和[图规范](EFFECT_GRAPH.md#missing-source)维护。
+**语义边界已确认（2026-11-18）：** 保留共享最新值；确定性约束 refined asset 对应唯一 Context 来源及装配规则，不要求每次捕获同一次生产。并发更新导致的取值差异按现有协议处理，不新增拒绝这类普通读取的检查。原则见[主设计](CORE_DESIGN.md#composition-polymorphism)。
+
+**已实现（2026-11-18）。** 根据本轮确认，任意位置实际生产的同一 refined asset 都可供普通 require 使用。gen 以有限供值固定点替代 AST 可见性过滤，保留最低限度的无来源／无法启动诊断；RuntimeGraph 维护每资产最新 Binding，调用捕获优先。执行帧继续支撑进度、参数生产身份与 scope 待用，切轮不清空共享普通值。详细协议与算法只在[主设计](CORE_DESIGN.md#await-visibility)和[图规范](EFFECT_GRAPH.md#missing-source)维护。
 
 不改变 handler、注册或 AST 写法；Stream 固定交付、资源 owner 定位及清理协议保留。按帧 TVar 迁移不再作为任务前提。完整等待环分析、任意业务 IO 进展与性能测量仍不承诺。
 
@@ -264,12 +266,12 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 <a id="pure-pipeline"></a>
 ### Pure 与 list 原子输出（2026-11-12）
 
-Pure 成为生产链中的值变换，Excu／Scoped 的原子输出统一为 `[String]`；parser 继续负责把输出变成资产。它分开了值变换与细化解析的职责，取代旧守卫接口。当前写法、位置限制和失败协议见[主设计：Pure](LATEST_DESIGN.md#pure)，不重复迁移清单。
+Pure 成为生产链中的值变换，Excu／Scoped 的原子输出统一为 `[String]`；parser 继续负责把输出变成资产。它分开了值变换与细化解析的职责，取代旧守卫接口。当前写法、位置限制和失败协议见[主设计：Pure](CORE_DESIGN.md#pure)，不重复迁移清单。
 
 <a id="scope-gc"></a>
 ### scope 身份、回收与关闭诊断（2026-11-13）
 
-Binding 的生产身份与执行帧支持单例／多例匹配和待用分析；ScopeTree 保持独立无环。close 可选，普通关闭失败只报告，取消在其余收尾后传播。当前规则见[实例身份](LATEST_DESIGN.md#scope-identity)与[可达性回收](LATEST_DESIGN.md#scope-gc)。这些已是持续执行清理的基础，后续不另建一套实例或回收器。
+Binding 的生产身份与执行帧支持单例／多例匹配和待用分析；ScopeTree 保持独立无环。close 可选，普通关闭失败只报告，取消在其余收尾后传播。当前规则见[实例身份](CORE_DESIGN.md#scope-identity)与[可达性回收](CORE_DESIGN.md#scope-gc)。这些已是持续执行清理的基础，后续不另建一套实例或回收器。
 
 <a id="deferred"></a>
 ## 保留的开放专题
@@ -289,7 +291,7 @@ Binding 的生产身份与执行帧支持单例／多例匹配和待用分析；
 <a id="middleware"></a>
 ### Middleware 与 Hanging
 
-独立 Middleware typing、装卸策略及其与 [Root 入口包装](LATEST_DESIGN.md#calls)的关系单独设计，Hanging 随之确认。本轮不以新增 Middleware 类别为前提。
+独立 Middleware typing、装卸策略及其与 [Root 入口包装](CORE_DESIGN.md#calls)的关系单独设计，Hanging 随之确认。本轮不以新增 Middleware 类别为前提。
 
 <a id="external-tools"></a>
 ### 外部工具与观察
@@ -349,3 +351,5 @@ LSP 仓库的来源可见性穷举模型尚未扩展到 Stream／lifelong；订�
 2026-11-17 本轮仅将 Stage 5／7 合并为一项工作，集中剩余交付、确认点和完成标准；保留已有阶段链接。未修改 SDK、生成产物或 demo，未编译或运行业务；上述实现与验证记录均属于各自注明的轮次。
 
 2026-11-17 前一轮仅整理文档：收敛计划、改用规范引用、修正指南过期描述，并核对引用与改动范围。没有修改 SDK、生成产物或 demo，没有重新编译或运行业务；上表均为历史记录。
+
+2026-11-18 文档同步：合入 main 的 `5b10644`，保留主设计改名 `CORE_DESIGN.md`、“业务即 DSL”及 algebraic effect 两节，同时保留本分支的共享供值、Injector／Booter 与阶段边界。按用户确认统一确定性的含义；本次仅修改文档，未改 SDK、生成产物或 facade，未重复编译或运行业务示例。

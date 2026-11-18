@@ -1,6 +1,6 @@
 # 组合推导：结构怎样成为执行语义
 
-更新：2026-11-17。组合逻辑是这个框架的核心设计原则：业务写下资产、effect、原子 handler 和 workflow 的关系，SDK 对这些结构进行运算，得到可以检查、生成和执行的含义。本文先说明这项原则，再列出各组合的推导依据；详细协议仍由[主设计](LATEST_DESIGN.md)、[图与来源](EFFECT_GRAPH.md)和[Stream 规范](STREAM_LIFELONG.md)分别维护。
+更新：2026-11-18。组合逻辑是这个框架的核心设计原则：业务写下资产、effect、原子 handler 和 workflow 的关系，SDK 对这些结构进行运算，得到可以检查、生成和执行的含义。本文先说明这项原则，再列出各组合的推导依据；详细协议仍由[主设计](CORE_DESIGN.md)、[图与来源](EFFECT_GRAPH.md)和[Stream 规范](STREAM_LIFELONG.md)分别维护。
 
 <a id="why"></a>
 ## 1. 组合逻辑为什么是框架核心
@@ -25,9 +25,9 @@ handler 描述一次原子操作；业务含义由它绑定的 effect、Input、
 <a id="determinism"></a>
 ### 确定性：结构决定装配规则
 
-1. **有静态依据。** 解释来自注册、AST 和可提取的 handler 读取关系。refined asset 的生产链静态唯一；同一资产的多次实际发布按已定义的共享最新值规则读取。
-2. **解释明确。** 同一份合法结构得到确定的类型能力、来源规则和执行计划；实际分支、业务值与 IO 成败仍由运行时按计划处理。
-3. **已能证明的结构错误在生成期报告。** 缺少合法解释或存在无法消除的歧义时拒绝；没有证明不等于已经证明安全。已实现的最低限度检查与延期的完整分析分开维护，见[普通读取来源](EFFECT_GRAPH.md#missing-source)与[当前边界](NEXT_STAGES.md#current-limits)。
+1. **来源与装配确定。** 解释来自注册、AST 和可提取的 handler 读取关系。每个 refined asset 对应唯一 Context 来源；读取路由、能力与驱动装配由 gen 确定。
+2. **运行按既定协议取值。** 同一 Context 可多次生产，普通 `require` 按共享最新值与固定捕获规则读取。首次捕获哪次发布可以受调度影响，这属于运行状态，不是装配歧义；详细读取协议见[主设计](CORE_DESIGN.md#await-visibility)。
+3. **已能证明的结构错误在生成期报告。** 缺少合法解释或存在无法消除的资产来源、装配歧义时拒绝；没有证明不等于已经证明安全。已实现的最低限度检查与延期的完整分析分开维护，见[普通读取来源](EFFECT_GRAPH.md#missing-source)与[当前边界](NEXT_STAGES.md#current-limits)。
 
 协议错误按“故障＋触发条件”划分生成期检查、运行状态与 SDK 不变量故障；现有 14 种故障的归属和证据边界统一见[协议故障表](EFFECT_GRAPH.md#protocol-faults)。生命周期资源读取在 `composeMethods` 按绑定方法检查，保持在同一组合计算内。
 
@@ -35,9 +35,11 @@ handler 描述一次原子操作；业务含义由它绑定的 effect、Input、
 
 这项设计把三件事连在一起：
 
-- **代码能够表达关系。** 注册和 workflow 是有限、明确的结构，读者、HLS、生成器和 agent 面对同一份原生 Haskell。关系应能沿源码追溯，见[代码即文档](LATEST_DESIGN.md#code-as-documentation)。
+- **代码能够表达关系。** 注册和 workflow 是有限、明确的结构，读者、HLS、生成器和 agent 面对同一份原生 Haskell。关系应能沿源码追溯，见[代码即文档](CORE_DESIGN.md#code-as-documentation)。
 - **编译器能够计算关系。** gen 把结构作为数据进行分析，形成类型约束、精细化 DI、来源证明和图；不要求原子方法理解整个调度器。
 - **运行时能够执行关系。** interpreter 消费已经确定的结构，管理实际值、执行进度、会话与资源；业务 IO 的结果不由编译器猜测。
+
+从业务一侧看，这三件事构成一门领域语言的前端与所有业务共用的后端，见[业务即 DSL](CORE_DESIGN.md#business-as-dsl)；与经典 algebraic effect 在解释机制上的异同见[主设计 3.12](CORE_DESIGN.md#algebraic-effects)。
 
 因此，设计新能力时先确定“哪些结构关系对应什么执行含义”，再决定如何生成代码和维护运行状态。没有结构证据的行为应诊断或保留待定，不能以线程先后选择不同的资产契约；同一契约的并发发布则按明确的最新值协议执行。框架对组合的解释有明确适用条件，也不因为引入状态机就自动证明任意业务程序满足代数定律。
 
@@ -84,7 +86,7 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 
 **解释只有一个权威来源。** Composition 调用 Injector 合成单入口的能力与装配，调用 Booter 合成挂载及驱动标记；Emit 和 runtime 消费这些结果。这里的“合成解释”对应框架对原子操作的回应与驱动，不新增业务 XxxHandler 类。多个合法运行路径或等价实现不构成歧义；只有既有协议无法确定解释且没有合法的运行选择规则时才拒绝。
 
-**当前统一到这里：** 类型能力、读取与包装、scope/Error 回调、会话入口和单元／来源关联已有明确计算归属。内部仍使用不同阶段算法，不是通用规则求解器；物理分模块不产生新的解释权威。阶段状态、两个检查点和装配流程只在[主设计的编译流水线](LATEST_DESIGN.md#generation)维护，缓存协议只在[图规范](EFFECT_GRAPH.md#cache)维护。
+**当前统一到这里：** 类型能力、读取与包装、scope/Error 回调、会话入口和单元／来源关联已有明确计算归属。内部仍使用不同阶段算法，不是通用规则求解器；物理分模块不产生新的解释权威。阶段状态、两个检查点和装配流程只在[主设计的编译流水线](CORE_DESIGN.md#generation)维护，缓存协议只在[图规范](EFFECT_GRAPH.md#cache)维护。
 
 | 组合问题 | 计算入口或关系查询 | 结果交给谁 |
 | --- | --- | --- |
@@ -133,12 +135,12 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 
 | 行为 | 组合 | 推导 | 驱动 | 规范 |
 | --- | --- | --- | --- | --- |
-| 资产有唯一的生产方 | Context 以 `asset = Asset @T "名字"` 声明；消费方只写资产名 | 按资产名解析出唯一生产方，多个生产方即报错 | 不按距离或拓扑替用户选来源 | [Context](LATEST_DESIGN.md#context)、[资产来源与访问约束](LATEST_DESIGN.md#demand-contract) |
-| 驱动一次新的生产 | 消费方 `requests "T"` | 入口的驱动步骤，排在前驱与方法体之前 | 每次进入入口都重新执行 T 的生产链并发布；不合并重复驱动 | [入口装配](LATEST_DESIGN.md#calls) |
-| 原子操作的输出解析成资产 | Context 的 Input 是 Excu 或 Scoped，parser 用 `raw` | 挂接连接（`contextInjections`）、raw 来源 | 句柄成功后，parser 读本次输出发布资产，句柄不重跑；普通 Context 的解析失败留在注入内部，资产不发布 | [原子输出挂接](LATEST_DESIGN.md#context) |
+| 资产有唯一的生产方 | Context 以 `asset = Asset @T "名字"` 声明；消费方只写资产名 | 按资产名解析出唯一生产方，多个生产方即报错 | 不按距离或拓扑替用户选来源 | [Context](CORE_DESIGN.md#context)、[资产来源与访问约束](CORE_DESIGN.md#demand-contract) |
+| 驱动一次新的生产 | 消费方 `requests "T"` | 入口的驱动步骤，排在前驱与方法体之前 | 每次进入入口都重新执行 T 的生产链并发布；不合并重复驱动 | [入口装配](CORE_DESIGN.md#calls) |
+| 原子操作的输出解析成资产 | Context 的 Input 是 Excu 或 Scoped，parser 用 `raw` | 挂接连接（`contextInjections`）、raw 来源 | 句柄成功后，parser 读本次输出发布资产，句柄不重跑；普通 Context 的解析失败留在注入内部，资产不发布 | [原子输出挂接](CORE_DESIGN.md#context) |
 | 同一个 parser，被驱动时自己取得输入 | 同上的 Context 被 `requests` 或选择读取驱动 | 同一份入口，raw 的回答方式不同 | raw 执行句柄入口，从头启动生产链；失败沿驱动方传播 | 同上 |
-| 输出的纯变换 | Input 链上串 Pure | Pure 链，挂接点是最上面的原子句柄 | 句柄输出经 Pure 依次变换后交给 parser；Pure 不改变调用者身份，不会重复注入 | [Pure](LATEST_DESIGN.md#pure) |
-| 操作按顺序组合 | `input = "前驱"` | 入口的前驱步骤 | 在方法体之前执行前驱；不传值，前驱失败原样传播 | [句柄与值](LATEST_DESIGN.md#handles-and-values) |
+| 输出的纯变换 | Input 链上串 Pure | Pure 链，挂接点是最上面的原子句柄 | 句柄输出经 Pure 依次变换后交给 parser；Pure 不改变调用者身份，不会重复注入 | [Pure](CORE_DESIGN.md#pure) |
+| 操作按顺序组合 | `input = "前驱"` | 入口的前驱步骤 | 在方法体之前执行前驱；不传值，前驱失败原样传播 | [句柄与值](CORE_DESIGN.md#handles-and-values) |
 | 每个生产方法都有人驱动 | 无需写法 | 从各 AST 末端和选择读取求可达集合 | 生产方法无法从任何入口到达时，生成期报错 | [图与来源](EFFECT_GRAPH.md) |
 | 相同上游出现在多条链上 | 两个 effect 以同一个 effect 为 Input | 各挂载保留自己的 NodeId | 各自执行，不按方法名去重；不把重复的 IO 当作幂等 | [结构共享与执行复用](EFFECT_GRAPH.md#reuse-boundary) |
 
@@ -147,14 +149,14 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 
 | 行为 | 组合 | 推导 | 驱动 | 规范 |
 | --- | --- | --- | --- | --- |
-| 读取已有的值，不生产 | `requires "T"`，方法体 `require @T` | 读取权限与读取路由；读取点的来源（`protoSources`） | 先用本次捕获，再读许可来源的发布；没有值时等待，不补跑生产 | [Context](LATEST_DESIGN.md#context) |
+| 读取已有的值，不生产 | `requires "T"`，方法体 `require @T` | 读取权限与读取路由；读取点的来源（`protoSources`） | 先用本次捕获，再读许可来源的发布；没有值时等待，不补跑生产 | [Context](CORE_DESIGN.md#context) |
 | 静态证明普通读取无来源 | 已到达的读取在所有已分析路径均无合法供值或捕获 | gen 在来源证明阶段拒绝，并定位读取点 | 不把结构错误交给运行时缺值处理 | [静态无来源诊断](EFFECT_GRAPH.md#missing-source) |
-| 按类型读取，读到哪份由注册决定 | 同一表示类型细化成多份资产；handler 只写 `require @T` | 每个 effect 按“表示类型 + effect”生成读取实例 | 同一个 handler 绑到不同 effect，各自读到 demands 里那份资产 | [Context](LATEST_DESIGN.md#context) |
-| 按构造器读取和类型的分支 | `requires` 分支契约（如 `FileTextWritten`） | 分支契约目录，投影当前构造器 | 读到构造器的字段；构造器不匹配报 `CaseNotSelected` | [Context](LATEST_DESIGN.md#context) |
+| 按类型读取，读到哪份由注册决定 | 同一表示类型细化成多份资产；handler 只写 `require @T` | 每个 effect 按“表示类型 + effect”生成读取实例 | 同一个 handler 绑到不同 effect，各自读到 demands 里那份资产 | [Context](CORE_DESIGN.md#context) |
+| 按构造器读取和类型的分支 | `requires` 分支契约（如 `FileTextWritten`） | 分支契约目录，投影当前构造器 | 读到构造器的字段；构造器不匹配报 `CaseNotSelected` | [Context](CORE_DESIGN.md#context) |
 | 读到哪一次发布 | 无需新写法；refined asset 决定唯一生产链 | 共享供值固定点与生产机会，持续资产另走会话 | 普通读取先用调用捕获，再取运行级最新 Binding；缺值等发布，不按 AST 位置过滤 | [图与来源](EFFECT_GRAPH.md#missing-source) |
-| 等不到值时结束等待 | 无需写法 | 来源候选与执行帧的节点进度 | 候选都已退休仍无值时报 `ContextNotInitialized`；资源 Context 与诊断、收尾、close 期间不等待 | [可见范围与等待](LATEST_DESIGN.md#await-visibility) |
-| 声明的读取都有用处 | 无需写法 | 读取依据：方法体的读取或控制流的读取 | 声明了却没有任何依据的读取，生成期报错 | [资产来源与访问约束](LATEST_DESIGN.md#demand-contract) |
-| 按资产的状态选分支 | `alternative` 的候选各 `requires` 同一资产的一个分支契约；AST 不写条件 | `AlternativeProto`：转折契约、构造器到候选的对应 | 选择读取相当于 `requests`：先生产转折资产，只启动匹配的候选，并把选择时的捕获交给它 | [workflow](LATEST_DESIGN.md#workflow) |
+| 等不到值时结束等待 | 无需写法 | 来源候选与执行帧的节点进度 | 候选都已退休仍无值时报 `ContextNotInitialized`；资源 Context 与诊断、收尾、close 期间不等待 | [可见范围与等待](CORE_DESIGN.md#await-visibility) |
+| 声明的读取都有用处 | 无需写法 | 读取依据：方法体的读取或控制流的读取 | 声明了却没有任何依据的读取，生成期报错 | [资产来源与访问约束](CORE_DESIGN.md#demand-contract) |
+| 按资产的状态选分支 | `alternative` 的候选各 `requires` 同一资产的一个分支契约；AST 不写条件 | `AlternativeProto`：转折契约、构造器到候选的对应 | 选择读取相当于 `requests`：先生产转折资产，只启动匹配的候选，并把选择时的捕获交给它 | [workflow](CORE_DESIGN.md#workflow) |
 
 <a id="scope"></a>
 ## 5. 资源（scope）
@@ -163,18 +165,18 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 
 | 行为 | 组合 | 推导 | 驱动 | 规范 |
 | --- | --- | --- | --- | --- |
-| 在需要的链上开启 | Scoped 放在链的 Input 上 | 入口的前驱步骤 | 进入入口时先开启；已开启的实例复用，跳过 open 的方法体 | [入口装配](LATEST_DESIGN.md#calls) |
-| 注册级单例 | Scoped 的资源 Context 没有开启参数 | scope 开启计划，类别为注册级单例 | 同一注册共享实例，归根帧 | [单例与多例](LATEST_DESIGN.md#scope-identity) |
+| 在需要的链上开启 | Scoped 放在链的 Input 上 | 入口的前驱步骤 | 进入入口时先开启；已开启的实例复用，跳过 open 的方法体 | [入口装配](CORE_DESIGN.md#calls) |
+| 注册级单例 | Scoped 的资源 Context 没有开启参数 | scope 开启计划，类别为注册级单例 | 同一注册共享实例，归根帧 | [单例与多例](CORE_DESIGN.md#scope-identity) |
 | 按一次生产共享 | 开启参数只经 `requires` 引用已有的生产 | 各参数可能的生产节点（`protoScopeOpenings`） | 读到同一次生产的开启共享同一实例，保留原归属帧 | 同上 |
 | 持续最新值作开启参数 | 资源 parser 声明 `requires` 并读 `require @T` | `FromSession` 开启计划 | 固定交付末条沿用原生产身份与帧，按交付／游标与后继读取位置判断待用 | [开启计划](EFFECT_GRAPH.md#scope-opening-retention) |
 | 每次新开（多例） | 当前执行用 `requests` 新生产了开启参数 | 同上 | 新的参数生产确定新实例；本次生产的后继仍共享它 | 同上 |
-| 实例属于哪一层 | 无需写法 | 参数生产所在的执行帧 | 取参数中最内层的帧，无参数取根帧；lifelong 本轮生产参数的实例归本轮 | 同上、[按可达性回收](LATEST_DESIGN.md#scope-gc) |
-| 一份资源只有一个关闭者 | Scoped `requests` 资源 Context | open 认领资源绑定 | 首次 open 认领为 owner，所有副本看到同一归属；其他实例认领报 `ScopeContextMismatch` | [scope](LATEST_DESIGN.md#scope) |
+| 实例属于哪一层 | 无需写法 | 参数生产所在的执行帧 | 取参数中最内层的帧，无参数取根帧；lifelong 本轮生产参数的实例归本轮 | 同上、[按可达性回收](CORE_DESIGN.md#scope-gc) |
+| 一份资源只有一个关闭者 | Scoped `requests` 资源 Context | open 认领资源绑定 | 首次 open 认领为 owner，所有副本看到同一归属；其他实例认领报 `ScopeContextMismatch` | [scope](CORE_DESIGN.md#scope) |
 | 只在已开启的链里读资源 | handler `require` 资源 | 资源读取点与所属 scope 的开启位置 | 资源在本链的 scope 开启前被读取，生成期拒绝；运行时不扫描其他活实例来补 | [Scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention) |
-| 不再使用时关闭 | 无需写法；close 写在 Scoped 上，可为 `Nothing` | 执行帧的待用关系、开启计划 | 没有当前使用者、匹配的待用或已有 ownership 保留，也没有保留它的子 scope 时同步关闭；`Nothing` 时只移出运行表 | [按可达性回收](LATEST_DESIGN.md#scope-gc) |
+| 不再使用时关闭 | 无需写法；close 写在 Scoped 上，可为 `Nothing` | 执行帧的待用关系、开启计划 | 没有当前使用者、匹配的待用或已有 ownership 保留，也没有保留它的子 scope 时同步关闭；`Nothing` 时只移出运行表 | [按可达性回收](CORE_DESIGN.md#scope-gc) |
 | 关闭顺序 | 无需写法 | ScopeTree：静态路径上的共同必经前序，加上 Input／requests 链与资源来源给出的注册前提 | 子先父后；实例只保留同一受控链实际使用的父实例 | [图与来源](EFFECT_GRAPH.md) |
 | 持续执行中复用与回收实例 | 来源的 Input 上游放 Scoped，开启参数按既有 demands 取得 | `SessionProto` 的挂载、`ScopeOpening` 的参数来源、`Source` 读取许可与 `ScopeTree` | 每步撤销实际使用；会话待用帧按实际参数身份保留后续所需实例，新 request 不直接关闭旧实例 | [Stream 资源边界](STREAM_LIFELONG.md#binding-retention)、[事实分工](EFFECT_GRAPH.md#scope-opening-retention) |
-| 故障归到资源 | Error 的 `handles`；关联 scope 不写 | 沿 Input／requests 找最近的 Scoped，必须恰好一个 | 在同一棵 ScopeTree 的祖先路径上依次检测、处置 | [Error](LATEST_DESIGN.md#error) |
+| 故障归到资源 | Error 的 `handles`；关联 scope 不写 | 沿 Input／requests 找最近的 Scoped，必须恰好一个 | 在同一棵 ScopeTree 的祖先路径上依次检测、处置 | [Error](CORE_DESIGN.md#error) |
 
 <a id="scope-missing"></a>
 ### 尚未覆盖
@@ -251,7 +253,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 <a id="layer"></a>
 ## 7. handler 的能力也由组合推出
 
-Layer 是方法体可用能力的边界，同样不由业务填写，而是从绑定推出（[注册](LATEST_DESIGN.md#registration)）：
+Layer 是方法体可用能力的边界，同样不由业务填写，而是从绑定推出（[注册](CORE_DESIGN.md#registration)）：
 
 | 能力 | 什么组合给它 |
 | --- | --- |

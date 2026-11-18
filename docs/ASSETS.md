@@ -1,6 +1,6 @@
 # 源码资产约束
 
-本文是[主设计](LATEST_DESIGN.md)引用的源码约束规范。业务写法先读[指南](GUIDE.md)；本页负责资产集合、业务模块的顶层白名单和资产目录，不描述运行时 scope 归属。
+本文是[主设计](CORE_DESIGN.md)引用的源码约束规范。业务写法先读[指南](GUIDE.md)；本页负责资产集合、业务模块的顶层白名单和资产目录，不描述运行时 scope 归属。
 
 更新：2026-11-08（Stage 2：顶层白名单取代普通函数的资产检查、构造器归属与接收形态检查）。
 
@@ -27,7 +27,7 @@
 
 顶层普通函数与顶层值、类声明（handler 类由注册生成）、foreign 声明和 rewrite rule 都被拒绝，诊断给出位置和建议。
 
-方法体内的 `let`／`where` 局部函数、lambda 与局部数据计算不受限制：它们属于 handler，随 handler 进入 effect 链。需要在多处使用的逻辑注册成 handler，通过 effect 组合；生产链中对句柄输出的纯变换（去重、排序、过滤）由 Pure 承接，见[主设计：Pure](LATEST_DESIGN.md#pure)。
+方法体内的 `let`／`where` 局部函数、lambda 与局部数据计算不受限制：它们属于 handler，随 handler 进入 effect 链。需要在多处使用的逻辑注册成 handler，通过 effect 组合；生产链中对句柄输出的纯变换（去重、排序、过滤）由 Pure 承接，见[主设计：Pure](CORE_DESIGN.md#pure)。
 
 例如以下顶层函数会被拒绝，即使它只处理 `String`：
 

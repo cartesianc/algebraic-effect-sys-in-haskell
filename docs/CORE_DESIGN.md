@@ -1,10 +1,10 @@
 # 主设计：Algebraic Effect Sys in Haskell
 
-更新：2026-11-17（文档状态与引用整理；当前运行协议不变）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范；阶段进度与验证边界见 [Next stages](NEXT_STAGES.md)。
+更新：2026-11-18（同步业务即 DSL、algebraic effect 关系与编译器分工；明确确定性约束资产来源和装配规则，保留共享最新值协议）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范；阶段进度与验证边界见 [Next stages](NEXT_STAGES.md)。
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
-按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [组合多态](#composition-polymorphism) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [gen 是编译器](#compiler) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [SDK 分工](#sdk-layout) · [Stream](#stream)。
+按任务跳转：[代码长什么样](#code-shape) · [核心对象](#model) · [设计原则](#principles) · [组合多态](#composition-polymorphism) · [代码即文档](#code-as-documentation) · [声明式设计](#declarative-design) · [句柄与值](#handles-and-values) · [生成前类型检查](#beforegen) · [gen 是编译器](#compiler) · [业务即 DSL](#business-as-dsl) · [与 algebraic effect](#algebraic-effects) · [注册](#registration) · [Context](#context) · [workflow](#workflow) · [scope](#scope) · [Error](#error) · [生成](#generation) · [SDK 分工](#sdk-layout) · [Stream](#stream)。
 
 ## 1. 范围与实现状态
 
@@ -12,7 +12,7 @@
 
 | 范围 | 状态 | 详细规范 |
 | --- | --- | --- |
-| Pure、Excu、Scoped、Error、Context；有限 workflow | 当前已实现；原子句柄与 Pure 交出 `[String]`，Pure 是生产链中的值变换（2026-11-12）；Error 的驱动链仍待设计 | [运行语义](LATEST_DESIGN.md#runtime) |
+| Pure、Excu、Scoped、Error、Context；有限 workflow | 当前已实现；原子句柄与 Pure 交出 `[String]`，Pure 是生产链中的值变换（2026-11-12）；Error 的驱动链仍待设计 | [运行语义](CORE_DESIGN.md#runtime) |
 | 统一 Prototype、运行图、静态来源与缺值等待 | Stage 1/2 已实现 | [图与来源](EFFECT_GRAPH.md) |
 | 普通 require 共享供值与等待结束 | 运行级最新值、固定捕获与最低限度供值推演已实现；完整进展证明未承诺 | [共享发布与等待](#await-visibility) |
 | scope 的单例与多例：`requires` 引用已有的一次生产、`requests` 发起新的生产，由此决定实例的共享与清理；按可达性回收、运行结束关闭、close 可选 | 已实现（2026-11-13） | [单例与多例](#scope-identity)、[按可达性回收](#scope-gc) |
@@ -111,7 +111,9 @@ flowchart LR
 
 框架的语义核心在声明之间的组合关系。同一个 Context 接在原子句柄后解析本次输出，接在 Stream 下持续解析，Input 链受持续资产驱动时再按实际挂载关系独立派生或复用输出。本框架将这种由结构选择解释的设计称为组合产生的特设多态。注册提供可组合的元素，gen 计算这些元素放在一起的含义，原子 handler 不需要知道自己处在哪条业务链。
 
-设计要求是：解释具有明确的静态依据，合法组合得到确定的装配规则，已能证明无合法解释或存在歧义时由 gen 拒绝。它不要求 gen 预知业务值、IO 成败或所有等待是否终止。新增内部协调先核对能否复用已有编译事实；需要新解释才扩展组合计算，运行时只将事实落实为本次身份、执行进度与使用关系。已实现的检查与尚未覆盖的边界必须分别记录；完整原则与规则定位见[组合推导](COMPOSITION.md#why)。[代码即文档](#code-as-documentation)使关系可读、可提取，[声明式组合与原子实现](#declarative-design)划定职责，[gen 作为编译器](#compiler)把关系编译成运行计划。
+设计要求是：解释具有明确的静态依据，合法组合得到确定的装配规则，已能证明无合法解释或存在资产来源、装配歧义时由 gen 拒绝。它不要求 gen 预知业务值、IO 成败或所有等待是否终止。新增内部协调先核对能否复用已有编译事实；需要新解释才扩展组合计算，运行时只将事实落实为本次身份、执行进度与使用关系。已实现的检查与尚未覆盖的边界必须分别记录；完整原则与规则定位见[组合推导](COMPOSITION.md#why)。[代码即文档](#code-as-documentation)使关系可读、可提取，[声明式组合与原子实现](#declarative-design)划定职责，[gen 作为编译器](#compiler)把关系编译成运行计划；[业务即 DSL](#business-as-dsl)说明这些原则共同的出发点，[与 algebraic effect 的关系](#algebraic-effects)说明解释机制的取舍。
+
+**确定性的边界：** 每个 refined asset 对应唯一的 Context 来源，读取路由与装配规则由 gen 确定。同一 Context 可以在不同位置和时刻多次生产；普通 `require` 按最新值与固定捕获协议取值，实际捕获哪次发布可以随执行进度和调度变化。这种变化不构成来源或装配歧义，也不要求不同执行读到同一次生产。具体读取顺序见[共享发布与等待](#await-visibility)。
 
 <a id="code-as-documentation"></a>
 ### 3.2 代码即文档，文档即代码
@@ -205,7 +207,7 @@ ScopeTree 单独构造并保持无环，供依赖清理和 Error 祖先导航使
 
 框架因此不按行为提供操作名，全部由组合推导出的行为登记在[组合推导](COMPOSITION.md)。资源的共享与清理同样只凭声明推导，不用 key 或寿命标签：`requests` 发起一次新的生产，`requires` 引用已有的一次生产，开启参数以哪种方式进入 scope，决定这次开启是多例还是单例，也决定实例何时关闭。规则见[单例与多例](#scope-identity)。
 
-Stream 的目标是让原子方法作者只需理解本方法的输入输出。gencode 静态推导 BootPlan，interpreter 执行它；不在运行中猜测业务属于 socket、event 还是 behavior，三种驱动关系目前的写法见 [Stream 第 4.1 节](STREAM_LIFELONG.md#drives)。完整匹配与回调规则作为[主设计第 7 章](LATEST_DESIGN.md#stream)的一部分维护。
+Stream 的目标是让原子方法作者只需理解本方法的输入输出。gencode 静态推导 BootPlan，interpreter 执行它；不在运行中猜测业务属于 socket、event 还是 behavior，三种驱动关系目前的写法见 [Stream 第 4.1 节](STREAM_LIFELONG.md#drives)。完整匹配与回调规则作为[主设计第 7 章](CORE_DESIGN.md#stream)的一部分维护。
 
 ### 3.9 约束、保证与开放问题
 
@@ -236,6 +238,47 @@ Error 的驱动链、Generic Map、跨独立 interpreter 存续、任意逃逸�
 gen 分开处理结构共享、同次输出复用与 scope 实例共享。相同上游出现在多个挂载中，不自动省略它的业务调用；AST 先给出末端，方法图及路径先于 ScopeTree，来源分析再证明各读取的合法装配。具体判定及复杂度边界见[结构共享与执行复用](EFFECT_GRAPH.md#reuse-boundary)。
 
 流水线的阶段、输入输出与各阶段的检查见 [4.9 编译流水线](#generation)，源码目录见 [SDK 分工](#sdk-layout)。
+
+<a id="business-as-dsl"></a>
+### 3.11 业务即 DSL：业务写前端，gen 提供共享后端
+
+从 gen 的角度看，一组业务模块是一门领域语言的定义，加上用这门语言写成的程序。业务作者用固定的元语言（typing 类别、Input、demands 的访问方式）定义词汇与文法，用原子 handler 与 Context parser 定义词元和解析，用 AST 写程序；SDK 提供所有业务共用的编译器中后端与运行时。
+
+| 编译器中的概念 | 框架中的对应 |
+| --- | --- |
+| 词元 | 原子句柄与 Pure 交出的 `[String]`，Stream 的原始输入 |
+| parser 与带类型的语法值 | Context 的 parser 把原子输出解析为资产；资产的表示 ADT 是解析结果的类型 |
+| 词汇表与文法产生式 | 注册：typing 是词类，Input 与 demands 规定它与其他词的连接方式 |
+| 程序 | AST／Workflow |
+| 中后端 | gen：来源解析对应名称解析，demand 契约对应类型检查，生成期拒绝对应语义错误，ScopeTree 与开启计划对应寿命分析，Emit 对应代码生成 |
+| 目标机器 | runtime 执行 Prototype 与生成的入口 |
+
+这一视角是其他原则的共同出发点：
+
+- 合法组合的资产来源与装配解释必须明确；无法消除的来源或装配歧义属于文法错误（[组合多态与确定性](#composition-polymorphism)）。
+- 已能静态判定的不合法组合在编译期报告，Context 来源不由运行时猜选；运行时按既定规则读取该来源的实际发布（[确定性](COMPOSITION.md#determinism)）。
+- 同一个词的含义由它所在的关系决定，对应编译器的重载解析与语义分析（[组合产生的特设多态](COMPOSITION.md#ad-hoc)）。
+- 资源何时关闭属于编译器的分析职责，业务只写 close，不写寿命标签（[单例与多例](#scope-identity)、[按可达性回收](#scope-gc)）。
+- 元语言保持固定且最小：业务可以定义任意多门领域语言，但不为实现方便扩展 typing 类别，或增加 key、寿命标签与 cleanup policy（[声明式组合与原子实现](#declarative-design)）。
+- 业务代码形态就是语言的定义面：资产 ADT、注册、handler 与 AST 的书写形态改变，会让所有已定义的业务语言随之改变，因此接口变更须单独确认（[代码即文档](#code-as-documentation)）。
+
+通常让用户定义语言的方法，如语言工作台、以库定义语言、程序即数据再写解释器、parser 生成器，一般还要求语言设计者自己实现语义。这里业务作者只写前端，驱动关系、来源接线与资源寿命由同一个后端推导。后端不认识任何一门具体业务语言却能编译它们，原因是前端元素保持参数化，含义只来自组合。
+
+代价是业务作者需要按语言设计的方式工作：先定义资产词汇和连接规则，再写程序。共享后端为每门业务语言提供确定的资产路由和装配规则，以及已有的生成期检查与资源回收协议，业务无需重复实现。
+
+<a id="algebraic-effects"></a>
+### 3.12 与 algebraic effect 的关系
+
+框架保留 algebraic effect 的核心分离：计算只声明需要的操作，操作怎样解释由所处上下文决定。handler 中的 `require @T`、raise 与 `endStream` 只表达需要什么，不知道值从哪里来、由谁响应；同一个原子 handler 绑定在不同 effect 下得到不同解释（[Stage 2](NEXT_STAGES.md#stage-2)）；生成的 Layer 约束限定方法体可以使用的操作，与 effect 类型限定计算可执行的操作是同一思路。
+
+解释的机制有意不同：
+
+1. **术语。** 本框架的 handler 是叶子位置的原子操作实现，不是捕获 continuation 的 effect handler。解释 require、requests、streams 的部分由 gen 按组合合成、runtime 执行，业务不手写。
+2. **静态唯一解析。** 经典模型由运行时最近的外层 handler 处理操作；这里由 gen 在生成期确定资产契约、Context 来源及装配解释，与类型类实例的一致性要求相近。无法消除的路由或装配歧义由 gen 拒绝；同一来源的多次发布仍由 runtime 按既定读取协议处理。
+3. **不开放 continuation。** 业务不能让操作恢复多次、不恢复或回溯；依赖 continuation 的控制效果（通过多次恢复实现的非确定性选择、回溯、生成器）当前不能表达；这与并发执行中按最新发布取值的时序变化是不同问题。
+4. **scoped 与持续效果由编译器负责。** Scoped 的 open／close、lifelong 与持续订阅在理论上属于 scoped／higher-order effects，不满足操作与后续计算可交换的代数律；本框架不要求业务 handler 处理它们，而由 gen 推导结构、runtime 执行协议。
+
+这一取舍使 Context 来源和装配关系静态确定。代价是：运行期才选择 Context 来源的配置与热插拔难以表达；控制效果需要另行设计；静态来源与装配分析的成本由 gen 承担，来源状态与路径可能指数增长（[当前限制](NEXT_STAGES.md#current-limits)）。后续加入 Middleware、自动重试等能力时，判断标准不变：新能力的解释须由组合在生成期唯一确定；运行时动态注册或拦截会破坏这一点。
 
 <a id="runtime"></a>
 ## 4. 当前运行协议
@@ -531,7 +574,7 @@ instance ParseFileNameLayer m => ParseFileNameHandler m where
 
 **状态：已实现（2026-11-18），本轮验证见 [Next stages](NEXT_STAGES.md#stage-2-await)。** 普通资产在同一次 interpreter 运行中共享最新发布；AST 位置与执行帧不再过滤普通供值。一个 refined asset 仍对应唯一 Context 和表示 ADT，`requests` 每次生产，`require` 只读取、不生产。声明与 handler 写法不变。
 
-- **读取顺序**：先用本次调用已经捕获的 Binding；没有捕获时，读取该 Context 的运行级最新发布，读到后固定为本次捕获。多个位置可以生产同一资产，最新指最后一次成功提交的发布，不按 Origin 编号排序。并发生产的具体值可以受调度影响，资产来源的静态路由仍唯一。
+- **读取顺序**：先用本次调用已经捕获的 Binding；没有捕获时，读取该 Context 的运行级最新发布，读到后固定为本次捕获。多个位置可以生产同一资产，最新指最后一次成功提交的发布，不按 Origin 编号排序。发布与读取并发时，捕获的具体生产可以受调度影响，即使生产者自身按顺序发布也一样；这是读取最新值的正常行为，资产来源与装配规则仍唯一，不因此拒绝合法的普通共享供值。
 - **缺值等待**：没有发布时挂起，发布或节点进度变化时重查。注册了生产方不等于它已经启动，`require` 不隐式调用它。
 - **gen 推演**：从空供值集分析有限 workflow 和方法结构，将能启动的路径的发布加入供值集，反复分析到固定点。并行分支可解开彼此的读取；单纯“先等 X 再生产 X”或没有启动种子的互等会被拒绝。未被需求启动的备用会话不提供供值证据。算法擦除 IO 并保留可能分支，只承诺最低限度覆盖，不证明所有业务条件或 IO 进展；细节见[来源分析](EFFECT_GRAPH.md#missing-source)。
 - **执行帧**：保留节点进度、具体生产身份、固定捕获身份和 scope 待用关系。lifelong 新一轮有新的调用捕获和交付视图，但共享普通资产不会因切轮清空。已发布的普通值也可供另一单元或后继读取。
