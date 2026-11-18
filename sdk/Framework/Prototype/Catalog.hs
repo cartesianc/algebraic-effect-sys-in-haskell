@@ -1,5 +1,5 @@
 -- 源码资产目录，不保存业务值、Context 来源或 scope 运行状态。
-module Framework.Gen.Catalog (Asset(..), AssetSymbol(..)) where
+module Framework.Prototype.Catalog (Asset(..), AssetSymbol(..)) where
 
 data AssetSymbol = AssetSymbol
   { assetModule :: String

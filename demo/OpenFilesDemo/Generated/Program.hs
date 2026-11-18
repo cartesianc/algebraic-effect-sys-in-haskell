@@ -606,4 +606,25 @@ generatedPrototype =
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         ]
+    , SDK.protoDriving =
+        SDK.DrivingPlan
+          { SDK.drivingNodes =
+              [ SDK.NodeDrive ([]) ([[0,0],[0,1],[1,0],[1,1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([0]) ([[0,0],[0,1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([0,0]) ([[0,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([0,1]) ([[0,1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1]) ([[1,0],[1,1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,0]) ([[1,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,1]) ([[1,1]]) ([]) (Nothing) ([]) ([]) ([])
+              ]
+          , SDK.drivingUnits = []
+          , SDK.drivingSessions = []
+          , SDK.drivingRootNodes = [[0,0],[0,1],[1,0],[1,1]]
+          , SDK.drivingOutputSites = []
+          , SDK.drivingRequests =
+              [ ("FileLocations", GetFileNamesGen)
+              , ("FileResources", GetOpenedFilesGen)
+              , ("InspectionSnapshot", GetInspectedFilesGen)
+              ]
+          }
     }

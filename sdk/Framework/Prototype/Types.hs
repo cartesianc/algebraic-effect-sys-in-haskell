@@ -11,6 +11,7 @@ module Framework.Prototype.Types
   , ChainRole(..), ChainProto(..), ChainKind(..), ChainDefinition(..)
   , ReadPoint(..), Source(..), PrototypeError(..), ResolvedDemand(..)
   , ScopeOpening(..), ScopeKind(..)
+  , DrivingPlan(..), NodeDrive(..), UnitDrive(..), SessionDrive(..), ReaderSite(..), LocalSource(..)
   ) where
 
 import Control.DeepSeq (NFData)
@@ -44,6 +45,7 @@ data Prototype method = Prototype
   , protoScopeNames :: [(method, String)]
   , protoSources :: [(ReadPoint, Source)]
   , protoScopeOpenings :: [ScopeOpening]
+  , protoDriving :: DrivingPlan method
   } deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 -- 声明接口先于 Handlers 存在；准备阶段只运行一次，方法解析后补全同一份计划。
@@ -169,3 +171,48 @@ data PrototypeError method
   | InvalidLifelong NodeId String
   | PrototypeWorkflowMismatch
   deriving (Eq, Show, Read, Functor, Generic, NFData)
+
+-- Booter 的静态驱动标记 v1（2026-11-18）。只保存关系，不包含游标、结束状态或资源实例。
+-- NodeId/资产名是既有结构的引用；会话的 BootPlan 仍只保存在 SessionProto。
+data DrivingPlan method = DrivingPlan
+  { drivingNodes :: [NodeDrive]
+  , drivingUnits :: [UnitDrive]
+  , drivingSessions :: [SessionDrive]
+  , drivingRootNodes :: [NodeId]
+  , drivingOutputSites :: [(NodeId, String)]
+  , drivingRequests :: [(String, method)]
+  } deriving (Eq, Show, Read, Functor, Generic, NFData)
+
+data NodeDrive = NodeDrive
+  { driveNode :: NodeId
+  , driveMembers :: [NodeId]
+  , driveSubscriptions :: [String]
+  , driveBoundary :: Maybe NodeId
+  , driveCaptures :: [NodeId]
+  , drivePriorBoundaries :: [NodeId]
+  -- 已知供值候选中不能在当前顺序等待期间推进的位置；不是资产可见性过滤器。
+  , driveBlockedPublishers :: [NodeId]
+  } deriving (Eq, Show, Read, Generic, NFData)
+
+data UnitDrive = UnitDrive
+  { driveUnit :: NodeId
+  , driveFrameNodes :: [NodeId]
+  , driveReaders :: [(String, [ReaderSite])]
+  , driveLocalSources :: [(String, LocalSource)]
+  } deriving (Eq, Show, Read, Generic, NFData)
+
+-- 普通位置仍活着，或选择器至少还有一个活候选，才保留该单元的订阅。
+data ReaderSite = ReadAt NodeId | ChooseAmong [NodeId]
+  deriving (Eq, Show, Read, Generic, NFData)
+
+-- 等待本轮全部发布位置退休，或等待派生上游本轮稳定；运行时再检查实际进度。
+data LocalSource = PublishedAt [NodeId] | DerivedFrom String
+  deriving (Eq, Show, Read, Generic, NFData)
+
+-- (边界, Context 来源) 到既有会话的路由；asset 引用 SessionProto，不复制其生产计划。
+data SessionDrive = SessionDrive
+  { driveSessionBoundary :: Maybe NodeId
+  , driveSessionSource :: String
+  , driveSessionAsset :: String
+  , driveSessionUpstream :: Maybe String
+  } deriving (Eq, Show, Read, Generic, NFData)

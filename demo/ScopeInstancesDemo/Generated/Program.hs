@@ -755,4 +755,24 @@ generatedPrototype =
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         ]
+    , SDK.protoDriving =
+        SDK.DrivingPlan
+          { SDK.drivingNodes =
+              [ SDK.NodeDrive ([]) ([[0,0],[1,0],[1,1],[1,2],[1,3],[1,4],[1,5]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([0]) ([[0,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([0,0]) ([[0,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1]) ([[1,0],[1,1],[1,2],[1,3],[1,4],[1,5]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,0]) ([[1,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,1]) ([[1,1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,2]) ([[1,2]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,3]) ([[1,3]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,4]) ([[1,4]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,5]) ([[1,5]]) ([]) (Nothing) ([]) ([]) ([])
+              ]
+          , SDK.drivingUnits = []
+          , SDK.drivingSessions = []
+          , SDK.drivingRootNodes = [[0,0],[1,0],[1,1],[1,2],[1,3],[1,4],[1,5]]
+          , SDK.drivingOutputSites = []
+          , SDK.drivingRequests = [("FileLocation", GetFileNameGen), ("FileResource", GetOpenedFileGen)]
+          }
     }

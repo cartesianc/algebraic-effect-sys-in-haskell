@@ -730,4 +730,22 @@ generatedPrototype =
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         ]
+    , SDK.protoDriving =
+        SDK.DrivingPlan
+          { SDK.drivingNodes =
+              [ SDK.NodeDrive ([]) ([[0],[1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([0]) ([[0]]) ([]) (Nothing) ([[-1]]) ([]) ([])
+              , SDK.NodeDrive ([1]) ([[1]]) ([]) (Nothing) ([[-1]]) ([]) ([])
+              , SDK.NodeDrive ([-1]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              ]
+          , SDK.drivingUnits = []
+          , SDK.drivingSessions = []
+          , SDK.drivingRootNodes = [[0],[1],[-1]]
+          , SDK.drivingOutputSites = []
+          , SDK.drivingRequests =
+              [ ("FileLocation", GetFileNameGen)
+              , ("FileResource", GetOpenedFileGen)
+              , ("ExtractFileText", GetFileTextGen)
+              ]
+          }
     }

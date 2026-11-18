@@ -1958,4 +1958,68 @@ generatedPrototype =
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         ]
+    , SDK.protoDriving =
+        SDK.DrivingPlan
+          { SDK.drivingNodes =
+              [ SDK.NodeDrive
+                  ([])
+                  ([[0,0],[0,1],[1,0],[1,1],[2,0],[2,1],[3,0],[3,1],[4,0],[4,1]])
+                  ([])
+                  (Nothing)
+                  ([])
+                  ([])
+                  ([])
+              , SDK.NodeDrive ([0]) ([[0,0],[0,1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([0,0]) ([[0,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([0,1]) ([[0,1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1]) ([[1,0],[1,1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,0]) ([[1,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,1]) ([[1,1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([2]) ([[2,0],[2,1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([2,0]) ([[2,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([2,1]) ([[2,1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([3]) ([[3,0],[3,1]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([3,0]) ([[3,0]]) ([]) (Nothing) ([[3,-1]]) ([]) ([])
+              , SDK.NodeDrive ([3,1]) ([[3,1]]) ([]) (Nothing) ([[3,-1]]) ([]) ([])
+              , SDK.NodeDrive ([4]) ([[4,0],[4,1]]) ([]) (Just [4]) ([]) ([]) ([])
+              , SDK.NodeDrive ([4,0]) ([[4,0]]) (["ParserA"]) (Just [4]) ([]) ([]) ([])
+              , SDK.NodeDrive ([4,1]) ([[4,1]]) (["ParserB"]) (Just [4]) ([]) ([]) ([])
+              , SDK.NodeDrive ([3,-1]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([4,-1,0,0]) ([]) ([]) (Just [4]) ([]) ([]) ([])
+              , SDK.NodeDrive ([4,-1,0,1]) ([]) ([]) (Just [4]) ([]) ([]) ([])
+              , SDK.NodeDrive ([4,-1,1,0]) ([]) ([]) (Just [4]) ([]) ([]) ([])
+              , SDK.NodeDrive ([4,-1,1,1]) ([]) ([]) (Just [4]) ([]) ([]) ([])
+              , SDK.NodeDrive ([-2,0,0]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([-2,0,1]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([-2,1,0]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([-2,1,1]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              ]
+          , SDK.drivingUnits =
+              [ SDK.UnitDrive ([4,0]) ([[4,0]]) ([("ParserA", [SDK.ReadAt ([4,0])]), ("ParserB", [])]) ([])
+              , SDK.UnitDrive ([4,1]) ([[4,1]]) ([("ParserA", []), ("ParserB", [SDK.ReadAt ([4,1])])]) ([])
+              ]
+          , SDK.drivingSessions =
+              [ SDK.SessionDrive (Nothing) ("ParserA") ("LevelA") (Nothing)
+              , SDK.SessionDrive (Nothing) ("ParserB") ("LevelB") (Nothing)
+              , SDK.SessionDrive (Just [4]) ("ParserA") ("LevelA") (Nothing)
+              , SDK.SessionDrive (Just [4]) ("ParserB") ("LevelB") (Nothing)
+              ]
+          , SDK.drivingRootNodes = [[0,0],[0,1],[1,0],[1,1],[2,0],[2,1],[3,0],[3,1],[4,0],[4,1],[3,-1]]
+          , SDK.drivingOutputSites = []
+          , SDK.drivingRequests =
+              [ ("ReportLocation", GetReportPathGen)
+              , ("ReplyLocation", GetReplyPathGen)
+              , ("ReportDraft", GetReportBodyGen)
+              , ("ReplyDraft", GetReplyBodyGen)
+              , ("ReportFile", GetOpenedReportGen)
+              , ("ReplyFile", GetOpenedReplyGen)
+              , ("ReportCounter", GetReportStatsGen)
+              , ("ReplyCounter", GetReplyStatsGen)
+              , ("ReportInspect", GetReportStateGen)
+              , ("CounterA", GetCountAGen)
+              , ("CounterB", GetCountBGen)
+              , ("ParserA", GetLevelAGen)
+              , ("ParserB", GetLevelBGen)
+              ]
+          }
     }

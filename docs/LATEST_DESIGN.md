@@ -719,17 +719,22 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 
 [gen 是编译器](#compiler)。手写业务只导入 [Framework.SDK](../sdk/Framework/SDK.hs)：注册、handler 能力、故障观察和 AST 组合，定义在 `Framework/Language/`；Types、Effects、AST 不导入 Generated 或 Handlers，handler 的类、Layer 与错误类型由 gen 生成，无须手写。生成代码只导入 [Framework.Generated](../sdk/Framework/Generated.hs)：Prototype 的数据模型、运行协议与装配操作，以及程序命令的适配。Generated.Program 绑定程序元数据后，业务仍写 `interpreter ast effects`。
 
-[Framework.Gen](../sdk/Framework/Gen.hs) 负责文件、缓存和生成流程，[Gen/Main.hs](../sdk/Framework/Gen/Main.hs) 是 `effect-codegen` 的命令行入口。组合含义由一个纯模块 [Gen.Composition](../sdk/Framework/Gen/Composition.hs) 的状态转换统一计算；前端与输出按各自职责分文件。任何阶段失败即停止，全部通过后才写回 Generated，未变文件保留时间戳。整个过程不执行 handler 业务：
+[Framework.Gen](../sdk/Framework/Gen.hs) 负责文件、缓存和生成流程，[Gen/Main.hs](../sdk/Framework/Gen/Main.hs) 是 `effect-codegen` 的命令行入口。组合含义由 [Gen.Composition](../sdk/Framework/Gen/Composition.hs) 的状态转换统一计算，并调用 Injector 与 Booter 合成装配和驱动计划；前端、类检与文本输出各守边界。任何阶段失败即停止，全部通过后才写回 Generated，未变文件保留时间戳。整个过程不执行 handler 业务：
 
 | 阶段 | 实现位置 | 输入 → 输出与检查 |
 | --- | --- | --- |
-| 读取声明 | `Gen.Source` | 用 GHC 读取 Types 的和类型，在独立 ghci 中加载 `effects` 与 `ast`；报告源码加载错误 |
-| 组合：声明与挂载 | `Gen.Composition` | 解析唯一资产来源、Input、注册约束，编号 workflow，确定 alternative、lifelong 和持续生产连接 |
-| 组合：接口与装配 | 同一组合状态机 | 计算有序驱动／前驱、raw、读取视图与路由、入口和输出连接、handler 类型能力；检查名字、表示类型和共享 handler 的签名一致性 |
-| 读取方法形状 | `Gen.Shape` | Handlers 的语法树 → `require @T`／raw 等读取结构；报告不支持的调用或结构 |
-| 组合：方法、图与来源 | `Gen.Composition` 接收形状继续 | 按绑定组成方法，检查读取依据，计算 EffectGraph、ScopeTree、来源与开启计划；拒绝非法回边、歧义和未驱动生产 |
-| 输出 | `Gen.Emit.*` | 按已计算的接口、装配事实与 Prototype 输出 Haskell；保持方法体原文，不重做组合选择 |
-| 类检 | `Gen.Assets`、`Gen.Catalog` | GHC 在内存中检查业务模块与输出，执行顶层白名单检查并产出资产目录 |
+| 读取声明 | `Gen.Frontend.Source` | GHC 解析 Types 的和类型，在独立 ghci 中加载 effects 与 ast；保留原文与位置 |
+| 解释注册 | `Gen.Composition` | 唯一资产来源、访问、Input、方法角色与绑定；`Names` 只拼写已选角色的名字 |
+| 合成驱动 | `Gen.Booter` | 以解析后的 effect 原型编号 workflow，确定 alternative、会话、挂载、输出连接及控制流已经承担的读取 |
+| 合成装配 | `Gen.Injector` | 以已解析声明计算 Layer、读取路由、有序 requests／Input、raw、入口操作、scope 与 Error 回调；检查表示类型与共享签名 |
+| 读取方法形状 | `Gen.Frontend.Shape` | handler 语法树 → 读取与控制结构；不解释来源或驱动 |
+| 方法、图与来源 | `Gen.Composition` | 组成方法、检查读取、计算 EffectGraph、ScopeTree 与供值／开启计划；完成后调用 Booter 补齐运行所需的静态驱动标记 |
+| 文本输出 | `Gen.Emit.*` | 渲染已确定的契约、入口与 Prototype；保留手写方法体；渲染注册快照不等于重新选择装配 |
+| 类检与目录 | `Gen.Check.Assets` → `Gen.Emit.Assets` | GHC 在内存中检查手写与生成模块，检查顶层约束并提取结构化目录，再将目录渲染为文本 |
+
+Injector 回答一个入口怎样得到能力与前驱装配，Booter 回答计算由什么结构驱动；二者都是编译端计算，不是运行时的新调度器。Composition 协调它们，公共方法身份、挂载及输出连接复用同一份计划。内部阶段可以有数据转换，但不能各自维护一份同义决定。
+
+`Gen.Plan` 保存声明接口和阶段间的纯计划，`Prototype.Types` 保存执行与展示都需要的编译事实；源码资产目录的纯类型位于 `Prototype.Catalog`，因此 Generated.Assets 不再导入 gen。runtime 仍判断交付、完成、取消与持有等动态事实。
 
 `advanceComposition` 规定阶段转换及两个接口检查点；状态和检查点的实现说明集中在本节：
 
@@ -745,9 +750,9 @@ completeComposition（补入可选缓存原型）
                                     缓存命中 ──┘
 ```
 
-`Source.loadComposition` 在 ghci 中加载声明并调用 `beginComposition`，返回可 Eq／Show／Read 的纯 `Unit`。它保存 `ReadRoute`、`ReaderPlan`、`SelectorPlan`、`SessionEntry`、`Capability` 等接口与装配事实，不包含 GHC AST、类字典或执行函数。首次没有 Handlers 时先交出契约；`prepareComposition` 接收 `Nothing` 表示缺少文件，`Just shapes` 表示已经提取方法体，即使 shapes 为空也不是缺少文件。后者继续进行读取与驱动检查。`completeComposition` 最终交出 `CompositionResult`（Unit 与 Prototype），缓存命中仍经过校验；完整缓存协议只在[图规范的缓存边界](EFFECT_GRAPH.md#cache)维护。
+`Frontend.Source.loadComposition` 在 ghci 中加载声明并调用 `beginComposition`，返回可 Eq／Show／Read 的纯 `Unit`。它保存 `ReadRoute`、`ReaderPlan`、`SelectorPlan`、`SessionEntry`、`Capability` 等接口与装配事实，不包含 GHC AST、类字典或执行函数。首次没有 Handlers 时先交出契约；`prepareComposition` 接收 `Nothing` 表示缺少文件，`Just shapes` 表示已经提取方法体，即使 shapes 为空也不是缺少文件。后者继续进行读取与驱动检查。`completeComposition` 最终交出 `CompositionResult`（Unit 与 Prototype），缓存命中仍经过校验；完整缓存协议只在[图规范的缓存边界](EFFECT_GRAPH.md#cache)维护。
 
-这是按依赖阶段组织的编译状态机。声明合法性、会话连接、接口绑定、图与来源证明各有计算入口；统一的是阶段次序与结果归属，没有将它们变成同一种算法。`Prototype.Query` 保存机器和原型校验共用的纯关系查询；源码提取、资产类检与文本渲染保持原有边界。各组合从哪里进入计算见[规则定位](COMPOSITION.md#pipeline)。
+这是按依赖阶段组织的编译状态机。声明合法性、会话连接、接口绑定、图与来源证明各有计算入口；统一的是阶段次序与结果归属，没有将它们变成同一种算法。运行驱动标记由 Booter 在来源证明完成后补全，缓存命中直接校验并读取这些标记，不在运行时推导兜底。`Prototype.Query` 保存机器和原型校验共用的纯关系查询；源码提取、资产类检与文本渲染保持原有边界。各组合从哪里进入计算见[规则定位](COMPOSITION.md#pipeline)。
 
 首次没有 Handlers.hs 时，形状为空，不检查读取与驱动，只生成契约和空的 Handlers 模块；填写 handler 后再次生成并编译 Main，命令与使用顺序见[指南：命令行与执行阶段](GUIDE.md#commands)。业务执行编译 Generated/Handlers：handler 方法体原样复制到按 effect 的类型标签上，后接 gen 生成的入口与路由；不回写手写源码或新增业务类型类。手写实现变更后须重新生成。
 
@@ -786,20 +791,27 @@ sdk/Framework/
   Gen.hs                    编译器：按阶段执行的流水线
   Gen/
     Main.hs                 effect-codegen 命令行入口
-    Source.hs               读取：解析 Types.hs、Handlers.hs，在 ghci 中求值声明
-    Composition.hs          组合状态机：声明、挂载、会话、类型能力、装配、图与来源证明
-    Names.hs                生成名字的固定规则
-    Shape.hs                前端：提取 handler 方法体的读取结构
+    Frontend/
+      Source.hs             GHC 源码解析、声明加载及源码位置
+      Shape.hs              handler 读取与控制结构提取
+    Composition.hs          唯一解释入口：协调合成、构图、来源证明与校验
+    Injector.hs             入口能力、读取路由、有序装配与协议包装计划
+    Booter.hs               workflow／会话挂载与运行所需静态驱动标记
+    Plan.hs                 编译检查点的纯计划及共享投影
+    Names.hs                按已确定角色拼写生成名字
+    Check/
+      Assets.hs             GHC 类检、顶层约束、源码资产目录提取
     Emit/
       Types.hs              已计算的表示类型与能力约束的 Haskell 渲染
       Effects.hs            Generated/Effects.hs
       Handlers.hs           Generated/Handlers.hs：方法体副本、At 路由与 effect 方法
       Program.hs            Generated/Program.hs 的程序部分
       Prototype.hs          Prototype 的 Haskell 值渲染
-    Assets.hs / Catalog.hs  类检：类型检查、顶层白名单与资产目录
+      Assets.hs             结构化资产目录的 Haskell 渲染
   Prototype.hs              编译产物门面：生成、执行、展示共用的静态模型
   Prototype/
-    Types.hs                Prototype 的纯 ADT
+    Types.hs                Prototype、驱动标记的纯 ADT
+    Catalog.hs              源码资产目录的纯元数据
     Graph.hs                方法结构、EffectGraph 与 ScopeTree 的数据
     Query.hs                只读结构、执行先后与启动查询
     Validate.hs             Prototype 自洽与 AST 快照核对
@@ -822,7 +834,7 @@ sdk/Framework/
   Recursion.hs              Fix、cata、zygo
 ```
 
-改声明语法从 Language.Registration 进入，再读 Gen.Composition 的状态与对应运算；改读取路由、类型能力或入口装配，也先改 Composition 的计算结果，再由 Gen.Emit 渲染。方法体语法提取在 Gen.Shape；改取值从 Runtime.Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Runtime.Execution → Frame／Runtime.Graph → Scope／Session／Retention 进入。组合机器保存编译工作状态和证明结果，Runtime.Graph 保存本次实际活动关系，Runtime.Scope 独立持有资源生命周期。
+改声明语法从 Language.Registration 进入，再读 Gen.Composition 的状态与对应运算；改读取路由、类型能力或入口装配，也先改 Composition 的计算结果，再由 Gen.Emit 渲染。方法体语法提取在 Gen.Frontend.Shape；改取值从 Runtime.Context → Runtime.App → Binding／Runtime.Graph 进入；改生命周期从 Runtime.Execution → Frame／Runtime.Graph → Scope／Session／Retention 进入。组合机器保存编译工作状态和证明结果，Runtime.Graph 保存本次实际活动关系，Runtime.Scope 独立持有资源生命周期。
 
 模块头说明职责和边界；关键锁、所有权、取消窗口及清理顺序在实现处保留注释。App 仍集中实现共享同一执行 frame 的存储协议，以章节分组，不为行数拆出互相依赖的状态容器。
 

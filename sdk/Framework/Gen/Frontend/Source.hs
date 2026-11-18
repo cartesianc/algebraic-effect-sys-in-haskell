@@ -1,6 +1,6 @@
 -- 读取源程序（前端）：在声明加载进程中求值 effects 与 ast 并计算到接口检查点 Unit，
 -- 用 GHC 解析器读取 Types.hs 的和类型与 Handlers.hs 的语法树。只解析和求值声明，不加载 handler 或执行业务。
-module Framework.Gen.Source
+module Framework.Gen.Frontend.Source
   ( HandlerSource(..), loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, sourceOffset
   ) where
 
@@ -8,7 +8,7 @@ import Control.Exception (evaluate)
 import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (toList)
 import Framework.Prototype.Types (SumTypes)
-import Framework.Gen.Composition (Unit)
+import Framework.Gen.Plan (Unit)
 import GHC (GhcPs, getSessionDynFlags, runGhc)
 import GHC.Data.FastString (mkFastString)
 import GHC.Data.StringBuffer (stringToStringBuffer)

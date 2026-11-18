@@ -26,6 +26,7 @@ renderPrototype prototype = unlines
   , ("protoScopeNames", list (pair genName show) (P.protoScopeNames prototype))
   , ("protoSources", list (pair renderReadPoint renderSource) (P.protoSources prototype))
   , ("protoScopeOpenings", list renderScopeOpening (P.protoScopeOpenings prototype))
+  , ("protoDriving", renderDriving (P.protoDriving prototype))
   ]) ++ "\n"
 
 genName :: String -> String
@@ -262,3 +263,24 @@ renderScopeOpening opening = record "ScopeOpeningPlan"
   , ("openingSources", list (pair show renderSource) (P.openingSources opening))
   , ("openingKinds", list tag (P.openingKinds opening))
   ]
+
+-- 驱动标记仍是显式 ADT；不在加载时用 read 解析文本或重建关系。
+renderDriving :: P.DrivingPlan String -> String
+renderDriving plan = record "DrivingPlan"
+  [ ("drivingNodes", list node (P.drivingNodes plan))
+  , ("drivingUnits", list unit (P.drivingUnits plan))
+  , ("drivingSessions", list session (P.drivingSessions plan))
+  , ("drivingRootNodes", show (P.drivingRootNodes plan))
+  , ("drivingOutputSites", show (P.drivingOutputSites plan))
+  , ("drivingRequests", list (pair show genName) (P.drivingRequests plan)) ]
+  where
+    node p = constructor "NodeDrive" [show (P.driveNode p), show (P.driveMembers p), show (P.driveSubscriptions p)
+      , show (P.driveBoundary p), show (P.driveCaptures p), show (P.drivePriorBoundaries p), show (P.driveBlockedPublishers p)]
+    unit p = constructor "UnitDrive" [show (P.driveUnit p), show (P.driveFrameNodes p)
+      , list (pair show (list reader)) (P.driveReaders p), list (pair show local) (P.driveLocalSources p)]
+    reader (P.ReadAt node') = constructor "ReadAt" [show node']
+    reader (P.ChooseAmong nodes) = constructor "ChooseAmong" [show nodes]
+    local (P.PublishedAt nodes) = constructor "PublishedAt" [show nodes]
+    local (P.DerivedFrom source) = constructor "DerivedFrom" [show source]
+    session p = constructor "SessionDrive" [show (P.driveSessionBoundary p), show (P.driveSessionSource p)
+      , show (P.driveSessionAsset p), show (P.driveSessionUpstream p)]

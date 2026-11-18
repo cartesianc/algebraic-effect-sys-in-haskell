@@ -2,14 +2,14 @@
 
 -- 用 GHC 加载并类型检查业务模块与新生成的副本，检查顶层定义，并给出源码资产目录。
 -- 只读取 GHC 已解析的名字和类型；不执行 handler。
-module Framework.Gen.Assets (checkAssets) where
+module Framework.Gen.Check.Assets (checkAssets) where
 
 import Control.Monad (forM, unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.Data (Data, cast, gmapQ)
 import Data.List (intercalate, isInfixOf, isPrefixOf, nub, sortOn, stripPrefix)
 import Data.Time.Clock (getCurrentTime)
-import Framework.Gen.Catalog
+import Framework.Prototype.Catalog
 import GHC
 import GHC.Core.DataCon (dataConName, dataConOrigArgTys)
 import GHC.Core.TyCon (isAlgTyCon, synTyConRhs_maybe, tyConDataCons, tyConFieldLabels, tyConName)
@@ -37,7 +37,7 @@ import Text.Read (readMaybe)
 -- 新契约及副本只作为内存 target；检查失败不改写 Generated。
 -- 同时加载手写与生成模块，但不在同一业务导入链混入两份 instance。
 -- roots 是资产的表示类型，contracts 是生成的资产类型；二者组成资产目录。
-checkAssets :: String -> [(String, String)] -> [String] -> [String] -> Maybe String -> IO String
+checkAssets :: String -> [(String, String)] -> [String] -> [String] -> Maybe String -> IO [Asset]
 checkAssets namespace generated roots contracts native = do
   library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
   files <- sourceFiles (modulePath namespace)
@@ -98,7 +98,7 @@ checkAssets namespace generated roots contracts native = do
         failures = concatMap (checkTopLevel namespace) checked
     unless (null failures) $
       liftIO (ioError (userError (intercalate "\n" failures)))
-    pure (renderAssets namespace (sortOn assetType (map describeAsset assets)))
+    pure (sortOn assetType (map describeAsset assets))
 
 modulePath :: String -> FilePath
 -- 统一用正斜杠：Windows 下 </> 插入的反斜杠会在 GHC 记录文件名时丢失，资产目录的路径因此出错。
@@ -208,21 +208,3 @@ typedVariables value
   | Just (_ :: Type) <- cast value = []
   | otherwise = concat (gmapQ typedVariables value)
 
-renderAssets :: String -> [Asset] -> String
-renderAssets namespace assets = unlines
-  [ "-- 自动生成的源码资产目录；不包含业务值或 Context 来源，不参与运行时生命周期。"
-  , "module " ++ namespace ++ ".Generated.Assets (generatedAssets) where"
-  , ""
-  , "import Framework.Gen.Catalog (Asset(..), AssetSymbol(..))"
-  , ""
-  , "generatedAssets :: [Asset]"
-  , "generatedAssets ="
-  , if null assets then "  []" else "  [ " ++ intercalate "\n  , " (map renderAsset assets) ++ "\n  ]"
-  ]
-  where
-    renderAsset asset = "Asset\n      { assetType = " ++ show (assetType asset)
-      ++ "\n      , assetConstructors =" ++ symbols (assetConstructors asset)
-      ++ "\n      , assetFields =" ++ symbols (assetFields asset)
-      ++ "\n      }"
-    symbols [] = " []"
-    symbols values = "\n          [ " ++ intercalate "\n          , " (map show values) ++ "\n          ]"

@@ -5,7 +5,7 @@
 module Framework.Gen.Emit.Program (renderProgram) where
 
 import Data.List (intercalate)
-import Framework.Gen.Composition
+import Framework.Gen.Plan
 
 renderProgram :: Unit -> String
 renderProgram unit = unlines (programHeader ++ astInterpreter)

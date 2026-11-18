@@ -82,17 +82,20 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 
 [Gen.Composition](../sdk/Framework/Gen/Composition.hs) 统一组合计算的入口和结果。它接收声明、workflow 与 handler 读取形状，输出确定的类型能力、路由、装配连接及 Prototype；Emit 渲染这些结果，runtime 执行计划。生产与消费是组合中的关系角色，不另加业务标签。
 
-**当前统一到这里：** 原先由 Emit 根据注册再判断的读取形态、入口包装、结束能力和会话入口，已成为组合计算的显式结果。内部仍按依赖阶段使用不同算法，尚未实现逐元素解释表或通用规则求解器；集中在一个模块也不等于这些算法已合成一种。阶段状态、两个检查点和装配流程只在[主设计的编译流水线](LATEST_DESIGN.md#generation)维护，缓存协议只在[图规范](EFFECT_GRAPH.md#cache)维护。
+**解释只有一个权威来源。** Composition 调用 Injector 合成单入口的能力与装配，调用 Booter 合成挂载及驱动标记；Emit 和 runtime 消费这些结果。这里的“合成解释”对应框架对原子操作的回应与驱动，不新增业务 XxxHandler 类。多个合法运行路径或等价实现不构成歧义；只有既有协议无法确定解释且没有合法的运行选择规则时才拒绝。
+
+**当前统一到这里：** 类型能力、读取与包装、scope/Error 回调、会话入口和单元／来源关联已有明确计算归属。内部仍使用不同阶段算法，不是通用规则求解器；物理分模块不产生新的解释权威。阶段状态、两个检查点和装配流程只在[主设计的编译流水线](LATEST_DESIGN.md#generation)维护，缓存协议只在[图规范](EFFECT_GRAPH.md#cache)维护。
 
 | 组合问题 | 计算入口或关系查询 | 结果交给谁 |
 | --- | --- | --- |
 | 哪份资产、哪种访问合法 | `buildEffectProtos`（内部解析 demands） | effect 原型、后续会话与读取计算 |
-| workflow 怎样挂载并驱动，是否复用已有输出 | `numberWorkflow`、`planSessions`；共享查询 `bootPlan`／`finiteSessions` | 挂载、会话与 `OutputConnection` |
-| handler 获得什么签名和入口 | `bindProgram`，内部形成读取路由、能力与操作类别 | `ReadRoute`、`Capability`、`EntryOperation`、选择器与会话入口；Emit 不再自行选取 |
+| workflow 怎样挂载并驱动，是否复用已有输出 | `Booter.numberWorkflow`、`Booter.planSessions`；共享查询 `bootPlan`／`finiteSessions` | 挂载、会话与 `OutputConnection` |
+| handler 获得什么签名和入口 | `Composition.declareEffects` → `Injector.bindProgram`，声明先确定角色，装配再确定能力与路由 | `ReadRoute`、`Capability`、`EntryOperation`、选择器与会话入口；Emit 不再自行选取 |
 | 调用结构怎样进入图与 ScopeTree | `composeMethods`、`buildStructure` | 方法图、链事实、无环 ScopeTree |
+| 单元、会话、捕获与本轮进展关联 | `Booter.completeDriving` | Prototype 的驱动标记；runtime 查询动态进度 |
 | 一个读取能用哪些生产，何时拒绝 | `resolveSources` | 来源证明、`protoSources`、scope 开启计划与静态诊断 |
 
-阶段专用助手放在相应入口的局部作用域，跨阶段只共享必要的纯查询；这限制了调用边界，不把模块重新拆回旧阶段文件。
+阶段专用助手放在所属解释入口内；模块按前端、解释、装配合成、驱动合成、数据与输出分工。跨阶段传递事实，不让下游读取原注册再决定一次；具体目录与接口检查点见主设计。
 
 这些入口是同一编译计算中的职责位置；维护者新增规则应先找到它依赖的事实，在对应计算中产生结果，交给后续步骤消费。不能在 Emit 或 runtime 再判断一遍，也不因“统一”而把取值、取消或资源状态搬到编译器。
 

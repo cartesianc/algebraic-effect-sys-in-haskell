@@ -90,14 +90,12 @@ newRuntimeGraph prototype scopes = do
     first : _ -> readIORef (scopeCoordinator first)
     [] -> newMVar ()
   frame <- newExecutionFrame coordinator Nothing Nothing
-    [chainNode chain | chain <- protoChains prototype, chainRole chain /= SessionChain]
+    (drivingRootNodes (protoDriving prototype))
   retentions <- newRetentions coordinator
   RuntimeGraph (PrototypeReference prototype) scopes frame retentions
     <$> newIORef [] <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
     <*> newMVar (Just []) <*> newIORef [] <*> newIORef (const (ioError (userError "No session launcher is installed")))
-    <*> pure [(node, effectName effect) | (_, described) <- workflowLifelongs (protoWorkflow prototype)
-           , session <- lifelongSessions described, ReuseOutput nodes <- [sessionPlan session], node <- nodes
-           , effect <- protoEffects prototype, effectProduces effect == Just (sessionAsset session)]
+    <*> pure (drivingOutputSites (protoDriving prototype))
     <*> newIORef []
 
 -- ScopeTree 的独立构建与校验仍在 Prototype；这里只把同一树的关系装入现有控制对象。
@@ -129,8 +127,7 @@ retainedInstance graph slot = case runtimePrototype graph of
               FromSession
                 -- 根帧的 lifelong 预约代表未来轮次，不能拿最新一条代替尚未领取的交付。
                 | frameParent frame == Nothing
-                , any (\(boundary, _) -> boundary `isPrefixOf` readNode point)
-                    (workflowLifelongs (protoWorkflow prototype)) -> pure []
+                , isJust (driveBoundary (nodeDriveAt prototype (readNode point))) -> pure []
                 | otherwise -> do
                     let session = case frameBoundary frame >>= \boundary -> lookup (Just boundary, source) sessions of
                           Just local -> Just local
@@ -230,10 +227,8 @@ reachableInstance graph slot = case runtimePrototype graph of
             | otherwise -> do
                 captured <- capturedFrameInputs frame
                 let reader = openingNode opening
-                    selectors = [alternativeSelector choice
-                      | AlternativeAt _ choice children <- allWorkflow (protoWorkflow prototype)
-                      , any (\child -> workflowNode child `isPrefixOf` reader) children]
-                    local = [identity | at <- reader : reverse selectors
+                    selectors = driveCaptures (nodeDriveAt prototype reader)
+                    local = [identity | at <- reader : selectors
                       , (node, context, identity) <- captured, node == at, context == source]
                     deliveredHere = [identity | (publishedAt, context, identity) <- delivered
                       , context == source, publishedAt `elem` nodes]
@@ -246,10 +241,8 @@ reachableInstance graph slot = case runtimePrototype graph of
           captured <- capturedFrameInputs frame
           let reader = openingNode opening
               -- 只有 alternative 把捕获交给候选；chained 不隐式传递前一调用的视图。
-              selectors = [alternativeSelector choice
-                | AlternativeAt _ choice children <- allWorkflow (protoWorkflow prototype)
-                , any (\child -> workflowNode child `isPrefixOf` reader) children]
-              selected = [value | at <- reader : reverse selectors
+              selectors = driveCaptures (nodeDriveAt prototype reader)
+              selected = [value | at <- reader : selectors
                 , (node, context, value) <- captured, node == at, context == source]
           case selected of
             value : _ -> pure (value == production)
@@ -260,8 +253,7 @@ reachableInstance graph slot = case runtimePrototype graph of
                 Nothing
                   -- 根帧里的未来轮次不是旧交付的读取方；实际活动轮帧有自己的游标。
                   | openingNode opening `notElem` producerMounts
-                  , any (\(boundary, _) -> boundary `isPrefixOf` reader)
-                      (workflowLifelongs (protoWorkflow prototype)) -> pure False
+                  , isJust (driveBoundary (nodeDriveAt prototype reader)) -> pure False
                   -- 会话步骤的普通 requires 沿 App 的有限读取路由，不冒充本单元订阅。
                   -- 启动捕获和 Derive 固定交付已由上面的 pending 查询优先处理。
                   | otherwise -> case sessionForReader prototype sessions reader source of
@@ -379,11 +371,8 @@ resolveDefinition (PrototypeReference prototype) boot = do
   entry <- case boot of
     TargetedBoot node -> either (Left . show) (Right . chainEntry) (lookupChain prototype node)
     -- 解析器与 request 一样发布一次资产；同一 Context 至多有其中一种生产入口。
-    RequestBoot source -> case
-      [method | effect <- protoEffects prototype, effectName effect == source
-        , (role, method) <- effectMethods effect, role `elem` [ContextRequest, ContextStream]] of
-      [method] -> Right method
-      _ -> Left ("Runtime request has no Context production entry: " ++ source)
+    RequestBoot source -> maybe (Left ("Runtime request has no Context production entry: " ++ source)) Right
+      (lookup source (drivingRequests (protoDriving prototype)))
   case [definition | definition <- protoChainDefinitions prototype, definitionEntry definition == entry] of
     [definition] -> Right (ChainReference definition)
     _ -> Left "Runtime activation has no unique static chain definition"
@@ -425,13 +414,11 @@ contextMayPublish graph _ origin source = case runtimePrototype graph of
   PrototypeReference prototype -> withFrameLock (runtimeRootFrame graph) $ do
     pendingFrames <- framePendingViews (runtimeRootFrame graph)
     let reader = originNode origin
-        repeated node = any (\(boundary, _) -> boundary `isPrefixOf` node)
-          (workflowLifelongs (protoWorkflow prototype))
+        excluded = driveBlockedPublishers (nodeDriveAt prototype reader)
         canPublish node = case lookupChain prototype node of
           Right chain | chainRole chain == SessionChain -> True
           Right _ -> any (\(_, pending, _) -> node `elem` pending) pendingFrames
-            && (repeated node || node /= reader && not (precedes (protoWorkflow prototype) reader node)
-                  && not (exclusive (protoWorkflow prototype) reader node))
+            && node `notElem` excluded
           Left _ -> True
     pure $ case sourcePlan (runtimePrototype graph) reader source of
       FromOwnChain -> False
@@ -531,20 +518,9 @@ obtainSession graph key bindings views = uninterruptibleMask_ $ do
 -- 有限会话的依赖图已经过 gen 校验；有边界的会话由 Execution 一次连接全部读取方。
 sessionUpstreamSource :: PrototypeReference -> SessionKey -> Either String (Maybe String)
 sessionUpstreamSource _ (Just _, _) = Right Nothing
-sessionUpstreamSource (PrototypeReference prototype) (Nothing, source) = do
-  asset <- case [asset | effect <- protoEffects prototype, effectName effect == source
-      , Just asset <- [effectProduces effect]] of
-    [asset] -> Right asset
-    _ -> Left ("No unique continuous producer for " ++ source)
-  plan <- case [sessionPlan session | session <- protoSessions prototype, sessionAsset session == asset] of
-    [plan] -> Right plan
-    _ -> Left ("No interpreter session plan for " ++ asset ++ "; regenerate the program")
-  case plan of
-    Receive _ -> Right Nothing
-    Derive upstream -> case [effectName effect | effect <- protoEffects prototype, effectProduces effect == Just upstream] of
-      [parent] -> Right (Just parent)
-      _ -> Left ("No unique upstream producer for " ++ upstream)
-    ReuseOutput _ -> Left "An interpreter session cannot reuse an AST output"
+sessionUpstreamSource (PrototypeReference prototype) (Nothing, source) = case sessionDriveAt prototype Nothing source of
+  Just route -> Right (driveSessionUpstream route)
+  Nothing -> Left ("No interpreter session driver for " ++ source ++ "; regenerate the program")
 
 -- lifelong 之后读取持续资产：取已经结束、且在 AST 中先于读取位置的那个 lifelong 的会话，不另行启动来源。
 -- 生成期保证这样的 lifelong 彼此先后；登记表按创建先后倒序，第一个即最近结束的。
@@ -560,7 +536,7 @@ priorSession :: Prototype method -> [(SessionKey, Session environment cause)] ->
              -> Maybe (Session environment cause)
 priorSession prototype registry reader source = case
   [session | ((Just boundary, selected), session) <- registry
-    , selected == source, precedes (protoWorkflow prototype) boundary reader] of
+    , selected == source, boundary `elem` drivePriorBoundaries (nodeDriveAt prototype reader)] of
   session : _ -> Just session
   [] -> Nothing
 

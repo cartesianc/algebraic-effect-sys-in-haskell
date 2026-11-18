@@ -118,6 +118,41 @@ validatePrototype prototype = do
   valid (unique [(openingNode opening, openingScope opening) | opening <- protoScopeOpenings prototype])
     "Duplicate scope opening position"
   mapM_ validateOpening (protoScopeOpenings prototype)
+  -- 校验引用与覆盖，不在 runtime 重跑 Booter 的推导算法。
+  let driving = protoDriving prototype
+      nodePlans = drivingNodes driving
+      unitPlans = drivingUnits driving
+      positions = map workflowNode (allWorkflow (protoWorkflow prototype)) ++ map chainNode chains
+      units = concatMap (lifelongUnits . snd) (workflowLifelongs (protoWorkflow prototype))
+      sources = map effectName effects
+  valid (unique (map driveNode nodePlans) && sameSet (map driveNode nodePlans) positions)
+    "Generated node drivers do not cover the prototype"
+  valid (unique (map driveUnit unitPlans) && sameSet (map driveUnit unitPlans) units)
+    "Generated unit drivers do not cover lifelong units"
+  valid (drivingRootNodes driving == [chainNode chain | chain <- chains, chainRole chain /= SessionChain])
+    "Generated root frame differs from mounted chains"
+  mapM_ (\plan -> do
+    valid (all (`elem` positions) (driveMembers plan ++ driveCaptures plan ++ drivePriorBoundaries plan ++ driveBlockedPublishers plan))
+      "Generated node driver references an unknown position"
+    valid (all (`elem` sources) (driveSubscriptions plan)) "Generated subscription references an unknown source") nodePlans
+  mapM_ (\plan -> do
+    valid (all (`elem` drivingRootNodes driving) (driveFrameNodes plan)) "Generated unit frame references a non-consumer mount"
+    valid (all (`elem` sources) (map fst (driveReaders plan) ++ map fst (driveLocalSources plan)))
+      "Generated unit driver references an unknown source") unitPlans
+  valid (unique (map fst (drivingRequests driving)) && drivingRequests driving ==
+      [(effectName effect, method) | effect <- effects, (role, method) <- effectMethods effect
+        , role `elem` [ContextRequest, ContextStream]]) "Generated Context entries differ from method roles"
+  let routes = drivingSessions driving
+      sessionKeys = [(boundary, sessionAsset session) | (boundary, sessions') <-
+          (Nothing, protoSessions prototype) : [(Just boundary, lifelongSessions description)
+            | (boundary, description) <- workflowLifelongs (protoWorkflow prototype)], session <- sessions']
+  valid (unique [(driveSessionBoundary route, driveSessionSource route) | route <- routes]
+      && sameSet [(driveSessionBoundary route, driveSessionAsset route) | route <- routes] sessionKeys)
+    "Generated session drivers do not cover session plans"
+  mapM_ (\route -> do
+    valid (any (\effect -> effectName effect == driveSessionSource route
+      && effectProduces effect == Just (driveSessionAsset route)) effects) "Generated session provider differs"
+    valid (maybe True (`elem` sources) (driveSessionUpstream route)) "Generated session has an unknown upstream") routes
   mapM_ (\chain -> do
     valid (unique (chainDrives chain) && all (`elem` contracts) (chainDrives chain)) "Invalid driven asset contracts"
     valid (unique (chainReads chain) && sameSet (chainReads chain)

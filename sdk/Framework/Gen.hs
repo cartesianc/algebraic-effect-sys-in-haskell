@@ -3,15 +3,17 @@
 module Framework.Gen (compileWorkflow) where
 
 import Control.Exception (evaluate)
-import Framework.Gen.Assets (checkAssets)
+import Framework.Gen.Check.Assets (checkAssets)
+import Framework.Gen.Plan
 import Framework.Gen.Composition
+import Framework.Gen.Emit.Assets (renderAssets)
 import Framework.Gen.Emit.Effects (renderEffects)
 import Framework.Gen.Emit.Handlers (renderHandlers)
 import Framework.Gen.Emit.Program (renderProgram)
 import Framework.Gen.Emit.Prototype (renderPrototype)
 import Framework.Gen.Names (handlerClass)
-import Framework.Gen.Shape (shapeHandlers)
-import Framework.Gen.Source (loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, handlerText)
+import Framework.Gen.Frontend.Shape (shapeHandlers)
+import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, handlerText)
 import Data.List (nub)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Exit (die)
@@ -60,7 +62,7 @@ compileWorkflow namespace = do
     [ writeIfChanged (generated </> "Effects.hs") contracts
     , writeIfChanged (generated </> "Program.hs") program
     , writeIfChanged (generated </> "Handlers.hs") handlers
-    , writeIfChanged (generated </> "Assets.hs") assets
+    , writeIfChanged (generated </> "Assets.hs") (renderAssets namespace assets)
     ]
   _ <- writeIfChanged cachePath (show (cacheKey, prototype, structure))
   putStrLn ("Generated " ++ generated ++ " (" ++ show (length (filter id changed))
@@ -76,6 +78,9 @@ structureSources =
   , "sdk/Framework/Prototype/Validate.hs"
   , "sdk/Framework/Gen/Composition.hs"
   , "sdk/Framework/Gen/Names.hs"
+  , "sdk/Framework/Gen/Plan.hs"
+  , "sdk/Framework/Gen/Injector.hs"
+  , "sdk/Framework/Gen/Booter.hs"
   , "sdk/Framework/Gen/Emit/Prototype.hs"
   , "sdk/Framework/Gen/Emit/Types.hs"
   , "sdk/Framework/Language/Registration.hs"

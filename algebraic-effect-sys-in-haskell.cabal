@@ -168,17 +168,21 @@ executable effect-codegen
   hs-source-dirs: sdk
   other-modules:
       Framework.Gen
-      Framework.Gen.Source
+      Framework.Gen.Frontend.Source
       Framework.Gen.Composition
+      Framework.Gen.Plan
+      Framework.Gen.Injector
+      Framework.Gen.Booter
+      Framework.Gen.Emit.Assets
       Framework.Gen.Emit.Types
       Framework.Gen.Names
-      Framework.Gen.Shape
+      Framework.Gen.Frontend.Shape
       Framework.Gen.Emit.Effects
       Framework.Gen.Emit.Handlers
       Framework.Gen.Emit.Program
       Framework.Gen.Emit.Prototype
-      Framework.Gen.Assets
-      Framework.Gen.Catalog
+      Framework.Gen.Check.Assets
+      Framework.Prototype.Catalog
       Framework.Recursion
       Framework.Language.AST
       Framework.Language.Handler

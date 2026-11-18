@@ -37,6 +37,13 @@ renderStructure prototype workflowAST = do
       ++ ["  session " ++ sessionAsset session ++ " " ++ describePlan (sessionPlan session)
            ++ " mounts " ++ show (sessionMounts session)
          | session <- protoSessions prototype]
+      ++ ["", "Compiled driving markers"]
+      ++ ["  unit " ++ show (driveUnit unit) ++ " frame " ++ show (driveFrameNodes unit)
+           ++ " readers " ++ show (driveReaders unit) ++ " local " ++ show (driveLocalSources unit)
+         | unit <- drivingUnits (protoDriving prototype)]
+      ++ ["  node " ++ show (driveNode node) ++ " subscriptions " ++ show (driveSubscriptions node)
+           ++ " boundary " ++ show (driveBoundary node) ++ " captures " ++ show (driveCaptures node)
+         | node <- drivingNodes (protoDriving prototype), not (null (driveSubscriptions node)) || driveBoundary node /= Nothing]
       ++ ["", "Chain definitions"]
       ++ ["  " ++ show (definitionKind definition) ++ " " ++ definitionEffect definition
            ++ " (" ++ show (definitionEntry definition) ++ ")"

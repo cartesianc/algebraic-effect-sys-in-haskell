@@ -2,12 +2,12 @@
 
 -- handler 方法体的纯结构副本；只保留按表示类型的读取与 raw，不求值业务数据或 IO。
 -- 读取 @T 与 raw 的来源因绑定而异，由 gen 在每个绑定上替换为 effect 方法调用。
-module Framework.Gen.Shape (shapeHandlers, analyzeModule) where
+module Framework.Gen.Frontend.Shape (shapeHandlers, analyzeModule) where
 
 import Control.Monad (unless)
 import Data.Data (Data, cast, gmapQ)
 import Data.List (nub)
-import Framework.Gen.Source (HandlerSource(..))
+import Framework.Gen.Frontend.Source (HandlerSource(..))
 import Framework.Prototype.Graph (MethodShape(..))
 import GHC (GhcPs)
 import GHC.Hs

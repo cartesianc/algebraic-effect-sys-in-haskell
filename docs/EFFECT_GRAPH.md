@@ -26,6 +26,23 @@
 
 链事实和标准查询由 `Framework.Prototype` 统一提供：`Prototype.Types` 保存纯模型，`Prototype.Graph` 保存方法图与 ScopeTree 的数据，`Prototype.Query` 提供只读查询，`Prototype.Validate` 校验自洽并核对 AST 快照。构建算法由 `Gen.Composition` 统一持有：从声明和方法形状逐步推导装配、图与来源，不让不同输出模块另行解释同一组合。内部状态与最终 Prototype 均不复制业务注册；gen 的输出阶段读取已确定事实生成接口与包装，Execution 读取挂载关系装配闭包，运行图共享这份原型并保存活动实例关系。运行图不累计完整方法调用历史。Stage 2 由 `chainDrives`、`chainReads` 和 `protoSources` 保存可能生产、缺值读取与供值机会；runtime 读取共享最新值，保留固定捕获。清理与 Error 边界保留。SDK 当前采用 Haskell ADT，不增加 JSON 或外部 LSP 协议。
 
+<a id="driving-plan"></a>
+## 编译驱动标记
+
+`Gen.Booter.completeDriving` 在来源证明之后补齐 `protoDriving`，Emit 输出显式 ADT。它复用原有 NodeId、方法身份、SessionProto 与 ScopeTree，不另建运行图，也不推断业务值。
+
+| 编译事实 | runtime 的使用 |
+| --- | --- |
+| NodeDrive：节点成员、订阅来源、lifelong 边界、alternative 捕获祖先与先前会话边界 | 直接定位读取和捕获；仍按实际结束位置、当前捕获与已登记会话决定本次操作 |
+| NodeDrive 的 blocked publishers | 在已知供值候选中排除不能与当前等待同时推进的位置；仍检查实际帧进度，不限制普通最新值的共享 |
+| UnitDrive：轮帧位置、读取义务、直接／间接本地来源 | 建立同一轮执行帧，判断实际活读取方；PublishedAt 等待位置退休，DerivedFrom 等待上游和派生步骤稳定 |
+| SessionDrive：边界、Context 来源、资产及唯一派生上游 | 引用已有 SessionProto；不复制其 Receive／Derive／ReuseOutput 生产计划 |
+| 根帧位置、输出发布位置与 Context 生产方法身份 | 装配入口、连接同次输出、登记 RequestBoot；不新增第三种 Boot |
+
+标记由编译器一次生成，加载时校验覆盖和引用；缺失标记是过期／失配产物，不在 runtime 重算结构补救。`--structure` 展示单元和节点标记。当前采用列表查询，不宣称已优化到常数查找；元数据增加，但没有扩大来源分析的路径枚举。
+
+runtime 仍用前缀匹配检查实际已结束位置、撤下发布者、清除 Origin 及跳过帧内待用节点。这些是在静态结构上更新动态状态，不是另一套驱动推导。会话退役、并发监督、锁与 scope close 的次序保持原协议。
+
 ## 运行图与链启动
 
 运行身份由 `Framework.Runtime.Identity` 定义，活动关系由 `Framework.Runtime.Graph` 管理。一次 interpreter 运行共享静态 Prototype 引用及运行图；活动 chain 引用其静态链定义，scope 实例引用其 Scoped 定义，Context 绑定保存产生它时的 `Execution`、生产 `ActivationId` 与执行帧。
@@ -54,7 +71,7 @@ Stage 3 复用这两个 Boot 构造：Receive／Derive 的每个独立生产步�
 
 启动图之外还检查同单元的路径覆盖：直接订阅或经独立 Derive 间接依赖自身输出时，每条到达订阅的 workflow 路径都须先经过发布位置，或同轮有并行且必经的发布路径；alternative 取各候选的必经交集。跨单元可以条件发布，无须每轮都产出。ReuseOutput parser 及其 requests 路径只允许读取原操作的驱动持续资产，避免挂接过程中再等待其他持续来源；普通资产读取仍按原来源协议检查。
 
-运行时依照同一份会话计划，把根为本单元 ReuseOutput 的直接及单上游 Derive 来源关联到实际轮帧。全部发布位置已完成或跳过、且派生成功步骤已追平上游累计发布数时，才能确认本轮不会再有交付；领取游标不证明处理完成。未知位置继续等待，其他单元及 Receive 来源不使用本轮耗尽判断。会话提交和节点退休共用通知，判断后再次读取会话，避免漏掉刚完成的发布。
+Booter 把根为本单元 ReuseOutput 的直接及单上游 Derive 来源写成静态标记，运行时将标记关联到实际轮帧。全部发布位置已完成或跳过、且派生成功步骤已追平上游累计发布数时，才能确认本轮不会再有交付；领取游标不证明处理完成。未知位置继续等待，其他单元及 Receive 来源不使用本轮耗尽判断。会话提交和节点退休共用通知，判断后再次读取会话，避免漏掉刚完成的发布。
 
 Scoped.open 可能复用实例而不交出新 raw，因此它的 AST 位置不能单独证明本轮必有发布。同单元直接或经 Derive 等待这种 ReuseOutput 时，gen 当前保守拒绝；跨单元等待与独立 Derive 仍保留。精确证明某次开启必为 fresh 后放行尚未实现。
 
@@ -205,10 +222,10 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 生成阶段按[主设计的编译流水线](LATEST_DESIGN.md#generation)推进；本节只解释图与来源的产物关系，阶段状态和检查点不在这里另行定义。`Gen.Composition` 内部步骤可以使用 `Prototype.Query` 的共享纯关系查询：
 
 1. **声明与挂载。** 解析注册、资产与 Input。AST 已用 `node` 指定末端，给每次挂载编号；检查 alternative 的分支契约及覆盖，定下持续会话与输出复用位置。末端不是从全图寻找的叶子。
-2. **接口与方法组成。** 计算挂载、选择器、会话步骤、输出连接、有序 requests／Input、raw 来源和读取路由，并据此形成 handler 类型能力。前端 `Gen.Shape` 提取读取形状后，机器把形状代换成对应 effect 方法的结构。一个 handler 的不同绑定仍保留各自入口与路由。
+2. **接口与方法组成。** 计算挂载、选择器、会话步骤、输出连接、有序 requests／Input、raw 来源和读取路由，并据此形成 handler 类型能力。前端 `Gen.Frontend.Shape` 提取读取形状后，机器把形状代换成对应 effect 方法的结构。一个 handler 的不同绑定仍保留各自入口与路由。
 3. **方法图。** 从同一装配结果建立挂接注入的分析副本，只消去对同次原子输出的再次索取。方法索引与活动栈检查引用，完成态摘要缓存 scope 路径与图。辅助／主 algebra 共用归约结果，不按调用次数复制展开树。
 4. **ScopeTree。** 从方法图的路径求共同必经前序，补入注册前提并检查环。先有方法图及路径，再有 ScopeTree；实例共享与关闭仍由运行时的生产身份、实际使用和待用关系决定。
-5. **来源与完成校验。** 结合方法结构、链挂载和 workflow 形成读取来源与 scope 开启计划，保留相关路径差异并裁剪无关状态。原型自洽和 Context 驱动检查完成后，结果才交给输出阶段。
+5. **来源、驱动标记与完成校验。** 结合方法结构、链挂载和 workflow 形成读取来源与 scope 开启计划，保留相关路径差异并裁剪无关状态。Booter 补齐单元与来源的运行关联；原型自洽和 Context 驱动检查完成后，结果才交给输出阶段。
 6. **输出与类检。** Emit 读取结果，生成普通 Haskell 的契约、入口和 `generatedPrototype`。GHC 在内存中完成类型及源码资产检查，再写回 Generated；`Generated/Assets.hs` 是独立资产目录。
 
 各阶段使用不同的专门算法，按依赖关系消费前一步事实；统一状态转换控制次序，最终装配结果供生成和运行共用。分支路径、方法缓存和来源集合仍是各算法的工作数据。源码加载、语法提取、文件写入和 Haskell 渲染保持各自职责，不重新选择组合解释。

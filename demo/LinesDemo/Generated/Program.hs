@@ -820,4 +820,51 @@ generatedPrototype =
             , SDK.openingKinds = [SDK.RegistrationSingleton]
             }
         ]
+    , SDK.protoDriving =
+        SDK.DrivingPlan
+          { SDK.drivingNodes =
+              [ SDK.NodeDrive ([]) ([[0,0],[1,0,0,0],[1,0,0,1],[1,0,1,0],[2,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([0]) ([[0,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([0,0]) ([[0,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1]) ([[1,0,0,0],[1,0,0,1],[1,0,1,0]]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,0]) ([[1,0,0,0],[1,0,0,1],[1,0,1,0]]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,0,0]) ([[1,0,0,0],[1,0,0,1]]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,0,0,0]) ([[1,0,0,0]]) (["LineParser"]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,0,0,1]) ([[1,0,0,1]]) (["LineParser"]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,0,1]) ([[1,0,1,0]]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,0,1,0]) ([[1,0,1,0]]) (["CountParser"]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([2]) ([[2,0]]) ([]) (Nothing) ([]) ([[1]]) ([])
+              , SDK.NodeDrive ([2,0]) ([[2,0]]) ([]) (Nothing) ([]) ([[1]]) ([])
+              , SDK.NodeDrive ([1,-1,0,0]) ([]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,-1,0,1]) ([]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([-2,0,0]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([-2,0,1]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([-2,1,0]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              ]
+          , SDK.drivingUnits =
+              [ SDK.UnitDrive
+                  ([1,0,0])
+                  ([[1,0,0,0],[1,0,0,1]])
+                  ([("LineParser", [SDK.ReadAt ([1,0,0,0]), SDK.ReadAt ([1,0,0,1])]), ("CountParser", [])])
+                  ([("CountParser", SDK.PublishedAt ([[1,0,0,1]]))])
+              , SDK.UnitDrive
+                  ([1,0,1])
+                  ([[1,0,1,0]])
+                  ([("LineParser", []), ("CountParser", [SDK.ReadAt ([1,0,1,0])])])
+                  ([])
+              ]
+          , SDK.drivingSessions =
+              [ SDK.SessionDrive (Nothing) ("LineParser") ("TextLine") (Nothing)
+              , SDK.SessionDrive (Nothing) ("CountParser") ("RunningTotal") (Just "LineParser")
+              , SDK.SessionDrive (Just [1]) ("LineParser") ("TextLine") (Nothing)
+              , SDK.SessionDrive (Just [1]) ("CountParser") ("RunningTotal") (Nothing)
+              ]
+          , SDK.drivingRootNodes = [[0,0],[1,0,0,0],[1,0,0,1],[1,0,1,0],[2,0]]
+          , SDK.drivingOutputSites = [([1,0,0,1],"CountParser")]
+          , SDK.drivingRequests =
+              [ ("InputResource", GetOpenedInputGen)
+              , ("LineParser", GetTextLineGen)
+              , ("CountParser", GetRunningTotalGen)
+              ]
+          }
     }

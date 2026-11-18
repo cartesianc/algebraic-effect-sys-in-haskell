@@ -232,8 +232,7 @@ executionAlgebra prototype store entries selectors layer expected = do
       unless (chainRole chain == NodeChain && chainTerminal chain == selected) $
         Left (InvalidPrototype ("Node chain differs at " ++ show location))
       entry <- resolve entries (chainTerminal chain)
-      subscribed <- mapM producerOf [asset | (_, described) <- workflowLifelongs (protoWorkflow prototype)
-        , (mounted, asset) <- lifelongSubscriptions described, mounted == location]
+      let subscribed = driveSubscriptions (nodeDriveAt prototype location)
       -- 已经结束订阅的节点不再执行，也不领取交付；退出时由 managed 把它记为跳过。
       single $ \run handoff -> ExceptT $ do
         ended <- endedNodes run
@@ -265,7 +264,7 @@ executionAlgebra prototype store entries selectors layer expected = do
       source <- producerOf (alternativeContract description)
       constructors <- mapM (constructorAt description . workflowNode) expectedChildren
       let candidates = zip constructors (zip (map workflowNode expectedChildren) parts)
-          members = [identifier | child <- expectedChildren, NodeAt identifier _ <- allWorkflow child]
+          members = driveMembers (nodeDriveAt prototype location)
       -- 转折资产是本 lifelong 的会话资产时，选择读取先领取本次交付，候选共享这次领取。
       -- 候选中的节点都已结束订阅时，选择读取不再执行，整个 alternative 跳过。
       -- 转折资产由本单元发布时：本轮没有新发布则本轮跳过；已封口并排空则候选都不会再被选中，记为结束。
@@ -303,28 +302,20 @@ executionAlgebra prototype store entries selectors layer expected = do
     -- 由某份资产驱动的会话也是它的读取方，与单元一同登记，游标交给那份会话的生产任务，
     -- 它在上游结束并排空后结束并离开。
     (Lifelong _, LifelongAt _ description _) -> do
-      units <- concatMap compiledUnits <$> compiledChildren
-      sources <- mapM (\session -> (,,) (sessionAsset session) (sessionPlan session) <$> producerOf (sessionAsset session))
-        (lifelongSessions description)
-      let selections = [(alternativeSelector choice, source)
-            | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype)
-            , Right source <- [producerOf (alternativeContract choice)]]
-          -- 单元是否读取会话资产：订阅、普通读取与选择读取都使用本轮固定的 Binding。
-          -- 只计尚未结束订阅的位置：ended 是本单元已经 endStream 的节点，它们链上的读取点不再计入；
-          -- 候选节点全部结束的 alternative 不再做选择读取。进入 lifelong 时 ended 为空。
-          access ended asset source unit
-            | or [unit `isPrefixOf` mounted && live mounted | (mounted, subscribed) <- lifelongSubscriptions description
-                 , subscribed == asset] = True
-            | or [unit `isPrefixOf` readNode point && live (readNode point) | (point, FromSession) <- protoSources prototype
-                 , readContract point == asset]
-              || or [unit `isPrefixOf` selector && liveChoice selector | (selector, selected) <- selections, selected == source] = True
-            | otherwise = False
-            where
-              live position = not (any (`isPrefixOf` position) ended)
-              liveChoice selector = or [live identifier | AlternativeAt _ choice children <- allWorkflow (protoWorkflow prototype)
-                , alternativeSelector choice == selector, child <- children, NodeAt identifier _ <- allWorkflow child]
-          -- 单元还要不要这个会话：仍有活的读取位置。
-          needs unit ended source = or [access ended asset source unit | (asset, _, selected) <- sources, selected == source]
+      compiled <- concatMap compiledUnits <$> compiledChildren
+      units <- mapM (\unit -> (,) unit <$> maybe (Left (InvalidLifelong unit "Missing compiled unit")) Right (lookup unit compiled))
+        (lifelongUnits description)
+      sources <- mapM (\session -> case [route | route <- drivingSessions (protoDriving prototype)
+          , driveSessionBoundary route == Just location, driveSessionAsset route == sessionAsset session] of
+        [route] -> Right (sessionAsset session, sessionPlan session, driveSessionSource route)
+        _ -> Left (InvalidLifelong location "Missing generated session driver")) (lifelongSessions description)
+      -- 读取位置与派生关联由 Booter 给出；这里只检查本单元实际结束的位置。
+      let access ended _ source unit = any (available ended)
+            (maybe [] id (lookup source (driveReaders (unitDriveAt prototype unit))))
+          available ended (ReadAt position) = live ended position
+          available ended (ChooseAmong members) = any (live ended) members
+          live ended position = not (any (`isPrefixOf` position) ended)
+          needs unit ended source = access ended "" source unit
       single $ \run handoff -> ExceptT $ do
         opened <- forM sources $ \(asset, plan, source) ->
           (,,,) asset plan source <$> boundarySession store location source handoff
@@ -349,17 +340,8 @@ executionAlgebra prototype store entries selectors layer expected = do
                 (Just _, Left problem) -> breakSession session (Right problem)
                 (Just [], Right ()) -> endSession session
                 _ -> pure ()
-        -- 本地来源来自同一份 gen 会话计划：沿唯一 Derive 上游回溯，Receive/其他单元继续等待。
-        -- gen 已拒绝启动环和跨单元多发布者；这里仅投影关系，不重新判断合法性。
-        let rooted prefix asset = case [plan | (selected, plan, _, _) <- opened, selected == asset] of
-              [ReuseOutput nodes] -> not (null nodes) && all (prefix `isPrefixOf`) nodes
-              [Derive upstream] -> rooted prefix upstream
-              _ -> False
-            local prefix = [(source, described) | (asset, plan, source, _) <- opened, rooted prefix asset
-              , described <- case plan of
-                  ReuseOutput nodes -> [PublishedAt nodes]
-                  Derive upstream -> [DerivedFrom parent | (selected, _, parent, _) <- opened, selected == upstream]
-                  Receive _ -> []]
+        -- 本单元发布及其 Derive 后继已在 gen 标出；运行时等待协议只读该关系。
+        let local unit = driveLocalSources (unitDriveAt prototype unit)
         outcomes <- runParalleled
           [ do
               outcome <- repeatUnit location run handoff
@@ -396,7 +378,7 @@ executionAlgebra prototype store entries selectors layer expected = do
     repeatUnit boundary run handoff cursors local needed withdraw (unit, execute) = do
       ended <- newIORef []
       held <- newIORef cursors
-      let members = [identifier | NodeAt identifier _ <- allWorkflow (protoWorkflow prototype), unit `isPrefixOf` identifier]
+      let members = driveMembers (nodeDriveAt prototype unit)
           settle seen = do
             current <- readIORef ended
             let fresh = filter (`notElem` seen) current
@@ -413,8 +395,7 @@ executionAlgebra prototype store entries selectors layer expected = do
               resetOrigins store unit
               outcome <- withRuntimeRetention store $ \retention -> mask $ \restore -> do
                 frame <- newChildFrame (runExecutionFrame run) boundary
-                  [chainNode chain | chain <- protoChains prototype, chainRole chain /= SessionChain
-                    , unit `isPrefixOf` chainNode chain]
+                  (driveFrameNodes (unitDriveAt prototype unit))
                 delivery <- readIORef held >>= newDeliveryFrame retention frame local [(source, session) | (source, (session, _)) <- cursors]
                 retireAfter
                   (restore (runExceptT (execute run { runExecutionFrame = frame, runDeliveryFrame = Just delivery
@@ -448,7 +429,7 @@ runStructuredAST prototype tree entries selectors sessions = do
   prepared <- either (ioError . userError . show) pure $
     foldAST (executionAlgebra prototype store compiled readers) tree (protoWorkflow prototype)
   configureRuntimeScopes store
-  retireAfter (if null (workflowLifelongs (protoWorkflow prototype))
+  retireAfter (if null (drivingUnits (protoDriving prototype))
     then do
       installSessionLauncher store (sessionLauncher store sessions (const (pure ())))
       runExceptT (compiledRun prepared (Run (runtimeRootFrame store) Nothing (const (pure ())) Nothing (const (pure ()))) noHandoff)

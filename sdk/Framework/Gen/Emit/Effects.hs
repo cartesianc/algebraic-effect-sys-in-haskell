@@ -6,10 +6,9 @@ module Framework.Gen.Emit.Effects (renderEffects) where
 
 import Data.Char (toUpper)
 import Data.List (intercalate)
-import Framework.Gen.Composition
+import Framework.Gen.Plan
 import Framework.Gen.Emit.Types (renderValueType, renderCapability)
 import Framework.Gen.Names (handlerClass, handlerError, handlerFailure, handlerLayer)
-import Framework.Language.Registration (EffectSpec(..), contextAsset, contractOf)
 
 renderEffects :: Unit -> String
 renderEffects unit = unlines (contractHeader ++ runtimeAliases ++ generatedContracts ++ methodIdentities
@@ -81,11 +80,11 @@ renderEffects unit = unlines (contractHeader ++ runtimeAliases ++ generatedContr
     contextDeclarations =
       [ "-- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。"
       , "data ContextValues = ContextValues"
-      ] ++ (case ["bound" ++ name s ++ " :: Maybe " ++ contractOf declared
-                  | s <- contextSpecs unit, Just declared <- [contextAsset (typing s)]] of
+      ] ++ (case ["bound" ++ assetOwner declared ++ " :: Maybe " ++ assetContract declared
+                  | declared <- unitAssets unit] of
         [] -> [""]
         fields -> ["  { " ++ intercalate "\n  , " fields, "  }", ""])
       ++ [ "emptyContexts :: ContextValues"
-         , "emptyContexts = ContextValues" ++ concat [" Nothing" | _ <- contextSpecs unit]
+         , "emptyContexts = ContextValues" ++ concat [" Nothing" | _ <- unitAssets unit]
          , ""
          ]

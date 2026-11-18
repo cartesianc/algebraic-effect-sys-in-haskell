@@ -818,4 +818,51 @@ generatedPrototype =
             , SDK.openingKinds = [SDK.RegistrationSingleton]
             }
         ]
+    , SDK.protoDriving =
+        SDK.DrivingPlan
+          { SDK.drivingNodes =
+              [ SDK.NodeDrive ([]) ([[0,0],[1,0,0],[1,0,1],[1,1,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([0]) ([[0,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([0,0]) ([[0,0]]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([1]) ([[1,0,0],[1,0,1],[1,1,0]]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,0]) ([[1,0,0],[1,0,1]]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,0,0]) ([[1,0,0]]) (["TemperatureParser"]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,0,1]) ([[1,0,1]]) (["TemperatureParser"]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,1]) ([[1,1,0]]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,1,0]) ([[1,1,0]]) (["Heartbeat"]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,-1,0,0]) ([]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,-1,0,1]) ([]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,-1,1,0]) ([]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([1,-1,1,1]) ([]) ([]) (Just [1]) ([]) ([]) ([])
+              , SDK.NodeDrive ([-2,0,0]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([-2,0,1]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([-2,1,0]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              , SDK.NodeDrive ([-2,1,1]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              ]
+          , SDK.drivingUnits =
+              [ SDK.UnitDrive
+                  ([1,0])
+                  ([[1,0,0],[1,0,1]])
+                  ([("TemperatureParser", [SDK.ReadAt ([1,0,0]), SDK.ReadAt ([1,0,1])]), ("Heartbeat", [])])
+                  ([])
+              , SDK.UnitDrive
+                  ([1,1])
+                  ([[1,1,0]])
+                  ([("TemperatureParser", []), ("Heartbeat", [SDK.ReadAt ([1,1,0])])])
+                  ([])
+              ]
+          , SDK.drivingSessions =
+              [ SDK.SessionDrive (Nothing) ("TemperatureParser") ("TemperatureSample") (Nothing)
+              , SDK.SessionDrive (Nothing) ("Heartbeat") ("Beat") (Nothing)
+              , SDK.SessionDrive (Just [1]) ("TemperatureParser") ("TemperatureSample") (Nothing)
+              , SDK.SessionDrive (Just [1]) ("Heartbeat") ("Beat") (Nothing)
+              ]
+          , SDK.drivingRootNodes = [[0,0],[1,0,0],[1,0,1],[1,1,0]]
+          , SDK.drivingOutputSites = []
+          , SDK.drivingRequests =
+              [ ("SensorResource", GetSensorStateGen)
+              , ("TemperatureParser", GetTemperatureSampleGen)
+              , ("Heartbeat", GetBeatGen)
+              ]
+          }
     }

@@ -2,7 +2,7 @@
 
 更新：2026-11-18。本文是阶段计划与开放项的唯一入口，保存各阶段的目标、剩余工作和必要的完成摘要。当前协议在[主设计](LATEST_DESIGN.md)及其专题中维护；历史验证集中在[验证边界](#baseline)，不代表本次重新执行。
 
-**当前进度：** handler 复用、scope 可达性回收、Stream 两侧结束、后继读取、交付保留和会话退役已落地。持续生产与有限取值的组合边界已经补齐，生成期无来源诊断、签名报错与组合设计收尾已完成；Receive 来源到 parser 的资源交接及示例 close 已修复，验证见[本轮记录](#receive-resource-verification)。[静态协议检查收口](#protocol-checks)已完成本轮范围，已补上既有 Binding ownership 的交付与执行保留，并进一步按会话待用帧回收不再使用的具体实例。Stage 5／7 本轮范围与验证见[阶段说明](#stage-5)；任意业务 ADT 内嵌资源转为独立开放专题。
+**当前进度：** handler 复用、scope 可达性回收、Stream 两侧结束、后继读取、交付保留和会话退役已落地。持续生产与有限取值的组合边界已经补齐，生成期无来源诊断、签名报错与组合设计收尾已完成；Receive 来源到 parser 的资源交接及示例 close 已修复，验证见[本轮记录](#receive-resource-verification)。[静态协议检查收口](#protocol-checks)已完成本轮范围，已补上既有 Binding ownership 的交付与执行保留，并进一步按会话待用帧回收不再使用的具体实例。Stage 5／7 已接通当前资产契约内的资源持有与回收，范围与验证见[阶段说明](#stage-5)；[普通 require 共享供值](#stage-2-await)也已实现。本轮已完成 [gen 决定归位](#gen-classification)，整理前端、Injector／Booter、计划与输出；[容量与背压](#backpressure)保留为延期专题，策略尚未确定。
 
 <a id="code-shape"></a>
 ## 代码长什么样
@@ -16,7 +16,9 @@
 
 目标是在现有架构内统一持续执行、资产访问和资源收尾。保持原子 handler、业务 effect、Context 解析与 workflow 驱动的分工，以及 Prototype／RuntimeGraph 和独立无环 ScopeTree；不为实现方便增加 effect 类别、手写装配层、资源寿命标签或 cleanup policy。
 
-资产引用的内存回收与 `Scoped.close` 管理的资源释放分别处理。释放引用不能替代关闭资源，业务资产保存记录也不能自动保证其中引用的资源仍然可用。完整设计原则见[主设计](LATEST_DESIGN.md#principles)。
+资产引用的内存回收与 `Scoped.close` 管理的资源释放分别处理。释放引用不能替代关闭资源。完整设计原则见[主设计](LATEST_DESIGN.md#principles)。
+
+**资产边界（2026-11-18 确认）：** 原子操作通过字符串 rawoutput 对接解析侧（当前批量输出为 `[String]`），Context 将其解析为业务资产，Pure 处理数据。不能把原生 Haskell 可定义任意字段的能力，当作框架允许把 Handle、连接等资源对象嵌入业务资产传递的契约。因此，“任意 ADT 内嵌资源的自动追踪与保活”从当前阶段及开放任务中移除；这不改变已声明资源绑定的 ownership、执行持有与 scope close。保留普通解析数据不自动延长生产资源的寿命，现有输出与解析接口见[入口装配](LATEST_DESIGN.md#calls)和[Context](LATEST_DESIGN.md#context)。
 
 <a id="stages"></a>
 ## 阶段地图
@@ -26,11 +28,12 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 | 阶段 | 目标 | 当前状态 |
 | --- | --- | --- |
 | [1：输入契约](#stage-1) | 资产来源明确，读取可检查 | 已完成；旧接收形态由 Stage 2 取代 |
-| [2：handler 复用](#stage-2) | 原子操作与业务装配分开 | 已完成；[完整等待迁移](#stage-2-await)独立待实施 |
-| [3：共同执行结构](#stage-3) | 对齐 Stream 与 lifelong 的推进、发布和结束边界 | 已有运行对应；持续生命周期的统一继续收敛 |
+| [2：handler 复用](#stage-2) | 原子操作与业务装配分开 | 已完成；[共享供值与保守等待](#stage-2-await)也已实现 |
+| [3：共同执行结构](#stage-3) | 对齐 Stream 与 lifelong 的推进、发布和结束边界 | Booter 统一静态驱动标记；动态生命周期保持既有协议 |
 | [4：资产访问](#stage-4) | 固定取值与重复启动分别计算 | 已完成；持续资产的资源持有留给 Stage 5／7 |
-| [5／7：持续资产的资源持有与自动回收](#stage-5) | 统一持有、交接、撤销与 scope close | 既有 ownership 保留与会话实例待用已接通；任意 ADT 内嵌资源不在本轮范围 |
+| [5／7：持续资产的资源持有与自动回收](#stage-5) | 统一持有、交接、撤销与 scope close | 当前契约范围已接通；不新增业务数据的资源依赖 |
 | [6：结束传播](#stage-6) | 生产结束、消费退出、排空和 workflow 返回 | 已实现；局部失败仍延期 |
+| [延期：容量与背压](#backpressure) | 限制未领取交付的积压，协调生产与消费进度 | 已确定需要解决；策略待收敛、未实现 |
 
 <a id="composition-machine"></a>
 ### 统一组合计算
@@ -44,7 +47,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 3. 同步设计与源码导航，删除被替代的算法模块，保留方法形状前端及各类输出模块。
 4. 显式重新生成现有示例并做必要普通编译，核对 facade 与生成结果；实际结果记在验证摘要。
 
-这项工作为后续组合判断提供单一落点，不新增用户语法、运行时调度机制、通用 IO 去重或额外资源持有规则。Stage 5／7 的业务边界继续单独收敛。
+这项工作为后续组合判断提供单一落点，不新增用户语法、运行时调度机制、通用 IO 去重或额外资源持有规则。资源持有的当前完成范围见 [Stage 5／7](#stage-5)。
 
 <a id="composition-review"></a>
 ### 当前收尾：组合检查与计算边界
@@ -65,7 +68,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 
 本轮新增：有资源的 Scoped 按 close 的方法绑定检查资源读取，open 或其他方法的读取不代替它。open 入口按 requests 生产并认领资源，方法体为空仍合法。沿用组合计算的类型路由，首次契约生成跳过、已有方法体时在图缓存前检查；无资源 scope 和可选 close 保持现有规则。参数生产身份、IO 顺序、条件路径和运行时防线保持原协议，不扩展 Shape 或引入新语法。
 
-交付以这项检查和 14 种故障的边界说明为限；完整等待与资源保活仍分别推进。实际验证及未覆盖范围见[验证摘要](#protocol-checks-verification)。
+该次交付以这项检查和 14 种故障的边界说明为限；后续共享供值与资源持有的完成状态分别见[等待阶段](#stage-2-await)和 [Stage 5／7](#stage-5)。实际验证及未覆盖范围见[验证摘要](#protocol-checks-verification)。
 
 <a id="composition-driving"></a>
 ### 持续生产与固定取值的组合
@@ -79,7 +82,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 3. runtime 只执行计划：重复推进在生产会话或 lifelong 中发生，普通读取捕获一次值后继续；交付队列只保存未领取值与最新值。
 4. 示例将计数、平均值或记录保存放回业务资产和原子 handler；不新增 effect 类别、声明关键字或 history 名称识别规则。
 
-具体规则归 [Stream 读取与驱动](STREAM_LIFELONG.md#contracts)及[有限读取](STREAM_LIFELONG.md#production)。本轮不解决任意资产内嵌资源的持有、不放开 requests 持续资产、不引入容量背压。本轮生成、编译及未覆盖范围见[验证摘要](#composition-driving-verification)。
+具体规则归 [Stream 读取与驱动](STREAM_LIFELONG.md#contracts)及[有限读取](STREAM_LIFELONG.md#production)。该次工作未放开 requests 持续资产，也未引入容量背压。本轮生成、编译及未覆盖范围见[验证摘要](#composition-driving-verification)。
 
 <a id="stage-1"></a>
 ### Stage 1：资产来源与接收契约
@@ -103,11 +106,11 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 <a id="stage-3"></a>
 ### Stage 3：Stream 与 lifelong 的共同执行结构
 
-**已有对应，生命周期边界继续收敛。** Stream 的生产步骤与 lifelong 单元都可以按“等待推进条件 → 有限执行 → 发布 → 继续或结束”理解。前者从 Context 需求启动，后者从 AST 启动；它们通过 Context 资产连接。
+**已有对应，静态驱动本轮统一，生命周期边界继续收敛。** Stream 的生产步骤与 lifelong 单元都可以按“等待推进条件 → 有限执行 → 发布 → 继续或结束”理解。前者从 Context 需求启动，后者从 AST 启动；它们通过 Context 资产连接。
 
 保留这项工作的理由是让结束、使用撤销和回收沿共同边界衔接。不能为统一实现把生产与消费压成一个串行循环，也不预设两种前端 ADT 已有一一同构证明。现行对应见[生产连接](STREAM_LIFELONG.md#bootplan)、[单元调度](STREAM_LIFELONG.md#scheduling)与[会话](STREAM_LIFELONG.md#sessions)。
 
-**剩余交付：** 配合 Stage 5／7 明确两种入口的持续状态、在途执行与资源持有如何衔接；只提取真正相同的协议，保留原有 workflow 并发关系。
+**后续衔接：** Stage 5／7 已接通执行使用、持续待用和绑定保留；背压阶段继续明确容量等待与这两种入口的衔接。静态驱动标记已按[本轮清单](#gen-classification)归位；这不等于所有生命周期问题已解决。只提取真正相同的协议，保留原有 workflow 并发关系。
 
 <a id="stage-4"></a>
 ### Stage 4：资产取值与驱动边界
@@ -116,13 +119,13 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 
 一次捕获保留原 Binding 的生产身份；之后的发布不改写本次值。T 若包含业务记录或累计状态，仍作为业务表示处理，不改变唯一 Context 来源。持续资产仍不能 requests。
 
-资源问题归 Stage 5／7：协调未领取交付、已捕获值、伴随发布中已知的 ownership，与实际执行和持续待用的关系；不再设计特殊的历史读取语法，也不默认推断业务数据中的资源引用。
+资源持有已由 Stage 5／7 接通：协调未领取交付、已捕获值、伴随发布中已知的 ownership，与实际执行和持续待用的关系；不设计特殊的历史读取语法，也不为普通解析数据增加资源依赖。
 
 <a id="stage-5"></a>
 <a id="stage-7"></a>
 ### Stage 5／7：持续资产的资源持有与自动回收
 
-**本轮范围已经收敛并接通实现（2026-11-18），验证见[会话实例回收记录](#session-scope-verification)。** Stage 5／7 合并处理实际执行、持续待用与已有 Binding ownership 的持有、交接、撤销和 close。任意业务 ADT 内嵌资源不作为这一阶段的前置要求；普通 parser／Pure 的产物不因生产使用过资源就继承其寿命。
+**本轮范围已经收敛并接通实现（2026-11-18），验证见[会话实例回收记录](#session-scope-verification)。** Stage 5／7 合并处理实际执行、持续待用与已有 Binding ownership 的持有、交接、撤销和 close。本阶段按上述 rawoutput 资产边界完成；普通 parser／Pure 的产物不因生产使用过资源就继承其寿命。
 
 **代码形态保持不变。** 沿用资产 ADT、Input／demands、原子 handler 和现有 Stream／lifelong 出口；业务仍只在 Scoped 的 close handler 中实现释放操作，不手写 layer、保活或释放调用。业务累计数据不作为 SDK 的特殊历史类型。
 
@@ -137,9 +140,9 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 **完成标准与边界。** 单例／多例只描述实例与参数生产的关系，使用是否耗尽决定 close。轮询、event、socket 按相同结构规则覆盖，不宣称 SDK 已从原子 IO 自动识别三种业务。读取值、来源可见性、已捕获 Binding 的身份与归属保持不变；旧资源绑定仍检查原 owner 的关闭／失败状态，不自动重开或换 owner。编译与源码核对不能证明全部取消交错、任意外部 IO 或资源逃逸安全。
 
 <a id="stage-5-foundation"></a>
-**持续最新值参数（2026-11-17）：** gen 为会话参数保存显式开启计划；runtime 登记实际选中 Binding 的 `ActivationId` 与原生产帧，固定交付与后继读取按相同来源规则参与回收。handler、demand、AST 写法不变。完整规范见[开启计划与待用](EFFECT_GRAPH.md#scope-opening-retention)。业务资产内嵌资源的持有没有因此实现。
+**持续最新值参数（2026-11-17）：** gen 为会话参数保存显式开启计划；runtime 登记实际选中 Binding 的 `ActivationId` 与原生产帧，固定交付与后继读取按相同来源规则参与回收。handler、demand、AST 写法不变。完整规范见[开启计划与待用](EFFECT_GRAPH.md#scope-opening-retention)。此项只观察既有 Binding 的身份，不扩展资产传递契约。
 
-**已完成的基础（2026-11-16）：** 普通后继按实际当前／保留绑定参与待用判断；轮间发布交接与回收共用协调锁；并发停止会话等待同一收尾完成信号。详细规则见[开启计划与待用](EFFECT_GRAPH.md#scope-opening-retention)和[会话协议](STREAM_LIFELONG.md#sessions)。这不等于已经提供任意业务数据内嵌资源的保活。
+**已完成的基础（2026-11-16）：** 普通后继按实际当前／保留绑定参与待用判断；轮间发布交接与回收共用协调锁；并发停止会话等待同一收尾完成信号。详细规则见[开启计划与待用](EFFECT_GRAPH.md#scope-opening-retention)和[会话协议](STREAM_LIFELONG.md#sessions)。持有范围沿用既有资源绑定协议。
 
 <a id="stage-6"></a>
 ### Stage 6：结束与终止传播
@@ -147,7 +150,7 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 **生产侧结束、消费侧结束及以下配套已实现（2026-11-14 至 17）。** 这解决了持续程序只能靠失败或取消退出的问题；正常结束可以让外层 workflow 继续。当前失败仍采用整次运行终止的临时规则，局部恢复未实现。
 
 - **来源结束与 workflow 返回**：`streamEnd`、排空、单元结束和 lifelong 返回；规则见[正常结束](STREAM_LIFELONG.md#end)。
-- **后继读取**：后继按既有可见性读取每个来源最新一次发布，单元内保持轮次隔离；规则仍见[正常结束](STREAM_LIFELONG.md#end)中的后继读取部分。
+- **后继读取**：普通资产按[共享供值](#stage-2-await)读取最新发布，调用捕获保持固定，切轮不清空共享普通值；持续资产的结束会话与固定交付仍按[正常结束](STREAM_LIFELONG.md#end)协议读取。
 
 <a id="stage-6-retention"></a>
 **引用保留基础（2026-11-14）：** 只保留仍有读取义务的数据；本轮改为交付队列与最新值，不再由 SDK 承诺完整业务历史。当前保留协议与复杂度见[会话保留](STREAM_LIFELONG.md#retention)。
@@ -163,6 +166,58 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 
 最后一轮修正的理由也保留在这里：同单元不证明生产已经完成，可能还有并行发布或尚未处理完的 Derive。因此只在本轮发布与派生处理稳定后跳过；发布节点结束须及时封口；取消不能把未完成的退役记为完成。完整判定维护在上述规范中，旧的“同单元一律不等待”方案已删除。
 
+<a id="gen-classification"></a>
+## 本轮：gen 决定归位与 Injector／Booter
+
+本轮保持 facade、原子 handler 与现有运行协议。先按下表迁移决定，再整理模块；多个合法运行分支不等于歧义，只拒绝既有语义不能确定解释的组合。
+
+| 决定／事实 | 重构前归属 | 本轮归属 | 静态／动态与完成条件 |
+| --- | --- | --- | --- |
+| Haskell 解析、声明加载、源码位置 | Source | Frontend.Source | 静态输入；沿用 GHC，不执行业务 |
+| require/raw 与控制结构提取 | Shape | Frontend.Shape | 静态输入；不解释资产来源 |
+| typing 对应的方法角色、绑定与名字 | Names、Composition | Composition；Names 仅拼名 | 静态解释只有一处 |
+| 表示类型、Layer、读取路由、前驱与 raw 来源 | Composition.bindProgram | Injector | 静态装配；不重读原注册来另选策略 |
+| scope/Error 回调与入口包装 | Composition、Emit.Handlers | Injector 的计划；Emit 渲染 | 静态装配；保持包装顺序与错误处理 |
+| AST 编号、选择器、会话与输出复用挂载 | Composition | Booter | 静态驱动；沿用 NodeId、BootPlan 和 Assembly |
+| 单元成员、帧位置、订阅与经 Derive 的本地来源 | Execution | Booter → Prototype | 静态驱动；runtime 直接读标记 |
+| 读取位置的会话边界、选择捕获祖先、供值进展关系 | Graph、Runtime | Booter → Prototype | 静态关联；不改变捕获优先及共享供值 |
+| 交付、游标、已结束位置、活动 Origin 与 scope 持有 | runtime | runtime | 动态状态；不前移、不新增调度器 |
+| 源码约束检查与资产目录提取 | Assets | Check.Assets | GHC 类检；返回结构化目录 |
+| Haskell 文本与资产目录文本 | Emit、Assets | Emit | 允许渲染构造器，不重新选择解释 |
+| 资产目录的纯元数据类型 | Gen.Catalog | Prototype.Catalog | 编译产物不依赖 gen |
+| 缓存、检查点、原子方法原文与文件写入 | Gen、Source、Emit | 原职责保留并更新依赖 | 不跳过检查，不隐式生成 |
+
+**实施状态：** 清单中的模块迁移、Injector 装配与 Booter 静态驱动标记已接入，显式生成与全项目普通编译通过；具体范围见[本轮验证](#gen-classification-verification)。内部计划与 Prototype 可以有阶段转换，但不独立维护两份相同决定。静态关联迁移不替换取消、锁、会话退役或 scope 回收协议。
+
+**验收边界：** 必要的显式生成和普通编译；允许模块路径、元数据与计划接线改变生成文本，不把字节变化等同于语义变化。不新增测试或负例。Stage 3 只记录静态驱动统一的实际完成范围，不宣称生命周期和背压已全部统一。
+
+<a id="gen-classification-verification"></a>
+**本轮验证（2026-11-18）：** 八个命名空间已显式重新生成，最终 `cabal build all --offline -j1 -v0` 通过，退出码 0。对照本轮修改前保存的生成产物，八份 `Generated/Effects.hs` 和八份 `Generated/Handlers.hs` 均未变化；`Generated/Program.hs` 仅增加 `protoDriving`，`Generated/Assets.hs` 仅改为导入 `Prototype.Catalog`。手写 facade 与业务 handler 未修改。按工作约定未新增测试、负例或运行业务 demo；运行关系的迁移做了源码对照，取消交错、会话退役及 scope 回收未做本次运行实测，普通编译不能代替这些验证。
+
+<a id="backpressure"></a>
+## 延期专题：持续交付的容量与背压
+
+**已确定需要解决，具体方案待收敛，尚未实现。** 当前已能裁剪不再有领取义务的交付，但慢消费者仍会让未领取积压持续增长；这些数据仍然可达，GC 不能替代流量协调。现有存储与读取义务见[交付保留](STREAM_LIFELONG.md#retention)。本阶段限制 SDK 交付积压，不裁剪业务资产自行保存的记录，也不把容量释放当成 scope close。
+
+**代码形态目标：** 保持原子 handler、资产解析、Input／demands 与 workflow 的现有分工；handler 不手写队列、容量轮询或释放调用。容量配置尚未确定归属，不预先增加 facade 字段；若确需声明接口，先展示 Effects／AST 的具体写法并单独确认。
+
+**实施顺序：**
+
+1. **在 Composition 中确定等待关系。** 复用 Receive、Derive、ReuseOutput 的生产计划、订阅关系与 workflow 顺序，分析容量等待能否由独立推进的读取方解除。重点覆盖同单元“先发布、后领取”及派生链的局部等待环；可静态证明无法推进的组合由 gen 拒绝，不以增大默认容量掩盖问题，不要求证明任意业务 IO 都能结束。
+2. **在 Session 中协调容量与交付。** 复用游标、会话状态和通知，区分尚未领取的交付、正在执行的固定捕获及最新值保留。确定容量许可取得／归还的位置，满时挂起而非忙轮询；领取、读取方离开或终止状态变化唤醒相关等待者。普通 require 仍按最新值与固定捕获协议读取，不额外制造逐条交付义务。
+3. **接通结束与资源回收。** 容量等待必须能响应取消与会话退役；生产 end、消费退出和正常排空继续沿用既有协议。先完成绑定持有的交接，再撤销原有保留；队列空位与执行使用分别记账，资源只有在原有 scope GC 条件满足时才 close，不新增回收器。
+
+**实现前需收敛的策略：**
+
+| 决定 | 当前建议（未确认） |
+| --- | --- |
+| 容量的单位、默认值和配置位置 | 先按会话的未领取条数设计；同时说明在途执行不计入队列上限，条数上限不等于进程内存上限 |
+| 满队列时的行为 | 首版考虑等待、不隐式丢弃或合并；容量能否配置为无界需明确 |
+| 广播中的慢消费者 | 保全每个有效订阅者的交付时，按最慢游标约束共同来源；订阅撤销及时解除该义务 |
+| 等待放在生产前还是发布时 | 分析容量预留与已完成 IO 的关系；既不回滚或重跑原子操作，也不让等待容量妨碍必要的消费启动 |
+
+**完成边界：** 按确定的单位约束积压；等待期间保持取消、排空、捕获与 close 的既有保证；不通过无限新建等待任务转移积压。生产节奏与调度关系会受到背压影响，不能宣称只是不可观察的内存优化。通用外部 push 适配、持久化积压、丢弃／合并策略和业务记录压缩不随本阶段自动引入。确认后的详细协议写入 Stream 规范，组合解释与拒绝条件登记到 COMPOSITION；本节只保留计划与状态。
+
 <a id="review"></a>
 ## 哪些仍需要单独设计
 
@@ -170,10 +225,9 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 
 下面这些涉及尚未区分的使用关系或新的保证范围，需要单独设计：
 
-- **父子实例引用的撤销。** 下一阶段开始时先核对[长期子实例保留历史父实例](EFFECT_GRAPH.md#scope-parent-retention)的边界：哪些引用是获取或 close 所需的真实依赖，哪些只代表此前一次共同使用。当前 `scopeParents` 不随步骤结束撤销；不能直接清空或以新参数替换旧引用。这是既有保守保留的收尾，不是本分支新增的行为。
-- **任意业务 ADT 内嵌资源与外部别名。** 资产读取关系不证明字段实际保存了哪些句柄；当前不沿 parser 或 Pure 的输入自动继承资源依赖，也不默认保护已逸出 SDK 的裸句柄。
+- **ScopeTree 的保守父依赖。** 按已确认方向保留由 Input 推导的宽依赖关系，不自动断边或按新参数替换旧父引用；[长期子实例保留历史父实例](EFFECT_GRAPH.md#scope-parent-retention)继续作为已知代价。将来在生成产物层人工精简边的能力不在本轮处理，也不作为背压的前置任务。
 - **更早停止或更早释放的策略。** interpreter 托管会话的停止时机、来源 end 后绕过现有退役边界的提前释放，以及新 cleanup policy，均不包含在此次内部回收修正中。
-- **持续调度与恢复。** 背压、自动重试、event／behavior／socket 的业务分类，以及 lifelong 局部失败分别收敛，不作为准确撤销已有使用关系的前置条件。
+- **持续调度与恢复。** 背压作为[延期专题](#backpressure)；自动重试、event／behavior／socket 的业务分类以及 lifelong 局部失败继续独立设计。
 
 普通共享供值的进度见[等待阶段](#stage-2-await)；本次不改变 facade 或增加用户寿命标签。
 
@@ -183,10 +237,10 @@ Stage 1–7 是本轮的编号，与早期 Prototype／RuntimeGraph、来源可�
 | 限制或未覆盖边界 | 归属 |
 | --- | --- |
 | 普通供值已跨 AST 位置共享；固定点与保守耗尽仍不证明所有等待都可结束 | [共享供值与等待](#stage-2-await) |
-| 持续值参数、已有 ownership 保留和会话实例待用已接通；任意 ADT 内嵌资源及外部别名未保证 | [资源开放专题](#deferred) |
-| 长期子实例可能保留历次共同使用的父实例，尚未区分可撤销的历史父引用 | [父引用边界](EFFECT_GRAPH.md#scope-parent-retention)、[待设计项](#review) |
+| 长期子实例可能保留历次共同使用的父实例；当前保留宽依赖，不自动断边 | [父引用边界](EFFECT_GRAPH.md#scope-parent-retention)、[待设计项](#review) |
 | 同单元直接或经 Derive 等待 Scoped.open 的复用输出被保守拒绝：复用实例不产生新输出；必定 fresh 的精确放行未做 | [输出复用规范](STREAM_LIFELONG.md#derive) |
-| 未领取交付没有硬容量与背压上限；interpreter 托管会话和 ReuseOutput 不按读取方计数退役 | [交付保留](STREAM_LIFELONG.md#retention)、[退役规则](STREAM_LIFELONG.md#consumer-end) |
+| 未领取交付没有硬容量与背压上限 | [延期：容量与背压](#backpressure) |
+| interpreter 托管会话和 ReuseOutput 各自沿用已有停止规则 | [退役规则](STREAM_LIFELONG.md#consumer-end) |
 | 含 lifelong 程序的失败仍终止整次运行 | [临时失败协议](STREAM_LIFELONG.md#failures) |
 | 生成期无来源诊断只覆盖已分析的普通读取点；合法来源在部分运行路径不发布仍由 runtime 处理，不证明全部等待可结束 | [本轮收尾](#composition-review)、[静态无来源诊断](EFFECT_GRAPH.md#missing-source) |
 | 来源状态与 scope 路径仍可能指数增长；共享通知存在多余唤醒，尚无大规模性能与长期堆占用实测 | [图与来源](EFFECT_GRAPH.md)、[会话复杂度](STREAM_LIFELONG.md#retention-cost) |
@@ -224,11 +278,10 @@ Binding 的生产身份与执行帧支持单例／多例匹配和待用分析；
 
 | 专题 | 仍需确定 |
 | --- | --- |
-| 背压与交付容量 | 容量、溢出策略、慢消费者及反馈与有界队列的进展；业务自行保存的记录不受 SDK 队列裁剪控制 |
 | 来源与调度 | 是否区分或自动推导 event／behavior／socket；自动重试、时间周期声明、通用外部 push callback 适配；已有单步写法见 [Stream](STREAM_LIFELONG.md#drives) |
 | 持续组合 | 嵌套 lifelong、多来源组合触发同一 target、派生步骤跳过与显式反馈 |
 | 值操作与适配 | 带类型的原子输出、嵌套输出结构、Pure 挂在 Stream 下、Generic Map；同注册多细化来源及同表示类型二元操作的其他写法 |
-| 资源协议 | 任意业务 ADT 内嵌资源与外部别名的持有保证；Stream close 接口是否需要；scope 同值复用、其他 cleanup policy、Linear 凭证、任意逸出资源、未发布的部分获取恢复、跨 interpreter 存续 |
+| 资源协议 | Stream close 接口是否需要；scope 同值复用、其他 cleanup policy、未发布的部分获取恢复、跨 interpreter 存续；均不扩展为普通业务资产内嵌资源的自动追踪 |
 | 故障恢复 | Error 驱动链、常驻 scope 失效与修复、局部失败、已展开 continuation 恢复及跨调用诊断；当前 resolve 不调用 close，处置成功仍传播原失败 |
 | 内存与诊断 | 业务惰性状态链是否需要处理，以及关闭失败记录长期累积的报告策略；强制求值或改变报告时机须另行确认 |
 | 模块与接口 | 多方法 effect 的入口／结果契约、独立生成模块组合、跨语言 schema |
@@ -286,6 +339,8 @@ LSP 仓库的来源可见性穷举模型尚未扩展到 Stream／lifelong；订�
 
 <a id="maintenance"></a>
 ## 怎样维护这份计划
+
+2026-11-18 本轮仅调整阶段文档：按 rawoutput 资产边界移除任意 ADT 内嵌资源的待办，保留 ScopeTree 宽依赖，将背压列为下一阶段并区分已确认目标与待定策略；同步共享供值的阶段状态。未修改 SDK、生成产物或 demo，未编译或运行业务。
 
 2026-11-18 合并收尾只补充父实例引用的保留边界和后续设计项，未修改 SDK，未重复编译或运行业务示例。外部审查者提供的运行结果不记作本轮执行记录。
 

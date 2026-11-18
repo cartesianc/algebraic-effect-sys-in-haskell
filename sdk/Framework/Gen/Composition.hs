@@ -1,27 +1,21 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 
--- 组合流水线 v2（2026-11-17）。声明是输入，装配、能力和原型是计算结果。
+-- 组合流水线 v3（2026-11-18）。声明是输入；Plan 记录装配、能力与原型计算的中间事实。
 -- advanceComposition 统一阶段转换与结果；内部仍由各解释阶段计算，不是通用规则求解器。
--- 声明解析、挂载查询、绑定检查与方法归约的专用助手放在对应入口 where，不能跨阶段调用。
--- Source/Shape 只提供 Haskell 结构，Emit 只投影下面的结果 ADT，runtime 不导入本模块。
+-- 本模块负责声明、方法图与来源证明；Injector 合成入口，Booter 合成挂载及静态驱动标记。
+-- Frontend.Source/Shape 只提供 Haskell 结构，Emit 只投影计划，runtime 不导入本模块。
 --
--- 规则定位：buildEffectProtos（资产来源/访问/类别）→ numberWorkflow/planSessions（挂载/驱动）
--- → bindProgram（类型/能力/路由/入口）→ composeMethods/buildStructure（方法/图）
--- → resolveSources（供值/捕获/开启）。跨阶段以明确参数及结果连接，不重新解释前一阶段事实。
+-- 规则定位：buildEffectProtos（资产来源/访问/类别）→ Booter.numberWorkflow（挂载/驱动）
+-- → Injector.bindProgram（类型/能力/路由/入口）→ composeMethods/buildStructure（方法/图）
+-- → resolveSources（供值/捕获/开启）→ Booter.completeDriving（静态运行关联）。
+-- 跨阶段以明确参数及结果连接，不重新解释前一阶段事实。
 -- AwaitingBodies 是 beforegen 的接口检查点；AwaitingGraph 是结构缓存检查点。
 -- 工作表/递归栈是同一计算中的局部证据，不能当作另一套装配结论或运行状态。
 -- 统一入口不降低路径分析的最坏复杂度；保留先投影再组合、缺值路径与分支相关性。
 module Framework.Gen.Composition
   ( beginComposition, prepareComposition, completeComposition, compositionKey
   , PendingComposition, CompositionResult(..)
-  , Unit(..), Binding(..), Signature(..), AssetDeclaration(..), BranchContract(..)
-  , ValueType(..), Capability(..), EntryOperation(..), ReadRoute(..), ReadView(..)
-  , ReaderPlan(..), SelectorPlan(..), SessionEntry(..)
-  , Assembly(..), EntryMount(..), OutputConnection(..), EntryStep(..), RawSource(..)
-  , stepMethod, rawMethod, bindingCalls, unitTerminals
-  , specifications, effectPrototypes, protoOf, contextSpecs, allMethods
-  , reference, parenthesized
   ) where
 
 import Control.Monad (foldM, unless, when)
@@ -33,6 +27,9 @@ import Data.Maybe (listToMaybe, maybeToList)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Framework.Gen.Names
+import Framework.Gen.Plan
+import Framework.Gen.Injector
+import Framework.Gen.Booter
 import Framework.Language.AST (WorkflowF(..))
 import Framework.Language.Registration hiding (effectKind)
 import qualified Framework.Language.Registration as Registration
@@ -76,7 +73,10 @@ advanceComposition state = case state of
     pure (Numbered namespace (PrototypePlan specifications effects workflow) sumTypes)
   Numbered namespace plan sumTypes -> do
     assembly <- diagnostic (assembleProgram plan)
-    AwaitingBodies <$> bindProgram namespace plan assembly sumTypes
+    unit <- bindProgram namespace plan (declareEffects (plannedRegistrations plan)) assembly sumTypes
+      (controlReads (plannedEffects plan) (plannedWorkflow plan))
+    let (selectors, sessions) = entryPlans (plannedEffects plan) assembly (unitBranches unit)
+    pure (AwaitingBodies unit { unitSelectors = selectors, unitSessionEntries = sessions })
   ResolvingBodies unit supplied -> do
     let checked = case supplied of Just _ -> True; Nothing -> False
     methods <- composeMethods checked (effectPrototypes unit) (unitBindings unit) (unitReads unit) (maybe [] id supplied)
@@ -86,7 +86,7 @@ advanceComposition state = case state of
     pure (ProvingSources pending prototype written readers)
   ProvingSources (PendingComposition unit checked _) prototype written readers -> do
     analyzed <- diagnostic (resolveSources checked (assemblyOutputs (unitAssembly unit)) written readers prototype)
-    pure (Checking unit checked analyzed)
+    pure (Checking unit checked (completeDriving analyzed))
   Checking unit checked prototype -> do
     diagnostic (validatePrototype prototype)
     when checked (diagnostic (checkDriven (unitAssembly unit) prototype))
@@ -131,54 +131,8 @@ completeComposition pending@(PendingComposition unit checked _) cached = do
     Complete result -> pure result
     _ -> Left "Composition did not complete"
 
--- 接口结果先有结构，再由 Emit 加 Haskell 模块限定。不能通过已渲染的 typeclass 文本重新选择装配。
-data ValueType = NativeType String | RefinedType String
-  deriving (Eq, Ord, Show, Read)
-
-data Capability = ReadsType ValueType | HasRaw | EndsSource | EndsSubscription | PureMonad | IOMonad
-  deriving (Eq, Show, Read)
-
--- 每个入口的解释已经确定；Emit 仅把该操作翻译成现有 runtime 包装，不再查看 typing。
-data EntryOperation
-  = AtomicOperation | OpenResource | CloseResource | SourceStep | PureOperation | PublishAsset String | ErrorOperation
-  deriving (Eq, Show, Read)
-
--- 读取结果始终是声明的表示类型。持续来源使用固定交付；是否反复执行由挂载/会话计划决定。
--- 业务可以把记录或统计声明为普通 ADT，编译器不为这类内容另外包装或选驱动。
-data ReadView = ValueView | ContinuousView | BranchView BranchContract
-  deriving (Eq, Show, Read)
-
-data ReadRoute = ReadRoute
-  { routeEffect :: String, routeType :: ValueType, routeContract :: String
-  , routeProvider :: String, routeReader :: String, routeView :: ReadView
-  } deriving (Eq, Show, Read)
-
-data ReaderPlan = ReaderPlan
-  { readerEffect :: String, readerMethod :: String, readerContract :: String, readerContinuous :: Bool
-  } deriving (Eq, Show, Read)
-
-data SelectorPlan = SelectorPlan
-  { selectorContract :: String, selectorEntry :: String
-  , selectorConstructors :: [String]
-  } deriving (Eq, Show, Read)
-
-data SessionEntry
-  = ReceiveEntry String (EntryMount String) (EntryMount String)
-  | DeriveEntry String (EntryMount String)
-  deriving (Eq, Show, Read)
-
 -- ========================================================================
--- 共享访问投影（不选择来源或驱动）
--- ========================================================================
-
--- requires 与 streams 读取资产；requests 只驱动，不读取。
-readsAccess :: Access -> Bool
-readsAccess RequestAccess = False
-readsAccess RequireAccess = True
-readsAccess StreamAccess = True
-
--- ========================================================================
--- 声明关系与 workflow 编号
+-- 声明关系与方法角色
 -- ========================================================================
 
 -- 注册关系的标准解析：同时完成注册级检查。之后的绑定与输出只读取这些事实，不再自行推导。
@@ -495,748 +449,9 @@ buildEffectProtos specifications sumTypes = do
 -- alternative 根据候选 Input 链的分支契约定位同一资产与构造器，检查完整覆盖后登记选择入口。
 -- 此处不提取候选的最长公共前缀，也不改写它们的 Input；选择绑定的交接由运行协议完成。
 -- 编号遍历本身随 AST 大小增长，但每处的注册查询、候选检查与 planSessions 分析另计。
-numberWorkflow :: [EffectProto String] -> Fix WorkflowF -> Either (PrototypeError String) WorkflowTree
-numberWorkflow effects tree = cata number tree [] False
-  where
-    -- inside：是否位于 lifelong 内。持续订阅只能挂在 lifelong 内；lifelong 不嵌套。
-    number (Node selected) path inside = do
-      effect <- findEffectProto effects selected
-      valid (effectKind effect `notElem` [PureKind, ContextKind, ErrorKind, StreamKind])
-        ("AST terminal must be an Excu or Scoped handle: " ++ selected
-          ++ " (Pure, Context, Stream and Error run only inside their chains)")
-      _ <- ordinaryEntry effect
-      let subscribed = streamedAssets effects selected
-      unless (inside || null subscribed) $ Left (InvalidLifelong path ("Node " ++ selected
-        ++ " subscribes to " ++ intercalate ", " subscribed ++ " with streams; mount it inside lifelong"))
-      pure (NodeAt path selected)
-    number (Chained children) path inside = do
-      nonEmpty path inside children
-      ChainedAt path <$> descend path inside children
-    number (Parallel children) path inside = do
-      nonEmpty path inside children
-      ParallelAt path <$> descend path inside children
-    number (Lifelong children) path inside = do
-      when inside $ Left (InvalidLifelong path "lifelong cannot be nested")
-      nonEmpty path True children
-      parts <- descend path True children
-      -- 直接子项各为一个单元；直接子项是 parallel 时拆这一层，不穿透更深的结构。
-      let units = concat [case part of
-            ParallelAt _ inner -> map workflowNode inner
-            _ -> [workflowNode part] | part <- parts]
-      subscriptions <- mapM subscription [(node', selected) | part <- parts, NodeAt node' selected <- allWorkflow part]
-      -- 先沿用本边界已经挂载的操作输出，再为其余订阅建立独立生产；副产物也登记为会话资产。
-      sessions <- planSessions effects path parts subscriptions
-      pure (LifelongAt path (LifelongProto units subscriptions sessions) parts)
-    number (Alternative children) path inside = do
-      nonEmpty path inside children
-      parts <- descend path inside children
-      cases <- mapM (candidateCase effects path) parts
-      contractType <- case nub (map fst cases) of
-        [selected] -> Right selected
-        _ -> invalid path "Candidates must depend on the same branch contract"
-      let constructors = map snd cases
-          declared = concat [map snd (effectBranches effect) | effect <- effects, effectProduces effect == Just contractType]
-      unless (unique constructors && sort constructors == sort declared) $
-        invalid path "Candidates must cover every constructor exactly once"
-      pure (AlternativeAt path (AlternativeProto contractType (path ++ [-1])
-        (zip (map workflowNode parts) constructors)) parts)
-    descend path inside children = sequence [child (path ++ [index]) inside | (index, child) <- zip [0 ..] children]
-    invalid path reason = Left (InvalidAlternative path reason)
-    -- lifelong 内每条成功路径都要领取新交付；挂载的 target 都订阅持续资产，所以只需拒绝空分支。
-    nonEmpty path inside children = when (inside && null children) $
-      Left (InvalidLifelong path "an empty branch inside lifelong never takes a delivery")
-    -- 一个挂载的 target 恰好由一份持续资产驱动；链内不再读取其他持续资产的快照，
-    -- 否则执行结果取决于读取时刻（多个来源的触发组合另行设计）。
-    subscription (node', selected) = case streamedAssets effects selected of
-      [contractType] -> do
-        let others = [other | other <- continuousReads effects selected, other /= contractType]
-        unless (null others) $ Left (InvalidLifelong node' ("Node " ++ selected ++ " is driven by " ++ contractType
-          ++ " and also reads continuous assets " ++ intercalate ", " others ++ "; read only its driving asset"))
-        pure (node', contractType)
-      [] -> Left (InvalidLifelong node' ("Node " ++ selected
-        ++ " inside lifelong must subscribe to exactly one continuous asset with streams"))
-      several -> Left (InvalidLifelong node' ("Node " ++ selected ++ " subscribes to several continuous assets "
-        ++ intercalate ", " several ++ "; one lifelong target is driven by one asset"))
-    -- 挂载解释的私有查询；仅用于当前编号与订阅检查。
-    -- 一条 original chain 由末端及其 Input 祖先组成；只看这些 effect 自己声明的 streams，
-    -- 不汇总 Context 生产链内部的依赖。
-    originEffects :: [EffectProto method] -> String -> [EffectProto method]
-    originEffects effects selected =
-      [effect | effect <- effects, effectName effect `elem` (selected : concat
-        [effectInputChain terminal | terminal <- effects, effectName terminal == selected])]
-
-    streamedAssets :: [EffectProto method] -> String -> [String]
-    streamedAssets effects selected = nub
-      [demandContract demand | effect <- originEffects effects selected, demand <- effectDemands effect
-      , demandAccess demand == StreamAccess]
-
-    -- 分支契约按其基础契约计入：读取持续和类型资产的分支即读取该资产。
-    continuousReads :: [EffectProto method] -> String -> [String]
-    continuousReads effects selected = nub
-      [base | effect <- originEffects effects selected, demand <- effectDemands effect
-      , let base = baseContract (demandContract demand)
-      , producer <- effects, effectContinuous producer, effectProduces producer == Just base]
-      where
-        baseContract contractType = case [produced | producer <- effects, Just produced <- [effectProduces producer]
-                                         , (branch, _) <- effectBranches producer, branch == contractType] of
-          produced : _ -> produced
-          [] -> contractType
-
--- ========================================================================
--- 持续生产连接及启动证明
--- ========================================================================
-
--- 本边界的装配先定位已由 AST 执行的原子句柄，再决定哪些资产需要独立生产。
--- 同名 effect 的不同挂载仍是不同执行；多个供值位置只允许同一单元内互斥的候选。
--- 连续副产物即使只有后继 requires，也有交付状态，不能因没有订阅而丢掉发布。
-planSessions :: [EffectProto method] -> NodeId -> [WorkflowTree] -> [(NodeId, String)]
-                   -> Either (PrototypeError method) [SessionProto]
-planSessions effects boundary children subscriptions = do
-  sessions <- mapM plan (zip [0 ..] assets)
-  checkStartup sessions
-  checkCoverage sessions
-  pure sessions
-  where
-    units = concat [case child of
-      ParallelAt _ inner -> map workflowNode inner
-      _ -> [workflowNode child] | child <- children]
-    workflow = LifelongAt boundary (LifelongProto units subscriptions []) children
-    mounted = [(node', effect) | NodeAt node' selected <- concatMap allWorkflow children
-      , effect <- effects, effectName effect == selected]
-    -- 匹配 original chain 的 target/Input，不扫描它请求的独立 Context 链。
-    positions producer = [node' | Just anchor <- [effectAnchor producer], (node', target) <- mounted
-      , anchor `elem` (effectName target : effectInputChain target)]
-    outputs = [contractType | producer <- effects, effectContinuous producer
-      , Just contractType <- [effectProduces producer], not (null (positions producer))]
-    assets = sessionAssets effects (nub (map snd subscriptions ++ outputs))
-    unitOf node' = [unit | unit <- units, unit `isPrefixOf` node']
-    plan (index, contractType) = do
-      producer <- case [effect | effect <- effects, effectProduces effect == Just contractType] of
-        [effect] -> pure effect
-        _ -> Left (UnknownPrototypeTarget contractType)
-      let nodes = positions producer
-      -- p 个位置要做 p*(p-1)/2 次同单元/互斥检查；exclusive 自身还遍历 workflow。
-      -- 并行或顺序中都可能发生的两次输出不能靠“谁先生产”合并成同一个来源。
-      unless (and [unitOf left == unitOf right && exclusive workflow left right
-          | (offset, left) <- zip [0 :: Int ..] nodes, right <- drop (offset + 1) nodes]) $
-        Left (InvalidLifelong boundary ("Continuous asset " ++ contractType
-          ++ " has several AST output positions " ++ show nodes
-          ++ "; use one position, mutually exclusive positions in one unit, or refine the asset"))
-      let selected = if null nodes then bootPlan effects producer else ReuseOutput nodes
-      pure (SessionProto contractType selected
-        [boundary ++ [-1, index, step] | step <- [0 .. sessionSteps selected - 1]])
-    -- 订阅边之外，还要计入 workflow 的启动前置。否则 chained [读 A, 产 A]
-    -- 虽然注册关系无环，第一条增量仍只能由正在等待它的后继产生。
-    -- 保守地纳入所有候选前驱：不依赖运行时恰好选中某个分支才具有进展。
-    -- SCC 只检测这份启动依赖图；发现环就拒绝，不删边来强行安排运行。
-    -- 纯 SCC 阶段与图规模相关，构边前的 precedes/selectors 查询和后面的覆盖遍历另计。
-    checkStartup sessions = case [cycle' | CyclicSCC cycle' <- stronglyConnComp graph] of
-      [] -> pure ()
-      cycle' : _ -> Left (InvalidLifelong boundary ("Continuous startup cycle: "
-        ++ intercalate " -> " (map describe cycle')
-        ++ "; a producer cannot wait for a target that needs its own publication"))
-      where
-        graph = [(key, key, dependencies) | (key, dependencies) <- edges]
-        edges = [(Left node', nub (Right asset : previous node' ++ selectors node'))
-          | (node', asset) <- subscriptions]
-          ++ [(Right (sessionAsset session), case sessionPlan session of
-              Receive _ -> []
-              Derive upstream -> [Right upstream]
-              ReuseOutput nodes -> map Left nodes) | session <- sessions]
-        previous node' = [Left before | (before, _) <- mounted, precedes workflow before node']
-        selectors node' = [Right (alternativeContract choice)
-          | AlternativeAt _ choice branches <- allWorkflow workflow
-          , any (\branch -> workflowNode branch `isPrefixOf` node') branches
-          , alternativeContract choice `elem` map sessionAsset sessions]
-        describe (Left node') = "target " ++ show node'
-        describe (Right asset) = "asset " ++ asset
-    -- 同一单元只有完成本轮后才能进入下一轮。每条能到达订阅的路径都必须
-    -- 已经生产，或同时启动了一条必经的生产路径，不能等本单元的下一轮来补值。
-    -- 其他单元独立推进，允许等待其未来发布；这里不证明原子 IO 的进展。
-    checkCoverage sessions = mapM_ check
-      [(node', asset, output, nodes, unit) | (node', asset) <- subscriptions
-      , (output, nodes@(source : _)) <- outputOf [] asset
-      , unit <- unitOf node', unit `elem` unitOf source]
-      where
-        outputOf seen asset
-          | asset `elem` seen = []
-          | otherwise = concat [case sessionPlan session of
-              ReuseOutput nodes -> [(sessionAsset session, nodes)]
-              Derive upstream -> outputOf (asset : seen) upstream
-              Receive _ -> []
-            | session <- sessions, sessionAsset session == asset]
-        check (node', asset, output, nodes, unit) = do
-          -- open 复用已有实例时不执行原子方法，也没有新输出。经过该位置不能
-          -- 证明本轮有交付；独立单元可以等待以后真正开启产生的输出或正常结束。
-          unless (null [() | producer <- effects, effectProduces producer == Just output
-              , Just anchorName <- [effectAnchor producer], anchor <- effects
-              , effectName anchor == anchorName, effectKind anchor == ScopedKind]) $
-            Left (InvalidLifelong node' ("Subscription to " ++ asset
-              ++ " waits for a Scoped output within the same unit; reusing an open scope produces no new output"))
-          case lookupWorkflow workflow unit of
-            Just tree -> unless (covered nodes node' False tree) $
-              Left (InvalidLifelong node' ("Subscription to " ++ asset
-                ++ " has a workflow path without an output from " ++ show nodes
-                ++ " in the same unit; that unit cannot reach its next execution while waiting"))
-            Nothing -> Left (InvalidLifelong unit "Missing unit for an output subscription")
-        covered sources target available tree = case tree of
-          NodeAt node' _ -> node' /= target || available
-          ChainedAt _ parts -> sequenceCovered parts available
-          ParallelAt _ parts -> and
-            [covered sources target (available || any (produces sources) others) child
-            | child <- parts, let others = filter ((/= workflowNode child) . workflowNode) parts]
-          _ -> all (covered sources target available) (workflowChildren tree)
-          where
-            sequenceCovered [] _ = True
-            sequenceCovered (child : rest) ready = covered sources target ready child
-              && sequenceCovered rest (ready || produces sources child)
-        produces sources tree = case tree of
-          NodeAt node' _ -> node' `elem` sources
-          AlternativeAt _ _ parts -> not (null parts) && all (produces sources) parts
-          _ -> any (produces sources) (workflowChildren tree)
-
--- ========================================================================
--- 入口与输出连接事实
--- ========================================================================
-
--- 调用顺序仍是 requests → Input → handler。角色用于保留装配依据；
--- 相同方法出现在两个步骤时仍执行两次，不能按名字或结构去重。
-data EntryStep method = RequestStep method | InputStep method
-  deriving (Eq, Show, Read)
-
-stepMethod :: EntryStep method -> method
-stepMethod (RequestStep method) = method
-stepMethod (InputStep method) = method
-
--- raw 的直接输入在本模块的绑定转换中解析。Stream 单步产 String，需要包装成单元素 list；
--- 其余输入交出 list。是否已有本次输出由现有 replay 协议决定，不缓存另一调用的结果。
-data RawSource method = RawList method | RawStream method
-  deriving (Eq, Show, Read)
-
-rawMethod :: RawSource method -> method
-rawMethod (RawList method) = method
-rawMethod (RawStream method) = method
-
--- 一个静态挂载；NodeId 保留每次 AST 出现的位置，同方法不合并挂载。
--- terminal 是结构展示的末端/契约，target 是运行入口的诊断标签：
--- 会话中 terminal 是资产名，target 分别是 Stream 与 parser 的 effect 名。
-data EntryMount method = EntryMount
-  { mountNode :: NodeId
-  , mountRole :: ChainRole
-  , mountTerminal :: String
-  , mountTarget :: String
-  , mountMethod :: method
-  } deriving (Eq, Show, Read)
-
--- 同次输出的连接：anchor → parser。role 区分普通吞错注入与持续失败传播；
--- 每次注入只能回放当前 anchor，不能借此跳过其他前驱。
-data OutputConnection method = OutputConnection
-  { outputAnchor :: method
-  , outputParser :: method
-  , outputProducer :: String
-  , outputRole :: MethodRole
-  } deriving (Eq, Show, Read)
-
-data Assembly method = Assembly
-  { assemblyMounts :: [EntryMount method]
-  , assemblyOutputs :: [OutputConnection method]
-  , assemblySessions :: [SessionProto]
-  , assemblyFiniteSessions :: [SessionProto]
-  } deriving (Eq, Show, Read)
-
-assembleProgram :: PrototypePlan -> Either (PrototypeError String) (Assembly String)
-assembleProgram plan = do
-  mounted <- concat <$> mapM mountedNode (allWorkflow workflow)
-  selectors <- mapM mountedSelector [selected | selected@AlternativeAt {} <- allWorkflow workflow]
-  sessions <- concat <$> mapM mountedSession
-    describedSessions
-  pure (Assembly (mounted ++ selectors ++ sessions) outputs describedSessions finite)
-  where
-    effects = plannedEffects plan
-    workflow = plannedWorkflow plan
-    finite = finiteSessions effects
-    describedSessions = concatMap (lifelongSessions . snd) (workflowLifelongs workflow) ++ finite
-    mountedNode (NodeAt identifier selected) = do
-      effect <- findEffectProto effects selected
-      method <- ordinaryEntry effect
-      pure [EntryMount identifier NodeChain selected selected method]
-    mountedNode _ = pure []
-    mountedSelector (AlternativeAt _ selected _) = case
-      [method | effect <- effects, effectProduces effect == Just (alternativeContract selected)
-        , Just method <- [selectorMethod effect]] of
-      [method] -> pure (EntryMount (alternativeSelector selected) SelectorChain
-        (alternativeContract selected) (alternativeContract selected) method)
-      _ -> Left (UnknownPrototypeTarget (alternativeContract selected))
-    mountedSelector _ = Left (InvalidPrototype "Expected alternative selector")
-    mountedSession described = do
-      producer <- case [effect | effect <- effects, effectProduces effect == Just (sessionAsset described)] of
-        [effect] -> pure effect
-        _ -> Left (UnknownPrototypeTarget (sessionAsset described))
-      let entry effect role = case lookup role (effectMethods effect) of
-            Just method -> pure (effectName effect, method)
-            Nothing -> Left (InvalidPrototype ("Session for " ++ sessionAsset described
-              ++ " has no " ++ show role ++ " method"))
-      steps <- case sessionPlan described of
-        Receive source -> do
-          streamEffect <- findEffectProto effects source
-          handle <- entry streamEffect StreamHandler
-          parser <- entry producer ContextStream
-          pure [handle, parser]
-        Derive _ -> (: []) <$> entry producer ContextStream
-        -- 沿用 AST 输出，不另建生产步骤；位置证据已经在 planSessions 的 BootPlan 中检查。
-        ReuseOutput _ -> pure []
-      valid (length steps == length (sessionMounts described)) ("Session steps differ for " ++ sessionAsset described)
-      pure [EntryMount mount SessionChain (sessionAsset described) target method
-        | (mount, (target, method)) <- zip (sessionMounts described) steps]
-    -- 保留原注入顺序：同一 anchor 内先普通 Context，再持续 Context，各自按注册顺序。
-    outputs =
-      [ OutputConnection anchorMethod parser (effectName producer) role
-      | anchor <- effects, (anchorRole, anchorMethod) <- effectMethods anchor
-      , anchorRole `elem` [HandlerMethod, ScopeOpen]
-      , role <- [ContextRequest, ContextStream], producer <- effects
-      , effectAnchor producer == Just (effectName anchor)
-      , Just parser <- [lookup role (effectMethods producer)] ]
-
 -- ========================================================================
 -- 接口能力、读取路由与方法组成
 -- ========================================================================
-
--- 一次绑定：handler 在某个 effect 方法中执行。
--- before 保存有角色的有序步骤（先驱动，后 Input），raw 保存直接 Input 及其输出形状；
--- routes 把规范化的表示类型映射到 (契约, 读取方法)。结构分析据此把 handler 方法体换成 effect 方法的结构。
-data Binding = Binding
-  { bindingEffect :: String
-  , bindingMethod :: String
-  , bindingHandler :: String
-  , bindingBefore :: [EntryStep String]
-  , bindingRaw :: Maybe (RawSource String)
-  , bindingRoutes :: [(String, (String, String))]
-  , bindingResult :: ValueType
-  , bindingOperation :: EntryOperation
-  , bindingCapabilities :: [Capability]
-  } deriving (Eq, Show, Read)
-
--- handler 的签名由绑定类别与 effect 的 demands 推出；同一 handler 的所有绑定必须一致。
--- layer 不含 Raises：它总是本 handler 的错误，由输出时补入。
-data Signature = Signature
-  { signatureHandler :: String
-  , signatureResult :: ValueType
-  , signatureLayer :: [Capability]
-  , signatureEffects :: [String]
-  } deriving (Eq, Show, Read)
-
--- 每个 Context 的契约类型由声明的资产名生成。
-data AssetDeclaration = AssetDeclaration
-  { assetContract :: String
-  , assetRepresentation :: TypeRef
-  , assetOwner :: String
-  } deriving (Eq, Show, Read)
-
--- 表示类型是和类型（至少两个构造器）时，每个构造器另有分支契约：契约名加构造器名。
--- 分支契约是基础契约的投影，读到构造器的字段（无字段为 ()）。
-data BranchContract = BranchContract
-  { branchName :: String
-  , branchBase :: String
-  , branchConstructor :: String
-  , branchField :: Maybe String
-  , branchOwner :: String
-  } deriving (Eq, Show, Read)
-
--- 一份程序的绑定结果：降级计划加上 gen 推出的资产、分支契约、handler 签名、绑定与末端入口。
-data Unit = Unit
-  { unitNamespace :: String
-  , unitPlan :: PrototypePlan
-  , unitAssets :: [AssetDeclaration]
-  , unitBranches :: [BranchContract]
-  , unitHandlers :: [String]
-  , unitSignatures :: [Signature]
-  , unitBindings :: [Binding]
-  -- 已解析的挂载与输出连接；构图、来源分析与输出共用。
-  , unitAssembly :: Assembly String
-  -- effect → handler 方法体必须读取的契约（requires／streams 中没有被 workflow 控制流使用的部分）。
-  , unitReads :: [(String, [String])]
-  , unitRoutes :: [ReadRoute]
-  , unitReaders :: [ReaderPlan]
-  , unitSelectors :: [SelectorPlan]
-  , unitSessionEntries :: [SessionEntry]
-  , unitScopeOrder :: [String]
-  } deriving (Eq, Show, Read)
-
--- 绑定阶段的入口：推出全部事实，再按原顺序检查生成名字、末端、表示类型与签名。
-bindProgram :: String -> PrototypePlan -> Assembly String -> SumTypes -> Either String Unit
-bindProgram namespace prepared assembly sumTypes = do
-  checkGenerated unit
-  when (null (unitTerminals unit)) (Left "Select at least one terminal effect for generation")
-  mapM_ (checkRepresentations unit) (specifications unit)
-  signatures <- mapM (signatureOf unit) (unitHandlers unit)
-  pure unit { unitSignatures = signatures }
-  where
-    unit = Unit
-      { unitNamespace = namespace
-      , unitPlan = prepared
-      , unitAssets = assets
-      , unitBranches = branches
-      , unitHandlers = nub [handler' | specification <- specifications unit, (_, handler') <- handlerBindings specification]
-      , unitSignatures = []
-      , unitBindings =
-          [ Binding (name specification) method handler' (beforeOf unit specification method)
-              (if readsRaw specification method then rawSource unit specification else Nothing)
-              [ (normalizeType (typeSpelling (routeType route)), (routeContract route, routeReader route))
-              | route <- unitRoutes unit, routeEffect route == name specification ]
-              (entryResult specification) (entryOperation specification method) (layerOf unit specification method)
-          | specification <- specifications unit, (method, handler') <- handlerBindings specification ]
-      , unitAssembly = assembly
-      , unitRoutes = [routeOf unit specification resolved
-          | specification <- specifications unit, not (null (handlerBindings specification))
-          , resolved <- readDemands unit (name specification)]
-      , unitReaders = [ReaderPlan (name specification) method (contractOf declared)
-            (Prototype.effectContinuous (protoOf unit (name specification)))
-          | specification <- contextSpecs unit
-          , Just method <- [contextReader (typing specification)]
-          , Just declared <- [contextAsset (typing specification)]]
-      , unitSelectors = [SelectorPlan contractType method
-            [branchConstructor branch | branch <- branches, branchBase branch == contractType]
-          | (contractType, method) <- nub [(mountTerminal mount, mountMethod mount)
-              | mount <- assemblyMounts assembly, mountRole mount == SelectorChain]]
-      , unitSessionEntries = sessionEntries unit assembly
-      , unitScopeOrder = nub (concat [Prototype.effectScopes effect
-          ++ [Prototype.effectName effect | Prototype.effectKind effect == ScopedKind]
-          | effect <- effectPrototypes unit])
-      , unitReads =
-          [ (name specification, nub
-              [ demandContract resolved | resolved <- resolvedOf unit (name specification), readsAccess (demandAccess resolved)
-              , (name specification, demandContract resolved) `notElem` controlled ])
-          | specification <- specifications unit ]
-      }
-    controlled = controlReads (Prototype.plannedEffects prepared) (Prototype.plannedWorkflow prepared)
-    assets =
-      [ AssetDeclaration (contractOf declared) (representation declared) (name specification)
-      | specification <- contextSpecs unit
-      , Just declared <- [contextAsset (typing specification)] ]
-    branches =
-      [ BranchContract (base ++ constructor) base constructor field owner
-      | AssetDeclaration base (TypeRef typeName) owner <- assets
-      , (branch, constructor) <- Prototype.effectBranches (protoOf unit owner)
-      , Just constructors <- [lookup typeName sumTypes]
-      , Just field <- [lookup constructor constructors]
-      , branch == base ++ constructor ]
-
-    -- 绑定解释与校验只在本阶段可见；后续算法和 Emit 读取 Unit 中的确定事实。
-    typeSpelling :: ValueType -> String
-    typeSpelling (NativeType selected) = selected
-    typeSpelling (RefinedType selected) = selected
-
-    readValueType :: Unit -> ResolvedDemand -> ValueType
-    readValueType unit resolved = NativeType (representationOf unit (demandContract resolved))
-
-    routeOf :: Unit -> EffectSpec -> ResolvedDemand -> ReadRoute
-    routeOf unit specification resolved = ReadRoute (name specification) (readValueType unit resolved)
-      contractType producer (readerOf unit producer) view
-      where
-        contractType = demandContract resolved
-        producer = demandProvider resolved
-        view = case [branch | branch <- unitBranches unit, branchName branch == contractType] of
-          branch : _ -> BranchView branch
-          _ | continuousContract unit contractType -> ContinuousView
-            | otherwise -> ValueView
-
-    entryResult :: EffectSpec -> ValueType
-    entryResult specification = case typing specification of
-      Context { asset = declared } -> RefinedType (contractOf declared)
-      _ -> NativeType (resultOf specification)
-
-    entryOperation :: EffectSpec -> String -> EntryOperation
-    entryOperation specification method = case typing specification of
-      Excu _ -> AtomicOperation
-      Scoped _ _ | Just method == entryMethod specification -> OpenResource
-                 | otherwise -> CloseResource
-      Stream _ -> SourceStep
-      Pure _ -> PureOperation
-      Context { asset = declared } -> PublishAsset (contractOf declared)
-      Error {} -> ErrorOperation
-
-    sessionEntries :: Unit -> Assembly String -> [SessionEntry]
-    sessionEntries unit assembly = nubBy sameEntry
-      [ entry
-      | specification <- contextSpecs unit
-      , session <- assemblySessions assembly
-      , Just (sessionAsset session) == effectProduces (protoOf unit (name specification))
-      , let entries = [mount | position <- sessionMounts session
-                  , mount <- assemblyMounts assembly, mountNode mount == position]
-      , entry <- case (sessionPlan session, entries) of
-          (Receive _, [source, parser]) -> [ReceiveEntry (name specification) source parser]
-          (Derive _, [parser]) -> [DeriveEntry (name specification) parser]
-          _ -> [] ]
-      where
-        -- 一个会话入口可用于多个挂载；只有生成的闭包定义共享，NodeId 仍保存在 Assembly/Prototype。
-        -- 按完整 mount 去重会把同一来源的 finite/lifelong 入口重复输出。
-        key entry = (mountTarget entry, mountMethod entry)
-        sameEntry (ReceiveEntry owner a b) (ReceiveEntry owner' a' b') =
-          owner == owner' && key a == key a' && key b == key b'
-        sameEntry (DeriveEntry owner a) (DeriveEntry owner' a') = owner == owner' && key a == key a'
-        sameEntry _ _ = False
-
-    specOf :: Unit -> String -> EffectSpec
-    specOf unit selectedName = case [specification | specification <- specifications unit, name specification == selectedName] of
-      specification : _ -> specification
-      [] -> error ("Validated registration has no effect: " ++ selectedName)
-
-    resolvedOf :: Unit -> String -> [ResolvedDemand]
-    resolvedOf unit = Prototype.effectDemands . protoOf unit
-
-    continuousContract :: Unit -> String -> Bool
-    continuousContract unit contractType = or
-      [ Prototype.effectContinuous (protoOf unit (assetOwner declared))
-      | declared <- unitAssets unit, assetContract declared == contractType ]
-
-    -- 契约读到的表示类型：基础契约是声明的表示类型，分支契约是构造器的字段（无字段为 ()）。
-    representationOf :: Unit -> String -> String
-    representationOf unit contractType = case [branch | branch <- unitBranches unit, branchName branch == contractType] of
-      branch : _ -> maybe "()" id (branchField branch)
-      [] -> case [reference (assetRepresentation declared) | declared <- unitAssets unit, assetContract declared == contractType] of
-        found : _ -> found
-        [] -> error ("Validated demand has no asset: " ++ contractType)
-
-    -- 读取方式影响驱动关系，不改变资产表示；本轮交付和有限读取都捕获声明的同一个 T。
-    readType :: Unit -> ResolvedDemand -> String
-    readType unit resolved = representationOf unit (demandContract resolved)
-
-    readDemands :: Unit -> String -> [ResolvedDemand]
-    readDemands unit selectedName = nubBy (\left right -> demandContract left == demandContract right)
-      [resolved | resolved <- resolvedOf unit selectedName, readsAccess (demandAccess resolved)]
-
-    readerOf :: Unit -> String -> String
-    readerOf unit provider = case contextReader (typing (specOf unit provider)) of
-      Just method -> method
-      Nothing -> error ("Validated demand has no reader: " ++ provider)
-
-    -- 驱动：requests 声明的资产在入口先调用 getT，沿 Input 驱动它的整条 Context 链。
-    drives :: Unit -> EffectSpec -> [String]
-    drives unit specification =
-      [ getter | resolved <- resolvedOf unit (name specification), demandAccess resolved == RequestAccess
-      , Just getter <- [contextProducer (typing (specOf unit (demandProvider resolved)))] ]
-
-    -- 挂接的 parser 与 Pure 用 raw 读取直接 Input 的输出，不把 Input 当前驱执行：
-    -- Input 是 Excu、Scoped、Pure 时读它交出的 list，是 Stream 时读会话本次取得的一份输入。
-    rawSource :: Unit -> EffectSpec -> Maybe (RawSource String)
-    rawSource unit specification
-      | rawKind (typing specification), input specification /= "Root" = case typing (specOf unit (input specification)) of
-          Excu _ -> RawList <$> entryMethod (specOf unit (input specification))
-          Scoped {} -> RawList <$> entryMethod (specOf unit (input specification))
-          Pure _ -> RawList <$> entryMethod (specOf unit (input specification))
-          Stream _ -> RawStream <$> entryMethod (specOf unit (input specification))
-          _ -> Nothing
-      | otherwise = Nothing
-      where
-        rawKind Context {} = True
-        rawKind (Pure _) = True
-        rawKind _ = False
-
-    -- 读取 raw 的方法：Context 的 parser（生产入口）与 Pure 的入口。
-    readsRaw :: EffectSpec -> String -> Bool
-    readsRaw specification method = case typing specification of
-      selected@Context {} -> Just method == contextProducer selected
-      Pure _ -> Just method == entryMethod specification
-      _ -> False
-
-    -- 其他 Input 是前驱：在 handler 之前执行一次，输出不交给 handler。
-    predecessor :: Unit -> EffectSpec -> [String]
-    predecessor unit specification
-      | input specification == "Root" = []
-      | Just _ <- rawSource unit specification = []
-      | otherwise = maybeToList (entryMethod (specOf unit (input specification)))
-
-    -- 算法说明 v2（2026-11-16）：绑定时计算一次，composeMethods 与 Emit 都读取 bindingBefore。
-    -- 先 requests 驱动，再 Input 前驱，最后 handler；close 与 Error 方法只执行 handler。
-    -- 即使驱动链与 Input 链包含相同方法，也不能在这里 nub：两个声明的调用仍是两次执行。
-    -- raw 的同次输出回放与 scope 的活实例共享在各自协议中判定，不由方法名相同推出。
-    -- handler 绑定复用只复用实现，不合并不同 effect 的路由或不同挂载的调用。
-    beforeOf :: Unit -> EffectSpec -> String -> [EntryStep String]
-    beforeOf unit specification method
-      | Just method == entryMethod specification =
-          map RequestStep (drives unit specification) ++ map InputStep (predecessor unit specification)
-      | otherwise = []
-
-    -- 绑定类别决定方法类型：原子句柄与 Pure 都交出 [String]。
-    resultOf :: EffectSpec -> String
-    resultOf specification = case typing specification of
-      Pure _ -> "[String]"
-      Excu _ -> "[String]"
-      Scoped {} -> "[String]"
-      Error {} -> "()"
-      Stream _ -> "String"
-      Context { asset = declared } -> reference (representation declared)
-
-    layerOf :: Unit -> EffectSpec -> String -> [Capability]
-    layerOf unit specification method = map ReadsType
-      (sortOn typeSpelling (nub [routeType route | route <- unitRoutes unit, routeEffect route == name specification]))
-      ++ [HasRaw | readsRaw specification method, Just _ <- [rawSource unit specification]]
-      ++ [EndsSource | Registration.effectKind (typing specification) == StreamKind]
-      ++ [EndsSubscription | consumesStream unit specification]
-      ++ [if Registration.effectKind (typing specification) == PureKind then PureMonad else IOMonad]
-
-    -- 算法说明 v2（2026-11-17）：endStream 给哪些 effect。
-    -- 只给自己以 streams 订阅持续资产的 Excu：它是被持续资产驱动的消费方，endStream 结束的是它自己的订阅。
-    -- 同一条链上的其他 effect（Input 前驱）和 lifelong 里不订阅的普通节点是原子操作，lifelong 只是插入它们的控制流，
-    -- handler 的签名不随所处的控制流改变，因而可以在持续链与有限链之间复用。
-    -- streams 只出现在被驱动的位置（lifelong 节点的订阅、持续 Context 被驱动的 Input 链），
-    -- 运行时按当前调用的位置确定订阅，不需要业务说明结束哪一份资产。
-    -- 只给 Excu：Scoped.open 被打断会使实例失效，Pure 是值变换，Stream 用 streamEnd。
-    -- 代价：每个 effect 查一次自己的 demand。
-    consumesStream :: Unit -> EffectSpec -> Bool
-    consumesStream unit specification = Registration.effectKind (typing specification) == ExcuKind
-      && or [Prototype.demandAccess demand == StreamAccess | demand <- Prototype.effectDemands (protoOf unit (name specification))]
-
-    signatureOf :: Unit -> String -> Either String Signature
-    signatureOf unit handler' = do
-      let bound = [(bindingEffect binding, (NativeType (resultOf (specOf unit (bindingEffect binding))), bindingCapabilities binding))
-            | binding <- unitBindings unit, bindingHandler binding == handler']
-      case nub (map snd bound) of
-        [(result, layer)] -> pure (Signature handler' result layer (nub (map fst bound)))
-        _ -> Left ("Handler " ++ handler' ++ " is bound with different signatures: "
-          ++ intercalate "; " [effect ++ " needs m (" ++ typeSpelling result ++ ") with " ++ intercalate ", " (map describeCapability layer) | (effect, (result, layer)) <- bound]
-          ++ "; reuse a handler only where the binding kind and representation reads agree")
-
-      where
-        -- 用户诊断使用可写入 Layer 的约束；派生 Show/Read 继续服务纯检查点，不用于错误展示。
-        -- 此处不导入 Emit：诊断描述不参与能力选择或生成代码。
-        describeCapability capability = case capability of
-          ReadsType value -> "SDK.Reads (" ++ typeSpelling value ++ ") m"
-          HasRaw -> "SDK.Raw m"
-          EndsSource -> "SDK.StreamEnds m"
-          EndsSubscription -> "SDK.EndsStream m"
-          PureMonad -> "Monad m"
-          IOMonad -> "MonadIO m"
-
-    -- 一个 effect 内每种表示类型至多出现一次；同类型的两个值需要角色类型（待定）。
-    checkRepresentations :: Unit -> EffectSpec -> Either String ()
-    checkRepresentations unit specification = do
-      let keys = [(normalizeType (readType unit resolved), demandContract resolved) | resolved <- readDemands unit (name specification)]
-      case [representation' | (representation', _) <- keys, length (filter ((== representation') . fst) keys) > 1] of
-        representation' : _ -> Left ("Effect " ++ name specification ++ " reads several assets of representation "
-          ++ representation' ++ " (" ++ intercalate ", " [contractType | (key, contractType) <- keys, key == representation']
-          ++ "); one effect reads each representation type at most once")
-        [] -> pure ()
-
-    -- 资产名与 handler 派生名都进入生成区的同一命名空间，不能重名或与固定名冲突。
-    checkGenerated :: Unit -> Either String ()
-    checkGenerated unit = do
-      let declared = map assetContract (unitAssets unit) ++ map branchName (unitBranches unit)
-          derived = concat [[handlerClass handler', handlerLayer handler', handlerError handler', handlerFailure handler'] | handler' <- unitHandlers unit]
-          reserved = reservedTypes ++ derived
-      case [contractType | contractType <- nub declared, length (filter (== contractType) declared) > 1] of
-        contractType : _ -> Left ("Contract " ++ contractType ++ " comes from more than one asset or branch; rename one of them")
-        [] -> pure ()
-      case [contractType | contractType <- nub declared, contractType `elem` reserved] of
-        contractType : _ -> Left ("Asset or branch contract " ++ contractType
-          ++ " collides with a generated name; rename the asset or constructor")
-        [] -> pure ()
-      case [handler' | handler' <- unitHandlers unit, not (validMethodName handler') || handler' `elem` reservedValues] of
-        handler' : _ -> Left ("Handler name must be a lowercase identifier not used by generated code: " ++ handler')
-        [] -> pure ()
-      mapM_ (\(AssetDeclaration contractType representation' owner) -> do
-          unless (validTypeName contractType) $
-            Left ("Asset name must be a type name such as StartURL: " ++ contractType ++ " in " ++ owner)
-          case representation' of
-            TypeRef _ -> pure ()
-            _ -> Left ("Context asset must wrap a business value, not Output: " ++ owner))
-        (unitAssets unit)
-      where
-        validTypeName selectedName = case selectedName of
-          first : rest -> isUpper first && all (\character -> isAlphaNum character || character `elem` "_'") rest
-          [] -> False
-        validMethodName selectedName = case selectedName of
-          first : rest -> isLower first && all (\character -> isAlphaNum character || character `elem` "_'") rest
-          [] -> False
-
-    -- workflow 控制流已经使用的读取：lifelong 订阅的 streams，以及 alternative 候选选择所依据的分支契约。
-    -- 输入链上的声明参与选择／交付，因此这些 demand 不要求 handler 方法体再读一次。
-    controlReads :: [Prototype.EffectProto method] -> Prototype.WorkflowTree -> [(String, String)]
-    controlReads effects tree = nub (walk tree ++ driven)
-      where
-        -- 持续资产生产链上的 streams 由上游交付驱动这条链，同样已被控制流使用。
-        driven = [ (Prototype.effectName effect, demandContract demand) | producer <- effects, Prototype.effectContinuous producer
-          , effect <- effects, Prototype.effectName effect `elem` Prototype.effectInputChain producer
-          , demand <- Prototype.effectDemands effect, demandAccess demand == StreamAccess ]
-        inherited selectedName = selectedName : concat
-          [Prototype.effectInputChain effect | effect <- effects, Prototype.effectName effect == selectedName]
-        demandsOf selectedName = [(Prototype.effectName effect, demand) | effect <- effects
-          , Prototype.effectName effect `elem` inherited selectedName, demand <- Prototype.effectDemands effect]
-        walk node' = here node' ++ concatMap walk (Prototype.workflowChildren node')
-        here (Prototype.LifelongAt _ description _) =
-          [ (consumer, demandContract demand) | (path, contractType) <- Prototype.lifelongSubscriptions description
-          , Just (Prototype.NodeAt _ selectedName) <- [Prototype.lookupWorkflow tree path]
-          , (consumer, demand) <- demandsOf selectedName
-          , demandAccess demand == StreamAccess, demandContract demand == contractType ]
-        here (Prototype.AlternativeAt _ description _) =
-          [ (consumer, demandContract demand) | (path, constructor) <- Prototype.alternativeCases description
-          , Just subtree <- [Prototype.lookupWorkflow tree path]
-          , selectedName <- Prototype.workflowTerminals subtree
-          , (consumer, demand) <- demandsOf selectedName, readsAccess (demandAccess demand)
-          , producer <- effects, Prototype.effectProduces producer == Just (Prototype.alternativeContract description)
-          , (branch, selectedConstructor) <- Prototype.effectBranches producer
-          , branch == demandContract demand, selectedConstructor == constructor ]
-        here _ = []
-
-specifications :: Unit -> [EffectSpec]
-specifications = Prototype.plannedRegistrations . unitPlan
-
-effectPrototypes :: Unit -> [Prototype.EffectProto String]
-effectPrototypes = Prototype.plannedEffects . unitPlan
-
-protoOf :: Unit -> String -> Prototype.EffectProto String
-protoOf unit selectedName = case [effect | effect <- effectPrototypes unit, Prototype.effectName effect == selectedName] of
-  effect : _ -> effect
-  [] -> error ("Validated prototype has no effect: " ++ selectedName)
-
-contextSpecs :: Unit -> [EffectSpec]
-contextSpecs = filter ((== ContextKind) . Registration.effectKind . typing) . specifications
-
-allMethods :: Unit -> [String]
-allMethods unit = [method | effect <- effectPrototypes unit, (_, method) <- Prototype.effectMethods effect]
-
-bindingCalls :: Binding -> [String]
-bindingCalls = map stepMethod . bindingBefore
-
--- Target 的实现可共用，挂载身份仍全部保存在 assemblyMounts；这里只投影生成的入口目录。
-unitTerminals :: Unit -> [(String, String)]
-unitTerminals unit = nub [(mountTerminal mount, mountMethod mount)
-  | mount <- assemblyMounts (unitAssembly unit), mountRole mount == Prototype.NodeChain]
-
-reference :: TypeRef -> String
-reference (TypeRef typeName) = typeName
-reference (OutputRef cause value) = "SDK.Output (" ++ reference cause ++ ") (" ++ reference value ++ ")"
-
--- 含空格且尚未整体括起的类型加括号。
-parenthesized :: String -> String
-parenthesized selected
-  | any (== ' ') selected && not (enclosed selected) = "(" ++ selected ++ ")"
-  | otherwise = selected
-  where enclosed text = take 1 text `elem` ["(", "["] && last text `elem` ")]" && balanced text
-        balanced text = all (> 0) (init (scanl1 (+) (map depth text)))
-        depth character
-          | character `elem` "([" = 1 :: Int
-          | character `elem` ")]" = -1
-          | otherwise = 0
-
--- 表示类型的比较形式：去掉模块限定与括号，String、FilePath 展开为 [Char]（与 Typeable 的写法一致）。
--- 绑定路由与方法形状代换共用同一类型比较；不选择资产。
-normalizeType :: String -> String
-normalizeType = unwords . concatMap expand . filter (`notElem` ["(", ")"]) . tokens
-  where
-    expand token = case unqualified token of
-      "String" -> ["[", "Char", "]"]
-      "FilePath" -> ["[", "Char", "]"]
-      other -> [other]
-    unqualified token = case break (== '.') token of
-      (first : _, '.' : rest) | isUpper first, not (null rest) -> unqualified rest
-      _ -> token
-    tokens [] = []
-    tokens (character : rest)
-      | isSpace character = tokens rest
-      | character `elem` "()[]," = [character] : tokens rest
-      | otherwise = let (word, remaining) = break (\next -> isSpace next || next `elem` "()[],") (character : rest)
-                    in word : tokens remaining
 
 -- 结构分析给出每个 handler 方法体的结构：@T 是按表示类型的读取，%raw 是 raw。
 -- 每个绑定按自己的路由把它们换成 effect 方法调用，前面接上驱动与 Input 前驱，得到 effect 方法的结构。
@@ -1358,7 +573,7 @@ buildStructure plan assembly shapes = do
       defaultReaders = [methodIdentity definition | definition <- defaults
         , methodRole definition == ContextRequire, methodIdentity definition `notElem` map fst shapes]
       result = Prototype (plannedRegistrations plan) effects definitions workflow finite
-        (map makeChain mounts) chainDefinitions graph scopes names [] []
+        (map makeChain mounts) chainDefinitions graph scopes names [] [] (DrivingPlan [] [] [] [] [] [])
   -- Stream 的方法只经会话执行：Stream 单步执行它取得下一份原始输入；挂在该 Stream 下的解析器调用它时，
   -- 由会话本次取得的输入回答，与挂在原子句柄下的 Context 调用句柄相同。其他方法直接调用会绕过会话另取一份。
   let streamMethods = [(effectName effect, method) | effect <- effects, (StreamHandler, method) <- effectMethods effect]
@@ -2193,3 +1408,65 @@ resolveSources checked connections definitions defaultReaders prototype = do
     combine :: [String] -> [(Bool, [(NodeId, String)])] -> [(Bool, [(NodeId, String)])] -> [(Bool, [(NodeId, String)])]
     combine future before after = nub [retainOutcome future (leftOK && rightOK, sort (nub (left ++ right)))
       | (leftOK, left) <- before, (rightOK, right) <- after]
+
+-- 普通入口按角色确定，关闭方法不参与入口选择。
+entryMethod :: EffectSpec -> Maybe String
+entryMethod specification = case typing specification of
+  Pure method -> effectMethodName "run" (name specification) <$ method
+  Excu method -> effectMethodName "run" (name specification) <$ method
+  Scoped opening _ -> effectMethodName "open" (name specification) <$ opening
+  -- Error 的两个方法由故障协议激活，不猜测一个普通 Node 入口。
+  Error {} -> Nothing
+  selected@Context {} -> contextProducer selected
+  -- Stream 的方法只经会话执行，不作为 AST 末端；末端检查另行拒绝。
+  Stream method -> effectMethodName "next" (name specification) <$ method
+
+-- 注册把 handler 绑定到 effect 方法：(effect 方法名, handler 名)。
+handlerBindings :: EffectSpec -> [(String, String)]
+handlerBindings specification = case typing specification of
+  Pure method -> bound "run" method
+  Excu method -> bound "run" method
+  Scoped opening closing -> bound "open" opening ++ bound "close" closing
+  Error { detect = detecting, resolve = resolving } -> bound "detect" detecting ++ bound "resolve" resolving
+  selected@Context { parser = parsing } -> [(method, selected') | Just method <- [contextProducer selected], Just selected' <- [parsing]]
+  Stream method -> bound "next" method
+  where
+    bound prefix method = [(effectMethodName prefix (name specification), selected) | Just selected <- [method]]
+
+-- 生产入口：get 加资产名，例如 getStartURL；它沿 Input 驱动 parser，结果发布为资产。
+-- 消费方写 requests 驱动它，handler 不直接调用。
+contextProducer :: EffectTyping -> Maybe String
+contextProducer (Context declared (Just _) _ _) = Just ("get" ++ contractOf declared)
+contextProducer _ = Nothing
+
+-- 读取入口：read 加资产名读取最新值；持续资产为 stream 加资产名，读取本次固定交付。
+-- 消费方写 requires／streams，handler 按表示类型 require，不直接调用它。
+contextReader :: EffectTyping -> Maybe String
+contextReader (Context declared _ True streaming) =
+  Just ((if streaming then "stream" else "read") ++ contractOf declared)
+contextReader _ = Nothing
+
+
+-- 注册只在此解释一次。Injector 消费方法、结果与操作角色，Names 只拼写已选角色的名字。
+declareEffects :: [EffectSpec] -> [EffectDeclaration]
+declareEffects = map declare
+  where
+    declare specification = EffectDeclaration (name specification) (entryMethod specification) (contextAsset (typing specification))
+      [(method, handler, operation specification method) | (method, handler) <- handlerBindings specification]
+      (NativeType (result specification))
+      (case typing specification of Error { handles = matched } -> Just matched; _ -> Nothing)
+    result specification = case typing specification of
+      Pure _ -> "[String]"
+      Excu _ -> "[String]"
+      Scoped {} -> "[String]"
+      Error {} -> "()"
+      Stream _ -> "String"
+      Context { asset = declared } -> reference (representation declared)
+    operation specification method = case typing specification of
+      Excu _ -> AtomicOperation
+      Scoped _ _ | Just method == entryMethod specification -> OpenResource
+                 | otherwise -> CloseResource
+      Stream _ -> SourceStep
+      Pure _ -> PureOperation
+      Context { asset = declared } -> PublishAsset (contractOf declared)
+      Error {} -> ErrorOperation

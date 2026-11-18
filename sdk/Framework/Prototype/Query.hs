@@ -1,7 +1,8 @@
 -- 只读的原型结构查询。NodeId 的先后与互斥只来自既有 workflow，
 -- 先后只约束启动；普通发布的共享不由这些关系过滤，也不在这里修改运行状态。
 module Framework.Prototype.Query
-  ( workflowNode, workflowChildren, workflowTerminals, workflowLifelongs, workflowSelectors
+  ( nodeDriveAt, unitDriveAt, sessionDriveAt, describedSession
+  , workflowNode, workflowChildren, workflowTerminals, workflowLifelongs, workflowSelectors
   , allWorkflow, lookupChain, lookupWorkflow, precedes, exclusive
   , driveSet, readPoints, scopeOpeningsAt, drivingAssets, bootPlan, sessionSteps, sessionAssets
   , finiteSessions, candidateCase, findEffectProto, ordinaryEntry, selectorMethod, calledMethods, reachableMethods
@@ -185,3 +186,31 @@ reachableMethods definitions = visit []
       | method `elem` seen = visit seen rest
       | otherwise = visit (seen ++ [method])
           (concat [calledMethods (methodBody definition) | definition <- definitions, methodIdentity definition == method] ++ rest)
+
+-- 查询只按身份读取 Booter 的标记；没有标记表示生成产物失配，不重跑结构推导兜底。
+nodeDriveAt :: Prototype method -> NodeId -> NodeDrive
+nodeDriveAt prototype node = case filter ((== node) . driveNode) (drivingNodes (protoDriving prototype)) of
+  [plan] -> plan
+  _ -> error ("Missing or duplicate generated node driver at " ++ show node ++ "; regenerate")
+
+unitDriveAt :: Prototype method -> NodeId -> UnitDrive
+unitDriveAt prototype node = case filter ((== node) . driveUnit) (drivingUnits (protoDriving prototype)) of
+  [plan] -> plan
+  _ -> error ("Missing or duplicate generated unit driver at " ++ show node ++ "; regenerate")
+
+sessionDriveAt :: Prototype method -> Maybe NodeId -> String -> Maybe SessionDrive
+sessionDriveAt prototype boundary source = case [plan | plan <- drivingSessions (protoDriving prototype)
+  , driveSessionBoundary plan == boundary, driveSessionSource plan == source] of
+  [plan] -> Just plan
+  _ -> Nothing
+
+describedSession :: Prototype method -> SessionDrive -> Maybe SessionProto
+describedSession prototype route = case [session | session <- candidates, sessionAsset session == driveSessionAsset route] of
+  [session] -> Just session
+  _ -> Nothing
+  where
+    candidates = case driveSessionBoundary route of
+      Nothing -> protoSessions prototype
+      Just node -> case lookupWorkflow (protoWorkflow prototype) node of
+        Just (LifelongAt _ description _) -> lifelongSessions description
+        _ -> []

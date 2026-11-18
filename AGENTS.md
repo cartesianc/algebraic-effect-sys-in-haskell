@@ -51,9 +51,9 @@
 | --- | --- |
 | 源语言：手写业务门面、注册、AST 与 handler 能力类 | [SDK.hs](sdk/Framework/SDK.hs)、[Registration](sdk/Framework/Language/Registration.hs)、[AST](sdk/Framework/Language/AST.hs)、[Handler](sdk/Framework/Language/Handler.hs) |
 | gen 流水线与命令行 | [Gen.hs](sdk/Framework/Gen.hs)、[Main](sdk/Framework/Gen/Main.hs) |
-| gen：前端读取与方法体形状 | [Source](sdk/Framework/Gen/Source.hs)、[Shape](sdk/Framework/Gen/Shape.hs) |
-| gen：统一组合计算（声明、会话、类型能力、装配、构图与来源证明） | [Composition](sdk/Framework/Gen/Composition.hs)；生成名字见 [Names](sdk/Framework/Gen/Names.hs) |
-| gen：输出与类检 | [Emit/Effects](sdk/Framework/Gen/Emit/Effects.hs)、[Emit/Handlers](sdk/Framework/Gen/Emit/Handlers.hs)、[Emit/Program](sdk/Framework/Gen/Emit/Program.hs)、[Emit/Prototype](sdk/Framework/Gen/Emit/Prototype.hs)、[Assets](sdk/Framework/Gen/Assets.hs)、[Catalog](sdk/Framework/Gen/Catalog.hs) |
+| gen：前端读取与方法体形状 | [Source](sdk/Framework/Gen/Frontend/Source.hs)、[Shape](sdk/Framework/Gen/Frontend/Shape.hs) |
+| gen：统一组合计算（声明、会话、类型能力、装配、构图与来源证明） | [Composition](sdk/Framework/Gen/Composition.hs)；装配见 [Injector](sdk/Framework/Gen/Injector.hs)，驱动标记见 [Booter](sdk/Framework/Gen/Booter.hs)，内部计划见 [Plan](sdk/Framework/Gen/Plan.hs)；[Names](sdk/Framework/Gen/Names.hs) 只拼写已定角色的名字 |
+| gen：输出与类检 | [Emit/Effects](sdk/Framework/Gen/Emit/Effects.hs)、[Emit/Handlers](sdk/Framework/Gen/Emit/Handlers.hs)、[Emit/Program](sdk/Framework/Gen/Emit/Program.hs)、[Emit/Prototype](sdk/Framework/Gen/Emit/Prototype.hs)、[Check/Assets](sdk/Framework/Gen/Check/Assets.hs)、[Emit/Assets](sdk/Framework/Gen/Emit/Assets.hs)、[Prototype/Catalog](sdk/Framework/Prototype/Catalog.hs) |
 | 编译产物：Prototype 模型、查询、校验与展示 | [Prototype.hs](sdk/Framework/Prototype.hs)、[Types](sdk/Framework/Prototype/Types.hs)、[Graph](sdk/Framework/Prototype/Graph.hs)、[Query](sdk/Framework/Prototype/Query.hs)、[Validate](sdk/Framework/Prototype/Validate.hs)、[Structure](sdk/Framework/Prototype/Structure.hs) |
 | 生成代码门面与运行入口 | [Generated.hs](sdk/Framework/Generated.hs)、[Program.hs](sdk/Framework/Program.hs) |
 | 运行时：协议、Context 与绑定 | [Protocol](sdk/Framework/Runtime/Protocol.hs)、[Context](sdk/Framework/Runtime/Context.hs)、[Binding](sdk/Framework/Runtime/Binding.hs) |

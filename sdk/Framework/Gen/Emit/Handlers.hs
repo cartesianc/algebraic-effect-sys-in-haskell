@@ -7,10 +7,10 @@ module Framework.Gen.Emit.Handlers (renderHandlers, handlerExports) where
 
 import Data.List (intercalate, nub, sortOn)
 import Data.Maybe (isJust)
-import Framework.Gen.Composition
+import Framework.Gen.Plan
 import Framework.Gen.Emit.Types (renderValueType)
 import Framework.Gen.Names (handlerError, handlerFailure)
-import Framework.Gen.Source (HandlerSource(..), sourceOffset)
+import Framework.Gen.Frontend.Source (HandlerSource(..), sourceOffset)
 import Framework.Language.Registration
 import Framework.Prototype.Graph (MethodRole(..))
 import qualified Framework.Prototype as Prototype
@@ -44,7 +44,7 @@ renderHandlers unit loaded = do
 -- 生成区的装配：effect 标签、handler 能力的实例与 effect 方法。
 support :: Unit -> String
 support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers unit) ++ routeInstances ++ rawInstances
-    ++ endInstances ++ concatMap entryDefinitions (specifications unit))
+    ++ endInstances ++ concatMap entryDefinitions (map Prototype.effectName (effectPrototypes unit)))
     ++ scopeHandlers ++ scopeCleanups ++ errorHandlers
     ++ injectionTable ContextRequest "contextInjections"
     ++ injectionTable ContextStream "streamContextInjections"
@@ -91,30 +91,29 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       | binding <- unitBindings unit, Just source <- [bindingRaw binding] ]
     -- 能力已经由组合计算确定；这里只为对应标签输出实例，不重新解释 effect 类别或 demands。
     endInstances = concat
-      [ [ "instance FrameworkRuntime.StreamEnds (At " ++ show (name specification) ++ ") where"
+      [ [ "instance FrameworkRuntime.StreamEnds (At " ++ show (selectedName) ++ ") where"
         , "  streamEnd = At FrameworkRuntime.endSource"
         , "" ]
-      | specification <- specifications unit, hasCapability specification EndsSource ]
+      | selectedName <- map Prototype.effectName (effectPrototypes unit), hasCapability selectedName EndsSource ]
       ++ concat
-      [ [ "instance FrameworkRuntime.EndsStream (At " ++ show (name specification) ++ ") where"
+      [ [ "instance FrameworkRuntime.EndsStream (At " ++ show (selectedName) ++ ") where"
         , "  endStream = At FrameworkRuntime.endSubscription"
         , "" ]
-      | specification <- specifications unit, hasCapability specification EndsSubscription ]
-    hasCapability specification capability = or
+      | selectedName <- map Prototype.effectName (effectPrototypes unit), hasCapability selectedName EndsSubscription ]
+    hasCapability selectedName capability = or
       [ capability `elem` bindingCapabilities binding
-      | binding <- unitBindings unit, bindingEffect binding == name specification ]
+      | binding <- unitBindings unit, bindingEffect binding == selectedName ]
 
     -- effect 方法：外层包装由类别决定；方法体先驱动、再执行 Input 前驱，最后在本 effect 的标签下执行 handler。
-    entryDefinitions specification =
+    entryDefinitions selectedName =
       [ line
-      | binding <- unitBindings unit, bindingEffect binding == name specification
+      | binding <- unitBindings unit, bindingEffect binding == selectedName
       , let method = bindingMethod binding
             handler' = bindingHandler binding
       , line <- definition method (renderValueType "FrameworkRuntime." "FrameworkGenerated." (bindingResult binding)) (wrapper binding)
           (intercalate " >> " (bindingCalls binding ++ [handlerCall binding handler'])) ]
-      ++ concat [ readerDefinition reader | reader <- unitReaders unit, readerEffect reader == name specification ]
+      ++ concat [ readerDefinition reader | reader <- unitReaders unit, readerEffect reader == selectedName ]
       where
-        selectedName = name specification
         handlerCall binding handler' = case bindingOperation binding of
           PublishAsset contract ->
             "(FrameworkGenerated." ++ contract ++ " <$> runAt @" ++ show selectedName ++ " FrameworkGenerated." ++ handler' ++ ")"
@@ -154,8 +153,6 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       , "  " ++ body
       , "" ]
 
-    orderedScopes = unitScopeOrder unit
-    openingInputs = Prototype.effectOpeningInputs . protoOf unit . name
 
     -- 控制对象由生成的 handler 模块创建；不同链引用同份对象，不预执行 open。
     scopeHandlers = unlines
@@ -167,9 +164,9 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       ]
       where
         registered =
-          [ "FrameworkRuntime.newScopeHandler " ++ show (name specification) ++ " " ++ show (openingInputs specification)
-              ++ " (" ++ show (Prototype.effectResource (protoOf unit (name specification))) ++ ")"
-          | selectedScope <- orderedScopes, specification <- specifications unit, name specification == selectedScope ]
+          [ "FrameworkRuntime.newScopeHandler " ++ show (scopeEffect plan) ++ " " ++ show (scopeInputs plan)
+              ++ " (" ++ show (scopeResource plan) ++ ")"
+          | plan <- unitScopes unit ]
     scopeCleanups = unlines
       [ ""
       , "-- SDK 自动收尾入口；安装时不关闭资源。"
@@ -180,10 +177,8 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       ]
       where
         callbacks =
-          [ "(" ++ show selectedScope ++ ", () <$ " ++ closing ++ ")"
-          | selectedScope <- orderedScopes
-          , effect <- effectPrototypes unit, Prototype.effectName effect == selectedScope
-          , (ScopeClose, closing) <- Prototype.effectMethods effect ]
+          [ "(" ++ show (scopeEffect plan) ++ ", () <$ " ++ closing ++ ")"
+          | plan <- unitScopes unit, Just closing <- [scopeCleanup plan] ]
     -- 原子句柄的输出交给挂在它下面的 parser：键是句柄的 effect 方法名。
     injectionTable role tableName = unlines
       [ ""
@@ -211,15 +206,13 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
       ]
       where
         callbacks =
-          [ "(" ++ show (Prototype.effectErrorScope effect) ++ ", FrameworkRuntime.ErrorHandler " ++ show (name specification)
+          [ "(" ++ show (errorScope plan) ++ ", FrameworkRuntime.ErrorHandler " ++ show (errorEffect plan)
               ++ "\n      (\\failure -> case (FrameworkRuntime.origin failure, FrameworkRuntime.detail failure) of"
-              ++ concatMap (("\n        " ++) . matchCase) (nub matched)
+              ++ concatMap (("\n        " ++) . matchCase) (errorMatches plan)
               ++ "\n        _ -> False)"
-              ++ "\n      (" ++ methodReference ErrorDetect ++ ") (" ++ methodReference ErrorResolve ++ "))"
-          | specification <- specifications unit
-          , Error { handles = matched } <- [typing specification]
-          , let effect = protoOf unit (name specification)
-                methodReference role = maybe "Nothing" ("Just " ++) (lookup role (Prototype.effectMethods effect)) ]
+              ++ "\n      (" ++ methodReference (errorDetect plan) ++ ") (" ++ methodReference (errorResolve plan) ++ "))"
+          | plan <- unitErrors unit ]
+        methodReference = maybe "Nothing" ("Just " ++)
         matchCase (RaisedBy selectedHandler) = "(_, FrameworkGenerated." ++ handlerFailure selectedHandler ++ ") -> True"
         matchCase (ScopeFaultIn selectedEffect) = "(" ++ show selectedEffect ++ ", FrameworkGenerated.ScopeBindingError _) -> True"
         matchCase (ContextFaultIn selectedEffect) = "(" ++ show selectedEffect ++ ", FrameworkGenerated.ContextBindingError _) -> True"

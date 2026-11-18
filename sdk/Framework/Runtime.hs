@@ -65,7 +65,6 @@ noHandoff = Handoff [] []
 -- 本轮稳定协议 v1（2026-11-17）：gen 允许“此前发布”和“同轮必经并行发布”，不能仅凭同单元
 -- 就不等待。PublishedAt 等全部发布位置退休；DerivedFrom 另等派生步骤处理完本轮上游发布。
 -- 只记录从本单元 ReuseOutput 可达的来源，其他单元与 Receive 仍通过未来增量驱动本单元。
-data LocalSource = PublishedAt [NodeId] | DerivedFrom String
 
 data DeliveryFrame environment cause = DeliveryFrame
   { frameLocal :: [(String, LocalSource)]
@@ -428,14 +427,4 @@ sessionLauncher graph steps onBroken session
 -- 会话计划与挂载只来自同一份原型；复用原始链输出的会话没有独立生产挂载。
 sessionDescriptionOf :: PrototypeReference -> Maybe NodeId -> String -> Maybe SessionProto
 sessionDescriptionOf (PrototypeReference prototype) boundary source =
-  case [session | session <- candidates
-       , Just (sessionAsset session) == lookup source produced] of
-    [description] -> Just description
-    _ -> Nothing
-  where
-    produced = [(effectName effect, contractType) | effect <- protoEffects prototype
-      , Just contractType <- [effectProduces effect]]
-    candidates = case boundary of
-      Nothing -> protoSessions prototype
-      Just lifelong -> [session | (identifier, described) <- workflowLifelongs (protoWorkflow prototype)
-        , identifier == lifelong, session <- lifelongSessions described]
+  sessionDriveAt prototype boundary source >>= describedSession prototype
