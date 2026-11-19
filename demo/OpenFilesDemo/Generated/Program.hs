@@ -22,10 +22,10 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "HoldFiles" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (HoldFilesResult <$> (() <$ Handlers.runHoldFiles))))))
-      , SDK.targetApp "InspectFiles" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (InspectFilesResult <$> (() <$ Handlers.runInspectFiles))))))
-      , SDK.targetApp "ReleaseFiles" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReleaseFilesResult <$> (() <$ Handlers.runReleaseFiles))))))
-      , SDK.targetApp "FinishInspection" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (FinishInspectionResult <$> (() <$ Handlers.runFinishInspection))))))
+    ( [ SDK.targetApp "HoldFiles" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (HoldFilesResult <$> (() <$ Handlers.runHoldFiles)))
+      , SDK.targetApp "InspectFiles" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (InspectFilesResult <$> (() <$ Handlers.runInspectFiles)))
+      , SDK.targetApp "ReleaseFiles" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ReleaseFilesResult <$> (() <$ Handlers.runReleaseFiles)))
+      , SDK.targetApp "FinishInspection" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (FinishInspectionResult <$> (() <$ Handlers.runFinishInspection)))
       ]
     , []
     , []

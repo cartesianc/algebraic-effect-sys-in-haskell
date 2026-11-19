@@ -2,7 +2,7 @@
 
 -- 输出 Generated/Handlers.hs：手写 Handlers.hs 的编译副本（方法体原样保留），后接 gen 生成的装配——
 -- 每个 effect 一个类型标签 At，按标签的 Reads／Raw／Raises 实例，“驱动 → Input → 方法体”的 effect 方法，
--- 以及 scope、Error 与挂接 Context 的登记表。只渲染绑定阶段定下的事实。
+-- 以及 scope 与 Error 的登记表。挂接的 Context 与自动收尾的 close 直接写在入口包装上。只渲染绑定阶段定下的事实。
 module Framework.Gen.Emit.Handlers (renderHandlers, handlerExports) where
 
 import Data.List (intercalate, nub, sortOn)
@@ -22,7 +22,7 @@ import GHC.Types.SrcLoc
 
 -- Generated/Handlers 导出的名字：全部 effect 方法与登记表。
 handlerExports :: Unit -> [String]
-handlerExports unit = allMethods unit ++ ["newScopeHandlers", "scopeCleanups", "errorHandlers", "contextInjections", "streamContextInjections"]
+handlerExports unit = allMethods unit ++ ["newScopeHandlers", "errorHandlers"]
 
 hasMiddleware :: Unit -> Bool
 hasMiddleware unit = any ((== MiddlewareOperation) . bindingOperation) (unitBindings unit)
@@ -53,9 +53,7 @@ renderHandlers unit loaded = do
 support :: Unit -> String
 support unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ concatMap raisesInstance ordinaryHandlers ++ routeInstances ++ rawInstances
     ++ endInstances ++ concatMap entryDefinitions (map Prototype.effectName (effectPrototypes unit)))
-    ++ scopeHandlers ++ scopeCleanups ++ errorHandlers
-    ++ injectionTable ContextRequest "contextInjections"
-    ++ injectionTable ContextStream "streamContextInjections"
+    ++ scopeHandlers ++ errorHandlers
   where
     hooked = hasMiddleware unit
     -- 标签与调用的写法：有 Middleware 时带 hooks。
@@ -66,7 +64,6 @@ support unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ conc
     signature resultType = if hooked
       then "forall hooks. Captured hooks => FrameworkGenerated.App " ++ resultType
       else "FrameworkGenerated.App " ++ resultType
-    tableSignature = if hooked then "forall hooks. Captured hooks => " else ""
     middlewareBindings = [binding | binding <- unitBindings unit, bindingOperation binding == MiddlewareOperation]
     middlewareHandlers = map bindingHandler middlewareBindings
     ordinaryHandlers = filter (`notElem` middlewareHandlers) (unitHandlers unit)
@@ -234,17 +231,28 @@ support unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ conc
         entered = scoped ++ " . FrameworkRuntime.enterHandler " ++ show selectedName
         wrapper binding = rootWrapper selectedName ++ " . " ++ case bindingOperation binding of
           -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
-          OpenResource -> scopeWrapper binding "openScope "
-          CloseResource -> scopeWrapper binding "closeScope "
-          AtomicOperation -> "FrameworkRuntime.atomicHandle " ++ show (bindingMethod binding) ++ " . " ++ entered
+          OpenResource -> scopeWrapper binding "openScope " (" " ++ cleanupOf selectedName)
+          CloseResource -> scopeWrapper binding "closeScope " ""
+          AtomicOperation -> "FrameworkRuntime.atomicHandle " ++ show (bindingMethod binding) ++ anchoredOf binding ++ " . " ++ entered
           SourceStep -> "FrameworkRuntime.streamHandle . " ++ entered
           PureOperation -> scoped
           PublishAsset _ -> scoped ++ " . FrameworkRuntime.callContext " ++ show selectedName
             ++ "\n    (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"
           ErrorOperation -> entered
           MiddlewareOperation -> entered
-        scopeWrapper binding operation = "FrameworkRuntime.atomicScope " ++ show (bindingMethod binding) ++ " . FrameworkRuntime."
-          ++ operation ++ show selectedName ++ " FrameworkGenerated.ScopeBindingError . " ++ entered
+        scopeWrapper binding operation cleanup = "FrameworkRuntime.atomicScope " ++ show (bindingMethod binding) ++ anchoredOf binding
+          ++ " . FrameworkRuntime." ++ operation ++ show selectedName ++ " FrameworkGenerated.ScopeBindingError" ++ cleanup ++ " . " ++ entered
+    -- 挂在原子句柄下的 parser：句柄成功交出时，普通挂接注入后吞错，持续挂接按本次执行位置筛选后传播失败。
+    anchoredOf binding = " " ++ connectionsOf ContextRequest ++ " " ++ connectionsOf ContextStream
+      where
+        connectionsOf role = "[" ++ intercalate ", "
+          [ "(" ++ show (outputProducer connection) ++ ", () <$ " ++ call (outputParser connection) ++ ")"
+          | connection <- assemblyOutputs (unitAssembly unit)
+          , outputRole connection == role, outputAnchor connection == bindingMethod binding ] ++ "]"
+    -- 自动收尾：open 带上本 scope 的 close，在同一 Middleware 列表下执行。
+    cleanupOf selectedName = case [closing | plan <- unitScopes unit, scopeEffect plan == selectedName, Just closing <- [scopeCleanup plan]] of
+      closing : _ -> "(Just (() <$ " ++ call closing ++ "))"
+      [] -> "Nothing"
     rootWrapper selectedName = "FrameworkRuntime.withErrorPath " ++ show (Prototype.effectNearestScopes (protoOf unit selectedName))
       ++ " . FrameworkRuntime.handleFailure"
     -- readT 与 streamT 的模式由组合计算选定，渲染器只输出相应的读取入口；读取不执行 handler，不随 hooks 变化。
@@ -280,35 +288,6 @@ support unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ conc
           [ "FrameworkRuntime.newScopeHandler " ++ show (scopeEffect plan) ++ " " ++ show (scopeInputs plan)
               ++ " (" ++ show (scopeResource plan) ++ ")"
           | plan <- unitScopes unit ]
-    -- 收尾表随 hooks 多态：开启它的挂载按哪组 Middleware 安装，收尾就调用同一组的 close。
-    scopeCleanups = unlines
-      [ ""
-      , "-- SDK 自动收尾入口；安装时不关闭资源。"
-      , "scopeCleanups :: " ++ tableSignature ++ "[(String, FrameworkGenerated.App ())]"
-      , "scopeCleanups ="
-      , "  [" ++ (if null callbacks then "" else " " ++ intercalate "\n  , " callbacks)
-      , "  ]"
-      ]
-      where
-        callbacks =
-          [ "(" ++ show (scopeEffect plan) ++ ", () <$ " ++ call closing ++ ")"
-          | plan <- unitScopes unit, Just closing <- [scopeCleanup plan] ]
-    -- 原子句柄的输出交给挂在它下面的 parser：键是句柄的 effect 方法名。
-    injectionTable role tableName = unlines
-      [ ""
-      , "-- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。"
-      , tableName ++ " :: " ++ tableSignature ++ "[(String, [(String, FrameworkGenerated.App ())])]"
-      , tableName ++ " ="
-      , "  [" ++ (if null entries then "" else " " ++ intercalate "\n  , " entries)
-      , "  ]"
-      ]
-      where
-        connections = [connection | connection <- assemblyOutputs (unitAssembly unit), outputRole connection == role]
-        entries =
-          [ "(" ++ show anchor ++ ", [" ++ intercalate ", "
-              ["(" ++ show (outputProducer connection) ++ ", () <$ " ++ call (outputParser connection) ++ ")"
-              | connection <- connections, outputAnchor connection == anchor] ++ "])"
-          | anchor <- nub (map outputAnchor connections) ]
     -- Error 只指向 scope：按 handles 匹配故障，detect／resolve 是生成的 effect 方法；Error 不被拦截，按空列表执行。
     errorHandlers = unlines
       [ ""

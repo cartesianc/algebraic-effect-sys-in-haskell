@@ -22,10 +22,10 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "FetchPage" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (FetchPageResult <$> (() <$ Handlers.runFetchPage))))))
-      , SDK.targetApp "FetchLinkedPage" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (FetchLinkedPageResult <$> (() <$ Handlers.runFetchLinkedPage))))))
-      , SDK.targetApp "PrintPage" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrintPageResult <$> (() <$ Handlers.runPrintPage))))))
-      , SDK.targetApp "PrintLinkedPage" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrintLinkedPageResult <$> (() <$ Handlers.runPrintLinkedPage))))))
+    ( [ SDK.targetApp "FetchPage" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (FetchPageResult <$> (() <$ Handlers.runFetchPage)))
+      , SDK.targetApp "FetchLinkedPage" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (FetchLinkedPageResult <$> (() <$ Handlers.runFetchLinkedPage)))
+      , SDK.targetApp "PrintPage" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (PrintPageResult <$> (() <$ Handlers.runPrintPage)))
+      , SDK.targetApp "PrintLinkedPage" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (PrintLinkedPageResult <$> (() <$ Handlers.runPrintLinkedPage)))
       ]
     , []
     , []

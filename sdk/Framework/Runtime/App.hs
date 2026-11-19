@@ -12,7 +12,7 @@
 -- open／close 在实际读取资源绑定时选择实例；不在 handler 外预先执行取值。
 -- 本文件保留共享 Environment 的解释器实现，按绑定、Store、诊断、生命周期和根调用分组。
 module Framework.Runtime.App
-  ( App, Launch(..), runAppWith, withScopeCleanups
+  ( App, Launch(..), runAppWith
   , superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError
   ) where
 
@@ -57,7 +57,6 @@ data Environment env cause = Environment
   , errorPath :: [String]
   , originalFailure :: Maybe (Failure cause)
   , diagnosticOwner :: Maybe (ScopeInstance env cause)
-  , scopeCleanups :: [(String, App env cause ())]
   , cleaningScopes :: Bool
   , consumer :: ScopeUser env cause
   , cleanupPermit :: Maybe (Unique, ScopeInstance env cause)
@@ -67,10 +66,6 @@ data Environment env cause = Environment
   , execution :: Execution
   , currentFrame :: ExecutionFrame
   , bindingRetention :: Retention env cause
-  -- 原子句柄方法名 → 挂在它下面的 Context 生产入口，由生成区安装。
-  , anchoredEntries :: [(String, [(String, App env cause ())])]
-  -- 持续 parser 的挂接目录；实际可执行项由当前 Origin 对应的静态发布位置筛选。
-  , streamEntries :: [(String, [(String, App env cause ())])]
   -- 注入期间各原子句柄的本次输出。
   , replays :: [(String, RawOutput)]
   -- 持续资产在本次调用的固定交付：lifelong 交付或此前的会话读取；其他调用之后的发布不改写它。
@@ -100,6 +95,8 @@ data Launch env cause = Launch
 data Opening env cause = Opening
   { family :: ScopeHandler env cause
   , wrapFault :: ScopeFault -> cause
+  -- gen 写在 open 入口上的本 scope close；开启成功时登记为自动收尾。
+  , closeAction :: Maybe (App env cause ())
   , observed :: IORef [ScopeInput]
   , observedFrames :: IORef [(String, ExecutionFrame)]
   , produced :: IORef (ScopeBindings env cause)
@@ -480,15 +477,10 @@ instance ContextStore env (App env cause) where
         possible <- contextMayPublish (runtimeGraph environment) (currentFrame environment)
           (executionOrigin (execution environment)) source
         if possible then readMVar signal >> pure True else pure False))
-  withAnchoredContexts entries (AppRun action) = AppRun $ local
-    (\environment -> environment { anchoredEntries = entries }) action
-  anchoredContexts method = AppRun (asks (fromMaybe [] . lookup method . anchoredEntries))
-  withStreamContexts entries (AppRun action) = AppRun $ local
-    (\environment -> environment { streamEntries = entries }) action
-  streamContexts method = AppRun $ do
+  activeStreamContexts entries = AppRun $ do
     environment <- ask
     let node = originNode (executionOrigin (execution environment))
-    pure [entry | entry@(source, _) <- fromMaybe [] (lookup method (streamEntries environment))
+    pure [entry | entry@(source, _) <- entries
       , source `elem` map fst (sessionSinks environment)
       , reusesOutputAt (runtimeGraph environment) node source]
   replayedOutput method = AppRun (asks (lookup method . replays))
@@ -722,16 +714,11 @@ scopeFailureTarget selected owner problem
 
 -- 生命周期执行与清理闭包 -------------------------------------------------------
 
--- 生成区安装 close 引用；安装本身不执行资源操作。
-withScopeCleanups :: [(String, App env cause ())] -> App env cause value -> App env cause value
-withScopeCleanups callbacks (AppRun action) = AppRun $ local
-  (\environment -> environment { scopeCleanups = callbacks }) action
-
 -- 在本次 open 退出前冻结绑定。后续 request、其他参数实例或重开都不会改变收尾目标。
 -- open 已失败但资源已经发布时，同样保存清理动作；未发布的部分获取由原子获取操作负责。
 captureScopeCleanup :: forall env cause. Environment env cause -> Opening env cause -> ScopeInstance env cause -> IO ()
 captureScopeCleanup environment attempt slot =
-  case lookup name (scopeCleanups environment) of
+  case closeAction attempt of
     Nothing -> pure ()
     Just (AppRun close) -> do
       saved <- scopeBindings <$> readIORef (scopeRecord slot)
@@ -769,15 +756,15 @@ captureScopeCleanup environment attempt slot =
         writeIORef (scopeCleanup slot) (Just (ScopeCleanup interrupted cleanup))
   where name = scopeName (family attempt)
 
-runOpen :: String -> (ScopeFault -> cause) -> App env cause value -> App env cause (Maybe value)
-runOpen name wrap (AppRun action) = AppRun $ do
+runOpen :: String -> (ScopeFault -> cause) -> Maybe (App env cause ()) -> App env cause value -> App env cause (Maybe value)
+runOpen name wrap cleanup (AppRun action) = AppRun $ do
   environment <- ask
   when (cleaningScopes environment || not (null (closings environment))) $
     throwError (fault name wrap ScopeCleanupInProgress)
   when (name `elem` ownedNames environment) (throwError (fault name wrap ScopeReentry))
   result <- liftIO $ mask $ \restore -> do
     handler <- getScope (scopes environment) name
-    attempt <- Opening handler wrap <$> newIORef [] <*> newIORef [] <*> newIORef [] <*> newIORef Nothing <*> newUnique
+    attempt <- Opening handler wrap cleanup <$> newIORef [] <*> newIORef [] <*> newIORef [] <*> newIORef Nothing <*> newUnique
     let inside = environment { openings = attempt : openings environment }
         execute = do
           when (null (scopeInputSources handler)) $
@@ -962,11 +949,11 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         { emptyValues = initial, bindings = values, scopes = handlers
         , caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
         , errorHandlers = [], errorPath = [], originalFailure = Nothing, diagnosticOwner = Nothing
-        , scopeCleanups = [], cleaningScopes = False, consumer = user
+        , cleaningScopes = False, consumer = user
         , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
         , activeActivation = Just (activationId activation), execution = currentExecution
         , currentFrame = launchFrame launch, bindingRetention = launchRetention launch
-        , anchoredEntries = [], streamEntries = [], replays = []
+        , replays = []
         , views = delivered, streamRaw = launchInput launch, sessionSinks = launchSinks launch
         , frameDeliver = launchDeliver launch }
   (do

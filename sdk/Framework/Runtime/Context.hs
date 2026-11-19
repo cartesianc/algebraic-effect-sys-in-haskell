@@ -98,17 +98,18 @@ streamHandle body = streamRawInput >>= maybe body pure
 -- Excu 的生成入口：每次调用都执行。
 atomicHandle
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> m [String] -> m [String]
-atomicHandle method = atomicScope method . fmap Just
+  => String -> [(String, m ())] -> [(String, m ())] -> m [String] -> m [String]
+atomicHandle method anchored continuous = atomicScope method anchored continuous . fmap Just
 
 -- 原子句柄（Excu、Scoped.open／close）的统一出口。handler 交出的 list 与是否成功
 -- 组成 RawOutput，只交给挂在该句柄下（可经一串 Pure）的 Context parser 解析并作为资产发布；没有挂接时直接丢弃。
 -- 以它为 Input 的入口不读取这份输出；普通挂接的失败留在注入内，持续挂接的失败按持续执行协议传播。
 -- 外层 Nothing 表示 handler 没有执行（复用的 scope 实例、重复 close），此时没有新的输出。
+-- 挂在句柄下的 parser 由 gen 写在入口上：anchored 是普通挂接，continuous 是持续挂接，各为 (Context 名, 生产入口)。
 atomicScope
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> m (Maybe [String]) -> m [String]
-atomicScope method body = do
+  => String -> [(String, m ())] -> [(String, m ())] -> m (Maybe [String]) -> m [String]
+atomicScope method anchored continuous body = do
   replayed <- replayedOutput method
   case replayed of
     -- 注入中的 parser（或它上方的 Pure）经 raw 调用挂接的句柄：回答本次输出，不重复执行。
@@ -125,9 +126,8 @@ atomicScope method body = do
     -- 挂接的 Context 自己拉取该句柄时（requests 驱动或选择读取），由它自己的入口发布，不再注入；
     -- 中间的 Pure 入口不改变调用者，所以经一串 Pure 拉取时仍认得出是这个 Context。
     deliver consumer raw = when (succeeded raw) $ do
-      anchored <- anchoredContexts method
       when (maybe True (`notElem` map fst anchored) consumer) $
         forM_ anchored $ \(_, produce) -> injectOutput method raw produce
-      continuous <- streamContexts method
-      when (maybe True (`notElem` map fst continuous) consumer) $
-        forM_ continuous $ \(_, produce) -> injectStreamOutput method raw produce
+      active <- activeStreamContexts continuous
+      when (maybe True (`notElem` map fst active) consumer) $
+        forM_ active $ \(_, produce) -> injectStreamOutput method raw produce

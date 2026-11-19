@@ -51,17 +51,10 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 返回 Nothing 表示当前不等待（诊断、收尾，或该来源是 scope 资源），缺值按 ContextNotInitialized 报出。
   awaitContext :: String -> m (Maybe (m Bool))
   awaitContext _ = pure Nothing
-  -- 生成区按原子句柄方法名安装挂在它下面的 Context 生产入口。
-  withAnchoredContexts :: [(String, [(String, m ())])] -> m value -> m value
-  withAnchoredContexts _ = id
-  anchoredContexts :: String -> m [(String, m ())]
-  anchoredContexts _ = pure []
-  -- 持续 Context 沿用原始链这次输出。只有原型指定的发布位置会取得这些入口；
-  -- 普通注入和持续注入分别保持各自的失败协议。
-  withStreamContexts :: [(String, [(String, m ())])] -> m value -> m value
-  withStreamContexts _ = id
-  streamContexts :: String -> m [(String, m ())]
-  streamContexts _ = pure []
+  -- 持续 Context 沿用原始链这次输出。gen 把挂在句柄下的持续 parser 写在入口上，
+  -- 只有本次执行位置是原型指定的发布位置时才取得它们；普通注入和持续注入分别保持各自的失败协议。
+  activeStreamContexts :: [(String, m ())] -> m [(String, m ())]
+  activeStreamContexts _ = pure []
   -- 注入期间，挂接 Context 对该句柄的调用由本次 RawOutput 回答，不重复执行。
   replayedOutput :: String -> m (Maybe RawOutput)
   replayedOutput _ = pure Nothing
@@ -115,7 +108,8 @@ data ScopeFault = ScopeNotOpen | ScopeIsClosed | ScopeReentry | ScopeInterrupted
 class Monad m => ScopeStore cause m | m -> cause where
   withScopeDependencies :: [String] -> m value -> m value
   -- Nothing 表示方法体没有执行：复用了同参的已开启实例，或重复 close 被跳过。
-  openScope :: String -> (ScopeFault -> cause) -> m value -> m (Maybe value)
+  -- open 带上本 scope 的 close 入口（gen 按开启它的同一 Middleware 列表写出），开启成功时登记为自动收尾。
+  openScope :: String -> (ScopeFault -> cause) -> Maybe (m ()) -> m value -> m (Maybe value)
   closeScope :: String -> (ScopeFault -> cause) -> m value -> m (Maybe value)
   invalidateScope :: String -> Failure cause -> m ()
 

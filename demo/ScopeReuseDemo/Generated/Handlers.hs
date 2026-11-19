@@ -20,7 +20,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module ScopeReuseDemo.Generated.Handlers (handlerSourceFingerprint, getFilePaths, readFilePaths, runPrepareProbe, getOpenedFile, readOpenedFile, openSharedFileScope, closeSharedFileScope, runWriteFirst, runWriteSecond, runWriteThird, runVerifyReuse, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections, streamContextInjections) where
+module ScopeReuseDemo.Generated.Handlers (handlerSourceFingerprint, getFilePaths, readFilePaths, runPrepareProbe, getOpenedFile, readOpenedFile, openSharedFileScope, closeSharedFileScope, runWriteFirst, runWriteSecond, runWriteThird, runVerifyReuse, newScopeHandlers, errorHandlers) where
 
 import qualified Framework.Generated as FrameworkRuntime
 import qualified ScopeReuseDemo.Generated.Effects as FrameworkGenerated
@@ -219,7 +219,7 @@ readFilePaths = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFail
   FrameworkRuntime.readContext "FileLocations" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileLocations
 
 runPrepareProbe :: FrameworkGenerated.App [String]
-runPrepareProbe = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrepareProbe" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareProbe") $
+runPrepareProbe = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrepareProbe" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareProbe") $
   getFilePaths >> runAt @"PrepareProbe" (FrameworkRuntime.super "prepareProbe" FrameworkGenerated.prepareProbe)
 
 getOpenedFile :: FrameworkGenerated.App FrameworkGenerated.OpenedFile
@@ -232,27 +232,27 @@ readOpenedFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFai
   FrameworkRuntime.readContext "FileResource" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileResource
 
 openSharedFileScope :: FrameworkGenerated.App [String]
-openSharedFileScope = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openSharedFileScope" . FrameworkRuntime.openScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
+openSharedFileScope = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openSharedFileScope" [] [] . FrameworkRuntime.openScope "SharedFileScope" FrameworkGenerated.ScopeBindingError (Just (() <$ closeSharedFileScope)) . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
   getOpenedFile >> runAt @"SharedFileScope" (FrameworkRuntime.super "openSharedFile" FrameworkGenerated.openSharedFile)
 
 closeSharedFileScope :: FrameworkGenerated.App [String]
-closeSharedFileScope = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeSharedFileScope" . FrameworkRuntime.closeScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
+closeSharedFileScope = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeSharedFileScope" [] [] . FrameworkRuntime.closeScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
   runAt @"SharedFileScope" (FrameworkRuntime.superClose "closeSharedFile" FrameworkGenerated.closeSharedFile)
 
 runWriteFirst :: FrameworkGenerated.App [String]
-runWriteFirst = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteFirst" . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteFirst") $
+runWriteFirst = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteFirst" [] [] . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteFirst") $
   openSharedFileScope >> runAt @"WriteFirst" (FrameworkRuntime.super "writeFirst" FrameworkGenerated.writeFirst)
 
 runWriteSecond :: FrameworkGenerated.App [String]
-runWriteSecond = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteSecond" . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteSecond") $
+runWriteSecond = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteSecond" [] [] . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteSecond") $
   openSharedFileScope >> runAt @"WriteSecond" (FrameworkRuntime.super "writeSecond" FrameworkGenerated.writeSecond)
 
 runWriteThird :: FrameworkGenerated.App [String]
-runWriteThird = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteThird" . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteThird") $
+runWriteThird = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteThird" [] [] . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteThird") $
   openSharedFileScope >> runAt @"WriteThird" (FrameworkRuntime.super "writeThird" FrameworkGenerated.writeThird)
 
 runVerifyReuse :: FrameworkGenerated.App [String]
-runVerifyReuse = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runVerifyReuse" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "VerifyReuse") $
+runVerifyReuse = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runVerifyReuse" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "VerifyReuse") $
   getFilePaths >> runAt @"VerifyReuse" (FrameworkRuntime.super "verifyReuse" FrameworkGenerated.verifyReuse)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -261,26 +261,8 @@ newScopeHandlers = sequence
   [ FrameworkRuntime.newScopeHandler "SharedFileScope" ["FileLocations"] (Just "FileResource")
   ]
 
--- SDK 自动收尾入口；安装时不关闭资源。
-scopeCleanups :: [(String, FrameworkGenerated.App ())]
-scopeCleanups =
-  [ ("SharedFileScope", () <$ closeSharedFileScope)
-  ]
-
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。
 errorHandlers :: [(Maybe String, FrameworkRuntime.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
 errorHandlers =
-  [
-  ]
-
--- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。
-contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
-contextInjections =
-  [
-  ]
-
--- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。
-streamContextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
-streamContextInjections =
   [
   ]

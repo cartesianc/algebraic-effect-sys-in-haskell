@@ -20,7 +20,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module ScopeInstancesDemo.Generated.Handlers (handlerSourceFingerprint, runPrepareFiles, getFileName, readFileName, getOpenedFile, readOpenedFile, openFileSession, closeFileSession, runUseFirst, runSelectSecond, runUseSecond, runSelectFirst, runReopenFirst, runCheckJournal, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections, streamContextInjections) where
+module ScopeInstancesDemo.Generated.Handlers (handlerSourceFingerprint, runPrepareFiles, getFileName, readFileName, getOpenedFile, readOpenedFile, openFileSession, closeFileSession, runUseFirst, runSelectSecond, runUseSecond, runSelectFirst, runReopenFirst, runCheckJournal, newScopeHandlers, errorHandlers) where
 
 import qualified Framework.Generated as FrameworkRuntime
 import qualified ScopeInstancesDemo.Generated.Effects as FrameworkGenerated
@@ -219,7 +219,7 @@ instance FrameworkRuntime.Reads (FileHandle) (At "ReopenFirst") where
   require = At ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
 runPrepareFiles :: FrameworkGenerated.App [String]
-runPrepareFiles = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrepareFiles" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareFiles") $
+runPrepareFiles = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrepareFiles" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareFiles") $
   runAt @"PrepareFiles" (FrameworkRuntime.super "prepareFiles" FrameworkGenerated.prepareFiles)
 
 getFileName :: FrameworkGenerated.App FrameworkGenerated.FileName
@@ -241,35 +241,35 @@ readOpenedFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFai
   FrameworkRuntime.readContext "FileResource" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileResource
 
 openFileSession :: FrameworkGenerated.App [String]
-openFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFileSession" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+openFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFileSession" [] [] . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError (Just (() <$ closeFileSession)) . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
   getOpenedFile >> runAt @"FileSession" (FrameworkRuntime.super "openSelectedFile" FrameworkGenerated.openSelectedFile)
 
 closeFileSession :: FrameworkGenerated.App [String]
-closeFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeFileSession" . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
+closeFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeFileSession" [] [] . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
   runAt @"FileSession" (FrameworkRuntime.superClose "closeSelectedFile" FrameworkGenerated.closeSelectedFile)
 
 runUseFirst :: FrameworkGenerated.App [String]
-runUseFirst = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runUseFirst" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "UseFirst") $
+runUseFirst = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runUseFirst" [] [] . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "UseFirst") $
   getFileName >> openFileSession >> runAt @"UseFirst" (FrameworkRuntime.super "checkSelection" FrameworkGenerated.checkSelection)
 
 runSelectSecond :: FrameworkGenerated.App [String]
-runSelectSecond = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runSelectSecond" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SelectSecond") $
+runSelectSecond = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runSelectSecond" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SelectSecond") $
   runAt @"SelectSecond" (FrameworkRuntime.super "selectSecond" FrameworkGenerated.selectSecond)
 
 runUseSecond :: FrameworkGenerated.App [String]
-runUseSecond = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runUseSecond" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "UseSecond") $
+runUseSecond = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runUseSecond" [] [] . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "UseSecond") $
   getFileName >> openFileSession >> runAt @"UseSecond" (FrameworkRuntime.super "checkSelection" FrameworkGenerated.checkSelection)
 
 runSelectFirst :: FrameworkGenerated.App [String]
-runSelectFirst = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runSelectFirst" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SelectFirst") $
+runSelectFirst = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runSelectFirst" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SelectFirst") $
   runAt @"SelectFirst" (FrameworkRuntime.super "selectFirst" FrameworkGenerated.selectFirst)
 
 runReopenFirst :: FrameworkGenerated.App [String]
-runReopenFirst = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReopenFirst" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "ReopenFirst") $
+runReopenFirst = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReopenFirst" [] [] . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "ReopenFirst") $
   getFileName >> openFileSession >> runAt @"ReopenFirst" (FrameworkRuntime.super "checkSelection" FrameworkGenerated.checkSelection)
 
 runCheckJournal :: FrameworkGenerated.App [String]
-runCheckJournal = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runCheckJournal" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CheckJournal") $
+runCheckJournal = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runCheckJournal" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CheckJournal") $
   runAt @"CheckJournal" (FrameworkRuntime.super "checkJournal" FrameworkGenerated.checkJournal)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -278,26 +278,8 @@ newScopeHandlers = sequence
   [ FrameworkRuntime.newScopeHandler "FileSession" ["FileLocation"] (Just "FileResource")
   ]
 
--- SDK 自动收尾入口；安装时不关闭资源。
-scopeCleanups :: [(String, FrameworkGenerated.App ())]
-scopeCleanups =
-  [ ("FileSession", () <$ closeFileSession)
-  ]
-
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。
 errorHandlers :: [(Maybe String, FrameworkRuntime.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
 errorHandlers =
-  [
-  ]
-
--- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。
-contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
-contextInjections =
-  [
-  ]
-
--- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。
-streamContextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
-streamContextInjections =
   [
   ]

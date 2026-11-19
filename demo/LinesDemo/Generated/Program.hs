@@ -22,15 +22,15 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "Announce" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (AnnounceResult <$> (() <$ Handlers.runAnnounce))))))
-      , SDK.targetApp "PrintLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (PrintLineResult <$> (() <$ Handlers.runPrintLine))))))
-      , SDK.targetApp "TextCounter" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (TextCounterResult <$> (() <$ Handlers.runTextCounter))))))
-      , SDK.targetApp "ShowTotal" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowTotalResult <$> (() <$ Handlers.runShowTotal))))))
-      , SDK.targetApp "Report" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReportResult <$> (() <$ Handlers.runReport))))))
+    ( [ SDK.targetApp "Announce" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (AnnounceResult <$> (() <$ Handlers.runAnnounce)))
+      , SDK.targetApp "PrintLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (PrintLineResult <$> (() <$ Handlers.runPrintLine)))
+      , SDK.targetApp "TextCounter" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (TextCounterResult <$> (() <$ Handlers.runTextCounter)))
+      , SDK.targetApp "ShowTotal" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ShowTotalResult <$> (() <$ Handlers.runShowTotal)))
+      , SDK.targetApp "Report" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ReportResult <$> (() <$ Handlers.runReport)))
       ]
     , []
-    , [ ("LineParser", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextLineFeed)))))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getTextLine)))))))
-      , ("CountParser", SDK.deriveSteps (SDK.targetApp "CountParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getRunningTotal)))))))
+    , [ ("LineParser", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (Handlers.nextLineFeed))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ Handlers.getTextLine))))
+      , ("CountParser", SDK.deriveSteps (SDK.targetApp "CountParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ Handlers.getRunningTotal))))
       ]
     )
 

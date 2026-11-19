@@ -45,10 +45,10 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
       , "  scopes <- Handlers.newScopeHandlers"
       , "  pure"
       , "    ( " ++ renderList "      "
-          [ wrapTarget hooks (variantLabel terminal hooks) (terminal ++ "Result <$> (() <$ " ++ handlers hooks method ++ ")")
+          [ wrapTarget (variantLabel terminal hooks) (terminal ++ "Result <$> (() <$ " ++ handlers hooks method ++ ")")
           | (terminal, method) <- unitTerminals unit, hooks <- variantsOf NodeChain terminal ]
       , "    , " ++ renderList "      "
-          [ wrapTarget hooks (variantLabel contractType hooks) ("caseOf" ++ contractType ++ " <$> " ++ handlers hooks selector)
+          [ wrapTarget (variantLabel contractType hooks) ("caseOf" ++ contractType ++ " <$> " ++ handlers hooks selector)
           | selectedSelector <- selectors
           , let contractType = selectorContract selectedSelector
                 selector = selectorEntry selectedSelector
@@ -82,7 +82,7 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
       DeriveEntry producer parser -> let hooks = mountHooks unit (mountNode parser) in
         "(" ++ show (variantLabel producer hooks) ++ ", SDK.deriveSteps ("
         ++ action hooks parser "() <$ " ++ "))"
-      where action hooks mounted prefix = wrapTarget hooks (mountTarget mounted)
+      where action hooks mounted prefix = wrapTarget (mountTarget mounted)
               (prefix ++ handlers hooks (mountMethod mounted))
     -- 注入 v4：入口对 Middleware 列表多态，挂载登记时在类型上给出覆盖它的列表，GHC 在编译期选定 该列表的 Captures 实例。
     -- 没有 Middleware 的程序照旧引用单态入口。
@@ -93,10 +93,8 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
     variantsOf role terminal = [] : [hooks | hooks <- unitVariants unit, hooks `elem`
       [mountHooks unit (mountNode mount) | mount <- assemblyMounts (unitAssembly unit)
         , mountRole mount == role, mountTerminal mount == terminal]]
-    wrapTarget hooks label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
-      ++ " (SDK.withErrorHandlers Handlers.errorHandlers"
-      ++ " (SDK.withAnchoredContexts " ++ handlers hooks "contextInjections"
-      ++ " (SDK.withStreamContexts " ++ handlers hooks "streamContextInjections"
-      ++ " (SDK.withScopeCleanups " ++ handlers hooks "scopeCleanups" ++ " (" ++ action ++ ")))))"
+    -- 挂接的 parser 与自动收尾的 close 已写在生成入口上；Target 只安装程序级的 Error 回调。
+    wrapTarget label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
+      ++ " (SDK.withErrorHandlers Handlers.errorHandlers (" ++ action ++ "))"
     renderList _ [] = "[]"
     renderList indent items = "[ " ++ intercalate ("\n" ++ indent ++ ", ") items ++ "\n" ++ indent ++ "]"

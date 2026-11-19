@@ -19,7 +19,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module StreamDemo.Generated.Handlers (handlerSourceFingerprint, getSensorState, readSensorState, openSensorLink, closeSensorLink, nextTemperatureFeed, getTemperatureSample, streamTemperatureSample, nextHeartbeatClock, getBeat, streamBeat, runAnnounce, runShowTemperature, runCheckTrend, runReportHeartbeat, newScopeHandlers, scopeCleanups, errorHandlers, contextInjections, streamContextInjections) where
+module StreamDemo.Generated.Handlers (handlerSourceFingerprint, getSensorState, readSensorState, openSensorLink, closeSensorLink, nextTemperatureFeed, getTemperatureSample, streamTemperatureSample, nextHeartbeatClock, getBeat, streamBeat, runAnnounce, runShowTemperature, runCheckTrend, runReportHeartbeat, newScopeHandlers, errorHandlers) where
 
 import qualified Framework.Generated as FrameworkRuntime
 import qualified StreamDemo.Generated.Effects as FrameworkGenerated
@@ -222,11 +222,11 @@ readSensorState = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFa
   FrameworkRuntime.readContext "SensorResource" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundSensorResource
 
 openSensorLink :: FrameworkGenerated.App [String]
-openSensorLink = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openSensorLink" . FrameworkRuntime.openScope "SensorLink" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
+openSensorLink = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openSensorLink" [] [] . FrameworkRuntime.openScope "SensorLink" FrameworkGenerated.ScopeBindingError (Just (() <$ closeSensorLink)) . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
   getSensorState >> runAt @"SensorLink" (FrameworkRuntime.super "connectSensor" FrameworkGenerated.connectSensor)
 
 closeSensorLink :: FrameworkGenerated.App [String]
-closeSensorLink = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeSensorLink" . FrameworkRuntime.closeScope "SensorLink" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
+closeSensorLink = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeSensorLink" [] [] . FrameworkRuntime.closeScope "SensorLink" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
   runAt @"SensorLink" (FrameworkRuntime.superClose "disconnectSensor" FrameworkGenerated.disconnectSensor)
 
 nextTemperatureFeed :: FrameworkGenerated.App String
@@ -256,19 +256,19 @@ streamBeat = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.h
   FrameworkRuntime.readStreamContext "Heartbeat" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundHeartbeat
 
 runAnnounce :: FrameworkGenerated.App [String]
-runAnnounce = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runAnnounce" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "Announce") $
+runAnnounce = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runAnnounce" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "Announce") $
   runAt @"Announce" (FrameworkRuntime.super "announce" FrameworkGenerated.announce)
 
 runShowTemperature :: FrameworkGenerated.App [String]
-runShowTemperature = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runShowTemperature" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowTemperature") $
+runShowTemperature = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runShowTemperature" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowTemperature") $
   runAt @"ShowTemperature" (FrameworkRuntime.super "showTemperature" FrameworkGenerated.showTemperature)
 
 runCheckTrend :: FrameworkGenerated.App [String]
-runCheckTrend = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runCheckTrend" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CheckTrend") $
+runCheckTrend = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runCheckTrend" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CheckTrend") $
   runAt @"CheckTrend" (FrameworkRuntime.super "checkTrend" FrameworkGenerated.checkTrend)
 
 runReportHeartbeat :: FrameworkGenerated.App [String]
-runReportHeartbeat = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReportHeartbeat" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReportHeartbeat") $
+runReportHeartbeat = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReportHeartbeat" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReportHeartbeat") $
   runAt @"ReportHeartbeat" (FrameworkRuntime.super "reportHeartbeat" FrameworkGenerated.reportHeartbeat)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
@@ -277,26 +277,8 @@ newScopeHandlers = sequence
   [ FrameworkRuntime.newScopeHandler "SensorLink" [] (Just "SensorResource")
   ]
 
--- SDK 自动收尾入口；安装时不关闭资源。
-scopeCleanups :: [(String, FrameworkGenerated.App ())]
-scopeCleanups =
-  [ ("SensorLink", () <$ closeSensorLink)
-  ]
-
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。
 errorHandlers :: [(Maybe String, FrameworkRuntime.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
 errorHandlers =
-  [
-  ]
-
--- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。
-contextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
-contextInjections =
-  [
-  ]
-
--- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。
-streamContextInjections :: [(String, [(String, FrameworkGenerated.App ())])]
-streamContextInjections =
   [
   ]

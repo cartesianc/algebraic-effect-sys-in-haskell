@@ -22,14 +22,14 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "Announce" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (AnnounceResult <$> (() <$ Handlers.runAnnounce))))))
-      , SDK.targetApp "ShowTemperature" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ShowTemperatureResult <$> (() <$ Handlers.runShowTemperature))))))
-      , SDK.targetApp "CheckTrend" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (CheckTrendResult <$> (() <$ Handlers.runCheckTrend))))))
-      , SDK.targetApp "ReportHeartbeat" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (ReportHeartbeatResult <$> (() <$ Handlers.runReportHeartbeat))))))
+    ( [ SDK.targetApp "Announce" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (AnnounceResult <$> (() <$ Handlers.runAnnounce)))
+      , SDK.targetApp "ShowTemperature" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ShowTemperatureResult <$> (() <$ Handlers.runShowTemperature)))
+      , SDK.targetApp "CheckTrend" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (CheckTrendResult <$> (() <$ Handlers.runCheckTrend)))
+      , SDK.targetApp "ReportHeartbeat" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ReportHeartbeatResult <$> (() <$ Handlers.runReportHeartbeat)))
       ]
     , []
-    , [ ("TemperatureParser", SDK.receiveSteps (SDK.targetApp "TemperatureFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextTemperatureFeed)))))) (SDK.targetApp "TemperatureParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getTemperatureSample)))))))
-      , ("Heartbeat", SDK.receiveSteps (SDK.targetApp "HeartbeatClock" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (Handlers.nextHeartbeatClock)))))) (SDK.targetApp "Heartbeat" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (() <$ Handlers.getBeat)))))))
+    , [ ("TemperatureParser", SDK.receiveSteps (SDK.targetApp "TemperatureFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (Handlers.nextTemperatureFeed))) (SDK.targetApp "TemperatureParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ Handlers.getTemperatureSample))))
+      , ("Heartbeat", SDK.receiveSteps (SDK.targetApp "HeartbeatClock" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (Handlers.nextHeartbeatClock))) (SDK.targetApp "Heartbeat" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ Handlers.getBeat))))
       ]
     )
 

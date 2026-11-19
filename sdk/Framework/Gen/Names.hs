@@ -30,5 +30,5 @@ reservedTypes :: [String]
 reservedTypes = ["App", "At", "Hook", "Captures", "Captured", "ContextValues", "Errors", "MethodGen", "Results", "ContextBindingError", "ScopeBindingError"]
 
 reservedValues :: [String]
-reservedValues = ["runAt", "runHook", "captureAt", "capturedAt", "emptyContexts", "handlerSourceFingerprint", "newScopeHandlers", "scopeCleanups"
-  , "errorHandlers", "contextInjections", "streamContextInjections", "interpreter", "compiledEntries", "generatedPrototype"]
+reservedValues = ["runAt", "runHook", "captureAt", "capturedAt", "emptyContexts", "handlerSourceFingerprint", "newScopeHandlers"
+  , "errorHandlers", "interpreter", "compiledEntries", "generatedPrototype"]

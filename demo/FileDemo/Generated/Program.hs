@@ -22,10 +22,10 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "WriteFirstLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (WriteFirstLineResult <$> (() <$ Handlers.runWriteFirstLine))))))
-      , SDK.targetApp "AppendLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (AppendLineResult <$> (() <$ Handlers.runAppendLine))))))
+    ( [ SDK.targetApp "WriteFirstLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (WriteFirstLineResult <$> (() <$ Handlers.runWriteFirstLine)))
+      , SDK.targetApp "AppendLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (AppendLineResult <$> (() <$ Handlers.runAppendLine)))
       ]
-    , [ SDK.targetApp "FileText" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (SDK.withAnchoredContexts Handlers.contextInjections (SDK.withStreamContexts Handlers.streamContextInjections (SDK.withScopeCleanups Handlers.scopeCleanups (caseOfFileText <$> Handlers.getFileText)))))
+    , [ SDK.targetApp "FileText" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (caseOfFileText <$> Handlers.getFileText))
       ]
     , []
     )
