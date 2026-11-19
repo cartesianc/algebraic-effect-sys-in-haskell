@@ -124,93 +124,93 @@ handlerSourceFingerprint = Just "23817ef6e3ebb472659b851b0d2176a8"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype At (effect :: FrameworkTypes.Symbol) value = At { runAt :: FrameworkGenerated.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runAt :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance FrameworkRuntime.Root (At effect) value
+instance FrameworkRuntime.Root (Wrap effect) value
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.PrepareSensorError (At effect) where
-  raise (FrameworkGenerated.PrepareSensorError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.PrepareSensorError (Wrap effect) where
+  raise (FrameworkGenerated.PrepareSensorError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.PrepareSensorFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ConnectSensorError (At effect) where
-  raise (FrameworkGenerated.ConnectSensorError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ConnectSensorError (Wrap effect) where
+  raise (FrameworkGenerated.ConnectSensorError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ConnectSensorFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DisconnectSensorError (At effect) where
-  raise (FrameworkGenerated.DisconnectSensorError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DisconnectSensorError (Wrap effect) where
+  raise (FrameworkGenerated.DisconnectSensorError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.DisconnectSensorFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextReadingError (At effect) where
-  raise (FrameworkGenerated.NextReadingError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextReadingError (Wrap effect) where
+  raise (FrameworkGenerated.NextReadingError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NextReadingFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseTemperatureError (At effect) where
-  raise (FrameworkGenerated.ParseTemperatureError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseTemperatureError (Wrap effect) where
+  raise (FrameworkGenerated.ParseTemperatureError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ParseTemperatureFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextBeatError (At effect) where
-  raise (FrameworkGenerated.NextBeatError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextBeatError (Wrap effect) where
+  raise (FrameworkGenerated.NextBeatError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NextBeatFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseBeatError (At effect) where
-  raise (FrameworkGenerated.ParseBeatError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseBeatError (Wrap effect) where
+  raise (FrameworkGenerated.ParseBeatError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ParseBeatFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AnnounceError (At effect) where
-  raise (FrameworkGenerated.AnnounceError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AnnounceError (Wrap effect) where
+  raise (FrameworkGenerated.AnnounceError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.AnnounceFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ShowTemperatureError (At effect) where
-  raise (FrameworkGenerated.ShowTemperatureError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ShowTemperatureError (Wrap effect) where
+  raise (FrameworkGenerated.ShowTemperatureError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ShowTemperatureFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CheckTrendError (At effect) where
-  raise (FrameworkGenerated.CheckTrendError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CheckTrendError (Wrap effect) where
+  raise (FrameworkGenerated.CheckTrendError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CheckTrendFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReportHeartbeatError (At effect) where
-  raise (FrameworkGenerated.ReportHeartbeatError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReportHeartbeatError (Wrap effect) where
+  raise (FrameworkGenerated.ReportHeartbeatError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReportHeartbeatFailure description)
 
-instance FrameworkRuntime.Reads (SensorMemory) (At "SensorLink") where
-  require = At ((\(FrameworkGenerated.SensorState value) -> value) <$> readSensorState)
+instance FrameworkRuntime.Reads (SensorMemory) (Wrap "SensorLink") where
+  require = Wrap ((\(FrameworkGenerated.SensorState value) -> value) <$> readSensorState)
 
-instance FrameworkRuntime.Reads (SensorMemory) (At "TemperatureParser") where
-  require = At ((\(FrameworkGenerated.SensorState value) -> value) <$> readSensorState)
+instance FrameworkRuntime.Reads (SensorMemory) (Wrap "TemperatureParser") where
+  require = Wrap ((\(FrameworkGenerated.SensorState value) -> value) <$> readSensorState)
 
-instance FrameworkRuntime.Reads (SensorMemory) (At "Heartbeat") where
-  require = At ((\(FrameworkGenerated.SensorState value) -> value) <$> readSensorState)
+instance FrameworkRuntime.Reads (SensorMemory) (Wrap "Heartbeat") where
+  require = Wrap ((\(FrameworkGenerated.SensorState value) -> value) <$> readSensorState)
 
-instance FrameworkRuntime.Reads (Temperature) (At "ShowTemperature") where
-  require = At ((\(FrameworkGenerated.TemperatureSample value) -> value) <$> streamTemperatureSample)
+instance FrameworkRuntime.Reads (Temperature) (Wrap "ShowTemperature") where
+  require = Wrap ((\(FrameworkGenerated.TemperatureSample value) -> value) <$> streamTemperatureSample)
 
-instance FrameworkRuntime.Reads (Temperature) (At "CheckTrend") where
-  require = At ((\(FrameworkGenerated.TemperatureSample value) -> value) <$> streamTemperatureSample)
+instance FrameworkRuntime.Reads (Temperature) (Wrap "CheckTrend") where
+  require = Wrap ((\(FrameworkGenerated.TemperatureSample value) -> value) <$> streamTemperatureSample)
 
-instance FrameworkRuntime.Reads (Int) (At "ReportHeartbeat") where
-  require = At ((\(FrameworkGenerated.Beat value) -> value) <$> streamBeat)
+instance FrameworkRuntime.Reads (Int) (Wrap "ReportHeartbeat") where
+  require = Wrap ((\(FrameworkGenerated.Beat value) -> value) <$> streamBeat)
 
-instance FrameworkRuntime.Raw (At "TemperatureParser") where
-  raw = At ((: []) <$> nextTemperatureFeed)
+instance FrameworkRuntime.Raw (Wrap "TemperatureParser") where
+  raw = Wrap ((: []) <$> nextTemperatureFeed)
 
-instance FrameworkRuntime.Raw (At "Heartbeat") where
-  raw = At ((: []) <$> nextHeartbeatClock)
+instance FrameworkRuntime.Raw (Wrap "Heartbeat") where
+  raw = Wrap ((: []) <$> nextHeartbeatClock)
 
-instance FrameworkRuntime.StreamEnds (At "TemperatureFeed") where
-  streamEnd = At FrameworkRuntime.endSource
+instance FrameworkRuntime.StreamEnds (Wrap "TemperatureFeed") where
+  streamEnd = Wrap FrameworkRuntime.endSource
 
-instance FrameworkRuntime.StreamEnds (At "HeartbeatClock") where
-  streamEnd = At FrameworkRuntime.endSource
+instance FrameworkRuntime.StreamEnds (Wrap "HeartbeatClock") where
+  streamEnd = Wrap FrameworkRuntime.endSource
 
-instance FrameworkRuntime.EndsStream (At "ShowTemperature") where
-  endStream = At FrameworkRuntime.endSubscription
+instance FrameworkRuntime.EndsStream (Wrap "ShowTemperature") where
+  endStream = Wrap FrameworkRuntime.endSubscription
 
-instance FrameworkRuntime.EndsStream (At "CheckTrend") where
-  endStream = At FrameworkRuntime.endSubscription
+instance FrameworkRuntime.EndsStream (Wrap "CheckTrend") where
+  endStream = Wrap FrameworkRuntime.endSubscription
 
-instance FrameworkRuntime.EndsStream (At "ReportHeartbeat") where
-  endStream = At FrameworkRuntime.endSubscription
+instance FrameworkRuntime.EndsStream (Wrap "ReportHeartbeat") where
+  endStream = Wrap FrameworkRuntime.endSubscription
 
 getSensorState :: FrameworkGenerated.App FrameworkGenerated.SensorState
 getSensorState = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "SensorResource"

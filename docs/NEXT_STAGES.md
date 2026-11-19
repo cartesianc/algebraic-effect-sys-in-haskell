@@ -6,7 +6,7 @@ Middleware 首版与 Root 的 `super` 已经实现，[superhandler 的生成期�
 <a id="superhandler"></a>
 ## superhandler 的生成期装配
 
-**第一批已实现（2026-11-19）。** `Gen.Injector.Super` 为每个 (Middleware 列表, 捕获类别) 预选 Middleware，Emit 写成 `Captures hooks kind` 实例；运行时不再按 `intercept` 筛选。close 的调用点由 gen 写成 `superClose`，只有它检查 GC 的关闭预约。具体实例、使用关系与取消仍由 runtime 管理。现行规则见 [CORE_DESIGN 的 Middleware](CORE_DESIGN.md#middleware)。
+**第一批已实现（2026-11-19）。** `Gen.Injector.Super` 为每个 (Middleware 列表, 捕获类别) 预选 Middleware，Emit 写成 `Captures hooks kind` 实例；运行时不再按 `intercept` 筛选。close 的调用点由 gen 写成 `superClose`，只有它检查 GC 的关闭预约。生成包装采用 `Wrap`、`superWrap`、`closeWrap`，业务 handler 可以同名。具体实例、使用关系与取消仍由 runtime 管理。现行规则见 [CORE_DESIGN 的 Middleware](CORE_DESIGN.md#middleware)。
 
 **第二批已实现（2026-11-19）。** parser 挂接表（普通与持续）与自动收尾表不再经 Target 安装、按名字查找：gen 把挂接的 parser 写在 atomicHandle／atomicScope 上，把 close 写在 openScope 上；持续挂接仍由运行时按执行位置与会话筛选。现行写法见[入口包装](CORE_DESIGN.md#calls)。
 

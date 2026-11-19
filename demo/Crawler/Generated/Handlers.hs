@@ -147,85 +147,85 @@ handlerSourceFingerprint = Just "1434b28d58664b93c295683b09237f73"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype At (effect :: FrameworkTypes.Symbol) value = At { runAt :: FrameworkGenerated.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runAt :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance FrameworkRuntime.Root (At effect) value
+instance FrameworkRuntime.Root (Wrap effect) value
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.StartURLError (At effect) where
-  raise (FrameworkGenerated.StartURLError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.StartURLError (Wrap effect) where
+  raise (FrameworkGenerated.StartURLError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.StartURLFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.LinkedURLError (At effect) where
-  raise (FrameworkGenerated.LinkedURLError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.LinkedURLError (Wrap effect) where
+  raise (FrameworkGenerated.LinkedURLError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.LinkedURLFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.FetchPageError (At effect) where
-  raise (FrameworkGenerated.FetchPageError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.FetchPageError (Wrap effect) where
+  raise (FrameworkGenerated.FetchPageError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.FetchPageFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DropBlankBodiesError (At effect) where
-  raise (FrameworkGenerated.DropBlankBodiesError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DropBlankBodiesError (Wrap effect) where
+  raise (FrameworkGenerated.DropBlankBodiesError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.DropBlankBodiesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ExtractSummaryError (At effect) where
-  raise (FrameworkGenerated.ExtractSummaryError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ExtractSummaryError (Wrap effect) where
+  raise (FrameworkGenerated.ExtractSummaryError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ExtractSummaryFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.PrintSummaryError (At effect) where
-  raise (FrameworkGenerated.PrintSummaryError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.PrintSummaryError (Wrap effect) where
+  raise (FrameworkGenerated.PrintSummaryError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.PrintSummaryFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SessionInfoError (At effect) where
-  raise (FrameworkGenerated.SessionInfoError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SessionInfoError (Wrap effect) where
+  raise (FrameworkGenerated.SessionInfoError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.SessionInfoFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenSessionError (At effect) where
-  raise (FrameworkGenerated.OpenSessionError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenSessionError (Wrap effect) where
+  raise (FrameworkGenerated.OpenSessionError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.OpenSessionFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseSessionError (At effect) where
-  raise (FrameworkGenerated.CloseSessionError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseSessionError (Wrap effect) where
+  raise (FrameworkGenerated.CloseSessionError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CloseSessionFailure description)
 
-instance FrameworkRuntime.Reads (PageURL) (At "FetchPage") where
-  require = At ((\(FrameworkGenerated.StartURL value) -> value) <$> readStartURL)
+instance FrameworkRuntime.Reads (PageURL) (Wrap "FetchPage") where
+  require = Wrap ((\(FrameworkGenerated.StartURL value) -> value) <$> readStartURL)
 
-instance FrameworkRuntime.Reads (SessionInfo) (At "FetchPage") where
-  require = At ((\(FrameworkGenerated.CrawlSessionInfo value) -> value) <$> readCrawlSessionInfo)
+instance FrameworkRuntime.Reads (SessionInfo) (Wrap "FetchPage") where
+  require = Wrap ((\(FrameworkGenerated.CrawlSessionInfo value) -> value) <$> readCrawlSessionInfo)
 
-instance FrameworkRuntime.Reads (PageURL) (At "ExtractPage") where
-  require = At ((\(FrameworkGenerated.StartURL value) -> value) <$> readStartURL)
+instance FrameworkRuntime.Reads (PageURL) (Wrap "ExtractPage") where
+  require = Wrap ((\(FrameworkGenerated.StartURL value) -> value) <$> readStartURL)
 
-instance FrameworkRuntime.Reads (PageSummary) (At "PrintPage") where
-  require = At ((\(FrameworkGenerated.StartPageSummary value) -> value) <$> readStartPageSummary)
+instance FrameworkRuntime.Reads (PageSummary) (Wrap "PrintPage") where
+  require = Wrap ((\(FrameworkGenerated.StartPageSummary value) -> value) <$> readStartPageSummary)
 
-instance FrameworkRuntime.Reads (PageURL) (At "FetchLinkedPage") where
-  require = At ((\(FrameworkGenerated.LinkedURL value) -> value) <$> readLinkedURL)
+instance FrameworkRuntime.Reads (PageURL) (Wrap "FetchLinkedPage") where
+  require = Wrap ((\(FrameworkGenerated.LinkedURL value) -> value) <$> readLinkedURL)
 
-instance FrameworkRuntime.Reads (SessionInfo) (At "FetchLinkedPage") where
-  require = At ((\(FrameworkGenerated.CrawlSessionInfo value) -> value) <$> readCrawlSessionInfo)
+instance FrameworkRuntime.Reads (SessionInfo) (Wrap "FetchLinkedPage") where
+  require = Wrap ((\(FrameworkGenerated.CrawlSessionInfo value) -> value) <$> readCrawlSessionInfo)
 
-instance FrameworkRuntime.Reads (PageURL) (At "ExtractLinkedPage") where
-  require = At ((\(FrameworkGenerated.LinkedURL value) -> value) <$> readLinkedURL)
+instance FrameworkRuntime.Reads (PageURL) (Wrap "ExtractLinkedPage") where
+  require = Wrap ((\(FrameworkGenerated.LinkedURL value) -> value) <$> readLinkedURL)
 
-instance FrameworkRuntime.Reads (PageSummary) (At "PrintLinkedPage") where
-  require = At ((\(FrameworkGenerated.LinkedPageSummary value) -> value) <$> readLinkedPageSummary)
+instance FrameworkRuntime.Reads (PageSummary) (Wrap "PrintLinkedPage") where
+  require = Wrap ((\(FrameworkGenerated.LinkedPageSummary value) -> value) <$> readLinkedPageSummary)
 
-instance FrameworkRuntime.Reads (SessionInfo) (At "CrawlSession") where
-  require = At ((\(FrameworkGenerated.CrawlSessionInfo value) -> value) <$> readCrawlSessionInfo)
+instance FrameworkRuntime.Reads (SessionInfo) (Wrap "CrawlSession") where
+  require = Wrap ((\(FrameworkGenerated.CrawlSessionInfo value) -> value) <$> readCrawlSessionInfo)
 
-instance FrameworkRuntime.Raw (At "KeepPageBody") where
-  raw = At (runFetchPage)
+instance FrameworkRuntime.Raw (Wrap "KeepPageBody") where
+  raw = Wrap (runFetchPage)
 
-instance FrameworkRuntime.Raw (At "ExtractPage") where
-  raw = At (runKeepPageBody)
+instance FrameworkRuntime.Raw (Wrap "ExtractPage") where
+  raw = Wrap (runKeepPageBody)
 
-instance FrameworkRuntime.Raw (At "KeepLinkedPageBody") where
-  raw = At (runFetchLinkedPage)
+instance FrameworkRuntime.Raw (Wrap "KeepLinkedPageBody") where
+  raw = Wrap (runFetchLinkedPage)
 
-instance FrameworkRuntime.Raw (At "ExtractLinkedPage") where
-  raw = At (runKeepLinkedPageBody)
+instance FrameworkRuntime.Raw (Wrap "ExtractLinkedPage") where
+  raw = Wrap (runKeepLinkedPageBody)
 
 getStartURL :: FrameworkGenerated.App FrameworkGenerated.StartURL
 getStartURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "StartPage"

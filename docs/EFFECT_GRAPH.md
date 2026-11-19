@@ -211,7 +211,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 结构副本描述带包装的句柄：原子句柄（Excu.handler、Scoped.open）的生成入口在方法体返回后注入挂在它下面（可经一串 Pure）的 Context，构图时该句柄的定义因此在方法体之后接一个可选分支，内容是这些 Context 的方法结构，其中对句柄的 raw 记为空（注入期间由本次输出回答，不再执行句柄），中间的 Pure 入口就地展开，同样回答到句柄为止。注入路径由此进入 effect graph 与 ScopeTree，不形成环；挂接的 Context 经 Pure 以外的方法又回到该句柄时生成器报错。Pure 的入口在来源分析和运行时都不改变调用者，句柄据此认出经 Pure 拉取它的 Context，不重复注入。
 
-业务执行副本把方法体原样复制到按 effect 的类型标签 `At "名字"` 上，另生成入口、按标签的路由与包装，不改写业务表达式。新的边界是读取 handler 的读取结构并按绑定生成独立结构，不解释任意业务值语义，不要求用户补写 layer 或另一份调用声明。结构提取也不证明任意 Haskell 函数的行为、动态调用次数或物理资源依赖。
+业务执行副本把方法体原样复制到按 effect 的类型标签 `Wrap "名字"` 上，另生成入口、按标签的路由与包装，不改写业务表达式。新的边界是读取 handler 的读取结构并按绑定生成独立结构，不解释任意业务值语义，不要求用户补写 layer 或另一份调用声明。结构提取也不证明任意 Haskell 函数的行为、动态调用次数或物理资源依赖。
 
 当前 source 结构支持 `require @T`／`raw` 读取、原生 `do`、`if`／`case` 和已识别的标准组合，包括顺序／绑定运算、`when`／`unless`、`either`／`maybe` 及 `catchError`。条件和待匹配的值本身不能隐藏读取。handler 直接调用其他 handler 或 effect 方法、未知高阶组合中的读取、含读取的循环组合（如 `forM_`／`replicateM_`）以及没有类型应用的 `require` 会报告错误，不静默生成空图。没有读取的原子业务表达式可在 handler 方法体内使用原生 Haskell 语法，结构副本将其擦除；方法内直接以标准组合完成 IO 迭代或数据计算，不受上述限制。生成器还检查每个读取在每个绑定下都能路由到唯一资产、同一 handler 的各绑定推出相同签名与 Layer、声明的 requires／streams 都有读取依据。[源码资产检查](ASSETS.md) 另行约束业务模块的顶层定义；顶层检查与 effect 图提取是两个不同边界。
 

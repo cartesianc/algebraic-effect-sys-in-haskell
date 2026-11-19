@@ -162,181 +162,181 @@ handlerSourceFingerprint = Just "7a50893a4ee9920737b0ff1ec8675dc8"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype At (effect :: FrameworkTypes.Symbol) value = At { runAt :: FrameworkGenerated.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runAt :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance FrameworkRuntime.Root (At effect) value
+instance FrameworkRuntime.Root (Wrap effect) value
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReportLocationError (At effect) where
-  raise (FrameworkGenerated.ReportLocationError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReportLocationError (Wrap effect) where
+  raise (FrameworkGenerated.ReportLocationError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReportLocationFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReplyLocationError (At effect) where
-  raise (FrameworkGenerated.ReplyLocationError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReplyLocationError (Wrap effect) where
+  raise (FrameworkGenerated.ReplyLocationError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReplyLocationFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReportDraftError (At effect) where
-  raise (FrameworkGenerated.ReportDraftError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReportDraftError (Wrap effect) where
+  raise (FrameworkGenerated.ReportDraftError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReportDraftFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReplyDraftError (At effect) where
-  raise (FrameworkGenerated.ReplyDraftError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReplyDraftError (Wrap effect) where
+  raise (FrameworkGenerated.ReplyDraftError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReplyDraftFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AcquireFileError (At effect) where
-  raise (FrameworkGenerated.AcquireFileError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AcquireFileError (Wrap effect) where
+  raise (FrameworkGenerated.AcquireFileError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.AcquireFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenTextFileError (At effect) where
-  raise (FrameworkGenerated.OpenTextFileError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenTextFileError (Wrap effect) where
+  raise (FrameworkGenerated.OpenTextFileError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.OpenTextFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseTextFileError (At effect) where
-  raise (FrameworkGenerated.CloseTextFileError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseTextFileError (Wrap effect) where
+  raise (FrameworkGenerated.CloseTextFileError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CloseTextFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.WriteTextError (At effect) where
-  raise (FrameworkGenerated.WriteTextError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.WriteTextError (Wrap effect) where
+  raise (FrameworkGenerated.WriteTextError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.WriteTextFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.MarkReadError (At effect) where
-  raise (FrameworkGenerated.MarkReadError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.MarkReadError (Wrap effect) where
+  raise (FrameworkGenerated.MarkReadError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.MarkReadFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReadTextError (At effect) where
-  raise (FrameworkGenerated.ReadTextError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReadTextError (Wrap effect) where
+  raise (FrameworkGenerated.ReadTextError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReadTextFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CountLinesError (At effect) where
-  raise (FrameworkGenerated.CountLinesError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CountLinesError (Wrap effect) where
+  raise (FrameworkGenerated.CountLinesError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CountLinesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ShowCountError (At effect) where
-  raise (FrameworkGenerated.ShowCountError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ShowCountError (Wrap effect) where
+  raise (FrameworkGenerated.ShowCountError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ShowCountFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.InspectFileError (At effect) where
-  raise (FrameworkGenerated.InspectFileError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.InspectFileError (Wrap effect) where
+  raise (FrameworkGenerated.InspectFileError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.InspectFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DescribeBlankError (At effect) where
-  raise (FrameworkGenerated.DescribeBlankError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DescribeBlankError (Wrap effect) where
+  raise (FrameworkGenerated.DescribeBlankError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.DescribeBlankFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DescribeFilledError (At effect) where
-  raise (FrameworkGenerated.DescribeFilledError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DescribeFilledError (Wrap effect) where
+  raise (FrameworkGenerated.DescribeFilledError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.DescribeFilledFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NewCounterError (At effect) where
-  raise (FrameworkGenerated.NewCounterError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NewCounterError (Wrap effect) where
+  raise (FrameworkGenerated.NewCounterError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NewCounterFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenCounterError (At effect) where
-  raise (FrameworkGenerated.OpenCounterError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenCounterError (Wrap effect) where
+  raise (FrameworkGenerated.OpenCounterError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.OpenCounterFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextAError (At effect) where
-  raise (FrameworkGenerated.NextAError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextAError (Wrap effect) where
+  raise (FrameworkGenerated.NextAError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NextAFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextBError (At effect) where
-  raise (FrameworkGenerated.NextBError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextBError (Wrap effect) where
+  raise (FrameworkGenerated.NextBError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NextBFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseLevelError (At effect) where
-  raise (FrameworkGenerated.ParseLevelError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseLevelError (Wrap effect) where
+  raise (FrameworkGenerated.ParseLevelError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ParseLevelFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ShowLevelError (At effect) where
-  raise (FrameworkGenerated.ShowLevelError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ShowLevelError (Wrap effect) where
+  raise (FrameworkGenerated.ShowLevelError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ShowLevelFailure description)
 
-instance FrameworkRuntime.Reads ([Char]) (At "ReportFile") where
-  require = At ((\(FrameworkGenerated.ReportPath value) -> value) <$> readReportPath)
+instance FrameworkRuntime.Reads ([Char]) (Wrap "ReportFile") where
+  require = Wrap ((\(FrameworkGenerated.ReportPath value) -> value) <$> readReportPath)
 
-instance FrameworkRuntime.Reads ([Char]) (At "ReplyFile") where
-  require = At ((\(FrameworkGenerated.ReplyPath value) -> value) <$> readReplyPath)
+instance FrameworkRuntime.Reads ([Char]) (Wrap "ReplyFile") where
+  require = Wrap ((\(FrameworkGenerated.ReplyPath value) -> value) <$> readReplyPath)
 
-instance FrameworkRuntime.Reads (TextFile) (At "ReportScope") where
-  require = At ((\(FrameworkGenerated.OpenedReport value) -> value) <$> readOpenedReport)
+instance FrameworkRuntime.Reads (TextFile) (Wrap "ReportScope") where
+  require = Wrap ((\(FrameworkGenerated.OpenedReport value) -> value) <$> readOpenedReport)
 
-instance FrameworkRuntime.Reads (TextFile) (At "ReplyScope") where
-  require = At ((\(FrameworkGenerated.OpenedReply value) -> value) <$> readOpenedReply)
+instance FrameworkRuntime.Reads (TextFile) (Wrap "ReplyScope") where
+  require = Wrap ((\(FrameworkGenerated.OpenedReply value) -> value) <$> readOpenedReply)
 
-instance FrameworkRuntime.Reads (TextFile) (At "WriteReport") where
-  require = At ((\(FrameworkGenerated.OpenedReport value) -> value) <$> readOpenedReport)
+instance FrameworkRuntime.Reads (TextFile) (Wrap "WriteReport") where
+  require = Wrap ((\(FrameworkGenerated.OpenedReport value) -> value) <$> readOpenedReport)
 
-instance FrameworkRuntime.Reads (Body) (At "WriteReport") where
-  require = At ((\(FrameworkGenerated.ReportBody value) -> value) <$> readReportBody)
+instance FrameworkRuntime.Reads (Body) (Wrap "WriteReport") where
+  require = Wrap ((\(FrameworkGenerated.ReportBody value) -> value) <$> readReportBody)
 
-instance FrameworkRuntime.Reads (TextFile) (At "WriteReply") where
-  require = At ((\(FrameworkGenerated.OpenedReply value) -> value) <$> readOpenedReply)
+instance FrameworkRuntime.Reads (TextFile) (Wrap "WriteReply") where
+  require = Wrap ((\(FrameworkGenerated.OpenedReply value) -> value) <$> readOpenedReply)
 
-instance FrameworkRuntime.Reads (Body) (At "WriteReply") where
-  require = At ((\(FrameworkGenerated.ReplyBody value) -> value) <$> readReplyBody)
+instance FrameworkRuntime.Reads (Body) (Wrap "WriteReply") where
+  require = Wrap ((\(FrameworkGenerated.ReplyBody value) -> value) <$> readReplyBody)
 
-instance FrameworkRuntime.Reads ([Char]) (At "ReadReport") where
-  require = At ((\(FrameworkGenerated.ReportPath value) -> value) <$> readReportPath)
+instance FrameworkRuntime.Reads ([Char]) (Wrap "ReadReport") where
+  require = Wrap ((\(FrameworkGenerated.ReportPath value) -> value) <$> readReportPath)
 
-instance FrameworkRuntime.Reads ([Char]) (At "ReadReply") where
-  require = At ((\(FrameworkGenerated.ReplyPath value) -> value) <$> readReplyPath)
+instance FrameworkRuntime.Reads ([Char]) (Wrap "ReadReply") where
+  require = Wrap ((\(FrameworkGenerated.ReplyPath value) -> value) <$> readReplyPath)
 
-instance FrameworkRuntime.Reads (LineCount) (At "ShowReport") where
-  require = At ((\(FrameworkGenerated.ReportStats value) -> value) <$> readReportStats)
+instance FrameworkRuntime.Reads (LineCount) (Wrap "ShowReport") where
+  require = Wrap ((\(FrameworkGenerated.ReportStats value) -> value) <$> readReportStats)
 
-instance FrameworkRuntime.Reads (LineCount) (At "ShowReply") where
-  require = At ((\(FrameworkGenerated.ReplyStats value) -> value) <$> readReplyStats)
+instance FrameworkRuntime.Reads (LineCount) (Wrap "ShowReply") where
+  require = Wrap ((\(FrameworkGenerated.ReplyStats value) -> value) <$> readReplyStats)
 
-instance FrameworkRuntime.Reads ([Char]) (At "ReportInspect") where
-  require = At ((\(FrameworkGenerated.ReportPath value) -> value) <$> readReportPath)
+instance FrameworkRuntime.Reads ([Char]) (Wrap "ReportInspect") where
+  require = Wrap ((\(FrameworkGenerated.ReportPath value) -> value) <$> readReportPath)
 
-instance FrameworkRuntime.Reads (()) (At "OnBlank") where
-  require = At (FrameworkRuntime.projectContext "ReportInspect" "ReportStateBlank" FrameworkGenerated.ContextBindingError (\(FrameworkGenerated.ReportState value) -> case value of { Blank -> Just (); _ -> Nothing }) (readReportState))
+instance FrameworkRuntime.Reads (()) (Wrap "OnBlank") where
+  require = Wrap (FrameworkRuntime.projectContext "ReportInspect" "ReportStateBlank" FrameworkGenerated.ContextBindingError (\(FrameworkGenerated.ReportState value) -> case value of { Blank -> Just (); _ -> Nothing }) (readReportState))
 
-instance FrameworkRuntime.Reads (Body) (At "OnFilled") where
-  require = At (FrameworkRuntime.projectContext "ReportInspect" "ReportStateFilled" FrameworkGenerated.ContextBindingError (\(FrameworkGenerated.ReportState value) -> case value of { Filled field -> Just field; _ -> Nothing }) (readReportState))
+instance FrameworkRuntime.Reads (Body) (Wrap "OnFilled") where
+  require = Wrap (FrameworkRuntime.projectContext "ReportInspect" "ReportStateFilled" FrameworkGenerated.ContextBindingError (\(FrameworkGenerated.ReportState value) -> case value of { Filled field -> Just field; _ -> Nothing }) (readReportState))
 
-instance FrameworkRuntime.Reads (FeedCounter) (At "FeedScopeA") where
-  require = At ((\(FrameworkGenerated.CountA value) -> value) <$> readCountA)
+instance FrameworkRuntime.Reads (FeedCounter) (Wrap "FeedScopeA") where
+  require = Wrap ((\(FrameworkGenerated.CountA value) -> value) <$> readCountA)
 
-instance FrameworkRuntime.Reads (FeedCounter) (At "FeedScopeB") where
-  require = At ((\(FrameworkGenerated.CountB value) -> value) <$> readCountB)
+instance FrameworkRuntime.Reads (FeedCounter) (Wrap "FeedScopeB") where
+  require = Wrap ((\(FrameworkGenerated.CountB value) -> value) <$> readCountB)
 
-instance FrameworkRuntime.Reads (FeedCounter) (At "FeedA") where
-  require = At ((\(FrameworkGenerated.CountA value) -> value) <$> readCountA)
+instance FrameworkRuntime.Reads (FeedCounter) (Wrap "FeedA") where
+  require = Wrap ((\(FrameworkGenerated.CountA value) -> value) <$> readCountA)
 
-instance FrameworkRuntime.Reads (FeedCounter) (At "FeedB") where
-  require = At ((\(FrameworkGenerated.CountB value) -> value) <$> readCountB)
+instance FrameworkRuntime.Reads (FeedCounter) (Wrap "FeedB") where
+  require = Wrap ((\(FrameworkGenerated.CountB value) -> value) <$> readCountB)
 
-instance FrameworkRuntime.Reads (Level) (At "ShowA") where
-  require = At ((\(FrameworkGenerated.LevelA value) -> value) <$> streamLevelA)
+instance FrameworkRuntime.Reads (Level) (Wrap "ShowA") where
+  require = Wrap ((\(FrameworkGenerated.LevelA value) -> value) <$> streamLevelA)
 
-instance FrameworkRuntime.Reads (Level) (At "ShowB") where
-  require = At ((\(FrameworkGenerated.LevelB value) -> value) <$> streamLevelB)
+instance FrameworkRuntime.Reads (Level) (Wrap "ShowB") where
+  require = Wrap ((\(FrameworkGenerated.LevelB value) -> value) <$> streamLevelB)
 
-instance FrameworkRuntime.Raw (At "ReportCounter") where
-  raw = At (runReadReport)
+instance FrameworkRuntime.Raw (Wrap "ReportCounter") where
+  raw = Wrap (runReadReport)
 
-instance FrameworkRuntime.Raw (At "ReplyCounter") where
-  raw = At (runReadReply)
+instance FrameworkRuntime.Raw (Wrap "ReplyCounter") where
+  raw = Wrap (runReadReply)
 
-instance FrameworkRuntime.Raw (At "ParserA") where
-  raw = At ((: []) <$> nextFeedA)
+instance FrameworkRuntime.Raw (Wrap "ParserA") where
+  raw = Wrap ((: []) <$> nextFeedA)
 
-instance FrameworkRuntime.Raw (At "ParserB") where
-  raw = At ((: []) <$> nextFeedB)
+instance FrameworkRuntime.Raw (Wrap "ParserB") where
+  raw = Wrap ((: []) <$> nextFeedB)
 
-instance FrameworkRuntime.StreamEnds (At "FeedA") where
-  streamEnd = At FrameworkRuntime.endSource
+instance FrameworkRuntime.StreamEnds (Wrap "FeedA") where
+  streamEnd = Wrap FrameworkRuntime.endSource
 
-instance FrameworkRuntime.StreamEnds (At "FeedB") where
-  streamEnd = At FrameworkRuntime.endSource
+instance FrameworkRuntime.StreamEnds (Wrap "FeedB") where
+  streamEnd = Wrap FrameworkRuntime.endSource
 
-instance FrameworkRuntime.EndsStream (At "ShowA") where
-  endStream = At FrameworkRuntime.endSubscription
+instance FrameworkRuntime.EndsStream (Wrap "ShowA") where
+  endStream = Wrap FrameworkRuntime.endSubscription
 
-instance FrameworkRuntime.EndsStream (At "ShowB") where
-  endStream = At FrameworkRuntime.endSubscription
+instance FrameworkRuntime.EndsStream (Wrap "ShowB") where
+  endStream = Wrap FrameworkRuntime.endSubscription
 
 getReportPath :: FrameworkGenerated.App FrameworkGenerated.ReportPath
 getReportPath = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ReportLocation"

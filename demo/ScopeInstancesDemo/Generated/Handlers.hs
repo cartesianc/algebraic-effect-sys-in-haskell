@@ -153,70 +153,70 @@ handlerSourceFingerprint = Just "78520366b00ac43b711576260bd83b06"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype At (effect :: FrameworkTypes.Symbol) value = At { runAt :: FrameworkGenerated.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runAt :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance FrameworkRuntime.Root (At effect) value
+instance FrameworkRuntime.Root (Wrap effect) value
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.PrepareFilesError (At effect) where
-  raise (FrameworkGenerated.PrepareFilesError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.PrepareFilesError (Wrap effect) where
+  raise (FrameworkGenerated.PrepareFilesError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.PrepareFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SelectedFileError (At effect) where
-  raise (FrameworkGenerated.SelectedFileError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SelectedFileError (Wrap effect) where
+  raise (FrameworkGenerated.SelectedFileError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.SelectedFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AcquireFileError (At effect) where
-  raise (FrameworkGenerated.AcquireFileError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AcquireFileError (Wrap effect) where
+  raise (FrameworkGenerated.AcquireFileError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.AcquireFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenSelectedFileError (At effect) where
-  raise (FrameworkGenerated.OpenSelectedFileError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenSelectedFileError (Wrap effect) where
+  raise (FrameworkGenerated.OpenSelectedFileError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.OpenSelectedFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseSelectedFileError (At effect) where
-  raise (FrameworkGenerated.CloseSelectedFileError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseSelectedFileError (Wrap effect) where
+  raise (FrameworkGenerated.CloseSelectedFileError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CloseSelectedFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CheckSelectionError (At effect) where
-  raise (FrameworkGenerated.CheckSelectionError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CheckSelectionError (Wrap effect) where
+  raise (FrameworkGenerated.CheckSelectionError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CheckSelectionFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SelectSecondError (At effect) where
-  raise (FrameworkGenerated.SelectSecondError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SelectSecondError (Wrap effect) where
+  raise (FrameworkGenerated.SelectSecondError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.SelectSecondFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SelectFirstError (At effect) where
-  raise (FrameworkGenerated.SelectFirstError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SelectFirstError (Wrap effect) where
+  raise (FrameworkGenerated.SelectFirstError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.SelectFirstFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CheckJournalError (At effect) where
-  raise (FrameworkGenerated.CheckJournalError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CheckJournalError (Wrap effect) where
+  raise (FrameworkGenerated.CheckJournalError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CheckJournalFailure description)
 
-instance FrameworkRuntime.Reads ([Char]) (At "FileResource") where
-  require = At ((\(FrameworkGenerated.FileName value) -> value) <$> readFileName)
+instance FrameworkRuntime.Reads ([Char]) (Wrap "FileResource") where
+  require = Wrap ((\(FrameworkGenerated.FileName value) -> value) <$> readFileName)
 
-instance FrameworkRuntime.Reads (FileHandle) (At "FileSession") where
-  require = At ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
+instance FrameworkRuntime.Reads (FileHandle) (Wrap "FileSession") where
+  require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
-instance FrameworkRuntime.Reads ([Char]) (At "UseFirst") where
-  require = At ((\(FrameworkGenerated.FileName value) -> value) <$> readFileName)
+instance FrameworkRuntime.Reads ([Char]) (Wrap "UseFirst") where
+  require = Wrap ((\(FrameworkGenerated.FileName value) -> value) <$> readFileName)
 
-instance FrameworkRuntime.Reads (FileHandle) (At "UseFirst") where
-  require = At ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
+instance FrameworkRuntime.Reads (FileHandle) (Wrap "UseFirst") where
+  require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
-instance FrameworkRuntime.Reads ([Char]) (At "UseSecond") where
-  require = At ((\(FrameworkGenerated.FileName value) -> value) <$> readFileName)
+instance FrameworkRuntime.Reads ([Char]) (Wrap "UseSecond") where
+  require = Wrap ((\(FrameworkGenerated.FileName value) -> value) <$> readFileName)
 
-instance FrameworkRuntime.Reads (FileHandle) (At "UseSecond") where
-  require = At ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
+instance FrameworkRuntime.Reads (FileHandle) (Wrap "UseSecond") where
+  require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
-instance FrameworkRuntime.Reads ([Char]) (At "ReopenFirst") where
-  require = At ((\(FrameworkGenerated.FileName value) -> value) <$> readFileName)
+instance FrameworkRuntime.Reads ([Char]) (Wrap "ReopenFirst") where
+  require = Wrap ((\(FrameworkGenerated.FileName value) -> value) <$> readFileName)
 
-instance FrameworkRuntime.Reads (FileHandle) (At "ReopenFirst") where
-  require = At ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
+instance FrameworkRuntime.Reads (FileHandle) (Wrap "ReopenFirst") where
+  require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
 runPrepareFiles :: FrameworkGenerated.App [String]
 runPrepareFiles = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrepareFiles" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareFiles") $

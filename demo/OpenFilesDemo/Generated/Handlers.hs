@@ -129,60 +129,60 @@ handlerSourceFingerprint = Just "63242e28103b32fa7873ea8d4096e691"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype At (effect :: FrameworkTypes.Symbol) value = At { runAt :: FrameworkGenerated.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runAt :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance FrameworkRuntime.Root (At effect) value
+instance FrameworkRuntime.Root (Wrap effect) value
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ListFilesError (At effect) where
-  raise (FrameworkGenerated.ListFilesError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ListFilesError (Wrap effect) where
+  raise (FrameworkGenerated.ListFilesError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ListFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AcquireFilesError (At effect) where
-  raise (FrameworkGenerated.AcquireFilesError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AcquireFilesError (Wrap effect) where
+  raise (FrameworkGenerated.AcquireFilesError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.AcquireFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenFilesError (At effect) where
-  raise (FrameworkGenerated.OpenFilesError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenFilesError (Wrap effect) where
+  raise (FrameworkGenerated.OpenFilesError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.OpenFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseFilesError (At effect) where
-  raise (FrameworkGenerated.CloseFilesError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseFilesError (Wrap effect) where
+  raise (FrameworkGenerated.CloseFilesError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CloseFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.HoldFilesError (At effect) where
-  raise (FrameworkGenerated.HoldFilesError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.HoldFilesError (Wrap effect) where
+  raise (FrameworkGenerated.HoldFilesError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.HoldFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.InspectFilesError (At effect) where
-  raise (FrameworkGenerated.InspectFilesError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.InspectFilesError (Wrap effect) where
+  raise (FrameworkGenerated.InspectFilesError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.InspectFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SnapshotFilesError (At effect) where
-  raise (FrameworkGenerated.SnapshotFilesError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SnapshotFilesError (Wrap effect) where
+  raise (FrameworkGenerated.SnapshotFilesError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.SnapshotFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.FinishInspectionError (At effect) where
-  raise (FrameworkGenerated.FinishInspectionError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.FinishInspectionError (Wrap effect) where
+  raise (FrameworkGenerated.FinishInspectionError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.FinishInspectionFailure description)
 
-instance FrameworkRuntime.Reads ([[Char]]) (At "FileResources") where
-  require = At ((\(FrameworkGenerated.FileNames value) -> value) <$> readFileNames)
+instance FrameworkRuntime.Reads ([[Char]]) (Wrap "FileResources") where
+  require = Wrap ((\(FrameworkGenerated.FileNames value) -> value) <$> readFileNames)
 
-instance FrameworkRuntime.Reads ([FileHandle]) (At "FileSession") where
-  require = At ((\(FrameworkGenerated.OpenedFiles value) -> value) <$> readOpenedFiles)
+instance FrameworkRuntime.Reads ([FileHandle]) (Wrap "FileSession") where
+  require = Wrap ((\(FrameworkGenerated.OpenedFiles value) -> value) <$> readOpenedFiles)
 
-instance FrameworkRuntime.Reads ([FileHandle]) (At "InspectFiles") where
-  require = At ((\(FrameworkGenerated.OpenedFiles value) -> value) <$> readOpenedFiles)
+instance FrameworkRuntime.Reads ([FileHandle]) (Wrap "InspectFiles") where
+  require = Wrap ((\(FrameworkGenerated.OpenedFiles value) -> value) <$> readOpenedFiles)
 
-instance FrameworkRuntime.Reads ([FileHandle]) (At "InspectionSnapshot") where
-  require = At ((\(FrameworkGenerated.OpenedFiles value) -> value) <$> readOpenedFiles)
+instance FrameworkRuntime.Reads ([FileHandle]) (Wrap "InspectionSnapshot") where
+  require = Wrap ((\(FrameworkGenerated.OpenedFiles value) -> value) <$> readOpenedFiles)
 
-instance FrameworkRuntime.Reads ([FileHandle]) (At "FinishInspection") where
-  require = At ((\(FrameworkGenerated.InspectedFiles value) -> value) <$> readInspectedFiles)
+instance FrameworkRuntime.Reads ([FileHandle]) (Wrap "FinishInspection") where
+  require = Wrap ((\(FrameworkGenerated.InspectedFiles value) -> value) <$> readInspectedFiles)
 
-instance FrameworkRuntime.Raw (At "InspectionSnapshot") where
-  raw = At (runReleaseFiles)
+instance FrameworkRuntime.Raw (Wrap "InspectionSnapshot") where
+  raw = Wrap (runReleaseFiles)
 
 getFileNames :: FrameworkGenerated.App FrameworkGenerated.FileNames
 getFileNames = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations"

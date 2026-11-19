@@ -9,11 +9,13 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Data (Data, cast, gmapQ)
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Framework.Prototype.Types (SumTypes)
 import Framework.Gen.Plan (Unit)
 import Framework.Gen.Frontend.Ghc (withSourceTargets)
-import GHC (GhcPs, GhcRn, LoadHowMuch(..), SuccessFlag(..), getModSummary, getSessionDynFlags,
-            load, ms_hspp_opts, parseModule, pm_parsed_source, runGhc, setTargets, tm_renamed_source, typecheckModule)
+import GHC (GhcPs, GhcRn, LoadHowMuch(..), SuccessFlag(..), getModSummary, getModuleInfo, getSessionDynFlags,
+            load, modInfoExports, ms_hspp_opts, ms_mod, parseModule, pm_parsed_source, runGhc, setTargets, tm_internals_,
+            tm_renamed_source, typecheckModule)
 import GHC.Fingerprint (fingerprintString)
 import GHC.Data.FastString (mkFastString)
 import GHC.Data.StringBuffer (stringToStringBuffer)
@@ -24,10 +26,11 @@ import qualified GHC.Parser as Parser
 import GHC.Parser.Annotation (getLocA)
 import GHC.Parser.Header (getOptions)
 import GHC.Parser.Lexer (ParseResult(..), initParserState, unP)
-import GHC.Types.Name (Name, nameOccName)
-import GHC.Types.Name.Occurrence (OccName, occNameString)
-import GHC.Types.Name.Reader (RdrName, rdrNameOcc)
-import GHC.Unit.Module (mkModule, mkModuleName)
+import GHC.Tc.Types (tcg_rdr_env)
+import GHC.Types.Name (Name, nameModule_maybe, nameOccName)
+import GHC.Types.Name.Occurrence (OccName, isVarOcc, occNameString)
+import GHC.Types.Name.Reader (RdrName, globalRdrEnvElts, greName, rdrNameOcc, unQualOK)
+import GHC.Unit.Module (mkModule, mkModuleName, moduleUnit)
 import GHC.Types.SrcLoc
 import System.Directory (doesFileExist)
 import System.Exit (ExitCode(..), die, exitWith)
@@ -70,6 +73,7 @@ data HandlerSource = HandlerSource
   { handlerText :: String
   , handlerModule :: HsModule GhcPs
   , handlerNames :: NameUses
+  , handlerScopeNames :: Set.Set String
   , handlerImplicitPrelude :: Bool
   , handlerRebindable :: Bool
   }
@@ -95,11 +99,19 @@ loadHandlers namespace contracts = do
           case tm_renamed_source checked of
             Nothing -> liftIO (ioError (userError ("Missing renamed source for " ++ handlers)))
             Just (group, _, _, _, _) -> do
+              -- 生成副本还会无修饰地导入本程序的 Types。内部包装名需要避开两边可见的名字。
+              let sibling suffix = mkModule (moduleUnit (ms_mod summary)) (mkModuleName (namespace ++ suffix))
+              types <- getModuleInfo (sibling ".Types")
               let enabled name = any (\flag -> flagSpecName flag == name && xopt (flagSpecFlag flag) (ms_hspp_opts summary)) xFlags
+                  visible = [greName entry | entry <- globalRdrEnvElts (tcg_rdr_env (fst (tm_internals_ checked))), unQualOK entry]
+                  -- 契约方法由生成区限定调用。其他库即使导出了同名函数，手写代码仍须能直接使用。
+                  contractMethod name = nameModule_maybe name == Just (sibling ".Generated.Effects") && isVarOcc (nameOccName name)
               pure (Just HandlerSource
                 { handlerText = source
                 , handlerModule = unLoc (pm_parsed_source parsed)
                 , handlerNames = Map.fromList (variableUses group)
+                , handlerScopeNames = Set.fromList [occNameString (nameOccName name)
+                    | name <- visible ++ maybe [] modInfoExports types, not (contractMethod name)]
                 , handlerImplicitPrelude = enabled "ImplicitPrelude"
                 , handlerRebindable = enabled "RebindableSyntax"
                 })

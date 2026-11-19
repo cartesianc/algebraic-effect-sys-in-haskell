@@ -147,67 +147,67 @@ handlerSourceFingerprint = Just "f67952eb8185e826660c71f475062247"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype At (effect :: FrameworkTypes.Symbol) value = At { runAt :: FrameworkGenerated.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runAt :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance FrameworkRuntime.Root (At effect) value
+instance FrameworkRuntime.Root (Wrap effect) value
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SharedPathsError (At effect) where
-  raise (FrameworkGenerated.SharedPathsError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SharedPathsError (Wrap effect) where
+  raise (FrameworkGenerated.SharedPathsError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.SharedPathsFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.PrepareProbeError (At effect) where
-  raise (FrameworkGenerated.PrepareProbeError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.PrepareProbeError (Wrap effect) where
+  raise (FrameworkGenerated.PrepareProbeError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.PrepareProbeFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AcquireFileError (At effect) where
-  raise (FrameworkGenerated.AcquireFileError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AcquireFileError (Wrap effect) where
+  raise (FrameworkGenerated.AcquireFileError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.AcquireFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenSharedFileError (At effect) where
-  raise (FrameworkGenerated.OpenSharedFileError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenSharedFileError (Wrap effect) where
+  raise (FrameworkGenerated.OpenSharedFileError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.OpenSharedFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseSharedFileError (At effect) where
-  raise (FrameworkGenerated.CloseSharedFileError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseSharedFileError (Wrap effect) where
+  raise (FrameworkGenerated.CloseSharedFileError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CloseSharedFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.WriteFirstError (At effect) where
-  raise (FrameworkGenerated.WriteFirstError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.WriteFirstError (Wrap effect) where
+  raise (FrameworkGenerated.WriteFirstError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.WriteFirstFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.WriteSecondError (At effect) where
-  raise (FrameworkGenerated.WriteSecondError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.WriteSecondError (Wrap effect) where
+  raise (FrameworkGenerated.WriteSecondError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.WriteSecondFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.WriteThirdError (At effect) where
-  raise (FrameworkGenerated.WriteThirdError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.WriteThirdError (Wrap effect) where
+  raise (FrameworkGenerated.WriteThirdError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.WriteThirdFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.VerifyReuseError (At effect) where
-  raise (FrameworkGenerated.VerifyReuseError description) = At (FrameworkRuntime.failEffect
+instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.VerifyReuseError (Wrap effect) where
+  raise (FrameworkGenerated.VerifyReuseError description) = Wrap (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.VerifyReuseFailure description)
 
-instance FrameworkRuntime.Reads (SharedPaths) (At "PrepareProbe") where
-  require = At ((\(FrameworkGenerated.FilePaths value) -> value) <$> readFilePaths)
+instance FrameworkRuntime.Reads (SharedPaths) (Wrap "PrepareProbe") where
+  require = Wrap ((\(FrameworkGenerated.FilePaths value) -> value) <$> readFilePaths)
 
-instance FrameworkRuntime.Reads (SharedPaths) (At "FileResource") where
-  require = At ((\(FrameworkGenerated.FilePaths value) -> value) <$> readFilePaths)
+instance FrameworkRuntime.Reads (SharedPaths) (Wrap "FileResource") where
+  require = Wrap ((\(FrameworkGenerated.FilePaths value) -> value) <$> readFilePaths)
 
-instance FrameworkRuntime.Reads (SharedFile) (At "SharedFileScope") where
-  require = At ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
+instance FrameworkRuntime.Reads (SharedFile) (Wrap "SharedFileScope") where
+  require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
-instance FrameworkRuntime.Reads (SharedFile) (At "WriteFirst") where
-  require = At ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
+instance FrameworkRuntime.Reads (SharedFile) (Wrap "WriteFirst") where
+  require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
-instance FrameworkRuntime.Reads (SharedFile) (At "WriteSecond") where
-  require = At ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
+instance FrameworkRuntime.Reads (SharedFile) (Wrap "WriteSecond") where
+  require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
-instance FrameworkRuntime.Reads (SharedFile) (At "WriteThird") where
-  require = At ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
+instance FrameworkRuntime.Reads (SharedFile) (Wrap "WriteThird") where
+  require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
-instance FrameworkRuntime.Reads (SharedPaths) (At "VerifyReuse") where
-  require = At ((\(FrameworkGenerated.FilePaths value) -> value) <$> readFilePaths)
+instance FrameworkRuntime.Reads (SharedPaths) (Wrap "VerifyReuse") where
+  require = Wrap ((\(FrameworkGenerated.FilePaths value) -> value) <$> readFilePaths)
 
 getFilePaths :: FrameworkGenerated.App FrameworkGenerated.FilePaths
 getFilePaths = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations"
