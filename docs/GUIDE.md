@@ -139,7 +139,7 @@ newtype WriteFirstLineError = WriteFirstLineError String
 
 ```haskell
 runWriteFirstLine = ⟨入口包装⟩ $
-  openFileSession >> runAt @"WriteFirstLine" (FrameworkRuntime.super "writeFirstLine" FrameworkGenerated.writeFirstLine)
+  openFileSession >> runWrap @"WriteFirstLine" (FrameworkRuntime.super "writeFirstLine" FrameworkGenerated.writeFirstLine)
 
 instance FrameworkRuntime.Reads (FileHandle) (Wrap "WriteFirstLine") where
   require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)

@@ -362,7 +362,7 @@ Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 
 生成副本为每个 effect 引入类型标签：
 
 ```haskell
-newtype Wrap (effect :: Symbol) value = Wrap { runAt :: App value }
+newtype Wrap (effect :: Symbol) value = Wrap { runWrap :: App value }
 ```
 
 handler 方法体原样复制，在 `Wrap "名字"` 上实例化。Reads、Raw、Raises 按标签生成 instance：`Reads T (Wrap "E")` 把读取路由到 E 的 demands 中表示类型为 T 的那份细化资产，普通资产解包 readT，分支契约经 projectContext 投影当前构造器，持续资产解包 streamT，只 requires 一个持续资产时经 latestContext 取最新一条；`Raw (Wrap "E")` 由 E 的直接 Input 回答；`Raises XxxError (Wrap "E")` 转成 Errors 中的 XxxFailure；`StreamEnds (Wrap "E")` 只为 Stream effect 生成，结束 E 所在的生产会话；`EndsStream (Wrap "E")` 只为持续消费链上的 Excu 生成，结束 E 所在调用的那一处订阅。GHC 在编译期按标签选定读取，运行时不按调用者查表。
@@ -383,11 +383,11 @@ instance FrameworkRuntime.Raw (Wrap "ExtractFileText") where
 ```haskell
 -- Crawler：先驱动 URL，再开启会话，最后运行共用的 fetchPage
 runFetchPage = ⟨入口包装⟩ $
-  getStartURL >> openCrawlSession >> runAt @"FetchPage" (FrameworkRuntime.super "fetchPage" FrameworkGenerated.fetchPage)
+  getStartURL >> openCrawlSession >> runWrap @"FetchPage" (FrameworkRuntime.super "fetchPage" FrameworkGenerated.fetchPage)
 
 -- Context：执行 parser 并包装成资产
 getStartURL = ⟨入口包装⟩ $
-  (FrameworkGenerated.StartURL <$> runAt @"StartPage" (FrameworkRuntime.super "startURL" FrameworkGenerated.startURL))
+  (FrameworkGenerated.StartURL <$> runWrap @"StartPage" (FrameworkRuntime.super "startURL" FrameworkGenerated.startURL))
 ```
 
 - **驱动**：effect 的 requests 依次执行对应资产的 getT，重新生产并发布当前 origin 的绑定。
@@ -428,7 +428,7 @@ openFileSession = (… . FrameworkRuntime.openScope "FileSession" FrameworkGener
 <a id="middleware"></a>
 #### Middleware：在 Root 级调用点捕获句柄与值
 
-每个原子类方法作为一个尚未执行的 action 交给 Root 的 `super`。例如，生成入口在完成 requests 和 Input 前驱后，执行 `runAt @hooks @"FileSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)`。同一手写 instance 仍可绑定到不同 effect。Injector 确定绑定可捕获的类别，Booter 给出挂载的 middleware 列表，生成代码里的类型标签把两者交给对应的 Root 实例。
+每个原子类方法作为一个尚未执行的 action 交给 Root 的 `super`。例如，生成入口在完成 requests 和 Input 前驱后，执行 `runWrap @hooks @"FileSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)`。同一手写 instance 仍可绑定到不同 effect。Injector 确定绑定可捕获的类别，Booter 给出挂载的 middleware 列表，生成代码里的类型标签把两者交给对应的 Root 实例。
 
 有匹配的 middleware 时，`super` 先通知进入，再执行一次业务 action，成功后通知输出并交回原值。action 内每次实际的 `raw` 和 `raise` 沿用各自的捕获点。Middleware 在自己的标签上运行，Root 在这个标签上直接执行，避免递归触发。业务和 middleware 的 instance 都无需手写推进操作。
 
@@ -460,7 +460,9 @@ ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "Wri
   instance Captures '["Audit"] 'PureKind      -- 空选择：默认方法，super 直接执行 action
   ```
 
-  被拦截类别的 effect 标签按类别取 Root 实例。例如在 FileDemo 为 FileSession 挂上日志后，`super` 调用 `FileDemo.Generated.Handlers.superWrap`，Scoped 的 `superClose` 调用同模块的 `closeWrap`，其余标签使用 Root 的默认 `super`。类型 `Wrap` 和两个方法 `superWrap`、`closeWrap` 以名称标出这层包装关系。遇到同名业务 handler，内部调用使用模块限定名；内部声明与业务类型或生成入口重名时，gen 只给内部名字追加撇号。运行时不再按 `intercept` 筛选。
+  被拦截类别的 effect 标签按类别取 Root 实例。例如在 FileDemo 为 FileSession 挂上日志后，`super` 调用 `superWrap`，Scoped 的 `superClose` 调用 `closeWrap`，其余标签使用 Root 的默认 `super`。`runWrap` 从 `Wrap` 取出本次 action。运行时直接使用已选定的 Middleware。
+
+  `Generated.Handlers` 的入口、包装方法、Middleware 方法和登记表由 `Gen.Names` 统一命名。gen 收集手写模块中可不加限定使用的名字以及业务 `Types` 的导出，先分配入口名，再分配辅助名；遇到重名就追加撇号，直到名字可用。例如业务已导入 `hookTrace` 时，生成入口写作 `hookTrace'`。`Generated.Program` 按同一份名字表引用导出；Prototype 仍以注册时的逻辑名定位入口。
 - **open／close 归谁。** 规则只看挂载位置，不为会话另设：lifelong 的会话步骤位于该 lifelong 路径下（`边界 ++ [-1, 序号, 步骤]`），标注覆盖整个 lifelong 或它的祖先时，会话步骤以该列表登记，它执行的 open 就是 `open… @hooks`；标注只覆盖 lifelong 内的子树时，只有这些节点带上列表。close 由 open 入口在同一列表下带上（`openScope … (Just (closeX @hooks))`），收尾调用同一列表下的 close。同一 handler 复用在不同子树时，只有被标注覆盖的那次挂载被捕获。
 - **superhandler 与 Root 级调用。** `super` 是 Root 提供的 superhandler，捕获分两层：
   - 进入 super：前驱已经完成，`hookedEnter` 给出即将运行的 handler 名。回放直接返回已交出的值时，整个 action 都会跳过。对于 scope，进入表示一次调用尝试；若需在方法内读取开启参数才判定复用，可能只观察到进入。

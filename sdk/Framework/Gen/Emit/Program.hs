@@ -5,13 +5,15 @@
 module Framework.Gen.Emit.Program (renderProgram) where
 
 import Data.List (intercalate)
+import Framework.Gen.Names (HandlerNames, entryName, helperName)
 import Framework.Gen.Plan
 import Framework.Prototype (ChainRole(..), variantLabel)
 
-renderProgram :: Maybe String -> Unit -> String
-renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
+renderProgram :: HandlerNames -> Maybe String -> Unit -> String
+renderProgram names typesFingerprint unit = unlines (programHeader ++ astInterpreter)
   where
     namespace = unitNamespace unit
+    helper name = "Handlers." ++ helperName names name
     selected = map fst (unitTerminals unit)
     hooked = any ((== MiddlewareOperation) . bindingOperation) (unitBindings unit)
     programHeader =
@@ -42,7 +44,7 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
       , "compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]"
       , "                     , [(String, SDK.SessionSteps ContextValues Errors)])"
       , "compiledEntries = do"
-      , "  scopes <- Handlers.newScopeHandlers"
+      , "  scopes <- " ++ helper "newScopeHandlers"
       , "  pure"
       , "    ( " ++ renderList "      "
           [ wrapTarget (variantLabel terminal hooks) (terminal ++ "Result <$> (() <$ " ++ handlers hooks method ++ ")")
@@ -68,7 +70,7 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
       , "interpreter = SDK.interpreter " ++ show namespace
           ++ " [" ++ intercalate ", " sourceChecks ++ "] generatedPrototype compiledEntries"
       ]
-    sourceChecks = ["(" ++ sourcePath "Handlers.hs" ++ ", Handlers.handlerSourceFingerprint)"]
+    sourceChecks = ["(" ++ sourcePath "Handlers.hs" ++ ", " ++ helper "handlerSourceFingerprint" ++ ")"]
       ++ ["(" ++ sourcePath "Types.hs" ++ ", " ++ show typesFingerprint ++ ")" | not (null selectors)]
     sourcePath file = show ("demo/" ++ map (\c -> if c == '.' then '/' else c) namespace ++ "/" ++ file)
     -- 按 Context 注册名登记（与运行时绑定来源同名）。Receive：Stream 单步取得原始输入，parser 解析它并发布。
@@ -87,14 +89,14 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
     -- 注入 v4：入口对 Middleware 列表多态，挂载登记时在类型上给出覆盖它的列表，GHC 在编译期选定 该列表的 Captures 实例。
     -- 没有 Middleware 的程序照旧引用单态入口。
     handlers hooks name
-      | hooked = "(Handlers." ++ name ++ " @'[" ++ intercalate ", " (map show hooks) ++ "])"
-      | otherwise = "Handlers." ++ name
+      | hooked = "(Handlers." ++ entryName names name ++ " @'[" ++ intercalate ", " (map show hooks) ++ "])"
+      | otherwise = "Handlers." ++ entryName names name
     -- 原有列表（空）总是登记；被 middleware 标注覆盖的挂载另以覆盖它的列表登记。
     variantsOf role terminal = [] : [hooks | hooks <- unitVariants unit, hooks `elem`
       [mountHooks unit (mountNode mount) | mount <- assemblyMounts (unitAssembly unit)
         , mountRole mount == role, mountTerminal mount == terminal]]
     -- 挂接的 parser 与自动收尾的 close 已写在生成入口上；Target 只安装程序级的 Error 回调。
     wrapTarget label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
-      ++ " (SDK.withErrorHandlers Handlers.errorHandlers (" ++ action ++ "))"
+      ++ " (SDK.withErrorHandlers " ++ helper "errorHandlers" ++ " (" ++ action ++ "))"
     renderList _ [] = "[]"
     renderList indent items = "[ " ++ intercalate ("\n" ++ indent ++ ", ") items ++ "\n" ++ indent ++ "]"

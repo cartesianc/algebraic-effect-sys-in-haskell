@@ -11,9 +11,9 @@ import Framework.Gen.Emit.Effects (renderEffects)
 import Framework.Gen.Emit.Handlers (renderHandlers)
 import Framework.Gen.Emit.Program (renderProgram)
 import Framework.Gen.Emit.Prototype (renderPrototype)
-import Framework.Gen.Names (handlerClass)
+import Framework.Gen.Names (handlerClass, nameHandlers)
 import Framework.Gen.Frontend.Shape (shapeHandlers)
-import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, handlerText)
+import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, handlerText, handlerScopeNames)
 import Data.List (nub)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Exit (die)
@@ -48,9 +48,10 @@ compileWorkflow namespace = do
       pure (completed, renderPrototype (compositionPrototype completed), False)
   let unit = compositionUnit result
       prototype = compositionPrototype result
-  handlers <- either (ioError . userError) pure (renderHandlers unit source)
+      names = nameHandlers (maybe mempty handlerScopeNames source) (allMethods unit)
+  handlers <- either (ioError . userError) pure (renderHandlers names unit source)
   -- 输出只读取机器完成态的接口事实。
-  let program = renderProgram typesFingerprint unit ++ structure
+  let program = renderProgram names typesFingerprint unit ++ structure
   _ <- evaluate (length structure)
   -- 类型检查、顶层白名单与资产目录；通过后才更新生成区，未变文件保留时间戳
   assets <- checkAssets namespace

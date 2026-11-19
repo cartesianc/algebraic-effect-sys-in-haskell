@@ -108,15 +108,15 @@ class WriteTextHandler m where
 
 ```haskell
 runWriteReport = ⟨入口包装⟩ $
-  openReportScope >> runAt @"WriteReport" FrameworkGenerated.writeText
+  getReportBody >> openReportScope >> runWrap @"WriteReport" (FrameworkRuntime.super "writeText" FrameworkGenerated.writeText)
 runReadReply = ⟨入口包装⟩ $
-  runMarkReply >> runAt @"ReadReply" FrameworkGenerated.readText
+  runMarkReply >> runWrap @"ReadReply" (FrameworkRuntime.super "readText" FrameworkGenerated.readText)
 
-instance FrameworkRuntime.Reads (TextFile) (At "WriteReport") where
-  require = At ((\(FrameworkGenerated.OpenedReport value) -> value) <$> readOpenedReport)
+instance FrameworkRuntime.Reads (TextFile) (Wrap "WriteReport") where
+  require = Wrap ((\(FrameworkGenerated.OpenedReport value) -> value) <$> readOpenedReport)
 
-instance FrameworkRuntime.Raw (At "ReportCounter") where
-  raw = At (runReadReport)
+instance FrameworkRuntime.Raw (Wrap "ReportCounter") where
+  raw = Wrap (runReadReport)
 ```
 
 ## 实测结果

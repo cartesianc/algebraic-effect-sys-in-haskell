@@ -116,7 +116,7 @@ handlerSourceFingerprint = Just "0f85fee9664ae32c437aa87048765df5"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runAt :: FrameworkGenerated.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
 instance FrameworkRuntime.Root (Wrap effect) value
@@ -206,12 +206,12 @@ instance FrameworkRuntime.EndsStream (Wrap "ShowTotal") where
 
 runAnnounce :: FrameworkGenerated.App [String]
 runAnnounce = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runAnnounce" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "Announce") $
-  runAt @"Announce" (FrameworkRuntime.super "announce" FrameworkGenerated.announce)
+  runWrap @"Announce" (FrameworkRuntime.super "announce" FrameworkGenerated.announce)
 
 getOpenedInput :: FrameworkGenerated.App FrameworkGenerated.OpenedInput
 getOpenedInput = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "InputResource"
     (\value bindings -> bindings { FrameworkGenerated.boundInputResource = Just value })) $
-  (FrameworkGenerated.OpenedInput <$> runAt @"InputResource" (FrameworkRuntime.super "acquireInput" FrameworkGenerated.acquireInput))
+  (FrameworkGenerated.OpenedInput <$> runWrap @"InputResource" (FrameworkRuntime.super "acquireInput" FrameworkGenerated.acquireInput))
 
 readOpenedInput :: FrameworkGenerated.App FrameworkGenerated.OpenedInput
 readOpenedInput = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
@@ -219,20 +219,20 @@ readOpenedInput = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFa
 
 openInputSession :: FrameworkGenerated.App [String]
 openInputSession = (FrameworkRuntime.withErrorPath ["InputSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openInputSession" [] [] . FrameworkRuntime.openScope "InputSession" FrameworkGenerated.ScopeBindingError (Just (() <$ closeInputSession)) . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "InputSession") $
-  getOpenedInput >> runAt @"InputSession" (FrameworkRuntime.super "openInput" FrameworkGenerated.openInput)
+  getOpenedInput >> runWrap @"InputSession" (FrameworkRuntime.super "openInput" FrameworkGenerated.openInput)
 
 closeInputSession :: FrameworkGenerated.App [String]
 closeInputSession = (FrameworkRuntime.withErrorPath ["InputSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeInputSession" [] [] . FrameworkRuntime.closeScope "InputSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "InputSession") $
-  runAt @"InputSession" (FrameworkRuntime.superClose "closeInput" FrameworkGenerated.closeInput)
+  runWrap @"InputSession" (FrameworkRuntime.superClose "closeInput" FrameworkGenerated.closeInput)
 
 nextLineFeed :: FrameworkGenerated.App String
 nextLineFeed = (FrameworkRuntime.withErrorPath ["InputSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies ["InputSession"] . FrameworkRuntime.enterHandler "LineFeed") $
-  openInputSession >> runAt @"LineFeed" (FrameworkRuntime.super "nextLine" FrameworkGenerated.nextLine)
+  openInputSession >> runWrap @"LineFeed" (FrameworkRuntime.super "nextLine" FrameworkGenerated.nextLine)
 
 getTextLine :: FrameworkGenerated.App FrameworkGenerated.TextLine
 getTextLine = (FrameworkRuntime.withErrorPath ["InputSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["InputSession"] . FrameworkRuntime.callContext "LineParser"
     (\value bindings -> bindings { FrameworkGenerated.boundLineParser = Just value })) $
-  (FrameworkGenerated.TextLine <$> runAt @"LineParser" (FrameworkRuntime.super "parseLine" FrameworkGenerated.parseLine))
+  (FrameworkGenerated.TextLine <$> runWrap @"LineParser" (FrameworkRuntime.super "parseLine" FrameworkGenerated.parseLine))
 
 streamTextLine :: FrameworkGenerated.App FrameworkGenerated.TextLine
 streamTextLine = (FrameworkRuntime.withErrorPath ["InputSession"] . FrameworkRuntime.handleFailure) $
@@ -240,16 +240,16 @@ streamTextLine = (FrameworkRuntime.withErrorPath ["InputSession"] . FrameworkRun
 
 runPrintLine :: FrameworkGenerated.App [String]
 runPrintLine = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrintLine" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrintLine") $
-  runAt @"PrintLine" (FrameworkRuntime.super "printLine" FrameworkGenerated.printLine)
+  runWrap @"PrintLine" (FrameworkRuntime.super "printLine" FrameworkGenerated.printLine)
 
 runTextCounter :: FrameworkGenerated.App [String]
 runTextCounter = (FrameworkRuntime.withErrorPath ["InputSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runTextCounter" [] [("CountParser", () <$ getRunningTotal)] . FrameworkRuntime.withScopeDependencies ["InputSession"] . FrameworkRuntime.enterHandler "TextCounter") $
-  openInputSession >> runAt @"TextCounter" (FrameworkRuntime.super "countText" FrameworkGenerated.countText)
+  openInputSession >> runWrap @"TextCounter" (FrameworkRuntime.super "countText" FrameworkGenerated.countText)
 
 getRunningTotal :: FrameworkGenerated.App FrameworkGenerated.RunningTotal
 getRunningTotal = (FrameworkRuntime.withErrorPath ["InputSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["InputSession"] . FrameworkRuntime.callContext "CountParser"
     (\value bindings -> bindings { FrameworkGenerated.boundCountParser = Just value })) $
-  (FrameworkGenerated.RunningTotal <$> runAt @"CountParser" (FrameworkRuntime.super "parseTotal" FrameworkGenerated.parseTotal))
+  (FrameworkGenerated.RunningTotal <$> runWrap @"CountParser" (FrameworkRuntime.super "parseTotal" FrameworkGenerated.parseTotal))
 
 streamRunningTotal :: FrameworkGenerated.App FrameworkGenerated.RunningTotal
 streamRunningTotal = (FrameworkRuntime.withErrorPath ["InputSession"] . FrameworkRuntime.handleFailure) $
@@ -257,11 +257,11 @@ streamRunningTotal = (FrameworkRuntime.withErrorPath ["InputSession"] . Framewor
 
 runShowTotal :: FrameworkGenerated.App [String]
 runShowTotal = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runShowTotal" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowTotal") $
-  runAt @"ShowTotal" (FrameworkRuntime.super "showTotal" FrameworkGenerated.showTotal)
+  runWrap @"ShowTotal" (FrameworkRuntime.super "showTotal" FrameworkGenerated.showTotal)
 
 runReport :: FrameworkGenerated.App [String]
 runReport = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReport" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "Report") $
-  runAt @"Report" (FrameworkRuntime.super "report" FrameworkGenerated.report)
+  runWrap @"Report" (FrameworkRuntime.super "report" FrameworkGenerated.report)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]

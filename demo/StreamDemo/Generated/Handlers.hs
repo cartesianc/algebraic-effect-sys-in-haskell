@@ -124,7 +124,7 @@ handlerSourceFingerprint = Just "23817ef6e3ebb472659b851b0d2176a8"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runAt :: FrameworkGenerated.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
 instance FrameworkRuntime.Root (Wrap effect) value
@@ -215,7 +215,7 @@ instance FrameworkRuntime.EndsStream (Wrap "ReportHeartbeat") where
 getSensorState :: FrameworkGenerated.App FrameworkGenerated.SensorState
 getSensorState = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "SensorResource"
     (\value bindings -> bindings { FrameworkGenerated.boundSensorResource = Just value })) $
-  (FrameworkGenerated.SensorState <$> runAt @"SensorResource" (FrameworkRuntime.super "prepareSensor" FrameworkGenerated.prepareSensor))
+  (FrameworkGenerated.SensorState <$> runWrap @"SensorResource" (FrameworkRuntime.super "prepareSensor" FrameworkGenerated.prepareSensor))
 
 readSensorState :: FrameworkGenerated.App FrameworkGenerated.SensorState
 readSensorState = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
@@ -223,20 +223,20 @@ readSensorState = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFa
 
 openSensorLink :: FrameworkGenerated.App [String]
 openSensorLink = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openSensorLink" [] [] . FrameworkRuntime.openScope "SensorLink" FrameworkGenerated.ScopeBindingError (Just (() <$ closeSensorLink)) . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
-  getSensorState >> runAt @"SensorLink" (FrameworkRuntime.super "connectSensor" FrameworkGenerated.connectSensor)
+  getSensorState >> runWrap @"SensorLink" (FrameworkRuntime.super "connectSensor" FrameworkGenerated.connectSensor)
 
 closeSensorLink :: FrameworkGenerated.App [String]
 closeSensorLink = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeSensorLink" [] [] . FrameworkRuntime.closeScope "SensorLink" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
-  runAt @"SensorLink" (FrameworkRuntime.superClose "disconnectSensor" FrameworkGenerated.disconnectSensor)
+  runWrap @"SensorLink" (FrameworkRuntime.superClose "disconnectSensor" FrameworkGenerated.disconnectSensor)
 
 nextTemperatureFeed :: FrameworkGenerated.App String
 nextTemperatureFeed = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.enterHandler "TemperatureFeed") $
-  openSensorLink >> runAt @"TemperatureFeed" (FrameworkRuntime.super "nextReading" FrameworkGenerated.nextReading)
+  openSensorLink >> runWrap @"TemperatureFeed" (FrameworkRuntime.super "nextReading" FrameworkGenerated.nextReading)
 
 getTemperatureSample :: FrameworkGenerated.App FrameworkGenerated.TemperatureSample
 getTemperatureSample = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.callContext "TemperatureParser"
     (\value bindings -> bindings { FrameworkGenerated.boundTemperatureParser = Just value })) $
-  (FrameworkGenerated.TemperatureSample <$> runAt @"TemperatureParser" (FrameworkRuntime.super "parseTemperature" FrameworkGenerated.parseTemperature))
+  (FrameworkGenerated.TemperatureSample <$> runWrap @"TemperatureParser" (FrameworkRuntime.super "parseTemperature" FrameworkGenerated.parseTemperature))
 
 streamTemperatureSample :: FrameworkGenerated.App FrameworkGenerated.TemperatureSample
 streamTemperatureSample = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure) $
@@ -244,12 +244,12 @@ streamTemperatureSample = (FrameworkRuntime.withErrorPath ["SensorLink"] . Frame
 
 nextHeartbeatClock :: FrameworkGenerated.App String
 nextHeartbeatClock = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.enterHandler "HeartbeatClock") $
-  openSensorLink >> runAt @"HeartbeatClock" (FrameworkRuntime.super "nextBeat" FrameworkGenerated.nextBeat)
+  openSensorLink >> runWrap @"HeartbeatClock" (FrameworkRuntime.super "nextBeat" FrameworkGenerated.nextBeat)
 
 getBeat :: FrameworkGenerated.App FrameworkGenerated.Beat
 getBeat = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.callContext "Heartbeat"
     (\value bindings -> bindings { FrameworkGenerated.boundHeartbeat = Just value })) $
-  (FrameworkGenerated.Beat <$> runAt @"Heartbeat" (FrameworkRuntime.super "parseBeat" FrameworkGenerated.parseBeat))
+  (FrameworkGenerated.Beat <$> runWrap @"Heartbeat" (FrameworkRuntime.super "parseBeat" FrameworkGenerated.parseBeat))
 
 streamBeat :: FrameworkGenerated.App FrameworkGenerated.Beat
 streamBeat = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure) $
@@ -257,19 +257,19 @@ streamBeat = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.h
 
 runAnnounce :: FrameworkGenerated.App [String]
 runAnnounce = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runAnnounce" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "Announce") $
-  runAt @"Announce" (FrameworkRuntime.super "announce" FrameworkGenerated.announce)
+  runWrap @"Announce" (FrameworkRuntime.super "announce" FrameworkGenerated.announce)
 
 runShowTemperature :: FrameworkGenerated.App [String]
 runShowTemperature = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runShowTemperature" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowTemperature") $
-  runAt @"ShowTemperature" (FrameworkRuntime.super "showTemperature" FrameworkGenerated.showTemperature)
+  runWrap @"ShowTemperature" (FrameworkRuntime.super "showTemperature" FrameworkGenerated.showTemperature)
 
 runCheckTrend :: FrameworkGenerated.App [String]
 runCheckTrend = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runCheckTrend" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CheckTrend") $
-  runAt @"CheckTrend" (FrameworkRuntime.super "checkTrend" FrameworkGenerated.checkTrend)
+  runWrap @"CheckTrend" (FrameworkRuntime.super "checkTrend" FrameworkGenerated.checkTrend)
 
 runReportHeartbeat :: FrameworkGenerated.App [String]
 runReportHeartbeat = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReportHeartbeat" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReportHeartbeat") $
-  runAt @"ReportHeartbeat" (FrameworkRuntime.super "reportHeartbeat" FrameworkGenerated.reportHeartbeat)
+  runWrap @"ReportHeartbeat" (FrameworkRuntime.super "reportHeartbeat" FrameworkGenerated.reportHeartbeat)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
