@@ -2021,5 +2021,7 @@ generatedPrototype =
               , ("ParserA", GetLevelAGen)
               , ("ParserB", GetLevelBGen)
               ]
+          , SDK.drivingMiddleware = []
+          , SDK.drivingHooks = []
           }
     }

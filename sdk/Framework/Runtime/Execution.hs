@@ -19,7 +19,7 @@ import Framework.Runtime.Session
   , retireSession, feedSession, endSession, breakSession )
 import Framework.Prototype
 import Framework.Recursion (Algebra)
-import Framework.Language.AST (AST, WorkflowF(..), foldAST)
+import Framework.Language.AST (AST, WorkflowF(..), foldAST, stripAST)
 import Control.Concurrent (MVar, ThreadId, forkIOWithUnmask, killThread, newEmptyMVar, putMVar, readMVar, tryPutMVar)
 import Control.Concurrent.MVar (newMVar, modifyMVar)
 import Control.Exception
@@ -226,6 +226,8 @@ executionAlgebra prototype store entries selectors layer expected = do
         Parallel selected -> selected
         Alternative selected -> selected
         Lifelong selected -> selected
+        -- 标注在折叠前剥离（runStructuredAST），不会作为一层出现。
+        Hooked _ selected -> [selected]
   case (layer, expected) of
     (Node selected, NodeAt _ _) -> do
       chain <- lookupChain prototype location
@@ -430,8 +432,12 @@ runStructuredAST
   -> IO (Output cause [value])
 runStructuredAST prototype tree entries selectors sessions = do
   store <- newRuntimeGraph prototype (scopeHandlers entries)
+  -- middleware 标注透明：剥离后核对骨架；标注本身须与编译时一致，生效集合已在 Prototype 中。
+  let (stripped, marks) = stripAST tree
+  unless (marks == drivingMiddleware (protoDriving prototype)) $
+    ioError (userError (show (PrototypeWorkflowMismatch :: PrototypeError String)))
   prepared <- either (ioError . userError . show) pure $
-    foldAST (executionAlgebra prototype store compiled readers) tree (protoWorkflow prototype)
+    foldAST (executionAlgebra prototype store compiled readers) stripped (protoWorkflow prototype)
   configureRuntimeScopes store
   retireAfter (if null (drivingUnits (protoDriving prototype))
     then do

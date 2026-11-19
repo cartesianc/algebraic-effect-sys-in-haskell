@@ -866,5 +866,7 @@ generatedPrototype =
               , ("LineParser", GetTextLineGen)
               , ("CountParser", GetRunningTotalGen)
               ]
+          , SDK.drivingMiddleware = []
+          , SDK.drivingHooks = []
           }
     }

@@ -58,21 +58,25 @@ renderEffects unit = unlines (contractHeader ++ runtimeAliases ++ generatedContr
     -- 每个 handler 一个类：Layer 是它能用的全部能力，来自绑定的 effect 的 demands 与类别。
     handlerContract (Signature handler' result capabilities bound) =
       [ "-- handler " ++ handler' ++ "：绑定到 " ++ intercalate "、" bound ++ "。"
-      , "type " ++ handlerLayer handler' ++ " m = (" ++ intercalate ", "
-          (init layer ++ ["SDK.Raises " ++ handlerError handler' ++ " m", last layer]) ++ ")"
+      , "type " ++ handlerLayer handler' ++ " m = (" ++ intercalate ", " raising ++ ")"
       , "class " ++ handlerClass handler' ++ " m where"
       , "  " ++ handler' ++ " :: m " ++ parenthesized (renderValueType "SDK." "" result)
       , ""
-      , "-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy " ++ show handler' ++ " 匹配。"
+      ] ++ (if Proceeds `elem` capabilities then [] else
+      [ "-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy " ++ show handler' ++ " 匹配。"
       , "newtype " ++ handlerError handler' ++ " = " ++ handlerError handler' ++ " String"
       , "  deriving (Eq, Show, Read)"
       , ""
-      ]
+      ])
       where layer = map renderCapability capabilities
+            -- Middleware 首版不 raise：hook 的 IO 异常作为被拦截调用的失败传播，不另给业务失败。
+            raising
+              | Proceeds `elem` capabilities = layer
+              | otherwise = init layer ++ ["SDK.Raises " ++ handlerError handler' ++ " m", last layer]
     errorDeclaration =
       [ "-- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。"
       , "data Errors = " ++ intercalate " | "
-          (map handlerFailure (unitHandlers unit)
+          (map handlerFailure (raisingHandlers unit)
            ++ ["ContextBindingError SDK.ContextFault", "ScopeBindingError SDK.ScopeFault"])
       , "  deriving (Eq, Show)"
       , ""

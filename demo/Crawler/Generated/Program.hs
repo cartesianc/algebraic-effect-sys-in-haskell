@@ -901,5 +901,7 @@ generatedPrototype =
               , ("ExtractLinkedPage", GetLinkedPageSummaryGen)
               , ("SessionContext", GetCrawlSessionInfoGen)
               ]
+          , SDK.drivingMiddleware = []
+          , SDK.drivingHooks = []
           }
     }

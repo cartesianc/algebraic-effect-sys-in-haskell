@@ -79,6 +79,11 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
       ++ " (SDK.withErrorHandlers Handlers.errorHandlers"
       ++ " (SDK.withAnchoredContexts Handlers.contextInjections"
       ++ " (SDK.withStreamContexts Handlers.streamContextInjections"
-      ++ " (SDK.withScopeCleanups Handlers.scopeCleanups (" ++ action ++ ")))))"
+      ++ " (SDK.withScopeCleanups Handlers.scopeCleanups (" ++ hooked action ++ ")))))"
+    -- 注册了 Middleware 时安装 hook 目录；没有时生成代码不变。
+    hooked action
+      | any ((== MiddlewareOperation) . bindingOperation) (unitBindings unit) =
+          "SDK.withMiddlewareHooks Handlers.middlewareHooks (" ++ action ++ ")"
+      | otherwise = action
     renderList _ [] = "[]"
     renderList indent items = "[ " ++ intercalate ("\n" ++ indent ++ ", ") items ++ "\n" ++ indent ++ "]"

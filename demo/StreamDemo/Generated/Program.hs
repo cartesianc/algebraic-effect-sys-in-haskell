@@ -864,5 +864,7 @@ generatedPrototype =
               , ("TemperatureParser", GetTemperatureSampleGen)
               , ("Heartbeat", GetBeatGen)
               ]
+          , SDK.drivingMiddleware = []
+          , SDK.drivingHooks = []
           }
     }

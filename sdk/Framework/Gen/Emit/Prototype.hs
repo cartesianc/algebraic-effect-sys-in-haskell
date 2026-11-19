@@ -108,6 +108,7 @@ renderTyping (R.Error detecting resolving handled) =
 renderTyping (R.Context declared parsing requiring streaming) =
   constructor "Context" [renderAsset declared, show parsing, show requiring, show streaming]
 renderTyping (R.Stream method) = constructor "Stream" [show method]
+renderTyping (R.Middleware method intercepted) = constructor "Middleware" [show method, list tag intercepted]
 
 renderAsset :: R.Asset -> String
 renderAsset (R.AssetDecl selected representation) = constructor "AssetDecl" [show selected, renderType representation]
@@ -272,7 +273,9 @@ renderDriving plan = record "DrivingPlan"
   , ("drivingSessions", list session (P.drivingSessions plan))
   , ("drivingRootNodes", show (P.drivingRootNodes plan))
   , ("drivingOutputSites", show (P.drivingOutputSites plan))
-  , ("drivingRequests", list (pair show genName) (P.drivingRequests plan)) ]
+  , ("drivingRequests", list (pair show genName) (P.drivingRequests plan))
+  , ("drivingMiddleware", show (P.drivingMiddleware plan))
+  , ("drivingHooks", show (P.drivingHooks plan)) ]
   where
     node p = constructor "NodeDrive" [show (P.driveNode p), show (P.driveMembers p), show (P.driveSubscriptions p)
       , show (P.driveBoundary p), show (P.driveCaptures p), show (P.drivePriorBoundaries p), show (P.driveBlockedPublishers p)]

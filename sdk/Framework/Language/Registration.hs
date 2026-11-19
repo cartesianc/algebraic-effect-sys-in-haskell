@@ -12,7 +12,7 @@
 -- 源语言的注册声明：用户在 Effects.hs 中写下的 ADT 与 demand 组合子，不执行 handler。
 -- 名字推导、资产来源与访问规则属于编译器：Framework.Gen.Names、Framework.Gen.Composition。
 module Framework.Language.Registration
-  ( EffectTyping(..), EffectKind(..), effectKind
+  ( EffectTyping(..), EffectKind(..), effectKind, allEffects
   , Asset(.., Asset), contractOf, contextAsset
   , Handles(..), TypeRef(..), typeRef, contractName
   , EffectSpec(..), Demand(..), Access(..), requests, requires, streams
@@ -42,6 +42,9 @@ data EffectTyping
   -- 持续生产节点。handler 每次调用取得一份原始输入（String），SDK 负责反复调用；
   -- 不作为 AST 末端，只经挂在它下面的 Context 解析后进入资产。
   | Stream { handler :: Maybe String }
+  -- 环绕 hook：没有 Input 前驱（input 写保留名 "None"），也不声明 demands；由 AST 的 middleware 标注挂载，
+  -- 拦截所在子树中 intercept 列出的类别的原子调用。handler 用 proceed 推进被拦截的调用，之后用 raw 读本次输出。
+  | Middleware { handler :: Maybe String, intercept :: [EffectKind] }
   deriving (Eq, Show, Read, Generic, NFData)
 
 -- 细化资产（refinement asset）：表示类型来自 Types.hs 或 Prelude，资产名给它一个独立的名义类型，
@@ -80,8 +83,12 @@ data Handles
   deriving (Eq, Show, Read, Generic, NFData)
 
 -- 注册类别：只保留类别，handler 名由注册描述。
-data EffectKind = PureKind | ExcuKind | ScopedKind | ErrorKind | ContextKind | StreamKind
+data EffectKind = PureKind | ExcuKind | ScopedKind | ErrorKind | ContextKind | StreamKind | MiddlewareKind
   deriving (Eq, Show, Read, Generic, NFData)
+
+-- intercept 的全类别简写：首版可拦截的是确实交出 raw 的原子调用（Excu、Scoped 的 open／close、Pure）。
+allEffects :: [EffectKind]
+allEffects = [ExcuKind, ScopedKind, PureKind]
 
 effectKind :: EffectTyping -> EffectKind
 effectKind (Pure _) = PureKind
@@ -90,6 +97,7 @@ effectKind (Scoped _ _) = ScopedKind
 effectKind Error {} = ErrorKind
 effectKind Context {} = ContextKind
 effectKind (Stream _) = StreamKind
+effectKind Middleware {} = MiddlewareKind
 
 -- 表示类型引用 Types.hs 中的原生类型；不复制其 ADT 结构。
 -- 识别 Output 以拒绝把完成协议声明为业务产物；业务 ADT 仍是不透明名称。

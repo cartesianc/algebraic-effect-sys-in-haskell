@@ -33,6 +33,10 @@ renderStructure prototype workflowAST = do
     tree = protoScopes prototype
     rendered =
       ["Workflow"] ++ renderWorkflow 1 (protoWorkflow prototype)
+      ++ concat [["", "Middleware (annotated subtree: hooks; effective hooks per launch position)"]
+          ++ ["  at " ++ show node ++ " " ++ unwords hooks | (node, hooks) <- drivingMiddleware (protoDriving prototype)]
+          ++ ["  launch " ++ show node ++ " " ++ unwords hooks | (node, hooks) <- drivingHooks (protoDriving prototype)]
+        | not (null (drivingMiddleware (protoDriving prototype)))]
       ++ ["", "Interpreter sessions (booted by a finite require of a Receive asset; kept until exit)"]
       ++ ["  session " ++ sessionAsset session ++ " " ++ describePlan (sessionPlan session)
            ++ " mounts " ++ show (sessionMounts session)

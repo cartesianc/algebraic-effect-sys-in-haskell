@@ -53,6 +53,8 @@ data PrototypePlan = PrototypePlan
   { plannedRegistrations :: [EffectSpec]
   , plannedEffects :: [EffectProto String]
   , plannedWorkflow :: WorkflowTree
+  -- AST 的 middleware 标注：(标注位置, hook 名)，位置按去掉标注后的路径编号。
+  , plannedMiddleware :: [(NodeId, [String])]
   } deriving (Eq, Show, Read, Generic, NFData)
 
 data EffectProto method = EffectProto
@@ -181,6 +183,10 @@ data DrivingPlan method = DrivingPlan
   , drivingRootNodes :: [NodeId]
   , drivingOutputSites :: [(NodeId, String)]
   , drivingRequests :: [(String, method)]
+  -- 源 AST 的 middleware 标注，启动时与当前 AST 核对。
+  , drivingMiddleware :: [(NodeId, [String])]
+  -- 每个运行位置实际生效的 hook 集合（只列非空）：所有覆盖该位置的标注之并，去重、无顺序。
+  , drivingHooks :: [(NodeId, [String])]
   } deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 data NodeDrive = NodeDrive

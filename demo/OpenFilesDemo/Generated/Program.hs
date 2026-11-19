@@ -626,5 +626,7 @@ generatedPrototype =
               , ("FileResources", GetOpenedFilesGen)
               , ("InspectionSnapshot", GetInspectedFilesGen)
               ]
+          , SDK.drivingMiddleware = []
+          , SDK.drivingHooks = []
           }
     }

@@ -592,5 +592,7 @@ generatedPrototype =
           , SDK.drivingRootNodes = [[0,0],[1,0],[1,1],[1,2],[2,0]]
           , SDK.drivingOutputSites = []
           , SDK.drivingRequests = [("FileLocations", GetFilePathsGen), ("FileResource", GetOpenedFileGen)]
+          , SDK.drivingMiddleware = []
+          , SDK.drivingHooks = []
           }
     }

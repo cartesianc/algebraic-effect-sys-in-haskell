@@ -20,9 +20,13 @@ import GHC.Hs
 import GHC.Parser.Annotation (getLocA)
 import GHC.Types.SrcLoc
 
--- Generated/Handlers 导出的名字：全部 effect 方法与登记表。
+-- Generated/Handlers 导出的名字：全部 effect 方法与登记表；hook 表只在注册了 Middleware 时生成。
 handlerExports :: Unit -> [String]
 handlerExports unit = allMethods unit ++ ["newScopeHandlers", "scopeCleanups", "errorHandlers", "contextInjections", "streamContextInjections"]
+  ++ ["middlewareHooks" | hasMiddleware unit]
+
+hasMiddleware :: Unit -> Bool
+hasMiddleware unit = any ((== MiddlewareOperation) . bindingOperation) (unitBindings unit)
 
 -- 首次生成尚无 Handlers.hs 时只给出指纹，编写 Handlers.hs 后重新生成；原文件始终保留，只有副本进入运行导入链。
 renderHandlers :: Unit -> Maybe HandlerSource -> Either String String
@@ -43,9 +47,9 @@ renderHandlers unit loaded = do
 
 -- 生成区的装配：effect 标签、handler 能力的实例与 effect 方法。
 support :: Unit -> String
-support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers unit) ++ routeInstances ++ rawInstances
-    ++ endInstances ++ concatMap entryDefinitions (map Prototype.effectName (effectPrototypes unit)))
-    ++ scopeHandlers ++ scopeCleanups ++ errorHandlers
+support unit = unlines (supportHeader ++ concatMap raisesInstance (raisingHandlers unit) ++ routeInstances ++ rawInstances
+    ++ endInstances ++ hookInstances ++ concatMap entryDefinitions (map Prototype.effectName (effectPrototypes unit)))
+    ++ scopeHandlers ++ scopeCleanups ++ errorHandlers ++ middlewareHooks
     ++ injectionTable ContextRequest "contextInjections"
     ++ injectionTable ContextStream "streamContextInjections"
   where
@@ -100,6 +104,15 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
         , "  endStream = At FrameworkRuntime.endSubscription"
         , "" ]
       | selectedName <- map Prototype.effectName (effectPrototypes unit), hasCapability selectedName EndsSubscription ]
+    -- hook 的 proceed 与 raw 只由拦截分发回答：proceed 等本次调用完成，raw 读它交出的输出。
+    hookInstances = concat
+      [ [ "instance FrameworkRuntime.Raw (At " ++ show (bindingEffect binding) ++ ") where"
+        , "  raw = At FrameworkRuntime.hookRaw"
+        , ""
+        , "instance FrameworkRuntime.Proceeds (At " ++ show (bindingEffect binding) ++ ") where"
+        , "  proceed = At FrameworkRuntime.hookProceed"
+        , "" ]
+      | binding <- unitBindings unit, bindingOperation binding == MiddlewareOperation ]
     hasCapability selectedName capability = or
       [ capability `elem` bindingCapabilities binding
       | binding <- unitBindings unit, bindingEffect binding == selectedName ]
@@ -117,9 +130,15 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
         handlerCall binding handler' = case bindingOperation binding of
           PublishAsset contract ->
             "(FrameworkGenerated." ++ contract ++ " <$> runAt @" ++ show selectedName ++ " FrameworkGenerated." ++ handler' ++ ")"
-          _ -> "runAt @" ++ show selectedName ++ " FrameworkGenerated." ++ handler'
+          _ -> intercepted binding ("runAt @" ++ show selectedName ++ " FrameworkGenerated." ++ handler')
+        -- 拦截槽只包住原子调用本身；驱动与 Input 前驱在槽外，各自按自己的入口拦截。
+        intercepted binding call = case bindingIntercept binding of
+          Just kind -> "FrameworkRuntime.interceptCall FrameworkRuntime." ++ show kind ++ " " ++ show selectedName ++ " (" ++ call ++ ")"
+          Nothing -> call
         scoped = "FrameworkRuntime.withScopeDependencies " ++ show (Prototype.effectScopes (protoOf unit selectedName))
         entered = scoped ++ " . FrameworkRuntime.enterHandler " ++ show selectedName
+        -- hook 入口不加包装：它在拦截分发内执行，异常作为被拦截调用的失败沿原调用的包装传播。
+        wrapper binding | bindingOperation binding == MiddlewareOperation = "id"
         wrapper binding = rootWrapper selectedName ++ " . " ++ case bindingOperation binding of
           -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
           OpenResource -> scopeWrapper binding "openScope "
@@ -130,6 +149,7 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
           PublishAsset _ -> scoped ++ " . FrameworkRuntime.callContext " ++ show selectedName
             ++ "\n    (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"
           ErrorOperation -> entered
+          MiddlewareOperation -> entered
         scopeWrapper binding operation = "FrameworkRuntime.atomicScope " ++ show (bindingMethod binding) ++ " . FrameworkRuntime."
           ++ operation ++ show selectedName ++ " FrameworkGenerated.ScopeBindingError . " ++ entered
     rootWrapper selectedName = "FrameworkRuntime.withErrorPath " ++ show (Prototype.effectNearestScopes (protoOf unit selectedName))
@@ -195,6 +215,22 @@ support unit = unlines (supportHeader ++ concatMap raisesInstance (unitHandlers 
               ["(" ++ show (outputProducer connection) ++ ", () <$ " ++ outputParser connection ++ ")"
               | connection <- connections, outputAnchor connection == anchor] ++ "])"
           | anchor <- nub (map outputAnchor connections) ]
+    -- hook 目录：Middleware 名 → (拦截类别, hook 入口)。生效位置由 Prototype 的静态 hook 集合决定。
+    middlewareHooks
+      | hasMiddleware unit = unlines
+          [ ""
+          , "-- Middleware 目录：按名字登记拦截类别与 hook 入口；每个运行位置的生效集合来自 Prototype。"
+          , "middlewareHooks :: [(String, ([FrameworkRuntime.EffectKind], FrameworkGenerated.App ()))]"
+          , "middlewareHooks ="
+          , "  [ " ++ intercalate "\n  , "
+              [ "(" ++ show (bindingEffect binding) ++ ", ([" ++ intercalate ", " ["FrameworkRuntime." ++ show kind | kind <- kinds]
+                  ++ "], " ++ bindingMethod binding ++ "))"
+              | binding <- unitBindings unit, bindingOperation binding == MiddlewareOperation
+              , let kinds = interceptedKinds (bindingEffect binding) ]
+          , "  ]"
+          ]
+      | otherwise = ""
+    interceptedKinds selectedName = [kind | (owner, kinds) <- unitMiddleware unit, owner == selectedName, kind <- kinds]
     -- Error 只指向 scope：按 handles 匹配故障，detect／resolve 是生成的 effect 方法。
     errorHandlers = unlines
       [ ""

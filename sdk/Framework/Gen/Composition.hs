@@ -30,7 +30,7 @@ import Framework.Gen.Names
 import Framework.Gen.Plan
 import Framework.Gen.Injector
 import Framework.Gen.Booter
-import Framework.Language.AST (WorkflowF(..))
+import Framework.Language.AST (WorkflowF(..), stripMiddleware)
 import Framework.Language.Registration hiding (effectKind)
 import qualified Framework.Language.Registration as Registration
 import Framework.Prototype.Graph
@@ -68,9 +68,12 @@ advanceComposition state = case state of
   Declared namespace specifications tree sumTypes -> do
     effects <- diagnostic (buildEffectProtos specifications sumTypes)
     pure (Related namespace specifications effects tree sumTypes)
+  -- middleware 标注是透明的：先剥离标注再编号，标注位置按剥离后的路径记录。
   Related namespace specifications effects tree sumTypes -> do
-    workflow <- diagnostic (numberWorkflow effects tree)
-    pure (Numbered namespace (PrototypePlan specifications effects workflow) sumTypes)
+    let (inner, marks) = stripMiddleware tree
+    workflow <- diagnostic (numberWorkflow effects inner)
+    diagnostic (checkMiddleware effects marks)
+    pure (Numbered namespace (PrototypePlan specifications effects workflow marks) sumTypes)
   Numbered namespace plan sumTypes -> do
     assembly <- diagnostic (assembleProgram plan)
     unit <- bindProgram namespace plan (declareEffects (plannedRegistrations plan)) assembly sumTypes
@@ -140,6 +143,7 @@ buildEffectProtos :: [EffectSpec] -> SumTypes -> Either (PrototypeError String) 
 buildEffectProtos specifications sumTypes = do
   valid (unique (map name specifications)) "Duplicate effect name"
   valid (all ((/= "Root") . name) specifications) "Root is reserved"
+  valid (all ((/= "None") . name) specifications) "None is reserved"
   fromRegistration (validateAssetSources specifications)
   mapM_ (\specification -> mapM_ (\demand -> valid (validContractName (contract demand))
       ("Demanded contract must be a contract name such as StartURL: " ++ contract demand
@@ -198,6 +202,7 @@ buildEffectProtos specifications sumTypes = do
                 kind | Registration.effectKind kind `elem` [ExcuKind, ScopedKind], Just _ <- entryMethod anchor -> [name anchor]
                 _ -> [] ]
       inputAncestors "Root" = []
+      inputAncestors "None" = []
       inputAncestors selected = selected : concat
         [inputAncestors (input specification) | specification <- specifications, name specification == selected]
       make specification contextDependencies = EffectProto
@@ -234,7 +239,9 @@ buildEffectProtos specifications sumTypes = do
         case typing specification of
           Scoped (Just _) _ -> pure ()
           _ -> Left (InvalidPrototype ("Input scope needs Scoped.open: " ++ selected))
-      boundHandlers = nub (concatMap (map snd . handlerBindings) specifications)
+      -- Middleware 的 handler 首版不 raise，RaisedBy 不能指向它。
+      boundHandlers = nub (concatMap (map snd . handlerBindings)
+        [specification | specification <- specifications, Registration.effectKind (typing specification) /= MiddlewareKind])
       checkHandled (RaisedBy selected) = valid (selected `elem` boundHandlers)
         ("RaisedBy must name a registered handler: " ++ selected)
       checkHandled (ScopeFaultIn selected) = do
@@ -244,8 +251,13 @@ buildEffectProtos specifications sumTypes = do
         target <- findSpec selected
         valid (Registration.effectKind (typing target) == ContextKind) ("ContextFaultIn must name a Context effect: " ++ selected)
       check specification = do
-        unless (input specification == "Root") $ do
+        -- "None" 只属于 Middleware：它没有 Input 前驱，由 AST 标注挂载；Middleware 不能作为任何 effect 的 Input。
+        valid ((input specification == "None") == (Registration.effectKind (typing specification) == MiddlewareKind))
+          ("Input \"None\" is reserved for Middleware, and a Middleware has input \"None\": " ++ name specification)
+        unless (input specification `elem` ["Root", "None"]) $ do
           predecessor <- findSpec (input specification)
+          valid (Registration.effectKind (typing predecessor) /= MiddlewareKind)
+            ("Input cannot reference Middleware " ++ name predecessor ++ " in " ++ name specification ++ "; mount it with middleware in the AST")
           valid (Registration.effectKind (typing predecessor) /= ContextKind)
             ("Input cannot reference Context " ++ name predecessor ++ " in " ++ name specification ++ "; use demands")
           valid (Registration.effectKind (typing predecessor) /= ErrorKind)
@@ -308,6 +320,12 @@ buildEffectProtos specifications sumTypes = do
               ("Only the parser Context may take Stream " ++ name specification ++ " as its input")
             valid (length below == 1)
               ("Stream " ++ name specification ++ " needs exactly one Context hanging below it as its parser")
+          -- Middleware 没有 demands：hook 只观察被拦截调用的 raw，不读取或驱动资产。
+          Middleware method intercepted -> do
+            valid (method /= Nothing) ("Middleware needs a handler: " ++ name specification)
+            valid (null (demands specification)) ("Middleware " ++ name specification ++ " declares no demands")
+            valid (not (null intercepted) && unique intercepted && all (`elem` allEffects) intercepted)
+              ("Middleware " ++ name specification ++ " intercepts a non-empty list of distinct kinds among Excu, Scoped and Pure")
           Error { handles = matched } -> do
             valid (not (null matched)) ("Error must declare the failures it handles: " ++ name specification)
             mapM_ checkHandled matched
@@ -416,6 +434,7 @@ buildEffectProtos specifications sumTypes = do
     contextNames branches specifications selected = nub . concat <$> mapM (visit []) selected
       where
         visit _ "Root" = Right []
+        visit _ "None" = Right []
         visit seen selectedName
           | selectedName `elem` seen = Left ("Cyclic input/demand: " ++ selectedName)
           | otherwise = do
@@ -441,6 +460,7 @@ buildEffectProtos specifications sumTypes = do
         | method <- maybeToList (contextProducer selected) ]
         ++ [(ContextRequire, method) | method <- maybeToList (contextReader selected)]
       Stream method -> named StreamHandler "next" method
+      Middleware method _ -> named MiddlewareHook "hook" method
       where
         named role prefix method = [(role, effectMethodName prefix (name specification)) | Just _ <- [method]]
 
@@ -467,6 +487,7 @@ composeMethods checkReads effects bindings required handlerShapes = do
   where
     compose binding = do
       let body = maybe Empty id (lookup (bindingHandler binding) handlerShapes)
+      when (checkReads && hooked binding) (middlewareOrder binding body)
       (mapped, contracts) <- resolve binding body
       pure (binding, sequenceShape (map Call (bindingCalls binding) ++ [mapped]), contracts)
     resolve binding shape = case shape of
@@ -476,6 +497,11 @@ composeMethods checkReads effects bindings required handlerShapes = do
         Nothing -> Left ("Handler " ++ bindingHandler binding ++ " reads " ++ typeText ++ " in " ++ bindingEffect binding
           ++ ", whose demands give " ++ describe (bindingRoutes binding)
           ++ "; declare requires/streams for an asset of that representation")
+      -- hook 的 proceed 与 raw 由拦截分发回答，不是 effect 方法调用。
+      Call "%proceed" | hooked binding -> pure (Empty, [])
+                      | otherwise -> Left ("Handler " ++ bindingHandler binding ++ " uses proceed in " ++ bindingEffect binding
+                          ++ "; only a Middleware handler proceeds")
+      Call "%raw" | hooked binding -> pure (Empty, [])
       Call "%raw" -> case bindingRaw binding of
         Just source -> pure (Call (rawMethod source), [])
         Nothing -> Left ("Handler " ++ bindingHandler binding ++ " uses raw in " ++ bindingEffect binding
@@ -491,6 +517,23 @@ composeMethods checkReads effects bindings required handlerShapes = do
         combine constructor children = do
           resolved <- mapM (resolve binding) children
           pure (constructor (map fst resolved), concatMap snd resolved)
+    hooked binding = bindingOperation binding == MiddlewareOperation
+    -- 次序检查 v1（2026-11-19）：proceed 恰好一次且直接位于方法主序列，不在分支或恢复里，
+    -- 因而每次 hook 都恰好推进一次；raw 只出现在它之后，读到的总是本次调用交出的输出。
+    middlewareOrder binding body = case break (== Call "%proceed") (topLevel body) of
+      (before, _ : after) | not (any (mentions "%proceed") (before ++ after)), not (any (mentions "%raw") before) -> pure ()
+      _ -> Left ("Middleware handler " ++ bindingHandler binding ++ " in " ++ bindingEffect binding
+        ++ " must call proceed exactly once, directly in its main do sequence, and read raw only after it")
+    topLevel shape = case shape of
+      Empty -> []
+      Sequence children -> children
+      _ -> [shape]
+    mentions selected shape = case shape of
+      Empty -> False
+      Call called -> called == selected
+      Sequence children -> any (mentions selected) children
+      Choice children -> any (mentions selected) children
+      Recover body recovery -> mentions selected body || mentions selected recovery
     describe [] = "no readable asset"
     describe routes = intercalate ", " [representation' ++ " (" ++ contractType ++ ")" | (representation', (contractType, _)) <- routes]
     -- close 读取检查 v1（2026-11-17）：有资源的 close 自身须读取资源以定位实例。
@@ -573,7 +616,7 @@ buildStructure plan assembly shapes = do
       defaultReaders = [methodIdentity definition | definition <- defaults
         , methodRole definition == ContextRequire, methodIdentity definition `notElem` map fst shapes]
       result = Prototype (plannedRegistrations plan) effects definitions workflow finite
-        (map makeChain mounts) chainDefinitions graph scopes names [] [] (DrivingPlan [] [] [] [] [] [])
+        (map makeChain mounts) chainDefinitions graph scopes names [] [] (DrivingPlan [] [] [] [] [] [] (plannedMiddleware plan) [])
   -- Stream 的方法只经会话执行：Stream 单步执行它取得下一份原始输入；挂在该 Stream 下的解析器调用它时，
   -- 由会话本次取得的输入回答，与挂在原子句柄下的 Context 调用句柄相同。其他方法直接调用会绕过会话另取一份。
   let streamMethods = [(effectName effect, method) | effect <- effects, (StreamHandler, method) <- effectMethods effect]
@@ -1420,6 +1463,8 @@ entryMethod specification = case typing specification of
   selected@Context {} -> contextProducer selected
   -- Stream 的方法只经会话执行，不作为 AST 末端；末端检查另行拒绝。
   Stream method -> effectMethodName "next" (name specification) <$ method
+  -- Middleware 的 hook 只经拦截分发执行，不是普通入口。
+  Middleware {} -> Nothing
 
 -- 注册把 handler 绑定到 effect 方法：(effect 方法名, handler 名)。
 handlerBindings :: EffectSpec -> [(String, String)]
@@ -1430,6 +1475,7 @@ handlerBindings specification = case typing specification of
   Error { detect = detecting, resolve = resolving } -> bound "detect" detecting ++ bound "resolve" resolving
   selected@Context { parser = parsing } -> [(method, selected') | Just method <- [contextProducer selected], Just selected' <- [parsing]]
   Stream method -> bound "next" method
+  Middleware method _ -> bound "hook" method
   where
     bound prefix method = [(effectMethodName prefix (name specification), selected) | Just selected <- [method]]
 
@@ -1455,11 +1501,13 @@ declareEffects = map declare
       [(method, handler, operation specification method) | (method, handler) <- handlerBindings specification]
       (NativeType (result specification))
       (case typing specification of Error { handles = matched } -> Just matched; _ -> Nothing)
+      (case typing specification of Middleware { intercept = intercepted } -> intercepted; _ -> [])
     result specification = case typing specification of
       Pure _ -> "[String]"
       Excu _ -> "[String]"
       Scoped {} -> "[String]"
       Error {} -> "()"
+      Middleware {} -> "()"
       Stream _ -> "String"
       Context { asset = declared } -> reference (representation declared)
     operation specification method = case typing specification of
@@ -1470,3 +1518,4 @@ declareEffects = map declare
       Pure _ -> PureOperation
       Context { asset = declared } -> PublishAsset (contractOf declared)
       Error {} -> ErrorOperation
+      Middleware {} -> MiddlewareOperation

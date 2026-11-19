@@ -34,6 +34,7 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
               [ (normalizeType (typeSpelling (routeType route)), (routeContract route, routeReader route))
               | route <- unitRoutes unit, routeEffect route == declarationName specification ]
               (entryResult specification) (entryOperation specification method) (layerOf unit specification method)
+              (interceptOf specification method)
           | specification <- declarations, (method, handler') <- [(method, handler) | (method, handler, _) <- declarationBindings specification] ]
       , unitAssembly = assembly
       , unitRoutes = [routeOf unit specification resolved
@@ -51,6 +52,8 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
       , unitErrors = [ErrorPlan (declarationName declared) (effectErrorScope effect) (nub handled)
             (lookup ErrorDetect (effectMethods effect)) (lookup ErrorResolve (effectMethods effect))
           | declared <- declarations, Just handled <- [declarationErrors declared], let effect = protoOf unit (declarationName declared)]
+      , unitMiddleware = [(declarationName declared, declarationIntercept declared)
+          | declared <- declarations, not (null (declarationIntercept declared))]
       , unitScopeOrder = nub (concat [Prototype.effectScopes effect
           ++ [Prototype.effectName effect | Prototype.effectKind effect == ScopedKind]
           | effect <- effectPrototypes unit])
@@ -177,8 +180,18 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
 
     resultOf specification = declarationResult specification
 
+    -- 只包装交出 raw 的原子调用（Excu.run、Scoped.open／close、Pure.run），且只在某个 Middleware 拦截该类别时；
+    -- 没有 Middleware 的程序生成代码不变。实际生效的 hook 由运行位置的静态集合决定。
+    interceptOf :: EffectDeclaration -> String -> Maybe EffectKind
+    interceptOf specification method
+      | entryOperation specification method `elem` [AtomicOperation, OpenResource, CloseResource, PureOperation]
+      , kindOf specification `elem` concatMap declarationIntercept declarations = Just (kindOf specification)
+      | otherwise = Nothing
+
     layerOf :: Unit -> EffectDeclaration -> String -> [Capability]
-    layerOf unit specification method = map ReadsType
+    layerOf unit specification method
+      | kindOf specification == MiddlewareKind = [HasRaw, Proceeds, IOMonad]
+      | otherwise = map ReadsType
       (sortOn typeSpelling (nub [routeType route | route <- unitRoutes unit, routeEffect route == declarationName specification]))
       ++ [HasRaw | readsRaw specification method, Just _ <- [rawSource unit specification]]
       ++ [EndsSource | kindOf specification == StreamKind]
@@ -215,6 +228,7 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
           HasRaw -> "SDK.Raw m"
           EndsSource -> "SDK.StreamEnds m"
           EndsSubscription -> "SDK.EndsStream m"
+          Proceeds -> "SDK.Proceeds m"
           PureMonad -> "Monad m"
           IOMonad -> "MonadIO m"
 

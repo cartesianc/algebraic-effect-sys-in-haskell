@@ -9,7 +9,7 @@ module Framework.Prototype.Validate
 
 import Control.Monad (unless)
 import Data.List (isPrefixOf, nub, sort, (\\))
-import Framework.Language.AST (AST, WorkflowF(..), foldAST)
+import Framework.Language.AST (AST, WorkflowF(..), foldAST, stripAST)
 import Framework.Language.Registration (EffectKind(..), EffectSpec(..))
 import qualified Framework.Language.Registration as Registration
 import Framework.Prototype.Graph
@@ -39,8 +39,12 @@ matchWorkflowLayer (Lifelong children) (LifelongAt _ _ expected)
   | length children == length expected = pure expected
 matchWorkflowLayer _ _ = Left PrototypeWorkflowMismatch
 
+-- middleware 标注是透明的：先去掉标注核对骨架，再核对标注本身与编译时一致。
 validateWorkflow :: Prototype method -> AST -> Either (PrototypeError method) ()
-validateWorkflow prototype ast = foldAST check ast (protoWorkflow prototype)
+validateWorkflow prototype ast = do
+  let (stripped, marks) = stripAST ast
+  unless (marks == drivingMiddleware (protoDriving prototype)) (Left PrototypeWorkflowMismatch)
+  foldAST check stripped (protoWorkflow prototype)
   where
     check layer expected = do
       children <- matchWorkflowLayer layer expected
@@ -50,6 +54,7 @@ validateWorkflow prototype ast = foldAST check ast (protoWorkflow prototype)
     childChecks (Parallel children) = children
     childChecks (Alternative children) = children
     childChecks (Lifelong children) = children
+    childChecks (Hooked _ child) = [child]
 
 -- 只核对显式字段的自洽性，不展开 methodBody、不重构图或修正手调 scope 父边。
 validatePrototype :: (Ord method, Show method) => Prototype method -> Either (PrototypeError method) ()

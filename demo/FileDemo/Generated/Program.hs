@@ -747,5 +747,7 @@ generatedPrototype =
               , ("FileResource", GetOpenedFileGen)
               , ("ExtractFileText", GetFileTextGen)
               ]
+          , SDK.drivingMiddleware = []
+          , SDK.drivingHooks = []
           }
     }

@@ -1,7 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 -- 驱动合成 v1（2026-11-18）：从 Composition 的已解析事实构造挂载与会话，
 -- 之后补全运行所需静态标记；不执行 handler，不读取业务源码。
-module Framework.Gen.Booter (numberWorkflow, assembleProgram, completeDriving, entryPlans, controlReads) where
+module Framework.Gen.Booter (numberWorkflow, checkMiddleware, assembleProgram, completeDriving, entryPlans, controlReads) where
 import Control.Monad (unless, when)
 import Data.Maybe (listToMaybe)
 import Data.Graph (SCC(..), stronglyConnComp)
@@ -22,9 +22,9 @@ numberWorkflow effects tree = cata number tree [] False
     -- inside：是否位于 lifelong 内。持续订阅只能挂在 lifelong 内；lifelong 不嵌套。
     number (Node selected) path inside = do
       effect <- findEffectProto effects selected
-      valid (effectKind effect `notElem` [PureKind, ContextKind, ErrorKind, StreamKind])
+      valid (effectKind effect `notElem` [PureKind, ContextKind, ErrorKind, StreamKind, MiddlewareKind])
         ("AST terminal must be an Excu or Scoped handle: " ++ selected
-          ++ " (Pure, Context, Stream and Error run only inside their chains)")
+          ++ " (Pure, Context, Stream and Error run only inside their chains; Middleware is mounted with middleware)")
       _ <- ordinaryEntry effect
       let subscribed = streamedAssets effects selected
       unless (inside || null subscribed) $ Left (InvalidLifelong path ("Node " ++ selected
@@ -272,9 +272,26 @@ assembleProgram plan = do
       , Just parser <- [lookup role (effectMethods producer)] ]
 
 
-completeDriving :: Prototype method -> Prototype method
-completeDriving prototype = prototype { protoDriving = DrivingPlan nodes units sessions rootNodes outputs requests }
+-- 标注只能列出已注册的 Middleware；一处标注的 hook 是集合，不能为空或重复。
+checkMiddleware :: [EffectProto String] -> [(NodeId, [String])] -> Either (PrototypeError String) ()
+checkMiddleware effects marks = mapM_ check marks
   where
+    check (path, hooks) = do
+      valid (not (null hooks) && length hooks == length (nub hooks))
+        ("middleware at " ++ show path ++ " lists a non-empty set of distinct hooks")
+      mapM_ (\selected -> do
+          effect <- findEffectProto effects selected
+          valid (effectKind effect == MiddlewareKind) ("middleware lists " ++ selected ++ ", which is not a Middleware"))
+        hooks
+
+completeDriving :: Prototype method -> Prototype method
+completeDriving prototype = prototype { protoDriving = DrivingPlan nodes units sessions rootNodes outputs requests
+    (drivingMiddleware (protoDriving prototype)) hooks }
+  where
+    -- 每个非会话根位置的 hook 集合：覆盖它的所有标注之并。集合没有顺序；会话 worker 首版不拦截。
+    hooks = [(position, active) | position <- rootNodes
+      , let active = nub (concat [selected | (root, selected) <- drivingMiddleware (protoDriving prototype), root `isPrefixOf` position])
+      , not (null active)]
     tree = protoWorkflow prototype
     workflow = allWorkflow tree
     effects = protoEffects prototype

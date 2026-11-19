@@ -5,7 +5,7 @@ module Framework.Gen.Plan
   , ValueType(..), Capability(..), EntryOperation(..), ReadRoute(..), ReadView(..)
   , ReaderPlan(..), SelectorPlan(..), SessionEntry(..)
   , Assembly(..), EntryMount(..), OutputConnection(..), EntryStep(..), RawSource(..)
-  , stepMethod, rawMethod, bindingCalls, unitTerminals
+  , stepMethod, rawMethod, bindingCalls, unitTerminals, raisingHandlers
   , effectPrototypes, protoOf, allMethods
   , reference, parenthesized, normalizeType, readsAccess ) where
 
@@ -24,6 +24,8 @@ data EffectDeclaration = EffectDeclaration
   , declarationBindings :: [(String, String, EntryOperation)]
   , declarationResult :: ValueType
   , declarationErrors :: Maybe [Handles]
+  -- Middleware 拦截的类别；其他注册为空。
+  , declarationIntercept :: [EffectKind]
   } deriving (Eq, Show, Read)
 
 data ErrorPlan = ErrorPlan
@@ -40,12 +42,13 @@ data ScopePlan = ScopePlan
 data ValueType = NativeType String | RefinedType String
   deriving (Eq, Ord, Show, Read)
 
-data Capability = ReadsType ValueType | HasRaw | EndsSource | EndsSubscription | PureMonad | IOMonad
+data Capability = ReadsType ValueType | HasRaw | EndsSource | EndsSubscription | Proceeds | PureMonad | IOMonad
   deriving (Eq, Show, Read)
 
 -- 每个入口的解释已经确定；Emit 仅把该操作翻译成现有 runtime 包装，不再查看 typing。
 data EntryOperation
   = AtomicOperation | OpenResource | CloseResource | SourceStep | PureOperation | PublishAsset String | ErrorOperation
+  | MiddlewareOperation
   deriving (Eq, Show, Read)
 
 -- 读取结果始终是声明的表示类型。持续来源使用固定交付；是否反复执行由挂载/会话计划决定。
@@ -130,6 +133,8 @@ data Binding = Binding
   , bindingResult :: ValueType
   , bindingOperation :: EntryOperation
   , bindingCapabilities :: [Capability]
+  -- 交出 raw 的原子调用且有 Middleware 拦截它的类别时，给出拦截分发所用的类别；否则不包装。
+  , bindingIntercept :: Maybe EffectKind
   } deriving (Eq, Show, Read)
 
 -- handler 的签名由绑定类别与 effect 的 demands 推出；同一 handler 的所有绑定必须一致。
@@ -178,6 +183,8 @@ data Unit = Unit
   , unitScopes :: [ScopePlan]
   , unitErrors :: [ErrorPlan]
   , unitScopeOrder :: [String]
+  -- Middleware → 它拦截的类别（注册顺序）。
+  , unitMiddleware :: [(String, [EffectKind])]
   } deriving (Eq, Show, Read)
 
 -- 绑定阶段的入口：推出全部事实，再按原顺序检查生成名字、末端、表示类型与签名。
@@ -194,6 +201,11 @@ allMethods unit = [method | effect <- effectPrototypes unit, (_, method) <- Prot
 
 bindingCalls :: Binding -> [String]
 bindingCalls = map stepMethod . bindingBefore
+
+-- 有本地错误的 handler：Middleware 首版不 raise，不生成错误类型与失败分类。
+raisingHandlers :: Unit -> [String]
+raisingHandlers unit = [signatureHandler signature | signature <- unitSignatures unit
+  , Proceeds `notElem` signatureLayer signature]
 
 -- Target 的实现可共用，挂载身份仍全部保存在 assemblyMounts；这里只投影生成的入口目录。
 unitTerminals :: Unit -> [(String, String)]
