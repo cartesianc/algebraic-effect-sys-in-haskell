@@ -46,11 +46,11 @@ renderHandlers unit loaded = do
         ++ (if isJust loaded then support unit else ""))
 
 -- 生成区的装配：effect 标签、handler 能力的实例与 effect 方法。
--- 注入 v4（2026-11-19）：注册了 Middleware 时，标签多一个类型参数 hooks（覆盖本次挂载的 Middleware 列表），
--- 入口对 hooks 多态。交出值、raw、raise 三个 Root 级调用点调用入口约束提供的方法 captureAt @hooks，
+-- 注入 v5（2026-11-19）：生成入口把原子 action 交给 Root.super；hooks 由挂载决定。
+-- 有捕获的 super 管理进入与成功返回，raw、raise 在 action 内调用 captureAt @hooks，
 -- 它的实例按类型级列表逐个展开到各 Middleware；GHC 在编译期按挂载登记的列表选定实例，入口只有一份，运行时不分发。
 support :: Unit -> String
-support unit = unlines (supportHeader ++ captureClasses ++ concatMap raisesInstance ordinaryHandlers ++ routeInstances ++ rawInstances
+support unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ concatMap raisesInstance ordinaryHandlers ++ routeInstances ++ rawInstances
     ++ endInstances ++ concatMap entryDefinitions (map Prototype.effectName (effectPrototypes unit)))
     ++ scopeHandlers ++ scopeCleanups ++ errorHandlers
     ++ injectionTable ContextRequest "contextInjections"
@@ -69,8 +69,8 @@ support unit = unlines (supportHeader ++ captureClasses ++ concatMap raisesInsta
     middlewareBindings = [binding | binding <- unitBindings unit, bindingOperation binding == MiddlewareOperation]
     middlewareHandlers = map bindingHandler middlewareBindings
     ordinaryHandlers = filter (`notElem` middlewareHandlers) (unitHandlers unit)
-    intercepted kind = or [kind `elem` kinds | (_, kinds) <- unitMiddleware unit]
     capture kind event = "captureAt @hooks FrameworkRuntime." ++ show kind ++ " (" ++ event ++ ") >> "
+    atomicCall handler' = "(FrameworkRuntime.super " ++ show handler' ++ " FrameworkGenerated." ++ handler' ++ ")"
     supportHeader =
       [ ""
       , "-- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，"
@@ -109,6 +109,7 @@ support unit = unlines (supportHeader ++ captureClasses ++ concatMap raisesInsta
             , "    | otherwise = pure ()"
             , ""
             , "instance FrameworkRuntime.Hooks (Hook " ++ show effect ++ ") where"
+            , "  hookedEnter = Hook FrameworkRuntime.hookEnter"
             , "  hookedOutput = Hook FrameworkRuntime.hookOutput"
             , "  hookedRaw = Hook FrameworkRuntime.hookRaw"
             , "  hookedError = Hook FrameworkRuntime.hookError"
@@ -118,21 +119,34 @@ support unit = unlines (supportHeader ++ captureClasses ++ concatMap raisesInsta
             , "    (FrameworkRuntime.failEffect " ++ show effect ++ " FrameworkGenerated." ++ handlerFailure handler' ++ " description))"
             , ""
             , bindingMethod binding ++ " :: FrameworkRuntime.HookEvent -> FrameworkGenerated.App [String]"
-            , bindingMethod binding ++ " event = FrameworkRuntime.runHookApp event (runHook @" ++ show effect ++ " FrameworkGenerated." ++ handler' ++ ")"
+            , bindingMethod binding ++ " event = FrameworkRuntime.runHookApp event (runHook @" ++ show effect ++ " " ++ atomicCall handler' ++ ")"
             , "" ]
           | binding <- middlewareBindings
           , let effect = bindingEffect binding
                 handler' = bindingHandler binding
                 kinds = [kind | (owner, selected) <- unitMiddleware unit, owner == effect, kind <- selected] ]
+    -- 标签决定原子调用的装配。Middleware 自身使用直接实例，避免递归捕获。
+    rootInstances
+      | not hooked = ["instance FrameworkRuntime.Root (At effect) value", ""]
+      | otherwise = ["instance FrameworkRuntime.Root (Hook effect) value", ""] ++ concat
+          [ case captureKind of
+              Nothing -> ["instance FrameworkRuntime.Root " ++ tag (show effect) ++ " value", ""]
+              Just kind ->
+                [ "instance Captures hooks => FrameworkRuntime.Root " ++ tag (show effect) ++ " [String] where"
+                , "  super name (At action) = At (FrameworkRuntime.superWith (captureAt @hooks FrameworkRuntime."
+                    ++ show kind ++ ") name action)"
+                , "" ]
+          | (effect, captureKind) <- nub [(bindingEffect b, bindingCaptureKind b) | b <- unitBindings unit,
+                                            bindingOperation b /= MiddlewareOperation] ]
     -- 有 Middleware 时，被拦截类别的 effect 按标签逐个给出 raise：先把 (handler 名, 描述) 交给 captureAt，再以原失败退出。
     raisesInstance handler'
       | hooked = concat
           [ [ "instance " ++ context ++ "FrameworkRuntime.Raises FrameworkGenerated." ++ handlerError handler' ++ " " ++ tag (show effect) ++ " where"
             , "  raise (FrameworkGenerated." ++ handlerError handler' ++ " description) = At ("
-                ++ (if intercepted kind then capture kind ("FrameworkRuntime.ErrorEvent " ++ show handler' ++ " description") else "")
+                ++ maybe "" (\kind -> capture kind ("FrameworkRuntime.ErrorEvent " ++ show handler' ++ " description")) captureKind
                 ++ "FrameworkRuntime.failEffect " ++ show effect ++ " FrameworkGenerated." ++ handlerFailure handler' ++ " description)"
             , "" ]
-          | (effect, kind) <- nub [(bindingEffect binding, bindingKind binding) | binding <- unitBindings unit, bindingHandler binding == handler'] ]
+          | (effect, captureKind) <- nub [(bindingEffect b, bindingCaptureKind b) | b <- unitBindings unit, bindingHandler b == handler'] ]
       | otherwise =
           [ "instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated." ++ handlerError handler' ++ " (At effect) where"
           , "  raise (FrameworkGenerated." ++ handlerError handler' ++ " description) = At (FrameworkRuntime.failEffect"
@@ -169,7 +183,7 @@ support unit = unlines (supportHeader ++ captureClasses ++ concatMap raisesInsta
     callSource (RawList method) = RawList (call method)
     callSource (RawStream method) = RawStream (call method)
     capturedRaw binding reading = case bindingRawKind binding of
-      Just kind | hooked, intercepted kind ->
+      Just kind ->
         reading ++ " >>= \\value -> " ++ capture kind ("FrameworkRuntime.RawEvent " ++ show (bindingHandler binding) ++ " value") ++ "pure value"
       _ -> reading
     -- 能力已经由组合计算确定；这里只为对应标签输出实例，不重新解释 effect 类别或 demands。
@@ -197,17 +211,11 @@ support unit = unlines (supportHeader ++ captureClasses ++ concatMap raisesInsta
           (intercalate " >> " (map call (bindingCalls binding) ++ [handlerCall binding handler'])) ]
       ++ concat [ readerDefinition reader | reader <- unitReaders unit, readerEffect reader == selectedName ]
       where
-        handlerCall binding handler' = case bindingOperation binding of
-          PublishAsset contract ->
-            "(FrameworkGenerated." ++ contract ++ " <$> " ++ runner selectedName ++ " FrameworkGenerated." ++ handler' ++ ")"
-          _ -> capturedOutput binding (runner selectedName ++ " FrameworkGenerated." ++ handler')
-        -- 交出值的捕获点：原子 handler（Excu、Scoped 的 open／close、Pure）这一次调用交出的值。
-        capturedOutput binding invocation
-          | hooked, bindingOperation binding `elem` [AtomicOperation, OpenResource, CloseResource, PureOperation]
-          , intercepted (bindingKind binding) =
-              "(" ++ invocation ++ " >>= \\output -> "
-                ++ capture (bindingKind binding) ("FrameworkRuntime.OutputEvent " ++ show (bindingHandler binding) ++ " output") ++ "pure output)"
-          | otherwise = invocation
+        handlerCall binding handler' =
+          let action = runner selectedName ++ " " ++ atomicCall handler'
+          in case bindingOperation binding of
+               PublishAsset contract -> "(FrameworkGenerated." ++ contract ++ " <$> " ++ action ++ ")"
+               _ -> action
         scoped = "FrameworkRuntime.withScopeDependencies " ++ show (Prototype.effectScopes (protoOf unit selectedName))
         entered = scoped ++ " . FrameworkRuntime.enterHandler " ++ show selectedName
         wrapper binding = rootWrapper selectedName ++ " . " ++ case bindingOperation binding of

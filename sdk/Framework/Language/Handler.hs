@@ -39,9 +39,10 @@ class EndsStream m where
   endStream :: m value
 
 -- 只给 Middleware handler：拆出本次 Root 级调用点捕获的内容，不是这一种时为 Nothing。
--- hookedOutput：原子 handler 交出的值；hookedRaw：读取方 handler 经 raw 读到的值；
+-- hookedEnter：Root 即将执行的 handler 名；hookedOutput：它交出的值；hookedRaw：读取方经 raw 读到的值；
 -- hookedError：handler raise 的错误描述。每项都带 handler 名；捕获只读，不改变原调用。
 class Hooks m where
+  hookedEnter :: m (Maybe String)
   hookedOutput :: m (Maybe (String, [String]))
   hookedRaw :: m (Maybe (String, [String]))
   hookedError :: m (Maybe (String, String))

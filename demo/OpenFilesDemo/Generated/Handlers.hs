@@ -132,6 +132,8 @@ handlerSourceFingerprint = Just "63242e28103b32fa7873ea8d4096e691"
 newtype At (effect :: FrameworkTypes.Symbol) value = At { runAt :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
+instance FrameworkRuntime.Root (At effect) value
+
 instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ListFilesError (At effect) where
   raise (FrameworkGenerated.ListFilesError description) = At (FrameworkRuntime.failEffect
     (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ListFilesFailure description)
@@ -185,7 +187,7 @@ instance FrameworkRuntime.Raw (At "InspectionSnapshot") where
 getFileNames :: FrameworkGenerated.App FrameworkGenerated.FileNames
 getFileNames = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations"
     (\value bindings -> bindings { FrameworkGenerated.boundFileLocations = Just value })) $
-  (FrameworkGenerated.FileNames <$> runAt @"FileLocations" FrameworkGenerated.listFiles)
+  (FrameworkGenerated.FileNames <$> runAt @"FileLocations" (FrameworkRuntime.super "listFiles" FrameworkGenerated.listFiles))
 
 readFileNames :: FrameworkGenerated.App FrameworkGenerated.FileNames
 readFileNames = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
@@ -194,7 +196,7 @@ readFileNames = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFail
 getOpenedFiles :: FrameworkGenerated.App FrameworkGenerated.OpenedFiles
 getOpenedFiles = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResources"
     (\value bindings -> bindings { FrameworkGenerated.boundFileResources = Just value })) $
-  (FrameworkGenerated.OpenedFiles <$> runAt @"FileResources" FrameworkGenerated.acquireFiles)
+  (FrameworkGenerated.OpenedFiles <$> runAt @"FileResources" (FrameworkRuntime.super "acquireFiles" FrameworkGenerated.acquireFiles))
 
 readOpenedFiles :: FrameworkGenerated.App FrameworkGenerated.OpenedFiles
 readOpenedFiles = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
@@ -202,28 +204,28 @@ readOpenedFiles = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFa
 
 openFileSession :: FrameworkGenerated.App [String]
 openFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFileSession" . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
-  getOpenedFiles >> runAt @"FileSession" FrameworkGenerated.openFiles
+  getOpenedFiles >> runAt @"FileSession" (FrameworkRuntime.super "openFiles" FrameworkGenerated.openFiles)
 
 closeFileSession :: FrameworkGenerated.App [String]
 closeFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeFileSession" . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
-  runAt @"FileSession" FrameworkGenerated.closeFiles
+  runAt @"FileSession" (FrameworkRuntime.super "closeFiles" FrameworkGenerated.closeFiles)
 
 runHoldFiles :: FrameworkGenerated.App [String]
 runHoldFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runHoldFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "HoldFiles") $
-  getFileNames >> openFileSession >> runAt @"HoldFiles" FrameworkGenerated.holdFiles
+  getFileNames >> openFileSession >> runAt @"HoldFiles" (FrameworkRuntime.super "holdFiles" FrameworkGenerated.holdFiles)
 
 runInspectFiles :: FrameworkGenerated.App [String]
 runInspectFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runInspectFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "InspectFiles") $
-  runHoldFiles >> runAt @"InspectFiles" FrameworkGenerated.inspectFiles
+  runHoldFiles >> runAt @"InspectFiles" (FrameworkRuntime.super "inspectFiles" FrameworkGenerated.inspectFiles)
 
 runReleaseFiles :: FrameworkGenerated.App [String]
 runReleaseFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReleaseFiles" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "ReleaseFiles") $
-  runHoldFiles >> runAt @"ReleaseFiles" FrameworkGenerated.holdFiles
+  runHoldFiles >> runAt @"ReleaseFiles" (FrameworkRuntime.super "holdFiles" FrameworkGenerated.holdFiles)
 
 getInspectedFiles :: FrameworkGenerated.App FrameworkGenerated.InspectedFiles
 getInspectedFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.callContext "InspectionSnapshot"
     (\value bindings -> bindings { FrameworkGenerated.boundInspectionSnapshot = Just value })) $
-  (FrameworkGenerated.InspectedFiles <$> runAt @"InspectionSnapshot" FrameworkGenerated.snapshotFiles)
+  (FrameworkGenerated.InspectedFiles <$> runAt @"InspectionSnapshot" (FrameworkRuntime.super "snapshotFiles" FrameworkGenerated.snapshotFiles))
 
 readInspectedFiles :: FrameworkGenerated.App FrameworkGenerated.InspectedFiles
 readInspectedFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure) $
@@ -231,7 +233,7 @@ readInspectedFiles = (FrameworkRuntime.withErrorPath ["FileSession"] . Framework
 
 runFinishInspection :: FrameworkGenerated.App [String]
 runFinishInspection = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runFinishInspection" . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FinishInspection") $
-  runAt @"FinishInspection" FrameworkGenerated.finishInspection
+  runAt @"FinishInspection" (FrameworkRuntime.super "finishInspection" FrameworkGenerated.finishInspection)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]

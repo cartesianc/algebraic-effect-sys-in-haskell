@@ -13,7 +13,7 @@
 -- 本文件保留共享 Environment 的解释器实现，按绑定、Store、诊断、生命周期和根调用分组。
 module Framework.Runtime.App
   ( App, Launch(..), runAppWith, withScopeCleanups
-  , HookEvent(..), HookApp, runHookApp, liftHookApp, hookOutput, hookRaw, hookError
+  , superWith, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError
   ) where
 
 import Framework.Runtime.Binding
@@ -29,7 +29,7 @@ import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, evaluate, fromException, mask, mask_, throwIO, try, finally)
 import Control.Monad (filterM, forM, forM_, when)
-import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
+import Control.Monad.Except (ExceptT(..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Reader (ReaderT(..), ask, asks, local, runReaderT)
 import Data.Foldable (toList)
@@ -858,10 +858,40 @@ runClose name wrap (AppRun action) = AppRun $ do
 
 -- Middleware 的执行载体 ---------------------------------------------------------
 
--- 注入 v3（2026-11-19）：Middleware 在生成期注入。gen 按挂载所在的标注特化入口，
--- 在交出值、raw、raise 三个 Root 级调用点上直接调用 Middleware 的入口；运行时没有目录或分发。
+-- gen 按挂载标注特化 Root 的进入／返回、raw 与 raise 捕获，运行时没有 Middleware 目录。
 -- 这里只提供 Middleware handler 的载体：本次调用点的捕获作为只读环境，执行期间不进入调用中的 open／close 尝试。
-data HookEvent = OutputEvent String [String] | RawEvent String [String] | ErrorEvent String String
+data HookEvent = EnterEvent String | OutputEvent String [String] | RawEvent String [String] | ErrorEvent String String
+
+-- 注入 v5：super 收到尚未执行的 action。前驱、requests、回放和 scope 外层协议均在调用方。
+superWith :: (HookEvent -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
+superWith capture name body = do
+  environment <- AppRun ask
+  let entering = capture (EnterEvent name)
+      execute = do
+        output <- body
+        capture (OutputEvent name output)
+        pure output
+  if cleaningScopes environment && not (null (closings environment))
+    then protectedClose entering body execute
+    else entering >> execute
+  where
+    -- GC 已消费本轮的关闭预约。进入通知失败或被取消时也要尝试实际 close 一次；
+    -- 正常路径只运行 execute。收尾自己的失败仍交给原有生命周期协议。
+    protectedClose (AppRun before) (AppRun close) (AppRun observed) = AppRun $ ReaderT $ \env -> ExceptT $
+      mask $ \restore -> do
+        let run action = runExceptT (runReaderT action env)
+        entered <- try (restore (run before))
+        case entered of
+          Left (exception :: SomeException) -> do
+            closed <- try (run close)
+            -- 任何一侧收到的取消均须传播，不能被另一侧的普通 IO 异常覆盖。
+            case (fromException exception :: Maybe SomeAsyncException, closed) of
+              (Nothing, Left closingException) -> throwIO (closingException :: SomeException)
+              _ -> throwIO exception
+          Right (Left problem) -> do
+            closed <- run close
+            pure (closed >> Left problem)
+          Right (Right ()) -> restore (run observed)
 
 newtype HookApp env cause value = HookApp (ReaderT HookEvent (App env cause) value)
   deriving (Functor, Applicative, Monad)
@@ -876,6 +906,11 @@ runHookApp :: HookEvent -> HookApp env cause value -> App env cause value
 runHookApp event (HookApp action) = case runReaderT action event of
   AppRun inner -> AppRun $ local (\environment -> environment
     { caller = Nothing, contexts = [], openings = [], closings = [], replays = [] }) inner
+
+hookEnter :: HookApp env cause (Maybe String)
+hookEnter = HookApp (asks (\event -> case event of
+  EnterEvent handler -> Just handler
+  _ -> Nothing))
 
 hookOutput, hookRaw :: HookApp env cause (Maybe (String, [String]))
 hookOutput = HookApp (asks (\event -> case event of

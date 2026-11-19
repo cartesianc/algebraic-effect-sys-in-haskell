@@ -133,8 +133,8 @@ data Binding = Binding
   , bindingResult :: ValueType
   , bindingOperation :: EntryOperation
   , bindingCapabilities :: [Capability]
-  -- 本绑定所属 effect 的类别；交出值与 raise 的捕获按它匹配 Middleware 的 intercept。
-  , bindingKind :: EffectKind
+  -- Injector 选定的 super 捕获类别；Nothing 使用 Root 的直接调用。
+  , bindingCaptureKind :: Maybe EffectKind
   -- raw 读到的那次原子调用的类别；raw 的捕获按它匹配。
   , bindingRawKind :: Maybe EffectKind
   } deriving (Eq, Show, Read)

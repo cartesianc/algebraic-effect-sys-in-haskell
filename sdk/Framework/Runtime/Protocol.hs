@@ -6,7 +6,7 @@
 -- 生成代码经 Framework.Generated 调用这些协议；handler 的能力类与完成结果属于源语言（Framework.Language.Handler）。
 -- 通用 Context 组合在 Runtime/Context.hs，IO 解释在 Runtime/App.hs。
 module Framework.Runtime.Protocol
-  ( failEffect, ErrorHandler(..), ErrorStore(..), runErrorHandler
+  ( Root(..), failEffect, ErrorHandler(..), ErrorStore(..), runErrorHandler
   , ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault(..), ScopeInput(..)
   , RawOutput(..)
   ) where
@@ -14,6 +14,12 @@ module Framework.Runtime.Protocol
 import Control.Monad.Except (MonadError, catchError, throwError)
 import Framework.Language.Handler (Failure(..), Output(..), ErrorReport(..))
 import Framework.Runtime.Identity (ActivationId)
+
+-- 生成入口在绑定的标签上调用 super；Middleware 与原子业务方法都不持有推进权。
+-- result 保留 parser、Stream、Error 等各自的返回类型。空策略直接执行原 action。
+class Monad m => Root m result where
+  super :: String -> m result -> m result
+  super _ = id
 
 -- Context 访问与发布协议 -------------------------------------------------------
 

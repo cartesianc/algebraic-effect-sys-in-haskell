@@ -11,11 +11,11 @@ Middleware 首版已经实现，下一阶段处理[持续交付的容量与背�
 
 | 事项 | 首版决定 |
 | --- | --- |
-| 是什么 | 由 Root 级入口驱动的 Excu：在 Root 级调用点（交出值、`raw`、`raise`）上同步执行，不包住或推进原调用 |
+| 是什么 | gen 把每次原子调用交给 Root 的 `super`。它按挂载注入 Middleware，进入前与成功返回时同步通知，并负责执行该 action；`raw` 和 `raise` 在方法内各自通知 |
 | 注入时机 | 生成期：`middleware` 标注是给 gen 的标记。标签带 Middleware 列表类型参数，入口对它多态，调用点经生成入口的类型类约束 `Captures hooks` 注入；挂载登记时给出列表，GHC 编译期选定实例。运行时没有 Middleware 目录或分发，只按静态登记名选取 Target |
 | 注册形态 | `EffectTyping` 增加 `Middleware { handler, intercept }`；`input` 写保留名 `"None"`，沿用 Input 的组合逻辑，表示没有 Input 注入；不另设 `MiddlewareSpec` |
 | `intercept` | 能交出 raw output 的 `ExcuKind`、`ScopedKind`（open／close）、`PureKind`；`allEffects` 是三者的简写 |
-| handler 能力 | `Hooks`（`hookedOutput`、`hookedRaw`、`hookedError`）、`Raises`、`MonadIO`；签名 `m [String]`；`Hooks` 只为 Middleware 的标签生成 |
+| handler 能力 | `Hooks`（`hookedEnter`、`hookedOutput`、`hookedRaw`、`hookedError`）、`Raises`、`MonadIO`；签名 `m [String]`；`Hooks` 只为 Middleware 的标签生成 |
 | 捕获范围 | 由位置决定：启动位置被标注覆盖即捕获，会话步骤也按同一前缀规则 |
 | 多个 Middleware | 按注册顺序同步执行，只读本次捕获，彼此不传值 |
 | `raise` | 与普通 Excu 相同，失败从调用点传播 |
@@ -24,7 +24,7 @@ Middleware 首版已经实现，下一阶段处理[持续交付的容量与背�
 **后续事项。**
 
 - **`requires`。** 若允许 Middleware 读取配置资产，须把它计入来源证明与等待环分析：它在调用点同步执行，读取等待可能与被捕获调用所在的生产形成等待环。
-- **更多捕获点与类型。** Context parser 交出的业务值、Stream 的原始输入、调用的进入等尚未捕获；若捕获值的类型随类别不同，可用 associated type 区分 `hookedOutput` 的结果类型。
+- **更多捕获类型。** Context parser 交出的业务值和 Stream 的原始输入仍沿专用协议传递。是否向 Middleware 开放这些类型另行设计。
 - **mock。** SDK 目前没有 mock 运行模式；Middleware 的 `raise` 在正常运行时按普通失败传播。
 - **Hanging 与装卸。** 与 Middleware 的挂起、恢复和装卸关系另行设计。
 
@@ -100,10 +100,12 @@ Stage 1–7 在各自已确认的范围内完成。下面保留规范入口，�
 | <a id="stage-3"></a><a id="stage-6"></a><a id="stage-6-reuse"></a>Stream 与 lifelong 的执行、两侧结束及同次输出复用 | [执行边界](STREAM_LIFELONG.md#execution-boundaries) · [来源结束](STREAM_LIFELONG.md#end) · [消费结束](STREAM_LIFELONG.md#consumer-end) · [输出复用](STREAM_LIFELONG.md#derive) |
 | <a id="stage-5"></a><a id="stage-7"></a><a id="scope-gc"></a>已知 ownership 的持续资产持有和 scope 回收 | [资源交接](STREAM_LIFELONG.md#binding-retention) · [可达性回收](CORE_DESIGN.md#scope-gc) |
 | <a id="pure-pipeline"></a>Pure 与 list 原子输出 | [Pure 的位置、输入与输出](CORE_DESIGN.md#pure) |
-| Middleware 首版：AST 标注挂载与 Root 级调用点捕获 | [Middleware](CORE_DESIGN.md#middleware) · [写法](GUIDE.md#middleware) |
+| Middleware：AST 挂载与 Root.super 接管原子调用 | [Middleware](CORE_DESIGN.md#middleware) · [写法](GUIDE.md#middleware) |
 | <a id="version-boundaries"></a>gen 内部职责与版本边界 | 共享供值改变了普通资产能读到哪次发布。其后的 Injector／Booter 重构统一静态装配与驱动事实，手写接口与该读取协议保持一致。[内部接口迁移](CORE_DESIGN.md#sdk-migration) |
 
 最近一次 gen 修复已在 FileDemo 验证局部 `raw` 和重导出的 SDK 能力，两个文件分支均返回 `Succ`；八个命名空间生成结果无变化，离线编译通过。该记录只覆盖当时的修复。
+
+2026-11-19，Root.super 接入后重新生成八个命名空间，全项目离线编译通过。临时 LinesDemo 在同一 handler 的两次挂载上验证了进入、业务与输出的顺序和标注隔离。FileDemo 验证了 raw 回放，以及自动 close 的进入通知失败后文件仍实际关闭。并发取消的具体时点未在本轮复现。
 
 <a id="maintenance"></a>
 ## 计划怎样更新

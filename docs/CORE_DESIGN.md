@@ -23,7 +23,7 @@
 | gen 作为编译器：SDK 分为源语言、gen、编译产物、运行时四层，生成按阶段执行 | 已实现（2026-11-08） | [gen 是编译器](#compiler)、[编译流水线](#generation)、[SDK 分工](#sdk-layout) |
 | 持续执行与资源收尾 | 两侧结束、后继读取、交付保留、会话退役及持续值参数已实现；交付与业务数据中的资源持有继续收敛 | [阶段状态](NEXT_STAGES.md#stages)、[当前限制](NEXT_STAGES.md#current-limits) |
 | 嵌套 lifelong、背压与交付容量等 | 后续专题，本轮不扩展 | [开放事项](NEXT_STAGES.md#deferred) |
-| Middleware：AST 标注挂载，在 Root 级调用点捕获交出值、raw 与 raise | 首版已实现（2026-11-19） | [Middleware](#middleware)、[后续事项](NEXT_STAGES.md#middleware) |
+| Middleware 按 AST 挂载注入 Root 的 `super`，观察进入、输出、raw 和 raise | 已实现（2026-11-19） | [Middleware](#middleware)、[后续事项](NEXT_STAGES.md#middleware) |
 | Generic Map、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [开放事项](NEXT_STAGES.md#deferred) |
 
 实现状态说明代码已接入的范围，不代表全部并发交错或资源逃逸已获证明。过去的编译及 demo 结果概述见 [已有基础与验证边界](NEXT_STAGES.md#baseline)。
@@ -346,7 +346,7 @@ Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必�
 | `Reads T m` | 绑定它的 effect streams 了持续资产；T 是资产表示类型 | `require @T` |
 | `Raw m` | 绑定成挂接的 parser 或 Pure | `raw :: m [String]` |
 | `Raises XxxError m` | 总是 | `raise (XxxError "...")` |
-| `Hooks m` | 绑定成 Middleware | `hookedOutput`、`hookedRaw`、`hookedError`：拆出本次调用点捕获的 (handler 名, 值) |
+| `Hooks m` | 绑定成 Middleware | `hookedEnter` 读取进入的 handler 名。输出、raw 与 raise 分别由 `hookedOutput`、`hookedRaw`、`hookedError` 读取 |
 | `StreamEnds m` | 绑定成 Stream 的 handler | `streamEnd`：来源没有下一份输入，正常结束 |
 | `EndsStream m` | 以 `streams` 订阅持续资产的 Excu（规则见 [Stream 9.5](STREAM_LIFELONG.md#consumer-end)） | `endStream`：结束本处订阅，按读取方计数停产 |
 | `MonadIO m` | Pure 以外总是 | `liftIO` |
@@ -383,11 +383,11 @@ instance FrameworkRuntime.Raw (At "ExtractFileText") where
 ```haskell
 -- Crawler：先驱动 URL，再开启会话，最后运行共用的 fetchPage
 runFetchPage = ⟨入口包装⟩ $
-  getStartURL >> openCrawlSession >> runAt @"FetchPage" FrameworkGenerated.fetchPage
+  getStartURL >> openCrawlSession >> runAt @"FetchPage" (FrameworkRuntime.super "fetchPage" FrameworkGenerated.fetchPage)
 
 -- Context：执行 parser 并包装成资产
 getStartURL = ⟨入口包装⟩ $
-  (FrameworkGenerated.StartURL <$> runAt @"StartPage" FrameworkGenerated.startURL)
+  (FrameworkGenerated.StartURL <$> runAt @"StartPage" (FrameworkRuntime.super "startURL" FrameworkGenerated.startURL))
 ```
 
 - **驱动**：effect 的 requests 依次执行对应资产的 getT，重新生产并发布当前 origin 的绑定。
@@ -419,7 +419,9 @@ Input 表达操作的前提关系，业务值来源单独由 demands 表达；Co
 <a id="middleware"></a>
 #### Middleware：在 Root 级调用点捕获句柄与值
 
-Middleware 是由 Root 级入口驱动的 Excu。gen 生成的 Root 级类方法调用点有三处：原子 handler 成功返回的值、`raw` 读取和 `raise`。注入发生在生成期，经类型类完成：AST 的 `middleware` 是给 gen 的标记；标签多一个类型参数 `hooks`（覆盖本次挂载的 Middleware 列表），被拦截类别的这些调用点通过入口约束 `Captures hooks` 调用 `captureAt @hooks` 并带上 handler 名；Middleware handler 作为类方法同步执行，用 `hookedOutput`／`hookedRaw`／`hookedError` 拆出本次捕获。它不包住、不推进、也不替换原调用；业务 handler 与 Input 关系都不变。运行时没有 Middleware 目录或分发。
+每个原子类方法作为一个尚未执行的 action 交给 Root 的 `super`。例如，生成入口在完成 requests 和 Input 前驱后，执行 `runAt @hooks @"FileSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)`。同一手写 instance 仍可绑定到不同 effect。Injector 确定绑定可捕获的类别，Booter 给出挂载的 middleware 列表，生成代码里的类型标签把两者交给对应的 Root 实例。
+
+有匹配的 middleware 时，`super` 先通知进入，再执行一次业务 action，成功后通知输出并交回原值。action 内每次实际的 `raw` 和 `raise` 沿用各自的捕获点。Middleware 在自己的标签上运行，Root 在这个标签上直接执行，避免递归触发。业务和 middleware 的 instance 都无需手写推进操作。
 
 ```haskell
 -- 注册：没有 Input 前驱，也没有 demands
@@ -441,14 +443,16 @@ ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "Wri
 - **挂载。** `middleware :: [EffectNode] -> AST -> AST` 包住恰好一棵子树。列表只接受 Middleware 注册名，普通 `node` 也不能引用 Middleware。标注是透明的：gen 先剥离标注再编号，NodeId、单元划分（包括 `lifelong` 对直接 `parallel` 子项的拆分）与无标注时相同；标注位置与 Middleware 名作为 `drivingMiddleware` 存入 Prototype，运行与 `--structure` 剥离当前 AST 后核对骨架，并核对标注与编译时一致。
 - **集合与类型类注入。** gen 为每个挂载（节点、选择读取、会话步骤）求覆盖它的全部标注之并，按注册顺序去重；Booter 把它存为 `drivingHooks`。注册了 Middleware 时，标签写作 `At hooks effect`，每个 effect 入口只生成一份，对 `hooks` 多态（`runX :: forall hooks. Captures hooks => App …`），入口之间以 `@hooks` 互相调用，所以前驱、`requests` 驱动、raw 读取的句柄、注入表与收尾表里的 close 都处在同一个列表下。生成的 Haskell 把 `Captures hooks` 写在入口的类型签名上。`Captures '[]` 什么也不做，`Captures (m ': ms)` 先交给 Middleware `m`（它按自己的 `intercept` 取舍类别），再交给 `ms`。Program 为每个挂载登记时在类型上给出列表（例如 `Handlers.runReport @'["Audit"]`，被覆盖的挂载另以 `名字@Audit` 登记），GHC 在编译期选定实例；运行时只按 Prototype 的静态登记名（`entryLabel`）选取已编译的 Target，没有目录或分发。
 - **open／close 归谁。** 规则只看挂载位置，不为会话另设：lifelong 的会话步骤位于该 lifelong 路径下（`边界 ++ [-1, 序号, 步骤]`），标注覆盖整个 lifelong 或它的祖先时，会话步骤以该列表登记，它执行的 open 就是 `open… @hooks`；标注只覆盖 lifelong 内的子树时，只有这些节点带上列表。close 来自开启时安装的收尾表 `scopeCleanups @hooks`，收尾调用同一列表下的 close。同一 handler 复用在不同子树时，只有被标注覆盖的那次挂载被捕获。
-- **三个捕获点。**
+- **四个捕获点。**
+  - 进入：前驱已经完成，`hookedEnter` 给出即将运行的 handler 名。回放直接返回已交出的值时，整个 action 都会跳过。对于 scope，进入表示一次调用尝试；若需在方法内读取开启参数才判定复用，可能只观察到进入。
   - 交出值：Excu.run、Scoped.open／close、Pure.run 这次调用成功交出的 `[String]`，handler 名是被调用的 handler。scope 复用跳过 open 方法体、或注入回放本次输出时，没有新的交出值。
   - raw：读取方 handler（挂接的 parser 或 Pure）经 `raw` 读到的值；类别取被读取的那次原子调用的类别，所以 Stream 下的原始输入不在首版类别内。注入时 parser 经回放读取，同样是一次 raw 读取。
   - raise：handler `raise` 时先捕获 (handler 名, 描述)，再以原失败退出。
 - **同步与顺序。** Middleware 是类方法，在调用点同步执行，调用点在它们完成后才继续。多个 Middleware 按注册顺序依次调用；每个都读到同一份捕获。它们的 IO 按此顺序发生，某个 Middleware 抛出失败会中止本次后续派发。Middleware handler 在自己的 `Hook` 标签下执行，那里的调用点不调用 `captureAt`，它自己不再被捕获。它交出的 `[String]` 没有挂接点。
 - **能力只给 Middleware。** gen 只为 Middleware 的标签生成 `Hooks (Hook "M")`，Layer 也只给 Middleware 加 `Hooks m`；普通 handler 写 `hookedOutput` 不能通过类型检查。Middleware 的能力只来自它的 handler 写法。
 - **失败。** Middleware 与普通 Excu 一样 `raise`，例如 mock 时用来判断 Middleware 是否写对。失败的 origin 是 Middleware 注册名，从调用点沿被捕获调用的入口包装传播，适用的 Error 可以用 `RaisedBy` 匹配。原生 IO 异常沿既有异常路径传播。`hookedError` 捕获的是显式 `raise`。
-- **生成代码。** 每个入口共用一份方法体。登记表为实际用到的不同列表保留各自的特化入口，同一持续来源可在不同子树使用不同列表。没有注册 Middleware 的程序，标签与入口保持单态，生成代码只多出两个空的驱动字段。
+- **自动收尾。** 调用前的 middleware 失败时，普通调用在运行方法体前退出。scope GC 已经预约的 close 仍须尝试一次并完成收尾，随后按原协议报告故障或传播取消。
+- **生成代码。** 每个入口共用一份方法体。登记表为实际用到的不同列表保留各自的特化入口，同一持续来源可在不同子树使用不同列表。没有注册 Middleware 的程序使用单态标签，Root 的默认 `super` 直接执行 action。
 
 <a id="context"></a>
 ### 4.3 Context、驱动与读取

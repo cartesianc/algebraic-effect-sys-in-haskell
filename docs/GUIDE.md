@@ -139,7 +139,7 @@ newtype WriteFirstLineError = WriteFirstLineError String
 
 ```haskell
 runWriteFirstLine = ⟨入口包装⟩ $
-  openFileSession >> runAt @"WriteFirstLine" FrameworkGenerated.writeFirstLine
+  openFileSession >> runAt @"WriteFirstLine" (FrameworkRuntime.super "writeFirstLine" FrameworkGenerated.writeFirstLine)
 
 instance FrameworkRuntime.Reads (FileHandle) (At "WriteFirstLine") where
   require = At ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
@@ -628,7 +628,7 @@ Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，
 | `value <- require @T`（持续资产） | 声明 streams 时读本次交付，声明 requires 时读本次固定值；不会自动包装此前的全部发布 |
 | `output <- raw` | 挂接的 parser 或 Pure 读取直接 Input 本次交出的 `[String]`，句柄不再执行一遍；挂在 Stream 下时是会话本次取得的那份原始输入（单元素 list） |
 | `raise (ReadFileContentError "message")` | 以本 handler 的错误失败；错误类型是 handler 名首字母大写加 `Error` |
-| `hookedOutput`、`hookedRaw`、`hookedError` | 只在 Middleware：本次调用点捕获的 (handler 名, 值)，不是这一种时为 `Nothing` |
+| `hookedEnter`、`hookedOutput`、`hookedRaw`、`hookedError` | Middleware 用第一个读取即将运行的 handler 名，其余分别读取输出、raw 和 raise 的负载。当前捕获点对应的读取返回 `Just` |
 | `pure [info]`、`pure (x : rest)` | Excu／Scoped／Pure 交出 list，交给挂在下面的 Pure 或 Context |
 | `liftIO (...)` | 执行 IO（Pure 不可用） |
 
@@ -804,6 +804,8 @@ EffectSpec
 -- Handlers.hs：Layer 是 Hooks、Raises、MonadIO；每个调用点执行一次
 instance TraceOutputLayer m => TraceOutputHandler m where
   traceOutput = do
+    entering <- hookedEnter
+    forM_ entering (\name -> liftIO (putStrLn ("starting " ++ name)))
     output <- hookedOutput             -- Just (handler 名, 交出的 list)，不是交出值时为 Nothing
     forM_ output (liftIO . print)
     failure <- hookedError             -- Just (handler 名, raise 的描述)
@@ -817,7 +819,7 @@ ast = parallel
   ]
 ```
 
-- **捕获什么**：标注覆盖的位置上，`intercept` 类别（Excu、Scoped 的 `open`／`close`、Pure；`allEffects` 表示三类全部）的三种 Root 级调用：handler 交出的值、`raw` 读到的值（类别取被读取的那次调用）、`raise` 的错误。每次捕获都带 handler 名。
+- **何时执行。** 在标注覆盖的位置，Root 的 `super` 会为匹配 `intercept` 的原子调用通知进入和成功返回。读取 `raw`（按上游类别匹配）或显式 `raise` 也会通知对应的 middleware。一次写文件可以先记录开始、执行原有业务 IO、再记录输出。业务 handler 保持原写法，整个推进过程由 SDK 负责。
 - **同步执行**：Middleware 是类方法，在调用点上执行完，原调用才继续；它只读捕获，不改变原值。多个 Middleware 按注册顺序依次执行，不要让它们依赖彼此。
 - **透明**：标注不改变子树的执行顺序、NodeId 和 lifelong 的单元划分。范围只看位置：标注覆盖整个 `lifelong` 时，它的生产会话里执行的调用（例如会话开启的 `open`）也被捕获；只覆盖 lifelong 里的子树时，只捕获这些节点。`--structure` 列出标注与每个启动位置生效的 Middleware。标注是给 gen 的标记，注入在生成期完成：改动标注后要重新生成。
 - **失败**：Middleware 与普通 Excu 一样 `raise`，失败从调用点传播，origin 是 Middleware 的注册名。

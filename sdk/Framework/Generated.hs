@@ -15,13 +15,13 @@ module Framework.Generated
   , atomicHandle, atomicScope, streamHandle, endSource, endSubscription
   , openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, withScopeCleanups
-  , HookEvent(..), HookApp, runHookApp, liftHookApp, hookOutput, hookRaw, hookError
+  , Root(..), superWith, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError
   , Generic, NFData, interpreter
   ) where
 
 import Framework.SDK
 import Framework.Runtime.Protocol
-  ( failEffect, ErrorStore(handleFailure, withErrorPath, withErrorHandlers), ErrorHandler(..)
+  ( Root(..), failEffect, ErrorStore(handleFailure, withErrorPath, withErrorHandlers), ErrorHandler(..)
   , ContextStore(enterHandler, withAnchoredContexts, withStreamContexts, endSource, endSubscription)
   , ScopeStore(openScope, closeScope, withScopeDependencies) )
 import Framework.Runtime.Context
@@ -30,7 +30,7 @@ import Framework.Runtime.Context
 import Framework.Language.Registration (TypeRef(..))
 import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, deriveSteps)
 import Framework.Runtime.App
-  ( withScopeCleanups, HookEvent(..), HookApp, runHookApp, liftHookApp, hookOutput, hookRaw, hookError )
+  ( withScopeCleanups, superWith, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError )
 import Framework.Runtime.Scope (ScopeHandler, newScopeHandler)
 import Framework.Program (initializePrototype, runProgram)
 import Framework.Prototype

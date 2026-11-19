@@ -34,7 +34,7 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
               [ (normalizeType (typeSpelling (routeType route)), (routeContract route, routeReader route))
               | route <- unitRoutes unit, routeEffect route == declarationName specification ]
               (entryResult specification) (entryOperation specification method) (layerOf unit specification method)
-              (kindOf specification) (rawKindOf specification method)
+              (captureKind (kindOf specification)) (rawKindOf specification method >>= captureKind)
           | specification <- declarations, (method, handler') <- [(method, handler) | (method, handler, _) <- declarationBindings specification] ]
       , unitAssembly = assembly
       , unitRoutes = [routeOf unit specification resolved
@@ -148,6 +148,9 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
     producerMethodOf selected = lookup ContextRequest (effectMethods (protoOf unit selected))
     readerMethodOf selected = lookup ContextRequire (effectMethods (protoOf unit selected))
     kindOf specification = effectKind (protoOf unit (declarationName specification))
+    captureKind kind
+      | any (elem kind . declarationIntercept) declarations = Just kind
+      | otherwise = Nothing
     inputOf specification = effectInput (protoOf unit (declarationName specification))
     rawSource :: Unit -> EffectDeclaration -> Maybe (RawSource String)
     rawSource _ specification
