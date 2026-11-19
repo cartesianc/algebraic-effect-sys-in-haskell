@@ -414,6 +414,15 @@ Input 表达操作的前提关系，业务值来源单独由 demands 表达；Co
 
 生成入口统一包装原协议：withErrorPath 记录失败路径上的 scope，handleFailure 接入 Failure 捕获与 Error 处置，atomicHandle／atomicScope 与 openScope／closeScope 包装原子句柄和 scope 生命周期，streamHandle 包装 Stream，callContext／readContext 包装 Context 的生产、挂接注入与读取。业务不写 handler／super 前缀。
 
+入口按标签已知的闭包由 gen 直接写在包装上，运行时不按名字查表：atomicHandle／atomicScope 带上挂在本句柄下的 parser（普通挂接与持续挂接两组），openScope 带上本 scope 的 close，开启成功时登记为自动收尾。
+
+```haskell
+runLocateFile = (… . FrameworkRuntime.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] [] . …) $ …
+openFileSession = (… . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError (Just (() <$ closeFileSession)) . …) $ …
+```
+
+持续挂接是否在本次执行生效，仍由运行时按执行位置与会话判断；Error 回调是程序级的一张表，由 Target 安装。
+
 根入口不修改业务方法体、不预执行未声明的 Context、不另行 boot 或 lower 上游。scope 复用仍经过调用入口，但可以跳过资源方法体。
 
 <a id="middleware"></a>
@@ -441,7 +450,7 @@ ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "Wri
 
 - **注册。** `input` 写保留名 `"None"`：没有 Input 注入，沿用 Input 的组合逻辑而不另设注册构造器。只有 Middleware 能写 `"None"`，Middleware 也只能写 `"None"`；任何 effect 的 Input 都不能指向 Middleware，因此 Middleware 与被捕获的链之间不会成环。`"None"` 与 `"Root"` 一样不能作为 effect 名。首版不允许 demands。`intercept` 非空、不重复，只能取能交出 raw output 的 `ExcuKind`、`ScopedKind`、`PureKind`；`allEffects` 是三者的简写。
 - **挂载。** `middleware :: [EffectNode] -> AST -> AST` 包住恰好一棵子树。列表只接受 Middleware 注册名，普通 `node` 也不能引用 Middleware。标注是透明的：gen 先剥离标注再编号，NodeId、单元划分（包括 `lifelong` 对直接 `parallel` 子项的拆分）与无标注时相同；标注位置与 Middleware 名作为 `drivingMiddleware` 存入 Prototype，运行与 `--structure` 剥离当前 AST 后核对骨架，并核对标注与编译时一致。
-- **集合与类型类注入。** gen 为每个挂载（节点、选择读取、会话步骤）求覆盖它的全部标注之并，按注册顺序去重；Booter 把它存为 `drivingHooks`。注册了 Middleware 时，标签写作 `At hooks effect`，每个 effect 入口只生成一份，对 `hooks` 多态（`runX :: forall hooks. Captures hooks => App …`），入口之间以 `@hooks` 互相调用，所以前驱、`requests` 驱动、raw 读取的句柄、注入表与收尾表里的 close 都处在同一个列表下。生成的 Haskell 把 `Captured hooks`（每个被拦截类别一条 `Captures hooks kind`）写在入口的类型签名上。Program 为每个挂载登记时在类型上给出列表（例如 `Handlers.runReport @'["Audit"]`，被覆盖的挂载另以 `名字@Audit` 登记），GHC 在编译期选定实例；运行时只按 Prototype 的静态登记名（`entryLabel`）选取已编译的 Target，没有目录或分发。
+- **集合与类型类注入。** gen 为每个挂载（节点、选择读取、会话步骤）求覆盖它的全部标注之并，按注册顺序去重；Booter 把它存为 `drivingHooks`。注册了 Middleware 时，标签写作 `At hooks effect`，每个 effect 入口只生成一份，对 `hooks` 多态（`runX :: forall hooks. Captures hooks => App …`），入口之间以 `@hooks` 互相调用，所以前驱、`requests` 驱动、raw 读取的句柄、挂接的 parser 与自动收尾的 close 都处在同一个列表下。生成的 Haskell 把 `Captured hooks`（每个被拦截类别一条 `Captures hooks kind`）写在入口的类型签名上。Program 为每个挂载登记时在类型上给出列表（例如 `Handlers.runReport @'["Audit"]`，被覆盖的挂载另以 `名字@Audit` 登记），GHC 在编译期选定实例；运行时只按 Prototype 的静态登记名（`entryLabel`）选取已编译的 Target，没有目录或分发。
 - **生成期选择。** `Gen.Injector.Super` 对入口实际实例化的每个列表（空列表、各挂载与会话步骤的列表）和每个被拦截的类别，按注册顺序选出拦截该类别的 Middleware；Emit 把每条选择写成一个 `Captures` 实例。例如 `Audit` 拦截 Excu 与 Scoped、`Timer` 拦截全部类别时：
 
   ```haskell
@@ -452,7 +461,7 @@ ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "Wri
   ```
 
   被拦截类别的 effect 标签按类别取 Root 实例（`super = superAt @hooks @kind`），其余标签使用 Root 的默认 `super`。运行时不再按 `intercept` 筛选。
-- **open／close 归谁。** 规则只看挂载位置，不为会话另设：lifelong 的会话步骤位于该 lifelong 路径下（`边界 ++ [-1, 序号, 步骤]`），标注覆盖整个 lifelong 或它的祖先时，会话步骤以该列表登记，它执行的 open 就是 `open… @hooks`；标注只覆盖 lifelong 内的子树时，只有这些节点带上列表。close 来自开启时安装的收尾表 `scopeCleanups @hooks`，收尾调用同一列表下的 close。同一 handler 复用在不同子树时，只有被标注覆盖的那次挂载被捕获。
+- **open／close 归谁。** 规则只看挂载位置，不为会话另设：lifelong 的会话步骤位于该 lifelong 路径下（`边界 ++ [-1, 序号, 步骤]`），标注覆盖整个 lifelong 或它的祖先时，会话步骤以该列表登记，它执行的 open 就是 `open… @hooks`；标注只覆盖 lifelong 内的子树时，只有这些节点带上列表。close 由 open 入口在同一列表下带上（`openScope … (Just (closeX @hooks))`），收尾调用同一列表下的 close。同一 handler 复用在不同子树时，只有被标注覆盖的那次挂载被捕获。
 - **superhandler 与 Root 级调用。** `super` 是 Root 提供的 superhandler，捕获分两层：
   - 进入 super：前驱已经完成，`hookedEnter` 给出即将运行的 handler 名。回放直接返回已交出的值时，整个 action 都会跳过。对于 scope，进入表示一次调用尝试；若需在方法内读取开启参数才判定复用，可能只观察到进入。
   - 以下三个是 super 内的 Root 级调用。交出值（`pure`）：Excu.run、Scoped.open／close、Pure.run 这次调用成功交出的 `[String]`，handler 名是被调用的 handler。scope 复用跳过 open 方法体、或注入回放本次输出时，没有新的交出值。
@@ -564,7 +573,7 @@ AST 组织链的启动次序。Crawler 中 parallel 先抓取并注入解析两�
 
 Excu.handler／Scoped.open 成功后，SDK 以根调用身份执行挂接 Context 的 getT；parser 的 raw 由本次输出回答（中间可以经过一串 Pure，见 [Pure](#pure)），不重复执行句柄。挂在 Stream 下的 parser 沿用同一写法：会话每取得一份原始输入调用一次 parser，raw 由这份输入回答（见第 7 章）。普通 Context 的注入失败留在注入内部，不进入原链也不触发 Error；资产没有发布，之后读取它的位置按上述等待规则处理：仍可能发布则等待，已确定耗尽则报缺值。
 
-parser 被 requests 驱动或被选择读取驱动时，raw 直接执行句柄入口，不再次注入；复用 open、重复 close、诊断与自动收尾不产生新的挂接注入。close 没有挂接点；scope 的资源 Context 不能挂在请求它的 Scoped 下。生成入口通过 atomicHandle／atomicScope 包装，挂接目录为 contextInjections。
+parser 被 requests 驱动或被选择读取驱动时，raw 直接执行句柄入口，不再次注入；复用 open、重复 close、诊断与自动收尾不产生新的挂接注入。close 没有挂接点；scope 的资源 Context 不能挂在请求它的 Scoped 下。生成入口通过 atomicHandle／atomicScope 包装，挂接的 parser 由 gen 写在句柄入口上。
 
 这是普通 Context 的基线；持续 Context 的 parser 故障不在注入内隔离，包括 ReuseOutput 沿用消费原子输出的解析，均进入现有 Stream 失败与监督协议，见 [Stream 第 9 节](STREAM_LIFELONG.md#failures)。
 

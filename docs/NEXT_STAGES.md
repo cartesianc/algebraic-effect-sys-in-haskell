@@ -8,7 +8,9 @@ Middleware 首版与 Root 的 `super` 已经实现，[superhandler 的生成期�
 
 **第一批已实现（2026-11-19）。** `Gen.Injector.Super` 为每个 (Middleware 列表, 捕获类别) 预选 Middleware，Emit 写成 `Captures hooks kind` 实例；运行时不再按 `intercept` 筛选。close 的调用点由 gen 写成 `superClose`，只有它检查 GC 的关闭预约。具体实例、使用关系与取消仍由 runtime 管理。现行规则见 [CORE_DESIGN 的 Middleware](CORE_DESIGN.md#middleware)。
 
-**后续可单独评估。** 普通 Context 的 parser 挂接表、收尾表与 Error 回调表都已由 gen 生成，运行时仍按名字查表。可评估把这些按标签已知的闭包收进 Root 实例；需区分原子调用成功发布、parser 主动拉取来源、以及用同次输出回答 `raw` 回放三种情况，持续发布另受本次执行位置约束。
+**第二批已实现（2026-11-19）。** parser 挂接表（普通与持续）与自动收尾表不再经 Target 安装、按名字查找：gen 把挂接的 parser 写在 atomicHandle／atomicScope 上，把 close 写在 openScope 上；持续挂接仍由运行时按执行位置与会话筛选。现行写法见[入口包装](CORE_DESIGN.md#calls)。
+
+**仍是程序级的。** Error 回调表仍由 Target 安装：它在运行时兼作诊断开关（注入期间清空以不触发诊断，收尾诊断沿用它），不是按入口固定的事实。收进生成期须先重新设计这个开关，与 [Error 驱动链](#deferred)一并考虑。
 
 <a id="code-shape"></a>
 <a id="middleware"></a>

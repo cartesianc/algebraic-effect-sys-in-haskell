@@ -137,7 +137,7 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 | --- | --- | --- | --- | --- |
 | 资产有唯一的生产方 | Context 以 `asset = Asset @T "名字"` 声明；消费方只写资产名 | 按资产名解析出唯一生产方，多个生产方即报错 | 不按距离或拓扑替用户选来源 | [Context](CORE_DESIGN.md#context)、[资产来源与访问约束](CORE_DESIGN.md#demand-contract) |
 | 驱动一次新的生产 | 消费方 `requests "T"` | 入口的驱动步骤，排在前驱与方法体之前 | 每次进入入口都重新执行 T 的生产链并发布；不合并重复驱动 | [入口装配](CORE_DESIGN.md#calls) |
-| 原子操作的输出解析成资产 | Context 的 Input 是 Excu 或 Scoped，parser 用 `raw` | 挂接连接（`contextInjections`）、raw 来源 | 句柄成功后，parser 读本次输出发布资产，句柄不重跑；普通 Context 的解析失败留在注入内部，资产不发布 | [原子输出挂接](CORE_DESIGN.md#context) |
+| 原子操作的输出解析成资产 | Context 的 Input 是 Excu 或 Scoped，parser 用 `raw` | 挂接连接（写在句柄入口的 atomicHandle／atomicScope 上）、raw 来源 | 句柄成功后，parser 读本次输出发布资产，句柄不重跑；普通 Context 的解析失败留在注入内部，资产不发布 | [原子输出挂接](CORE_DESIGN.md#context) |
 | 同一个 parser，被驱动时自己取得输入 | 同上的 Context 被 `requests` 或选择读取驱动 | 同一份入口，raw 的回答方式不同 | raw 执行句柄入口，从头启动生产链；失败沿驱动方传播 | 同上 |
 | 输出的纯变换 | Input 链上串 Pure | Pure 链，挂接点是最上面的原子句柄 | 句柄输出经 Pure 依次变换后交给 parser；Pure 不改变调用者身份，不会重复注入 | [Pure](CORE_DESIGN.md#pure) |
 | 操作按顺序组合 | `input = "前驱"` | 入口的前驱步骤 | 在方法体之前执行前驱；不传值，前驱失败原样传播 | [句柄与值](CORE_DESIGN.md#handles-and-values) |
