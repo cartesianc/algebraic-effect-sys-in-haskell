@@ -7,8 +7,8 @@ module Framework.Gen.Emit.Program (renderProgram) where
 import Data.List (intercalate)
 import Framework.Gen.Plan
 
-renderProgram :: Unit -> String
-renderProgram unit = unlines (programHeader ++ astInterpreter)
+renderProgram :: Maybe String -> Unit -> String
+renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
   where
     namespace = unitNamespace unit
     selected = map fst (unitTerminals unit)
@@ -61,9 +61,11 @@ renderProgram unit = unlines (programHeader ++ astInterpreter)
       [ "-- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。"
       , "interpreter :: SDK.AST -> [EffectSpec] -> IO ()"
       , "interpreter = SDK.interpreter " ++ show namespace
-          ++ " " ++ show ("demo/" ++ map (\character -> if character == '.' then '/' else character) namespace ++ "/Handlers.hs")
-          ++ " Handlers.handlerSourceFingerprint generatedPrototype compiledEntries"
+          ++ " [" ++ intercalate ", " sourceChecks ++ "] generatedPrototype compiledEntries"
       ]
+    sourceChecks = ["(" ++ sourcePath "Handlers.hs" ++ ", Handlers.handlerSourceFingerprint)"]
+      ++ ["(" ++ sourcePath "Types.hs" ++ ", " ++ show typesFingerprint ++ ")" | not (null selectors)]
+    sourcePath file = show ("demo/" ++ map (\c -> if c == '.' then '/' else c) namespace ++ "/" ++ file)
     -- 按 Context 注册名登记（与运行时绑定来源同名）。Receive：Stream 单步取得原始输入，parser 解析它并发布。
     -- Derive：领取一条上游交付后只执行 parser，它沿 Input 链执行被驱动的句柄并发布。
     sessionSteps = map renderSession (unitSessionEntries unit)

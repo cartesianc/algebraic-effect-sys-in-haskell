@@ -1,7 +1,7 @@
 -- 读取源程序（前端）：在声明加载进程中求值 effects 与 ast 并计算到接口检查点 Unit，
 -- 用 GHC 解析器读取 Types.hs 的和类型与 Handlers.hs 的语法树。只解析和求值声明，不加载 handler 或执行业务。
 module Framework.Gen.Frontend.Source
-  ( HandlerSource(..), loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, sourceOffset
+  ( HandlerSource(..), loadComposition, loadHandlers, resolveHandlerImports, loadSumTypes, namespaceDirectory, sourceOffset
   ) where
 
 import Control.Exception (evaluate)
@@ -9,7 +9,12 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (toList)
 import Framework.Prototype.Types (SumTypes)
 import Framework.Gen.Plan (Unit)
-import GHC (GhcPs, getSessionDynFlags, runGhc)
+import Framework.Gen.Frontend.Ghc (withSourceTargets)
+import GHC (GhcPs, LoadHowMuch(..), SuccessFlag(..), getModSummary, getSession, getSessionDynFlags,
+            load, ms_hspp_opts, runGhc, setInteractiveDynFlags, setTargets)
+import GHC.Driver.Main (hscRnImportDecls)
+import GHC.Driver.Session (homeUnitId_)
+import GHC.Fingerprint (fingerprintString)
 import GHC.Data.FastString (mkFastString)
 import GHC.Data.StringBuffer (stringToStringBuffer)
 import GHC.Driver.Config.Parser (initParserOpts)
@@ -20,7 +25,8 @@ import GHC.Parser.Annotation (getLocA)
 import GHC.Parser.Header (getOptions)
 import GHC.Parser.Lexer (ParseResult(..), initParserState, unP)
 import GHC.Types.Name.Occurrence (occNameString)
-import GHC.Types.Name.Reader (rdrNameOcc)
+import GHC.Types.Name.Reader (GlobalRdrEnv, rdrNameOcc)
+import GHC.Unit.Module (mkModule, mkModuleName)
 import GHC.Types.SrcLoc
 import System.Directory (doesFileExist)
 import System.Exit (ExitCode(..), die, exitWith)
@@ -78,6 +84,23 @@ loadHandlers namespace = do
 namespaceDirectory :: String -> FilePath
 namespaceDirectory namespace = "demo" </> map (\c -> if c == '.' then pathSeparator else c) namespace
 
+-- 只加载手写方法的导入依赖。候选契约来自本次注册，首次生成也不依赖磁盘上的旧契约。
+-- GHC 解析导入列表、限定名和重导出；Shape 用定义名称识别能力，保留方法体的原始语法树。
+resolveHandlerImports :: String -> String -> HandlerSource -> IO GlobalRdrEnv
+resolveHandlerImports namespace contracts source = withSourceTargets $ \memoryTarget -> do
+  let handlers = namespace ++ ".Handlers"
+  setTargets [memoryTarget handlers (handlerText source), memoryTarget (namespace ++ ".Generated.Effects") contracts]
+  flags <- getSessionDynFlags
+  result <- load (LoadDependenciesOf (mkModule (homeUnitId_ flags) (mkModuleName handlers)))
+  case result of
+    Failed -> liftIO (ioError (userError ("Cannot load the imports of " ++ handlers)))
+    Succeeded -> do
+      -- 该 GHC 接口使用交互环境，导入的语言扩展仍以 Handlers.hs 自己的 pragma 为准。
+      summary <- getModSummary (mkModuleName handlers)
+      setInteractiveDynFlags (ms_hspp_opts summary)
+      session <- getSession
+      liftIO (hscRnImportDecls session (hsmodImports (handlerModule source)))
+
 -- 以文件自身的语言扩展解析源码；只读取语法树，不加载或执行模块。
 parseSourceFile :: FilePath -> IO (String, HsModule GhcPs, Bool, Bool)
 parseSourceFile inputPath = do
@@ -103,11 +126,11 @@ parseSourceFile inputPath = do
 
 -- Types.hs 中的和类型：至少两个构造器、每个构造器至多一个字段；字段类型取源码原文。
 -- 多字段和类型仍是合法业务 ADT；这里只支持上述自动投影形状，其余不生成分支契约。
-loadSumTypes :: String -> IO [(String, [(String, Maybe String)])]
+loadSumTypes :: String -> IO (SumTypes, Maybe String)
 loadSumTypes namespace = do
   let inputPath = namespaceDirectory namespace </> "Types.hs"
   exists <- doesFileExist inputPath
-  if not exists then pure [] else do
+  if not exists then pure ([], Nothing) else do
     (source, parsed, _, _) <- parseSourceFile inputPath
     let text located = case getLocA located of
           RealSrcSpan span _ ->
@@ -125,12 +148,13 @@ loadSumTypes namespace = do
                 (\found -> (named, Just found)) <$> text argument
               _ -> Nothing
           _ -> Nothing
-    pure
-      [ (occNameString (rdrNameOcc typeName), constructors)
-      | L _ (TyClD _ DataDecl { tcdLName = L _ typeName, tcdDataDefn = HsDataDefn { dd_cons = declared } }) <- hsmodDecls parsed
-      , let candidates = map fields (toList declared)
-      , length candidates > 1, all (/= Nothing) candidates
-      , let constructors = [found | Just found <- candidates] ]
+    let sums =
+          [ (occNameString (rdrNameOcc typeName), constructors)
+          | L _ (TyClD _ DataDecl { tcdLName = L _ typeName, tcdDataDefn = HsDataDefn { dd_cons = declared } }) <- hsmodDecls parsed
+          , let candidates = map fields (toList declared)
+          , length candidates > 1, all (/= Nothing) candidates
+          , let constructors = [found | Just found <- candidates] ]
+    pure (sums, Just (show (fingerprintString source)))
 
 -- 行列号（列按 GHC 的制表位规则）换算为源码字符偏移。
 sourceOffset :: String -> Int -> Int -> Int

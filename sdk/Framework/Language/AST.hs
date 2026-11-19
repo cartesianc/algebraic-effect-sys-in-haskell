@@ -15,7 +15,7 @@ data WorkflowF next
   | Chained [next]
   | Parallel [next]
   | Alternative [next]
-  -- Lifelong 订阅持续资产：每个消费单元在新增量交付后执行一次，再等待下一条；本身没有正常结束。
+  -- Lifelong 订阅持续资产。每个单元按交付重复执行，所有单元结束后本分支成功返回。
   -- 直接子项各为一个单元，直接子项是 parallel 时拆这一层；其余子树作为有限单元整体重复。
   | Lifelong [next]
   deriving (Eq, Functor, Show, Read)

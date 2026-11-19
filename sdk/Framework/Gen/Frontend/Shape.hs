@@ -13,29 +13,27 @@ import GHC (GhcPs)
 import GHC.Hs
 import GHC.Hs.Utils (CollectFlag(..), collectLocalBinders, collectPatBinders)
 import GHC.Types.Name.Occurrence (occNameString)
-import GHC.Types.Name.Reader (RdrName(..), rdrNameOcc)
+import GHC.Types.Name (nameModule_maybe)
+import GHC.Types.Name.Reader (GlobalRdrEnv, LookupGRE(..), WhichGREs(..), greName, lookupGRE, RdrName(..), rdrNameOcc)
 import GHC.Types.SrcLoc (GenLocated(..), unLoc)
-import GHC.Unit.Module (moduleNameString)
+import GHC.Unit.Module (moduleName, moduleNameString)
 import GHC.Utils.Outputable (ppr, showSDocUnsafe)
 
 data Environment = Environment
   { contractsModule :: String
   , handlerMethods :: [(String, String)]
   , imports :: [ImportDecl GhcPs]
+  , resolvedImports :: GlobalRdrEnv
   , boundNames :: [String]
   , hasImplicitPrelude :: Bool
   -- 当前所在的 handler 类，用于诊断。
   , ownerClass :: Maybe String
   }
 
--- SDK 中 handler 能力的导出模块。
-capabilityModules :: [String]
-capabilityModules = ["Framework.SDK", "Framework.Language.Handler"]
-
 -- 形状阶段：分析 Handlers.hs 中各 handler 的方法体。RebindableSyntax 下 do 不按标准语义展开，不分析。
-shapeHandlers :: String -> [(String, String)] -> HandlerSource -> Either String [(String, MethodShape String)]
-shapeHandlers namespace handlers source = do
-  analyzed <- analyzeModule namespace handlers (handlerImplicitPrelude source) (handlerModule source)
+shapeHandlers :: String -> [(String, String)] -> GlobalRdrEnv -> HandlerSource -> Either String [(String, MethodShape String)]
+shapeHandlers namespace handlers resolved source = do
+  analyzed <- analyzeModule namespace handlers resolved (handlerImplicitPrelude source) (handlerModule source)
   if handlerRebindable source && any ((/= Empty) . snd) analyzed
     then Left "Effect structure analysis does not support RebindableSyntax; use standard Haskell in handler bodies"
     else pure analyzed
@@ -43,15 +41,15 @@ shapeHandlers namespace handlers source = do
 -- 每个 handler 方法体得到一份结构：require @T 记为 @T，raw 记为 %raw。
 -- handler 不能调用其他 handler：组合只经注册的 Input、demands 与 AST。
 analyzeModule
-  :: String -> [(String, String)] -> Bool -> HsModule GhcPs
+  :: String -> [(String, String)] -> GlobalRdrEnv -> Bool -> HsModule GhcPs
   -> Either String [(String, MethodShape String)]
-analyzeModule namespace handlers implicitPrelude parsed = do
+analyzeModule namespace handlers resolved implicitPrelude parsed = do
   unless (length (nub (map snd handlers)) == length handlers) $
     Left "Structure analysis needs distinct handler names"
   concat <$> mapM instanceShapes (hsmodDecls parsed)
   where
     environment = Environment (namespace ++ ".Generated.Effects") handlers
-      (map unLoc (hsmodImports parsed)) [] implicitPrelude Nothing
+      (map unLoc (hsmodImports parsed)) resolved [] implicitPrelude Nothing
     instanceShapes (L _ (InstD _ (ClsInstD _ declaration))) =
       case classIdentifier (sig_body (unLoc (cid_poly_ty declaration))) of
         Just identifier
@@ -100,16 +98,16 @@ localEnvironment environment =
 -- require 记为带 @ 前缀的取值标记，须配合类型实参；handler 方法记为带 ! 前缀的标记，在调用处拒绝。
 methodReference :: Environment -> RdrName -> Maybe String
 methodReference environment identifier
-  | identifierName identifier == "require"
-  , imported environment capabilityModules (Just "Reads") identifier = Just "@require"
-  | identifierName identifier == "raw"
-  , imported environment capabilityModules (Just "Raw") identifier = Just "%raw"
-  | otherwise = case
-      [method | (owner, method) <- handlerMethods environment
-        , method == identifierName identifier
-        , imported environment [contractsModule environment] (Just owner) identifier] of
-      [method] -> Just ('!' : method)
-      _ -> Nothing
+  | Unqual _ <- identifier, name `elem` boundNames environment = Nothing
+  | [entry] <- lookupGRE (resolvedImports environment) (LookupRdrName identifier SameNameSpace)
+  , Just owner <- moduleNameString . moduleName <$> nameModule_maybe (greName entry) =
+      case (owner, name) of
+        ("Framework.Language.Handler", "require") -> Just "@require"
+        ("Framework.Language.Handler", "raw") -> Just "%raw"
+        _ | owner == contractsModule environment && name `elem` map snd (handlerMethods environment) -> Just ('!' : name)
+          | otherwise -> Nothing
+  | otherwise = Nothing
+  where name = identifierName identifier
 
 -- require @T 记为按表示类型的读取；类型原文由 gen 规范化后与绑定的路由比较。
 demandCall :: LHsWcType GhcPs -> Either String (MethodShape String)

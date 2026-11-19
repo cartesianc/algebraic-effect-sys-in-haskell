@@ -42,40 +42,37 @@ import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, hSetNewlineMode,
 import System.IO.Error (tryIOError)
 import System.Process (callProcess)
 
--- Generated.Program 提供 namespace、真实手写源文件路径与编译副本指纹。
+-- Generated.Program 提供本次生成引用的手写源文件路径与指纹。
 -- 路径可以是绝对路径，或相对于启动目录；SDK 不从 namespace 推导 demo 布局。
 -- 业务仍只看到已绑定这些参数的 interpreter ast effects。
 interpreter
   :: (Show cause, Show value, Show method, Ord method, NFData method)
-  => String -> FilePath
-  -> Maybe String -> Prototype method
+  => String -> [(FilePath, Maybe String)] -> Prototype method
   -> IO ([Target environment cause value], [Target environment cause String], [(String, SessionSteps environment cause)])
   -> AST -> [EffectSpec] -> IO ()
-interpreter namespace sourcePath sourceFingerprint prototype createEntries tree specifications = do
+interpreter namespace sources prototype createEntries tree specifications = do
   hSetEncoding stdout utf8
   arguments <- getArgs
   case arguments of
     [] -> do
-      verifyRegistrations
-      verifyHandlerSource namespace sourcePath sourceFingerprint
+      verifyInputs
       (_, rendered) <- runProgram prototype createEntries tree
       putStrLn rendered
     ["--generate"] -> generate namespace
     ["--structure"] -> do
-      verifyRegistrations
-      verifyHandlerSource namespace sourcePath sourceFingerprint
+      verifyInputs
       initialized <- initializePrototype prototype
       rendered <- either (ioError . userError . show) pure (renderStructure initialized tree)
       putStr rendered
     _ -> ioError (userError "Usage: program [--generate|--structure]")
   where
-    verifyRegistrations
-      | specifications == protoRegistrations prototype = pure ()
+    verifyInputs
+      | specifications == protoRegistrations prototype = mapM_ (uncurry (verifySource namespace)) sources
       | otherwise = staleGenerated namespace "Registrations changed"
 
 -- 与生成时使用相同的 UTF-8 和换行读取方式；只校验生成器交来的源文件。
-verifyHandlerSource :: String -> FilePath -> Maybe String -> IO ()
-verifyHandlerSource namespace path expected = do
+verifySource :: String -> FilePath -> Maybe String -> IO ()
+verifySource namespace path expected = do
   actual <- tryIOError $ withFile path ReadMode $ \handle -> do
     hSetEncoding handle utf8
     hSetNewlineMode handle universalNewlineMode

@@ -8,7 +8,7 @@ import Control.Monad (forM, unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.Data (Data, cast, gmapQ)
 import Data.List (intercalate, isInfixOf, isPrefixOf, nub, sortOn, stripPrefix)
-import Data.Time.Clock (getCurrentTime)
+import Framework.Gen.Frontend.Ghc (modulePath, withSourceTargets)
 import Framework.Prototype.Catalog
 import GHC
 import GHC.Core.DataCon (dataConName, dataConOrigArgTys)
@@ -17,9 +17,6 @@ import GHC.Core.TyCo.FVs (tyConsOfType)
 import GHC.Core.TyCo.Rep (scaledThing)
 import GHC.Core.Type (splitTyConApp_maybe)
 import GHC.Data.FastString (unpackFS)
-import GHC.Data.StringBuffer (stringToStringBuffer)
-import GHC.Driver.Backend (noBackend)
-import GHC.Driver.Session (DynFlags(..), GhcLink(..))
 import GHC.Hs
 import GHC.Hs.Utils (CollectFlag(..), collectHsBindBinders)
 import GHC.Types.FieldLabel (flSelector)
@@ -31,7 +28,6 @@ import GHC.Unit.Module (moduleNameString)
 import GHC.Utils.Outputable (ppr, showSDocUnsafe)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.FilePath (normalise, takeExtension, takeFileName)
-import System.Process (readProcess)
 import Text.Read (readMaybe)
 
 -- 新契约及副本只作为内存 target；检查失败不改写 Generated。
@@ -39,22 +35,9 @@ import Text.Read (readMaybe)
 -- roots 是资产的表示类型，contracts 是生成的资产类型；二者组成资产目录。
 checkAssets :: String -> [(String, String)] -> [String] -> [String] -> Maybe String -> IO [Asset]
 checkAssets namespace generated roots contracts native = do
-  library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
   files <- sourceFiles (modulePath namespace)
-  now <- getCurrentTime
-  runGhc (Just library) $ do
-    initial <- getSessionDynFlags
-    logger <- getLogger
-    packages <- liftIO (interpretPackageEnv logger initial)
-    _ <- setSessionDynFlags packages
-      { backend = noBackend, ghcLink = NoLink, importPaths = ["demo", "sdk"], verbosity = 0 }
-    let memoryTarget moduleName source = Target
-          { targetId = TargetFile (modulePath moduleName ++ ".hs") Nothing
-          , targetAllowObjCode = False
-          , targetUnitId = homeUnitId_ initial
-          , targetContents = Just (stringToStringBuffer source, now)
-          }
-        rootModule = namespace ++ ".Generated.AssetRoots"
+  withSourceTargets $ \memoryTarget -> do
+    let rootModule = namespace ++ ".Generated.AssetRoots"
         rootSource = unlines $
           ["{-# LANGUAGE DataKinds, TypeOperators, TypeFamilies #-}"
           , "module " ++ rootModule ++ " where", "import " ++ namespace ++ ".Types"
@@ -99,10 +82,6 @@ checkAssets namespace generated roots contracts native = do
     unless (null failures) $
       liftIO (ioError (userError (intercalate "\n" failures)))
     pure (sortOn assetType (map describeAsset assets))
-
-modulePath :: String -> FilePath
--- 统一用正斜杠：Windows 下 </> 插入的反斜杠会在 GHC 记录文件名时丢失，资产目录的路径因此出错。
-modulePath selected = "demo/" ++ map (\c -> if c == '.' then '/' else c) selected
 
 sourceFiles :: FilePath -> IO [FilePath]
 sourceFiles directory = do
@@ -190,8 +169,9 @@ checkTopLevel namespace checked = case tm_renamed_source checked of
       MainModule -> "Main.hs defines only main"
       OtherModule -> "write value operations inside handler methods (local functions there are fine)"
     workflowType selected = case splitTyConApp_maybe selected of
-      Just (constructor, []) -> fmap (moduleNameString . moduleName) (nameModule_maybe (tyConName constructor))
-        == Just "Framework.Language.AST"
+      Just (constructor, []) -> let name = tyConName constructor
+        in occNameString (nameOccName name) == "AST"
+          && fmap (moduleNameString . moduleName) (nameModule_maybe name) == Just "Framework.Language.AST"
       _ -> False
     typed = typedVariables (tm_typechecked_source checked)
     at location = showSDocUnsafe (ppr location) ++ ": "

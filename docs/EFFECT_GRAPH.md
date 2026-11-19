@@ -222,7 +222,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 生成阶段按[主设计的编译流水线](CORE_DESIGN.md#generation)推进；本节只解释图与来源的产物关系，阶段状态和检查点不在这里另行定义。`Gen.Composition` 内部步骤可以使用 `Prototype.Query` 的共享纯关系查询：
 
 1. **声明与挂载。** 解析注册、资产与 Input。AST 已用 `node` 指定末端，给每次挂载编号；检查 alternative 的分支契约及覆盖，定下持续会话与输出复用位置。末端不是从全图寻找的叶子。
-2. **接口与方法组成。** 计算挂载、选择器、会话步骤、输出连接、有序 requests／Input、raw 来源和读取路由，并据此形成 handler 类型能力。前端 `Gen.Frontend.Shape` 提取读取形状后，机器把形状代换成对应 effect 方法的结构。一个 handler 的不同绑定仍保留各自入口与路由。
+2. **接口与方法组成。** 计算挂载、选择器、会话步骤、输出连接、有序 requests／Input、raw 来源和读取路由，并据此形成 handler 类型能力。前端用本次契约解析 Handlers 的导入，`Gen.Frontend.Shape` 按 GHC 认定的定义识别 `require` 和 `raw`。限定导入、重导出与直接导入产生相同的读取形状，局部同名值按 Haskell 作用域处理。机器再把形状代换成对应 effect 方法的结构，每个绑定保留各自的入口与路由。
 3. **方法图。** 从同一装配结果建立挂接注入的分析副本，只消去对同次原子输出的再次索取。方法索引与活动栈检查引用，完成态摘要缓存 scope 路径与图。辅助／主 algebra 共用归约结果，不按调用次数复制展开树。
 4. **ScopeTree。** 从方法图的路径求共同必经前序，补入注册前提并检查环。先有方法图及路径，再有 ScopeTree；实例共享与关闭仍由运行时的生产身份、实际使用和待用关系决定。
 5. **来源、驱动标记与完成校验。** 结合方法结构、链挂载和 workflow 形成读取来源与 scope 开启计划，保留相关路径差异并裁剪无关状态。Booter 补齐单元与来源的运行关联；原型自洽和 Context 驱动检查完成后，结果才交给输出阶段。

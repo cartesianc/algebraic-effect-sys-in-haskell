@@ -13,7 +13,7 @@ import Framework.Gen.Emit.Program (renderProgram)
 import Framework.Gen.Emit.Prototype (renderPrototype)
 import Framework.Gen.Names (handlerClass)
 import Framework.Gen.Frontend.Shape (shapeHandlers)
-import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, handlerText)
+import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, resolveHandlerImports, loadSumTypes, namespaceDirectory, handlerText)
 import Data.List (nub)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Exit (die)
@@ -28,11 +28,14 @@ compileWorkflow namespace = do
   let generated = namespaceDirectory namespace </> "Generated"
       cachePath = generated </> ".scope-cache"
   -- 同一组合机器在声明进程中走到接口检查点；首次无 Handlers 也能生成同步契约。
-  sumTypes <- loadSumTypes namespace
+  (sumTypes, typesFingerprint) <- loadSumTypes namespace
   interface <- loadComposition namespace sumTypes
   source <- loadHandlers namespace
-  shapes <- either (ioError . userError) pure
-    (traverse (shapeHandlers namespace [(handlerClass handler', handler') | handler' <- unitHandlers interface]) source)
+  let contracts = renderEffects interface
+      handlersInScope = [(handlerClass handler', handler') | handler' <- unitHandlers interface]
+  shapes <- traverse (\native -> do
+    imports <- resolveHandlerImports namespace contracts native
+    either (ioError . userError) pure (shapeHandlers namespace handlersInScope imports native)) source
   pending <- either die pure (prepareComposition interface shapes)
   dependencies <- mapM readUtf8 structureSources
   let cacheKey = show (compositionKey pending, dependencies)
@@ -49,8 +52,7 @@ compileWorkflow namespace = do
       prototype = compositionPrototype result
   handlers <- either (ioError . userError) pure (renderHandlers unit source)
   -- 输出只读取机器完成态的接口事实。
-  let contracts = renderEffects unit
-      program = renderProgram unit ++ structure
+  let program = renderProgram typesFingerprint unit ++ structure
   _ <- evaluate (length structure)
   -- 类型检查、顶层白名单与资产目录；通过后才更新生成区，未变文件保留时间戳
   assets <- checkAssets namespace

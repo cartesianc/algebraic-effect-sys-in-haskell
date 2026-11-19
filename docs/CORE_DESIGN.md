@@ -231,7 +231,7 @@ Error 的驱动链、Generic Map、跨独立 interpreter 存续、任意逃逸�
 
 依赖只从上往下：源语言不导入其他层；gen 导入源语言与 Prototype 的数据模型，不导入运行时；运行时导入源语言与 Prototype，不导入 gen。demo 的可执行程序不链接 `Framework.Gen.*`，`effect-codegen` 不链接 `Framework.Runtime.*`。Generated/Assets.hs 是审查用的资产目录，不进入运行导入链。
 
-能在生成期判定的组合、读取路由与合法性问题，都由 gen 报错，不留给运行时。运行时启动前只核对编译产物与当前源码是同一份——注册快照、Handlers 指纹、AST 的层级——并校验 Prototype 自洽，不重新推导结构。读取同样只执行编译结果：按生成的来源表取值，缺值时等待发布而不生产；读取权限在生成期确定，运行时不查声明表。
+能在生成期判定的组合、读取路由与合法性问题，都由 gen 报错。启动时核对注册快照、Handlers 指纹与 AST 层级，并校验 Prototype 自洽。生成了 alternative 选择器的程序还核对 `Types.hs` 指纹，确保构造器分派表来自当时读取的类型定义。读取按生成的来源表取值，缺值时等待发布，读取权限在生成期确定。
 
 `Gen.Composition` 统一编译入口、阶段转换与装配事实：声明、资产来源、workflow 挂载、会话连接、handler 类型能力、入口装配、方法图和来源证明按依赖顺序计算。各阶段仍使用专门算法，没有通用的规则匹配或固定点求解器。输出阶段读取结果生成类型约束、精细化 DI 与 Prototype，不重新选择组合解释。内部装配记录只在 gen 存在；方法摘要缓存只保存纯结构，不包含业务值或活实例，运行时仍逐挂载、逐调用执行。
 
@@ -602,7 +602,7 @@ node :: String -> EffectNode
 chained, parallel, alternative, lifelong :: BranchChild child => [child] -> AST
 ```
 
-BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两个实例；业务不增加 class、instance 或转换调用。同一列表只能全是 node 或全是 branch，裸 node 不能赋给 AST，原始 AST 构造器与子项转换不公开。单节点模块用 `chained [node "目标"]`，空分支需如 `chained ([] :: [AST])` 的类型标注，仍成功返回空结果。内部递归表示与 algebra 不变，通过 foldAST 使用 cata。
+BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两个实例；业务不增加 class、instance 或转换调用。同一列表只能全是 node 或全是 branch，裸 node 不能赋给 AST，原始 AST 构造器与子项转换不公开。单节点模块用 `chained [node "目标"]`。整个程序必须至少挂载一个末端。有限 workflow 内可用 `chained ([] :: [AST])` 表达一个成功返回空结果的子分支。内部递归表示与 algebra 不变，通过 foldAST 使用 cata。
 
 这项类型约束不证明分支来自独立文件，也不禁止内联子分支或直接构造叶模块。独立文件、顶层只引用模块名属于声明格式：正文采用固定 branch 构造、显式列表、node 与直接模块引用，不借任意 lambda／map／条件计算隐藏结构，引用保持有限无环。未来 LSP 保存模块定义、引用和源码位置，并检查该格式；当前执行 AST 不保留源码身份，不新增运行时模块 key。
 

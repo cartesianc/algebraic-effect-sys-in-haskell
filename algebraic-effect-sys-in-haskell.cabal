@@ -169,6 +169,7 @@ executable effect-codegen
   other-modules:
       Framework.Gen
       Framework.Gen.Frontend.Source
+      Framework.Gen.Frontend.Ghc
       Framework.Gen.Composition
       Framework.Gen.Plan
       Framework.Gen.Injector
