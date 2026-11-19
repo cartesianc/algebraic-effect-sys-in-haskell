@@ -9,7 +9,7 @@ import Data.List (intercalate, nub, sortOn)
 import Data.Maybe (isJust)
 import Framework.Gen.Plan
 import Framework.Gen.Emit.Types (renderValueType)
-import Framework.Gen.Names (handlerError, handlerFailure, variantSuffix)
+import Framework.Gen.Names (handlerError, handlerFailure)
 import Framework.Gen.Frontend.Source (HandlerSource(..), sourceOffset)
 import Framework.Language.Registration
 import Framework.Prototype.Graph (MethodRole(..))
@@ -20,15 +20,9 @@ import GHC.Hs
 import GHC.Parser.Annotation (getLocA)
 import GHC.Types.SrcLoc
 
--- Generated/Handlers 导出的名字：全部 effect 方法与登记表；有 middleware 标注时另有各特化的入口与登记表。
+-- Generated/Handlers 导出的名字：全部 effect 方法与登记表。
 handlerExports :: Unit -> [String]
 handlerExports unit = allMethods unit ++ ["newScopeHandlers", "scopeCleanups", "errorHandlers", "contextInjections", "streamContextInjections"]
-  ++ concat [ map (++ suffix) (specializedMethods unit ++ ["scopeCleanups", "contextInjections", "streamContextInjections"])
-            | hooks <- unitVariants unit, let suffix = variantSuffix hooks ]
-
--- 特化的是 effect 入口；读取入口不执行 handler，各特化共用原有的一份。
-specializedMethods :: Unit -> [String]
-specializedMethods unit = [bindingMethod binding | binding <- unitBindings unit, bindingOperation binding /= MiddlewareOperation]
 
 hasMiddleware :: Unit -> Bool
 hasMiddleware unit = any ((== MiddlewareOperation) . bindingOperation) (unitBindings unit)
@@ -39,116 +33,124 @@ renderHandlers unit loaded = do
   let generatedName = unitNamespace unit ++ ".Generated.Handlers"
       sourceFingerprint = fmap (show . fingerprintString . handlerText) loaded
       extraExports = "handlerSourceFingerprint" : handlerExports unit
+      extensions = copyExtensions ++ (if hasMiddleware unit then middlewareExtensions else [])
   generated <- case loaded of
     Nothing -> pure ("module " ++ generatedName ++ " (handlerSourceFingerprint) where\n")
     Just source -> copyModule (unitNamespace unit) generatedName extraExports (handlerText source) (handlerModule source)
   pure ("-- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。\n"
-        ++ concat ["{-# LANGUAGE " ++ extension ++ " #-}\n" | extension <- copyExtensions]
+        ++ concat ["{-# LANGUAGE " ++ extension ++ " #-}\n" | extension <- extensions]
         ++ generated
         ++ "\n-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。\n"
         ++ "handlerSourceFingerprint :: Maybe String\n"
         ++ "handlerSourceFingerprint = " ++ show sourceFingerprint ++ "\n"
         ++ (if isJust loaded then support unit else ""))
 
--- 生成区的装配：原有一份，加上 Middleware 的标签与入口，以及每个 middleware 集合的一份特化。
--- 注入 v3（2026-11-19）：middleware 标注是给 gen 的标记。被覆盖的挂载使用特化入口，
--- 特化里交出值、raw、raise 三个 Root 级调用点直接调用 Middleware 入口；运行时不再分发。
+-- 生成区的装配：effect 标签、handler 能力的实例与 effect 方法。
+-- 注入 v4（2026-11-19）：注册了 Middleware 时，标签多一个类型参数 hooks（覆盖本次挂载的 Middleware 列表），
+-- 入口对 hooks 多态。交出值、raw、raise 三个 Root 级调用点调用 superclass 方法 captureAt @hooks，
+-- 它的实例按类型级列表逐个展开到各 Middleware；GHC 在编译期按挂载登记的列表选定实例，入口只有一份，运行时不分发。
 support :: Unit -> String
-support unit = specialized unit [] ++ middlewareSupport unit ++ concatMap (specialized unit) (unitVariants unit)
-
--- Middleware 在自己的标签下执行：hooked* 读本次调用点的捕获，raise 与普通 Excu 相同；它自己的调用点不再被捕获。
-middlewareSupport :: Unit -> String
-middlewareSupport unit
-  | not (hasMiddleware unit) = ""
-  | otherwise = unlines $
-      [ ""
-      , "-- Middleware 的标签：handler 在这里执行，用 hooked* 读本次调用点捕获的 (handler 名, 值)。"
-      , "newtype Hook (effect :: FrameworkTypes.Symbol) value = Hook { runHook :: FrameworkRuntime.HookApp FrameworkGenerated.ContextValues FrameworkGenerated.Errors value }"
-      , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)"
-      , "" ] ++ concat
-      [ [ "instance FrameworkRuntime.Hooks (Hook " ++ show effect ++ ") where"
-        , "  hookedOutput = Hook FrameworkRuntime.hookOutput"
-        , "  hookedRaw = Hook FrameworkRuntime.hookRaw"
-        , "  hookedError = Hook FrameworkRuntime.hookError"
-        , ""
-        , "instance FrameworkRuntime.Raises FrameworkGenerated." ++ handlerError handler' ++ " (Hook " ++ show effect ++ ") where"
-        , "  raise (FrameworkGenerated." ++ handlerError handler' ++ " description) = Hook (FrameworkRuntime.liftHookApp"
-        , "    (FrameworkRuntime.failEffect " ++ show effect ++ " FrameworkGenerated." ++ handlerFailure handler' ++ " description))"
-        , ""
-        , bindingMethod binding ++ " :: FrameworkRuntime.HookEvent -> FrameworkGenerated.App [String]"
-        , bindingMethod binding ++ " event = FrameworkRuntime.runHookApp event (runHook @" ++ show effect ++ " FrameworkGenerated." ++ handler' ++ ")"
-        , "" ]
-      | binding <- unitBindings unit, bindingOperation binding == MiddlewareOperation
-      , let effect = bindingEffect binding
-            handler' = bindingHandler binding ]
-
--- 一份装配：hooks 为空是原有的一份，否则是被这组 Middleware 覆盖的挂载使用的特化。
--- 特化只换标签、入口名与登记表名；运行协议使用的方法名（atomicHandle、注入键等）保持原名。
-specialized :: Unit -> [String] -> String
-specialized unit hooks = unlines (supportHeader ++ concatMap raisesInstance ordinaryHandlers ++ routeInstances ++ rawInstances
+support unit = unlines (supportHeader ++ captureClasses ++ concatMap raisesInstance ordinaryHandlers ++ routeInstances ++ rawInstances
     ++ endInstances ++ concatMap entryDefinitions (map Prototype.effectName (effectPrototypes unit)))
-    ++ (if base then scopeHandlers else "") ++ scopeCleanups ++ (if base then errorHandlers else "")
-    ++ injectionTable ContextRequest ("contextInjections" ++ suffix)
-    ++ injectionTable ContextStream ("streamContextInjections" ++ suffix)
+    ++ scopeHandlers ++ scopeCleanups ++ errorHandlers
+    ++ injectionTable ContextRequest "contextInjections"
+    ++ injectionTable ContextStream "streamContextInjections"
   where
-    base = null hooks
-    suffix = variantSuffix hooks
-    tag = "At" ++ suffix
-    runner = "runAt" ++ suffix
-    renamed method = method ++ suffix
-    middlewareHandlers = [bindingHandler binding | binding <- unitBindings unit, bindingOperation binding == MiddlewareOperation]
+    hooked = hasMiddleware unit
+    -- 标签与调用的写法：有 Middleware 时带 hooks。
+    tag effect = if hooked then "(At hooks " ++ effect ++ ")" else "(At " ++ effect ++ ")"
+    runner effect = if hooked then "runAt @hooks @" ++ show effect else "runAt @" ++ show effect
+    call method = if hooked then method ++ " @hooks" else method
+    context = if hooked then "Captures hooks => " else ""
+    signature resultType = if hooked
+      then "forall hooks. Captures hooks => FrameworkGenerated.App " ++ resultType
+      else "FrameworkGenerated.App " ++ resultType
+    tableSignature = if hooked then "forall hooks. Captures hooks => " else ""
+    middlewareBindings = [binding | binding <- unitBindings unit, bindingOperation binding == MiddlewareOperation]
+    middlewareHandlers = map bindingHandler middlewareBindings
     ordinaryHandlers = filter (`notElem` middlewareHandlers) (unitHandlers unit)
-    -- 调用点上依次调用集合中拦截该类别的 Middleware，再继续原调用。
-    entryOf selected = case [bindingMethod binding | binding <- unitBindings unit
-        , bindingOperation binding == MiddlewareOperation, bindingEffect binding == selected] of
-      method : _ -> method
-      [] -> error ("Validated Middleware has no entry: " ++ selected)
-    captured kind event = concat [entryOf selected ++ " (" ++ event ++ ") >> " | selected <- capturedBy unit hooks kind]
-    supportHeader
-      | base =
-          [ ""
-          , "-- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，"
-          , "-- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。"
-          , "newtype At (effect :: FrameworkTypes.Symbol) value = At { runAt :: FrameworkGenerated.App value }"
-          , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)"
-          , ""
-          ]
+    intercepted kind = or [kind `elem` kinds | (_, kinds) <- unitMiddleware unit]
+    capture kind event = "captureAt @hooks FrameworkRuntime." ++ show kind ++ " (" ++ event ++ ") >> "
+    supportHeader =
+      [ ""
+      , "-- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，"
+      , "-- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。"
+      , if hooked
+          then "newtype At (hooks :: [FrameworkTypes.Symbol]) (effect :: FrameworkTypes.Symbol) value = At { runAt :: FrameworkGenerated.App value }"
+          else "newtype At (effect :: FrameworkTypes.Symbol) value = At { runAt :: FrameworkGenerated.App value }"
+      , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)"
+      , ""
+      ]
+    -- Root 的 superclass：Captures hooks 把一次调用点交给列表中的每个 Middleware；每个 Middleware 按 intercept 取舍类别。
+    -- Middleware handler 在自己的 Hook 标签下执行，那里的调用点不改写，它自己不再被捕获。
+    captureClasses
+      | not hooked = []
       | otherwise =
-          [ ""
-          , "-- middleware " ++ unwords hooks ++ " 覆盖的挂载使用以下特化：同一份 handler 在这个标签下执行，"
-          , "-- 交出值、raw 与 raise 在调用点上直接调用这些 Middleware 的入口。"
-          , "newtype " ++ tag ++ " (effect :: FrameworkTypes.Symbol) value = " ++ tag ++ " { " ++ runner ++ " :: FrameworkGenerated.App value }"
-          , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)"
+          [ "-- Root 的 superclass：hooks 是覆盖本次挂载的 Middleware，按注册顺序；空列表不做任何事。"
+          , "class Captures (hooks :: [FrameworkTypes.Symbol]) where"
+          , "  captureAt :: FrameworkRuntime.EffectKind -> FrameworkRuntime.HookEvent -> FrameworkGenerated.App ()"
           , ""
-          ]
-    -- 调用点被捕获的 handler 按标签逐个给出 raise：先把 (handler 名, 描述) 交给 Middleware，再以原失败退出。
+          , "instance Captures '[] where"
+          , "  captureAt _ _ = pure ()"
+          , ""
+          , "instance (Captured hook, Captures hooks) => Captures (hook ': hooks) where"
+          , "  captureAt kind event = capturedAt @hook kind event >> captureAt @hooks kind event"
+          , ""
+          , "class Captured (hook :: FrameworkTypes.Symbol) where"
+          , "  capturedAt :: FrameworkRuntime.EffectKind -> FrameworkRuntime.HookEvent -> FrameworkGenerated.App ()"
+          , ""
+          , "-- Middleware 的标签：handler 在这里执行，用 hooked* 读本次调用点捕获的 (handler 名, 值)。"
+          , "newtype Hook (effect :: FrameworkTypes.Symbol) value = Hook { runHook :: FrameworkRuntime.HookApp FrameworkGenerated.ContextValues FrameworkGenerated.Errors value }"
+          , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)"
+          , "" ] ++ concat
+          [ [ "instance Captured " ++ show effect ++ " where"
+            , "  capturedAt kind event"
+            , "    | kind `elem` [" ++ intercalate ", " ["FrameworkRuntime." ++ show kind | kind <- kinds] ++ "] = () <$ " ++ bindingMethod binding ++ " event"
+            , "    | otherwise = pure ()"
+            , ""
+            , "instance FrameworkRuntime.Hooks (Hook " ++ show effect ++ ") where"
+            , "  hookedOutput = Hook FrameworkRuntime.hookOutput"
+            , "  hookedRaw = Hook FrameworkRuntime.hookRaw"
+            , "  hookedError = Hook FrameworkRuntime.hookError"
+            , ""
+            , "instance FrameworkRuntime.Raises FrameworkGenerated." ++ handlerError handler' ++ " (Hook " ++ show effect ++ ") where"
+            , "  raise (FrameworkGenerated." ++ handlerError handler' ++ " description) = Hook (FrameworkRuntime.liftHookApp"
+            , "    (FrameworkRuntime.failEffect " ++ show effect ++ " FrameworkGenerated." ++ handlerFailure handler' ++ " description))"
+            , ""
+            , bindingMethod binding ++ " :: FrameworkRuntime.HookEvent -> FrameworkGenerated.App [String]"
+            , bindingMethod binding ++ " event = FrameworkRuntime.runHookApp event (runHook @" ++ show effect ++ " FrameworkGenerated." ++ handler' ++ ")"
+            , "" ]
+          | binding <- middlewareBindings
+          , let effect = bindingEffect binding
+                handler' = bindingHandler binding
+                kinds = [kind | (owner, selected) <- unitMiddleware unit, owner == effect, kind <- selected] ]
+    -- 有 Middleware 时，被拦截类别的 effect 按标签逐个给出 raise：先把 (handler 名, 描述) 交给 captureAt，再以原失败退出。
     raisesInstance handler'
-      | any (not . null . capturedBy unit hooks . bindingKind) bound = concat
-          [ [ "instance FrameworkRuntime.Raises FrameworkGenerated." ++ handlerError handler' ++ " (" ++ tag ++ " " ++ show effect ++ ") where"
-            , "  raise (FrameworkGenerated." ++ handlerError handler' ++ " description) = " ++ tag ++ " ("
-                ++ captured kind ("FrameworkRuntime.ErrorEvent " ++ show handler' ++ " description")
+      | hooked = concat
+          [ [ "instance " ++ context ++ "FrameworkRuntime.Raises FrameworkGenerated." ++ handlerError handler' ++ " " ++ tag (show effect) ++ " where"
+            , "  raise (FrameworkGenerated." ++ handlerError handler' ++ " description) = At ("
+                ++ (if intercepted kind then capture kind ("FrameworkRuntime.ErrorEvent " ++ show handler' ++ " description") else "")
                 ++ "FrameworkRuntime.failEffect " ++ show effect ++ " FrameworkGenerated." ++ handlerFailure handler' ++ " description)"
             , "" ]
-          | (effect, kind) <- nub [(bindingEffect binding, bindingKind binding) | binding <- bound] ]
+          | (effect, kind) <- nub [(bindingEffect binding, bindingKind binding) | binding <- unitBindings unit, bindingHandler binding == handler'] ]
       | otherwise =
-          [ "instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated." ++ handlerError handler' ++ " (" ++ tag ++ " effect) where"
-          , "  raise (FrameworkGenerated." ++ handlerError handler' ++ " description) = " ++ tag ++ " (FrameworkRuntime.failEffect"
+          [ "instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated." ++ handlerError handler' ++ " (At effect) where"
+          , "  raise (FrameworkGenerated." ++ handlerError handler' ++ " description) = At (FrameworkRuntime.failEffect"
           , "    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated."
               ++ handlerFailure handler' ++ " description)"
           , ""
           ]
-      where bound = [binding | binding <- unitBindings unit, bindingHandler binding == handler']
     -- demands 按表示类型路由到资产的读取入口；持续与有限调用都读声明的 T，分支契约投影构造器字段。
     routeInstances = concat
-      [ [ "instance FrameworkRuntime.Reads (" ++ renderValueType "FrameworkRuntime." "FrameworkGenerated." (routeType route) ++ ") (" ++ tag ++ " "
-            ++ show (routeEffect route) ++ ") where"
-        , "  require = " ++ tag ++ " (" ++ routeExpression route ++ ")"
+      [ [ "instance FrameworkRuntime.Reads (" ++ renderValueType "FrameworkRuntime." "FrameworkGenerated." (routeType route) ++ ") "
+            ++ tag (show (routeEffect route)) ++ " where"
+        , "  require = At (" ++ routeExpression route ++ ")"
         , "" ]
       | route <- unitRoutes unit ]
     routeExpression route = case routeView route of
-      BranchView (BranchContract _ base' constructor field _) ->
+      BranchView (BranchContract _ base constructor field _) ->
         "FrameworkRuntime.projectContext " ++ show producer ++ " "
-        ++ show contractType ++ " FrameworkGenerated.ContextBindingError (\\(FrameworkGenerated." ++ base'
+        ++ show contractType ++ " FrameworkGenerated.ContextBindingError (\\(FrameworkGenerated." ++ base
         ++ " value) -> case value of { " ++ constructor ++ maybe " -> Just ()" (const " field -> Just field") field
         ++ "; _ -> Nothing }) (" ++ reader ++ ")"
       ContinuousView -> unwrap contractType ++ " <$> " ++ reader
@@ -158,28 +160,27 @@ specialized unit hooks = unlines (supportHeader ++ concatMap raisesInstance ordi
         producer = routeProvider route
         reader = routeReader route
         unwrap selectedContract = "(\\(FrameworkGenerated." ++ selectedContract ++ " value) -> value)"
-    -- raw 的捕获点：读取方 handler 与读到的值；读取的仍是本特化里的入口。
+    -- raw 的捕获点：读取方 handler 与读到的值；类别取被读取的那次调用的类别。
     rawInstances = concat
-      [ [ "instance FrameworkRuntime.Raw (" ++ tag ++ " " ++ show (bindingEffect binding) ++ ") where"
-        , "  raw = " ++ tag ++ " (" ++ capturedRaw binding (rawExpression (renamedSource source)) ++ ")"
+      [ [ "instance " ++ context ++ "FrameworkRuntime.Raw " ++ tag (show (bindingEffect binding)) ++ " where"
+        , "  raw = At (" ++ capturedRaw binding (rawExpression (callSource source)) ++ ")"
         , "" ]
       | binding <- unitBindings unit, Just source <- [bindingRaw binding] ]
-    renamedSource (RawList method) = RawList (renamed method)
-    renamedSource (RawStream method) = RawStream (renamed method)
+    callSource (RawList method) = RawList (call method)
+    callSource (RawStream method) = RawStream (call method)
     capturedRaw binding reading = case bindingRawKind binding of
-      Just kind | not (null (capturedBy unit hooks kind)) ->
-        reading ++ " >>= \\value -> " ++ captured kind
-          ("FrameworkRuntime.RawEvent " ++ show (bindingHandler binding) ++ " value") ++ "pure value"
+      Just kind | hooked, intercepted kind ->
+        reading ++ " >>= \\value -> " ++ capture kind ("FrameworkRuntime.RawEvent " ++ show (bindingHandler binding) ++ " value") ++ "pure value"
       _ -> reading
     -- 能力已经由组合计算确定；这里只为对应标签输出实例，不重新解释 effect 类别或 demands。
     endInstances = concat
-      [ [ "instance FrameworkRuntime.StreamEnds (" ++ tag ++ " " ++ show (selectedName) ++ ") where"
-        , "  streamEnd = " ++ tag ++ " FrameworkRuntime.endSource"
+      [ [ "instance FrameworkRuntime.StreamEnds " ++ tag (show selectedName) ++ " where"
+        , "  streamEnd = At FrameworkRuntime.endSource"
         , "" ]
       | selectedName <- map Prototype.effectName (effectPrototypes unit), hasCapability selectedName EndsSource ]
       ++ concat
-      [ [ "instance FrameworkRuntime.EndsStream (" ++ tag ++ " " ++ show (selectedName) ++ ") where"
-        , "  endStream = " ++ tag ++ " FrameworkRuntime.endSubscription"
+      [ [ "instance FrameworkRuntime.EndsStream " ++ tag (show selectedName) ++ " where"
+        , "  endStream = At FrameworkRuntime.endSubscription"
         , "" ]
       | selectedName <- map Prototype.effectName (effectPrototypes unit), hasCapability selectedName EndsSubscription ]
     hasCapability selectedName capability = or
@@ -192,21 +193,21 @@ specialized unit hooks = unlines (supportHeader ++ concatMap raisesInstance ordi
       | binding <- unitBindings unit, bindingEffect binding == selectedName, bindingOperation binding /= MiddlewareOperation
       , let method = bindingMethod binding
             handler' = bindingHandler binding
-      , line <- definition (renamed method) (renderValueType "FrameworkRuntime." "FrameworkGenerated." (bindingResult binding)) (wrapper binding)
-          (intercalate " >> " (map renamed (bindingCalls binding) ++ [handlerCall binding handler'])) ]
-      ++ concat [ readerDefinition reader | base, reader <- unitReaders unit, readerEffect reader == selectedName ]
+      , line <- definition True method (renderValueType "FrameworkRuntime." "FrameworkGenerated." (bindingResult binding)) (wrapper binding)
+          (intercalate " >> " (map call (bindingCalls binding) ++ [handlerCall binding handler'])) ]
+      ++ concat [ readerDefinition reader | reader <- unitReaders unit, readerEffect reader == selectedName ]
       where
         handlerCall binding handler' = case bindingOperation binding of
           PublishAsset contract ->
-            "(FrameworkGenerated." ++ contract ++ " <$> " ++ runner ++ " @" ++ show selectedName ++ " FrameworkGenerated." ++ handler' ++ ")"
-          _ -> capturedOutput binding (runner ++ " @" ++ show selectedName ++ " FrameworkGenerated." ++ handler')
+            "(FrameworkGenerated." ++ contract ++ " <$> " ++ runner selectedName ++ " FrameworkGenerated." ++ handler' ++ ")"
+          _ -> capturedOutput binding (runner selectedName ++ " FrameworkGenerated." ++ handler')
         -- 交出值的捕获点：原子 handler（Excu、Scoped 的 open／close、Pure）这一次调用交出的值。
-        capturedOutput binding call
-          | bindingOperation binding `elem` [AtomicOperation, OpenResource, CloseResource, PureOperation]
-          , not (null (capturedBy unit hooks (bindingKind binding))) =
-              "(" ++ call ++ " >>= \\output -> " ++ captured (bindingKind binding)
-                ("FrameworkRuntime.OutputEvent " ++ show (bindingHandler binding) ++ " output") ++ "pure output)"
-          | otherwise = call
+        capturedOutput binding invocation
+          | hooked, bindingOperation binding `elem` [AtomicOperation, OpenResource, CloseResource, PureOperation]
+          , intercepted (bindingKind binding) =
+              "(" ++ invocation ++ " >>= \\output -> "
+                ++ capture (bindingKind binding) ("FrameworkRuntime.OutputEvent " ++ show (bindingHandler binding) ++ " output") ++ "pure output)"
+          | otherwise = invocation
         scoped = "FrameworkRuntime.withScopeDependencies " ++ show (Prototype.effectScopes (protoOf unit selectedName))
         entered = scoped ++ " . FrameworkRuntime.enterHandler " ++ show selectedName
         wrapper binding = rootWrapper selectedName ++ " . " ++ case bindingOperation binding of
@@ -224,21 +225,21 @@ specialized unit hooks = unlines (supportHeader ++ concatMap raisesInstance ordi
           ++ operation ++ show selectedName ++ " FrameworkGenerated.ScopeBindingError . " ++ entered
     rootWrapper selectedName = "FrameworkRuntime.withErrorPath " ++ show (Prototype.effectNearestScopes (protoOf unit selectedName))
       ++ " . FrameworkRuntime.handleFailure"
-    -- readT 与 streamT 的模式由组合计算选定，渲染器只输出相应的读取入口。
+    -- readT 与 streamT 的模式由组合计算选定，渲染器只输出相应的读取入口；读取不执行 handler，不随 hooks 变化。
     readerDefinition reader
-      | readerContinuous reader = definition method
+      | readerContinuous reader = definition False method
           ("FrameworkGenerated." ++ contractType) (rootWrapper selectedName)
           ("FrameworkRuntime.readStreamContext " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError"
             ++ " FrameworkGenerated.bound" ++ selectedName)
-      | otherwise = definition method ("FrameworkGenerated." ++ contractType) (rootWrapper selectedName)
+      | otherwise = definition False method ("FrameworkGenerated." ++ contractType) (rootWrapper selectedName)
           ("FrameworkRuntime.readContext " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError "
              ++ "FrameworkGenerated.bound" ++ selectedName)
       where
         selectedName = readerEffect reader
         method = readerMethod reader
         contractType = readerContract reader
-    definition method resultType wrapper body =
-      [ method ++ " :: FrameworkGenerated.App " ++ parenthesized resultType
+    definition polymorphic method resultType wrapper body =
+      [ method ++ " :: " ++ (if polymorphic then signature else ("FrameworkGenerated.App " ++)) (parenthesized resultType)
       , method ++ " = (" ++ wrapper ++ ") $"
       , "  " ++ body
       , "" ]
@@ -257,24 +258,24 @@ specialized unit hooks = unlines (supportHeader ++ concatMap raisesInstance ordi
           [ "FrameworkRuntime.newScopeHandler " ++ show (scopeEffect plan) ++ " " ++ show (scopeInputs plan)
               ++ " (" ++ show (scopeResource plan) ++ ")"
           | plan <- unitScopes unit ]
-    -- 收尾沿用开启时所在特化的 close：开启它的挂载被哪组 Middleware 覆盖，收尾就调用那一份。
+    -- 收尾表随 hooks 多态：开启它的挂载按哪组 Middleware 安装，收尾就调用同一组的 close。
     scopeCleanups = unlines
       [ ""
       , "-- SDK 自动收尾入口；安装时不关闭资源。"
-      , "scopeCleanups" ++ suffix ++ " :: [(String, FrameworkGenerated.App ())]"
-      , "scopeCleanups" ++ suffix ++ " ="
+      , "scopeCleanups :: " ++ tableSignature ++ "[(String, FrameworkGenerated.App ())]"
+      , "scopeCleanups ="
       , "  [" ++ (if null callbacks then "" else " " ++ intercalate "\n  , " callbacks)
       , "  ]"
       ]
       where
         callbacks =
-          [ "(" ++ show (scopeEffect plan) ++ ", () <$ " ++ renamed closing ++ ")"
+          [ "(" ++ show (scopeEffect plan) ++ ", () <$ " ++ call closing ++ ")"
           | plan <- unitScopes unit, Just closing <- [scopeCleanup plan] ]
     -- 原子句柄的输出交给挂在它下面的 parser：键是句柄的 effect 方法名。
     injectionTable role tableName = unlines
       [ ""
       , "-- 挂在原子句柄下的 Context：句柄的输出交给它的 parser 解析并发布为资产；没有挂接时输出被丢弃。"
-      , tableName ++ " :: [(String, [(String, FrameworkGenerated.App ())])]"
+      , tableName ++ " :: " ++ tableSignature ++ "[(String, [(String, FrameworkGenerated.App ())])]"
       , tableName ++ " ="
       , "  [" ++ (if null entries then "" else " " ++ intercalate "\n  , " entries)
       , "  ]"
@@ -283,10 +284,10 @@ specialized unit hooks = unlines (supportHeader ++ concatMap raisesInstance ordi
         connections = [connection | connection <- assemblyOutputs (unitAssembly unit), outputRole connection == role]
         entries =
           [ "(" ++ show anchor ++ ", [" ++ intercalate ", "
-              ["(" ++ show (outputProducer connection) ++ ", () <$ " ++ renamed (outputParser connection) ++ ")"
+              ["(" ++ show (outputProducer connection) ++ ", () <$ " ++ call (outputParser connection) ++ ")"
               | connection <- connections, outputAnchor connection == anchor] ++ "])"
           | anchor <- nub (map outputAnchor connections) ]
-    -- Error 只指向 scope：按 handles 匹配故障，detect／resolve 是生成的 effect 方法。
+    -- Error 只指向 scope：按 handles 匹配故障，detect／resolve 是生成的 effect 方法；Error 不被拦截，按空列表执行。
     errorHandlers = unlines
       [ ""
       , "-- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。"
@@ -303,7 +304,7 @@ specialized unit hooks = unlines (supportHeader ++ concatMap raisesInstance ordi
               ++ "\n        _ -> False)"
               ++ "\n      (" ++ methodReference (errorDetect plan) ++ ") (" ++ methodReference (errorResolve plan) ++ "))"
           | plan <- unitErrors unit ]
-        methodReference = maybe "Nothing" ("Just " ++)
+        methodReference = maybe "Nothing" (\method -> "Just " ++ (if hooked then "(" ++ method ++ " @'[])" else method))
         matchCase (RaisedBy selectedHandler) = "(_, FrameworkGenerated." ++ handlerFailure selectedHandler ++ ") -> True"
         matchCase (ScopeFaultIn selectedEffect) = "(" ++ show selectedEffect ++ ", FrameworkGenerated.ScopeBindingError _) -> True"
         matchCase (ContextFaultIn selectedEffect) = "(" ++ show selectedEffect ++ ", FrameworkGenerated.ContextBindingError _) -> True"
@@ -319,6 +320,10 @@ copyExtensions :: [String]
 copyExtensions =
   [ "ConstraintKinds", "DataKinds", "FlexibleContexts", "FlexibleInstances", "GeneralizedNewtypeDeriving"
   , "KindSignatures", "MultiParamTypeClasses", "ScopedTypeVariables", "TypeApplications", "UndecidableInstances" ]
+
+-- 入口对 hooks 多态（类型只出现在约束里）、类型级列表的实例展开。
+middlewareExtensions :: [String]
+middlewareExtensions = ["AllowAmbiguousTypes", "TypeOperators"]
 
 -- 只改模块名、导出表并补充导入；方法体与 instance 原样保留。
 copyModule :: String -> String -> [String] -> String -> HsModule GhcPs -> Either String String

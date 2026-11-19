@@ -5,7 +5,6 @@
 module Framework.Gen.Emit.Program (renderProgram) where
 
 import Data.List (intercalate)
-import Framework.Gen.Names (variantSuffix)
 import Framework.Gen.Plan
 import Framework.Prototype (ChainRole(..), variantLabel)
 
@@ -14,9 +13,12 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
   where
     namespace = unitNamespace unit
     selected = map fst (unitTerminals unit)
+    hooked = any ((== MiddlewareOperation) . bindingOperation) (unitBindings unit)
     programHeader =
-      [ "{-# LANGUAGE DuplicateRecordFields #-}"
-      , ""
+      [ "{-# LANGUAGE DuplicateRecordFields #-}" ]
+      ++ (if hooked then ["{-# LANGUAGE DataKinds #-}", "{-# LANGUAGE TypeApplications #-}"] else [])
+      ++
+      [ ""
       , "-- 自动生成；只登记末端入口与原型，执行由 SDK 的 interpreter 完成。"
       , "module " ++ namespace ++ ".Generated.Program where"
       , ""
@@ -43,10 +45,10 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
       , "  scopes <- Handlers.newScopeHandlers"
       , "  pure"
       , "    ( " ++ renderList "      "
-          [ wrapTarget hooks (variantLabel terminal hooks) (terminal ++ "Result <$> (() <$ Handlers." ++ method ++ variantSuffix hooks ++ ")")
+          [ wrapTarget hooks (variantLabel terminal hooks) (terminal ++ "Result <$> (() <$ " ++ handlers hooks method ++ ")")
           | (terminal, method) <- unitTerminals unit, hooks <- variantsOf NodeChain terminal ]
       , "    , " ++ renderList "      "
-          [ wrapTarget hooks (variantLabel contractType hooks) ("caseOf" ++ contractType ++ " <$> Handlers." ++ selector ++ variantSuffix hooks)
+          [ wrapTarget hooks (variantLabel contractType hooks) ("caseOf" ++ contractType ++ " <$> " ++ handlers hooks selector)
           | selectedSelector <- selectors
           , let contractType = selectorContract selectedSelector
                 selector = selectorEntry selectedSelector
@@ -81,16 +83,20 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
         "(" ++ show (variantLabel producer hooks) ++ ", SDK.deriveSteps ("
         ++ action hooks parser "() <$ " ++ "))"
       where action hooks mounted prefix = wrapTarget hooks (mountTarget mounted)
-              (prefix ++ "Handlers." ++ mountMethod mounted ++ variantSuffix hooks)
-    -- 原有的一份总是登记；被 middleware 标注覆盖的挂载另登记所在集合的特化。
+              (prefix ++ handlers hooks (mountMethod mounted))
+    -- 注入 v4：入口对 Middleware 列表多态，挂载登记时在类型上给出覆盖它的列表，GHC 在编译期选定 Root 的 superclass 实例。
+    -- 没有 Middleware 的程序照旧引用单态入口。
+    handlers hooks name
+      | hooked = "(Handlers." ++ name ++ " @'[" ++ intercalate ", " (map show hooks) ++ "])"
+      | otherwise = "Handlers." ++ name
+    -- 原有列表（空）总是登记；被 middleware 标注覆盖的挂载另以覆盖它的列表登记。
     variantsOf role terminal = [] : [hooks | hooks <- unitVariants unit, hooks `elem`
       [mountHooks unit (mountNode mount) | mount <- assemblyMounts (unitAssembly unit)
         , mountRole mount == role, mountTerminal mount == terminal]]
     wrapTarget hooks label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
       ++ " (SDK.withErrorHandlers Handlers.errorHandlers"
-      ++ " (SDK.withAnchoredContexts Handlers.contextInjections" ++ suffix
-      ++ " (SDK.withStreamContexts Handlers.streamContextInjections" ++ suffix
-      ++ " (SDK.withScopeCleanups Handlers.scopeCleanups" ++ suffix ++ " (" ++ action ++ ")))))"
-      where suffix = variantSuffix hooks
+      ++ " (SDK.withAnchoredContexts " ++ handlers hooks "contextInjections"
+      ++ " (SDK.withStreamContexts " ++ handlers hooks "streamContextInjections"
+      ++ " (SDK.withScopeCleanups " ++ handlers hooks "scopeCleanups" ++ " (" ++ action ++ ")))))"
     renderList _ [] = "[]"
     renderList indent items = "[ " ++ intercalate ("\n" ++ indent ++ ", ") items ++ "\n" ++ indent ++ "]"

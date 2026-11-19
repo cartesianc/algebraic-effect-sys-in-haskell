@@ -419,7 +419,7 @@ Input 表达操作的前提关系，业务值来源单独由 demands 表达；Co
 <a id="middleware"></a>
 #### Middleware：在 Root 级调用点捕获句柄与值
 
-Middleware 是驱动方式特殊的 Excu，也是 Root 的 superclass 的注入方。gen 生成的 Root 级类方法调用点有三处：原子 handler 交出的值（方法体最后 `pure` 的那份）、`raw` 读取和 `raise`。注入发生在生成期：AST 的 `middleware` 是给 gen 的标记，gen 为每组覆盖挂载的 Middleware 生成一份特化的标签与入口，在被拦截类别的这些调用点上直接调用 Middleware 的入口并带上 handler 名；Middleware handler 作为类方法同步执行，用 `hookedOutput`／`hookedRaw`／`hookedError` 拆出本次捕获。它不包住、不推进、也不替换原调用；业务 handler 与 Input 关系都不变。运行时没有 Middleware 目录或分发。
+Middleware 是驱动方式特殊的 Excu，也是 Root 的 superclass 的注入方。gen 生成的 Root 级类方法调用点有三处：原子 handler 交出的值（方法体最后 `pure` 的那份）、`raw` 读取和 `raise`。注入发生在生成期，经类型类完成：AST 的 `middleware` 是给 gen 的标记；标签多一个类型参数 `hooks`（覆盖本次挂载的 Middleware 列表），被拦截类别的这些调用点调用 Root 的 superclass 方法 `captureAt @hooks` 并带上 handler 名；Middleware handler 作为类方法同步执行，用 `hookedOutput`／`hookedRaw`／`hookedError` 拆出本次捕获。它不包住、不推进、也不替换原调用；业务 handler 与 Input 关系都不变。运行时没有 Middleware 目录或分发。
 
 ```haskell
 -- 注册：没有 Input 前驱，也没有 demands
@@ -439,16 +439,16 @@ ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "Wri
 
 - **注册。** `input` 写保留名 `"None"`：没有 Input 注入，沿用 Input 的组合逻辑而不另设注册构造器。只有 Middleware 能写 `"None"`，Middleware 也只能写 `"None"`；任何 effect 的 Input 都不能指向 Middleware，因此 Middleware 与被捕获的链之间不会成环。`"None"` 与 `"Root"` 一样不能作为 effect 名。首版不允许 demands。`intercept` 非空、不重复，只能取能交出 raw output 的 `ExcuKind`、`ScopedKind`、`PureKind`；`allEffects` 是三者的简写。
 - **挂载。** `middleware :: [EffectNode] -> AST -> AST` 包住恰好一棵子树。列表只接受 Middleware 注册名，普通 `node` 也不能引用 Middleware。标注是透明的：gen 先剥离标注再编号，NodeId、单元划分（包括 `lifelong` 对直接 `parallel` 子项的拆分）与无标注时相同；标注位置与 Middleware 名作为 `drivingMiddleware` 存入 Prototype，运行与 `--structure` 剥离当前 AST 后核对骨架，并核对标注与编译时一致。
-- **生效集合与特化。** gen 为每个挂载（节点、选择读取、会话步骤）求覆盖它的全部标注之并，按注册顺序去重；Booter 把它存为 `drivingHooks`。每个出现过的非空集合生成一份特化：标签 `AtVia_…`、全部 effect 入口 `…Via_…`，以及该特化的注入与收尾登记表；特化入口之间互相调用，所以前驱、`requests` 驱动、raw 读取的句柄与收尾的 close 都留在同一份特化里。运行协议使用的方法名（`atomicHandle`、注入键）保持原名。Program 为被覆盖的挂载另外登记 `名字@Middleware…` 的 Target，运行时只按 Prototype 的静态登记名（`entryLabel`）选取已编译的 Target。
-- **open／close 归谁。** 规则只看挂载位置，不为会话另设：lifelong 的会话步骤位于该 lifelong 路径下（`边界 ++ [-1, 序号, 步骤]`），标注覆盖整个 lifelong 或它的祖先时，会话步骤使用特化，它执行的 open 就是特化的 open；标注只覆盖 lifelong 内的子树时，只有这些节点使用特化。close 由开启时所在特化的收尾表登记，收尾调用同一份特化的 close。同一 handler 复用在不同子树时，只有被标注覆盖的那次挂载被捕获。
+- **集合与类型类注入。** gen 为每个挂载（节点、选择读取、会话步骤）求覆盖它的全部标注之并，按注册顺序去重；Booter 把它存为 `drivingHooks`。注册了 Middleware 时，标签写作 `At hooks effect`，每个 effect 入口只生成一份，对 `hooks` 多态（`runX :: forall hooks. Captures hooks => App …`），入口之间以 `@hooks` 互相调用，所以前驱、`requests` 驱动、raw 读取的句柄、注入表与收尾表里的 close 都处在同一个列表下。`Captures` 是 Root 的 superclass：`Captures '[]` 什么也不做，`Captures (m ': ms)` 先交给 Middleware `m`（它按自己的 `intercept` 取舍类别），再交给 `ms`。Program 为每个挂载登记时在类型上给出列表（例如 `Handlers.runReport @'["Audit"]`，被覆盖的挂载另以 `名字@Audit` 登记），GHC 在编译期选定实例；运行时只按 Prototype 的静态登记名（`entryLabel`）选取已编译的 Target，没有目录或分发。
+- **open／close 归谁。** 规则只看挂载位置，不为会话另设：lifelong 的会话步骤位于该 lifelong 路径下（`边界 ++ [-1, 序号, 步骤]`），标注覆盖整个 lifelong 或它的祖先时，会话步骤以该列表登记，它执行的 open 就是 `open… @hooks`；标注只覆盖 lifelong 内的子树时，只有这些节点带上列表。close 来自开启时安装的收尾表 `scopeCleanups @hooks`，收尾调用同一列表下的 close。同一 handler 复用在不同子树时，只有被标注覆盖的那次挂载被捕获。
 - **三个捕获点。**
   - 交出值：Excu.run、Scoped.open／close、Pure.run 这次调用成功交出的 `[String]`，handler 名是被调用的 handler。scope 复用跳过 open 方法体、或注入回放本次输出时，没有新的交出值。
   - raw：读取方 handler（挂接的 parser 或 Pure）经 `raw` 读到的值；类别取被读取的那次原子调用的类别，所以 Stream 下的原始输入不在首版类别内。注入时 parser 经回放读取，同样是一次 raw 读取。
   - raise：handler `raise` 时先捕获 (handler 名, 描述)，再以原失败退出。
-- **同步与顺序。** Middleware 是类方法，在调用点同步执行，调用点在它们完成后才继续。多个 Middleware 按注册顺序依次调用；它们只读本次捕获，彼此不传值，结果不依赖先后。Middleware handler 在自己的 `Hook` 标签下执行，那里的调用点没有改写，它自己不再被捕获。它交出的 `[String]` 没有挂接点。
+- **同步与顺序。** Middleware 是类方法，在调用点同步执行，调用点在它们完成后才继续。多个 Middleware 按注册顺序依次调用；它们只读本次捕获，彼此不传值，结果不依赖先后。Middleware handler 在自己的 `Hook` 标签下执行，那里的调用点不调用 `captureAt`，它自己不再被捕获。它交出的 `[String]` 没有挂接点。
 - **能力只给 Middleware。** gen 只为 Middleware 的标签生成 `Hooks (At "M")`，Layer 也只给 Middleware 加 `Hooks m`；普通 handler 写 `hookedOutput` 不能通过类型检查。Middleware 的能力只来自它的 handler 写法。
 - **失败。** Middleware 与普通 Excu 一样 `raise`，例如 mock 时用来判断 Middleware 是否写对。失败的 origin 是 Middleware 注册名，从调用点沿被捕获调用的入口包装传播，Error 可以用 `RaisedBy` 匹配；IO 异常同理。被捕获的值此时已经交出，原调用不重跑。
-- **生成代码。** 没有注册 Middleware 的程序没有特化，生成代码只多出两个空的驱动字段。特化的代价是生成代码量随不同集合的个数线性增长。
+- **生成代码。** 入口不随列表复制，代码量与有几组 Middleware 无关；不同列表只是同一入口的不同类型实例。没有注册 Middleware 的程序，标签与入口保持单态，生成代码只多出两个空的驱动字段。
 
 <a id="context"></a>
 ### 4.3 Context、驱动与读取

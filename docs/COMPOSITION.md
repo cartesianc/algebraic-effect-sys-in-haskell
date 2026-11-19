@@ -276,8 +276,8 @@ Middleware 是驱动方式特殊的 Excu，也是 Root 的 superclass 的注入�
 | --- | --- | --- | --- | --- |
 | 观察一段子树里交出的值、raw 与失败 | Middleware 注册（`input = "None"`）；AST 写 `middleware [node "M"] 子树` | 剥离标注后照常编号；标注位置存为 `drivingMiddleware` | 子树的结构、NodeId 与单元划分不变 | [Middleware](CORE_DESIGN.md#middleware) |
 | 只捕获某几类 effect | `intercept = [ExcuKind, ...]`，或 `allEffects` | 被拦截类别的交出值、`raw`、`raise` 改写为带 handler 名的调用；其他调用点不变 | 调用点上执行生效的 Middleware，原值原样交回 | 同上 |
-| 同一 handler 在不同子树表现不同 | 一处挂载在标注内，另一处不在 | 每个挂载的 Middleware 集合（`drivingHooks`），按位置前缀取覆盖它的标注之并，会话步骤同样；每个集合生成一份特化入口，调用点直接调用 Middleware | 按静态登记名选取已编译的 Target；未覆盖的挂载用原有入口 | 同上 |
+| 同一 handler 在不同子树表现不同 | 一处挂载在标注内，另一处不在 | 每个挂载的 Middleware 列表（`drivingHooks`），按位置前缀取覆盖它的标注之并，会话步骤同样；入口对列表多态，挂载登记时在类型上给出列表，调用点经 superclass `Captures` 调用 Middleware | 按静态登记名选取已编译的 Target；未覆盖的挂载以空列表登记 | 同上 |
 | 拆出本次捕获 | 方法体 `hookedOutput`／`hookedRaw`／`hookedError` | 只为 Middleware 的标签生成 `Hooks` 实例 | 不是本次的那一种时为 `Nothing` | 同上 |
-| Middleware 与被捕获的链不成环 | 无需写法 | 任何 effect 的 Input 都不能指向 Middleware；Middleware 没有 demands；Middleware 在自己的标签下执行，调用点不改写 | Middleware 自己不再被捕获 | 同上 |
+| Middleware 与被捕获的链不成环 | 无需写法 | 任何 effect 的 Input 都不能指向 Middleware；Middleware 没有 demands；Middleware 在自己的标签下执行，那里的调用点不调用 `captureAt` | Middleware 自己不再被捕获 | 同上 |
 
 Middleware 与普通 Excu 一样可以 `raise`，失败从调用点传播；后续事项见 [Next stages](NEXT_STAGES.md#middleware)。

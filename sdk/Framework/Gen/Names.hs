@@ -5,7 +5,7 @@
 module Framework.Gen.Names
   ( effectMethodName
   , capitalized, handlerClass, handlerLayer, handlerError, handlerFailure
-  , reservedTypes, reservedValues, variantSuffix
+  , reservedTypes, reservedValues
   ) where
 
 import Data.Char (toUpper)
@@ -27,13 +27,8 @@ handlerFailure handler' = capitalized handler' ++ "Failure"
 
 -- 生成区的固定类型名与值名；资产名、分支契约和 handler 名都不能与它们冲突。
 reservedTypes :: [String]
-reservedTypes = ["App", "At", "Hook", "ContextValues", "Errors", "MethodGen", "Results", "ContextBindingError", "ScopeBindingError"]
+reservedTypes = ["App", "At", "Hook", "Captures", "Captured", "ContextValues", "Errors", "MethodGen", "Results", "ContextBindingError", "ScopeBindingError"]
 
 reservedValues :: [String]
-reservedValues = ["runAt", "runHook", "emptyContexts", "handlerSourceFingerprint", "newScopeHandlers", "scopeCleanups"
+reservedValues = ["runAt", "runHook", "captureAt", "capturedAt", "emptyContexts", "handlerSourceFingerprint", "newScopeHandlers", "scopeCleanups"
   , "errorHandlers", "contextInjections", "streamContextInjections", "interpreter", "compiledEntries", "generatedPrototype"]
-
--- 特化入口的名字后缀：Via 加各 Middleware 名；没有 Middleware 时为空，即原有名字。
-variantSuffix :: [String] -> String
-variantSuffix [] = ""
-variantSuffix hooks = "Via" ++ concatMap (("_" ++) . capitalized) hooks

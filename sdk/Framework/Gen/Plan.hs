@@ -5,7 +5,7 @@ module Framework.Gen.Plan
   , ValueType(..), Capability(..), EntryOperation(..), ReadRoute(..), ReadView(..)
   , ReaderPlan(..), SelectorPlan(..), SessionEntry(..)
   , Assembly(..), EntryMount(..), OutputConnection(..), EntryStep(..), RawSource(..)
-  , stepMethod, rawMethod, bindingCalls, unitTerminals, mountHooks, unitVariants, capturedBy
+  , stepMethod, rawMethod, bindingCalls, unitTerminals, mountHooks, unitVariants
   , effectPrototypes, protoOf, allMethods
   , reference, parenthesized, normalizeType, readsAccess ) where
 
@@ -208,15 +208,10 @@ bindingCalls = map stepMethod . bindingBefore
 mountHooks :: Unit -> NodeId -> [String]
 mountHooks unit = Prototype.hooksAt (map fst (unitMiddleware unit)) (plannedMiddleware (unitPlan unit))
 
--- 需要特化的 Middleware 集合：各挂载实际出现的非空集合。
+-- 挂载登记用到的 Middleware 列表：各挂载实际出现的非空列表。
 unitVariants :: Unit -> [[String]]
 unitVariants unit = nub [hooks | mount <- assemblyMounts (unitAssembly unit)
   , let hooks = mountHooks unit (mountNode mount), not (null hooks)]
-
--- 特化中某一类调用点要调用的 Middleware：集合里拦截该类别的那些。
-capturedBy :: Unit -> [String] -> EffectKind -> [String]
-capturedBy unit hooks kind = [selected | selected <- hooks
-  , Just kinds <- [lookup selected (unitMiddleware unit)], kind `elem` kinds]
 
 -- Target 的实现可共用，挂载身份仍全部保存在 assemblyMounts；这里只投影生成的入口目录。
 unitTerminals :: Unit -> [(String, String)]

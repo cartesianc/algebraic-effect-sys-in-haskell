@@ -12,7 +12,7 @@ Middleware 首版已经实现，下一阶段处理[持续交付的容量与背�
 | 事项 | 首版决定 |
 | --- | --- |
 | 是什么 | 驱动方式特殊的 Excu，Root 的 superclass 的注入方：在 Root 级调用点（交出值、`raw`、`raise`）上同步执行，不包住或推进原调用 |
-| 注入时机 | 生成期：`middleware` 标注是给 gen 的标记，gen 按覆盖挂载的 Middleware 集合特化入口；运行时没有 Middleware 目录或分发，只按静态登记名选取 Target |
+| 注入时机 | 生成期：`middleware` 标注是给 gen 的标记。标签带 Middleware 列表类型参数，入口对它多态，调用点经 Root 的 superclass `Captures` 注入；挂载登记时给出列表，GHC 编译期选定实例。运行时没有 Middleware 目录或分发，只按静态登记名选取 Target |
 | 注册形态 | `EffectTyping` 增加 `Middleware { handler, intercept }`；`input` 写保留名 `"None"`，沿用 Input 的组合逻辑，表示没有 Input 注入；不另设 `MiddlewareSpec` |
 | `intercept` | 能交出 raw output 的 `ExcuKind`、`ScopedKind`（open／close）、`PureKind`；`allEffects` 是三者的简写 |
 | handler 能力 | `Hooks`（`hookedOutput`、`hookedRaw`、`hookedError`）、`Raises`、`MonadIO`；签名 `m [String]`；`Hooks` 只为 Middleware 的标签生成 |
