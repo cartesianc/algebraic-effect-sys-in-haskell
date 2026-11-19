@@ -347,8 +347,8 @@ completeDriving prototype = prototype { protoDriving = DrivingPlan nodes units s
     outputs = [(node, provider (sessionAsset session)) | (Just _, session) <- descriptions
       , ReuseOutput publishers <- [sessionPlan session], node <- publishers]
 
-sessionEntries :: [EffectProto String] -> Assembly String -> [SessionEntry]
-sessionEntries effects assembly = nubBy sameEntry
+sessionEntries :: (NodeId -> [String]) -> [EffectProto String] -> Assembly String -> [SessionEntry]
+sessionEntries hooksAtMount effects assembly = nubBy sameEntry
   [ entry
   | effect <- effects, effectKind effect == ContextKind
   , session <- assemblySessions assembly
@@ -360,9 +360,9 @@ sessionEntries effects assembly = nubBy sameEntry
       (Derive _, [parser]) -> [DeriveEntry (effectName effect) parser]
       _ -> [] ]
   where
-    -- 一个会话入口可用于多个挂载；只有生成的闭包定义共享，NodeId 仍保存在 Assembly/Prototype。
-    -- 按完整 mount 去重会把同一来源的 finite/lifelong 入口重复输出。
-    key entry = (mountTarget entry, mountMethod entry)
+    -- 相同方法只在挂载的 Middleware 列表也相同时共享闭包。运行时按这个列表选择登记名。
+    -- NodeId 留在 Assembly/Prototype；把路径本身计入身份会重复登记同一特化。
+    key entry = (mountTarget entry, mountMethod entry, hooksAtMount (mountNode entry))
     sameEntry (ReceiveEntry owner a b) (ReceiveEntry owner' a' b') =
       owner == owner' && key a == key a' && key b == key b'
     sameEntry (DeriveEntry owner a) (DeriveEntry owner' a') = owner == owner' && key a == key a'
@@ -398,8 +398,8 @@ controlReads effects tree = nub (walk tree ++ driven)
     here _ = []
 
 
-entryPlans :: [EffectProto String] -> Assembly String -> [BranchContract] -> ([SelectorPlan], [SessionEntry])
-entryPlans effects assembly branches =
+entryPlans :: (NodeId -> [String]) -> [EffectProto String] -> Assembly String -> [BranchContract] -> ([SelectorPlan], [SessionEntry])
+entryPlans hooksAtMount effects assembly branches =
   ( [SelectorPlan contract method [branchConstructor branch | branch <- branches, branchBase branch == contract]
     | (contract, method) <- nub [(mountTerminal mount, mountMethod mount) | mount <- assemblyMounts assembly, mountRole mount == SelectorChain]]
-  , sessionEntries effects assembly )
+  , sessionEntries hooksAtMount effects assembly )

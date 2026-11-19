@@ -84,7 +84,7 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
         ++ action hooks parser "() <$ " ++ "))"
       where action hooks mounted prefix = wrapTarget hooks (mountTarget mounted)
               (prefix ++ handlers hooks (mountMethod mounted))
-    -- 注入 v4：入口对 Middleware 列表多态，挂载登记时在类型上给出覆盖它的列表，GHC 在编译期选定 Root 的 superclass 实例。
+    -- 注入 v4：入口对 Middleware 列表多态，挂载登记时在类型上给出覆盖它的列表，GHC 在编译期选定 该列表的 Captures 实例。
     -- 没有 Middleware 的程序照旧引用单态入口。
     handlers hooks name
       | hooked = "(Handlers." ++ name ++ " @'[" ++ intercalate ", " (map show hooks) ++ "])"

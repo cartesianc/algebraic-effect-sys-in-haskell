@@ -78,7 +78,7 @@ advanceComposition state = case state of
     assembly <- diagnostic (assembleProgram plan)
     unit <- bindProgram namespace plan (declareEffects (plannedRegistrations plan)) assembly sumTypes
       (controlReads (plannedEffects plan) (plannedWorkflow plan))
-    let (selectors, sessions) = entryPlans (plannedEffects plan) assembly (unitBranches unit)
+    let (selectors, sessions) = entryPlans (mountHooks unit) (plannedEffects plan) assembly (unitBranches unit)
     pure (AwaitingBodies unit { unitSelectors = selectors, unitSessionEntries = sessions })
   ResolvingBodies unit supplied -> do
     let checked = case supplied of Just _ -> True; Nothing -> False

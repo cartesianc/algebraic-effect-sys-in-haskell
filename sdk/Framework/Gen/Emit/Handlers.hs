@@ -47,7 +47,7 @@ renderHandlers unit loaded = do
 
 -- 生成区的装配：effect 标签、handler 能力的实例与 effect 方法。
 -- 注入 v4（2026-11-19）：注册了 Middleware 时，标签多一个类型参数 hooks（覆盖本次挂载的 Middleware 列表），
--- 入口对 hooks 多态。交出值、raw、raise 三个 Root 级调用点调用 superclass 方法 captureAt @hooks，
+-- 入口对 hooks 多态。交出值、raw、raise 三个 Root 级调用点调用入口约束提供的方法 captureAt @hooks，
 -- 它的实例按类型级列表逐个展开到各 Middleware；GHC 在编译期按挂载登记的列表选定实例，入口只有一份，运行时不分发。
 support :: Unit -> String
 support unit = unlines (supportHeader ++ captureClasses ++ concatMap raisesInstance ordinaryHandlers ++ routeInstances ++ rawInstances
@@ -81,12 +81,12 @@ support unit = unlines (supportHeader ++ captureClasses ++ concatMap raisesInsta
       , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)"
       , ""
       ]
-    -- Root 的 superclass：Captures hooks 把一次调用点交给列表中的每个 Middleware；每个 Middleware 按 intercept 取舍类别。
+    -- Root 级入口约束：Captures hooks 把一次调用点交给列表中的每个 Middleware；每个 Middleware 按 intercept 取舍类别。
     -- Middleware handler 在自己的 Hook 标签下执行，那里的调用点不改写，它自己不再被捕获。
     captureClasses
       | not hooked = []
       | otherwise =
-          [ "-- Root 的 superclass：hooks 是覆盖本次挂载的 Middleware，按注册顺序；空列表不做任何事。"
+          [ "-- Root 级入口约束：hooks 是覆盖本次挂载的 Middleware，按注册顺序；空列表不做任何事。"
           , "class Captures (hooks :: [FrameworkTypes.Symbol]) where"
           , "  captureAt :: FrameworkRuntime.EffectKind -> FrameworkRuntime.HookEvent -> FrameworkGenerated.App ()"
           , ""
