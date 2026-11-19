@@ -28,7 +28,7 @@ import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
 import OpenFilesDemo.Types
-import Framework.SDK (Raises(..), Reads(..))
+import Framework.SDK (Raises(..), Reads(..), rawoutput)
 import OpenFilesDemo.Generated.Effects
 import OpenFilesDemo.Types
 import Control.Exception (bracketOnError, displayException)
@@ -67,7 +67,7 @@ instance OpenFilesLayer m => OpenFilesHandler m where
   openFiles = do
     files <- require @[FileHandle]
     liftIO (putStrLn ("[open] acquired " ++ show (length files) ++ " files"))
-    pure []
+    rawoutput []
 
 instance CloseFilesLayer m => CloseFilesHandler m where
   closeFiles = do
@@ -76,7 +76,7 @@ instance CloseFilesLayer m => CloseFilesHandler m where
     outcome <- liftIO (tryIOError (mapM_ (hClose . snd) files))
     either (raise . CloseFilesError . displayException) pure outcome
     liftIO (putStrLn ("[close] released " ++ show (length files) ++ " files"))
-    pure []
+    rawoutput []
 
 -- 挂在 ReleaseFiles 下，记下本链持有的文件；值只经资产流动，关闭后的检查读取这份快照，不再 require 已关闭的资源。
 instance SnapshotFilesLayer m => SnapshotFilesHandler m where
@@ -84,7 +84,7 @@ instance SnapshotFilesLayer m => SnapshotFilesHandler m where
 
 -- HoldFiles 与 ReleaseFiles 共用：Input 已开启文件，本链只持有它们，链退出后 SDK 自动关闭。
 instance HoldFilesLayer m => HoldFilesHandler m where
-  holdFiles = pure []
+  holdFiles = rawoutput []
 
 instance InspectFilesLayer m => InspectFilesHandler m where
   inspectFiles = do
@@ -109,7 +109,7 @@ instance InspectFilesLayer m => InspectFilesHandler m where
     either (raise . InspectFilesError . displayException) pure written
     liftIO (putStrLn "[check] write and flush: 10/10 succeeded before close")
     -- 链退出后自动关闭；后续 Node 不继承这份活资源。
-    pure []
+    rawoutput []
 
 -- 前一个 node 的链已经退出，SDK 已关闭它持有的文件；这里只检查快照中的 Handle。
 instance FinishInspectionLayer m => FinishInspectionHandler m where
@@ -121,14 +121,14 @@ instance FinishInspectionLayer m => FinishInspectionHandler m where
     unless (length closed == 10 && and closed) $
       raise (FinishInspectionError "Not all files closed after the scope closed")
     liftIO (putStrLn "[check] after the scope closed: 10/10 closed")
-    pure []
+    rawoutput []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "63242e28103b32fa7873ea8d4096e691"
+handlerSourceFingerprint = Just "51dd65515b772801e2460a0459aae292"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
--- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
+-- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
 newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
@@ -182,7 +182,7 @@ instance FrameworkRuntime.Reads ([FileHandle]) (Wrap "FinishInspection") where
   require = Wrap ((\(FrameworkGenerated.InspectedFiles value) -> value) <$> readInspectedFiles)
 
 instance FrameworkRuntime.Raw (Wrap "InspectionSnapshot") where
-  raw = Wrap (runReleaseFiles)
+  rawinput = Wrap (runReleaseFiles)
 
 getFileNames :: FrameworkGenerated.App FrameworkGenerated.FileNames
 getFileNames = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations"

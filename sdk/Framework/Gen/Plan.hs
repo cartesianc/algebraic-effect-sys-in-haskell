@@ -84,7 +84,7 @@ stepMethod :: EntryStep method -> method
 stepMethod (RequestStep method) = method
 stepMethod (InputStep method) = method
 
--- raw 的直接输入在本模块的绑定转换中解析。Stream 单步产 String，需要包装成单元素 list；
+-- rawinput 的直接输入在本模块的绑定转换中解析。Stream 单步产 String，需要包装成单元素 list；
 -- 其余输入交出 list。是否已有本次输出由现有 replay 协议决定，不缓存另一调用的结果。
 data RawSource method = RawList method | RawStream method
   deriving (Eq, Show, Read)
@@ -121,7 +121,7 @@ data Assembly method = Assembly
   } deriving (Eq, Show, Read)
 
 -- 一次绑定：handler 在某个 effect 方法中执行。
--- before 保存有角色的有序步骤（先驱动，后 Input），raw 保存直接 Input 及其输出形状；
+-- before 保存有角色的有序步骤（先驱动，后 Input），bindingRaw 保存直接 Input 及其输出形状；
 -- routes 把规范化的表示类型映射到 (契约, 读取方法)。结构分析据此把 handler 方法体换成 effect 方法的结构。
 data Binding = Binding
   { bindingEffect :: String
@@ -135,7 +135,7 @@ data Binding = Binding
   , bindingCapabilities :: [Capability]
   -- Injector 选定的 super 捕获类别；Nothing 使用 Root 的直接调用。
   , bindingCaptureKind :: Maybe EffectKind
-  -- raw 读到的那次原子调用的类别；raw 的捕获按它匹配。
+  -- rawinput 读到的那次原子调用的类别；rawinput 的捕获按它匹配。
   , bindingRawKind :: Maybe EffectKind
   } deriving (Eq, Show, Read)
 

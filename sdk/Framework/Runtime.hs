@@ -367,7 +367,7 @@ sessionLauncher graph steps onBroken session
           Left SourceEnded -> pure (Just Nothing)
           Right (Left problem, _, _) -> pure (Just (Just problem))
           Right (Right text, captured, _) -> do
-            -- Receive 资源交接 v1（2026-11-17）：raw 回答本次输入，不重跑来源的 open。
+            -- Receive 资源交接 v1（2026-11-17）：rawinput 回答本次输入，不重跑来源的 open。
             -- parser 因此需要本次已捕获的资源 Binding；同一步共用 owner，保留原生产身份。
             -- 只交接资源，不带入来源的普通捕获或交付视图，不写回会话或跨轮复用。
             resources <- filterM (fmap isJust . readBindingOwner . snd) captured

@@ -7,10 +7,10 @@ import Framework.SDK (EffectSpec(..), EffectTyping(..), Handles(..), Asset(..), 
 import FileDemo.Types
 
 -- 注册是业务配置：每个字段写 handler 名，文件 IO 在 Handlers.hs 的 handler 中。
--- Context 是细化 parser：把 raw 解析成资产的表示类型；require = True 缓存最新值。
+-- Context 是细化 parser：把 rawinput 解析成资产的表示类型；require = True 缓存最新值。
 -- Excu 与 Scoped 的 open／close 是原子句柄，交出 [String]；SDK 保存 scope 生命周期状态。
--- Pure 只在生产链中：用 raw 读上层交出的 list，变换后交给下面的 Pure 或 Context，不声明 demands。
--- input 是前驱：gen 在 handler 之前执行它。input 是原子句柄或 Pure 的 Context／Pure 挂在它下面，用 raw 读取它的输出。
+-- Pure 只在生产链中：用 rawinput 读上层交出的 list，变换后交给下面的 Pure 或 Context，不声明 demands。
+-- input 是前驱：gen 在 handler 之前执行它。input 是原子句柄或 Pure 的 Context／Pure 挂在它下面，用 rawinput 读取它的输出。
 -- Asset @表示类型 "资产名" 把表示类型细化为以资产名命名的资产；handler 按表示类型 require，来源由 demands 决定。
 -- requests 驱动资产的生产链，requires 只读取：读取时还没有发布就等待，不在读取处生产。
 -- Error：handles 写 handler 名，作用的 scope 由 Input 链推导。

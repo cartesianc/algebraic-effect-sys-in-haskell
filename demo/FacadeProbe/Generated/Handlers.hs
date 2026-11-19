@@ -9,7 +9,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
--- handler 是不带参数的类方法：按表示类型 require 资产，用 raw 读取挂接上游的本次输出，
+-- handler 是不带参数的类方法：按表示类型 require 资产，用 rawinput 读取挂接上游的本次输出，
 -- 用 raise 报告自己的失败；不出现上游 effect、scope、细化资产或 effect 错误。
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -28,7 +28,7 @@ import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
 import FacadeProbe.Types
-import Framework.SDK (Raises(..), Raw(..), Reads(..))
+import Framework.SDK (Raises(..), Raw(..), Reads(..), rawoutput)
 import FacadeProbe.Generated.Effects
 import FacadeProbe.Types
 import Control.Concurrent (threadDelay)
@@ -60,35 +60,35 @@ instance OpenTextFileLayer m => OpenTextFileHandler m where
   openTextFile = do
     TextFile path _ <- require @TextFile
     liftIO (putStrLn ("[open] " ++ path))
-    pure []
+    rawoutput []
 
 instance CloseTextFileLayer m => CloseTextFileHandler m where
   closeTextFile = do
     TextFile path file <- require @TextFile
     liftIO (hClose file >> putStrLn ("[close] " ++ path))
-    pure []
+    rawoutput []
 
 instance WriteTextLayer m => WriteTextHandler m where
   writeText = do
     TextFile path file <- require @TextFile
     Body text <- require @Body
     liftIO (hPutStr file text >> hFlush file >> putStrLn ("[write] " ++ path))
-    pure []
+    rawoutput []
 
 instance MarkReadLayer m => MarkReadHandler m where
   markRead = do
     liftIO (putStrLn "[mark] before reading")
-    pure []
+    rawoutput []
 
 instance ReadTextLayer m => ReadTextHandler m where
   readText = do
     path <- require @FilePath
     contents <- liftIO (readFile' path)
-    pure [contents]
+    rawoutput [contents]
 
 instance CountLinesLayer m => CountLinesHandler m where
   countLines = do
-    output <- raw
+    output <- rawinput
     contents <- case output of
       [text] -> pure text
       _ -> raise (CountLinesError "no text")
@@ -98,7 +98,7 @@ instance ShowCountLayer m => ShowCountHandler m where
   showCount = do
     LineCount count <- require @LineCount
     liftIO (putStrLn ("[lines] " ++ show count))
-    pure []
+    rawoutput []
 
 instance InspectFileLayer m => InspectFileHandler m where
   inspectFile = do
@@ -109,13 +109,13 @@ instance InspectFileLayer m => InspectFileHandler m where
 instance DescribeBlankLayer m => DescribeBlankHandler m where
   describeBlank = do
     liftIO (putStrLn "[state] blank")
-    pure []
+    rawoutput []
 
 instance DescribeFilledLayer m => DescribeFilledHandler m where
   describeFilled = do
     Body text <- require @Body
     liftIO (putStrLn ("[state] filled, " ++ show (length text) ++ " characters"))
-    pure []
+    rawoutput []
 
 instance NewCounterLayer m => NewCounterHandler m where
   newCounter = liftIO (FeedCounter <$> newIORef 0)
@@ -123,7 +123,7 @@ instance NewCounterLayer m => NewCounterHandler m where
 instance OpenCounterLayer m => OpenCounterHandler m where
   openCounter = do
     FeedCounter _ <- require @FeedCounter
-    pure []
+    rawoutput []
 
 instance NextALayer m => NextAHandler m where
   nextA = do
@@ -143,7 +143,7 @@ instance NextBLayer m => NextBHandler m where
 
 instance ParseLevelLayer m => ParseLevelHandler m where
   parseLevel = do
-    reading <- concat <$> raw
+    reading <- concat <$> rawinput
     case reads reading of
       [((number, value), "")] -> pure (Level number value)
       _ -> raise (ParseLevelError reading)
@@ -154,14 +154,14 @@ instance ShowLevelLayer m => ShowLevelHandler m where
     Level number value <- require @Level
     liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show number))
     when (number >= 3) (raise (ShowLevelError "enough deliveries"))
-    pure []
+    rawoutput []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "7a50893a4ee9920737b0ff1ec8675dc8"
+handlerSourceFingerprint = Just "6ab7790bd46bf1e255880e0603c7b42f"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
--- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
+-- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
 newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
@@ -315,16 +315,16 @@ instance FrameworkRuntime.Reads (Level) (Wrap "ShowB") where
   require = Wrap ((\(FrameworkGenerated.LevelB value) -> value) <$> streamLevelB)
 
 instance FrameworkRuntime.Raw (Wrap "ReportCounter") where
-  raw = Wrap (runReadReport)
+  rawinput = Wrap (runReadReport)
 
 instance FrameworkRuntime.Raw (Wrap "ReplyCounter") where
-  raw = Wrap (runReadReply)
+  rawinput = Wrap (runReadReply)
 
 instance FrameworkRuntime.Raw (Wrap "ParserA") where
-  raw = Wrap ((: []) <$> nextFeedA)
+  rawinput = Wrap ((: []) <$> nextFeedA)
 
 instance FrameworkRuntime.Raw (Wrap "ParserB") where
-  raw = Wrap ((: []) <$> nextFeedB)
+  rawinput = Wrap ((: []) <$> nextFeedB)
 
 instance FrameworkRuntime.StreamEnds (Wrap "FeedA") where
   streamEnd = Wrap FrameworkRuntime.endSource

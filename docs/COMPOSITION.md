@@ -137,8 +137,8 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 | --- | --- | --- | --- | --- |
 | 资产有唯一的生产方 | Context 以 `asset = Asset @T "名字"` 声明；消费方只写资产名 | 按资产名解析出唯一生产方，多个生产方即报错 | 不按距离或拓扑替用户选来源 | [Context](CORE_DESIGN.md#context)、[资产来源与访问约束](CORE_DESIGN.md#demand-contract) |
 | 驱动一次新的生产 | 消费方 `requests "T"` | 入口的驱动步骤，排在前驱与方法体之前 | 每次进入入口都重新执行 T 的生产链并发布；不合并重复驱动 | [入口装配](CORE_DESIGN.md#calls) |
-| 原子操作的输出解析成资产 | Context 的 Input 是 Excu 或 Scoped，parser 用 `raw` | 挂接连接（写在句柄入口的 atomicHandle／atomicScope 上）、raw 来源 | 句柄成功后，parser 读本次输出发布资产，句柄不重跑；普通 Context 的解析失败留在注入内部，资产不发布 | [原子输出挂接](CORE_DESIGN.md#context) |
-| 同一个 parser，被驱动时自己取得输入 | 同上的 Context 被 `requests` 或选择读取驱动 | 同一份入口，raw 的回答方式不同 | raw 执行句柄入口，从头启动生产链；失败沿驱动方传播 | 同上 |
+| 原子操作的输出解析成资产 | Context 的 Input 是 Excu 或 Scoped，parser 用 `rawinput` | 挂接连接（写在句柄入口的 atomicHandle／atomicScope 上）、rawinput 来源 | 句柄成功后，parser 读本次输出发布资产，句柄不重跑；普通 Context 的解析失败留在注入内部，资产不发布 | [原子输出挂接](CORE_DESIGN.md#context) |
+| 同一个 parser，被驱动时自己取得输入 | 同上的 Context 被 `requests` 或选择读取驱动 | 同一份入口，rawinput 的回答方式不同 | rawinput 执行句柄入口，从头启动生产链；失败沿驱动方传播 | 同上 |
 | 输出的纯变换 | Input 链上串 Pure | Pure 链，挂接点是最上面的原子句柄 | 句柄输出经 Pure 依次变换后交给 parser；Pure 不改变调用者身份，不会重复注入 | [Pure](CORE_DESIGN.md#pure) |
 | 操作按顺序组合 | `input = "前驱"` | 入口的前驱步骤 | 在方法体之前执行前驱；不传值，前驱失败原样传播 | [句柄与值](CORE_DESIGN.md#handles-and-values) |
 | 每个生产方法都有人驱动 | 无需写法 | 从各 AST 末端和选择读取求可达集合 | 生产方法无法从任何入口到达时，生成期报错 | [图与来源](EFFECT_GRAPH.md) |
@@ -274,8 +274,8 @@ Middleware 是由 Root 级入口驱动的 Excu：注册给出 handler 与拦截�
 
 | 行为 | 组合 | 推导 | 驱动 | 规范 |
 | --- | --- | --- | --- | --- |
-| 观察一段子树里交出的值、raw 与失败 | Middleware 注册（`input = "None"`）；AST 写 `middleware [node "M"] 子树` | 剥离标注后照常编号；标注位置存为 `drivingMiddleware` | 子树的结构、NodeId 与单元划分不变 | [Middleware](CORE_DESIGN.md#middleware) |
-| 只捕获某几类 effect | `intercept = [ExcuKind, ...]`，或 `allEffects` | Injector 为绑定选定捕获类别；`Injector.Super` 为每个 (列表, 类别) 选定 Middleware；gen 把每次原子调用交给相应标签的 Root.super | 匹配的调用在进入、成功返回、raw 和 raise 时同步通知；直接实例执行原 action | 同上 |
+| 观察一段子树里交出的值、rawinput 与失败 | Middleware 注册（`input = "None"`）；AST 写 `middleware [node "M"] 子树` | 剥离标注后照常编号；标注位置存为 `drivingMiddleware` | 子树的结构、NodeId 与单元划分不变 | [Middleware](CORE_DESIGN.md#middleware) |
+| 只捕获某几类 effect | `intercept = [ExcuKind, ...]`，或 `allEffects` | Injector 为绑定选定捕获类别；`Injector.Super` 为每个 (列表, 类别) 选定 Middleware；gen 把每次原子调用交给相应标签的 Root.super | 匹配的调用在进入、成功返回、rawinput 和 raise 时同步通知；直接实例执行原 action | 同上 |
 | 同一 handler 在不同子树表现不同 | 一处挂载在标注内，另一处不在 | 每个挂载的 Middleware 列表（`drivingHooks`），按位置前缀取覆盖它的标注之并，会话步骤同样；入口对列表多态，挂载登记时在类型上给出列表，调用点经入口约束 `Captured hooks` 取得该列表在本类别上的选择 | 按静态登记名选取已编译的 Target；未覆盖的挂载以空列表登记 | 同上 |
 | 拆出本次捕获 | 方法体 `hookedEnter`／`hookedOutput`／`hookedRaw`／`hookedError` | 只为 Middleware 的标签生成 `Hooks` 实例 | 对应当前捕获点的读取返回 `Just` | 同上 |
 | Middleware 与被捕获的链不成环 | 无需写法 | 任何 effect 的 Input 都不能指向 Middleware；Middleware 没有 demands；Middleware 在自己的标签下执行，那里的调用点不调用 `captureAt` | Middleware 自己不再被捕获 | 同上 |

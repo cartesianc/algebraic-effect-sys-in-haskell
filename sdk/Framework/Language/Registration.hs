@@ -27,7 +27,7 @@ import Data.Typeable (Typeable, splitTyConApp, typeRep, typeRepTyCon)
 -- 每个字段写 handler 名：handler 是不带参数的类方法，可以被多个注册复用。
 -- effect 自己的方法由 gen 按 effect 名或资产名生成，只在生成区使用。
 data EffectTyping
-  -- 生产链中的纯值变换：用 raw 读上层（Excu、Scoped 或 Pure）交出的 [String]，变换后交给下面的 Pure 或 Context；
+  -- 生产链中的纯值变换：用 rawinput 读上层（Excu、Scoped 或 Pure）交出的 [String]，变换后交给下面的 Pure 或 Context；
   -- 不声明 demands，不作为 AST 末端，必须绑定 handler。
   = Pure { handler :: Maybe String }
   -- 原子句柄：Excu 与 Scoped 的 open／close 交出 [String]，只交给挂在它下面（可经 Pure）的 Context 解析。
@@ -43,7 +43,7 @@ data EffectTyping
   -- 不作为 AST 末端，只经挂在它下面的 Context 解析后进入资产。
   | Stream { handler :: Maybe String }
   -- 驱动方式特殊的 Excu：没有 Input 前驱（input 写保留名 "None"），也不声明 demands；由 AST 的 middleware 标注挂载。
-  -- 标注范围内，intercept 类别的 effect 在 Root 级调用点（交出值、raw、raise）同步执行它，handler 用 hooked* 拆出捕获。
+  -- 标注范围内，intercept 类别的 effect 在 Root 级调用点（交出值、rawinput、raise）同步执行它，handler 用 hooked* 拆出捕获。
   | Middleware { handler :: Maybe String, intercept :: [EffectKind] }
   deriving (Eq, Show, Read, Generic, NFData)
 

@@ -27,7 +27,7 @@ import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
 import Crawler.Types
-import Framework.SDK (Raises(..), Raw(..), Reads(..))
+import Framework.SDK (Raises(..), Raw(..), Reads(..), rawoutput)
 import Crawler.Generated.Effects
 import Crawler.Types
 import Control.Concurrent (forkFinally, killThread, newEmptyMVar, putMVar, takeMVar)
@@ -80,17 +80,19 @@ instance FetchPageLayer m => FetchPageHandler m where
     case outcome of
       Left problem -> raise (FetchPageError (url ++ ": " ++ displayException problem))
       Right (ExitFailure _, _, message) -> raise (FetchPageError (url ++ ": " ++ message))
-      Right (ExitSuccess, html, _) -> pure [html]
+      Right (ExitSuccess, html, _) -> rawoutput [html]
 
--- Pure，两个抓取链共用：raw 是本次抓取交出的 list，只留下有内容的正文；没有 IO，也不读资产。
+-- Pure，两个抓取链共用：rawinput 是本次抓取交出的 list，只留下有内容的正文；没有 IO，也不读资产。
 instance DropBlankBodiesLayer m => DropBlankBodiesHandler m where
-  dropBlankBodies = filter (not . all isSpace) <$> raw
+  dropBlankBodies = do
+    bodies <- rawinput
+    rawoutput (filter (not . all isSpace) bodies)
 
--- 挂在 Pure 下，两个解析共用：raw 是去掉空白后的 list（一页正文）。AST 执行抓取时由 SDK 注入，
--- 本次输出经 Pure 交到这里，不重新抓取；被 requests 驱动时，raw 经 Pure 执行抓取句柄，启动整条链。
+-- 挂在 Pure 下，两个解析共用：rawinput 是去掉空白后的 list（一页正文）。AST 执行抓取时由 SDK 注入，
+-- 本次输出经 Pure 交到这里，不重新抓取；被 requests 驱动时，rawinput 经 Pure 执行抓取句柄，启动整条链。
 instance ExtractSummaryLayer m => ExtractSummaryHandler m where
   extractSummary = do
-    fetched <- raw
+    fetched <- rawinput
     PageURL url <- require @PageURL
     html <- case fetched of
       [page] -> pure page
@@ -122,7 +124,7 @@ instance PrintSummaryLayer m => PrintSummaryHandler m where
            ] ++ (if null links then ["  (none)"] else map ("  " ++) links) ++ [""])
     outcome <- liftIO (tryIOError (putStr report >> hFlush stdout))
     either (\problem -> raise (PrintSummaryError (url ++ ": " ++ displayException problem))) pure outcome
-    pure []
+    rawoutput []
 
 -- 会话信息由 Context 生产，SDK 在 scope 内保存并供各抓取链读取。
 instance SessionInfoLayer m => SessionInfoHandler m where
@@ -133,20 +135,20 @@ instance OpenSessionLayer m => OpenSessionHandler m where
   openSession = do
     SessionInfo name _ <- require @SessionInfo
     liftIO (putStrLn ("[scope] open " ++ name))
-    pure []
+    rawoutput []
 
 instance CloseSessionLayer m => CloseSessionHandler m where
   closeSession = do
     SessionInfo name _ <- require @SessionInfo
     liftIO (putStrLn ("[scope] close " ++ name))
-    pure []
+    rawoutput []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "1434b28d58664b93c295683b09237f73"
+handlerSourceFingerprint = Just "f8c100e855fb22092ce2e75164d11d60"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
--- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
+-- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
 newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
@@ -216,16 +218,16 @@ instance FrameworkRuntime.Reads (SessionInfo) (Wrap "CrawlSession") where
   require = Wrap ((\(FrameworkGenerated.CrawlSessionInfo value) -> value) <$> readCrawlSessionInfo)
 
 instance FrameworkRuntime.Raw (Wrap "KeepPageBody") where
-  raw = Wrap (runFetchPage)
+  rawinput = Wrap (runFetchPage)
 
 instance FrameworkRuntime.Raw (Wrap "ExtractPage") where
-  raw = Wrap (runKeepPageBody)
+  rawinput = Wrap (runKeepPageBody)
 
 instance FrameworkRuntime.Raw (Wrap "KeepLinkedPageBody") where
-  raw = Wrap (runFetchLinkedPage)
+  rawinput = Wrap (runFetchLinkedPage)
 
 instance FrameworkRuntime.Raw (Wrap "ExtractLinkedPage") where
-  raw = Wrap (runKeepLinkedPageBody)
+  rawinput = Wrap (runKeepLinkedPageBody)
 
 getStartURL :: FrameworkGenerated.App FrameworkGenerated.StartURL
 getStartURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "StartPage"

@@ -1,5 +1,5 @@
--- handler 方法体的纯结构副本；只保留按表示类型的读取与 raw，不求值业务数据或 IO。
--- 读取 @T 与 raw 的来源因绑定而异，由 gen 在每个绑定上替换为 effect 方法调用。
+-- handler 方法体的纯结构副本；只保留按表示类型的读取与 rawinput，不求值业务数据或 IO。
+-- 读取 @T 与 rawinput 的来源因绑定而异，由 gen 在每个绑定上替换为 effect 方法调用。
 module Framework.Gen.Frontend.Shape (shapeHandlers, analyzeModule) where
 
 import Control.Monad (unless, when)
@@ -35,7 +35,7 @@ shapeHandlers namespace handlers source = do
     then Left "Effect structure analysis does not support RebindableSyntax; use standard Haskell in handler bodies"
     else pure analyzed
 
--- 每个 handler 方法体得到一份结构：require @T 记为 @T，raw 记为 %raw。
+-- 每个 handler 方法体得到一份结构：require @T 记为 @T，rawinput 记为 %raw。
 -- handler 不能调用其他 handler：组合只经注册的 Input、demands 与 AST。
 analyzeModule
   :: String -> [(String, String)] -> NameUses -> Bool -> HsModule GhcPs
@@ -88,7 +88,7 @@ methodReference environment identifier = do
   let name = occNameString (nameOccName resolved)
   case (owner, name) of
     ("Framework.Language.Handler", "require") -> Just "@require"
-    ("Framework.Language.Handler", "raw") -> Just "%raw"
+    ("Framework.Language.Handler", "rawinput") -> Just "%raw"
     _ | owner == contractsModule environment && name `elem` map snd (handlerMethods environment) -> Just ('!' : name)
       | otherwise -> Nothing
 
@@ -233,7 +233,7 @@ shapeExpression environment located
           else shapeApplication environment operator [left, right]
       _ -> unsupported
   where
-    unsupported = Left "unsupported use of require/raw; bind it in a do statement, or use if/case or a supported combinator"
+    unsupported = Left "unsupported use of require/rawinput; bind it in a do statement, or use if/case or a supported combinator"
 
 application :: LHsExpr GhcPs -> (LHsExpr GhcPs, [LHsExpr GhcPs])
 application expression = case unLoc expression of

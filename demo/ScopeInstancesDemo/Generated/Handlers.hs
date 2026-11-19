@@ -28,7 +28,7 @@ import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
 import ScopeInstancesDemo.Types
-import Framework.SDK (Raises(..), Reads(..))
+import Framework.SDK (Raises(..), Reads(..), rawoutput)
 import ScopeInstancesDemo.Generated.Effects
 import ScopeInstancesDemo.Types
 import Control.Exception (bracketOnError, displayException)
@@ -48,7 +48,7 @@ instance PrepareFilesLayer m => PrepareFilesHandler m where
       mapM_ ((`writeFile` "") . (outputDirectory </>)) ["one.txt", "two.txt", "events.txt"]
       writeFile (outputDirectory </> "selected.txt") (outputDirectory </> "one.txt")
     either (raise . PrepareFilesError . displayException) pure outcome
-    pure []
+    rawoutput []
 
 -- 选择由普通 Excu 节点改写；下一条使用闭包的 requests 会重新读取它。
 instance SelectSecondLayer m => SelectSecondHandler m where
@@ -56,14 +56,14 @@ instance SelectSecondLayer m => SelectSecondHandler m where
     let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
     outcome <- liftIO (tryIOError (writeFile (outputDirectory </> "selected.txt") (outputDirectory </> "two.txt")))
     either (raise . SelectSecondError . displayException) pure outcome
-    pure []
+    rawoutput []
 
 instance SelectFirstLayer m => SelectFirstHandler m where
   selectFirst = do
     let outputDirectory = "demo" </> "ScopeInstancesDemo" </> "output"
     outcome <- liftIO (tryIOError (writeFile (outputDirectory </> "selected.txt") (outputDirectory </> "one.txt")))
     either (raise . SelectFirstError . displayException) pure outcome
-    pure []
+    rawoutput []
 
 -- 参数确实由 parser 中的 IO 动态取得。观察日志不承担任何 scope 状态管理。
 instance SelectedFileLayer m => SelectedFileHandler m where
@@ -93,7 +93,7 @@ instance OpenSelectedFileLayer m => OpenSelectedFileHandler m where
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     outcome <- liftIO (tryIOError (appendFile journal ("open " ++ path ++ "\n")))
     either (raise . OpenSelectedFileError . displayException) pure outcome
-    pure []
+    rawoutput []
 
 instance CloseSelectedFileLayer m => CloseSelectedFileHandler m where
   closeSelectedFile = do
@@ -103,7 +103,7 @@ instance CloseSelectedFileLayer m => CloseSelectedFileHandler m where
       hClose file
       appendFile journal ("close " ++ path ++ "\n")
     either (raise . CloseSelectedFileError . displayException) pure outcome
-    pure []
+    rawoutput []
 
 -- UseFirst、UseSecond、ReopenFirst 共用：scope 内 require 稳定参数与本条闭包选中的实例。
 instance CheckSelectionLayer m => CheckSelectionHandler m where
@@ -118,7 +118,7 @@ instance CheckSelectionLayer m => CheckSelectionHandler m where
       hFlush file
     either (raise . CheckSelectionError . displayException) pure outcome
     liftIO (putStrLn ("[use] " ++ takeFileName path ++ ": the current argument selected this instance; its Handle is live"))
-    pure []
+    rawoutput []
 
 -- 各使用闭包已退出并自动关闭实例；此处只读日志和文件，不 require 旧资源。
 instance CheckJournalLayer m => CheckJournalHandler m where
@@ -145,14 +145,14 @@ instance CheckJournalLayer m => CheckJournalHandler m where
       putStrLn "[check] each use closure opened the instance its current argument selected and closed it on exit"
       putStrLn "[check] actual acquisitions/closures: file 1 = 2/2; file 2 = 1/1"
       putStrLn "[check] three argument requests, three open calls; require reuses the stable parameter within each chain"
-    pure []
+    rawoutput []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "78520366b00ac43b711576260bd83b06"
+handlerSourceFingerprint = Just "41486932e45cadd7d9a7a352aa7f8739"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
--- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
+-- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
 newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: FrameworkGenerated.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 

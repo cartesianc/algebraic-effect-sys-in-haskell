@@ -10,7 +10,7 @@
 
 module Crawler.Handlers () where
 
-import Framework.SDK (Raises(..), Raw(..), Reads(..))
+import Framework.SDK (Raises(..), Raw(..), Reads(..), rawoutput)
 import Crawler.Generated.Effects
 import Crawler.Types
 import Control.Concurrent (forkFinally, killThread, newEmptyMVar, putMVar, takeMVar)
@@ -63,17 +63,19 @@ instance FetchPageLayer m => FetchPageHandler m where
     case outcome of
       Left problem -> raise (FetchPageError (url ++ ": " ++ displayException problem))
       Right (ExitFailure _, _, message) -> raise (FetchPageError (url ++ ": " ++ message))
-      Right (ExitSuccess, html, _) -> pure [html]
+      Right (ExitSuccess, html, _) -> rawoutput [html]
 
--- Pure，两个抓取链共用：raw 是本次抓取交出的 list，只留下有内容的正文；没有 IO，也不读资产。
+-- Pure，两个抓取链共用：rawinput 是本次抓取交出的 list，只留下有内容的正文；没有 IO，也不读资产。
 instance DropBlankBodiesLayer m => DropBlankBodiesHandler m where
-  dropBlankBodies = filter (not . all isSpace) <$> raw
+  dropBlankBodies = do
+    bodies <- rawinput
+    rawoutput (filter (not . all isSpace) bodies)
 
--- 挂在 Pure 下，两个解析共用：raw 是去掉空白后的 list（一页正文）。AST 执行抓取时由 SDK 注入，
--- 本次输出经 Pure 交到这里，不重新抓取；被 requests 驱动时，raw 经 Pure 执行抓取句柄，启动整条链。
+-- 挂在 Pure 下，两个解析共用：rawinput 是去掉空白后的 list（一页正文）。AST 执行抓取时由 SDK 注入，
+-- 本次输出经 Pure 交到这里，不重新抓取；被 requests 驱动时，rawinput 经 Pure 执行抓取句柄，启动整条链。
 instance ExtractSummaryLayer m => ExtractSummaryHandler m where
   extractSummary = do
-    fetched <- raw
+    fetched <- rawinput
     PageURL url <- require @PageURL
     html <- case fetched of
       [page] -> pure page
@@ -105,7 +107,7 @@ instance PrintSummaryLayer m => PrintSummaryHandler m where
            ] ++ (if null links then ["  (none)"] else map ("  " ++) links) ++ [""])
     outcome <- liftIO (tryIOError (putStr report >> hFlush stdout))
     either (\problem -> raise (PrintSummaryError (url ++ ": " ++ displayException problem))) pure outcome
-    pure []
+    rawoutput []
 
 -- 会话信息由 Context 生产，SDK 在 scope 内保存并供各抓取链读取。
 instance SessionInfoLayer m => SessionInfoHandler m where
@@ -116,10 +118,10 @@ instance OpenSessionLayer m => OpenSessionHandler m where
   openSession = do
     SessionInfo name _ <- require @SessionInfo
     liftIO (putStrLn ("[scope] open " ++ name))
-    pure []
+    rawoutput []
 
 instance CloseSessionLayer m => CloseSessionHandler m where
   closeSession = do
     SessionInfo name _ <- require @SessionInfo
     liftIO (putStrLn ("[scope] close " ++ name))
-    pure []
+    rawoutput []

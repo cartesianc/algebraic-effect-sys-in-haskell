@@ -20,7 +20,7 @@ Middleware 首版与 Root 的 `super` 已经实现，[superhandler 的生成期�
 
 | 事项 | 首版决定 |
 | --- | --- |
-| 是什么 | gen 把每次原子调用交给 Root 的 `super`。它按挂载注入 Middleware，进入前与成功返回时同步通知，并负责执行该 action；`raw` 和 `raise` 在方法内各自通知 |
+| 是什么 | gen 把每次原子调用交给 Root 的 `super`。它按挂载注入 Middleware，进入前与成功返回时同步通知，并负责执行该 action；`rawinput` 和 `raise` 在方法内各自通知 |
 | 注入时机 | 生成期：`middleware` 标注是给 gen 的标记。标签带 Middleware 列表类型参数，入口对它多态，调用点经生成入口的类型类约束 `Captured hooks` 取得 gen 预选的 `Captures hooks kind` 实例；挂载登记时给出列表，GHC 编译期选定实例。运行时没有 Middleware 目录或分发，只按静态登记名选取 Target |
 | 注册形态 | `EffectTyping` 增加 `Middleware { handler, intercept }`；`input` 写保留名 `"None"`，沿用 Input 的组合逻辑，表示没有 Input 注入；不另设 `MiddlewareSpec` |
 | `intercept` | 能交出 raw output 的 `ExcuKind`、`ScopedKind`（open／close）、`PureKind`；`allEffects` 是三者的简写 |
@@ -108,7 +108,7 @@ Stage 1–7 在各自已确认的范围内完成。下面保留规范入口，�
 | <a id="stage-2-await"></a><a id="stage-4"></a>共享最新值、固定捕获与持续驱动 | [普通 require 的供值与等待](CORE_DESIGN.md#await-visibility) · [Stream 的读取与驱动](STREAM_LIFELONG.md#contracts) |
 | <a id="stage-3"></a><a id="stage-6"></a><a id="stage-6-reuse"></a>Stream 与 lifelong 的执行、两侧结束及同次输出复用 | [执行边界](STREAM_LIFELONG.md#execution-boundaries) · [来源结束](STREAM_LIFELONG.md#end) · [消费结束](STREAM_LIFELONG.md#consumer-end) · [输出复用](STREAM_LIFELONG.md#derive) |
 | <a id="stage-5"></a><a id="stage-7"></a><a id="scope-gc"></a>已知 ownership 的持续资产持有和 scope 回收 | [资源交接](STREAM_LIFELONG.md#binding-retention) · [可达性回收](CORE_DESIGN.md#scope-gc) |
-| <a id="pure-pipeline"></a>Pure 与 list 原子输出 | [Pure 的位置、输入与输出](CORE_DESIGN.md#pure) |
+| <a id="pure-pipeline"></a>Pure 与 list 原子输出 | 手写 parser 和 Pure 的读取方法从 `raw` 更名为 `rawinput`。返回原子列表时可用 SDK 的 `rawoutput`，普通值仍可用 `pure`。[输入与输出](CORE_DESIGN.md#pure) |
 | Middleware：AST 挂载与 Root.super 接管原子调用 | [Middleware](CORE_DESIGN.md#middleware) · [写法](GUIDE.md#middleware) |
 | <a id="version-boundaries"></a>gen 内部职责与版本边界 | 共享供值改变了普通资产能读到哪次发布。其后的 Injector／Booter 重构统一静态装配与驱动事实，手写接口与该读取协议保持一致。[内部接口迁移](CORE_DESIGN.md#sdk-migration) |
 

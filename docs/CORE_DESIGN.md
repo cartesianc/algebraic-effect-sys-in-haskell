@@ -23,7 +23,7 @@
 | gen 作为编译器：SDK 分为源语言、gen、编译产物、运行时四层，生成按阶段执行 | 已实现（2026-11-08） | [gen 是编译器](#compiler)、[编译流水线](#generation)、[SDK 分工](#sdk-layout) |
 | 持续执行与资源收尾 | 两侧结束、后继读取、交付保留、会话退役及持续值参数已实现；交付与业务数据中的资源持有继续收敛 | [阶段状态](NEXT_STAGES.md#stages)、[当前限制](NEXT_STAGES.md#current-limits) |
 | 嵌套 lifelong、背压与交付容量等 | 后续专题，本轮不扩展 | [开放事项](NEXT_STAGES.md#deferred) |
-| Middleware 按 AST 挂载注入 Root 的 `super`，观察进入、输出、raw 和 raise | 已实现（2026-11-19） | [Middleware](#middleware)、[后续事项](NEXT_STAGES.md#middleware) |
+| Middleware 按 AST 挂载注入 Root 的 `super`，观察进入、输出、rawinput 和 raise | 已实现（2026-11-19） | [Middleware](#middleware)、[后续事项](NEXT_STAGES.md#middleware) |
 | Generic Map、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [开放事项](NEXT_STAGES.md#deferred) |
 
 实现状态说明代码已接入的范围，不代表全部并发交错或资源逃逸已获证明。过去的编译及 demo 结果概述见 [已有基础与验证边界](NEXT_STAGES.md#baseline)。
@@ -51,21 +51,21 @@ EffectSpec
 ```haskell
 instance ParseFileTextLayer m => ParseFileTextHandler m where
   parseFileText = do
-    contents <- raw
+    contents <- rawinput
     text <- case contents of
       [whole] -> pure whole
       _ -> raise (ParseFileTextError "File read returned no text")
     pure (if null text then Blank else Written text)
 ```
 
-注册给出类别、绑定、前驱与产物，handler 给出原子的读取、解析和 IO。`raw` 是读取句柄这次交出的 list，parser 把它细化成资产的表示类型。沿代码中出现的结构进入对应子模块：
+注册给出类别、绑定、前驱与产物，handler 给出原子的读取、解析和 IO。`rawinput` 是读取句柄这次交出的 list，parser 把它细化成资产的表示类型。沿代码中出现的结构进入对应子模块：
 
 | 看到的代码形态 | 继续阅读 |
 | --- | --- |
 | `data TextState = Blank \| Written String` | [资产写法](GUIDE.md#types)、[资产约束](ASSETS.md) |
 | `EffectSpec`、`typing`、`input`、`demands` | [注册写法](GUIDE.md#effects)、[方法契约](#registration) |
 | `instance XxxLayer m => XxxHandler m where` | [handler 写法](GUIDE.md#handlers)、[handler 契约](#registration)、[入口装配](#calls) |
-| `requests`、`require @T`、`raw` | [Context 驱动与读取](#context)、[Pure](#pure) |
+| `requests`、`require @T`、`rawinput` | [Context 驱动与读取](#context)、[Pure](#pure) |
 | `Scoped { open, close }`、`raise` | [scope](#scope)、[Error](#error) |
 | `alternative [node "WriteFirstLine", node "AppendLine"]` | [workflow 写法](GUIDE.md#workflow)、[启动协议](#workflow) |
 | 生成契约、`generatedPrototype` | [生成与源码同步](#generation)、[图与来源](EFFECT_GRAPH.md) |
@@ -76,8 +76,8 @@ instance ParseFileTextLayer m => ParseFileTextHandler m where
 | 对象 | 表达什么 | 不应承担的职责 |
 | --- | --- | --- |
 | EffectSpec／typing | 操作类别、绑定的 handler、前驱与资产访问 | 原子业务方法体 |
-| Input | 前驱：gen 在 handler 之前装配执行的 effect；挂接的 Context 与 Pure 用 raw 读它交出的 list | 隐式传值，或被方法体调用 |
-| Pure | 生产链中的纯值变换：从上层的 raw 取 list，变换后交给下面的 Pure 或 Context | IO、读取资产，或作为 AST 末端 |
+| Input | 前驱：gen 在 handler 之前装配执行的 effect；挂接的 Context 与 Pure 用 rawinput 读它交出的 list | 隐式传值，或被方法体调用 |
+| Pure | 生产链中的纯值变换：从上层的 rawinput 取 list，变换后交给下面的 Pure 或 Context | IO、读取资产，或作为 AST 末端 |
 | asset／契约 | Context 对外发布的具名业务值类型：表示类型的细化，按名字解析唯一来源 | 运行时 scope 所有权本身 |
 | demands | 驱动或读取哪份资产 | 指定随运行时序变化的生产者 |
 | handler | 不带参数的原子类方法：按表示类型读取、执行 IO、解析；可注册到多个 effect | 调用上游或其他 handler，隐藏一套框架外的组合 |
@@ -169,7 +169,7 @@ SDK 将 effect、资产与 workflow 作为结构数据运算，推出类型能�
 
 **值操作**由 Context 的生产、解析与资产承载，消费方通过 demands 声明驱动与读取。生产链中对句柄输出的纯变换（去重、排序、过滤）由 Pure 承担，Context 只做细化解析。requests 在入口驱动生产，require 按既有来源与捕获读取，不生产，还没有值时等待发布；持续资产的读取返回本次确定的资产值；重复执行由驱动关系决定。handler 用原生 ADT 模式匹配和计算处理这些值；值只经资产流动，跨 handler 的业务产值通过 Context 发布。资产来源与 scope 的资源关闭归属分别管理。
 
-两者通过 Context 衔接：Excu.handler／Scoped.open 交出的 `[String]` 交给挂接的 Context 解析为业务资产，中间可以经过一串 Pure；Stream 的原始输入交给挂在它下面的 Context 解析，写法与挂在原子句柄下的 Context 相同。比如 FileDemo 中，`readFileContent` 执行读取操作，挂在它下面的 `parseFileText` 用 `raw` 把读取结果解析为 `FileText`，消费方通过 `requires "FileTextBlank"` 或 `requires "FileTextWritten"` 读取对应分支资产。前驱关系和资产读取关系都能从注册与 handler 的读取中读出，详见[原子输出挂接](#context)与[持续生产](#stream)。
+两者通过 Context 衔接：Excu.handler／Scoped.open 交出的 `[String]` 交给挂接的 Context 解析为业务资产，中间可以经过一串 Pure；Stream 的原始输入交给挂在它下面的 Context 解析，写法与挂在原子句柄下的 Context 相同。比如 FileDemo 中，`readFileContent` 执行读取操作，挂在它下面的 `parseFileText` 用 `rawinput` 把读取结果解析为 `FileText`，消费方通过 `requires "FileTextBlank"` 或 `requires "FileTextWritten"` 读取对应分支资产。前驱关系和资产读取关系都能从注册与 handler 的读取中读出，详见[原子输出挂接](#context)与[持续生产](#stream)。
 
 这种分离是职责与契约的划分，不新增独立 impl 层。值操作写在 handler 方法体内，业务模块顶层不定义普通函数，见[源码资产约束](ASSETS.md)；同一个 handler 可以先读取，再用读到的值完成原子操作。
 
@@ -190,7 +190,7 @@ AST 挂载完整 original chain 的末端，并规定启动和执行控制。Con
 
 ### 3.6 可观察组合与原子方法
 
-组合写在注册与 AST 中，handler 方法体只含读取、raise 与原子计算。纯结构提取识别 `require @T`、`raw`、分支和标准组合，擦除不含读取的业务值计算，再按绑定代换成 effect 方法的读取结构；handler 直接调用其他 handler 或 effect 方法、读取经未知高阶组合传递时必须诊断，不能默认为空图。
+组合写在注册与 AST 中，handler 方法体只含读取、raise 与原子计算。纯结构提取识别 `require @T`、`rawinput`、分支和标准组合，擦除不含读取的业务值计算，再按绑定代换成 effect 方法的读取结构；handler 直接调用其他 handler 或 effect 方法、读取经未知高阶组合传递时必须诊断，不能默认为空图。
 
 所有值操作写成 handler 的类方法并注册，才能被 SDK 驱动和静态分析：业务模块顶层不允许普通函数，方法体内的局部函数与 lambda 不限制。资产集合、顶层白名单与资产目录统一见 [ASSETS](ASSETS.md)。这些约束不追踪值来源，也不证明原子方法的 IO 粒度、业务正确性或所有资源别名。
 
@@ -293,7 +293,7 @@ gen 分开处理结构共享、同次输出复用与 scope 实例共享。相同
 
 | 注册类别 | 绑定的 handler | handler 签名 | gen 生成的内部入口 | SDK 执行责任 |
 | --- | --- | --- | --- | --- |
-| Pure | handler（必填） | m [String]，Layer 只有 Raw、Raises，不含 MonadIO | run名字 | 只在生产链中：用 raw 读上层交出的 list，结果只交给下面的 Pure 或 Context；不声明 demands，不作为 AST 末端，见 [Pure](#pure) |
+| Pure | handler（必填） | m [String]，Layer 只有 Raw、Raises，不含 MonadIO | run名字 | 只在生产链中：用 rawinput 读上层交出的 list，结果只交给下面的 Pure 或 Context；不声明 demands，不作为 AST 末端，见 [Pure](#pure) |
 | Excu | handler | m [String] | run名字 | 交出的 list 只交给挂接的 Context（可经 Pure）；入口装配驱动与前驱并承接失败 |
 | Scoped | open、close | 均为 m [String] | open名字、close名字 | 开启参数按生产身份共享；无当前使用、待用节点及子 scope 保留时回收，close 可选 |
 | Error | detect、resolve | 均为 m () | detect名字、resolve名字 | 只处理关联 scope 的失败；沿 ScopeTree 祖先顺序检测，Succ 后调用可选 resolve，保存原始与次生失败 |
@@ -344,9 +344,9 @@ Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必�
 | --- | --- | --- |
 | `Reads T m` | 绑定它的 effect requires 了表示类型为 T 的资产 | `require @T` |
 | `Reads T m` | 绑定它的 effect streams 了持续资产；T 是资产表示类型 | `require @T` |
-| `Raw m` | 绑定成挂接的 parser 或 Pure | `raw :: m [String]` |
+| `Raw m` | 绑定成挂接的 parser 或 Pure | `rawinput :: m [String]` |
 | `Raises XxxError m` | 总是 | `raise (XxxError "...")` |
-| `Hooks m` | 绑定成 Middleware | `hookedEnter` 读取进入的 handler 名。输出、raw 与 raise 分别由 `hookedOutput`、`hookedRaw`、`hookedError` 读取 |
+| `Hooks m` | 绑定成 Middleware | `hookedEnter` 读取进入的 handler 名。输出、rawinput 与 raise 分别由 `hookedOutput`、`hookedRaw`、`hookedError` 读取 |
 | `StreamEnds m` | 绑定成 Stream 的 handler | `streamEnd`：来源没有下一份输入，正常结束 |
 | `EndsStream m` | 以 `streams` 订阅持续资产的 Excu（规则见 [Stream 9.5](STREAM_LIFELONG.md#consumer-end)） | `endStream`：结束本处订阅，按读取方计数停产 |
 | `MonadIO m` | Pure 以外总是 | `liftIO` |
@@ -372,7 +372,7 @@ instance FrameworkRuntime.Reads (FileHandle) (Wrap "WriteFirstLine") where
   require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
 instance FrameworkRuntime.Raw (Wrap "ExtractFileText") where
-  raw = Wrap (runReadFile)
+  rawinput = Wrap (runReadFile)
 ```
 
 <a id="calls"></a>
@@ -393,10 +393,10 @@ getStartURL = ⟨入口包装⟩ $
 - **驱动**：effect 的 requests 依次执行对应资产的 getT，重新生产并发布当前 origin 的绑定。
 - **Input**：前驱的入口在方法体之前执行；方法体不调用上游，也不捕获前驱的失败，失败后的改道用 AST 的 alternative。Scoped 前驱已开启时复用实例，跳过 open 的方法体。
 - **方法体**：在 `Wrap "名字"` 上运行绑定的 handler；Context 的入口再把结果包成资产。
-- **挂接**：Input 是 Excu、Scoped、Pure 或 Stream 的 Context，以及 Pure 自身，不把 Input 当作前驱执行，raw 由 Input 的入口回答：注入时由本次输出回答，被驱动时执行该入口，Stream 下为 `(: []) <$> next名字`。Pure 的入口只是 raw 的中间一段，不改变调用者身份。
+- **挂接**：Input 是 Excu、Scoped、Pure 或 Stream 的 Context，以及 Pure 自身，不把 Input 当作前驱执行，rawinput 由 Input 的入口回答：注入时由本次输出回答，被驱动时执行该入口，Stream 下为 `(: []) <$> next名字`。Pure 的入口只是 rawinput 的中间一段，不改变调用者身份。
 - **只运行 handler 的入口**：close、detect、resolve 不驱动，也不执行前驱。
 
-生成器读取方法体中的读取（`require @T`、`raw`），形成每个 handler 的原子形状；再按绑定把表示类型代换成该 effect 的细化资产读取，与入口的驱动和前驱一起组成 effect 方法的纯结构。它不解释任意 Haskell 业务值语义。handler 方法体不能直接调用其他 handler 或 effect 的方法，gencode 报错：那样会绕过 effect 入口，丢失 Input、驱动和错误位置。
+生成器读取方法体中的读取（`require @T`、`rawinput`），形成每个 handler 的原子形状；再按绑定把表示类型代换成该 effect 的细化资产读取，与入口的驱动和前驱一起组成 effect 方法的纯结构。它不解释任意 Haskell 业务值语义。handler 方法体不能直接调用其他 handler 或 effect 的方法，gencode 报错：那样会绕过 effect 入口，丢失 Input、驱动和错误位置。
 
 需要分别识别以下对象：
 
@@ -430,7 +430,7 @@ openFileSession = (… . FrameworkRuntime.openScope "FileSession" FrameworkGener
 
 每个原子类方法作为一个尚未执行的 action 交给 Root 的 `super`。例如，生成入口在完成 requests 和 Input 前驱后，执行 `runWrap @hooks @"FileSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)`。同一手写 instance 仍可绑定到不同 effect。Injector 确定绑定可捕获的类别，Booter 给出挂载的 middleware 列表，生成代码里的类型标签把两者交给对应的 Root 实例。
 
-有匹配的 middleware 时，`super` 先通知进入，再执行一次业务 action，成功后通知输出并交回原值。action 内每次实际的 `raw` 和 `raise` 沿用各自的捕获点。Middleware 在自己的标签上运行，Root 在这个标签上直接执行，避免递归触发。业务和 middleware 的 instance 都无需手写推进操作。
+有匹配的 middleware 时，`super` 先通知进入，再执行一次业务 action，成功后通知输出并交回原值。action 内每次实际的 `rawinput` 和 `raise` 沿用各自的捕获点。Middleware 在自己的标签上运行，Root 在这个标签上直接执行，避免递归触发。业务和 middleware 的 instance 都无需手写推进操作。
 
 ```haskell
 -- 注册：没有 Input 前驱，也没有 demands
@@ -442,7 +442,7 @@ instance TraceOutputLayer m => TraceOutputHandler m where
   traceOutput = do
     output <- hookedOutput      -- Maybe (handler 名, 交出的 [String])
     forM_ output (liftIO . print)
-    pure []
+    rawoutput []
 
 -- AST：透明标注一棵子树
 ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "WriteReport"]]
@@ -450,7 +450,7 @@ ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "Wri
 
 - **注册。** `input` 写保留名 `"None"`：没有 Input 注入，沿用 Input 的组合逻辑而不另设注册构造器。只有 Middleware 能写 `"None"`，Middleware 也只能写 `"None"`；任何 effect 的 Input 都不能指向 Middleware，因此 Middleware 与被捕获的链之间不会成环。`"None"` 与 `"Root"` 一样不能作为 effect 名。首版不允许 demands。`intercept` 非空、不重复，只能取能交出 raw output 的 `ExcuKind`、`ScopedKind`、`PureKind`；`allEffects` 是三者的简写。
 - **挂载。** `middleware :: [EffectNode] -> AST -> AST` 包住恰好一棵子树。列表只接受 Middleware 注册名，普通 `node` 也不能引用 Middleware。标注是透明的：gen 先剥离标注再编号，NodeId、单元划分（包括 `lifelong` 对直接 `parallel` 子项的拆分）与无标注时相同；标注位置与 Middleware 名作为 `drivingMiddleware` 存入 Prototype，运行与 `--structure` 剥离当前 AST 后核对骨架，并核对标注与编译时一致。
-- **集合与类型类注入。** gen 为每个挂载（节点、选择读取、会话步骤）求覆盖它的全部标注之并，按注册顺序去重；Booter 把它存为 `drivingHooks`。注册了 Middleware 时，标签写作 `Wrap hooks effect`，每个 effect 入口只生成一份，对 `hooks` 多态（`runX :: forall hooks. Captured hooks => App …`），入口之间以 `@hooks` 互相调用，所以前驱、`requests` 驱动、raw 读取的句柄、挂接的 parser 与自动收尾的 close 都处在同一个列表下。生成的 Haskell 把 `Captured hooks`（每个被拦截类别一条 `Captures hooks kind`）写在入口的类型签名上。Program 为每个挂载登记时在类型上给出列表（例如 `Handlers.runReport @'["Audit"]`，被覆盖的挂载另以 `名字@Audit` 登记），GHC 在编译期选定实例；运行时只按 Prototype 的静态登记名（`entryLabel`）选取已编译的 Target，没有目录或分发。
+- **集合与类型类注入。** gen 为每个挂载（节点、选择读取、会话步骤）求覆盖它的全部标注之并，按注册顺序去重；Booter 把它存为 `drivingHooks`。注册了 Middleware 时，标签写作 `Wrap hooks effect`，每个 effect 入口只生成一份，对 `hooks` 多态（`runX :: forall hooks. Captured hooks => App …`），入口之间以 `@hooks` 互相调用，所以前驱、`requests` 驱动、rawinput 读取的句柄、挂接的 parser 与自动收尾的 close 都处在同一个列表下。生成的 Haskell 把 `Captured hooks`（每个被拦截类别一条 `Captures hooks kind`）写在入口的类型签名上。Program 为每个挂载登记时在类型上给出列表（例如 `Handlers.runReport @'["Audit"]`，被覆盖的挂载另以 `名字@Audit` 登记），GHC 在编译期选定实例；运行时只按 Prototype 的静态登记名（`entryLabel`）选取已编译的 Target，没有目录或分发。
 - **生成期选择。** `Gen.Injector.Super` 对入口实际实例化的每个列表（空列表、各挂载与会话步骤的列表）和每个被拦截的类别，按注册顺序选出拦截该类别的 Middleware；Emit 把每条选择写成一个 `Captures` 实例。例如 `Audit` 拦截 Excu 与 Scoped、`Timer` 拦截全部类别时：
 
   ```haskell
@@ -467,7 +467,7 @@ ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "Wri
 - **superhandler 与 Root 级调用。** `super` 是 Root 提供的 superhandler，捕获分两层：
   - 进入 super：前驱已经完成，`hookedEnter` 给出即将运行的 handler 名。回放直接返回已交出的值时，整个 action 都会跳过。对于 scope，进入表示一次调用尝试；若需在方法内读取开启参数才判定复用，可能只观察到进入。
   - 以下三个是 super 内的 Root 级调用。交出值（`pure`）：Excu.run、Scoped.open／close、Pure.run 这次调用成功交出的 `[String]`，handler 名是被调用的 handler。scope 复用跳过 open 方法体、或注入回放本次输出时，没有新的交出值。
-  - raw：读取方 handler（挂接的 parser 或 Pure）经 `raw` 读到的值；类别取被读取的那次原子调用的类别，所以 Stream 下的原始输入不在首版类别内。注入时 parser 经回放读取，同样是一次 raw 读取。
+  - rawinput：读取方 handler（挂接的 parser 或 Pure）经 `rawinput` 读到的值；类别取被读取的那次原子调用的类别，所以 Stream 下的原始输入不在首版类别内。注入时 parser 经回放读取，同样是一次 rawinput 读取。
   - raise：handler `raise` 时先捕获 (handler 名, 描述)，再以原失败退出。
 - **同步与顺序。** Middleware 是类方法，在调用点同步执行，调用点在它们完成后才继续。多个 Middleware 按注册顺序依次调用；每个都读到同一份捕获。它们的 IO 按此顺序发生，某个 Middleware 抛出失败会中止本次后续派发。Middleware handler 在自己的 `Hook` 标签下执行，那里的调用点不调用 `captureAt`，它自己不再被捕获。它交出的 `[String]` 没有挂接点。
 - **能力只给 Middleware。** gen 只为 Middleware 的标签生成 `Hooks (Hook "M")`，Layer 也只给 Middleware 加 `Hooks m`；普通 handler 写 `hookedOutput` 不能通过类型检查。Middleware 的能力只来自它的 handler 写法。
@@ -536,7 +536,7 @@ instance CloseSessionLayer m => CloseSessionHandler m where
     outcome <- liftIO (tryIOError (hClose file))
     either (raise . CloseSessionError . displayException) pure outcome
     liftIO (putStrLn ("[close] " ++ path))
-    pure []
+    rawoutput []
 ```
 
 handler 直接在 `<-` 左侧匹配表示类型的构造器，或先具名绑定再 case；和类型的业务分支用 case 或 lambda-case 表达，失败用 raise。SDK 不增加 MonadFail，不把类型类约束当作执行过模式匹配的证明。Stage 1 对资产包装构造器的接收形态检查已随 Stage 2 取消：handler 不写资产类型。持续读取也直接匹配声明表示类型，SDK 不要求额外的历史构造器。
@@ -573,9 +573,9 @@ AST 组织链的启动次序。Crawler 中 parallel 先抓取并注入解析两�
 
 #### 原子输出挂接与失败隔离
 
-Excu.handler／Scoped.open 成功后，SDK 以根调用身份执行挂接 Context 的 getT；parser 的 raw 由本次输出回答（中间可以经过一串 Pure，见 [Pure](#pure)），不重复执行句柄。挂在 Stream 下的 parser 沿用同一写法：会话每取得一份原始输入调用一次 parser，raw 由这份输入回答（见第 7 章）。普通 Context 的注入失败留在注入内部，不进入原链也不触发 Error；资产没有发布，之后读取它的位置按上述等待规则处理：仍可能发布则等待，已确定耗尽则报缺值。
+Excu.handler／Scoped.open 成功后，SDK 以根调用身份执行挂接 Context 的 getT；parser 的 rawinput 由本次输出回答（中间可以经过一串 Pure，见 [Pure](#pure)），不重复执行句柄。挂在 Stream 下的 parser 沿用同一写法：会话每取得一份原始输入调用一次 parser，rawinput 由这份输入回答（见第 7 章）。普通 Context 的注入失败留在注入内部，不进入原链也不触发 Error；资产没有发布，之后读取它的位置按上述等待规则处理：仍可能发布则等待，已确定耗尽则报缺值。
 
-parser 被 requests 驱动或被选择读取驱动时，raw 直接执行句柄入口，不再次注入；复用 open、重复 close、诊断与自动收尾不产生新的挂接注入。close 没有挂接点；scope 的资源 Context 不能挂在请求它的 Scoped 下。生成入口通过 atomicHandle／atomicScope 包装，挂接的 parser 由 gen 写在句柄入口上。
+parser 被 requests 驱动或被选择读取驱动时，rawinput 直接执行句柄入口，不再次注入；复用 open、重复 close、诊断与自动收尾不产生新的挂接注入。close 没有挂接点；scope 的资源 Context 不能挂在请求它的 Scoped 下。生成入口通过 atomicHandle／atomicScope 包装，挂接的 parser 由 gen 写在句柄入口上。
 
 这是普通 Context 的基线；持续 Context 的 parser 故障不在注入内隔离，包括 ReuseOutput 沿用消费原子输出的解析，均进入现有 Stream 失败与监督协议，见 [Stream 第 9 节](STREAM_LIFELONG.md#failures)。
 
@@ -596,26 +596,28 @@ EffectSpec { name = "FileLocation"
 
 -- Handlers.hs 节选
 instance LocateFileLayer m => LocateFileHandler m where
-  locateFile = pure ["demo" </> "FileDemo" </> "output.txt"]
+  locateFile = rawoutput ["demo" </> "FileDemo" </> "output.txt"]
 
 instance ValidateFileNameLayer m => ValidateFileNameHandler m where
   validateFileName = do
-    paths <- raw
+    paths <- rawinput
     unless (all (\path -> not (null path) && '\0' `notElem` path) paths) $
       raise (ValidateFileNameError "File name must be nonempty and contain no NUL character")
-    pure paths
+    rawoutput paths
 
 instance ParseFileNameLayer m => ParseFileNameHandler m where
   parseFileName = do
-    paths <- raw
+    paths <- rawinput
     case paths of
       [path] -> pure path
       _ -> raise (ParseFileNameError "Expected exactly one file name")
 ```
 
-**原子输出统一是 list。** Excu 与 Scoped 的 open／close 交出 `[String]`：没有信息时是 `pure []`，一项是 `pure [x]`，一串操作或递归的结果在方法体里用 `:`、`concat` 组合。list 是自由幺半群，只承诺顺序与拼接；别的组合方式（计数、集合、拼成一段文本）都能从它用一次 `foldMap` 得到，所以在句柄这一层先用 list 收集，不提前丢掉信息。它不保留嵌套：需要层次时在元素里编码（例如完整路径），由 parser 还原。Stream 有自己的数据结构，仍是每次一份 `String`，挂在它下面的 parser 读到的 raw 是单元素 list。
+**原子输入和输出。** `rawinput :: Raw m => m [String]` 读取直接 Input 交出的列表。`rawoutput :: Applicative m => [String] -> m [String]` 定义为 `pure`，用于返回原子列表。已挂载并匹配的 Middleware 在整个 handler 成功返回时观察一次输出。Context parser 返回资产表示值时仍可用 `pure`。
 
-**Pure 是对上层输出的 fmap。** Pure 用 `raw` 读直接 Input 交出的 list，返回变换后的 list：去重、排序、过滤都是整个 list 上的普通函数，检查不通过时 `raise`。它没有 IO（Layer 不含 `MonadIO`），也不读资产（不声明 demands，Layer 不含 `Reads`）：值只从上层的 raw 来，和 Context 接收句柄输出一样不走 demands，因此不会出现 demands 的循环依赖。
+**原子输出统一是 list。** Excu 与 Scoped 的 open／close 交出 `[String]`。`rawoutput []` 表示空列表，`rawoutput [x]` 交出一项，多项结果用 `:` 或 `concat` 组合。list 的顺序与拼接允许下游用 `foldMap` 计数、构造集合或合并文本。层次数据可以在元素里编码（例如完整路径），由 parser 还原。Stream 每步返回一份 `String`，其 parser 用 `rawinput` 读到单元素列表。
+
+**Pure 是对上层输出的 fmap。** Pure 用 `rawinput` 读直接 Input 交出的 list，返回变换后的 list：去重、排序、过滤都是整个 list 上的普通函数，检查不通过时 `raise`。它没有 IO（Layer 不含 `MonadIO`），也不读资产（不声明 demands，Layer 不含 `Reads`）：输入只来自直接上游，和 Context 接收句柄输出一样不走 demands，因此不会出现 demands 的循环依赖。
 
 **Pure 只在生产链中。**
 
@@ -623,12 +625,12 @@ instance ParseFileNameLayer m => ParseFileNameHandler m where
 - 以 Pure 为 input 的只能是 Context 或 Pure，且至少有一个；一串 Pure 因此总是落到一个 Context。Excu、Scoped、Stream、Error 都不能以 Pure 为 input。
 - Pure 不作为 AST 末端，必须绑定 handler，不声明 demands。
 
-**Context 是细化 parser。** Context 把 raw 细化成资产的表示类型，作用类似 tokenize：即使解析结果仍是 list，也要经过 Context 才成为资产、才能被读取。值的变换写在 Pure 里，Context 不承担；这是写法上的分工，gen 不检查 parser 方法体做了什么。
+**Context 是细化 parser。** Context 把原始输出细化成资产的表示类型，作用类似 tokenize：即使解析结果仍是 list，也要经过 Context 才成为资产、才能被读取。值的变换写在 Pure 里，Context 不承担；这是写法上的分工，gen 不检查 parser 方法体做了什么。
 
 **执行。** 挂在一串 Pure 下的 Context，挂接点是这串 Pure 最上面的原子句柄：
 
-- **注入**：句柄在操作链里成功返回后，SDK 以根调用身份执行挂接 Context 的 getT；parser 的 raw 经这串 Pure 读到句柄本次的输出，句柄不再执行。
-- **驱动**：requests 或 alternative 的选择读取进入 getT 时，parser 的 raw 执行 Pure 的入口，Pure 的 raw 再执行句柄入口，由此启动整条生产链。
+- **注入**：句柄在操作链里成功返回后，SDK 以根调用身份执行挂接 Context 的 getT；parser 的 rawinput 经这串 Pure 读到句柄本次的输出，句柄不再执行。
+- **驱动**：requests 或 alternative 的选择读取进入 getT 时，parser 的 rawinput 执行 Pure 的入口，Pure 的 rawinput 再执行句柄入口，由此启动整条生产链。
 - **调用者**：Pure 的入口不改变调用者身份，句柄据此认出是被挂接的 Context 自己经 Pure 拉取，不重复注入。生成期的注入副本把中间的 Pure 就地展开，同样回答到句柄为止。
 - **失败**：Pure 的 `raise` 与 parser 失败相同：普通 Context 注入时留在注入内部，资产不发布；显式驱动时沿驱动方传播；持续 Context 的输出复用走 Stream 失败协议。
 
@@ -833,7 +835,7 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 | 读取声明 | `Gen.Frontend.Source` | GHC 解析 Types 的和类型，在独立 ghci 中加载 effects 与 ast；保留原文与位置 |
 | 解释注册 | `Gen.Composition` | 唯一资产来源、访问、Input、方法角色与绑定；`Names` 只拼写已选角色的名字 |
 | 合成驱动 | `Gen.Booter` | 以解析后的 effect 原型编号 workflow，确定 alternative、会话、挂载、输出连接及控制流已经承担的读取 |
-| 合成装配 | `Gen.Injector` | 以已解析声明计算 Layer、读取路由、有序 requests／Input、raw、入口操作、scope 与 Error 回调；检查表示类型与共享签名。`Injector.Super` 按挂载列表与捕获类别预选 superhandler 要调用的 Middleware |
+| 合成装配 | `Gen.Injector` | 以已解析声明计算 Layer、读取路由、有序 requests／Input、rawinput、入口操作、scope 与 Error 回调；检查表示类型与共享签名。`Injector.Super` 按挂载列表与捕获类别预选 superhandler 要调用的 Middleware |
 | 读取方法形状 | `Gen.Frontend.Shape` | handler 语法树 → 读取与控制结构；不解释来源或驱动 |
 | 方法、图与来源 | `Gen.Composition` | 组成方法、检查读取、计算 EffectGraph、ScopeTree 与供值／开启计划；完成后调用 Booter 补齐运行所需的静态驱动标记 |
 | 文本输出 | `Gen.Emit.*` | 渲染已确定的契约、入口与 Prototype；保留手写方法体；渲染注册快照不等于重新选择装配 |

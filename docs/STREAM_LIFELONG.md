@@ -15,7 +15,7 @@
     → 生成唯一装配及其依据
     → interpreter 执行已经装配的闭包
 
-业务作者需要知道本地输入输出、`require`、`raw`、`raise`，Stream handler 报告来源结束的 `streamEnd`，以及消费方不再消费时的 `endStream`，不需要知道 BootPlan、会话、游标或调度循环。
+业务作者需要知道本地输入输出、`require`、`rawinput`、`raise`，Stream handler 报告来源结束的 `streamEnd`，以及消费方不再消费时的 `endStream`，不需要知道 BootPlan、会话、游标或调度循环。
 
 自动装配只依赖明确契约，不从任意 IO 恢复作者意图。匹配不成立时生成期诊断，不按方法名相似度、运行速度或最后写入猜选。原子化约束保证组合可观察，不证明任意方法体足够细、无副作用或必然返回。
 
@@ -26,7 +26,7 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 | 结构 | 职责 |
 | --- | --- |
 | Stream effect | 第六种 typing；绑定的 handler 每次取得一份原始输入（`String`），只由生产会话驱动；来源没有下一份输入时以 `streamEnd` 结束（[9.4](#end)） |
-| parser | Context 绑定的 handler：用 `raw` 读取 Stream 本次取得的输入或原子句柄本次交出的输出，返回表示类型的值 |
+| parser | Context 绑定的 handler：用 `rawinput` 读取 Stream 本次取得的输入或原子句柄本次交出的输出，返回表示类型的值 |
 | Context.stream | `True` 声明持续资产；当且仅当它的 Input 链被持续驱动（挂在 Stream 下，或链上有 `streams` demand），且须同时 `require = True` |
 | Context.require | `True` 缓存最新值；读取已有绑定或交付视图，不生产；普通资产缺值按[Context 的等待与结束规则](CORE_DESIGN.md#context)处理，持续交付沿用本专题协议 |
 | 持续资产 | `stream = True` 的资产；每次发布保持声明的表示类型，读取是否带来重复执行由组合关系决定 |
@@ -41,7 +41,7 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 
 Stream 不进入 original chain，也不作为 AST target；它的持续运行由生产会话托管。original target 代表一条完整消费链的末端，其中有限执行的 Excu／Scoped 可以消费上游资产，同时把本次输出交给挂接的 Context 发布新资产。Stream 不向 AST 返回 Succ，它的结束由等待交付的单元和 lifelong 观察；这不限制消费节点本身的产值。
 
-socket、event、behavior 用来解释不同的驱动关系，但不是类型标签；它们在 SDK 中如何区分仍待确定，目前的写法见 [4.1 节](#drives)。挂在 Stream 下的 Context 与挂在原子句柄下的 Context 写法相同：parser 用 `raw` 取得本次输入。
+socket、event、behavior 用来解释不同的驱动关系，但不是类型标签；它们在 SDK 中如何区分仍待确定，目前的写法见 [4.1 节](#drives)。挂在 Stream 下的 Context 与挂在原子句柄下的 Context 写法相同：parser 用 `rawinput` 取得本次输入。
 
 <a id="contracts"></a>
 ## 3. 资产、方法与 beforegen
@@ -64,7 +64,7 @@ socket、event、behavior 用来解释不同的驱动关系，但不是类型标
 | `getT` | 执行 parser 并包装发布一个资产；会话每取得一份原始输入调用一次 |
 | `streamT` | 读取本次固定的持续资产值（SDK 实现，消费方经路由的 `require` 使用） |
 
-parser 没有另外的输入方法：`raw` 由会话本次取得的输入回答，读作单元素 list（`(: []) <$> next名字`），不再执行 Stream handler，与挂在原子句柄下的 Context 读取句柄输出相同（[主设计 4.3](CORE_DESIGN.md#context) 的原子输出挂接）。首次生成契约后才编写 Handlers。
+parser 没有另外的输入方法：`rawinput` 由会话本次取得的输入回答，读作单元素 list（`(: []) <$> next名字`），不再执行 Stream handler，与挂在原子句柄下的 Context 读取句柄输出相同（[主设计 4.3](CORE_DESIGN.md#context) 的原子输出挂接）。首次生成契约后才编写 Handlers。
 
 同一 refined asset 的所有访问方式共享固定表示 ADT 和唯一 Context 来源；读取的返回形态不同，不会产生第二种资产身份。声明与读取依据统一见[主设计：资产来源与访问约束](CORE_DESIGN.md#demand-contract)，包括 streams 在 Prototype 中的交付依据。
 
@@ -84,7 +84,7 @@ parser 没有另外的输入方法：`raw` 由会话本次取得的输入回答�
 | 没有 Stream，也没有 `streams` | `False` | 任意 | 普通单值资产 |
 | 以上任一持续资产 | `True` | `False` | 报错：`stream = True` 需要 `require = True` |
 
-另外：Context 必须声明 parser；Stream 必须声明 handler；以 Stream 为 input 的必须恰好是一个 Context（它的 parser），其他 effect 不能直接取得原始输入。持续资产经会话发布和交付，消费方不能声明 `requests "T"`。Stream 下的 parser 不把 Stream 当作前驱执行；挂在原子句柄下的 parser 用 `raw` 取得句柄输出，注入时由同次输出回答，不再执行句柄。
+另外：Context 必须声明 parser；Stream 必须声明 handler；以 Stream 为 input 的必须恰好是一个 Context（它的 parser），其他 effect 不能直接取得原始输入。持续资产经会话发布和交付，消费方不能声明 `requests "T"`。Stream 下的 parser 不把 Stream 当作前驱执行；挂在原子句柄下的 parser 用 `rawinput` 取得句柄输出，注入时由同次输出回答，不再执行句柄。
 
 ### 3.3 消费权限与读取类型
 
@@ -103,7 +103,7 @@ T 可以是业务保存的记录、累计统计或其他 ADT。若 A 的原子�
 
 ### 3.4 原子输入与源码约束
 
-Stream handler 一次返回一个原始输入，parser 一次解析一个。parser 的 `raw` 由会话本次取得的输入回答，不再执行 Stream handler 另取一份；Stream handler 由会话驱动，其他 handler 不能取得原始输入。Stream 有自己的数据结构：handler 仍是每次一份 `String`，不改成原子句柄的 list 输出，下面也不挂 Pure（[主设计：Pure](CORE_DESIGN.md#pure)）。Stream 自己的 Input（例如传感器连接的 Scoped）作为前驱在 handler 之前执行，跨生产步骤保持（见 8.1）。业务只写原生 instance、读取、ADT、局部计算和 raise，不手写 yield、递归连接、publish、subscribe、acknowledge 或回调参数；顶层白名单继续适用（[ASSETS](ASSETS.md)）。
+Stream handler 一次返回一个原始输入，parser 一次解析一个。parser 的 `rawinput` 由会话本次取得的输入回答，不再执行 Stream handler 另取一份；Stream handler 由会话驱动，其他 handler 不能取得原始输入。Stream 有自己的数据结构：handler 仍是每次一份 `String`，不改成原子句柄的 list 输出，下面也不挂 Pure（[主设计：Pure](CORE_DESIGN.md#pure)）。Stream 自己的 Input（例如传感器连接的 Scoped）作为前驱在 handler 之前执行，跨生产步骤保持（见 8.1）。业务只写原生 instance、读取、ADT、局部计算和 raise，不手写 yield、递归连接、publish、subscribe、acknowledge 或回调参数；顶层白名单继续适用（[ASSETS](ASSETS.md)）。
 
 Excu／Scoped 交出的 `[String]` 是原子句柄的输出，不能把空 list 释为 EOF。来源的结束只由 Stream handler 用 `streamEnd` 报告，见 [9.4 节](#end)。
 
@@ -183,11 +183,11 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
               size = previousSize + length text
               updated = Total count size
           in count `seq` size `seq` (updated, updated)
-        pure [show count, show size]
+        rawoutput [show count, show size]
 
     instance ParseTotalLayer m => ParseTotalHandler m where
       parseTotal = do
-        fields <- raw
+        fields <- rawinput
         case fields of
           [count, size] -> pure (Total (read count) (read size))
           _ -> raise (ParseTotalError "the counter gives a line count and a character count")
@@ -210,7 +210,7 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
 
 **规则。**
 
-- **已有 AST 执行**：gen 在同一个 lifelong 内沿 target 自身及 original Input 链确定 Context 所挂原子句柄的发布位置，写入 `ReuseOutput [NodeId]`；不把任意 requests 生产链中的同名操作算成全局复用者。会话没有独立 worker 或虚构的生产挂载；原子入口成功后调用挂接 parser，`raw` 由本次输出回答。parser 的生产记录继承原节点的 Origin、执行帧和 ScopeUser，资产保持这次生产的身份。不同独立调用不因 handler 名或值相同而合并。
+- **已有 AST 执行**：gen 在同一个 lifelong 内沿 target 自身及 original Input 链确定 Context 所挂原子句柄的发布位置，写入 `ReuseOutput [NodeId]`；不把任意 requests 生产链中的同名操作算成全局复用者。会话没有独立 worker 或虚构的生产挂载；原子入口成功后调用挂接 parser，`rawinput` 由本次输出回答。parser 的生产记录继承原节点的 Origin、执行帧和 ScopeUser，资产保持这次生产的身份。不同独立调用不因 handler 名或值相同而合并。
 - **独立派生**：没有上述 AST 发布位置时使用 Derive。会话每领取一条上游交付执行一次 parser 及其 Input 链，成功后发布一条；无新增量时等待，不能用 `requests` 补产。可以继续逐级派生。
 - **来源与驱动**：一条派生链只由一份持续资产驱动，不再读取其他持续资产。ReuseOutput 默认只接受一个发布位置；多个位置须处于同一个重复单元，且两两是 alternative 的互斥候选。gen 另把 target 订阅、chained 前置和持续资产的 alternative 选择读取纳入启动依赖检查，保守拒绝存在启动环的候选组合，不依赖 IO 时序证明进展。Input／demand 的环也照常拒绝。
 - **同单元的路径覆盖**：单元直接订阅或经独立 Derive 间接依赖自己产出的资产时，每条到达订阅的 workflow 路径必须此前已经过发布位置，或同轮有并行启动且必经的发布路径。alternative 只有每个候选都能供值才算必经，不能用其他候选可能发布来证明当前路径。跨单元的条件发布不要求每轮产出；读取方可以等待后续增量，或在发布单元结束并排空后退出。
@@ -382,13 +382,13 @@ R 为一个会话当前登记的读取方数量，N 为保留的条目数。会�
 
 ### 8.1 生产路径
 
-    Receive：Stream 单步取得原始输入 → 安装为 parser 的本次输入（raw） → parser 解析并发布一次 → 下一步
+    Receive：Stream 单步取得原始输入 → 安装为 parser 的本次输入（rawinput） → parser 解析并发布一次 → 下一步
     Derive：领取一条上游交付 → 将该交付固定为本步输入 → parser 沿 Input 链执行被驱动的句柄，解析并发布一次 → 下一步
-    ReuseOutput：原 AST 位置执行原子句柄 → 挂接 parser 读取本次 raw 并发布一次 → 原 workflow 按已有控制流继续
+    ReuseOutput：原 AST 位置执行原子句柄 → 挂接 parser 读取本次原始输出并发布一次 → 原 workflow 按已有控制流继续
 
 parser 的包装发布一次；会话不再次发布返回值，也不再调用一次 parser。Receive／Derive 的每一步是一次独立的受控调用（自己的 Origin 与捕获环境），从进入 lifelong 时保存的交接新副本开始：外层已经捕获的值（例如 alternative 选择时读到的配置）在生产端与消费端一致。interpreter 托管的会话没有交接。ReuseOutput 的 parser 是原节点内的挂接调用，保留该节点的 Origin、执行帧与 ScopeUser；记录自己的 Context activation，但不另开一个根执行、不重放原子操作。
 
-Receive 在交出原始输入时，也把同一步来源执行已捕获的资源 Binding 交给 parser；parser 的 raw 使用这次输入，因此不重跑来源来恢复资源。交接保留原 Binding 的生产身份、执行帧与共享 ownership，来源与 parser 使用同一步的 ScopeUser。这是同一生产步骤内的资源交接，不放宽普通跨入口 Handoff 对资源绑定的过滤，普通资产按共享供值协议读取；不能扫描其他打开的实例来补值。资源与开启参数仍按[既有 scope 规则](CORE_DESIGN.md#scope)区分，不因来源在会话里运行而重分类。
+Receive 在交出原始输入时，也把同一步来源执行已捕获的资源 Binding 交给 parser；parser 的 rawinput 使用这次输入，因此不重跑来源来恢复资源。交接保留原 Binding 的生产身份、执行帧与共享 ownership，来源与 parser 使用同一步的 ScopeUser。这是同一生产步骤内的资源交接，不放宽普通跨入口 Handoff 对资源绑定的过滤，普通资产按共享供值协议读取；不能扫描其他打开的实例来补值。资源与开启参数仍按[既有 scope 规则](CORE_DESIGN.md#scope)区分，不因来源在会话里运行而重分类。
 
 Receive 的来源与 parser 共用本步使用登记，Derive 每次解析使用独立登记；本步的业务、诊断与受控结果消费结束后撤销。跨步骤的复用由会话的待用执行帧保持，按实际参数生产身份匹配实例，不再让一份 ScopeUser 累积持有全部历次实例。来源正常结束时仍保留会话待用预约到退役；详细边界见[第 9.3 节](#binding-retention)，停止与退役时机见[第 9.5 节](#consumer-end)。ReuseOutput 沿原消费节点与执行帧回收，没有额外生产任务或会话预约。
 
@@ -426,7 +426,7 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
 | 共同责任 | 独立生产步骤 | lifelong 消费轮次 | SDK 落点 |
 | --- | --- | --- | --- |
 | 使用已确定的驱动关系 | Receive／Derive 挂载；ReuseOutput 直接复用原节点 | 单元、订阅节点、本地发布与派生关系 | Composition 组织计算；Booter 输出 Prototype 驱动事实；Injector 给出入口装配 |
-| 为实际调用建立身份与固定捕获 | 每次 lower 创建 Origin／Activation；Receive 在本步交接 raw 和资源 | 交付由 DeliveryFrame 固定，各 target 有各自的调用身份 | Runtime、Runtime.App；Binding 的原生产身份不因交接改变 |
+| 为实际调用建立身份与固定捕获 | 每次 lower 创建 Origin／Activation；Receive 在本步交接原始输入和资源 | 交付由 DeliveryFrame 固定，各 target 有各自的调用身份 | Runtime、Runtime.App；Binding 的原生产身份不因交接改变 |
 | 区分实际使用、未来待用与绑定保留 | 本步 ScopeUser／Retention，会话未来使用帧 | 调用 ScopeUser、本轮 Retention／ExecutionFrame 及外层待用 | Runtime.Frame、Retention、Graph 与 Scope，详见 [8.1](#production)、[9.3](#binding-retention) |
 | 结束只影响其所属边界 | 来源封口后仍可排空；退役才撤销会话预约 | 节点结束订阅、单元结束、lifelong 返回各自处理 | Runtime.sessionLauncher、Execution.repeatUnit、Session；详见 [正常结束](#end)、[消费方结束](#consumer-end) |
 | 退出后再判断资源是否不可达 | 步骤撤销实际使用，退役停止并等待 worker | 受控子任务汇合，轮帧结束，撤销执行保留 | 两侧均进入现有 Graph／Scope 回收；失败、取消见 [第 9 节](#failures) |
@@ -521,7 +521,7 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
 
 `streamEnd` 不改变注册、parser 与消费方 handler 的写法；不调用 `streamEnd` 的 Stream 行为与此前相同。LinesDemo 读完四行后 `streamEnd`，打印与统计单元排空后退出并封住 `RunningTotal`；显示单元领完统计增量后退出，lifelong 返回，`Report` 读取最终统计（输出复用见 [4.2 节](#derive)）。`TextLine` 的读取方全部离开时会话退役，输入文件随之关闭，早于 `Report`。parser、Excu、Scoped 的 Layer 里没有 `StreamEnds`，在它们的方法体里写 `streamEnd` 由 GHC 拒绝。
 
-**三个出口。** Stream handler 的方法体有三个出口：返回一份原始输入、`raise` 失败、`streamEnd` 正常结束。结束由来源在取下一份输入的这一步自己报告，不另设“是否结束”的查询方法。`raw` 不在其中：它是下一层（parser）读取第一种出口的方式。
+**三个出口。** Stream handler 的方法体有三个出口：返回一份原始输入、`raise` 失败、`streamEnd` 正常结束。结束由来源在取下一份输入的这一步自己报告，不另设“是否结束”的查询方法。`rawinput` 不在其中：它是下一层（parser）读取第一种出口的方式。
 
 | 出口 | 之后发生什么 |
 | --- | --- |
@@ -598,7 +598,7 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
       printLine = do
         Line text <- require @Line
         if text == "stop" then endStream else liftIO (putStrLn text)
-        pure []
+        rawoutput []
 
 **谁拿到 `endStream`。** 自己以 `streams` 订阅持续资产的 Excu（`Gen.Composition` 的绑定能力规则，2026-11-17 修订）。它是被这份资产驱动的消费方，`endStream` 结束的是它自己的订阅。`streams` 只出现在被驱动的位置：lifelong 节点的订阅（[5.2 节](#static)），或独立 Derive／ReuseOutput 被驱动的 Input 链。所以运行时按当前调用的位置就能确定订阅，业务不用说明结束哪一份资产。
 

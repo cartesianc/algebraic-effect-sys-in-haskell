@@ -25,7 +25,7 @@ data MethodRole
   -- 挂在 Stream 下的解析器仍调用 Stream 方法；运行包装用本次原始输入回答，不再获取一次。
   | StreamHandler
   | ContextStream
-  -- Middleware 的入口：只在 Root 级调用点（交出值、raw、raise）上同步执行，不是链入口，也不在其他方法体中被调用。
+  -- Middleware 的入口：只在 Root 级调用点（交出值、rawinput、raise）上同步执行，不是链入口，也不在其他方法体中被调用。
   | MiddlewareHook
   deriving (Eq, Ord, Show, Read, Generic, NFData)
 

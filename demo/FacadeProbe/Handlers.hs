@@ -1,4 +1,4 @@
--- handler 是不带参数的类方法：按表示类型 require 资产，用 raw 读取挂接上游的本次输出，
+-- handler 是不带参数的类方法：按表示类型 require 资产，用 rawinput 读取挂接上游的本次输出，
 -- 用 raise 报告自己的失败；不出现上游 effect、scope、细化资产或 effect 错误。
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -11,7 +11,7 @@
 
 module FacadeProbe.Handlers () where
 
-import Framework.SDK (Raises(..), Raw(..), Reads(..))
+import Framework.SDK (Raises(..), Raw(..), Reads(..), rawoutput)
 import FacadeProbe.Generated.Effects
 import FacadeProbe.Types
 import Control.Concurrent (threadDelay)
@@ -43,35 +43,35 @@ instance OpenTextFileLayer m => OpenTextFileHandler m where
   openTextFile = do
     TextFile path _ <- require @TextFile
     liftIO (putStrLn ("[open] " ++ path))
-    pure []
+    rawoutput []
 
 instance CloseTextFileLayer m => CloseTextFileHandler m where
   closeTextFile = do
     TextFile path file <- require @TextFile
     liftIO (hClose file >> putStrLn ("[close] " ++ path))
-    pure []
+    rawoutput []
 
 instance WriteTextLayer m => WriteTextHandler m where
   writeText = do
     TextFile path file <- require @TextFile
     Body text <- require @Body
     liftIO (hPutStr file text >> hFlush file >> putStrLn ("[write] " ++ path))
-    pure []
+    rawoutput []
 
 instance MarkReadLayer m => MarkReadHandler m where
   markRead = do
     liftIO (putStrLn "[mark] before reading")
-    pure []
+    rawoutput []
 
 instance ReadTextLayer m => ReadTextHandler m where
   readText = do
     path <- require @FilePath
     contents <- liftIO (readFile' path)
-    pure [contents]
+    rawoutput [contents]
 
 instance CountLinesLayer m => CountLinesHandler m where
   countLines = do
-    output <- raw
+    output <- rawinput
     contents <- case output of
       [text] -> pure text
       _ -> raise (CountLinesError "no text")
@@ -81,7 +81,7 @@ instance ShowCountLayer m => ShowCountHandler m where
   showCount = do
     LineCount count <- require @LineCount
     liftIO (putStrLn ("[lines] " ++ show count))
-    pure []
+    rawoutput []
 
 instance InspectFileLayer m => InspectFileHandler m where
   inspectFile = do
@@ -92,13 +92,13 @@ instance InspectFileLayer m => InspectFileHandler m where
 instance DescribeBlankLayer m => DescribeBlankHandler m where
   describeBlank = do
     liftIO (putStrLn "[state] blank")
-    pure []
+    rawoutput []
 
 instance DescribeFilledLayer m => DescribeFilledHandler m where
   describeFilled = do
     Body text <- require @Body
     liftIO (putStrLn ("[state] filled, " ++ show (length text) ++ " characters"))
-    pure []
+    rawoutput []
 
 instance NewCounterLayer m => NewCounterHandler m where
   newCounter = liftIO (FeedCounter <$> newIORef 0)
@@ -106,7 +106,7 @@ instance NewCounterLayer m => NewCounterHandler m where
 instance OpenCounterLayer m => OpenCounterHandler m where
   openCounter = do
     FeedCounter _ <- require @FeedCounter
-    pure []
+    rawoutput []
 
 instance NextALayer m => NextAHandler m where
   nextA = do
@@ -126,7 +126,7 @@ instance NextBLayer m => NextBHandler m where
 
 instance ParseLevelLayer m => ParseLevelHandler m where
   parseLevel = do
-    reading <- concat <$> raw
+    reading <- concat <$> rawinput
     case reads reading of
       [((number, value), "")] -> pure (Level number value)
       _ -> raise (ParseLevelError reading)
@@ -137,4 +137,4 @@ instance ShowLevelLayer m => ShowLevelHandler m where
     Level number value <- require @Level
     liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show number))
     when (number >= 3) (raise (ShowLevelError "enough deliveries"))
-    pure []
+    rawoutput []

@@ -18,7 +18,7 @@
 - 代码的书写形态属于架构契约。新增功能先展示受影响的资产、注册、instance 与 workflow 写法，再说明装配语义；重构保持关系的源码可见性与可提取性。同步实际接口、示例与设计说明，目标接口标明未实现；详见[代码即文档](docs/CORE_DESIGN.md#code-as-documentation)。
 - 程序只有 workflow 入口，保持 `main = interpreter ast effects`；不提供绕过 AST 的单末端业务入口。
 - Handlers 在生成前保持原生 Haskell。先生成同步的契约接口，再写 instance；手写和 Generated/Handlers 分别加载，避免重复 instance。
-- handler 是不带参数的原子类方法，写作 `instance XxxLayer m => XxxHandler m`：按表示类型 `require`，挂接的 parser 与 Pure 用 `raw` 读上层交出的 `[String]`，失败用本 handler 的 `raise`，Stream handler 在来源没有下一份输入时用 `streamEnd` 正常结束，以 `streams` 订阅持续资产的 Excu 用 `endStream` 结束自己的订阅。一个 handler 可注册到多个 effect。Input 前驱与 `requests` 驱动由 gencode 装配进 effect 入口；方法体不调用上游、其他 handler 或 effect 方法，SDK 不补跑未声明的上游。
+- handler 是不带参数的原子类方法，写作 `instance XxxLayer m => XxxHandler m`：按表示类型 `require`，挂接的 parser 与 Pure 用 `rawinput` 读上层交出的 `[String]`，原子句柄用 `rawoutput` 交出列表，失败用本 handler 的 `raise`，Stream handler 在来源没有下一份输入时用 `streamEnd` 正常结束，以 `streams` 订阅持续资产的 Excu 用 `endStream` 结束自己的订阅。一个 handler 可注册到多个 effect。Input 前驱与 `requests` 驱动由 gencode 装配进 effect 入口；方法体不调用上游、其他 handler 或 effect 方法，SDK 不补跑未声明的上游。
 - 业务模块顶层只允许类型声明、instance、`effects`、具名 AST 与 `main`，禁止顶层普通函数；值操作写在 handler 方法体内，方法体内的局部函数与 lambda 不限制。规则见 [ASSETS](docs/ASSETS.md)。
 - 确定性约束 refined asset 的唯一 Context 来源和装配规则；同一来源多次发布时，普通 require 按既定最新值与固定捕获协议读取，具体生产可受调度影响，不因此拒绝合法共享供值。完整边界见[主设计](docs/CORE_DESIGN.md#composition-polymorphism)。
 - 每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；同一资产可声明多种合法访问方式，一个消费者可依赖多个资产。读取按“表示类型 + effect”路由到唯一资产，一个 effect 内表示类型不重复，见[资产来源与访问约束](docs/CORE_DESIGN.md#demand-contract)；不新增位置参数或提前取值。
@@ -37,7 +37,7 @@
 | 任务 | 必须读取 |
 | --- | --- |
 | 改注册、方法签名或 beforegen | [设计方法](docs/CORE_DESIGN.md#principles)、[运行语义：注册](docs/CORE_DESIGN.md#registration)、[指南](docs/GUIDE.md) |
-| 改 requests／require／raw／注入 | [运行语义：Context](docs/CORE_DESIGN.md#context)、[入口装配](docs/CORE_DESIGN.md#calls)、[图与来源](docs/EFFECT_GRAPH.md) |
+| 改 requests／require／rawinput／注入 | [运行语义：Context](docs/CORE_DESIGN.md#context)、[入口装配](docs/CORE_DESIGN.md#calls)、[图与来源](docs/EFFECT_GRAPH.md) |
 | 改 branch 或启动 | [运行语义：workflow](docs/CORE_DESIGN.md#workflow)、[图与身份](docs/EFFECT_GRAPH.md) |
 | 改 scope、归属、cleanup 或 Error | [运行语义：scope](docs/CORE_DESIGN.md#scope)、[Error](docs/CORE_DESIGN.md#error)、[ScopeTree](docs/EFFECT_GRAPH.md) |
 | 改 gen：流水线阶段、结构、缓存或资产检查 | [gen 是编译器](docs/CORE_DESIGN.md#compiler)、[编译流水线](docs/CORE_DESIGN.md#generation)、[图与生成](docs/EFFECT_GRAPH.md)、[资产约束](docs/ASSETS.md) |

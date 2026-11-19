@@ -10,7 +10,7 @@
 
 module LinesDemo.Handlers () where
 
-import Framework.SDK (StreamEnds(..), Raises(..), Raw(..), Reads(..))
+import Framework.SDK (StreamEnds(..), Raises(..), Raw(..), Reads(..), rawoutput)
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
 import Control.Monad.IO.Class (liftIO)
@@ -21,7 +21,7 @@ import System.IO (IOMode(ReadMode), hClose, hGetLine, hIsEOF, openFile)
 instance AnnounceLayer m => AnnounceHandler m where
   announce = do
     liftIO (putStrLn "Reading the input line by line.")
-    pure []
+    rawoutput []
 
 -- 输入文件在第一次读行时由 InputSession 取得，之后的各步骤共用同一个 Handle。
 instance AcquireInputLayer m => AcquireInputHandler m where
@@ -35,13 +35,13 @@ instance OpenInputLayer m => OpenInputHandler m where
   openInput = do
     InputFile path _ _ <- require @InputFile
     liftIO (putStrLn ("[open] " ++ path))
-    pure []
+    rawoutput []
 
 instance CloseInputLayer m => CloseInputHandler m where
   closeInput = do
     InputFile path file _ <- require @InputFile
     liftIO (hClose file >> putStrLn ("[close] " ++ path))
-    pure []
+    rawoutput []
 
 -- 一次读一行。文件读完时 streamEnd：这一步不交出输入，parser 不执行，生产会话正常结束；
 -- 已经发布的行仍会交给 PrintLine 处理完。
@@ -53,14 +53,14 @@ instance NextLineLayer m => NextLineHandler m where
 
 instance ParseLineLayer m => ParseLineHandler m where
   parseLine = do
-    text <- concat <$> raw
+    text <- concat <$> rawinput
     pure (Line text)
 
 instance PrintLineLayer m => PrintLineHandler m where
   printLine = do
     Line text <- require @Line
     liftIO (putStrLn ("line: " ++ text))
-    pure []
+    rawoutput []
 
 -- 由 TextLine 驱动：每来一行执行一次。计数是业务状态，SDK 只交付本次 Line。
 instance CountTextLayer m => CountTextHandler m where
@@ -72,11 +72,11 @@ instance CountTextLayer m => CountTextHandler m where
           size = previousSize + length text
           updated = Total count size
       in count `seq` size `seq` (updated, updated)
-    pure [show count, show size]
+    rawoutput [show count, show size]
 
 instance ParseTotalLayer m => ParseTotalHandler m where
   parseTotal = do
-    fields <- raw
+    fields <- rawinput
     case fields of
       [count, size] -> pure (Total (read count) (read size))
       _ -> raise (ParseTotalError "the counter gives a line count and a character count")
@@ -85,10 +85,10 @@ instance ShowTotalLayer m => ShowTotalHandler m where
   showTotal = do
     Total count size <- require @Total
     liftIO (putStrLn ("  so far: " ++ show count ++ " lines, " ++ show size ++ " characters"))
-    pure []
+    rawoutput []
 
 instance ReportLayer m => ReportHandler m where
   report = do
     Total count size <- require @Total
     liftIO (putStrLn ("The selected total is: " ++ show count ++ " lines, " ++ show size ++ " characters."))
-    pure []
+    rawoutput []

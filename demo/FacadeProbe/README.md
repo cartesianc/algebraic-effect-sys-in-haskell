@@ -55,18 +55,18 @@ instance OpenTextFileLayer m => OpenTextFileHandler m where
   openTextFile = do
     TextFile path _ <- require @TextFile
     liftIO (putStrLn ("[open] " ++ path))
-    pure []
+    rawoutput []
 
 instance WriteTextLayer m => WriteTextHandler m where
   writeText = do
     TextFile path file <- require @TextFile
     Body text <- require @Body
     liftIO (hPutStr file text >> hFlush file >> putStrLn ("[write] " ++ path))
-    pure []
+    rawoutput []
 
 instance CountLinesLayer m => CountLinesHandler m where
   countLines = do
-    output <- raw
+    output <- rawinput
     contents <- case output of
       [text] -> pure text
       _ -> raise (CountLinesError "no text")
@@ -77,7 +77,7 @@ instance ShowLevelLayer m => ShowLevelHandler m where
     Level number value <- require @Level
     liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show number))
     when (number >= 3) (raise (ShowLevelError "enough deliveries"))
-    pure []
+    rawoutput []
 ```
 
 交付编号由每个来源自己的 `FeedCounter` 保存并发布到 `Level`；SDK 不从全量记录推导它。两个来源的 Counter 和 Scoped 注册见 [Effects.hs](Effects.hs)，共用原子获取和消费 handler。
@@ -116,7 +116,7 @@ instance FrameworkRuntime.Reads (TextFile) (Wrap "WriteReport") where
   require = Wrap ((\(FrameworkGenerated.OpenedReport value) -> value) <$> readOpenedReport)
 
 instance FrameworkRuntime.Raw (Wrap "ReportCounter") where
-  raw = Wrap (runReadReport)
+  rawinput = Wrap (runReadReport)
 ```
 
 ## 实测结果
@@ -126,7 +126,7 @@ instance FrameworkRuntime.Raw (Wrap "ReportCounter") where
 - 除 `parallel` 的交错和两个 lifelong 单元的交错外，输出行相同；写入的 `report.txt`、`reply.txt` 内容相同；每个 scope 各开关一次。
 - `alternative` 按资产状态选择候选（`[state] filled, 42 characters`）；Stream parser 和 lifelong 消费者按各自资产工作。
 - lifelong 结束时报 `origin = "ShowA"`；`detail` 由原型的 `ShowAFailure` 变为 `ShowLevelFailure`：失败属于 handler，发生在哪个 effect 记在 `origin`。
-- 原型实测时 GHC 放过的“handler 调用另一个 handler 的类方法”，现在由 gencode 报错；读取未声明的表示类型、在非挂接 handler 中使用 `raw`，同样在生成期报错。以上报错路径本次没有逐一触发。
+- 原型实测时 GHC 放过的“handler 调用另一个 handler 的类方法”，现在由 gencode 报错；读取未声明的表示类型、在非挂接 handler 中使用 `rawinput`，同样在生成期报错。以上报错路径本次没有逐一触发。
 
 ## 运行
 

@@ -492,7 +492,7 @@ instance ContextStore env (App env cause) where
         inside = environment { caller = Nothing, errorHandlers = []
                              , replays = (method, raw) : replays environment }
     when allowed $ () <$ liftIO (runExceptT (runReaderT action inside))
-  -- 仍在原始操作的执行帧与资源使用登记内解析；只覆盖 raw，不另外 lower 一次生产链。
+  -- 仍在原始操作的执行帧与资源使用登记内解析；只覆盖 rawinput，不另外 lower 一次生产链。
   -- 持续 parser 的失败保留原来的诊断和监督路径，不能套用普通挂接的吞错规则。
   injectStreamOutput method raw (AppRun action) = AppRun $ do
     environment <- ask
@@ -845,7 +845,7 @@ runClose name wrap (AppRun action) = AppRun $ do
 
 -- Middleware 的执行载体 ---------------------------------------------------------
 
--- gen 按挂载标注特化 Root 的进入／返回、raw 与 raise 捕获，运行时没有 Middleware 目录。
+-- gen 按挂载标注特化 Root 的进入／返回、rawinput 与 raise 捕获，运行时没有 Middleware 目录。
 -- 这里只提供 Middleware handler 的载体：本次调用点的捕获作为只读环境，执行期间不进入调用中的 open／close 尝试。
 data HookEvent = EnterEvent String | OutputEvent String [String] | RawEvent String [String] | ErrorEvent String String
 

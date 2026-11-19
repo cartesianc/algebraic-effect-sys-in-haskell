@@ -11,7 +11,7 @@
 
 module FileDemo.Handlers () where
 
-import Framework.SDK (Raises(..), Raw(..), Reads(..))
+import Framework.SDK (Raises(..), Raw(..), Reads(..), rawoutput)
 import FileDemo.Generated.Effects
 import FileDemo.Types
 import Control.Exception (bracketOnError, displayException)
@@ -27,20 +27,20 @@ import System.IO.Error (tryIOError)
 
 -- 示例专用文件：首次运行创建，后续追加；在项目根目录运行。原子句柄交出路径 list。
 instance LocateFileLayer m => LocateFileHandler m where
-  locateFile = pure ["demo" </> "FileDemo" </> "output.txt"]
+  locateFile = rawoutput ["demo" </> "FileDemo" </> "output.txt"]
 
--- Pure：raw 是上层交出的路径 list；逐项检查后原样交给下面的 parser。没有 IO，也不读资产。
+-- Pure：rawinput 是上层交出的路径 list；逐项检查后原样交给下面的 parser。没有 IO，也不读资产。
 instance ValidateFileNameLayer m => ValidateFileNameHandler m where
   validateFileName = do
-    paths <- raw
+    paths <- rawinput
     unless (all (\path -> not (null path) && '\0' `notElem` path) paths) $
       raise (ValidateFileNameError "File name must be nonempty and contain no NUL character")
-    pure paths
+    rawoutput paths
 
 -- Context 是细化 parser：通过检查的 list 恰好有一个路径时，才是文件名资产。
 instance ParseFileNameLayer m => ParseFileNameHandler m where
   parseFileName = do
-    paths <- raw
+    paths <- rawinput
     case paths of
       [path] -> pure path
       _ -> raise (ParseFileNameError "Expected exactly one file name")
@@ -58,7 +58,7 @@ instance AcquireFileLayer m => AcquireFileHandler m where
 
 -- requests 在开启前驱动 FileResource 打开文件；开启期间 Context 保存真实 Handle，后续 require 复用它。
 instance OpenSessionLayer m => OpenSessionHandler m where
-  openSession = pure []
+  openSession = rawoutput []
 
 instance CloseSessionLayer m => CloseSessionHandler m where
   closeSession = do
@@ -66,7 +66,7 @@ instance CloseSessionLayer m => CloseSessionHandler m where
     outcome <- liftIO (tryIOError (hClose file))
     either (raise . CloseSessionError . displayException) pure outcome
     liftIO (putStrLn ("[close] " ++ path))
-    pure []
+    rawoutput []
 
 -- 读取是原子句柄：只执行 IO，把读到的文本交出；FileText 由挂在它下面的 ExtractFileText 解析。
 -- Input FileSession 已在它之前开启（同份已开启的 scope 不再执行 open）。
@@ -82,13 +82,13 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
           then pure (reverse characters)
           else hGetChar file >>= \character -> next (character : characters)) []
     contents <- either (raise . ReadFileContentError . displayException) pure outcome
-    pure [contents]
+    rawoutput [contents]
 
--- parser 挂在读取句柄下：raw 是句柄本次交出的 list（一段文本），解析成文件状态（和类型）。
--- alternative 的选择读取驱动它：raw 执行读取句柄，读一次文件。
+-- parser 挂在读取句柄下：rawinput 是句柄本次交出的 list（一段文本），解析成文件状态（和类型）。
+-- alternative 的选择读取驱动它：rawinput 执行读取句柄，读一次文件。
 instance ParseFileTextLayer m => ParseFileTextHandler m where
   parseFileText = do
-    contents <- raw
+    contents <- rawinput
     text <- case contents of
       [whole] -> pure whole
       _ -> raise (ParseFileTextError "File read returned no text")
@@ -120,7 +120,7 @@ instance WriteFirstLineLayer m => WriteFirstLineHandler m where
       hFlush file
       putStrLn ("[write] " ++ path ++ ": " ++ line)
     either (raise . WriteFirstLineError . displayException) pure outcome
-    pure []
+    rawoutput []
 
 instance AppendLineLayer m => AppendLineHandler m where
   appendLine = do
@@ -135,4 +135,4 @@ instance AppendLineLayer m => AppendLineHandler m where
       hFlush file
       putStrLn ("[write] " ++ path ++ ": " ++ line)
     either (raise . AppendLineError . displayException) pure outcome
-    pure []
+    rawoutput []

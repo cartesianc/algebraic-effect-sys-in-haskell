@@ -3,7 +3,7 @@
 本文是[主设计第 5 章](CORE_DESIGN.md)引用的详细规范，负责 Prototype、来源分析、RuntimeGraph、ScopeTree 与缓存。范围为 Stage 1/2 的协议；Stream／lifelong 在原型中的表示（`LifelongAt`、会话挂载、`protoSessions`、`FromSession`）见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static)，运行接入见[第 7 节](STREAM_LIFELONG.md#sessions)。
 
 
-业务入口仍为 `main = interpreter ast effects`，手写 handler 仍使用原生 Haskell 的 `instance`、`do`、模式匹配和读取（`require @T`、`raw`）。gen 的组合状态机（[Framework.Gen.Composition](../sdk/Framework/Gen/Composition.hs)）统一计算注册、方法、workflow、链定义与挂载、effect graph 和 ScopeTree，输出唯一的 `generatedPrototype :: SDK.Prototype MethodGen` 显式 ADT 常量；数据模型在 `Framework.Prototype`。运行时校验并直接使用这份原型，不预执行 Context 或资源 IO。
+业务入口仍为 `main = interpreter ast effects`，手写 handler 仍使用原生 Haskell 的 `instance`、`do`、模式匹配和读取（`require @T`、`rawinput`）。gen 的组合状态机（[Framework.Gen.Composition](../sdk/Framework/Gen/Composition.hs)）统一计算注册、方法、workflow、链定义与挂载、effect graph 和 ScopeTree，输出唯一的 `generatedPrototype :: SDK.Prototype MethodGen` 显式 ADT 常量；数据模型在 `Framework.Prototype`。运行时校验并直接使用这份原型，不预执行 Context 或资源 IO。
 
 生成前可由 GHC／HLS 检查手写模块是[核心设计约束](CORE_DESIGN.md#beforegen)。已有契约接口提供类方法与 ADT 类型关系；生成器从合法 Haskell 中提取支持的结构，不要求先把业务源码转换成另一种语法。宿主语言类型正确与静态 effect 结构可提取需要分别满足。
 
@@ -67,13 +67,13 @@ data Execution
 
 Stage 3 复用这两个 Boot 构造：Receive／Derive 的每个独立生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。独立会话每次生产使用新的 ScopeUser，其中 Receive 的来源与紧接的 parser 共用本步登记；跨步骤的待用由会话执行帧保持。lifelong 的消费 target 同样每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
 
-本轮 ReuseOutput 连接沿用已有 AST 执行：`SessionProto.sessionPlan` 保存 `ReuseOutput [NodeId]`，指向同一 lifelong 内的具体原子输出发布位置，`sessionMounts` 为空。gen 沿 target 自身与 original Input 链定位挂接句柄；所有这些持续副产物都进入会话集合，包括仅供后继读取的产物。gen 仍保留 original chain 与 Context chain 的独立定义；执行时挂接 parser 用同次 raw，不另建根调用或生产 worker。parser 的 `RequestBoot` 继承原节点的 Origin、执行帧和 ScopeUser。其交付只含持续资产，原 AST 调用的普通产物写入运行级最新值，不作为该交付的固定伴随值。多个发布位置只允许同单元、两两 alternative 互斥；不按调度选取，不合并同名 handler 的独立调用。组合机器以订阅、chained 前置和持续 alternative 选择读取建立启动依赖，拒绝有环组合。完整规则见 [Stream 第 4.2 节](STREAM_LIFELONG.md#derive)，实现状态见 [Next stages](NEXT_STAGES.md#stage-6-reuse)。
+本轮 ReuseOutput 连接沿用已有 AST 执行：`SessionProto.sessionPlan` 保存 `ReuseOutput [NodeId]`，指向同一 lifelong 内的具体原子输出发布位置，`sessionMounts` 为空。gen 沿 target 自身与 original Input 链定位挂接句柄；所有这些持续副产物都进入会话集合，包括仅供后继读取的产物。gen 仍保留 original chain 与 Context chain 的独立定义；执行时挂接 parser 用同次原子输出，不另建根调用或生产 worker。parser 的 `RequestBoot` 继承原节点的 Origin、执行帧和 ScopeUser。其交付只含持续资产，原 AST 调用的普通产物写入运行级最新值，不作为该交付的固定伴随值。多个发布位置只允许同单元、两两 alternative 互斥；不按调度选取，不合并同名 handler 的独立调用。组合机器以订阅、chained 前置和持续 alternative 选择读取建立启动依赖，拒绝有环组合。完整规则见 [Stream 第 4.2 节](STREAM_LIFELONG.md#derive)，实现状态见 [Next stages](NEXT_STAGES.md#stage-6-reuse)。
 
 启动图之外还检查同单元的路径覆盖：直接订阅或经独立 Derive 间接依赖自身输出时，每条到达订阅的 workflow 路径都须先经过发布位置，或同轮有并行且必经的发布路径；alternative 取各候选的必经交集。跨单元可以条件发布，无须每轮都产出。ReuseOutput parser 及其 requests 路径只允许读取原操作的驱动持续资产，避免挂接过程中再等待其他持续来源；普通资产读取仍按原来源协议检查。
 
 Booter 把根为本单元 ReuseOutput 的直接及单上游 Derive 来源写成静态标记，运行时将标记关联到实际轮帧。全部发布位置已完成或跳过、且派生成功步骤已追平上游累计发布数时，才能确认本轮不会再有交付；领取游标不证明处理完成。未知位置继续等待，其他单元及 Receive 来源不使用本轮耗尽判断。会话提交和节点退休共用通知，判断后再次读取会话，避免漏掉刚完成的发布。
 
-Scoped.open 可能复用实例而不交出新 raw，因此它的 AST 位置不能单独证明本轮必有发布。同单元直接或经 Derive 等待这种 ReuseOutput 时，gen 当前保守拒绝；跨单元等待与独立 Derive 仍保留。精确证明某次开启必为 fresh 后放行尚未实现。
+Scoped.open 可能复用实例而不交出新的原子输出，因此它的 AST 位置不能单独证明本轮必有发布。同单元直接或经 Derive 等待这种 ReuseOutput 时，gen 当前保守拒绝；跨单元等待与独立 Derive 仍保留。精确证明某次开启必为 fresh 后放行尚未实现。
 
 这里的“入口使用登记”是原有有限使用闭包的资源含义：一次 AST 入口内，实际 open／require 选中的 scope 计入同一份使用。`ScopeUser` 保留原有 `Unique` 协调身份，并新增 `scopeUserExecution`；同一入口的 ctx chain 使用同一个 `ScopeUser`。`scopeUsers` 同时携带使用者身份与 `Execution`，不以 AST 位置替代并发使用协调。
 
@@ -129,7 +129,7 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 `composeMethods` 按每个绑定检查有资源 Context 的 Scoped：已声明的 close 方法体必须包含该资源的读取。检查使用 `resolve` 已完成的表示类型到细化资产路由；另一生命周期方法的读取、入口自动装配的 requests、其他资产的读取都不能代替本方法的读取。同一个 handler 绑定到多个 effect 时，分别按各自资源检查；读取该资源的分支契约也计入，因为投影首先读取同一个资源 Binding。诊断包含 Scoped、close 角色、handler、资源资产及 Context 来源。
 
-这落实的是 close 的实例定位契约。open 的资源已由生成入口按 requests 生产并认领，open 方法体可以不读取资源，例如 FileDemo 的 `openSession = pure []`；close 则依赖读取来定位实例和取得关闭锁。无资源 Context 的 scope、未声明的 close 不需要这项读取。首次缺少 Handlers 的契约生成暂不检查；已有方法体时每次在图缓存查询之前检查。
+这落实的是 close 的实例定位契约。open 的资源已由生成入口按 requests 生产并认领，open 方法体可以不读取资源，例如 FileDemo 的 `openSession = rawoutput []`；close 则依赖读取来定位实例和取得关闭锁。无资源 Context 的 scope、未声明的 close 不需要这项读取。首次缺少 Handlers 的契约生成暂不检查；已有方法体时每次在图缓存查询之前检查。
 
 检查只拒绝整个方法都没有该资源读取的情况，不枚举运行条件，不把“出现过 require”当成“所有成功路径都读过”或“读取先于 IO”的证明。Shape 当前擦除普通 IO、业务条件和没有读取的退出表达式；条件路径绕过读取、读取前执行 IO、实际归属缺失或错配继续由 runtime 防守。不为了消除运行时故障而拒绝整个条件分支或引入新的方法体位置标记。
 
@@ -207,13 +207,13 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 `MethodDefinition.methodIdentity` 表示当前方法；`methodEffect` 使用同一 effect 的首个注册入口的 Gen 身份，将该 effect 的方法归为一组，不增加 effect key。例如 `openFileSession` 与 `closeFileSession` 的方法身份不同，但 `methodEffect` 都为 `OpenFileSessionGen`。scope 的静态身份使用其 open 方法身份。
 
-生成器通过 GHC 解析器查看手写 handler 方法体中的读取：`require @T` 记为按表示类型的读取原子，`raw` 记为挂接输入原子，形成每个 handler 的原子形状。再按每个绑定把表示类型代换成该 effect 声明的细化资产的读取方法、把 raw 代换成直接 Input 的入口，并在前面接上驱动（requests 的 getT）与 Input 前驱，组成 effect 方法的纯结构副本。表示类型按规范化的类型原文比较（例如 `String` 与 `[Char]` 视为同一类型）。副本剥离业务值、模式匹配所得数据、纯计算结果和实际 IO，只保留读取与入口引用及其结构关系。调用顺序、分支和重复读取不能被简单的名称集合代替；静态分支保留可能路径，不执行条件表达式来选择业务分支。驱动还是读取由注册决定，不能仅按方法名判断是否重新生产。
+生成器通过 GHC 解析器查看手写 handler 方法体中的读取：`require @T` 记为按表示类型的读取原子，`rawinput` 记为挂接输入原子，形成每个 handler 的原子形状。再按每个绑定把表示类型代换成该 effect 声明的细化资产的读取方法、把 rawinput 代换成直接 Input 的入口，并在前面接上驱动（requests 的 getT）与 Input 前驱，组成 effect 方法的纯结构副本。表示类型按规范化的类型原文比较（例如 `String` 与 `[Char]` 视为同一类型）。副本剥离业务值、模式匹配所得数据、纯计算结果和实际 IO，只保留读取与入口引用及其结构关系。调用顺序、分支和重复读取不能被简单的名称集合代替；静态分支保留可能路径，不执行条件表达式来选择业务分支。驱动还是读取由注册决定，不能仅按方法名判断是否重新生产。
 
-结构副本描述带包装的句柄：原子句柄（Excu.handler、Scoped.open）的生成入口在方法体返回后注入挂在它下面（可经一串 Pure）的 Context，构图时该句柄的定义因此在方法体之后接一个可选分支，内容是这些 Context 的方法结构，其中对句柄的 raw 记为空（注入期间由本次输出回答，不再执行句柄），中间的 Pure 入口就地展开，同样回答到句柄为止。注入路径由此进入 effect graph 与 ScopeTree，不形成环；挂接的 Context 经 Pure 以外的方法又回到该句柄时生成器报错。Pure 的入口在来源分析和运行时都不改变调用者，句柄据此认出经 Pure 拉取它的 Context，不重复注入。
+结构副本描述带包装的句柄：原子句柄（Excu.handler、Scoped.open）的生成入口在方法体返回后注入挂在它下面（可经一串 Pure）的 Context，构图时该句柄的定义因此在方法体之后接一个可选分支，内容是这些 Context 的方法结构，其中对句柄的 rawinput 记为空（注入期间由本次输出回答，不再执行句柄），中间的 Pure 入口就地展开，同样回答到句柄为止。注入路径由此进入 effect graph 与 ScopeTree，不形成环；挂接的 Context 经 Pure 以外的方法又回到该句柄时生成器报错。Pure 的入口在来源分析和运行时都不改变调用者，句柄据此认出经 Pure 拉取它的 Context，不重复注入。
 
 业务执行副本把方法体原样复制到按 effect 的类型标签 `Wrap "名字"` 上，另生成入口、按标签的路由与包装，不改写业务表达式。新的边界是读取 handler 的读取结构并按绑定生成独立结构，不解释任意业务值语义，不要求用户补写 layer 或另一份调用声明。结构提取也不证明任意 Haskell 函数的行为、动态调用次数或物理资源依赖。
 
-当前 source 结构支持 `require @T`／`raw` 读取、原生 `do`、`if`／`case` 和已识别的标准组合，包括顺序／绑定运算、`when`／`unless`、`either`／`maybe` 及 `catchError`。条件和待匹配的值本身不能隐藏读取。handler 直接调用其他 handler 或 effect 方法、未知高阶组合中的读取、含读取的循环组合（如 `forM_`／`replicateM_`）以及没有类型应用的 `require` 会报告错误，不静默生成空图。没有读取的原子业务表达式可在 handler 方法体内使用原生 Haskell 语法，结构副本将其擦除；方法内直接以标准组合完成 IO 迭代或数据计算，不受上述限制。生成器还检查每个读取在每个绑定下都能路由到唯一资产、同一 handler 的各绑定推出相同签名与 Layer、声明的 requires／streams 都有读取依据。[源码资产检查](ASSETS.md) 另行约束业务模块的顶层定义；顶层检查与 effect 图提取是两个不同边界。
+当前 source 结构支持 `require @T`／`rawinput` 读取、原生 `do`、`if`／`case` 和已识别的标准组合，包括顺序／绑定运算、`when`／`unless`、`either`／`maybe` 及 `catchError`。条件和待匹配的值本身不能隐藏读取。handler 直接调用其他 handler 或 effect 方法、未知高阶组合中的读取、含读取的循环组合（如 `forM_`／`replicateM_`）以及没有类型应用的 `require` 会报告错误，不静默生成空图。没有读取的原子业务表达式可在 handler 方法体内使用原生 Haskell 语法，结构副本将其擦除；方法内直接以标准组合完成 IO 迭代或数据计算，不受上述限制。生成器还检查每个读取在每个绑定下都能路由到唯一资产、同一 handler 的各绑定推出相同签名与 Layer、声明的 requires／streams 都有读取依据。[源码资产检查](ASSETS.md) 另行约束业务模块的顶层定义；顶层检查与 effect 图提取是两个不同边界。
 
 `catchError body recovery` 使用独立的 `Recover` 结构。scope 分析保留正文的正常路径，并为每条正文路径的任意 scope 前缀接入 recovery 路径；前缀包括空前缀和完整前缀，不假定正文一定全部执行后才进入 recovery。这是保守的静态路径集合，不执行业务来验证成功条件，也不证明某个 scope 已成功获取资源。
 
@@ -222,7 +222,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 生成阶段按[主设计的编译流水线](CORE_DESIGN.md#generation)推进；本节只解释图与来源的产物关系，阶段状态和检查点不在这里另行定义。`Gen.Composition` 内部步骤可以使用 `Prototype.Query` 的共享纯关系查询：
 
 1. **声明与挂载。** 解析注册、资产与 Input。AST 已用 `node` 指定末端，给每次挂载编号；检查 alternative 的分支契约及覆盖，定下持续会话与输出复用位置。末端不是从全图寻找的叶子。
-2. **接口与方法组成。** 计算挂载、选择器、会话步骤、输出连接、有序 requests／Input、raw 来源和读取路由，并据此形成 handler 类型能力。前端用本次契约对手写 Handlers 做 GHC 名称解析与类型检查。`Gen.Frontend.Shape` 按原始语法提取控制流，按每个变量使用位置的 GHC `Name` 识别 SDK 的 `require` 和 `raw`。例如，`Payload{..} -> pure [raw]` 中的 `raw` 是局部字段值；同一模块经重导出调用 SDK 的 `raw`，仍产生挂接输入的读取形状。机器再把形状代换成对应 effect 方法的结构，每个绑定保留各自的入口与路由。
+2. **接口与方法组成。** 计算挂载、选择器、会话步骤、输出连接、有序 requests／Input、rawinput 来源和读取路由，并据此形成 handler 类型能力。前端用本次契约对手写 Handlers 做 GHC 名称解析与类型检查。`Gen.Frontend.Shape` 按原始语法提取控制流，按每个变量使用位置的 GHC `Name` 识别 SDK 的 `require` 和 `rawinput`。例如，`Payload{..} -> rawoutput [rawinput]` 中的 `rawinput` 是局部字段值；同一模块经重导出调用 SDK 的 `rawinput`，仍产生挂接输入的读取形状。机器再把形状代换成对应 effect 方法的结构，每个绑定保留各自的入口与路由。
 3. **方法图。** 从同一装配结果建立挂接注入的分析副本，只消去对同次原子输出的再次索取。方法索引与活动栈检查引用，完成态摘要缓存 scope 路径与图。辅助／主 algebra 共用归约结果，不按调用次数复制展开树。
 4. **ScopeTree。** 从方法图的路径求共同必经前序，补入注册前提并检查环。先有方法图及路径，再有 ScopeTree；实例共享与关闭仍由运行时的生产身份、实际使用和待用关系决定。
 5. **来源、驱动标记与完成校验。** 结合方法结构、链挂载和 workflow 形成读取来源与 scope 开启计划，保留相关路径差异并裁剪无关状态。Booter 补齐单元与来源的运行关联；原型自洽和 Context 驱动检查完成后，结果才交给输出阶段。
@@ -236,7 +236,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 | 机制 | 复用依据 | 保留的执行语义 |
 | --- | --- | --- |
 | 方法目录、链定义共享 | 同一静态注册／方法身份 | 每个 AST 挂载仍有自己的 NodeId，每次调用仍执行 |
-| 原子输出的挂接解析 | parser 正在接收这次调用的 raw | 解析不重新执行句柄；另一次独立驱动仍可执行句柄 |
+| 原子输出的挂接解析 | parser 正在接收这次调用的原始输出 | 解析不重新执行句柄；另一次独立驱动仍可执行句柄 |
 | 持续资产的 ReuseOutput | 同一 lifelong 内已挂载的原子输出位置；多个位置须属于同一单元且互斥 | 保留原 AST 调用，不为订阅再启动派生生产 |
 | alternative 的交接 | 选择阶段确定的一份转折资产及其构造器 | 只启动选中候选并交接捕获；候选自身的 Input／requests 照常执行 |
 | scope 实例共享 | 同一 Scoped 注册及相同参数生产身份，实例仍可用 | 由运行协议复用实例，ScopeTree 提供依赖与清理顺序 |
@@ -257,7 +257,7 @@ Assembly 是组合机器内部的装配结果，不是第二份业务注册或 R
 | --- | --- | --- |
 | `EntryMount` | 组合机器的 ChainProto、Emit.Program 的入口登记 | NodeId、入口角色、结构末端、运行诊断标签、方法身份；相同方法的多个挂载仍独立 |
 | `EntryStep` | 组合机器的方法组成、Emit.Handlers | 有序 RequestStep／InputStep；两处都使用 bindingBefore，不重新推导或去重 |
-| `RawSource` | 结构中的 raw 引用、生成的 Raw 实例 | 直接输入的方法；Stream 的 String 包成单元素 list，其余保持 list |
+| `RawSource` | 结构中的 rawinput 引用、生成的 Raw 实例 | 直接输入的方法；Stream 的 String 包成单元素 list，其余保持 list |
 | `OutputConnection` | 组合机器的注入结构、驱动与来源证明；Emit 的注入表 | 当前 anchor → parser，以及普通／持续注入角色；保持原有注入顺序和错误协议 |
 | `BootPlan.ReuseOutput` | 组合结果、Prototype 与现有 runtime | 机器确定的具体 AST 输出位置，不新增独立生产步骤 |
 
@@ -299,7 +299,7 @@ Pred 与由它得到的 `precedes` 只用于 `buildScopeTree` 的内部计算，
 公开结果只有 `ScopeTree`，其父子边表达构树结果，以下路径与候选证据直接保存在同一结构中：
 
 - `scopePaths`：各独立 chain 的路径，而非跨 Node 拼接的运行顺序。
-- `scopeCandidates`：raw 候选关系，来自单条路径的前后关系，尚未当作必经边；入口来源见 `graphRootPaths`。
+- `scopeCandidates`：原始候选关系，来自单条路径的前后关系，尚未当作必经边；入口来源见 `graphRootPaths`。
 - `scopeOpposed`：存在两条分别包含 A、B 的路径，一条为 `A … B`，另一条为 `B … A`。这是无固定顺序的双向实证；不能用不同路径的边拼出的 union reachability 代替。
 - `scopeUndetermined`：仅凭路径不能建立共同必经关系、又没有上述双向实证的未定关系。缺少共同路径或覆盖不足不等于独立；补充的注册前提可能进一步确定这些节点的清理关系。
 

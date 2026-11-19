@@ -27,7 +27,7 @@ effects =
   , excu "MarkReply" "markRead" "Root" []
   , excu "ReadReport" "readText" "Root" [requires "ReportPath"]
   , excu "ReadReply" "readText" "MarkReply" [requires "ReplyPath"]
-    -- 同一个解析器，挂在不同的句柄下，用 raw 读取句柄本次的输出
+    -- 同一个解析器，挂在不同的句柄下，用 rawinput 读取句柄本次的输出
   , context "ReportCounter" (Asset @LineCount "ReportStats") "countLines" "ReadReport" []
   , context "ReplyCounter" (Asset @LineCount "ReplyStats") "countLines" "ReadReply" []
   , excu "ShowReport" "showCount" "Root" [requires "ReportStats"]

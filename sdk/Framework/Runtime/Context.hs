@@ -90,7 +90,7 @@ readStreamContext contextName wrap select = do
   recordContextInput contextName
   pure value
 
--- Stream 的生成入口。会话调用 parser 时安装了本次原始输入：parser 的 raw 由这份输入回答，
+-- Stream 的生成入口。会话调用 parser 时安装了本次原始输入：parser 的 rawinput 由这份输入回答，
 -- 不再执行 handler 另取一份，与挂在原子句柄下的 Context 相同。Stream 单步没有安装输入，执行 handler 取得下一份。
 streamHandle :: ContextStore environment m => m String -> m String
 streamHandle body = streamRawInput >>= maybe body pure
@@ -112,7 +112,7 @@ atomicScope
 atomicScope method anchored continuous body = do
   replayed <- replayedOutput method
   case replayed of
-    -- 注入中的 parser（或它上方的 Pure）经 raw 调用挂接的句柄：回答本次输出，不重复执行。
+    -- 注入中的 parser（或它上方的 Pure）经 rawinput 调用挂接的句柄：回答本次输出，不重复执行。
     Just raw -> pure (info raw)
     Nothing -> do
       consumer <- currentHandler

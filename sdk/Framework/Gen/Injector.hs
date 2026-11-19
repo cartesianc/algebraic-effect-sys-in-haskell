@@ -144,7 +144,7 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
       [ getter | resolved <- resolvedOf unit (declarationName specification), demandAccess resolved == RequestAccess
       , Just getter <- [producerMethodOf (demandProvider resolved)] ]
 
-    -- 挂接的 parser 与 Pure 用 raw 读取直接 Input 的输出，不把 Input 当前驱执行：
+    -- 挂接的 parser 与 Pure 用 rawinput 读取直接 Input 的输出，不把 Input 当前驱执行：
     -- Input 是 Excu、Scoped、Pure 时读它交出的 list，是 Stream 时读会话本次取得的一份输入。
     methodOf selected = declarationEntry (specOf unit selected)
     producerMethodOf selected = lookup ContextRequest (effectMethods (protoOf unit selected))
@@ -172,7 +172,7 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
     -- 算法说明 v2（2026-11-16）：绑定时计算一次，composeMethods 与 Emit 都读取 bindingBefore。
     -- 先 requests 驱动，再 Input 前驱，最后 handler；close 与 Error 方法只执行 handler。
     -- 即使驱动链与 Input 链包含相同方法，也不能在这里 nub：两个声明的调用仍是两次执行。
-    -- raw 的同次输出回放与 scope 的活实例共享在各自协议中判定，不由方法名相同推出。
+    -- rawinput 的同次输出回放与 scope 的活实例共享在各自协议中判定，不由方法名相同推出。
     -- handler 绑定复用只复用实现，不合并不同 effect 的路由或不同挂载的调用。
     beforeOf :: Unit -> EffectDeclaration -> String -> [EntryStep String]
     beforeOf unit specification method
@@ -182,7 +182,7 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
 
     resultOf specification = declarationResult specification
 
-    -- raw 读到的是直接 Input 那次原子调用交出的值，捕获按 Input 的类别匹配。
+    -- rawinput 读到的是直接 Input 那次原子调用交出的值，捕获按 Input 的类别匹配。
     rawKindOf :: EffectDeclaration -> String -> Maybe EffectKind
     rawKindOf specification method
       | readsRaw specification method, Just _ <- rawSource unit specification =

@@ -44,7 +44,7 @@ renderHandlers names unit loaded = do
 -- 生成区的装配：effect 标签、handler 能力的实例与 effect 方法。
 -- 注入 v6（2026-11-19）：生成入口把原子 action 交给 Root.super；hooks 由挂载决定，类别由绑定决定。
 -- Injector.Super 已为每个 (列表, 类别) 选定 Middleware，这里把选择写成 Captures 实例：
--- 有捕获的 super 管理进入与成功返回，raw、raise 在 action 内调用 captureAt @hooks @kind。
+-- 有捕获的 super 管理进入与成功返回，rawinput、raise 在 action 内调用 captureAt @hooks @kind。
 -- GHC 在编译期按挂载登记的列表选定实例，入口只有一份，运行时不分发、不筛选。
 support :: HandlerNames -> Unit -> String
 support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ concatMap raisesInstance ordinaryHandlers ++ routeInstances ++ rawInstances
@@ -83,7 +83,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     supportHeader =
       [ ""
       , "-- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，"
-      , "-- 读取、raw 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。"
+      , "-- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。"
       , "newtype " ++ wrap ++ (if hooked then " (hooks :: [FrameworkTypes.Symbol])" else "")
           ++ " (effect :: FrameworkTypes.Symbol) value = " ++ wrap ++ " { " ++ runWrap ++ " :: FrameworkGenerated.App value }"
       , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)"
@@ -193,10 +193,10 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         producer = routeProvider route
         reader = entry (routeReader route)
         unwrap selectedContract = "(\\(FrameworkGenerated." ++ selectedContract ++ " value) -> value)"
-    -- raw 的捕获点：读取方 handler 与读到的值；类别取被读取的那次调用的类别。
+    -- rawinput 的捕获点：读取方 handler 与读到的值；类别取被读取的那次调用的类别。
     rawInstances = concat
       [ [ "instance " ++ context ++ "FrameworkRuntime.Raw " ++ tag (show (bindingEffect binding)) ++ " where"
-        , "  raw = " ++ wrap ++ " (" ++ capturedRaw binding (rawExpression (callSource source)) ++ ")"
+        , "  rawinput = " ++ wrap ++ " (" ++ capturedRaw binding (rawExpression (callSource source)) ++ ")"
         , "" ]
       | binding <- unitBindings unit, Just source <- [bindingRaw binding] ]
     callSource (RawList method) = RawList (call method)
@@ -319,7 +319,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         matchCase (ContextFaultIn selectedEffect) = "(" ++ show selectedEffect ++ ", FrameworkGenerated.ContextBindingError _) -> True"
 
 
--- 只渲染绑定中已解析的 raw 形状，不重新查询 Input 注册。
+-- 只渲染绑定中已解析的 rawinput 形状，不重新查询 Input 注册。
 rawExpression :: RawSource String -> String
 rawExpression (RawList method) = method
 rawExpression (RawStream method) = "(: []) <$> " ++ method

@@ -296,17 +296,17 @@ buildEffectProtos specifications sumTypes = do
               , anchor <- specifications, name anchor == anchorName
               , Scoped {} <- [typing anchor], requestSource anchor == Just (name specification)])
               ("Context " ++ name specification ++ " cannot hang below the scope that requests it as its resource")
-          -- Pure 只在生产链中：值来自上层的 raw，交给下面的 Pure 或 Context，不声明 demands。
+          -- Pure 只在生产链中：用 rawinput 读取直接上游的输出，再交给下游 Pure 或 Context。
           Pure method -> do
             valid (method /= Nothing) ("Pure needs a handler: " ++ name specification)
             valid (null (demands specification))
-              ("Pure " ++ name specification ++ " takes its value from raw and declares no demands")
+              ("Pure " ++ name specification ++ " reads its input with rawinput and declares no demands")
             upper <- if input specification == "Root"
               then Left (InvalidPrototype ("Pure " ++ name specification
-                ++ " needs an Excu, Scoped or Pure input to read raw from"))
+                ++ " needs an Excu, Scoped or Pure input for rawinput"))
               else findSpec (input specification)
             valid (Registration.effectKind (typing upper) `elem` [ExcuKind, ScopedKind, PureKind])
-              ("Pure " ++ name specification ++ " reads raw from an Excu, Scoped or Pure, not from "
+              ("Pure " ++ name specification ++ " uses rawinput to read from an Excu, Scoped or Pure, not from "
                 ++ name upper ++ "; a Stream has only its parser Context below it")
             let below = [Registration.effectKind (typing consumer) | consumer <- specifications, input consumer == name specification]
             valid (not (null below) && all (`elem` [ContextKind, PureKind]) below)
@@ -473,9 +473,9 @@ buildEffectProtos specifications sumTypes = do
 -- 接口能力、读取路由与方法组成
 -- ========================================================================
 
--- 结构分析给出每个 handler 方法体的结构：@T 是按表示类型的读取，%raw 是 raw。
+-- 结构分析给出每个 handler 方法体的结构：@T 是按表示类型的读取，%raw 是 rawinput。
 -- 每个绑定按自己的路由把它们换成 effect 方法调用，前面接上驱动与 Input 前驱，得到 effect 方法的结构。
--- 同时检查 handler 读取的表示类型都有声明，raw 只用于挂接的 parser，声明的读取都被方法体或控制流使用。
+-- 同时检查 handler 读取的表示类型都有声明，rawinput 只用于挂接的 parser，声明的读取都被方法体或控制流使用。
 composeMethods :: Bool -> [EffectProto String] -> [Binding] -> [(String, [String])] -> [(String, MethodShape String)]
                -> Either String [(String, MethodShape String)]
 composeMethods checkReads effects bindings required handlerShapes = do
@@ -498,8 +498,8 @@ composeMethods checkReads effects bindings required handlerShapes = do
           ++ "; declare requires/streams for an asset of that representation")
       Call "%raw" -> case bindingRaw binding of
         Just source -> pure (Call (rawMethod source), [])
-        Nothing -> Left ("Handler " ++ bindingHandler binding ++ " uses raw in " ++ bindingEffect binding
-          ++ "; only a Context parser or a Pure hanging below an Excu, Scoped, Pure or Stream reads raw")
+        Nothing -> Left ("Handler " ++ bindingHandler binding ++ " uses rawinput in " ++ bindingEffect binding
+          ++ "; rawinput requires an attached Context parser or a Pure with a valid input")
       Call other -> pure (Call other, [])
       Sequence children -> combine Sequence children
       Choice children -> combine Choice children
@@ -566,7 +566,7 @@ buildStructure plan assembly shapes = do
       , let anchor = outputAnchor connection
             produced = outputParser connection
       , anchor `elem` reachableMethods definitions (calledMethods (replayedBody effects bodyOf anchor (bodyOf produced)))])
-    "An injected Context reaches its anchor through another method; read the anchor with raw, directly or through Pure"
+    "An injected Context reaches its anchor through another method; read the anchor with rawinput, directly or through Pure"
   let mounts = assemblyMounts assembly
       sessions = [mount | mount <- mounts, mountNode mount `elem` concatMap sessionMounts lifelongSessionsOf]
       entries = nub (map mountMethod mounts)
@@ -621,7 +621,7 @@ buildStructure plan assembly shapes = do
         ++ "; its first delivery would wait for another stream")))
     [makeChain mount | mount <- sessions]
   -- 沿用 AST 输出的 parser 没有独立会话挂载，但仍须遵守相同的读取边界。
-  -- 只分析交接后的 parser（raw 对 anchor 的调用已抹去），避免把合法下游消费算进来。
+  -- 只分析交接后的 parser（rawinput 对 anchor 的调用已抹去），避免把合法下游消费算进来。
   mapM_ (\(session, nodes) -> do
       producer <- case [effect | effect <- effects, effectProduces effect == Just (sessionAsset session)] of
         [effect] -> pure effect
@@ -685,7 +685,7 @@ buildStructure plan assembly shapes = do
 
     -- 同次输出复用（算法说明 v2）：沿 Assembly 的连接改写注入副本，原生产方法仍可独立驱动。
     -- 连接与生成的注入表同源；这里消除的是分析副本中的回放调用，不修改手写方法体。
-    -- 挂接 Context 的 raw 到达 anchor 时由已有输出回答，所以该调用在副本中是 Empty；
+    -- 挂接 Context 的 rawinput 到达 anchor 时由已有输出回答，所以该调用在副本中是 Empty；
     -- 中间 Pure 的结构就地展开，以便保留其读取/控制结构，同时消去对 anchor 的重复执行边。
     -- 这只消除“句柄输出交给自己的 parser，parser 又索取同次输出”的结构回边；
     -- 不是寻找任意公共前缀，也不任意断开业务依赖。其他回到 anchor 的路径由前面的检查拒绝。

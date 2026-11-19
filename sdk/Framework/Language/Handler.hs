@@ -3,7 +3,7 @@
 -- handler 在源语言中能用的全部能力，以及业务能观察到的完成结果。
 -- 能力类的实例由 gen 按注册生成（Framework.Gen.Emit.Handlers）；执行载体的协议在 Framework.Runtime.Protocol。
 module Framework.Language.Handler
-  ( Reads(..), Raw(..), Raises(..), StreamEnds(..), EndsStream(..), Hooks(..)
+  ( Reads(..), Raw(..), rawoutput, Raises(..), StreamEnds(..), EndsStream(..), Hooks(..)
   , Failure(..), Output(..), ErrorReport(..)
   ) where
 
@@ -18,7 +18,11 @@ class Reads value m where
   require :: m value
 
 class Raw m where
-  raw :: m [String]
+  rawinput :: m [String]
+
+-- 交出原子调用的原始输出。Root.super 在整个 action 成功返回时通知 Middleware。
+rawoutput :: Applicative m => [String] -> m [String]
+rawoutput = pure
 
 class Raises failure m where
   raise :: failure -> m value
@@ -39,7 +43,7 @@ class EndsStream m where
   endStream :: m value
 
 -- 只给 Middleware handler：拆出本次 Root 级调用点捕获的内容，不是这一种时为 Nothing。
--- hookedEnter：Root 即将执行的 handler 名；hookedOutput：它交出的值；hookedRaw：读取方经 raw 读到的值；
+-- hookedEnter：Root 即将执行的 handler 名；hookedOutput：它交出的值；hookedRaw：读取方经 rawinput 读到的值；
 -- hookedError：handler raise 的错误描述。每项都带 handler 名；捕获只读，不改变原调用。
 class Hooks m where
   hookedEnter :: m (Maybe String)

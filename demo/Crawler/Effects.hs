@@ -11,7 +11,7 @@ import Crawler.Types
 -- handler 按表示类型 require；同一个 handler 注册到不同 effect，由各自的 demands 决定读哪份资产。
 -- requests 在入口驱动资产的生产链，requires 只读取；input 是前驱，gen 在 handler 之前执行它。
 -- 抓取是原子句柄（Excu），只执行 IO，交出 [String]；Pure 在生产链中去掉空白正文；
--- 解析 Context 以 input 挂在 Pure 下，用 raw 读取它变换后的 list。
+-- 解析 Context 以 input 挂在 Pure 下，用 rawinput 读取它变换后的 list。
 -- 无开启输入的 scope 在实际重叠的使用闭包之间共享。业务产值统一由 Context 提供，失败仍用 raise。
 effects :: [EffectSpec]
 effects =
