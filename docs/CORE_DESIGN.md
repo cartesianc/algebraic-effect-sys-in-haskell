@@ -441,18 +441,28 @@ ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "Wri
 
 - **注册。** `input` 写保留名 `"None"`：没有 Input 注入，沿用 Input 的组合逻辑而不另设注册构造器。只有 Middleware 能写 `"None"`，Middleware 也只能写 `"None"`；任何 effect 的 Input 都不能指向 Middleware，因此 Middleware 与被捕获的链之间不会成环。`"None"` 与 `"Root"` 一样不能作为 effect 名。首版不允许 demands。`intercept` 非空、不重复，只能取能交出 raw output 的 `ExcuKind`、`ScopedKind`、`PureKind`；`allEffects` 是三者的简写。
 - **挂载。** `middleware :: [EffectNode] -> AST -> AST` 包住恰好一棵子树。列表只接受 Middleware 注册名，普通 `node` 也不能引用 Middleware。标注是透明的：gen 先剥离标注再编号，NodeId、单元划分（包括 `lifelong` 对直接 `parallel` 子项的拆分）与无标注时相同；标注位置与 Middleware 名作为 `drivingMiddleware` 存入 Prototype，运行与 `--structure` 剥离当前 AST 后核对骨架，并核对标注与编译时一致。
-- **集合与类型类注入。** gen 为每个挂载（节点、选择读取、会话步骤）求覆盖它的全部标注之并，按注册顺序去重；Booter 把它存为 `drivingHooks`。注册了 Middleware 时，标签写作 `At hooks effect`，每个 effect 入口只生成一份，对 `hooks` 多态（`runX :: forall hooks. Captures hooks => App …`），入口之间以 `@hooks` 互相调用，所以前驱、`requests` 驱动、raw 读取的句柄、注入表与收尾表里的 close 都处在同一个列表下。生成的 Haskell 把 `Captures hooks` 写在入口的类型签名上。`Captures '[]` 什么也不做，`Captures (m ': ms)` 先交给 Middleware `m`（它按自己的 `intercept` 取舍类别），再交给 `ms`。Program 为每个挂载登记时在类型上给出列表（例如 `Handlers.runReport @'["Audit"]`，被覆盖的挂载另以 `名字@Audit` 登记），GHC 在编译期选定实例；运行时只按 Prototype 的静态登记名（`entryLabel`）选取已编译的 Target，没有目录或分发。
+- **集合与类型类注入。** gen 为每个挂载（节点、选择读取、会话步骤）求覆盖它的全部标注之并，按注册顺序去重；Booter 把它存为 `drivingHooks`。注册了 Middleware 时，标签写作 `At hooks effect`，每个 effect 入口只生成一份，对 `hooks` 多态（`runX :: forall hooks. Captures hooks => App …`），入口之间以 `@hooks` 互相调用，所以前驱、`requests` 驱动、raw 读取的句柄、注入表与收尾表里的 close 都处在同一个列表下。生成的 Haskell 把 `Captured hooks`（每个被拦截类别一条 `Captures hooks kind`）写在入口的类型签名上。Program 为每个挂载登记时在类型上给出列表（例如 `Handlers.runReport @'["Audit"]`，被覆盖的挂载另以 `名字@Audit` 登记），GHC 在编译期选定实例；运行时只按 Prototype 的静态登记名（`entryLabel`）选取已编译的 Target，没有目录或分发。
+- **生成期选择。** `Gen.Injector.Super` 对入口实际实例化的每个列表（空列表、各挂载与会话步骤的列表）和每个被拦截的类别，按注册顺序选出拦截该类别的 Middleware；Emit 把每条选择写成一个 `Captures` 实例。例如 `Audit` 拦截 Excu 与 Scoped、`Timer` 拦截全部类别时：
+
+  ```haskell
+  instance Captures '["Audit", "Timer"] 'ExcuKind where
+    captureAt event = hookAudit event >> hookTimer event >> pure ()
+    superAt = superWith (captureAt @'["Audit", "Timer"] @'ExcuKind)
+  instance Captures '["Audit"] 'PureKind      -- 空选择：默认方法，super 直接执行 action
+  ```
+
+  被拦截类别的 effect 标签按类别取 Root 实例（`super = superAt @hooks @kind`），其余标签使用 Root 的默认 `super`。运行时不再按 `intercept` 筛选。
 - **open／close 归谁。** 规则只看挂载位置，不为会话另设：lifelong 的会话步骤位于该 lifelong 路径下（`边界 ++ [-1, 序号, 步骤]`），标注覆盖整个 lifelong 或它的祖先时，会话步骤以该列表登记，它执行的 open 就是 `open… @hooks`；标注只覆盖 lifelong 内的子树时，只有这些节点带上列表。close 来自开启时安装的收尾表 `scopeCleanups @hooks`，收尾调用同一列表下的 close。同一 handler 复用在不同子树时，只有被标注覆盖的那次挂载被捕获。
-- **四个捕获点。**
-  - 进入：前驱已经完成，`hookedEnter` 给出即将运行的 handler 名。回放直接返回已交出的值时，整个 action 都会跳过。对于 scope，进入表示一次调用尝试；若需在方法内读取开启参数才判定复用，可能只观察到进入。
-  - 交出值：Excu.run、Scoped.open／close、Pure.run 这次调用成功交出的 `[String]`，handler 名是被调用的 handler。scope 复用跳过 open 方法体、或注入回放本次输出时，没有新的交出值。
+- **superhandler 与 Root 级调用。** `super` 是 Root 提供的 superhandler，捕获分两层：
+  - 进入 super：前驱已经完成，`hookedEnter` 给出即将运行的 handler 名。回放直接返回已交出的值时，整个 action 都会跳过。对于 scope，进入表示一次调用尝试；若需在方法内读取开启参数才判定复用，可能只观察到进入。
+  - 以下三个是 super 内的 Root 级调用。交出值（`pure`）：Excu.run、Scoped.open／close、Pure.run 这次调用成功交出的 `[String]`，handler 名是被调用的 handler。scope 复用跳过 open 方法体、或注入回放本次输出时，没有新的交出值。
   - raw：读取方 handler（挂接的 parser 或 Pure）经 `raw` 读到的值；类别取被读取的那次原子调用的类别，所以 Stream 下的原始输入不在首版类别内。注入时 parser 经回放读取，同样是一次 raw 读取。
   - raise：handler `raise` 时先捕获 (handler 名, 描述)，再以原失败退出。
 - **同步与顺序。** Middleware 是类方法，在调用点同步执行，调用点在它们完成后才继续。多个 Middleware 按注册顺序依次调用；每个都读到同一份捕获。它们的 IO 按此顺序发生，某个 Middleware 抛出失败会中止本次后续派发。Middleware handler 在自己的 `Hook` 标签下执行，那里的调用点不调用 `captureAt`，它自己不再被捕获。它交出的 `[String]` 没有挂接点。
 - **能力只给 Middleware。** gen 只为 Middleware 的标签生成 `Hooks (Hook "M")`，Layer 也只给 Middleware 加 `Hooks m`；普通 handler 写 `hookedOutput` 不能通过类型检查。Middleware 的能力只来自它的 handler 写法。
 - **失败。** Middleware 与普通 Excu 一样 `raise`，例如 mock 时用来判断 Middleware 是否写对。失败的 origin 是 Middleware 注册名，从调用点沿被捕获调用的入口包装传播，适用的 Error 可以用 `RaisedBy` 匹配。原生 IO 异常沿既有异常路径传播。`hookedError` 捕获的是显式 `raise`。
-- **自动收尾。** 调用前的 middleware 失败时，普通调用在运行方法体前退出。scope GC 已经预约的 close 仍须尝试一次并完成收尾，随后按原协议报告故障或传播取消。
-- **生成代码。** 每个入口共用一份方法体。登记表为实际用到的不同列表保留各自的特化入口，同一持续来源可在不同子树使用不同列表。没有注册 Middleware 的程序使用单态标签，Root 的默认 `super` 直接执行 action。
+- **自动收尾。** 调用前的 middleware 失败时，普通调用在运行方法体前退出。scope GC 已经预约的 close 仍须尝试一次并完成收尾，随后按原协议报告故障或传播取消。close 的调用点由 gen 按绑定操作写成 `superClose`，只有它在运行时检查本次是否持有关闭预约；其他调用点不做这项检查。
+- **生成代码。** 每个入口共用一份方法体。登记表为实际用到的不同列表保留各自的特化入口，同一持续来源可在不同子树使用不同列表。`Captures` 实例的条数是“用到的列表数 × 被拦截的类别数”，每条只有几行，不随入口数增长。没有注册 Middleware 的程序使用单态标签，Root 的默认 `super` 直接执行 action。
 
 <a id="context"></a>
 ### 4.3 Context、驱动与读取
@@ -812,7 +822,7 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 | 读取声明 | `Gen.Frontend.Source` | GHC 解析 Types 的和类型，在独立 ghci 中加载 effects 与 ast；保留原文与位置 |
 | 解释注册 | `Gen.Composition` | 唯一资产来源、访问、Input、方法角色与绑定；`Names` 只拼写已选角色的名字 |
 | 合成驱动 | `Gen.Booter` | 以解析后的 effect 原型编号 workflow，确定 alternative、会话、挂载、输出连接及控制流已经承担的读取 |
-| 合成装配 | `Gen.Injector` | 以已解析声明计算 Layer、读取路由、有序 requests／Input、raw、入口操作、scope 与 Error 回调；检查表示类型与共享签名 |
+| 合成装配 | `Gen.Injector` | 以已解析声明计算 Layer、读取路由、有序 requests／Input、raw、入口操作、scope 与 Error 回调；检查表示类型与共享签名。`Injector.Super` 按挂载列表与捕获类别预选 superhandler 要调用的 Middleware |
 | 读取方法形状 | `Gen.Frontend.Shape` | handler 语法树 → 读取与控制结构；不解释来源或驱动 |
 | 方法、图与来源 | `Gen.Composition` | 组成方法、检查读取、计算 EffectGraph、ScopeTree 与供值／开启计划；完成后调用 Booter 补齐运行所需的静态驱动标记 |
 | 文本输出 | `Gen.Emit.*` | 渲染已确定的契约、入口与 Prototype；保留手写方法体；渲染注册快照不等于重新选择装配 |
@@ -882,6 +892,7 @@ sdk/Framework/
       Shape.hs              handler 读取与控制结构提取
     Composition.hs          唯一解释入口：协调合成、构图、来源证明与校验
     Injector.hs             入口能力、读取路由、有序装配与协议包装计划
+    Injector/Super.hs       superhandler 的静态选择：(Middleware 列表, 捕获类别) → Middleware
     Booter.hs               workflow／会话挂载与运行所需静态驱动标记
     Plan.hs                 编译检查点的纯计划及共享投影
     Names.hs                按已确定角色拼写生成名字

@@ -1,12 +1,14 @@
 # Next stages
 
 <a id="stages"></a>
-Middleware 首版与 Root 的 `super` 已经实现。[superhandler 装配草案](#superhandler)进入审查。下一项已排定的功能是[持续交付的容量与背压](#backpressure)，[AST 嵌套与 workflow 边界](#ast-nesting)单列为待设计阶段。其他开放项见[专题清单](#deferred)。
+Middleware 首版与 Root 的 `super` 已经实现，[superhandler 的生成期选择](#superhandler)第一批已完成。下一项已排定的功能是[持续交付的容量与背压](#backpressure)，[AST 嵌套与 workflow 边界](#ast-nesting)单列为待设计阶段。其他开放项见[专题清单](#deferred)。
 
 <a id="superhandler"></a>
-## 待审查 · superhandler 的生成期装配
+## superhandler 的生成期装配
 
-拟由 `Gen.Injector.Super` 按挂载与捕获点预选 middleware。第一批只收拢静态类别筛选，具体实例、使用关系与取消仍由 runtime 管理。`openSession` 的代码形态、模块分工与验收例见[临时方案](SUPERHANDLER_DRAFT.md)。
+**第一批已实现（2026-11-19）。** `Gen.Injector.Super` 为每个 (Middleware 列表, 捕获类别) 预选 Middleware，Emit 写成 `Captures hooks kind` 实例；运行时不再按 `intercept` 筛选。close 的调用点由 gen 写成 `superClose`，只有它检查 GC 的关闭预约。具体实例、使用关系与取消仍由 runtime 管理。现行规则见 [CORE_DESIGN 的 Middleware](CORE_DESIGN.md#middleware)。
+
+**后续可单独评估。** 普通 Context 的 parser 挂接表、收尾表与 Error 回调表都已由 gen 生成，运行时仍按名字查表。可评估把这些按标签已知的闭包收进 Root 实例；需区分原子调用成功发布、parser 主动拉取来源、以及用同次输出回答 `raw` 回放三种情况，持续发布另受本次执行位置约束。
 
 <a id="code-shape"></a>
 <a id="middleware"></a>
@@ -17,7 +19,7 @@ Middleware 首版与 Root 的 `super` 已经实现。[superhandler 装配草案]
 | 事项 | 首版决定 |
 | --- | --- |
 | 是什么 | gen 把每次原子调用交给 Root 的 `super`。它按挂载注入 Middleware，进入前与成功返回时同步通知，并负责执行该 action；`raw` 和 `raise` 在方法内各自通知 |
-| 注入时机 | 生成期：`middleware` 标注是给 gen 的标记。标签带 Middleware 列表类型参数，入口对它多态，调用点经生成入口的类型类约束 `Captures hooks` 注入；挂载登记时给出列表，GHC 编译期选定实例。运行时没有 Middleware 目录或分发，只按静态登记名选取 Target |
+| 注入时机 | 生成期：`middleware` 标注是给 gen 的标记。标签带 Middleware 列表类型参数，入口对它多态，调用点经生成入口的类型类约束 `Captured hooks` 取得 gen 预选的 `Captures hooks kind` 实例；挂载登记时给出列表，GHC 编译期选定实例。运行时没有 Middleware 目录或分发，只按静态登记名选取 Target |
 | 注册形态 | `EffectTyping` 增加 `Middleware { handler, intercept }`；`input` 写保留名 `"None"`，沿用 Input 的组合逻辑，表示没有 Input 注入；不另设 `MiddlewareSpec` |
 | `intercept` | 能交出 raw output 的 `ExcuKind`、`ScopedKind`（open／close）、`PureKind`；`allEffects` 是三者的简写 |
 | handler 能力 | `Hooks`（`hookedEnter`、`hookedOutput`、`hookedRaw`、`hookedError`）、`Raises`、`MonadIO`；签名 `m [String]`；`Hooks` 只为 Middleware 的标签生成 |
