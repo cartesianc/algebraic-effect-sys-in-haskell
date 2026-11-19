@@ -233,7 +233,8 @@ executionAlgebra prototype store entries selectors layer expected = do
       chain <- lookupChain prototype location
       unless (chainRole chain == NodeChain && chainTerminal chain == selected) $
         Left (InvalidPrototype ("Node chain differs at " ++ show location))
-      entry <- resolve entries (chainTerminal chain)
+      -- 被 middleware 标注覆盖的挂载使用 gen 特化的 Target；运行时只按静态登记名选取。
+      entry <- resolve entries (entryLabel (protoDriving prototype) location (chainTerminal chain))
       let subscribed = driveSubscriptions (nodeDriveAt prototype location)
       -- 已经结束订阅的节点不再执行，也不领取交付；退出时由 managed 把它记为跳过。
       single $ \run handoff -> ExceptT $ do
@@ -262,7 +263,7 @@ executionAlgebra prototype store entries selectors layer expected = do
       unless (chainRole chain == SelectorChain
           && chainTerminal chain == alternativeContract description) $
         Left (InvalidAlternative location "Selector chain differs from its alternative")
-      selector <- resolve selectors (chainTerminal chain)
+      selector <- resolve selectors (entryLabel (protoDriving prototype) (alternativeSelector description) (chainTerminal chain))
       source <- producerOf (alternativeContract description)
       constructors <- mapM (constructorAt description . workflowNode) expectedChildren
       let candidates = zip constructors (zip (map workflowNode expectedChildren) parts)

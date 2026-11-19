@@ -819,7 +819,7 @@ ast = parallel
 
 - **捕获什么**：标注覆盖的位置上，`intercept` 类别（Excu、Scoped 的 `open`／`close`、Pure；`allEffects` 表示三类全部）的三种 Root 级调用：handler 交出的值、`raw` 读到的值（类别取被读取的那次调用）、`raise` 的错误。每次捕获都带 handler 名。
 - **同步执行**：Middleware 是类方法，在调用点上执行完，原调用才继续；它只读捕获，不改变原值。多个 Middleware 按注册顺序依次执行，不要让它们依赖彼此。
-- **透明**：标注不改变子树的执行顺序、NodeId 和 lifelong 的单元划分。范围只看位置：标注覆盖整个 `lifelong` 时，它的生产会话里执行的调用（例如会话开启的 `open`）也被捕获；只覆盖 lifelong 里的子树时，只捕获这些节点。`--structure` 列出标注与每个启动位置生效的 Middleware。
+- **透明**：标注不改变子树的执行顺序、NodeId 和 lifelong 的单元划分。范围只看位置：标注覆盖整个 `lifelong` 时，它的生产会话里执行的调用（例如会话开启的 `open`）也被捕获；只覆盖 lifelong 里的子树时，只捕获这些节点。`--structure` 列出标注与每个启动位置生效的 Middleware。标注是给 gen 的标记，注入在生成期完成：改动标注后要重新生成。
 - **失败**：Middleware 与普通 Excu 一样 `raise`，失败从调用点传播，origin 是 Middleware 的注册名。
 - **限制**：标注列表只能写 Middleware；Middleware 不能作为 `node` 末端，也不能作为其他 effect 的 `input`；`hooked*` 只有 Middleware 的 handler 能用。
 

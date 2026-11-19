@@ -34,7 +34,7 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
               [ (normalizeType (typeSpelling (routeType route)), (routeContract route, routeReader route))
               | route <- unitRoutes unit, routeEffect route == declarationName specification ]
               (entryResult specification) (entryOperation specification method) (layerOf unit specification method)
-              (observedOf specification) (rawObservedOf specification method)
+              (kindOf specification) (rawKindOf specification method)
           | specification <- declarations, (method, handler') <- [(method, handler) | (method, handler, _) <- declarationBindings specification] ]
       , unitAssembly = assembly
       , unitRoutes = [routeOf unit specification resolved
@@ -180,18 +180,11 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
 
     resultOf specification = declarationResult specification
 
-    -- 捕获只看类别：某个 Middleware 拦截该类别时，Root 级调用点改写为带 handler 名的捕获调用；
-    -- 没有 Middleware 的程序生成代码不变。实际执行哪些 Middleware 由启动位置的静态集合决定。
-    intercepted kind = kind `elem` concatMap declarationIntercept declarations
-    observedOf :: EffectDeclaration -> Maybe EffectKind
-    observedOf specification
-      | intercepted (kindOf specification) = Just (kindOf specification)
-      | otherwise = Nothing
-    -- raw 读到的是直接 Input 那次原子调用交出的值，按 Input 的类别判断。
-    rawObservedOf :: EffectDeclaration -> String -> Maybe EffectKind
-    rawObservedOf specification method
-      | readsRaw specification method, Just _ <- rawSource unit specification
-      , let source = effectKind (protoOf unit (inputOf specification)), intercepted source = Just source
+    -- raw 读到的是直接 Input 那次原子调用交出的值，捕获按 Input 的类别匹配。
+    rawKindOf :: EffectDeclaration -> String -> Maybe EffectKind
+    rawKindOf specification method
+      | readsRaw specification method, Just _ <- rawSource unit specification =
+          Just (effectKind (protoOf unit (inputOf specification)))
       | otherwise = Nothing
 
     layerOf :: Unit -> EffectDeclaration -> String -> [Capability]

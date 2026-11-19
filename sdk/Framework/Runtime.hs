@@ -355,7 +355,11 @@ sessionLauncher graph steps onBroken session
     (boundary, source) = sessionKey session
     description = sessionDescriptionOf (runtimePrototype graph) boundary source
     mounts = sessionMounts <$> description
-    produce execution future selected upcoming = case (lookup source steps, mounts) of
+    -- 会话的各步骤位置被同一组标注覆盖；按首个步骤取 gen 特化的步骤。
+    label = maybe source (\nodes -> case nodes of
+      first : _ -> referenceLabel (runtimePrototype graph) first source
+      [] -> source) mounts
+    produce execution future selected upcoming = case (lookup label steps, mounts) of
       (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ withStep execution $ \owner retention -> do
         -- streamEnd 只来自 Stream 单步：这一步没有原始输入，parser 不执行，也不发布。
         taken <- try (lowerWith graph streamMount (step owner retention Nothing []) stream)
@@ -431,6 +435,9 @@ sessionLauncher graph steps onBroken session
     loop step = step >>= maybe (loop step) pure
 
 -- 会话计划与挂载只来自同一份原型；复用原始链输出的会话没有独立生产挂载。
+referenceLabel :: PrototypeReference -> NodeId -> String -> String
+referenceLabel (PrototypeReference prototype) = entryLabel (protoDriving prototype)
+
 sessionDescriptionOf :: PrototypeReference -> Maybe NodeId -> String -> Maybe SessionProto
 sessionDescriptionOf (PrototypeReference prototype) boundary source =
   sessionDriveAt prototype boundary source >>= describedSession prototype

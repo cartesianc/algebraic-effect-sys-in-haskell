@@ -5,7 +5,9 @@
 module Framework.Gen.Emit.Program (renderProgram) where
 
 import Data.List (intercalate)
+import Framework.Gen.Names (variantSuffix)
 import Framework.Gen.Plan
+import Framework.Prototype (ChainRole(..), variantLabel)
 
 renderProgram :: Maybe String -> Unit -> String
 renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
@@ -41,13 +43,14 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
       , "  scopes <- Handlers.newScopeHandlers"
       , "  pure"
       , "    ( " ++ renderList "      "
-          [ wrapTarget terminal (terminal ++ "Result <$> (() <$ Handlers." ++ method ++ ")")
-          | (terminal, method) <- unitTerminals unit ]
+          [ wrapTarget hooks (variantLabel terminal hooks) (terminal ++ "Result <$> (() <$ Handlers." ++ method ++ variantSuffix hooks ++ ")")
+          | (terminal, method) <- unitTerminals unit, hooks <- variantsOf NodeChain terminal ]
       , "    , " ++ renderList "      "
-          [ wrapTarget contractType ("caseOf" ++ contractType ++ " <$> Handlers." ++ selector)
+          [ wrapTarget hooks (variantLabel contractType hooks) ("caseOf" ++ contractType ++ " <$> Handlers." ++ selector ++ variantSuffix hooks)
           | selectedSelector <- selectors
           , let contractType = selectorContract selectedSelector
-                selector = selectorEntry selectedSelector ]
+                selector = selectorEntry selectedSelector
+          , hooks <- variantsOf SelectorChain contractType ]
       , "    , " ++ renderList "      " sessionSteps
       , "    )"
       , ""
@@ -68,22 +71,26 @@ renderProgram typesFingerprint unit = unlines (programHeader ++ astInterpreter)
     sourcePath file = show ("demo/" ++ map (\c -> if c == '.' then '/' else c) namespace ++ "/" ++ file)
     -- 按 Context 注册名登记（与运行时绑定来源同名）。Receive：Stream 单步取得原始输入，parser 解析它并发布。
     -- Derive：领取一条上游交付后只执行 parser，它沿 Input 链执行被驱动的句柄并发布。
+    -- 会话按所在位置的 Middleware 集合登记；同一会话的各步骤位置被同一组标注覆盖。
     sessionSteps = map renderSession (unitSessionEntries unit)
     renderSession entry = case entry of
-      ReceiveEntry producer source parser -> "(" ++ show producer ++ ", SDK.receiveSteps ("
-        ++ action source "" ++ ") (" ++ action parser "() <$ " ++ "))"
-      DeriveEntry producer parser -> "(" ++ show producer ++ ", SDK.deriveSteps ("
-        ++ action parser "() <$ " ++ "))"
-      where action mounted prefix = wrapTarget (mountTarget mounted) (prefix ++ "Handlers." ++ mountMethod mounted)
-    wrapTarget label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
+      ReceiveEntry producer source parser -> let hooks = mountHooks unit (mountNode source) in
+        "(" ++ show (variantLabel producer hooks) ++ ", SDK.receiveSteps ("
+        ++ action hooks source "" ++ ") (" ++ action hooks parser "() <$ " ++ "))"
+      DeriveEntry producer parser -> let hooks = mountHooks unit (mountNode parser) in
+        "(" ++ show (variantLabel producer hooks) ++ ", SDK.deriveSteps ("
+        ++ action hooks parser "() <$ " ++ "))"
+      where action hooks mounted prefix = wrapTarget hooks (mountTarget mounted)
+              (prefix ++ "Handlers." ++ mountMethod mounted ++ variantSuffix hooks)
+    -- 原有的一份总是登记；被 middleware 标注覆盖的挂载另登记所在集合的特化。
+    variantsOf role terminal = [] : [hooks | hooks <- unitVariants unit, hooks `elem`
+      [mountHooks unit (mountNode mount) | mount <- assemblyMounts (unitAssembly unit)
+        , mountRole mount == role, mountTerminal mount == terminal]]
+    wrapTarget hooks label action = "SDK.targetApp " ++ show label ++ " emptyContexts scopes"
       ++ " (SDK.withErrorHandlers Handlers.errorHandlers"
-      ++ " (SDK.withAnchoredContexts Handlers.contextInjections"
-      ++ " (SDK.withStreamContexts Handlers.streamContextInjections"
-      ++ " (SDK.withScopeCleanups Handlers.scopeCleanups (" ++ hooked action ++ ")))))"
-    -- 注册了 Middleware 时安装 hook 目录；没有时生成代码不变。
-    hooked action
-      | any ((== MiddlewareOperation) . bindingOperation) (unitBindings unit) =
-          "SDK.withMiddlewareHooks Handlers.middlewareHooks (" ++ action ++ ")"
-      | otherwise = action
+      ++ " (SDK.withAnchoredContexts Handlers.contextInjections" ++ suffix
+      ++ " (SDK.withStreamContexts Handlers.streamContextInjections" ++ suffix
+      ++ " (SDK.withScopeCleanups Handlers.scopeCleanups" ++ suffix ++ " (" ++ action ++ ")))))"
+      where suffix = variantSuffix hooks
     renderList _ [] = "[]"
     renderList indent items = "[ " ++ intercalate ("\n" ++ indent ++ ", ") items ++ "\n" ++ indent ++ "]"

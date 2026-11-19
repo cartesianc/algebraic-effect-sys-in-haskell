@@ -6,9 +6,10 @@ module Framework.Prototype.Query
   , allWorkflow, lookupChain, lookupWorkflow, precedes, exclusive
   , driveSet, readPoints, scopeOpeningsAt, drivingAssets, bootPlan, sessionSteps, sessionAssets
   , finiteSessions, candidateCase, findEffectProto, ordinaryEntry, selectorMethod, calledMethods, reachableMethods
+  , hooksAt, variantLabel, entryLabel
   ) where
 
-import Data.List (isPrefixOf, nub)
+import Data.List (intercalate, isPrefixOf, nub)
 import Data.Maybe (listToMaybe)
 import Framework.Language.Registration (Access(..))
 import Framework.Prototype.Graph
@@ -214,3 +215,18 @@ describedSession prototype route = case [session | session <- candidates, sessio
       Just node -> case lookupWorkflow (protoWorkflow prototype) node of
         Just (LifelongAt _ description _) -> lifelongSessions description
         _ -> []
+
+-- Middleware 标注 v2（2026-11-19）：注入发生在生成期。一个启动位置被哪些标注覆盖只看路径前缀，
+-- 会话步骤的位置在所属 lifelong 路径下，同一规则适用；结果按 Middleware 的注册顺序排列、去重。
+-- gen 按这份集合特化入口，运行时只按 entryLabel 选取已编译的 Target，不再分发。
+hooksAt :: [String] -> [(NodeId, [String])] -> NodeId -> [String]
+hooksAt order marks position = [selected | selected <- order
+  , or [selected `elem` hooks | (root, hooks) <- marks, root `isPrefixOf` position]]
+
+-- 特化 Target 的登记名：没有 Middleware 时就是原名。
+variantLabel :: String -> [String] -> String
+variantLabel base [] = base
+variantLabel base hooks = base ++ "@" ++ intercalate "+" hooks
+
+entryLabel :: DrivingPlan method -> NodeId -> String -> String
+entryLabel plan position base = variantLabel base (maybe [] id (lookup position (drivingHooks plan)))

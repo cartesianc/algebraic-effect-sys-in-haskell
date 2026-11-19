@@ -5,7 +5,7 @@ module Framework.Gen.Plan
   , ValueType(..), Capability(..), EntryOperation(..), ReadRoute(..), ReadView(..)
   , ReaderPlan(..), SelectorPlan(..), SessionEntry(..)
   , Assembly(..), EntryMount(..), OutputConnection(..), EntryStep(..), RawSource(..)
-  , stepMethod, rawMethod, bindingCalls, unitTerminals
+  , stepMethod, rawMethod, bindingCalls, unitTerminals, mountHooks, unitVariants, capturedBy
   , effectPrototypes, protoOf, allMethods
   , reference, parenthesized, normalizeType, readsAccess ) where
 
@@ -133,10 +133,10 @@ data Binding = Binding
   , bindingResult :: ValueType
   , bindingOperation :: EntryOperation
   , bindingCapabilities :: [Capability]
-  -- 本绑定所属 effect 的类别被某个 Middleware 拦截时给出该类别：交出值与 raise 改写为带 handler 名的捕获调用。
-  , bindingObserved :: Maybe EffectKind
-  -- raw 读到的那个原子调用的类别被拦截时给出该类别：raw 改写为带 handler 名的捕获调用。
-  , bindingRawObserved :: Maybe EffectKind
+  -- 本绑定所属 effect 的类别；交出值与 raise 的捕获按它匹配 Middleware 的 intercept。
+  , bindingKind :: EffectKind
+  -- raw 读到的那次原子调用的类别；raw 的捕获按它匹配。
+  , bindingRawKind :: Maybe EffectKind
   } deriving (Eq, Show, Read)
 
 -- handler 的签名由绑定类别与 effect 的 demands 推出；同一 handler 的所有绑定必须一致。
@@ -203,6 +203,20 @@ allMethods unit = [method | effect <- effectPrototypes unit, (_, method) <- Prot
 
 bindingCalls :: Binding -> [String]
 bindingCalls = map stepMethod . bindingBefore
+
+-- 一个挂载被哪些 Middleware 覆盖（注册顺序）；与 Prototype 的 drivingHooks 用同一计算。
+mountHooks :: Unit -> NodeId -> [String]
+mountHooks unit = Prototype.hooksAt (map fst (unitMiddleware unit)) (plannedMiddleware (unitPlan unit))
+
+-- 需要特化的 Middleware 集合：各挂载实际出现的非空集合。
+unitVariants :: Unit -> [[String]]
+unitVariants unit = nub [hooks | mount <- assemblyMounts (unitAssembly unit)
+  , let hooks = mountHooks unit (mountNode mount), not (null hooks)]
+
+-- 特化中某一类调用点要调用的 Middleware：集合里拦截该类别的那些。
+capturedBy :: Unit -> [String] -> EffectKind -> [String]
+capturedBy unit hooks kind = [selected | selected <- hooks
+  , Just kinds <- [lookup selected (unitMiddleware unit)], kind `elem` kinds]
 
 -- Target 的实现可共用，挂载身份仍全部保存在 assemblyMounts；这里只投影生成的入口目录。
 unitTerminals :: Unit -> [(String, String)]

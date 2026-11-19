@@ -80,8 +80,6 @@ data RuntimeGraph environment cause = RuntimeGraph
   -- 普通资产 v1（2026-11-18）：每个 Context 一份运行级最新发布；帧不是可见性边界。
   -- Origin 表只保存当前步骤的伴随输出；切轮不撤销这份共享值，不累积历史。
   , runtimeLatest :: IORef (ScopeBindings environment cause)
-  -- 每个启动位置生效的 hook 集合；从 Prototype 投影一次，启动时按位置查表。
-  , runtimeHooks :: [(NodeId, [String])]
   }
 
 newRuntimeGraph
@@ -99,7 +97,6 @@ newRuntimeGraph prototype scopes = do
     <*> newMVar (Just []) <*> newIORef [] <*> newIORef (const (ioError (userError "No session launcher is installed")))
     <*> pure (drivingOutputSites (protoDriving prototype))
     <*> newIORef []
-    <*> pure (drivingHooks (protoDriving prototype))
 
 -- ScopeTree 的独立构建与校验仍在 Prototype；这里只把同一树的关系装入现有控制对象。
 configureRuntimeScopes :: RuntimeGraph environment cause -> IO ()

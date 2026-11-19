@@ -13,7 +13,7 @@
 -- 本文件保留共享 Environment 的解释器实现，按绑定、Store、诊断、生命周期和根调用分组。
 module Framework.Runtime.App
   ( App, Launch(..), runAppWith, withScopeCleanups
-  , withMiddlewareHooks, observeOutput, observeRaw, observeRaise, observedOutput, observedRaw, observedError
+  , HookEvent(..), HookApp, runHookApp, liftHookApp, hookOutput, hookRaw, hookError
   ) where
 
 import Framework.Runtime.Binding
@@ -26,13 +26,12 @@ import Framework.Runtime.Identity
 import Framework.Runtime.Frame (ExecutionFrame, owningFrame, captureFrameInput)
 import Framework.Runtime.Session (Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..), View, awaitView)
 import Framework.Prototype (NodeId)
-import Framework.Language.Registration (EffectKind)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, evaluate, fromException, mask, mask_, throwIO, try, finally)
 import Control.Monad (filterM, forM, forM_, when)
 import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO(..))
-import Control.Monad.Reader (ReaderT, ask, asks, local, runReaderT)
+import Control.Monad.Reader (ReaderT(..), ask, asks, local, runReaderT)
 import Data.Foldable (toList)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (find, nub)
@@ -83,11 +82,6 @@ data Environment env cause = Environment
   , sessionSinks :: [(String, Bound env cause -> IO ())]
   -- lifelong 单元执行中：本次 frame 对会话资产的领取（同一 frame 只领取一次，各调用共享）。
   , frameDeliver :: String -> Maybe (IO (Either (Stopped cause) (View env cause)))
-  -- Middleware 目录（生成区安装）与本启动位置生效的集合；Middleware 执行时集合为空，不再捕获。
-  , hookTable :: [(String, ([EffectKind], App env cause ()))]
-  , activeHooks :: [String]
-  -- 只在 Middleware 执行时安装：本次调用点捕获的内容。
-  , hookEvent :: Maybe HookEvent
   }
 
 -- 一次末端调用的起点：交接的绑定与视图；会话步骤另带原始输入，lifelong 单元另带本次 frame。
@@ -862,60 +856,39 @@ runClose name wrap (AppRun action) = AppRun $ do
       `finally` releaseReservation
   either throwError pure result
 
--- Middleware 捕获 -------------------------------------------------------------
+-- Middleware 的执行载体 ---------------------------------------------------------
 
--- 捕获 v2（2026-11-19）：Middleware 不包住调用，只在 Root 级的类方法调用点上注入操作语义。
--- 生成代码把原子 handler 交出的值（pure）、raw 读取与 raise 改写为带 handler 名的调用；
--- 调用点上，本启动位置生效、且拦截该类别的 Middleware handler 作为类方法同步执行，
--- 用 hookedOutput／hookedRaw／hookedError 拆出本次捕获。它与普通 Excu 一样可以 raise，失败从调用点传播。
+-- 注入 v3（2026-11-19）：Middleware 在生成期注入。gen 按挂载所在的标注特化入口，
+-- 在交出值、raw、raise 三个 Root 级调用点上直接调用 Middleware 的入口；运行时没有目录或分发。
+-- 这里只提供 Middleware handler 的载体：本次调用点的捕获作为只读环境，执行期间不进入调用中的 open／close 尝试。
 data HookEvent = OutputEvent String [String] | RawEvent String [String] | ErrorEvent String String
 
--- 生成区安装 Middleware 目录（注册顺序）；安装本身不执行 handler。
-withMiddlewareHooks :: [(String, ([EffectKind], App env cause ()))] -> App env cause value -> App env cause value
-withMiddlewareHooks table (AppRun action) = AppRun $ local
-  (\environment -> environment { hookTable = table }) action
+newtype HookApp env cause value = HookApp (ReaderT HookEvent (App env cause) value)
+  deriving (Functor, Applicative, Monad)
 
--- 按注册顺序依次执行；捕获期间生效集合为空，Middleware 自己的调用点不再被捕获。
--- 它只观察本次调用点：不进入调用中的 open／close 尝试，也不回放其他输出。
-dispatchHooks :: EffectKind -> HookEvent -> App env cause ()
-dispatchHooks kind event = do
-  environment <- AppRun ask
-  forM_ [hook | (hookName, (kinds, hook)) <- hookTable environment
-        , hookName `elem` activeHooks environment, kind `elem` kinds] $ \(AppRun hook) ->
-    AppRun $ local (\inner -> inner
-      { activeHooks = [], hookEvent = Just event
-      , caller = Nothing, contexts = [], openings = [], closings = [], replays = [] }) hook
+instance MonadIO (HookApp env cause) where
+  liftIO = liftHookApp . liftIO
 
--- 原子 handler 交出的值：调用成功后捕获，原值交回调用者。
-observeOutput :: EffectKind -> String -> App env cause [String] -> App env cause [String]
-observeOutput kind handler call = do
-  output <- call
-  dispatchHooks kind (OutputEvent handler output)
-  pure output
+liftHookApp :: App env cause value -> HookApp env cause value
+liftHookApp action = HookApp (ReaderT (const action))
 
--- raw 读取：读取方 handler 与读到的值；类别是被读取输出的那个原子调用的类别。
-observeRaw :: EffectKind -> String -> App env cause [String] -> App env cause [String]
-observeRaw kind handler reading = do
-  value <- reading
-  dispatchHooks kind (RawEvent handler value)
-  pure value
+runHookApp :: HookEvent -> HookApp env cause value -> App env cause value
+runHookApp event (HookApp action) = case runReaderT action event of
+  AppRun inner -> AppRun $ local (\environment -> environment
+    { caller = Nothing, contexts = [], openings = [], closings = [], replays = [] }) inner
 
--- raise：先捕获 handler 与错误描述，再以原失败退出。
-observeRaise :: EffectKind -> String -> String -> App env cause value -> App env cause value
-observeRaise kind handler description failing = dispatchHooks kind (ErrorEvent handler description) >> failing
+hookOutput, hookRaw :: HookApp env cause (Maybe (String, [String]))
+hookOutput = HookApp (asks (\event -> case event of
+  OutputEvent handler output -> Just (handler, output)
+  _ -> Nothing))
+hookRaw = HookApp (asks (\event -> case event of
+  RawEvent handler value -> Just (handler, value)
+  _ -> Nothing))
 
-observedOutput, observedRaw :: App env cause (Maybe (String, [String]))
-observedOutput = AppRun (asks hookEvent) >>= \event -> pure (case event of
-  Just (OutputEvent handler output) -> Just (handler, output)
-  _ -> Nothing)
-observedRaw = AppRun (asks hookEvent) >>= \event -> pure (case event of
-  Just (RawEvent handler value) -> Just (handler, value)
-  _ -> Nothing)
-
-observedError :: App env cause (Maybe (String, String))
-observedError = AppRun (asks hookEvent) >>= \event -> pure (case event of
-  Just (ErrorEvent handler description) -> Just (handler, description)
-  _ -> Nothing)
+hookError :: HookApp env cause (Maybe (String, String))
+hookError = HookApp (asks (\event -> case event of
+  ErrorEvent handler description -> Just (handler, description)
+  _ -> Nothing))
 
 -- 完整调用边界 ---------------------------------------------------------------
 
@@ -953,8 +926,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         , currentFrame = launchFrame launch, bindingRetention = launchRetention launch
         , anchoredEntries = [], streamEntries = [], replays = []
         , views = delivered, streamRaw = launchInput launch, sessionSinks = launchSinks launch
-        , frameDeliver = launchDeliver launch
-        , hookTable = [], activeHooks = fromMaybe [] (lookup node (runtimeHooks graph)), hookEvent = Nothing }
+        , frameDeliver = launchDeliver launch }
   (do
       completed <- try $ restore $ do
         outcome <- runExceptT (runReaderT action environment)
