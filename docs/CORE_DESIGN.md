@@ -23,7 +23,8 @@
 | gen 作为编译器：SDK 分为源语言、gen、编译产物、运行时四层，生成按阶段执行 | 已实现（2026-11-08） | [gen 是编译器](#compiler)、[编译流水线](#generation)、[SDK 分工](#sdk-layout) |
 | 持续执行与资源收尾 | 两侧结束、后继读取、交付保留、会话退役及持续值参数已实现；交付与业务数据中的资源持有继续收敛 | [阶段状态](NEXT_STAGES.md#stages)、[当前限制](NEXT_STAGES.md#current-limits) |
 | 嵌套 lifelong、背压与交付容量等 | 后续专题，本轮不扩展 | [开放事项](NEXT_STAGES.md#deferred) |
-| Middleware、Generic Map、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [开放事项](NEXT_STAGES.md#deferred) |
+| Middleware：AST 标注挂载、环绕交出 raw 的原子调用 | 首版已实现（2026-11-19）；不提供 `raise`，会话 worker 内的调用不拦截 | [Middleware](#middleware)、[后续事项](NEXT_STAGES.md#middleware) |
+| Generic Map、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [开放事项](NEXT_STAGES.md#deferred) |
 
 实现状态说明代码已接入的范围，不代表全部并发交错或资源逃逸已获证明。过去的编译及 demo 结果概述见 [已有基础与验证边界](NEXT_STAGES.md#baseline)。
 
@@ -288,7 +289,7 @@ gen 分开处理结构共享、同次输出复用与 scope 实例共享。相同
 <a id="registration"></a>
 ### 4.1 注册与 handler 契约
 
-统一使用 EffectSpec 注册，effect typing 有 Pure、Excu、Scoped、Error、Context、Stream 六类；Stream 是持续数据源，只由生产会话驱动，规则见第 7 章。typing 的字段写 handler 名：handler 是不带参数的原子类方法，一个 handler 可以注册到多个 effect。effect 是业务配置，给出类别、绑定、前驱（input）与资产访问（demands）；effect 自身的入口方法名由 gen 内部生成，用户不写也不调用。对外产值的细化解析归 Context，生产链中的纯值变换归 Pure，不另设 Map。
+统一使用 EffectSpec 注册，effect typing 有 Pure、Excu、Scoped、Error、Context、Stream、Middleware 七类；Stream 是持续数据源，只由生产会话驱动，规则见第 7 章；Middleware 只由 AST 标注挂载，规则见 [Middleware](#middleware)。typing 的字段写 handler 名：handler 是不带参数的原子类方法，一个 handler 可以注册到多个 effect。effect 是业务配置，给出类别、绑定、前驱（input）与资产访问（demands）；effect 自身的入口方法名由 gen 内部生成，用户不写也不调用。对外产值的细化解析归 Context，生产链中的纯值变换归 Pure，不另设 Map。
 
 | 注册类别 | 绑定的 handler | handler 签名 | gen 生成的内部入口 | SDK 执行责任 |
 | --- | --- | --- | --- | --- |
@@ -298,6 +299,7 @@ gen 分开处理结构共享、同次输出复用与 scope 实例共享。相同
 | Error | detect、resolve | 均为 m () | detect名字、resolve名字 | 只处理关联 scope 的失败；沿 ScopeTree 祖先顺序检测，Succ 后调用可选 resolve，保存原始与次生失败 |
 | Context | parser | m 表示类型 | getT；`require = True` 时 readT，`stream = True` 时为 streamT | getT 执行前驱与 parser 并包装发布；读取先用 state，无值时等待发布，不生产；失败保留该来源旧值；持续资产见第 7 章 |
 | Stream | handler | m String | next名字 | 只由生产会话驱动；不作为 AST target |
+| Middleware | handler（必填）；`intercept :: [EffectKind]` | m ()，Layer 是 Raw、Proceeds、MonadIO，不含 Raises | hook名字 | `input = "None"`，没有 demands；只经拦截分发执行，不作为 AST target，见 [Middleware](#middleware) |
 
 #### 注册构造
 
@@ -319,6 +321,9 @@ typing = Context { asset = Asset @SessionInfo "CrawlSessionInfo", parser = Just 
 
 -- 持续数据源：每次取得一份原始输入，由挂在它下面的 Context 的 parser 解析
 typing = Stream { handler = Just "nextReading" }
+
+-- 环绕 hook：input 写保留名 "None"；allEffects 是 [ExcuKind, ScopedKind, PureKind] 的简写
+typing = Middleware { handler = Just "traceOutput", intercept = [ExcuKind, ScopedKind] }
 ```
 
 注册使用普通 ADT 的不同构造器携带各自属性，不因字段不同而引入 type family 或 data family。handler 名绑定使用 Maybe String，Nothing 表示未绑定，不把返回值改成 Maybe；handler = Nothing 的 effect 保留 Input 关系，被 target 选中时报没有入口；Pure 没有可选的入口，必须绑定 handler。SDK 不猜测 handler 名，也不生成默认成功操作。
@@ -339,13 +344,14 @@ Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必�
 | --- | --- | --- |
 | `Reads T m` | 绑定它的 effect requires 了表示类型为 T 的资产 | `require @T` |
 | `Reads T m` | 绑定它的 effect streams 了持续资产；T 是资产表示类型 | `require @T` |
-| `Raw m` | 绑定成挂接的 parser 或 Pure | `raw :: m [String]` |
-| `Raises XxxError m` | 总是 | `raise (XxxError "...")` |
+| `Raw m` | 绑定成挂接的 parser、Pure 或 Middleware | `raw :: m [String]`；Middleware 读被拦截调用本次交出的输出 |
+| `Raises XxxError m` | Middleware 以外总是 | `raise (XxxError "...")` |
+| `Proceeds m` | 绑定成 Middleware | `proceed`：推进被拦截的调用，调用成功后返回 |
 | `StreamEnds m` | 绑定成 Stream 的 handler | `streamEnd`：来源没有下一份输入，正常结束 |
 | `EndsStream m` | 以 `streams` 订阅持续资产的 Excu（规则见 [Stream 9.5](STREAM_LIFELONG.md#consumer-end)） | `endStream`：结束本处订阅，按读取方计数停产 |
 | `MonadIO m` | Pure 以外总是 | `liftIO` |
 
-Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 handler 的类或 request；单独的 requests 不带来 Reads。一个 handler 只有一份 Layer，各绑定推出的方法类型与 Layer 必须一致，否则 gencode 报错。`Reads`、`Raw`、`Raises`、`StreamEnds`、`EndsStream` 定义在 Framework.Language.Handler，由 Framework.SDK 导出；`Raw`、`Raises` 是暂定名。
+Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 handler 的类或 request；单独的 requests 不带来 Reads。一个 handler 只有一份 Layer，各绑定推出的方法类型与 Layer 必须一致，否则 gencode 报错。`Reads`、`Raw`、`Raises`、`StreamEnds`、`EndsStream`、`Proceeds` 定义在 Framework.Language.Handler，由 Framework.SDK 导出；`Raw`、`Raises` 是暂定名。
 
 失败属于 handler：raise 的错误类型由 handler 名决定，不随绑定改变，Errors 中的分类是 `XxxFailure`；发生在哪个 effect 由 SDK 记为 Failure.origin，只是诊断位置。原始 Failure 保存 origin、detail 分类和 message，传播或次生失败不覆盖原故障；不要求用户声明错误 ADT。
 
@@ -408,7 +414,37 @@ Input 表达操作的前提关系，业务值来源单独由 demands 表达；Co
 
 生成入口统一包装原协议：withErrorPath 记录失败路径上的 scope，handleFailure 接入 Failure 捕获与 Error 处置，atomicHandle／atomicScope 与 openScope／closeScope 包装原子句柄和 scope 生命周期，streamHandle 包装 Stream，callContext／readContext 包装 Context 的生产、挂接注入与读取。业务不写 handler／super 前缀。
 
-根入口不修改业务方法体、不预执行未声明的 Context、不另行 boot 或 lower 上游。scope 复用仍经过调用入口，但可以跳过资源方法体。独立 Middleware typing 及装卸策略保留为后续专题，尚未实现，见 [Next stages](NEXT_STAGES.md#middleware)。
+根入口不修改业务方法体、不预执行未声明的 Context、不另行 boot 或 lower 上游。scope 复用仍经过调用入口，但可以跳过资源方法体。
+
+<a id="middleware"></a>
+#### Middleware：环绕一次原子调用
+
+Middleware 是 Root 的 superhandler 的注入方。Root 的统一包装由 gen 写进每个入口；注册了 Middleware 时，gen 在交出 raw 的原子调用外再留一个拦截槽，Middleware 注册把 hook 填进这个槽。业务不改原子 handler，也不改 Input 关系：
+
+```haskell
+-- 注册：没有 Input 前驱，也没有 demands
+EffectSpec { name = "TraceOutput", typing = Middleware { handler = Just "traceOutput", intercept = [ExcuKind, ScopedKind] }
+           , input = "None", demands = [] }
+
+-- handler：恰好一次 proceed，raw 只在它之后读
+instance TraceOutputLayer m => TraceOutputHandler m where
+  traceOutput = do
+    liftIO (putStrLn "start")
+    proceed
+    fields <- raw
+    liftIO (print fields)
+
+-- AST：透明标注一棵子树，hook 是集合
+ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "WriteReport"]]
+```
+
+- **注册。** `input` 写保留名 `"None"`：没有 Input 注入，沿用 Input 的组合逻辑而不另设注册构造器。只有 Middleware 能写 `"None"`，Middleware 也只能写 `"None"`；任何 effect 的 Input 都不能指向 Middleware，因此 hook 与被拦截的链之间不会成环。`"None"` 与 `"Root"` 一样不能作为 effect 名。首版不允许 demands，hook 不读取、不驱动资产。`intercept` 非空、不重复，只能取 `ExcuKind`、`ScopedKind`、`PureKind`，即确实交出 raw 的原子调用；`allEffects` 是三者的简写。
+- **挂载。** `middleware :: [EffectNode] -> AST -> AST` 包住恰好一棵子树。列表只接受 Middleware 注册名，普通 `node` 也不能引用 Middleware。标注是透明的：gen 先剥离标注再编号，NodeId、单元划分（包括 `lifelong` 对直接 `parallel` 子项的拆分）与无标注时相同；标注位置与 hook 名作为 `drivingMiddleware` 存入 Prototype，运行与 `--structure` 剥离当前 AST 后核对骨架，并核对标注与编译时一致。
+- **生效集合。** Booter 为每个非会话启动位置求覆盖它的全部标注之并，去重后存为 `drivingHooks`。同一 hook 出现在嵌套标注中只算一次；集合没有顺序。运行时按启动位置查表，同一 handler 复用在不同子树时，只有标注覆盖的那次挂载被拦截。会话 worker（Receive／Derive 步骤）内的调用首版不拦截。
+- **槽位。** 槽只包住 `runAt @"X" handler` 这一次原子调用（Excu.run、Scoped.open／close、Pure.run），在 atomicHandle／atomicScope 之内、驱动与 Input 前驱之外：前驱经自己的入口，各自按自己的类别被拦截；前驱失败时不进入本槽。scope 复用跳过 open 方法体时，槽也不执行；回放本次输出（parser 经 raw 读挂接句柄）不重跑调用，也不再触发 hook。close 在收尾时沿用开启时的启动位置。没有注册 Middleware 的程序，生成代码不出现拦截槽。
+- **屏障语义。** 生效的多个 hook 在各自的线程中执行前半段；全部到达 `proceed` 后，原调用恰好执行一次；本次输出交给所有 hook 后，等所有后半段结束，调用才返回。任何 hook 都观察不到其他 hook 的执行次序，结果与标注顺序无关。hook 自身执行时生效集合为空，hook 不会被再拦截。
+- **raw 与结果。** hook 的 `raw` 读本次调用交出的 `[String]`，是只读旁路；原结果由 SDK 原样交回调用者，挂接的 parser 照常读同一份输出。gen 检查 hook 方法主 `do` 序列中恰好直接出现一次 `proceed`，不在分支或恢复里，`raw` 只出现在它之后；`proceed` 只给 Middleware。
+- **失败。** 首版 Layer 不含 `Raises`。原调用失败时，等在 `proceed` 的 hook 退出、不执行后半段，原失败照常传播。hook 抛出的 IO 异常附上 hook 名与被拦截 effect，作为被拦截调用的异常沿原入口包装传播；前半段异常时原调用一次也不执行，后半段异常时原调用已经完成，不重跑。
 
 <a id="context"></a>
 ### 4.3 Context、驱动与读取
@@ -600,6 +636,7 @@ SDK 将 node 与 branch 分成两个抽象类型：
 ```haskell
 node :: String -> EffectNode
 chained, parallel, alternative, lifelong :: BranchChild child => [child] -> AST
+middleware :: [EffectNode] -> AST -> AST  -- 透明标注，见 [Middleware](#middleware)
 ```
 
 BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两个实例；业务不增加 class、instance 或转换调用。同一列表只能全是 node 或全是 branch，裸 node 不能赋给 AST，原始 AST 构造器与子项转换不公开。单节点模块用 `chained [node "目标"]`。整个程序必须至少挂载一个末端。有限 workflow 内可用 `chained ([] :: [AST])` 表达一个成功返回空结果的子分支。内部递归表示与 algebra 不变，通过 foldAST 使用 cata。

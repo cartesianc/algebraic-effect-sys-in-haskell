@@ -395,20 +395,20 @@ EffectSpec
 | 参数 | 类型 | 含义 |
 | --- | --- | --- |
 | `name` | `String` | effect 的注册名 |
-| `typing` | `EffectTyping` | 类别（六选一）及绑定的 handler 名 |
+| `typing` | `EffectTyping` | 类别（七选一）及绑定的 handler 名 |
 | `input` | `String` | 前驱：gen 在 handler 之前执行哪个 effect |
 | `demands` | `[Demand]` | 驱动或读取哪些资产 |
 
-文件需开启 `DuplicateRecordFields`（多个类别共用字段名 `handler`）和 `TypeApplications`（`Asset @类型 "资产名"` 中的类型应用），从 `Framework.SDK` 导入 `EffectSpec(..)`、`EffectTyping(..)`、`Asset(..)`、`requests`、`requires`；订阅持续资产时导入 `streams`，用到 Error 时再导入 `Handles(..)`。
+文件需开启 `DuplicateRecordFields`（多个类别共用字段名 `handler`）和 `TypeApplications`（`Asset @类型 "资产名"` 中的类型应用），从 `Framework.SDK` 导入 `EffectSpec(..)`、`EffectTyping(..)`、`Asset(..)`、`requests`、`requires`；订阅持续资产时导入 `streams`，用到 Error 时再导入 `Handles(..)`，注册 Middleware 时再导入 `EffectKind(..)`（或 `allEffects`）。
 
 ### `name`
 
 - **唯一身份**：AST 的 `node`、其他 effect 的 `input`、Error 的 `ScopeFaultIn`／`ContextFaultIn` 都用这个名字引用它，在注册集合中不能重复。
 - **生成的名字**：生成器据此产出类型标签 `At "名字"`、结果构造器 `名字Result` 和内部入口方法（见下表），所以 `name` 须是大写字母开头的 Haskell 类型名。handler 的类、Layer 与错误类型由 handler 名推出，不由 effect 名推出。
 
-### `typing`：六种类别
+### `typing`：七种类别
 
-`typing` 是六选一的枚举，每种类别的字段写它绑定的 handler 名：
+`typing` 是七选一的枚举，每种类别的字段写它绑定的 handler 名：
 
 | 枚举 | 字段 | handler 签名 | gen 生成的内部入口 | 用途 |
 | --- | --- | --- | --- | --- |
@@ -418,6 +418,7 @@ EffectSpec
 | `Scoped` | `open`、`close :: Maybe String` | 均为 `m [String]` | `open名字`、`close名字` | 资源的开启与关闭（原子句柄） |
 | `Error` | `detect`、`resolve :: Maybe String`；`handles :: [Handles]` | 均为 `m ()` | `detect名字`、`resolve名字`，由失败协议调用 | 对 scope 内的指定失败做诊断和处置 |
 | `Stream` | `handler :: Maybe String` | `m String` | `next名字`，由生产会话调用 | 持续取得原始输入，交给挂在它下面的 Context 解析 |
+| `Middleware` | `handler :: Maybe String`（必填）；`intercept :: [EffectKind]` | `m ()` | `hook名字`，由拦截分发调用 | 环绕 AST 标注范围内的原子调用，见 [`middleware`](#middleware) |
 
 - **字段写 handler 名**：`Just "名字"` 绑定 `Handlers.hs` 中同名的类方法，`Nothing` 不绑定。入口为 `Nothing` 的 effect 只作为声明存在，不能被 AST 选为末端。
 - **handler 可以复用**：同一个 handler 可以绑定到多个 effect，前提是各绑定推出相同的签名和 Layer。例如 Crawler 的 `FetchPage`、`FetchLinkedPage` 共用 `fetchPage`，FacadeProbe 的两个 Scoped 共用 `openTextFile`／`closeTextFile`。
@@ -510,7 +511,7 @@ Context 协议故障的来源一律记为生产方的注册名，不是契约名
 input = "FileSession"
 ```
 
-- **取值**：`"Root"`（没有上游），或另一个**非 Context、非 Error** 的 effect 名。Context 只能经 `demands` 接入，不能写在 `input` 里。只有 Context 和 Pure 可以把 Pure 写在 `input` 里。
+- **取值**：`"Root"`（没有上游），或另一个**非 Context、非 Error、非 Middleware** 的 effect 名；Middleware 自己写保留名 `"None"`，其他类别不能写 `"None"`。Context 只能经 `demands` 接入，不能写在 `input` 里。只有 Context 和 Pure 可以把 Pure 写在 `input` 里。
 - **含义**：前驱。gen 在这个 effect 的入口中先执行 `input` 指向的 effect（连同它自己的前驱），再执行绑定的 handler；方法体不调用上游，也不捕获前驱的失败。前驱失败后的改道用 AST 的 `alternative`。
 - **已开启的 scope 不重开**：前驱是 Scoped 时，同一条链里已开启的实例直接复用，不再执行 `open`。
 - **挂接**：Context 的 `input` 指向 Excu、Scoped 或 Stream 时，它就挂在这个句柄下，parser 用 `raw` 读取句柄入口（`handler`／`open`）本次交出的 list；`close` 没有挂接点。挂接的 Context 不把句柄当作前驱重跑。例如 [FacadeProbe](../demo/FacadeProbe/Effects.hs) 的 `ReportCounter` 挂在 `ReadReport` 下，把读到的文本解析成行数。
@@ -615,6 +616,7 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
 | Scoped.open／close | `m [String]` | 同上；`close` 的输出没有挂接点 |
 | Error.detect／resolve | `m ()` | 见下文「Error 的写法」 |
 | Stream | `m String` | 一份原始输入 |
+| Middleware | `m ()` | 见 [`middleware`](#middleware) |
 
 Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，不用写。
 
@@ -625,7 +627,8 @@ Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，
 | `x <- require @T`（普通资产） | 读取绑定的 effect 所声明、表示类型为 `T` 的资产；缺值时等待发布，不生产；已确定生产耗尽则报缺值 |
 | `value <- require @T`（持续资产） | 声明 streams 时读本次交付，声明 requires 时读本次固定值；不会自动包装此前的全部发布 |
 | `output <- raw` | 挂接的 parser 或 Pure 读取直接 Input 本次交出的 `[String]`，句柄不再执行一遍；挂在 Stream 下时是会话本次取得的那份原始输入（单元素 list） |
-| `raise (ReadFileContentError "message")` | 以本 handler 的错误失败；错误类型是 handler 名首字母大写加 `Error` |
+| `raise (ReadFileContentError "message")` | 以本 handler 的错误失败；错误类型是 handler 名首字母大写加 `Error`（Middleware 没有） |
+| `proceed` | 只在 Middleware：推进被拦截的调用，调用成功后返回；之后的 `raw` 读这次调用交出的 `[String]` |
 | `pure [info]`、`pure (x : rest)` | Excu／Scoped／Pure 交出 list，交给挂在下面的 Pure 或 Context |
 | `liftIO (...)` | 执行 IO（Pure 不可用） |
 
@@ -721,6 +724,7 @@ ast = operateFile
 | --- | --- | --- | --- |
 | node | `node "effect名"` | `EffectNode` | 选择一条操作链的末端 effect |
 | branch | `chained`、`parallel`、`alternative` 或 `lifelong` 加子项列表 | `AST` | 组合 node 或其他 branch |
+| 标注 | `middleware [node "M"] 子树` | `AST` | 为一棵子树挂载 hook，不改变它的结构，见 [`middleware`](#middleware) |
 
 - **node 不是 AST**：顶层和每个模块都必须是 branch，单个 node 也要包进一个 branch。
 - **子项列表同质**：一个列表要么全是 node，要么全是 branch，不能混排。
@@ -728,7 +732,7 @@ ast = operateFile
 
 ### node
 
-- **只选原始句柄**：选中的 effect 必须是 Excu 或 Scoped，不能是 Pure、Context、Stream 或 Error。
+- **只选原始句柄**：选中的 effect 必须是 Excu 或 Scoped，不能是 Pure、Context、Stream、Error 或 Middleware。
 - **运行即执行入口**：入口先按 `requests` 驱动资产，再执行 Input 链上的前驱，最后执行绑定的 handler（Scoped 末端执行 `open`）。Input 链不需要在 AST 里重写。
 - **node 结果不隐式传值**：值经 Context 发布。普通 `require` 先用本次捕获，否则读同一 refined asset 的共享最新值；尚未发布时可等待其他并行分支生产。
 
@@ -784,6 +788,40 @@ monitor = lifelong
 - **结束**：Stream handler 用 `streamEnd` 报告来源结束，已发布的交付仍可领取；消费方 handler 用 `endStream` 结束自己的订阅，所有读取方都离开时来源停止生产。单元在所需来源耗尽、或它的节点都结束订阅时结束；全部单元正常结束后 lifelong 成功返回，放在它后面的 branch 接着执行；仍有消费单元未结束时后面的 branch 不会执行。含 lifelong 的程序中任何失败都会结束整次运行（临时规则）。
 
 单元划分、交付、会话与失败的完整写法见[持续资产与 lifelong](#stream)。
+
+<a id="middleware"></a>
+#### `middleware`
+
+```haskell
+-- Effects.hs：没有 Input（保留名 "None"），没有 demands；intercept 选拦截的类别
+EffectSpec
+  { name = "TraceOutput"
+  , typing = Middleware { handler = Just "traceOutput", intercept = [ExcuKind, ScopedKind] }
+  , input = "None"
+  , demands = []
+  }
+
+-- Handlers.hs：Layer 是 Raw、Proceeds、MonadIO；没有 raise
+instance TraceOutputLayer m => TraceOutputHandler m where
+  traceOutput = do
+    liftIO (putStrLn "start")
+    proceed                 -- 被拦截的调用在这里执行一次
+    fields <- raw           -- 这次调用交出的 list
+    liftIO (print fields)
+
+-- AST.hs：只有左支的 WriteReport 被拦截
+ast = parallel
+  [ middleware [node "TraceOutput"] (chained [node "Prepare", node "WriteReport"])
+  , chained [node "WriteReport"]
+  ]
+```
+
+- **拦截什么**：标注覆盖的挂载上，类别在 `intercept` 中的原子调用：Excu 的 handler、Scoped 的 `open`／`close`、Pure 的 handler。`allEffects` 表示三类全部。只包住 handler 这一次调用：`requests` 驱动与 Input 前驱经各自的入口，各自按自己的类别拦截；scope 复用跳过 `open` 时不触发 hook。
+- **透明**：标注不改变子树的执行顺序、NodeId 和 lifelong 的单元划分；标注直接包住 lifelong 的 `parallel` 子项时，仍按该 `parallel` 拆单元。`--structure` 列出标注与每个启动位置生效的 hook。
+- **多个 hook 没有顺序**：列表和嵌套标注合成一个集合，重复的只算一次。所有 hook 的 `proceed` 前半段都执行完，原调用才执行一次；结果交给所有 hook，它们的后半段都结束后调用才返回。不要让 hook 之间依赖彼此的执行先后。
+- **方法体的写法**：主 `do` 序列中直接写恰好一次 `proceed`，不能放在 `when`、`case` 等分支里；`raw` 只能写在它之后。否则 gencode 报错。
+- **失败**：原调用失败时 hook 不执行后半段，原失败照常传播。hook 里的 IO 异常会作为被拦截调用的异常传播，并注明 hook 与被拦截的 effect；在 `proceed` 之前抛出时原调用不执行。
+- **限制**：标注列表只能写 Middleware；Middleware 不能作为 `node` 末端，也不能作为其他 effect 的 `input`。生产会话（Stream 与它的 parser、派生会话）里的调用首版不拦截。
 
 ### 文件组织
 

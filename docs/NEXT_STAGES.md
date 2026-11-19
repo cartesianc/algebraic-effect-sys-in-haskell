@@ -1,93 +1,29 @@
 # Next stages
 
 <a id="stages"></a>
-下一阶段设计 [Middleware 的环绕调用](#middleware)。[AST 嵌套与 workflow 边界](#ast-nesting)单列为待设计阶段；[持续交付的容量与背压](#backpressure)保留原计划。三者都尚未实现各自拟议的扩展，其他开放项见[专题清单](#deferred)。
+Middleware 首版已经实现，下一阶段处理[持续交付的容量与背压](#backpressure)；[AST 嵌套与 workflow 边界](#ast-nesting)单列为待设计阶段。两者都尚未实现，其他开放项见[专题清单](#deferred)。
 
 <a id="code-shape"></a>
-## 代码长什么样
-
-下面是 Middleware 的**接口提案**。SDK 目前没有 `middleware`、`MiddlewareSpec` 或 `proceed`。现有可运行的注册、instance 和具名 workflow 见[开发指南](GUIDE.md#code-shape)。
-
-```haskell
--- Effects.hs · effects :: [EffectSpec] 中的一项（拟议）
-MiddlewareSpec
-  { name      = "TraceOutput"
-  , handler   = Just "traceOutput"
-  , intercept = [ExcuKind, ScopedKind]
-  }
-
--- Handlers.hs · 对确实交出 raw 的调用，示意前置和后置操作
-instance TraceOutputLayer m => TraceOutputHandler m where
-  traceOutput = do
-    liftIO (putStrLn "start")
-    proceed
-    fields <- raw
-    liftIO (print fields)
-
--- AST.hs · 用具名 branch 保留方括号写法，作用域里只有一棵子树
-reportBranch :: AST
-reportBranch = chained [node "Prepare", node "WriteReport"]
-
-ast :: AST
-ast = parallel
-  [ middleware [node "TraceOutput"] reportBranch
-  , chained [node "WriteReport"]
-  ]
-```
-
-建议签名为 `middleware :: [EffectNode] -> AST -> AST`。节点列表引用 Middleware 注册名，第二个参数接一棵已经写明驱动方式的 branch。要包住多项，由作者在这棵树上选择 `chained` 或 `parallel`。因此不需要另造 `nodelist` 标记，也没有子树列表的隐式执行顺序。上例两支复用一个 `WriteReport`，只有左支经过 `TraceOutput`。
-
 <a id="middleware"></a>
-## Middleware 怎样包住一次调用
+## Middleware：首版范围与后续事项
 
-**槽位只包住本单元的原子调用。** gen 保留生成入口已有的执行顺序：先按声明执行 `requests` 和 Input 前驱，然后把本单元的 `runAt @"X" handler` 作为尚未执行的 action 交给 Root 的 `superhandler`。以 FileDemo 为例，拟议的生成片段如下，省略现有的外层协议包装。
+**首版已实现（2026-11-19）。** 现行规则写在 [CORE_DESIGN 的 Middleware](CORE_DESIGN.md#middleware)，组合依据登记在 [COMPOSITION](COMPOSITION.md#middleware)，写法见[开发指南](GUIDE.md#middleware)。已确认的取舍：
 
-```haskell
-runReadFile = do
-  openFileSession
-  superhandler readFileEntry (runAt @"ReadFile" FrameworkGenerated.readFileContent)
-```
-
-`openFileSession` 经过自己的入口；只有确实执行 open 方法体时，才进入它自己的原子槽位。前驱失败时不会进入 ReadFile 的槽位。前驱成功后，Root 按本次挂载计划进入 ReadFile 的 hook，`proceed` 推进同一槽位的下一层，最内层才调用 `readFileContent`。ReadFile 的推进次数和计时范围均不包含前驱。空 hook 计划直接执行该次原子调用。错误路径、scope 生命周期锁、Context 注入与发布保持原有入口顺序。[现有入口装配](CORE_DESIGN.md#calls)
-
-**推进次数。** 正常完成时，各层各推进一次，原子调用总计一次。若将来允许前置 `raise`，推进前失败意味着原子调用零次；原调用或后置操作失败不会重跑已经执行的 IO。业务 handler 只取得受控的 `proceed`，原结果由 SDK 保管并交回调用者。取消和必须执行的资源清理沿用 SDK 的协议。
-
-**raw 的交接。** `withMiddleware :: Entry -> m a -> m a` 原样传回结果 `a`。业务 `raw :: m [String]` 读取独立的只读旁路通道。Injector 只在已知能交出原始输出的位置接线，由本次原子调用交接一次输出；同一槽位的后置 hook 与原 parser 都可读取它。通用派发层无需检查、转换或覆盖 `a`，也不会为读取 raw 再执行 action。业务交出 `[]` 是一次有效输出；scope 复用时没有执行 open 方法体，也就没有本次 open 的 raw。
-
-**gen 的次序检查。** Middleware 方法主 `do` 序列中必须有且仅有一处直接的 SDK `proceed`。它须在每一条能执行 SDK `raw` 的路径上先成功返回；前置代码读取 `raw`、某个分支绕过推进后再读、将推进或读取藏在无法证明顺序的局部 action 里，都在生成期报错。Source／Shape 按使用位置的 GHC `Name` 识别两个能力，合法的重导出和同名局部变量遵循 Haskell 作用域。到达后置位置只证明时序正确；该注册是否能读 raw 还要满足挂载角色的能力约束。
-
-### 一个 superclass 怎么接多个注册
-
-下面只表示 SDK 的目标类型关系，`Entry` 表示调用入口。Superclass 为 Root 提供环绕能力，gen 为一个程序合成派发实现。
-
-```haskell
-class Monad m => Middleware m where
-  withMiddleware :: Entry -> m a -> m a
-
-class Middleware m => Root m where
-  superhandler :: Entry -> m a -> m a
-```
-
-例如 `TraceOutput` 和 `Metrics` 分别绑定自己的原子 handler 类。gen 将注册身份分别接到各自的 handler，在程序的 `withMiddleware` 实现里按挂载计划组合它们。Root 始终只依赖 `Middleware m`，注册列表和匹配结果留在编译产物里。派发 hook 本身走内部入口，避免 hook 再拦截自己；并发分支使用各自的计划。现有 SDK 的 Root 职责由多个生成包装共同承担，上述两个类仍是拟议接口。
-
-### 实施顺序与模块
-
-| 步骤 | 模块 | 交付与待定边界 |
-| --- | --- | --- |
-| 1. 注册与 AST | `Language.Registration`、`Language.AST`、`Framework.SDK` | Middleware 注册没有 Input。建议首版也不提供 `demands`，因而不读取配置资产，也不触发 `requests`。若以后开放 `requires`，须把它计入来源与等待环分析。注册构造器的选择见下表。 |
-| 2. 挂载合法性 | `Gen.Composition`、`Gen.Booter`、`Prototype` | 在两种位置分别校验同一种 `EffectNode`。hook 列表只接受已注册的 Middleware；普通业务节点列为 hook 时拒绝。普通 workflow 的 `node` 仍遵循现有末端规则，Middleware 注册名出现在该位置时也拒绝。未知名称在两处都报错，诊断指出挂载位置和期望角色。合法挂载才进入静态 hook 计划。 |
-| 3. 提取与装配 | `Gen.Frontend.Source／Shape`、`Gen.Composition`、`Gen.Injector`、`Gen.Emit` | 前端提取已解析的能力使用及控制流，gen 校验推进次数与 raw 读取次序。Injector 把槽位接在本单元的原子调用上，按输出角色接 raw 通道；Emit 渲染已定计划。 |
-| 4. 执行与验收 | runtime 的入口与执行环境 | 用并发分支复用同一 handler 的例子核对 hook 隔离；用 FileDemo 核对前驱和原子调用各自的次数、同次 raw 与原 parser 的交接。透明标注保持 `lifelong` 对直接 `parallel` 子项的拆分。 |
-
-### 需要用户决定的三项
-
-| 待定项 | 建议与实际代价 |
+| 事项 | 首版决定 |
 | --- | --- |
-| **待定 · 注册形态** | 建议给现有 `data EffectSpec` 增加并列构造器 `MiddlewareSpec`，保留 `effects :: [EffectSpec]` 的写法。这样类型直接排除 Middleware 的 Input，但现有 `typing`、`input`、`demands` 记录选择器在新构造器上将成为部分函数，处理所有注册的代码须先按构造器匹配。另一方案是在 `EffectTyping` 增加类别，再由 gen 强制 `input = "Root"`；类型层仍允许写出其他 Input。 |
-| **待定 · 首版是否提供 `Raises`** | 建议首版暂不给 Middleware 的 Layer 提供这项能力。若业务需要在推进前主动拒绝调用，须同时确认下面的故障归属和自动 close 的保护。无论选哪种，原子 handler 自身已支持的失败仍按原协议传播。 |
-| **待定 · Middleware 自身失败的归属** | 若开放 `raise`，建议保留 Middleware handler 为故障来源，并附实际拦截的挂载位置。现有 `RaisedBy` 按 handler 匹配，Error 注册须关联唯一 scope。还需决定缺少适用 scope 的挂载如何处理、后置失败如何报告、以及诊断或 close 怎样完成。Middleware 自身没有 Input，不能据此挑选其他 scope 实例。[现有 Error 协议](CORE_DESIGN.md#error) |
+| 注册形态 | `EffectTyping` 增加 `Middleware { handler, intercept }`；`input` 写保留名 `"None"`，沿用 Input 的组合逻辑，表示没有 Input 注入，由另外的注入方成为 Root 的 superclass；不另设 `MiddlewareSpec` |
+| `intercept` | 只取交出 raw 的原子调用：`ExcuKind`、`ScopedKind`（open／close）、`PureKind`；`allEffects` 是三者的简写 |
+| 多个 hook | 生效的 hook 是集合，屏障语义：全部前半段到达 `proceed` 后原调用执行一次，再等全部后半段结束；构造上与顺序无关 |
+| `Raises` | 首版不提供 |
+| hook 的 IO 异常 | 作为被拦截调用的异常传播，附 hook 名与被拦截 effect；不吞掉、不改写原失败 |
+| demands | 首版不允许 |
 
-**`intercept` 留待细化。** 类别列表沿用 `EffectKind`，保留 `AllEffect` 表示覆盖所有业务 effect 类别的简写意图。在原子槽位边界内，各类别的方法角色、可提供的能力、多 hook 顺序、嵌套标注和跨链归属另议。特别是多个子树共享生产会话时，应按明确的结构关系装配，不能由先到达的消费者决定 hook。Hanging 与装卸策略继续独立设计。
+**后续事项。**
+
+- **`raise` 与故障归属。** 若开放推进前拒绝调用，需决定 Middleware handler 作为故障来源时如何匹配 Error：`RaisedBy` 按 handler 匹配，而 Error 须关联唯一 scope，Middleware 没有 Input，不能据此挑选 scope 实例；后置失败如何报告、诊断或 close 怎样完成也需同时确定。[现有 Error 协议](CORE_DESIGN.md#error)
+- **`requires`。** 若允许 hook 读取配置资产，须把它计入来源证明与等待环分析：hook 在被拦截调用的屏障内等待，可能与该调用的生产形成等待环。
+- **会话 worker。** Receive／Derive 步骤由多个子树共享，首版不拦截其中的调用；若要拦截，须按明确的结构关系决定生效集合，不能由先到达的消费者决定。
+- **Hanging 与装卸。** 与 Middleware 的挂起、恢复和装卸关系另行设计。
 
 <a id="backpressure"></a>
 ## 延期专题：持续交付的容量与背压
@@ -124,7 +60,7 @@ class Middleware m => Root m where
 2. **结束和取消传到哪里。** 内层结束后外层何时进入后继，外层结束或被取消时要等待哪些内层调用、交付和清理。失败归属与局部恢复须衔接现有 Error 专题。
 3. **资源归谁。** 哪个执行帧持有订阅、固定捕获与 scope 待用关系，退出时谁撤销它们。沿用现有的执行帧、会话退役和 scope GC。[执行边界](STREAM_LIFELONG.md#execution-boundaries) · [资源交接](STREAM_LIFELONG.md#binding-retention)
 
-先列出获准与拒绝的嵌套形状及其启动、推进和退出轨迹；确认后由 `Gen.Composition／Booter` 生成静态边界，`Runtime.Execution／Frame／Session` 落实本次执行的关系。**在该阶段单独确认前保留现行嵌套限制。** Middleware 对一棵已有子树作透明标注，背压处理交付容量，两项工作都不预先决定嵌套执行策略。
+先列出获准与拒绝的嵌套形状及其启动、推进和退出轨迹；确认后由 `Gen.Composition／Booter` 生成静态边界，`Runtime.Execution／Frame／Session` 落实本次执行的关系。**在该阶段单独确认前保留现行嵌套限制。** Middleware 对一棵已有子树作透明标注，背压处理交付容量，两项工作都不决定嵌套执行策略。
 
 <a id="deferred"></a>
 ## 其他开放专题
@@ -138,7 +74,7 @@ class Middleware m => Root m where
 | 故障恢复 | Error 驱动链、常驻 scope 失效与修复、局部失败、已展开 continuation 恢复及跨调用诊断；当前 resolve 不调用 close，处置成功仍传播原失败 |
 | 内存与诊断 | 业务惰性状态链是否需要处理，以及关闭失败记录长期累积的报告策略；强制求值或改变报告时机须另行确认 |
 | 模块与接口 | 独立生成模块组合、跨语言 schema |
-| Hanging 与装卸 | 与 Middleware 的挂起、恢复、装卸关系另行设计。 |
+| Hanging 与装卸 | 与 Middleware 的挂起、恢复、装卸关系另行设计，见 [Middleware 后续事项](#middleware)。 |
 | 外部工具 | LSP 侧的订阅、会话、单元与来源可视化，及穷举模型对 Stream／lifelong 的覆盖。 |
 
 <a id="review"></a>
@@ -161,9 +97,10 @@ Stage 1–7 在各自已确认的范围内完成。下面保留规范入口，�
 | <a id="stage-3"></a><a id="stage-6"></a><a id="stage-6-reuse"></a>Stream 与 lifelong 的执行、两侧结束及同次输出复用 | [执行边界](STREAM_LIFELONG.md#execution-boundaries) · [来源结束](STREAM_LIFELONG.md#end) · [消费结束](STREAM_LIFELONG.md#consumer-end) · [输出复用](STREAM_LIFELONG.md#derive) |
 | <a id="stage-5"></a><a id="stage-7"></a><a id="scope-gc"></a>已知 ownership 的持续资产持有和 scope 回收 | [资源交接](STREAM_LIFELONG.md#binding-retention) · [可达性回收](CORE_DESIGN.md#scope-gc) |
 | <a id="pure-pipeline"></a>Pure 与 list 原子输出 | [Pure 的位置、输入与输出](CORE_DESIGN.md#pure) |
+| Middleware 首版：AST 标注挂载、原子调用的环绕与屏障语义 | [Middleware](CORE_DESIGN.md#middleware) · [写法](GUIDE.md#middleware) |
 | <a id="version-boundaries"></a>gen 内部职责与版本边界 | 共享供值改变了普通资产能读到哪次发布。其后的 Injector／Booter 重构统一静态装配与驱动事实，手写接口与该读取协议保持一致。[内部接口迁移](CORE_DESIGN.md#sdk-migration) |
 
-最近一次 gen 修复已在 FileDemo 验证局部 `raw` 和重导出的 SDK 能力，两个文件分支均返回 `Succ`；八个命名空间生成结果无变化，离线编译通过。该记录只覆盖当时的修复，Middleware 仍处于设计阶段。
+最近一次 gen 修复已在 FileDemo 验证局部 `raw` 和重导出的 SDK 能力，两个文件分支均返回 `Succ`；八个命名空间生成结果无变化，离线编译通过。该记录只覆盖当时的修复。
 
 <a id="maintenance"></a>
 ## 计划怎样更新
