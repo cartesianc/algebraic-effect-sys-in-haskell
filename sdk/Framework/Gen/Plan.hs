@@ -3,7 +3,7 @@
 module Framework.Gen.Plan
   ( EffectDeclaration(..), ErrorPlan(..), ScopePlan(..), Unit(..), Binding(..), Signature(..), AssetDeclaration(..), BranchContract(..)
   , ValueType(..), Capability(..), EntryOperation(..), ReadRoute(..), ReadView(..)
-  , ReaderPlan(..), SelectorPlan(..), SessionEntry(..)
+  , ReaderPlan(..), SelectorPlan(..), SessionEntry(..), SuperSelection(..)
   , Assembly(..), EntryMount(..), OutputConnection(..), EntryStep(..), RawSource(..)
   , stepMethod, rawMethod, bindingCalls, unitTerminals, mountHooks, unitVariants
   , effectPrototypes, protoOf, allMethods
@@ -187,6 +187,15 @@ data Unit = Unit
   , unitScopeOrder :: [String]
   -- Middleware → 它拦截的类别（注册顺序）。
   , unitMiddleware :: [(String, [EffectKind])]
+  -- superhandler 的静态选择，由 Injector.Super 在会话入口确定后计算。
+  , unitSupers :: [SuperSelection]
+  } deriving (Eq, Show, Read)
+
+-- 某个 Middleware 列表在某个捕获类别上要调用的 Middleware（注册顺序）；空表示 Root 直接执行 action。
+data SuperSelection = SuperSelection
+  { selectionHooks :: [String]
+  , selectionKind :: EffectKind
+  , selectionMiddleware :: [String]
   } deriving (Eq, Show, Read)
 
 -- 绑定阶段的入口：推出全部事实，再按原顺序检查生成名字、末端、表示类型与签名。

@@ -223,7 +223,7 @@ openInputSession = (FrameworkRuntime.withErrorPath ["InputSession"] . FrameworkR
 
 closeInputSession :: FrameworkGenerated.App [String]
 closeInputSession = (FrameworkRuntime.withErrorPath ["InputSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeInputSession" . FrameworkRuntime.closeScope "InputSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "InputSession") $
-  runAt @"InputSession" (FrameworkRuntime.super "closeInput" FrameworkGenerated.closeInput)
+  runAt @"InputSession" (FrameworkRuntime.superClose "closeInput" FrameworkGenerated.closeInput)
 
 nextLineFeed :: FrameworkGenerated.App String
 nextLineFeed = (FrameworkRuntime.withErrorPath ["InputSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies ["InputSession"] . FrameworkRuntime.enterHandler "LineFeed") $

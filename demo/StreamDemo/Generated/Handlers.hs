@@ -227,7 +227,7 @@ openSensorLink = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRunti
 
 closeSensorLink :: FrameworkGenerated.App [String]
 closeSensorLink = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeSensorLink" . FrameworkRuntime.closeScope "SensorLink" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SensorLink") $
-  runAt @"SensorLink" (FrameworkRuntime.super "disconnectSensor" FrameworkGenerated.disconnectSensor)
+  runAt @"SensorLink" (FrameworkRuntime.superClose "disconnectSensor" FrameworkGenerated.disconnectSensor)
 
 nextTemperatureFeed :: FrameworkGenerated.App String
 nextTemperatureFeed = (FrameworkRuntime.withErrorPath ["SensorLink"] . FrameworkRuntime.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies ["SensorLink"] . FrameworkRuntime.enterHandler "TemperatureFeed") $

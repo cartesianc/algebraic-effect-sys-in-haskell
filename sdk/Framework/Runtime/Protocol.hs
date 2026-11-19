@@ -20,6 +20,9 @@ import Framework.Runtime.Identity (ActivationId)
 class Monad m => Root m result where
   super :: String -> m result -> m result
   super _ = id
+  -- Scoped.close 的调用点由 gen 确定并改用它：GC 已预约的 close 在进入通知失败时仍须执行。
+  superClose :: String -> m result -> m result
+  superClose = super
 
 -- Context 访问与发布协议 -------------------------------------------------------
 

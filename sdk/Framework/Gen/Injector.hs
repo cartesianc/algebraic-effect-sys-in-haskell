@@ -7,6 +7,7 @@ import Data.List (intercalate, nub, nubBy, sortOn)
 import Data.Maybe (maybeToList)
 import Framework.Gen.Plan
 import Framework.Gen.Names
+import Framework.Gen.Injector.Super (captureKindOf)
 import Framework.Prototype.Graph (MethodRole(..))
 import Framework.Language.Registration hiding (effectKind)
 import Framework.Prototype.Types
@@ -34,7 +35,7 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
               [ (normalizeType (typeSpelling (routeType route)), (routeContract route, routeReader route))
               | route <- unitRoutes unit, routeEffect route == declarationName specification ]
               (entryResult specification) (entryOperation specification method) (layerOf unit specification method)
-              (captureKind (kindOf specification)) (rawKindOf specification method >>= captureKind)
+              (captureKindOf declarations (kindOf specification)) (rawKindOf specification method >>= captureKindOf declarations)
           | specification <- declarations, (method, handler') <- [(method, handler) | (method, handler, _) <- declarationBindings specification] ]
       , unitAssembly = assembly
       , unitRoutes = [routeOf unit specification resolved
@@ -54,6 +55,7 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
           | declared <- declarations, Just handled <- [declarationErrors declared], let effect = protoOf unit (declarationName declared)]
       , unitMiddleware = [(declarationName declared, declarationIntercept declared)
           | declared <- declarations, not (null (declarationIntercept declared))]
+      , unitSupers = []
       , unitScopeOrder = nub (concat [Prototype.effectScopes effect
           ++ [Prototype.effectName effect | Prototype.effectKind effect == ScopedKind]
           | effect <- effectPrototypes unit])
@@ -148,9 +150,6 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
     producerMethodOf selected = lookup ContextRequest (effectMethods (protoOf unit selected))
     readerMethodOf selected = lookup ContextRequire (effectMethods (protoOf unit selected))
     kindOf specification = effectKind (protoOf unit (declarationName specification))
-    captureKind kind
-      | any (elem kind . declarationIntercept) declarations = Just kind
-      | otherwise = Nothing
     inputOf specification = effectInput (protoOf unit (declarationName specification))
     rawSource :: Unit -> EffectDeclaration -> Maybe (RawSource String)
     rawSource _ specification

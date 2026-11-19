@@ -398,7 +398,7 @@ openReportScope = (FrameworkRuntime.withErrorPath ["ReportScope"] . FrameworkRun
 
 closeReportScope :: FrameworkGenerated.App [String]
 closeReportScope = (FrameworkRuntime.withErrorPath ["ReportScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeReportScope" . FrameworkRuntime.closeScope "ReportScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReportScope") $
-  runAt @"ReportScope" (FrameworkRuntime.super "closeTextFile" FrameworkGenerated.closeTextFile)
+  runAt @"ReportScope" (FrameworkRuntime.superClose "closeTextFile" FrameworkGenerated.closeTextFile)
 
 openReplyScope :: FrameworkGenerated.App [String]
 openReplyScope = (FrameworkRuntime.withErrorPath ["ReplyScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openReplyScope" . FrameworkRuntime.openScope "ReplyScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReplyScope") $
@@ -406,7 +406,7 @@ openReplyScope = (FrameworkRuntime.withErrorPath ["ReplyScope"] . FrameworkRunti
 
 closeReplyScope :: FrameworkGenerated.App [String]
 closeReplyScope = (FrameworkRuntime.withErrorPath ["ReplyScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeReplyScope" . FrameworkRuntime.closeScope "ReplyScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReplyScope") $
-  runAt @"ReplyScope" (FrameworkRuntime.super "closeTextFile" FrameworkGenerated.closeTextFile)
+  runAt @"ReplyScope" (FrameworkRuntime.superClose "closeTextFile" FrameworkGenerated.closeTextFile)
 
 runWriteReport :: FrameworkGenerated.App [String]
 runWriteReport = (FrameworkRuntime.withErrorPath ["ReportScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteReport" . FrameworkRuntime.withScopeDependencies ["ReportScope"] . FrameworkRuntime.enterHandler "WriteReport") $

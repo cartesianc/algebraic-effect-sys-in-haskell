@@ -302,7 +302,7 @@ openCrawlSession = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkR
 
 closeCrawlSession :: FrameworkGenerated.App [String]
 closeCrawlSession = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeCrawlSession" . FrameworkRuntime.closeScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
-  runAt @"CrawlSession" (FrameworkRuntime.super "closeSession" FrameworkGenerated.closeSession)
+  runAt @"CrawlSession" (FrameworkRuntime.superClose "closeSession" FrameworkGenerated.closeSession)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]

@@ -46,9 +46,10 @@ renderHandlers unit loaded = do
         ++ (if isJust loaded then support unit else ""))
 
 -- 生成区的装配：effect 标签、handler 能力的实例与 effect 方法。
--- 注入 v5（2026-11-19）：生成入口把原子 action 交给 Root.super；hooks 由挂载决定。
--- 有捕获的 super 管理进入与成功返回，raw、raise 在 action 内调用 captureAt @hooks，
--- 它的实例按类型级列表逐个展开到各 Middleware；GHC 在编译期按挂载登记的列表选定实例，入口只有一份，运行时不分发。
+-- 注入 v6（2026-11-19）：生成入口把原子 action 交给 Root.super；hooks 由挂载决定，类别由绑定决定。
+-- Injector.Super 已为每个 (列表, 类别) 选定 Middleware，这里把选择写成 Captures 实例：
+-- 有捕获的 super 管理进入与成功返回，raw、raise 在 action 内调用 captureAt @hooks @kind。
+-- GHC 在编译期按挂载登记的列表选定实例，入口只有一份，运行时不分发、不筛选。
 support :: Unit -> String
 support unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ concatMap raisesInstance ordinaryHandlers ++ routeInstances ++ rawInstances
     ++ endInstances ++ concatMap entryDefinitions (map Prototype.effectName (effectPrototypes unit)))
@@ -61,16 +62,20 @@ support unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ conc
     tag effect = if hooked then "(At hooks " ++ effect ++ ")" else "(At " ++ effect ++ ")"
     runner effect = if hooked then "runAt @hooks @" ++ show effect else "runAt @" ++ show effect
     call method = if hooked then method ++ " @hooks" else method
-    context = if hooked then "Captures hooks => " else ""
+    context = if hooked then "Captured hooks => " else ""
     signature resultType = if hooked
-      then "forall hooks. Captures hooks => FrameworkGenerated.App " ++ resultType
+      then "forall hooks. Captured hooks => FrameworkGenerated.App " ++ resultType
       else "FrameworkGenerated.App " ++ resultType
-    tableSignature = if hooked then "forall hooks. Captures hooks => " else ""
+    tableSignature = if hooked then "forall hooks. Captured hooks => " else ""
     middlewareBindings = [binding | binding <- unitBindings unit, bindingOperation binding == MiddlewareOperation]
     middlewareHandlers = map bindingHandler middlewareBindings
     ordinaryHandlers = filter (`notElem` middlewareHandlers) (unitHandlers unit)
-    capture kind event = "captureAt @hooks FrameworkRuntime." ++ show kind ++ " (" ++ event ++ ") >> "
-    atomicCall handler' = "(FrameworkRuntime.super " ++ show handler' ++ " FrameworkGenerated." ++ handler' ++ ")"
+    capture kind event = "captureAt @hooks @" ++ promoted kind ++ " (" ++ event ++ ") >> "
+    promoted kind = "'FrameworkRuntime." ++ show kind
+    hookList hooks = "'[" ++ intercalate ", " (map show hooks) ++ "]"
+    -- close 的调用点用 superClose：是否 close 由绑定的操作在生成期确定。
+    atomicCall operation handler' = "(FrameworkRuntime." ++ (if operation == CloseResource then "superClose" else "super")
+      ++ " " ++ show handler' ++ " FrameworkGenerated." ++ handler' ++ ")"
     supportHeader =
       [ ""
       , "-- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，"
@@ -81,34 +86,29 @@ support unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ conc
       , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)"
       , ""
       ]
-    -- Root 级入口约束：Captures hooks 把一次调用点交给列表中的每个 Middleware；每个 Middleware 按 intercept 取舍类别。
+    -- Captures hooks kind：Injector.Super 的选择逐条写成实例，选中的 Middleware 按注册顺序同步调用。
     -- Middleware handler 在自己的 Hook 标签下执行，那里的调用点不改写，它自己不再被捕获。
     captureClasses
       | not hooked = []
       | otherwise =
-          [ "-- Root 级入口约束：hooks 是覆盖本次挂载的 Middleware，按注册顺序；空列表不做任何事。"
-          , "class Captures (hooks :: [FrameworkTypes.Symbol]) where"
-          , "  captureAt :: FrameworkRuntime.EffectKind -> FrameworkRuntime.HookEvent -> FrameworkGenerated.App ()"
+          [ "-- superhandler 的静态选择：hooks 是覆盖本次挂载的 Middleware（注册顺序），kind 是捕获类别。"
+          , "-- 默认方法即空选择：不捕获，super 直接执行 action。"
+          , "class Captures (hooks :: [FrameworkTypes.Symbol]) (kind :: FrameworkRuntime.EffectKind) where"
+          , "  captureAt :: FrameworkRuntime.HookEvent -> FrameworkGenerated.App ()"
+          , "  captureAt _ = pure ()"
+          , "  superAt, closeAt :: String -> FrameworkGenerated.App [String] -> FrameworkGenerated.App [String]"
+          , "  superAt _ = id"
+          , "  closeAt _ = id"
           , ""
-          , "instance Captures '[] where"
-          , "  captureAt _ _ = pure ()"
-          , ""
-          , "instance (Captured hook, Captures hooks) => Captures (hook ': hooks) where"
-          , "  captureAt kind event = capturedAt @hook kind event >> captureAt @hooks kind event"
-          , ""
-          , "class Captured (hook :: FrameworkTypes.Symbol) where"
-          , "  capturedAt :: FrameworkRuntime.EffectKind -> FrameworkRuntime.HookEvent -> FrameworkGenerated.App ()"
-          , ""
+          , "-- 入口对 hooks 多态：每个被拦截的类别都有该列表的选择。"
+          , "type Captured hooks = (" ++ intercalate ", " ["Captures hooks " ++ promoted kind | kind <- selectedKinds] ++ ")"
+          , "" ] ++ concatMap selectionInstance (unitSupers unit) ++
+          [ ""
           , "-- Middleware 的标签：handler 在这里执行，用 hooked* 读本次调用点捕获的 (handler 名, 值)。"
           , "newtype Hook (effect :: FrameworkTypes.Symbol) value = Hook { runHook :: FrameworkRuntime.HookApp FrameworkGenerated.ContextValues FrameworkGenerated.Errors value }"
           , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)"
           , "" ] ++ concat
-          [ [ "instance Captured " ++ show effect ++ " where"
-            , "  capturedAt kind event"
-            , "    | kind `elem` [" ++ intercalate ", " ["FrameworkRuntime." ++ show kind | kind <- kinds] ++ "] = () <$ " ++ bindingMethod binding ++ " event"
-            , "    | otherwise = pure ()"
-            , ""
-            , "instance FrameworkRuntime.Hooks (Hook " ++ show effect ++ ") where"
+          [ [ "instance FrameworkRuntime.Hooks (Hook " ++ show effect ++ ") where"
             , "  hookedEnter = Hook FrameworkRuntime.hookEnter"
             , "  hookedOutput = Hook FrameworkRuntime.hookOutput"
             , "  hookedRaw = Hook FrameworkRuntime.hookRaw"
@@ -119,12 +119,26 @@ support unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ conc
             , "    (FrameworkRuntime.failEffect " ++ show effect ++ " FrameworkGenerated." ++ handlerFailure handler' ++ " description))"
             , ""
             , bindingMethod binding ++ " :: FrameworkRuntime.HookEvent -> FrameworkGenerated.App [String]"
-            , bindingMethod binding ++ " event = FrameworkRuntime.runHookApp event (runHook @" ++ show effect ++ " " ++ atomicCall handler' ++ ")"
+            , bindingMethod binding ++ " event = FrameworkRuntime.runHookApp event (runHook @" ++ show effect ++ " "
+                ++ atomicCall MiddlewareOperation handler' ++ ")"
             , "" ]
           | binding <- middlewareBindings
           , let effect = bindingEffect binding
-                handler' = bindingHandler binding
-                kinds = [kind | (owner, selected) <- unitMiddleware unit, owner == effect, kind <- selected] ]
+                handler' = bindingHandler binding ]
+    selectedKinds = nub (map selectionKind (unitSupers unit))
+    middlewareMethod selected = case [bindingMethod binding | binding <- middlewareBindings, bindingEffect binding == selected] of
+      method : _ -> method
+      [] -> error ("Middleware has no hook method: " ++ selected)
+    -- 一条选择一个实例；空选择沿用默认方法。只有 Scoped 有 close 的调用点。
+    selectionInstance (SuperSelection hooks kind []) =
+      ["instance Captures " ++ hookList hooks ++ " " ++ promoted kind, ""]
+    selectionInstance (SuperSelection hooks kind selected) =
+      [ "instance Captures " ++ hookList hooks ++ " " ++ promoted kind ++ " where"
+      , "  captureAt event = " ++ concatMap (\hook -> middlewareMethod hook ++ " event >> ") selected ++ "pure ()"
+      , "  superAt = FrameworkRuntime.superWith (captureAt @" ++ hookList hooks ++ " @" ++ promoted kind ++ ")" ]
+      ++ [ "  closeAt = FrameworkRuntime.superClosing (captureAt @" ++ hookList hooks ++ " @" ++ promoted kind ++ ")"
+         | kind == ScopedKind ]
+      ++ [""]
     -- 标签决定原子调用的装配。Middleware 自身使用直接实例，避免递归捕获。
     rootInstances
       | not hooked = ["instance FrameworkRuntime.Root (At effect) value", ""]
@@ -132,10 +146,10 @@ support unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ conc
           [ case captureKind of
               Nothing -> ["instance FrameworkRuntime.Root " ++ tag (show effect) ++ " value", ""]
               Just kind ->
-                [ "instance Captures hooks => FrameworkRuntime.Root " ++ tag (show effect) ++ " [String] where"
-                , "  super name (At action) = At (FrameworkRuntime.superWith (captureAt @hooks FrameworkRuntime."
-                    ++ show kind ++ ") name action)"
-                , "" ]
+                [ "instance Captures hooks " ++ promoted kind ++ " => FrameworkRuntime.Root " ++ tag (show effect) ++ " [String] where"
+                , "  super name (At action) = At (superAt @hooks @" ++ promoted kind ++ " name action)" ]
+                ++ [ "  superClose name (At action) = At (closeAt @hooks @" ++ promoted kind ++ " name action)" | kind == ScopedKind ]
+                ++ [ "" ]
           | (effect, captureKind) <- nub [(bindingEffect b, bindingCaptureKind b) | b <- unitBindings unit,
                                             bindingOperation b /= MiddlewareOperation] ]
     -- 有 Middleware 时，被拦截类别的 effect 按标签逐个给出 raise：先把 (handler 名, 描述) 交给 captureAt，再以原失败退出。
@@ -212,7 +226,7 @@ support unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ conc
       ++ concat [ readerDefinition reader | reader <- unitReaders unit, readerEffect reader == selectedName ]
       where
         handlerCall binding handler' =
-          let action = runner selectedName ++ " " ++ atomicCall handler'
+          let action = runner selectedName ++ " " ++ atomicCall (bindingOperation binding) handler'
           in case bindingOperation binding of
                PublishAsset contract -> "(FrameworkGenerated." ++ contract ++ " <$> " ++ action ++ ")"
                _ -> action

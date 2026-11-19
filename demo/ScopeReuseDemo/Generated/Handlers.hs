@@ -237,7 +237,7 @@ openSharedFileScope = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . Fram
 
 closeSharedFileScope :: FrameworkGenerated.App [String]
 closeSharedFileScope = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeSharedFileScope" . FrameworkRuntime.closeScope "SharedFileScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "SharedFileScope") $
-  runAt @"SharedFileScope" (FrameworkRuntime.super "closeSharedFile" FrameworkGenerated.closeSharedFile)
+  runAt @"SharedFileScope" (FrameworkRuntime.superClose "closeSharedFile" FrameworkGenerated.closeSharedFile)
 
 runWriteFirst :: FrameworkGenerated.App [String]
 runWriteFirst = (FrameworkRuntime.withErrorPath ["SharedFileScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteFirst" . FrameworkRuntime.withScopeDependencies ["SharedFileScope"] . FrameworkRuntime.enterHandler "WriteFirst") $

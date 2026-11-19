@@ -173,6 +173,7 @@ executable effect-codegen
       Framework.Gen.Composition
       Framework.Gen.Plan
       Framework.Gen.Injector
+      Framework.Gen.Injector.Super
       Framework.Gen.Booter
       Framework.Gen.Emit.Assets
       Framework.Gen.Emit.Types

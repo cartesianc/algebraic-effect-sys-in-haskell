@@ -29,6 +29,7 @@ import qualified Data.Set as Set
 import Framework.Gen.Names
 import Framework.Gen.Plan
 import Framework.Gen.Injector
+import Framework.Gen.Injector.Super (superSelections)
 import Framework.Gen.Booter
 import Framework.Language.AST (WorkflowF(..), stripMiddleware)
 import Framework.Language.Registration hiding (effectKind)
@@ -79,7 +80,8 @@ advanceComposition state = case state of
     unit <- bindProgram namespace plan (declareEffects (plannedRegistrations plan)) assembly sumTypes
       (controlReads (plannedEffects plan) (plannedWorkflow plan))
     let (selectors, sessions) = entryPlans (mountHooks unit) (plannedEffects plan) assembly (unitBranches unit)
-    pure (AwaitingBodies unit { unitSelectors = selectors, unitSessionEntries = sessions })
+        entered = unit { unitSelectors = selectors, unitSessionEntries = sessions }
+    pure (AwaitingBodies entered { unitSupers = superSelections entered })
   ResolvingBodies unit supplied -> do
     let checked = case supplied of Just _ -> True; Nothing -> False
     methods <- composeMethods checked (effectPrototypes unit) (unitBindings unit) (unitReads unit) (maybe [] id supplied)

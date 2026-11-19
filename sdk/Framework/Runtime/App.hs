@@ -13,7 +13,7 @@
 -- 本文件保留共享 Environment 的解释器实现，按绑定、Store、诊断、生命周期和根调用分组。
 module Framework.Runtime.App
   ( App, Launch(..), runAppWith, withScopeCleanups
-  , superWith, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError
+  , superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError
   ) where
 
 import Framework.Runtime.Binding
@@ -862,18 +862,25 @@ runClose name wrap (AppRun action) = AppRun $ do
 -- 这里只提供 Middleware handler 的载体：本次调用点的捕获作为只读环境，执行期间不进入调用中的 open／close 尝试。
 data HookEvent = EnterEvent String | OutputEvent String [String] | RawEvent String [String] | ErrorEvent String String
 
--- 注入 v5：super 收到尚未执行的 action。前驱、requests、回放和 scope 外层协议均在调用方。
+-- 注入 v6：super 收到尚未执行的 action。前驱、requests、回放和 scope 外层协议均在调用方。
+-- gen 已按 (Middleware 列表, 类别) 选定实例；空选择直接执行 action，不经过这里。
 superWith :: (HookEvent -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
-superWith capture name body = do
+superWith capture name body = capture (EnterEvent name) >> returning capture name body
+
+-- 执行一次 action，成功交出时通知输出并交回原值。
+returning :: (HookEvent -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
+returning capture name body = do
+  output <- body
+  capture (OutputEvent name output)
+  pure output
+
+-- close 的调用点由 gen 选定。本次是否持有 GC 的关闭预约只有运行时知道。
+superClosing :: (HookEvent -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
+superClosing capture name body = do
   environment <- AppRun ask
-  let entering = capture (EnterEvent name)
-      execute = do
-        output <- body
-        capture (OutputEvent name output)
-        pure output
   if cleaningScopes environment && not (null (closings environment))
-    then protectedClose entering body execute
-    else entering >> execute
+    then protectedClose (capture (EnterEvent name)) body (returning capture name body)
+    else superWith capture name body
   where
     -- GC 已消费本轮的关闭预约。进入通知失败或被取消时也要尝试实际 close 一次；
     -- 正常路径只运行 execute。收尾自己的失败仍交给原有生命周期协议。

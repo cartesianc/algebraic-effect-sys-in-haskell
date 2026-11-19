@@ -246,7 +246,7 @@ openFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRun
 
 closeFileSession :: FrameworkGenerated.App [String]
 closeFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeFileSession" . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
-  runAt @"FileSession" (FrameworkRuntime.super "closeSelectedFile" FrameworkGenerated.closeSelectedFile)
+  runAt @"FileSession" (FrameworkRuntime.superClose "closeSelectedFile" FrameworkGenerated.closeSelectedFile)
 
 runUseFirst :: FrameworkGenerated.App [String]
 runUseFirst = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runUseFirst" . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "UseFirst") $
