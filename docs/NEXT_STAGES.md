@@ -11,18 +11,20 @@ Middleware 首版已经实现，下一阶段处理[持续交付的容量与背�
 
 | 事项 | 首版决定 |
 | --- | --- |
-| 注册形态 | `EffectTyping` 增加 `Middleware { handler, intercept }`；`input` 写保留名 `"None"`，沿用 Input 的组合逻辑，表示没有 Input 注入，由另外的注入方成为 Root 的 superclass；不另设 `MiddlewareSpec` |
-| `intercept` | 只取交出 raw 的原子调用：`ExcuKind`、`ScopedKind`（open／close）、`PureKind`；`allEffects` 是三者的简写 |
-| 多个 hook | 生效的 hook 是集合，屏障语义：全部前半段到达 `proceed` 后原调用执行一次，再等全部后半段结束；构造上与顺序无关 |
-| `Raises` | 首版不提供 |
-| hook 的 IO 异常 | 作为被拦截调用的异常传播，附 hook 名与被拦截 effect；不吞掉、不改写原失败 |
+| 是什么 | 驱动方式特殊的 Excu，Root 的 superclass 的注入方：在 Root 级调用点（交出值、`raw`、`raise`）上同步执行，不包住或推进原调用 |
+| 注册形态 | `EffectTyping` 增加 `Middleware { handler, intercept }`；`input` 写保留名 `"None"`，沿用 Input 的组合逻辑，表示没有 Input 注入；不另设 `MiddlewareSpec` |
+| `intercept` | 能交出 raw output 的 `ExcuKind`、`ScopedKind`（open／close）、`PureKind`；`allEffects` 是三者的简写 |
+| handler 能力 | `Hooks`（`hookedOutput`、`hookedRaw`、`hookedError`）、`Raises`、`MonadIO`；签名 `m [String]`；`Hooks` 只为 Middleware 的标签生成 |
+| 捕获范围 | 由位置决定：启动位置被标注覆盖即捕获，会话步骤也按同一前缀规则 |
+| 多个 Middleware | 按注册顺序同步执行，只读本次捕获，彼此不传值 |
+| `raise` | 与普通 Excu 相同，失败从调用点传播 |
 | demands | 首版不允许 |
 
 **后续事项。**
 
-- **`raise` 与故障归属。** 若开放推进前拒绝调用，需决定 Middleware handler 作为故障来源时如何匹配 Error：`RaisedBy` 按 handler 匹配，而 Error 须关联唯一 scope，Middleware 没有 Input，不能据此挑选 scope 实例；后置失败如何报告、诊断或 close 怎样完成也需同时确定。[现有 Error 协议](CORE_DESIGN.md#error)
-- **`requires`。** 若允许 hook 读取配置资产，须把它计入来源证明与等待环分析：hook 在被拦截调用的屏障内等待，可能与该调用的生产形成等待环。
-- **会话 worker。** Receive／Derive 步骤由多个子树共享，首版不拦截其中的调用；若要拦截，须按明确的结构关系决定生效集合，不能由先到达的消费者决定。
+- **`requires`。** 若允许 Middleware 读取配置资产，须把它计入来源证明与等待环分析：它在调用点同步执行，读取等待可能与被捕获调用所在的生产形成等待环。
+- **更多捕获点与类型。** Context parser 交出的业务值、Stream 的原始输入、调用的进入等尚未捕获；若捕获值的类型随类别不同，可用 associated type 区分 `hookedOutput` 的结果类型。
+- **mock。** SDK 目前没有 mock 运行模式；Middleware 的 `raise` 在正常运行时按普通失败传播。
 - **Hanging 与装卸。** 与 Middleware 的挂起、恢复和装卸关系另行设计。
 
 <a id="backpressure"></a>
@@ -97,7 +99,7 @@ Stage 1–7 在各自已确认的范围内完成。下面保留规范入口，�
 | <a id="stage-3"></a><a id="stage-6"></a><a id="stage-6-reuse"></a>Stream 与 lifelong 的执行、两侧结束及同次输出复用 | [执行边界](STREAM_LIFELONG.md#execution-boundaries) · [来源结束](STREAM_LIFELONG.md#end) · [消费结束](STREAM_LIFELONG.md#consumer-end) · [输出复用](STREAM_LIFELONG.md#derive) |
 | <a id="stage-5"></a><a id="stage-7"></a><a id="scope-gc"></a>已知 ownership 的持续资产持有和 scope 回收 | [资源交接](STREAM_LIFELONG.md#binding-retention) · [可达性回收](CORE_DESIGN.md#scope-gc) |
 | <a id="pure-pipeline"></a>Pure 与 list 原子输出 | [Pure 的位置、输入与输出](CORE_DESIGN.md#pure) |
-| Middleware 首版：AST 标注挂载、原子调用的环绕与屏障语义 | [Middleware](CORE_DESIGN.md#middleware) · [写法](GUIDE.md#middleware) |
+| Middleware 首版：AST 标注挂载与 Root 级调用点捕获 | [Middleware](CORE_DESIGN.md#middleware) · [写法](GUIDE.md#middleware) |
 | <a id="version-boundaries"></a>gen 内部职责与版本边界 | 共享供值改变了普通资产能读到哪次发布。其后的 Injector／Booter 重构统一静态装配与驱动事实，手写接口与该读取协议保持一致。[内部接口迁移](CORE_DESIGN.md#sdk-migration) |
 
 最近一次 gen 修复已在 FileDemo 验证局部 `raw` 和重导出的 SDK 能力，两个文件分支均返回 `Succ`；八个命名空间生成结果无变化，离线编译通过。该记录只覆盖当时的修复。

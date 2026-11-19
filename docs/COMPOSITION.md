@@ -17,7 +17,6 @@ handler 描述一次原子操作；业务含义由它绑定的 effect、Input、
 | Context | Input 是普通句柄、Stream，或其链被持续资产驱动；AST 是否已有对应发布位置 | 一次解析、持续来源、独立派生或同次输出复用 |
 | 资产读取 | 表示类型、refined asset、访问方式及挂载位置 | 唯一来源路由、固定捕获或按交付驱动 |
 | Scoped 的开启参数 | 引用已有生产还是本次驱动新生产 | 实例共享依据与开启类别；实际身份留到运行时匹配 |
-| 原子调用的入口 | 是否有 Middleware 拦截它的类别；挂载位置被哪些 `middleware` 标注覆盖 | 有无拦截槽；每个启动位置生效的 hook 集合 |
 
 原子 handler 对组合保持不变：它只使用绑定契约给出的能力，完成本次读取、解析或 IO。同一份实现能用于不同业务关系，但每个绑定仍必须满足签名与读取约束；复用实现不合并实际调用。
 
@@ -259,9 +258,9 @@ Layer 是方法体可用能力的边界，同样不由业务填写，而是从�
 | 能力 | 什么组合给它 |
 | --- | --- |
 | `Reads T` | demands 中 `requires` 或 `streams` 的资产，T 为其声明表示类型；单独的 `requests` 不带来读取 |
-| `Raw` | 挂接的 parser 与 Pure；Middleware 读被拦截调用本次的输出 |
-| `Raises` | 每个 handler 的本地错误，由输出时补入；Middleware 首版没有 |
-| `Proceeds`（`proceed`） | 只有 Middleware |
+| `Raw` | 只有挂接的 parser 与 Pure |
+| `Raises` | 每个 handler 的本地错误，由输出时补入 |
+| `Hooks`（`hookedOutput`／`hookedRaw`／`hookedError`） | 只有 Middleware |
 | `StreamEnds`（`streamEnd`） | 绑定成 Stream 的 handler |
 | `EndsStream`（`endStream`） | 自己声明了 `streams` 的 Excu；同链的前驱与 lifelong 里不订阅的普通节点不给 |
 | `MonadIO` | Pure 以外 |
@@ -269,17 +268,16 @@ Layer 是方法体可用能力的边界，同样不由业务填写，而是从�
 同一个 handler 绑定到多个 effect 时，各绑定推出的 Layer 必须一致。因此能力只按 handler 自己的类别和读取推出，不按它所处的控制流推出：普通原子操作放进 lifelong 不会多出能力，也就能在有限链与持续链之间复用。
 
 <a id="middleware"></a>
-## 8. 环绕（Middleware）
+## 8. 捕获（Middleware）
 
-Middleware 是 Root 的 superhandler 的注入方：注册只给出 hook 与它拦截的类别，作用范围由 AST 标注给出，被拦截的原子 handler 与它的 Input 关系都不改变。
+Middleware 是驱动方式特殊的 Excu，也是 Root 的 superclass 的注入方：注册给出 handler 与拦截的类别，作用范围由 AST 标注给出。捕获由 Root 级调用点的改写决定，不是另一种按关系选择解释的多态；被捕获的 handler 与它的 Input 关系都不改变。
 
 | 行为 | 组合 | 推导 | 驱动 | 规范 |
 | --- | --- | --- | --- | --- |
-| 在一段子树的原子调用前后做事 | Middleware 注册（`input = "None"`）；AST 写 `middleware [node "M"] 子树` | 剥离标注后照常编号；标注位置存为 `drivingMiddleware` | 子树的结构、NodeId 与单元划分不变 | [Middleware](CORE_DESIGN.md#middleware) |
-| 只拦截某几类调用 | `intercept = [ExcuKind, ...]`，或 `allEffects` | 有 Middleware 拦截的类别，其原子调用生成拦截槽；其他入口不变 | 槽只包住 handler 这一次调用，驱动与 Input 前驱在槽外 | 同上 |
-| 同一 handler 在不同子树表现不同 | 一处挂载在标注内，另一处不在 | 每个启动位置的生效集合（`drivingHooks`），覆盖它的标注之并 | 按启动位置查表；未覆盖的挂载直接执行 | 同上 |
-| 多个 hook 同时生效 | 一个或嵌套的多个标注 | 集合，去重，无顺序 | 屏障：全部到达 `proceed` 后原调用执行一次，再等全部后半段结束 | 同上 |
-| hook 读本次输出 | 方法体 `proceed` 之后 `raw` | 次序检查：恰好一次直接的 `proceed`，`raw` 在其后 | 读只读旁路；原结果原样交回，parser 照常解析 | 同上 |
-| hook 与被拦截的链不成环 | 无需写法 | 任何 effect 的 Input 都不能指向 Middleware；Middleware 没有 demands | hook 执行时生效集合为空，不再被拦截 | 同上 |
+| 观察一段子树里交出的值、raw 与失败 | Middleware 注册（`input = "None"`）；AST 写 `middleware [node "M"] 子树` | 剥离标注后照常编号；标注位置存为 `drivingMiddleware` | 子树的结构、NodeId 与单元划分不变 | [Middleware](CORE_DESIGN.md#middleware) |
+| 只捕获某几类 effect | `intercept = [ExcuKind, ...]`，或 `allEffects` | 被拦截类别的交出值、`raw`、`raise` 改写为带 handler 名的调用；其他调用点不变 | 调用点上执行生效的 Middleware，原值原样交回 | 同上 |
+| 同一 handler 在不同子树表现不同 | 一处挂载在标注内，另一处不在 | 每个启动位置的生效集合（`drivingHooks`），按位置前缀取覆盖它的标注之并，会话步骤同样 | 按启动位置查表；未覆盖的挂载不执行 Middleware | 同上 |
+| 拆出本次捕获 | 方法体 `hookedOutput`／`hookedRaw`／`hookedError` | 只为 Middleware 的标签生成 `Hooks` 实例 | 不是本次的那一种时为 `Nothing` | 同上 |
+| Middleware 与被捕获的链不成环 | 无需写法 | 任何 effect 的 Input 都不能指向 Middleware；Middleware 没有 demands | Middleware 执行时生效集合为空，不再被捕获 | 同上 |
 
-首版不拦截会话 worker（Receive／Derive 步骤）内的调用，也不提供 `raise`；后续事项见 [Next stages](NEXT_STAGES.md#middleware)。
+Middleware 与普通 Excu 一样可以 `raise`，失败从调用点传播；后续事项见 [Next stages](NEXT_STAGES.md#middleware)。
