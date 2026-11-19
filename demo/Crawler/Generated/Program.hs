@@ -16,7 +16,7 @@ data Results = FetchPageResult () | FetchLinkedPageResult () | PrintPageResult (
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
 -- 第二个列表是各转折契约的选择末端：驱动资产（持续资产领取本次交付），返回它当前的构造器名。
--- 第三个列表是各持续资产的生产步骤：会话按需启动，Stream 单步取得原始输入（或领取一条上游交付），parser 发布一次资产。
+-- 第三个列表是各持续资产的生产步骤：会话按需启动，Receive 在每次 rawemit 时调用 parser，Derive 每领取一条上游交付调用一次。
 compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]
                      , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do

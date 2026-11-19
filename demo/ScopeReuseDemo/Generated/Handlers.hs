@@ -209,6 +209,8 @@ instance FrameworkRuntime.Reads (SharedFile) (Wrap "WriteThird") where
 instance FrameworkRuntime.Reads (SharedPaths) (Wrap "VerifyReuse") where
   require = Wrap ((\(FrameworkGenerated.FilePaths value) -> value) <$> readFilePaths)
 
+instance FrameworkRuntime.RawOutputs (Wrap effect)
+
 getFilePaths :: FrameworkGenerated.App FrameworkGenerated.FilePaths
 getFilePaths = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations"
     (\value bindings -> bindings { FrameworkGenerated.boundFileLocations = Just value })) $

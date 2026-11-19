@@ -12,8 +12,8 @@
 -- open／close 在实际读取资源绑定时选择实例；不在 handler 外预先执行取值。
 -- 本文件保留共享 Environment 的解释器实现，按绑定、Store、诊断、生命周期和根调用分组。
 module Framework.Runtime.App
-  ( App, Launch(..), runAppWith
-  , superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError
+  ( App, Launch(..), StreamPort(..), emitToParser, emittedInput, runAppWith
+  , superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError, onRawOutput, onEmit
   ) where
 
 import Framework.Runtime.Binding
@@ -70,8 +70,8 @@ data Environment env cause = Environment
   , replays :: [(String, RawOutput)]
   -- 持续资产在本次调用的固定交付：lifelong 交付或此前的会话读取；其他调用之后的发布不改写它。
   , views :: IORef [(String, View env cause)]
-  -- 解析器本次的原始输入，只在会话调用解析器时安装。
-  , streamRaw :: Maybe String
+  -- Receive 来源取得同步交付函数，parser 只取得本条原始输入。
+  , streamPort :: StreamPort env cause
   -- 这些来源的发布进入会话队列，而不是按 Origin 的业务资产表：
   -- 会话步骤的本资产，以及原始链沿用本次输出的持续 parser 产物。
   , sessionSinks :: [(String, Bound env cause -> IO ())]
@@ -84,13 +84,35 @@ data Environment env cause = Environment
 data Launch env cause = Launch
   { launchBindings :: ScopeBindings env cause
   , launchViews :: [(String, View env cause)]
-  , launchInput :: Maybe String
+  , launchPort :: StreamPort env cause
   , launchSinks :: [(String, Bound env cause -> IO ())]
   , launchDeliver :: String -> Maybe (IO (Either (Stopped cause) (View env cause)))
   , launchUser :: Maybe (ScopeUser env cause)
   , launchFrame :: ExecutionFrame
   , launchRetention :: Retention env cause
   }
+
+-- Receive 的两个静态挂载各有一端。交付同步调用独立的 parser activation，并传播它的原失败。
+data StreamPort env cause
+  = NoStreamPort
+  | SourcePort (String -> ScopeBindings env cause -> IO (Either (Failure cause) ()))
+  | ParserInput String
+
+emitToParser :: String -> App env cause ()
+emitToParser text = do
+  environment <- AppRun ask
+  case streamPort environment of
+    SourcePort deliver -> do
+      captured <- rawIO (readIORef (bindings environment))
+      rawIO (deliver text captured) >>= either throwError pure
+    _ -> rawIO (ioError (userError "rawemit outside its generated Stream source"))
+
+emittedInput :: App env cause [String]
+emittedInput = do
+  port <- AppRun (asks streamPort)
+  case port of
+    ParserInput text -> pure [text]
+    _ -> rawIO (ioError (userError "Stream parser has no emitted input"))
 
 data Opening env cause = Opening
   { family :: ScopeHandler env cause
@@ -524,7 +546,6 @@ instance ContextStore env (App env cause) where
       ended <- rawIO (endedSession graph (originNode (executionOrigin (execution environment))) source)
       session <- maybe (rawIO (obtainSession graph (Nothing, source) [] [])) pure ended
       captureDelivery environment source select (rawIO (awaitView session (bindingRetention environment)))
-  streamRawInput = AppRun (asks streamRaw)
   endSource = rawIO (throwIO SourceEnded)
   endSubscription = rawIO (throwIO SubscriptionEnded)
   recordContextInput source = do
@@ -717,7 +738,7 @@ scopeFailureTarget selected owner problem
 -- 在本次 open 退出前冻结绑定。后续 request、其他参数实例或重开都不会改变收尾目标。
 -- open 已失败但资源已经发布时，同样保存清理动作；未发布的部分获取由原子获取操作负责。
 captureScopeCleanup :: forall env cause. Environment env cause -> Opening env cause -> ScopeInstance env cause -> IO ()
-captureScopeCleanup environment attempt slot =
+captureScopeCleanup openingEnvironment attempt slot =
   case closeAction attempt of
     Nothing -> pure ()
     Just (AppRun close) -> do
@@ -754,7 +775,10 @@ captureScopeCleanup environment attempt slot =
                 Right (Left diagnosed) -> (diagnosed, Nothing)
                 Right (Right ()) -> (problem, Nothing)
         writeIORef (scopeCleanup slot) (Just (ScopeCleanup interrupted cleanup))
-  where name = scopeName (family attempt)
+  where
+    name = scopeName (family attempt)
+    -- 收尾闭包可以跨过本次来源调用；它只保存收尾需要的环境，解除对 emit 回调的引用。
+    environment = openingEnvironment { streamPort = NoStreamPort }
 
 runOpen :: String -> (ScopeFault -> cause) -> Maybe (App env cause ()) -> App env cause value -> App env cause (Maybe value)
 runOpen name wrap cleanup (AppRun action) = AppRun $ do
@@ -847,7 +871,9 @@ runClose name wrap (AppRun action) = AppRun $ do
 
 -- gen 按挂载标注特化 Root 的进入／返回、rawinput 与 raise 捕获，运行时没有 Middleware 目录。
 -- 这里只提供 Middleware handler 的载体：本次调用点的捕获作为只读环境，执行期间不进入调用中的 open／close 尝试。
-data HookEvent = EnterEvent String | OutputEvent String [String] | RawEvent String [String] | ErrorEvent String String
+data HookEvent
+  = EnterEvent String | OutputEvent String [String] | RawEvent String [String]
+  | RawOutputEvent String [String] | EmitEvent String String | ErrorEvent String String
 
 -- 注入 v6：super 收到尚未执行的 action。前驱、requests、回放和 scope 外层协议均在调用方。
 -- gen 已按 (Middleware 列表, 类别) 选定实例；空选择直接执行 action，不经过这里。
@@ -909,6 +935,7 @@ hookEnter = HookApp (asks (\event -> case event of
 hookOutput, hookRaw :: HookApp env cause (Maybe (String, [String]))
 hookOutput = HookApp (asks (\event -> case event of
   OutputEvent handler output -> Just (handler, output)
+  EmitEvent handler text -> Just (handler, [text])
   _ -> Nothing))
 hookRaw = HookApp (asks (\event -> case event of
   RawEvent handler value -> Just (handler, value)
@@ -919,12 +946,23 @@ hookError = HookApp (asks (\event -> case event of
   ErrorEvent handler description -> Just (handler, description)
   _ -> Nothing))
 
+-- 分派对象已由 gen 选定；这里只把当前调用点的具体值交给类型匹配的回调。
+onRawOutput :: (String -> [String] -> HookApp env cause ()) -> HookApp env cause ()
+onRawOutput action = HookApp ask >>= \event -> case event of
+  RawOutputEvent name output -> action name output
+  _ -> pure ()
+
+onEmit :: (String -> String -> HookApp env cause ()) -> HookApp env cause ()
+onEmit action = HookApp ask >>= \event -> case event of
+  EmitEvent name text -> action name text
+  _ -> pure ()
+
 -- 完整调用边界 ---------------------------------------------------------------
 
 -- consumer 覆盖整个末端调用、诊断和结果消费；嵌套方法返回不提前释放借用。
 -- Launch 提供本次调用的初始捕获；返回完整捕获快照，由 Runtime 按交接边界选取。
 -- 普通 Handoff 过滤资源；同一 Receive 步骤的 parser 可接收来源已捕获的资源，
--- 两次调用共用本生产步骤的 ScopeUser，原 Binding 的生产身份、归属与关闭责任不变。
+-- 来源保持本次使用，解析期间持有收到的资源 Binding，原生产身份与关闭责任不变。
 runAppWith :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> NodeId -> Launch env cause
            -> env -> App env cause value
            -> IO (Either (Failure cause) value, ScopeBindings env cause, [(String, View env cause)])
@@ -954,7 +992,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         , activeActivation = Just (activationId activation), execution = currentExecution
         , currentFrame = launchFrame launch, bindingRetention = launchRetention launch
         , replays = []
-        , views = delivered, streamRaw = launchInput launch, sessionSinks = launchSinks launch
+        , views = delivered, streamPort = launchPort launch, sessionSinks = launchSinks launch
         , frameDeliver = launchDeliver launch }
   (do
       completed <- try $ restore $ do
@@ -966,7 +1004,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
       captured <- readIORef values >>= filterM (fmap isNothing . readBindingOwner . snd)
       capturedViews <- readIORef delivered
       keepBindings (launchRetention launch) (map snd captured ++ concatMap (toList . snd) capturedViews)
-      -- 显式 launchUser 由外层生产步骤负责撤销；Receive 的来源与 parser 共用本步登记。
+      -- 显式 launchUser 由外层生产步骤负责撤销；Receive 的逐条 parser 持有自己的嵌套使用。
       -- 跨步骤待用由会话执行帧保持，不把本步 ScopeUser 留到会话停止。
       -- 节点进度由 Execution 在本调用（含交接）返回后完成，再回收相关 Scoped。
       -- 此处只撤销实际使用，避免重复扫描整批实例或早于进度更新进行关闭。

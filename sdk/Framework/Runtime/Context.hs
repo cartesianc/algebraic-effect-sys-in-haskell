@@ -3,7 +3,7 @@
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Runtime.Context
   ( ContextFault(..), readContext, callContext
-  , projectContext, atomicHandle, atomicScope, readStreamContext, streamHandle
+  , projectContext, atomicHandle, atomicScope, readStreamContext
   ) where
 
 import Framework.Runtime.Protocol
@@ -89,11 +89,6 @@ readStreamContext contextName wrap select = do
         (contextName ++ ": no delivery here (no stream session can deliver, or the stream ended without publishing)")) pure delivered
   recordContextInput contextName
   pure value
-
--- Stream 的生成入口。会话调用 parser 时安装了本次原始输入：parser 的 rawinput 由这份输入回答，
--- 不再执行 handler 另取一份，与挂在原子句柄下的 Context 相同。Stream 单步没有安装输入，执行 handler 取得下一份。
-streamHandle :: ContextStore environment m => m String -> m String
-streamHandle body = streamRawInput >>= maybe body pure
 
 -- Excu 的生成入口：每次调用都执行。
 atomicHandle

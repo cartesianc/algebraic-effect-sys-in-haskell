@@ -35,7 +35,7 @@ data MethodGen = RunLocateFileGen | RunValidateFileNameGen | GetFileNameGen | Re
 instance SDK.NFData MethodGen
 
 -- handler locateFile：绑定到 LocateFile。
-type LocateFileLayer m = (SDK.Raises LocateFileError m, MonadIO m)
+type LocateFileLayer m = (SDK.RawOutputs m, SDK.Raises LocateFileError m, MonadIO m)
 class LocateFileHandler m where
   locateFile :: m [String]
 
@@ -44,7 +44,7 @@ newtype LocateFileError = LocateFileError String
   deriving (Eq, Show, Read)
 
 -- handler validateFileName：绑定到 ValidateFileName。
-type ValidateFileNameLayer m = (SDK.Raw m, SDK.Raises ValidateFileNameError m, Monad m)
+type ValidateFileNameLayer m = (SDK.Raw m, SDK.RawOutputs m, SDK.Raises ValidateFileNameError m, Monad m)
 class ValidateFileNameHandler m where
   validateFileName :: m [String]
 
@@ -71,7 +71,7 @@ newtype AcquireFileError = AcquireFileError String
   deriving (Eq, Show, Read)
 
 -- handler openSession：绑定到 FileSession。
-type OpenSessionLayer m = (SDK.Reads (FileHandle) m, SDK.Raises OpenSessionError m, MonadIO m)
+type OpenSessionLayer m = (SDK.Reads (FileHandle) m, SDK.RawOutputs m, SDK.Raises OpenSessionError m, MonadIO m)
 class OpenSessionHandler m where
   openSession :: m [String]
 
@@ -80,7 +80,7 @@ newtype OpenSessionError = OpenSessionError String
   deriving (Eq, Show, Read)
 
 -- handler closeSession：绑定到 FileSession。
-type CloseSessionLayer m = (SDK.Reads (FileHandle) m, SDK.Raises CloseSessionError m, MonadIO m)
+type CloseSessionLayer m = (SDK.Reads (FileHandle) m, SDK.RawOutputs m, SDK.Raises CloseSessionError m, MonadIO m)
 class CloseSessionHandler m where
   closeSession :: m [String]
 
@@ -107,7 +107,7 @@ newtype ResolveFileSessionError = ResolveFileSessionError String
   deriving (Eq, Show, Read)
 
 -- handler readFileContent：绑定到 ReadFile。
-type ReadFileContentLayer m = (SDK.Reads (FileHandle) m, SDK.Raises ReadFileContentError m, MonadIO m)
+type ReadFileContentLayer m = (SDK.Reads (FileHandle) m, SDK.RawOutputs m, SDK.Raises ReadFileContentError m, MonadIO m)
 class ReadFileContentHandler m where
   readFileContent :: m [String]
 
@@ -125,7 +125,7 @@ newtype ParseFileTextError = ParseFileTextError String
   deriving (Eq, Show, Read)
 
 -- handler writeFirstLine：绑定到 WriteFirstLine。
-type WriteFirstLineLayer m = (SDK.Reads (()) m, SDK.Reads (FileHandle) m, SDK.Raises WriteFirstLineError m, MonadIO m)
+type WriteFirstLineLayer m = (SDK.Reads (()) m, SDK.Reads (FileHandle) m, SDK.RawOutputs m, SDK.Raises WriteFirstLineError m, MonadIO m)
 class WriteFirstLineHandler m where
   writeFirstLine :: m [String]
 
@@ -134,7 +134,7 @@ newtype WriteFirstLineError = WriteFirstLineError String
   deriving (Eq, Show, Read)
 
 -- handler appendLine：绑定到 AppendLine。
-type AppendLineLayer m = (SDK.Reads (FileHandle) m, SDK.Reads (String) m, SDK.Raises AppendLineError m, MonadIO m)
+type AppendLineLayer m = (SDK.Reads (FileHandle) m, SDK.Reads (String) m, SDK.RawOutputs m, SDK.Raises AppendLineError m, MonadIO m)
 class AppendLineHandler m where
   appendLine :: m [String]
 

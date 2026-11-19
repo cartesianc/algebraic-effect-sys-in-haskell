@@ -20,10 +20,10 @@ Middleware 首版与 Root 的 `super` 已经实现，[superhandler 的生成期�
 
 | 事项 | 首版决定 |
 | --- | --- |
-| 是什么 | gen 把每次原子调用交给 Root 的 `super`。它按挂载注入 Middleware，进入前与成功返回时同步通知，并负责执行该 action；`rawinput` 和 `raise` 在方法内各自通知 |
+| 是什么 | gen 把每次原子调用交给 Root 的 `super`。它按挂载注入 Middleware，进入前同步通知并执行业务 action；列表方法成功返回时通知最终输出，Stream 按每次 rawemit 通知，方法内的 hook 见[指南](GUIDE.md#middleware) |
 | 注入时机 | 生成期：`middleware` 标注是给 gen 的标记。标签带 Middleware 列表类型参数，入口对它多态，调用点经生成入口的类型类约束 `Captured hooks` 取得 gen 预选的 `Captures hooks kind` 实例；挂载登记时给出列表，GHC 编译期选定实例。运行时没有 Middleware 目录或分发，只按静态登记名选取 Target |
 | 注册形态 | `EffectTyping` 增加 `Middleware { handler, intercept }`；`input` 写保留名 `"None"`，沿用 Input 的组合逻辑，表示没有 Input 注入；不另设 `MiddlewareSpec` |
-| `intercept` | 能交出 raw output 的 `ExcuKind`、`ScopedKind`（open／close）、`PureKind`；`allEffects` 是三者的简写 |
+| `intercept` | 能交出 raw output 的 `ExcuKind`、`ScopedKind`（open／close）、`PureKind`，以及逐条 rawemit 的 `StreamKind`；`allEffects` 包含四类 |
 | handler 能力 | `Hooks`（`hookedEnter`、`hookedOutput`、`hookedRaw`、`hookedError`）、`Raises`、`MonadIO`；签名 `m [String]`；`Hooks` 只为 Middleware 的标签生成 |
 | 捕获范围 | 由位置决定：启动位置被标注覆盖即捕获，会话步骤也按同一前缀规则 |
 | 多个 Middleware | 按注册顺序同步执行，只读本次捕获，彼此不传值 |
@@ -33,7 +33,7 @@ Middleware 首版与 Root 的 `super` 已经实现，[superhandler 的生成期�
 **后续事项。**
 
 - **`requires`。** 若允许 Middleware 读取配置资产，须把它计入来源证明与等待环分析：它在调用点同步执行，读取等待可能与被捕获调用所在的生产形成等待环。
-- **更多捕获类型。** Context parser 交出的业务值和 Stream 的原始输入仍沿专用协议传递。是否向 Middleware 开放这些类型另行设计。
+- **更多捕获类型。** Stream 的逐条交付已接入 Middleware（2026-11-20），写法见[指南](GUIDE.md#middleware)。Context parser 交出的业务 ADT 与其他类别的扩展仍待设计。
 - **mock。** SDK 目前没有 mock 运行模式；Middleware 的 `raise` 在正常运行时按普通失败传播。
 - **Hanging 与装卸。** 与 Middleware 的挂起、恢复和装卸关系另行设计。
 

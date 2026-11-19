@@ -10,7 +10,7 @@
 
 module LinesDemo.Handlers () where
 
-import Framework.SDK (StreamEnds(..), Raises(..), Raw(..), Reads(..), rawoutput)
+import Framework.SDK (Emits(rawemit), Hooks(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), rawoutput)
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
 import Control.Monad.IO.Class (liftIO)
@@ -43,13 +43,24 @@ instance CloseInputLayer m => CloseInputHandler m where
     liftIO (hClose file >> putStrLn ("[close] " ++ path))
     rawoutput []
 
--- 一次读一行。文件读完时 streamEnd：这一步不交出输入，parser 不执行，生产会话正常结束；
--- 已经发布的行仍会交给 PrintLine 处理完。
+-- 在一次来源调用内持续读取。每个 rawemit 都完成这行的解析与发布，再读取下一行。
 instance NextLineLayer m => NextLineHandler m where
   nextLine = do
     InputFile _ file _ <- require @InputFile
-    finished <- liftIO (hIsEOF file)
-    if finished then streamEnd else liftIO (hGetLine file)
+    let readLines = do
+          finished <- liftIO (hIsEOF file)
+          if finished then streamEnd else do
+            line <- liftIO (hGetLine file)
+            rawemit line
+            readLines
+    readLines
+
+instance TraceLineLayer m => TraceLineHandler m where
+  traceLine = do
+    rawinputhook $ \parser fields -> liftIO (putStrLn ("[input] " ++ parser ++ ": " ++ show fields))
+    rawoutputhook $ \handler fields -> liftIO (putStrLn ("[output] " ++ handler ++ ": " ++ show fields))
+    rawemithook $ \source line -> liftIO (putStrLn ("[emit] " ++ source ++ ": " ++ line))
+    rawoutput []
 
 instance ParseLineLayer m => ParseLineHandler m where
   parseLine = do

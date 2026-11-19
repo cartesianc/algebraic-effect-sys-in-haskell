@@ -325,7 +325,7 @@ buildEffectProtos specifications sumTypes = do
             valid (method /= Nothing) ("Middleware needs a handler: " ++ name specification)
             valid (null (demands specification)) ("Middleware " ++ name specification ++ " declares no demands")
             valid (not (null intercepted) && unique intercepted && all (`elem` allEffects) intercepted)
-              ("Middleware " ++ name specification ++ " intercepts a non-empty list of distinct kinds among Excu, Scoped and Pure")
+              ("Middleware " ++ name specification ++ " intercepts a non-empty list of distinct kinds among Excu, Scoped, Pure and Stream")
           Error { handles = matched } -> do
             valid (not (null matched)) ("Error must declare the failures it handles: " ++ name specification)
             mapM_ checkHandled matched
@@ -1485,7 +1485,7 @@ declareEffects = map declare
       Scoped {} -> "[String]"
       Error {} -> "()"
       Middleware {} -> "[String]"
-      Stream _ -> "String"
+      Stream _ -> "()"
       Context { asset = declared } -> reference (representation declared)
     operation specification method = case typing specification of
       Excu _ -> AtomicOperation

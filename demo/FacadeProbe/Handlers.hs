@@ -11,7 +11,7 @@
 
 module FacadeProbe.Handlers () where
 
-import Framework.SDK (Raises(..), Raw(..), Reads(..), rawoutput)
+import Framework.SDK (Emits(rawemit), Raises(..), Raw(..), Reads(..), rawoutput)
 import FacadeProbe.Generated.Effects
 import FacadeProbe.Types
 import Control.Concurrent (threadDelay)
@@ -114,7 +114,7 @@ instance NextALayer m => NextAHandler m where
     liftIO (threadDelay 40000)
     number <- liftIO $ atomicModifyIORef' counter $ \previous ->
       let current = previous + 1 in (current, current)
-    pure (show (number, 10 :: Int))
+    rawemit (show (number, 10 :: Int))
 
 instance NextBLayer m => NextBHandler m where
   nextB = do
@@ -122,7 +122,7 @@ instance NextBLayer m => NextBHandler m where
     liftIO (threadDelay 60000)
     number <- liftIO $ atomicModifyIORef' counter $ \previous ->
       let current = previous + 1 in (current, current)
-    pure (show (number, 20 :: Int))
+    rawemit (show (number, 20 :: Int))
 
 instance ParseLevelLayer m => ParseLevelHandler m where
   parseLevel = do

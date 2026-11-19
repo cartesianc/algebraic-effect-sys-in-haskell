@@ -3,13 +3,13 @@
 -- handler 在源语言中能用的全部能力，以及业务能观察到的完成结果。
 -- 能力类的实例由 gen 按注册生成（Framework.Gen.Emit.Handlers）；执行载体的协议在 Framework.Runtime.Protocol。
 module Framework.Language.Handler
-  ( Reads(..), Raw(..), rawoutput, Raises(..), StreamEnds(..), EndsStream(..), Hooks(..)
+  ( Reads(..), Raw(..), Emits(..), RawOutputs(..), Raises(..), StreamEnds(..), EndsStream(..), Hooks(..)
   , Failure(..), Output(..), ErrorReport(..)
   ) where
 
 -- handler 是对 m 泛型的类方法，只能使用 gen 按注册给出的 Layer：
 -- Reads 按表示类型读取资产，来源由 effect 的 demands 在 gen 时解析；
--- Raw 读取直接 Input 本次交出的输出，只给挂接的 parser 与 Pure：Excu、Scoped.open、Pure 交出 [String]，
+-- Raw 读取直接 Input 本次交出的输出，只给挂接的 parser 与 Pure。RawOutputs 交出原子列表，
 -- Stream 的一份原始输入读作单元素 list；
 -- Raises 以本 handler 的错误失败，发生位置由 SDK 记录；
 -- StreamEnds 只给 Stream handler（生产方）：来源已经没有下一份输入时以 streamEnd 退出方法体；
@@ -20,17 +20,19 @@ class Reads value m where
 class Raw m where
   rawinput :: m [String]
 
--- 交出原子调用的原始输出。Root.super 在整个 action 成功返回时通知 Middleware。
-rawoutput :: Applicative m => [String] -> m [String]
-rawoutput = pure
+-- Stream 的一次交付。返回 () 时本条的 parser 已成功发布，来源方法可以继续交付。
+class Emits m where
+  rawemit :: String -> m ()
+
+-- 业务调用显式输出时注入 rawoutputhook；自身的 Middleware 输出使用默认实现。
+class Applicative m => RawOutputs m where
+  rawoutput :: [String] -> m [String]
+  rawoutput = pure
 
 class Raises failure m where
   raise :: failure -> m value
 
--- Stream handler 的三个出口：返回一份原始输入、raise 失败、streamEnd 正常结束。
--- streamEnd 直接作用于资产：结束本次生产步骤和当前绑定的生产会话，不看 AST 上有哪些消费方；
--- 这一步不交出输入，parser 不执行；已发布的交付仍可领取，各消费方排空后各自结束。
--- 它不是失败，不进入 Error 协议。
+-- 正常返回 () 继续下一步。streamEnd 封住当前会话，保留包括本次调用在内的已发布交付。
 class StreamEnds m where
   streamEnd :: m value
 
@@ -45,11 +47,19 @@ class EndsStream m where
 -- 只给 Middleware handler：拆出本次 Root 级调用点捕获的内容，不是这一种时为 Nothing。
 -- hookedEnter：Root 即将执行的 handler 名；hookedOutput：它交出的值；hookedRaw：读取方经 rawinput 读到的值；
 -- hookedError：handler raise 的错误描述。每项都带 handler 名；捕获只读，不改变原调用。
-class Hooks m where
+class Monad m => Hooks m where
   hookedEnter :: m (Maybe String)
   hookedOutput :: m (Maybe (String, [String]))
   hookedRaw :: m (Maybe (String, [String]))
   hookedError :: m (Maybe (String, String))
+
+  -- 在对应操作处执行回调。名字与负载由该次调用的生成实例提供。
+  rawinputhook :: (String -> [String] -> m ()) -> m ()
+  rawinputhook action = hookedRaw >>= mapM_ (uncurry action)
+  rawoutputhook :: (String -> [String] -> m ()) -> m ()
+  rawemithook :: (String -> String -> m ()) -> m ()
+  raisehook :: (String -> String -> m ()) -> m ()
+  raisehook action = hookedError >>= mapM_ (uncurry action)
 
 -- SDK 统一失败协议：来源、生成的错误分类和消息；传播时不改写或再次包装。
 data Failure cause = Failure

@@ -200,7 +200,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 
 | 行为 | 组合 | 推导 | 驱动 | 规范 | 或可类比为 |
 | --- | --- | --- | --- | --- | --- |
-| 持续来源，取不到下一份输入时结束 | Stream effect，加挂在它下面、`stream = True` 的 Context；来源没有下一份输入时 handler 调用 `streamEnd` | `BootPlan` 为 Receive；Stream handler 的 Layer 带 `StreamEnds` | 会话的生产任务循环执行 Stream 单步与 parser，每步发布一条；`streamEnd` 使会话封口 | [4](STREAM_LIFELONG.md#bootplan)、[9.4](STREAM_LIFELONG.md#end) | `repeatEffectOption` |
+| 持续来源，取不到下一份输入时结束 | Stream effect，加挂在它下面、`stream = True` 的 Context；来源没有下一份输入时 handler 调用 `streamEnd` | `BootPlan` 为 Receive；Stream handler 的 Layer 带 `Emits` 和 `StreamEnds` | 每次 rawemit 驱动 parser 发布一条，来源正常返回后继续下一步；`streamEnd` 使会话封口 | [4](STREAM_LIFELONG.md#bootplan)、[9.4](STREAM_LIFELONG.md#end) | `repeatEffectOption` |
 | 首次需要时才开始生产 | 无需写法 | 会话描述 | 进入 lifelong 时启动本边界的会话；lifelong 外第一次 `require` 时启动托管会话 | [7](STREAM_LIFELONG.md#sessions)、[8.3](STREAM_LIFELONG.md#production) | 流的惰性 |
 | 由上游每条交付驱动产出一条 | Context `stream = True`，Input 链上有 `streams "U"`，本 lifelong 没有它的发布位置 | `BootPlan` 为 Derive | 领取一条 U 的交付 → 执行被驱动的 Input 链 → parser 发布一条；可以逐级串联 | [4.2](STREAM_LIFELONG.md#derive)、[8.1](STREAM_LIFELONG.md#production) | `mapEffect` |
 | 消费步骤的输出成为新的持续资产，不重跑该步骤 | Context 挂在 lifelong 节点的原子句柄下 | `BootPlan` 为 `ReuseOutput [发布节点]` | 节点执行后由挂接 parser 发布，不另开任务；发布节点都结束或所在单元结束后封口 | [4.2](STREAM_LIFELONG.md#derive) | `mapEffect` 的结果再被共享 |
@@ -275,7 +275,7 @@ Middleware 是由 Root 级入口驱动的 Excu：注册给出 handler 与拦截�
 | 行为 | 组合 | 推导 | 驱动 | 规范 |
 | --- | --- | --- | --- | --- |
 | 观察一段子树里交出的值、rawinput 与失败 | Middleware 注册（`input = "None"`）；AST 写 `middleware [node "M"] 子树` | 剥离标注后照常编号；标注位置存为 `drivingMiddleware` | 子树的结构、NodeId 与单元划分不变 | [Middleware](CORE_DESIGN.md#middleware) |
-| 只捕获某几类 effect | `intercept = [ExcuKind, ...]`，或 `allEffects` | Injector 为绑定选定捕获类别；`Injector.Super` 为每个 (列表, 类别) 选定 Middleware；gen 把每次原子调用交给相应标签的 Root.super | 匹配的调用在进入、成功返回、rawinput 和 raise 时同步通知；直接实例执行原 action | 同上 |
+| 只捕获某几类 effect | `intercept = [ExcuKind, ...]`，或 `allEffects` | Injector 为绑定选定捕获类别；`Injector.Super` 为每个 (列表, 类别) 选定 Middleware；gen 把每次原子调用交给相应标签的 Root.super | 匹配的调用在进入、交出结果或执行 rawinput、rawoutput、rawemit、raise 时同步通知；直接实例执行原 action | 同上 |
 | 同一 handler 在不同子树表现不同 | 一处挂载在标注内，另一处不在 | 每个挂载的 Middleware 列表（`drivingHooks`），按位置前缀取覆盖它的标注之并，会话步骤同样；入口对列表多态，挂载登记时在类型上给出列表，调用点经入口约束 `Captured hooks` 取得该列表在本类别上的选择 | 按静态登记名选取已编译的 Target；未覆盖的挂载以空列表登记 | 同上 |
 | 拆出本次捕获 | 方法体 `hookedEnter`／`hookedOutput`／`hookedRaw`／`hookedError` | 只为 Middleware 的标签生成 `Hooks` 实例 | 对应当前捕获点的读取返回 `Just` | 同上 |
 | Middleware 与被捕获的链不成环 | 无需写法 | 任何 effect 的 Input 都不能指向 Middleware；Middleware 没有 demands；Middleware 在自己的标签下执行，那里的调用点不调用 `captureAt` | Middleware 自己不再被捕获 | 同上 |

@@ -14,7 +14,7 @@ module Framework.Runtime
   ) where
 
 import Framework.Language.Handler (Failure)
-import Framework.Runtime.App (App, Launch(..), runAppWith)
+import Framework.Runtime.App (App, Launch(..), StreamPort(..), runAppWith)
 import Framework.Runtime.Graph
   ( RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, runtimeRootFrame, newOrigin, obtainSession
   , currentPublications, collectRuntimeScopes, withRuntimeRetention )
@@ -227,7 +227,7 @@ lowerTarget graph retention location executionFrame frame (Handoff given views) 
       companions = [entry | (_, (_, published)) <- taken, entry@(source, _) <- published, source `notElem` map fst given]
       sinks = [(source, appendDelivery session []) | Just current <- [frame], (source, (session, _)) <- frameSessions current]
       launch = Launch
-        { launchBindings = given ++ companions, launchViews = merged, launchInput = Nothing
+        { launchBindings = given ++ companions, launchViews = merged, launchPort = NoStreamPort
         , launchSinks = sinks, launchDeliver = \source -> frame >>= (`frameRead` source)
         , launchUser = Nothing, launchFrame = executionFrame, launchRetention = retention }
   keepBindings retention (map snd (given ++ companions) ++ concatMap (toList . snd) merged)
@@ -265,13 +265,13 @@ cleanupTargets = cleanupScopes . scopeHandlers
 -- ReuseOutput 已属于原消费轮次，不建立第二份循环、ScopeUser 或会话待用帧。
 
 -- 生成区按资产登记的生产步骤。parser 的入口发布一次资产；会话不再次发布返回值。
--- ReceiveSteps：Stream 单步取得原始输入，再由 parser 解析。
+-- ReceiveSteps：Stream 每次 rawemit 都在返回前驱动一次 parser。
 -- DeriveSteps：领取一条上游持续资产的交付后执行 parser，它沿 Input 链执行被驱动的句柄。
 data SessionSteps environment cause
-  = ReceiveSteps (Target environment cause String) (Target environment cause ())
+  = ReceiveSteps (Target environment cause ()) (Target environment cause ())
   | DeriveSteps (Target environment cause ())
 
-receiveSteps :: Target environment cause String -> Target environment cause () -> SessionSteps environment cause
+receiveSteps :: Target environment cause () -> Target environment cause () -> SessionSteps environment cause
 receiveSteps = ReceiveSteps
 
 deriveSteps :: Target environment cause () -> SessionSteps environment cause
@@ -289,7 +289,7 @@ deriveSteps = DeriveSteps
 -- 撤销会话的待用预约后回收只在会话挂载中开启的 scope；派生会话退役后，上游若也没有读取方，随之退役。
 -- 启动到登记在不可中断区内完成，取消不会落在任务已启动、尚未登记之间。任务继承这一屏蔽，只在生产时解除：
 -- 报告失败、撤销使用登记和填写完成信号都不会被停止请求打断，stopSession 一定等得到完成信号。
-sessionLauncher :: RuntimeGraph environment cause -> [(String, SessionSteps environment cause)]
+sessionLauncher :: forall environment cause. RuntimeGraph environment cause -> [(String, SessionSteps environment cause)]
                 -> (Broken cause -> IO ()) -> Session environment cause -> IO ()
 sessionLauncher graph steps onBroken session
   -- 已挂载的原始链提供输出：只登记会话的交付状态，不创建第二个驱动或资源使用者。
@@ -361,20 +361,20 @@ sessionLauncher graph steps onBroken session
       [] -> source) mounts
     produce execution future selected upcoming = case (lookup label steps, mounts) of
       (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ withStep execution $ \owner retention -> do
-        -- streamEnd 只来自 Stream 单步：这一步没有原始输入，parser 不执行，也不发布。
-        taken <- try (lowerWith graph streamMount (step owner retention Nothing []) stream)
-        case taken of
-          Left SourceEnded -> pure (Just Nothing)
-          Right (Left problem, _, _) -> pure (Just (Just problem))
-          Right (Right text, captured, _) -> do
-            -- Receive 资源交接 v1（2026-11-17）：rawinput 回答本次输入，不重跑来源的 open。
-            -- parser 因此需要本次已捕获的资源 Binding；同一步共用 owner，保留原生产身份。
-            -- 只交接资源，不带入来源的普通捕获或交付视图，不写回会话或跨轮复用。
-            resources <- filterM (fmap isJust . readBindingOwner . snd) captured
-            let parseStep = (step owner retention (Just text) sink)
-                  { launchBindings = resources ++ [entry | entry@(name, _) <- sessionBindings session
-                    , name `notElem` map fst resources] }
-            either (Just . Just) (const Nothing) . first <$> lowerWith graph parserMount parseStep parser
+        -- 来源拥有本次调用的资源。每条 emit 在独立的 parser 调用与保留范围中发布，
+        -- parser 完成后立即释放该次使用；长时间未返回的来源不会积累历次 parser 的捕获。
+        let deliver text captured = withStep execution $ \parserOwner parserRetention -> do
+              inheritScopeUse owner parserOwner
+              resources <- filterM (fmap isJust . readBindingOwner . snd) captured
+              let parseStep = (step parserOwner parserRetention (ParserInput text) sink)
+                    { launchBindings = resources ++ [entry | entry@(name, _) <- sessionBindings session
+                      , name `notElem` map fst resources] }
+              first <$> lowerWith graph parserMount parseStep parser
+        taken <- try (lowerWith graph streamMount (step owner retention (SourcePort deliver) []) stream)
+        pure $ case taken of
+          Left SourceEnded -> Just Nothing
+          Right (Left problem, _, _) -> Just (Just problem)
+          Right (Right (), _, _) -> Nothing
       -- 每一步先领取一条上游交付，把该 Binding 作为本步的固定视图；上游结束并排空即正常结束。
       -- 被驱动链上的 Excu 调用 endStream：这一步放弃，不发布，派生会话不再消费上游，同样正常结束。
       -- 正常退出时离开上游，计数归零则退役上游；失败或取消只离开，停止交给收尾或本会话的退役。
@@ -412,9 +412,10 @@ sessionLauncher graph steps onBroken session
     sink = [(source, \value -> do
       companions <- currentPublications graph (maybe [] id mounts)
       appendDelivery session companions value)]
-    -- 每步实际使用 v1（2026-11-18）：Receive 的两个入口共用一次使用登记，Derive
+    -- 每步实际使用 v1（2026-11-18）：Receive 的来源与逐条 parser 分别持有活跃使用，Derive
     -- 每条交付使用一次；诊断与解析完成后撤销，再由现有 GC 核对长期预约及其他使用者。
     -- 新参数只产生新实例；另一订阅/调用仍持有的旧实例不因本步骤结束而关闭。
+    withStep :: Execution -> (ScopeUser environment cause -> Retention environment cause -> IO a) -> IO a
     withStep execution action = mask $ \restore -> do
       owner <- newScopeUser (runtimeScopes graph) execution
       restore (withRuntimeRetention graph (action owner)) `finally` (do
@@ -422,11 +423,11 @@ sessionLauncher graph steps onBroken session
         collectRuntimeScopes graph (maybe [] id mounts))
     -- 发布的原帧不变；future 只表达后续生产步骤的待用，不改变 Binding 出身。
     step owner retention input sinks = Launch
-      { launchBindings = sessionBindings session, launchViews = sessionViews session, launchInput = input
+      { launchBindings = sessionBindings session, launchViews = sessionViews session, launchPort = input
       , launchSinks = sinks, launchDeliver = noDelivery, launchUser = Just owner
       , launchFrame = runtimeRootFrame graph, launchRetention = retention }
     -- 被驱动的一步：上游这条交付的视图盖过交接中同一来源的视图。
-    driven owner retention upstream view = (step owner retention Nothing sink)
+    driven owner retention upstream view = (step owner retention NoStreamPort sink)
       { launchViews = (upstream, view) : filter ((/= upstream) . fst) (sessionViews session) }
     noDelivery = const Nothing
     first (outcome, _, _) = outcome

@@ -1,4 +1,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- 自动生成；只登记末端入口与原型，执行由 SDK 的 interpreter 完成。
 module LinesDemo.Generated.Program where
@@ -16,21 +18,25 @@ data Results = AnnounceResult () | PrintLineResult () | TextCounterResult () | S
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
 -- 第二个列表是各转折契约的选择末端：驱动资产（持续资产领取本次交付），返回它当前的构造器名。
--- 第三个列表是各持续资产的生产步骤：会话按需启动，Stream 单步取得原始输入（或领取一条上游交付），parser 发布一次资产。
+-- 第三个列表是各持续资产的生产步骤：会话按需启动，Receive 在每次 rawemit 时调用 parser，Derive 每领取一条上游交付调用一次。
 compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]
                      , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
-    ( [ SDK.targetApp "Announce" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (AnnounceResult <$> (() <$ Handlers.runAnnounce)))
-      , SDK.targetApp "PrintLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (PrintLineResult <$> (() <$ Handlers.runPrintLine)))
-      , SDK.targetApp "TextCounter" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (TextCounterResult <$> (() <$ Handlers.runTextCounter)))
-      , SDK.targetApp "ShowTotal" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ShowTotalResult <$> (() <$ Handlers.runShowTotal)))
-      , SDK.targetApp "Report" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ReportResult <$> (() <$ Handlers.runReport)))
+    ( [ SDK.targetApp "Announce" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (AnnounceResult <$> (() <$ (Handlers.runAnnounce @'[]))))
+      , SDK.targetApp "PrintLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (PrintLineResult <$> (() <$ (Handlers.runPrintLine @'[]))))
+      , SDK.targetApp "PrintLine@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (PrintLineResult <$> (() <$ (Handlers.runPrintLine @'["TraceLine"]))))
+      , SDK.targetApp "TextCounter" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (TextCounterResult <$> (() <$ (Handlers.runTextCounter @'[]))))
+      , SDK.targetApp "TextCounter@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (TextCounterResult <$> (() <$ (Handlers.runTextCounter @'["TraceLine"]))))
+      , SDK.targetApp "ShowTotal" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ShowTotalResult <$> (() <$ (Handlers.runShowTotal @'[]))))
+      , SDK.targetApp "ShowTotal@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ShowTotalResult <$> (() <$ (Handlers.runShowTotal @'["TraceLine"]))))
+      , SDK.targetApp "Report" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ReportResult <$> (() <$ (Handlers.runReport @'[]))))
       ]
     , []
-    , [ ("LineParser", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (Handlers.nextLineFeed))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ Handlers.getTextLine))))
-      , ("CountParser", SDK.deriveSteps (SDK.targetApp "CountParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ Handlers.getRunningTotal))))
+    , [ ("LineParser@TraceLine", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers ((Handlers.nextLineFeed @'["TraceLine"])))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getTextLine @'["TraceLine"])))))
+      , ("LineParser", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers ((Handlers.nextLineFeed @'[])))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getTextLine @'[])))))
+      , ("CountParser", SDK.deriveSteps (SDK.targetApp "CountParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getRunningTotal @'[])))))
       ]
     )
 
@@ -72,6 +78,12 @@ generatedPrototype =
             , SDK.typing = SDK.Stream (Just "nextLine")
             , SDK.input = "InputSession"
             , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("OpenedInput")]
+            }
+        , SDK.EffectSpec
+            { SDK.name = "TraceLine"
+            , SDK.typing = SDK.Middleware (Just "traceLine") ([SDK.StreamKind, SDK.ScopedKind])
+            , SDK.input = "None"
+            , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "LineParser"
@@ -197,6 +209,25 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["InputSession"]
             , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["InputResource"]
+            , SDK.effectContinuous = False
+            }
+        , SDK.EffectProto
+            { SDK.effectName = "TraceLine"
+            , SDK.effectKind = SDK.MiddlewareKind
+            , SDK.effectInput = "None"
+            , SDK.effectMethods = [(SDK.MiddlewareHook, HookTraceLineGen)]
+            , SDK.effectDemands = []
+            , SDK.effectProduces = Nothing
+            , SDK.effectBranches = []
+            , SDK.effectAnchor = Nothing
+            , SDK.effectScopes = []
+            , SDK.effectErrorScope = Nothing
+            , SDK.effectInputChain = []
+            , SDK.effectScopeParents = []
+            , SDK.effectOpeningInputs = []
+            , SDK.effectNearestScopes = []
+            , SDK.effectResource = Nothing
+            , SDK.effectContextDependencies = []
             , SDK.effectContinuous = False
             }
         , SDK.EffectProto
@@ -338,6 +369,7 @@ generatedPrototype =
             (NextLineFeedGen)
             (SDK.StreamHandler)
             (SDK.Sequence ([SDK.Call (OpenInputSessionGen), SDK.Call (ReadOpenedInputGen)]))
+        , SDK.MethodDefinition (HookTraceLineGen) (HookTraceLineGen) (SDK.MiddlewareHook) (SDK.Empty)
         , SDK.MethodDefinition
             (GetTextLineGen)
             (GetTextLineGen)
@@ -866,7 +898,8 @@ generatedPrototype =
               , ("LineParser", GetTextLineGen)
               , ("CountParser", GetRunningTotalGen)
               ]
-          , SDK.drivingMiddleware = []
-          , SDK.drivingHooks = []
+          , SDK.drivingMiddleware = [([1],["TraceLine"])]
+          , SDK.drivingHooks =
+              [([1,0,0,0],["TraceLine"]),([1,0,0,1],["TraceLine"]),([1,0,1,0],["TraceLine"]),([1,-1,0,0],["TraceLine"]),([1,-1,0,1],["TraceLine"])]
           }
     }

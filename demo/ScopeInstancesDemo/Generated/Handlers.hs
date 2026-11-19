@@ -218,6 +218,8 @@ instance FrameworkRuntime.Reads ([Char]) (Wrap "ReopenFirst") where
 instance FrameworkRuntime.Reads (FileHandle) (Wrap "ReopenFirst") where
   require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
 
+instance FrameworkRuntime.RawOutputs (Wrap effect)
+
 runPrepareFiles :: FrameworkGenerated.App [String]
 runPrepareFiles = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrepareFiles" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrepareFiles") $
   runWrap @"PrepareFiles" (FrameworkRuntime.super "prepareFiles" FrameworkGenerated.prepareFiles)

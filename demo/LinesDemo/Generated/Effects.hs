@@ -30,12 +30,12 @@ deriving instance Eq (Total) => Eq RunningTotal
 deriving instance Show (Total) => Show RunningTotal
 
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = RunAnnounceGen | GetOpenedInputGen | ReadOpenedInputGen | OpenInputSessionGen | CloseInputSessionGen | NextLineFeedGen | GetTextLineGen | StreamTextLineGen | RunPrintLineGen | RunTextCounterGen | GetRunningTotalGen | StreamRunningTotalGen | RunShowTotalGen | RunReportGen
+data MethodGen = RunAnnounceGen | GetOpenedInputGen | ReadOpenedInputGen | OpenInputSessionGen | CloseInputSessionGen | NextLineFeedGen | HookTraceLineGen | GetTextLineGen | StreamTextLineGen | RunPrintLineGen | RunTextCounterGen | GetRunningTotalGen | StreamRunningTotalGen | RunShowTotalGen | RunReportGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
 -- handler announce：绑定到 Announce。
-type AnnounceLayer m = (SDK.Raises AnnounceError m, MonadIO m)
+type AnnounceLayer m = (SDK.RawOutputs m, SDK.Raises AnnounceError m, MonadIO m)
 class AnnounceHandler m where
   announce :: m [String]
 
@@ -53,7 +53,7 @@ newtype AcquireInputError = AcquireInputError String
   deriving (Eq, Show, Read)
 
 -- handler openInput：绑定到 InputSession。
-type OpenInputLayer m = (SDK.Reads (InputFile) m, SDK.Raises OpenInputError m, MonadIO m)
+type OpenInputLayer m = (SDK.Reads (InputFile) m, SDK.RawOutputs m, SDK.Raises OpenInputError m, MonadIO m)
 class OpenInputHandler m where
   openInput :: m [String]
 
@@ -62,7 +62,7 @@ newtype OpenInputError = OpenInputError String
   deriving (Eq, Show, Read)
 
 -- handler closeInput：绑定到 InputSession。
-type CloseInputLayer m = (SDK.Reads (InputFile) m, SDK.Raises CloseInputError m, MonadIO m)
+type CloseInputLayer m = (SDK.Reads (InputFile) m, SDK.RawOutputs m, SDK.Raises CloseInputError m, MonadIO m)
 class CloseInputHandler m where
   closeInput :: m [String]
 
@@ -71,12 +71,21 @@ newtype CloseInputError = CloseInputError String
   deriving (Eq, Show, Read)
 
 -- handler nextLine：绑定到 LineFeed。
-type NextLineLayer m = (SDK.Reads (InputFile) m, SDK.StreamEnds m, SDK.Raises NextLineError m, MonadIO m)
+type NextLineLayer m = (SDK.Reads (InputFile) m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextLineError m, MonadIO m)
 class NextLineHandler m where
-  nextLine :: m String
+  nextLine :: m ()
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "nextLine" 匹配。
 newtype NextLineError = NextLineError String
+  deriving (Eq, Show, Read)
+
+-- handler traceLine：绑定到 TraceLine。
+type TraceLineLayer m = (SDK.Hooks m, SDK.RawOutputs m, SDK.Raises TraceLineError m, MonadIO m)
+class TraceLineHandler m where
+  traceLine :: m [String]
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "traceLine" 匹配。
+newtype TraceLineError = TraceLineError String
   deriving (Eq, Show, Read)
 
 -- handler parseLine：绑定到 LineParser。
@@ -89,7 +98,7 @@ newtype ParseLineError = ParseLineError String
   deriving (Eq, Show, Read)
 
 -- handler printLine：绑定到 PrintLine。
-type PrintLineLayer m = (SDK.Reads (Line) m, SDK.EndsStream m, SDK.Raises PrintLineError m, MonadIO m)
+type PrintLineLayer m = (SDK.Reads (Line) m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises PrintLineError m, MonadIO m)
 class PrintLineHandler m where
   printLine :: m [String]
 
@@ -98,7 +107,7 @@ newtype PrintLineError = PrintLineError String
   deriving (Eq, Show, Read)
 
 -- handler countText：绑定到 TextCounter。
-type CountTextLayer m = (SDK.Reads (InputFile) m, SDK.Reads (Line) m, SDK.EndsStream m, SDK.Raises CountTextError m, MonadIO m)
+type CountTextLayer m = (SDK.Reads (InputFile) m, SDK.Reads (Line) m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises CountTextError m, MonadIO m)
 class CountTextHandler m where
   countText :: m [String]
 
@@ -116,7 +125,7 @@ newtype ParseTotalError = ParseTotalError String
   deriving (Eq, Show, Read)
 
 -- handler showTotal：绑定到 ShowTotal。
-type ShowTotalLayer m = (SDK.Reads (Total) m, SDK.EndsStream m, SDK.Raises ShowTotalError m, MonadIO m)
+type ShowTotalLayer m = (SDK.Reads (Total) m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ShowTotalError m, MonadIO m)
 class ShowTotalHandler m where
   showTotal :: m [String]
 
@@ -125,7 +134,7 @@ newtype ShowTotalError = ShowTotalError String
   deriving (Eq, Show, Read)
 
 -- handler report：绑定到 Report。
-type ReportLayer m = (SDK.Reads (Total) m, SDK.Raises ReportError m, MonadIO m)
+type ReportLayer m = (SDK.Reads (Total) m, SDK.RawOutputs m, SDK.Raises ReportError m, MonadIO m)
 class ReportHandler m where
   report :: m [String]
 
@@ -134,7 +143,7 @@ newtype ReportError = ReportError String
   deriving (Eq, Show, Read)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
-data Errors = AnnounceFailure | AcquireInputFailure | OpenInputFailure | CloseInputFailure | NextLineFailure | ParseLineFailure | PrintLineFailure | CountTextFailure | ParseTotalFailure | ShowTotalFailure | ReportFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+data Errors = AnnounceFailure | AcquireInputFailure | OpenInputFailure | CloseInputFailure | NextLineFailure | TraceLineFailure | ParseLineFailure | PrintLineFailure | CountTextFailure | ParseTotalFailure | ShowTotalFailure | ReportFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。

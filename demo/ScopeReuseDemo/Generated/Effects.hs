@@ -40,7 +40,7 @@ newtype SharedPathsError = SharedPathsError String
   deriving (Eq, Show, Read)
 
 -- handler prepareProbe：绑定到 PrepareProbe。
-type PrepareProbeLayer m = (SDK.Reads (SharedPaths) m, SDK.Raises PrepareProbeError m, MonadIO m)
+type PrepareProbeLayer m = (SDK.Reads (SharedPaths) m, SDK.RawOutputs m, SDK.Raises PrepareProbeError m, MonadIO m)
 class PrepareProbeHandler m where
   prepareProbe :: m [String]
 
@@ -58,7 +58,7 @@ newtype AcquireFileError = AcquireFileError String
   deriving (Eq, Show, Read)
 
 -- handler openSharedFile：绑定到 SharedFileScope。
-type OpenSharedFileLayer m = (SDK.Reads (SharedFile) m, SDK.Raises OpenSharedFileError m, MonadIO m)
+type OpenSharedFileLayer m = (SDK.Reads (SharedFile) m, SDK.RawOutputs m, SDK.Raises OpenSharedFileError m, MonadIO m)
 class OpenSharedFileHandler m where
   openSharedFile :: m [String]
 
@@ -67,7 +67,7 @@ newtype OpenSharedFileError = OpenSharedFileError String
   deriving (Eq, Show, Read)
 
 -- handler closeSharedFile：绑定到 SharedFileScope。
-type CloseSharedFileLayer m = (SDK.Reads (SharedFile) m, SDK.Raises CloseSharedFileError m, MonadIO m)
+type CloseSharedFileLayer m = (SDK.Reads (SharedFile) m, SDK.RawOutputs m, SDK.Raises CloseSharedFileError m, MonadIO m)
 class CloseSharedFileHandler m where
   closeSharedFile :: m [String]
 
@@ -76,7 +76,7 @@ newtype CloseSharedFileError = CloseSharedFileError String
   deriving (Eq, Show, Read)
 
 -- handler writeFirst：绑定到 WriteFirst。
-type WriteFirstLayer m = (SDK.Reads (SharedFile) m, SDK.Raises WriteFirstError m, MonadIO m)
+type WriteFirstLayer m = (SDK.Reads (SharedFile) m, SDK.RawOutputs m, SDK.Raises WriteFirstError m, MonadIO m)
 class WriteFirstHandler m where
   writeFirst :: m [String]
 
@@ -85,7 +85,7 @@ newtype WriteFirstError = WriteFirstError String
   deriving (Eq, Show, Read)
 
 -- handler writeSecond：绑定到 WriteSecond。
-type WriteSecondLayer m = (SDK.Reads (SharedFile) m, SDK.Raises WriteSecondError m, MonadIO m)
+type WriteSecondLayer m = (SDK.Reads (SharedFile) m, SDK.RawOutputs m, SDK.Raises WriteSecondError m, MonadIO m)
 class WriteSecondHandler m where
   writeSecond :: m [String]
 
@@ -94,7 +94,7 @@ newtype WriteSecondError = WriteSecondError String
   deriving (Eq, Show, Read)
 
 -- handler writeThird：绑定到 WriteThird。
-type WriteThirdLayer m = (SDK.Reads (SharedFile) m, SDK.Raises WriteThirdError m, MonadIO m)
+type WriteThirdLayer m = (SDK.Reads (SharedFile) m, SDK.RawOutputs m, SDK.Raises WriteThirdError m, MonadIO m)
 class WriteThirdHandler m where
   writeThird :: m [String]
 
@@ -103,7 +103,7 @@ newtype WriteThirdError = WriteThirdError String
   deriving (Eq, Show, Read)
 
 -- handler verifyReuse：绑定到 VerifyReuse。
-type VerifyReuseLayer m = (SDK.Reads (SharedPaths) m, SDK.Raises VerifyReuseError m, MonadIO m)
+type VerifyReuseLayer m = (SDK.Reads (SharedPaths) m, SDK.RawOutputs m, SDK.Raises VerifyReuseError m, MonadIO m)
 class VerifyReuseHandler m where
   verifyReuse :: m [String]
 

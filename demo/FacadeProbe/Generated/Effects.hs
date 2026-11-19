@@ -120,7 +120,7 @@ newtype AcquireFileError = AcquireFileError String
   deriving (Eq, Show, Read)
 
 -- handler openTextFile：绑定到 ReportScope、ReplyScope。
-type OpenTextFileLayer m = (SDK.Reads (TextFile) m, SDK.Raises OpenTextFileError m, MonadIO m)
+type OpenTextFileLayer m = (SDK.Reads (TextFile) m, SDK.RawOutputs m, SDK.Raises OpenTextFileError m, MonadIO m)
 class OpenTextFileHandler m where
   openTextFile :: m [String]
 
@@ -129,7 +129,7 @@ newtype OpenTextFileError = OpenTextFileError String
   deriving (Eq, Show, Read)
 
 -- handler closeTextFile：绑定到 ReportScope、ReplyScope。
-type CloseTextFileLayer m = (SDK.Reads (TextFile) m, SDK.Raises CloseTextFileError m, MonadIO m)
+type CloseTextFileLayer m = (SDK.Reads (TextFile) m, SDK.RawOutputs m, SDK.Raises CloseTextFileError m, MonadIO m)
 class CloseTextFileHandler m where
   closeTextFile :: m [String]
 
@@ -138,7 +138,7 @@ newtype CloseTextFileError = CloseTextFileError String
   deriving (Eq, Show, Read)
 
 -- handler writeText：绑定到 WriteReport、WriteReply。
-type WriteTextLayer m = (SDK.Reads (Body) m, SDK.Reads (TextFile) m, SDK.Raises WriteTextError m, MonadIO m)
+type WriteTextLayer m = (SDK.Reads (Body) m, SDK.Reads (TextFile) m, SDK.RawOutputs m, SDK.Raises WriteTextError m, MonadIO m)
 class WriteTextHandler m where
   writeText :: m [String]
 
@@ -147,7 +147,7 @@ newtype WriteTextError = WriteTextError String
   deriving (Eq, Show, Read)
 
 -- handler markRead：绑定到 MarkReply。
-type MarkReadLayer m = (SDK.Raises MarkReadError m, MonadIO m)
+type MarkReadLayer m = (SDK.RawOutputs m, SDK.Raises MarkReadError m, MonadIO m)
 class MarkReadHandler m where
   markRead :: m [String]
 
@@ -156,7 +156,7 @@ newtype MarkReadError = MarkReadError String
   deriving (Eq, Show, Read)
 
 -- handler readText：绑定到 ReadReport、ReadReply。
-type ReadTextLayer m = (SDK.Reads ([Char]) m, SDK.Raises ReadTextError m, MonadIO m)
+type ReadTextLayer m = (SDK.Reads ([Char]) m, SDK.RawOutputs m, SDK.Raises ReadTextError m, MonadIO m)
 class ReadTextHandler m where
   readText :: m [String]
 
@@ -174,7 +174,7 @@ newtype CountLinesError = CountLinesError String
   deriving (Eq, Show, Read)
 
 -- handler showCount：绑定到 ShowReport、ShowReply。
-type ShowCountLayer m = (SDK.Reads (LineCount) m, SDK.Raises ShowCountError m, MonadIO m)
+type ShowCountLayer m = (SDK.Reads (LineCount) m, SDK.RawOutputs m, SDK.Raises ShowCountError m, MonadIO m)
 class ShowCountHandler m where
   showCount :: m [String]
 
@@ -192,7 +192,7 @@ newtype InspectFileError = InspectFileError String
   deriving (Eq, Show, Read)
 
 -- handler describeBlank：绑定到 OnBlank。
-type DescribeBlankLayer m = (SDK.Reads (()) m, SDK.Raises DescribeBlankError m, MonadIO m)
+type DescribeBlankLayer m = (SDK.Reads (()) m, SDK.RawOutputs m, SDK.Raises DescribeBlankError m, MonadIO m)
 class DescribeBlankHandler m where
   describeBlank :: m [String]
 
@@ -201,7 +201,7 @@ newtype DescribeBlankError = DescribeBlankError String
   deriving (Eq, Show, Read)
 
 -- handler describeFilled：绑定到 OnFilled。
-type DescribeFilledLayer m = (SDK.Reads (Body) m, SDK.Raises DescribeFilledError m, MonadIO m)
+type DescribeFilledLayer m = (SDK.Reads (Body) m, SDK.RawOutputs m, SDK.Raises DescribeFilledError m, MonadIO m)
 class DescribeFilledHandler m where
   describeFilled :: m [String]
 
@@ -219,7 +219,7 @@ newtype NewCounterError = NewCounterError String
   deriving (Eq, Show, Read)
 
 -- handler openCounter：绑定到 FeedScopeA、FeedScopeB。
-type OpenCounterLayer m = (SDK.Reads (FeedCounter) m, SDK.Raises OpenCounterError m, MonadIO m)
+type OpenCounterLayer m = (SDK.Reads (FeedCounter) m, SDK.RawOutputs m, SDK.Raises OpenCounterError m, MonadIO m)
 class OpenCounterHandler m where
   openCounter :: m [String]
 
@@ -228,18 +228,18 @@ newtype OpenCounterError = OpenCounterError String
   deriving (Eq, Show, Read)
 
 -- handler nextA：绑定到 FeedA。
-type NextALayer m = (SDK.Reads (FeedCounter) m, SDK.StreamEnds m, SDK.Raises NextAError m, MonadIO m)
+type NextALayer m = (SDK.Reads (FeedCounter) m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextAError m, MonadIO m)
 class NextAHandler m where
-  nextA :: m String
+  nextA :: m ()
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "nextA" 匹配。
 newtype NextAError = NextAError String
   deriving (Eq, Show, Read)
 
 -- handler nextB：绑定到 FeedB。
-type NextBLayer m = (SDK.Reads (FeedCounter) m, SDK.StreamEnds m, SDK.Raises NextBError m, MonadIO m)
+type NextBLayer m = (SDK.Reads (FeedCounter) m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextBError m, MonadIO m)
 class NextBHandler m where
-  nextB :: m String
+  nextB :: m ()
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "nextB" 匹配。
 newtype NextBError = NextBError String
@@ -255,7 +255,7 @@ newtype ParseLevelError = ParseLevelError String
   deriving (Eq, Show, Read)
 
 -- handler showLevel：绑定到 ShowA、ShowB。
-type ShowLevelLayer m = (SDK.Reads (Level) m, SDK.EndsStream m, SDK.Raises ShowLevelError m, MonadIO m)
+type ShowLevelLayer m = (SDK.Reads (Level) m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ShowLevelError m, MonadIO m)
 class ShowLevelHandler m where
   showLevel :: m [String]
 

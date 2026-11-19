@@ -28,7 +28,7 @@ import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
 import FacadeProbe.Types
-import Framework.SDK (Raises(..), Raw(..), Reads(..), rawoutput)
+import Framework.SDK (Emits(rawemit), Raises(..), Raw(..), Reads(..), rawoutput)
 import FacadeProbe.Generated.Effects
 import FacadeProbe.Types
 import Control.Concurrent (threadDelay)
@@ -131,7 +131,7 @@ instance NextALayer m => NextAHandler m where
     liftIO (threadDelay 40000)
     number <- liftIO $ atomicModifyIORef' counter $ \previous ->
       let current = previous + 1 in (current, current)
-    pure (show (number, 10 :: Int))
+    rawemit (show (number, 10 :: Int))
 
 instance NextBLayer m => NextBHandler m where
   nextB = do
@@ -139,7 +139,7 @@ instance NextBLayer m => NextBHandler m where
     liftIO (threadDelay 60000)
     number <- liftIO $ atomicModifyIORef' counter $ \previous ->
       let current = previous + 1 in (current, current)
-    pure (show (number, 20 :: Int))
+    rawemit (show (number, 20 :: Int))
 
 instance ParseLevelLayer m => ParseLevelHandler m where
   parseLevel = do
@@ -158,7 +158,7 @@ instance ShowLevelLayer m => ShowLevelHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "6ab7790bd46bf1e255880e0603c7b42f"
+handlerSourceFingerprint = Just "0a0b686cffa24a432689b625d717b103"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -321,10 +321,18 @@ instance FrameworkRuntime.Raw (Wrap "ReplyCounter") where
   rawinput = Wrap (runReadReply)
 
 instance FrameworkRuntime.Raw (Wrap "ParserA") where
-  rawinput = Wrap ((: []) <$> nextFeedA)
+  rawinput = Wrap (FrameworkRuntime.emittedInput)
 
 instance FrameworkRuntime.Raw (Wrap "ParserB") where
-  rawinput = Wrap ((: []) <$> nextFeedB)
+  rawinput = Wrap (FrameworkRuntime.emittedInput)
+
+instance FrameworkRuntime.RawOutputs (Wrap effect)
+
+instance FrameworkRuntime.Emits (Wrap "FeedA") where
+  rawemit text = Wrap (FrameworkRuntime.emitToParser text)
+
+instance FrameworkRuntime.Emits (Wrap "FeedB") where
+  rawemit text = Wrap (FrameworkRuntime.emitToParser text)
 
 instance FrameworkRuntime.StreamEnds (Wrap "FeedA") where
   streamEnd = Wrap FrameworkRuntime.endSource
@@ -497,12 +505,12 @@ openFeedScopeB :: FrameworkGenerated.App [String]
 openFeedScopeB = (FrameworkRuntime.withErrorPath ["FeedScopeB"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFeedScopeB" [] [] . FrameworkRuntime.openScope "FeedScopeB" FrameworkGenerated.ScopeBindingError Nothing . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FeedScopeB") $
   getCountB >> runWrap @"FeedScopeB" (FrameworkRuntime.super "openCounter" FrameworkGenerated.openCounter)
 
-nextFeedA :: FrameworkGenerated.App String
-nextFeedA = (FrameworkRuntime.withErrorPath ["FeedScopeA"] . FrameworkRuntime.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies ["FeedScopeA"] . FrameworkRuntime.enterHandler "FeedA") $
+nextFeedA :: FrameworkGenerated.App ()
+nextFeedA = (FrameworkRuntime.withErrorPath ["FeedScopeA"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FeedScopeA"] . FrameworkRuntime.enterHandler "FeedA") $
   openFeedScopeA >> runWrap @"FeedA" (FrameworkRuntime.super "nextA" FrameworkGenerated.nextA)
 
-nextFeedB :: FrameworkGenerated.App String
-nextFeedB = (FrameworkRuntime.withErrorPath ["FeedScopeB"] . FrameworkRuntime.handleFailure . FrameworkRuntime.streamHandle . FrameworkRuntime.withScopeDependencies ["FeedScopeB"] . FrameworkRuntime.enterHandler "FeedB") $
+nextFeedB :: FrameworkGenerated.App ()
+nextFeedB = (FrameworkRuntime.withErrorPath ["FeedScopeB"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FeedScopeB"] . FrameworkRuntime.enterHandler "FeedB") $
   openFeedScopeB >> runWrap @"FeedB" (FrameworkRuntime.super "nextB" FrameworkGenerated.nextB)
 
 getLevelA :: FrameworkGenerated.App FrameworkGenerated.LevelA

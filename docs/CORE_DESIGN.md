@@ -298,7 +298,7 @@ gen 分开处理结构共享、同次输出复用与 scope 实例共享。相同
 | Scoped | open、close | 均为 m [String] | open名字、close名字 | 开启参数按生产身份共享；无当前使用、待用节点及子 scope 保留时回收，close 可选 |
 | Error | detect、resolve | 均为 m () | detect名字、resolve名字 | 只处理关联 scope 的失败；沿 ScopeTree 祖先顺序检测，Succ 后调用可选 resolve，保存原始与次生失败 |
 | Context | parser | m 表示类型 | getT；`require = True` 时 readT，`stream = True` 时为 streamT | getT 执行前驱与 parser 并包装发布；读取先用 state，无值时等待发布，不生产；失败保留该来源旧值；持续资产见第 7 章 |
-| Stream | handler | m String | next名字 | 只由生产会话驱动；不作为 AST target |
+| Stream | handler | m () | next名字 | 只由生产会话驱动；不作为 AST target |
 | Middleware | handler（必填）；`intercept :: [EffectKind]` | m [String]，Layer 是 Hooks、Raises、MonadIO | hook名字 | 驱动方式特殊的 Excu：`input = "None"`，没有 demands；只在 Root 级调用点上执行，不作为 AST target，见 [Middleware](#middleware) |
 
 #### 注册构造
@@ -322,7 +322,7 @@ typing = Context { asset = Asset @SessionInfo "CrawlSessionInfo", parser = Just 
 -- 持续数据源：每次取得一份原始输入，由挂在它下面的 Context 的 parser 解析
 typing = Stream { handler = Just "nextReading" }
 
--- 驱动方式特殊的 Excu：input 写保留名 "None"；allEffects 是 [ExcuKind, ScopedKind, PureKind] 的简写
+-- 驱动方式特殊的 Excu：input 写保留名 "None"；allEffects 是 [ExcuKind, ScopedKind, PureKind, StreamKind] 的简写
 typing = Middleware { handler = Just "traceOutput", intercept = [ExcuKind, ScopedKind] }
 ```
 
@@ -347,11 +347,13 @@ Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必�
 | `Raw m` | 绑定成挂接的 parser 或 Pure | `rawinput :: m [String]` |
 | `Raises XxxError m` | 总是 | `raise (XxxError "...")` |
 | `Hooks m` | 绑定成 Middleware | `hookedEnter` 读取进入的 handler 名。输出、rawinput 与 raise 分别由 `hookedOutput`、`hookedRaw`、`hookedError` 读取 |
+| `Emits m` | Stream | `rawemit text` 同步交付一条，返回后来源继续 |
+| `RawOutputs m` | 返回原子列表的 handler 和 Middleware | `rawoutput fields` |
 | `StreamEnds m` | 绑定成 Stream 的 handler | `streamEnd`：来源没有下一份输入，正常结束 |
 | `EndsStream m` | 以 `streams` 订阅持续资产的 Excu（规则见 [Stream 9.5](STREAM_LIFELONG.md#consumer-end)） | `endStream`：结束本处订阅，按读取方计数停产 |
 | `MonadIO m` | Pure 以外总是 | `liftIO` |
 
-Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 handler 的类或 request；单独的 requests 不带来 Reads。一个 handler 只有一份 Layer，各绑定推出的方法类型与 Layer 必须一致，否则 gencode 报错。`Reads`、`Raw`、`Raises`、`StreamEnds`、`EndsStream`、`Hooks` 定义在 Framework.Language.Handler，由 Framework.SDK 导出；`Raw`、`Raises` 是暂定名。
+Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 handler 的类或 request；单独的 requests 不带来 Reads。一个 handler 只有一份 Layer，各绑定推出的方法类型与 Layer 必须一致，否则 gencode 报错。`Reads`、`Raw`、`RawOutputs`、`Emits`、`Raises`、`StreamEnds`、`EndsStream`、`Hooks` 定义在 Framework.Language.Handler，由 Framework.SDK 导出；`Raw`、`Raises` 是暂定名。
 
 失败属于 handler：raise 的错误类型由 handler 名决定，不随绑定改变，Errors 中的分类是 `XxxFailure`；发生在哪个 effect 由 SDK 记为 Failure.origin，只是诊断位置。原始 Failure 保存 origin、detail 分类和 message，传播或次生失败不覆盖原故障；不要求用户声明错误 ADT。
 
@@ -393,7 +395,7 @@ getStartURL = ⟨入口包装⟩ $
 - **驱动**：effect 的 requests 依次执行对应资产的 getT，重新生产并发布当前 origin 的绑定。
 - **Input**：前驱的入口在方法体之前执行；方法体不调用上游，也不捕获前驱的失败，失败后的改道用 AST 的 alternative。Scoped 前驱已开启时复用实例，跳过 open 的方法体。
 - **方法体**：在 `Wrap "名字"` 上运行绑定的 handler；Context 的入口再把结果包成资产。
-- **挂接**：Input 是 Excu、Scoped、Pure 或 Stream 的 Context，以及 Pure 自身，不把 Input 当作前驱执行，rawinput 由 Input 的入口回答：注入时由本次输出回答，被驱动时执行该入口，Stream 下为 `(: []) <$> next名字`。Pure 的入口只是 rawinput 的中间一段，不改变调用者身份。
+- **挂接**：Input 是 Excu、Scoped、Pure 或 Stream 的 Context，以及 Pure 自身，不把 Input 当作前驱执行，rawinput 由 Input 的入口回答：注入时由本次输出回答，被驱动时执行该入口，Stream 下直接读取当前 rawemit 的单元素输入。Pure 的入口只是 rawinput 的中间一段，不改变调用者身份。
 - **只运行 handler 的入口**：close、detect、resolve 不驱动，也不执行前驱。
 
 生成器读取方法体中的读取（`require @T`、`rawinput`），形成每个 handler 的原子形状；再按绑定把表示类型代换成该 effect 的细化资产读取，与入口的驱动和前驱一起组成 effect 方法的纯结构。它不解释任意 Haskell 业务值语义。handler 方法体不能直接调用其他 handler 或 effect 的方法，gencode 报错：那样会绕过 effect 入口，丢失 Input、驱动和错误位置。
@@ -412,7 +414,7 @@ Input 表达操作的前提关系，业务值来源单独由 demands 表达；Co
 
 #### Root 的统一入口包装
 
-生成入口统一包装原协议：withErrorPath 记录失败路径上的 scope，handleFailure 接入 Failure 捕获与 Error 处置，atomicHandle／atomicScope 与 openScope／closeScope 包装原子句柄和 scope 生命周期，streamHandle 包装 Stream，callContext／readContext 包装 Context 的生产、挂接注入与读取。业务不写 handler／super 前缀。
+生成入口统一包装原协议：withErrorPath 记录失败路径上的 scope，handleFailure 接入 Failure 捕获与 Error 处置，atomicHandle／atomicScope 与 openScope／closeScope 包装原子句柄和 scope 生命周期，Receive 为 Stream 的 rawemit 安装本会话的 parser，callContext／readContext 包装 Context 的生产、挂接注入与读取。业务不写 handler／super 前缀。
 
 入口按标签已知的闭包由 gen 直接写在包装上，运行时不按名字查表：atomicHandle／atomicScope 带上挂在本句柄下的 parser（普通挂接与持续挂接两组），openScope 带上本 scope 的 close，开启成功时登记为自动收尾。
 
@@ -428,9 +430,9 @@ openFileSession = (… . FrameworkRuntime.openScope "FileSession" FrameworkGener
 <a id="middleware"></a>
 #### Middleware：在 Root 级调用点捕获句柄与值
 
-每个原子类方法作为一个尚未执行的 action 交给 Root 的 `super`。例如，生成入口在完成 requests 和 Input 前驱后，执行 `runWrap @hooks @"FileSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)`。同一手写 instance 仍可绑定到不同 effect。Injector 确定绑定可捕获的类别，Booter 给出挂载的 middleware 列表，生成代码里的类型标签把两者交给对应的 Root 实例。
+每个原子类方法作为一个尚未执行的 action 交给 Root 的 `super`。例如，生成入口在完成 requests 和 Input 前驱后，执行 `runWrap @hooks @"FileSession" @"openSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)`。同一手写 instance 仍可绑定到不同 effect。Injector 确定绑定可捕获的类别，Booter 给出挂载的 middleware 列表，生成代码里的类型标签把两者交给对应的 Root 实例。
 
-有匹配的 middleware 时，`super` 先通知进入，再执行一次业务 action，成功后通知输出并交回原值。action 内每次实际的 `rawinput` 和 `raise` 沿用各自的捕获点。Middleware 在自己的标签上运行，Root 在这个标签上直接执行，避免递归触发。业务和 middleware 的 instance 都无需手写推进操作。
+有匹配的 middleware 时，`super` 先通知进入，再执行一次业务 action，原子列表方法成功时通知返回值。Stream 在每次 rawemit 处通知输出。方法内的操作各在执行处触发对应的 hook。Middleware 在自己的标签上运行，Root 在这个标签上直接执行，避免递归触发。业务和 middleware 的 instance 都无需手写推进操作。
 
 ```haskell
 -- 注册：没有 Input 前驱，也没有 demands
@@ -448,9 +450,9 @@ instance TraceOutputLayer m => TraceOutputHandler m where
 ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "WriteReport"]]
 ```
 
-- **注册。** `input` 写保留名 `"None"`：没有 Input 注入，沿用 Input 的组合逻辑而不另设注册构造器。只有 Middleware 能写 `"None"`，Middleware 也只能写 `"None"`；任何 effect 的 Input 都不能指向 Middleware，因此 Middleware 与被捕获的链之间不会成环。`"None"` 与 `"Root"` 一样不能作为 effect 名。首版不允许 demands。`intercept` 非空、不重复，只能取能交出 raw output 的 `ExcuKind`、`ScopedKind`、`PureKind`；`allEffects` 是三者的简写。
+- **注册。** `input` 写保留名 `"None"`：没有 Input 注入，沿用 Input 的组合逻辑而不另设注册构造器。只有 Middleware 能写 `"None"`，Middleware 也只能写 `"None"`；任何 effect 的 Input 都不能指向 Middleware，因此 Middleware 与被捕获的链之间不会成环。`"None"` 与 `"Root"` 一样不能作为 effect 名。首版不允许 demands。`intercept` 非空、不重复，接受 `ExcuKind`、`ScopedKind`、`PureKind` 和 `StreamKind`，`allEffects` 包含这四类。
 - **挂载。** `middleware :: [EffectNode] -> AST -> AST` 包住恰好一棵子树。列表只接受 Middleware 注册名，普通 `node` 也不能引用 Middleware。标注是透明的：gen 先剥离标注再编号，NodeId、单元划分（包括 `lifelong` 对直接 `parallel` 子项的拆分）与无标注时相同；标注位置与 Middleware 名作为 `drivingMiddleware` 存入 Prototype，运行与 `--structure` 剥离当前 AST 后核对骨架，并核对标注与编译时一致。
-- **集合与类型类注入。** gen 为每个挂载（节点、选择读取、会话步骤）求覆盖它的全部标注之并，按注册顺序去重；Booter 把它存为 `drivingHooks`。注册了 Middleware 时，标签写作 `Wrap hooks effect`，每个 effect 入口只生成一份，对 `hooks` 多态（`runX :: forall hooks. Captured hooks => App …`），入口之间以 `@hooks` 互相调用，所以前驱、`requests` 驱动、rawinput 读取的句柄、挂接的 parser 与自动收尾的 close 都处在同一个列表下。生成的 Haskell 把 `Captured hooks`（每个被拦截类别一条 `Captures hooks kind`）写在入口的类型签名上。Program 为每个挂载登记时在类型上给出列表（例如 `Handlers.runReport @'["Audit"]`，被覆盖的挂载另以 `名字@Audit` 登记），GHC 在编译期选定实例；运行时只按 Prototype 的静态登记名（`entryLabel`）选取已编译的 Target，没有目录或分发。
+- **集合与类型类注入。** gen 为每个挂载（节点、选择读取、会话步骤）求覆盖它的全部标注之并，按注册顺序去重；Booter 把它存为 `drivingHooks`。注册了 Middleware 时，标签写作 `Wrap hooks effect method`，每个 effect 入口只生成一份，对 `hooks` 多态（`runX :: forall hooks. Captured hooks => App …`），入口之间以 `@hooks` 互相调用，所以前驱、`requests` 驱动、rawinput 读取的句柄、挂接的 parser 与自动收尾的 close 都处在同一个列表下。生成的 Haskell 把 `Captured hooks`（每个被拦截类别一条 `Captures hooks kind`）写在入口的类型签名上。Program 为每个挂载登记时在类型上给出列表（例如 `Handlers.runReport @'["Audit"]`，被覆盖的挂载另以 `名字@Audit` 登记），GHC 在编译期选定实例；运行时只按 Prototype 的静态登记名（`entryLabel`）选取已编译的 Target，没有目录或分发。
 - **生成期选择。** `Gen.Injector.Super` 对入口实际实例化的每个列表（空列表、各挂载与会话步骤的列表）和每个被拦截的类别，按注册顺序选出拦截该类别的 Middleware；Emit 把每条选择写成一个 `Captures` 实例。例如 `Audit` 拦截 Excu 与 Scoped、`Timer` 拦截全部类别时：
 
   ```haskell
@@ -466,8 +468,9 @@ ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "Wri
 - **open／close 归谁。** 规则只看挂载位置，不为会话另设：lifelong 的会话步骤位于该 lifelong 路径下（`边界 ++ [-1, 序号, 步骤]`），标注覆盖整个 lifelong 或它的祖先时，会话步骤以该列表登记，它执行的 open 就是 `open… @hooks`；标注只覆盖 lifelong 内的子树时，只有这些节点带上列表。close 由 open 入口在同一列表下带上（`openScope … (Just (closeX @hooks))`），收尾调用同一列表下的 close。同一 handler 复用在不同子树时，只有被标注覆盖的那次挂载被捕获。
 - **superhandler 与 Root 级调用。** `super` 是 Root 提供的 superhandler，捕获分两层：
   - 进入 super：前驱已经完成，`hookedEnter` 给出即将运行的 handler 名。回放直接返回已交出的值时，整个 action 都会跳过。对于 scope，进入表示一次调用尝试；若需在方法内读取开启参数才判定复用，可能只观察到进入。
-  - 以下三个是 super 内的 Root 级调用。交出值（`pure`）：Excu.run、Scoped.open／close、Pure.run 这次调用成功交出的 `[String]`，handler 名是被调用的 handler。scope 复用跳过 open 方法体、或注入回放本次输出时，没有新的交出值。
-  - rawinput：读取方 handler（挂接的 parser 或 Pure）经 `rawinput` 读到的值；类别取被读取的那次原子调用的类别，所以 Stream 下的原始输入不在首版类别内。注入时 parser 经回放读取，同样是一次 rawinput 读取。
+  - 方法成功返回时的输出捕获适用于Excu.run、Scoped.open／close、Pure.run 这次调用成功交出的 `[String]`，handler 名是被调用的 handler。scope 复用跳过 open 方法体、或注入回放本次输出时，没有新的交出值。
+  - rawinput：读取方 handler（挂接的 parser 或 Pure）经 `rawinput` 读到的值；类别取被读取的那次原子调用的类别，在 Stream 下，每次读取本条输入时按 StreamKind 通知。注入时 parser 经回放读取，同样是一次 rawinput 读取。
+  - 显式操作对应 Middleware 类方法 `rawinputhook`、`rawoutputhook`、`rawemithook`、`raisehook`，回调参数为 handler 名与该次负载。Stream 的 `hookedOutput` 在 emit 处得到单元素列表；来源方法返回 `()` 时没有输出负载。
   - raise：handler `raise` 时先捕获 (handler 名, 描述)，再以原失败退出。
 - **同步与顺序。** Middleware 是类方法，在调用点同步执行，调用点在它们完成后才继续。多个 Middleware 按注册顺序依次调用；每个都读到同一份捕获。它们的 IO 按此顺序发生，某个 Middleware 抛出失败会中止本次后续派发。Middleware handler 在自己的 `Hook` 标签下执行，那里的调用点不调用 `captureAt`，它自己不再被捕获。它交出的 `[String]` 没有挂接点。
 - **能力只给 Middleware。** gen 只为 Middleware 的标签生成 `Hooks (Hook "M")`，Layer 也只给 Middleware 加 `Hooks m`；普通 handler 写 `hookedOutput` 不能通过类型检查。Middleware 的能力只来自它的 handler 写法。
@@ -613,9 +616,9 @@ instance ParseFileNameLayer m => ParseFileNameHandler m where
       _ -> raise (ParseFileNameError "Expected exactly one file name")
 ```
 
-**原子输入和输出。** `rawinput :: Raw m => m [String]` 读取直接 Input 交出的列表。`rawoutput :: Applicative m => [String] -> m [String]` 定义为 `pure`，用于返回原子列表。已挂载并匹配的 Middleware 在整个 handler 成功返回时观察一次输出。Context parser 返回资产表示值时仍可用 `pure`。
+**原子输入和输出。** `rawinput :: Raw m => m [String]` 读取直接 Input 交出的列表。`rawoutput :: RawOutputs m => [String] -> m [String]` 将同一列表交还业务代码，显式调用处可以执行 `rawoutputhook`。已挂载并匹配的 Middleware 在整个 handler 成功返回时观察一次输出。Context parser 返回资产表示值时仍可用 `pure`。
 
-**原子输出统一是 list。** Excu 与 Scoped 的 open／close 交出 `[String]`。`rawoutput []` 表示空列表，`rawoutput [x]` 交出一项，多项结果用 `:` 或 `concat` 组合。list 的顺序与拼接允许下游用 `foldMap` 计数、构造集合或合并文本。层次数据可以在元素里编码（例如完整路径），由 parser 还原。Stream 每步返回一份 `String`，其 parser 用 `rawinput` 读到单元素列表。
+**原子输出统一是 list。** Excu 与 Scoped 的 open／close 交出 `[String]`。`rawoutput []` 表示空列表，`rawoutput [x]` 交出一项，多项结果用 `:` 或 `concat` 组合。list 的顺序与拼接允许下游用 `foldMap` 计数、构造集合或合并文本。层次数据可以在元素里编码（例如完整路径），由 parser 还原。Stream 可在一次调用中多次 `rawemit text`，其 parser 每次用 `rawinput` 读到 `[text]`。
 
 **Pure 是对上层输出的 fmap。** Pure 用 `rawinput` 读直接 Input 交出的 list，返回变换后的 list：去重、排序、过滤都是整个 list 上的普通函数，检查不通过时 `raise`。它没有 IO（Layer 不含 `MonadIO`），也不读资产（不声明 demands，Layer 不含 `Reads`）：输入只来自直接上游，和 Context 接收句柄输出一样不走 demands，因此不会出现 demands 的循环依赖。
 
@@ -786,7 +789,7 @@ EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope
 
 **状态：已实现（2026-11-13）。** SDK 同时观察当前使用者与剩余程序：仍可能触达的实例保留，不可达时同步回收。handler 只实现怎样关闭，AST、Input 与 demands 提供何时不再使用的依据。
 
-- **当前使用**：每次 AST 入口完整 chain 建立一份 `ScopeUser`，open／require 选中的实例加入其中，等待 opening 也计入。同一入口内的 Context 生产继承该登记。业务、Error 诊断和受控结果消费全部结束后才撤销。Receive 的来源与 parser 共用本步登记，Derive 每次处理独立登记；会话跨步骤复用由待用帧保持，不累积实际使用。
+- **当前使用**：每次 AST 入口完整 chain 建立一份 `ScopeUser`，open／require 选中的实例加入其中，等待 opening 也计入。同一入口内的 Context 生产继承该登记。业务、Error 诊断和受控结果消费全部结束后才撤销。每次 rawemit 的 parser 继承来源已使用的实例，并在该条解析结束后撤销自己的登记，Derive 每次处理独立登记；会话跨步骤复用由待用帧保持，不累积实际使用。
 - **待用关系**：gen 在 `protoScopeOpenings` 中记录每个开启位置各参数可能的生产节点或会话来源，包括本节点和 alternative 交接的捕获。执行帧保存待执行、执行中、完成和跳过的节点。有限运行使用根帧，lifelong 单元每轮使用子帧，独立生产会话另有后续步骤的待用帧；节点完成、chained 短路及 alternative 排除候选都会撤销相应待用关系，更新幂等。
 - **实际匹配**：运行时比较参数 Binding 的生产身份，不把 NodeId 当实例身份。根帧下所有待用帧参与查询，固定捕获和伴随交付优先，未捕获的普通参数使用共享最新值；确定重新生产参数的未开始开启不保留旧实例。最新值被覆盖也会重新检查依赖该参数的 scope。执行帧不复制值表，跨帧读取不改变 Binding 的归属帧；完整规则见[Scope 开启计划与待用查询](EFFECT_GRAPH.md#scope-opening-retention)。
 - **值保留**：待交付、已捕获和合法后继可读的 Binding，按已有 ownership 参与回收判断；领取先登记执行持有，再撤销队列持有。资源范围与撤销边界见[Stream 资源边界](STREAM_LIFELONG.md#binding-retention)。

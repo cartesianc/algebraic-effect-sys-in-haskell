@@ -86,9 +86,9 @@ data Handles
 data EffectKind = PureKind | ExcuKind | ScopedKind | ErrorKind | ContextKind | StreamKind | MiddlewareKind
   deriving (Eq, Show, Read, Generic, NFData)
 
--- intercept 的全类别简写：首版捕获能交出 raw output 的 Excu、Scoped（open／close）与 Pure。
+-- intercept 的全类别简写：捕获交出原子列表的 Excu、Scoped、Pure，以及逐条 rawemit 的 Stream。
 allEffects :: [EffectKind]
-allEffects = [ExcuKind, ScopedKind, PureKind]
+allEffects = [ExcuKind, ScopedKind, PureKind, StreamKind]
 
 effectKind :: EffectTyping -> EffectKind
 effectKind (Pure _) = PureKind

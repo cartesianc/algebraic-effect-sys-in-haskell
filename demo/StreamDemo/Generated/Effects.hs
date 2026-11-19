@@ -44,7 +44,7 @@ newtype PrepareSensorError = PrepareSensorError String
   deriving (Eq, Show, Read)
 
 -- handler connectSensor：绑定到 SensorLink。
-type ConnectSensorLayer m = (SDK.Reads (SensorMemory) m, SDK.Raises ConnectSensorError m, MonadIO m)
+type ConnectSensorLayer m = (SDK.Reads (SensorMemory) m, SDK.RawOutputs m, SDK.Raises ConnectSensorError m, MonadIO m)
 class ConnectSensorHandler m where
   connectSensor :: m [String]
 
@@ -53,7 +53,7 @@ newtype ConnectSensorError = ConnectSensorError String
   deriving (Eq, Show, Read)
 
 -- handler disconnectSensor：绑定到 SensorLink。
-type DisconnectSensorLayer m = (SDK.Reads (SensorMemory) m, SDK.Raises DisconnectSensorError m, MonadIO m)
+type DisconnectSensorLayer m = (SDK.Reads (SensorMemory) m, SDK.RawOutputs m, SDK.Raises DisconnectSensorError m, MonadIO m)
 class DisconnectSensorHandler m where
   disconnectSensor :: m [String]
 
@@ -62,9 +62,9 @@ newtype DisconnectSensorError = DisconnectSensorError String
   deriving (Eq, Show, Read)
 
 -- handler nextReading：绑定到 TemperatureFeed。
-type NextReadingLayer m = (SDK.StreamEnds m, SDK.Raises NextReadingError m, MonadIO m)
+type NextReadingLayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextReadingError m, MonadIO m)
 class NextReadingHandler m where
-  nextReading :: m String
+  nextReading :: m ()
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "nextReading" 匹配。
 newtype NextReadingError = NextReadingError String
@@ -80,9 +80,9 @@ newtype ParseTemperatureError = ParseTemperatureError String
   deriving (Eq, Show, Read)
 
 -- handler nextBeat：绑定到 HeartbeatClock。
-type NextBeatLayer m = (SDK.StreamEnds m, SDK.Raises NextBeatError m, MonadIO m)
+type NextBeatLayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextBeatError m, MonadIO m)
 class NextBeatHandler m where
-  nextBeat :: m String
+  nextBeat :: m ()
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "nextBeat" 匹配。
 newtype NextBeatError = NextBeatError String
@@ -98,7 +98,7 @@ newtype ParseBeatError = ParseBeatError String
   deriving (Eq, Show, Read)
 
 -- handler announce：绑定到 Announce。
-type AnnounceLayer m = (SDK.Raises AnnounceError m, MonadIO m)
+type AnnounceLayer m = (SDK.RawOutputs m, SDK.Raises AnnounceError m, MonadIO m)
 class AnnounceHandler m where
   announce :: m [String]
 
@@ -107,7 +107,7 @@ newtype AnnounceError = AnnounceError String
   deriving (Eq, Show, Read)
 
 -- handler showTemperature：绑定到 ShowTemperature。
-type ShowTemperatureLayer m = (SDK.Reads (Temperature) m, SDK.EndsStream m, SDK.Raises ShowTemperatureError m, MonadIO m)
+type ShowTemperatureLayer m = (SDK.Reads (Temperature) m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ShowTemperatureError m, MonadIO m)
 class ShowTemperatureHandler m where
   showTemperature :: m [String]
 
@@ -116,7 +116,7 @@ newtype ShowTemperatureError = ShowTemperatureError String
   deriving (Eq, Show, Read)
 
 -- handler checkTrend：绑定到 CheckTrend。
-type CheckTrendLayer m = (SDK.Reads (Temperature) m, SDK.EndsStream m, SDK.Raises CheckTrendError m, MonadIO m)
+type CheckTrendLayer m = (SDK.Reads (Temperature) m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises CheckTrendError m, MonadIO m)
 class CheckTrendHandler m where
   checkTrend :: m [String]
 
@@ -125,7 +125,7 @@ newtype CheckTrendError = CheckTrendError String
   deriving (Eq, Show, Read)
 
 -- handler reportHeartbeat：绑定到 ReportHeartbeat。
-type ReportHeartbeatLayer m = (SDK.Reads (Int) m, SDK.EndsStream m, SDK.Raises ReportHeartbeatError m, MonadIO m)
+type ReportHeartbeatLayer m = (SDK.Reads (Int) m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ReportHeartbeatError m, MonadIO m)
 class ReportHeartbeatHandler m where
   reportHeartbeat :: m [String]
 

@@ -21,8 +21,8 @@ data MethodRole
   | ScopeClose
   | ErrorDetect
   | ErrorResolve
-  -- StreamHandler 取得单步原始输入；ContextStream 标记持续资产的 getT：只由会话调用，不是可请求的生产入口。
-  -- 挂在 Stream 下的解析器仍调用 Stream 方法；运行包装用本次原始输入回答，不再获取一次。
+  -- StreamHandler 在调用内通过 rawemit 逐条提供输入；ContextStream 标记持续资产的 getT：只由会话调用，不是可请求的生产入口。
+  -- parser 的 rawinput 保留 Stream 的静态来源引用，生成入口读取当前 emit 的输入。
   | StreamHandler
   | ContextStream
   -- Middleware 的入口：只在 Root 级调用点（交出值、rawinput、raise）上同步执行，不是链入口，也不在其他方法体中被调用。

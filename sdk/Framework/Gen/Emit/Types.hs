@@ -13,6 +13,8 @@ renderCapability :: Capability -> String
 renderCapability capability = case capability of
   ReadsType value -> "SDK.Reads (" ++ renderValueType "SDK." "" value ++ ") m"
   HasRaw -> "SDK.Raw m"
+  WritesRaw -> "SDK.RawOutputs m"
+  EmitsItem -> "SDK.Emits m"
   EndsSource -> "SDK.StreamEnds m"
   EndsSubscription -> "SDK.EndsStream m"
   ObservesHooks -> "SDK.Hooks m"

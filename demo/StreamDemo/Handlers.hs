@@ -10,7 +10,7 @@
 
 module StreamDemo.Handlers () where
 
-import Framework.SDK (Raises(..), Raw(..), Reads(..), rawoutput)
+import Framework.SDK (Emits(rawemit), Raises(..), Raw(..), Reads(..), rawoutput)
 import StreamDemo.Generated.Effects
 import StreamDemo.Types
 import Control.Concurrent (threadDelay)
@@ -41,7 +41,7 @@ instance NextReadingLayer m => NextReadingHandler m where
   nextReading = do
     liftIO (threadDelay 700000)
     seconds <- liftIO getMonotonicTime
-    pure (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
+    rawemit (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
 
 -- parser 挂在 Stream 下：rawinput 是会话本次取得的一份原始读数（单元素 list，不会再读一次），返回一份资产的表示值；
 -- 发布与交付由 SDK 完成；最近五次读数由这个业务 parser 维护。
@@ -61,7 +61,7 @@ instance NextBeatLayer m => NextBeatHandler m where
   nextBeat = do
     liftIO (threadDelay 2000000)
     seconds <- liftIO getMonotonicTime
-    pure (show (round seconds :: Int))
+    rawemit (show (round seconds :: Int))
 
 instance ParseBeatLayer m => ParseBeatHandler m where
   parseBeat = do

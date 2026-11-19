@@ -3,7 +3,7 @@
 
 module LinesDemo.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), Asset(..), requests, requires, streams)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), EffectKind(StreamKind, ScopedKind), Asset(..), requests, requires, streams)
 import LinesDemo.Types
 
 -- 一个会结束的 Stream：逐行读取文本文件，读到末尾时 handler 调用 streamEnd。
@@ -37,6 +37,12 @@ effects =
       , typing = Stream { handler = Just "nextLine" }
       , input = "InputSession"
       , demands = [requires "OpenedInput"]
+      }
+  , EffectSpec
+      { name = "TraceLine"
+      , typing = Middleware { handler = Just "traceLine", intercept = [StreamKind, ScopedKind] }
+      , input = "None"
+      , demands = []
       }
   , EffectSpec
       { name = "LineParser"

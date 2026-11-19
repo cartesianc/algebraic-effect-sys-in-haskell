@@ -191,11 +191,12 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
 
     layerOf :: Unit -> EffectDeclaration -> String -> [Capability]
     layerOf unit specification method
-      | kindOf specification == MiddlewareKind = [ObservesHooks, IOMonad]
+      | kindOf specification == MiddlewareKind = [ObservesHooks, WritesRaw, IOMonad]
       | otherwise = map ReadsType
       (sortOn typeSpelling (nub [routeType route | route <- unitRoutes unit, routeEffect route == declarationName specification]))
       ++ [HasRaw | readsRaw specification method, Just _ <- [rawSource unit specification]]
-      ++ [EndsSource | kindOf specification == StreamKind]
+      ++ [WritesRaw | resultOf specification == NativeType "[String]"]
+      ++ (if kindOf specification == StreamKind then [EmitsItem, EndsSource] else [])
       ++ [EndsSubscription | consumesStream unit specification]
       ++ [if kindOf specification == PureKind then PureMonad else IOMonad]
 
@@ -227,6 +228,8 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
         describeCapability capability = case capability of
           ReadsType value -> "SDK.Reads (" ++ typeSpelling value ++ ") m"
           HasRaw -> "SDK.Raw m"
+          WritesRaw -> "SDK.RawOutputs m"
+          EmitsItem -> "SDK.Emits m"
           EndsSource -> "SDK.StreamEnds m"
           EndsSubscription -> "SDK.EndsStream m"
           ObservesHooks -> "SDK.Hooks m"

@@ -246,6 +246,8 @@ instance FrameworkRuntime.Raw (Wrap "FileLocation") where
 instance FrameworkRuntime.Raw (Wrap "ExtractFileText") where
   rawinput = Wrap (runReadFile)
 
+instance FrameworkRuntime.RawOutputs (Wrap effect)
+
 runLocateFile :: FrameworkGenerated.App [String]
 runLocateFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "LocateFile") $
   runWrap @"LocateFile" (FrameworkRuntime.super "locateFile" FrameworkGenerated.locateFile)

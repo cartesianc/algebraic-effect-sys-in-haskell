@@ -31,7 +31,7 @@ data MethodGen = RunPrepareFilesGen | GetFileNameGen | ReadFileNameGen | GetOpen
 instance SDK.NFData MethodGen
 
 -- handler prepareFiles：绑定到 PrepareFiles。
-type PrepareFilesLayer m = (SDK.Raises PrepareFilesError m, MonadIO m)
+type PrepareFilesLayer m = (SDK.RawOutputs m, SDK.Raises PrepareFilesError m, MonadIO m)
 class PrepareFilesHandler m where
   prepareFiles :: m [String]
 
@@ -58,7 +58,7 @@ newtype AcquireFileError = AcquireFileError String
   deriving (Eq, Show, Read)
 
 -- handler openSelectedFile：绑定到 FileSession。
-type OpenSelectedFileLayer m = (SDK.Reads (FileHandle) m, SDK.Raises OpenSelectedFileError m, MonadIO m)
+type OpenSelectedFileLayer m = (SDK.Reads (FileHandle) m, SDK.RawOutputs m, SDK.Raises OpenSelectedFileError m, MonadIO m)
 class OpenSelectedFileHandler m where
   openSelectedFile :: m [String]
 
@@ -67,7 +67,7 @@ newtype OpenSelectedFileError = OpenSelectedFileError String
   deriving (Eq, Show, Read)
 
 -- handler closeSelectedFile：绑定到 FileSession。
-type CloseSelectedFileLayer m = (SDK.Reads (FileHandle) m, SDK.Raises CloseSelectedFileError m, MonadIO m)
+type CloseSelectedFileLayer m = (SDK.Reads (FileHandle) m, SDK.RawOutputs m, SDK.Raises CloseSelectedFileError m, MonadIO m)
 class CloseSelectedFileHandler m where
   closeSelectedFile :: m [String]
 
@@ -76,7 +76,7 @@ newtype CloseSelectedFileError = CloseSelectedFileError String
   deriving (Eq, Show, Read)
 
 -- handler checkSelection：绑定到 UseFirst、UseSecond、ReopenFirst。
-type CheckSelectionLayer m = (SDK.Reads (FileHandle) m, SDK.Reads ([Char]) m, SDK.Raises CheckSelectionError m, MonadIO m)
+type CheckSelectionLayer m = (SDK.Reads (FileHandle) m, SDK.Reads ([Char]) m, SDK.RawOutputs m, SDK.Raises CheckSelectionError m, MonadIO m)
 class CheckSelectionHandler m where
   checkSelection :: m [String]
 
@@ -85,7 +85,7 @@ newtype CheckSelectionError = CheckSelectionError String
   deriving (Eq, Show, Read)
 
 -- handler selectSecond：绑定到 SelectSecond。
-type SelectSecondLayer m = (SDK.Raises SelectSecondError m, MonadIO m)
+type SelectSecondLayer m = (SDK.RawOutputs m, SDK.Raises SelectSecondError m, MonadIO m)
 class SelectSecondHandler m where
   selectSecond :: m [String]
 
@@ -94,7 +94,7 @@ newtype SelectSecondError = SelectSecondError String
   deriving (Eq, Show, Read)
 
 -- handler selectFirst：绑定到 SelectFirst。
-type SelectFirstLayer m = (SDK.Raises SelectFirstError m, MonadIO m)
+type SelectFirstLayer m = (SDK.RawOutputs m, SDK.Raises SelectFirstError m, MonadIO m)
 class SelectFirstHandler m where
   selectFirst :: m [String]
 
@@ -103,7 +103,7 @@ newtype SelectFirstError = SelectFirstError String
   deriving (Eq, Show, Read)
 
 -- handler checkJournal：绑定到 CheckJournal。
-type CheckJournalLayer m = (SDK.Raises CheckJournalError m, MonadIO m)
+type CheckJournalLayer m = (SDK.RawOutputs m, SDK.Raises CheckJournalError m, MonadIO m)
 class CheckJournalHandler m where
   checkJournal :: m [String]
 

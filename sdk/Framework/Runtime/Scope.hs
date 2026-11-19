@@ -12,7 +12,7 @@ module Framework.Runtime.Scope
   , emptyScope, scopeFailure, beginScope, finishScope, interruptedScope
   , Scopes, ScopeBinding, ScopeBindings, ScopeHandler(..), ScopeInstance(..), ScopeInput(..)
   , ScopeCleanup(..), cleanupScopes, cleanupAvailable, newScopeHandler, findScope, getScope, selectScopeInstance
-  , ScopeUser(..), newScopeUser, useScope, detachScopeUser, saveCleanupFailures
+  , ScopeUser(..), newScopeUser, inheritScopeUse, useScope, detachScopeUser, saveCleanupFailures
   , rememberUnownedBinding, claimBindingOwner
   , configureScopeRelations, scopeErrorPath, reserveScopeClose, finishScopeClose
   ) where
@@ -235,6 +235,12 @@ rememberUse user slot = do
     writeIORef (scopeUsers slot) ((scopeUserIdentity user, scopeUserExecution user) : users)
     atomicModifyIORef' (scopeUserInstances user) $ \slots ->
       (if any ((== scopeRecord slot) . scopeRecord) slots then slots else slot : slots, ())
+
+-- parser 作为 rawemit 的嵌套调用。复制来源正在使用的实例，保留父子关联的证据；
+-- 本条解析后来打开的实例只属于 parser，在这次交付返回时可以独立撤销。
+inheritScopeUse :: ScopeUser env cause -> ScopeUser env cause -> IO ()
+inheritScopeUse source parser = coordinatedUser source $
+  readIORef (scopeUserInstances source) >>= mapM_ (rememberUse parser)
 
 rememberParent :: ScopeInstance environment cause -> ScopeInstance environment cause -> IO ()
 rememberParent child parent = do

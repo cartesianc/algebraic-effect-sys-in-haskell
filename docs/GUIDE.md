@@ -417,13 +417,13 @@ EffectSpec
 | `Excu` | `handler :: Maybe String` | `m [String]` | `run名字` | 执行操作（原子句柄） |
 | `Scoped` | `open`、`close :: Maybe String` | 均为 `m [String]` | `open名字`、`close名字` | 资源的开启与关闭（原子句柄） |
 | `Error` | `detect`、`resolve :: Maybe String`；`handles :: [Handles]` | 均为 `m ()` | `detect名字`、`resolve名字`，由失败协议调用 | 对 scope 内的指定失败做诊断和处置 |
-| `Stream` | `handler :: Maybe String` | `m String` | `next名字`，由生产会话调用 | 持续取得原始输入，交给挂在它下面的 Context 解析 |
+| `Stream` | `handler :: Maybe String` | `m ()` | `next名字`，由生产会话调用 | 持续取得原始输入，交给挂在它下面的 Context 解析 |
 | `Middleware` | `handler :: Maybe String`（必填）；`intercept :: [EffectKind]` | `m [String]` | `hook名字`，在 Root 级调用点上调用 | 捕获 AST 标注范围内交出的值、`rawinput` 与 `raise`，见 [`middleware`](#middleware) |
 
 - **字段写 handler 名**：`Just "名字"` 绑定 `Handlers.hs` 中同名的类方法，`Nothing` 不绑定。入口为 `Nothing` 的 effect 只作为声明存在，不能被 AST 选为末端。
 - **handler 可以复用**：同一个 handler 可以绑定到多个 effect，前提是各绑定推出相同的签名和 Layer。例如 Crawler 的 `FetchPage`、`FetchLinkedPage` 共用 `fetchPage`，FacadeProbe 的两个 Scoped 共用 `openTextFile`／`closeTextFile`。
 - **入口是内部名字**：上表的入口方法由 gen 按 effect 名或资产名生成，用户不写也不调用；handler 名不能与它们重名。
-- **业务资产只归 Context**：Excu 和 Scoped 返回的 `[String]` 是原子句柄交出的输出，只交给挂接的 Context 解析，中间可以经过一串 Pure（见 `input`）；Stream 返回的原始输入交给对应的 Context 解析器。它们和 Pure 都不直接产出业务资产。
+- **业务资产只归 Context**：Excu 和 Scoped 返回的 `[String]` 是原子句柄交出的输出，只交给挂接的 Context 解析，中间可以经过一串 Pure（见 `input`）；Stream 以 rawemit 交出的原始输入交给对应的 Context 解析器。它们和 Pure 都不直接产出业务资产。
 
 #### `Context`
 
@@ -478,7 +478,7 @@ typing = Scoped { open = Just "openSession", close = Just "closeSession" }
 typing = Stream { handler = Just "nextReading" }
 ```
 
-持续数据源：每次调用取得一份原始输入（`m String`），节奏由方法体自己的阻塞或等待决定。它不能作为 AST 末端，由生产会话驱动；恰好一个 Context 以它为 `input`，其 parser 用 `rawinput` 读取这份输入（单元素 list）。Stream 有自己的数据结构，不改成 list 输出，也不能在下面挂 Pure。写法见[持续资产与 lifelong](#stream)。
+持续数据源：来源方法（`m ()`）可以多次调用 `rawemit text`，节奏由方法体自己的阻塞或等待决定。它不能作为 AST 末端，由生产会话驱动；恰好一个 Context 以它为 `input`，其 parser 用 `rawinput` 读取这份输入（单元素 list）。Stream 有自己的数据结构，不改成 list 输出，也不能在下面挂 Pure。写法见[持续资产与 lifelong](#stream)。
 
 #### `Error`
 
@@ -616,7 +616,7 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
 | Excu | `m [String]` | 交给挂接 Context 的 list，没有就 `rawoutput []` |
 | Scoped.open／close | `m [String]` | 同上；`close` 的输出没有挂接点 |
 | Error.detect／resolve | `m ()` | 见下文「Error 的写法」 |
-| Stream | `m String` | 一份原始输入 |
+| Stream | `m ()` | 每次 `rawemit text` 同步解析一份原始输入 |
 | Middleware | `m [String]` | 没有挂接点，通常 `rawoutput []`；见 [`middleware`](#middleware) |
 
 Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，不用写。
@@ -630,7 +630,7 @@ Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，
 | `output <- rawinput` | 挂接的 parser 或 Pure 读取直接 Input 本次交出的 `[String]`，句柄不再执行一遍；挂在 Stream 下时是会话本次取得的那份原始输入（单元素 list） |
 | `raise (ReadFileContentError "message")` | 以本 handler 的错误失败；错误类型是 handler 名首字母大写加 `Error` |
 | `hookedEnter`、`hookedOutput`、`hookedRaw`、`hookedError` | Middleware 用第一个读取即将运行的 handler 名，其余分别读取输出、rawinput 和 raise 的负载。当前捕获点对应的读取返回 `Just` |
-| `rawoutput [info]`、`rawoutput (x : rest)` | 以 `rawoutput` 返回原子列表（SDK 定义为 `pure`）。Excu、Scoped.open 和 Pure 的输出可由下游 Pure 或 Context 读取 |
+| `rawoutput [info]`、`rawoutput (x : rest)` | 以 `rawoutput` 返回原子列表，显式调用处可执行 `rawoutputhook`。Excu、Scoped.open 和 Pure 的输出可由下游 Pure 或 Context 读取 |
 | `liftIO (...)` | 执行 IO（Pure 不可用） |
 
 - **按表示类型读取**：`require` 必须显式写类型应用，例如 `FileHandle path file <- require @FileHandle`；可以直接在绑定处匹配表示类型的构造器，也可以先具名接收再 `case`。和类型的失败分支用 `raise`。
@@ -821,6 +821,7 @@ ast = parallel
 ```
 
 - **何时执行。** 在标注覆盖的位置，Root 的 `super` 会为匹配 `intercept` 的原子调用通知进入和成功返回。读取 `rawinput`（按上游类别匹配）或显式 `raise` 也会通知对应的 middleware。一次写文件可以先记录开始、执行原有业务 IO、再记录输出。业务 handler 保持原写法，整个推进过程由 SDK 负责。
+- **按操作写 hook**：在 Middleware handler 内写 `rawemithook $ \source text -> liftIO (print (source, text))`。读取与显式列表输出对应 `rawinputhook` 和 `rawoutputhook`，负载为 `[String]`。显式输出与整个原子方法成功返回是两个位置，`hookedOutput` 仍可观察后者。hook 自身的 `rawoutput []` 直接返回。
 - **同步执行**：Middleware 是类方法，在调用点上执行完，原调用才继续；它只读捕获，不改变原值。多个 Middleware 按注册顺序依次执行，不要让它们依赖彼此。
 - **透明**：标注不改变子树的执行顺序、NodeId 和 lifelong 的单元划分。范围只看位置：标注覆盖整个 `lifelong` 时，它的生产会话里执行的调用（例如会话开启的 `open`）也被捕获；只覆盖 lifelong 里的子树时，只捕获这些节点。`--structure` 列出标注与每个启动位置生效的 Middleware。标注是给 gen 的标记，注入在生成期完成：改动标注后要重新生成。
 - **失败**：Middleware 与普通 Excu 一样 `raise`，失败从调用点传播，origin 是 Middleware 的注册名。
@@ -883,7 +884,7 @@ EffectSpec
   }
 ```
 
-持续交付来自持续的驱动。上面是来源单步：会话反复执行 Stream 的 handler 取得原始输入，交给挂在下面的 parser 解析并发布。由另一份持续资产驱动时，可以独立派生，也可以直接解析 lifelong 消费节点本次操作的输出，见下面的“由持续资产驱动的持续资产”。声明规则：
+持续交付来自持续的驱动。上面是来源单步：会话反复调用来源，其每次 rawemit 立即驱动挂接的 parser。由另一份持续资产驱动时，可以独立派生，也可以直接解析 lifelong 消费节点本次操作的输出，见下面的“由持续资产驱动的持续资产”。声明规则：
 
 - **`stream = True` 当且仅当 Context 的 Input 链被持续驱动**：直接 Input 是 Stream，或链上有 `streams` demand；必须同时 `require = True`。被驱动的链不能声明成普通资产，没有驱动的链也不能声明成持续资产。
 - **一个 Stream 恰好有一个 Context 以它为 `input`**，作为它的 parser。
@@ -897,13 +898,13 @@ EffectSpec
 
 | 驱动关系 | 例子 | 现在怎么写 |
 | --- | --- | --- |
-| socket | 连接、消息队列、传感器 | Stream handler 阻塞接收一份原始输入（StreamDemo 的 `TemperatureFeed`＋`TemperatureParser`） |
-| behavior | 时钟、心跳、状态轮询 | Stream handler 先等待采样间隔，再取当前值（StreamDemo 的 `HeartbeatClock`＋`Heartbeat`） |
+| socket | 连接、消息队列、传感器 | 用 scope 保持连接，每次收帧后 `rawemit` |
+| behavior | 时钟、心跳、状态轮询 | Stream handler 先等待采样间隔，再取当前值（StreamDemo 的温度与心跳都采用这一写法） |
 | event | 事件队列、由回调转成的阻塞等待 | Stream handler 阻塞读取下一个事件 |
 
 外部回调不能直接注册给 SDK，需要先转换成可阻塞读取的队列。详细规则见 [Stream 规范 4.1 节](STREAM_LIFELONG.md#drives)。
 
-### handler：每次只处理一份
+### handler：定时采样与逐条交付
 
 以下节选 [StreamDemo/Handlers.hs](../demo/StreamDemo/Handlers.hs)，省略 import 和其他 instance。`Temperature`、`SensorMemory` 是业务 Types.hs 中的资产表示；最近五次读数与编号由业务 parser 保存。
 
@@ -912,7 +913,7 @@ instance NextReadingLayer m => NextReadingHandler m where
   nextReading = do
     liftIO (threadDelay 700000)
     seconds <- liftIO getMonotonicTime
-    pure (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
+    rawemit (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
 
 instance ParseTemperatureLayer m => ParseTemperatureHandler m where
   parseTemperature = do
@@ -932,7 +933,7 @@ instance ShowTemperatureLayer m => ShowTemperatureHandler m where
     rawoutput []
 ```
 
-- **Stream handler** 一次返回一份原始输入；节奏由方法体自己的阻塞或等待决定，SDK 不加间隔。来源没有下一份输入时用 `streamEnd` 退出；StreamDemo 的两个来源不会结束。
+- **Stream handler** 在下一次采样前用 `rawemit` 交出当前读数；节奏由方法体自己的阻塞或等待决定，SDK 不加间隔。来源没有下一份输入时用 `streamEnd` 退出；StreamDemo 的两个来源不会结束。
 - **parser** 用 `rawinput` 读取会话本次取得的原始输入，不再执行 Stream handler。示例的 `SensorMemory` 是由 `SensorLink` 管理的业务状态，累计规则在 parser 方法体里。
 - **消费方** 直接匹配 `Temperature`。发布与逐条交付由 SDK 装配；编号、窗口和平均值是业务数据，不是 SDK 为 stream 规定的历史形态。
 
@@ -1045,20 +1046,27 @@ snapshotAst = chained [node "Announce", node "Report"]
 
 ### 结束与失败
 
-- **正常结束**：Stream handler 在来源没有下一份输入时调用 `streamEnd`。它和返回值、`raise` 并列，是方法体的第三个出口；签名仍是 `m String`，只有 Stream handler 的 Layer 里有它：
+- **正常结束**：Stream handler 在来源没有下一份输入时调用 `streamEnd`。一次调用可以逐行发布，最后在 EOF 处正常结束。下例与上面的单步轮询共用同一个来源协议。
 
   ```haskell
-  -- demo/LinesDemo/Handlers.hs（节选）；需要 import Framework.SDK (StreamEnds(..))
+  -- demo/LinesDemo/Handlers.hs（节选）；需要 import Framework.SDK (Emits(..), StreamEnds(..))
   instance NextLineLayer m => NextLineHandler m where
     nextLine = do
       InputFile _ file _ <- require @InputFile
-      finished <- liftIO (hIsEOF file)
-      if finished then streamEnd else liftIO (hGetLine file)
+      let readLines = do
+            finished <- liftIO (hIsEOF file)
+            if finished then streamEnd else do
+              line <- liftIO (hGetLine file)
+              rawemit line
+              readLines
+      readLines
   ```
+
+  LinesDemo 在 lifelong 上挂载 `TraceLine`，注册为 `intercept = [StreamKind, ScopedKind]`。它的 handler 用 `rawemithook $ \source line -> liftIO (print (source, line))` 逐条记录。每次 hook 完成才启动该条的 parser。
 
   上面的 LinesDemo AST 将 `Report` 放在 lifelong 之后；单元处理完所需交付并结束，才会继续执行它。
 
-  `streamEnd` 不是失败，不进入 Error 诊断。它结束当前绑定的生产会话，不依赖消费方是否已经完成。这一步不交出输入，parser 不执行；已经发布的交付仍可领取。单元在它要领取的来源已经结束并领完时结束：尚未执行的后继放弃，已完成的部分不回滚。全部单元结束后 lifelong 成功返回（不带结果），排在后面的节点继续执行。
+  `streamEnd` 不是失败，不进入 Error 诊断。它结束当前绑定的生产会话，不依赖消费方是否已经完成。结束动作本身不发布；同一次调用中已发布的交付仍可领取。单元在它要领取的来源已经结束并领完时结束：尚未执行的后继放弃，已完成的部分不回滚。全部单元结束后 lifelong 成功返回（不带结果），排在后面的节点继续执行。
 - **结束后能读什么**：普通资产每个 Context 保留最新发布，lifelong 切轮或结束不会清空它；后继和其他单元均可读取，第一次读取后固定为本次捕获。持续资产仍读所选会话最后一条，不重启已结束来源；多个互不先后的 lifelong 会话仍须消除选择歧义。
 - **消费方结束**：自身以 `streams` 订阅的 Excu 可以调用 `endStream`。本次调用放弃、不交出结果，该节点之后各轮跳过；本轮 chained 的后继和其他单元继续按各自依赖执行。同单元直接或经派生读取它产物的位置，仍等待本轮可能完成的发布；确定本轮稳定且无新交付时才跳过，封口排空后结束相应订阅。只 `require` 这份本地持续资产时可读已有值，一次都没有发布则报缺值。会话是否停产由剩余读取方决定，详细规则见[消费方结束](STREAM_LIFELONG.md#consumer-end)。
 

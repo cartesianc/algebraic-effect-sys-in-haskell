@@ -184,6 +184,8 @@ instance FrameworkRuntime.Reads ([FileHandle]) (Wrap "FinishInspection") where
 instance FrameworkRuntime.Raw (Wrap "InspectionSnapshot") where
   rawinput = Wrap (runReleaseFiles)
 
+instance FrameworkRuntime.RawOutputs (Wrap effect)
+
 getFileNames :: FrameworkGenerated.App FrameworkGenerated.FileNames
 getFileNames = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocations"
     (\value bindings -> bindings { FrameworkGenerated.boundFileLocations = Just value })) $

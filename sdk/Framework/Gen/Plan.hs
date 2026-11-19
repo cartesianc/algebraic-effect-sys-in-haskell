@@ -42,7 +42,7 @@ data ScopePlan = ScopePlan
 data ValueType = NativeType String | RefinedType String
   deriving (Eq, Ord, Show, Read)
 
-data Capability = ReadsType ValueType | HasRaw | EndsSource | EndsSubscription | ObservesHooks | PureMonad | IOMonad
+data Capability = ReadsType ValueType | HasRaw | WritesRaw | EmitsItem | EndsSource | EndsSubscription | ObservesHooks | PureMonad | IOMonad
   deriving (Eq, Show, Read)
 
 -- 每个入口的解释已经确定；Emit 仅把该操作翻译成现有 runtime 包装，不再查看 typing。
@@ -84,7 +84,7 @@ stepMethod :: EntryStep method -> method
 stepMethod (RequestStep method) = method
 stepMethod (InputStep method) = method
 
--- rawinput 的直接输入在本模块的绑定转换中解析。Stream 单步产 String，需要包装成单元素 list；
+-- rawinput 的直接输入在本模块的绑定转换中解析。RawStream 记录结构上的来源方法；运行时读取本次 rawemit 的单元素 list；
 -- 其余输入交出 list。是否已有本次输出由现有 replay 协议决定，不缓存另一调用的结果。
 data RawSource method = RawList method | RawStream method
   deriving (Eq, Show, Read)

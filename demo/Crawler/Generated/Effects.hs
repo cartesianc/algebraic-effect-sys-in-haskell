@@ -61,7 +61,7 @@ newtype LinkedURLError = LinkedURLError String
   deriving (Eq, Show, Read)
 
 -- handler fetchPage：绑定到 FetchPage、FetchLinkedPage。
-type FetchPageLayer m = (SDK.Reads (PageURL) m, SDK.Reads (SessionInfo) m, SDK.Raises FetchPageError m, MonadIO m)
+type FetchPageLayer m = (SDK.Reads (PageURL) m, SDK.Reads (SessionInfo) m, SDK.RawOutputs m, SDK.Raises FetchPageError m, MonadIO m)
 class FetchPageHandler m where
   fetchPage :: m [String]
 
@@ -70,7 +70,7 @@ newtype FetchPageError = FetchPageError String
   deriving (Eq, Show, Read)
 
 -- handler dropBlankBodies：绑定到 KeepPageBody、KeepLinkedPageBody。
-type DropBlankBodiesLayer m = (SDK.Raw m, SDK.Raises DropBlankBodiesError m, Monad m)
+type DropBlankBodiesLayer m = (SDK.Raw m, SDK.RawOutputs m, SDK.Raises DropBlankBodiesError m, Monad m)
 class DropBlankBodiesHandler m where
   dropBlankBodies :: m [String]
 
@@ -88,7 +88,7 @@ newtype ExtractSummaryError = ExtractSummaryError String
   deriving (Eq, Show, Read)
 
 -- handler printSummary：绑定到 PrintPage、PrintLinkedPage。
-type PrintSummaryLayer m = (SDK.Reads (PageSummary) m, SDK.Raises PrintSummaryError m, MonadIO m)
+type PrintSummaryLayer m = (SDK.Reads (PageSummary) m, SDK.RawOutputs m, SDK.Raises PrintSummaryError m, MonadIO m)
 class PrintSummaryHandler m where
   printSummary :: m [String]
 
@@ -106,7 +106,7 @@ newtype SessionInfoError = SessionInfoError String
   deriving (Eq, Show, Read)
 
 -- handler openSession：绑定到 CrawlSession。
-type OpenSessionLayer m = (SDK.Reads (SessionInfo) m, SDK.Raises OpenSessionError m, MonadIO m)
+type OpenSessionLayer m = (SDK.Reads (SessionInfo) m, SDK.RawOutputs m, SDK.Raises OpenSessionError m, MonadIO m)
 class OpenSessionHandler m where
   openSession :: m [String]
 
@@ -115,7 +115,7 @@ newtype OpenSessionError = OpenSessionError String
   deriving (Eq, Show, Read)
 
 -- handler closeSession：绑定到 CrawlSession。
-type CloseSessionLayer m = (SDK.Reads (SessionInfo) m, SDK.Raises CloseSessionError m, MonadIO m)
+type CloseSessionLayer m = (SDK.Reads (SessionInfo) m, SDK.RawOutputs m, SDK.Raises CloseSessionError m, MonadIO m)
 class CloseSessionHandler m where
   closeSession :: m [String]
 

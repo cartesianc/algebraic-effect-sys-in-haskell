@@ -229,6 +229,8 @@ instance FrameworkRuntime.Raw (Wrap "KeepLinkedPageBody") where
 instance FrameworkRuntime.Raw (Wrap "ExtractLinkedPage") where
   rawinput = Wrap (runKeepLinkedPageBody)
 
+instance FrameworkRuntime.RawOutputs (Wrap effect)
+
 getStartURL :: FrameworkGenerated.App FrameworkGenerated.StartURL
 getStartURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "StartPage"
     (\value bindings -> bindings { FrameworkGenerated.boundStartPage = Just value })) $

@@ -53,7 +53,7 @@ newtype AcquireFilesError = AcquireFilesError String
   deriving (Eq, Show, Read)
 
 -- handler openFiles：绑定到 FileSession。
-type OpenFilesLayer m = (SDK.Reads ([FileHandle]) m, SDK.Raises OpenFilesError m, MonadIO m)
+type OpenFilesLayer m = (SDK.Reads ([FileHandle]) m, SDK.RawOutputs m, SDK.Raises OpenFilesError m, MonadIO m)
 class OpenFilesHandler m where
   openFiles :: m [String]
 
@@ -62,7 +62,7 @@ newtype OpenFilesError = OpenFilesError String
   deriving (Eq, Show, Read)
 
 -- handler closeFiles：绑定到 FileSession。
-type CloseFilesLayer m = (SDK.Reads ([FileHandle]) m, SDK.Raises CloseFilesError m, MonadIO m)
+type CloseFilesLayer m = (SDK.Reads ([FileHandle]) m, SDK.RawOutputs m, SDK.Raises CloseFilesError m, MonadIO m)
 class CloseFilesHandler m where
   closeFiles :: m [String]
 
@@ -71,7 +71,7 @@ newtype CloseFilesError = CloseFilesError String
   deriving (Eq, Show, Read)
 
 -- handler holdFiles：绑定到 HoldFiles、ReleaseFiles。
-type HoldFilesLayer m = (SDK.Raises HoldFilesError m, MonadIO m)
+type HoldFilesLayer m = (SDK.RawOutputs m, SDK.Raises HoldFilesError m, MonadIO m)
 class HoldFilesHandler m where
   holdFiles :: m [String]
 
@@ -80,7 +80,7 @@ newtype HoldFilesError = HoldFilesError String
   deriving (Eq, Show, Read)
 
 -- handler inspectFiles：绑定到 InspectFiles。
-type InspectFilesLayer m = (SDK.Reads ([FileHandle]) m, SDK.Raises InspectFilesError m, MonadIO m)
+type InspectFilesLayer m = (SDK.Reads ([FileHandle]) m, SDK.RawOutputs m, SDK.Raises InspectFilesError m, MonadIO m)
 class InspectFilesHandler m where
   inspectFiles :: m [String]
 
@@ -98,7 +98,7 @@ newtype SnapshotFilesError = SnapshotFilesError String
   deriving (Eq, Show, Read)
 
 -- handler finishInspection：绑定到 FinishInspection。
-type FinishInspectionLayer m = (SDK.Reads ([FileHandle]) m, SDK.Raises FinishInspectionError m, MonadIO m)
+type FinishInspectionLayer m = (SDK.Reads ([FileHandle]) m, SDK.RawOutputs m, SDK.Raises FinishInspectionError m, MonadIO m)
 class FinishInspectionHandler m where
   finishInspection :: m [String]
 

@@ -40,7 +40,7 @@ renderProgram names typesFingerprint unit = unlines (programHeader ++ astInterpr
       , ""
       , "-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。"
       , "-- 第二个列表是各转折契约的选择末端：驱动资产（持续资产领取本次交付），返回它当前的构造器名。"
-      , "-- 第三个列表是各持续资产的生产步骤：会话按需启动，Stream 单步取得原始输入（或领取一条上游交付），parser 发布一次资产。"
+      , "-- 第三个列表是各持续资产的生产步骤：会话按需启动，Receive 在每次 rawemit 时调用 parser，Derive 每领取一条上游交付调用一次。"
       , "compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]"
       , "                     , [(String, SDK.SessionSteps ContextValues Errors)])"
       , "compiledEntries = do"
@@ -73,7 +73,7 @@ renderProgram names typesFingerprint unit = unlines (programHeader ++ astInterpr
     sourceChecks = ["(" ++ sourcePath "Handlers.hs" ++ ", " ++ helper "handlerSourceFingerprint" ++ ")"]
       ++ ["(" ++ sourcePath "Types.hs" ++ ", " ++ show typesFingerprint ++ ")" | not (null selectors)]
     sourcePath file = show ("demo/" ++ map (\c -> if c == '.' then '/' else c) namespace ++ "/" ++ file)
-    -- 按 Context 注册名登记（与运行时绑定来源同名）。Receive：Stream 单步取得原始输入，parser 解析它并发布。
+    -- 按 Context 注册名登记（与运行时绑定来源同名）。Receive：Stream 方法内每次 rawemit 驱动一次 parser 解析并发布。
     -- Derive：领取一条上游交付后只执行 parser，它沿 Input 链执行被驱动的句柄并发布。
     -- 会话按所在位置的 Middleware 集合登记；同一会话的各步骤位置被同一组标注覆盖。
     sessionSteps = map renderSession (unitSessionEntries unit)

@@ -48,7 +48,7 @@ renderHandlers names unit loaded = do
 -- GHC 在编译期按挂载登记的列表选定实例，入口只有一份，运行时不分发、不筛选。
 support :: HandlerNames -> Unit -> String
 support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ concatMap raisesInstance ordinaryHandlers ++ routeInstances ++ rawInstances
-    ++ endInstances ++ concatMap entryDefinitions (map Prototype.effectName (effectPrototypes unit)))
+    ++ outputInstances ++ endInstances ++ concatMap entryDefinitions (map Prototype.effectName (effectPrototypes unit)))
     ++ scopeHandlers ++ errorHandlers
   where
     hooked = hasMiddleware unit
@@ -64,8 +64,11 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     superWrap = helper "superWrap"
     closeWrap = helper "closeWrap"
     -- 标签与调用的写法：有 Middleware 时带 hooks。
-    tag effect = "(" ++ wrap ++ (if hooked then " hooks " else " ") ++ effect ++ ")"
-    runner effect = runWrap ++ (if hooked then " @hooks @" else " @") ++ show effect
+    tag effect = methodTag effect "method"
+    methodTag effect method = "(" ++ wrap ++ (if hooked then " hooks " else " ") ++ effect
+      ++ (if hooked then " " ++ method else "") ++ ")"
+    runner effect handler' = runWrap ++ (if hooked then " @hooks @" else " @") ++ show effect
+      ++ (if hooked then " @" ++ show handler' else "")
     call method = entry method ++ if hooked then " @hooks" else ""
     context = if hooked then captured ++ " hooks => " else ""
     signature resultType = if hooked
@@ -85,7 +88,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       , "-- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，"
       , "-- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。"
       , "newtype " ++ wrap ++ (if hooked then " (hooks :: [FrameworkTypes.Symbol])" else "")
-          ++ " (effect :: FrameworkTypes.Symbol) value = " ++ wrap ++ " { " ++ runWrap ++ " :: FrameworkGenerated.App value }"
+          ++ " (effect :: FrameworkTypes.Symbol)" ++ (if hooked then " (method :: FrameworkTypes.Symbol)" else "") ++ " value = " ++ wrap ++ " { " ++ runWrap ++ " :: FrameworkGenerated.App value }"
       , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)"
       , ""
       ]
@@ -116,6 +119,10 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
             , "  hookedOutput = " ++ hookTag ++ " FrameworkRuntime.hookOutput"
             , "  hookedRaw = " ++ hookTag ++ " FrameworkRuntime.hookRaw"
             , "  hookedError = " ++ hookTag ++ " FrameworkRuntime.hookError"
+            , hookCallback "rawoutputhook" "onRawOutput"
+            , hookCallback "rawemithook" "onEmit"
+            , ""
+            , "instance FrameworkRuntime.RawOutputs (" ++ hookTag ++ " " ++ show effect ++ ")"
             , ""
             , "instance FrameworkRuntime.Raises FrameworkGenerated." ++ handlerError handler' ++ " (" ++ hookTag ++ " " ++ show effect ++ ") where"
             , "  raise (FrameworkGenerated." ++ handlerError handler' ++ " description) = " ++ hookTag ++ " (FrameworkRuntime.liftHookApp"
@@ -128,6 +135,8 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
           | binding <- middlewareBindings
           , let effect = bindingEffect binding
                 handler' = bindingHandler binding ]
+    hookCallback method adapter = "  " ++ method ++ " action = " ++ hookTag ++ " (FrameworkRuntime." ++ adapter
+      ++ " (\\name value -> " ++ runHook ++ " (action name value)))"
     selectedKinds = nub (map selectionKind (unitSupers unit))
     middlewareMethod selected = case [bindingMethod binding | binding <- middlewareBindings, bindingEffect binding == selected] of
       method : _ -> entry method
@@ -137,8 +146,9 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       ["instance " ++ captures ++ " " ++ hookList hooks ++ " " ++ promoted kind, ""]
     selectionInstance (SuperSelection hooks kind selected) =
       [ "instance " ++ captures ++ " " ++ hookList hooks ++ " " ++ promoted kind ++ " where"
-      , "  " ++ captureAt ++ " event = " ++ concatMap (\hook -> middlewareMethod hook ++ " event >> ") selected ++ "pure ()"
-      , "  " ++ superWrap ++ " = FrameworkRuntime.superWith (" ++ captureAt ++ " @" ++ hookList hooks ++ " @" ++ promoted kind ++ ")" ]
+      , "  " ++ captureAt ++ " event = " ++ concatMap (\hook -> middlewareMethod hook ++ " event >> ") selected ++ "pure ()" ]
+      ++ [ "  " ++ superWrap ++ " = FrameworkRuntime.superWith (" ++ captureAt ++ " @" ++ hookList hooks ++ " @" ++ promoted kind ++ ")"
+         | kind /= StreamKind ]
       ++ [ "  " ++ closeWrap ++ " = FrameworkRuntime.superClosing (" ++ captureAt ++ " @" ++ hookList hooks ++ " @" ++ promoted kind ++ ")"
          | kind == ScopedKind ]
       ++ [""]
@@ -148,6 +158,11 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       | otherwise = ["instance FrameworkRuntime.Root (" ++ hookTag ++ " effect) value", ""] ++ concat
           [ case captureKind of
               Nothing -> ["instance FrameworkRuntime.Root " ++ tag (show effect) ++ " value", ""]
+              Just StreamKind ->
+                [ "instance " ++ captures ++ " hooks " ++ promoted StreamKind ++ " => FrameworkRuntime.Root " ++ tag (show effect) ++ " () where"
+                , "  super name (" ++ wrap ++ " action) = " ++ wrap ++ " ("
+                    ++ capture StreamKind "FrameworkRuntime.EnterEvent name" ++ "action)"
+                , "" ]
               Just kind ->
                 [ "instance " ++ captures ++ " hooks " ++ promoted kind ++ " => FrameworkRuntime.Root " ++ tag (show effect) ++ " [String] where"
                 , rootMethod "super" superWrap kind ]
@@ -200,13 +215,34 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         , "" ]
       | binding <- unitBindings unit, Just source <- [bindingRaw binding] ]
     callSource (RawList method) = RawList (call method)
-    callSource (RawStream method) = RawStream (call method)
+    callSource (RawStream method) = RawStream method
     capturedRaw binding reading = case bindingRawKind binding of
       Just kind ->
         reading ++ " >>= \\value -> " ++ capture kind ("FrameworkRuntime.RawEvent " ++ show (bindingHandler binding) ++ " value") ++ "pure value"
       _ -> reading
     -- 能力已经由组合计算确定；这里只为对应标签输出实例，不重新解释 effect 类别或 demands。
+    -- Scoped 的 open 和 close 共用 effect 标签，method 标签区分两处输出的业务名称。
+    -- Middleware 自身的 Hook 标签用 RawOutputs 的默认实现，输出不会再进入 hook。
+    outputInstances
+      | not hooked = ["instance FrameworkRuntime.RawOutputs " ++ tag "effect", ""]
+      | otherwise = concat (nub
+          [ [ "instance " ++ context ++ "FrameworkRuntime.RawOutputs " ++ methodTag (show (bindingEffect binding)) (show handler') ++ " where"
+            , "  rawoutput value = " ++ wrap ++ " ("
+                ++ maybe "" (\kind -> capture kind ("FrameworkRuntime.RawOutputEvent " ++ show handler' ++ " value"))
+                     (bindingCaptureKind binding)
+                ++ "pure value)"
+            , "" ]
+          | binding <- unitBindings unit, WritesRaw `elem` bindingCapabilities binding
+          , bindingOperation binding /= MiddlewareOperation, let handler' = bindingHandler binding ])
     endInstances = concat
+      [ [ "instance " ++ context ++ "FrameworkRuntime.Emits " ++ tag (show (bindingEffect binding)) ++ " where"
+        , "  rawemit text = " ++ wrap ++ " ("
+            ++ maybe "" (\kind -> capture kind ("FrameworkRuntime.EmitEvent " ++ show (bindingHandler binding) ++ " text"))
+                 (bindingCaptureKind binding)
+            ++ "FrameworkRuntime.emitToParser text)"
+        , "" ]
+      | binding <- unitBindings unit, EmitsItem `elem` bindingCapabilities binding ]
+      ++ concat
       [ [ "instance FrameworkRuntime.StreamEnds " ++ tag (show selectedName) ++ " where"
         , "  streamEnd = " ++ wrap ++ " FrameworkRuntime.endSource"
         , "" ]
@@ -231,7 +267,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       ++ concat [ readerDefinition reader | reader <- unitReaders unit, readerEffect reader == selectedName ]
       where
         handlerCall binding handler' =
-          let action = runner selectedName ++ " " ++ atomicCall (bindingOperation binding) handler'
+          let action = runner selectedName handler' ++ " " ++ atomicCall (bindingOperation binding) handler'
           in case bindingOperation binding of
                PublishAsset contract -> "(FrameworkGenerated." ++ contract ++ " <$> " ++ action ++ ")"
                _ -> action
@@ -242,7 +278,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
           OpenResource -> scopeWrapper binding "openScope " (" " ++ cleanupOf selectedName)
           CloseResource -> scopeWrapper binding "closeScope " ""
           AtomicOperation -> "FrameworkRuntime.atomicHandle " ++ show (bindingMethod binding) ++ anchoredOf binding ++ " . " ++ entered
-          SourceStep -> "FrameworkRuntime.streamHandle . " ++ entered
+          SourceStep -> entered
           PureOperation -> scoped
           PublishAsset _ -> scoped ++ " . FrameworkRuntime.callContext " ++ show selectedName
             ++ "\n    (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"
@@ -322,7 +358,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
 -- 只渲染绑定中已解析的 rawinput 形状，不重新查询 Input 注册。
 rawExpression :: RawSource String -> String
 rawExpression (RawList method) = method
-rawExpression (RawStream method) = "(: []) <$> " ++ method
+rawExpression (RawStream _) = "FrameworkRuntime.emittedInput"
 
 -- 追加代码需要的扩展；手写文件自己的扩展照常生效。
 copyExtensions :: [String]

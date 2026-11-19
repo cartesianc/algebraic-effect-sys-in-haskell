@@ -65,7 +65,7 @@ data Execution
 1. **AST 启动**：Node 或 alternative 的选择读取启动选定入口，建立本次 origin 及入口使用登记。
 2. **Context 启动**：实际生产（`requests` 驱动的 getT）建立 ctx chain 记录，包住生产、成功发布和返回。嵌套 ctx 启动继承外层 origin 和入口使用登记；返回只结束本次生产记录，不撤销整个入口对 scope 的使用。读取不生产，也没有新 activation；选择读取驱动转折资产、挂接注入实际生产时经过同一启动边界。
 
-Stage 3 复用这两个 Boot 构造：Receive／Derive 的每个独立生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。独立会话每次生产使用新的 ScopeUser，其中 Receive 的来源与紧接的 parser 共用本步登记；跨步骤的待用由会话执行帧保持。lifelong 的消费 target 同样每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
+Stage 3 复用这两个 Boot 构造：Receive／Derive 的每个独立生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。独立会话每次生产使用新的 ScopeUser，其中 Receive 的来源与逐条 parser 各自持有本次使用；跨步骤的待用由会话执行帧保持。lifelong 的消费 target 同样每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
 
 本轮 ReuseOutput 连接沿用已有 AST 执行：`SessionProto.sessionPlan` 保存 `ReuseOutput [NodeId]`，指向同一 lifelong 内的具体原子输出发布位置，`sessionMounts` 为空。gen 沿 target 自身与 original Input 链定位挂接句柄；所有这些持续副产物都进入会话集合，包括仅供后继读取的产物。gen 仍保留 original chain 与 Context chain 的独立定义；执行时挂接 parser 用同次原子输出，不另建根调用或生产 worker。parser 的 `RequestBoot` 继承原节点的 Origin、执行帧和 ScopeUser。其交付只含持续资产，原 AST 调用的普通产物写入运行级最新值，不作为该交付的固定伴随值。多个发布位置只允许同单元、两两 alternative 互斥；不按调度选取，不合并同名 handler 的独立调用。组合机器以订阅、chained 前置和持续 alternative 选择读取建立启动依赖，拒绝有环组合。完整规则见 [Stream 第 4.2 节](STREAM_LIFELONG.md#derive)，实现状态见 [Next stages](NEXT_STAGES.md#stage-6-reuse)。
 
@@ -257,7 +257,7 @@ Assembly 是组合机器内部的装配结果，不是第二份业务注册或 R
 | --- | --- | --- |
 | `EntryMount` | 组合机器的 ChainProto、Emit.Program 的入口登记 | NodeId、入口角色、结构末端、运行诊断标签、方法身份；相同方法的多个挂载仍独立 |
 | `EntryStep` | 组合机器的方法组成、Emit.Handlers | 有序 RequestStep／InputStep；两处都使用 bindingBefore，不重新推导或去重 |
-| `RawSource` | 结构中的 rawinput 引用、生成的 Raw 实例 | 直接输入的方法；Stream 的 String 包成单元素 list，其余保持 list |
+| `RawSource` | 结构中的 rawinput 引用、生成的 Raw 实例 | 直接 Input 的结构引用。Stream parser 的生成实例读本次 emit 的固定输入 [text]，静态来源仍指向该 Stream |
 | `OutputConnection` | 组合机器的注入结构、驱动与来源证明；Emit 的注入表 | 当前 anchor → parser，以及普通／持续注入角色；保持原有注入顺序和错误协议 |
 | `BootPlan.ReuseOutput` | 组合结果、Prototype 与现有 runtime | 机器确定的具体 AST 输出位置，不新增独立生产步骤 |
 

@@ -12,10 +12,10 @@ module Framework.Generated
   , failEffect, handleFailure, withErrorPath, withErrorHandlers, ErrorHandler(..)
   , readContext, readStreamContext
   , callContext, projectContext, enterHandler
-  , atomicHandle, atomicScope, streamHandle, endSource, endSubscription
+  , atomicHandle, atomicScope, emittedInput, emitToParser, endSource, endSubscription
   , openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler
-  , Root(..), superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError
+  , Root(..), superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError, onRawOutput, onEmit
   , Generic, NFData, interpreter
   ) where
 
@@ -26,11 +26,11 @@ import Framework.Runtime.Protocol
   , ScopeStore(openScope, closeScope, withScopeDependencies) )
 import Framework.Runtime.Context
   ( readContext, readStreamContext, callContext
-  , projectContext, atomicHandle, atomicScope, streamHandle )
+  , projectContext, atomicHandle, atomicScope )
 import Framework.Language.Registration (TypeRef(..))
 import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, deriveSteps)
 import Framework.Runtime.App
-  ( superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError )
+  ( emittedInput, emitToParser, superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError, onRawOutput, onEmit )
 import Framework.Runtime.Scope (ScopeHandler, newScopeHandler)
 import Framework.Program (initializePrototype, runProgram)
 import Framework.Prototype
