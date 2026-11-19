@@ -1,20 +1,18 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-
 -- handler 方法体的纯结构副本；只保留按表示类型的读取与 raw，不求值业务数据或 IO。
 -- 读取 @T 与 raw 的来源因绑定而异，由 gen 在每个绑定上替换为 effect 方法调用。
 module Framework.Gen.Frontend.Shape (shapeHandlers, analyzeModule) where
 
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Data.Data (Data, cast, gmapQ)
 import Data.List (nub)
-import Framework.Gen.Frontend.Source (HandlerSource(..))
+import Data.Maybe (isJust)
+import Framework.Gen.Frontend.Source (HandlerSource(..), NameUses, nameAtUse)
 import Framework.Prototype.Graph (MethodShape(..))
 import GHC (GhcPs)
 import GHC.Hs
-import GHC.Hs.Utils (CollectFlag(..), collectLocalBinders, collectPatBinders)
 import GHC.Types.Name.Occurrence (occNameString)
-import GHC.Types.Name (nameModule_maybe)
-import GHC.Types.Name.Reader (GlobalRdrEnv, LookupGRE(..), WhichGREs(..), greName, lookupGRE, RdrName(..), rdrNameOcc)
+import GHC.Types.Name (nameModule_maybe, nameOccName)
+import GHC.Types.Name.Reader (RdrName(..), rdrNameOcc)
 import GHC.Types.SrcLoc (GenLocated(..), unLoc)
 import GHC.Unit.Module (moduleName, moduleNameString)
 import GHC.Utils.Outputable (ppr, showSDocUnsafe)
@@ -23,17 +21,16 @@ data Environment = Environment
   { contractsModule :: String
   , handlerMethods :: [(String, String)]
   , imports :: [ImportDecl GhcPs]
-  , resolvedImports :: GlobalRdrEnv
-  , boundNames :: [String]
+  , resolvedUses :: NameUses
   , hasImplicitPrelude :: Bool
   -- 当前所在的 handler 类，用于诊断。
   , ownerClass :: Maybe String
   }
 
 -- 形状阶段：分析 Handlers.hs 中各 handler 的方法体。RebindableSyntax 下 do 不按标准语义展开，不分析。
-shapeHandlers :: String -> [(String, String)] -> GlobalRdrEnv -> HandlerSource -> Either String [(String, MethodShape String)]
-shapeHandlers namespace handlers resolved source = do
-  analyzed <- analyzeModule namespace handlers resolved (handlerImplicitPrelude source) (handlerModule source)
+shapeHandlers :: String -> [(String, String)] -> HandlerSource -> Either String [(String, MethodShape String)]
+shapeHandlers namespace handlers source = do
+  analyzed <- analyzeModule namespace handlers (handlerNames source) (handlerImplicitPrelude source) (handlerModule source)
   if handlerRebindable source && any ((/= Empty) . snd) analyzed
     then Left "Effect structure analysis does not support RebindableSyntax; use standard Haskell in handler bodies"
     else pure analyzed
@@ -41,7 +38,7 @@ shapeHandlers namespace handlers resolved source = do
 -- 每个 handler 方法体得到一份结构：require @T 记为 @T，raw 记为 %raw。
 -- handler 不能调用其他 handler：组合只经注册的 Input、demands 与 AST。
 analyzeModule
-  :: String -> [(String, String)] -> GlobalRdrEnv -> Bool -> HsModule GhcPs
+  :: String -> [(String, String)] -> NameUses -> Bool -> HsModule GhcPs
   -> Either String [(String, MethodShape String)]
 analyzeModule namespace handlers resolved implicitPrelude parsed = do
   unless (length (nub (map snd handlers)) == length handlers) $
@@ -49,7 +46,7 @@ analyzeModule namespace handlers resolved implicitPrelude parsed = do
   concat <$> mapM instanceShapes (hsmodDecls parsed)
   where
     environment = Environment (namespace ++ ".Generated.Effects") handlers
-      (map unLoc (hsmodImports parsed)) resolved [] implicitPrelude Nothing
+      (map unLoc (hsmodImports parsed)) resolved implicitPrelude Nothing
     instanceShapes (L _ (InstD _ (ClsInstD _ declaration))) =
       case classIdentifier (sig_body (unLoc (cid_poly_ty declaration))) of
         Just identifier
@@ -83,31 +80,17 @@ classIdentifier located = case unLoc located of
 identifierName :: RdrName -> String
 identifierName = occNameString . rdrNameOcc
 
-shadow :: [String] -> Environment -> Environment
-shadow names environment = environment {boundNames = names ++ boundNames environment}
-
-patternNames :: LPat GhcPs -> [String]
-patternNames = map identifierName . collectPatBinders CollNoDictBinders
-
-localEnvironment :: Environment -> HsLocalBinds GhcPs -> Environment
-localEnvironment environment =
-  flip shadow environment . map identifierName . collectLocalBinders CollNoDictBinders
-
--- 只识别真正导入的名称；qualified alias 与 hiding 都参与。
--- 局部 pattern/let/where 名称优先，不把同名业务变量误当作 SDK 能力或 handler。
--- require 记为带 @ 前缀的取值标记，须配合类型实参；handler 方法记为带 ! 前缀的标记，在调用处拒绝。
-methodReference :: Environment -> RdrName -> Maybe String
-methodReference environment identifier
-  | Unqual _ <- identifier, name `elem` boundNames environment = Nothing
-  | [entry] <- lookupGRE (resolvedImports environment) (LookupRdrName identifier SameNameSpace)
-  , Just owner <- moduleNameString . moduleName <$> nameModule_maybe (greName entry) =
-      case (owner, name) of
-        ("Framework.Language.Handler", "require") -> Just "@require"
-        ("Framework.Language.Handler", "raw") -> Just "%raw"
-        _ | owner == contractsModule environment && name `elem` map snd (handlerMethods environment) -> Just ('!' : name)
-          | otherwise -> Nothing
-  | otherwise = Nothing
-  where name = identifierName identifier
+-- GHC 在使用位置确定定义。重导出保留 SDK 定义；局部绑定（包括 RecordWildCards）有自己的 Name。
+methodReference :: Environment -> LocatedN RdrName -> Maybe String
+methodReference environment identifier = do
+  resolved <- nameAtUse (resolvedUses environment) identifier
+  owner <- moduleNameString . moduleName <$> nameModule_maybe resolved
+  let name = occNameString (nameOccName resolved)
+  case (owner, name) of
+    ("Framework.Language.Handler", "require") -> Just "@require"
+    ("Framework.Language.Handler", "raw") -> Just "%raw"
+    _ | owner == contractsModule environment && name `elem` map snd (handlerMethods environment) -> Just ('!' : name)
+      | otherwise -> Nothing
 
 -- require @T 记为按表示类型的读取；类型原文由 gen 规范化后与绑定的路由比较。
 demandCall :: LHsWcType GhcPs -> Either String (MethodShape String)
@@ -123,8 +106,7 @@ directCall environment reference = case reference of
 
 imported :: Environment -> [String] -> Maybe String -> RdrName -> Bool
 imported environment modules owner identifier = case identifier of
-  Unqual _ -> identifierName identifier `notElem` boundNames environment
-    && (any (matches Nothing) (imports environment) || implicitPrelude)
+  Unqual _ -> any (matches Nothing) (imports environment) || implicitPrelude
   Qual qualifier _ -> any (matches (Just (moduleNameString qualifier))) (imports environment)
   _ -> False
   where
@@ -156,61 +138,16 @@ wrappedName located = case unLoc located of
   IEPattern _ identifier -> identifierName (unLoc identifier)
   IEType _ identifier -> identifierName (unLoc identifier)
 
--- 引用扫描也遵守词法作用域。未支持的纯业务语法没有 effect 引用时直接擦除。
-references :: Data value => Environment -> value -> [String]
-references environment value
-  | Just expression <- cast value = expressionReferences environment expression
-  | Just matches <- cast value = matchesReferences environment matches
-  | Just rhss <- cast value = rhsReferences environment rhss
-  | otherwise = concat (gmapQ (references environment) value)
-
-expressionReferences :: Environment -> HsExpr GhcPs -> [String]
-expressionReferences environment expression = case expression of
-  HsVar _ identifier -> maybe [] pure (methodReference environment (unLoc identifier))
-  HsLet _ bindings body ->
-    let nested = localEnvironment environment bindings
-    in references nested bindings ++ references nested body
-  HsDo _ (MDoExpr _) statements ->
-    statementReferences (afterStatements environment (unLoc statements)) (unLoc statements)
-  HsDo _ _ statements -> statementReferences environment (unLoc statements)
-  _ -> concat (gmapQ (references environment) expression)
-
-matchesReferences :: Environment -> Match GhcPs (LHsExpr GhcPs) -> [String]
-matchesReferences environment Match {m_pats = patterns, m_grhss = rhss} =
-  references environment (unLoc patterns)
-    ++ rhsReferences (shadow (concatMap patternNames (unLoc patterns)) environment) rhss
-
-rhsReferences :: Environment -> GRHSs GhcPs (LHsExpr GhcPs) -> [String]
-rhsReferences environment GRHSs {grhssGRHSs = rhss, grhssLocalBinds = bindings} =
-  let nested = localEnvironment environment bindings
-  in references nested bindings ++ concatMap (guardedReferences nested . unLoc) rhss
-
-guardedReferences :: Environment -> GRHS GhcPs (LHsExpr GhcPs) -> [String]
-guardedReferences environment (GRHS _ guards body) =
-  statementReferences environment guards ++ references (afterStatements environment guards) body
-
-afterStatements :: Environment -> [ExprLStmt GhcPs] -> Environment
-afterStatements = foldl advance
-  where
-    advance environment (L _ (BindStmt _ pattern' _)) = shadow (patternNames pattern') environment
-    advance environment (L _ (LetStmt _ bindings)) = localEnvironment environment bindings
-    advance environment (L _ RecStmt {recS_stmts = statements}) = afterStatements environment (unLoc statements)
-    advance environment _ = environment
-
-statementReferences :: Environment -> [ExprLStmt GhcPs] -> [String]
-statementReferences _ [] = []
-statementReferences environment (statement : rest) =
-  current ++ statementReferences next rest
-  where
-    next = afterStatements environment [statement]
-    current = case unLoc statement of
-      LetStmt _ bindings -> references next bindings
-      RecStmt {recS_stmts = statements} -> statementReferences next (unLoc statements)
-      _ -> references environment (unLoc statement)
+-- 解析树决定业务表达式的控制流；只在变量出现的位置查询重命名结果。
+hasReference :: Data value => Environment -> value -> Bool
+hasReference environment value
+  | Just (HsVar _ identifier) <- (cast value :: Maybe (HsExpr GhcPs)) =
+      isJust (methodReference environment identifier)
+  | otherwise = or (gmapQ (hasReference environment) value)
 
 rejectReferences :: Data value => Environment -> String -> value -> Either String ()
 rejectReferences environment description value =
-  unless (null (references environment value)) $
+  when (hasReference environment value) $
     Left (description ++ "; bind the asset with require before using it")
 
 sequenceShape :: [MethodShape String] -> MethodShape String
@@ -233,46 +170,43 @@ shapeMatches environment MG {mg_alts = alternatives} =
 shapeMatch :: Environment -> Match GhcPs (LHsExpr GhcPs) -> Either String (MethodShape String)
 shapeMatch environment Match {m_pats = patterns, m_grhss = rhss} = do
   rejectReferences environment "effect reference in a pattern" (unLoc patterns)
-  shapeRhss (shadow (concatMap patternNames (unLoc patterns)) environment) rhss
+  shapeRhss environment rhss
 
 shapeRhss :: Environment -> GRHSs GhcPs (LHsExpr GhcPs) -> Either String (MethodShape String)
 shapeRhss environment GRHSs {grhssGRHSs = rhss, grhssLocalBinds = bindings} = do
-  let nested = localEnvironment environment bindings
-  rejectReferences nested "effect reference in a where binding" bindings
-  choiceShape <$> mapM (shapeGuarded nested . unLoc) rhss
+  rejectReferences environment "effect reference in a where binding" bindings
+  choiceShape <$> mapM (shapeGuarded environment . unLoc) rhss
 
 shapeGuarded :: Environment -> GRHS GhcPs (LHsExpr GhcPs) -> Either String (MethodShape String)
 shapeGuarded environment (GRHS _ guards body) = do
-  unless (null (statementReferences environment guards)) $
+  when (hasReference environment guards) $
     Left "effect reference in a guard; bind the Context before the branch"
-  shapeExpression (afterStatements environment guards) body
+  shapeExpression environment body
 
 shapeStatements :: Environment -> [ExprLStmt GhcPs] -> Either String (MethodShape String)
-shapeStatements _ [] = pure Empty
-shapeStatements environment (statement : rest) = do
-  let next = afterStatements environment [statement]
-  current <- case unLoc statement of
-    BindStmt _ pattern' body -> do
-      rejectReferences environment "effect reference in a binding pattern" pattern'
-      shapeExpression environment body
-    BodyStmt _ body _ _ -> shapeExpression environment body
-    LastStmt _ body _ _ -> shapeExpression environment body
-    LetStmt _ bindings -> do
-      rejectReferences next "effect reference in a let binding" bindings
-      pure Empty
-    other -> rejectReferences environment "unsupported effect statement" other >> pure Empty
-  following <- shapeStatements next rest
-  pure (sequenceShape [current, following])
+shapeStatements environment statements = sequenceShape <$> mapM analyze statements
+  where
+    analyze :: ExprLStmt GhcPs -> Either String (MethodShape String)
+    analyze statement = case unLoc statement of
+      BindStmt _ pattern' body -> do
+        rejectReferences environment "effect reference in a binding pattern" pattern'
+        shapeExpression environment body
+      BodyStmt _ body _ _ -> shapeExpression environment body
+      LastStmt _ body _ _ -> shapeExpression environment body
+      LetStmt _ bindings -> do
+        rejectReferences environment "effect reference in a let binding" bindings
+        pure Empty
+      other -> rejectReferences environment "unsupported effect statement" other >> pure Empty
 
 shapeExpression :: Environment -> LHsExpr GhcPs -> Either String (MethodShape String)
 shapeExpression environment located
-  | null (references environment located) = pure Empty
+  | not (hasReference environment located) = pure Empty
   | otherwise = case unLoc located of
       HsVar _ identifier -> maybe unsupported (directCall environment)
-        (methodReference environment (unLoc identifier))
+        (methodReference environment identifier)
       HsPar _ body -> shapeExpression environment body
       HsAppType _ (L _ (HsVar _ identifier)) argument
-        | Just "@require" <- methodReference environment (unLoc identifier) -> demandCall argument
+        | Just "@require" <- methodReference environment identifier -> demandCall argument
       HsAppType _ body _ -> shapeExpression environment body
       ExprWithTySig _ body _ -> shapeExpression environment body
       HsPragE _ _ body -> shapeExpression environment body
@@ -285,9 +219,8 @@ shapeExpression environment located
         shapeMatches environment alternatives
       HsMultiIf _ alternatives -> choiceShape <$> mapM (shapeGuarded environment . unLoc) alternatives
       HsLet _ bindings body -> do
-        let nested = localEnvironment environment bindings
-        rejectReferences nested "effect reference in a let binding" bindings
-        shapeExpression nested body
+        rejectReferences environment "effect reference in a let binding" bindings
+        shapeExpression environment body
       HsApp {} -> uncurry (shapeApplication environment) (application located)
       OpApp _ left operator right -> do
         -- GHC parser 尚未根据导入 fixity 重关联；混合 operator 必须显式括号化。
@@ -323,6 +256,7 @@ variableName expression = case unLoc expression of
 known :: Environment -> String -> LHsExpr GhcPs -> Bool
 known environment expected expression = case unLoc expression of
   HsVar _ identifier -> identifierName (unLoc identifier) == expected
+    && isJust (nameAtUse (resolvedUses environment) identifier >>= nameModule_maybe)
     && imported environment modules owner (unLoc identifier)
   HsPar _ body -> known environment expected body
   HsAppType _ body _ -> known environment expected body
@@ -376,7 +310,7 @@ shapeApplication environment function arguments = case arguments of
 
 shapeContinuation :: Environment -> LHsExpr GhcPs -> Either String (MethodShape String)
 shapeContinuation environment expression
-  | null (references environment expression) = pure Empty
+  | not (hasReference environment expression) = pure Empty
   | otherwise = case unLoc expression of
       HsLam _ _ matches -> shapeMatches environment matches
       HsPar _ body -> shapeContinuation environment body

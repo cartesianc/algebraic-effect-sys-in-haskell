@@ -1,31 +1,32 @@
 -- 读取源程序（前端）：在声明加载进程中求值 effects 与 ast 并计算到接口检查点 Unit，
--- 用 GHC 解析器读取 Types.hs 的和类型与 Handlers.hs 的语法树。只解析和求值声明，不加载 handler 或执行业务。
+-- 解析 Types.hs 的和类型；用本次生成的契约对 Handlers.hs 做无代码类型检查，取得 GHC 解析的名称。
 module Framework.Gen.Frontend.Source
-  ( HandlerSource(..), loadComposition, loadHandlers, resolveHandlerImports, loadSumTypes, namespaceDirectory, sourceOffset
+  ( HandlerSource(..), NameUses, nameAtUse, loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, sourceOffset
   ) where
 
 import Control.Exception (evaluate)
 import Control.Monad.IO.Class (liftIO)
+import Data.Data (Data, cast, gmapQ)
 import Data.Foldable (toList)
+import qualified Data.Map.Strict as Map
 import Framework.Prototype.Types (SumTypes)
 import Framework.Gen.Plan (Unit)
 import Framework.Gen.Frontend.Ghc (withSourceTargets)
-import GHC (GhcPs, LoadHowMuch(..), SuccessFlag(..), getModSummary, getSession, getSessionDynFlags,
-            load, ms_hspp_opts, runGhc, setInteractiveDynFlags, setTargets)
-import GHC.Driver.Main (hscRnImportDecls)
-import GHC.Driver.Session (homeUnitId_)
+import GHC (GhcPs, GhcRn, LoadHowMuch(..), SuccessFlag(..), getModSummary, getSessionDynFlags,
+            load, ms_hspp_opts, parseModule, pm_parsed_source, runGhc, setTargets, tm_renamed_source, typecheckModule)
 import GHC.Fingerprint (fingerprintString)
 import GHC.Data.FastString (mkFastString)
 import GHC.Data.StringBuffer (stringToStringBuffer)
 import GHC.Driver.Config.Parser (initParserOpts)
-import GHC.Driver.Session (flagSpecFlag, flagSpecName, parseDynamicFilePragma, xFlags, xopt)
+import GHC.Driver.Session (flagSpecFlag, flagSpecName, homeUnitId_, parseDynamicFilePragma, xFlags, xopt)
 import GHC.Hs
 import qualified GHC.Parser as Parser
 import GHC.Parser.Annotation (getLocA)
 import GHC.Parser.Header (getOptions)
 import GHC.Parser.Lexer (ParseResult(..), initParserState, unP)
-import GHC.Types.Name.Occurrence (occNameString)
-import GHC.Types.Name.Reader (GlobalRdrEnv, rdrNameOcc)
+import GHC.Types.Name (Name, nameOccName)
+import GHC.Types.Name.Occurrence (OccName, occNameString)
+import GHC.Types.Name.Reader (RdrName, rdrNameOcc)
 import GHC.Unit.Module (mkModule, mkModuleName)
 import GHC.Types.SrcLoc
 import System.Directory (doesFileExist)
@@ -64,52 +65,77 @@ loadComposition namespace sumTypes = do
       Just (Right plan) -> pure plan
     _ -> exitWith result
 
--- 手写 Handlers.hs 的一次读取与解析快照；分析与复制共用它，不加载 instance 或执行业务。
+-- 同一份源码的解析树保留业务写法，重命名树提供每处变量使用的定义身份。
 data HandlerSource = HandlerSource
   { handlerText :: String
   , handlerModule :: HsModule GhcPs
+  , handlerNames :: NameUses
   , handlerImplicitPrelude :: Bool
   , handlerRebindable :: Bool
   }
 
 -- 首次生成时还没有 Handlers.hs：返回 Nothing，只生成契约。
-loadHandlers :: String -> IO (Maybe HandlerSource)
-loadHandlers namespace = do
+loadHandlers :: String -> String -> IO (Maybe HandlerSource)
+loadHandlers namespace contracts = do
   let inputPath = namespaceDirectory namespace </> "Handlers.hs"
   exists <- doesFileExist inputPath
   if not exists then pure Nothing else do
-    (source, parsed, implicitPrelude, rebindableSyntax) <- parseSourceFile inputPath
-    pure (Just (HandlerSource source parsed implicitPrelude rebindableSyntax))
+    source <- readSource inputPath
+    withSourceTargets $ \memoryTarget -> do
+      let handlers = namespace ++ ".Handlers"
+      setTargets [memoryTarget handlers source, memoryTarget (namespace ++ ".Generated.Effects") contracts]
+      flags <- getSessionDynFlags
+      loaded <- load (LoadDependenciesOf (mkModule (homeUnitId_ flags) (mkModuleName handlers)))
+      case loaded of
+        Failed -> liftIO (ioError (userError ("Cannot load the imports of " ++ handlers)))
+        Succeeded -> do
+          summary <- getModSummary (mkModuleName handlers)
+          parsed <- parseModule summary
+          checked <- typecheckModule parsed
+          case tm_renamed_source checked of
+            Nothing -> liftIO (ioError (userError ("Missing renamed source for " ++ handlers)))
+            Just (group, _, _, _, _) -> do
+              let enabled name = any (\flag -> flagSpecName flag == name && xopt (flagSpecFlag flag) (ms_hspp_opts summary)) xFlags
+              pure (Just HandlerSource
+                { handlerText = source
+                , handlerModule = unLoc (pm_parsed_source parsed)
+                , handlerNames = Map.fromList (variableUses group)
+                , handlerImplicitPrelude = enabled "ImplicitPrelude"
+                , handlerRebindable = enabled "RebindableSyntax"
+                })
+
+-- Name 的定义位置和变量的使用位置不同。用同一次 parse/rename 的 token 范围对齐，
+-- 拼写用于区分重命名展开时可能共享位置的名称；无源码位置的合成变量不属于手写表达式。
+type NameUses = Map.Map (RealSrcSpan, OccName) Name
+
+variableUses :: Data a => a -> [((RealSrcSpan, OccName), Name)]
+variableUses tree
+  | Just (HsVar _ identifier) <- (cast tree :: Maybe (HsExpr GhcRn)) =
+      case getLocA identifier of
+        RealSrcSpan location _ -> let name = unLoc identifier in [((location, nameOccName name), name)]
+        _ -> []
+  | otherwise = concat (gmapQ variableUses tree)
+
+nameAtUse :: NameUses -> LocatedN RdrName -> Maybe Name
+nameAtUse names identifier = case getLocA identifier of
+  RealSrcSpan span _ -> Map.lookup (span, rdrNameOcc (unLoc identifier)) names
+  _ -> Nothing
 
 namespaceDirectory :: String -> FilePath
 namespaceDirectory namespace = "demo" </> map (\c -> if c == '.' then pathSeparator else c) namespace
 
--- 只加载手写方法的导入依赖。候选契约来自本次注册，首次生成也不依赖磁盘上的旧契约。
--- GHC 解析导入列表、限定名和重导出；Shape 用定义名称识别能力，保留方法体的原始语法树。
-resolveHandlerImports :: String -> String -> HandlerSource -> IO GlobalRdrEnv
-resolveHandlerImports namespace contracts source = withSourceTargets $ \memoryTarget -> do
-  let handlers = namespace ++ ".Handlers"
-  setTargets [memoryTarget handlers (handlerText source), memoryTarget (namespace ++ ".Generated.Effects") contracts]
-  flags <- getSessionDynFlags
-  result <- load (LoadDependenciesOf (mkModule (homeUnitId_ flags) (mkModuleName handlers)))
-  case result of
-    Failed -> liftIO (ioError (userError ("Cannot load the imports of " ++ handlers)))
-    Succeeded -> do
-      -- 该 GHC 接口使用交互环境，导入的语言扩展仍以 Handlers.hs 自己的 pragma 为准。
-      summary <- getModSummary (mkModuleName handlers)
-      setInteractiveDynFlags (ms_hspp_opts summary)
-      session <- getSession
-      liftIO (hscRnImportDecls session (hsmodImports (handlerModule source)))
+readSource :: FilePath -> IO String
+readSource inputPath = withFile inputPath ReadMode $ \handle -> do
+  hSetEncoding handle utf8
+  hSetNewlineMode handle universalNewlineMode
+  contents <- hGetContents handle
+  _ <- evaluate (length contents)
+  pure contents
 
--- 以文件自身的语言扩展解析源码；只读取语法树，不加载或执行模块。
-parseSourceFile :: FilePath -> IO (String, HsModule GhcPs, Bool, Bool)
+-- 和类型只需要声明形状；按该文件自己的语言扩展解析。
+parseSourceFile :: FilePath -> IO (String, HsModule GhcPs)
 parseSourceFile inputPath = do
-  source <- withFile inputPath ReadMode $ \handle -> do
-    hSetEncoding handle utf8
-    hSetNewlineMode handle universalNewlineMode
-    contents <- hGetContents handle
-    _ <- evaluate (length contents)
-    pure contents
+  source <- readSource inputPath
   library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
   runGhc (Just library) $ do
     initial <- getSessionDynFlags
@@ -120,9 +146,7 @@ parseSourceFile inputPath = do
           (mkRealSrcLoc (mkFastString inputPath) 1 1)
     case unP Parser.parseModule state of
       PFailed _ -> liftIO (ioError (userError ("Cannot parse " ++ inputPath ++ "; check its Haskell syntax")))
-      POk _ parsed ->
-        let enabled name = any (\option -> flagSpecName option == name && xopt (flagSpecFlag option) flags) xFlags
-        in pure (source, unLoc parsed, enabled "ImplicitPrelude", enabled "RebindableSyntax")
+      POk _ parsed -> pure (source, unLoc parsed)
 
 -- Types.hs 中的和类型：至少两个构造器、每个构造器至多一个字段；字段类型取源码原文。
 -- 多字段和类型仍是合法业务 ADT；这里只支持上述自动投影形状，其余不生成分支契约。
@@ -131,7 +155,7 @@ loadSumTypes namespace = do
   let inputPath = namespaceDirectory namespace </> "Types.hs"
   exists <- doesFileExist inputPath
   if not exists then pure ([], Nothing) else do
-    (source, parsed, _, _) <- parseSourceFile inputPath
+    (source, parsed) <- parseSourceFile inputPath
     let text located = case getLocA located of
           RealSrcSpan span _ ->
             let start = sourceOffset source (srcSpanStartLine span) (srcSpanStartCol span)

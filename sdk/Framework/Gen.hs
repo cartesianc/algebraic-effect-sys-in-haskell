@@ -13,7 +13,7 @@ import Framework.Gen.Emit.Program (renderProgram)
 import Framework.Gen.Emit.Prototype (renderPrototype)
 import Framework.Gen.Names (handlerClass)
 import Framework.Gen.Frontend.Shape (shapeHandlers)
-import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, resolveHandlerImports, loadSumTypes, namespaceDirectory, handlerText)
+import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, handlerText)
 import Data.List (nub)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Exit (die)
@@ -30,12 +30,10 @@ compileWorkflow namespace = do
   -- 同一组合机器在声明进程中走到接口检查点；首次无 Handlers 也能生成同步契约。
   (sumTypes, typesFingerprint) <- loadSumTypes namespace
   interface <- loadComposition namespace sumTypes
-  source <- loadHandlers namespace
   let contracts = renderEffects interface
       handlersInScope = [(handlerClass handler', handler') | handler' <- unitHandlers interface]
-  shapes <- traverse (\native -> do
-    imports <- resolveHandlerImports namespace contracts native
-    either (ioError . userError) pure (shapeHandlers namespace handlersInScope imports native)) source
+  source <- loadHandlers namespace contracts
+  shapes <- either (ioError . userError) pure (traverse (shapeHandlers namespace handlersInScope) source)
   pending <- either die pure (prepareComposition interface shapes)
   dependencies <- mapM readUtf8 structureSources
   let cacheKey = show (compositionKey pending, dependencies)
