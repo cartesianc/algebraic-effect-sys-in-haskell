@@ -13,7 +13,7 @@
 -- 本文件保留共享 Environment 的解释器实现，按绑定、Store、诊断、生命周期和根调用分组。
 module Framework.Runtime.App
   ( App, Launch(..), runAppWith, withScopeCleanups
-  , withMiddlewareHooks, interceptCall, hookProceed, hookRaw
+  , withMiddlewareHooks, observeOutput, observeRaw, observeRaise, observedOutput, observedRaw, observedError
   ) where
 
 import Framework.Runtime.Binding
@@ -27,9 +27,8 @@ import Framework.Runtime.Frame (ExecutionFrame, owningFrame, captureFrameInput)
 import Framework.Runtime.Session (Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..), View, awaitView)
 import Framework.Prototype (NodeId)
 import Framework.Language.Registration (EffectKind)
-import Control.Concurrent (forkIOWithUnmask, killThread)
-import Control.Concurrent.MVar (MVar, newEmptyMVar, readMVar, withMVar, takeMVar, tryTakeMVar, tryReadMVar, putMVar, tryPutMVar)
-import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, evaluate, fromException, mask, mask_, onException, throwIO, toException, try, finally)
+import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
+import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, evaluate, fromException, mask, mask_, throwIO, try, finally)
 import Control.Monad (filterM, forM, forM_, when)
 import Control.Monad.Except (ExceptT, MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO(..))
@@ -84,11 +83,11 @@ data Environment env cause = Environment
   , sessionSinks :: [(String, Bound env cause -> IO ())]
   -- lifelong 单元执行中：本次 frame 对会话资产的领取（同一 frame 只领取一次，各调用共享）。
   , frameDeliver :: String -> Maybe (IO (Either (Stopped cause) (View env cause)))
-  -- Middleware 目录（生成区安装）与本启动位置生效的 hook 集合；hook 自身执行时集合为空，不再被拦截。
+  -- Middleware 目录（生成区安装）与本启动位置生效的集合；Middleware 执行时集合为空，不再捕获。
   , hookTable :: [(String, ([EffectKind], App env cause ()))]
   , activeHooks :: [String]
-  -- 只在 hook 执行时安装：proceed 与 raw 经它与拦截分发交接。
-  , hookChannel :: Maybe (HookChannel cause)
+  -- 只在 Middleware 执行时安装：本次调用点捕获的内容。
+  , hookEvent :: Maybe HookEvent
   }
 
 -- 一次末端调用的起点：交接的绑定与视图；会话步骤另带原始输入，lifelong 单元另带本次 frame。
@@ -863,117 +862,60 @@ runClose name wrap (AppRun action) = AppRun $ do
       `finally` releaseReservation
   either throwError pure result
 
--- Middleware 拦截 -------------------------------------------------------------
+-- Middleware 捕获 -------------------------------------------------------------
 
--- 屏障语义 v1（2026-11-19）：生效的 hook 是集合，彼此没有先后。每个 hook 在自己的线程执行前半段，
--- 全部到达 proceed 后原调用执行一次；结果交给所有 hook 后，等它们的后半段全部结束才返回。
--- 因此任何 hook 都看不到另一 hook 的前后半段次序，结果也不依赖登记顺序。
--- hook 线程到达 proceed 时登记 Arrived，结束时登记 Finished；result 是本次调用交出的输出（失败为 Nothing）。
-data HookPhase cause = Arrived | Finished (Either SomeException (Either (Failure cause) ()))
+-- 捕获 v2（2026-11-19）：Middleware 不包住调用，只在 Root 级的类方法调用点上注入操作语义。
+-- 生成代码把原子 handler 交出的值（pure）、raw 读取与 raise 改写为带 handler 名的调用；
+-- 调用点上，本启动位置生效、且拦截该类别的 Middleware handler 作为类方法同步执行，
+-- 用 hookedOutput／hookedRaw／hookedError 拆出本次捕获。它与普通 Excu 一样可以 raise，失败从调用点传播。
+data HookEvent = OutputEvent String [String] | RawEvent String [String] | ErrorEvent String String
 
-data HookChannel cause = HookChannel
-  { hookPhase :: MVar (HookPhase cause)
-  , hookResult :: MVar (Maybe [String])
-  }
-
--- 被拦截的调用失败后，等在 proceed 的 hook 以此退出；原失败照常传播，这个退出不另行报告。
-data HookAbort = HookAbort
-instance Show HookAbort where show _ = "SDK middleware hook stopped: the intercepted call failed"
-instance Exception HookAbort
-
--- hook 的同步异常附上 hook 与被拦截 effect 后，作为被拦截调用的异常沿原包装传播。
-data HookFailure = HookFailure String String SomeException
-instance Show HookFailure where
-  show (HookFailure hookName target problem) =
-    "Middleware " ++ hookName ++ " around " ++ target ++ " failed: " ++ displayException problem
-instance Exception HookFailure
-
--- 生成区安装 hook 目录；安装本身不执行 hook。
+-- 生成区安装 Middleware 目录（注册顺序）；安装本身不执行 handler。
 withMiddlewareHooks :: [(String, ([EffectKind], App env cause ()))] -> App env cause value -> App env cause value
 withMiddlewareHooks table (AppRun action) = AppRun $ local
   (\environment -> environment { hookTable = table }) action
 
--- 拦截槽只包住一次原子调用。没有生效的 hook 拦截该类别时原样执行。
-interceptCall :: EffectKind -> String -> App env cause [String] -> App env cause [String]
-interceptCall kind target (AppRun call) = do
+-- 按注册顺序依次执行；捕获期间生效集合为空，Middleware 自己的调用点不再被捕获。
+-- 它只观察本次调用点：不进入调用中的 open／close 尝试，也不回放其他输出。
+dispatchHooks :: EffectKind -> HookEvent -> App env cause ()
+dispatchHooks kind event = do
   environment <- AppRun ask
-  let selected = [(hookName, hook) | hookName <- activeHooks environment
-        , Just (kinds, hook) <- [lookup hookName (hookTable environment)], kind `elem` kinds]
-  if null selected
-    then AppRun call
-    else rawIO (barrier environment target selected (runExceptT (runReaderT call environment))) >>= either throwError pure
+  forM_ [hook | (hookName, (kinds, hook)) <- hookTable environment
+        , hookName `elem` activeHooks environment, kind `elem` kinds] $ \(AppRun hook) ->
+    AppRun $ local (\inner -> inner
+      { activeHooks = [], hookEvent = Just event
+      , caller = Nothing, contexts = [], openings = [], closings = [], replays = [] }) hook
 
-barrier :: forall env cause. Environment env cause -> String -> [(String, App env cause ())]
-        -> IO (Either (Failure cause) [String]) -> IO (Either (Failure cause) [String])
-barrier environment target selected call = mask $ \restore -> do
-  started <- forM selected $ \(hookName, AppRun hook) -> do
-    channel <- HookChannel <$> newEmptyMVar <*> newEmptyMVar
-    -- hook 只观察本次调用：不进入调用中的 open／close 尝试，也不回放其他输出。
-    let inside = environment
-          { activeHooks = [], hookChannel = Just channel
-          , caller = Nothing, contexts = [], openings = [], closings = [], replays = [] }
-    thread <- forkIOWithUnmask $ \unmask -> do
-      ended <- try (unmask (runExceptT (runReaderT hook inside)))
-      _ <- tryPutMVar (hookPhase channel) (Finished ended)
-      pure ()
-    pure (hookName, channel, thread)
-  let stopAll = forM_ started (\(_, _, thread) -> killThread thread)
-      phases = forM started (\(hookName, channel, _) -> (,) hookName <$> restore (takeMVar (hookPhase channel)))
-  (do
-      arrivals <- phases
-      case [(hookName, ended) | (hookName, Finished ended) <- arrivals] of
-        -- 有 hook 未到达 proceed 就结束：原调用一次也不执行。
-        (hookName, ended) : _ -> stopAll >> rethrow hookName ended
-        [] -> do
-          outcome <- try (restore call)
-          let shared = case outcome of
-                Right (Right output) -> Just output
-                _ -> Nothing
-          forM_ started (\(_, channel, _) -> putMVar (hookResult channel) shared)
-          endings <- phases
-          case outcome of
-            Left (problem :: SomeException) -> throwIO problem
-            Right (Left failure) -> pure (Left failure)
-            Right (Right output) -> case [(hookName, ended) | (hookName, Finished ended) <- endings, not (clean ended)] of
-              (hookName, ended) : _ -> rethrow hookName ended
-              [] -> pure (Right output))
-    `onException` stopAll
-  where
-    clean :: Either SomeException (Either (Failure cause) ()) -> Bool
-    clean (Right (Right ())) = True
-    clean _ = False
-    rethrow :: String -> Either SomeException (Either (Failure cause) ()) -> IO (Either (Failure cause) [String])
-    rethrow hookName ended = case ended of
-      Left problem
-        | Just (_ :: SomeAsyncException) <- fromException problem -> throwIO problem
-        | otherwise -> throwIO (HookFailure hookName target problem)
-      Right (Left failure) -> pure (Left failure)
-      Right (Right ()) -> throwIO (HookFailure hookName target (toException (userError "returned without proceed")))
+-- 原子 handler 交出的值：调用成功后捕获，原值交回调用者。
+observeOutput :: EffectKind -> String -> App env cause [String] -> App env cause [String]
+observeOutput kind handler call = do
+  output <- call
+  dispatchHooks kind (OutputEvent handler output)
+  pure output
 
--- hook 推进：登记到达，等本次调用完成；调用失败时 hook 退出，不执行后半段。
-hookProceed :: App env cause ()
-hookProceed = do
-  channel <- currentHook "proceed"
-  rawIO $ do
-    already <- tryReadMVar (hookResult channel)
-    when (isJust already) (throwIO (userError "proceed is called once in a middleware hook"))
-    putMVar (hookPhase channel) Arrived
-    shared <- readMVar (hookResult channel)
-    when (isNothing shared) (throwIO HookAbort)
+-- raw 读取：读取方 handler 与读到的值；类别是被读取输出的那个原子调用的类别。
+observeRaw :: EffectKind -> String -> App env cause [String] -> App env cause [String]
+observeRaw kind handler reading = do
+  value <- reading
+  dispatchHooks kind (RawEvent handler value)
+  pure value
 
--- hook 的 raw：proceed 之后读本次调用交出的输出。
-hookRaw :: App env cause [String]
-hookRaw = do
-  channel <- currentHook "raw"
-  shared <- rawIO (tryReadMVar (hookResult channel))
-  case shared of
-    Just (Just output) -> pure output
-    Just Nothing -> rawIO (throwIO HookAbort)
-    Nothing -> rawIO (throwIO (userError "raw is read after proceed in a middleware hook"))
+-- raise：先捕获 handler 与错误描述，再以原失败退出。
+observeRaise :: EffectKind -> String -> String -> App env cause value -> App env cause value
+observeRaise kind handler description failing = dispatchHooks kind (ErrorEvent handler description) >> failing
 
-currentHook :: String -> App env cause (HookChannel cause)
-currentHook operation = AppRun (asks hookChannel)
-  >>= maybe (rawIO (throwIO (userError (operation ++ " is available only in a middleware hook")))) pure
+observedOutput, observedRaw :: App env cause (Maybe (String, [String]))
+observedOutput = AppRun (asks hookEvent) >>= \event -> pure (case event of
+  Just (OutputEvent handler output) -> Just (handler, output)
+  _ -> Nothing)
+observedRaw = AppRun (asks hookEvent) >>= \event -> pure (case event of
+  Just (RawEvent handler value) -> Just (handler, value)
+  _ -> Nothing)
+
+observedError :: App env cause (Maybe (String, String))
+observedError = AppRun (asks hookEvent) >>= \event -> pure (case event of
+  Just (ErrorEvent handler description) -> Just (handler, description)
+  _ -> Nothing)
 
 -- 完整调用边界 ---------------------------------------------------------------
 
@@ -1012,7 +954,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         , anchoredEntries = [], streamEntries = [], replays = []
         , views = delivered, streamRaw = launchInput launch, sessionSinks = launchSinks launch
         , frameDeliver = launchDeliver launch
-        , hookTable = [], activeHooks = fromMaybe [] (lookup node (runtimeHooks graph)), hookChannel = Nothing }
+        , hookTable = [], activeHooks = fromMaybe [] (lookup node (runtimeHooks graph)), hookEvent = Nothing }
   (do
       completed <- try $ restore $ do
         outcome <- runExceptT (runReaderT action environment)

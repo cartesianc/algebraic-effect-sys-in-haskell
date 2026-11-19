@@ -288,8 +288,8 @@ completeDriving :: Prototype method -> Prototype method
 completeDriving prototype = prototype { protoDriving = DrivingPlan nodes units sessions rootNodes outputs requests
     (drivingMiddleware (protoDriving prototype)) hooks }
   where
-    -- 每个非会话根位置的 hook 集合：覆盖它的所有标注之并。集合没有顺序；会话 worker 首版不拦截。
-    hooks = [(position, active) | position <- rootNodes
+    -- 每个启动位置（含会话步骤）的 Middleware 集合：按位置前缀取覆盖它的所有标注之并，不为会话另设规则。
+    hooks = [(position, active) | position <- nub (map chainNode chains)
       , let active = nub (concat [selected | (root, selected) <- drivingMiddleware (protoDriving prototype), root `isPrefixOf` position])
       , not (null active)]
     tree = protoWorkflow prototype

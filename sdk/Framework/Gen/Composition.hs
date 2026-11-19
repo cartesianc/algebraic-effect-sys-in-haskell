@@ -239,9 +239,7 @@ buildEffectProtos specifications sumTypes = do
         case typing specification of
           Scoped (Just _) _ -> pure ()
           _ -> Left (InvalidPrototype ("Input scope needs Scoped.open: " ++ selected))
-      -- Middleware 的 handler 首版不 raise，RaisedBy 不能指向它。
-      boundHandlers = nub (concatMap (map snd . handlerBindings)
-        [specification | specification <- specifications, Registration.effectKind (typing specification) /= MiddlewareKind])
+      boundHandlers = nub (concatMap (map snd . handlerBindings) specifications)
       checkHandled (RaisedBy selected) = valid (selected `elem` boundHandlers)
         ("RaisedBy must name a registered handler: " ++ selected)
       checkHandled (ScopeFaultIn selected) = do
@@ -320,7 +318,7 @@ buildEffectProtos specifications sumTypes = do
               ("Only the parser Context may take Stream " ++ name specification ++ " as its input")
             valid (length below == 1)
               ("Stream " ++ name specification ++ " needs exactly one Context hanging below it as its parser")
-          -- Middleware 没有 demands：hook 只观察被拦截调用的 raw，不读取或驱动资产。
+          -- Middleware 没有 demands：只在 Root 级调用点捕获值，不读取或驱动资产。
           Middleware method intercepted -> do
             valid (method /= Nothing) ("Middleware needs a handler: " ++ name specification)
             valid (null (demands specification)) ("Middleware " ++ name specification ++ " declares no demands")
@@ -487,7 +485,6 @@ composeMethods checkReads effects bindings required handlerShapes = do
   where
     compose binding = do
       let body = maybe Empty id (lookup (bindingHandler binding) handlerShapes)
-      when (checkReads && hooked binding) (middlewareOrder binding body)
       (mapped, contracts) <- resolve binding body
       pure (binding, sequenceShape (map Call (bindingCalls binding) ++ [mapped]), contracts)
     resolve binding shape = case shape of
@@ -497,11 +494,6 @@ composeMethods checkReads effects bindings required handlerShapes = do
         Nothing -> Left ("Handler " ++ bindingHandler binding ++ " reads " ++ typeText ++ " in " ++ bindingEffect binding
           ++ ", whose demands give " ++ describe (bindingRoutes binding)
           ++ "; declare requires/streams for an asset of that representation")
-      -- hook 的 proceed 与 raw 由拦截分发回答，不是 effect 方法调用。
-      Call "%proceed" | hooked binding -> pure (Empty, [])
-                      | otherwise -> Left ("Handler " ++ bindingHandler binding ++ " uses proceed in " ++ bindingEffect binding
-                          ++ "; only a Middleware handler proceeds")
-      Call "%raw" | hooked binding -> pure (Empty, [])
       Call "%raw" -> case bindingRaw binding of
         Just source -> pure (Call (rawMethod source), [])
         Nothing -> Left ("Handler " ++ bindingHandler binding ++ " uses raw in " ++ bindingEffect binding
@@ -517,23 +509,6 @@ composeMethods checkReads effects bindings required handlerShapes = do
         combine constructor children = do
           resolved <- mapM (resolve binding) children
           pure (constructor (map fst resolved), concatMap snd resolved)
-    hooked binding = bindingOperation binding == MiddlewareOperation
-    -- 次序检查 v1（2026-11-19）：proceed 恰好一次且直接位于方法主序列，不在分支或恢复里，
-    -- 因而每次 hook 都恰好推进一次；raw 只出现在它之后，读到的总是本次调用交出的输出。
-    middlewareOrder binding body = case break (== Call "%proceed") (topLevel body) of
-      (before, _ : after) | not (any (mentions "%proceed") (before ++ after)), not (any (mentions "%raw") before) -> pure ()
-      _ -> Left ("Middleware handler " ++ bindingHandler binding ++ " in " ++ bindingEffect binding
-        ++ " must call proceed exactly once, directly in its main do sequence, and read raw only after it")
-    topLevel shape = case shape of
-      Empty -> []
-      Sequence children -> children
-      _ -> [shape]
-    mentions selected shape = case shape of
-      Empty -> False
-      Call called -> called == selected
-      Sequence children -> any (mentions selected) children
-      Choice children -> any (mentions selected) children
-      Recover body recovery -> mentions selected body || mentions selected recovery
     describe [] = "no readable asset"
     describe routes = intercalate ", " [representation' ++ " (" ++ contractType ++ ")" | (representation', (contractType, _)) <- routes]
     -- close 读取检查 v1（2026-11-17）：有资源的 close 自身须读取资源以定位实例。
@@ -1463,7 +1438,7 @@ entryMethod specification = case typing specification of
   selected@Context {} -> contextProducer selected
   -- Stream 的方法只经会话执行，不作为 AST 末端；末端检查另行拒绝。
   Stream method -> effectMethodName "next" (name specification) <$ method
-  -- Middleware 的 hook 只经拦截分发执行，不是普通入口。
+  -- Middleware 只在 Root 级调用点上执行，不是普通入口。
   Middleware {} -> Nothing
 
 -- 注册把 handler 绑定到 effect 方法：(effect 方法名, handler 名)。
@@ -1507,7 +1482,7 @@ declareEffects = map declare
       Excu _ -> "[String]"
       Scoped {} -> "[String]"
       Error {} -> "()"
-      Middleware {} -> "()"
+      Middleware {} -> "[String]"
       Stream _ -> "String"
       Context { asset = declared } -> reference (representation declared)
     operation specification method = case typing specification of

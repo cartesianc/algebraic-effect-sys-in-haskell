@@ -3,7 +3,7 @@
 -- handler 在源语言中能用的全部能力，以及业务能观察到的完成结果。
 -- 能力类的实例由 gen 按注册生成（Framework.Gen.Emit.Handlers）；执行载体的协议在 Framework.Runtime.Protocol。
 module Framework.Language.Handler
-  ( Reads(..), Raw(..), Raises(..), StreamEnds(..), EndsStream(..), Proceeds(..)
+  ( Reads(..), Raw(..), Raises(..), StreamEnds(..), EndsStream(..), Hooks(..)
   , Failure(..), Output(..), ErrorReport(..)
   ) where
 
@@ -38,11 +38,13 @@ class StreamEnds m where
 class EndsStream m where
   endStream :: m value
 
--- Middleware handler 的推进：进入被拦截的原子调用，调用正常交出结果后返回。
--- 方法主 do 序列中恰好直接出现一次，raw 只在它之后读取本次输出；gen 检查这两条次序。
--- 被拦截的调用总计执行一次，结果由 SDK 原样交回调用者，hook 不能替换它。
-class Proceeds m where
-  proceed :: m ()
+-- 只给 Middleware handler：拆出本次 Root 级调用点捕获的内容，不是这一种时为 Nothing。
+-- hookedOutput：原子 handler 交出的值；hookedRaw：读取方 handler 经 raw 读到的值；
+-- hookedError：handler raise 的错误描述。每项都带 handler 名；捕获只读，不改变原调用。
+class Hooks m where
+  hookedOutput :: m (Maybe (String, [String]))
+  hookedRaw :: m (Maybe (String, [String]))
+  hookedError :: m (Maybe (String, String))
 
 -- SDK 统一失败协议：来源、生成的错误分类和消息；传播时不改写或再次包装。
 data Failure cause = Failure

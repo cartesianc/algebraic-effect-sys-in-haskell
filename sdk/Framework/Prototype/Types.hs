@@ -185,7 +185,7 @@ data DrivingPlan method = DrivingPlan
   , drivingRequests :: [(String, method)]
   -- 源 AST 的 middleware 标注，启动时与当前 AST 核对。
   , drivingMiddleware :: [(NodeId, [String])]
-  -- 每个运行位置实际生效的 hook 集合（只列非空）：所有覆盖该位置的标注之并，去重、无顺序。
+  -- 每个启动位置实际生效的 Middleware（只列非空）：所有覆盖该位置的标注之并，去重。
   , drivingHooks :: [(NodeId, [String])]
   } deriving (Eq, Show, Read, Functor, Generic, NFData)
 

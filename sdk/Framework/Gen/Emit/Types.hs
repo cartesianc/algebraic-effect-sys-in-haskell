@@ -15,6 +15,6 @@ renderCapability capability = case capability of
   HasRaw -> "SDK.Raw m"
   EndsSource -> "SDK.StreamEnds m"
   EndsSubscription -> "SDK.EndsStream m"
-  Proceeds -> "SDK.Proceeds m"
+  ObservesHooks -> "SDK.Hooks m"
   PureMonad -> "Monad m"
   IOMonad -> "MonadIO m"

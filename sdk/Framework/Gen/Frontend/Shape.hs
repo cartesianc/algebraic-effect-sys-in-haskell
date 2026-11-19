@@ -89,7 +89,6 @@ methodReference environment identifier = do
   case (owner, name) of
     ("Framework.Language.Handler", "require") -> Just "@require"
     ("Framework.Language.Handler", "raw") -> Just "%raw"
-    ("Framework.Language.Handler", "proceed") -> Just "%proceed"
     _ | owner == contractsModule environment && name `elem` map snd (handlerMethods environment) -> Just ('!' : name)
       | otherwise -> Nothing
 

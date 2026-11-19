@@ -15,7 +15,7 @@ module Framework.Generated
   , atomicHandle, atomicScope, streamHandle, endSource, endSubscription
   , openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, withScopeCleanups
-  , withMiddlewareHooks, interceptCall, hookProceed, hookRaw
+  , withMiddlewareHooks, observeOutput, observeRaw, observeRaise, observedOutput, observedRaw, observedError
   , Generic, NFData, interpreter
   ) where
 
@@ -29,7 +29,9 @@ import Framework.Runtime.Context
   , projectContext, atomicHandle, atomicScope, streamHandle )
 import Framework.Language.Registration (TypeRef(..))
 import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, deriveSteps)
-import Framework.Runtime.App (withScopeCleanups, withMiddlewareHooks, interceptCall, hookProceed, hookRaw)
+import Framework.Runtime.App
+  ( withScopeCleanups, withMiddlewareHooks, observeOutput, observeRaw, observeRaise
+  , observedOutput, observedRaw, observedError )
 import Framework.Runtime.Scope (ScopeHandler, newScopeHandler)
 import Framework.Program (initializePrototype, runProgram)
 import Framework.Prototype

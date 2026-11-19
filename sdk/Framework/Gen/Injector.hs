@@ -34,7 +34,7 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
               [ (normalizeType (typeSpelling (routeType route)), (routeContract route, routeReader route))
               | route <- unitRoutes unit, routeEffect route == declarationName specification ]
               (entryResult specification) (entryOperation specification method) (layerOf unit specification method)
-              (interceptOf specification method)
+              (observedOf specification) (rawObservedOf specification method)
           | specification <- declarations, (method, handler') <- [(method, handler) | (method, handler, _) <- declarationBindings specification] ]
       , unitAssembly = assembly
       , unitRoutes = [routeOf unit specification resolved
@@ -180,17 +180,23 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
 
     resultOf specification = declarationResult specification
 
-    -- 只包装交出 raw 的原子调用（Excu.run、Scoped.open／close、Pure.run），且只在某个 Middleware 拦截该类别时；
-    -- 没有 Middleware 的程序生成代码不变。实际生效的 hook 由运行位置的静态集合决定。
-    interceptOf :: EffectDeclaration -> String -> Maybe EffectKind
-    interceptOf specification method
-      | entryOperation specification method `elem` [AtomicOperation, OpenResource, CloseResource, PureOperation]
-      , kindOf specification `elem` concatMap declarationIntercept declarations = Just (kindOf specification)
+    -- 捕获只看类别：某个 Middleware 拦截该类别时，Root 级调用点改写为带 handler 名的捕获调用；
+    -- 没有 Middleware 的程序生成代码不变。实际执行哪些 Middleware 由启动位置的静态集合决定。
+    intercepted kind = kind `elem` concatMap declarationIntercept declarations
+    observedOf :: EffectDeclaration -> Maybe EffectKind
+    observedOf specification
+      | intercepted (kindOf specification) = Just (kindOf specification)
+      | otherwise = Nothing
+    -- raw 读到的是直接 Input 那次原子调用交出的值，按 Input 的类别判断。
+    rawObservedOf :: EffectDeclaration -> String -> Maybe EffectKind
+    rawObservedOf specification method
+      | readsRaw specification method, Just _ <- rawSource unit specification
+      , let source = effectKind (protoOf unit (inputOf specification)), intercepted source = Just source
       | otherwise = Nothing
 
     layerOf :: Unit -> EffectDeclaration -> String -> [Capability]
     layerOf unit specification method
-      | kindOf specification == MiddlewareKind = [HasRaw, Proceeds, IOMonad]
+      | kindOf specification == MiddlewareKind = [ObservesHooks, IOMonad]
       | otherwise = map ReadsType
       (sortOn typeSpelling (nub [routeType route | route <- unitRoutes unit, routeEffect route == declarationName specification]))
       ++ [HasRaw | readsRaw specification method, Just _ <- [rawSource unit specification]]
@@ -228,7 +234,7 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
           HasRaw -> "SDK.Raw m"
           EndsSource -> "SDK.StreamEnds m"
           EndsSubscription -> "SDK.EndsStream m"
-          Proceeds -> "SDK.Proceeds m"
+          ObservesHooks -> "SDK.Hooks m"
           PureMonad -> "Monad m"
           IOMonad -> "MonadIO m"
 

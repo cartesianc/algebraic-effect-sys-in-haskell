@@ -42,8 +42,8 @@ data EffectTyping
   -- 持续生产节点。handler 每次调用取得一份原始输入（String），SDK 负责反复调用；
   -- 不作为 AST 末端，只经挂在它下面的 Context 解析后进入资产。
   | Stream { handler :: Maybe String }
-  -- 环绕 hook：没有 Input 前驱（input 写保留名 "None"），也不声明 demands；由 AST 的 middleware 标注挂载，
-  -- 拦截所在子树中 intercept 列出的类别的原子调用。handler 用 proceed 推进被拦截的调用，之后用 raw 读本次输出。
+  -- 驱动方式特殊的 Excu：没有 Input 前驱（input 写保留名 "None"），也不声明 demands；由 AST 的 middleware 标注挂载。
+  -- 标注范围内，intercept 类别的 effect 在 Root 级调用点（交出值、raw、raise）同步执行它，handler 用 hooked* 拆出捕获。
   | Middleware { handler :: Maybe String, intercept :: [EffectKind] }
   deriving (Eq, Show, Read, Generic, NFData)
 
@@ -86,7 +86,7 @@ data Handles
 data EffectKind = PureKind | ExcuKind | ScopedKind | ErrorKind | ContextKind | StreamKind | MiddlewareKind
   deriving (Eq, Show, Read, Generic, NFData)
 
--- intercept 的全类别简写：首版可拦截的是确实交出 raw 的原子调用（Excu、Scoped 的 open／close、Pure）。
+-- intercept 的全类别简写：首版捕获能交出 raw output 的 Excu、Scoped（open／close）与 Pure。
 allEffects :: [EffectKind]
 allEffects = [ExcuKind, ScopedKind, PureKind]
 
