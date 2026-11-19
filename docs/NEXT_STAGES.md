@@ -1,7 +1,12 @@
 # Next stages
 
 <a id="stages"></a>
-Middleware 首版已经实现，下一阶段处理[持续交付的容量与背压](#backpressure)；[AST 嵌套与 workflow 边界](#ast-nesting)单列为待设计阶段。两者都尚未实现，其他开放项见[专题清单](#deferred)。
+Middleware 首版与 Root 的 `super` 已经实现。[superhandler 装配草案](#superhandler)进入审查。下一项已排定的功能是[持续交付的容量与背压](#backpressure)，[AST 嵌套与 workflow 边界](#ast-nesting)单列为待设计阶段。其他开放项见[专题清单](#deferred)。
+
+<a id="superhandler"></a>
+## 待审查 · superhandler 的生成期装配
+
+拟由 `Gen.Injector.Super` 按挂载与捕获点预选 middleware。第一批只收拢静态类别筛选，具体实例、使用关系与取消仍由 runtime 管理。`openSession` 的代码形态、模块分工与验收例见[临时方案](SUPERHANDLER_DRAFT.md)。
 
 <a id="code-shape"></a>
 <a id="middleware"></a>
@@ -103,7 +108,7 @@ Stage 1–7 在各自已确认的范围内完成。下面保留规范入口，�
 | Middleware：AST 挂载与 Root.super 接管原子调用 | [Middleware](CORE_DESIGN.md#middleware) · [写法](GUIDE.md#middleware) |
 | <a id="version-boundaries"></a>gen 内部职责与版本边界 | 共享供值改变了普通资产能读到哪次发布。其后的 Injector／Booter 重构统一静态装配与驱动事实，手写接口与该读取协议保持一致。[内部接口迁移](CORE_DESIGN.md#sdk-migration) |
 
-最近一次 gen 修复已在 FileDemo 验证局部 `raw` 和重导出的 SDK 能力，两个文件分支均返回 `Succ`；八个命名空间生成结果无变化，离线编译通过。该记录只覆盖当时的修复。
+gen 源码契约与 Shape 名称解析已完成。历史验证包括八个命名空间重新生成、全部 Cabal 目标离线编译，以及 FileDemo 的 `--structure` 展示两个 alternative 候选。后续 Shape 修复重新生成八个命名空间，产物一致。FileDemo 验证了局部 `raw` 与重导出的 SDK 能力，空文件和已有内容两种业务路径均返回 `Succ`。[编译流水线](CORE_DESIGN.md#generation)
 
 2026-11-19，Root.super 接入后重新生成八个命名空间，全项目离线编译通过。临时 LinesDemo 在同一 handler 的两次挂载上验证了进入、业务与输出的顺序和标注隔离。FileDemo 验证了 raw 回放，以及自动 close 的进入通知失败后文件仍实际关闭。并发取消的具体时点未在本轮复现。
 
