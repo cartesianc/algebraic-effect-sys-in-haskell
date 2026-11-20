@@ -194,6 +194,10 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
       | kindOf specification == MiddlewareKind = [ObservesHooks, WritesRaw, IOMonad]
       | otherwise = map ReadsType
       (sortOn typeSpelling (nub [routeType route | route <- unitRoutes unit, routeEffect route == declarationName specification]))
+      -- x:xs 读取：只给以 streams 读取持续资产的路由，由声明决定，首次生成契约时即确定。
+      ++ map StreamsType (sortOn typeSpelling (nub
+          [ routeType route | route <- unitRoutes unit, routeEffect route == declarationName specification
+          , routeView route == ContinuousView, streamsContract unit (declarationName specification) (routeContract route) ]))
       ++ [HasRaw | readsRaw specification method, Just _ <- [rawSource unit specification]]
       ++ [WritesRaw | resultOf specification == NativeType "[String]"]
       ++ (if kindOf specification == StreamKind then [EmitsItem, EndsSource] else [])
@@ -211,6 +215,11 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
     consumesStream :: Unit -> EffectDeclaration -> Bool
     consumesStream unit specification = kindOf specification == ExcuKind
       && or [Prototype.demandAccess demand == StreamAccess | demand <- Prototype.effectDemands (protoOf unit (declarationName specification))]
+    -- 本 effect 以 streams 读取该契约：Layer 才带 Streams。
+    streamsContract :: Unit -> String -> String -> Bool
+    streamsContract unit selectedName contractType = or
+      [ Prototype.demandAccess demand == StreamAccess && Prototype.demandContract demand == contractType
+      | demand <- Prototype.effectDemands (protoOf unit selectedName) ]
 
     signatureOf :: Unit -> String -> Either String Signature
     signatureOf unit handler' = do
@@ -227,6 +236,7 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
         -- 此处不导入 Emit：诊断描述不参与能力选择或生成代码。
         describeCapability capability = case capability of
           ReadsType value -> "SDK.Reads (" ++ typeSpelling value ++ ") m"
+          StreamsType value -> "SDK.Streams (" ++ typeSpelling value ++ ") m"
           HasRaw -> "SDK.Raw m"
           WritesRaw -> "SDK.RawOutputs m"
           EmitsItem -> "SDK.Emits m"

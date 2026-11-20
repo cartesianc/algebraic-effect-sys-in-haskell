@@ -864,7 +864,7 @@ EffectSpec
   { name = "TemperatureParser"
   , typing = Context { asset = Asset @Temperature "TemperatureSample", parser = Just "parseTemperature", require = True, stream = True }
   , input = "TemperatureFeed"
-  , demands = [requires "SensorState"]
+  , demands = []
   }
 
 EffectSpec
@@ -878,7 +878,7 @@ EffectSpec
   { name = "Heartbeat"
   , typing = Context { asset = Asset @Int "Beat", parser = Just "parseBeat", require = True, stream = True }
   , input = "HeartbeatClock"
-  , demands = [requires "SensorState"]
+  , demands = []
   }
 
 EffectSpec
@@ -894,7 +894,7 @@ EffectSpec
 - **`stream = True` 当且仅当 Context 的 Input 链被持续驱动**：直接 Input 是 Stream，或链上有 `streams` demand；必须同时 `require = True`。被驱动的链不能声明成普通资产，没有驱动的链也不能声明成持续资产。
 - **一个 Stream 恰好有一个 Context 以它为 `input`**，作为它的 parser。
 - **持续资产经会话发布与交付**：消费方不能 `requests` 它；已有消费操作的输出可交给挂接 Context 发布，不必另开生产任务。
-- **订阅**：消费方写 `streams "T"`，表示由 T 的新交付驱动，同时取得读取权限；handler 用 `require @表示类型` 取得本次交付。
+- **订阅**：消费方写 `streams "T"`，表示由 T 的新交付驱动，同时取得读取权限；handler 用 `require @表示类型` 取得本次交付，用 `stream @表示类型` 取得 x:xs（本次交付及同一会话中更早的交付，最新在前）。
 - **只读固定值**：`requires "T"` 的 handler 同样用 `require @表示类型`；已有捕获时复用，没有时取许可来源的最新值。读取不会使当前链反复执行。
 
 ### 驱动方式
@@ -911,7 +911,7 @@ EffectSpec
 
 ### handler：定时采样与逐条交付
 
-以下节选 [StreamDemo/Handlers.hs](../demo/StreamDemo/Handlers.hs)，省略 import 和其他 instance。`Temperature`、`SensorMemory` 是业务 Types.hs 中的资产表示；最近五次读数与编号由业务 parser 保存。
+以下节选 [StreamDemo/Handlers.hs](../demo/StreamDemo/Handlers.hs)，省略 import 和其他 instance。`Temperature` 是业务 Types.hs 中的资产表示；编号与最近五次读数由消费方从 x:xs 算出。
 
 ```haskell
 instance NextReadingLayer m => NextReadingHandler m where
@@ -923,24 +923,27 @@ instance NextReadingLayer m => NextReadingHandler m where
 instance ParseTemperatureLayer m => ParseTemperatureHandler m where
   parseTemperature = do
     reading <- concat <$> rawinput
-    SensorMemory samples _ <- require @SensorMemory
     case reads reading of
-      [(value, "")] -> liftIO $ atomicModifyIORef' samples $ \(count, previous) ->
-        let recent = take 5 (value : previous)
-            number = count + 1
-        in number `seq` ((number, recent), Temperature number value recent)
+      [(value, "")] -> pure (Temperature value)
       _ -> raise (ParseTemperatureError ("unreadable sensor output: " ++ reading))
 
 instance ShowTemperatureLayer m => ShowTemperatureHandler m where
   showTemperature = do
-    Temperature number value _ <- require @Temperature
-    liftIO (printf "reading #%d: %.1f C\n" number value)
+    Temperature value <- require @Temperature
+    seen <- stream @Temperature
+    liftIO (printf "reading #%d: %.1f C\n" (length seen) value)
     rawoutput []
+
+instance CheckTrendLayer m => CheckTrendHandler m where
+  checkTrend = do
+    seen <- stream @Temperature
+    let recent = take 5 [value | Temperature value <- toList seen]
+    ...
 ```
 
 - **Stream handler** 在下一次采样前用 `rawemit` 交出当前读数；节奏由方法体自己的阻塞或等待决定，SDK 不加间隔。来源没有下一份输入时用 `streamEnd` 退出；StreamDemo 的两个来源不会结束。
-- **parser** 用 `rawinput` 读取会话本次取得的原始输入，不再执行 Stream handler。示例的 `SensorMemory` 是由 `SensorLink` 管理的业务状态，累计规则在 parser 方法体里。
-- **消费方** 直接匹配 `Temperature`。发布与逐条交付由 SDK 装配；编号、窗口和平均值是业务数据，不是 SDK 为 stream 规定的历史形态。
+- **parser** 用 `rawinput` 读取会话本次取得的原始输入，不再执行 Stream handler，只解析这一条。
+- **消费方** 用 `require @Temperature` 读本次读数，用 `stream @Temperature` 读 `x :> xs`：编号是它的长度，窗口是它的前五条。`xs` 都已发布，读取不等待、不驱动来源；有 `stream @T` 读取的资产，会话从开头保留全部交付，见[按 x:xs 读取](STREAM_LIFELONG.md#flow)。
 
 [完整 Effects.hs](../demo/StreamDemo/Effects.hs) · [Types.hs](../demo/StreamDemo/Types.hs)
 
@@ -966,15 +969,15 @@ ast = chained [setup, monitor]
 
 ### 由持续资产驱动的持续资产
 
-被持续资产驱动的 effect 下面可以挂 Context，产出另一份持续资产。LinesDemo 中 `TextCounter` 每次执行统计已收到的行数与字符数，Context 沿用这次输出产出 `RunningTotal`。这样既保留操作与解析的分工，也不用为解析再执行一次统计。
+被持续资产驱动的 effect 下面可以挂 Context，产出另一份持续资产。LinesDemo 中 `TextCounter` 每次执行以 `stream @Line` 统计已收到的行数与字符数，Context 沿用这次输出产出 `RunningTotal`。这样既保留操作与解析的分工，也不用为解析再执行一次统计。
 
 ```haskell
 -- demo/LinesDemo/Effects.hs（节选）
 EffectSpec
   { name = "TextCounter"
   , typing = Excu { handler = Just "countText" }
-  , input = "InputSession"
-  , demands = [streams "TextLine", requires "OpenedInput"]
+  , input = "Root"
+  , demands = [streams "TextLine"]
   }
 
 EffectSpec
@@ -996,14 +999,8 @@ EffectSpec
 -- demo/LinesDemo/Handlers.hs（节选；省略 import）
 instance CountTextLayer m => CountTextHandler m where
   countText = do
-    Line text <- require @Line
-    InputFile _ _ counter <- require @InputFile
-    Total count size <- liftIO $ atomicModifyIORef' counter $ \(Total previousCount previousSize) ->
-      let count = previousCount + 1
-          size = previousSize + length text
-          updated = Total count size
-      in count `seq` size `seq` (updated, updated)
-    rawoutput [show count, show size]
+    seen <- stream @Line
+    rawoutput [show (length seen), show (sum [length text | Line text <- toList seen])]
 
 instance ParseTotalLayer m => ParseTotalHandler m where
   parseTotal = do
@@ -1057,7 +1054,7 @@ snapshotAst = chained [node "Announce", node "Report"]
   -- demo/LinesDemo/Handlers.hs（节选）；需要 import Framework.SDK (Emits(..), StreamEnds(..))
   instance NextLineLayer m => NextLineHandler m where
     nextLine = do
-      InputFile _ file _ <- require @InputFile
+      InputFile _ file <- require @InputFile
       let readLines = do
             finished <- liftIO (hIsEOF file)
             if finished then streamEnd else do

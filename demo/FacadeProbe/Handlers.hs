@@ -11,13 +11,12 @@
 
 module FacadeProbe.Handlers () where
 
-import Framework.SDK (Emits(rawemit), Raises(..), Raw(..), Reads(..), rawoutput)
+import Framework.SDK (Emits(rawemit), Raises(..), Raw(..), Reads(..), Streams(..), rawoutput)
 import FacadeProbe.Generated.Effects
 import FacadeProbe.Types
 import Control.Concurrent (threadDelay)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
-import Data.IORef (atomicModifyIORef', newIORef)
 import System.FilePath ((</>))
 import System.IO (IOMode(WriteMode), hClose, hFlush, hPutStr, openFile, readFile')
 
@@ -100,41 +99,30 @@ instance DescribeFilledLayer m => DescribeFilledHandler m where
     liftIO (putStrLn ("[state] filled, " ++ show (length text) ++ " characters"))
     rawoutput []
 
-instance NewCounterLayer m => NewCounterHandler m where
-  newCounter = liftIO (FeedCounter <$> newIORef 0)
-
-instance OpenCounterLayer m => OpenCounterHandler m where
-  openCounter = do
-    FeedCounter _ <- require @FeedCounter
-    rawoutput []
-
 instance NextALayer m => NextAHandler m where
   nextA = do
-    FeedCounter counter <- require @FeedCounter
     liftIO (threadDelay 40000)
-    number <- liftIO $ atomicModifyIORef' counter $ \previous ->
-      let current = previous + 1 in (current, current)
-    rawemit (show (number, 10 :: Int))
+    rawemit (show (10 :: Int))
 
 instance NextBLayer m => NextBHandler m where
   nextB = do
-    FeedCounter counter <- require @FeedCounter
     liftIO (threadDelay 60000)
-    number <- liftIO $ atomicModifyIORef' counter $ \previous ->
-      let current = previous + 1 in (current, current)
-    rawemit (show (number, 20 :: Int))
+    rawemit (show (20 :: Int))
 
 instance ParseLevelLayer m => ParseLevelHandler m where
   parseLevel = do
     reading <- concat <$> rawinput
     case reads reading of
-      [((number, value), "")] -> pure (Level number value)
+      [(value, "")] -> pure (Level value)
       _ -> raise (ParseLevelError reading)
 
 -- ShowA 与 ShowB 共用；失败按 handler 固定为 ShowLevelError，origin 仍是具体的 effect。
+-- 交付编号是 x:xs 的长度：本次交付加上同一会话中更早的交付。
 instance ShowLevelLayer m => ShowLevelHandler m where
   showLevel = do
-    Level number value <- require @Level
+    Level value <- require @Level
+    seen <- stream @Level
+    let number = length seen
     liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show number))
     when (number >= 3) (raise (ShowLevelError "enough deliveries"))
     rawoutput []

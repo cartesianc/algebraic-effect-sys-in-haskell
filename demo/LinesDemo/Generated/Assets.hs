@@ -27,23 +27,23 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "LinesDemo.Types", assetName = "InputFile", assetFile = "demo/LinesDemo/Types.hs", assetLine = 8, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "LinesDemo.Types", assetName = "InputFile", assetFile = "demo/LinesDemo/Types.hs", assetLine = 7, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "LinesDemo.Types", assetName = "InputFile", assetFile = "demo/LinesDemo/Types.hs", assetLine = 8, assetColumn = 18}
+          [ AssetSymbol {assetModule = "LinesDemo.Types", assetName = "InputFile", assetFile = "demo/LinesDemo/Types.hs", assetLine = 7, assetColumn = 18}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "LinesDemo.Types", assetName = "Line", assetFile = "demo/LinesDemo/Types.hs", assetLine = 14, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "LinesDemo.Types", assetName = "Line", assetFile = "demo/LinesDemo/Types.hs", assetLine = 11, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "LinesDemo.Types", assetName = "Line", assetFile = "demo/LinesDemo/Types.hs", assetLine = 14, assetColumn = 16}
+          [ AssetSymbol {assetModule = "LinesDemo.Types", assetName = "Line", assetFile = "demo/LinesDemo/Types.hs", assetLine = 11, assetColumn = 16}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "LinesDemo.Types", assetName = "Total", assetFile = "demo/LinesDemo/Types.hs", assetLine = 18, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "LinesDemo.Types", assetName = "Total", assetFile = "demo/LinesDemo/Types.hs", assetLine = 15, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "LinesDemo.Types", assetName = "Total", assetFile = "demo/LinesDemo/Types.hs", assetLine = 18, assetColumn = 14}
+          [ AssetSymbol {assetModule = "LinesDemo.Types", assetName = "Total", assetFile = "demo/LinesDemo/Types.hs", assetLine = 15, assetColumn = 14}
           ]
       , assetFields = []
       }

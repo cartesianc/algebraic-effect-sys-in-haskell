@@ -10,7 +10,7 @@ import LinesDemo.Types
 -- 输入文件是 InputSession 的资源：没有开启参数，只开启一次，在生产会话的各步骤间保持。
 -- LineFeed 每次取得一行原始文本；挂在它下面的 LineParser 把它解析成持续资产 TextLine。
 -- PrintLine 以 TextLine 的新交付驱动；Report 排在 lifelong 之后，来源结束、交付处理完才执行。
--- TextCounter 在消费 workflow 中每来一行统计一次，CountParser 沿用这次输出发布 RunningTotal。
+-- TextCounter 在消费 workflow 中每来一行以 x:xs 读取 TextLine 统计一次，CountParser 沿用这次输出发布 RunningTotal。
 -- ShowTotal 订阅统计资产，不再独立执行一遍 TextCounter；Report 读它结束时的最新一条。
 effects :: [EffectSpec]
 effects =
@@ -59,8 +59,8 @@ effects =
   , EffectSpec
       { name = "TextCounter"
       , typing = Excu { handler = Just "countText" }
-      , input = "InputSession"
-      , demands = [streams "TextLine", requires "OpenedInput"]
+      , input = "Root"
+      , demands = [streams "TextLine"]
       }
   , EffectSpec
       { name = "CountParser"

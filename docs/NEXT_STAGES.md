@@ -6,14 +6,16 @@
 <a id="urgent"></a>
 ## Urgent stage · 持续资产按 x:xs 读取、资产固定形式与 alternative
 
-本节五项都**尚未实现**，均来自 2026-11-21 的设计讨论。每项分三部分：“上下文”说明问题和代码证据；“已定”是用户确认的结论，实施时不再重新讨论；“待确认”是讨论中提出、尚未拍板的方案，动手前须逐条取得确认。五项都会改变注册写法、handler 能力或可观察运行行为，按工作约定须单独确认。实施时还要同步修订 `AGENTS.md` 中“累计记录等数据由业务资产与原子操作表达，不在 SDK 内设置历史类型特例”一句，以及 [COMPOSITION](COMPOSITION.md#ad-hoc)、[STREAM_LIFELONG](STREAM_LIFELONG.md#contracts) 中同样的表述。
+五项均来自 2026-11-21 的设计讨论。**U1 已实现（2026-11-21）**，其余四项**尚未实现**。每项分三部分：“上下文”说明问题和代码证据；“已定”是用户确认的结论，实施时不再重新讨论；“待确认”是讨论中提出、尚未拍板的方案，动手前须逐条取得确认。五项都会改变注册写法、handler 能力或可观察运行行为，按工作约定须单独确认。`AGENTS.md`、[COMPOSITION](COMPOSITION.md#ad-hoc) 与 [STREAM_LIFELONG](STREAM_LIFELONG.md#contracts) 中“累计记录由业务资产表达、不设历史类型特例”的表述已随 U1 改为[按 x:xs 读取](STREAM_LIFELONG.md#flow)。
 
 建议顺序：U1 → U2、U3（与 U1 共用运行时改动）→ U4（依赖 U1 去掉 `IORef`）。U5 与前四项独立。
 
 <a id="urgent-flow"></a>
-### U1　持续资产按 x:xs 读取（最先做）
+### U1　持续资产按 x:xs 读取（已实现）
 
-**上下文。** 现在的持续资产只实现了驱动，作为数据的一半没有实现。
+**状态：已实现（2026-11-21）。** 当前规则见 [STREAM_LIFELONG：按 x:xs 读取](STREAM_LIFELONG.md#flow)。实施按下面的方案与分层表完成，未增加声明语法。三个 demo 同时去掉了只为承载 `IORef` 而存在的注册：LinesDemo 的 `TextCounter` 不再读 `OpenedInput`（Input 改为 Root），StreamDemo 删去 `SensorResource`，FacadeProbe 删去 `CounterA/B` 与 `FeedScopeA/B`。未覆盖：被标记会话的保留没有上限（无限来源随运行增长，归 [U3](#urgent-backpressure)），流结束后的保存归 [U2](#urgent-history)。
+
+**上下文（实施前）。** 当时的持续资产只实现了驱动，作为数据的一半没有实现。
 
 - 会话已有读取 x:xs 所需的大部分结构：有序交付队列（`Runtime/Session.hs` 的 `stateEntries` 与绝对序号 `stateBase`），每个读取方一个游标（`Cursor`），`release` 按最小游标裁剪，`stateSignal` 用于等待，`stateStopped` 区分 `Drained` 和 `Broke`。但每次执行只推进一格。
 - 生成的 `streamT`（`readStreamContext`）读本读取方游标位置的一条，`readT`（`readContext`）读整次运行共享的最新值。两者都只返回一个值，又都包装成同一个 `require`，handler 分不出来。

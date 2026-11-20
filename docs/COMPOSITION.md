@@ -149,6 +149,7 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 
 | 行为 | 组合 | 推导 | 驱动 | 规范 |
 | --- | --- | --- | --- | --- |
+| 读取持续资产本次及更早的交付 | `streams "T"`，方法体 `stream @T` | 被历史读取的契约；生产它的 Context 原型标 `effectHistory`，Layer 带 `Streams T` | 会话从开头保留全部交付；读到 `x :> xs`，与 `require @T` 同一视图，不等待、不驱动来源 | [按 x:xs 读取](STREAM_LIFELONG.md#flow) |
 | 读取已有的值，不生产 | `requires "T"`，方法体 `require @T` | 读取权限与读取路由；读取点的来源（`protoSources`） | 先用本次捕获，再读许可来源的发布；没有值时等待，不补跑生产 | [Context](CORE_DESIGN.md#context) |
 | 静态证明普通读取无来源 | 已到达的读取在所有已分析路径均无合法供值或捕获 | gen 在来源证明阶段拒绝，并定位读取点 | 不把结构错误交给运行时缺值处理 | [静态无来源诊断](EFFECT_GRAPH.md#missing-source) |
 | 按类型读取，读到哪份由注册决定 | 同一表示类型细化成多份资产；handler 只写 `require @T` | 每个 effect 按“表示类型 + effect”生成读取实例 | 同一个 handler 绑到不同 effect，各自读到 demands 里那份资产 | [Context](CORE_DESIGN.md#context) |
@@ -225,7 +226,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | 结束向下游传播并排空 | 无需写法 | — | 封口后读取方领完积压才结束；单元在所需来源排空或节点都结束订阅时结束；全部单元结束后 lifelong 返回 | [9.4](STREAM_LIFELONG.md#end) | 流的完成 |
 | 结束后或在外部读最新的值 | lifelong 的后继或 lifelong 外写 `requires "T"` | 静态来源表；后继读取的来源保留 | 后继读每个来源最新一次发布；lifelong 外由托管会话交付，至少等到一条 | [9.4](STREAM_LIFELONG.md#end)、[8.3](STREAM_LIFELONG.md#production) | `runLast` |
 
-类比在许多地方并不成立，例如：资产是有唯一来源、按名字细化的业务值；消费按单元逐条推进，同一单元不并发处理多条；保留未领取交付但没有容量背压；`require` 读的是当作不变的值，不是订阅；含 lifelong 的程序中任何失败暂按临时规则终止整次运行。累计记录、平均值或其他状态由业务 handler 与资产表达。
+类比在许多地方并不成立，例如：资产是有唯一来源、按名字细化的业务值；消费按单元逐条推进，同一单元不并发处理多条；保留未领取交付但没有容量背压；`require` 读的是当作不变的值，不是订阅；含 lifelong 的程序中任何失败暂按临时规则终止整次运行。会话内的计数、窗口等跨条逻辑用 `stream @T` 读取 x:xs，流结束后的保存尚未设计。
 
 <a id="stream-drive"></a>
 ### 6.3 运行时据哪些事实选择驱动

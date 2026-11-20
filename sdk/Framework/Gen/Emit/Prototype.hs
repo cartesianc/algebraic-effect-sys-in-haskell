@@ -171,6 +171,7 @@ renderEffect effect = update
     , changed P.effectResource "effectResource" show
     , changed P.effectContextDependencies "effectContextDependencies" show
     , changed P.effectContinuous "effectContinuous" show
+    , changed P.effectHistory "effectHistory" show
     ])
   where
     -- 与 SDK 的 effectProto 默认值相同的字段不写。

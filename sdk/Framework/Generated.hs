@@ -10,7 +10,7 @@ module Framework.Generated
   , App, TypeRef(..)
   , Target, targetApp, SessionSteps, receiveSteps, deriveSteps
   , failEffect, handleFailure, withErrorPath, withErrorHandlers, ErrorHandler(..)
-  , readContext, readStreamContext
+  , readContext, readStreamContext, readStreamHistory
   , callContext, projectContext, enterHandler
   , atomicHandle, atomicScope, emittedInput, emitToParser, endSource, endSubscription
   , openScope, closeScope, withScopeDependencies
@@ -25,7 +25,7 @@ import Framework.Runtime.Protocol
   , ContextStore(enterHandler, endSource, endSubscription)
   , ScopeStore(openScope, closeScope, withScopeDependencies) )
 import Framework.Runtime.Context
-  ( readContext, readStreamContext, callContext
+  ( readContext, readStreamContext, readStreamHistory, callContext
   , projectContext, atomicHandle, atomicScope )
 import Framework.Language.Registration (TypeRef(..))
 import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, deriveSteps)

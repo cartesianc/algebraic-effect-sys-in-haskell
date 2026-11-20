@@ -71,6 +71,11 @@ class Monad m => ContextStore environment m | m -> environment where
   -- Nothing 表示当前不允许启动会话（诊断、收尾）；会话失败时传播它的原失败。
   awaitContextValue :: String -> (environment -> Maybe value) -> m (Maybe value)
   awaitContextValue _ _ = pure Nothing
+  -- stream @T：与上面两者取同一个固定视图，返回本次值及同会话更早的发布，最新在前。
+  readContextHistory :: String -> (environment -> Maybe value) -> m (Maybe [value])
+  readContextHistory _ _ = pure Nothing
+  awaitContextHistory :: String -> (environment -> Maybe value) -> m (Maybe [value])
+  awaitContextHistory _ _ = pure Nothing
   -- Stream handler 的 streamEnd：退出本次生产步骤，由生产任务接住并正常结束会话。
   -- 不是 Failure，不经过 Error 诊断，也不被方法体内的 catchError 接住。
   endSource :: m value

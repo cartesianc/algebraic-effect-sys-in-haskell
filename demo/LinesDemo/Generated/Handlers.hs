@@ -16,18 +16,18 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module LinesDemo.Generated.Handlers (handlerSourceFingerprint, runAnnounce, getOpenedInput, readOpenedInput, openInputSession, closeInputSession, nextLineFeed, hookTraceLine, getTextLine, streamTextLine, runPrintLine, runTextCounter, getRunningTotal, streamRunningTotal, runShowTotal, runReport, newScopeHandlers, errorHandlers) where
+module LinesDemo.Generated.Handlers (handlerSourceFingerprint, runAnnounce, getOpenedInput, readOpenedInput, openInputSession, closeInputSession, nextLineFeed, hookTraceLine, getTextLine, streamTextLine, runPrintLine, runTextCounter, getRunningTotal, streamRunningTotal, runShowTotal, runReport, historyTextLine, historyRunningTotal, newScopeHandlers, errorHandlers) where
 
 import qualified Framework.Generated as SDK
 import qualified LinesDemo.Generated.Effects as Effects
 import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
-import Framework.SDK (Emits(rawemit), Hooks(hook), Operation(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), rawoutput)
+import Framework.SDK (Emits(rawemit), Hooks(hook), Operation(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), Streams(..), rawoutput)
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
 import Control.Monad.IO.Class (liftIO)
-import Data.IORef (atomicModifyIORef', newIORef)
+import Data.Foldable (toList)
 import System.FilePath ((</>))
 import System.IO (IOMode(ReadMode), hClose, hGetLine, hIsEOF, openFile)
 
@@ -41,25 +41,24 @@ instance AcquireInputLayer m => AcquireInputHandler m where
   acquireInput = do
     let path = "demo" </> "LinesDemo" </> "input.txt"
     file <- liftIO (openFile path ReadMode)
-    counter <- liftIO (newIORef (Total 0 0))
-    pure (InputFile path file counter)
+    pure (InputFile path file)
 
 instance OpenInputLayer m => OpenInputHandler m where
   openInput = do
-    InputFile path _ _ <- require @InputFile
+    InputFile path _ <- require @InputFile
     liftIO (putStrLn ("[open] " ++ path))
     rawoutput []
 
 instance CloseInputLayer m => CloseInputHandler m where
   closeInput = do
-    InputFile path file _ <- require @InputFile
+    InputFile path file <- require @InputFile
     liftIO (hClose file >> putStrLn ("[close] " ++ path))
     rawoutput []
 
 -- 在一次来源调用内持续读取。每个 rawemit 都完成这行的解析与发布，再读取下一行。
 instance NextLineLayer m => NextLineHandler m where
   nextLine = do
-    InputFile _ file _ <- require @InputFile
+    InputFile _ file <- require @InputFile
     let readLines = do
           finished <- liftIO (hIsEOF file)
           if finished then streamEnd else do
@@ -90,17 +89,11 @@ instance PrintLineLayer m => PrintLineHandler m where
     liftIO (putStrLn ("line: " ++ text))
     rawoutput []
 
--- 由 TextLine 驱动：每来一行执行一次。计数是业务状态，SDK 只交付本次 Line。
+-- 由 TextLine 驱动：每来一行执行一次。stream 给出本次的一行及同一会话中更早的行，计数直接由它算出。
 instance CountTextLayer m => CountTextHandler m where
   countText = do
-    Line text <- require @Line
-    InputFile _ _ counter <- require @InputFile
-    Total count size <- liftIO $ atomicModifyIORef' counter $ \(Total previousCount previousSize) ->
-      let count = previousCount + 1
-          size = previousSize + length text
-          updated = Total count size
-      in count `seq` size `seq` (updated, updated)
-    rawoutput [show count, show size]
+    seen <- stream @Line
+    rawoutput [show (length seen), show (sum [length text | Line text <- toList seen])]
 
 instance ParseTotalLayer m => ParseTotalHandler m where
   parseTotal = do
@@ -123,7 +116,7 @@ instance ReportLayer m => ReportHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "65972ef14476f7caeea09207461d7d9d"
+handlerSourceFingerprint = Just "1ddffe69d4f67a351197b372017d1415"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -228,14 +221,20 @@ instance SDK.Reads Line (Wrap hooks "PrintLine" method) where
 instance SDK.Reads Line (Wrap hooks "TextCounter" method) where
   require = Wrap (SDK.coerce <$> streamTextLine)
 
-instance SDK.Reads InputFile (Wrap hooks "TextCounter" method) where
-  require = Wrap (SDK.coerce <$> readOpenedInput)
-
 instance SDK.Reads Total (Wrap hooks "ShowTotal" method) where
   require = Wrap (SDK.coerce <$> streamRunningTotal)
 
 instance SDK.Reads Total (Wrap hooks "Report" method) where
   require = Wrap (SDK.coerce <$> streamRunningTotal)
+
+instance SDK.Streams Line (Wrap hooks "PrintLine" method) where
+  stream = Wrap (SDK.coerce <$> historyTextLine)
+
+instance SDK.Streams Line (Wrap hooks "TextCounter" method) where
+  stream = Wrap (SDK.coerce <$> historyTextLine)
+
+instance SDK.Streams Total (Wrap hooks "ShowTotal" method) where
+  stream = Wrap (SDK.coerce <$> historyRunningTotal)
 
 instance Captured hooks => SDK.Raw (Wrap hooks "LineParser" "parseLine") where
   rawinput = Wrap SDK.emittedInput >>= \value -> value <$ notifyAt @'SDK.StreamKind (`SDK.RawInput` value)
@@ -315,6 +314,12 @@ streamTextLine =
   . SDK.handleFailure $
     SDK.readStreamContext "LineParser" Effects.ContextBindingError Effects.boundLineParser
 
+historyTextLine :: Effects.App (SDK.Flow Effects.TextLine)
+historyTextLine =
+  SDK.withErrorPath ["InputSession"]
+  . SDK.handleFailure $
+    SDK.readStreamHistory "LineParser" Effects.ContextBindingError Effects.boundLineParser
+
 runPrintLine :: forall hooks. Captured hooks => Effects.App [String]
 runPrintLine =
   SDK.handleFailure
@@ -324,27 +329,27 @@ runPrintLine =
 
 runTextCounter :: forall hooks. Captured hooks => Effects.App [String]
 runTextCounter =
-  SDK.withErrorPath ["InputSession"]
-  . SDK.handleFailure
+  SDK.handleFailure
   . SDK.atomicHandle "runTextCounter" [] [("CountParser", () <$ getRunningTotal @hooks)]
-  . SDK.withScopeDependencies ["InputSession"]
   . SDK.enterHandler "TextCounter" $
-    openInputSession @hooks >> call @hooks @"TextCounter" @"countText" Effects.countText
+    call @hooks @"TextCounter" @"countText" Effects.countText
 
 getRunningTotal :: forall hooks. Captured hooks => Effects.App Effects.RunningTotal
 getRunningTotal =
-  SDK.withErrorPath ["InputSession"]
-  . SDK.handleFailure
-  . SDK.withScopeDependencies ["InputSession"]
+  SDK.handleFailure
   . SDK.callContext "CountParser"
       (\value bindings -> bindings { Effects.boundCountParser = Just value }) $
     Effects.RunningTotal <$> call @hooks @"CountParser" @"parseTotal" Effects.parseTotal
 
 streamRunningTotal :: Effects.App Effects.RunningTotal
 streamRunningTotal =
-  SDK.withErrorPath ["InputSession"]
-  . SDK.handleFailure $
+  SDK.handleFailure $
     SDK.readStreamContext "CountParser" Effects.ContextBindingError Effects.boundCountParser
+
+historyRunningTotal :: Effects.App (SDK.Flow Effects.RunningTotal)
+historyRunningTotal =
+  SDK.handleFailure $
+    SDK.readStreamHistory "CountParser" Effects.ContextBindingError Effects.boundCountParser
 
 runShowTotal :: forall hooks. Captured hooks => Effects.App [String]
 runShowTotal =

@@ -521,31 +521,11 @@ instance ContextStore env (App env cause) where
     let allowed = not (isJust (originalFailure environment)) && not (cleaningScopes environment)
     when allowed $ local (\inside -> inside
       { caller = Nothing, replays = (method, raw) : replays inside }) action
-  -- 本次已有视图时直接读取；lifelong 单元中尚未领取的会话资产在第一次读取时领取本次 frame 的交付。
-  -- 这时才发现来源已结束并排空：本次调用无法继续，以内部信号交回单元调度，由它正常结束单元。
-  -- 本单元发布、一条都还没有发布过的会话（Undriven）：没有可读的值，按缺值处理（awaitContextValue 不另找来源）。
-  readContextValue source select = do
-    environment <- AppRun ask
-    captured <- rawIO (lookup source <$> readIORef (views environment))
-    case captured of
-      Just view -> rememberView environment source view >> pure (valueOf source select view)
-      Nothing | deliveryAllowed environment, Just deliver <- frameDeliver environment source -> do
-        delivered <- rawIO deliver
-        case delivered of
-          Left Undriven -> pure Nothing
-          _ -> captureDelivery environment source select (pure delivered)
-            >>= maybe (rawIO (throwIO DeliveryDrained)) (pure . Just)
-      Nothing -> pure Nothing
-  -- 诊断、收尾与 close 期间不启动会话；读到的绑定捕获为本次视图。
-  -- 会话已结束时仍可读最后一次发布，不重新启动来源；零发布结束按缺值报出。
-  -- 合法的先前 lifelong 会话优先，否则取得编译器为该资产安排的 interpreter 托管会话。
-  awaitContextValue source select = do
-    environment <- AppRun ask
-    if not (deliveryAllowed environment) || isJust (frameDeliver environment source) then pure Nothing else do
-      let graph = runtimeGraph environment
-      ended <- rawIO (endedSession graph (originNode (executionOrigin (execution environment))) source)
-      session <- maybe (rawIO (obtainSession graph (Nothing, source) [] [])) pure ended
-      captureDelivery environment source select (rawIO (awaitView session (bindingRetention environment)))
+  -- 值与 x:xs 读取同一个固定视图，只差投影：valueOf 取最后一条，historyOf 取整段。
+  readContextValue source select = readContextWith source (valueOf source select)
+  awaitContextValue source select = awaitContextWith source (valueOf source select)
+  readContextHistory source select = readContextWith source (historyOf source select)
+  awaitContextHistory source select = awaitContextWith source (historyOf source select)
   endSource = rawIO (throwIO SourceEnded)
   endSubscription = rawIO (throwIO SubscriptionEnded)
   recordContextInput source = do
@@ -685,7 +665,43 @@ runDiagnostic environment problem selected callback = do
     Nothing -> execute
     Just slot -> withMVar (scopeRecoveryGate slot) (const execute)
 
--- 捕获的是本次交付的 Binding；SDK 不把业务值解释成历史或其他容器。
+-- 本次已有视图时直接读取；lifelong 单元中尚未领取的会话资产在第一次读取时领取本次 frame 的交付。
+-- 这时才发现来源已结束并排空：本次调用无法继续，以内部信号交回单元调度，由它正常结束单元。
+-- 本单元发布、一条都还没有发布过的会话（Undriven）：没有可读的值，按缺值处理（awaitContextWith 不另找来源）。
+readContextWith :: String -> (View env cause -> Maybe value) -> App env cause (Maybe value)
+readContextWith source project = do
+  environment <- AppRun ask
+  captured <- rawIO (lookup source <$> readIORef (views environment))
+  case captured of
+    Just view -> rememberView environment source view >> pure (project view)
+    Nothing | deliveryAllowed environment, Just deliver <- frameDeliver environment source -> do
+      delivered <- rawIO deliver
+      case delivered of
+        Left Undriven -> pure Nothing
+        _ -> captureDelivery environment source project (pure delivered)
+          >>= maybe (rawIO (throwIO DeliveryDrained)) (pure . Just)
+    Nothing -> pure Nothing
+
+-- 诊断、收尾与 close 期间不启动会话；读到的绑定捕获为本次视图。
+-- 会话已结束时仍可读最后一次发布，不重新启动来源；零发布结束按缺值报出。
+-- 合法的先前 lifelong 会话优先，否则取得编译器为该资产安排的 interpreter 托管会话。
+awaitContextWith :: String -> (View env cause -> Maybe value) -> App env cause (Maybe value)
+awaitContextWith source project = do
+  environment <- AppRun ask
+  if not (deliveryAllowed environment) || isJust (frameDeliver environment source) then pure Nothing else do
+    let graph = runtimeGraph environment
+    ended <- rawIO (endedSession graph (originNode (executionOrigin (execution environment))) source)
+    session <- maybe (rawIO (obtainSession graph (Nothing, source) [] [])) pure ended
+    captureDelivery environment source project (rawIO (awaitView session (bindingRetention environment)))
+
+-- stream @T 的投影：视图整段，本次值在前，其后是同会话更早的发布。
+historyOf :: String -> (env -> Maybe value) -> View env cause -> Maybe [value]
+historyOf source select view = case toList (Seq.reverse view) of
+  [] -> Nothing
+  bindings -> Just [fromMaybe (error ("SDK: a delivery of " ++ source ++ " carries no value; regenerate the program"))
+    (select (bindingValues binding)) | binding <- bindings]
+
+-- 捕获的是本次交付的 Binding（视图最后一条）。
 valueOf :: String -> (env -> Maybe value) -> View env cause -> Maybe value
 valueOf source select view = fmap (\binding ->
   fromMaybe (error ("SDK: a delivery of " ++ source ++ " carries no value; regenerate the program"))
@@ -710,9 +726,9 @@ rememberView environment source view = when (deliveryAllowed environment) $
 
 -- 会话失败时传播它的原失败或原生异常；取得的视图捕获为本次视图，之后的发布不改写它。
 -- Nothing：来源已正常结束且没有可交付的视图，由调用方按各自的协议处理。
-captureDelivery :: Environment env cause -> String -> (env -> Maybe value)
+captureDelivery :: Environment env cause -> String -> (View env cause -> Maybe value)
                 -> App env cause (Either (Stopped cause) (View env cause)) -> App env cause (Maybe value)
-captureDelivery environment source select deliver = do
+captureDelivery environment source project deliver = do
   delivered <- deliver
   case delivered of
     Left (Broke (Left exception)) -> rawIO (throwIO exception)
@@ -723,7 +739,7 @@ captureDelivery environment source select deliver = do
       rememberView environment source view
       rawIO $ atomicModifyIORef' (views environment) $ \current ->
         ((source, view) : filter ((/= source) . fst) current, ())
-      pure (valueOf source select view)
+      pure (project view)
 
 -- 此证据只描述这次失败所涉及的实例，不参与开启参数的生产身份匹配。
 scopeFailureTarget :: String -> Maybe (ScopeInstance env cause) -> Failure cause -> Failure cause

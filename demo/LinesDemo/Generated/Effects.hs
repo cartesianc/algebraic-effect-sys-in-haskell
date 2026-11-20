@@ -106,7 +106,7 @@ newtype ParseLineError = ParseLineError String
 instance SDK.HandlerError ParseLineError Errors where raised (ParseLineError description) = (ParseLineFailure, description)
 
 -- handler printLine：绑定到 PrintLine。
-type PrintLineLayer m = (SDK.Reads Line m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises PrintLineError m, MonadIO m)
+type PrintLineLayer m = (SDK.Reads Line m, SDK.Streams Line m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises PrintLineError m, MonadIO m)
 class PrintLineHandler m where
   printLine :: m [String]
 
@@ -116,7 +116,7 @@ newtype PrintLineError = PrintLineError String
 instance SDK.HandlerError PrintLineError Errors where raised (PrintLineError description) = (PrintLineFailure, description)
 
 -- handler countText：绑定到 TextCounter。
-type CountTextLayer m = (SDK.Reads InputFile m, SDK.Reads Line m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises CountTextError m, MonadIO m)
+type CountTextLayer m = (SDK.Reads Line m, SDK.Streams Line m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises CountTextError m, MonadIO m)
 class CountTextHandler m where
   countText :: m [String]
 
@@ -136,7 +136,7 @@ newtype ParseTotalError = ParseTotalError String
 instance SDK.HandlerError ParseTotalError Errors where raised (ParseTotalError description) = (ParseTotalFailure, description)
 
 -- handler showTotal：绑定到 ShowTotal。
-type ShowTotalLayer m = (SDK.Reads Total m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ShowTotalError m, MonadIO m)
+type ShowTotalLayer m = (SDK.Reads Total m, SDK.Streams Total m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ShowTotalError m, MonadIO m)
 class ShowTotalHandler m where
   showTotal :: m [String]
 

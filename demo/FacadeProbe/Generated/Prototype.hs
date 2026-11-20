@@ -154,42 +154,16 @@ generatedPrototype =
             , SDK.demands = [SDK.Demand SDK.RequireAccess "ReportStateFilled"]
             }
         , SDK.EffectSpec
-            { SDK.name = "CounterA"
-            , SDK.typing =
-                SDK.Context (SDK.AssetDecl "CountA" (SDK.TypeRef "FeedCounter")) (Just "newCounter") True False
-            , SDK.input = "Root"
-            , SDK.demands = []
-            }
-        , SDK.EffectSpec
-            { SDK.name = "CounterB"
-            , SDK.typing =
-                SDK.Context (SDK.AssetDecl "CountB" (SDK.TypeRef "FeedCounter")) (Just "newCounter") True False
-            , SDK.input = "Root"
-            , SDK.demands = []
-            }
-        , SDK.EffectSpec
-            { SDK.name = "FeedScopeA"
-            , SDK.typing = SDK.Scoped (Just "openCounter") Nothing
-            , SDK.input = "Root"
-            , SDK.demands = [SDK.Demand SDK.RequestAccess "CountA", SDK.Demand SDK.RequireAccess "CountA"]
-            }
-        , SDK.EffectSpec
-            { SDK.name = "FeedScopeB"
-            , SDK.typing = SDK.Scoped (Just "openCounter") Nothing
-            , SDK.input = "Root"
-            , SDK.demands = [SDK.Demand SDK.RequestAccess "CountB", SDK.Demand SDK.RequireAccess "CountB"]
-            }
-        , SDK.EffectSpec
             { SDK.name = "FeedA"
             , SDK.typing = SDK.Stream (Just "nextA")
-            , SDK.input = "FeedScopeA"
-            , SDK.demands = [SDK.Demand SDK.RequireAccess "CountA"]
+            , SDK.input = "Root"
+            , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "FeedB"
             , SDK.typing = SDK.Stream (Just "nextB")
-            , SDK.input = "FeedScopeB"
-            , SDK.demands = [SDK.Demand SDK.RequireAccess "CountB"]
+            , SDK.input = "Root"
+            , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "ParserA"
@@ -365,81 +339,35 @@ generatedPrototype =
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "ReportStateFilled" "ReportInspect"]
             , SDK.effectContextDependencies = ["ReportLocation","ReportInspect"]
             }
-        , (SDK.effectProto "CounterA" SDK.ContextKind "Root")
-            { SDK.effectMethods = [(SDK.ContextRequest, GetCountAGen), (SDK.ContextRequire, ReadCountAGen)]
-            , SDK.effectProduces = Just "CountA"
-            }
-        , (SDK.effectProto "CounterB" SDK.ContextKind "Root")
-            { SDK.effectMethods = [(SDK.ContextRequest, GetCountBGen), (SDK.ContextRequire, ReadCountBGen)]
-            , SDK.effectProduces = Just "CountB"
-            }
-        , (SDK.effectProto "FeedScopeA" SDK.ScopedKind "Root")
-            { SDK.effectMethods = [(SDK.ScopeOpen, OpenFeedScopeAGen)]
-            , SDK.effectDemands =
-                [ SDK.ResolvedDemand SDK.RequestAccess "CountA" "CounterA"
-                , SDK.ResolvedDemand SDK.RequireAccess "CountA" "CounterA"
-                ]
-            , SDK.effectNearestScopes = ["FeedScopeA"]
-            , SDK.effectResource = Just "CounterA"
-            , SDK.effectContextDependencies = ["CounterA"]
-            }
-        , (SDK.effectProto "FeedScopeB" SDK.ScopedKind "Root")
-            { SDK.effectMethods = [(SDK.ScopeOpen, OpenFeedScopeBGen)]
-            , SDK.effectDemands =
-                [ SDK.ResolvedDemand SDK.RequestAccess "CountB" "CounterB"
-                , SDK.ResolvedDemand SDK.RequireAccess "CountB" "CounterB"
-                ]
-            , SDK.effectNearestScopes = ["FeedScopeB"]
-            , SDK.effectResource = Just "CounterB"
-            , SDK.effectContextDependencies = ["CounterB"]
-            }
-        , (SDK.effectProto "FeedA" SDK.StreamKind "FeedScopeA")
+        , (SDK.effectProto "FeedA" SDK.StreamKind "Root")
             { SDK.effectMethods = [(SDK.StreamHandler, NextFeedAGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "CountA" "CounterA"]
-            , SDK.effectScopes = ["FeedScopeA"]
-            , SDK.effectInputChain = ["FeedScopeA"]
-            , SDK.effectScopeParents = ["FeedScopeA"]
-            , SDK.effectNearestScopes = ["FeedScopeA"]
-            , SDK.effectContextDependencies = ["CounterA"]
             }
-        , (SDK.effectProto "FeedB" SDK.StreamKind "FeedScopeB")
+        , (SDK.effectProto "FeedB" SDK.StreamKind "Root")
             { SDK.effectMethods = [(SDK.StreamHandler, NextFeedBGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "CountB" "CounterB"]
-            , SDK.effectScopes = ["FeedScopeB"]
-            , SDK.effectInputChain = ["FeedScopeB"]
-            , SDK.effectScopeParents = ["FeedScopeB"]
-            , SDK.effectNearestScopes = ["FeedScopeB"]
-            , SDK.effectContextDependencies = ["CounterB"]
             }
         , (SDK.effectProto "ParserA" SDK.ContextKind "FeedA")
             { SDK.effectMethods = [(SDK.ContextStream, GetLevelAGen), (SDK.ContextRequire, StreamLevelAGen)]
             , SDK.effectProduces = Just "LevelA"
-            , SDK.effectScopes = ["FeedScopeA"]
-            , SDK.effectInputChain = ["FeedA","FeedScopeA"]
-            , SDK.effectScopeParents = ["FeedScopeA"]
-            , SDK.effectNearestScopes = ["FeedScopeA"]
-            , SDK.effectContextDependencies = ["CounterA"]
+            , SDK.effectInputChain = ["FeedA"]
             , SDK.effectContinuous = True
+            , SDK.effectHistory = True
             }
         , (SDK.effectProto "ParserB" SDK.ContextKind "FeedB")
             { SDK.effectMethods = [(SDK.ContextStream, GetLevelBGen), (SDK.ContextRequire, StreamLevelBGen)]
             , SDK.effectProduces = Just "LevelB"
-            , SDK.effectScopes = ["FeedScopeB"]
-            , SDK.effectInputChain = ["FeedB","FeedScopeB"]
-            , SDK.effectScopeParents = ["FeedScopeB"]
-            , SDK.effectNearestScopes = ["FeedScopeB"]
-            , SDK.effectContextDependencies = ["CounterB"]
+            , SDK.effectInputChain = ["FeedB"]
             , SDK.effectContinuous = True
+            , SDK.effectHistory = True
             }
         , (SDK.effectProto "ShowA" SDK.ExcuKind "Root")
             { SDK.effectMethods = [(SDK.HandlerMethod, RunShowAGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.StreamAccess "LevelA" "ParserA"]
-            , SDK.effectContextDependencies = ["CounterA","ParserA"]
+            , SDK.effectContextDependencies = ["ParserA"]
             }
         , (SDK.effectProto "ShowB" SDK.ExcuKind "Root")
             { SDK.effectMethods = [(SDK.HandlerMethod, RunShowBGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.StreamAccess "LevelB" "ParserB"]
-            , SDK.effectContextDependencies = ["CounterB","ParserB"]
+            , SDK.effectContextDependencies = ["ParserB"]
             }
         ]
     , SDK.protoMethods =
@@ -545,36 +473,22 @@ generatedPrototype =
         , SDK.MethodDefinition ReadReportStateGen GetReportStateGen SDK.ContextRequire SDK.Empty
         , SDK.MethodDefinition RunOnBlankGen RunOnBlankGen SDK.HandlerMethod SDK.Empty
         , SDK.MethodDefinition RunOnFilledGen RunOnFilledGen SDK.HandlerMethod (SDK.Call ReadReportStateGen)
-        , SDK.MethodDefinition GetCountAGen GetCountAGen SDK.ContextRequest SDK.Empty
-        , SDK.MethodDefinition ReadCountAGen GetCountAGen SDK.ContextRequire SDK.Empty
-        , SDK.MethodDefinition GetCountBGen GetCountBGen SDK.ContextRequest SDK.Empty
-        , SDK.MethodDefinition ReadCountBGen GetCountBGen SDK.ContextRequire SDK.Empty
-        , SDK.MethodDefinition
-            OpenFeedScopeAGen
-            OpenFeedScopeAGen
-            SDK.ScopeOpen
-            (SDK.Sequence [SDK.Call GetCountAGen, SDK.Call ReadCountAGen])
-        , SDK.MethodDefinition
-            OpenFeedScopeBGen
-            OpenFeedScopeBGen
-            SDK.ScopeOpen
-            (SDK.Sequence [SDK.Call GetCountBGen, SDK.Call ReadCountBGen])
-        , SDK.MethodDefinition
-            NextFeedAGen
-            NextFeedAGen
-            SDK.StreamHandler
-            (SDK.Sequence [SDK.Call OpenFeedScopeAGen, SDK.Call ReadCountAGen])
-        , SDK.MethodDefinition
-            NextFeedBGen
-            NextFeedBGen
-            SDK.StreamHandler
-            (SDK.Sequence [SDK.Call OpenFeedScopeBGen, SDK.Call ReadCountBGen])
+        , SDK.MethodDefinition NextFeedAGen NextFeedAGen SDK.StreamHandler SDK.Empty
+        , SDK.MethodDefinition NextFeedBGen NextFeedBGen SDK.StreamHandler SDK.Empty
         , SDK.MethodDefinition GetLevelAGen GetLevelAGen SDK.ContextStream (SDK.Call NextFeedAGen)
         , SDK.MethodDefinition StreamLevelAGen GetLevelAGen SDK.ContextRequire SDK.Empty
         , SDK.MethodDefinition GetLevelBGen GetLevelBGen SDK.ContextStream (SDK.Call NextFeedBGen)
         , SDK.MethodDefinition StreamLevelBGen GetLevelBGen SDK.ContextRequire SDK.Empty
-        , SDK.MethodDefinition RunShowAGen RunShowAGen SDK.HandlerMethod (SDK.Call StreamLevelAGen)
-        , SDK.MethodDefinition RunShowBGen RunShowBGen SDK.HandlerMethod (SDK.Call StreamLevelBGen)
+        , SDK.MethodDefinition
+            RunShowAGen
+            RunShowAGen
+            SDK.HandlerMethod
+            (SDK.Sequence [SDK.Call StreamLevelAGen, SDK.Call StreamLevelAGen])
+        , SDK.MethodDefinition
+            RunShowBGen
+            RunShowBGen
+            SDK.HandlerMethod
+            (SDK.Sequence [SDK.Call StreamLevelBGen, SDK.Call StreamLevelBGen])
         ]
     , SDK.protoWorkflow =
         SDK.ChainedAt
@@ -776,80 +690,80 @@ generatedPrototype =
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "LevelA"
             , SDK.chainEntry = NextFeedAGen
-            , SDK.chainReaches = [NextFeedAGen, OpenFeedScopeAGen, GetCountAGen, ReadCountAGen]
+            , SDK.chainReaches = [NextFeedAGen]
             , SDK.chainDrives = []
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[OpenFeedScopeAGen]]
+            , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [4,-1,0,1]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "LevelA"
             , SDK.chainEntry = GetLevelAGen
-            , SDK.chainReaches = [GetLevelAGen, NextFeedAGen, OpenFeedScopeAGen, GetCountAGen, ReadCountAGen]
+            , SDK.chainReaches = [GetLevelAGen, NextFeedAGen]
             , SDK.chainDrives = ["LevelA"]
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[OpenFeedScopeAGen]]
+            , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [4,-1,1,0]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "LevelB"
             , SDK.chainEntry = NextFeedBGen
-            , SDK.chainReaches = [NextFeedBGen, OpenFeedScopeBGen, GetCountBGen, ReadCountBGen]
+            , SDK.chainReaches = [NextFeedBGen]
             , SDK.chainDrives = []
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[OpenFeedScopeBGen]]
+            , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [4,-1,1,1]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "LevelB"
             , SDK.chainEntry = GetLevelBGen
-            , SDK.chainReaches = [GetLevelBGen, NextFeedBGen, OpenFeedScopeBGen, GetCountBGen, ReadCountBGen]
+            , SDK.chainReaches = [GetLevelBGen, NextFeedBGen]
             , SDK.chainDrives = ["LevelB"]
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[OpenFeedScopeBGen]]
+            , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [-2,0,0]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "LevelA"
             , SDK.chainEntry = NextFeedAGen
-            , SDK.chainReaches = [NextFeedAGen, OpenFeedScopeAGen, GetCountAGen, ReadCountAGen]
+            , SDK.chainReaches = [NextFeedAGen]
             , SDK.chainDrives = []
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[OpenFeedScopeAGen]]
+            , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [-2,0,1]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "LevelA"
             , SDK.chainEntry = GetLevelAGen
-            , SDK.chainReaches = [GetLevelAGen, NextFeedAGen, OpenFeedScopeAGen, GetCountAGen, ReadCountAGen]
+            , SDK.chainReaches = [GetLevelAGen, NextFeedAGen]
             , SDK.chainDrives = ["LevelA"]
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[OpenFeedScopeAGen]]
+            , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [-2,1,0]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "LevelB"
             , SDK.chainEntry = NextFeedBGen
-            , SDK.chainReaches = [NextFeedBGen, OpenFeedScopeBGen, GetCountBGen, ReadCountBGen]
+            , SDK.chainReaches = [NextFeedBGen]
             , SDK.chainDrives = []
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[OpenFeedScopeBGen]]
+            , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [-2,1,1]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "LevelB"
             , SDK.chainEntry = GetLevelBGen
-            , SDK.chainReaches = [GetLevelBGen, NextFeedBGen, OpenFeedScopeBGen, GetCountBGen, ReadCountBGen]
+            , SDK.chainReaches = [GetLevelBGen, NextFeedBGen]
             , SDK.chainDrives = ["LevelB"]
             , SDK.chainReads = []
-            , SDK.chainScopePaths = [[OpenFeedScopeBGen]]
+            , SDK.chainScopePaths = [[]]
             }
         ]
     , SDK.protoChainDefinitions =
@@ -1049,58 +963,21 @@ generatedPrototype =
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
-            , SDK.definitionEffect = "CounterA"
-            , SDK.definitionEntry = GetCountAGen
-            , SDK.definitionReaches = [GetCountAGen]
-            }
-        , SDK.ChainDefinition
-            { SDK.definitionKind = SDK.ContextChain
-            , SDK.definitionEffect = "CounterA"
-            , SDK.definitionEntry = ReadCountAGen
-            , SDK.definitionReaches = [ReadCountAGen]
-            }
-        , SDK.ChainDefinition
-            { SDK.definitionKind = SDK.ContextChain
-            , SDK.definitionEffect = "CounterB"
-            , SDK.definitionEntry = GetCountBGen
-            , SDK.definitionReaches = [GetCountBGen]
-            }
-        , SDK.ChainDefinition
-            { SDK.definitionKind = SDK.ContextChain
-            , SDK.definitionEffect = "CounterB"
-            , SDK.definitionEntry = ReadCountBGen
-            , SDK.definitionReaches = [ReadCountBGen]
-            }
-        , SDK.ChainDefinition
-            { SDK.definitionKind = SDK.OriginChain
-            , SDK.definitionEffect = "FeedScopeA"
-            , SDK.definitionEntry = OpenFeedScopeAGen
-            , SDK.definitionReaches = [OpenFeedScopeAGen, GetCountAGen, ReadCountAGen]
-            }
-        , SDK.ChainDefinition
-            { SDK.definitionKind = SDK.OriginChain
-            , SDK.definitionEffect = "FeedScopeB"
-            , SDK.definitionEntry = OpenFeedScopeBGen
-            , SDK.definitionReaches = [OpenFeedScopeBGen, GetCountBGen, ReadCountBGen]
-            }
-        , SDK.ChainDefinition
-            { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "FeedA"
             , SDK.definitionEntry = NextFeedAGen
-            , SDK.definitionReaches = [NextFeedAGen, OpenFeedScopeAGen, GetCountAGen, ReadCountAGen]
+            , SDK.definitionReaches = [NextFeedAGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "FeedB"
             , SDK.definitionEntry = NextFeedBGen
-            , SDK.definitionReaches = [NextFeedBGen, OpenFeedScopeBGen, GetCountBGen, ReadCountBGen]
+            , SDK.definitionReaches = [NextFeedBGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ParserA"
             , SDK.definitionEntry = GetLevelAGen
-            , SDK.definitionReaches =
-                [GetLevelAGen, NextFeedAGen, OpenFeedScopeAGen, GetCountAGen, ReadCountAGen]
+            , SDK.definitionReaches = [GetLevelAGen, NextFeedAGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -1112,8 +989,7 @@ generatedPrototype =
             { SDK.definitionKind = SDK.ContextChain
             , SDK.definitionEffect = "ParserB"
             , SDK.definitionEntry = GetLevelBGen
-            , SDK.definitionReaches =
-                [GetLevelBGen, NextFeedBGen, OpenFeedScopeBGen, GetCountBGen, ReadCountBGen]
+            , SDK.definitionReaches = [GetLevelBGen, NextFeedBGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -1218,40 +1094,26 @@ generatedPrototype =
               , SDK.MethodDefinition RunOnBlankGen RunOnBlankGen SDK.HandlerMethod SDK.Empty
               , SDK.MethodDefinition RunOnFilledGen RunOnFilledGen SDK.HandlerMethod (SDK.Call ReadReportStateGen)
               , SDK.MethodDefinition ReadReportStateGen GetReportStateGen SDK.ContextRequire SDK.Empty
-              , SDK.MethodDefinition RunShowAGen RunShowAGen SDK.HandlerMethod (SDK.Call StreamLevelAGen)
+              , SDK.MethodDefinition
+                  RunShowAGen
+                  RunShowAGen
+                  SDK.HandlerMethod
+                  (SDK.Sequence [SDK.Call StreamLevelAGen, SDK.Call StreamLevelAGen])
               , SDK.MethodDefinition StreamLevelAGen GetLevelAGen SDK.ContextRequire SDK.Empty
-              , SDK.MethodDefinition RunShowBGen RunShowBGen SDK.HandlerMethod (SDK.Call StreamLevelBGen)
+              , SDK.MethodDefinition
+                  RunShowBGen
+                  RunShowBGen
+                  SDK.HandlerMethod
+                  (SDK.Sequence [SDK.Call StreamLevelBGen, SDK.Call StreamLevelBGen])
               , SDK.MethodDefinition StreamLevelBGen GetLevelBGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition
                   GetReportStateGen
                   GetReportStateGen
                   SDK.ContextRequest
                   (SDK.Call ReadReportPathGen)
-              , SDK.MethodDefinition
-                  NextFeedAGen
-                  NextFeedAGen
-                  SDK.StreamHandler
-                  (SDK.Sequence [SDK.Call OpenFeedScopeAGen, SDK.Call ReadCountAGen])
-              , SDK.MethodDefinition
-                  OpenFeedScopeAGen
-                  OpenFeedScopeAGen
-                  SDK.ScopeOpen
-                  (SDK.Sequence [SDK.Call GetCountAGen, SDK.Call ReadCountAGen])
-              , SDK.MethodDefinition GetCountAGen GetCountAGen SDK.ContextRequest SDK.Empty
-              , SDK.MethodDefinition ReadCountAGen GetCountAGen SDK.ContextRequire SDK.Empty
+              , SDK.MethodDefinition NextFeedAGen NextFeedAGen SDK.StreamHandler SDK.Empty
               , SDK.MethodDefinition GetLevelAGen GetLevelAGen SDK.ContextStream (SDK.Call NextFeedAGen)
-              , SDK.MethodDefinition
-                  NextFeedBGen
-                  NextFeedBGen
-                  SDK.StreamHandler
-                  (SDK.Sequence [SDK.Call OpenFeedScopeBGen, SDK.Call ReadCountBGen])
-              , SDK.MethodDefinition
-                  OpenFeedScopeBGen
-                  OpenFeedScopeBGen
-                  SDK.ScopeOpen
-                  (SDK.Sequence [SDK.Call GetCountBGen, SDK.Call ReadCountBGen])
-              , SDK.MethodDefinition GetCountBGen GetCountBGen SDK.ContextRequest SDK.Empty
-              , SDK.MethodDefinition ReadCountBGen GetCountBGen SDK.ContextRequire SDK.Empty
+              , SDK.MethodDefinition NextFeedBGen NextFeedBGen SDK.StreamHandler SDK.Empty
               , SDK.MethodDefinition GetLevelBGen GetLevelBGen SDK.ContextStream (SDK.Call NextFeedBGen)
               ]
           , SDK.graphRoots =
@@ -1297,20 +1159,11 @@ generatedPrototype =
               , (RunShowAGen, StreamLevelAGen)
               , (RunShowBGen, StreamLevelBGen)
               , (GetReportStateGen, ReadReportPathGen)
-              , (NextFeedAGen, OpenFeedScopeAGen)
-              , (NextFeedAGen, ReadCountAGen)
-              , (OpenFeedScopeAGen, GetCountAGen)
-              , (OpenFeedScopeAGen, ReadCountAGen)
               , (GetLevelAGen, NextFeedAGen)
-              , (NextFeedBGen, OpenFeedScopeBGen)
-              , (NextFeedBGen, ReadCountBGen)
-              , (OpenFeedScopeBGen, GetCountBGen)
-              , (OpenFeedScopeBGen, ReadCountBGen)
               , (GetLevelBGen, NextFeedBGen)
               ]
-          , SDK.graphScopes = [OpenReportScopeGen, OpenReplyScopeGen, OpenFeedScopeAGen, OpenFeedScopeBGen]
-          , SDK.graphScopePaths =
-              [[OpenReportScopeGen], [OpenReplyScopeGen], [], [OpenFeedScopeAGen], [OpenFeedScopeBGen]]
+          , SDK.graphScopes = [OpenReportScopeGen, OpenReplyScopeGen]
+          , SDK.graphScopePaths = [[OpenReportScopeGen], [OpenReplyScopeGen], []]
           , SDK.graphRootPaths =
               [ (RunWriteReportGen, [[OpenReportScopeGen]])
               , (RunWriteReplyGen, [[OpenReplyScopeGen]])
@@ -1323,16 +1176,16 @@ generatedPrototype =
               , (RunShowAGen, [[]])
               , (RunShowBGen, [[]])
               , (GetReportStateGen, [[]])
-              , (NextFeedAGen, [[OpenFeedScopeAGen]])
-              , (GetLevelAGen, [[OpenFeedScopeAGen]])
-              , (NextFeedBGen, [[OpenFeedScopeBGen]])
-              , (GetLevelBGen, [[OpenFeedScopeBGen]])
+              , (NextFeedAGen, [[]])
+              , (GetLevelAGen, [[]])
+              , (NextFeedBGen, [[]])
+              , (GetLevelBGen, [[]])
               ]
           , SDK.graphScopeOrder = []
           }
     , SDK.protoScopes =
         SDK.ScopeTree
-          { SDK.scopeRoots = [OpenReportScopeGen, OpenReplyScopeGen, OpenFeedScopeAGen, OpenFeedScopeBGen]
+          { SDK.scopeRoots = [OpenReportScopeGen, OpenReplyScopeGen]
           , SDK.scopeNodes =
               [ SDK.ScopeNode
                   { SDK.scopeIdentity = OpenReportScopeGen
@@ -1344,38 +1197,14 @@ generatedPrototype =
                   , SDK.scopeParents = []
                   , SDK.scopeChildren = []
                   }
-              , SDK.ScopeNode
-                  { SDK.scopeIdentity = OpenFeedScopeAGen
-                  , SDK.scopeParents = []
-                  , SDK.scopeChildren = []
-                  }
-              , SDK.ScopeNode
-                  { SDK.scopeIdentity = OpenFeedScopeBGen
-                  , SDK.scopeParents = []
-                  , SDK.scopeChildren = []
-                  }
               ]
-          , SDK.scopeLayers =
-              [[OpenReportScopeGen, OpenReplyScopeGen, OpenFeedScopeAGen, OpenFeedScopeBGen]]
-          , SDK.scopePaths =
-              [[OpenReportScopeGen], [OpenReplyScopeGen], [], [OpenFeedScopeAGen], [OpenFeedScopeBGen]]
+          , SDK.scopeLayers = [[OpenReportScopeGen, OpenReplyScopeGen]]
+          , SDK.scopePaths = [[OpenReportScopeGen], [OpenReplyScopeGen], []]
           , SDK.scopeCandidates = []
           , SDK.scopeOpposed = []
-          , SDK.scopeUndetermined =
-              [ (OpenFeedScopeAGen, OpenFeedScopeBGen)
-              , (OpenFeedScopeAGen, OpenReplyScopeGen)
-              , (OpenFeedScopeAGen, OpenReportScopeGen)
-              , (OpenFeedScopeBGen, OpenReplyScopeGen)
-              , (OpenFeedScopeBGen, OpenReportScopeGen)
-              , (OpenReplyScopeGen, OpenReportScopeGen)
-              ]
+          , SDK.scopeUndetermined = [(OpenReplyScopeGen, OpenReportScopeGen)]
           }
-    , SDK.protoScopeNames =
-        [ (OpenReportScopeGen, "ReportScope")
-        , (OpenReplyScopeGen, "ReplyScope")
-        , (OpenFeedScopeAGen, "FeedScopeA")
-        , (OpenFeedScopeBGen, "FeedScopeB")
-        ]
+    , SDK.protoScopeNames = [(OpenReportScopeGen, "ReportScope"), (OpenReplyScopeGen, "ReplyScope")]
     , SDK.protoSources =
         [ (SDK.ReadPoint [3,-1] "ReportPath", SDK.FromChains [[0,0]])
         , (SDK.ReadPoint [2,1] "ReplyStats", SDK.FromChains [[1,1]])
@@ -1385,54 +1214,6 @@ generatedPrototype =
         ]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
-            { SDK.openingNode = [-2,1,1]
-            , SDK.openingScope = "FeedScopeB"
-            , SDK.openingSources = []
-            , SDK.openingKinds = [SDK.RegistrationSingleton]
-            }
-        , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [-2,1,0]
-            , SDK.openingScope = "FeedScopeB"
-            , SDK.openingSources = []
-            , SDK.openingKinds = [SDK.RegistrationSingleton]
-            }
-        , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [-2,0,1]
-            , SDK.openingScope = "FeedScopeA"
-            , SDK.openingSources = []
-            , SDK.openingKinds = [SDK.RegistrationSingleton]
-            }
-        , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [-2,0,0]
-            , SDK.openingScope = "FeedScopeA"
-            , SDK.openingSources = []
-            , SDK.openingKinds = [SDK.RegistrationSingleton]
-            }
-        , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [4,-1,1,1]
-            , SDK.openingScope = "FeedScopeB"
-            , SDK.openingSources = []
-            , SDK.openingKinds = [SDK.RegistrationSingleton]
-            }
-        , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [4,-1,1,0]
-            , SDK.openingScope = "FeedScopeB"
-            , SDK.openingSources = []
-            , SDK.openingKinds = [SDK.RegistrationSingleton]
-            }
-        , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [4,-1,0,1]
-            , SDK.openingScope = "FeedScopeA"
-            , SDK.openingSources = []
-            , SDK.openingKinds = [SDK.RegistrationSingleton]
-            }
-        , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [4,-1,0,0]
-            , SDK.openingScope = "FeedScopeA"
-            , SDK.openingSources = []
-            , SDK.openingKinds = [SDK.RegistrationSingleton]
-            }
-        , SDK.ScopeOpeningPlan
             { SDK.openingNode = [0,1]
             , SDK.openingScope = "ReplyScope"
             , SDK.openingSources = [("ReplyLocation", SDK.FromChains [[0,1]])]
@@ -1496,8 +1277,6 @@ generatedPrototype =
               , ("ReportCounter", GetReportStatsGen)
               , ("ReplyCounter", GetReplyStatsGen)
               , ("ReportInspect", GetReportStateGen)
-              , ("CounterA", GetCountAGen)
-              , ("CounterB", GetCountBGen)
               , ("ParserA", GetLevelAGen)
               , ("ParserB", GetLevelBGen)
               ]

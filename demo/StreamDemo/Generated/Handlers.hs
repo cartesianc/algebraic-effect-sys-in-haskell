@@ -14,36 +14,30 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module StreamDemo.Generated.Handlers (handlerSourceFingerprint, getSensorState, readSensorState, openSensorLink, closeSensorLink, nextTemperatureFeed, getTemperatureSample, streamTemperatureSample, nextHeartbeatClock, getBeat, streamBeat, runAnnounce, runShowTemperature, runCheckTrend, runReportHeartbeat, newScopeHandlers, errorHandlers) where
+module StreamDemo.Generated.Handlers (handlerSourceFingerprint, openSensorLink, closeSensorLink, nextTemperatureFeed, getTemperatureSample, streamTemperatureSample, nextHeartbeatClock, getBeat, streamBeat, runAnnounce, runShowTemperature, runCheckTrend, runReportHeartbeat, historyTemperatureSample, historyBeat, newScopeHandlers, errorHandlers) where
 
 import qualified Framework.Generated as SDK
 import qualified StreamDemo.Generated.Effects as Effects
 import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
-import Framework.SDK (Emits(rawemit), Raises(..), Raw(..), Reads(..), rawoutput)
+import Framework.SDK (Emits(rawemit), Raises(..), Raw(..), Reads(..), Streams(..), rawoutput)
 import StreamDemo.Generated.Effects
 import StreamDemo.Types
 import Control.Concurrent (threadDelay)
 import Control.Monad.IO.Class (liftIO)
-import Data.IORef (atomicModifyIORef', newIORef)
+import Data.Foldable (toList)
 import GHC.Clock (getMonotonicTime)
 import Text.Printf (printf)
-
--- 两个来源共用同一传感器会话；内存里的累计是业务资源，不是 SDK 的特殊资产。
-instance PrepareSensorLayer m => PrepareSensorHandler m where
-  prepareSensor = liftIO (SensorMemory <$> newIORef (0, []) <*> newIORef 0)
 
 -- 连接在第一次读数时由 Input 打开；生产会话的各步骤共用它，运行退出时由 SDK 关闭。
 instance ConnectSensorLayer m => ConnectSensorHandler m where
   connectSensor = do
-    SensorMemory _ _ <- require @SensorMemory
     liftIO (putStrLn "[sensor] connected")
     rawoutput []
 
 instance DisconnectSensorLayer m => DisconnectSensorHandler m where
   disconnectSensor = do
-    SensorMemory _ _ <- require @SensorMemory
     liftIO (putStrLn "[sensor] disconnected")
     rawoutput []
 
@@ -55,16 +49,12 @@ instance NextReadingLayer m => NextReadingHandler m where
     rawemit (printf "%.1f" (21 + 3 * sin (seconds / 3) :: Double))
 
 -- parser 挂在 Stream 下：rawinput 是会话本次取得的一份原始读数（单元素 list，不会再读一次），返回一份资产的表示值；
--- 发布与交付由 SDK 完成；最近五次读数由这个业务 parser 维护。
+-- 发布与交付由 SDK 完成。
 instance ParseTemperatureLayer m => ParseTemperatureHandler m where
   parseTemperature = do
     reading <- concat <$> rawinput
-    SensorMemory samples _ <- require @SensorMemory
     case reads reading of
-      [(value, "")] -> liftIO $ atomicModifyIORef' samples $ \(count, previous) ->
-        let recent = take 5 (value : previous)
-            number = count + 1
-        in number `seq` ((number, recent), Temperature number value recent)
+      [(value, "")] -> pure (Temperature value)
       _ -> raise (ParseTemperatureError ("unreadable sensor output: " ++ reading))
 
 -- 心跳也是 Stream：每两秒交出一次单调时钟的秒数，由挂在它下面的 parser 解析。
@@ -77,10 +67,8 @@ instance NextBeatLayer m => NextBeatHandler m where
 instance ParseBeatLayer m => ParseBeatHandler m where
   parseBeat = do
     tick <- concat <$> rawinput
-    SensorMemory _ beats <- require @SensorMemory
     case reads tick :: [(Int, String)] of
-      [(_, "")] -> liftIO $ atomicModifyIORef' beats $ \previous ->
-        let number = previous + 1 in (number, number)
+      [(seconds, "")] -> pure seconds
       _ -> raise (ParseBeatError ("unreadable clock output: " ++ tick))
 
 instance AnnounceLayer m => AnnounceHandler m where
@@ -88,17 +76,20 @@ instance AnnounceLayer m => AnnounceHandler m where
     liftIO (putStrLn "Monitoring the sensor; press Ctrl-C to stop.")
     rawoutput []
 
--- 同一单元的一次执行里，ShowTemperature 与 CheckTrend 读到同一份交付视图。
+-- 同一单元的一次执行里，ShowTemperature 与 CheckTrend 读到同一份交付视图；
+-- require 取本次读数，stream 取本次及更早的读数（最新在前），编号是它的长度。
 instance ShowTemperatureLayer m => ShowTemperatureHandler m where
   showTemperature = do
-    Temperature number value _ <- require @Temperature
-    liftIO (printf "reading #%d: %.1f C\n" number value)
+    Temperature value <- require @Temperature
+    seen <- stream @Temperature
+    liftIO (printf "reading #%d: %.1f C\n" (length seen) value)
     rawoutput []
 
 instance CheckTrendLayer m => CheckTrendHandler m where
   checkTrend = do
-    Temperature _ _ recent <- require @Temperature
-    let average = sum recent / fromIntegral (length recent)
+    seen <- stream @Temperature
+    let recent = take 5 [value | Temperature value <- toList seen]
+        average = sum recent / fromIntegral (length recent)
     case recent of
       current : previous : _ ->
         liftIO (printf "  trend %s, average of the last %d: %.2f C\n"
@@ -108,13 +99,13 @@ instance CheckTrendLayer m => CheckTrendHandler m where
 
 instance ReportHeartbeatLayer m => ReportHeartbeatHandler m where
   reportHeartbeat = do
-    number <- require @Int
-    liftIO (putStrLn ("[heartbeat] #" ++ show number))
+    beats <- stream @Int
+    liftIO (putStrLn ("[heartbeat] #" ++ show (length beats)))
     rawoutput []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "e9cc1f0242b01e10df6d0e847f699bb9"
+handlerSourceFingerprint = Just "1461d43856ff83ae6322c4f89ae47a69"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -141,15 +132,6 @@ instance (SDK.HandlerError problem Effects.Errors, FrameworkTypes.KnownSymbol ef
   raise problem = Wrap (SDK.failEffect (nameOf @effect) failure description)
     where (failure, description) = SDK.raised problem
 
-instance SDK.Reads SensorMemory (Wrap "SensorLink" method) where
-  require = Wrap (SDK.coerce <$> readSensorState)
-
-instance SDK.Reads SensorMemory (Wrap "TemperatureParser" method) where
-  require = Wrap (SDK.coerce <$> readSensorState)
-
-instance SDK.Reads SensorMemory (Wrap "Heartbeat" method) where
-  require = Wrap (SDK.coerce <$> readSensorState)
-
 instance SDK.Reads Temperature (Wrap "ShowTemperature" method) where
   require = Wrap (SDK.coerce <$> streamTemperatureSample)
 
@@ -158,6 +140,15 @@ instance SDK.Reads Temperature (Wrap "CheckTrend" method) where
 
 instance SDK.Reads Int (Wrap "ReportHeartbeat" method) where
   require = Wrap (SDK.coerce <$> streamBeat)
+
+instance SDK.Streams Temperature (Wrap "ShowTemperature" method) where
+  stream = Wrap (SDK.coerce <$> historyTemperatureSample)
+
+instance SDK.Streams Temperature (Wrap "CheckTrend" method) where
+  stream = Wrap (SDK.coerce <$> historyTemperatureSample)
+
+instance SDK.Streams Int (Wrap "ReportHeartbeat" method) where
+  stream = Wrap (SDK.coerce <$> historyBeat)
 
 instance SDK.Raw (Wrap "TemperatureParser" "parseTemperature") where
   rawinput = Wrap SDK.emittedInput
@@ -176,18 +167,6 @@ instance SDK.StreamEnds (Wrap effect method) where
 instance SDK.EndsStream (Wrap effect method) where
   endStream = Wrap SDK.endSubscription
 
-getSensorState :: Effects.App Effects.SensorState
-getSensorState =
-  SDK.handleFailure
-  . SDK.callContext "SensorResource"
-      (\value bindings -> bindings { Effects.boundSensorResource = Just value }) $
-    Effects.SensorState <$> call @"SensorResource" @"prepareSensor" Effects.prepareSensor
-
-readSensorState :: Effects.App Effects.SensorState
-readSensorState =
-  SDK.handleFailure $
-    SDK.readContext "SensorResource" Effects.ContextBindingError Effects.boundSensorResource
-
 openSensorLink :: Effects.App [String]
 openSensorLink =
   SDK.withErrorPath ["SensorLink"]
@@ -195,7 +174,7 @@ openSensorLink =
   . SDK.atomicScope "openSensorLink" [] []
   . SDK.openScope "SensorLink" Effects.ScopeBindingError (Just (() <$ closeSensorLink))
   . SDK.enterHandler "SensorLink" $
-    getSensorState >> call @"SensorLink" @"connectSensor" Effects.connectSensor
+    call @"SensorLink" @"connectSensor" Effects.connectSensor
 
 closeSensorLink :: Effects.App [String]
 closeSensorLink =
@@ -229,6 +208,12 @@ streamTemperatureSample =
   . SDK.handleFailure $
     SDK.readStreamContext "TemperatureParser" Effects.ContextBindingError Effects.boundTemperatureParser
 
+historyTemperatureSample :: Effects.App (SDK.Flow Effects.TemperatureSample)
+historyTemperatureSample =
+  SDK.withErrorPath ["SensorLink"]
+  . SDK.handleFailure $
+    SDK.readStreamHistory "TemperatureParser" Effects.ContextBindingError Effects.boundTemperatureParser
+
 nextHeartbeatClock :: Effects.App ()
 nextHeartbeatClock =
   SDK.withErrorPath ["SensorLink"]
@@ -251,6 +236,12 @@ streamBeat =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure $
     SDK.readStreamContext "Heartbeat" Effects.ContextBindingError Effects.boundHeartbeat
+
+historyBeat :: Effects.App (SDK.Flow Effects.Beat)
+historyBeat =
+  SDK.withErrorPath ["SensorLink"]
+  . SDK.handleFailure $
+    SDK.readStreamHistory "Heartbeat" Effects.ContextBindingError Effects.boundHeartbeat
 
 runAnnounce :: Effects.App [String]
 runAnnounce =
@@ -283,7 +274,7 @@ runReportHeartbeat =
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ SDK.newScopeHandler "SensorLink" [] (Just "SensorResource")
+  [ SDK.newScopeHandler "SensorLink" [] Nothing
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。

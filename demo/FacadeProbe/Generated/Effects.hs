@@ -54,14 +54,6 @@ newtype ReportState = ReportState FileState
 deriving instance Eq FileState => Eq ReportState
 deriving instance Show FileState => Show ReportState
 
-newtype CountA = CountA FeedCounter
-deriving instance Eq FeedCounter => Eq CountA
-deriving instance Show FeedCounter => Show CountA
-
-newtype CountB = CountB FeedCounter
-deriving instance Eq FeedCounter => Eq CountB
-deriving instance Show FeedCounter => Show CountB
-
 newtype LevelA = LevelA Level
 deriving instance Eq Level => Eq LevelA
 deriving instance Show Level => Show LevelA
@@ -71,7 +63,7 @@ deriving instance Eq Level => Eq LevelB
 deriving instance Show Level => Show LevelB
 
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = GetReportPathGen | ReadReportPathGen | GetReplyPathGen | ReadReplyPathGen | GetReportBodyGen | ReadReportBodyGen | GetReplyBodyGen | ReadReplyBodyGen | GetOpenedReportGen | ReadOpenedReportGen | GetOpenedReplyGen | ReadOpenedReplyGen | OpenReportScopeGen | CloseReportScopeGen | OpenReplyScopeGen | CloseReplyScopeGen | RunWriteReportGen | RunWriteReplyGen | RunMarkReplyGen | RunReadReportGen | RunReadReplyGen | GetReportStatsGen | ReadReportStatsGen | GetReplyStatsGen | ReadReplyStatsGen | RunShowReportGen | RunShowReplyGen | GetReportStateGen | ReadReportStateGen | RunOnBlankGen | RunOnFilledGen | GetCountAGen | ReadCountAGen | GetCountBGen | ReadCountBGen | OpenFeedScopeAGen | OpenFeedScopeBGen | NextFeedAGen | NextFeedBGen | GetLevelAGen | StreamLevelAGen | GetLevelBGen | StreamLevelBGen | RunShowAGen | RunShowBGen
+data MethodGen = GetReportPathGen | ReadReportPathGen | GetReplyPathGen | ReadReplyPathGen | GetReportBodyGen | ReadReportBodyGen | GetReplyBodyGen | ReadReplyBodyGen | GetOpenedReportGen | ReadOpenedReportGen | GetOpenedReplyGen | ReadOpenedReplyGen | OpenReportScopeGen | CloseReportScopeGen | OpenReplyScopeGen | CloseReplyScopeGen | RunWriteReportGen | RunWriteReplyGen | RunMarkReplyGen | RunReadReportGen | RunReadReplyGen | GetReportStatsGen | ReadReportStatsGen | GetReplyStatsGen | ReadReplyStatsGen | RunShowReportGen | RunShowReplyGen | GetReportStateGen | ReadReportStateGen | RunOnBlankGen | RunOnFilledGen | NextFeedAGen | NextFeedBGen | GetLevelAGen | StreamLevelAGen | GetLevelBGen | StreamLevelBGen | RunShowAGen | RunShowBGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
@@ -225,28 +217,8 @@ newtype DescribeFilledError = DescribeFilledError String
   deriving (Eq, Show, Read)
 instance SDK.HandlerError DescribeFilledError Errors where raised (DescribeFilledError description) = (DescribeFilledFailure, description)
 
--- handler newCounter：绑定到 CounterA、CounterB。
-type NewCounterLayer m = (SDK.Raises NewCounterError m, MonadIO m)
-class NewCounterHandler m where
-  newCounter :: m FeedCounter
-
--- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "newCounter" 匹配。
-newtype NewCounterError = NewCounterError String
-  deriving (Eq, Show, Read)
-instance SDK.HandlerError NewCounterError Errors where raised (NewCounterError description) = (NewCounterFailure, description)
-
--- handler openCounter：绑定到 FeedScopeA、FeedScopeB。
-type OpenCounterLayer m = (SDK.Reads FeedCounter m, SDK.RawOutputs m, SDK.Raises OpenCounterError m, MonadIO m)
-class OpenCounterHandler m where
-  openCounter :: m [String]
-
--- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openCounter" 匹配。
-newtype OpenCounterError = OpenCounterError String
-  deriving (Eq, Show, Read)
-instance SDK.HandlerError OpenCounterError Errors where raised (OpenCounterError description) = (OpenCounterFailure, description)
-
 -- handler nextA：绑定到 FeedA。
-type NextALayer m = (SDK.Reads FeedCounter m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextAError m, MonadIO m)
+type NextALayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextAError m, MonadIO m)
 class NextAHandler m where
   nextA :: m ()
 
@@ -256,7 +228,7 @@ newtype NextAError = NextAError String
 instance SDK.HandlerError NextAError Errors where raised (NextAError description) = (NextAFailure, description)
 
 -- handler nextB：绑定到 FeedB。
-type NextBLayer m = (SDK.Reads FeedCounter m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextBError m, MonadIO m)
+type NextBLayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextBError m, MonadIO m)
 class NextBHandler m where
   nextB :: m ()
 
@@ -276,7 +248,7 @@ newtype ParseLevelError = ParseLevelError String
 instance SDK.HandlerError ParseLevelError Errors where raised (ParseLevelError description) = (ParseLevelFailure, description)
 
 -- handler showLevel：绑定到 ShowA、ShowB。
-type ShowLevelLayer m = (SDK.Reads Level m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ShowLevelError m, MonadIO m)
+type ShowLevelLayer m = (SDK.Reads Level m, SDK.Streams Level m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ShowLevelError m, MonadIO m)
 class ShowLevelHandler m where
   showLevel :: m [String]
 
@@ -286,7 +258,7 @@ newtype ShowLevelError = ShowLevelError String
 instance SDK.HandlerError ShowLevelError Errors where raised (ShowLevelError description) = (ShowLevelFailure, description)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
-data Errors = ReportLocationFailure | ReplyLocationFailure | ReportDraftFailure | ReplyDraftFailure | AcquireFileFailure | OpenTextFileFailure | CloseTextFileFailure | WriteTextFailure | MarkReadFailure | ReadTextFailure | CountLinesFailure | ShowCountFailure | InspectFileFailure | DescribeBlankFailure | DescribeFilledFailure | NewCounterFailure | OpenCounterFailure | NextAFailure | NextBFailure | ParseLevelFailure | ShowLevelFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+data Errors = ReportLocationFailure | ReplyLocationFailure | ReportDraftFailure | ReplyDraftFailure | AcquireFileFailure | OpenTextFileFailure | CloseTextFileFailure | WriteTextFailure | MarkReadFailure | ReadTextFailure | CountLinesFailure | ShowCountFailure | InspectFileFailure | DescribeBlankFailure | DescribeFilledFailure | NextAFailure | NextBFailure | ParseLevelFailure | ShowLevelFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。
@@ -300,12 +272,10 @@ data ContextValues = ContextValues
   , boundReportCounter :: Maybe ReportStats
   , boundReplyCounter :: Maybe ReplyStats
   , boundReportInspect :: Maybe ReportState
-  , boundCounterA :: Maybe CountA
-  , boundCounterB :: Maybe CountB
   , boundParserA :: Maybe LevelA
   , boundParserB :: Maybe LevelB
   }
 
 emptyContexts :: ContextValues
-emptyContexts = ContextValues Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+emptyContexts = ContextValues Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 

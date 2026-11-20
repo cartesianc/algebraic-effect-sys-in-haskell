@@ -56,7 +56,8 @@ data CompositionState
   | Checking Unit Bool (Prototype String)
   | Complete CompositionResult
 
-data PendingComposition = PendingComposition Unit Bool [(String, MethodShape String)]
+-- 末项：被 stream @T 读取 x:xs 的持续契约；随方法一起进入缓存键，建图后标在其生产 Context 上。
+data PendingComposition = PendingComposition Unit Bool [(String, MethodShape String)] [String]
 
 data CompositionResult = CompositionResult
   { compositionUnit :: Unit
@@ -84,11 +85,12 @@ advanceComposition state = case state of
   ResolvingBodies unit supplied -> do
     let checked = case supplied of Just _ -> True; Nothing -> False
     methods <- composeMethods checked (effectPrototypes unit) (unitBindings unit) (unitReads unit) (maybe [] id supplied)
-    pure (AwaitingGraph (PendingComposition unit checked methods))
-  BuildingStructure pending@(PendingComposition unit _ methods) -> do
+    let histories = streamHistories (unitBindings unit) (maybe [] id supplied)
+    pure (AwaitingGraph (PendingComposition unit checked methods histories))
+  BuildingStructure pending@(PendingComposition unit _ methods histories) -> do
     (prototype, written, readers) <- diagnostic (buildStructure (unitPlan unit) (unitAssembly unit) methods)
-    pure (ProvingSources pending prototype written readers)
-  ProvingSources (PendingComposition unit checked _) prototype written readers -> do
+    pure (ProvingSources pending (markHistories histories prototype) written readers)
+  ProvingSources (PendingComposition unit checked _ _) prototype written readers -> do
     analyzed <- diagnostic (resolveSources checked (assemblyOutputs (unitAssembly unit)) written readers prototype)
     pure (Checking unit checked (completeDriving analyzed))
   Checking unit checked prototype -> do
@@ -133,10 +135,10 @@ prepareComposition unit shapes = do
     _ -> Left "Composition did not reach the graph checkpoint"
 
 compositionKey :: PendingComposition -> String
-compositionKey (PendingComposition unit checked methods) = show (unitPlan unit, unitAssembly unit, checked, methods)
+compositionKey (PendingComposition unit checked methods histories) = show (unitPlan unit, unitAssembly unit, checked, methods, histories)
 
 completeComposition :: PendingComposition -> Maybe (Prototype String) -> Either String CompositionResult
-completeComposition pending@(PendingComposition unit checked _) cached = do
+completeComposition pending@(PendingComposition unit checked _ _) cached = do
   state <- settleComposition (case cached of
     Just prototype -> Checking unit checked prototype
     Nothing -> BuildingStructure pending)
@@ -239,6 +241,8 @@ buildEffectProtos specifications sumTypes = do
         , effectResource = case typing specification of Scoped {} -> requestSource specification; _ -> Nothing
         , effectContextDependencies = contextDependencies
         , effectContinuous = continuousContext specification
+        -- 由方法体形状在建图后标记（markHistories）；声明阶段一律不保留历史。
+        , effectHistory = False
         }
       prototypes = zipWith make specifications dependencies
       findSpec selected = case filter ((== selected) . name) specifications of
@@ -504,6 +508,16 @@ composeMethods checkReads effects bindings required handlerShapes = do
         Nothing -> Left ("Handler " ++ bindingHandler binding ++ " reads " ++ typeText ++ " in " ++ bindingEffect binding
           ++ ", whose demands give " ++ describe (bindingRoutes binding)
           ++ "; declare requires/streams for an asset of that representation")
+      -- stream @T：同一路由的 x:xs 读取，方法图上仍是对读取方法的调用；只允许 streams 读取的持续资产。
+      Call ('~' : typeText) -> case lookup (normalizeType typeText) (bindingRoutes binding) of
+        Just (contractType, reader)
+          | streamed binding contractType -> pure (Call reader, [contractType])
+          | otherwise -> Left ("Handler " ++ bindingHandler binding ++ " reads " ++ typeText ++ " with stream in "
+              ++ bindingEffect binding ++ ", but " ++ contractType ++ " is not a continuous asset read with streams"
+              ++ "; use require for a single value, or declare streams " ++ show contractType)
+        Nothing -> Left ("Handler " ++ bindingHandler binding ++ " streams " ++ typeText ++ " in " ++ bindingEffect binding
+          ++ ", whose demands give " ++ describe (bindingRoutes binding)
+          ++ "; declare streams for a continuous asset of that representation")
       Call "%raw" -> case bindingRaw binding of
         Just source -> pure (Call (rawMethod source), [])
         Nothing -> Left ("Handler " ++ bindingHandler binding ++ " uses rawinput in " ++ bindingEffect binding
@@ -519,6 +533,9 @@ composeMethods checkReads effects bindings required handlerShapes = do
         combine constructor children = do
           resolved <- mapM (resolve binding) children
           pure (constructor (map fst resolved), concatMap snd resolved)
+    streamed binding contractType = or
+      [ demandAccess demand == StreamAccess && demandContract demand == contractType
+      | effect <- effects, effectName effect == bindingEffect binding, demand <- effectDemands effect ]
     describe [] = "no readable asset"
     describe routes = intercalate ", " [representation' ++ " (" ++ contractType ++ ")" | (representation', (contractType, _)) <- routes]
     -- close 读取检查 v1（2026-11-17）：有资源的 close 自身须读取资源以定位实例。
@@ -552,6 +569,28 @@ composeMethods checkReads effects bindings required handlerShapes = do
     flatten Empty = []
     flatten (Sequence children) = children
     flatten shape = [shape]
+
+-- 算法说明 v1（2026-11-21）：x:xs 读取的契约。每个绑定按自己的路由把方法体中的 ~T 换成契约；
+-- 读取是否合法已由 composeMethods 检查，这里只收集，供运行时决定哪些会话从开头保留交付。
+streamHistories :: [Binding] -> [(String, MethodShape String)] -> [String]
+streamHistories bindings handlerShapes = nub
+  [ contractType
+  | binding <- bindings
+  , Just body <- [lookup (bindingHandler binding) handlerShapes]
+  , typeText <- streamed body
+  , Just (contractType, _) <- [lookup (normalizeType typeText) (bindingRoutes binding)] ]
+  where
+    streamed shape = case shape of
+      Call ('~' : typeText) -> [typeText]
+      Sequence children -> concatMap streamed children
+      Choice children -> concatMap streamed children
+      Recover body recovery -> streamed body ++ streamed recovery
+      _ -> []
+
+-- 被 x:xs 读取的契约，标在生产它的持续 Context 上；其余 effect 保持 effectProto 的默认值。
+markHistories :: [String] -> Prototype String -> Prototype String
+markHistories histories prototype = prototype { protoEffects = map mark (protoEffects prototype) }
+  where mark effect = effect { effectHistory = effectContinuous effect && maybe False (`elem` histories) (effectProduces effect) }
 
 -- ========================================================================
 -- 方法图与原型组装

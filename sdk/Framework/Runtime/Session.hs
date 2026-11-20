@@ -84,6 +84,9 @@ data SessionState environment cause = SessionState
   -- 仍可能领取交付的游标。Nothing：读取方尚未登记（lifelong 的会话在进入边界时启动，
   -- 各单元随后登记），此前的发布全部保留。interpreter 托管的会话没有游标，从创建起就是空表。
   , stateReaders :: Maybe [Cursor]
+  -- 有 handler 以 stream @T 读取 x:xs 时（原型 effectHistory）从会话开头保留全部发布，不受 release 裁剪；
+  -- 交付与有限读取的视图是到该条为止的整段，最后一条是本次值。否则为 Nothing，视图只有一条。
+  , stateHistory :: Maybe (Seq (ScopeBinding environment cause))
   }
 
 -- 生产任务的停止状态，与 stateStopped 的“发布已结束”分开。
@@ -117,12 +120,13 @@ data Session environment cause = Session
   , sessionCollect :: [ScopeBinding environment cause] -> IO ()
   }
 
-newSession :: IO () -> ([ScopeBinding environment cause] -> IO ()) -> SessionKey -> ScopeBindings environment cause -> [(String, View environment cause)]
-           -> IO (Session environment cause)
-newSession notify collect key bindings views = do
+newSession :: IO () -> ([ScopeBinding environment cause] -> IO ()) -> Bool -> SessionKey -> ScopeBindings environment cause
+           -> [(String, View environment cause)] -> IO (Session environment cause)
+newSession notify collect history key bindings views = do
   signal <- newEmptyMVar
   let readers = maybe (Just []) (const Nothing) (fst key)
-  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Seq.empty 0 Nothing signal readers) <*> newMVar NoWorker
+      kept = if history then Just Seq.empty else Nothing
+  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Seq.empty 0 Nothing signal readers kept) <*> newMVar NoWorker
     <*> newEmptyMVar <*> newMVar (Unretired (pure ())) <*> pure notify <*> pure collect
 
 -- 两次相等的值仍是两条发布；会话已经结束或失败时不再接受新条目。
@@ -137,7 +141,8 @@ appendDelivery session companions value = changeState session $ \state -> case s
     in length resources `seq` retained `seq` Just state
       { stateEntries = stateEntries state |> value
       , stateCompanions = stateCompanions state |> companions
-      , stateResources = retained }
+      , stateResources = retained
+      , stateHistory = (|> value) <$> stateHistory state }
 
 breakSession :: Session environment cause -> Broken cause -> IO ()
 breakSession session reason = stopState session (Broke reason)
@@ -279,12 +284,12 @@ sessionCaughtUp session upstream = do
 -- 来源结束后仍读到最后一条；一条都没有发布就结束时返回 Drained。
 awaitView :: Session environment cause -> Retention environment cause -> IO (Either (Stopped cause) (View environment cause))
 awaitView session retention = awaitState session retention (pure Nothing)
-  (latestView . stateEntries) toList
+  wholeView latestBindings
 
 retainedView :: Session environment cause -> Retention environment cause -> IO (Maybe (View environment cause))
 retainedView session retention = withRetentionLock retention $ do
   value <- currentView session
-  mapM_ (keepBindingsLocked retention . toList) value
+  mapM_ (keepBindingsLocked retention . latestBindings) value
   pure value
 
 -- 仅未领取的交付和伴随发布构成队列保留根；最新快照是否仍待用由 Graph 的来源规则决定。
@@ -295,8 +300,17 @@ pendingBindings session = concatMap snd . toList . stateResources <$> readMVar (
 -- 不等待地取当前保留的视图：一条都没有发布时为 Nothing。本单元发布的会话本轮没有新发布时，
 -- 只读最新一条的读取（require）用它读已有的一条，不推进游标。
 currentView :: Session environment cause -> IO (Maybe (View environment cause))
-currentView session = (\state -> latestView (stateEntries state))
-  <$> readMVar (sessionState session)
+currentView session = wholeView <$> readMVar (sessionState session)
+
+-- 有限读取的视图：保留历史时是到最新一条为止的整段，否则只有最新一条。
+wholeView :: SessionState environment cause -> Maybe (View environment cause)
+wholeView state = case stateHistory state of
+  Just history | not (Seq.null history) -> Just history
+  _ -> latestView (stateEntries state)
+
+-- 执行保留只登记视图的最后一条（本次值）；历史中更早的发布不延长资源的使用期。
+latestBindings :: View environment cause -> [ScopeBinding environment cause]
+latestBindings = maybe [] toList . latestView
 
 -- 固定最后一个绑定，不让一次有限读取持有整条交付队列。
 latestView :: Seq value -> Maybe (Seq value)
@@ -416,9 +430,9 @@ takeDeliveryOnWith signal session (Reading position) retention interrupted selec
   outcome <- awaitStateOnWith signal session retention interrupted
     (\state -> let offset = delivered - stateBase state
       in if Seq.length (stateEntries state) > offset
-        then Just (Seq.singleton (Seq.index (stateEntries state) offset), Seq.index (stateCompanions state) offset)
+        then Just (deliveredView state offset, Seq.index (stateCompanions state) offset)
         else Nothing)
-    (\(view, companions) -> toList view ++ map snd companions)
+    (\(view, companions) -> latestBindings view ++ map snd companions)
     selected
   case outcome of
     -- 视图与伴随发布先求值，不让这次交付挂住整份会话状态；游标前进后放掉不再需要的部分。
@@ -427,6 +441,12 @@ takeDeliveryOnWith signal session (Reading position) retention interrupted selec
       modifySession session (\state -> pure (state, ()))
     Left _ -> pure ()
   pure outcome
+
+-- 本次交付的视图（offset 相对 stateBase）：保留历史时带上它之前的同会话发布。
+deliveredView :: SessionState environment cause -> Int -> View environment cause
+deliveredView state offset = case stateHistory state of
+  Just history -> Seq.take (stateBase state + offset + 1) history
+  Nothing -> Seq.singleton (Seq.index (stateEntries state) offset)
 
 -- 把上游会话和已经登记的游标交给由它驱动的会话；只交一次。
 feedSession :: Session environment cause -> Session environment cause -> Cursor -> IO ()

@@ -10,11 +10,11 @@
 
 module LinesDemo.Handlers () where
 
-import Framework.SDK (Emits(rawemit), Hooks(hook), Operation(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), rawoutput)
+import Framework.SDK (Emits(rawemit), Hooks(hook), Operation(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), Streams(..), rawoutput)
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
 import Control.Monad.IO.Class (liftIO)
-import Data.IORef (atomicModifyIORef', newIORef)
+import Data.Foldable (toList)
 import System.FilePath ((</>))
 import System.IO (IOMode(ReadMode), hClose, hGetLine, hIsEOF, openFile)
 
@@ -28,25 +28,24 @@ instance AcquireInputLayer m => AcquireInputHandler m where
   acquireInput = do
     let path = "demo" </> "LinesDemo" </> "input.txt"
     file <- liftIO (openFile path ReadMode)
-    counter <- liftIO (newIORef (Total 0 0))
-    pure (InputFile path file counter)
+    pure (InputFile path file)
 
 instance OpenInputLayer m => OpenInputHandler m where
   openInput = do
-    InputFile path _ _ <- require @InputFile
+    InputFile path _ <- require @InputFile
     liftIO (putStrLn ("[open] " ++ path))
     rawoutput []
 
 instance CloseInputLayer m => CloseInputHandler m where
   closeInput = do
-    InputFile path file _ <- require @InputFile
+    InputFile path file <- require @InputFile
     liftIO (hClose file >> putStrLn ("[close] " ++ path))
     rawoutput []
 
 -- 在一次来源调用内持续读取。每个 rawemit 都完成这行的解析与发布，再读取下一行。
 instance NextLineLayer m => NextLineHandler m where
   nextLine = do
-    InputFile _ file _ <- require @InputFile
+    InputFile _ file <- require @InputFile
     let readLines = do
           finished <- liftIO (hIsEOF file)
           if finished then streamEnd else do
@@ -77,17 +76,11 @@ instance PrintLineLayer m => PrintLineHandler m where
     liftIO (putStrLn ("line: " ++ text))
     rawoutput []
 
--- 由 TextLine 驱动：每来一行执行一次。计数是业务状态，SDK 只交付本次 Line。
+-- 由 TextLine 驱动：每来一行执行一次。stream 给出本次的一行及同一会话中更早的行，计数直接由它算出。
 instance CountTextLayer m => CountTextHandler m where
   countText = do
-    Line text <- require @Line
-    InputFile _ _ counter <- require @InputFile
-    Total count size <- liftIO $ atomicModifyIORef' counter $ \(Total previousCount previousSize) ->
-      let count = previousCount + 1
-          size = previousSize + length text
-          updated = Total count size
-      in count `seq` size `seq` (updated, updated)
-    rawoutput [show count, show size]
+    seen <- stream @Line
+    rawoutput [show (length seen), show (sum [length text | Line text <- toList seen])]
 
 instance ParseTotalLayer m => ParseTotalHandler m where
   parseTotal = do

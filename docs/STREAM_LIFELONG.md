@@ -88,18 +88,42 @@ parser 没有另外的输入方法：`rawinput` 由会话本次取得的输入�
 
 ### 3.3 消费权限与读取类型
 
-资产表示类型由 Types.hs 与 Context 的声明确定。消费方在 demands 中写资产名，handler 始终按表示类型写 `require @T`：
+资产表示类型由 Types.hs 与 Context 的声明确定。消费方在 demands 中写资产名，handler 按表示类型写 `require @T` 读取本次增量；以 `streams` 读取持续资产的 handler 还可以写 `stream @T` 读取 x:xs（见下文[按 x:xs 读取](#flow)）：
 
-| 注册 | 读取结果 | 驱动关系 |
-| --- | --- | --- |
-| `streams "Asset"` | 本次交付的 T | 在 lifelong 原始消费链或持续 Context 生产链上，由该资产的交付推进 |
-| `requires "Asset"` | 本次已捕获的 T；尚未捕获时取得许可来源的当前值 | 只读取，不因此重复启动当前链 |
+| 注册 | `require @T` | `stream @T` | 驱动关系 |
+| --- | --- | --- | --- |
+| `streams "Asset"` | 本次交付的 T | `x :> xs`：本次交付及同一会话中更早的交付 | 在 lifelong 原始消费链或持续 Context 生产链上，由该资产的交付推进 |
+| `requires "Asset"` | 本次已捕获的 T；尚未捕获时取得许可来源的当前值 | 不提供 | 只读取，不因此重复启动当前链 |
 
 同一资产可声明两种访问方式；它们给出同一个表示类型和读取路由，不产生重复 Reads 实例。普通资产保持原来的读取协议；持续资产不能声明 `requests`。只有持续资产的基础资产可以被订阅，分支契约通过基础资产的固定值投影。只有 Excu、Scoped 可以声明 streams。
 
 **生产持续性与消费重复性分别计算。** A 的 Input 链订阅 B 时，A 可以继续随 B 的新交付生产；普通链 C 只 `requires` A，就只取得一次确定的值。A 不需要额外挂入 AST 的 lifelong，C 也不因读取 A 而变成 lifelong。C 若要随 A 的新交付反复执行，仍按既有规则在 lifelong 中声明 streams。普通 Context 生产链同样可只 require 持续资产并发布一次普通产物。
 
-T 可以是业务保存的记录、累计统计或其他 ADT。若 A 的原子操作把此前记录保存进 T，C 读到的自然是那份记录；SDK 不识别 history 节点，不从类型或名称猜测累计业务，也不自动给每次读取附加完整发布历史。确定的是本次 Binding；后台发布不改写已经捕获的 Binding。可变资源对象本身的业务行为仍由其类型与原子方法决定。
+T 可以是业务的任意 ADT。确定的是本次 Binding；后台发布不改写已经捕获的 Binding。可变资源对象本身的业务行为仍由其类型与原子方法决定。
+
+<a id="flow"></a>
+**按 x:xs 读取。** 持续资产是第三种资产：既驱动消费，也是一串交付。`stream = True` 的 `Asset @Line "TextLine"` 就是元素为 `Line` 的流，声明与 demands 都不写 `Flow`。以 `streams "TextLine"` 读取它的 effect，Layer 中有 `SDK.Streams Line m`：
+
+```haskell
+-- Framework.Language.Handler，经 Framework.SDK 导出
+data Flow a = a :> Flow a | Done
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+infixr 5 :>
+
+class Streams value m where
+  stream :: m (Flow value)
+
+-- demo/LinesDemo/Handlers.hs（节选）
+countText = do
+  seen <- stream @Line                      -- 本次交付 :> 更早的交付
+  rawoutput [show (length seen), show (sum [length text | Line text <- toList seen])]
+```
+
+- **x 是本次，xs 是过去。** `x` 是本次交付（有限读取时是捕获的那一条），`xs` 是同一会话中更早的交付，最新在前。它与 `require @T` 取同一个固定视图，同一次调用里两者一致。`xs` 都已发布：读取不等待后续发布，也不驱动来源。
+- **会话边界。** 历史从会话开头算起，与读取方何时登记无关；会话结束并回收后，历史随之放掉。要在流结束后保存数据，属于 [history 组合](NEXT_STAGES.md#urgent-history)，尚未设计。
+- **静态保留。** gen 从方法体中的 `stream @T` 收集被历史读取的契约，只允许持续资产；在生产它的 Context 原型上标 `effectHistory = True`。只有被标记的会话从开头保留全部交付（见[保留范围](#retention)），其他资产不受影响。
+- **refine 在元素上。** 契约仍生成 `newtype TextLine = TextLine Line`；`Flow` 的参数是 representational 角色，生成的 `Streams` 实例直接把 `Flow TextLine` `coerce` 成 `Flow Line`。
+- **未覆盖。** 惰性的未来尾部与背压见 [U3](NEXT_STAGES.md#urgent-backpressure)；被标记会话的保留没有上限，无限来源会随运行增长。
 
 ### 3.4 原子输入与源码约束
 
@@ -151,8 +175,8 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
     EffectSpec
       { name = "TextCounter"
       , typing = Excu { handler = Just "countText" }
-      , input = "InputSession"
-      , demands = [streams "TextLine", requires "OpenedInput"]
+      , input = "Root"
+      , demands = [streams "TextLine"]
       }
     EffectSpec
       { name = "CountParser"
@@ -176,14 +200,8 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
     -- demo/LinesDemo/Handlers.hs（节选）
     instance CountTextLayer m => CountTextHandler m where
       countText = do
-        Line text <- require @Line
-        InputFile _ _ counter <- require @InputFile
-        Total count size <- liftIO $ atomicModifyIORef' counter $ \(Total previousCount previousSize) ->
-          let count = previousCount + 1
-              size = previousSize + length text
-              updated = Total count size
-          in count `seq` size `seq` (updated, updated)
-        rawoutput [show count, show size]
+        seen <- stream @Line
+        rawoutput [show (length seen), show (sum [length text | Line text <- toList seen])]
 
     instance ParseTotalLayer m => ParseTotalHandler m where
       parseTotal = do
@@ -201,7 +219,7 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
           ]
       ]
 
-`countText` 的累计保存在 InputFile 的业务状态中，`parseTotal` 只解析本次原子输出。两者是普通的 Excu handler 与 parser，没有新的 effect 类别、关键字或 handler 能力。AST 的一个单元打印并执行 `TextCounter`；gen 把 `RunningTotal` 装配为 ReuseOutput，会话接收这次原子输出经 `CountParser` 解析后的资产。另一个单元的 `ShowTotal` 领取该发布，不另行执行统计，显示与原行文本可以交错。原子方法仍然不知道它的输出将由谁消费。
+`countText` 以 `stream @Line` 读取本次及更早的行算出累计，`parseTotal` 只解析本次原子输出。两者是普通的 Excu handler 与 parser，没有新的 effect 类别、关键字或 handler 能力。AST 的一个单元打印并执行 `TextCounter`；gen 把 `RunningTotal` 装配为 ReuseOutput，会话接收这次原子输出经 `CountParser` 解析后的资产。另一个单元的 `ShowTotal` 领取该发布，不另行执行统计，显示与原行文本可以交错。原子方法仍然不知道它的输出将由谁消费。
 
 **为什么产出声明为持续资产。** 链上有 `streams` demand，执行机会来自那份资产的交付，连续成功执行会产生一串增量。`stream = True` 把这个结构关系写在源码里；写成 `False` 或通过 `requests` 再驱动它由生成期拒绝。发布只发生于实际执行且成功解析的位置，alternative 未选中的位置不凭空产生交付。
 
@@ -344,10 +362,11 @@ ReuseOutput 沿用原调用的 ScopeUser，没有独立生产任务；资源按[
 <a id="retention"></a>
 ### 7.1 会话保留多少发布
 
-会话保存的是交付协议需要的绑定，不是业务历史。每个读取方按自己的游标领取；SDK 保留尚未被全部读取方领取的增量，以及供有限读取和合法后继读取的最新一条。
+会话保存的是交付协议需要的绑定。每个读取方按自己的游标领取；SDK 保留尚未被全部读取方领取的增量，以及供有限读取和合法后继读取的最新一条。有 handler 以 `stream @T` 读取的资产另外保留会话的全部交付。
 
 | 读取关系 | 保留范围 |
 | --- | --- |
+| 原型标了 `effectHistory`（有 `stream @T` 读取，见[按 x:xs 读取](#flow)） | 会话开头起的全部交付，不随游标裁剪；交付视图是开头到本条 |
 | lifelong 的单元与独立 Derive 会话 | 最慢游标之后的未领取交付，加上最新一条 |
 | 没有未领取交付，或只有普通有限读取 | 最新一条 |
 | lifelong 尚在完成初始读取方登记 | 暂保留已经发布的交付，登记完成后按游标裁剪 |
@@ -357,7 +376,7 @@ ReuseOutput 沿用原调用的 ScopeUser，没有独立生产任务；资源按[
 - **停止**：lifelong 内的独立会话按[读取方计数](#consumer-end)退役；interpreter 托管会话保持到运行结束，避免后续有限读取意外重启来源。
 - **伴随发布**只随交付领取：全部读取方领取过后，SDK 放掉该条伴随发布的引用。
 - **积压不合并**：相等值的两次发布仍是两次交付。不丢弃尚未领取的值，也不因没有新交付而补跑来源。
-- **没有硬容量与背压**：慢消费者仍可能造成无界积压。SDK 不默认保留已经全部消费的完整发布序列；业务保存的记录属于业务资产内容。
+- **没有硬容量与背压**：慢消费者仍可能造成无界积压。没有 `stream @T` 读取时，SDK 不保留已经全部消费的发布。
 - **固定捕获**：消费者已经取得的 Binding 独立于队列裁剪。释放 SDK 的队列引用不改变本次读取结果，也不等于关闭值中可能引用的资源。
 
 <a id="retention-cost"></a>
@@ -413,7 +432,7 @@ gen 为独立 Receive／Derive 生产关系生成 interpreter 托管计划。首
 - **不补跑 AST**：ReuseOutput 的位置只在所属 lifelong 实际执行时供值。有限读取建立的是已生成的独立生产计划，不执行或借用未来的 AST 挂载。
 - **收尾限制**：诊断、自动收尾与 close 期间不启动新会话。
 
-这项组合只把生产计划与读取方的启动关系分开；不放开对持续资产的 `requests`，不把普通链的 `streams` 自动解释成有限读取，也不新增 history 类别。
+这项组合只把生产计划与读取方的启动关系分开；不放开对持续资产的 `requests`，也不把普通链的 `streams` 自动解释成有限读取。
 
 <a id="execution-boundaries"></a>
 ### 8.4 共同执行结构与模块边界
@@ -493,14 +512,14 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
 **代码长什么样。** Stream handler 的结果为 `m ()`，Layer 提供 `Emits` 与 `StreamEnds`。以下是 LinesDemo 的来源和外层 workflow。
 
     -- demo/LinesDemo/Generated/Effects.hs（生成）
-    type NextLineLayer m = (SDK.Reads (InputFile) m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextLineError m, MonadIO m)
+    type NextLineLayer m = (SDK.Reads InputFile m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextLineError m, MonadIO m)
     class NextLineHandler m where
       nextLine :: m ()
 
     -- demo/LinesDemo/Handlers.hs（手写）
     instance NextLineLayer m => NextLineHandler m where
       nextLine = do
-        InputFile _ file _ <- require @InputFile
+        InputFile _ file <- require @InputFile
         let readLines = do
               finished <- liftIO (hIsEOF file)
               if finished then streamEnd else do

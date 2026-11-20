@@ -1,4 +1,4 @@
--- handler 方法体的纯结构副本；只保留按表示类型的读取与 rawinput，不求值业务数据或 IO。
+-- handler 方法体的纯结构副本；只保留按表示类型的读取（require、stream）与 rawinput，不求值业务数据或 IO。
 -- 读取 @T 与 rawinput 的来源因绑定而异，由 gen 在每个绑定上替换为 effect 方法调用。
 module Framework.Gen.Frontend.Shape (shapeHandlers, analyzeModule) where
 
@@ -35,7 +35,7 @@ shapeHandlers namespace handlers source = do
     then Left "Effect structure analysis does not support RebindableSyntax; use standard Haskell in handler bodies"
     else pure analyzed
 
--- 每个 handler 方法体得到一份结构：require @T 记为 @T，rawinput 记为 %raw。
+-- 每个 handler 方法体得到一份结构：require @T 记为 @T，stream @T 记为 ~T，rawinput 记为 %raw。
 -- handler 不能调用其他 handler：组合只经注册的 Input、demands 与 AST。
 analyzeModule
   :: String -> [(String, String)] -> NameUses -> Bool -> HsModule GhcPs
@@ -88,18 +88,20 @@ methodReference environment identifier = do
   let name = occNameString (nameOccName resolved)
   case (owner, name) of
     ("Framework.Language.Handler", "require") -> Just "@require"
+    ("Framework.Language.Handler", "stream") -> Just "@stream"
     ("Framework.Language.Handler", "rawinput") -> Just "%raw"
     _ | owner == contractsModule environment && name `elem` map snd (handlerMethods environment) -> Just ('!' : name)
       | otherwise -> Nothing
 
--- require @T 记为按表示类型的读取；类型原文由 gen 规范化后与绑定的路由比较。
-demandCall :: LHsWcType GhcPs -> Either String (MethodShape String)
-demandCall argument = pure (Call ('@' : showSDocUnsafe (ppr (hswc_body argument))))
+-- require @T 记为按表示类型的读取，stream @T 记为同一资产的 x:xs 读取；类型原文由 gen 规范化后与绑定的路由比较。
+demandCall :: String -> LHsWcType GhcPs -> Either String (MethodShape String)
+demandCall marker argument = pure (Call (marker ++ showSDocUnsafe (ppr (hswc_body argument))))
 
 -- handler 之间不直接调用：被调用的 handler 不经 effect 入口，Input、驱动和错误位置都会丢失。
 directCall :: Environment -> String -> Either String (MethodShape String)
 directCall environment reference = case reference of
   "@require" -> Left "require needs an explicit representation type, e.g. require @PageURL"
+  "@stream" -> Left "stream needs an explicit representation type, e.g. stream @Line"
   '!' : method -> Left ("handler " ++ maybe "" (++ " ") (ownerClass environment) ++ "calls handler " ++ method
     ++ " directly; compose handlers through effect registrations (Input, demands) and the AST")
   _ -> pure (Call reference)
@@ -206,7 +208,8 @@ shapeExpression environment located
         (methodReference environment identifier)
       HsPar _ body -> shapeExpression environment body
       HsAppType _ (L _ (HsVar _ identifier)) argument
-        | Just "@require" <- methodReference environment identifier -> demandCall argument
+        | Just "@require" <- methodReference environment identifier -> demandCall "@" argument
+        | Just "@stream" <- methodReference environment identifier -> demandCall "~" argument
       HsAppType _ body _ -> shapeExpression environment body
       ExprWithTySig _ body _ -> shapeExpression environment body
       HsPragE _ _ body -> shapeExpression environment body
@@ -233,7 +236,7 @@ shapeExpression environment located
           else shapeApplication environment operator [left, right]
       _ -> unsupported
   where
-    unsupported = Left "unsupported use of require/rawinput; bind it in a do statement, or use if/case or a supported combinator"
+    unsupported = Left "unsupported use of require/stream/rawinput; bind it in a do statement, or use if/case or a supported combinator"
 
 application :: LHsExpr GhcPs -> (LHsExpr GhcPs, [LHsExpr GhcPs])
 application expression = case unLoc expression of

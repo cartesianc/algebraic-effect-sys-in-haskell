@@ -15,20 +15,19 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module FacadeProbe.Generated.Handlers (handlerSourceFingerprint, getReportPath, readReportPath, getReplyPath, readReplyPath, getReportBody, readReportBody, getReplyBody, readReplyBody, getOpenedReport, readOpenedReport, getOpenedReply, readOpenedReply, openReportScope, closeReportScope, openReplyScope, closeReplyScope, runWriteReport, runWriteReply, runMarkReply, runReadReport, runReadReply, getReportStats, readReportStats, getReplyStats, readReplyStats, runShowReport, runShowReply, getReportState, readReportState, runOnBlank, runOnFilled, getCountA, readCountA, getCountB, readCountB, openFeedScopeA, openFeedScopeB, nextFeedA, nextFeedB, getLevelA, streamLevelA, getLevelB, streamLevelB, runShowA, runShowB, newScopeHandlers, errorHandlers) where
+module FacadeProbe.Generated.Handlers (handlerSourceFingerprint, getReportPath, readReportPath, getReplyPath, readReplyPath, getReportBody, readReportBody, getReplyBody, readReplyBody, getOpenedReport, readOpenedReport, getOpenedReply, readOpenedReply, openReportScope, closeReportScope, openReplyScope, closeReplyScope, runWriteReport, runWriteReply, runMarkReply, runReadReport, runReadReply, getReportStats, readReportStats, getReplyStats, readReplyStats, runShowReport, runShowReply, getReportState, readReportState, runOnBlank, runOnFilled, nextFeedA, nextFeedB, getLevelA, streamLevelA, getLevelB, streamLevelB, runShowA, runShowB, historyLevelA, historyLevelB, newScopeHandlers, errorHandlers) where
 
 import qualified Framework.Generated as SDK
 import qualified FacadeProbe.Generated.Effects as Effects
 import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
-import Framework.SDK (Emits(rawemit), Raises(..), Raw(..), Reads(..), rawoutput)
+import Framework.SDK (Emits(rawemit), Raises(..), Raw(..), Reads(..), Streams(..), rawoutput)
 import FacadeProbe.Generated.Effects
 import FacadeProbe.Types
 import Control.Concurrent (threadDelay)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
-import Data.IORef (atomicModifyIORef', newIORef)
 import System.FilePath ((</>))
 import System.IO (IOMode(WriteMode), hClose, hFlush, hPutStr, openFile, readFile')
 
@@ -111,48 +110,37 @@ instance DescribeFilledLayer m => DescribeFilledHandler m where
     liftIO (putStrLn ("[state] filled, " ++ show (length text) ++ " characters"))
     rawoutput []
 
-instance NewCounterLayer m => NewCounterHandler m where
-  newCounter = liftIO (FeedCounter <$> newIORef 0)
-
-instance OpenCounterLayer m => OpenCounterHandler m where
-  openCounter = do
-    FeedCounter _ <- require @FeedCounter
-    rawoutput []
-
 instance NextALayer m => NextAHandler m where
   nextA = do
-    FeedCounter counter <- require @FeedCounter
     liftIO (threadDelay 40000)
-    number <- liftIO $ atomicModifyIORef' counter $ \previous ->
-      let current = previous + 1 in (current, current)
-    rawemit (show (number, 10 :: Int))
+    rawemit (show (10 :: Int))
 
 instance NextBLayer m => NextBHandler m where
   nextB = do
-    FeedCounter counter <- require @FeedCounter
     liftIO (threadDelay 60000)
-    number <- liftIO $ atomicModifyIORef' counter $ \previous ->
-      let current = previous + 1 in (current, current)
-    rawemit (show (number, 20 :: Int))
+    rawemit (show (20 :: Int))
 
 instance ParseLevelLayer m => ParseLevelHandler m where
   parseLevel = do
     reading <- concat <$> rawinput
     case reads reading of
-      [((number, value), "")] -> pure (Level number value)
+      [(value, "")] -> pure (Level value)
       _ -> raise (ParseLevelError reading)
 
 -- ShowA 与 ShowB 共用；失败按 handler 固定为 ShowLevelError，origin 仍是具体的 effect。
+-- 交付编号是 x:xs 的长度：本次交付加上同一会话中更早的交付。
 instance ShowLevelLayer m => ShowLevelHandler m where
   showLevel = do
-    Level number value <- require @Level
+    Level value <- require @Level
+    seen <- stream @Level
+    let number = length seen
     liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show number))
     when (number >= 3) (raise (ShowLevelError "enough deliveries"))
     rawoutput []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "0a0b686cffa24a432689b625d717b103"
+handlerSourceFingerprint = Just "e86501422369c5a5564521577a3d3b0b"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -224,23 +212,17 @@ instance SDK.Reads () (Wrap "OnBlank" method) where
 instance SDK.Reads Body (Wrap "OnFilled" method) where
   require = Wrap (SDK.projectContext "ReportInspect" "ReportStateFilled" Effects.ContextBindingError (\(Effects.ReportState value) -> case value of { Filled field -> Just field; _ -> Nothing }) (readReportState))
 
-instance SDK.Reads FeedCounter (Wrap "FeedScopeA" method) where
-  require = Wrap (SDK.coerce <$> readCountA)
-
-instance SDK.Reads FeedCounter (Wrap "FeedScopeB" method) where
-  require = Wrap (SDK.coerce <$> readCountB)
-
-instance SDK.Reads FeedCounter (Wrap "FeedA" method) where
-  require = Wrap (SDK.coerce <$> readCountA)
-
-instance SDK.Reads FeedCounter (Wrap "FeedB" method) where
-  require = Wrap (SDK.coerce <$> readCountB)
-
 instance SDK.Reads Level (Wrap "ShowA" method) where
   require = Wrap (SDK.coerce <$> streamLevelA)
 
 instance SDK.Reads Level (Wrap "ShowB" method) where
   require = Wrap (SDK.coerce <$> streamLevelB)
+
+instance SDK.Streams Level (Wrap "ShowA" method) where
+  stream = Wrap (SDK.coerce <$> historyLevelA)
+
+instance SDK.Streams Level (Wrap "ShowB" method) where
+  stream = Wrap (SDK.coerce <$> historyLevelB)
 
 instance SDK.Raw (Wrap "ReportCounter" "countLines") where
   rawinput = Wrap runReadReport
@@ -476,93 +458,51 @@ runOnFilled =
   . SDK.enterHandler "OnFilled" $
     call @"OnFilled" @"describeFilled" Effects.describeFilled
 
-getCountA :: Effects.App Effects.CountA
-getCountA =
-  SDK.handleFailure
-  . SDK.callContext "CounterA"
-      (\value bindings -> bindings { Effects.boundCounterA = Just value }) $
-    Effects.CountA <$> call @"CounterA" @"newCounter" Effects.newCounter
-
-readCountA :: Effects.App Effects.CountA
-readCountA =
-  SDK.handleFailure $
-    SDK.readContext "CounterA" Effects.ContextBindingError Effects.boundCounterA
-
-getCountB :: Effects.App Effects.CountB
-getCountB =
-  SDK.handleFailure
-  . SDK.callContext "CounterB"
-      (\value bindings -> bindings { Effects.boundCounterB = Just value }) $
-    Effects.CountB <$> call @"CounterB" @"newCounter" Effects.newCounter
-
-readCountB :: Effects.App Effects.CountB
-readCountB =
-  SDK.handleFailure $
-    SDK.readContext "CounterB" Effects.ContextBindingError Effects.boundCounterB
-
-openFeedScopeA :: Effects.App [String]
-openFeedScopeA =
-  SDK.withErrorPath ["FeedScopeA"]
-  . SDK.handleFailure
-  . SDK.atomicScope "openFeedScopeA" [] []
-  . SDK.openScope "FeedScopeA" Effects.ScopeBindingError Nothing
-  . SDK.enterHandler "FeedScopeA" $
-    getCountA >> call @"FeedScopeA" @"openCounter" Effects.openCounter
-
-openFeedScopeB :: Effects.App [String]
-openFeedScopeB =
-  SDK.withErrorPath ["FeedScopeB"]
-  . SDK.handleFailure
-  . SDK.atomicScope "openFeedScopeB" [] []
-  . SDK.openScope "FeedScopeB" Effects.ScopeBindingError Nothing
-  . SDK.enterHandler "FeedScopeB" $
-    getCountB >> call @"FeedScopeB" @"openCounter" Effects.openCounter
-
 nextFeedA :: Effects.App ()
 nextFeedA =
-  SDK.withErrorPath ["FeedScopeA"]
-  . SDK.handleFailure
-  . SDK.withScopeDependencies ["FeedScopeA"]
+  SDK.handleFailure
   . SDK.enterHandler "FeedA" $
-    openFeedScopeA >> call @"FeedA" @"nextA" Effects.nextA
+    call @"FeedA" @"nextA" Effects.nextA
 
 nextFeedB :: Effects.App ()
 nextFeedB =
-  SDK.withErrorPath ["FeedScopeB"]
-  . SDK.handleFailure
-  . SDK.withScopeDependencies ["FeedScopeB"]
+  SDK.handleFailure
   . SDK.enterHandler "FeedB" $
-    openFeedScopeB >> call @"FeedB" @"nextB" Effects.nextB
+    call @"FeedB" @"nextB" Effects.nextB
 
 getLevelA :: Effects.App Effects.LevelA
 getLevelA =
-  SDK.withErrorPath ["FeedScopeA"]
-  . SDK.handleFailure
-  . SDK.withScopeDependencies ["FeedScopeA"]
+  SDK.handleFailure
   . SDK.callContext "ParserA"
       (\value bindings -> bindings { Effects.boundParserA = Just value }) $
     Effects.LevelA <$> call @"ParserA" @"parseLevel" Effects.parseLevel
 
 streamLevelA :: Effects.App Effects.LevelA
 streamLevelA =
-  SDK.withErrorPath ["FeedScopeA"]
-  . SDK.handleFailure $
+  SDK.handleFailure $
     SDK.readStreamContext "ParserA" Effects.ContextBindingError Effects.boundParserA
+
+historyLevelA :: Effects.App (SDK.Flow Effects.LevelA)
+historyLevelA =
+  SDK.handleFailure $
+    SDK.readStreamHistory "ParserA" Effects.ContextBindingError Effects.boundParserA
 
 getLevelB :: Effects.App Effects.LevelB
 getLevelB =
-  SDK.withErrorPath ["FeedScopeB"]
-  . SDK.handleFailure
-  . SDK.withScopeDependencies ["FeedScopeB"]
+  SDK.handleFailure
   . SDK.callContext "ParserB"
       (\value bindings -> bindings { Effects.boundParserB = Just value }) $
     Effects.LevelB <$> call @"ParserB" @"parseLevel" Effects.parseLevel
 
 streamLevelB :: Effects.App Effects.LevelB
 streamLevelB =
-  SDK.withErrorPath ["FeedScopeB"]
-  . SDK.handleFailure $
+  SDK.handleFailure $
     SDK.readStreamContext "ParserB" Effects.ContextBindingError Effects.boundParserB
+
+historyLevelB :: Effects.App (SDK.Flow Effects.LevelB)
+historyLevelB =
+  SDK.handleFailure $
+    SDK.readStreamHistory "ParserB" Effects.ContextBindingError Effects.boundParserB
 
 runShowA :: Effects.App [String]
 runShowA =
@@ -583,8 +523,6 @@ newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
   [ SDK.newScopeHandler "ReportScope" ["ReportLocation"] (Just "ReportFile")
   , SDK.newScopeHandler "ReplyScope" ["ReplyLocation"] (Just "ReplyFile")
-  , SDK.newScopeHandler "FeedScopeA" [] (Just "CounterA")
-  , SDK.newScopeHandler "FeedScopeB" [] (Just "CounterB")
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。

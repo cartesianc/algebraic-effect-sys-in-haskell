@@ -473,7 +473,8 @@ obtainSession graph key bindings views = uninterruptibleMask_ $ do
                   Just source -> do
                     (updated, previous) <- assemble known (Nothing, source)
                     pure (updated, Just previous)
-                fresh <- newSession (notifyFrame (runtimeRootFrame graph)) (collectRetainedScopes graph) selected
+                fresh <- newSession (notifyFrame (runtimeRootFrame graph)) (collectRetainedScopes graph)
+                  (sessionHistory (runtimePrototype graph) (snd selected)) selected
                   (if selected == key then bindings else []) (if selected == key then views else [])
                 forM_ parent $ \previous -> do
                   cursor <- attachReader previous
@@ -516,6 +517,11 @@ obtainSession graph key bindings views = uninterruptibleMask_ $ do
 
 -- 只投影已生成计划的上游引用，不从 handler、资产内容或运行时状态推断生产方式。
 -- 有限会话的依赖图已经过 gen 校验；有边界的会话由 Execution 一次连接全部读取方。
+-- 会话以生产方 effect 命名；原型标了 effectHistory 的持续资产从开头保留全部发布，供 stream @T 读取 x:xs。
+sessionHistory :: PrototypeReference -> String -> Bool
+sessionHistory (PrototypeReference prototype) source =
+  or [effectHistory effect | effect <- protoEffects prototype, effectName effect == source]
+
 sessionUpstreamSource :: PrototypeReference -> SessionKey -> Either String (Maybe String)
 sessionUpstreamSource _ (Just _, _) = Right Nothing
 sessionUpstreamSource (PrototypeReference prototype) (Nothing, source) = case sessionDriveAt prototype Nothing source of

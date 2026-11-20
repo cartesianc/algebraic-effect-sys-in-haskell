@@ -3,12 +3,12 @@
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Runtime.Context
   ( ContextFault(..), readContext, callContext
-  , projectContext, atomicHandle, atomicScope, readStreamContext
+  , projectContext, atomicHandle, atomicScope, readStreamContext, readStreamHistory
   ) where
 
 import Framework.Runtime.Protocol
   (ContextStore(..), ContextFault(..), RawOutput(..), failEffect)
-import Framework.Language.Handler (Failure(..))
+import Framework.Language.Handler (Failure(..), Flow(..))
 import Control.Monad (forM_, when)
 import Control.Monad.Except (MonadError, catchError, throwError)
 
@@ -89,6 +89,22 @@ readStreamContext contextName wrap select = do
         (contextName ++ ": no delivery here (no stream session can deliver, or the stream ended without publishing)")) pure delivered
   recordContextInput contextName
   pure value
+
+-- stream @T 的生成入口：与 readStreamContext 领取同一次交付，返回 x :> xs。
+-- x 是本次值，xs 是同一会话更早的发布（最新在前），都已发布；读取不等待后续发布，也不驱动来源。
+readStreamHistory
+  :: (ContextStore environment m, MonadError (Failure cause) m)
+  => String -> (ContextFault -> cause) -> (environment -> Maybe value) -> m (Flow value)
+readStreamHistory contextName wrap select = do
+  captured <- readContextHistory contextName select
+  values <- case captured of
+    Just values -> pure values
+    Nothing -> do
+      delivered <- awaitContextHistory contextName select
+      maybe (failEffect contextName (wrap ContextNotInitialized)
+        (contextName ++ ": no delivery here (no stream session can deliver, or the stream ended without publishing)")) pure delivered
+  recordContextInput contextName
+  pure (foldr (:>) Done values)
 
 -- Excu 的生成入口：每次调用都执行。
 atomicHandle

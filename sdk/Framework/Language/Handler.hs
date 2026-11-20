@@ -1,9 +1,10 @@
+{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 -- handler 在源语言中能用的全部能力，以及业务能观察到的完成结果。
 -- 能力类的实例由 gen 按注册生成（Framework.Gen.Emit.Handlers）；执行载体的协议在 Framework.Runtime.Protocol。
 module Framework.Language.Handler
-  ( Reads(..), Raw(..), Emits(..), RawOutputs(..), Raises(..), StreamEnds(..), EndsStream(..), Hooks(..), Operation(..)
+  ( Reads(..), Streams(..), Flow(..), Raw(..), Emits(..), RawOutputs(..), Raises(..), StreamEnds(..), EndsStream(..), Hooks(..), Operation(..)
   , Failure(..), Output(..), ErrorReport(..)
   ) where
 
@@ -16,6 +17,15 @@ module Framework.Language.Handler
 -- EndsStream 只给由持续资产驱动的消费链上的 Excu handler（消费方）：不再消费这份持续资产时以 endStream 退出。
 class Reads value m where
   require :: m value
+
+-- 持续资产按 x:xs 读取：x 是本次交付（或捕获的那一条），xs 是同一会话中更早的交付，最新在前。
+-- 只给以 streams 读取该资产的 effect；require 仍只读本次增量。xs 都已发布，读取不等待、不驱动来源。
+data Flow value = value :> Flow value | Done
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+infixr 5 :>
+
+class Streams value m where
+  stream :: m (Flow value)
 
 class Raw m where
   rawinput :: m [String]

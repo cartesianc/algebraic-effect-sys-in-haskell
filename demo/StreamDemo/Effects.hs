@@ -3,25 +3,20 @@
 
 module StreamDemo.Effects (effects) where
 
-import Framework.SDK (EffectSpec(..), EffectTyping(..), Asset(..), requests, requires, streams)
+import Framework.SDK (EffectSpec(..), EffectTyping(..), Asset(..), streams)
 import StreamDemo.Types
 
 -- Stream：每次取得一份原始输入（String），本身不是 AST 末端；挂在它下面的 Context 是它的 parser。
 -- stream = True 声明持续资产；生产连接与订阅驱动由 gen 根据组合确定。
--- 消费方写 streams "资产名"，handler 用 require @表示类型读取本次交付；业务累计由 SensorMemory 保存。
+-- 消费方写 streams "资产名"，handler 用 require @表示类型读取本次交付，
+-- 用 stream @表示类型读取 x:xs（本次交付及同一会话中更早的交付）；编号、窗口都由它算出，不另设业务累计。
 effects :: [EffectSpec]
 effects =
   [ EffectSpec
-      { name = "SensorResource"
-      , typing = Context { asset = Asset @SensorMemory "SensorState", parser = Just "prepareSensor", require = True, stream = False }
-      , input = "Root"
-      , demands = []
-      }
-  , EffectSpec
       { name = "SensorLink"
       , typing = Scoped { open = Just "connectSensor", close = Just "disconnectSensor" }
       , input = "Root"
-      , demands = [requests "SensorState", requires "SensorState"]
+      , demands = []
       }
   , EffectSpec
       { name = "TemperatureFeed"
@@ -33,7 +28,7 @@ effects =
       { name = "TemperatureParser"
       , typing = Context { asset = Asset @Temperature "TemperatureSample", parser = Just "parseTemperature", require = True, stream = True }
       , input = "TemperatureFeed"
-      , demands = [requires "SensorState"]
+      , demands = []
       }
   , EffectSpec
       { name = "HeartbeatClock"
@@ -45,7 +40,7 @@ effects =
       { name = "Heartbeat"
       , typing = Context { asset = Asset @Int "Beat", parser = Just "parseBeat", require = True, stream = True }
       , input = "HeartbeatClock"
-      , demands = [requires "SensorState"]
+      , demands = []
       }
   , EffectSpec
       { name = "Announce"

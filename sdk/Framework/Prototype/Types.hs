@@ -76,6 +76,8 @@ data EffectProto method = EffectProto
   , effectContextDependencies :: [String]
   -- 持续资产：stream = True，Input 链由 Stream 或增量驱动；读取方是否重复由组合计划决定。
   , effectContinuous :: Bool
+  -- 持续资产有 handler 以 stream @T 读取 x:xs：会话从开头保留全部交付。由方法体形状决定，声明不写。
+  , effectHistory :: Bool
   } deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 -- 只有名字、类别与 Input 的 effect 原型：其余列表为空、Maybe 为 Nothing、非持续。
@@ -86,7 +88,7 @@ effectProto name kind input = EffectProto
   , effectMethods = [], effectDemands = [], effectProduces = Nothing, effectBranches = []
   , effectAnchor = Nothing, effectScopes = [], effectErrorScope = Nothing, effectInputChain = []
   , effectScopeParents = [], effectOpeningInputs = [], effectNearestScopes = [], effectResource = Nothing
-  , effectContextDependencies = [], effectContinuous = False
+  , effectContextDependencies = [], effectContinuous = False, effectHistory = False
   }
 
 data WorkflowTree

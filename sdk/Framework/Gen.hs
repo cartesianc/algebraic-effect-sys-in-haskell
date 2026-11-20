@@ -50,7 +50,7 @@ compileWorkflow namespace = do
       pure (completed, renderPrototype (compositionPrototype completed), False)
   let unit = compositionUnit result
       prototype = compositionPrototype result
-      names = nameHandlers (maybe mempty handlerScopeNames source) (allMethods unit)
+      names = nameHandlers (maybe mempty handlerScopeNames source) (allMethods unit ++ historyEntries unit)
   handlers <- either (ioError . userError) pure (renderHandlers names unit source)
   -- 输出只读取机器完成态的接口事实。
   let program = renderProgram names typesFingerprint hangingSources unit

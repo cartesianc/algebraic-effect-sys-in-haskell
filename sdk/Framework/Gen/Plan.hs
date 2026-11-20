@@ -6,7 +6,7 @@ module Framework.Gen.Plan
   , ReaderPlan(..), SelectorPlan(..), SessionEntry(..), SuperSelection(..)
   , Assembly(..), EntryMount(..), OutputConnection(..), EntryStep(..), RawSource(..)
   , stepMethod, rawMethod, bindingCalls, unitTerminals, mountHooks, unitVariants
-  , effectPrototypes, protoOf, allMethods
+  , effectPrototypes, protoOf, allMethods, streamedRoutes, historyEntry, historyEntries
   , reference, parenthesized, normalizeType, readsAccess ) where
 
 import Data.Char (isSpace, isUpper)
@@ -42,7 +42,7 @@ data ScopePlan = ScopePlan
 data ValueType = NativeType String | RefinedType String
   deriving (Eq, Ord, Show, Read)
 
-data Capability = ReadsType ValueType | HasRaw | WritesRaw | EmitsItem | EndsSource | EndsSubscription | ObservesHooks | PureMonad | IOMonad
+data Capability = ReadsType ValueType | StreamsType ValueType | HasRaw | WritesRaw | EmitsItem | EndsSource | EndsSubscription | ObservesHooks | PureMonad | IOMonad
   deriving (Eq, Show, Read)
 
 -- 每个入口的解释已经确定；Emit 仅把该操作翻译成现有 runtime 包装，不再查看 typing。
@@ -209,6 +209,20 @@ protoOf unit selectedName = case [effect | effect <- effectPrototypes unit, Prot
 
 allMethods :: Unit -> [String]
 allMethods unit = [method | effect <- effectPrototypes unit, (_, method) <- Prototype.effectMethods effect]
+
+-- x:xs 读取的路由：持续资产，且所在 effect 的 Layer 带对应的 Streams 能力。
+streamedRoutes :: Unit -> [ReadRoute]
+streamedRoutes unit =
+  [ route | route <- unitRoutes unit, routeView route == ContinuousView
+  , any (\binding -> bindingEffect binding == routeEffect route && StreamsType (routeType route) `elem` bindingCapabilities binding)
+      (unitBindings unit) ]
+
+-- 每个被 streams 读取的持续契约一个历史读取入口；名字前缀不与任何 effect 方法前缀相同。
+historyEntry :: String -> String
+historyEntry contractType = "history" ++ contractType
+
+historyEntries :: Unit -> [String]
+historyEntries unit = nub [historyEntry (routeContract route) | route <- streamedRoutes unit]
 
 bindingCalls :: Binding -> [String]
 bindingCalls = map stepMethod . bindingBefore

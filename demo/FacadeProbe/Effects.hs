@@ -36,13 +36,9 @@ effects =
   , context "ReportInspect" (Asset @FileState "ReportState") "inspectFile" "Root" [requires "ReportPath"]
   , excu "OnBlank" "describeBlank" "Root" [requires "ReportStateBlank"]
   , excu "OnFilled" "describeFilled" "Root" [requires "ReportStateFilled"]
-    -- 同一个 Stream 解析器和消费者；Stream 方法体各不相同
-  , context "CounterA" (Asset @FeedCounter "CountA") "newCounter" "Root" []
-  , context "CounterB" (Asset @FeedCounter "CountB") "newCounter" "Root" []
-  , feedScope "FeedScopeA" "CountA"
-  , feedScope "FeedScopeB" "CountB"
-  , stream "FeedA" "nextA" "FeedScopeA" "CountA"
-  , stream "FeedB" "nextB" "FeedScopeB" "CountB"
+    -- 同一个 Stream 解析器和消费者；Stream 方法体各不相同。交付编号由消费者以 stream @Level 读取 x:xs 得到
+  , stream "FeedA" "nextA"
+  , stream "FeedB" "nextB"
   , continuous "ParserA" (Asset @Level "LevelA") "parseLevel" "FeedA"
   , continuous "ParserB" (Asset @Level "LevelB") "parseLevel" "FeedB"
   , excu "ShowA" "showLevel" "Root" [streams "LevelA"]
@@ -73,15 +69,9 @@ effects =
       , input = "Root"
       , demands = [requests resource, requires resource]
       }
-    feedScope selected resource = EffectSpec
-      { name = selected
-      , typing = Scoped { open = Just "openCounter", close = Nothing }
-      , input = "Root"
-      , demands = [requests resource, requires resource]
-      }
-    stream selected method upstream resource = EffectSpec
+    stream selected method = EffectSpec
       { name = selected
       , typing = Stream { handler = Just method }
-      , input = upstream
-      , demands = [requires resource]
+      , input = "Root"
+      , demands = []
       }

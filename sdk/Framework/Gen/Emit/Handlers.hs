@@ -30,7 +30,7 @@ renderHandlers names unit loaded = do
   let generatedName = unitNamespace unit ++ ".Generated.Handlers"
       sourceFingerprint = fmap (show . fingerprintString . handlerText) loaded
       fingerprint = helperName names "handlerSourceFingerprint"
-      extraExports = fingerprint : map (entryName names) (allMethods unit) ++ map (helperName names) ["newScopeHandlers", "errorHandlers"]
+      extraExports = fingerprint : map (entryName names) (allMethods unit ++ historyEntries unit) ++ map (helperName names) ["newScopeHandlers", "errorHandlers"]
       extensions = copyExtensions ++ (if hasMiddleware unit then middlewareExtensions else [])
       supplied = maybe [] (leadingExtensions extensions . handlerText) loaded
       qualifiers = maybe longQualifiers (chooseQualifiers . handlerModule) loaded
@@ -51,7 +51,7 @@ renderHandlers names unit loaded = do
 -- super 通知进入，然后执行 action；显式操作在各自的调用点通知 Middleware。
 -- GHC 在编译期按挂载登记的列表选定实例，入口只有一份，运行时不分发、不筛选。
 support :: HandlerNames -> Unit -> String
-support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ raisesInstances ++ routeInstances ++ rawInstances
+support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ raisesInstances ++ routeInstances ++ streamInstances ++ rawInstances
     ++ outputInstances ++ endInstances ++ concatMap entryDefinitions (map Prototype.effectName (effectPrototypes unit)))
     ++ scopeHandlers ++ errorHandlers
   where
@@ -216,6 +216,13 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         contractType = routeContract route
         producer = routeProvider route
         reader = entry (routeReader route)
+    -- streams 读取的持续资产另有 x:xs 入口；Flow 的参数是 representational 角色，契约细化直接 coerce 掉。
+    streamInstances = concat
+      [ [ "instance FrameworkRuntime.Streams " ++ parenthesized (renderValueType "FrameworkRuntime." "FrameworkGenerated." (routeType route)) ++ " "
+            ++ tag (show (routeEffect route)) ++ " where"
+        , "  stream = " ++ wrap ++ " (FrameworkRuntime.coerce <$> " ++ entry (historyEntry (routeContract route)) ++ ")"
+        , "" ]
+      | route <- streamedRoutes unit ]
     -- rawinput 的捕获点：读取方 handler 与读到的值；类别取被读取的那次调用的类别。
     rawInstances = concat
       [ [ "instance " ++ context ++ "FrameworkRuntime.Raw " ++ methodTag (show (bindingEffect binding)) (show (bindingHandler binding)) ++ " where"
@@ -260,6 +267,8 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       , line <- definition True method (renderValueType "FrameworkRuntime." "FrameworkGenerated." (bindingResult binding)) (wrapper binding)
           (intercalate " >> " (map call (bindingCalls binding) ++ [handlerCall binding handler'])) ]
       ++ concat [ readerDefinition reader | reader <- unitReaders unit, readerEffect reader == selectedName ]
+      ++ concat [ historyDefinition reader | reader <- unitReaders unit, readerEffect reader == selectedName
+                , readerContinuous reader, historyEntry (readerContract reader) `elem` historyEntries unit ]
       where
         -- close 的调用点用 callClose：是否 close 由绑定的操作在生成期确定。
         handlerCall binding handler' =
@@ -312,6 +321,11 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         selectedName = readerEffect reader
         method = readerMethod reader
         contractType = readerContract reader
+    -- x:xs：本次固定交付及其之前的同会话交付；与 streamT 取同一个视图，不另起读取。
+    historyDefinition reader = definition False (historyEntry (readerContract reader))
+      ("FrameworkRuntime.Flow FrameworkGenerated." ++ readerContract reader) (rootWrapper (readerEffect reader))
+      ("FrameworkRuntime.readStreamHistory " ++ show (readerEffect reader) ++ " FrameworkGenerated.ContextBindingError"
+        ++ " FrameworkGenerated.bound" ++ readerEffect reader)
     definition polymorphic method resultType wrapper body =
       [ entry method ++ " :: " ++ (if polymorphic then signature else ("FrameworkGenerated.App " ++)) (parenthesized resultType)
       , entry method ++ " ="

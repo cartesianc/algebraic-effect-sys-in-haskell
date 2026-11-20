@@ -12,7 +12,7 @@
 data TextFile = TextFile FilePath Handle deriving Show
 newtype Body = Body String deriving Show
 newtype LineCount = LineCount Int deriving Show
-data Level = Level Int Int deriving Show
+newtype Level = Level Int deriving Show
 data FileState = Blank | Filled Body deriving Show
 ```
 
@@ -39,7 +39,7 @@ effects =
   , context "ReportCounter" (Asset @LineCount "ReportStats") "countLines" "ReadReport" []
   , context "ReplyCounter" (Asset @LineCount "ReplyStats") "countLines" "ReadReply" []
     -- 同一个 Stream parser 和消费者
-  , stream "FeedA" "nextA"
+  , stream "FeedA" "nextA"                  -- Input 为 Root 的 Stream
   , continuous "ParserA" (Asset @Level "LevelA") "parseLevel" "FeedA"
   , excu "ShowA" "showLevel" "Root" [streams "LevelA"]
   ...
@@ -74,13 +74,15 @@ instance CountLinesLayer m => CountLinesHandler m where
 
 instance ShowLevelLayer m => ShowLevelHandler m where
   showLevel = do
-    Level number value <- require @Level
+    Level value <- require @Level
+    seen <- stream @Level
+    let number = length seen
     liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show number))
     when (number >= 3) (raise (ShowLevelError "enough deliveries"))
     rawoutput []
 ```
 
-交付编号由每个来源自己的 `FeedCounter` 保存并发布到 `Level`；SDK 不从全量记录推导它。两个来源的 Counter 和 Scoped 注册见 [Effects.hs](Effects.hs)，共用原子获取和消费 handler。
+交付编号是 `stream @Level` 读到的 x:xs 的长度：本次交付加上同一会话中更早的交付（[持续资产按 x:xs 读取](../../docs/STREAM_LIFELONG.md#flow)）。两个来源共用 parser 和消费 handler，各自的会话分别计数。
 
 ### 4. AST.hs：不变
 
