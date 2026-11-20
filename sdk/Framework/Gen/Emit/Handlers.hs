@@ -5,8 +5,9 @@
 -- 以及 scope 与 Error 的登记表。挂接的 Context 与自动收尾的 close 直接写在入口包装上。只渲染绑定阶段定下的事实。
 module Framework.Gen.Emit.Handlers (renderHandlers) where
 
-import Data.Char (isSpace)
-import Data.List (intercalate, isPrefixOf, nub, sortOn)
+import Data.Char (isAlphaNum, isSpace)
+import Data.List (intercalate, isPrefixOf, nub, sortOn, stripPrefix)
+import Data.Maybe (fromMaybe)
 import Framework.Gen.Plan
 import Framework.Gen.Emit.Types (renderValueType)
 import Framework.Gen.Names (HandlerNames, entryName, helperName, handlerError, handlerFailure)
@@ -14,7 +15,7 @@ import Framework.Gen.Frontend.Source (HandlerSource(..), sourceOffset)
 import Framework.Language.Registration
 import Framework.Prototype.Graph (MethodRole(..))
 import qualified Framework.Prototype as Prototype
-import GHC (GhcPs)
+import GHC (GhcPs, moduleNameString)
 import GHC.Fingerprint (fingerprintString)
 import GHC.Hs
 import GHC.Parser.Annotation (getLocA)
@@ -32,16 +33,17 @@ renderHandlers names unit loaded = do
       extraExports = fingerprint : map (entryName names) (allMethods unit) ++ map (helperName names) ["newScopeHandlers", "errorHandlers"]
       extensions = copyExtensions ++ (if hasMiddleware unit then middlewareExtensions else [])
       supplied = maybe [] (leadingExtensions extensions . handlerText) loaded
+      qualifiers = maybe longQualifiers (chooseQualifiers . handlerModule) loaded
   generated <- case loaded of
     Nothing -> pure ("module " ++ generatedName ++ " (" ++ fingerprint ++ ") where\n")
-    Just source -> copyModule (unitNamespace unit) generatedName extraExports (handlerText source) (handlerModule source)
+    Just source -> copyModule qualifiers (unitNamespace unit) generatedName extraExports (handlerText source) (handlerModule source)
   pure ("-- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。\n"
         ++ concat ["{-# LANGUAGE " ++ extension ++ " #-}\n" | extension <- extensions, extension `notElem` supplied]
         ++ generated
         ++ "\n-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。\n"
         ++ fingerprint ++ " :: Maybe String\n"
         ++ fingerprint ++ " = " ++ show sourceFingerprint ++ "\n"
-        ++ maybe "" (const (support names unit)) loaded)
+        ++ maybe "" (const (requalify qualifiers (support names unit))) loaded)
 
 -- 生成区的装配：effect 标签、handler 能力的实例与 effect 方法。
 -- 注入 v6（2026-11-19）：生成入口把原子 action 交给 Root.super；hooks 由挂载决定，类别由绑定决定。
@@ -182,9 +184,9 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
           ]
     -- demands 按表示类型路由到资产的读取入口；持续与有限调用都读声明的 T，分支契约投影构造器字段。
     routeInstances = concat
-      [ [ "instance FrameworkRuntime.Reads (" ++ renderValueType "FrameworkRuntime." "FrameworkGenerated." (routeType route) ++ ") "
+      [ [ "instance FrameworkRuntime.Reads " ++ parenthesized (renderValueType "FrameworkRuntime." "FrameworkGenerated." (routeType route)) ++ " "
             ++ tag (show (routeEffect route)) ++ " where"
-        , "  require = " ++ wrap ++ " (" ++ routeExpression route ++ ")"
+        , "  require = " ++ wrap ++ " " ++ parenthesized (routeExpression route)
         , "" ]
       | route <- unitRoutes unit ]
     routeExpression route = case routeView route of
@@ -193,17 +195,16 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         ++ show contractType ++ " FrameworkGenerated.ContextBindingError (\\(FrameworkGenerated." ++ base
         ++ " value) -> case value of { " ++ constructor ++ maybe " -> Just ()" (const " field -> Just field") field
         ++ "; _ -> Nothing }) (" ++ reader ++ ")"
-      ContinuousView -> unwrap contractType ++ " <$> " ++ reader
-      ValueView -> unwrap contractType ++ " <$> " ++ reader
+      ContinuousView -> "FrameworkRuntime.coerce <$> " ++ reader
+      ValueView -> "FrameworkRuntime.coerce <$> " ++ reader
       where
         contractType = routeContract route
         producer = routeProvider route
         reader = entry (routeReader route)
-        unwrap selectedContract = "(\\(FrameworkGenerated." ++ selectedContract ++ " value) -> value)"
     -- rawinput 的捕获点：读取方 handler 与读到的值；类别取被读取的那次调用的类别。
     rawInstances = concat
       [ [ "instance " ++ context ++ "FrameworkRuntime.Raw " ++ tag (show (bindingEffect binding)) ++ " where"
-        , "  rawinput = " ++ wrap ++ " (" ++ capturedRaw binding (rawExpression (callSource source)) ++ ")"
+        , "  rawinput = " ++ wrap ++ " " ++ parenthesized (capturedRaw binding (rawExpression (callSource source)))
         , "" ]
       | binding <- unitBindings unit, Just source <- [bindingRaw binding] ]
     callSource (RawList method) = RawList (call method)
@@ -266,7 +267,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         handlerCall binding handler' =
           let action = runner selectedName handler' ++ " " ++ atomicCall (bindingOperation binding) handler'
           in case bindingOperation binding of
-               PublishAsset contract -> "(FrameworkGenerated." ++ contract ++ " <$> " ++ action ++ ")"
+               PublishAsset contract -> "FrameworkGenerated." ++ contract ++ " <$> " ++ action
                _ -> action
         scoped = ["FrameworkRuntime.withScopeDependencies " ++ show scopes | not (null scopes)]
           where scopes = Prototype.effectScopes (protoOf unit selectedName)
@@ -324,23 +325,19 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     scopeHandlers = unlines
       [ "-- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。"
       , helper "newScopeHandlers" ++ " :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]"
-      , helper "newScopeHandlers" ++ " = sequence"
-      , "  [" ++ (if null registered then "" else " " ++ intercalate "\n  , " registered)
-      , "  ]"
+      , helper "newScopeHandlers" ++ " = sequence" ++ (if null registered then " []" else "\n  [ " ++ intercalate "\n  , " registered ++ "\n  ]")
       ]
       where
         registered =
           [ "FrameworkRuntime.newScopeHandler " ++ show (scopeEffect plan) ++ " " ++ show (scopeInputs plan)
-              ++ " (" ++ show (scopeResource plan) ++ ")"
+              ++ " " ++ showsPrec 11 (scopeResource plan) ""
           | plan <- unitScopes unit ]
     -- Error 只指向 scope：按 handles 匹配故障，detect／resolve 是生成的 effect 方法；Error 不被拦截，按空列表执行。
     errorHandlers = unlines
       [ ""
       , "-- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。"
       , helper "errorHandlers" ++ " :: [(Maybe String, FrameworkRuntime.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]"
-      , helper "errorHandlers" ++ " ="
-      , "  [" ++ (if null callbacks then "" else " " ++ intercalate "\n  , " callbacks)
-      , "  ]"
+      , helper "errorHandlers" ++ " =" ++ (if null callbacks then " []" else "\n  [ " ++ intercalate "\n  , " callbacks ++ "\n  ]")
       ]
       where
         callbacks =
@@ -383,9 +380,37 @@ leadingExtensions allowed = scan . lines
       | otherwise = []
       where trimmed = dropWhile isSpace line
 
+-- 生成区以固定的长限定名书写，输出时换成短名：Framework.Generated 写作 SDK（与 Effects.hs、Program.hs 一致），
+-- 生成的契约模块写作 Effects。手写文件已用某个短名作限定（as 别名或模块名）时，该模块保留长名。
+data Qualifiers = Qualifiers { runtimeQualifier :: String, effectsQualifier :: String }
+
+longQualifiers :: Qualifiers
+longQualifiers = Qualifiers "FrameworkRuntime" "FrameworkGenerated"
+
+chooseQualifiers :: HsModule GhcPs -> Qualifiers
+chooseQualifiers parsed =
+  Qualifiers (pick "SDK" (runtimeQualifier longQualifiers)) (pick "Effects" (effectsQualifier longQualifiers))
+  where
+    taken = [ moduleNameString (unLoc (fromMaybe (ideclName declaration) (ideclAs declaration)))
+            | L _ declaration <- hsmodImports parsed ]
+    pick short long = if short `elem` taken then long else short
+
+-- 只替换作为限定前缀出现的长名；生成区不含手写代码。
+requalify :: Qualifiers -> String -> String
+requalify qualifiers = go ' '
+  where
+    go _ [] = []
+    go previous text@(character : rest)
+      | boundary previous, Just remaining <- stripPrefix "FrameworkRuntime." text =
+          runtimeQualifier qualifiers ++ "." ++ go '.' remaining
+      | boundary previous, Just remaining <- stripPrefix "FrameworkGenerated." text =
+          effectsQualifier qualifiers ++ "." ++ go '.' remaining
+      | otherwise = character : go character rest
+    boundary previous = not (isAlphaNum previous || previous `elem` "_.")
+
 -- 只改模块名、导出表并补充导入；方法体与 instance 原样保留。
-copyModule :: String -> String -> [String] -> String -> HsModule GhcPs -> Either String String
-copyModule namespace generatedName extraExports source parsed = do
+copyModule :: Qualifiers -> String -> String -> [String] -> String -> HsModule GhcPs -> Either String String
+copyModule qualifiers namespace generatedName extraExports source parsed = do
   moduleName <- maybe (Left "Handlers.hs must declare its module") Right (hsmodName parsed)
   rename <- replace (getLocA moduleName) generatedName
   exports <- case hsmodExports parsed of
@@ -402,8 +427,8 @@ copyModule namespace generatedName extraExports source parsed = do
       alreadyImportsTypes = not (any (("#" `isPrefixOf`) . dropWhile isSpace) (lines source))
         && any (sameImport typesImport) (hsmodImports parsed)
       imports = (importStart, importStart,
-        "import qualified Framework.Generated as FrameworkRuntime\n"
-        ++ "import qualified " ++ namespace ++ ".Generated.Effects as FrameworkGenerated\n"
+        "import qualified Framework.Generated as " ++ runtimeQualifier qualifiers ++ "\n"
+        ++ "import qualified " ++ namespace ++ ".Generated.Effects as " ++ effectsQualifier qualifiers ++ "\n"
         ++ "import qualified Control.Monad.IO.Class as FrameworkIO\n"
         ++ "import qualified Data.Proxy as FrameworkProxy\n"
         ++ "import qualified GHC.TypeLits as FrameworkTypes\n"

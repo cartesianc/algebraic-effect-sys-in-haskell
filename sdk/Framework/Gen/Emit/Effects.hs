@@ -41,11 +41,12 @@ renderEffects unit = unlines (contractHeader ++ runtimeAliases ++ generatedContr
       [] -> []
       declarations -> "-- 每个 Context 的资产类型：名字来自 Asset 声明，包装其表示类型。"
         : concat
-          [ [ "newtype " ++ generated ++ " = " ++ generated ++ " (" ++ reference representation' ++ ")"
-            , "deriving instance Eq (" ++ reference representation' ++ ") => Eq " ++ generated
-            , "deriving instance Show (" ++ reference representation' ++ ") => Show " ++ generated
+          [ [ "newtype " ++ generated ++ " = " ++ generated ++ " " ++ wrapped
+            , "deriving instance Eq " ++ wrapped ++ " => Eq " ++ generated
+            , "deriving instance Show " ++ wrapped ++ " => Show " ++ generated
             , "" ]
-          | AssetDeclaration generated representation' _ <- declarations ]
+          | AssetDeclaration generated representation' _ <- declarations
+          , let wrapped = parenthesized (reference representation') ]
     genName [] = "MissingMethodGen"
     genName (first : rest) = toUpper first : rest ++ "Gen"
     methodIdentities =

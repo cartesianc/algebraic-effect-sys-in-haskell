@@ -17,57 +17,57 @@ import FacadeProbe.Types
 type App = SDK.App ContextValues Errors
 
 -- 每个 Context 的资产类型：名字来自 Asset 声明，包装其表示类型。
-newtype ReportPath = ReportPath ([Char])
-deriving instance Eq ([Char]) => Eq ReportPath
-deriving instance Show ([Char]) => Show ReportPath
+newtype ReportPath = ReportPath [Char]
+deriving instance Eq [Char] => Eq ReportPath
+deriving instance Show [Char] => Show ReportPath
 
-newtype ReplyPath = ReplyPath ([Char])
-deriving instance Eq ([Char]) => Eq ReplyPath
-deriving instance Show ([Char]) => Show ReplyPath
+newtype ReplyPath = ReplyPath [Char]
+deriving instance Eq [Char] => Eq ReplyPath
+deriving instance Show [Char] => Show ReplyPath
 
-newtype ReportBody = ReportBody (Body)
-deriving instance Eq (Body) => Eq ReportBody
-deriving instance Show (Body) => Show ReportBody
+newtype ReportBody = ReportBody Body
+deriving instance Eq Body => Eq ReportBody
+deriving instance Show Body => Show ReportBody
 
-newtype ReplyBody = ReplyBody (Body)
-deriving instance Eq (Body) => Eq ReplyBody
-deriving instance Show (Body) => Show ReplyBody
+newtype ReplyBody = ReplyBody Body
+deriving instance Eq Body => Eq ReplyBody
+deriving instance Show Body => Show ReplyBody
 
-newtype OpenedReport = OpenedReport (TextFile)
-deriving instance Eq (TextFile) => Eq OpenedReport
-deriving instance Show (TextFile) => Show OpenedReport
+newtype OpenedReport = OpenedReport TextFile
+deriving instance Eq TextFile => Eq OpenedReport
+deriving instance Show TextFile => Show OpenedReport
 
-newtype OpenedReply = OpenedReply (TextFile)
-deriving instance Eq (TextFile) => Eq OpenedReply
-deriving instance Show (TextFile) => Show OpenedReply
+newtype OpenedReply = OpenedReply TextFile
+deriving instance Eq TextFile => Eq OpenedReply
+deriving instance Show TextFile => Show OpenedReply
 
-newtype ReportStats = ReportStats (LineCount)
-deriving instance Eq (LineCount) => Eq ReportStats
-deriving instance Show (LineCount) => Show ReportStats
+newtype ReportStats = ReportStats LineCount
+deriving instance Eq LineCount => Eq ReportStats
+deriving instance Show LineCount => Show ReportStats
 
-newtype ReplyStats = ReplyStats (LineCount)
-deriving instance Eq (LineCount) => Eq ReplyStats
-deriving instance Show (LineCount) => Show ReplyStats
+newtype ReplyStats = ReplyStats LineCount
+deriving instance Eq LineCount => Eq ReplyStats
+deriving instance Show LineCount => Show ReplyStats
 
-newtype ReportState = ReportState (FileState)
-deriving instance Eq (FileState) => Eq ReportState
-deriving instance Show (FileState) => Show ReportState
+newtype ReportState = ReportState FileState
+deriving instance Eq FileState => Eq ReportState
+deriving instance Show FileState => Show ReportState
 
-newtype CountA = CountA (FeedCounter)
-deriving instance Eq (FeedCounter) => Eq CountA
-deriving instance Show (FeedCounter) => Show CountA
+newtype CountA = CountA FeedCounter
+deriving instance Eq FeedCounter => Eq CountA
+deriving instance Show FeedCounter => Show CountA
 
-newtype CountB = CountB (FeedCounter)
-deriving instance Eq (FeedCounter) => Eq CountB
-deriving instance Show (FeedCounter) => Show CountB
+newtype CountB = CountB FeedCounter
+deriving instance Eq FeedCounter => Eq CountB
+deriving instance Show FeedCounter => Show CountB
 
-newtype LevelA = LevelA (Level)
-deriving instance Eq (Level) => Eq LevelA
-deriving instance Show (Level) => Show LevelA
+newtype LevelA = LevelA Level
+deriving instance Eq Level => Eq LevelA
+deriving instance Show Level => Show LevelA
 
-newtype LevelB = LevelB (Level)
-deriving instance Eq (Level) => Eq LevelB
-deriving instance Show (Level) => Show LevelB
+newtype LevelB = LevelB Level
+deriving instance Eq Level => Eq LevelB
+deriving instance Show Level => Show LevelB
 
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
 data MethodGen = GetReportPathGen | ReadReportPathGen | GetReplyPathGen | ReadReplyPathGen | GetReportBodyGen | ReadReportBodyGen | GetReplyBodyGen | ReadReplyBodyGen | GetOpenedReportGen | ReadOpenedReportGen | GetOpenedReplyGen | ReadOpenedReplyGen | OpenReportScopeGen | CloseReportScopeGen | OpenReplyScopeGen | CloseReplyScopeGen | RunWriteReportGen | RunWriteReplyGen | RunMarkReplyGen | RunReadReportGen | RunReadReplyGen | GetReportStatsGen | ReadReportStatsGen | GetReplyStatsGen | ReadReplyStatsGen | RunShowReportGen | RunShowReplyGen | GetReportStateGen | ReadReportStateGen | RunOnBlankGen | RunOnFilledGen | GetCountAGen | ReadCountAGen | GetCountBGen | ReadCountBGen | OpenFeedScopeAGen | OpenFeedScopeBGen | NextFeedAGen | NextFeedBGen | GetLevelAGen | StreamLevelAGen | GetLevelBGen | StreamLevelBGen | RunShowAGen | RunShowBGen
@@ -111,7 +111,7 @@ newtype ReplyDraftError = ReplyDraftError String
   deriving (Eq, Show, Read)
 
 -- handler acquireFile：绑定到 ReportFile、ReplyFile。
-type AcquireFileLayer m = (SDK.Reads ([Char]) m, SDK.Raises AcquireFileError m, MonadIO m)
+type AcquireFileLayer m = (SDK.Reads [Char] m, SDK.Raises AcquireFileError m, MonadIO m)
 class AcquireFileHandler m where
   acquireFile :: m TextFile
 
@@ -120,7 +120,7 @@ newtype AcquireFileError = AcquireFileError String
   deriving (Eq, Show, Read)
 
 -- handler openTextFile：绑定到 ReportScope、ReplyScope。
-type OpenTextFileLayer m = (SDK.Reads (TextFile) m, SDK.RawOutputs m, SDK.Raises OpenTextFileError m, MonadIO m)
+type OpenTextFileLayer m = (SDK.Reads TextFile m, SDK.RawOutputs m, SDK.Raises OpenTextFileError m, MonadIO m)
 class OpenTextFileHandler m where
   openTextFile :: m [String]
 
@@ -129,7 +129,7 @@ newtype OpenTextFileError = OpenTextFileError String
   deriving (Eq, Show, Read)
 
 -- handler closeTextFile：绑定到 ReportScope、ReplyScope。
-type CloseTextFileLayer m = (SDK.Reads (TextFile) m, SDK.RawOutputs m, SDK.Raises CloseTextFileError m, MonadIO m)
+type CloseTextFileLayer m = (SDK.Reads TextFile m, SDK.RawOutputs m, SDK.Raises CloseTextFileError m, MonadIO m)
 class CloseTextFileHandler m where
   closeTextFile :: m [String]
 
@@ -138,7 +138,7 @@ newtype CloseTextFileError = CloseTextFileError String
   deriving (Eq, Show, Read)
 
 -- handler writeText：绑定到 WriteReport、WriteReply。
-type WriteTextLayer m = (SDK.Reads (Body) m, SDK.Reads (TextFile) m, SDK.RawOutputs m, SDK.Raises WriteTextError m, MonadIO m)
+type WriteTextLayer m = (SDK.Reads Body m, SDK.Reads TextFile m, SDK.RawOutputs m, SDK.Raises WriteTextError m, MonadIO m)
 class WriteTextHandler m where
   writeText :: m [String]
 
@@ -156,7 +156,7 @@ newtype MarkReadError = MarkReadError String
   deriving (Eq, Show, Read)
 
 -- handler readText：绑定到 ReadReport、ReadReply。
-type ReadTextLayer m = (SDK.Reads ([Char]) m, SDK.RawOutputs m, SDK.Raises ReadTextError m, MonadIO m)
+type ReadTextLayer m = (SDK.Reads [Char] m, SDK.RawOutputs m, SDK.Raises ReadTextError m, MonadIO m)
 class ReadTextHandler m where
   readText :: m [String]
 
@@ -174,7 +174,7 @@ newtype CountLinesError = CountLinesError String
   deriving (Eq, Show, Read)
 
 -- handler showCount：绑定到 ShowReport、ShowReply。
-type ShowCountLayer m = (SDK.Reads (LineCount) m, SDK.RawOutputs m, SDK.Raises ShowCountError m, MonadIO m)
+type ShowCountLayer m = (SDK.Reads LineCount m, SDK.RawOutputs m, SDK.Raises ShowCountError m, MonadIO m)
 class ShowCountHandler m where
   showCount :: m [String]
 
@@ -183,7 +183,7 @@ newtype ShowCountError = ShowCountError String
   deriving (Eq, Show, Read)
 
 -- handler inspectFile：绑定到 ReportInspect。
-type InspectFileLayer m = (SDK.Reads ([Char]) m, SDK.Raises InspectFileError m, MonadIO m)
+type InspectFileLayer m = (SDK.Reads [Char] m, SDK.Raises InspectFileError m, MonadIO m)
 class InspectFileHandler m where
   inspectFile :: m FileState
 
@@ -192,7 +192,7 @@ newtype InspectFileError = InspectFileError String
   deriving (Eq, Show, Read)
 
 -- handler describeBlank：绑定到 OnBlank。
-type DescribeBlankLayer m = (SDK.Reads (()) m, SDK.RawOutputs m, SDK.Raises DescribeBlankError m, MonadIO m)
+type DescribeBlankLayer m = (SDK.Reads () m, SDK.RawOutputs m, SDK.Raises DescribeBlankError m, MonadIO m)
 class DescribeBlankHandler m where
   describeBlank :: m [String]
 
@@ -201,7 +201,7 @@ newtype DescribeBlankError = DescribeBlankError String
   deriving (Eq, Show, Read)
 
 -- handler describeFilled：绑定到 OnFilled。
-type DescribeFilledLayer m = (SDK.Reads (Body) m, SDK.RawOutputs m, SDK.Raises DescribeFilledError m, MonadIO m)
+type DescribeFilledLayer m = (SDK.Reads Body m, SDK.RawOutputs m, SDK.Raises DescribeFilledError m, MonadIO m)
 class DescribeFilledHandler m where
   describeFilled :: m [String]
 
@@ -219,7 +219,7 @@ newtype NewCounterError = NewCounterError String
   deriving (Eq, Show, Read)
 
 -- handler openCounter：绑定到 FeedScopeA、FeedScopeB。
-type OpenCounterLayer m = (SDK.Reads (FeedCounter) m, SDK.RawOutputs m, SDK.Raises OpenCounterError m, MonadIO m)
+type OpenCounterLayer m = (SDK.Reads FeedCounter m, SDK.RawOutputs m, SDK.Raises OpenCounterError m, MonadIO m)
 class OpenCounterHandler m where
   openCounter :: m [String]
 
@@ -228,7 +228,7 @@ newtype OpenCounterError = OpenCounterError String
   deriving (Eq, Show, Read)
 
 -- handler nextA：绑定到 FeedA。
-type NextALayer m = (SDK.Reads (FeedCounter) m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextAError m, MonadIO m)
+type NextALayer m = (SDK.Reads FeedCounter m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextAError m, MonadIO m)
 class NextAHandler m where
   nextA :: m ()
 
@@ -237,7 +237,7 @@ newtype NextAError = NextAError String
   deriving (Eq, Show, Read)
 
 -- handler nextB：绑定到 FeedB。
-type NextBLayer m = (SDK.Reads (FeedCounter) m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextBError m, MonadIO m)
+type NextBLayer m = (SDK.Reads FeedCounter m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextBError m, MonadIO m)
 class NextBHandler m where
   nextB :: m ()
 
@@ -255,7 +255,7 @@ newtype ParseLevelError = ParseLevelError String
   deriving (Eq, Show, Read)
 
 -- handler showLevel：绑定到 ShowA、ShowB。
-type ShowLevelLayer m = (SDK.Reads (Level) m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ShowLevelError m, MonadIO m)
+type ShowLevelLayer m = (SDK.Reads Level m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ShowLevelError m, MonadIO m)
 class ShowLevelHandler m where
   showLevel :: m [String]
 

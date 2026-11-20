@@ -21,7 +21,8 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
                      , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
-  let target label action = SDK.targetApp label emptyContexts scopes
+  let target :: Show value => String -> App value -> SDK.Target ContextValues Errors value
+      target label action = SDK.targetApp label emptyContexts scopes
         (SDK.withErrorHandlers Handlers.errorHandlers action)
   pure
     ( [ target "FetchPage" (FetchPageResult () <$ Handlers.runFetchPage)
@@ -142,251 +143,110 @@ generatedPrototype =
             }
         ]
     , SDK.protoEffects =
-        [ SDK.EffectProto
-            { SDK.effectName = "StartPage"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        [ (SDK.effectProto "StartPage" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetStartURLGen), (SDK.ContextRequire, ReadStartURLGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "StartURL"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "LinkedPage"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "LinkedPage" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetLinkedURLGen), (SDK.ContextRequire, ReadLinkedURLGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "LinkedURL"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "FetchPage"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "CrawlSession"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunFetchPageGen)]
+        , (SDK.effectProto "FetchPage" SDK.ExcuKind "CrawlSession")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunFetchPageGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "StartURL" "StartPage"
                 , SDK.ResolvedDemand SDK.RequireAccess "StartURL" "StartPage"
                 , SDK.ResolvedDemand SDK.RequireAccess "CrawlSessionInfo" "SessionContext"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["CrawlSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["CrawlSession"]
             , SDK.effectScopeParents = ["CrawlSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["CrawlSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","StartPage"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "KeepPageBody"
-            , SDK.effectKind = SDK.PureKind
-            , SDK.effectInput = "FetchPage"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunKeepPageBodyGen)]
-            , SDK.effectDemands = []
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
+        , (SDK.effectProto "KeepPageBody" SDK.PureKind "FetchPage")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunKeepPageBodyGen)]
             , SDK.effectScopes = ["CrawlSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["FetchPage","CrawlSession"]
             , SDK.effectScopeParents = ["CrawlSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["CrawlSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","StartPage"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ExtractPage"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "KeepPageBody"
-            , SDK.effectMethods =
+        , (SDK.effectProto "ExtractPage" SDK.ContextKind "KeepPageBody")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetStartPageSummaryGen), (SDK.ContextRequire, ReadStartPageSummaryGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "StartURL" "StartPage"]
             , SDK.effectProduces = Just "StartPageSummary"
-            , SDK.effectBranches = []
             , SDK.effectAnchor = Just "FetchPage"
             , SDK.effectScopes = ["CrawlSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["KeepPageBody","FetchPage","CrawlSession"]
             , SDK.effectScopeParents = ["CrawlSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["CrawlSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","StartPage"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "PrintPage"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunPrintPageGen)]
+        , (SDK.effectProto "PrintPage" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunPrintPageGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "StartPageSummary" "ExtractPage"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
             , SDK.effectScopeParents = ["CrawlSession"]
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","StartPage","ExtractPage"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "FetchLinkedPage"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "CrawlSession"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunFetchLinkedPageGen)]
+        , (SDK.effectProto "FetchLinkedPage" SDK.ExcuKind "CrawlSession")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunFetchLinkedPageGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "LinkedURL" "LinkedPage"
                 , SDK.ResolvedDemand SDK.RequireAccess "LinkedURL" "LinkedPage"
                 , SDK.ResolvedDemand SDK.RequireAccess "CrawlSessionInfo" "SessionContext"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["CrawlSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["CrawlSession"]
             , SDK.effectScopeParents = ["CrawlSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["CrawlSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","LinkedPage"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "KeepLinkedPageBody"
-            , SDK.effectKind = SDK.PureKind
-            , SDK.effectInput = "FetchLinkedPage"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunKeepLinkedPageBodyGen)]
-            , SDK.effectDemands = []
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
+        , (SDK.effectProto "KeepLinkedPageBody" SDK.PureKind "FetchLinkedPage")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunKeepLinkedPageBodyGen)]
             , SDK.effectScopes = ["CrawlSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["FetchLinkedPage","CrawlSession"]
             , SDK.effectScopeParents = ["CrawlSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["CrawlSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","LinkedPage"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ExtractLinkedPage"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "KeepLinkedPageBody"
-            , SDK.effectMethods =
+        , (SDK.effectProto "ExtractLinkedPage" SDK.ContextKind "KeepLinkedPageBody")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetLinkedPageSummaryGen), (SDK.ContextRequire, ReadLinkedPageSummaryGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "LinkedURL" "LinkedPage"]
             , SDK.effectProduces = Just "LinkedPageSummary"
-            , SDK.effectBranches = []
             , SDK.effectAnchor = Just "FetchLinkedPage"
             , SDK.effectScopes = ["CrawlSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["KeepLinkedPageBody","FetchLinkedPage","CrawlSession"]
             , SDK.effectScopeParents = ["CrawlSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["CrawlSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","LinkedPage"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "PrintLinkedPage"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunPrintLinkedPageGen)]
+        , (SDK.effectProto "PrintLinkedPage" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunPrintLinkedPageGen)]
             , SDK.effectDemands =
                 [SDK.ResolvedDemand SDK.RequireAccess "LinkedPageSummary" "ExtractLinkedPage"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
             , SDK.effectScopeParents = ["CrawlSession"]
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SessionContext","LinkedPage","ExtractLinkedPage"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "SessionContext"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "SessionContext" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetCrawlSessionInfoGen), (SDK.ContextRequire, ReadCrawlSessionInfoGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "CrawlSessionInfo"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "CrawlSession"
-            , SDK.effectKind = SDK.ScopedKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "CrawlSession" SDK.ScopedKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ScopeOpen, OpenCrawlSessionGen), (SDK.ScopeClose, CloseCrawlSessionGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "CrawlSessionInfo" "SessionContext"
                 , SDK.ResolvedDemand SDK.RequireAccess "CrawlSessionInfo" "SessionContext"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["CrawlSession"]
             , SDK.effectResource = Just "SessionContext"
             , SDK.effectContextDependencies = ["SessionContext"]
-            , SDK.effectContinuous = False
             }
         ]
     , SDK.protoMethods =

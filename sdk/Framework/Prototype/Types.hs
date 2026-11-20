@@ -6,7 +6,7 @@
 -- Prototype 的唯一数据模型，也就是 gen 的编译产物（中间表示）。这里只保存可发射、可校验的静态事实，
 -- 不引入执行句柄或资源。构建算法在 Framework.Gen.Composition，执行与展示只读取它。
 module Framework.Prototype.Types
-  ( NodeId, SumTypes, Prototype(..), PrototypePlan(..), EffectProto(..)
+  ( NodeId, SumTypes, Prototype(..), PrototypePlan(..), EffectProto(..), effectProto
   , WorkflowTree(..), AlternativeProto(..), LifelongProto(..), SessionProto(..), BootPlan(..)
   , ChainRole(..), ChainProto(..), ChainKind(..), ChainDefinition(..)
   , ReadPoint(..), Source(..), PrototypeError(..), ResolvedDemand(..)
@@ -77,6 +77,17 @@ data EffectProto method = EffectProto
   -- 持续资产：stream = True，Input 链由 Stream 或增量驱动；读取方是否重复由组合计划决定。
   , effectContinuous :: Bool
   } deriving (Eq, Show, Read, Functor, Generic, NFData)
+
+-- 只有名字、类别与 Input 的 effect 原型：其余列表为空、Maybe 为 Nothing、非持续。
+-- 生成的 Prototype 以它为底，只写非默认字段。
+effectProto :: String -> EffectKind -> String -> EffectProto method
+effectProto name kind input = EffectProto
+  { effectName = name, effectKind = kind, effectInput = input
+  , effectMethods = [], effectDemands = [], effectProduces = Nothing, effectBranches = []
+  , effectAnchor = Nothing, effectScopes = [], effectErrorScope = Nothing, effectInputChain = []
+  , effectScopeParents = [], effectOpeningInputs = [], effectNearestScopes = [], effectResource = Nothing
+  , effectContextDependencies = [], effectContinuous = False
+  }
 
 data WorkflowTree
   = NodeAt NodeId String

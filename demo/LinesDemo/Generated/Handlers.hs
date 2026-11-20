@@ -17,8 +17,8 @@
 
 module LinesDemo.Generated.Handlers (handlerSourceFingerprint, runAnnounce, getOpenedInput, readOpenedInput, openInputSession, closeInputSession, nextLineFeed, hookTraceLine, getTextLine, streamTextLine, runPrintLine, runTextCounter, getRunningTotal, streamRunningTotal, runShowTotal, runReport, newScopeHandlers, errorHandlers) where
 
-import qualified Framework.Generated as FrameworkRuntime
-import qualified LinesDemo.Generated.Effects as FrameworkGenerated
+import qualified Framework.Generated as SDK
+import qualified LinesDemo.Generated.Effects as Effects
 import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
@@ -126,281 +126,279 @@ handlerSourceFingerprint = Just "65972ef14476f7caeea09207461d7d9d"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype Wrap (hooks :: [FrameworkTypes.Symbol]) (effect :: FrameworkTypes.Symbol) (method :: FrameworkTypes.Symbol) value = Wrap { runWrap :: FrameworkGenerated.App value }
+newtype Wrap (hooks :: [FrameworkTypes.Symbol]) (effect :: FrameworkTypes.Symbol) (method :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
 -- superhandler 的静态选择：hooks 是覆盖本次挂载的 Middleware（注册顺序），kind 是捕获类别。
 -- 默认方法即空选择：不捕获，super 直接执行 action。
-class Captures (hooks :: [FrameworkTypes.Symbol]) (kind :: FrameworkRuntime.EffectKind) where
-  captureAt :: FrameworkRuntime.Operation -> FrameworkGenerated.App ()
+class Captures (hooks :: [FrameworkTypes.Symbol]) (kind :: SDK.EffectKind) where
+  captureAt :: SDK.Operation -> Effects.App ()
   captureAt _ = pure ()
-  superWrap :: String -> FrameworkGenerated.App value -> FrameworkGenerated.App value
-  closeWrap :: String -> FrameworkGenerated.App [String] -> FrameworkGenerated.App [String]
+  superWrap :: String -> Effects.App value -> Effects.App value
+  closeWrap :: String -> Effects.App [String] -> Effects.App [String]
   superWrap _ = id
   closeWrap _ = id
 
 -- 入口对 hooks 多态：每个被拦截的类别都有该列表的选择。
-type Captured hooks = (Captures hooks 'FrameworkRuntime.StreamKind, Captures hooks 'FrameworkRuntime.ScopedKind)
+type Captured hooks = (Captures hooks 'SDK.StreamKind, Captures hooks 'SDK.ScopedKind)
 
-instance Captures '[] 'FrameworkRuntime.StreamKind
+instance Captures '[] 'SDK.StreamKind
 
-instance Captures '[] 'FrameworkRuntime.ScopedKind
+instance Captures '[] 'SDK.ScopedKind
 
-instance Captures '["TraceLine"] 'FrameworkRuntime.StreamKind where
+instance Captures '["TraceLine"] 'SDK.StreamKind where
   captureAt event = hookTraceLine event >> pure ()
-  superWrap = FrameworkRuntime.superWith (captureAt @'["TraceLine"] @'FrameworkRuntime.StreamKind)
+  superWrap = SDK.superWith (captureAt @'["TraceLine"] @'SDK.StreamKind)
 
-instance Captures '["TraceLine"] 'FrameworkRuntime.ScopedKind where
+instance Captures '["TraceLine"] 'SDK.ScopedKind where
   captureAt event = hookTraceLine event >> pure ()
-  superWrap = FrameworkRuntime.superWith (captureAt @'["TraceLine"] @'FrameworkRuntime.ScopedKind)
-  closeWrap = FrameworkRuntime.superClosing (captureAt @'["TraceLine"] @'FrameworkRuntime.ScopedKind)
+  superWrap = SDK.superWith (captureAt @'["TraceLine"] @'SDK.ScopedKind)
+  closeWrap = SDK.superClosing (captureAt @'["TraceLine"] @'SDK.ScopedKind)
 
 
 -- Middleware 的标签：handler 在这里执行，用 hook 读取触发本次调用的 Operation。
-newtype Hook (effect :: FrameworkTypes.Symbol) value = Hook { runHook :: FrameworkRuntime.HookApp FrameworkGenerated.ContextValues FrameworkGenerated.Errors value }
+newtype Hook (effect :: FrameworkTypes.Symbol) value = Hook { runHook :: SDK.HookApp Effects.ContextValues Effects.Errors value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance FrameworkRuntime.Hooks (Hook "TraceLine") where
-  hook = Hook FrameworkRuntime.currentOperation
+instance SDK.Hooks (Hook "TraceLine") where
+  hook = Hook SDK.currentOperation
 
-instance FrameworkRuntime.RawOutputs (Hook "TraceLine")
+instance SDK.RawOutputs (Hook "TraceLine")
 
-instance FrameworkRuntime.Raises FrameworkGenerated.TraceLineError (Hook "TraceLine") where
-  raise (FrameworkGenerated.TraceLineError description) = Hook (FrameworkRuntime.liftHookApp
-    (FrameworkRuntime.failEffect "TraceLine" FrameworkGenerated.TraceLineFailure description))
+instance SDK.Raises Effects.TraceLineError (Hook "TraceLine") where
+  raise (Effects.TraceLineError description) = Hook (SDK.liftHookApp
+    (SDK.failEffect "TraceLine" Effects.TraceLineFailure description))
 
-hookTraceLine :: FrameworkRuntime.Operation -> FrameworkGenerated.App [String]
-hookTraceLine event = FrameworkRuntime.runHookApp event (runHook @"TraceLine" (FrameworkRuntime.super "traceLine" FrameworkGenerated.traceLine))
+hookTraceLine :: SDK.Operation -> Effects.App [String]
+hookTraceLine event = SDK.runHookApp event (runHook @"TraceLine" (SDK.super "traceLine" Effects.traceLine))
 
-instance FrameworkRuntime.Root (Hook effect) value
+instance SDK.Root (Hook effect) value
 
-instance FrameworkRuntime.Root (Wrap hooks "Announce" method) value
+instance SDK.Root (Wrap hooks "Announce" method) value
 
-instance FrameworkRuntime.Root (Wrap hooks "InputResource" method) value
+instance SDK.Root (Wrap hooks "InputResource" method) value
 
-instance Captures hooks 'FrameworkRuntime.ScopedKind => FrameworkRuntime.Root (Wrap hooks "InputSession" method) [String] where
-  super name (Wrap action) = Wrap (superWrap @hooks @'FrameworkRuntime.ScopedKind name action)
-  superClose name (Wrap action) = Wrap (closeWrap @hooks @'FrameworkRuntime.ScopedKind name action)
+instance Captures hooks 'SDK.ScopedKind => SDK.Root (Wrap hooks "InputSession" method) [String] where
+  super name (Wrap action) = Wrap (superWrap @hooks @'SDK.ScopedKind name action)
+  superClose name (Wrap action) = Wrap (closeWrap @hooks @'SDK.ScopedKind name action)
 
-instance Captures hooks 'FrameworkRuntime.StreamKind => FrameworkRuntime.Root (Wrap hooks "LineFeed" method) () where
-  super name (Wrap action) = Wrap (superWrap @hooks @'FrameworkRuntime.StreamKind name action)
+instance Captures hooks 'SDK.StreamKind => SDK.Root (Wrap hooks "LineFeed" method) () where
+  super name (Wrap action) = Wrap (superWrap @hooks @'SDK.StreamKind name action)
 
-instance FrameworkRuntime.Root (Wrap hooks "LineParser" method) value
+instance SDK.Root (Wrap hooks "LineParser" method) value
 
-instance FrameworkRuntime.Root (Wrap hooks "PrintLine" method) value
+instance SDK.Root (Wrap hooks "PrintLine" method) value
 
-instance FrameworkRuntime.Root (Wrap hooks "TextCounter" method) value
+instance SDK.Root (Wrap hooks "TextCounter" method) value
 
-instance FrameworkRuntime.Root (Wrap hooks "CountParser" method) value
+instance SDK.Root (Wrap hooks "CountParser" method) value
 
-instance FrameworkRuntime.Root (Wrap hooks "ShowTotal" method) value
+instance SDK.Root (Wrap hooks "ShowTotal" method) value
 
-instance FrameworkRuntime.Root (Wrap hooks "Report" method) value
+instance SDK.Root (Wrap hooks "Report" method) value
 
-instance FrameworkRuntime.Raises FrameworkGenerated.AnnounceError (Wrap hooks "Announce" method) where
-  raise (FrameworkGenerated.AnnounceError description) = Wrap (FrameworkRuntime.failEffect "Announce" FrameworkGenerated.AnnounceFailure description)
+instance SDK.Raises Effects.AnnounceError (Wrap hooks "Announce" method) where
+  raise (Effects.AnnounceError description) = Wrap (SDK.failEffect "Announce" Effects.AnnounceFailure description)
 
-instance FrameworkRuntime.Raises FrameworkGenerated.AcquireInputError (Wrap hooks "InputResource" method) where
-  raise (FrameworkGenerated.AcquireInputError description) = Wrap (FrameworkRuntime.failEffect "InputResource" FrameworkGenerated.AcquireInputFailure description)
+instance SDK.Raises Effects.AcquireInputError (Wrap hooks "InputResource" method) where
+  raise (Effects.AcquireInputError description) = Wrap (SDK.failEffect "InputResource" Effects.AcquireInputFailure description)
 
-instance Captured hooks => FrameworkRuntime.Raises FrameworkGenerated.OpenInputError (Wrap hooks "InputSession" method) where
-  raise (FrameworkGenerated.OpenInputError description) = Wrap (captureAt @hooks @'FrameworkRuntime.ScopedKind (FrameworkRuntime.Raise "openInput" description) >> FrameworkRuntime.failEffect "InputSession" FrameworkGenerated.OpenInputFailure description)
+instance Captured hooks => SDK.Raises Effects.OpenInputError (Wrap hooks "InputSession" method) where
+  raise (Effects.OpenInputError description) = Wrap (captureAt @hooks @'SDK.ScopedKind (SDK.Raise "openInput" description) >> SDK.failEffect "InputSession" Effects.OpenInputFailure description)
 
-instance Captured hooks => FrameworkRuntime.Raises FrameworkGenerated.CloseInputError (Wrap hooks "InputSession" method) where
-  raise (FrameworkGenerated.CloseInputError description) = Wrap (captureAt @hooks @'FrameworkRuntime.ScopedKind (FrameworkRuntime.Raise "closeInput" description) >> FrameworkRuntime.failEffect "InputSession" FrameworkGenerated.CloseInputFailure description)
+instance Captured hooks => SDK.Raises Effects.CloseInputError (Wrap hooks "InputSession" method) where
+  raise (Effects.CloseInputError description) = Wrap (captureAt @hooks @'SDK.ScopedKind (SDK.Raise "closeInput" description) >> SDK.failEffect "InputSession" Effects.CloseInputFailure description)
 
-instance Captured hooks => FrameworkRuntime.Raises FrameworkGenerated.NextLineError (Wrap hooks "LineFeed" method) where
-  raise (FrameworkGenerated.NextLineError description) = Wrap (captureAt @hooks @'FrameworkRuntime.StreamKind (FrameworkRuntime.Raise "nextLine" description) >> FrameworkRuntime.failEffect "LineFeed" FrameworkGenerated.NextLineFailure description)
+instance Captured hooks => SDK.Raises Effects.NextLineError (Wrap hooks "LineFeed" method) where
+  raise (Effects.NextLineError description) = Wrap (captureAt @hooks @'SDK.StreamKind (SDK.Raise "nextLine" description) >> SDK.failEffect "LineFeed" Effects.NextLineFailure description)
 
-instance FrameworkRuntime.Raises FrameworkGenerated.ParseLineError (Wrap hooks "LineParser" method) where
-  raise (FrameworkGenerated.ParseLineError description) = Wrap (FrameworkRuntime.failEffect "LineParser" FrameworkGenerated.ParseLineFailure description)
+instance SDK.Raises Effects.ParseLineError (Wrap hooks "LineParser" method) where
+  raise (Effects.ParseLineError description) = Wrap (SDK.failEffect "LineParser" Effects.ParseLineFailure description)
 
-instance FrameworkRuntime.Raises FrameworkGenerated.PrintLineError (Wrap hooks "PrintLine" method) where
-  raise (FrameworkGenerated.PrintLineError description) = Wrap (FrameworkRuntime.failEffect "PrintLine" FrameworkGenerated.PrintLineFailure description)
+instance SDK.Raises Effects.PrintLineError (Wrap hooks "PrintLine" method) where
+  raise (Effects.PrintLineError description) = Wrap (SDK.failEffect "PrintLine" Effects.PrintLineFailure description)
 
-instance FrameworkRuntime.Raises FrameworkGenerated.CountTextError (Wrap hooks "TextCounter" method) where
-  raise (FrameworkGenerated.CountTextError description) = Wrap (FrameworkRuntime.failEffect "TextCounter" FrameworkGenerated.CountTextFailure description)
+instance SDK.Raises Effects.CountTextError (Wrap hooks "TextCounter" method) where
+  raise (Effects.CountTextError description) = Wrap (SDK.failEffect "TextCounter" Effects.CountTextFailure description)
 
-instance FrameworkRuntime.Raises FrameworkGenerated.ParseTotalError (Wrap hooks "CountParser" method) where
-  raise (FrameworkGenerated.ParseTotalError description) = Wrap (FrameworkRuntime.failEffect "CountParser" FrameworkGenerated.ParseTotalFailure description)
+instance SDK.Raises Effects.ParseTotalError (Wrap hooks "CountParser" method) where
+  raise (Effects.ParseTotalError description) = Wrap (SDK.failEffect "CountParser" Effects.ParseTotalFailure description)
 
-instance FrameworkRuntime.Raises FrameworkGenerated.ShowTotalError (Wrap hooks "ShowTotal" method) where
-  raise (FrameworkGenerated.ShowTotalError description) = Wrap (FrameworkRuntime.failEffect "ShowTotal" FrameworkGenerated.ShowTotalFailure description)
+instance SDK.Raises Effects.ShowTotalError (Wrap hooks "ShowTotal" method) where
+  raise (Effects.ShowTotalError description) = Wrap (SDK.failEffect "ShowTotal" Effects.ShowTotalFailure description)
 
-instance FrameworkRuntime.Raises FrameworkGenerated.ReportError (Wrap hooks "Report" method) where
-  raise (FrameworkGenerated.ReportError description) = Wrap (FrameworkRuntime.failEffect "Report" FrameworkGenerated.ReportFailure description)
+instance SDK.Raises Effects.ReportError (Wrap hooks "Report" method) where
+  raise (Effects.ReportError description) = Wrap (SDK.failEffect "Report" Effects.ReportFailure description)
 
-instance FrameworkRuntime.Reads (InputFile) (Wrap hooks "InputSession" method) where
-  require = Wrap ((\(FrameworkGenerated.OpenedInput value) -> value) <$> readOpenedInput)
+instance SDK.Reads InputFile (Wrap hooks "InputSession" method) where
+  require = Wrap (SDK.coerce <$> readOpenedInput)
 
-instance FrameworkRuntime.Reads (InputFile) (Wrap hooks "LineFeed" method) where
-  require = Wrap ((\(FrameworkGenerated.OpenedInput value) -> value) <$> readOpenedInput)
+instance SDK.Reads InputFile (Wrap hooks "LineFeed" method) where
+  require = Wrap (SDK.coerce <$> readOpenedInput)
 
-instance FrameworkRuntime.Reads (Line) (Wrap hooks "PrintLine" method) where
-  require = Wrap ((\(FrameworkGenerated.TextLine value) -> value) <$> streamTextLine)
+instance SDK.Reads Line (Wrap hooks "PrintLine" method) where
+  require = Wrap (SDK.coerce <$> streamTextLine)
 
-instance FrameworkRuntime.Reads (Line) (Wrap hooks "TextCounter" method) where
-  require = Wrap ((\(FrameworkGenerated.TextLine value) -> value) <$> streamTextLine)
+instance SDK.Reads Line (Wrap hooks "TextCounter" method) where
+  require = Wrap (SDK.coerce <$> streamTextLine)
 
-instance FrameworkRuntime.Reads (InputFile) (Wrap hooks "TextCounter" method) where
-  require = Wrap ((\(FrameworkGenerated.OpenedInput value) -> value) <$> readOpenedInput)
+instance SDK.Reads InputFile (Wrap hooks "TextCounter" method) where
+  require = Wrap (SDK.coerce <$> readOpenedInput)
 
-instance FrameworkRuntime.Reads (Total) (Wrap hooks "ShowTotal" method) where
-  require = Wrap ((\(FrameworkGenerated.RunningTotal value) -> value) <$> streamRunningTotal)
+instance SDK.Reads Total (Wrap hooks "ShowTotal" method) where
+  require = Wrap (SDK.coerce <$> streamRunningTotal)
 
-instance FrameworkRuntime.Reads (Total) (Wrap hooks "Report" method) where
-  require = Wrap ((\(FrameworkGenerated.RunningTotal value) -> value) <$> streamRunningTotal)
+instance SDK.Reads Total (Wrap hooks "Report" method) where
+  require = Wrap (SDK.coerce <$> streamRunningTotal)
 
-instance Captured hooks => FrameworkRuntime.Raw (Wrap hooks "LineParser" method) where
-  rawinput = Wrap (FrameworkRuntime.emittedInput >>= \value -> captureAt @hooks @'FrameworkRuntime.StreamKind (FrameworkRuntime.RawInput "parseLine" value) >> pure value)
+instance Captured hooks => SDK.Raw (Wrap hooks "LineParser" method) where
+  rawinput = Wrap (SDK.emittedInput >>= \value -> captureAt @hooks @'SDK.StreamKind (SDK.RawInput "parseLine" value) >> pure value)
 
-instance Captured hooks => FrameworkRuntime.Raw (Wrap hooks "CountParser" method) where
+instance Captured hooks => SDK.Raw (Wrap hooks "CountParser" method) where
   rawinput = Wrap (runTextCounter @hooks)
 
-instance FrameworkRuntime.RawOutputs (Wrap hooks "Announce" "announce")
+instance SDK.RawOutputs (Wrap hooks "Announce" "announce")
 
-instance Captured hooks => FrameworkRuntime.RawOutputs (Wrap hooks "InputSession" "openInput") where
-  rawoutput value = Wrap (captureAt @hooks @'FrameworkRuntime.ScopedKind (FrameworkRuntime.RawOutput "openInput" value) >> pure value)
+instance Captured hooks => SDK.RawOutputs (Wrap hooks "InputSession" "openInput") where
+  rawoutput value = Wrap (captureAt @hooks @'SDK.ScopedKind (SDK.RawOutput "openInput" value) >> pure value)
 
-instance Captured hooks => FrameworkRuntime.RawOutputs (Wrap hooks "InputSession" "closeInput") where
-  rawoutput value = Wrap (captureAt @hooks @'FrameworkRuntime.ScopedKind (FrameworkRuntime.RawOutput "closeInput" value) >> pure value)
+instance Captured hooks => SDK.RawOutputs (Wrap hooks "InputSession" "closeInput") where
+  rawoutput value = Wrap (captureAt @hooks @'SDK.ScopedKind (SDK.RawOutput "closeInput" value) >> pure value)
 
-instance FrameworkRuntime.RawOutputs (Wrap hooks "PrintLine" "printLine")
+instance SDK.RawOutputs (Wrap hooks "PrintLine" "printLine")
 
-instance FrameworkRuntime.RawOutputs (Wrap hooks "TextCounter" "countText")
+instance SDK.RawOutputs (Wrap hooks "TextCounter" "countText")
 
-instance FrameworkRuntime.RawOutputs (Wrap hooks "ShowTotal" "showTotal")
+instance SDK.RawOutputs (Wrap hooks "ShowTotal" "showTotal")
 
-instance FrameworkRuntime.RawOutputs (Wrap hooks "Report" "report")
+instance SDK.RawOutputs (Wrap hooks "Report" "report")
 
-instance Captured hooks => FrameworkRuntime.Emits (Wrap hooks "LineFeed" method) where
-  rawemit text = Wrap (captureAt @hooks @'FrameworkRuntime.StreamKind (FrameworkRuntime.RawEmit "nextLine" text) >> FrameworkRuntime.emitToParser text)
+instance Captured hooks => SDK.Emits (Wrap hooks "LineFeed" method) where
+  rawemit text = Wrap (captureAt @hooks @'SDK.StreamKind (SDK.RawEmit "nextLine" text) >> SDK.emitToParser text)
 
-instance FrameworkRuntime.StreamEnds (Wrap hooks "LineFeed" method) where
-  streamEnd = Wrap FrameworkRuntime.endSource
+instance SDK.StreamEnds (Wrap hooks "LineFeed" method) where
+  streamEnd = Wrap SDK.endSource
 
-instance FrameworkRuntime.EndsStream (Wrap hooks "PrintLine" method) where
-  endStream = Wrap FrameworkRuntime.endSubscription
+instance SDK.EndsStream (Wrap hooks "PrintLine" method) where
+  endStream = Wrap SDK.endSubscription
 
-instance FrameworkRuntime.EndsStream (Wrap hooks "TextCounter" method) where
-  endStream = Wrap FrameworkRuntime.endSubscription
+instance SDK.EndsStream (Wrap hooks "TextCounter" method) where
+  endStream = Wrap SDK.endSubscription
 
-instance FrameworkRuntime.EndsStream (Wrap hooks "ShowTotal" method) where
-  endStream = Wrap FrameworkRuntime.endSubscription
+instance SDK.EndsStream (Wrap hooks "ShowTotal" method) where
+  endStream = Wrap SDK.endSubscription
 
-runAnnounce :: forall hooks. Captured hooks => FrameworkGenerated.App [String]
+runAnnounce :: forall hooks. Captured hooks => Effects.App [String]
 runAnnounce =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runAnnounce" [] []
-  . FrameworkRuntime.enterHandler "Announce" $
-    runWrap @hooks @"Announce" @"announce" (FrameworkRuntime.super "announce" FrameworkGenerated.announce)
+  SDK.handleFailure
+  . SDK.atomicHandle "runAnnounce" [] []
+  . SDK.enterHandler "Announce" $
+    runWrap @hooks @"Announce" @"announce" (SDK.super "announce" Effects.announce)
 
-getOpenedInput :: forall hooks. Captured hooks => FrameworkGenerated.App FrameworkGenerated.OpenedInput
+getOpenedInput :: forall hooks. Captured hooks => Effects.App Effects.OpenedInput
 getOpenedInput =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "InputResource"
-      (\value bindings -> bindings { FrameworkGenerated.boundInputResource = Just value }) $
-    (FrameworkGenerated.OpenedInput <$> runWrap @hooks @"InputResource" @"acquireInput" (FrameworkRuntime.super "acquireInput" FrameworkGenerated.acquireInput))
+  SDK.handleFailure
+  . SDK.callContext "InputResource"
+      (\value bindings -> bindings { Effects.boundInputResource = Just value }) $
+    Effects.OpenedInput <$> runWrap @hooks @"InputResource" @"acquireInput" (SDK.super "acquireInput" Effects.acquireInput)
 
-readOpenedInput :: FrameworkGenerated.App FrameworkGenerated.OpenedInput
+readOpenedInput :: Effects.App Effects.OpenedInput
 readOpenedInput =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "InputResource" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundInputResource
+  SDK.handleFailure $
+    SDK.readContext "InputResource" Effects.ContextBindingError Effects.boundInputResource
 
-openInputSession :: forall hooks. Captured hooks => FrameworkGenerated.App [String]
+openInputSession :: forall hooks. Captured hooks => Effects.App [String]
 openInputSession =
-  FrameworkRuntime.withErrorPath ["InputSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "openInputSession" [] []
-  . FrameworkRuntime.openScope "InputSession" FrameworkGenerated.ScopeBindingError (Just (() <$ closeInputSession @hooks))
-  . FrameworkRuntime.enterHandler "InputSession" $
-    getOpenedInput @hooks >> runWrap @hooks @"InputSession" @"openInput" (FrameworkRuntime.super "openInput" FrameworkGenerated.openInput)
+  SDK.withErrorPath ["InputSession"]
+  . SDK.handleFailure
+  . SDK.atomicScope "openInputSession" [] []
+  . SDK.openScope "InputSession" Effects.ScopeBindingError (Just (() <$ closeInputSession @hooks))
+  . SDK.enterHandler "InputSession" $
+    getOpenedInput @hooks >> runWrap @hooks @"InputSession" @"openInput" (SDK.super "openInput" Effects.openInput)
 
-closeInputSession :: forall hooks. Captured hooks => FrameworkGenerated.App [String]
+closeInputSession :: forall hooks. Captured hooks => Effects.App [String]
 closeInputSession =
-  FrameworkRuntime.withErrorPath ["InputSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "closeInputSession" [] []
-  . FrameworkRuntime.closeScope "InputSession" FrameworkGenerated.ScopeBindingError
-  . FrameworkRuntime.enterHandler "InputSession" $
-    runWrap @hooks @"InputSession" @"closeInput" (FrameworkRuntime.superClose "closeInput" FrameworkGenerated.closeInput)
+  SDK.withErrorPath ["InputSession"]
+  . SDK.handleFailure
+  . SDK.atomicScope "closeInputSession" [] []
+  . SDK.closeScope "InputSession" Effects.ScopeBindingError
+  . SDK.enterHandler "InputSession" $
+    runWrap @hooks @"InputSession" @"closeInput" (SDK.superClose "closeInput" Effects.closeInput)
 
-nextLineFeed :: forall hooks. Captured hooks => FrameworkGenerated.App ()
+nextLineFeed :: forall hooks. Captured hooks => Effects.App ()
 nextLineFeed =
-  FrameworkRuntime.withErrorPath ["InputSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["InputSession"]
-  . FrameworkRuntime.enterHandler "LineFeed" $
-    openInputSession @hooks >> runWrap @hooks @"LineFeed" @"nextLine" (FrameworkRuntime.super "nextLine" FrameworkGenerated.nextLine)
+  SDK.withErrorPath ["InputSession"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["InputSession"]
+  . SDK.enterHandler "LineFeed" $
+    openInputSession @hooks >> runWrap @hooks @"LineFeed" @"nextLine" (SDK.super "nextLine" Effects.nextLine)
 
-getTextLine :: forall hooks. Captured hooks => FrameworkGenerated.App FrameworkGenerated.TextLine
+getTextLine :: forall hooks. Captured hooks => Effects.App Effects.TextLine
 getTextLine =
-  FrameworkRuntime.withErrorPath ["InputSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["InputSession"]
-  . FrameworkRuntime.callContext "LineParser"
-      (\value bindings -> bindings { FrameworkGenerated.boundLineParser = Just value }) $
-    (FrameworkGenerated.TextLine <$> runWrap @hooks @"LineParser" @"parseLine" (FrameworkRuntime.super "parseLine" FrameworkGenerated.parseLine))
+  SDK.withErrorPath ["InputSession"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["InputSession"]
+  . SDK.callContext "LineParser"
+      (\value bindings -> bindings { Effects.boundLineParser = Just value }) $
+    Effects.TextLine <$> runWrap @hooks @"LineParser" @"parseLine" (SDK.super "parseLine" Effects.parseLine)
 
-streamTextLine :: FrameworkGenerated.App FrameworkGenerated.TextLine
+streamTextLine :: Effects.App Effects.TextLine
 streamTextLine =
-  FrameworkRuntime.withErrorPath ["InputSession"]
-  . FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readStreamContext "LineParser" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundLineParser
+  SDK.withErrorPath ["InputSession"]
+  . SDK.handleFailure $
+    SDK.readStreamContext "LineParser" Effects.ContextBindingError Effects.boundLineParser
 
-runPrintLine :: forall hooks. Captured hooks => FrameworkGenerated.App [String]
+runPrintLine :: forall hooks. Captured hooks => Effects.App [String]
 runPrintLine =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runPrintLine" [] []
-  . FrameworkRuntime.enterHandler "PrintLine" $
-    runWrap @hooks @"PrintLine" @"printLine" (FrameworkRuntime.super "printLine" FrameworkGenerated.printLine)
+  SDK.handleFailure
+  . SDK.atomicHandle "runPrintLine" [] []
+  . SDK.enterHandler "PrintLine" $
+    runWrap @hooks @"PrintLine" @"printLine" (SDK.super "printLine" Effects.printLine)
 
-runTextCounter :: forall hooks. Captured hooks => FrameworkGenerated.App [String]
+runTextCounter :: forall hooks. Captured hooks => Effects.App [String]
 runTextCounter =
-  FrameworkRuntime.withErrorPath ["InputSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runTextCounter" [] [("CountParser", () <$ getRunningTotal @hooks)]
-  . FrameworkRuntime.withScopeDependencies ["InputSession"]
-  . FrameworkRuntime.enterHandler "TextCounter" $
-    openInputSession @hooks >> runWrap @hooks @"TextCounter" @"countText" (FrameworkRuntime.super "countText" FrameworkGenerated.countText)
+  SDK.withErrorPath ["InputSession"]
+  . SDK.handleFailure
+  . SDK.atomicHandle "runTextCounter" [] [("CountParser", () <$ getRunningTotal @hooks)]
+  . SDK.withScopeDependencies ["InputSession"]
+  . SDK.enterHandler "TextCounter" $
+    openInputSession @hooks >> runWrap @hooks @"TextCounter" @"countText" (SDK.super "countText" Effects.countText)
 
-getRunningTotal :: forall hooks. Captured hooks => FrameworkGenerated.App FrameworkGenerated.RunningTotal
+getRunningTotal :: forall hooks. Captured hooks => Effects.App Effects.RunningTotal
 getRunningTotal =
-  FrameworkRuntime.withErrorPath ["InputSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["InputSession"]
-  . FrameworkRuntime.callContext "CountParser"
-      (\value bindings -> bindings { FrameworkGenerated.boundCountParser = Just value }) $
-    (FrameworkGenerated.RunningTotal <$> runWrap @hooks @"CountParser" @"parseTotal" (FrameworkRuntime.super "parseTotal" FrameworkGenerated.parseTotal))
+  SDK.withErrorPath ["InputSession"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["InputSession"]
+  . SDK.callContext "CountParser"
+      (\value bindings -> bindings { Effects.boundCountParser = Just value }) $
+    Effects.RunningTotal <$> runWrap @hooks @"CountParser" @"parseTotal" (SDK.super "parseTotal" Effects.parseTotal)
 
-streamRunningTotal :: FrameworkGenerated.App FrameworkGenerated.RunningTotal
+streamRunningTotal :: Effects.App Effects.RunningTotal
 streamRunningTotal =
-  FrameworkRuntime.withErrorPath ["InputSession"]
-  . FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readStreamContext "CountParser" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundCountParser
+  SDK.withErrorPath ["InputSession"]
+  . SDK.handleFailure $
+    SDK.readStreamContext "CountParser" Effects.ContextBindingError Effects.boundCountParser
 
-runShowTotal :: forall hooks. Captured hooks => FrameworkGenerated.App [String]
+runShowTotal :: forall hooks. Captured hooks => Effects.App [String]
 runShowTotal =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runShowTotal" [] []
-  . FrameworkRuntime.enterHandler "ShowTotal" $
-    runWrap @hooks @"ShowTotal" @"showTotal" (FrameworkRuntime.super "showTotal" FrameworkGenerated.showTotal)
+  SDK.handleFailure
+  . SDK.atomicHandle "runShowTotal" [] []
+  . SDK.enterHandler "ShowTotal" $
+    runWrap @hooks @"ShowTotal" @"showTotal" (SDK.super "showTotal" Effects.showTotal)
 
-runReport :: forall hooks. Captured hooks => FrameworkGenerated.App [String]
+runReport :: forall hooks. Captured hooks => Effects.App [String]
 runReport =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runReport" [] []
-  . FrameworkRuntime.enterHandler "Report" $
-    runWrap @hooks @"Report" @"report" (FrameworkRuntime.super "report" FrameworkGenerated.report)
+  SDK.handleFailure
+  . SDK.atomicHandle "runReport" [] []
+  . SDK.enterHandler "Report" $
+    runWrap @hooks @"Report" @"report" (SDK.super "report" Effects.report)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
-newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
+newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ FrameworkRuntime.newScopeHandler "InputSession" [] (Just "InputResource")
+  [ SDK.newScopeHandler "InputSession" [] (Just "InputResource")
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。
-errorHandlers :: [(Maybe String, FrameworkRuntime.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
-errorHandlers =
-  [
-  ]
+errorHandlers :: [(Maybe String, SDK.ErrorHandler Effects.Errors Effects.App)]
+errorHandlers = []

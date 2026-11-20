@@ -21,7 +21,8 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
                      , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
-  let target label action = SDK.targetApp label emptyContexts scopes
+  let target :: Show value => String -> App value -> SDK.Target ContextValues Errors value
+      target label action = SDK.targetApp label emptyContexts scopes
         (SDK.withErrorHandlers Handlers.errorHandlers action)
   pure
     ( [ target "WriteReport" (WriteReportResult () <$ Handlers.runWriteReport)
@@ -263,610 +264,227 @@ generatedPrototype =
             }
         ]
     , SDK.protoEffects =
-        [ SDK.EffectProto
-            { SDK.effectName = "ReportLocation"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        [ (SDK.effectProto "ReportLocation" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetReportPathGen), (SDK.ContextRequire, ReadReportPathGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "ReportPath"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReplyLocation"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "ReplyLocation" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetReplyPathGen), (SDK.ContextRequire, ReadReplyPathGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "ReplyPath"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReportDraft"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "ReportDraft" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetReportBodyGen), (SDK.ContextRequire, ReadReportBodyGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "ReportBody"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReplyDraft"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "ReplyDraft" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetReplyBodyGen), (SDK.ContextRequire, ReadReplyBodyGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "ReplyBody"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReportFile"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "ReportFile" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetOpenedReportGen), (SDK.ContextRequire, ReadOpenedReportGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "ReportPath" "ReportLocation"
                 , SDK.ResolvedDemand SDK.RequireAccess "ReportPath" "ReportLocation"
                 ]
             , SDK.effectProduces = Just "OpenedReport"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReportLocation"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReplyFile"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "ReplyFile" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetOpenedReplyGen), (SDK.ContextRequire, ReadOpenedReplyGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "ReplyPath" "ReplyLocation"
                 , SDK.ResolvedDemand SDK.RequireAccess "ReplyPath" "ReplyLocation"
                 ]
             , SDK.effectProduces = Just "OpenedReply"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReplyLocation"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReportScope"
-            , SDK.effectKind = SDK.ScopedKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ScopeOpen, OpenReportScopeGen), (SDK.ScopeClose, CloseReportScopeGen)]
+        , (SDK.effectProto "ReportScope" SDK.ScopedKind "Root")
+            { SDK.effectMethods = [(SDK.ScopeOpen, OpenReportScopeGen), (SDK.ScopeClose, CloseReportScopeGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "OpenedReport" "ReportFile"
                 , SDK.ResolvedDemand SDK.RequireAccess "OpenedReport" "ReportFile"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
             , SDK.effectOpeningInputs = ["ReportLocation"]
             , SDK.effectNearestScopes = ["ReportScope"]
             , SDK.effectResource = Just "ReportFile"
             , SDK.effectContextDependencies = ["ReportLocation","ReportFile"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReplyScope"
-            , SDK.effectKind = SDK.ScopedKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ScopeOpen, OpenReplyScopeGen), (SDK.ScopeClose, CloseReplyScopeGen)]
+        , (SDK.effectProto "ReplyScope" SDK.ScopedKind "Root")
+            { SDK.effectMethods = [(SDK.ScopeOpen, OpenReplyScopeGen), (SDK.ScopeClose, CloseReplyScopeGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "OpenedReply" "ReplyFile"
                 , SDK.ResolvedDemand SDK.RequireAccess "OpenedReply" "ReplyFile"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
             , SDK.effectOpeningInputs = ["ReplyLocation"]
             , SDK.effectNearestScopes = ["ReplyScope"]
             , SDK.effectResource = Just "ReplyFile"
             , SDK.effectContextDependencies = ["ReplyLocation","ReplyFile"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "WriteReport"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "ReportScope"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunWriteReportGen)]
+        , (SDK.effectProto "WriteReport" SDK.ExcuKind "ReportScope")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunWriteReportGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "ReportBody" "ReportDraft"
                 , SDK.ResolvedDemand SDK.RequireAccess "OpenedReport" "ReportFile"
                 , SDK.ResolvedDemand SDK.RequireAccess "ReportBody" "ReportDraft"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["ReportScope"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["ReportScope"]
             , SDK.effectScopeParents = ["ReportScope"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["ReportScope"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReportLocation","ReportFile","ReportDraft"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "WriteReply"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "ReplyScope"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunWriteReplyGen)]
+        , (SDK.effectProto "WriteReply" SDK.ExcuKind "ReplyScope")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunWriteReplyGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "ReplyBody" "ReplyDraft"
                 , SDK.ResolvedDemand SDK.RequireAccess "OpenedReply" "ReplyFile"
                 , SDK.ResolvedDemand SDK.RequireAccess "ReplyBody" "ReplyDraft"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["ReplyScope"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["ReplyScope"]
             , SDK.effectScopeParents = ["ReplyScope"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["ReplyScope"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReplyLocation","ReplyFile","ReplyDraft"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "MarkReply"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunMarkReplyGen)]
-            , SDK.effectDemands = []
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
+        , (SDK.effectProto "MarkReply" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunMarkReplyGen)]
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReadReport"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunReadReportGen)]
+        , (SDK.effectProto "ReadReport" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunReadReportGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "ReportPath" "ReportLocation"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReportLocation"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReadReply"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "MarkReply"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunReadReplyGen)]
+        , (SDK.effectProto "ReadReply" SDK.ExcuKind "MarkReply")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunReadReplyGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "ReplyPath" "ReplyLocation"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["MarkReply"]
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReplyLocation"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReportCounter"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "ReadReport"
-            , SDK.effectMethods =
+        , (SDK.effectProto "ReportCounter" SDK.ContextKind "ReadReport")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetReportStatsGen), (SDK.ContextRequire, ReadReportStatsGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "ReportStats"
-            , SDK.effectBranches = []
             , SDK.effectAnchor = Just "ReadReport"
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["ReadReport"]
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReportLocation"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReplyCounter"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "ReadReply"
-            , SDK.effectMethods =
+        , (SDK.effectProto "ReplyCounter" SDK.ContextKind "ReadReply")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetReplyStatsGen), (SDK.ContextRequire, ReadReplyStatsGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "ReplyStats"
-            , SDK.effectBranches = []
             , SDK.effectAnchor = Just "ReadReply"
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["ReadReply","MarkReply"]
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReplyLocation"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ShowReport"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunShowReportGen)]
+        , (SDK.effectProto "ShowReport" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunShowReportGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "ReportStats" "ReportCounter"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReportLocation","ReportCounter"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ShowReply"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunShowReplyGen)]
+        , (SDK.effectProto "ShowReply" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunShowReplyGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "ReplyStats" "ReplyCounter"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReplyLocation","ReplyCounter"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReportInspect"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "ReportInspect" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetReportStateGen), (SDK.ContextRequire, ReadReportStateGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "ReportPath" "ReportLocation"]
             , SDK.effectProduces = Just "ReportState"
             , SDK.effectBranches = [("ReportStateBlank","Blank"),("ReportStateFilled","Filled")]
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReportLocation"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "OnBlank"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunOnBlankGen)]
+        , (SDK.effectProto "OnBlank" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunOnBlankGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "ReportStateBlank" "ReportInspect"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReportLocation","ReportInspect"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "OnFilled"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunOnFilledGen)]
+        , (SDK.effectProto "OnFilled" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunOnFilledGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "ReportStateFilled" "ReportInspect"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["ReportLocation","ReportInspect"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "CounterA"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ContextRequest, GetCountAGen), (SDK.ContextRequire, ReadCountAGen)]
-            , SDK.effectDemands = []
+        , (SDK.effectProto "CounterA" SDK.ContextKind "Root")
+            { SDK.effectMethods = [(SDK.ContextRequest, GetCountAGen), (SDK.ContextRequire, ReadCountAGen)]
             , SDK.effectProduces = Just "CountA"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "CounterB"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ContextRequest, GetCountBGen), (SDK.ContextRequire, ReadCountBGen)]
-            , SDK.effectDemands = []
+        , (SDK.effectProto "CounterB" SDK.ContextKind "Root")
+            { SDK.effectMethods = [(SDK.ContextRequest, GetCountBGen), (SDK.ContextRequire, ReadCountBGen)]
             , SDK.effectProduces = Just "CountB"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "FeedScopeA"
-            , SDK.effectKind = SDK.ScopedKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ScopeOpen, OpenFeedScopeAGen)]
+        , (SDK.effectProto "FeedScopeA" SDK.ScopedKind "Root")
+            { SDK.effectMethods = [(SDK.ScopeOpen, OpenFeedScopeAGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "CountA" "CounterA"
                 , SDK.ResolvedDemand SDK.RequireAccess "CountA" "CounterA"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["FeedScopeA"]
             , SDK.effectResource = Just "CounterA"
             , SDK.effectContextDependencies = ["CounterA"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "FeedScopeB"
-            , SDK.effectKind = SDK.ScopedKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ScopeOpen, OpenFeedScopeBGen)]
+        , (SDK.effectProto "FeedScopeB" SDK.ScopedKind "Root")
+            { SDK.effectMethods = [(SDK.ScopeOpen, OpenFeedScopeBGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "CountB" "CounterB"
                 , SDK.ResolvedDemand SDK.RequireAccess "CountB" "CounterB"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["FeedScopeB"]
             , SDK.effectResource = Just "CounterB"
             , SDK.effectContextDependencies = ["CounterB"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "FeedA"
-            , SDK.effectKind = SDK.StreamKind
-            , SDK.effectInput = "FeedScopeA"
-            , SDK.effectMethods = [(SDK.StreamHandler, NextFeedAGen)]
+        , (SDK.effectProto "FeedA" SDK.StreamKind "FeedScopeA")
+            { SDK.effectMethods = [(SDK.StreamHandler, NextFeedAGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "CountA" "CounterA"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["FeedScopeA"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["FeedScopeA"]
             , SDK.effectScopeParents = ["FeedScopeA"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["FeedScopeA"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["CounterA"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "FeedB"
-            , SDK.effectKind = SDK.StreamKind
-            , SDK.effectInput = "FeedScopeB"
-            , SDK.effectMethods = [(SDK.StreamHandler, NextFeedBGen)]
+        , (SDK.effectProto "FeedB" SDK.StreamKind "FeedScopeB")
+            { SDK.effectMethods = [(SDK.StreamHandler, NextFeedBGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "CountB" "CounterB"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["FeedScopeB"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["FeedScopeB"]
             , SDK.effectScopeParents = ["FeedScopeB"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["FeedScopeB"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["CounterB"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ParserA"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "FeedA"
-            , SDK.effectMethods = [(SDK.ContextStream, GetLevelAGen), (SDK.ContextRequire, StreamLevelAGen)]
-            , SDK.effectDemands = []
+        , (SDK.effectProto "ParserA" SDK.ContextKind "FeedA")
+            { SDK.effectMethods = [(SDK.ContextStream, GetLevelAGen), (SDK.ContextRequire, StreamLevelAGen)]
             , SDK.effectProduces = Just "LevelA"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["FeedScopeA"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["FeedA","FeedScopeA"]
             , SDK.effectScopeParents = ["FeedScopeA"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["FeedScopeA"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["CounterA"]
             , SDK.effectContinuous = True
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ParserB"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "FeedB"
-            , SDK.effectMethods = [(SDK.ContextStream, GetLevelBGen), (SDK.ContextRequire, StreamLevelBGen)]
-            , SDK.effectDemands = []
+        , (SDK.effectProto "ParserB" SDK.ContextKind "FeedB")
+            { SDK.effectMethods = [(SDK.ContextStream, GetLevelBGen), (SDK.ContextRequire, StreamLevelBGen)]
             , SDK.effectProduces = Just "LevelB"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["FeedScopeB"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["FeedB","FeedScopeB"]
             , SDK.effectScopeParents = ["FeedScopeB"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["FeedScopeB"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["CounterB"]
             , SDK.effectContinuous = True
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ShowA"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunShowAGen)]
+        , (SDK.effectProto "ShowA" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunShowAGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.StreamAccess "LevelA" "ParserA"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["CounterA","ParserA"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ShowB"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunShowBGen)]
+        , (SDK.effectProto "ShowB" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunShowBGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.StreamAccess "LevelB" "ParserB"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["CounterB","ParserB"]
-            , SDK.effectContinuous = False
             }
         ]
     , SDK.protoMethods =

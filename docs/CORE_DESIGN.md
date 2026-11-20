@@ -370,11 +370,11 @@ newtype Wrap (effect :: Symbol) value = Wrap { runWrap :: App value }
 handler 方法体原样复制，在 `Wrap "名字"` 上实例化。Reads、Raw、Raises 按标签生成 instance：`Reads T (Wrap "E")` 把读取路由到 E 的 demands 中表示类型为 T 的那份细化资产，普通资产解包 readT，分支契约经 projectContext 投影当前构造器，持续资产解包 streamT，只 requires 一个持续资产时经 latestContext 取最新一条；`Raw (Wrap "E")` 由 E 的直接 Input 回答；`Raises XxxError (Wrap "E")` 转成 Errors 中的 XxxFailure；`StreamEnds (Wrap "E")` 只为 Stream effect 生成，结束 E 所在的生产会话；`EndsStream (Wrap "E")` 只为持续消费链上的 Excu 生成，结束 E 所在调用的那一处订阅。GHC 在编译期按标签选定读取，运行时不按调用者查表。
 
 ```haskell
-instance FrameworkRuntime.Reads (FileHandle) (Wrap "WriteFirstLine") where
-  require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
+instance SDK.Reads FileHandle (Wrap "WriteFirstLine") where
+  require = Wrap (SDK.coerce <$> readOpenedFile)
 
-instance FrameworkRuntime.Raw (Wrap "ExtractFileText") where
-  rawinput = Wrap (runReadFile)
+instance SDK.Raw (Wrap "ExtractFileText") where
+  rawinput = Wrap runReadFile
 ```
 
 <a id="calls"></a>
@@ -385,11 +385,11 @@ instance FrameworkRuntime.Raw (Wrap "ExtractFileText") where
 ```haskell
 -- Crawler：先驱动 URL，再开启会话，最后运行共用的 fetchPage
 runFetchPage = ⟨入口包装⟩ $
-  getStartURL >> openCrawlSession >> runWrap @"FetchPage" (FrameworkRuntime.super "fetchPage" FrameworkGenerated.fetchPage)
+  getStartURL >> openCrawlSession >> runWrap @"FetchPage" (SDK.super "fetchPage" Effects.fetchPage)
 
 -- Context：执行 parser 并包装成资产
 getStartURL = ⟨入口包装⟩ $
-  (FrameworkGenerated.StartURL <$> runWrap @"StartPage" (FrameworkRuntime.super "startURL" FrameworkGenerated.startURL))
+  Effects.StartURL <$> runWrap @"StartPage" (SDK.super "startURL" Effects.startURL)
 ```
 
 - **驱动**：effect 的 requests 依次执行对应资产的 getT，重新生产并发布当前 origin 的绑定。
@@ -420,20 +420,20 @@ Input 表达操作的前提关系，业务值来源单独由 demands 表达；Co
 
 ```haskell
 runLocateFile =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] []
-  . FrameworkRuntime.enterHandler "LocateFile" $
-    runWrap @"LocateFile" (FrameworkRuntime.super "locateFile" FrameworkGenerated.locateFile)
+  SDK.handleFailure
+  . SDK.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] []
+  . SDK.enterHandler "LocateFile" $
+    runWrap @"LocateFile" (SDK.super "locateFile" Effects.locateFile)
 ```
 
-生成入口逐行列出包装顺序。`withErrorPath` 和 `withScopeDependencies` 只在该入口有对应的 scope 要加入时出现。持续挂接在本次执行是否生效由运行位置与会话决定。`compiledEntries` 的局部 `target` 为各末端安装同一组程序级 Error 回调。
+生成区以 `SDK.` 限定 `Framework.Generated`、以 `Effects.` 限定生成的契约模块；手写 Handlers.hs 已用其中某个限定名时，该模块退回 `FrameworkRuntime.`／`FrameworkGenerated.`。生成入口逐行列出包装顺序。`withErrorPath` 和 `withScopeDependencies` 只在该入口有对应的 scope 要加入时出现。持续挂接在本次执行是否生效由运行位置与会话决定。`compiledEntries` 的局部 `target` 为各末端安装同一组程序级 Error 回调。
 
 根入口不修改业务方法体、不预执行未声明的 Context、不另行 boot 或 lower 上游。scope 复用仍经过调用入口，但可以跳过资源方法体。
 
 <a id="middleware"></a>
 #### Middleware：在 Root 级调用点捕获句柄与值
 
-每个原子类方法作为一个尚未执行的 action 交给 Root 的 `super`。例如，生成入口在完成 requests 和 Input 前驱后，执行 `runWrap @hooks @"FileSession" @"openSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)`。同一手写 instance 仍可绑定到不同 effect。Injector 确定绑定可捕获的类别，Booter 给出挂载的 middleware 列表，生成代码里的类型标签把两者交给对应的 Root 实例。
+每个原子类方法作为一个尚未执行的 action 交给 Root 的 `super`。例如，生成入口在完成 requests 和 Input 前驱后，执行 `runWrap @hooks @"FileSession" @"openSession" (SDK.super "openSession" Effects.openSession)`。同一手写 instance 仍可绑定到不同 effect。Injector 确定绑定可捕获的类别，Booter 给出挂载的 middleware 列表，生成代码里的类型标签把两者交给对应的 Root 实例。
 
 有匹配的 middleware 时，`super` 先通知进入，再执行一次业务 action 并原样返回结果。方法内每次显式调用 `rawinput`、`rawoutput`、`rawemit` 或 `raise`，在该操作的执行位置通知匹配的 Middleware。Middleware 在自己的标签上运行，Root 在这个标签上直接执行，避免递归触发。
 

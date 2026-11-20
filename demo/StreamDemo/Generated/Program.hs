@@ -21,7 +21,8 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
                      , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
-  let target label action = SDK.targetApp label emptyContexts scopes
+  let target :: Show value => String -> App value -> SDK.Target ContextValues Errors value
+      target label action = SDK.targetApp label emptyContexts scopes
         (SDK.withErrorHandlers Handlers.errorHandlers action)
   pure
     ( [ target "Announce" (AnnounceResult () <$ Handlers.runAnnounce)
@@ -117,202 +118,79 @@ generatedPrototype =
             }
         ]
     , SDK.protoEffects =
-        [ SDK.EffectProto
-            { SDK.effectName = "SensorResource"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        [ (SDK.effectProto "SensorResource" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetSensorStateGen), (SDK.ContextRequire, ReadSensorStateGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "SensorState"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "SensorLink"
-            , SDK.effectKind = SDK.ScopedKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ScopeOpen, OpenSensorLinkGen), (SDK.ScopeClose, CloseSensorLinkGen)]
+        , (SDK.effectProto "SensorLink" SDK.ScopedKind "Root")
+            { SDK.effectMethods = [(SDK.ScopeOpen, OpenSensorLinkGen), (SDK.ScopeClose, CloseSensorLinkGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "SensorState" "SensorResource"
                 , SDK.ResolvedDemand SDK.RequireAccess "SensorState" "SensorResource"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["SensorLink"]
             , SDK.effectResource = Just "SensorResource"
             , SDK.effectContextDependencies = ["SensorResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "TemperatureFeed"
-            , SDK.effectKind = SDK.StreamKind
-            , SDK.effectInput = "SensorLink"
-            , SDK.effectMethods = [(SDK.StreamHandler, NextTemperatureFeedGen)]
-            , SDK.effectDemands = []
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
+        , (SDK.effectProto "TemperatureFeed" SDK.StreamKind "SensorLink")
+            { SDK.effectMethods = [(SDK.StreamHandler, NextTemperatureFeedGen)]
             , SDK.effectScopes = ["SensorLink"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["SensorLink"]
             , SDK.effectScopeParents = ["SensorLink"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["SensorLink"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SensorResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "TemperatureParser"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "TemperatureFeed"
-            , SDK.effectMethods =
+        , (SDK.effectProto "TemperatureParser" SDK.ContextKind "TemperatureFeed")
+            { SDK.effectMethods =
                 [(SDK.ContextStream, GetTemperatureSampleGen), (SDK.ContextRequire, StreamTemperatureSampleGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "SensorState" "SensorResource"]
             , SDK.effectProduces = Just "TemperatureSample"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["SensorLink"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["TemperatureFeed","SensorLink"]
             , SDK.effectScopeParents = ["SensorLink"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["SensorLink"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SensorResource"]
             , SDK.effectContinuous = True
             }
-        , SDK.EffectProto
-            { SDK.effectName = "HeartbeatClock"
-            , SDK.effectKind = SDK.StreamKind
-            , SDK.effectInput = "SensorLink"
-            , SDK.effectMethods = [(SDK.StreamHandler, NextHeartbeatClockGen)]
-            , SDK.effectDemands = []
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
+        , (SDK.effectProto "HeartbeatClock" SDK.StreamKind "SensorLink")
+            { SDK.effectMethods = [(SDK.StreamHandler, NextHeartbeatClockGen)]
             , SDK.effectScopes = ["SensorLink"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["SensorLink"]
             , SDK.effectScopeParents = ["SensorLink"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["SensorLink"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SensorResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "Heartbeat"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "HeartbeatClock"
-            , SDK.effectMethods = [(SDK.ContextStream, GetBeatGen), (SDK.ContextRequire, StreamBeatGen)]
+        , (SDK.effectProto "Heartbeat" SDK.ContextKind "HeartbeatClock")
+            { SDK.effectMethods = [(SDK.ContextStream, GetBeatGen), (SDK.ContextRequire, StreamBeatGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "SensorState" "SensorResource"]
             , SDK.effectProduces = Just "Beat"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["SensorLink"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["HeartbeatClock","SensorLink"]
             , SDK.effectScopeParents = ["SensorLink"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["SensorLink"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SensorResource"]
             , SDK.effectContinuous = True
             }
-        , SDK.EffectProto
-            { SDK.effectName = "Announce"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunAnnounceGen)]
-            , SDK.effectDemands = []
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
+        , (SDK.effectProto "Announce" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunAnnounceGen)]
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ShowTemperature"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunShowTemperatureGen)]
+        , (SDK.effectProto "ShowTemperature" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunShowTemperatureGen)]
             , SDK.effectDemands =
                 [SDK.ResolvedDemand SDK.StreamAccess "TemperatureSample" "TemperatureParser"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SensorResource","TemperatureParser"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "CheckTrend"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunCheckTrendGen)]
+        , (SDK.effectProto "CheckTrend" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunCheckTrendGen)]
             , SDK.effectDemands =
                 [SDK.ResolvedDemand SDK.StreamAccess "TemperatureSample" "TemperatureParser"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SensorResource","TemperatureParser"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReportHeartbeat"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunReportHeartbeatGen)]
+        , (SDK.effectProto "ReportHeartbeat" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunReportHeartbeatGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.StreamAccess "Beat" "Heartbeat"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["SensorResource","Heartbeat"]
-            , SDK.effectContinuous = False
             }
         ]
     , SDK.protoMethods =

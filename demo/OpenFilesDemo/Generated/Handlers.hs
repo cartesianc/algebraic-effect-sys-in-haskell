@@ -16,8 +16,8 @@
 
 module OpenFilesDemo.Generated.Handlers (handlerSourceFingerprint, getFileNames, readFileNames, getOpenedFiles, readOpenedFiles, openFileSession, closeFileSession, runHoldFiles, runInspectFiles, runReleaseFiles, getInspectedFiles, readInspectedFiles, runFinishInspection, newScopeHandlers, errorHandlers) where
 
-import qualified Framework.Generated as FrameworkRuntime
-import qualified OpenFilesDemo.Generated.Effects as FrameworkGenerated
+import qualified Framework.Generated as SDK
+import qualified OpenFilesDemo.Generated.Effects as Effects
 import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
@@ -122,162 +122,160 @@ handlerSourceFingerprint = Just "51dd65515b772801e2460a0459aae292"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: FrameworkGenerated.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance FrameworkRuntime.Root (Wrap effect) value
+instance SDK.Root (Wrap effect) value
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ListFilesError (Wrap effect) where
-  raise (FrameworkGenerated.ListFilesError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ListFilesFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ListFilesError (Wrap effect) where
+  raise (Effects.ListFilesError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ListFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AcquireFilesError (Wrap effect) where
-  raise (FrameworkGenerated.AcquireFilesError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.AcquireFilesFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.AcquireFilesError (Wrap effect) where
+  raise (Effects.AcquireFilesError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.AcquireFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenFilesError (Wrap effect) where
-  raise (FrameworkGenerated.OpenFilesError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.OpenFilesFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.OpenFilesError (Wrap effect) where
+  raise (Effects.OpenFilesError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.OpenFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseFilesError (Wrap effect) where
-  raise (FrameworkGenerated.CloseFilesError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CloseFilesFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.CloseFilesError (Wrap effect) where
+  raise (Effects.CloseFilesError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.CloseFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.HoldFilesError (Wrap effect) where
-  raise (FrameworkGenerated.HoldFilesError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.HoldFilesFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.HoldFilesError (Wrap effect) where
+  raise (Effects.HoldFilesError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.HoldFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.InspectFilesError (Wrap effect) where
-  raise (FrameworkGenerated.InspectFilesError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.InspectFilesFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.InspectFilesError (Wrap effect) where
+  raise (Effects.InspectFilesError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.InspectFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SnapshotFilesError (Wrap effect) where
-  raise (FrameworkGenerated.SnapshotFilesError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.SnapshotFilesFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.SnapshotFilesError (Wrap effect) where
+  raise (Effects.SnapshotFilesError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.SnapshotFilesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.FinishInspectionError (Wrap effect) where
-  raise (FrameworkGenerated.FinishInspectionError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.FinishInspectionFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.FinishInspectionError (Wrap effect) where
+  raise (Effects.FinishInspectionError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.FinishInspectionFailure description)
 
-instance FrameworkRuntime.Reads ([[Char]]) (Wrap "FileResources") where
-  require = Wrap ((\(FrameworkGenerated.FileNames value) -> value) <$> readFileNames)
+instance SDK.Reads [[Char]] (Wrap "FileResources") where
+  require = Wrap (SDK.coerce <$> readFileNames)
 
-instance FrameworkRuntime.Reads ([FileHandle]) (Wrap "FileSession") where
-  require = Wrap ((\(FrameworkGenerated.OpenedFiles value) -> value) <$> readOpenedFiles)
+instance SDK.Reads [FileHandle] (Wrap "FileSession") where
+  require = Wrap (SDK.coerce <$> readOpenedFiles)
 
-instance FrameworkRuntime.Reads ([FileHandle]) (Wrap "InspectFiles") where
-  require = Wrap ((\(FrameworkGenerated.OpenedFiles value) -> value) <$> readOpenedFiles)
+instance SDK.Reads [FileHandle] (Wrap "InspectFiles") where
+  require = Wrap (SDK.coerce <$> readOpenedFiles)
 
-instance FrameworkRuntime.Reads ([FileHandle]) (Wrap "InspectionSnapshot") where
-  require = Wrap ((\(FrameworkGenerated.OpenedFiles value) -> value) <$> readOpenedFiles)
+instance SDK.Reads [FileHandle] (Wrap "InspectionSnapshot") where
+  require = Wrap (SDK.coerce <$> readOpenedFiles)
 
-instance FrameworkRuntime.Reads ([FileHandle]) (Wrap "FinishInspection") where
-  require = Wrap ((\(FrameworkGenerated.InspectedFiles value) -> value) <$> readInspectedFiles)
+instance SDK.Reads [FileHandle] (Wrap "FinishInspection") where
+  require = Wrap (SDK.coerce <$> readInspectedFiles)
 
-instance FrameworkRuntime.Raw (Wrap "InspectionSnapshot") where
-  rawinput = Wrap (runReleaseFiles)
+instance SDK.Raw (Wrap "InspectionSnapshot") where
+  rawinput = Wrap runReleaseFiles
 
-instance FrameworkRuntime.RawOutputs (Wrap effect)
+instance SDK.RawOutputs (Wrap effect)
 
-getFileNames :: FrameworkGenerated.App FrameworkGenerated.FileNames
+getFileNames :: Effects.App Effects.FileNames
 getFileNames =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "FileLocations"
-      (\value bindings -> bindings { FrameworkGenerated.boundFileLocations = Just value }) $
-    (FrameworkGenerated.FileNames <$> runWrap @"FileLocations" (FrameworkRuntime.super "listFiles" FrameworkGenerated.listFiles))
+  SDK.handleFailure
+  . SDK.callContext "FileLocations"
+      (\value bindings -> bindings { Effects.boundFileLocations = Just value }) $
+    Effects.FileNames <$> runWrap @"FileLocations" (SDK.super "listFiles" Effects.listFiles)
 
-readFileNames :: FrameworkGenerated.App FrameworkGenerated.FileNames
+readFileNames :: Effects.App Effects.FileNames
 readFileNames =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "FileLocations" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileLocations
+  SDK.handleFailure $
+    SDK.readContext "FileLocations" Effects.ContextBindingError Effects.boundFileLocations
 
-getOpenedFiles :: FrameworkGenerated.App FrameworkGenerated.OpenedFiles
+getOpenedFiles :: Effects.App Effects.OpenedFiles
 getOpenedFiles =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "FileResources"
-      (\value bindings -> bindings { FrameworkGenerated.boundFileResources = Just value }) $
-    (FrameworkGenerated.OpenedFiles <$> runWrap @"FileResources" (FrameworkRuntime.super "acquireFiles" FrameworkGenerated.acquireFiles))
+  SDK.handleFailure
+  . SDK.callContext "FileResources"
+      (\value bindings -> bindings { Effects.boundFileResources = Just value }) $
+    Effects.OpenedFiles <$> runWrap @"FileResources" (SDK.super "acquireFiles" Effects.acquireFiles)
 
-readOpenedFiles :: FrameworkGenerated.App FrameworkGenerated.OpenedFiles
+readOpenedFiles :: Effects.App Effects.OpenedFiles
 readOpenedFiles =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "FileResources" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileResources
+  SDK.handleFailure $
+    SDK.readContext "FileResources" Effects.ContextBindingError Effects.boundFileResources
 
-openFileSession :: FrameworkGenerated.App [String]
+openFileSession :: Effects.App [String]
 openFileSession =
-  FrameworkRuntime.withErrorPath ["FileSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "openFileSession" [] []
-  . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError (Just (() <$ closeFileSession))
-  . FrameworkRuntime.enterHandler "FileSession" $
-    getOpenedFiles >> runWrap @"FileSession" (FrameworkRuntime.super "openFiles" FrameworkGenerated.openFiles)
+  SDK.withErrorPath ["FileSession"]
+  . SDK.handleFailure
+  . SDK.atomicScope "openFileSession" [] []
+  . SDK.openScope "FileSession" Effects.ScopeBindingError (Just (() <$ closeFileSession))
+  . SDK.enterHandler "FileSession" $
+    getOpenedFiles >> runWrap @"FileSession" (SDK.super "openFiles" Effects.openFiles)
 
-closeFileSession :: FrameworkGenerated.App [String]
+closeFileSession :: Effects.App [String]
 closeFileSession =
-  FrameworkRuntime.withErrorPath ["FileSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "closeFileSession" [] []
-  . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError
-  . FrameworkRuntime.enterHandler "FileSession" $
-    runWrap @"FileSession" (FrameworkRuntime.superClose "closeFiles" FrameworkGenerated.closeFiles)
+  SDK.withErrorPath ["FileSession"]
+  . SDK.handleFailure
+  . SDK.atomicScope "closeFileSession" [] []
+  . SDK.closeScope "FileSession" Effects.ScopeBindingError
+  . SDK.enterHandler "FileSession" $
+    runWrap @"FileSession" (SDK.superClose "closeFiles" Effects.closeFiles)
 
-runHoldFiles :: FrameworkGenerated.App [String]
+runHoldFiles :: Effects.App [String]
 runHoldFiles =
-  FrameworkRuntime.withErrorPath ["FileSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runHoldFiles" [] []
-  . FrameworkRuntime.withScopeDependencies ["FileSession"]
-  . FrameworkRuntime.enterHandler "HoldFiles" $
-    getFileNames >> openFileSession >> runWrap @"HoldFiles" (FrameworkRuntime.super "holdFiles" FrameworkGenerated.holdFiles)
+  SDK.withErrorPath ["FileSession"]
+  . SDK.handleFailure
+  . SDK.atomicHandle "runHoldFiles" [] []
+  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.enterHandler "HoldFiles" $
+    getFileNames >> openFileSession >> runWrap @"HoldFiles" (SDK.super "holdFiles" Effects.holdFiles)
 
-runInspectFiles :: FrameworkGenerated.App [String]
+runInspectFiles :: Effects.App [String]
 runInspectFiles =
-  FrameworkRuntime.withErrorPath ["FileSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runInspectFiles" [] []
-  . FrameworkRuntime.withScopeDependencies ["FileSession"]
-  . FrameworkRuntime.enterHandler "InspectFiles" $
-    runHoldFiles >> runWrap @"InspectFiles" (FrameworkRuntime.super "inspectFiles" FrameworkGenerated.inspectFiles)
+  SDK.withErrorPath ["FileSession"]
+  . SDK.handleFailure
+  . SDK.atomicHandle "runInspectFiles" [] []
+  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.enterHandler "InspectFiles" $
+    runHoldFiles >> runWrap @"InspectFiles" (SDK.super "inspectFiles" Effects.inspectFiles)
 
-runReleaseFiles :: FrameworkGenerated.App [String]
+runReleaseFiles :: Effects.App [String]
 runReleaseFiles =
-  FrameworkRuntime.withErrorPath ["FileSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runReleaseFiles" [("InspectionSnapshot", () <$ getInspectedFiles)] []
-  . FrameworkRuntime.withScopeDependencies ["FileSession"]
-  . FrameworkRuntime.enterHandler "ReleaseFiles" $
-    runHoldFiles >> runWrap @"ReleaseFiles" (FrameworkRuntime.super "holdFiles" FrameworkGenerated.holdFiles)
+  SDK.withErrorPath ["FileSession"]
+  . SDK.handleFailure
+  . SDK.atomicHandle "runReleaseFiles" [("InspectionSnapshot", () <$ getInspectedFiles)] []
+  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.enterHandler "ReleaseFiles" $
+    runHoldFiles >> runWrap @"ReleaseFiles" (SDK.super "holdFiles" Effects.holdFiles)
 
-getInspectedFiles :: FrameworkGenerated.App FrameworkGenerated.InspectedFiles
+getInspectedFiles :: Effects.App Effects.InspectedFiles
 getInspectedFiles =
-  FrameworkRuntime.withErrorPath ["FileSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["FileSession"]
-  . FrameworkRuntime.callContext "InspectionSnapshot"
-      (\value bindings -> bindings { FrameworkGenerated.boundInspectionSnapshot = Just value }) $
-    (FrameworkGenerated.InspectedFiles <$> runWrap @"InspectionSnapshot" (FrameworkRuntime.super "snapshotFiles" FrameworkGenerated.snapshotFiles))
+  SDK.withErrorPath ["FileSession"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.callContext "InspectionSnapshot"
+      (\value bindings -> bindings { Effects.boundInspectionSnapshot = Just value }) $
+    Effects.InspectedFiles <$> runWrap @"InspectionSnapshot" (SDK.super "snapshotFiles" Effects.snapshotFiles)
 
-readInspectedFiles :: FrameworkGenerated.App FrameworkGenerated.InspectedFiles
+readInspectedFiles :: Effects.App Effects.InspectedFiles
 readInspectedFiles =
-  FrameworkRuntime.withErrorPath ["FileSession"]
-  . FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "InspectionSnapshot" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundInspectionSnapshot
+  SDK.withErrorPath ["FileSession"]
+  . SDK.handleFailure $
+    SDK.readContext "InspectionSnapshot" Effects.ContextBindingError Effects.boundInspectionSnapshot
 
-runFinishInspection :: FrameworkGenerated.App [String]
+runFinishInspection :: Effects.App [String]
 runFinishInspection =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runFinishInspection" [] []
-  . FrameworkRuntime.enterHandler "FinishInspection" $
-    runWrap @"FinishInspection" (FrameworkRuntime.super "finishInspection" FrameworkGenerated.finishInspection)
+  SDK.handleFailure
+  . SDK.atomicHandle "runFinishInspection" [] []
+  . SDK.enterHandler "FinishInspection" $
+    runWrap @"FinishInspection" (SDK.super "finishInspection" Effects.finishInspection)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
-newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
+newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ FrameworkRuntime.newScopeHandler "FileSession" ["FileLocations"] (Just "FileResources")
+  [ SDK.newScopeHandler "FileSession" ["FileLocations"] (Just "FileResources")
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。
-errorHandlers :: [(Maybe String, FrameworkRuntime.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
-errorHandlers =
-  [
-  ]
+errorHandlers :: [(Maybe String, SDK.ErrorHandler Effects.Errors Effects.App)]
+errorHandlers = []

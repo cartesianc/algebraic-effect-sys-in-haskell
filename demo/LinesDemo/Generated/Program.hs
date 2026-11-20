@@ -23,7 +23,8 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
                      , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
-  let target label action = SDK.targetApp label emptyContexts scopes
+  let target :: Show value => String -> App value -> SDK.Target ContextValues Errors value
+      target label action = SDK.targetApp label emptyContexts scopes
         (SDK.withErrorHandlers Handlers.errorHandlers action)
   pure
     ( [ target "Announce" (AnnounceResult () <$ Handlers.runAnnounce @'[])
@@ -124,224 +125,87 @@ generatedPrototype =
             }
         ]
     , SDK.protoEffects =
-        [ SDK.EffectProto
-            { SDK.effectName = "Announce"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunAnnounceGen)]
-            , SDK.effectDemands = []
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
+        [ (SDK.effectProto "Announce" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunAnnounceGen)]
             }
-        , SDK.EffectProto
-            { SDK.effectName = "InputResource"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "InputResource" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetOpenedInputGen), (SDK.ContextRequire, ReadOpenedInputGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "OpenedInput"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "InputSession"
-            , SDK.effectKind = SDK.ScopedKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "InputSession" SDK.ScopedKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ScopeOpen, OpenInputSessionGen), (SDK.ScopeClose, CloseInputSessionGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "OpenedInput" "InputResource"
                 , SDK.ResolvedDemand SDK.RequireAccess "OpenedInput" "InputResource"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["InputSession"]
             , SDK.effectResource = Just "InputResource"
             , SDK.effectContextDependencies = ["InputResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "LineFeed"
-            , SDK.effectKind = SDK.StreamKind
-            , SDK.effectInput = "InputSession"
-            , SDK.effectMethods = [(SDK.StreamHandler, NextLineFeedGen)]
+        , (SDK.effectProto "LineFeed" SDK.StreamKind "InputSession")
+            { SDK.effectMethods = [(SDK.StreamHandler, NextLineFeedGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "OpenedInput" "InputResource"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["InputSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["InputSession"]
             , SDK.effectScopeParents = ["InputSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["InputSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["InputResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "TraceLine"
-            , SDK.effectKind = SDK.MiddlewareKind
-            , SDK.effectInput = "None"
-            , SDK.effectMethods = [(SDK.MiddlewareHook, HookTraceLineGen)]
-            , SDK.effectDemands = []
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
+        , (SDK.effectProto "TraceLine" SDK.MiddlewareKind "None")
+            { SDK.effectMethods = [(SDK.MiddlewareHook, HookTraceLineGen)]
             }
-        , SDK.EffectProto
-            { SDK.effectName = "LineParser"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "LineFeed"
-            , SDK.effectMethods =
+        , (SDK.effectProto "LineParser" SDK.ContextKind "LineFeed")
+            { SDK.effectMethods =
                 [(SDK.ContextStream, GetTextLineGen), (SDK.ContextRequire, StreamTextLineGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "TextLine"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["InputSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["LineFeed","InputSession"]
             , SDK.effectScopeParents = ["InputSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["InputSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["InputResource"]
             , SDK.effectContinuous = True
             }
-        , SDK.EffectProto
-            { SDK.effectName = "PrintLine"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunPrintLineGen)]
+        , (SDK.effectProto "PrintLine" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunPrintLineGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.StreamAccess "TextLine" "LineParser"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["InputResource","LineParser"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "TextCounter"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "InputSession"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunTextCounterGen)]
+        , (SDK.effectProto "TextCounter" SDK.ExcuKind "InputSession")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunTextCounterGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.StreamAccess "TextLine" "LineParser"
                 , SDK.ResolvedDemand SDK.RequireAccess "OpenedInput" "InputResource"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["InputSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["InputSession"]
             , SDK.effectScopeParents = ["InputSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["InputSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["InputResource","LineParser"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "CountParser"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "TextCounter"
-            , SDK.effectMethods =
+        , (SDK.effectProto "CountParser" SDK.ContextKind "TextCounter")
+            { SDK.effectMethods =
                 [(SDK.ContextStream, GetRunningTotalGen), (SDK.ContextRequire, StreamRunningTotalGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "RunningTotal"
-            , SDK.effectBranches = []
             , SDK.effectAnchor = Just "TextCounter"
             , SDK.effectScopes = ["InputSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["TextCounter","InputSession"]
             , SDK.effectScopeParents = ["InputSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["InputSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["InputResource","LineParser"]
             , SDK.effectContinuous = True
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ShowTotal"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunShowTotalGen)]
+        , (SDK.effectProto "ShowTotal" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunShowTotalGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.StreamAccess "RunningTotal" "CountParser"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["InputResource","LineParser","CountParser"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "Report"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunReportGen)]
+        , (SDK.effectProto "Report" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunReportGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "RunningTotal" "CountParser"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
             , SDK.effectScopeParents = ["InputSession"]
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["InputResource","LineParser","CountParser"]
-            , SDK.effectContinuous = False
             }
         ]
     , SDK.protoMethods =

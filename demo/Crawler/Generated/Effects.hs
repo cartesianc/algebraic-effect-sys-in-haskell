@@ -17,25 +17,25 @@ import Crawler.Types
 type App = SDK.App ContextValues Errors
 
 -- 每个 Context 的资产类型：名字来自 Asset 声明，包装其表示类型。
-newtype StartURL = StartURL (PageURL)
-deriving instance Eq (PageURL) => Eq StartURL
-deriving instance Show (PageURL) => Show StartURL
+newtype StartURL = StartURL PageURL
+deriving instance Eq PageURL => Eq StartURL
+deriving instance Show PageURL => Show StartURL
 
-newtype LinkedURL = LinkedURL (PageURL)
-deriving instance Eq (PageURL) => Eq LinkedURL
-deriving instance Show (PageURL) => Show LinkedURL
+newtype LinkedURL = LinkedURL PageURL
+deriving instance Eq PageURL => Eq LinkedURL
+deriving instance Show PageURL => Show LinkedURL
 
-newtype StartPageSummary = StartPageSummary (PageSummary)
-deriving instance Eq (PageSummary) => Eq StartPageSummary
-deriving instance Show (PageSummary) => Show StartPageSummary
+newtype StartPageSummary = StartPageSummary PageSummary
+deriving instance Eq PageSummary => Eq StartPageSummary
+deriving instance Show PageSummary => Show StartPageSummary
 
-newtype LinkedPageSummary = LinkedPageSummary (PageSummary)
-deriving instance Eq (PageSummary) => Eq LinkedPageSummary
-deriving instance Show (PageSummary) => Show LinkedPageSummary
+newtype LinkedPageSummary = LinkedPageSummary PageSummary
+deriving instance Eq PageSummary => Eq LinkedPageSummary
+deriving instance Show PageSummary => Show LinkedPageSummary
 
-newtype CrawlSessionInfo = CrawlSessionInfo (SessionInfo)
-deriving instance Eq (SessionInfo) => Eq CrawlSessionInfo
-deriving instance Show (SessionInfo) => Show CrawlSessionInfo
+newtype CrawlSessionInfo = CrawlSessionInfo SessionInfo
+deriving instance Eq SessionInfo => Eq CrawlSessionInfo
+deriving instance Show SessionInfo => Show CrawlSessionInfo
 
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
 data MethodGen = GetStartURLGen | ReadStartURLGen | GetLinkedURLGen | ReadLinkedURLGen | RunFetchPageGen | RunKeepPageBodyGen | GetStartPageSummaryGen | ReadStartPageSummaryGen | RunPrintPageGen | RunFetchLinkedPageGen | RunKeepLinkedPageBodyGen | GetLinkedPageSummaryGen | ReadLinkedPageSummaryGen | RunPrintLinkedPageGen | GetCrawlSessionInfoGen | ReadCrawlSessionInfoGen | OpenCrawlSessionGen | CloseCrawlSessionGen
@@ -61,7 +61,7 @@ newtype LinkedURLError = LinkedURLError String
   deriving (Eq, Show, Read)
 
 -- handler fetchPage：绑定到 FetchPage、FetchLinkedPage。
-type FetchPageLayer m = (SDK.Reads (PageURL) m, SDK.Reads (SessionInfo) m, SDK.RawOutputs m, SDK.Raises FetchPageError m, MonadIO m)
+type FetchPageLayer m = (SDK.Reads PageURL m, SDK.Reads SessionInfo m, SDK.RawOutputs m, SDK.Raises FetchPageError m, MonadIO m)
 class FetchPageHandler m where
   fetchPage :: m [String]
 
@@ -79,7 +79,7 @@ newtype DropBlankBodiesError = DropBlankBodiesError String
   deriving (Eq, Show, Read)
 
 -- handler extractSummary：绑定到 ExtractPage、ExtractLinkedPage。
-type ExtractSummaryLayer m = (SDK.Reads (PageURL) m, SDK.Raw m, SDK.Raises ExtractSummaryError m, MonadIO m)
+type ExtractSummaryLayer m = (SDK.Reads PageURL m, SDK.Raw m, SDK.Raises ExtractSummaryError m, MonadIO m)
 class ExtractSummaryHandler m where
   extractSummary :: m PageSummary
 
@@ -88,7 +88,7 @@ newtype ExtractSummaryError = ExtractSummaryError String
   deriving (Eq, Show, Read)
 
 -- handler printSummary：绑定到 PrintPage、PrintLinkedPage。
-type PrintSummaryLayer m = (SDK.Reads (PageSummary) m, SDK.RawOutputs m, SDK.Raises PrintSummaryError m, MonadIO m)
+type PrintSummaryLayer m = (SDK.Reads PageSummary m, SDK.RawOutputs m, SDK.Raises PrintSummaryError m, MonadIO m)
 class PrintSummaryHandler m where
   printSummary :: m [String]
 
@@ -106,7 +106,7 @@ newtype SessionInfoError = SessionInfoError String
   deriving (Eq, Show, Read)
 
 -- handler openSession：绑定到 CrawlSession。
-type OpenSessionLayer m = (SDK.Reads (SessionInfo) m, SDK.RawOutputs m, SDK.Raises OpenSessionError m, MonadIO m)
+type OpenSessionLayer m = (SDK.Reads SessionInfo m, SDK.RawOutputs m, SDK.Raises OpenSessionError m, MonadIO m)
 class OpenSessionHandler m where
   openSession :: m [String]
 
@@ -115,7 +115,7 @@ newtype OpenSessionError = OpenSessionError String
   deriving (Eq, Show, Read)
 
 -- handler closeSession：绑定到 CrawlSession。
-type CloseSessionLayer m = (SDK.Reads (SessionInfo) m, SDK.RawOutputs m, SDK.Raises CloseSessionError m, MonadIO m)
+type CloseSessionLayer m = (SDK.Reads SessionInfo m, SDK.RawOutputs m, SDK.Raises CloseSessionError m, MonadIO m)
 class CloseSessionHandler m where
   closeSession :: m [String]
 

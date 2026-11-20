@@ -16,8 +16,8 @@
 
 module FacadeProbe.Generated.Handlers (handlerSourceFingerprint, getReportPath, readReportPath, getReplyPath, readReplyPath, getReportBody, readReportBody, getReplyBody, readReplyBody, getOpenedReport, readOpenedReport, getOpenedReply, readOpenedReply, openReportScope, closeReportScope, openReplyScope, closeReplyScope, runWriteReport, runWriteReply, runMarkReply, runReadReport, runReadReply, getReportStats, readReportStats, getReplyStats, readReplyStats, runShowReport, runShowReply, getReportState, readReportState, runOnBlank, runOnFilled, getCountA, readCountA, getCountB, readCountB, openFeedScopeA, openFeedScopeB, nextFeedA, nextFeedB, getLevelA, streamLevelA, getLevelB, streamLevelB, runShowA, runShowB, newScopeHandlers, errorHandlers) where
 
-import qualified Framework.Generated as FrameworkRuntime
-import qualified FacadeProbe.Generated.Effects as FrameworkGenerated
+import qualified Framework.Generated as SDK
+import qualified FacadeProbe.Generated.Effects as Effects
 import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
@@ -155,514 +155,512 @@ handlerSourceFingerprint = Just "0a0b686cffa24a432689b625d717b103"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: FrameworkGenerated.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance FrameworkRuntime.Root (Wrap effect) value
+instance SDK.Root (Wrap effect) value
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReportLocationError (Wrap effect) where
-  raise (FrameworkGenerated.ReportLocationError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReportLocationFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ReportLocationError (Wrap effect) where
+  raise (Effects.ReportLocationError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ReportLocationFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReplyLocationError (Wrap effect) where
-  raise (FrameworkGenerated.ReplyLocationError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReplyLocationFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ReplyLocationError (Wrap effect) where
+  raise (Effects.ReplyLocationError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ReplyLocationFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReportDraftError (Wrap effect) where
-  raise (FrameworkGenerated.ReportDraftError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReportDraftFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ReportDraftError (Wrap effect) where
+  raise (Effects.ReportDraftError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ReportDraftFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReplyDraftError (Wrap effect) where
-  raise (FrameworkGenerated.ReplyDraftError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReplyDraftFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ReplyDraftError (Wrap effect) where
+  raise (Effects.ReplyDraftError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ReplyDraftFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AcquireFileError (Wrap effect) where
-  raise (FrameworkGenerated.AcquireFileError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.AcquireFileFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.AcquireFileError (Wrap effect) where
+  raise (Effects.AcquireFileError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.AcquireFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenTextFileError (Wrap effect) where
-  raise (FrameworkGenerated.OpenTextFileError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.OpenTextFileFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.OpenTextFileError (Wrap effect) where
+  raise (Effects.OpenTextFileError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.OpenTextFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseTextFileError (Wrap effect) where
-  raise (FrameworkGenerated.CloseTextFileError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CloseTextFileFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.CloseTextFileError (Wrap effect) where
+  raise (Effects.CloseTextFileError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.CloseTextFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.WriteTextError (Wrap effect) where
-  raise (FrameworkGenerated.WriteTextError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.WriteTextFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.WriteTextError (Wrap effect) where
+  raise (Effects.WriteTextError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.WriteTextFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.MarkReadError (Wrap effect) where
-  raise (FrameworkGenerated.MarkReadError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.MarkReadFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.MarkReadError (Wrap effect) where
+  raise (Effects.MarkReadError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.MarkReadFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReadTextError (Wrap effect) where
-  raise (FrameworkGenerated.ReadTextError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReadTextFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ReadTextError (Wrap effect) where
+  raise (Effects.ReadTextError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ReadTextFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CountLinesError (Wrap effect) where
-  raise (FrameworkGenerated.CountLinesError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CountLinesFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.CountLinesError (Wrap effect) where
+  raise (Effects.CountLinesError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.CountLinesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ShowCountError (Wrap effect) where
-  raise (FrameworkGenerated.ShowCountError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ShowCountFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ShowCountError (Wrap effect) where
+  raise (Effects.ShowCountError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ShowCountFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.InspectFileError (Wrap effect) where
-  raise (FrameworkGenerated.InspectFileError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.InspectFileFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.InspectFileError (Wrap effect) where
+  raise (Effects.InspectFileError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.InspectFileFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DescribeBlankError (Wrap effect) where
-  raise (FrameworkGenerated.DescribeBlankError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.DescribeBlankFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.DescribeBlankError (Wrap effect) where
+  raise (Effects.DescribeBlankError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.DescribeBlankFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DescribeFilledError (Wrap effect) where
-  raise (FrameworkGenerated.DescribeFilledError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.DescribeFilledFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.DescribeFilledError (Wrap effect) where
+  raise (Effects.DescribeFilledError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.DescribeFilledFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NewCounterError (Wrap effect) where
-  raise (FrameworkGenerated.NewCounterError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NewCounterFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.NewCounterError (Wrap effect) where
+  raise (Effects.NewCounterError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.NewCounterFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenCounterError (Wrap effect) where
-  raise (FrameworkGenerated.OpenCounterError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.OpenCounterFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.OpenCounterError (Wrap effect) where
+  raise (Effects.OpenCounterError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.OpenCounterFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextAError (Wrap effect) where
-  raise (FrameworkGenerated.NextAError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NextAFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.NextAError (Wrap effect) where
+  raise (Effects.NextAError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.NextAFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextBError (Wrap effect) where
-  raise (FrameworkGenerated.NextBError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NextBFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.NextBError (Wrap effect) where
+  raise (Effects.NextBError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.NextBFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseLevelError (Wrap effect) where
-  raise (FrameworkGenerated.ParseLevelError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ParseLevelFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ParseLevelError (Wrap effect) where
+  raise (Effects.ParseLevelError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ParseLevelFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ShowLevelError (Wrap effect) where
-  raise (FrameworkGenerated.ShowLevelError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ShowLevelFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ShowLevelError (Wrap effect) where
+  raise (Effects.ShowLevelError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ShowLevelFailure description)
 
-instance FrameworkRuntime.Reads ([Char]) (Wrap "ReportFile") where
-  require = Wrap ((\(FrameworkGenerated.ReportPath value) -> value) <$> readReportPath)
+instance SDK.Reads [Char] (Wrap "ReportFile") where
+  require = Wrap (SDK.coerce <$> readReportPath)
 
-instance FrameworkRuntime.Reads ([Char]) (Wrap "ReplyFile") where
-  require = Wrap ((\(FrameworkGenerated.ReplyPath value) -> value) <$> readReplyPath)
+instance SDK.Reads [Char] (Wrap "ReplyFile") where
+  require = Wrap (SDK.coerce <$> readReplyPath)
 
-instance FrameworkRuntime.Reads (TextFile) (Wrap "ReportScope") where
-  require = Wrap ((\(FrameworkGenerated.OpenedReport value) -> value) <$> readOpenedReport)
+instance SDK.Reads TextFile (Wrap "ReportScope") where
+  require = Wrap (SDK.coerce <$> readOpenedReport)
 
-instance FrameworkRuntime.Reads (TextFile) (Wrap "ReplyScope") where
-  require = Wrap ((\(FrameworkGenerated.OpenedReply value) -> value) <$> readOpenedReply)
+instance SDK.Reads TextFile (Wrap "ReplyScope") where
+  require = Wrap (SDK.coerce <$> readOpenedReply)
 
-instance FrameworkRuntime.Reads (TextFile) (Wrap "WriteReport") where
-  require = Wrap ((\(FrameworkGenerated.OpenedReport value) -> value) <$> readOpenedReport)
+instance SDK.Reads TextFile (Wrap "WriteReport") where
+  require = Wrap (SDK.coerce <$> readOpenedReport)
 
-instance FrameworkRuntime.Reads (Body) (Wrap "WriteReport") where
-  require = Wrap ((\(FrameworkGenerated.ReportBody value) -> value) <$> readReportBody)
+instance SDK.Reads Body (Wrap "WriteReport") where
+  require = Wrap (SDK.coerce <$> readReportBody)
 
-instance FrameworkRuntime.Reads (TextFile) (Wrap "WriteReply") where
-  require = Wrap ((\(FrameworkGenerated.OpenedReply value) -> value) <$> readOpenedReply)
+instance SDK.Reads TextFile (Wrap "WriteReply") where
+  require = Wrap (SDK.coerce <$> readOpenedReply)
 
-instance FrameworkRuntime.Reads (Body) (Wrap "WriteReply") where
-  require = Wrap ((\(FrameworkGenerated.ReplyBody value) -> value) <$> readReplyBody)
+instance SDK.Reads Body (Wrap "WriteReply") where
+  require = Wrap (SDK.coerce <$> readReplyBody)
 
-instance FrameworkRuntime.Reads ([Char]) (Wrap "ReadReport") where
-  require = Wrap ((\(FrameworkGenerated.ReportPath value) -> value) <$> readReportPath)
+instance SDK.Reads [Char] (Wrap "ReadReport") where
+  require = Wrap (SDK.coerce <$> readReportPath)
 
-instance FrameworkRuntime.Reads ([Char]) (Wrap "ReadReply") where
-  require = Wrap ((\(FrameworkGenerated.ReplyPath value) -> value) <$> readReplyPath)
+instance SDK.Reads [Char] (Wrap "ReadReply") where
+  require = Wrap (SDK.coerce <$> readReplyPath)
 
-instance FrameworkRuntime.Reads (LineCount) (Wrap "ShowReport") where
-  require = Wrap ((\(FrameworkGenerated.ReportStats value) -> value) <$> readReportStats)
+instance SDK.Reads LineCount (Wrap "ShowReport") where
+  require = Wrap (SDK.coerce <$> readReportStats)
 
-instance FrameworkRuntime.Reads (LineCount) (Wrap "ShowReply") where
-  require = Wrap ((\(FrameworkGenerated.ReplyStats value) -> value) <$> readReplyStats)
+instance SDK.Reads LineCount (Wrap "ShowReply") where
+  require = Wrap (SDK.coerce <$> readReplyStats)
 
-instance FrameworkRuntime.Reads ([Char]) (Wrap "ReportInspect") where
-  require = Wrap ((\(FrameworkGenerated.ReportPath value) -> value) <$> readReportPath)
+instance SDK.Reads [Char] (Wrap "ReportInspect") where
+  require = Wrap (SDK.coerce <$> readReportPath)
 
-instance FrameworkRuntime.Reads (()) (Wrap "OnBlank") where
-  require = Wrap (FrameworkRuntime.projectContext "ReportInspect" "ReportStateBlank" FrameworkGenerated.ContextBindingError (\(FrameworkGenerated.ReportState value) -> case value of { Blank -> Just (); _ -> Nothing }) (readReportState))
+instance SDK.Reads () (Wrap "OnBlank") where
+  require = Wrap (SDK.projectContext "ReportInspect" "ReportStateBlank" Effects.ContextBindingError (\(Effects.ReportState value) -> case value of { Blank -> Just (); _ -> Nothing }) (readReportState))
 
-instance FrameworkRuntime.Reads (Body) (Wrap "OnFilled") where
-  require = Wrap (FrameworkRuntime.projectContext "ReportInspect" "ReportStateFilled" FrameworkGenerated.ContextBindingError (\(FrameworkGenerated.ReportState value) -> case value of { Filled field -> Just field; _ -> Nothing }) (readReportState))
+instance SDK.Reads Body (Wrap "OnFilled") where
+  require = Wrap (SDK.projectContext "ReportInspect" "ReportStateFilled" Effects.ContextBindingError (\(Effects.ReportState value) -> case value of { Filled field -> Just field; _ -> Nothing }) (readReportState))
 
-instance FrameworkRuntime.Reads (FeedCounter) (Wrap "FeedScopeA") where
-  require = Wrap ((\(FrameworkGenerated.CountA value) -> value) <$> readCountA)
+instance SDK.Reads FeedCounter (Wrap "FeedScopeA") where
+  require = Wrap (SDK.coerce <$> readCountA)
 
-instance FrameworkRuntime.Reads (FeedCounter) (Wrap "FeedScopeB") where
-  require = Wrap ((\(FrameworkGenerated.CountB value) -> value) <$> readCountB)
+instance SDK.Reads FeedCounter (Wrap "FeedScopeB") where
+  require = Wrap (SDK.coerce <$> readCountB)
 
-instance FrameworkRuntime.Reads (FeedCounter) (Wrap "FeedA") where
-  require = Wrap ((\(FrameworkGenerated.CountA value) -> value) <$> readCountA)
+instance SDK.Reads FeedCounter (Wrap "FeedA") where
+  require = Wrap (SDK.coerce <$> readCountA)
 
-instance FrameworkRuntime.Reads (FeedCounter) (Wrap "FeedB") where
-  require = Wrap ((\(FrameworkGenerated.CountB value) -> value) <$> readCountB)
+instance SDK.Reads FeedCounter (Wrap "FeedB") where
+  require = Wrap (SDK.coerce <$> readCountB)
 
-instance FrameworkRuntime.Reads (Level) (Wrap "ShowA") where
-  require = Wrap ((\(FrameworkGenerated.LevelA value) -> value) <$> streamLevelA)
+instance SDK.Reads Level (Wrap "ShowA") where
+  require = Wrap (SDK.coerce <$> streamLevelA)
 
-instance FrameworkRuntime.Reads (Level) (Wrap "ShowB") where
-  require = Wrap ((\(FrameworkGenerated.LevelB value) -> value) <$> streamLevelB)
+instance SDK.Reads Level (Wrap "ShowB") where
+  require = Wrap (SDK.coerce <$> streamLevelB)
 
-instance FrameworkRuntime.Raw (Wrap "ReportCounter") where
-  rawinput = Wrap (runReadReport)
+instance SDK.Raw (Wrap "ReportCounter") where
+  rawinput = Wrap runReadReport
 
-instance FrameworkRuntime.Raw (Wrap "ReplyCounter") where
-  rawinput = Wrap (runReadReply)
+instance SDK.Raw (Wrap "ReplyCounter") where
+  rawinput = Wrap runReadReply
 
-instance FrameworkRuntime.Raw (Wrap "ParserA") where
-  rawinput = Wrap (FrameworkRuntime.emittedInput)
+instance SDK.Raw (Wrap "ParserA") where
+  rawinput = Wrap SDK.emittedInput
 
-instance FrameworkRuntime.Raw (Wrap "ParserB") where
-  rawinput = Wrap (FrameworkRuntime.emittedInput)
+instance SDK.Raw (Wrap "ParserB") where
+  rawinput = Wrap SDK.emittedInput
 
-instance FrameworkRuntime.RawOutputs (Wrap effect)
+instance SDK.RawOutputs (Wrap effect)
 
-instance FrameworkRuntime.Emits (Wrap "FeedA") where
-  rawemit text = Wrap (FrameworkRuntime.emitToParser text)
+instance SDK.Emits (Wrap "FeedA") where
+  rawemit text = Wrap (SDK.emitToParser text)
 
-instance FrameworkRuntime.Emits (Wrap "FeedB") where
-  rawemit text = Wrap (FrameworkRuntime.emitToParser text)
+instance SDK.Emits (Wrap "FeedB") where
+  rawemit text = Wrap (SDK.emitToParser text)
 
-instance FrameworkRuntime.StreamEnds (Wrap "FeedA") where
-  streamEnd = Wrap FrameworkRuntime.endSource
+instance SDK.StreamEnds (Wrap "FeedA") where
+  streamEnd = Wrap SDK.endSource
 
-instance FrameworkRuntime.StreamEnds (Wrap "FeedB") where
-  streamEnd = Wrap FrameworkRuntime.endSource
+instance SDK.StreamEnds (Wrap "FeedB") where
+  streamEnd = Wrap SDK.endSource
 
-instance FrameworkRuntime.EndsStream (Wrap "ShowA") where
-  endStream = Wrap FrameworkRuntime.endSubscription
+instance SDK.EndsStream (Wrap "ShowA") where
+  endStream = Wrap SDK.endSubscription
 
-instance FrameworkRuntime.EndsStream (Wrap "ShowB") where
-  endStream = Wrap FrameworkRuntime.endSubscription
+instance SDK.EndsStream (Wrap "ShowB") where
+  endStream = Wrap SDK.endSubscription
 
-getReportPath :: FrameworkGenerated.App FrameworkGenerated.ReportPath
+getReportPath :: Effects.App Effects.ReportPath
 getReportPath =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "ReportLocation"
-      (\value bindings -> bindings { FrameworkGenerated.boundReportLocation = Just value }) $
-    (FrameworkGenerated.ReportPath <$> runWrap @"ReportLocation" (FrameworkRuntime.super "reportLocation" FrameworkGenerated.reportLocation))
+  SDK.handleFailure
+  . SDK.callContext "ReportLocation"
+      (\value bindings -> bindings { Effects.boundReportLocation = Just value }) $
+    Effects.ReportPath <$> runWrap @"ReportLocation" (SDK.super "reportLocation" Effects.reportLocation)
 
-readReportPath :: FrameworkGenerated.App FrameworkGenerated.ReportPath
+readReportPath :: Effects.App Effects.ReportPath
 readReportPath =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "ReportLocation" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportLocation
+  SDK.handleFailure $
+    SDK.readContext "ReportLocation" Effects.ContextBindingError Effects.boundReportLocation
 
-getReplyPath :: FrameworkGenerated.App FrameworkGenerated.ReplyPath
+getReplyPath :: Effects.App Effects.ReplyPath
 getReplyPath =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "ReplyLocation"
-      (\value bindings -> bindings { FrameworkGenerated.boundReplyLocation = Just value }) $
-    (FrameworkGenerated.ReplyPath <$> runWrap @"ReplyLocation" (FrameworkRuntime.super "replyLocation" FrameworkGenerated.replyLocation))
+  SDK.handleFailure
+  . SDK.callContext "ReplyLocation"
+      (\value bindings -> bindings { Effects.boundReplyLocation = Just value }) $
+    Effects.ReplyPath <$> runWrap @"ReplyLocation" (SDK.super "replyLocation" Effects.replyLocation)
 
-readReplyPath :: FrameworkGenerated.App FrameworkGenerated.ReplyPath
+readReplyPath :: Effects.App Effects.ReplyPath
 readReplyPath =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "ReplyLocation" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReplyLocation
+  SDK.handleFailure $
+    SDK.readContext "ReplyLocation" Effects.ContextBindingError Effects.boundReplyLocation
 
-getReportBody :: FrameworkGenerated.App FrameworkGenerated.ReportBody
+getReportBody :: Effects.App Effects.ReportBody
 getReportBody =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "ReportDraft"
-      (\value bindings -> bindings { FrameworkGenerated.boundReportDraft = Just value }) $
-    (FrameworkGenerated.ReportBody <$> runWrap @"ReportDraft" (FrameworkRuntime.super "reportDraft" FrameworkGenerated.reportDraft))
+  SDK.handleFailure
+  . SDK.callContext "ReportDraft"
+      (\value bindings -> bindings { Effects.boundReportDraft = Just value }) $
+    Effects.ReportBody <$> runWrap @"ReportDraft" (SDK.super "reportDraft" Effects.reportDraft)
 
-readReportBody :: FrameworkGenerated.App FrameworkGenerated.ReportBody
+readReportBody :: Effects.App Effects.ReportBody
 readReportBody =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "ReportDraft" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportDraft
+  SDK.handleFailure $
+    SDK.readContext "ReportDraft" Effects.ContextBindingError Effects.boundReportDraft
 
-getReplyBody :: FrameworkGenerated.App FrameworkGenerated.ReplyBody
+getReplyBody :: Effects.App Effects.ReplyBody
 getReplyBody =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "ReplyDraft"
-      (\value bindings -> bindings { FrameworkGenerated.boundReplyDraft = Just value }) $
-    (FrameworkGenerated.ReplyBody <$> runWrap @"ReplyDraft" (FrameworkRuntime.super "replyDraft" FrameworkGenerated.replyDraft))
+  SDK.handleFailure
+  . SDK.callContext "ReplyDraft"
+      (\value bindings -> bindings { Effects.boundReplyDraft = Just value }) $
+    Effects.ReplyBody <$> runWrap @"ReplyDraft" (SDK.super "replyDraft" Effects.replyDraft)
 
-readReplyBody :: FrameworkGenerated.App FrameworkGenerated.ReplyBody
+readReplyBody :: Effects.App Effects.ReplyBody
 readReplyBody =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "ReplyDraft" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReplyDraft
+  SDK.handleFailure $
+    SDK.readContext "ReplyDraft" Effects.ContextBindingError Effects.boundReplyDraft
 
-getOpenedReport :: FrameworkGenerated.App FrameworkGenerated.OpenedReport
+getOpenedReport :: Effects.App Effects.OpenedReport
 getOpenedReport =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "ReportFile"
-      (\value bindings -> bindings { FrameworkGenerated.boundReportFile = Just value }) $
-    getReportPath >> (FrameworkGenerated.OpenedReport <$> runWrap @"ReportFile" (FrameworkRuntime.super "acquireFile" FrameworkGenerated.acquireFile))
+  SDK.handleFailure
+  . SDK.callContext "ReportFile"
+      (\value bindings -> bindings { Effects.boundReportFile = Just value }) $
+    getReportPath >> Effects.OpenedReport <$> runWrap @"ReportFile" (SDK.super "acquireFile" Effects.acquireFile)
 
-readOpenedReport :: FrameworkGenerated.App FrameworkGenerated.OpenedReport
+readOpenedReport :: Effects.App Effects.OpenedReport
 readOpenedReport =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "ReportFile" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportFile
+  SDK.handleFailure $
+    SDK.readContext "ReportFile" Effects.ContextBindingError Effects.boundReportFile
 
-getOpenedReply :: FrameworkGenerated.App FrameworkGenerated.OpenedReply
+getOpenedReply :: Effects.App Effects.OpenedReply
 getOpenedReply =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "ReplyFile"
-      (\value bindings -> bindings { FrameworkGenerated.boundReplyFile = Just value }) $
-    getReplyPath >> (FrameworkGenerated.OpenedReply <$> runWrap @"ReplyFile" (FrameworkRuntime.super "acquireFile" FrameworkGenerated.acquireFile))
+  SDK.handleFailure
+  . SDK.callContext "ReplyFile"
+      (\value bindings -> bindings { Effects.boundReplyFile = Just value }) $
+    getReplyPath >> Effects.OpenedReply <$> runWrap @"ReplyFile" (SDK.super "acquireFile" Effects.acquireFile)
 
-readOpenedReply :: FrameworkGenerated.App FrameworkGenerated.OpenedReply
+readOpenedReply :: Effects.App Effects.OpenedReply
 readOpenedReply =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "ReplyFile" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReplyFile
+  SDK.handleFailure $
+    SDK.readContext "ReplyFile" Effects.ContextBindingError Effects.boundReplyFile
 
-openReportScope :: FrameworkGenerated.App [String]
+openReportScope :: Effects.App [String]
 openReportScope =
-  FrameworkRuntime.withErrorPath ["ReportScope"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "openReportScope" [] []
-  . FrameworkRuntime.openScope "ReportScope" FrameworkGenerated.ScopeBindingError (Just (() <$ closeReportScope))
-  . FrameworkRuntime.enterHandler "ReportScope" $
-    getOpenedReport >> runWrap @"ReportScope" (FrameworkRuntime.super "openTextFile" FrameworkGenerated.openTextFile)
+  SDK.withErrorPath ["ReportScope"]
+  . SDK.handleFailure
+  . SDK.atomicScope "openReportScope" [] []
+  . SDK.openScope "ReportScope" Effects.ScopeBindingError (Just (() <$ closeReportScope))
+  . SDK.enterHandler "ReportScope" $
+    getOpenedReport >> runWrap @"ReportScope" (SDK.super "openTextFile" Effects.openTextFile)
 
-closeReportScope :: FrameworkGenerated.App [String]
+closeReportScope :: Effects.App [String]
 closeReportScope =
-  FrameworkRuntime.withErrorPath ["ReportScope"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "closeReportScope" [] []
-  . FrameworkRuntime.closeScope "ReportScope" FrameworkGenerated.ScopeBindingError
-  . FrameworkRuntime.enterHandler "ReportScope" $
-    runWrap @"ReportScope" (FrameworkRuntime.superClose "closeTextFile" FrameworkGenerated.closeTextFile)
+  SDK.withErrorPath ["ReportScope"]
+  . SDK.handleFailure
+  . SDK.atomicScope "closeReportScope" [] []
+  . SDK.closeScope "ReportScope" Effects.ScopeBindingError
+  . SDK.enterHandler "ReportScope" $
+    runWrap @"ReportScope" (SDK.superClose "closeTextFile" Effects.closeTextFile)
 
-openReplyScope :: FrameworkGenerated.App [String]
+openReplyScope :: Effects.App [String]
 openReplyScope =
-  FrameworkRuntime.withErrorPath ["ReplyScope"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "openReplyScope" [] []
-  . FrameworkRuntime.openScope "ReplyScope" FrameworkGenerated.ScopeBindingError (Just (() <$ closeReplyScope))
-  . FrameworkRuntime.enterHandler "ReplyScope" $
-    getOpenedReply >> runWrap @"ReplyScope" (FrameworkRuntime.super "openTextFile" FrameworkGenerated.openTextFile)
+  SDK.withErrorPath ["ReplyScope"]
+  . SDK.handleFailure
+  . SDK.atomicScope "openReplyScope" [] []
+  . SDK.openScope "ReplyScope" Effects.ScopeBindingError (Just (() <$ closeReplyScope))
+  . SDK.enterHandler "ReplyScope" $
+    getOpenedReply >> runWrap @"ReplyScope" (SDK.super "openTextFile" Effects.openTextFile)
 
-closeReplyScope :: FrameworkGenerated.App [String]
+closeReplyScope :: Effects.App [String]
 closeReplyScope =
-  FrameworkRuntime.withErrorPath ["ReplyScope"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "closeReplyScope" [] []
-  . FrameworkRuntime.closeScope "ReplyScope" FrameworkGenerated.ScopeBindingError
-  . FrameworkRuntime.enterHandler "ReplyScope" $
-    runWrap @"ReplyScope" (FrameworkRuntime.superClose "closeTextFile" FrameworkGenerated.closeTextFile)
+  SDK.withErrorPath ["ReplyScope"]
+  . SDK.handleFailure
+  . SDK.atomicScope "closeReplyScope" [] []
+  . SDK.closeScope "ReplyScope" Effects.ScopeBindingError
+  . SDK.enterHandler "ReplyScope" $
+    runWrap @"ReplyScope" (SDK.superClose "closeTextFile" Effects.closeTextFile)
 
-runWriteReport :: FrameworkGenerated.App [String]
+runWriteReport :: Effects.App [String]
 runWriteReport =
-  FrameworkRuntime.withErrorPath ["ReportScope"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runWriteReport" [] []
-  . FrameworkRuntime.withScopeDependencies ["ReportScope"]
-  . FrameworkRuntime.enterHandler "WriteReport" $
-    getReportBody >> openReportScope >> runWrap @"WriteReport" (FrameworkRuntime.super "writeText" FrameworkGenerated.writeText)
+  SDK.withErrorPath ["ReportScope"]
+  . SDK.handleFailure
+  . SDK.atomicHandle "runWriteReport" [] []
+  . SDK.withScopeDependencies ["ReportScope"]
+  . SDK.enterHandler "WriteReport" $
+    getReportBody >> openReportScope >> runWrap @"WriteReport" (SDK.super "writeText" Effects.writeText)
 
-runWriteReply :: FrameworkGenerated.App [String]
+runWriteReply :: Effects.App [String]
 runWriteReply =
-  FrameworkRuntime.withErrorPath ["ReplyScope"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runWriteReply" [] []
-  . FrameworkRuntime.withScopeDependencies ["ReplyScope"]
-  . FrameworkRuntime.enterHandler "WriteReply" $
-    getReplyBody >> openReplyScope >> runWrap @"WriteReply" (FrameworkRuntime.super "writeText" FrameworkGenerated.writeText)
+  SDK.withErrorPath ["ReplyScope"]
+  . SDK.handleFailure
+  . SDK.atomicHandle "runWriteReply" [] []
+  . SDK.withScopeDependencies ["ReplyScope"]
+  . SDK.enterHandler "WriteReply" $
+    getReplyBody >> openReplyScope >> runWrap @"WriteReply" (SDK.super "writeText" Effects.writeText)
 
-runMarkReply :: FrameworkGenerated.App [String]
+runMarkReply :: Effects.App [String]
 runMarkReply =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runMarkReply" [] []
-  . FrameworkRuntime.enterHandler "MarkReply" $
-    runWrap @"MarkReply" (FrameworkRuntime.super "markRead" FrameworkGenerated.markRead)
+  SDK.handleFailure
+  . SDK.atomicHandle "runMarkReply" [] []
+  . SDK.enterHandler "MarkReply" $
+    runWrap @"MarkReply" (SDK.super "markRead" Effects.markRead)
 
-runReadReport :: FrameworkGenerated.App [String]
+runReadReport :: Effects.App [String]
 runReadReport =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runReadReport" [("ReportCounter", () <$ getReportStats)] []
-  . FrameworkRuntime.enterHandler "ReadReport" $
-    runWrap @"ReadReport" (FrameworkRuntime.super "readText" FrameworkGenerated.readText)
+  SDK.handleFailure
+  . SDK.atomicHandle "runReadReport" [("ReportCounter", () <$ getReportStats)] []
+  . SDK.enterHandler "ReadReport" $
+    runWrap @"ReadReport" (SDK.super "readText" Effects.readText)
 
-runReadReply :: FrameworkGenerated.App [String]
+runReadReply :: Effects.App [String]
 runReadReply =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runReadReply" [("ReplyCounter", () <$ getReplyStats)] []
-  . FrameworkRuntime.enterHandler "ReadReply" $
-    runMarkReply >> runWrap @"ReadReply" (FrameworkRuntime.super "readText" FrameworkGenerated.readText)
+  SDK.handleFailure
+  . SDK.atomicHandle "runReadReply" [("ReplyCounter", () <$ getReplyStats)] []
+  . SDK.enterHandler "ReadReply" $
+    runMarkReply >> runWrap @"ReadReply" (SDK.super "readText" Effects.readText)
 
-getReportStats :: FrameworkGenerated.App FrameworkGenerated.ReportStats
+getReportStats :: Effects.App Effects.ReportStats
 getReportStats =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "ReportCounter"
-      (\value bindings -> bindings { FrameworkGenerated.boundReportCounter = Just value }) $
-    (FrameworkGenerated.ReportStats <$> runWrap @"ReportCounter" (FrameworkRuntime.super "countLines" FrameworkGenerated.countLines))
+  SDK.handleFailure
+  . SDK.callContext "ReportCounter"
+      (\value bindings -> bindings { Effects.boundReportCounter = Just value }) $
+    Effects.ReportStats <$> runWrap @"ReportCounter" (SDK.super "countLines" Effects.countLines)
 
-readReportStats :: FrameworkGenerated.App FrameworkGenerated.ReportStats
+readReportStats :: Effects.App Effects.ReportStats
 readReportStats =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "ReportCounter" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportCounter
+  SDK.handleFailure $
+    SDK.readContext "ReportCounter" Effects.ContextBindingError Effects.boundReportCounter
 
-getReplyStats :: FrameworkGenerated.App FrameworkGenerated.ReplyStats
+getReplyStats :: Effects.App Effects.ReplyStats
 getReplyStats =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "ReplyCounter"
-      (\value bindings -> bindings { FrameworkGenerated.boundReplyCounter = Just value }) $
-    (FrameworkGenerated.ReplyStats <$> runWrap @"ReplyCounter" (FrameworkRuntime.super "countLines" FrameworkGenerated.countLines))
+  SDK.handleFailure
+  . SDK.callContext "ReplyCounter"
+      (\value bindings -> bindings { Effects.boundReplyCounter = Just value }) $
+    Effects.ReplyStats <$> runWrap @"ReplyCounter" (SDK.super "countLines" Effects.countLines)
 
-readReplyStats :: FrameworkGenerated.App FrameworkGenerated.ReplyStats
+readReplyStats :: Effects.App Effects.ReplyStats
 readReplyStats =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "ReplyCounter" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReplyCounter
+  SDK.handleFailure $
+    SDK.readContext "ReplyCounter" Effects.ContextBindingError Effects.boundReplyCounter
 
-runShowReport :: FrameworkGenerated.App [String]
+runShowReport :: Effects.App [String]
 runShowReport =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runShowReport" [] []
-  . FrameworkRuntime.enterHandler "ShowReport" $
-    runWrap @"ShowReport" (FrameworkRuntime.super "showCount" FrameworkGenerated.showCount)
+  SDK.handleFailure
+  . SDK.atomicHandle "runShowReport" [] []
+  . SDK.enterHandler "ShowReport" $
+    runWrap @"ShowReport" (SDK.super "showCount" Effects.showCount)
 
-runShowReply :: FrameworkGenerated.App [String]
+runShowReply :: Effects.App [String]
 runShowReply =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runShowReply" [] []
-  . FrameworkRuntime.enterHandler "ShowReply" $
-    runWrap @"ShowReply" (FrameworkRuntime.super "showCount" FrameworkGenerated.showCount)
+  SDK.handleFailure
+  . SDK.atomicHandle "runShowReply" [] []
+  . SDK.enterHandler "ShowReply" $
+    runWrap @"ShowReply" (SDK.super "showCount" Effects.showCount)
 
-getReportState :: FrameworkGenerated.App FrameworkGenerated.ReportState
+getReportState :: Effects.App Effects.ReportState
 getReportState =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "ReportInspect"
-      (\value bindings -> bindings { FrameworkGenerated.boundReportInspect = Just value }) $
-    (FrameworkGenerated.ReportState <$> runWrap @"ReportInspect" (FrameworkRuntime.super "inspectFile" FrameworkGenerated.inspectFile))
+  SDK.handleFailure
+  . SDK.callContext "ReportInspect"
+      (\value bindings -> bindings { Effects.boundReportInspect = Just value }) $
+    Effects.ReportState <$> runWrap @"ReportInspect" (SDK.super "inspectFile" Effects.inspectFile)
 
-readReportState :: FrameworkGenerated.App FrameworkGenerated.ReportState
+readReportState :: Effects.App Effects.ReportState
 readReportState =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "ReportInspect" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportInspect
+  SDK.handleFailure $
+    SDK.readContext "ReportInspect" Effects.ContextBindingError Effects.boundReportInspect
 
-runOnBlank :: FrameworkGenerated.App [String]
+runOnBlank :: Effects.App [String]
 runOnBlank =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runOnBlank" [] []
-  . FrameworkRuntime.enterHandler "OnBlank" $
-    runWrap @"OnBlank" (FrameworkRuntime.super "describeBlank" FrameworkGenerated.describeBlank)
+  SDK.handleFailure
+  . SDK.atomicHandle "runOnBlank" [] []
+  . SDK.enterHandler "OnBlank" $
+    runWrap @"OnBlank" (SDK.super "describeBlank" Effects.describeBlank)
 
-runOnFilled :: FrameworkGenerated.App [String]
+runOnFilled :: Effects.App [String]
 runOnFilled =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runOnFilled" [] []
-  . FrameworkRuntime.enterHandler "OnFilled" $
-    runWrap @"OnFilled" (FrameworkRuntime.super "describeFilled" FrameworkGenerated.describeFilled)
+  SDK.handleFailure
+  . SDK.atomicHandle "runOnFilled" [] []
+  . SDK.enterHandler "OnFilled" $
+    runWrap @"OnFilled" (SDK.super "describeFilled" Effects.describeFilled)
 
-getCountA :: FrameworkGenerated.App FrameworkGenerated.CountA
+getCountA :: Effects.App Effects.CountA
 getCountA =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "CounterA"
-      (\value bindings -> bindings { FrameworkGenerated.boundCounterA = Just value }) $
-    (FrameworkGenerated.CountA <$> runWrap @"CounterA" (FrameworkRuntime.super "newCounter" FrameworkGenerated.newCounter))
+  SDK.handleFailure
+  . SDK.callContext "CounterA"
+      (\value bindings -> bindings { Effects.boundCounterA = Just value }) $
+    Effects.CountA <$> runWrap @"CounterA" (SDK.super "newCounter" Effects.newCounter)
 
-readCountA :: FrameworkGenerated.App FrameworkGenerated.CountA
+readCountA :: Effects.App Effects.CountA
 readCountA =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "CounterA" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundCounterA
+  SDK.handleFailure $
+    SDK.readContext "CounterA" Effects.ContextBindingError Effects.boundCounterA
 
-getCountB :: FrameworkGenerated.App FrameworkGenerated.CountB
+getCountB :: Effects.App Effects.CountB
 getCountB =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "CounterB"
-      (\value bindings -> bindings { FrameworkGenerated.boundCounterB = Just value }) $
-    (FrameworkGenerated.CountB <$> runWrap @"CounterB" (FrameworkRuntime.super "newCounter" FrameworkGenerated.newCounter))
+  SDK.handleFailure
+  . SDK.callContext "CounterB"
+      (\value bindings -> bindings { Effects.boundCounterB = Just value }) $
+    Effects.CountB <$> runWrap @"CounterB" (SDK.super "newCounter" Effects.newCounter)
 
-readCountB :: FrameworkGenerated.App FrameworkGenerated.CountB
+readCountB :: Effects.App Effects.CountB
 readCountB =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "CounterB" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundCounterB
+  SDK.handleFailure $
+    SDK.readContext "CounterB" Effects.ContextBindingError Effects.boundCounterB
 
-openFeedScopeA :: FrameworkGenerated.App [String]
+openFeedScopeA :: Effects.App [String]
 openFeedScopeA =
-  FrameworkRuntime.withErrorPath ["FeedScopeA"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "openFeedScopeA" [] []
-  . FrameworkRuntime.openScope "FeedScopeA" FrameworkGenerated.ScopeBindingError Nothing
-  . FrameworkRuntime.enterHandler "FeedScopeA" $
-    getCountA >> runWrap @"FeedScopeA" (FrameworkRuntime.super "openCounter" FrameworkGenerated.openCounter)
+  SDK.withErrorPath ["FeedScopeA"]
+  . SDK.handleFailure
+  . SDK.atomicScope "openFeedScopeA" [] []
+  . SDK.openScope "FeedScopeA" Effects.ScopeBindingError Nothing
+  . SDK.enterHandler "FeedScopeA" $
+    getCountA >> runWrap @"FeedScopeA" (SDK.super "openCounter" Effects.openCounter)
 
-openFeedScopeB :: FrameworkGenerated.App [String]
+openFeedScopeB :: Effects.App [String]
 openFeedScopeB =
-  FrameworkRuntime.withErrorPath ["FeedScopeB"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "openFeedScopeB" [] []
-  . FrameworkRuntime.openScope "FeedScopeB" FrameworkGenerated.ScopeBindingError Nothing
-  . FrameworkRuntime.enterHandler "FeedScopeB" $
-    getCountB >> runWrap @"FeedScopeB" (FrameworkRuntime.super "openCounter" FrameworkGenerated.openCounter)
+  SDK.withErrorPath ["FeedScopeB"]
+  . SDK.handleFailure
+  . SDK.atomicScope "openFeedScopeB" [] []
+  . SDK.openScope "FeedScopeB" Effects.ScopeBindingError Nothing
+  . SDK.enterHandler "FeedScopeB" $
+    getCountB >> runWrap @"FeedScopeB" (SDK.super "openCounter" Effects.openCounter)
 
-nextFeedA :: FrameworkGenerated.App ()
+nextFeedA :: Effects.App ()
 nextFeedA =
-  FrameworkRuntime.withErrorPath ["FeedScopeA"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["FeedScopeA"]
-  . FrameworkRuntime.enterHandler "FeedA" $
-    openFeedScopeA >> runWrap @"FeedA" (FrameworkRuntime.super "nextA" FrameworkGenerated.nextA)
+  SDK.withErrorPath ["FeedScopeA"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["FeedScopeA"]
+  . SDK.enterHandler "FeedA" $
+    openFeedScopeA >> runWrap @"FeedA" (SDK.super "nextA" Effects.nextA)
 
-nextFeedB :: FrameworkGenerated.App ()
+nextFeedB :: Effects.App ()
 nextFeedB =
-  FrameworkRuntime.withErrorPath ["FeedScopeB"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["FeedScopeB"]
-  . FrameworkRuntime.enterHandler "FeedB" $
-    openFeedScopeB >> runWrap @"FeedB" (FrameworkRuntime.super "nextB" FrameworkGenerated.nextB)
+  SDK.withErrorPath ["FeedScopeB"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["FeedScopeB"]
+  . SDK.enterHandler "FeedB" $
+    openFeedScopeB >> runWrap @"FeedB" (SDK.super "nextB" Effects.nextB)
 
-getLevelA :: FrameworkGenerated.App FrameworkGenerated.LevelA
+getLevelA :: Effects.App Effects.LevelA
 getLevelA =
-  FrameworkRuntime.withErrorPath ["FeedScopeA"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["FeedScopeA"]
-  . FrameworkRuntime.callContext "ParserA"
-      (\value bindings -> bindings { FrameworkGenerated.boundParserA = Just value }) $
-    (FrameworkGenerated.LevelA <$> runWrap @"ParserA" (FrameworkRuntime.super "parseLevel" FrameworkGenerated.parseLevel))
+  SDK.withErrorPath ["FeedScopeA"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["FeedScopeA"]
+  . SDK.callContext "ParserA"
+      (\value bindings -> bindings { Effects.boundParserA = Just value }) $
+    Effects.LevelA <$> runWrap @"ParserA" (SDK.super "parseLevel" Effects.parseLevel)
 
-streamLevelA :: FrameworkGenerated.App FrameworkGenerated.LevelA
+streamLevelA :: Effects.App Effects.LevelA
 streamLevelA =
-  FrameworkRuntime.withErrorPath ["FeedScopeA"]
-  . FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readStreamContext "ParserA" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundParserA
+  SDK.withErrorPath ["FeedScopeA"]
+  . SDK.handleFailure $
+    SDK.readStreamContext "ParserA" Effects.ContextBindingError Effects.boundParserA
 
-getLevelB :: FrameworkGenerated.App FrameworkGenerated.LevelB
+getLevelB :: Effects.App Effects.LevelB
 getLevelB =
-  FrameworkRuntime.withErrorPath ["FeedScopeB"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["FeedScopeB"]
-  . FrameworkRuntime.callContext "ParserB"
-      (\value bindings -> bindings { FrameworkGenerated.boundParserB = Just value }) $
-    (FrameworkGenerated.LevelB <$> runWrap @"ParserB" (FrameworkRuntime.super "parseLevel" FrameworkGenerated.parseLevel))
+  SDK.withErrorPath ["FeedScopeB"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["FeedScopeB"]
+  . SDK.callContext "ParserB"
+      (\value bindings -> bindings { Effects.boundParserB = Just value }) $
+    Effects.LevelB <$> runWrap @"ParserB" (SDK.super "parseLevel" Effects.parseLevel)
 
-streamLevelB :: FrameworkGenerated.App FrameworkGenerated.LevelB
+streamLevelB :: Effects.App Effects.LevelB
 streamLevelB =
-  FrameworkRuntime.withErrorPath ["FeedScopeB"]
-  . FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readStreamContext "ParserB" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundParserB
+  SDK.withErrorPath ["FeedScopeB"]
+  . SDK.handleFailure $
+    SDK.readStreamContext "ParserB" Effects.ContextBindingError Effects.boundParserB
 
-runShowA :: FrameworkGenerated.App [String]
+runShowA :: Effects.App [String]
 runShowA =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runShowA" [] []
-  . FrameworkRuntime.enterHandler "ShowA" $
-    runWrap @"ShowA" (FrameworkRuntime.super "showLevel" FrameworkGenerated.showLevel)
+  SDK.handleFailure
+  . SDK.atomicHandle "runShowA" [] []
+  . SDK.enterHandler "ShowA" $
+    runWrap @"ShowA" (SDK.super "showLevel" Effects.showLevel)
 
-runShowB :: FrameworkGenerated.App [String]
+runShowB :: Effects.App [String]
 runShowB =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runShowB" [] []
-  . FrameworkRuntime.enterHandler "ShowB" $
-    runWrap @"ShowB" (FrameworkRuntime.super "showLevel" FrameworkGenerated.showLevel)
+  SDK.handleFailure
+  . SDK.atomicHandle "runShowB" [] []
+  . SDK.enterHandler "ShowB" $
+    runWrap @"ShowB" (SDK.super "showLevel" Effects.showLevel)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
-newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
+newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ FrameworkRuntime.newScopeHandler "ReportScope" ["ReportLocation"] (Just "ReportFile")
-  , FrameworkRuntime.newScopeHandler "ReplyScope" ["ReplyLocation"] (Just "ReplyFile")
-  , FrameworkRuntime.newScopeHandler "FeedScopeA" [] (Just "CounterA")
-  , FrameworkRuntime.newScopeHandler "FeedScopeB" [] (Just "CounterB")
+  [ SDK.newScopeHandler "ReportScope" ["ReportLocation"] (Just "ReportFile")
+  , SDK.newScopeHandler "ReplyScope" ["ReplyLocation"] (Just "ReplyFile")
+  , SDK.newScopeHandler "FeedScopeA" [] (Just "CounterA")
+  , SDK.newScopeHandler "FeedScopeB" [] (Just "CounterB")
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。
-errorHandlers :: [(Maybe String, FrameworkRuntime.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
-errorHandlers =
-  [
-  ]
+errorHandlers :: [(Maybe String, SDK.ErrorHandler Effects.Errors Effects.App)]
+errorHandlers = []

@@ -15,8 +15,8 @@
 
 module Crawler.Generated.Handlers (handlerSourceFingerprint, getStartURL, readStartURL, getLinkedURL, readLinkedURL, runFetchPage, runKeepPageBody, getStartPageSummary, readStartPageSummary, runPrintPage, runFetchLinkedPage, runKeepLinkedPageBody, getLinkedPageSummary, readLinkedPageSummary, runPrintLinkedPage, getCrawlSessionInfo, readCrawlSessionInfo, openCrawlSession, closeCrawlSession, newScopeHandlers, errorHandlers) where
 
-import qualified Framework.Generated as FrameworkRuntime
-import qualified Crawler.Generated.Effects as FrameworkGenerated
+import qualified Framework.Generated as SDK
+import qualified Crawler.Generated.Effects as Effects
 import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
@@ -142,226 +142,224 @@ handlerSourceFingerprint = Just "f8c100e855fb22092ce2e75164d11d60"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: FrameworkGenerated.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance FrameworkRuntime.Root (Wrap effect) value
+instance SDK.Root (Wrap effect) value
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.StartURLError (Wrap effect) where
-  raise (FrameworkGenerated.StartURLError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.StartURLFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.StartURLError (Wrap effect) where
+  raise (Effects.StartURLError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.StartURLFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.LinkedURLError (Wrap effect) where
-  raise (FrameworkGenerated.LinkedURLError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.LinkedURLFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.LinkedURLError (Wrap effect) where
+  raise (Effects.LinkedURLError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.LinkedURLFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.FetchPageError (Wrap effect) where
-  raise (FrameworkGenerated.FetchPageError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.FetchPageFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.FetchPageError (Wrap effect) where
+  raise (Effects.FetchPageError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.FetchPageFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DropBlankBodiesError (Wrap effect) where
-  raise (FrameworkGenerated.DropBlankBodiesError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.DropBlankBodiesFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.DropBlankBodiesError (Wrap effect) where
+  raise (Effects.DropBlankBodiesError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.DropBlankBodiesFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ExtractSummaryError (Wrap effect) where
-  raise (FrameworkGenerated.ExtractSummaryError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ExtractSummaryFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ExtractSummaryError (Wrap effect) where
+  raise (Effects.ExtractSummaryError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ExtractSummaryFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.PrintSummaryError (Wrap effect) where
-  raise (FrameworkGenerated.PrintSummaryError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.PrintSummaryFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.PrintSummaryError (Wrap effect) where
+  raise (Effects.PrintSummaryError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.PrintSummaryFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.SessionInfoError (Wrap effect) where
-  raise (FrameworkGenerated.SessionInfoError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.SessionInfoFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.SessionInfoError (Wrap effect) where
+  raise (Effects.SessionInfoError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.SessionInfoFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.OpenSessionError (Wrap effect) where
-  raise (FrameworkGenerated.OpenSessionError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.OpenSessionFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.OpenSessionError (Wrap effect) where
+  raise (Effects.OpenSessionError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.OpenSessionFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CloseSessionError (Wrap effect) where
-  raise (FrameworkGenerated.CloseSessionError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CloseSessionFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.CloseSessionError (Wrap effect) where
+  raise (Effects.CloseSessionError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.CloseSessionFailure description)
 
-instance FrameworkRuntime.Reads (PageURL) (Wrap "FetchPage") where
-  require = Wrap ((\(FrameworkGenerated.StartURL value) -> value) <$> readStartURL)
+instance SDK.Reads PageURL (Wrap "FetchPage") where
+  require = Wrap (SDK.coerce <$> readStartURL)
 
-instance FrameworkRuntime.Reads (SessionInfo) (Wrap "FetchPage") where
-  require = Wrap ((\(FrameworkGenerated.CrawlSessionInfo value) -> value) <$> readCrawlSessionInfo)
+instance SDK.Reads SessionInfo (Wrap "FetchPage") where
+  require = Wrap (SDK.coerce <$> readCrawlSessionInfo)
 
-instance FrameworkRuntime.Reads (PageURL) (Wrap "ExtractPage") where
-  require = Wrap ((\(FrameworkGenerated.StartURL value) -> value) <$> readStartURL)
+instance SDK.Reads PageURL (Wrap "ExtractPage") where
+  require = Wrap (SDK.coerce <$> readStartURL)
 
-instance FrameworkRuntime.Reads (PageSummary) (Wrap "PrintPage") where
-  require = Wrap ((\(FrameworkGenerated.StartPageSummary value) -> value) <$> readStartPageSummary)
+instance SDK.Reads PageSummary (Wrap "PrintPage") where
+  require = Wrap (SDK.coerce <$> readStartPageSummary)
 
-instance FrameworkRuntime.Reads (PageURL) (Wrap "FetchLinkedPage") where
-  require = Wrap ((\(FrameworkGenerated.LinkedURL value) -> value) <$> readLinkedURL)
+instance SDK.Reads PageURL (Wrap "FetchLinkedPage") where
+  require = Wrap (SDK.coerce <$> readLinkedURL)
 
-instance FrameworkRuntime.Reads (SessionInfo) (Wrap "FetchLinkedPage") where
-  require = Wrap ((\(FrameworkGenerated.CrawlSessionInfo value) -> value) <$> readCrawlSessionInfo)
+instance SDK.Reads SessionInfo (Wrap "FetchLinkedPage") where
+  require = Wrap (SDK.coerce <$> readCrawlSessionInfo)
 
-instance FrameworkRuntime.Reads (PageURL) (Wrap "ExtractLinkedPage") where
-  require = Wrap ((\(FrameworkGenerated.LinkedURL value) -> value) <$> readLinkedURL)
+instance SDK.Reads PageURL (Wrap "ExtractLinkedPage") where
+  require = Wrap (SDK.coerce <$> readLinkedURL)
 
-instance FrameworkRuntime.Reads (PageSummary) (Wrap "PrintLinkedPage") where
-  require = Wrap ((\(FrameworkGenerated.LinkedPageSummary value) -> value) <$> readLinkedPageSummary)
+instance SDK.Reads PageSummary (Wrap "PrintLinkedPage") where
+  require = Wrap (SDK.coerce <$> readLinkedPageSummary)
 
-instance FrameworkRuntime.Reads (SessionInfo) (Wrap "CrawlSession") where
-  require = Wrap ((\(FrameworkGenerated.CrawlSessionInfo value) -> value) <$> readCrawlSessionInfo)
+instance SDK.Reads SessionInfo (Wrap "CrawlSession") where
+  require = Wrap (SDK.coerce <$> readCrawlSessionInfo)
 
-instance FrameworkRuntime.Raw (Wrap "KeepPageBody") where
-  rawinput = Wrap (runFetchPage)
+instance SDK.Raw (Wrap "KeepPageBody") where
+  rawinput = Wrap runFetchPage
 
-instance FrameworkRuntime.Raw (Wrap "ExtractPage") where
-  rawinput = Wrap (runKeepPageBody)
+instance SDK.Raw (Wrap "ExtractPage") where
+  rawinput = Wrap runKeepPageBody
 
-instance FrameworkRuntime.Raw (Wrap "KeepLinkedPageBody") where
-  rawinput = Wrap (runFetchLinkedPage)
+instance SDK.Raw (Wrap "KeepLinkedPageBody") where
+  rawinput = Wrap runFetchLinkedPage
 
-instance FrameworkRuntime.Raw (Wrap "ExtractLinkedPage") where
-  rawinput = Wrap (runKeepLinkedPageBody)
+instance SDK.Raw (Wrap "ExtractLinkedPage") where
+  rawinput = Wrap runKeepLinkedPageBody
 
-instance FrameworkRuntime.RawOutputs (Wrap effect)
+instance SDK.RawOutputs (Wrap effect)
 
-getStartURL :: FrameworkGenerated.App FrameworkGenerated.StartURL
+getStartURL :: Effects.App Effects.StartURL
 getStartURL =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "StartPage"
-      (\value bindings -> bindings { FrameworkGenerated.boundStartPage = Just value }) $
-    (FrameworkGenerated.StartURL <$> runWrap @"StartPage" (FrameworkRuntime.super "startURL" FrameworkGenerated.startURL))
+  SDK.handleFailure
+  . SDK.callContext "StartPage"
+      (\value bindings -> bindings { Effects.boundStartPage = Just value }) $
+    Effects.StartURL <$> runWrap @"StartPage" (SDK.super "startURL" Effects.startURL)
 
-readStartURL :: FrameworkGenerated.App FrameworkGenerated.StartURL
+readStartURL :: Effects.App Effects.StartURL
 readStartURL =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "StartPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundStartPage
+  SDK.handleFailure $
+    SDK.readContext "StartPage" Effects.ContextBindingError Effects.boundStartPage
 
-getLinkedURL :: FrameworkGenerated.App FrameworkGenerated.LinkedURL
+getLinkedURL :: Effects.App Effects.LinkedURL
 getLinkedURL =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "LinkedPage"
-      (\value bindings -> bindings { FrameworkGenerated.boundLinkedPage = Just value }) $
-    (FrameworkGenerated.LinkedURL <$> runWrap @"LinkedPage" (FrameworkRuntime.super "linkedURL" FrameworkGenerated.linkedURL))
+  SDK.handleFailure
+  . SDK.callContext "LinkedPage"
+      (\value bindings -> bindings { Effects.boundLinkedPage = Just value }) $
+    Effects.LinkedURL <$> runWrap @"LinkedPage" (SDK.super "linkedURL" Effects.linkedURL)
 
-readLinkedURL :: FrameworkGenerated.App FrameworkGenerated.LinkedURL
+readLinkedURL :: Effects.App Effects.LinkedURL
 readLinkedURL =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "LinkedPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundLinkedPage
+  SDK.handleFailure $
+    SDK.readContext "LinkedPage" Effects.ContextBindingError Effects.boundLinkedPage
 
-runFetchPage :: FrameworkGenerated.App [String]
+runFetchPage :: Effects.App [String]
 runFetchPage =
-  FrameworkRuntime.withErrorPath ["CrawlSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runFetchPage" [("ExtractPage", () <$ getStartPageSummary)] []
-  . FrameworkRuntime.withScopeDependencies ["CrawlSession"]
-  . FrameworkRuntime.enterHandler "FetchPage" $
-    getStartURL >> openCrawlSession >> runWrap @"FetchPage" (FrameworkRuntime.super "fetchPage" FrameworkGenerated.fetchPage)
+  SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure
+  . SDK.atomicHandle "runFetchPage" [("ExtractPage", () <$ getStartPageSummary)] []
+  . SDK.withScopeDependencies ["CrawlSession"]
+  . SDK.enterHandler "FetchPage" $
+    getStartURL >> openCrawlSession >> runWrap @"FetchPage" (SDK.super "fetchPage" Effects.fetchPage)
 
-runKeepPageBody :: FrameworkGenerated.App [String]
+runKeepPageBody :: Effects.App [String]
 runKeepPageBody =
-  FrameworkRuntime.withErrorPath ["CrawlSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["CrawlSession"] $
-    runWrap @"KeepPageBody" (FrameworkRuntime.super "dropBlankBodies" FrameworkGenerated.dropBlankBodies)
+  SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["CrawlSession"] $
+    runWrap @"KeepPageBody" (SDK.super "dropBlankBodies" Effects.dropBlankBodies)
 
-getStartPageSummary :: FrameworkGenerated.App FrameworkGenerated.StartPageSummary
+getStartPageSummary :: Effects.App Effects.StartPageSummary
 getStartPageSummary =
-  FrameworkRuntime.withErrorPath ["CrawlSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["CrawlSession"]
-  . FrameworkRuntime.callContext "ExtractPage"
-      (\value bindings -> bindings { FrameworkGenerated.boundExtractPage = Just value }) $
-    (FrameworkGenerated.StartPageSummary <$> runWrap @"ExtractPage" (FrameworkRuntime.super "extractSummary" FrameworkGenerated.extractSummary))
+  SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["CrawlSession"]
+  . SDK.callContext "ExtractPage"
+      (\value bindings -> bindings { Effects.boundExtractPage = Just value }) $
+    Effects.StartPageSummary <$> runWrap @"ExtractPage" (SDK.super "extractSummary" Effects.extractSummary)
 
-readStartPageSummary :: FrameworkGenerated.App FrameworkGenerated.StartPageSummary
+readStartPageSummary :: Effects.App Effects.StartPageSummary
 readStartPageSummary =
-  FrameworkRuntime.withErrorPath ["CrawlSession"]
-  . FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "ExtractPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundExtractPage
+  SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure $
+    SDK.readContext "ExtractPage" Effects.ContextBindingError Effects.boundExtractPage
 
-runPrintPage :: FrameworkGenerated.App [String]
+runPrintPage :: Effects.App [String]
 runPrintPage =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runPrintPage" [] []
-  . FrameworkRuntime.enterHandler "PrintPage" $
-    runWrap @"PrintPage" (FrameworkRuntime.super "printSummary" FrameworkGenerated.printSummary)
+  SDK.handleFailure
+  . SDK.atomicHandle "runPrintPage" [] []
+  . SDK.enterHandler "PrintPage" $
+    runWrap @"PrintPage" (SDK.super "printSummary" Effects.printSummary)
 
-runFetchLinkedPage :: FrameworkGenerated.App [String]
+runFetchLinkedPage :: Effects.App [String]
 runFetchLinkedPage =
-  FrameworkRuntime.withErrorPath ["CrawlSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runFetchLinkedPage" [("ExtractLinkedPage", () <$ getLinkedPageSummary)] []
-  . FrameworkRuntime.withScopeDependencies ["CrawlSession"]
-  . FrameworkRuntime.enterHandler "FetchLinkedPage" $
-    getLinkedURL >> openCrawlSession >> runWrap @"FetchLinkedPage" (FrameworkRuntime.super "fetchPage" FrameworkGenerated.fetchPage)
+  SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure
+  . SDK.atomicHandle "runFetchLinkedPage" [("ExtractLinkedPage", () <$ getLinkedPageSummary)] []
+  . SDK.withScopeDependencies ["CrawlSession"]
+  . SDK.enterHandler "FetchLinkedPage" $
+    getLinkedURL >> openCrawlSession >> runWrap @"FetchLinkedPage" (SDK.super "fetchPage" Effects.fetchPage)
 
-runKeepLinkedPageBody :: FrameworkGenerated.App [String]
+runKeepLinkedPageBody :: Effects.App [String]
 runKeepLinkedPageBody =
-  FrameworkRuntime.withErrorPath ["CrawlSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["CrawlSession"] $
-    runWrap @"KeepLinkedPageBody" (FrameworkRuntime.super "dropBlankBodies" FrameworkGenerated.dropBlankBodies)
+  SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["CrawlSession"] $
+    runWrap @"KeepLinkedPageBody" (SDK.super "dropBlankBodies" Effects.dropBlankBodies)
 
-getLinkedPageSummary :: FrameworkGenerated.App FrameworkGenerated.LinkedPageSummary
+getLinkedPageSummary :: Effects.App Effects.LinkedPageSummary
 getLinkedPageSummary =
-  FrameworkRuntime.withErrorPath ["CrawlSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["CrawlSession"]
-  . FrameworkRuntime.callContext "ExtractLinkedPage"
-      (\value bindings -> bindings { FrameworkGenerated.boundExtractLinkedPage = Just value }) $
-    (FrameworkGenerated.LinkedPageSummary <$> runWrap @"ExtractLinkedPage" (FrameworkRuntime.super "extractSummary" FrameworkGenerated.extractSummary))
+  SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["CrawlSession"]
+  . SDK.callContext "ExtractLinkedPage"
+      (\value bindings -> bindings { Effects.boundExtractLinkedPage = Just value }) $
+    Effects.LinkedPageSummary <$> runWrap @"ExtractLinkedPage" (SDK.super "extractSummary" Effects.extractSummary)
 
-readLinkedPageSummary :: FrameworkGenerated.App FrameworkGenerated.LinkedPageSummary
+readLinkedPageSummary :: Effects.App Effects.LinkedPageSummary
 readLinkedPageSummary =
-  FrameworkRuntime.withErrorPath ["CrawlSession"]
-  . FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "ExtractLinkedPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundExtractLinkedPage
+  SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure $
+    SDK.readContext "ExtractLinkedPage" Effects.ContextBindingError Effects.boundExtractLinkedPage
 
-runPrintLinkedPage :: FrameworkGenerated.App [String]
+runPrintLinkedPage :: Effects.App [String]
 runPrintLinkedPage =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runPrintLinkedPage" [] []
-  . FrameworkRuntime.enterHandler "PrintLinkedPage" $
-    runWrap @"PrintLinkedPage" (FrameworkRuntime.super "printSummary" FrameworkGenerated.printSummary)
+  SDK.handleFailure
+  . SDK.atomicHandle "runPrintLinkedPage" [] []
+  . SDK.enterHandler "PrintLinkedPage" $
+    runWrap @"PrintLinkedPage" (SDK.super "printSummary" Effects.printSummary)
 
-getCrawlSessionInfo :: FrameworkGenerated.App FrameworkGenerated.CrawlSessionInfo
+getCrawlSessionInfo :: Effects.App Effects.CrawlSessionInfo
 getCrawlSessionInfo =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "SessionContext"
-      (\value bindings -> bindings { FrameworkGenerated.boundSessionContext = Just value }) $
-    (FrameworkGenerated.CrawlSessionInfo <$> runWrap @"SessionContext" (FrameworkRuntime.super "sessionInfo" FrameworkGenerated.sessionInfo))
+  SDK.handleFailure
+  . SDK.callContext "SessionContext"
+      (\value bindings -> bindings { Effects.boundSessionContext = Just value }) $
+    Effects.CrawlSessionInfo <$> runWrap @"SessionContext" (SDK.super "sessionInfo" Effects.sessionInfo)
 
-readCrawlSessionInfo :: FrameworkGenerated.App FrameworkGenerated.CrawlSessionInfo
+readCrawlSessionInfo :: Effects.App Effects.CrawlSessionInfo
 readCrawlSessionInfo =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "SessionContext" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundSessionContext
+  SDK.handleFailure $
+    SDK.readContext "SessionContext" Effects.ContextBindingError Effects.boundSessionContext
 
-openCrawlSession :: FrameworkGenerated.App [String]
+openCrawlSession :: Effects.App [String]
 openCrawlSession =
-  FrameworkRuntime.withErrorPath ["CrawlSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "openCrawlSession" [] []
-  . FrameworkRuntime.openScope "CrawlSession" FrameworkGenerated.ScopeBindingError (Just (() <$ closeCrawlSession))
-  . FrameworkRuntime.enterHandler "CrawlSession" $
-    getCrawlSessionInfo >> runWrap @"CrawlSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)
+  SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure
+  . SDK.atomicScope "openCrawlSession" [] []
+  . SDK.openScope "CrawlSession" Effects.ScopeBindingError (Just (() <$ closeCrawlSession))
+  . SDK.enterHandler "CrawlSession" $
+    getCrawlSessionInfo >> runWrap @"CrawlSession" (SDK.super "openSession" Effects.openSession)
 
-closeCrawlSession :: FrameworkGenerated.App [String]
+closeCrawlSession :: Effects.App [String]
 closeCrawlSession =
-  FrameworkRuntime.withErrorPath ["CrawlSession"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "closeCrawlSession" [] []
-  . FrameworkRuntime.closeScope "CrawlSession" FrameworkGenerated.ScopeBindingError
-  . FrameworkRuntime.enterHandler "CrawlSession" $
-    runWrap @"CrawlSession" (FrameworkRuntime.superClose "closeSession" FrameworkGenerated.closeSession)
+  SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure
+  . SDK.atomicScope "closeCrawlSession" [] []
+  . SDK.closeScope "CrawlSession" Effects.ScopeBindingError
+  . SDK.enterHandler "CrawlSession" $
+    runWrap @"CrawlSession" (SDK.superClose "closeSession" Effects.closeSession)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
-newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
+newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ FrameworkRuntime.newScopeHandler "CrawlSession" [] (Just "SessionContext")
+  [ SDK.newScopeHandler "CrawlSession" [] (Just "SessionContext")
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。
-errorHandlers :: [(Maybe String, FrameworkRuntime.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
-errorHandlers =
-  [
-  ]
+errorHandlers :: [(Maybe String, SDK.ErrorHandler Effects.Errors Effects.App)]
+errorHandlers = []

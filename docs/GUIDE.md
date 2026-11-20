@@ -139,10 +139,10 @@ newtype WriteFirstLineError = WriteFirstLineError String
 
 ```haskell
 runWriteFirstLine = ⟨入口包装⟩ $
-  openFileSession >> runWrap @"WriteFirstLine" (FrameworkRuntime.super "writeFirstLine" FrameworkGenerated.writeFirstLine)
+  openFileSession >> runWrap @"WriteFirstLine" (SDK.super "writeFirstLine" Effects.writeFirstLine)
 
-instance FrameworkRuntime.Reads (FileHandle) (Wrap "WriteFirstLine") where
-  require = Wrap ((\(FrameworkGenerated.OpenedFile value) -> value) <$> readOpenedFile)
+instance SDK.Reads FileHandle (Wrap "WriteFirstLine") where
+  require = Wrap (SDK.coerce <$> readOpenedFile)
 ```
 
 Generated/Effects 提供可检查的接口，Generated/Program 保存末端登记和静态 Prototype；运行副本及协议由生成器维护。

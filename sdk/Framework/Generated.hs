@@ -16,7 +16,7 @@ module Framework.Generated
   , openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler
   , Root(..), superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation
-  , Generic, NFData, interpreter
+  , Generic, NFData, coerce, interpreter
   ) where
 
 import Framework.SDK
@@ -37,6 +37,8 @@ import Framework.Prototype
 import Framework.Prototype.Structure
 import Control.DeepSeq (NFData)
 import Control.Exception (evaluate)
+-- 生成的读取入口用它把资产的名义类型解成表示类型。
+import Data.Coerce (coerce)
 import GHC.Fingerprint (fingerprintString)
 import GHC.Generics (Generic)
 import System.Environment (getArgs)

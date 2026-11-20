@@ -60,8 +60,8 @@ pair :: (left -> String) -> (right -> String) -> (left, right) -> String
 pair renderLeft renderRight (left, right) =
   "(" ++ renderLeft left ++ ", " ++ renderRight right ++ ")"
 
--- 参数由调用位置按 Haskell 应用优先级渲染。字面量、列表和标签可直接作参数；
--- Just 等原生构造器交给 Show，嵌套的生成表达式显式分组。
+-- 构造器参数按 Haskell 应用优先级渲染：叶子值一律经 showArg（Just、负数由 Show 加括号），
+-- 标签与列表可直接作参数，嵌套的生成表达式显式分组。记录字段的值不需要括号，仍用 show。
 showArg :: Show a => a -> String
 showArg value = showsPrec 11 value ""
 
@@ -81,8 +81,17 @@ blockConstructor name arguments = intercalate "\n" (("SDK." ++ name) : map (inde
 
 record :: String -> [(String, String)] -> String
 record name [] = "SDK." ++ name ++ " {}"
-record name (first : rest) = intercalate "\n"
-  (("SDK." ++ name) : field "  { " first : map (field "  , ") rest ++ ["  }"])
+record name fields = fieldBlock ("SDK." ++ name) fields
+
+-- 以已有值为底的记录更新：只写给出的字段。
+update :: String -> [(String, String)] -> String
+update base [] = base
+update base fields = fieldBlock ("(" ++ base ++ ")") fields
+
+fieldBlock :: String -> [(String, String)] -> String
+fieldBlock _ [] = error "fieldBlock needs at least one field"
+fieldBlock header (first : rest) = intercalate "\n"
+  (header : field "  { " first : map (field "  , ") rest ++ ["  }"])
   where
     field prefix (selected, value)
       | fits complete = complete
@@ -107,49 +116,53 @@ renderTyping (R.Scoped opening closing) = constructor "Scoped" [showArg opening,
 renderTyping (R.Error detecting resolving handled) =
   constructor "Error" [showArg detecting, showArg resolving, list renderHandles handled]
 renderTyping (R.Context declared parsing requiring streaming) =
-  constructor "Context" [group (renderAsset declared), showArg parsing, show requiring, show streaming]
+  constructor "Context" [group (renderAsset declared), showArg parsing, showArg requiring, showArg streaming]
 renderTyping (R.Stream method) = constructor "Stream" [showArg method]
 renderTyping (R.Middleware method intercepted) = constructor "Middleware" [showArg method, list tag intercepted]
 
 renderAsset :: R.Asset -> String
-renderAsset (R.AssetDecl selected representation) = constructor "AssetDecl" [show selected, group (renderType representation)]
+renderAsset (R.AssetDecl selected representation) = constructor "AssetDecl" [showArg selected, group (renderType representation)]
 
 renderType :: R.TypeRef -> String
-renderType (R.TypeRef selected) = constructor "TypeRef" [show selected]
+renderType (R.TypeRef selected) = constructor "TypeRef" [showArg selected]
 renderType (R.OutputRef cause value) = constructor "OutputRef" [group (renderType cause), group (renderType value)]
 
 renderHandles :: R.Handles -> String
-renderHandles (R.RaisedBy selected) = constructor "RaisedBy" [show selected]
-renderHandles (R.ScopeFaultIn selected) = constructor "ScopeFaultIn" [show selected]
-renderHandles (R.ContextFaultIn selected) = constructor "ContextFaultIn" [show selected]
+renderHandles (R.RaisedBy selected) = constructor "RaisedBy" [showArg selected]
+renderHandles (R.ScopeFaultIn selected) = constructor "ScopeFaultIn" [showArg selected]
+renderHandles (R.ContextFaultIn selected) = constructor "ContextFaultIn" [showArg selected]
 
 renderDemand :: R.Demand -> String
-renderDemand (R.Demand access contract) = constructor "Demand" [tag access, show contract]
+renderDemand (R.Demand access contract) = constructor "Demand" [tag access, showArg contract]
 
 renderResolved :: P.ResolvedDemand -> String
 renderResolved (P.ResolvedDemand access contract provider) =
-  constructor "ResolvedDemand" [tag access, show contract, show provider]
+  constructor "ResolvedDemand" [tag access, showArg contract, showArg provider]
 
 renderEffect :: P.EffectProto String -> String
-renderEffect effect = record "EffectProto"
-  [ ("effectName", show (P.effectName effect))
-  , ("effectKind", tag (P.effectKind effect))
-  , ("effectInput", show (P.effectInput effect))
-  , ("effectMethods", list (pair tag genName) (P.effectMethods effect))
-  , ("effectDemands", list renderResolved (P.effectDemands effect))
-  , ("effectProduces", show (P.effectProduces effect))
-  , ("effectBranches", show (P.effectBranches effect))
-  , ("effectAnchor", show (P.effectAnchor effect))
-  , ("effectScopes", show (P.effectScopes effect))
-  , ("effectErrorScope", show (P.effectErrorScope effect))
-  , ("effectInputChain", show (P.effectInputChain effect))
-  , ("effectScopeParents", show (P.effectScopeParents effect))
-  , ("effectOpeningInputs", show (P.effectOpeningInputs effect))
-  , ("effectNearestScopes", show (P.effectNearestScopes effect))
-  , ("effectResource", show (P.effectResource effect))
-  , ("effectContextDependencies", show (P.effectContextDependencies effect))
-  , ("effectContinuous", show (P.effectContinuous effect))
-  ]
+renderEffect effect = update
+  ("SDK.effectProto " ++ unwords [show (P.effectName effect), tag (P.effectKind effect), show (P.effectInput effect)])
+  (concat
+    [ changed P.effectMethods "effectMethods" (list (pair tag genName))
+    , changed P.effectDemands "effectDemands" (list renderResolved)
+    , changed P.effectProduces "effectProduces" show
+    , changed P.effectBranches "effectBranches" show
+    , changed P.effectAnchor "effectAnchor" show
+    , changed P.effectScopes "effectScopes" show
+    , changed P.effectErrorScope "effectErrorScope" show
+    , changed P.effectInputChain "effectInputChain" show
+    , changed P.effectScopeParents "effectScopeParents" show
+    , changed P.effectOpeningInputs "effectOpeningInputs" show
+    , changed P.effectNearestScopes "effectNearestScopes" show
+    , changed P.effectResource "effectResource" show
+    , changed P.effectContextDependencies "effectContextDependencies" show
+    , changed P.effectContinuous "effectContinuous" show
+    ])
+  where
+    -- 与 SDK 的 effectProto 默认值相同的字段不写。
+    base = P.effectProto (P.effectName effect) (P.effectKind effect) (P.effectInput effect)
+    changed :: Eq value => (P.EffectProto String -> value) -> String -> (value -> String) -> [(String, String)]
+    changed selector name render = [(name, render (selector effect)) | selector effect /= selector base]
 
 renderMethod :: G.MethodDefinition String -> String
 renderMethod definition = constructor "MethodDefinition"
@@ -171,13 +184,13 @@ shapeArgument G.Empty = "SDK.Empty"
 shapeArgument shape = group (renderShape shape)
 
 renderWorkflow :: P.WorkflowTree -> String
-renderWorkflow (P.NodeAt node selected) = constructor "NodeAt" [show node, show selected]
-renderWorkflow (P.ChainedAt node children) = blockConstructor "ChainedAt" [show node, blockList renderWorkflow children]
-renderWorkflow (P.ParallelAt node children) = blockConstructor "ParallelAt" [show node, blockList renderWorkflow children]
+renderWorkflow (P.NodeAt node selected) = constructor "NodeAt" [showArg node, showArg selected]
+renderWorkflow (P.ChainedAt node children) = blockConstructor "ChainedAt" [showArg node, blockList renderWorkflow children]
+renderWorkflow (P.ParallelAt node children) = blockConstructor "ParallelAt" [showArg node, blockList renderWorkflow children]
 renderWorkflow (P.AlternativeAt node alternative children) =
-  blockConstructor "AlternativeAt" [show node, group (renderAlternative alternative), blockList renderWorkflow children]
+  blockConstructor "AlternativeAt" [showArg node, group (renderAlternative alternative), blockList renderWorkflow children]
 renderWorkflow (P.LifelongAt node lifelong children) =
-  blockConstructor "LifelongAt" [show node, group (renderLifelong lifelong), blockList renderWorkflow children]
+  blockConstructor "LifelongAt" [showArg node, group (renderLifelong lifelong), blockList renderWorkflow children]
 
 renderAlternative :: P.AlternativeProto -> String
 renderAlternative alternative = record "AlternativeProto"
@@ -201,9 +214,9 @@ renderSession session = record "SessionProto"
   ]
 
 renderBootPlan :: P.BootPlan -> String
-renderBootPlan (P.Receive source) = constructor "Receive" [show source]
-renderBootPlan (P.Derive upstream) = constructor "Derive" [show upstream]
-renderBootPlan (P.ReuseOutput nodes) = constructor "ReuseOutput" [show nodes]
+renderBootPlan (P.Receive source) = constructor "Receive" [showArg source]
+renderBootPlan (P.Derive upstream) = constructor "Derive" [showArg upstream]
+renderBootPlan (P.ReuseOutput nodes) = constructor "ReuseOutput" [showArg nodes]
 
 renderChain :: P.ChainProto String -> String
 renderChain chain = record "ChainProto"
@@ -255,7 +268,7 @@ renderScopeNode node = record "ScopeNode"
   ]
 
 renderReadPoint :: P.ReadPoint -> String
-renderReadPoint point = constructor "ReadPoint" [show (P.readNode point), show (P.readContract point)]
+renderReadPoint point = constructor "ReadPoint" [showArg (P.readNode point), showArg (P.readContract point)]
 
 renderSource :: P.Source -> String
 renderSource (P.FromChains nodes) = constructor "FromChains" [list show nodes]
@@ -282,13 +295,13 @@ renderDriving plan = record "DrivingPlan"
   , ("drivingMiddleware", show (P.drivingMiddleware plan))
   , ("drivingHooks", show (P.drivingHooks plan)) ]
   where
-    node p = constructor "NodeDrive" [show (P.driveNode p), show (P.driveMembers p), show (P.driveSubscriptions p)
-      , showArg (P.driveBoundary p), show (P.driveCaptures p), show (P.drivePriorBoundaries p), show (P.driveBlockedPublishers p)]
-    unit p = constructor "UnitDrive" [show (P.driveUnit p), show (P.driveFrameNodes p)
+    node p = constructor "NodeDrive" [showArg (P.driveNode p), showArg (P.driveMembers p), showArg (P.driveSubscriptions p)
+      , showArg (P.driveBoundary p), showArg (P.driveCaptures p), showArg (P.drivePriorBoundaries p), showArg (P.driveBlockedPublishers p)]
+    unit p = constructor "UnitDrive" [showArg (P.driveUnit p), showArg (P.driveFrameNodes p)
       , list (pair show (list reader)) (P.driveReaders p), list (pair show local) (P.driveLocalSources p)]
-    reader (P.ReadAt node') = constructor "ReadAt" [show node']
-    reader (P.ChooseAmong nodes) = constructor "ChooseAmong" [show nodes]
-    local (P.PublishedAt nodes) = constructor "PublishedAt" [show nodes]
-    local (P.DerivedFrom source) = constructor "DerivedFrom" [show source]
-    session p = constructor "SessionDrive" [showArg (P.driveSessionBoundary p), show (P.driveSessionSource p)
-      , show (P.driveSessionAsset p), showArg (P.driveSessionUpstream p)]
+    reader (P.ReadAt node') = constructor "ReadAt" [showArg node']
+    reader (P.ChooseAmong nodes) = constructor "ChooseAmong" [showArg nodes]
+    local (P.PublishedAt nodes) = constructor "PublishedAt" [showArg nodes]
+    local (P.DerivedFrom source) = constructor "DerivedFrom" [showArg source]
+    session p = constructor "SessionDrive" [showArg (P.driveSessionBoundary p), showArg (P.driveSessionSource p)
+      , showArg (P.driveSessionAsset p), showArg (P.driveSessionUpstream p)]

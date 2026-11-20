@@ -15,8 +15,8 @@
 
 module StreamDemo.Generated.Handlers (handlerSourceFingerprint, getSensorState, readSensorState, openSensorLink, closeSensorLink, nextTemperatureFeed, getTemperatureSample, streamTemperatureSample, nextHeartbeatClock, getBeat, streamBeat, runAnnounce, runShowTemperature, runCheckTrend, runReportHeartbeat, newScopeHandlers, errorHandlers) where
 
-import qualified Framework.Generated as FrameworkRuntime
-import qualified StreamDemo.Generated.Effects as FrameworkGenerated
+import qualified Framework.Generated as SDK
+import qualified StreamDemo.Generated.Effects as Effects
 import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
@@ -117,214 +117,212 @@ handlerSourceFingerprint = Just "e9cc1f0242b01e10df6d0e847f699bb9"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: FrameworkGenerated.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance FrameworkRuntime.Root (Wrap effect) value
+instance SDK.Root (Wrap effect) value
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.PrepareSensorError (Wrap effect) where
-  raise (FrameworkGenerated.PrepareSensorError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.PrepareSensorFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.PrepareSensorError (Wrap effect) where
+  raise (Effects.PrepareSensorError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.PrepareSensorFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ConnectSensorError (Wrap effect) where
-  raise (FrameworkGenerated.ConnectSensorError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ConnectSensorFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ConnectSensorError (Wrap effect) where
+  raise (Effects.ConnectSensorError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ConnectSensorFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.DisconnectSensorError (Wrap effect) where
-  raise (FrameworkGenerated.DisconnectSensorError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.DisconnectSensorFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.DisconnectSensorError (Wrap effect) where
+  raise (Effects.DisconnectSensorError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.DisconnectSensorFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextReadingError (Wrap effect) where
-  raise (FrameworkGenerated.NextReadingError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NextReadingFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.NextReadingError (Wrap effect) where
+  raise (Effects.NextReadingError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.NextReadingFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseTemperatureError (Wrap effect) where
-  raise (FrameworkGenerated.ParseTemperatureError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ParseTemperatureFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ParseTemperatureError (Wrap effect) where
+  raise (Effects.ParseTemperatureError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ParseTemperatureFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.NextBeatError (Wrap effect) where
-  raise (FrameworkGenerated.NextBeatError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.NextBeatFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.NextBeatError (Wrap effect) where
+  raise (Effects.NextBeatError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.NextBeatFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ParseBeatError (Wrap effect) where
-  raise (FrameworkGenerated.ParseBeatError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ParseBeatFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ParseBeatError (Wrap effect) where
+  raise (Effects.ParseBeatError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ParseBeatFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.AnnounceError (Wrap effect) where
-  raise (FrameworkGenerated.AnnounceError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.AnnounceFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.AnnounceError (Wrap effect) where
+  raise (Effects.AnnounceError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.AnnounceFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ShowTemperatureError (Wrap effect) where
-  raise (FrameworkGenerated.ShowTemperatureError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ShowTemperatureFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ShowTemperatureError (Wrap effect) where
+  raise (Effects.ShowTemperatureError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ShowTemperatureFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.CheckTrendError (Wrap effect) where
-  raise (FrameworkGenerated.CheckTrendError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.CheckTrendFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.CheckTrendError (Wrap effect) where
+  raise (Effects.CheckTrendError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.CheckTrendFailure description)
 
-instance FrameworkTypes.KnownSymbol effect => FrameworkRuntime.Raises FrameworkGenerated.ReportHeartbeatError (Wrap effect) where
-  raise (FrameworkGenerated.ReportHeartbeatError description) = Wrap (FrameworkRuntime.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) FrameworkGenerated.ReportHeartbeatFailure description)
+instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ReportHeartbeatError (Wrap effect) where
+  raise (Effects.ReportHeartbeatError description) = Wrap (SDK.failEffect
+    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ReportHeartbeatFailure description)
 
-instance FrameworkRuntime.Reads (SensorMemory) (Wrap "SensorLink") where
-  require = Wrap ((\(FrameworkGenerated.SensorState value) -> value) <$> readSensorState)
+instance SDK.Reads SensorMemory (Wrap "SensorLink") where
+  require = Wrap (SDK.coerce <$> readSensorState)
 
-instance FrameworkRuntime.Reads (SensorMemory) (Wrap "TemperatureParser") where
-  require = Wrap ((\(FrameworkGenerated.SensorState value) -> value) <$> readSensorState)
+instance SDK.Reads SensorMemory (Wrap "TemperatureParser") where
+  require = Wrap (SDK.coerce <$> readSensorState)
 
-instance FrameworkRuntime.Reads (SensorMemory) (Wrap "Heartbeat") where
-  require = Wrap ((\(FrameworkGenerated.SensorState value) -> value) <$> readSensorState)
+instance SDK.Reads SensorMemory (Wrap "Heartbeat") where
+  require = Wrap (SDK.coerce <$> readSensorState)
 
-instance FrameworkRuntime.Reads (Temperature) (Wrap "ShowTemperature") where
-  require = Wrap ((\(FrameworkGenerated.TemperatureSample value) -> value) <$> streamTemperatureSample)
+instance SDK.Reads Temperature (Wrap "ShowTemperature") where
+  require = Wrap (SDK.coerce <$> streamTemperatureSample)
 
-instance FrameworkRuntime.Reads (Temperature) (Wrap "CheckTrend") where
-  require = Wrap ((\(FrameworkGenerated.TemperatureSample value) -> value) <$> streamTemperatureSample)
+instance SDK.Reads Temperature (Wrap "CheckTrend") where
+  require = Wrap (SDK.coerce <$> streamTemperatureSample)
 
-instance FrameworkRuntime.Reads (Int) (Wrap "ReportHeartbeat") where
-  require = Wrap ((\(FrameworkGenerated.Beat value) -> value) <$> streamBeat)
+instance SDK.Reads Int (Wrap "ReportHeartbeat") where
+  require = Wrap (SDK.coerce <$> streamBeat)
 
-instance FrameworkRuntime.Raw (Wrap "TemperatureParser") where
-  rawinput = Wrap (FrameworkRuntime.emittedInput)
+instance SDK.Raw (Wrap "TemperatureParser") where
+  rawinput = Wrap SDK.emittedInput
 
-instance FrameworkRuntime.Raw (Wrap "Heartbeat") where
-  rawinput = Wrap (FrameworkRuntime.emittedInput)
+instance SDK.Raw (Wrap "Heartbeat") where
+  rawinput = Wrap SDK.emittedInput
 
-instance FrameworkRuntime.RawOutputs (Wrap effect)
+instance SDK.RawOutputs (Wrap effect)
 
-instance FrameworkRuntime.Emits (Wrap "TemperatureFeed") where
-  rawemit text = Wrap (FrameworkRuntime.emitToParser text)
+instance SDK.Emits (Wrap "TemperatureFeed") where
+  rawemit text = Wrap (SDK.emitToParser text)
 
-instance FrameworkRuntime.Emits (Wrap "HeartbeatClock") where
-  rawemit text = Wrap (FrameworkRuntime.emitToParser text)
+instance SDK.Emits (Wrap "HeartbeatClock") where
+  rawemit text = Wrap (SDK.emitToParser text)
 
-instance FrameworkRuntime.StreamEnds (Wrap "TemperatureFeed") where
-  streamEnd = Wrap FrameworkRuntime.endSource
+instance SDK.StreamEnds (Wrap "TemperatureFeed") where
+  streamEnd = Wrap SDK.endSource
 
-instance FrameworkRuntime.StreamEnds (Wrap "HeartbeatClock") where
-  streamEnd = Wrap FrameworkRuntime.endSource
+instance SDK.StreamEnds (Wrap "HeartbeatClock") where
+  streamEnd = Wrap SDK.endSource
 
-instance FrameworkRuntime.EndsStream (Wrap "ShowTemperature") where
-  endStream = Wrap FrameworkRuntime.endSubscription
+instance SDK.EndsStream (Wrap "ShowTemperature") where
+  endStream = Wrap SDK.endSubscription
 
-instance FrameworkRuntime.EndsStream (Wrap "CheckTrend") where
-  endStream = Wrap FrameworkRuntime.endSubscription
+instance SDK.EndsStream (Wrap "CheckTrend") where
+  endStream = Wrap SDK.endSubscription
 
-instance FrameworkRuntime.EndsStream (Wrap "ReportHeartbeat") where
-  endStream = Wrap FrameworkRuntime.endSubscription
+instance SDK.EndsStream (Wrap "ReportHeartbeat") where
+  endStream = Wrap SDK.endSubscription
 
-getSensorState :: FrameworkGenerated.App FrameworkGenerated.SensorState
+getSensorState :: Effects.App Effects.SensorState
 getSensorState =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.callContext "SensorResource"
-      (\value bindings -> bindings { FrameworkGenerated.boundSensorResource = Just value }) $
-    (FrameworkGenerated.SensorState <$> runWrap @"SensorResource" (FrameworkRuntime.super "prepareSensor" FrameworkGenerated.prepareSensor))
+  SDK.handleFailure
+  . SDK.callContext "SensorResource"
+      (\value bindings -> bindings { Effects.boundSensorResource = Just value }) $
+    Effects.SensorState <$> runWrap @"SensorResource" (SDK.super "prepareSensor" Effects.prepareSensor)
 
-readSensorState :: FrameworkGenerated.App FrameworkGenerated.SensorState
+readSensorState :: Effects.App Effects.SensorState
 readSensorState =
-  FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readContext "SensorResource" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundSensorResource
+  SDK.handleFailure $
+    SDK.readContext "SensorResource" Effects.ContextBindingError Effects.boundSensorResource
 
-openSensorLink :: FrameworkGenerated.App [String]
+openSensorLink :: Effects.App [String]
 openSensorLink =
-  FrameworkRuntime.withErrorPath ["SensorLink"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "openSensorLink" [] []
-  . FrameworkRuntime.openScope "SensorLink" FrameworkGenerated.ScopeBindingError (Just (() <$ closeSensorLink))
-  . FrameworkRuntime.enterHandler "SensorLink" $
-    getSensorState >> runWrap @"SensorLink" (FrameworkRuntime.super "connectSensor" FrameworkGenerated.connectSensor)
+  SDK.withErrorPath ["SensorLink"]
+  . SDK.handleFailure
+  . SDK.atomicScope "openSensorLink" [] []
+  . SDK.openScope "SensorLink" Effects.ScopeBindingError (Just (() <$ closeSensorLink))
+  . SDK.enterHandler "SensorLink" $
+    getSensorState >> runWrap @"SensorLink" (SDK.super "connectSensor" Effects.connectSensor)
 
-closeSensorLink :: FrameworkGenerated.App [String]
+closeSensorLink :: Effects.App [String]
 closeSensorLink =
-  FrameworkRuntime.withErrorPath ["SensorLink"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicScope "closeSensorLink" [] []
-  . FrameworkRuntime.closeScope "SensorLink" FrameworkGenerated.ScopeBindingError
-  . FrameworkRuntime.enterHandler "SensorLink" $
-    runWrap @"SensorLink" (FrameworkRuntime.superClose "disconnectSensor" FrameworkGenerated.disconnectSensor)
+  SDK.withErrorPath ["SensorLink"]
+  . SDK.handleFailure
+  . SDK.atomicScope "closeSensorLink" [] []
+  . SDK.closeScope "SensorLink" Effects.ScopeBindingError
+  . SDK.enterHandler "SensorLink" $
+    runWrap @"SensorLink" (SDK.superClose "disconnectSensor" Effects.disconnectSensor)
 
-nextTemperatureFeed :: FrameworkGenerated.App ()
+nextTemperatureFeed :: Effects.App ()
 nextTemperatureFeed =
-  FrameworkRuntime.withErrorPath ["SensorLink"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["SensorLink"]
-  . FrameworkRuntime.enterHandler "TemperatureFeed" $
-    openSensorLink >> runWrap @"TemperatureFeed" (FrameworkRuntime.super "nextReading" FrameworkGenerated.nextReading)
+  SDK.withErrorPath ["SensorLink"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["SensorLink"]
+  . SDK.enterHandler "TemperatureFeed" $
+    openSensorLink >> runWrap @"TemperatureFeed" (SDK.super "nextReading" Effects.nextReading)
 
-getTemperatureSample :: FrameworkGenerated.App FrameworkGenerated.TemperatureSample
+getTemperatureSample :: Effects.App Effects.TemperatureSample
 getTemperatureSample =
-  FrameworkRuntime.withErrorPath ["SensorLink"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["SensorLink"]
-  . FrameworkRuntime.callContext "TemperatureParser"
-      (\value bindings -> bindings { FrameworkGenerated.boundTemperatureParser = Just value }) $
-    (FrameworkGenerated.TemperatureSample <$> runWrap @"TemperatureParser" (FrameworkRuntime.super "parseTemperature" FrameworkGenerated.parseTemperature))
+  SDK.withErrorPath ["SensorLink"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["SensorLink"]
+  . SDK.callContext "TemperatureParser"
+      (\value bindings -> bindings { Effects.boundTemperatureParser = Just value }) $
+    Effects.TemperatureSample <$> runWrap @"TemperatureParser" (SDK.super "parseTemperature" Effects.parseTemperature)
 
-streamTemperatureSample :: FrameworkGenerated.App FrameworkGenerated.TemperatureSample
+streamTemperatureSample :: Effects.App Effects.TemperatureSample
 streamTemperatureSample =
-  FrameworkRuntime.withErrorPath ["SensorLink"]
-  . FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readStreamContext "TemperatureParser" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundTemperatureParser
+  SDK.withErrorPath ["SensorLink"]
+  . SDK.handleFailure $
+    SDK.readStreamContext "TemperatureParser" Effects.ContextBindingError Effects.boundTemperatureParser
 
-nextHeartbeatClock :: FrameworkGenerated.App ()
+nextHeartbeatClock :: Effects.App ()
 nextHeartbeatClock =
-  FrameworkRuntime.withErrorPath ["SensorLink"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["SensorLink"]
-  . FrameworkRuntime.enterHandler "HeartbeatClock" $
-    openSensorLink >> runWrap @"HeartbeatClock" (FrameworkRuntime.super "nextBeat" FrameworkGenerated.nextBeat)
+  SDK.withErrorPath ["SensorLink"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["SensorLink"]
+  . SDK.enterHandler "HeartbeatClock" $
+    openSensorLink >> runWrap @"HeartbeatClock" (SDK.super "nextBeat" Effects.nextBeat)
 
-getBeat :: FrameworkGenerated.App FrameworkGenerated.Beat
+getBeat :: Effects.App Effects.Beat
 getBeat =
-  FrameworkRuntime.withErrorPath ["SensorLink"]
-  . FrameworkRuntime.handleFailure
-  . FrameworkRuntime.withScopeDependencies ["SensorLink"]
-  . FrameworkRuntime.callContext "Heartbeat"
-      (\value bindings -> bindings { FrameworkGenerated.boundHeartbeat = Just value }) $
-    (FrameworkGenerated.Beat <$> runWrap @"Heartbeat" (FrameworkRuntime.super "parseBeat" FrameworkGenerated.parseBeat))
+  SDK.withErrorPath ["SensorLink"]
+  . SDK.handleFailure
+  . SDK.withScopeDependencies ["SensorLink"]
+  . SDK.callContext "Heartbeat"
+      (\value bindings -> bindings { Effects.boundHeartbeat = Just value }) $
+    Effects.Beat <$> runWrap @"Heartbeat" (SDK.super "parseBeat" Effects.parseBeat)
 
-streamBeat :: FrameworkGenerated.App FrameworkGenerated.Beat
+streamBeat :: Effects.App Effects.Beat
 streamBeat =
-  FrameworkRuntime.withErrorPath ["SensorLink"]
-  . FrameworkRuntime.handleFailure $
-    FrameworkRuntime.readStreamContext "Heartbeat" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundHeartbeat
+  SDK.withErrorPath ["SensorLink"]
+  . SDK.handleFailure $
+    SDK.readStreamContext "Heartbeat" Effects.ContextBindingError Effects.boundHeartbeat
 
-runAnnounce :: FrameworkGenerated.App [String]
+runAnnounce :: Effects.App [String]
 runAnnounce =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runAnnounce" [] []
-  . FrameworkRuntime.enterHandler "Announce" $
-    runWrap @"Announce" (FrameworkRuntime.super "announce" FrameworkGenerated.announce)
+  SDK.handleFailure
+  . SDK.atomicHandle "runAnnounce" [] []
+  . SDK.enterHandler "Announce" $
+    runWrap @"Announce" (SDK.super "announce" Effects.announce)
 
-runShowTemperature :: FrameworkGenerated.App [String]
+runShowTemperature :: Effects.App [String]
 runShowTemperature =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runShowTemperature" [] []
-  . FrameworkRuntime.enterHandler "ShowTemperature" $
-    runWrap @"ShowTemperature" (FrameworkRuntime.super "showTemperature" FrameworkGenerated.showTemperature)
+  SDK.handleFailure
+  . SDK.atomicHandle "runShowTemperature" [] []
+  . SDK.enterHandler "ShowTemperature" $
+    runWrap @"ShowTemperature" (SDK.super "showTemperature" Effects.showTemperature)
 
-runCheckTrend :: FrameworkGenerated.App [String]
+runCheckTrend :: Effects.App [String]
 runCheckTrend =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runCheckTrend" [] []
-  . FrameworkRuntime.enterHandler "CheckTrend" $
-    runWrap @"CheckTrend" (FrameworkRuntime.super "checkTrend" FrameworkGenerated.checkTrend)
+  SDK.handleFailure
+  . SDK.atomicHandle "runCheckTrend" [] []
+  . SDK.enterHandler "CheckTrend" $
+    runWrap @"CheckTrend" (SDK.super "checkTrend" Effects.checkTrend)
 
-runReportHeartbeat :: FrameworkGenerated.App [String]
+runReportHeartbeat :: Effects.App [String]
 runReportHeartbeat =
-  FrameworkRuntime.handleFailure
-  . FrameworkRuntime.atomicHandle "runReportHeartbeat" [] []
-  . FrameworkRuntime.enterHandler "ReportHeartbeat" $
-    runWrap @"ReportHeartbeat" (FrameworkRuntime.super "reportHeartbeat" FrameworkGenerated.reportHeartbeat)
+  SDK.handleFailure
+  . SDK.atomicHandle "runReportHeartbeat" [] []
+  . SDK.enterHandler "ReportHeartbeat" $
+    runWrap @"ReportHeartbeat" (SDK.super "reportHeartbeat" Effects.reportHeartbeat)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
-newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]
+newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ FrameworkRuntime.newScopeHandler "SensorLink" [] (Just "SensorResource")
+  [ SDK.newScopeHandler "SensorLink" [] (Just "SensorResource")
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。
-errorHandlers :: [(Maybe String, FrameworkRuntime.ErrorHandler FrameworkGenerated.Errors FrameworkGenerated.App)]
-errorHandlers =
-  [
-  ]
+errorHandlers :: [(Maybe String, SDK.ErrorHandler Effects.Errors Effects.App)]
+errorHandlers = []

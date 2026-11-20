@@ -21,7 +21,8 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
                      , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
-  let target label action = SDK.targetApp label emptyContexts scopes
+  let target :: Show value => String -> App value -> SDK.Target ContextValues Errors value
+      target label action = SDK.targetApp label emptyContexts scopes
         (SDK.withErrorHandlers Handlers.errorHandlers action)
   pure
     ( [ target "PrepareFiles" (PrepareFilesResult () <$ Handlers.runPrepareFiles)
@@ -122,212 +123,79 @@ generatedPrototype =
             }
         ]
     , SDK.protoEffects =
-        [ SDK.EffectProto
-            { SDK.effectName = "PrepareFiles"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunPrepareFilesGen)]
-            , SDK.effectDemands = []
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
+        [ (SDK.effectProto "PrepareFiles" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunPrepareFilesGen)]
             }
-        , SDK.EffectProto
-            { SDK.effectName = "FileLocation"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "FileLocation" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetFileNameGen), (SDK.ContextRequire, ReadFileNameGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "FileName"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "FileResource"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "FileResource" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetOpenedFileGen), (SDK.ContextRequire, ReadOpenedFileGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "FileName" "FileLocation"]
             , SDK.effectProduces = Just "OpenedFile"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "FileSession"
-            , SDK.effectKind = SDK.ScopedKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.ScopeOpen, OpenFileSessionGen), (SDK.ScopeClose, CloseFileSessionGen)]
+        , (SDK.effectProto "FileSession" SDK.ScopedKind "Root")
+            { SDK.effectMethods = [(SDK.ScopeOpen, OpenFileSessionGen), (SDK.ScopeClose, CloseFileSessionGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "OpenedFile" "FileResource"
                 , SDK.ResolvedDemand SDK.RequireAccess "OpenedFile" "FileResource"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
             , SDK.effectOpeningInputs = ["FileLocation"]
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectResource = Just "FileResource"
             , SDK.effectContextDependencies = ["FileLocation","FileResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "UseFirst"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "FileSession"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunUseFirstGen)]
+        , (SDK.effectProto "UseFirst" SDK.ExcuKind "FileSession")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunUseFirstGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "FileName" "FileLocation"
                 , SDK.ResolvedDemand SDK.RequireAccess "FileName" "FileLocation"
                 , SDK.ResolvedDemand SDK.RequireAccess "OpenedFile" "FileResource"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["FileSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["FileSession"]
             , SDK.effectScopeParents = ["FileSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["FileSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation","FileResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "SelectSecond"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunSelectSecondGen)]
-            , SDK.effectDemands = []
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
+        , (SDK.effectProto "SelectSecond" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunSelectSecondGen)]
             }
-        , SDK.EffectProto
-            { SDK.effectName = "UseSecond"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "FileSession"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunUseSecondGen)]
+        , (SDK.effectProto "UseSecond" SDK.ExcuKind "FileSession")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunUseSecondGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "FileName" "FileLocation"
                 , SDK.ResolvedDemand SDK.RequireAccess "FileName" "FileLocation"
                 , SDK.ResolvedDemand SDK.RequireAccess "OpenedFile" "FileResource"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["FileSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["FileSession"]
             , SDK.effectScopeParents = ["FileSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["FileSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation","FileResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "SelectFirst"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunSelectFirstGen)]
-            , SDK.effectDemands = []
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
+        , (SDK.effectProto "SelectFirst" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunSelectFirstGen)]
             }
-        , SDK.EffectProto
-            { SDK.effectName = "ReopenFirst"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "FileSession"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunReopenFirstGen)]
+        , (SDK.effectProto "ReopenFirst" SDK.ExcuKind "FileSession")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunReopenFirstGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "FileName" "FileLocation"
                 , SDK.ResolvedDemand SDK.RequireAccess "FileName" "FileLocation"
                 , SDK.ResolvedDemand SDK.RequireAccess "OpenedFile" "FileResource"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["FileSession"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["FileSession"]
             , SDK.effectScopeParents = ["FileSession"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["FileSession"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocation","FileResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "CheckJournal"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunCheckJournalGen)]
-            , SDK.effectDemands = []
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
+        , (SDK.effectProto "CheckJournal" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunCheckJournalGen)]
             }
         ]
     , SDK.protoMethods =

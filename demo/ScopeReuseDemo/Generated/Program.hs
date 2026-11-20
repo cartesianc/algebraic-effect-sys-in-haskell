@@ -21,7 +21,8 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
                      , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
-  let target label action = SDK.targetApp label emptyContexts scopes
+  let target :: Show value => String -> App value -> SDK.Target ContextValues Errors value
+      target label action = SDK.targetApp label emptyContexts scopes
         (SDK.withErrorHandlers Handlers.errorHandlers action)
   pure
     ( [ target "PrepareProbe" (PrepareProbeResult () <$ Handlers.runPrepareProbe)
@@ -98,169 +99,72 @@ generatedPrototype =
             }
         ]
     , SDK.protoEffects =
-        [ SDK.EffectProto
-            { SDK.effectName = "FileLocations"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        [ (SDK.effectProto "FileLocations" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetFilePathsGen), (SDK.ContextRequire, ReadFilePathsGen)]
-            , SDK.effectDemands = []
             , SDK.effectProduces = Just "FilePaths"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
-            , SDK.effectContextDependencies = []
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "PrepareProbe"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunPrepareProbeGen)]
+        , (SDK.effectProto "PrepareProbe" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunPrepareProbeGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "FilePaths" "FileLocations"
                 , SDK.ResolvedDemand SDK.RequireAccess "FilePaths" "FileLocations"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "FileResource"
-            , SDK.effectKind = SDK.ContextKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "FileResource" SDK.ContextKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ContextRequest, GetOpenedFileGen), (SDK.ContextRequire, ReadOpenedFileGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "FilePaths" "FileLocations"]
             , SDK.effectProduces = Just "OpenedFile"
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "SharedFileScope"
-            , SDK.effectKind = SDK.ScopedKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods =
+        , (SDK.effectProto "SharedFileScope" SDK.ScopedKind "Root")
+            { SDK.effectMethods =
                 [(SDK.ScopeOpen, OpenSharedFileScopeGen), (SDK.ScopeClose, CloseSharedFileScopeGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "OpenedFile" "FileResource"
                 , SDK.ResolvedDemand SDK.RequireAccess "OpenedFile" "FileResource"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
             , SDK.effectOpeningInputs = ["FileLocations"]
             , SDK.effectNearestScopes = ["SharedFileScope"]
             , SDK.effectResource = Just "FileResource"
             , SDK.effectContextDependencies = ["FileLocations","FileResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "WriteFirst"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "SharedFileScope"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunWriteFirstGen)]
+        , (SDK.effectProto "WriteFirst" SDK.ExcuKind "SharedFileScope")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunWriteFirstGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "OpenedFile" "FileResource"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["SharedFileScope"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["SharedFileScope"]
             , SDK.effectScopeParents = ["SharedFileScope"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["SharedFileScope"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations","FileResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "WriteSecond"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "SharedFileScope"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunWriteSecondGen)]
+        , (SDK.effectProto "WriteSecond" SDK.ExcuKind "SharedFileScope")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunWriteSecondGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "OpenedFile" "FileResource"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["SharedFileScope"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["SharedFileScope"]
             , SDK.effectScopeParents = ["SharedFileScope"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["SharedFileScope"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations","FileResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "WriteThird"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "SharedFileScope"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunWriteThirdGen)]
+        , (SDK.effectProto "WriteThird" SDK.ExcuKind "SharedFileScope")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunWriteThirdGen)]
             , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "OpenedFile" "FileResource"]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
             , SDK.effectScopes = ["SharedFileScope"]
-            , SDK.effectErrorScope = Nothing
             , SDK.effectInputChain = ["SharedFileScope"]
             , SDK.effectScopeParents = ["SharedFileScope"]
-            , SDK.effectOpeningInputs = []
             , SDK.effectNearestScopes = ["SharedFileScope"]
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations","FileResource"]
-            , SDK.effectContinuous = False
             }
-        , SDK.EffectProto
-            { SDK.effectName = "VerifyReuse"
-            , SDK.effectKind = SDK.ExcuKind
-            , SDK.effectInput = "Root"
-            , SDK.effectMethods = [(SDK.HandlerMethod, RunVerifyReuseGen)]
+        , (SDK.effectProto "VerifyReuse" SDK.ExcuKind "Root")
+            { SDK.effectMethods = [(SDK.HandlerMethod, RunVerifyReuseGen)]
             , SDK.effectDemands =
                 [ SDK.ResolvedDemand SDK.RequestAccess "FilePaths" "FileLocations"
                 , SDK.ResolvedDemand SDK.RequireAccess "FilePaths" "FileLocations"
                 ]
-            , SDK.effectProduces = Nothing
-            , SDK.effectBranches = []
-            , SDK.effectAnchor = Nothing
-            , SDK.effectScopes = []
-            , SDK.effectErrorScope = Nothing
-            , SDK.effectInputChain = []
-            , SDK.effectScopeParents = []
-            , SDK.effectOpeningInputs = []
-            , SDK.effectNearestScopes = []
-            , SDK.effectResource = Nothing
             , SDK.effectContextDependencies = ["FileLocations"]
-            , SDK.effectContinuous = False
             }
         ]
     , SDK.protoMethods =

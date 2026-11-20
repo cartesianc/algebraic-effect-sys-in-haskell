@@ -17,13 +17,13 @@ import ScopeInstancesDemo.Types
 type App = SDK.App ContextValues Errors
 
 -- 每个 Context 的资产类型：名字来自 Asset 声明，包装其表示类型。
-newtype FileName = FileName ([Char])
-deriving instance Eq ([Char]) => Eq FileName
-deriving instance Show ([Char]) => Show FileName
+newtype FileName = FileName [Char]
+deriving instance Eq [Char] => Eq FileName
+deriving instance Show [Char] => Show FileName
 
-newtype OpenedFile = OpenedFile (FileHandle)
-deriving instance Eq (FileHandle) => Eq OpenedFile
-deriving instance Show (FileHandle) => Show OpenedFile
+newtype OpenedFile = OpenedFile FileHandle
+deriving instance Eq FileHandle => Eq OpenedFile
+deriving instance Show FileHandle => Show OpenedFile
 
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
 data MethodGen = RunPrepareFilesGen | GetFileNameGen | ReadFileNameGen | GetOpenedFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | RunUseFirstGen | RunSelectSecondGen | RunUseSecondGen | RunSelectFirstGen | RunReopenFirstGen | RunCheckJournalGen
@@ -49,7 +49,7 @@ newtype SelectedFileError = SelectedFileError String
   deriving (Eq, Show, Read)
 
 -- handler acquireFile：绑定到 FileResource。
-type AcquireFileLayer m = (SDK.Reads ([Char]) m, SDK.Raises AcquireFileError m, MonadIO m)
+type AcquireFileLayer m = (SDK.Reads [Char] m, SDK.Raises AcquireFileError m, MonadIO m)
 class AcquireFileHandler m where
   acquireFile :: m FileHandle
 
@@ -58,7 +58,7 @@ newtype AcquireFileError = AcquireFileError String
   deriving (Eq, Show, Read)
 
 -- handler openSelectedFile：绑定到 FileSession。
-type OpenSelectedFileLayer m = (SDK.Reads (FileHandle) m, SDK.RawOutputs m, SDK.Raises OpenSelectedFileError m, MonadIO m)
+type OpenSelectedFileLayer m = (SDK.Reads FileHandle m, SDK.RawOutputs m, SDK.Raises OpenSelectedFileError m, MonadIO m)
 class OpenSelectedFileHandler m where
   openSelectedFile :: m [String]
 
@@ -67,7 +67,7 @@ newtype OpenSelectedFileError = OpenSelectedFileError String
   deriving (Eq, Show, Read)
 
 -- handler closeSelectedFile：绑定到 FileSession。
-type CloseSelectedFileLayer m = (SDK.Reads (FileHandle) m, SDK.RawOutputs m, SDK.Raises CloseSelectedFileError m, MonadIO m)
+type CloseSelectedFileLayer m = (SDK.Reads FileHandle m, SDK.RawOutputs m, SDK.Raises CloseSelectedFileError m, MonadIO m)
 class CloseSelectedFileHandler m where
   closeSelectedFile :: m [String]
 
@@ -76,7 +76,7 @@ newtype CloseSelectedFileError = CloseSelectedFileError String
   deriving (Eq, Show, Read)
 
 -- handler checkSelection：绑定到 UseFirst、UseSecond、ReopenFirst。
-type CheckSelectionLayer m = (SDK.Reads (FileHandle) m, SDK.Reads ([Char]) m, SDK.RawOutputs m, SDK.Raises CheckSelectionError m, MonadIO m)
+type CheckSelectionLayer m = (SDK.Reads FileHandle m, SDK.Reads [Char] m, SDK.RawOutputs m, SDK.Raises CheckSelectionError m, MonadIO m)
 class CheckSelectionHandler m where
   checkSelection :: m [String]
 
