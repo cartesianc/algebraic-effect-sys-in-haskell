@@ -8,7 +8,7 @@
 - 保持设计简单，遵循附近风格；源码和样例是证据，不是不可改变的设计权威。
 - 开工先说明涉及的 SDK 模块、各自职责与拟改内容；过程中按模块报告实际改动及原因。若从 runtime 扩展到 Booter、Composition、Injector 或 Source／Shape，先解释跨越边界的必要性。
 - 设计先于实现。声明语法变更单独确认，不为实现方便增加语法、特殊情况或兼容层。
-- 当前探索阶段只做必要的普通编译，不自行新增测试、负例或额外检查门槛。历史验证不能冒充本次验证。
+- 日常改动只做必要的普通编译，不自行新增测试、负例或额外检查门槛。历史验证不能冒充本次验证。
 - 不自动使用 agent-browser；需要视觉检查时请用户协助。
 - commit 使用 Conventional Commits。提交、推送及其他发布动作遵守用户本轮授权。
 
@@ -43,7 +43,7 @@
 | 改 gen：流水线阶段、结构、缓存或资产检查 | [gen 是编译器](docs/CORE_DESIGN.md#compiler)、[编译流水线](docs/CORE_DESIGN.md#generation)、[图与生成](docs/EFFECT_GRAPH.md)、[资产约束](docs/ASSETS.md) |
 | 改 Stream／lifelong | [主设计第 7 章](docs/CORE_DESIGN.md#stream)、[完整规范](docs/STREAM_LIFELONG.md)、[Next stages](docs/NEXT_STAGES.md)，以及将修改的当前协议 |
 | 设计持续执行的结束与清理 | [阶段计划](docs/NEXT_STAGES.md#stages)、[主设计第 7 章](docs/CORE_DESIGN.md#stream)、[运行语义：scope](docs/CORE_DESIGN.md#scope) |
-| 设计 Middleware 与 Hanging | [后续专题](docs/NEXT_STAGES.md#middleware)、[Root 入口包装](docs/CORE_DESIGN.md#calls) |
+| 设计 Middleware 与 Hanging | [prebeta 覆盖范围](docs/NEXT_STAGES.md#middleware)、[Root 入口包装](docs/CORE_DESIGN.md#calls) |
 | 新增或查找由组合推导的行为（不新增方法名或 tag，由 Prototype 组合决定运行驱动） | [组合推导](docs/COMPOSITION.md)、所属专题；新行为先写专题规则，再在组合推导中登记一行 |
 | 修改文档 | [文档职责与维护规则](docs/CORE_DESIGN.md#documents)，只在所属专题维护详细规范 |
 

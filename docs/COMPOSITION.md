@@ -181,7 +181,7 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 <a id="scope-missing"></a>
 ### 尚未覆盖
 
-待交付和已捕获值已有 ownership 的保留见[资源协议](STREAM_LIFELONG.md#binding-retention)。一个 Scoped 注册服务多种细化资源仍未实现（见 [Next stages](NEXT_STAGES.md#deferred)）。普通解析数据不继承生产资源的寿命；任意业务 ADT 内嵌资源的自动追踪不属于当前[资产契约](STREAM_LIFELONG.md#binding-retention)，不作为本轮待办。
+待交付和已捕获值已有 ownership 的保留见[资源协议](STREAM_LIFELONG.md#binding-retention)。一个 Scoped 注册服务多种细化资源仍未实现。普通解析数据不继承生产资源的寿命；任意业务 ADT 内嵌资源的自动追踪不属于当前[资产契约](STREAM_LIFELONG.md#binding-retention)，不作为本轮待办。
 
 <a id="stream"></a>
 ## 6. 持续执行（Stream 与 lifelong）
@@ -280,4 +280,4 @@ Middleware 是由 Root 级入口驱动的 Excu：注册给出 handler 与拦截�
 | 读取本次操作 | `op <- hook` | 只为 Middleware 的标签生成 `Hooks` 实例 | `op` 是触发该次调用的操作 | 同上 |
 | Middleware 与被捕获的链不成环 | 无需写法 | 任何 effect 的 Input 都不能指向 Middleware；Middleware 没有 demands；Middleware 在自己的标签下执行，那里的调用点不调用 `notify` | Middleware 自己不再被捕获 | 同上 |
 
-Middleware 与普通 Excu 一样可以 `raise`，失败从调用点传播；后续事项见 [Next stages](NEXT_STAGES.md#middleware)。
+Middleware 与普通 Excu 一样可以 `raise`，失败从调用点传播；当前支持的捕获类别见[主设计](CORE_DESIGN.md#middleware)。

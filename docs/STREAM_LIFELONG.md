@@ -41,7 +41,7 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 
 Stream 不进入 original chain，也不作为 AST target；它的持续运行由生产会话托管。original target 代表一条完整消费链的末端，其中有限执行的 Excu／Scoped 可以消费上游资产，同时把本次输出交给挂接的 Context 发布新资产。Stream 不向 AST 返回 Succ，它的结束由等待交付的单元和 lifelong 观察；这不限制消费节点本身的产值。
 
-socket、event、behavior 用来解释不同的驱动关系，但不是类型标签；它们在 SDK 中如何区分仍待确定，目前的写法见 [4.1 节](#drives)。挂在 Stream 下的 Context 与挂在原子句柄下的 Context 写法相同：parser 用 `rawinput` 取得本次输入。
+socket、event、behavior 描述业务来源的取值方式。三种来源的现行写法见[第 4.1 节](#drives)。挂在 Stream 下的 Context 与挂在原子句柄下的 Context 写法相同：parser 用 `rawinput` 取得本次输入。
 
 <a id="contracts"></a>
 ## 3. 资产、方法与 beforegen
@@ -129,7 +129,7 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
 <a id="drives"></a>
 ### 4.1 socket、event、behavior 的写法
 
-这三个词描述外部数据怎样到来，帮助业务作者写 Stream handler；当前都写成 Stream 加 parser。SDK 不按 IO 内容识别它们，也不据此改变生产方式；是否增加自动推导或调度策略归[开放专题](NEXT_STAGES.md#deferred)。
+这三个词描述外部数据怎样到来，帮助业务作者写 Stream handler；当前都写成 Stream 加 parser。SDK 根据注册和链的组合确定驱动方式。
 
 | 驱动关系 | 数据怎样到来 | 写法 |
 | --- | --- | --- |
@@ -430,7 +430,7 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
 
 `streamEnd`、`endStream`、正常返回和失败不合并成同一种结果。来源封口不等于生产线程已退出，生产线程退出也不意味着所有消费者持有的资源可以关闭。当前独立来源封口后保留会话预约，等待既定退役或运行退出；ReuseOutput 没有独立 worker 或会话预约。
 
-本节是当前协议的实现对照。Source／Shape 读取 Haskell 结构，Emit 渲染已定计划；它们不决定上述动态状态。容量等待、局部失败恢复和新的提前释放策略仍按 [Next stages](NEXT_STAGES.md#deferred) 单独设计，不属于 Stage 3 的完成条件。
+本节是当前协议的实现对照。Source／Shape 读取 Haskell 结构，Emit 渲染已定计划；它们不决定上述动态状态。容量等待留给[背压专题](NEXT_STAGES.md#backpressure)，现行失败传播见[失败协议](#failures)。
 
 <a id="failures"></a>
 ## 9. 故障、取消与资源边界
@@ -483,7 +483,7 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
 
 轮询、event 与 socket 都使用这组结构规则：一次采样或收到一条消息不代表来源结束，暂时没有输入也不表示可以 close。BootPlan 决定驱动装配；SDK 不从原子 IO 推断这三个业务名称，也不按它们另选清理策略。现有写法见[第 4.1 节](#drives)。
 
-资源关闭后的受控读取继续检查原 Binding 的 owner 与关闭／失败状态，不自动换 owner、重开或重放生产。外部别名不在本节保留保证内；lifelong 局部失败属于[独立开放专题](NEXT_STAGES.md#deferred)，不作为本节既定保证的前置条件。
+资源关闭后的受控读取继续检查原 Binding 的 owner 与关闭／失败状态，不自动换 owner、重开或重放生产。外部别名不在本节保留保证内。含 lifelong 的程序按[现行失败协议](#failures)传播失败。
 
 业务资产保存多份数据不等于可以把其中各资源的 owner 合成一个，也不能复活已关闭资源。持续值作为 scope 开启参数沿用本次 Binding 的生产身份和原生产帧；已领取交付、游标下一条与合法后继按读取规则参与待用判断，详见[开启计划与待用](EFFECT_GRAPH.md#scope-opening-retention)。这不自动展开 T 中的资源引用或额外保活其内容。
 
@@ -675,6 +675,6 @@ ScopeTree 独立构建并保持无环；订阅与回调关系不作为 scope 父
 <a id="deferred"></a>
 ## 11. 验证与延期
 
-本仓库按约定只做普通编译、生成结果审阅和示例观察，不新增测试框架、负例或穷举门槛。已有验证范围概述见 [Next stages](NEXT_STAGES.md#baseline)，逐次观察记录保留在 Git 历史。LSP 仓库的外部穷举模型尚未扩展到 Stream／lifelong。
+本仓库按约定只做普通编译、生成结果审阅和示例观察，不新增测试框架、负例或穷举门槛。现有验证的边界见 [Next stages](NEXT_STAGES.md#current-limits)，逐次观察记录保留在 Git 历史。LSP 仓库的外部穷举模型尚未扩展到 Stream／lifelong。
 
-当前缺口统一记录在 [Next stages 的限制与开放专题](NEXT_STAGES.md#current-limits)。持续值参数、既有 ownership 的交接与会话实例的待用回收已接通；保留范围以[资产契约](#binding-retention)为界。容量背压、局部失败及控制流扩展分别收敛。已有单步来源的写法见[第 4.1 节](#drives)，不据此宣称已提供通用外部回调适配。
+当前缺口统一记录在 [Next stages 的限制与开放专题](NEXT_STAGES.md#current-limits)。持续值参数、既有 ownership 的交接与会话实例的待用回收已接通；保留范围以[资产契约](#binding-retention)为界。容量背压与嵌套 workflow 分列为后续专题。已有单步来源的写法见[第 4.1 节](#drives)，不据此宣称已提供通用外部回调适配。

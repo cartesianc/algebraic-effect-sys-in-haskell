@@ -1,6 +1,6 @@
 # 主设计：Algebraic Effect Sys in Haskell
 
-更新：2026-11-18（同步业务即 DSL、algebraic effect 关系与编译器分工；明确确定性约束资产来源和装配规则，保留共享最新值协议）。本文统一保存设计原则与当前运行协议，并引用图、资产和 Stream 专题作为完整规范；阶段进度与验证边界见 [Next stages](NEXT_STAGES.md)。
+项目于 2026-11-20 进入 **prebeta**。本文记录现行的业务写法、组合规则与执行协议。阶段安排与已知边界见 [Next stages](NEXT_STAGES.md#stages)。
 
 运行和书写示例见 [GUIDE](GUIDE.md)，工作约束见 [AGENTS](../AGENTS.md)。
 
@@ -21,12 +21,11 @@
 | lifelong 消费原子输出复用为持续资产 | 已实现（2026-11-15）；不新增 facade 语法或 handler 能力 | [输出复用](STREAM_LIFELONG.md#derive)、[实施记录](NEXT_STAGES.md#stage-6-reuse) |
 | 原子 handler 复用、前驱与驱动装配、按标签路由 | 已实现（Stage 2，2026-11-08）；本文第 4 章即当前协议 | [Next stages](NEXT_STAGES.md#stage-2) |
 | gen 作为编译器：SDK 分为源语言、gen、编译产物、运行时四层，生成按阶段执行 | 已实现（2026-11-08） | [gen 是编译器](#compiler)、[编译流水线](#generation)、[SDK 分工](#sdk-layout) |
-| 持续执行与资源收尾 | 两侧结束、后继读取、交付保留、会话退役及持续值参数已实现；交付与业务数据中的资源持有继续收敛 | [阶段状态](NEXT_STAGES.md#stages)、[当前限制](NEXT_STAGES.md#current-limits) |
-| 嵌套 lifelong、背压与交付容量等 | 后续专题，本轮不扩展 | [开放事项](NEXT_STAGES.md#deferred) |
-| Middleware 按 AST 挂载注入 Root 的 `super`，观察进入、输出、rawinput 和 raise | 已实现（2026-11-19） | [Middleware](#middleware)、[后续事项](NEXT_STAGES.md#middleware) |
-| Generic Map、Middleware 运行期装卸、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [开放事项](NEXT_STAGES.md#deferred) |
+| 持续执行与资源收尾 | 两侧结束、后继读取、交付保留、会话退役及持续值参数已实现；待交付值与固定捕获按已有 Binding ownership 保活 | [阶段状态](NEXT_STAGES.md#stages)、[当前限制](NEXT_STAGES.md#current-limits) |
+| 持续交付的背压、嵌套 lifelong | 两项分别设计 | [后续专题](NEXT_STAGES.md#deferred) |
+| Middleware 按具名分支挂载，由 Root 的 `super` 及显式操作通知 handler | 已支持 Excu、Scoped、Pure 和 Stream | [Middleware](#middleware) |
 
-实现状态说明代码已接入的范围，不代表全部并发交错或资源逃逸已获证明。过去的编译及 demo 结果概述见 [已有基础与验证边界](NEXT_STAGES.md#baseline)。
+实现状态说明代码已接入的范围，不代表全部并发交错或资源逃逸已获证明。已交付能力见[规范索引](NEXT_STAGES.md#baseline)，验证范围见[已知边界](NEXT_STAGES.md#current-limits)。
 
 <a id="code-shape"></a>
 ## 2. 代码长什么样
@@ -214,9 +213,9 @@ Stream 的目标是让原子方法作者只需理解本方法的输入输出。g
 
 方法签名、生成期结构检查、运行时协议和外部 IO 保证必须分别说明。绑定稳定性由 ContextStore 及共享 ownership 实现，不能从“描述是纯的”直接推导出重复 IO 幂等或资源安全。
 
-Error 的驱动链、Generic Map、跨独立 interpreter 存续、任意逃逸资源和恢复已展开 continuation 等仍有开放边界；状态见 [Next stages](NEXT_STAGES.md)。不以旧候选接口充当已接受的当前 API。
+prebeta 以现行协议作为 LSP 的实现依据。后续专题与当前保证的边界见[阶段计划](NEXT_STAGES.md#stages)。
 
-新增功能先给出 facade、生成契约、runtime 责任及 failure／cleanup 边界，再分批实现。当前探索阶段只做必要普通编译，不自行新增测试、负例或额外检查门槛。
+新增功能先给出 facade、生成契约、runtime 责任及 failure／cleanup 边界，再分批实现。日常改动只做必要普通编译，不自行新增测试、负例或额外检查门槛。
 
 <a id="compiler"></a>
 ### 3.10 gen 是这个 EDSL 的编译器
@@ -573,7 +572,7 @@ Gen.Composition 统一计算唯一来源、访问结果、绑定的读取路由�
 
 读取权限在生成期确定：gencode 拒绝 handler 读取未声明的表示类型，只为声明了 requires／streams 的 effect 生成读取实例，运行时不按当前消费者查声明表。SDK 不预初始化 Context，未声明的上游不执行。
 
-AST 组织链的启动次序。Crawler 中 parallel 先抓取并注入解析两页，chained 再打印；共用的打印 handler 按各自 refined asset 读取摘要，不重复抓取。普通读取也可在独立并行分支等待生产，Generic Map 仍待设计。
+AST 组织链的启动次序。Crawler 中 parallel 先抓取并注入解析两页，chained 再打印；共用的打印 handler 按各自 refined asset 读取摘要，不重复抓取。普通读取也可在独立并行分支等待生产。
 
 业务表示类型在 Types.hs 用原生 data/newtype 单独定义，注册以 `Asset @表示类型 "资产名"` 引用并细化为资产。TypeRef 通过 Typeable 识别 SDK 的 Output 构造器以拒绝嵌套完成协议，不解析显示字符串；其余业务类型保存显示名称，Generated 模块须能解析该类型名。它不保存完整数据定义，也不代表任意 Haskell 类型结构都能被第三方工具解释或被 Generic Map 自动适配。
 

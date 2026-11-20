@@ -1295,5 +1295,5 @@ Crawler 需要网络和 PATH 上的 `curl`。文件类示例的输出写在各�
 - **handler 复用**：各绑定的方法类型与 Layer 必须一致；一个 effect 内同一表示类型只能路由到一份资产。完整约束见[注册契约](CORE_DESIGN.md#registration)。
 - **持续资源与内存**：生产侧结束、消费侧结束和会话退役已实现。持续值可作为 scope 开启参数，待交付值与固定捕获已按[既有 Binding ownership](STREAM_LIFELONG.md#binding-retention)保留资源。交付队列保留未领取值和最新值，没有硬容量或背压保证；业务自行保存的记录不由 SDK 裁剪。边界与剩余阶段见 [Next stages](NEXT_STAGES.md#current-limits)。
 - **资源管理范围**：SDK 只管理已交给它的资源。业务自行 `forkIO` 的线程、未发布的部分获取和逸出资源由原子实现负责，见[scope 保证](CORE_DESIGN.md#scope-gc)。
-- **其他扩展**：背压、局部失败、嵌套 lifelong、Middleware 和通用适配等统一跟踪在[开放专题](NEXT_STAGES.md#deferred)，本指南不列另一份状态清单。
+- 持续交付的背压和嵌套 `lifelong` 分别列入[后续专题](NEXT_STAGES.md#deferred)。
 - **构建方式**：SDK 目前随仓库内示例一起编译，尚不能作为独立依赖引入。
