@@ -1,14 +1,8 @@
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE UndecidableInstances #-}
 -- handler 是不带参数的类方法：按表示类型 require 资产，用 rawinput 读取挂接上游的本次输出，
 -- 用 raise 报告自己的失败；不出现上游 effect、scope、细化资产或 effect 错误。
 {-# LANGUAGE ConstraintKinds #-}
@@ -27,7 +21,6 @@ import qualified FacadeProbe.Generated.Effects as FrameworkGenerated
 import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
-import FacadeProbe.Types
 import Framework.SDK (Emits(rawemit), Raises(..), Raw(..), Reads(..), rawoutput)
 import FacadeProbe.Generated.Effects
 import FacadeProbe.Types
@@ -347,197 +340,317 @@ instance FrameworkRuntime.EndsStream (Wrap "ShowB") where
   endStream = Wrap FrameworkRuntime.endSubscription
 
 getReportPath :: FrameworkGenerated.App FrameworkGenerated.ReportPath
-getReportPath = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ReportLocation"
-    (\value bindings -> bindings { FrameworkGenerated.boundReportLocation = Just value })) $
-  (FrameworkGenerated.ReportPath <$> runWrap @"ReportLocation" (FrameworkRuntime.super "reportLocation" FrameworkGenerated.reportLocation))
+getReportPath =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "ReportLocation"
+      (\value bindings -> bindings { FrameworkGenerated.boundReportLocation = Just value }) $
+    (FrameworkGenerated.ReportPath <$> runWrap @"ReportLocation" (FrameworkRuntime.super "reportLocation" FrameworkGenerated.reportLocation))
 
 readReportPath :: FrameworkGenerated.App FrameworkGenerated.ReportPath
-readReportPath = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ReportLocation" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportLocation
+readReportPath =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "ReportLocation" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportLocation
 
 getReplyPath :: FrameworkGenerated.App FrameworkGenerated.ReplyPath
-getReplyPath = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ReplyLocation"
-    (\value bindings -> bindings { FrameworkGenerated.boundReplyLocation = Just value })) $
-  (FrameworkGenerated.ReplyPath <$> runWrap @"ReplyLocation" (FrameworkRuntime.super "replyLocation" FrameworkGenerated.replyLocation))
+getReplyPath =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "ReplyLocation"
+      (\value bindings -> bindings { FrameworkGenerated.boundReplyLocation = Just value }) $
+    (FrameworkGenerated.ReplyPath <$> runWrap @"ReplyLocation" (FrameworkRuntime.super "replyLocation" FrameworkGenerated.replyLocation))
 
 readReplyPath :: FrameworkGenerated.App FrameworkGenerated.ReplyPath
-readReplyPath = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ReplyLocation" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReplyLocation
+readReplyPath =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "ReplyLocation" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReplyLocation
 
 getReportBody :: FrameworkGenerated.App FrameworkGenerated.ReportBody
-getReportBody = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ReportDraft"
-    (\value bindings -> bindings { FrameworkGenerated.boundReportDraft = Just value })) $
-  (FrameworkGenerated.ReportBody <$> runWrap @"ReportDraft" (FrameworkRuntime.super "reportDraft" FrameworkGenerated.reportDraft))
+getReportBody =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "ReportDraft"
+      (\value bindings -> bindings { FrameworkGenerated.boundReportDraft = Just value }) $
+    (FrameworkGenerated.ReportBody <$> runWrap @"ReportDraft" (FrameworkRuntime.super "reportDraft" FrameworkGenerated.reportDraft))
 
 readReportBody :: FrameworkGenerated.App FrameworkGenerated.ReportBody
-readReportBody = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ReportDraft" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportDraft
+readReportBody =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "ReportDraft" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportDraft
 
 getReplyBody :: FrameworkGenerated.App FrameworkGenerated.ReplyBody
-getReplyBody = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ReplyDraft"
-    (\value bindings -> bindings { FrameworkGenerated.boundReplyDraft = Just value })) $
-  (FrameworkGenerated.ReplyBody <$> runWrap @"ReplyDraft" (FrameworkRuntime.super "replyDraft" FrameworkGenerated.replyDraft))
+getReplyBody =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "ReplyDraft"
+      (\value bindings -> bindings { FrameworkGenerated.boundReplyDraft = Just value }) $
+    (FrameworkGenerated.ReplyBody <$> runWrap @"ReplyDraft" (FrameworkRuntime.super "replyDraft" FrameworkGenerated.replyDraft))
 
 readReplyBody :: FrameworkGenerated.App FrameworkGenerated.ReplyBody
-readReplyBody = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ReplyDraft" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReplyDraft
+readReplyBody =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "ReplyDraft" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReplyDraft
 
 getOpenedReport :: FrameworkGenerated.App FrameworkGenerated.OpenedReport
-getOpenedReport = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ReportFile"
-    (\value bindings -> bindings { FrameworkGenerated.boundReportFile = Just value })) $
-  getReportPath >> (FrameworkGenerated.OpenedReport <$> runWrap @"ReportFile" (FrameworkRuntime.super "acquireFile" FrameworkGenerated.acquireFile))
+getOpenedReport =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "ReportFile"
+      (\value bindings -> bindings { FrameworkGenerated.boundReportFile = Just value }) $
+    getReportPath >> (FrameworkGenerated.OpenedReport <$> runWrap @"ReportFile" (FrameworkRuntime.super "acquireFile" FrameworkGenerated.acquireFile))
 
 readOpenedReport :: FrameworkGenerated.App FrameworkGenerated.OpenedReport
-readOpenedReport = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ReportFile" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportFile
+readOpenedReport =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "ReportFile" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportFile
 
 getOpenedReply :: FrameworkGenerated.App FrameworkGenerated.OpenedReply
-getOpenedReply = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ReplyFile"
-    (\value bindings -> bindings { FrameworkGenerated.boundReplyFile = Just value })) $
-  getReplyPath >> (FrameworkGenerated.OpenedReply <$> runWrap @"ReplyFile" (FrameworkRuntime.super "acquireFile" FrameworkGenerated.acquireFile))
+getOpenedReply =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "ReplyFile"
+      (\value bindings -> bindings { FrameworkGenerated.boundReplyFile = Just value }) $
+    getReplyPath >> (FrameworkGenerated.OpenedReply <$> runWrap @"ReplyFile" (FrameworkRuntime.super "acquireFile" FrameworkGenerated.acquireFile))
 
 readOpenedReply :: FrameworkGenerated.App FrameworkGenerated.OpenedReply
-readOpenedReply = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ReplyFile" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReplyFile
+readOpenedReply =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "ReplyFile" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReplyFile
 
 openReportScope :: FrameworkGenerated.App [String]
-openReportScope = (FrameworkRuntime.withErrorPath ["ReportScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openReportScope" [] [] . FrameworkRuntime.openScope "ReportScope" FrameworkGenerated.ScopeBindingError (Just (() <$ closeReportScope)) . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReportScope") $
-  getOpenedReport >> runWrap @"ReportScope" (FrameworkRuntime.super "openTextFile" FrameworkGenerated.openTextFile)
+openReportScope =
+  FrameworkRuntime.withErrorPath ["ReportScope"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicScope "openReportScope" [] []
+  . FrameworkRuntime.openScope "ReportScope" FrameworkGenerated.ScopeBindingError (Just (() <$ closeReportScope))
+  . FrameworkRuntime.enterHandler "ReportScope" $
+    getOpenedReport >> runWrap @"ReportScope" (FrameworkRuntime.super "openTextFile" FrameworkGenerated.openTextFile)
 
 closeReportScope :: FrameworkGenerated.App [String]
-closeReportScope = (FrameworkRuntime.withErrorPath ["ReportScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeReportScope" [] [] . FrameworkRuntime.closeScope "ReportScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReportScope") $
-  runWrap @"ReportScope" (FrameworkRuntime.superClose "closeTextFile" FrameworkGenerated.closeTextFile)
+closeReportScope =
+  FrameworkRuntime.withErrorPath ["ReportScope"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicScope "closeReportScope" [] []
+  . FrameworkRuntime.closeScope "ReportScope" FrameworkGenerated.ScopeBindingError
+  . FrameworkRuntime.enterHandler "ReportScope" $
+    runWrap @"ReportScope" (FrameworkRuntime.superClose "closeTextFile" FrameworkGenerated.closeTextFile)
 
 openReplyScope :: FrameworkGenerated.App [String]
-openReplyScope = (FrameworkRuntime.withErrorPath ["ReplyScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openReplyScope" [] [] . FrameworkRuntime.openScope "ReplyScope" FrameworkGenerated.ScopeBindingError (Just (() <$ closeReplyScope)) . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReplyScope") $
-  getOpenedReply >> runWrap @"ReplyScope" (FrameworkRuntime.super "openTextFile" FrameworkGenerated.openTextFile)
+openReplyScope =
+  FrameworkRuntime.withErrorPath ["ReplyScope"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicScope "openReplyScope" [] []
+  . FrameworkRuntime.openScope "ReplyScope" FrameworkGenerated.ScopeBindingError (Just (() <$ closeReplyScope))
+  . FrameworkRuntime.enterHandler "ReplyScope" $
+    getOpenedReply >> runWrap @"ReplyScope" (FrameworkRuntime.super "openTextFile" FrameworkGenerated.openTextFile)
 
 closeReplyScope :: FrameworkGenerated.App [String]
-closeReplyScope = (FrameworkRuntime.withErrorPath ["ReplyScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeReplyScope" [] [] . FrameworkRuntime.closeScope "ReplyScope" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReplyScope") $
-  runWrap @"ReplyScope" (FrameworkRuntime.superClose "closeTextFile" FrameworkGenerated.closeTextFile)
+closeReplyScope =
+  FrameworkRuntime.withErrorPath ["ReplyScope"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicScope "closeReplyScope" [] []
+  . FrameworkRuntime.closeScope "ReplyScope" FrameworkGenerated.ScopeBindingError
+  . FrameworkRuntime.enterHandler "ReplyScope" $
+    runWrap @"ReplyScope" (FrameworkRuntime.superClose "closeTextFile" FrameworkGenerated.closeTextFile)
 
 runWriteReport :: FrameworkGenerated.App [String]
-runWriteReport = (FrameworkRuntime.withErrorPath ["ReportScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteReport" [] [] . FrameworkRuntime.withScopeDependencies ["ReportScope"] . FrameworkRuntime.enterHandler "WriteReport") $
-  getReportBody >> openReportScope >> runWrap @"WriteReport" (FrameworkRuntime.super "writeText" FrameworkGenerated.writeText)
+runWriteReport =
+  FrameworkRuntime.withErrorPath ["ReportScope"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runWriteReport" [] []
+  . FrameworkRuntime.withScopeDependencies ["ReportScope"]
+  . FrameworkRuntime.enterHandler "WriteReport" $
+    getReportBody >> openReportScope >> runWrap @"WriteReport" (FrameworkRuntime.super "writeText" FrameworkGenerated.writeText)
 
 runWriteReply :: FrameworkGenerated.App [String]
-runWriteReply = (FrameworkRuntime.withErrorPath ["ReplyScope"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteReply" [] [] . FrameworkRuntime.withScopeDependencies ["ReplyScope"] . FrameworkRuntime.enterHandler "WriteReply") $
-  getReplyBody >> openReplyScope >> runWrap @"WriteReply" (FrameworkRuntime.super "writeText" FrameworkGenerated.writeText)
+runWriteReply =
+  FrameworkRuntime.withErrorPath ["ReplyScope"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runWriteReply" [] []
+  . FrameworkRuntime.withScopeDependencies ["ReplyScope"]
+  . FrameworkRuntime.enterHandler "WriteReply" $
+    getReplyBody >> openReplyScope >> runWrap @"WriteReply" (FrameworkRuntime.super "writeText" FrameworkGenerated.writeText)
 
 runMarkReply :: FrameworkGenerated.App [String]
-runMarkReply = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runMarkReply" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "MarkReply") $
-  runWrap @"MarkReply" (FrameworkRuntime.super "markRead" FrameworkGenerated.markRead)
+runMarkReply =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runMarkReply" [] []
+  . FrameworkRuntime.enterHandler "MarkReply" $
+    runWrap @"MarkReply" (FrameworkRuntime.super "markRead" FrameworkGenerated.markRead)
 
 runReadReport :: FrameworkGenerated.App [String]
-runReadReport = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReadReport" [("ReportCounter", () <$ getReportStats)] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReadReport") $
-  runWrap @"ReadReport" (FrameworkRuntime.super "readText" FrameworkGenerated.readText)
+runReadReport =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runReadReport" [("ReportCounter", () <$ getReportStats)] []
+  . FrameworkRuntime.enterHandler "ReadReport" $
+    runWrap @"ReadReport" (FrameworkRuntime.super "readText" FrameworkGenerated.readText)
 
 runReadReply :: FrameworkGenerated.App [String]
-runReadReply = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReadReply" [("ReplyCounter", () <$ getReplyStats)] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ReadReply") $
-  runMarkReply >> runWrap @"ReadReply" (FrameworkRuntime.super "readText" FrameworkGenerated.readText)
+runReadReply =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runReadReply" [("ReplyCounter", () <$ getReplyStats)] []
+  . FrameworkRuntime.enterHandler "ReadReply" $
+    runMarkReply >> runWrap @"ReadReply" (FrameworkRuntime.super "readText" FrameworkGenerated.readText)
 
 getReportStats :: FrameworkGenerated.App FrameworkGenerated.ReportStats
-getReportStats = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ReportCounter"
-    (\value bindings -> bindings { FrameworkGenerated.boundReportCounter = Just value })) $
-  (FrameworkGenerated.ReportStats <$> runWrap @"ReportCounter" (FrameworkRuntime.super "countLines" FrameworkGenerated.countLines))
+getReportStats =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "ReportCounter"
+      (\value bindings -> bindings { FrameworkGenerated.boundReportCounter = Just value }) $
+    (FrameworkGenerated.ReportStats <$> runWrap @"ReportCounter" (FrameworkRuntime.super "countLines" FrameworkGenerated.countLines))
 
 readReportStats :: FrameworkGenerated.App FrameworkGenerated.ReportStats
-readReportStats = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ReportCounter" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportCounter
+readReportStats =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "ReportCounter" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportCounter
 
 getReplyStats :: FrameworkGenerated.App FrameworkGenerated.ReplyStats
-getReplyStats = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ReplyCounter"
-    (\value bindings -> bindings { FrameworkGenerated.boundReplyCounter = Just value })) $
-  (FrameworkGenerated.ReplyStats <$> runWrap @"ReplyCounter" (FrameworkRuntime.super "countLines" FrameworkGenerated.countLines))
+getReplyStats =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "ReplyCounter"
+      (\value bindings -> bindings { FrameworkGenerated.boundReplyCounter = Just value }) $
+    (FrameworkGenerated.ReplyStats <$> runWrap @"ReplyCounter" (FrameworkRuntime.super "countLines" FrameworkGenerated.countLines))
 
 readReplyStats :: FrameworkGenerated.App FrameworkGenerated.ReplyStats
-readReplyStats = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ReplyCounter" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReplyCounter
+readReplyStats =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "ReplyCounter" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReplyCounter
 
 runShowReport :: FrameworkGenerated.App [String]
-runShowReport = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runShowReport" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowReport") $
-  runWrap @"ShowReport" (FrameworkRuntime.super "showCount" FrameworkGenerated.showCount)
+runShowReport =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runShowReport" [] []
+  . FrameworkRuntime.enterHandler "ShowReport" $
+    runWrap @"ShowReport" (FrameworkRuntime.super "showCount" FrameworkGenerated.showCount)
 
 runShowReply :: FrameworkGenerated.App [String]
-runShowReply = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runShowReply" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowReply") $
-  runWrap @"ShowReply" (FrameworkRuntime.super "showCount" FrameworkGenerated.showCount)
+runShowReply =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runShowReply" [] []
+  . FrameworkRuntime.enterHandler "ShowReply" $
+    runWrap @"ShowReply" (FrameworkRuntime.super "showCount" FrameworkGenerated.showCount)
 
 getReportState :: FrameworkGenerated.App FrameworkGenerated.ReportState
-getReportState = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "ReportInspect"
-    (\value bindings -> bindings { FrameworkGenerated.boundReportInspect = Just value })) $
-  (FrameworkGenerated.ReportState <$> runWrap @"ReportInspect" (FrameworkRuntime.super "inspectFile" FrameworkGenerated.inspectFile))
+getReportState =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "ReportInspect"
+      (\value bindings -> bindings { FrameworkGenerated.boundReportInspect = Just value }) $
+    (FrameworkGenerated.ReportState <$> runWrap @"ReportInspect" (FrameworkRuntime.super "inspectFile" FrameworkGenerated.inspectFile))
 
 readReportState :: FrameworkGenerated.App FrameworkGenerated.ReportState
-readReportState = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ReportInspect" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportInspect
+readReportState =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "ReportInspect" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundReportInspect
 
 runOnBlank :: FrameworkGenerated.App [String]
-runOnBlank = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runOnBlank" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "OnBlank") $
-  runWrap @"OnBlank" (FrameworkRuntime.super "describeBlank" FrameworkGenerated.describeBlank)
+runOnBlank =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runOnBlank" [] []
+  . FrameworkRuntime.enterHandler "OnBlank" $
+    runWrap @"OnBlank" (FrameworkRuntime.super "describeBlank" FrameworkGenerated.describeBlank)
 
 runOnFilled :: FrameworkGenerated.App [String]
-runOnFilled = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runOnFilled" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "OnFilled") $
-  runWrap @"OnFilled" (FrameworkRuntime.super "describeFilled" FrameworkGenerated.describeFilled)
+runOnFilled =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runOnFilled" [] []
+  . FrameworkRuntime.enterHandler "OnFilled" $
+    runWrap @"OnFilled" (FrameworkRuntime.super "describeFilled" FrameworkGenerated.describeFilled)
 
 getCountA :: FrameworkGenerated.App FrameworkGenerated.CountA
-getCountA = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "CounterA"
-    (\value bindings -> bindings { FrameworkGenerated.boundCounterA = Just value })) $
-  (FrameworkGenerated.CountA <$> runWrap @"CounterA" (FrameworkRuntime.super "newCounter" FrameworkGenerated.newCounter))
+getCountA =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "CounterA"
+      (\value bindings -> bindings { FrameworkGenerated.boundCounterA = Just value }) $
+    (FrameworkGenerated.CountA <$> runWrap @"CounterA" (FrameworkRuntime.super "newCounter" FrameworkGenerated.newCounter))
 
 readCountA :: FrameworkGenerated.App FrameworkGenerated.CountA
-readCountA = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "CounterA" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundCounterA
+readCountA =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "CounterA" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundCounterA
 
 getCountB :: FrameworkGenerated.App FrameworkGenerated.CountB
-getCountB = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "CounterB"
-    (\value bindings -> bindings { FrameworkGenerated.boundCounterB = Just value })) $
-  (FrameworkGenerated.CountB <$> runWrap @"CounterB" (FrameworkRuntime.super "newCounter" FrameworkGenerated.newCounter))
+getCountB =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "CounterB"
+      (\value bindings -> bindings { FrameworkGenerated.boundCounterB = Just value }) $
+    (FrameworkGenerated.CountB <$> runWrap @"CounterB" (FrameworkRuntime.super "newCounter" FrameworkGenerated.newCounter))
 
 readCountB :: FrameworkGenerated.App FrameworkGenerated.CountB
-readCountB = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "CounterB" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundCounterB
+readCountB =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "CounterB" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundCounterB
 
 openFeedScopeA :: FrameworkGenerated.App [String]
-openFeedScopeA = (FrameworkRuntime.withErrorPath ["FeedScopeA"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFeedScopeA" [] [] . FrameworkRuntime.openScope "FeedScopeA" FrameworkGenerated.ScopeBindingError Nothing . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FeedScopeA") $
-  getCountA >> runWrap @"FeedScopeA" (FrameworkRuntime.super "openCounter" FrameworkGenerated.openCounter)
+openFeedScopeA =
+  FrameworkRuntime.withErrorPath ["FeedScopeA"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicScope "openFeedScopeA" [] []
+  . FrameworkRuntime.openScope "FeedScopeA" FrameworkGenerated.ScopeBindingError Nothing
+  . FrameworkRuntime.enterHandler "FeedScopeA" $
+    getCountA >> runWrap @"FeedScopeA" (FrameworkRuntime.super "openCounter" FrameworkGenerated.openCounter)
 
 openFeedScopeB :: FrameworkGenerated.App [String]
-openFeedScopeB = (FrameworkRuntime.withErrorPath ["FeedScopeB"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFeedScopeB" [] [] . FrameworkRuntime.openScope "FeedScopeB" FrameworkGenerated.ScopeBindingError Nothing . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FeedScopeB") $
-  getCountB >> runWrap @"FeedScopeB" (FrameworkRuntime.super "openCounter" FrameworkGenerated.openCounter)
+openFeedScopeB =
+  FrameworkRuntime.withErrorPath ["FeedScopeB"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicScope "openFeedScopeB" [] []
+  . FrameworkRuntime.openScope "FeedScopeB" FrameworkGenerated.ScopeBindingError Nothing
+  . FrameworkRuntime.enterHandler "FeedScopeB" $
+    getCountB >> runWrap @"FeedScopeB" (FrameworkRuntime.super "openCounter" FrameworkGenerated.openCounter)
 
 nextFeedA :: FrameworkGenerated.App ()
-nextFeedA = (FrameworkRuntime.withErrorPath ["FeedScopeA"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FeedScopeA"] . FrameworkRuntime.enterHandler "FeedA") $
-  openFeedScopeA >> runWrap @"FeedA" (FrameworkRuntime.super "nextA" FrameworkGenerated.nextA)
+nextFeedA =
+  FrameworkRuntime.withErrorPath ["FeedScopeA"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.withScopeDependencies ["FeedScopeA"]
+  . FrameworkRuntime.enterHandler "FeedA" $
+    openFeedScopeA >> runWrap @"FeedA" (FrameworkRuntime.super "nextA" FrameworkGenerated.nextA)
 
 nextFeedB :: FrameworkGenerated.App ()
-nextFeedB = (FrameworkRuntime.withErrorPath ["FeedScopeB"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FeedScopeB"] . FrameworkRuntime.enterHandler "FeedB") $
-  openFeedScopeB >> runWrap @"FeedB" (FrameworkRuntime.super "nextB" FrameworkGenerated.nextB)
+nextFeedB =
+  FrameworkRuntime.withErrorPath ["FeedScopeB"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.withScopeDependencies ["FeedScopeB"]
+  . FrameworkRuntime.enterHandler "FeedB" $
+    openFeedScopeB >> runWrap @"FeedB" (FrameworkRuntime.super "nextB" FrameworkGenerated.nextB)
 
 getLevelA :: FrameworkGenerated.App FrameworkGenerated.LevelA
-getLevelA = (FrameworkRuntime.withErrorPath ["FeedScopeA"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FeedScopeA"] . FrameworkRuntime.callContext "ParserA"
-    (\value bindings -> bindings { FrameworkGenerated.boundParserA = Just value })) $
-  (FrameworkGenerated.LevelA <$> runWrap @"ParserA" (FrameworkRuntime.super "parseLevel" FrameworkGenerated.parseLevel))
+getLevelA =
+  FrameworkRuntime.withErrorPath ["FeedScopeA"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.withScopeDependencies ["FeedScopeA"]
+  . FrameworkRuntime.callContext "ParserA"
+      (\value bindings -> bindings { FrameworkGenerated.boundParserA = Just value }) $
+    (FrameworkGenerated.LevelA <$> runWrap @"ParserA" (FrameworkRuntime.super "parseLevel" FrameworkGenerated.parseLevel))
 
 streamLevelA :: FrameworkGenerated.App FrameworkGenerated.LevelA
-streamLevelA = (FrameworkRuntime.withErrorPath ["FeedScopeA"] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readStreamContext "ParserA" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundParserA
+streamLevelA =
+  FrameworkRuntime.withErrorPath ["FeedScopeA"]
+  . FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readStreamContext "ParserA" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundParserA
 
 getLevelB :: FrameworkGenerated.App FrameworkGenerated.LevelB
-getLevelB = (FrameworkRuntime.withErrorPath ["FeedScopeB"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FeedScopeB"] . FrameworkRuntime.callContext "ParserB"
-    (\value bindings -> bindings { FrameworkGenerated.boundParserB = Just value })) $
-  (FrameworkGenerated.LevelB <$> runWrap @"ParserB" (FrameworkRuntime.super "parseLevel" FrameworkGenerated.parseLevel))
+getLevelB =
+  FrameworkRuntime.withErrorPath ["FeedScopeB"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.withScopeDependencies ["FeedScopeB"]
+  . FrameworkRuntime.callContext "ParserB"
+      (\value bindings -> bindings { FrameworkGenerated.boundParserB = Just value }) $
+    (FrameworkGenerated.LevelB <$> runWrap @"ParserB" (FrameworkRuntime.super "parseLevel" FrameworkGenerated.parseLevel))
 
 streamLevelB :: FrameworkGenerated.App FrameworkGenerated.LevelB
-streamLevelB = (FrameworkRuntime.withErrorPath ["FeedScopeB"] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readStreamContext "ParserB" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundParserB
+streamLevelB =
+  FrameworkRuntime.withErrorPath ["FeedScopeB"]
+  . FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readStreamContext "ParserB" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundParserB
 
 runShowA :: FrameworkGenerated.App [String]
-runShowA = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runShowA" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowA") $
-  runWrap @"ShowA" (FrameworkRuntime.super "showLevel" FrameworkGenerated.showLevel)
+runShowA =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runShowA" [] []
+  . FrameworkRuntime.enterHandler "ShowA" $
+    runWrap @"ShowA" (FrameworkRuntime.super "showLevel" FrameworkGenerated.showLevel)
 
 runShowB :: FrameworkGenerated.App [String]
-runShowB = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runShowB" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "ShowB") $
-  runWrap @"ShowB" (FrameworkRuntime.super "showLevel" FrameworkGenerated.showLevel)
+runShowB =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runShowB" [] []
+  . FrameworkRuntime.enterHandler "ShowB" $
+    runWrap @"ShowB" (FrameworkRuntime.super "showLevel" FrameworkGenerated.showLevel)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]

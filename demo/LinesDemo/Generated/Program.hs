@@ -23,20 +23,22 @@ compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target Co
                      , [(String, SDK.SessionSteps ContextValues Errors)])
 compiledEntries = do
   scopes <- Handlers.newScopeHandlers
+  let target label action = SDK.targetApp label emptyContexts scopes
+        (SDK.withErrorHandlers Handlers.errorHandlers action)
   pure
-    ( [ SDK.targetApp "Announce" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (AnnounceResult <$> (() <$ (Handlers.runAnnounce @'[]))))
-      , SDK.targetApp "PrintLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (PrintLineResult <$> (() <$ (Handlers.runPrintLine @'[]))))
-      , SDK.targetApp "PrintLine@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (PrintLineResult <$> (() <$ (Handlers.runPrintLine @'["TraceLine"]))))
-      , SDK.targetApp "TextCounter" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (TextCounterResult <$> (() <$ (Handlers.runTextCounter @'[]))))
-      , SDK.targetApp "TextCounter@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (TextCounterResult <$> (() <$ (Handlers.runTextCounter @'["TraceLine"]))))
-      , SDK.targetApp "ShowTotal" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ShowTotalResult <$> (() <$ (Handlers.runShowTotal @'[]))))
-      , SDK.targetApp "ShowTotal@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ShowTotalResult <$> (() <$ (Handlers.runShowTotal @'["TraceLine"]))))
-      , SDK.targetApp "Report" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ReportResult <$> (() <$ (Handlers.runReport @'[]))))
+    ( [ target "Announce" (AnnounceResult () <$ Handlers.runAnnounce @'[])
+      , target "PrintLine" (PrintLineResult () <$ Handlers.runPrintLine @'[])
+      , target "PrintLine@TraceLine" (PrintLineResult () <$ Handlers.runPrintLine @'["TraceLine"])
+      , target "TextCounter" (TextCounterResult () <$ Handlers.runTextCounter @'[])
+      , target "TextCounter@TraceLine" (TextCounterResult () <$ Handlers.runTextCounter @'["TraceLine"])
+      , target "ShowTotal" (ShowTotalResult () <$ Handlers.runShowTotal @'[])
+      , target "ShowTotal@TraceLine" (ShowTotalResult () <$ Handlers.runShowTotal @'["TraceLine"])
+      , target "Report" (ReportResult () <$ Handlers.runReport @'[])
       ]
     , []
-    , [ ("LineParser@TraceLine", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers ((Handlers.nextLineFeed @'["TraceLine"])))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getTextLine @'["TraceLine"])))))
-      , ("LineParser", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers ((Handlers.nextLineFeed @'[])))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getTextLine @'[])))))
-      , ("CountParser", SDK.deriveSteps (SDK.targetApp "CountParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getRunningTotal @'[])))))
+    , [ ("LineParser@TraceLine", SDK.receiveSteps (target "LineFeed" (Handlers.nextLineFeed @'["TraceLine"])) (target "LineParser" (() <$ Handlers.getTextLine @'["TraceLine"])))
+      , ("LineParser", SDK.receiveSteps (target "LineFeed" (Handlers.nextLineFeed @'[])) (target "LineParser" (() <$ Handlers.getTextLine @'[])))
+      , ("CountParser", SDK.deriveSteps (target "CountParser" (() <$ Handlers.getRunningTotal @'[])))
       ]
     )
 
@@ -58,11 +60,7 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "InputResource"
             , SDK.typing =
-                SDK.Context
-                  (SDK.AssetDecl ("OpenedInput") (SDK.TypeRef ("InputFile")))
-                  (Just "acquireInput")
-                  (True)
-                  (False)
+                SDK.Context (SDK.AssetDecl "OpenedInput" (SDK.TypeRef "InputFile")) (Just "acquireInput") True False
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -71,24 +69,24 @@ generatedPrototype =
             , SDK.typing = SDK.Scoped (Just "openInput") (Just "closeInput")
             , SDK.input = "Root"
             , SDK.demands =
-                [SDK.Demand (SDK.RequestAccess) ("OpenedInput"), SDK.Demand (SDK.RequireAccess) ("OpenedInput")]
+                [SDK.Demand SDK.RequestAccess "OpenedInput", SDK.Demand SDK.RequireAccess "OpenedInput"]
             }
         , SDK.EffectSpec
             { SDK.name = "LineFeed"
             , SDK.typing = SDK.Stream (Just "nextLine")
             , SDK.input = "InputSession"
-            , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("OpenedInput")]
+            , SDK.demands = [SDK.Demand SDK.RequireAccess "OpenedInput"]
             }
         , SDK.EffectSpec
             { SDK.name = "TraceLine"
-            , SDK.typing = SDK.Middleware (Just "traceLine") ([SDK.StreamKind, SDK.ScopedKind])
+            , SDK.typing = SDK.Middleware (Just "traceLine") [SDK.StreamKind, SDK.ScopedKind]
             , SDK.input = "None"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "LineParser"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl ("TextLine") (SDK.TypeRef ("Line"))) (Just "parseLine") (True) (True)
+                SDK.Context (SDK.AssetDecl "TextLine" (SDK.TypeRef "Line")) (Just "parseLine") True True
             , SDK.input = "LineFeed"
             , SDK.demands = []
             }
@@ -96,23 +94,19 @@ generatedPrototype =
             { SDK.name = "PrintLine"
             , SDK.typing = SDK.Excu (Just "printLine")
             , SDK.input = "Root"
-            , SDK.demands = [SDK.Demand (SDK.StreamAccess) ("TextLine")]
+            , SDK.demands = [SDK.Demand SDK.StreamAccess "TextLine"]
             }
         , SDK.EffectSpec
             { SDK.name = "TextCounter"
             , SDK.typing = SDK.Excu (Just "countText")
             , SDK.input = "InputSession"
             , SDK.demands =
-                [SDK.Demand (SDK.StreamAccess) ("TextLine"), SDK.Demand (SDK.RequireAccess) ("OpenedInput")]
+                [SDK.Demand SDK.StreamAccess "TextLine", SDK.Demand SDK.RequireAccess "OpenedInput"]
             }
         , SDK.EffectSpec
             { SDK.name = "CountParser"
             , SDK.typing =
-                SDK.Context
-                  (SDK.AssetDecl ("RunningTotal") (SDK.TypeRef ("Total")))
-                  (Just "parseTotal")
-                  (True)
-                  (True)
+                SDK.Context (SDK.AssetDecl "RunningTotal" (SDK.TypeRef "Total")) (Just "parseTotal") True True
             , SDK.input = "TextCounter"
             , SDK.demands = []
             }
@@ -120,13 +114,13 @@ generatedPrototype =
             { SDK.name = "ShowTotal"
             , SDK.typing = SDK.Excu (Just "showTotal")
             , SDK.input = "Root"
-            , SDK.demands = [SDK.Demand (SDK.StreamAccess) ("RunningTotal")]
+            , SDK.demands = [SDK.Demand SDK.StreamAccess "RunningTotal"]
             }
         , SDK.EffectSpec
             { SDK.name = "Report"
             , SDK.typing = SDK.Excu (Just "report")
             , SDK.input = "Root"
-            , SDK.demands = [SDK.Demand (SDK.RequireAccess) ("RunningTotal")]
+            , SDK.demands = [SDK.Demand SDK.RequireAccess "RunningTotal"]
             }
         ]
     , SDK.protoEffects =
@@ -176,8 +170,8 @@ generatedPrototype =
             , SDK.effectMethods =
                 [(SDK.ScopeOpen, OpenInputSessionGen), (SDK.ScopeClose, CloseInputSessionGen)]
             , SDK.effectDemands =
-                [ SDK.ResolvedDemand (SDK.RequestAccess) ("OpenedInput") ("InputResource")
-                , SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedInput") ("InputResource")
+                [ SDK.ResolvedDemand SDK.RequestAccess "OpenedInput" "InputResource"
+                , SDK.ResolvedDemand SDK.RequireAccess "OpenedInput" "InputResource"
                 ]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
@@ -197,7 +191,7 @@ generatedPrototype =
             , SDK.effectKind = SDK.StreamKind
             , SDK.effectInput = "InputSession"
             , SDK.effectMethods = [(SDK.StreamHandler, NextLineFeedGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedInput") ("InputResource")]
+            , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "OpenedInput" "InputResource"]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
             , SDK.effectAnchor = Nothing
@@ -255,7 +249,7 @@ generatedPrototype =
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "Root"
             , SDK.effectMethods = [(SDK.HandlerMethod, RunPrintLineGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand (SDK.StreamAccess) ("TextLine") ("LineParser")]
+            , SDK.effectDemands = [SDK.ResolvedDemand SDK.StreamAccess "TextLine" "LineParser"]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
             , SDK.effectAnchor = Nothing
@@ -275,8 +269,8 @@ generatedPrototype =
             , SDK.effectInput = "InputSession"
             , SDK.effectMethods = [(SDK.HandlerMethod, RunTextCounterGen)]
             , SDK.effectDemands =
-                [ SDK.ResolvedDemand (SDK.StreamAccess) ("TextLine") ("LineParser")
-                , SDK.ResolvedDemand (SDK.RequireAccess) ("OpenedInput") ("InputResource")
+                [ SDK.ResolvedDemand SDK.StreamAccess "TextLine" "LineParser"
+                , SDK.ResolvedDemand SDK.RequireAccess "OpenedInput" "InputResource"
                 ]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
@@ -316,7 +310,7 @@ generatedPrototype =
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "Root"
             , SDK.effectMethods = [(SDK.HandlerMethod, RunShowTotalGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand (SDK.StreamAccess) ("RunningTotal") ("CountParser")]
+            , SDK.effectDemands = [SDK.ResolvedDemand SDK.StreamAccess "RunningTotal" "CountParser"]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
             , SDK.effectAnchor = Nothing
@@ -335,7 +329,7 @@ generatedPrototype =
             , SDK.effectKind = SDK.ExcuKind
             , SDK.effectInput = "Root"
             , SDK.effectMethods = [(SDK.HandlerMethod, RunReportGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand (SDK.RequireAccess) ("RunningTotal") ("CountParser")]
+            , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "RunningTotal" "CountParser"]
             , SDK.effectProduces = Nothing
             , SDK.effectBranches = []
             , SDK.effectAnchor = Nothing
@@ -351,135 +345,106 @@ generatedPrototype =
             }
         ]
     , SDK.protoMethods =
-        [ SDK.MethodDefinition (RunAnnounceGen) (RunAnnounceGen) (SDK.HandlerMethod) (SDK.Empty)
-        , SDK.MethodDefinition (GetOpenedInputGen) (GetOpenedInputGen) (SDK.ContextRequest) (SDK.Empty)
-        , SDK.MethodDefinition (ReadOpenedInputGen) (GetOpenedInputGen) (SDK.ContextRequire) (SDK.Empty)
+        [ SDK.MethodDefinition RunAnnounceGen RunAnnounceGen SDK.HandlerMethod SDK.Empty
+        , SDK.MethodDefinition GetOpenedInputGen GetOpenedInputGen SDK.ContextRequest SDK.Empty
+        , SDK.MethodDefinition ReadOpenedInputGen GetOpenedInputGen SDK.ContextRequire SDK.Empty
         , SDK.MethodDefinition
-            (OpenInputSessionGen)
-            (OpenInputSessionGen)
-            (SDK.ScopeOpen)
-            (SDK.Sequence ([SDK.Call (GetOpenedInputGen), SDK.Call (ReadOpenedInputGen)]))
+            OpenInputSessionGen
+            OpenInputSessionGen
+            SDK.ScopeOpen
+            (SDK.Sequence [SDK.Call GetOpenedInputGen, SDK.Call ReadOpenedInputGen])
         , SDK.MethodDefinition
-            (CloseInputSessionGen)
-            (OpenInputSessionGen)
-            (SDK.ScopeClose)
-            (SDK.Call (ReadOpenedInputGen))
+            CloseInputSessionGen
+            OpenInputSessionGen
+            SDK.ScopeClose
+            (SDK.Call ReadOpenedInputGen)
         , SDK.MethodDefinition
-            (NextLineFeedGen)
-            (NextLineFeedGen)
-            (SDK.StreamHandler)
-            (SDK.Sequence ([SDK.Call (OpenInputSessionGen), SDK.Call (ReadOpenedInputGen)]))
-        , SDK.MethodDefinition (HookTraceLineGen) (HookTraceLineGen) (SDK.MiddlewareHook) (SDK.Empty)
+            NextLineFeedGen
+            NextLineFeedGen
+            SDK.StreamHandler
+            (SDK.Sequence [SDK.Call OpenInputSessionGen, SDK.Call ReadOpenedInputGen])
+        , SDK.MethodDefinition HookTraceLineGen HookTraceLineGen SDK.MiddlewareHook SDK.Empty
+        , SDK.MethodDefinition GetTextLineGen GetTextLineGen SDK.ContextStream (SDK.Call NextLineFeedGen)
+        , SDK.MethodDefinition StreamTextLineGen GetTextLineGen SDK.ContextRequire SDK.Empty
+        , SDK.MethodDefinition RunPrintLineGen RunPrintLineGen SDK.HandlerMethod (SDK.Call StreamTextLineGen)
         , SDK.MethodDefinition
-            (GetTextLineGen)
-            (GetTextLineGen)
-            (SDK.ContextStream)
-            (SDK.Call (NextLineFeedGen))
-        , SDK.MethodDefinition (StreamTextLineGen) (GetTextLineGen) (SDK.ContextRequire) (SDK.Empty)
-        , SDK.MethodDefinition
-            (RunPrintLineGen)
-            (RunPrintLineGen)
-            (SDK.HandlerMethod)
-            (SDK.Call (StreamTextLineGen))
-        , SDK.MethodDefinition
-            (RunTextCounterGen)
-            (RunTextCounterGen)
-            (SDK.HandlerMethod)
+            RunTextCounterGen
+            RunTextCounterGen
+            SDK.HandlerMethod
             (
               SDK.Sequence
-                (
-                  [ SDK.Sequence
-                      ([SDK.Call (OpenInputSessionGen), SDK.Call (StreamTextLineGen), SDK.Call (ReadOpenedInputGen)])
-                  , SDK.Choice ([SDK.Empty, SDK.Sequence ([SDK.Empty])])
-                  ]
-                )
+                [ SDK.Sequence [SDK.Call OpenInputSessionGen, SDK.Call StreamTextLineGen, SDK.Call ReadOpenedInputGen]
+                , SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]
+                ]
             )
         , SDK.MethodDefinition
-            (GetRunningTotalGen)
-            (GetRunningTotalGen)
-            (SDK.ContextStream)
-            (SDK.Call (RunTextCounterGen))
-        , SDK.MethodDefinition (StreamRunningTotalGen) (GetRunningTotalGen) (SDK.ContextRequire) (SDK.Empty)
+            GetRunningTotalGen
+            GetRunningTotalGen
+            SDK.ContextStream
+            (SDK.Call RunTextCounterGen)
+        , SDK.MethodDefinition StreamRunningTotalGen GetRunningTotalGen SDK.ContextRequire SDK.Empty
         , SDK.MethodDefinition
-            (RunShowTotalGen)
-            (RunShowTotalGen)
-            (SDK.HandlerMethod)
-            (SDK.Call (StreamRunningTotalGen))
-        , SDK.MethodDefinition
-            (RunReportGen)
-            (RunReportGen)
-            (SDK.HandlerMethod)
-            (SDK.Call (StreamRunningTotalGen))
+            RunShowTotalGen
+            RunShowTotalGen
+            SDK.HandlerMethod
+            (SDK.Call StreamRunningTotalGen)
+        , SDK.MethodDefinition RunReportGen RunReportGen SDK.HandlerMethod (SDK.Call StreamRunningTotalGen)
         ]
     , SDK.protoWorkflow =
         SDK.ChainedAt
-          ([])
-          (
-            [ SDK.ChainedAt
-                ([0])
-                (
-                  [ SDK.NodeAt ([0,0]) ("Announce")
+          []
+          [ SDK.ChainedAt
+              [0]
+              [ SDK.NodeAt [0,0] "Announce"
+              ]
+          , SDK.LifelongAt
+              [1]
+              (
+                SDK.LifelongProto
+                  { SDK.lifelongUnits = [[1,0,0],[1,0,1]]
+                  , SDK.lifelongSubscriptions =
+                      [([1,0,0,0],"TextLine"),([1,0,0,1],"TextLine"),([1,0,1,0],"RunningTotal")]
+                  , SDK.lifelongSessions =
+                      [ SDK.SessionProto
+                          { SDK.sessionAsset = "TextLine"
+                          , SDK.sessionPlan = SDK.Receive "LineFeed"
+                          , SDK.sessionMounts = [[1,-1,0,0],[1,-1,0,1]]
+                          }
+                      , SDK.SessionProto
+                          { SDK.sessionAsset = "RunningTotal"
+                          , SDK.sessionPlan = SDK.ReuseOutput [[1,0,0,1]]
+                          , SDK.sessionMounts = []
+                          }
+                      ]
+                  }
+              )
+              [ SDK.ParallelAt
+                  [1,0]
+                  [ SDK.ChainedAt
+                      [1,0,0]
+                      [ SDK.NodeAt [1,0,0,0] "PrintLine"
+                      , SDK.NodeAt [1,0,0,1] "TextCounter"
+                      ]
+                  , SDK.ChainedAt
+                      [1,0,1]
+                      [ SDK.NodeAt [1,0,1,0] "ShowTotal"
+                      ]
                   ]
-                )
-            , SDK.LifelongAt
-                ([1])
-                (
-                  SDK.LifelongProto
-                    { SDK.lifelongUnits = [[1,0,0],[1,0,1]]
-                    , SDK.lifelongSubscriptions =
-                        [([1,0,0,0],"TextLine"),([1,0,0,1],"TextLine"),([1,0,1,0],"RunningTotal")]
-                    , SDK.lifelongSessions =
-                        [ SDK.SessionProto
-                            { SDK.sessionAsset = "TextLine"
-                            , SDK.sessionPlan = SDK.Receive ("LineFeed")
-                            , SDK.sessionMounts = [[1,-1,0,0],[1,-1,0,1]]
-                            }
-                        , SDK.SessionProto
-                            { SDK.sessionAsset = "RunningTotal"
-                            , SDK.sessionPlan = SDK.ReuseOutput ([[1,0,0,1]])
-                            , SDK.sessionMounts = []
-                            }
-                        ]
-                    }
-                )
-                (
-                  [ SDK.ParallelAt
-                      ([1,0])
-                      (
-                        [ SDK.ChainedAt
-                            ([1,0,0])
-                            (
-                              [ SDK.NodeAt ([1,0,0,0]) ("PrintLine")
-                              , SDK.NodeAt ([1,0,0,1]) ("TextCounter")
-                              ]
-                            )
-                        , SDK.ChainedAt
-                            ([1,0,1])
-                            (
-                              [ SDK.NodeAt ([1,0,1,0]) ("ShowTotal")
-                              ]
-                            )
-                        ]
-                      )
-                  ]
-                )
-            , SDK.ChainedAt
-                ([2])
-                (
-                  [ SDK.NodeAt ([2,0]) ("Report")
-                  ]
-                )
-            ]
-          )
+              ]
+          , SDK.ChainedAt
+              [2]
+              [ SDK.NodeAt [2,0] "Report"
+              ]
+          ]
     , SDK.protoSessions =
         [ SDK.SessionProto
             { SDK.sessionAsset = "TextLine"
-            , SDK.sessionPlan = SDK.Receive ("LineFeed")
+            , SDK.sessionPlan = SDK.Receive "LineFeed"
             , SDK.sessionMounts = [[-2,0,0],[-2,0,1]]
             }
         , SDK.SessionProto
             { SDK.sessionAsset = "RunningTotal"
-            , SDK.sessionPlan = SDK.Derive ("TextLine")
+            , SDK.sessionPlan = SDK.Derive "TextLine"
             , SDK.sessionMounts = [[-2,1,0]]
             }
         ]
@@ -700,59 +665,44 @@ generatedPrototype =
     , SDK.protoGraph =
         SDK.EffectGraph
           { SDK.graphMethods =
-              [ SDK.MethodDefinition (RunAnnounceGen) (RunAnnounceGen) (SDK.HandlerMethod) (SDK.Empty)
+              [ SDK.MethodDefinition RunAnnounceGen RunAnnounceGen SDK.HandlerMethod SDK.Empty
+              , SDK.MethodDefinition RunPrintLineGen RunPrintLineGen SDK.HandlerMethod (SDK.Call StreamTextLineGen)
+              , SDK.MethodDefinition StreamTextLineGen GetTextLineGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition
-                  (RunPrintLineGen)
-                  (RunPrintLineGen)
-                  (SDK.HandlerMethod)
-                  (SDK.Call (StreamTextLineGen))
-              , SDK.MethodDefinition (StreamTextLineGen) (GetTextLineGen) (SDK.ContextRequire) (SDK.Empty)
-              , SDK.MethodDefinition
-                  (RunTextCounterGen)
-                  (RunTextCounterGen)
-                  (SDK.HandlerMethod)
+                  RunTextCounterGen
+                  RunTextCounterGen
+                  SDK.HandlerMethod
                   (
                     SDK.Sequence
-                      (
-                        [ SDK.Sequence
-                            ([SDK.Call (OpenInputSessionGen), SDK.Call (StreamTextLineGen), SDK.Call (ReadOpenedInputGen)])
-                        , SDK.Choice ([SDK.Empty, SDK.Sequence ([SDK.Empty])])
-                        ]
-                      )
+                      [ SDK.Sequence [SDK.Call OpenInputSessionGen, SDK.Call StreamTextLineGen, SDK.Call ReadOpenedInputGen]
+                      , SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]
+                      ]
                   )
               , SDK.MethodDefinition
-                  (OpenInputSessionGen)
-                  (OpenInputSessionGen)
-                  (SDK.ScopeOpen)
-                  (SDK.Sequence ([SDK.Call (GetOpenedInputGen), SDK.Call (ReadOpenedInputGen)]))
-              , SDK.MethodDefinition (GetOpenedInputGen) (GetOpenedInputGen) (SDK.ContextRequest) (SDK.Empty)
-              , SDK.MethodDefinition (ReadOpenedInputGen) (GetOpenedInputGen) (SDK.ContextRequire) (SDK.Empty)
+                  OpenInputSessionGen
+                  OpenInputSessionGen
+                  SDK.ScopeOpen
+                  (SDK.Sequence [SDK.Call GetOpenedInputGen, SDK.Call ReadOpenedInputGen])
+              , SDK.MethodDefinition GetOpenedInputGen GetOpenedInputGen SDK.ContextRequest SDK.Empty
+              , SDK.MethodDefinition ReadOpenedInputGen GetOpenedInputGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition
-                  (RunShowTotalGen)
-                  (RunShowTotalGen)
-                  (SDK.HandlerMethod)
-                  (SDK.Call (StreamRunningTotalGen))
-              , SDK.MethodDefinition (StreamRunningTotalGen) (GetRunningTotalGen) (SDK.ContextRequire) (SDK.Empty)
+                  RunShowTotalGen
+                  RunShowTotalGen
+                  SDK.HandlerMethod
+                  (SDK.Call StreamRunningTotalGen)
+              , SDK.MethodDefinition StreamRunningTotalGen GetRunningTotalGen SDK.ContextRequire SDK.Empty
+              , SDK.MethodDefinition RunReportGen RunReportGen SDK.HandlerMethod (SDK.Call StreamRunningTotalGen)
               , SDK.MethodDefinition
-                  (RunReportGen)
-                  (RunReportGen)
-                  (SDK.HandlerMethod)
-                  (SDK.Call (StreamRunningTotalGen))
+                  NextLineFeedGen
+                  NextLineFeedGen
+                  SDK.StreamHandler
+                  (SDK.Sequence [SDK.Call OpenInputSessionGen, SDK.Call ReadOpenedInputGen])
+              , SDK.MethodDefinition GetTextLineGen GetTextLineGen SDK.ContextStream (SDK.Call NextLineFeedGen)
               , SDK.MethodDefinition
-                  (NextLineFeedGen)
-                  (NextLineFeedGen)
-                  (SDK.StreamHandler)
-                  (SDK.Sequence ([SDK.Call (OpenInputSessionGen), SDK.Call (ReadOpenedInputGen)]))
-              , SDK.MethodDefinition
-                  (GetTextLineGen)
-                  (GetTextLineGen)
-                  (SDK.ContextStream)
-                  (SDK.Call (NextLineFeedGen))
-              , SDK.MethodDefinition
-                  (GetRunningTotalGen)
-                  (GetRunningTotalGen)
-                  (SDK.ContextStream)
-                  (SDK.Call (RunTextCounterGen))
+                  GetRunningTotalGen
+                  GetRunningTotalGen
+                  SDK.ContextStream
+                  (SDK.Call RunTextCounterGen)
               ]
           , SDK.graphRoots =
               [ RunAnnounceGen
@@ -810,9 +760,9 @@ generatedPrototype =
           }
     , SDK.protoScopeNames = [(OpenInputSessionGen, "InputSession")]
     , SDK.protoSources =
-        [ (SDK.ReadPoint ([-2,1,0]) ("TextLine"), SDK.FromSession)
-        , (SDK.ReadPoint ([2,0]) ("RunningTotal"), SDK.FromSession)
-        , (SDK.ReadPoint ([1,0,1,0]) ("RunningTotal"), SDK.FromSession)
+        [ (SDK.ReadPoint [-2,1,0] "TextLine", SDK.FromSession)
+        , (SDK.ReadPoint [2,0] "RunningTotal", SDK.FromSession)
+        , (SDK.ReadPoint [1,0,1,0] "RunningTotal", SDK.FromSession)
         ]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
@@ -855,41 +805,37 @@ generatedPrototype =
     , SDK.protoDriving =
         SDK.DrivingPlan
           { SDK.drivingNodes =
-              [ SDK.NodeDrive ([]) ([[0,0],[1,0,0,0],[1,0,0,1],[1,0,1,0],[2,0]]) ([]) (Nothing) ([]) ([]) ([])
-              , SDK.NodeDrive ([0]) ([[0,0]]) ([]) (Nothing) ([]) ([]) ([])
-              , SDK.NodeDrive ([0,0]) ([[0,0]]) ([]) (Nothing) ([]) ([]) ([])
-              , SDK.NodeDrive ([1]) ([[1,0,0,0],[1,0,0,1],[1,0,1,0]]) ([]) (Just [1]) ([]) ([]) ([])
-              , SDK.NodeDrive ([1,0]) ([[1,0,0,0],[1,0,0,1],[1,0,1,0]]) ([]) (Just [1]) ([]) ([]) ([])
-              , SDK.NodeDrive ([1,0,0]) ([[1,0,0,0],[1,0,0,1]]) ([]) (Just [1]) ([]) ([]) ([])
-              , SDK.NodeDrive ([1,0,0,0]) ([[1,0,0,0]]) (["LineParser"]) (Just [1]) ([]) ([]) ([])
-              , SDK.NodeDrive ([1,0,0,1]) ([[1,0,0,1]]) (["LineParser"]) (Just [1]) ([]) ([]) ([])
-              , SDK.NodeDrive ([1,0,1]) ([[1,0,1,0]]) ([]) (Just [1]) ([]) ([]) ([])
-              , SDK.NodeDrive ([1,0,1,0]) ([[1,0,1,0]]) (["CountParser"]) (Just [1]) ([]) ([]) ([])
-              , SDK.NodeDrive ([2]) ([[2,0]]) ([]) (Nothing) ([]) ([[1]]) ([])
-              , SDK.NodeDrive ([2,0]) ([[2,0]]) ([]) (Nothing) ([]) ([[1]]) ([])
-              , SDK.NodeDrive ([1,-1,0,0]) ([]) ([]) (Just [1]) ([]) ([]) ([])
-              , SDK.NodeDrive ([1,-1,0,1]) ([]) ([]) (Just [1]) ([]) ([]) ([])
-              , SDK.NodeDrive ([-2,0,0]) ([]) ([]) (Nothing) ([]) ([]) ([])
-              , SDK.NodeDrive ([-2,0,1]) ([]) ([]) (Nothing) ([]) ([]) ([])
-              , SDK.NodeDrive ([-2,1,0]) ([]) ([]) (Nothing) ([]) ([]) ([])
+              [ SDK.NodeDrive [] [[0,0],[1,0,0,0],[1,0,0,1],[1,0,1,0],[2,0]] [] Nothing [] [] []
+              , SDK.NodeDrive [0] [[0,0]] [] Nothing [] [] []
+              , SDK.NodeDrive [0,0] [[0,0]] [] Nothing [] [] []
+              , SDK.NodeDrive [1] [[1,0,0,0],[1,0,0,1],[1,0,1,0]] [] (Just [1]) [] [] []
+              , SDK.NodeDrive [1,0] [[1,0,0,0],[1,0,0,1],[1,0,1,0]] [] (Just [1]) [] [] []
+              , SDK.NodeDrive [1,0,0] [[1,0,0,0],[1,0,0,1]] [] (Just [1]) [] [] []
+              , SDK.NodeDrive [1,0,0,0] [[1,0,0,0]] ["LineParser"] (Just [1]) [] [] []
+              , SDK.NodeDrive [1,0,0,1] [[1,0,0,1]] ["LineParser"] (Just [1]) [] [] []
+              , SDK.NodeDrive [1,0,1] [[1,0,1,0]] [] (Just [1]) [] [] []
+              , SDK.NodeDrive [1,0,1,0] [[1,0,1,0]] ["CountParser"] (Just [1]) [] [] []
+              , SDK.NodeDrive [2] [[2,0]] [] Nothing [] [[1]] []
+              , SDK.NodeDrive [2,0] [[2,0]] [] Nothing [] [[1]] []
+              , SDK.NodeDrive [1,-1,0,0] [] [] (Just [1]) [] [] []
+              , SDK.NodeDrive [1,-1,0,1] [] [] (Just [1]) [] [] []
+              , SDK.NodeDrive [-2,0,0] [] [] Nothing [] [] []
+              , SDK.NodeDrive [-2,0,1] [] [] Nothing [] [] []
+              , SDK.NodeDrive [-2,1,0] [] [] Nothing [] [] []
               ]
           , SDK.drivingUnits =
               [ SDK.UnitDrive
-                  ([1,0,0])
-                  ([[1,0,0,0],[1,0,0,1]])
-                  ([("LineParser", [SDK.ReadAt ([1,0,0,0]), SDK.ReadAt ([1,0,0,1])]), ("CountParser", [])])
-                  ([("CountParser", SDK.PublishedAt ([[1,0,0,1]]))])
-              , SDK.UnitDrive
-                  ([1,0,1])
-                  ([[1,0,1,0]])
-                  ([("LineParser", []), ("CountParser", [SDK.ReadAt ([1,0,1,0])])])
-                  ([])
+                  [1,0,0]
+                  [[1,0,0,0],[1,0,0,1]]
+                  [("LineParser", [SDK.ReadAt [1,0,0,0], SDK.ReadAt [1,0,0,1]]), ("CountParser", [])]
+                  [("CountParser", SDK.PublishedAt [[1,0,0,1]])]
+              , SDK.UnitDrive [1,0,1] [[1,0,1,0]] [("LineParser", []), ("CountParser", [SDK.ReadAt [1,0,1,0]])] []
               ]
           , SDK.drivingSessions =
-              [ SDK.SessionDrive (Nothing) ("LineParser") ("TextLine") (Nothing)
-              , SDK.SessionDrive (Nothing) ("CountParser") ("RunningTotal") (Just "LineParser")
-              , SDK.SessionDrive (Just [1]) ("LineParser") ("TextLine") (Nothing)
-              , SDK.SessionDrive (Just [1]) ("CountParser") ("RunningTotal") (Nothing)
+              [ SDK.SessionDrive Nothing "LineParser" "TextLine" Nothing
+              , SDK.SessionDrive Nothing "CountParser" "RunningTotal" (Just "LineParser")
+              , SDK.SessionDrive (Just [1]) "LineParser" "TextLine" Nothing
+              , SDK.SessionDrive (Just [1]) "CountParser" "RunningTotal" Nothing
               ]
           , SDK.drivingRootNodes = [[0,0],[1,0,0,0],[1,0,0,1],[1,0,1,0],[2,0]]
           , SDK.drivingOutputSites = [([1,0,0,1],"CountParser")]

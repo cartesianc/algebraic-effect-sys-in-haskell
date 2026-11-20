@@ -1,14 +1,8 @@
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE UndecidableInstances #-}
 -- handler 是不带参数的类方法：按表示类型 require 资产，用 raise 报告自己的失败。
 -- 上游、scope 和资产名都不出现在这里；gen 按注册装配，运行编译 Generated 副本。
 {-# LANGUAGE ConstraintKinds #-}
@@ -27,7 +21,6 @@ import qualified FileDemo.Generated.Effects as FrameworkGenerated
 import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
-import FileDemo.Types
 import Framework.SDK (Raises(..), Raw(..), Reads(..), rawoutput)
 import FileDemo.Generated.Effects
 import FileDemo.Types
@@ -249,67 +242,116 @@ instance FrameworkRuntime.Raw (Wrap "ExtractFileText") where
 instance FrameworkRuntime.RawOutputs (Wrap effect)
 
 runLocateFile :: FrameworkGenerated.App [String]
-runLocateFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "LocateFile") $
-  runWrap @"LocateFile" (FrameworkRuntime.super "locateFile" FrameworkGenerated.locateFile)
+runLocateFile =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] []
+  . FrameworkRuntime.enterHandler "LocateFile" $
+    runWrap @"LocateFile" (FrameworkRuntime.super "locateFile" FrameworkGenerated.locateFile)
 
 runValidateFileName :: FrameworkGenerated.App [String]
-runValidateFileName = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies []) $
-  runWrap @"ValidateFileName" (FrameworkRuntime.super "validateFileName" FrameworkGenerated.validateFileName)
+runValidateFileName =
+  FrameworkRuntime.handleFailure $
+    runWrap @"ValidateFileName" (FrameworkRuntime.super "validateFileName" FrameworkGenerated.validateFileName)
 
 getFileName :: FrameworkGenerated.App FrameworkGenerated.FileName
-getFileName = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileLocation"
-    (\value bindings -> bindings { FrameworkGenerated.boundFileLocation = Just value })) $
-  (FrameworkGenerated.FileName <$> runWrap @"FileLocation" (FrameworkRuntime.super "parseFileName" FrameworkGenerated.parseFileName))
+getFileName =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "FileLocation"
+      (\value bindings -> bindings { FrameworkGenerated.boundFileLocation = Just value }) $
+    (FrameworkGenerated.FileName <$> runWrap @"FileLocation" (FrameworkRuntime.super "parseFileName" FrameworkGenerated.parseFileName))
 
 readFileName :: FrameworkGenerated.App FrameworkGenerated.FileName
-readFileName = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "FileLocation" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileLocation
+readFileName =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "FileLocation" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileLocation
 
 getOpenedFile :: FrameworkGenerated.App FrameworkGenerated.OpenedFile
-getOpenedFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "FileResource"
-    (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value })) $
-  getFileName >> (FrameworkGenerated.OpenedFile <$> runWrap @"FileResource" (FrameworkRuntime.super "acquireFile" FrameworkGenerated.acquireFile))
+getOpenedFile =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "FileResource"
+      (\value bindings -> bindings { FrameworkGenerated.boundFileResource = Just value }) $
+    getFileName >> (FrameworkGenerated.OpenedFile <$> runWrap @"FileResource" (FrameworkRuntime.super "acquireFile" FrameworkGenerated.acquireFile))
 
 readOpenedFile :: FrameworkGenerated.App FrameworkGenerated.OpenedFile
-readOpenedFile = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "FileResource" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileResource
+readOpenedFile =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "FileResource" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundFileResource
 
 openFileSession :: FrameworkGenerated.App [String]
-openFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openFileSession" [] [] . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError (Just (() <$ closeFileSession)) . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
-  getOpenedFile >> runWrap @"FileSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)
+openFileSession =
+  FrameworkRuntime.withErrorPath ["FileSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicScope "openFileSession" [] []
+  . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError (Just (() <$ closeFileSession))
+  . FrameworkRuntime.enterHandler "FileSession" $
+    getOpenedFile >> runWrap @"FileSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)
 
 closeFileSession :: FrameworkGenerated.App [String]
-closeFileSession = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeFileSession" [] [] . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "FileSession") $
-  runWrap @"FileSession" (FrameworkRuntime.superClose "closeSession" FrameworkGenerated.closeSession)
+closeFileSession =
+  FrameworkRuntime.withErrorPath ["FileSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicScope "closeFileSession" [] []
+  . FrameworkRuntime.closeScope "FileSession" FrameworkGenerated.ScopeBindingError
+  . FrameworkRuntime.enterHandler "FileSession" $
+    runWrap @"FileSession" (FrameworkRuntime.superClose "closeSession" FrameworkGenerated.closeSession)
 
 detectFileRecovery :: FrameworkGenerated.App ()
-detectFileRecovery = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileRecovery") $
-  runWrap @"FileRecovery" (FrameworkRuntime.super "detectFileSession" FrameworkGenerated.detectFileSession)
+detectFileRecovery =
+  FrameworkRuntime.withErrorPath ["FileSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.withScopeDependencies ["FileSession"]
+  . FrameworkRuntime.enterHandler "FileRecovery" $
+    runWrap @"FileRecovery" (FrameworkRuntime.super "detectFileSession" FrameworkGenerated.detectFileSession)
 
 resolveFileRecovery :: FrameworkGenerated.App ()
-resolveFileRecovery = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "FileRecovery") $
-  runWrap @"FileRecovery" (FrameworkRuntime.super "resolveFileSession" FrameworkGenerated.resolveFileSession)
+resolveFileRecovery =
+  FrameworkRuntime.withErrorPath ["FileSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.withScopeDependencies ["FileSession"]
+  . FrameworkRuntime.enterHandler "FileRecovery" $
+    runWrap @"FileRecovery" (FrameworkRuntime.super "resolveFileSession" FrameworkGenerated.resolveFileSession)
 
 runReadFile :: FrameworkGenerated.App [String]
-runReadFile = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runReadFile" [("ExtractFileText", () <$ getFileText)] [] . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "ReadFile") $
-  openFileSession >> runWrap @"ReadFile" (FrameworkRuntime.super "readFileContent" FrameworkGenerated.readFileContent)
+runReadFile =
+  FrameworkRuntime.withErrorPath ["FileSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runReadFile" [("ExtractFileText", () <$ getFileText)] []
+  . FrameworkRuntime.withScopeDependencies ["FileSession"]
+  . FrameworkRuntime.enterHandler "ReadFile" $
+    openFileSession >> runWrap @"ReadFile" (FrameworkRuntime.super "readFileContent" FrameworkGenerated.readFileContent)
 
 getFileText :: FrameworkGenerated.App FrameworkGenerated.FileText
-getFileText = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.callContext "ExtractFileText"
-    (\value bindings -> bindings { FrameworkGenerated.boundExtractFileText = Just value })) $
-  (FrameworkGenerated.FileText <$> runWrap @"ExtractFileText" (FrameworkRuntime.super "parseFileText" FrameworkGenerated.parseFileText))
+getFileText =
+  FrameworkRuntime.withErrorPath ["FileSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.withScopeDependencies ["FileSession"]
+  . FrameworkRuntime.callContext "ExtractFileText"
+      (\value bindings -> bindings { FrameworkGenerated.boundExtractFileText = Just value }) $
+    (FrameworkGenerated.FileText <$> runWrap @"ExtractFileText" (FrameworkRuntime.super "parseFileText" FrameworkGenerated.parseFileText))
 
 readFileText :: FrameworkGenerated.App FrameworkGenerated.FileText
-readFileText = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ExtractFileText" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundExtractFileText
+readFileText =
+  FrameworkRuntime.withErrorPath ["FileSession"]
+  . FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "ExtractFileText" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundExtractFileText
 
 runWriteFirstLine :: FrameworkGenerated.App [String]
-runWriteFirstLine = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runWriteFirstLine" [] [] . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "WriteFirstLine") $
-  openFileSession >> runWrap @"WriteFirstLine" (FrameworkRuntime.super "writeFirstLine" FrameworkGenerated.writeFirstLine)
+runWriteFirstLine =
+  FrameworkRuntime.withErrorPath ["FileSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runWriteFirstLine" [] []
+  . FrameworkRuntime.withScopeDependencies ["FileSession"]
+  . FrameworkRuntime.enterHandler "WriteFirstLine" $
+    openFileSession >> runWrap @"WriteFirstLine" (FrameworkRuntime.super "writeFirstLine" FrameworkGenerated.writeFirstLine)
 
 runAppendLine :: FrameworkGenerated.App [String]
-runAppendLine = (FrameworkRuntime.withErrorPath ["FileSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runAppendLine" [] [] . FrameworkRuntime.withScopeDependencies ["FileSession"] . FrameworkRuntime.enterHandler "AppendLine") $
-  openFileSession >> runWrap @"AppendLine" (FrameworkRuntime.super "appendLine" FrameworkGenerated.appendLine)
+runAppendLine =
+  FrameworkRuntime.withErrorPath ["FileSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runAppendLine" [] []
+  . FrameworkRuntime.withScopeDependencies ["FileSession"]
+  . FrameworkRuntime.enterHandler "AppendLine" $
+    openFileSession >> runWrap @"AppendLine" (FrameworkRuntime.super "appendLine" FrameworkGenerated.appendLine)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]

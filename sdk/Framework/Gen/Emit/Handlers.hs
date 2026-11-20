@@ -5,7 +5,8 @@
 -- 以及 scope 与 Error 的登记表。挂接的 Context 与自动收尾的 close 直接写在入口包装上。只渲染绑定阶段定下的事实。
 module Framework.Gen.Emit.Handlers (renderHandlers) where
 
-import Data.List (intercalate, nub, sortOn)
+import Data.Char (isSpace)
+import Data.List (intercalate, isPrefixOf, nub, sortOn)
 import Framework.Gen.Plan
 import Framework.Gen.Emit.Types (renderValueType)
 import Framework.Gen.Names (HandlerNames, entryName, helperName, handlerError, handlerFailure)
@@ -30,11 +31,12 @@ renderHandlers names unit loaded = do
       fingerprint = helperName names "handlerSourceFingerprint"
       extraExports = fingerprint : map (entryName names) (allMethods unit) ++ map (helperName names) ["newScopeHandlers", "errorHandlers"]
       extensions = copyExtensions ++ (if hasMiddleware unit then middlewareExtensions else [])
+      supplied = maybe [] (leadingExtensions extensions . handlerText) loaded
   generated <- case loaded of
     Nothing -> pure ("module " ++ generatedName ++ " (" ++ fingerprint ++ ") where\n")
     Just source -> copyModule (unitNamespace unit) generatedName extraExports (handlerText source) (handlerModule source)
   pure ("-- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。\n"
-        ++ concat ["{-# LANGUAGE " ++ extension ++ " #-}\n" | extension <- extensions]
+        ++ concat ["{-# LANGUAGE " ++ extension ++ " #-}\n" | extension <- extensions, extension `notElem` supplied]
         ++ generated
         ++ "\n-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。\n"
         ++ fingerprint ++ " :: Maybe String\n"
@@ -71,6 +73,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       ++ (if hooked then " @" ++ show handler' else "")
     call method = entry method ++ if hooked then " @hooks" else ""
     context = if hooked then captured ++ " hooks => " else ""
+    captureContext = maybe "" (const context)
     signature resultType = if hooked
       then "forall hooks. " ++ context ++ "FrameworkGenerated.App " ++ resultType
       else "FrameworkGenerated.App " ++ resultType
@@ -164,7 +167,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     -- 有 Middleware 时，被拦截类别的 effect 按标签逐个给出 raise：先把 (handler 名, 描述) 交给 captureAt，再以原失败退出。
     raisesInstance handler'
       | hooked = concat
-          [ [ "instance " ++ context ++ "FrameworkRuntime.Raises FrameworkGenerated." ++ handlerError handler' ++ " " ++ tag (show effect) ++ " where"
+          [ [ "instance " ++ captureContext captureKind ++ "FrameworkRuntime.Raises FrameworkGenerated." ++ handlerError handler' ++ " " ++ tag (show effect) ++ " where"
             , "  raise (FrameworkGenerated." ++ handlerError handler' ++ " description) = " ++ wrap ++ " ("
                 ++ maybe "" (\kind -> capture kind ("FrameworkRuntime.Raise " ++ show handler' ++ " description")) captureKind
                 ++ "FrameworkRuntime.failEffect " ++ show effect ++ " FrameworkGenerated." ++ handlerFailure handler' ++ " description)"
@@ -215,16 +218,21 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     outputInstances
       | not hooked = ["instance FrameworkRuntime.RawOutputs " ++ tag "effect", ""]
       | otherwise = concat (nub
-          [ [ "instance " ++ context ++ "FrameworkRuntime.RawOutputs " ++ methodTag (show (bindingEffect binding)) (show handler') ++ " where"
-            , "  rawoutput value = " ++ wrap ++ " ("
-                ++ maybe "" (\kind -> capture kind ("FrameworkRuntime.RawOutput " ++ show handler' ++ " value"))
-                     (bindingCaptureKind binding)
-                ++ "pure value)"
-            , "" ]
+          [ rawOutputInstance binding
           | binding <- unitBindings unit, WritesRaw `elem` bindingCapabilities binding
-          , bindingOperation binding /= MiddlewareOperation, let handler' = bindingHandler binding ])
+          , bindingOperation binding /= MiddlewareOperation ])
+    rawOutputInstance binding = case bindingCaptureKind binding of
+      Nothing -> ["instance " ++ instanceType, ""]
+      Just kind ->
+        [ "instance " ++ context ++ instanceType ++ " where"
+        , "  rawoutput value = " ++ wrap ++ " ("
+            ++ capture kind ("FrameworkRuntime.RawOutput " ++ show handler' ++ " value") ++ "pure value)"
+        , "" ]
+      where
+        handler' = bindingHandler binding
+        instanceType = "FrameworkRuntime.RawOutputs " ++ methodTag (show (bindingEffect binding)) (show handler')
     endInstances = concat
-      [ [ "instance " ++ context ++ "FrameworkRuntime.Emits " ++ tag (show (bindingEffect binding)) ++ " where"
+      [ [ "instance " ++ captureContext (bindingCaptureKind binding) ++ "FrameworkRuntime.Emits " ++ tag (show (bindingEffect binding)) ++ " where"
         , "  rawemit text = " ++ wrap ++ " ("
             ++ maybe "" (\kind -> capture kind ("FrameworkRuntime.RawEmit " ++ show (bindingHandler binding) ++ " text"))
                  (bindingCaptureKind binding)
@@ -260,21 +268,23 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
           in case bindingOperation binding of
                PublishAsset contract -> "(FrameworkGenerated." ++ contract ++ " <$> " ++ action ++ ")"
                _ -> action
-        scoped = "FrameworkRuntime.withScopeDependencies " ++ show (Prototype.effectScopes (protoOf unit selectedName))
-        entered = scoped ++ " . FrameworkRuntime.enterHandler " ++ show selectedName
-        wrapper binding = rootWrapper selectedName ++ " . " ++ case bindingOperation binding of
+        scoped = ["FrameworkRuntime.withScopeDependencies " ++ show scopes | not (null scopes)]
+          where scopes = Prototype.effectScopes (protoOf unit selectedName)
+        entered = scoped ++ ["FrameworkRuntime.enterHandler " ++ show selectedName]
+        wrapper binding = rootWrapper selectedName ++ case bindingOperation binding of
           -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
           OpenResource -> scopeWrapper binding "openScope " (" " ++ cleanupOf selectedName)
           CloseResource -> scopeWrapper binding "closeScope " ""
-          AtomicOperation -> "FrameworkRuntime.atomicHandle " ++ show (bindingMethod binding) ++ anchoredOf binding ++ " . " ++ entered
+          AtomicOperation -> ("FrameworkRuntime.atomicHandle " ++ show (bindingMethod binding) ++ anchoredOf binding) : entered
           SourceStep -> entered
           PureOperation -> scoped
-          PublishAsset _ -> scoped ++ " . FrameworkRuntime.callContext " ++ show selectedName
-            ++ "\n    (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"
+          PublishAsset _ -> scoped ++ ["FrameworkRuntime.callContext " ++ show selectedName
+            ++ "\n      (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"]
           ErrorOperation -> entered
           MiddlewareOperation -> entered
-        scopeWrapper binding operation cleanup = "FrameworkRuntime.atomicScope " ++ show (bindingMethod binding) ++ anchoredOf binding
-          ++ " . FrameworkRuntime." ++ operation ++ show selectedName ++ " FrameworkGenerated.ScopeBindingError" ++ cleanup ++ " . " ++ entered
+        scopeWrapper binding operation cleanup =
+          [ "FrameworkRuntime.atomicScope " ++ show (bindingMethod binding) ++ anchoredOf binding
+          , "FrameworkRuntime." ++ operation ++ show selectedName ++ " FrameworkGenerated.ScopeBindingError" ++ cleanup ] ++ entered
     -- 挂在原子句柄下的 parser：句柄成功交出时，普通挂接注入后吞错，持续挂接按本次执行位置筛选后传播失败。
     anchoredOf binding = " " ++ connectionsOf ContextRequest ++ " " ++ connectionsOf ContextStream
       where
@@ -286,8 +296,9 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     cleanupOf selectedName = case [closing | plan <- unitScopes unit, scopeEffect plan == selectedName, Just closing <- [scopeCleanup plan]] of
       closing : _ -> "(Just (() <$ " ++ call closing ++ "))"
       [] -> "Nothing"
-    rootWrapper selectedName = "FrameworkRuntime.withErrorPath " ++ show (Prototype.effectNearestScopes (protoOf unit selectedName))
-      ++ " . FrameworkRuntime.handleFailure"
+    rootWrapper selectedName =
+      ["FrameworkRuntime.withErrorPath " ++ show path | not (null path)] ++ ["FrameworkRuntime.handleFailure"]
+      where path = Prototype.effectNearestScopes (protoOf unit selectedName)
     -- readT 与 streamT 的模式由组合计算选定，渲染器只输出相应的读取入口；读取不执行 handler，不随 hooks 变化。
     readerDefinition reader
       | readerContinuous reader = definition False method
@@ -303,8 +314,9 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         contractType = readerContract reader
     definition polymorphic method resultType wrapper body =
       [ entry method ++ " :: " ++ (if polymorphic then signature else ("FrameworkGenerated.App " ++)) (parenthesized resultType)
-      , entry method ++ " = (" ++ wrapper ++ ") $"
-      , "  " ++ body
+      , entry method ++ " ="
+      , "  " ++ intercalate "\n  . " wrapper ++ " $"
+      , "    " ++ body
       , "" ]
 
 
@@ -359,6 +371,18 @@ copyExtensions =
 middlewareExtensions :: [String]
 middlewareExtensions = ["AllowAmbiguousTypes", "TypeOperators"]
 
+-- 只认文件头连续出现的正向、已知扩展；遇到 CPP、OPTIONS 或其他 pragma 就停止。
+-- 原文件中的 pragma 和顺序照抄，生成区只补这里尚未启用的扩展。
+leadingExtensions :: [String] -> String -> [String]
+leadingExtensions allowed = scan . lines
+  where
+    scan [] = []
+    scan (line : rest)
+      | null trimmed || "--" `isPrefixOf` trimmed = scan rest
+      | ["{-#", "LANGUAGE", ext, "#-}"] <- words trimmed, ext `elem` allowed = ext : scan rest
+      | otherwise = []
+      where trimmed = dropWhile isSpace line
+
 -- 只改模块名、导出表并补充导入；方法体与 instance 原样保留。
 copyModule :: String -> String -> [String] -> String -> HsModule GhcPs -> Either String String
 copyModule namespace generatedName extraExports source parsed = do
@@ -373,15 +397,22 @@ copyModule namespace generatedName extraExports source parsed = do
     first : _ -> Right first
     [] -> Left "Handlers.hs must import the generated handler contracts"
   (importStart, _) <- range (getLocA firstImport)
-  let imports = (importStart, importStart,
+  let typesImport = "import " ++ namespace ++ ".Types"
+      -- 复用无条件的完整导入；带限定、显式列表或 CPP 的导入保留原有补全。
+      alreadyImportsTypes = not (any (("#" `isPrefixOf`) . dropWhile isSpace) (lines source))
+        && any (sameImport typesImport) (hsmodImports parsed)
+      imports = (importStart, importStart,
         "import qualified Framework.Generated as FrameworkRuntime\n"
         ++ "import qualified " ++ namespace ++ ".Generated.Effects as FrameworkGenerated\n"
         ++ "import qualified Control.Monad.IO.Class as FrameworkIO\n"
         ++ "import qualified Data.Proxy as FrameworkProxy\n"
         ++ "import qualified GHC.TypeLits as FrameworkTypes\n"
-        ++ "import " ++ namespace ++ ".Types\n")
+        ++ (if alreadyImportsTypes then "" else typesImport ++ "\n"))
   pure (foldr apply source (sortOn (\(start, _, _) -> start) (rename : imports : exports)))
   where
+    sameImport expected declaration = case range (getLocA declaration) of
+      Right (start, end) -> take (end - start) (drop start source) == expected
+      Left _ -> False
     apply (start, end, replacement) remaining =
       take start remaining ++ replacement ++ drop end remaining
     range (RealSrcSpan span _) = Right

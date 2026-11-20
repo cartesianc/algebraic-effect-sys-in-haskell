@@ -419,11 +419,14 @@ Input 表达操作的前提关系，业务值来源单独由 demands 表达；Co
 入口按标签已知的闭包由 gen 直接写在包装上，运行时不按名字查表：atomicHandle／atomicScope 带上挂在本句柄下的 parser（普通挂接与持续挂接两组），openScope 带上本 scope 的 close，开启成功时登记为自动收尾。
 
 ```haskell
-runLocateFile = (… . FrameworkRuntime.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] [] . …) $ …
-openFileSession = (… . FrameworkRuntime.openScope "FileSession" FrameworkGenerated.ScopeBindingError (Just (() <$ closeFileSession)) . …) $ …
+runLocateFile =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] []
+  . FrameworkRuntime.enterHandler "LocateFile" $
+    runWrap @"LocateFile" (FrameworkRuntime.super "locateFile" FrameworkGenerated.locateFile)
 ```
 
-持续挂接是否在本次执行生效，仍由运行时按执行位置与会话判断；Error 回调是程序级的一张表，由 Target 安装。
+生成入口逐行列出包装顺序。`withErrorPath` 和 `withScopeDependencies` 只在该入口有对应的 scope 要加入时出现。持续挂接在本次执行是否生效由运行位置与会话决定。`compiledEntries` 的局部 `target` 为各末端安装同一组程序级 Error 回调。
 
 根入口不修改业务方法体、不预执行未声明的 Context、不另行 boot 或 lower 上游。scope 复用仍经过调用入口，但可以跳过资源方法体。
 

@@ -1,14 +1,8 @@
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE UndecidableInstances #-}
 -- handler 是不带参数的类方法；SDK 按注册装配上游与读取来源，运行编译 Generated 副本。
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -26,7 +20,6 @@ import qualified Crawler.Generated.Effects as FrameworkGenerated
 import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
-import Crawler.Types
 import Framework.SDK (Raises(..), Raw(..), Reads(..), rawoutput)
 import Crawler.Generated.Effects
 import Crawler.Types
@@ -232,81 +225,134 @@ instance FrameworkRuntime.Raw (Wrap "ExtractLinkedPage") where
 instance FrameworkRuntime.RawOutputs (Wrap effect)
 
 getStartURL :: FrameworkGenerated.App FrameworkGenerated.StartURL
-getStartURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "StartPage"
-    (\value bindings -> bindings { FrameworkGenerated.boundStartPage = Just value })) $
-  (FrameworkGenerated.StartURL <$> runWrap @"StartPage" (FrameworkRuntime.super "startURL" FrameworkGenerated.startURL))
+getStartURL =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "StartPage"
+      (\value bindings -> bindings { FrameworkGenerated.boundStartPage = Just value }) $
+    (FrameworkGenerated.StartURL <$> runWrap @"StartPage" (FrameworkRuntime.super "startURL" FrameworkGenerated.startURL))
 
 readStartURL :: FrameworkGenerated.App FrameworkGenerated.StartURL
-readStartURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "StartPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundStartPage
+readStartURL =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "StartPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundStartPage
 
 getLinkedURL :: FrameworkGenerated.App FrameworkGenerated.LinkedURL
-getLinkedURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "LinkedPage"
-    (\value bindings -> bindings { FrameworkGenerated.boundLinkedPage = Just value })) $
-  (FrameworkGenerated.LinkedURL <$> runWrap @"LinkedPage" (FrameworkRuntime.super "linkedURL" FrameworkGenerated.linkedURL))
+getLinkedURL =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "LinkedPage"
+      (\value bindings -> bindings { FrameworkGenerated.boundLinkedPage = Just value }) $
+    (FrameworkGenerated.LinkedURL <$> runWrap @"LinkedPage" (FrameworkRuntime.super "linkedURL" FrameworkGenerated.linkedURL))
 
 readLinkedURL :: FrameworkGenerated.App FrameworkGenerated.LinkedURL
-readLinkedURL = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "LinkedPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundLinkedPage
+readLinkedURL =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "LinkedPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundLinkedPage
 
 runFetchPage :: FrameworkGenerated.App [String]
-runFetchPage = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runFetchPage" [("ExtractPage", () <$ getStartPageSummary)] [] . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FetchPage") $
-  getStartURL >> openCrawlSession >> runWrap @"FetchPage" (FrameworkRuntime.super "fetchPage" FrameworkGenerated.fetchPage)
+runFetchPage =
+  FrameworkRuntime.withErrorPath ["CrawlSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runFetchPage" [("ExtractPage", () <$ getStartPageSummary)] []
+  . FrameworkRuntime.withScopeDependencies ["CrawlSession"]
+  . FrameworkRuntime.enterHandler "FetchPage" $
+    getStartURL >> openCrawlSession >> runWrap @"FetchPage" (FrameworkRuntime.super "fetchPage" FrameworkGenerated.fetchPage)
 
 runKeepPageBody :: FrameworkGenerated.App [String]
-runKeepPageBody = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"]) $
-  runWrap @"KeepPageBody" (FrameworkRuntime.super "dropBlankBodies" FrameworkGenerated.dropBlankBodies)
+runKeepPageBody =
+  FrameworkRuntime.withErrorPath ["CrawlSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.withScopeDependencies ["CrawlSession"] $
+    runWrap @"KeepPageBody" (FrameworkRuntime.super "dropBlankBodies" FrameworkGenerated.dropBlankBodies)
 
 getStartPageSummary :: FrameworkGenerated.App FrameworkGenerated.StartPageSummary
-getStartPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractPage"
-    (\value bindings -> bindings { FrameworkGenerated.boundExtractPage = Just value })) $
-  (FrameworkGenerated.StartPageSummary <$> runWrap @"ExtractPage" (FrameworkRuntime.super "extractSummary" FrameworkGenerated.extractSummary))
+getStartPageSummary =
+  FrameworkRuntime.withErrorPath ["CrawlSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.withScopeDependencies ["CrawlSession"]
+  . FrameworkRuntime.callContext "ExtractPage"
+      (\value bindings -> bindings { FrameworkGenerated.boundExtractPage = Just value }) $
+    (FrameworkGenerated.StartPageSummary <$> runWrap @"ExtractPage" (FrameworkRuntime.super "extractSummary" FrameworkGenerated.extractSummary))
 
 readStartPageSummary :: FrameworkGenerated.App FrameworkGenerated.StartPageSummary
-readStartPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ExtractPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundExtractPage
+readStartPageSummary =
+  FrameworkRuntime.withErrorPath ["CrawlSession"]
+  . FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "ExtractPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundExtractPage
 
 runPrintPage :: FrameworkGenerated.App [String]
-runPrintPage = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrintPage" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrintPage") $
-  runWrap @"PrintPage" (FrameworkRuntime.super "printSummary" FrameworkGenerated.printSummary)
+runPrintPage =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runPrintPage" [] []
+  . FrameworkRuntime.enterHandler "PrintPage" $
+    runWrap @"PrintPage" (FrameworkRuntime.super "printSummary" FrameworkGenerated.printSummary)
 
 runFetchLinkedPage :: FrameworkGenerated.App [String]
-runFetchLinkedPage = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runFetchLinkedPage" [("ExtractLinkedPage", () <$ getLinkedPageSummary)] [] . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.enterHandler "FetchLinkedPage") $
-  getLinkedURL >> openCrawlSession >> runWrap @"FetchLinkedPage" (FrameworkRuntime.super "fetchPage" FrameworkGenerated.fetchPage)
+runFetchLinkedPage =
+  FrameworkRuntime.withErrorPath ["CrawlSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runFetchLinkedPage" [("ExtractLinkedPage", () <$ getLinkedPageSummary)] []
+  . FrameworkRuntime.withScopeDependencies ["CrawlSession"]
+  . FrameworkRuntime.enterHandler "FetchLinkedPage" $
+    getLinkedURL >> openCrawlSession >> runWrap @"FetchLinkedPage" (FrameworkRuntime.super "fetchPage" FrameworkGenerated.fetchPage)
 
 runKeepLinkedPageBody :: FrameworkGenerated.App [String]
-runKeepLinkedPageBody = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"]) $
-  runWrap @"KeepLinkedPageBody" (FrameworkRuntime.super "dropBlankBodies" FrameworkGenerated.dropBlankBodies)
+runKeepLinkedPageBody =
+  FrameworkRuntime.withErrorPath ["CrawlSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.withScopeDependencies ["CrawlSession"] $
+    runWrap @"KeepLinkedPageBody" (FrameworkRuntime.super "dropBlankBodies" FrameworkGenerated.dropBlankBodies)
 
 getLinkedPageSummary :: FrameworkGenerated.App FrameworkGenerated.LinkedPageSummary
-getLinkedPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies ["CrawlSession"] . FrameworkRuntime.callContext "ExtractLinkedPage"
-    (\value bindings -> bindings { FrameworkGenerated.boundExtractLinkedPage = Just value })) $
-  (FrameworkGenerated.LinkedPageSummary <$> runWrap @"ExtractLinkedPage" (FrameworkRuntime.super "extractSummary" FrameworkGenerated.extractSummary))
+getLinkedPageSummary =
+  FrameworkRuntime.withErrorPath ["CrawlSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.withScopeDependencies ["CrawlSession"]
+  . FrameworkRuntime.callContext "ExtractLinkedPage"
+      (\value bindings -> bindings { FrameworkGenerated.boundExtractLinkedPage = Just value }) $
+    (FrameworkGenerated.LinkedPageSummary <$> runWrap @"ExtractLinkedPage" (FrameworkRuntime.super "extractSummary" FrameworkGenerated.extractSummary))
 
 readLinkedPageSummary :: FrameworkGenerated.App FrameworkGenerated.LinkedPageSummary
-readLinkedPageSummary = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "ExtractLinkedPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundExtractLinkedPage
+readLinkedPageSummary =
+  FrameworkRuntime.withErrorPath ["CrawlSession"]
+  . FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "ExtractLinkedPage" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundExtractLinkedPage
 
 runPrintLinkedPage :: FrameworkGenerated.App [String]
-runPrintLinkedPage = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicHandle "runPrintLinkedPage" [] [] . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "PrintLinkedPage") $
-  runWrap @"PrintLinkedPage" (FrameworkRuntime.super "printSummary" FrameworkGenerated.printSummary)
+runPrintLinkedPage =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicHandle "runPrintLinkedPage" [] []
+  . FrameworkRuntime.enterHandler "PrintLinkedPage" $
+    runWrap @"PrintLinkedPage" (FrameworkRuntime.super "printSummary" FrameworkGenerated.printSummary)
 
 getCrawlSessionInfo :: FrameworkGenerated.App FrameworkGenerated.CrawlSessionInfo
-getCrawlSessionInfo = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.callContext "SessionContext"
-    (\value bindings -> bindings { FrameworkGenerated.boundSessionContext = Just value })) $
-  (FrameworkGenerated.CrawlSessionInfo <$> runWrap @"SessionContext" (FrameworkRuntime.super "sessionInfo" FrameworkGenerated.sessionInfo))
+getCrawlSessionInfo =
+  FrameworkRuntime.handleFailure
+  . FrameworkRuntime.callContext "SessionContext"
+      (\value bindings -> bindings { FrameworkGenerated.boundSessionContext = Just value }) $
+    (FrameworkGenerated.CrawlSessionInfo <$> runWrap @"SessionContext" (FrameworkRuntime.super "sessionInfo" FrameworkGenerated.sessionInfo))
 
 readCrawlSessionInfo :: FrameworkGenerated.App FrameworkGenerated.CrawlSessionInfo
-readCrawlSessionInfo = (FrameworkRuntime.withErrorPath [] . FrameworkRuntime.handleFailure) $
-  FrameworkRuntime.readContext "SessionContext" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundSessionContext
+readCrawlSessionInfo =
+  FrameworkRuntime.handleFailure $
+    FrameworkRuntime.readContext "SessionContext" FrameworkGenerated.ContextBindingError FrameworkGenerated.boundSessionContext
 
 openCrawlSession :: FrameworkGenerated.App [String]
-openCrawlSession = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "openCrawlSession" [] [] . FrameworkRuntime.openScope "CrawlSession" FrameworkGenerated.ScopeBindingError (Just (() <$ closeCrawlSession)) . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
-  getCrawlSessionInfo >> runWrap @"CrawlSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)
+openCrawlSession =
+  FrameworkRuntime.withErrorPath ["CrawlSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicScope "openCrawlSession" [] []
+  . FrameworkRuntime.openScope "CrawlSession" FrameworkGenerated.ScopeBindingError (Just (() <$ closeCrawlSession))
+  . FrameworkRuntime.enterHandler "CrawlSession" $
+    getCrawlSessionInfo >> runWrap @"CrawlSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)
 
 closeCrawlSession :: FrameworkGenerated.App [String]
-closeCrawlSession = (FrameworkRuntime.withErrorPath ["CrawlSession"] . FrameworkRuntime.handleFailure . FrameworkRuntime.atomicScope "closeCrawlSession" [] [] . FrameworkRuntime.closeScope "CrawlSession" FrameworkGenerated.ScopeBindingError . FrameworkRuntime.withScopeDependencies [] . FrameworkRuntime.enterHandler "CrawlSession") $
-  runWrap @"CrawlSession" (FrameworkRuntime.superClose "closeSession" FrameworkGenerated.closeSession)
+closeCrawlSession =
+  FrameworkRuntime.withErrorPath ["CrawlSession"]
+  . FrameworkRuntime.handleFailure
+  . FrameworkRuntime.atomicScope "closeCrawlSession" [] []
+  . FrameworkRuntime.closeScope "CrawlSession" FrameworkGenerated.ScopeBindingError
+  . FrameworkRuntime.enterHandler "CrawlSession" $
+    runWrap @"CrawlSession" (FrameworkRuntime.superClose "closeSession" FrameworkGenerated.closeSession)
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [FrameworkRuntime.ScopeHandler FrameworkGenerated.ContextValues FrameworkGenerated.Errors]

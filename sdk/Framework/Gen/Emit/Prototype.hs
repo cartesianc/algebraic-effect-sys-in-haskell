@@ -60,23 +60,24 @@ pair :: (left -> String) -> (right -> String) -> (left, right) -> String
 pair renderLeft renderRight (left, right) =
   "(" ++ renderLeft left ++ ", " ++ renderRight right ++ ")"
 
-maybeValue :: (value -> String) -> Maybe value -> String
-maybeValue _ Nothing = "Nothing"
-maybeValue render (Just value) = "Just (" ++ render value ++ ")"
+-- 参数由调用位置按 Haskell 应用优先级渲染。字面量、列表和标签可直接作参数；
+-- Just 等原生构造器交给 Show，嵌套的生成表达式显式分组。
+showArg :: Show a => a -> String
+showArg value = showsPrec 11 value ""
+
+group :: String -> String
+group value
+  | '\n' `elem` value = "(\n" ++ indent 2 value ++ "\n)"
+  | otherwise = "(" ++ value ++ ")"
 
 constructor :: String -> [String] -> String
-constructor name values
+constructor name arguments
   | fits compact = compact
-  | otherwise = blockConstructor name values
-  where compact = unwords (("SDK." ++ name) : map (\value -> "(" ++ value ++ ")") values)
+  | otherwise = blockConstructor name arguments
+  where compact = unwords (("SDK." ++ name) : arguments)
 
 blockConstructor :: String -> [String] -> String
-blockConstructor name values = intercalate "\n"
-  (("SDK." ++ name) : map (indent 2 . argument) values)
-  where
-    argument value
-      | '\n' `notElem` value = "(" ++ value ++ ")"
-      | otherwise = "(\n" ++ indent 2 value ++ "\n)"
+blockConstructor name arguments = intercalate "\n" (("SDK." ++ name) : map (indent 2) arguments)
 
 record :: String -> [(String, String)] -> String
 record name [] = "SDK." ++ name ++ " {}"
@@ -100,22 +101,22 @@ renderSpec specification = record "EffectSpec"
   ]
 
 renderTyping :: R.EffectTyping -> String
-renderTyping (R.Pure method) = constructor "Pure" [show method]
-renderTyping (R.Excu method) = constructor "Excu" [show method]
-renderTyping (R.Scoped opening closing) = constructor "Scoped" [show opening, show closing]
+renderTyping (R.Pure method) = constructor "Pure" [showArg method]
+renderTyping (R.Excu method) = constructor "Excu" [showArg method]
+renderTyping (R.Scoped opening closing) = constructor "Scoped" [showArg opening, showArg closing]
 renderTyping (R.Error detecting resolving handled) =
-  constructor "Error" [show detecting, show resolving, list renderHandles handled]
+  constructor "Error" [showArg detecting, showArg resolving, list renderHandles handled]
 renderTyping (R.Context declared parsing requiring streaming) =
-  constructor "Context" [renderAsset declared, show parsing, show requiring, show streaming]
-renderTyping (R.Stream method) = constructor "Stream" [show method]
-renderTyping (R.Middleware method intercepted) = constructor "Middleware" [show method, list tag intercepted]
+  constructor "Context" [group (renderAsset declared), showArg parsing, show requiring, show streaming]
+renderTyping (R.Stream method) = constructor "Stream" [showArg method]
+renderTyping (R.Middleware method intercepted) = constructor "Middleware" [showArg method, list tag intercepted]
 
 renderAsset :: R.Asset -> String
-renderAsset (R.AssetDecl selected representation) = constructor "AssetDecl" [show selected, renderType representation]
+renderAsset (R.AssetDecl selected representation) = constructor "AssetDecl" [show selected, group (renderType representation)]
 
 renderType :: R.TypeRef -> String
 renderType (R.TypeRef selected) = constructor "TypeRef" [show selected]
-renderType (R.OutputRef cause value) = constructor "OutputRef" [renderType cause, renderType value]
+renderType (R.OutputRef cause value) = constructor "OutputRef" [group (renderType cause), group (renderType value)]
 
 renderHandles :: R.Handles -> String
 renderHandles (R.RaisedBy selected) = constructor "RaisedBy" [show selected]
@@ -155,7 +156,7 @@ renderMethod definition = constructor "MethodDefinition"
   [ genName (G.methodIdentity definition)
   , genName (G.methodEffect definition)
   , tag (G.methodRole definition)
-  , renderShape (G.methodBody definition)
+  , shapeArgument (G.methodBody definition)
   ]
 
 renderShape :: G.MethodShape String -> String
@@ -163,16 +164,20 @@ renderShape G.Empty = "SDK.Empty"
 renderShape (G.Call method) = constructor "Call" [genName method]
 renderShape (G.Sequence children) = constructor "Sequence" [list renderShape children]
 renderShape (G.Choice children) = constructor "Choice" [list renderShape children]
-renderShape (G.Recover body recovery) = constructor "Recover" [renderShape body, renderShape recovery]
+renderShape (G.Recover body recovery) = constructor "Recover" [shapeArgument body, shapeArgument recovery]
+
+shapeArgument :: G.MethodShape String -> String
+shapeArgument G.Empty = "SDK.Empty"
+shapeArgument shape = group (renderShape shape)
 
 renderWorkflow :: P.WorkflowTree -> String
 renderWorkflow (P.NodeAt node selected) = constructor "NodeAt" [show node, show selected]
 renderWorkflow (P.ChainedAt node children) = blockConstructor "ChainedAt" [show node, blockList renderWorkflow children]
 renderWorkflow (P.ParallelAt node children) = blockConstructor "ParallelAt" [show node, blockList renderWorkflow children]
 renderWorkflow (P.AlternativeAt node alternative children) =
-  blockConstructor "AlternativeAt" [show node, renderAlternative alternative, blockList renderWorkflow children]
+  blockConstructor "AlternativeAt" [show node, group (renderAlternative alternative), blockList renderWorkflow children]
 renderWorkflow (P.LifelongAt node lifelong children) =
-  blockConstructor "LifelongAt" [show node, renderLifelong lifelong, blockList renderWorkflow children]
+  blockConstructor "LifelongAt" [show node, group (renderLifelong lifelong), blockList renderWorkflow children]
 
 renderAlternative :: P.AlternativeProto -> String
 renderAlternative alternative = record "AlternativeProto"
@@ -278,12 +283,12 @@ renderDriving plan = record "DrivingPlan"
   , ("drivingHooks", show (P.drivingHooks plan)) ]
   where
     node p = constructor "NodeDrive" [show (P.driveNode p), show (P.driveMembers p), show (P.driveSubscriptions p)
-      , show (P.driveBoundary p), show (P.driveCaptures p), show (P.drivePriorBoundaries p), show (P.driveBlockedPublishers p)]
+      , showArg (P.driveBoundary p), show (P.driveCaptures p), show (P.drivePriorBoundaries p), show (P.driveBlockedPublishers p)]
     unit p = constructor "UnitDrive" [show (P.driveUnit p), show (P.driveFrameNodes p)
       , list (pair show (list reader)) (P.driveReaders p), list (pair show local) (P.driveLocalSources p)]
     reader (P.ReadAt node') = constructor "ReadAt" [show node']
     reader (P.ChooseAmong nodes) = constructor "ChooseAmong" [show nodes]
     local (P.PublishedAt nodes) = constructor "PublishedAt" [show nodes]
     local (P.DerivedFrom source) = constructor "DerivedFrom" [show source]
-    session p = constructor "SessionDrive" [show (P.driveSessionBoundary p), show (P.driveSessionSource p)
-      , show (P.driveSessionAsset p), show (P.driveSessionUpstream p)]
+    session p = constructor "SessionDrive" [showArg (P.driveSessionBoundary p), show (P.driveSessionSource p)
+      , show (P.driveSessionAsset p), showArg (P.driveSessionUpstream p)]
