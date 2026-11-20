@@ -19,33 +19,58 @@
 - 生成的 `streamT`（`readStreamContext`）读本读取方游标位置的一条，`readT`（`readContext`）读整次运行共享的最新值。两者都只返回一个值，又都包装成同一个 `require`，handler 分不出来。
 - 结果是计数、窗口、与前一条比较这类跨条逻辑都无法表达，只能把 `IORef` 放进资源资产绕过框架：`LinesDemo` 的 `InputFile`（`IORef Total`），`StreamDemo` 的 `SensorMemory`（`SensorLink` 拿它充当开启参数，它不是真正的资源），`FacadeProbe` 的 `FeedCounter`。`IORef` 没有 `Show`，于是 `Types.hs` 出现手写 instance。这类累计对 gen、静态图和 LSP 都不可见。
 
-**已定。**
+**已定。** 1–5 为第一轮结论，6–10 为第二轮结论。U1 没有待确认项，可以直接实施。
 
 1. 持续资产是第三种资产，按 `x:xs` 读取：可以只读 `x`，必须能读 `xs`。
 2. `require` 对值资产和持续资产都只读一次增量。
-3. `streams` 声明读取持续资产，读到的是来源运行中、尚未结束的整串。
-4. `x:xs` 惰性求值：尾部在被需要时才生产。
+3. `streams` 声明读取持续资产，读到的是来源运行中、尚未结束的历史。
+4. 未来部分的读取是惰性的：尾部在被需要时才生产。这一点属于 U2、U3 的范围，U1 不涉及。
 5. 持续 Context 对 Stream `rawemit` 的解析必须落到这个结构上。
+6. **`xs` 是过去。** 读取方在某次交付时拿到 `x :> xs`：`x` 是本次交付，`xs` 是同一会话中更早到达的交付，最新的在前。只执行一次的读取方，`x` 是它捕获的那一条。U1 的 `xs` 都已经发布，读取它不需要等待，也不拉动来源。
+7. **声明不变。** 持续资产照旧写 `Asset @Line "TextLine"`。`stream = True` 就表示这个资产是 `Flow Line`、元素是 `Line`。不写 `Asset @(Flow Line)`，没有不兼容的语法改动。
+8. **refine 做在元素上。** 照旧生成 `newtype TextLine = TextLine Line`。契约名标识“这一条流”，元素同为 `Line` 的两条流互不相通。`Flow` 的参数是 representational 角色，`Flow TextLine` 可以直接 `coerce` 成 `Flow Line`。
+9. **demands 不变。** demands 里写的是契约名，不写 `Flow`。会话是否需要保留历史，由 gen 从 handler 方法体中的 `stream @T` 静态得出。
+10. **不引入 HKT 或 DataKinds。** 资产形状只有“值”和“流”两种，而且是封闭的，业务代码从不需要对形状做多态。gen 按 `stream` 字段区分形状，再生成对应的能力实例。
 
-**待确认。**
+业务可见的写法：
 
-- 业务可见的结构，名字待定：
+```haskell
+-- Framework.Language.Handler，经 Framework.SDK 导出
+data Flow a = a :> Flow a | Done
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+infixr 5 :>
 
-  ```haskell
-  data Flow a = a :> Flow a | Done
-  infixr 5 :>
+class Streams value m where
+  stream :: m (Flow value)    -- 只给 demands 中以 streams 读取该资产的 effect
+```
 
-  class Streams value m where
-    stream :: m (Flow value)    -- 只在 demands 声明了 streams 的 handler 的 Layer 中出现
-  ```
+```haskell
+-- LinesDemo：TextCounter 不再借用 InputFile 里的 IORef 计数
+countText = do
+  seen <- stream @Line                      -- 本次交付 :> 更早的交付
+  rawoutput [show (length seen), show (sum [length text | Line text <- toList seen])]
 
-  `require @T` 照旧只读增量，`stream @T` 读整串。
-- 声明写成 `Asset @(Flow Line) "TextLine"`：资产的值是整串，`Line` 是元素。parser 仍返回 `Line`，由 SDK 接到 `Flow Line` 上，parser 拿不到尾部。`Flow` 只能出现在 `Asset` 声明的最外层，不能出现在字段里，也不能嵌套。gen 检查 `stream = True` 与资产类型一致，之后可以删去这个字段。这是不兼容的语法改动，现有持续资产的声明都要改。
-- 读取位置：lifelong 中逐条启动的消费方拿到以本次交付开头的 `Flow`，只执行一次的消费方拿到会话开头起的整串。
-- 运行时：在已有游标上展开 `Flow`。强制尾部只做两件事：先**单独提交**需求登记，再等待该位置的结果 `data Step binding = Next binding | Ended | Broken Failure`。`Ended` 展开为 `Done`，`Broken` 在强制处按“上游失败原样传播”抛出。来源的 IO 留在会话线程，不使用来源侧的 lazy IO。原型验证时发现，登记和等待放进同一个 STM 事务会死锁：等待触发 retry，登记随之被撤销。
-- 生成的读取入口对每个单元的 `ContextValues` 快照做与 `readT` 相同的投影和 `coerce`，不需要新的存储形态。gen 的形状提取需要识别 `stream @T`。
+printLine = do                              -- 只读增量的写法不变
+  Line text <- require @Line
+  ...
+```
 
-**验收。** 三个 demo 去掉 `IORef` 和手写 instance，计数、窗口、编号都由 `stream @T` 读整串完成。8 个命名空间重新生成，`cabal build all` 无警告，`scripts/check.ps1` 通过。
+**实施方案。**
+
+| 层 | 改动 |
+| --- | --- |
+| 源语言 `Language/Handler` | 新增 `Flow` 和 `Streams`，由 `Framework.SDK` 导出 |
+| gen 形状 `Frontend/Shape` | 识别 `stream @T`，记作对表示类型 `T` 的历史读取 |
+| gen 组合 `Composition` | 历史读取按与 `require` 相同的路由解析为对读取方法的调用，所以方法图不变。另外收集被历史读取的契约，只允许持续资产。这份契约列表进入组合缓存键，并在建图后标在生产该资产的 Context 上 |
+| gen 接口 `Injector`、`Plan`、`Emit/Types` | 每个以 `streams` 读取的路由，在 Layer 中加上 `SDK.Streams T m`。这只由声明决定，首次生成契约时就已确定 |
+| gen 输出 `Emit/Handlers` | 为持续资产生成历史读取入口，并为相应标签生成 `Streams` 实例，内容是对 `Flow` 做 `coerce` |
+| 原型 `Prototype/Types` | `EffectProto` 新增 `effectHistory :: Bool`，默认 `False`，只在被历史读取的持续 Context 上为 `True` |
+| 运行时 `Session` | 被标记的资产，会话从开头起保留全部交付，不随游标裁剪。交付视图从“只含本条”改为“历史开头到本条”。现有读取都只取视图的最后一条，行为不变 |
+| 运行时 `Protocol`、`App`、`Context` | 新增历史读取：沿用现有的捕获与等待路径取得视图，把它倒序投影成 `Flow` |
+
+代价：被标记资产的会话会在整个生命周期内保留全部交付。没有 `stream @T` 读取的资产不受影响。
+
+**验收。** 三个 demo 去掉 `IORef` 和手写 instance，计数、窗口、编号都改用 `stream @T` 读取历史完成。8 个命名空间重新生成，`cabal build all` 无警告，`scripts/check.ps1` 通过，LinesDemo 的统计输出与改动前一致。完成后更新 STREAM_LIFELONG、GUIDE、COMPOSITION 和 `AGENTS.md` 中的相应表述。
 
 <a id="urgent-history"></a>
 ### U2　流结束后的 history 保存
