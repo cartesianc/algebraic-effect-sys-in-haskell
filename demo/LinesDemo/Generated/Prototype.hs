@@ -1,9 +1,11 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- 自动生成；gen 编译出的静态结构，由 Program 交给 interpreter，运行前校验。
 module LinesDemo.Generated.Prototype (generatedPrototype) where
 
 import qualified Framework.Generated as SDK
+import qualified LinesDemo.Types as AssetTypes
 import LinesDemo.Generated.Effects (MethodGen(..))
 
 -- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
@@ -21,7 +23,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "InputResource"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "OpenedInput" (SDK.TypeRef "InputFile")) (Just "acquireInput") True False
+                SDK.Context
+                  (SDK.AssetDecl "OpenedInput" (SDK.typeRef @AssetTypes.InputFile))
+                  (Just "acquireInput")
+                  True
+                  False
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -47,7 +53,7 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "LineParser"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "TextLine" (SDK.TypeRef "Line")) (Just "parseLine") True True
+                SDK.Context (SDK.AssetDecl "TextLine" (SDK.typeRef @AssetTypes.Line)) (Just "parseLine") True True
             , SDK.input = "LineFeed"
             , SDK.demands = []
             }
@@ -66,7 +72,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "CountParser"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "RunningTotal" (SDK.TypeRef "Total")) (Just "parseTotal") True True
+                SDK.Context
+                  (SDK.AssetDecl "RunningTotal" (SDK.typeRef @AssetTypes.Total))
+                  (Just "parseTotal")
+                  True
+                  True
             , SDK.input = "TextCounter"
             , SDK.demands = []
             }

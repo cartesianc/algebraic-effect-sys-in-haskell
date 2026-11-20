@@ -76,7 +76,7 @@ newtype CloseInputError = CloseInputError String
 instance SDK.HandlerError CloseInputError Errors where raised (CloseInputError description) = (CloseInputFailure, description)
 
 -- handler nextLine：绑定到 LineFeed。
-type NextLineLayer m = (SDK.Reads InputFile m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextLineError m, MonadIO m)
+type NextLineLayer m = (SDK.Reads InputFile m, SDK.Emits m, SDK.StreamEnds m, SDK.MonadMask m, SDK.Raises NextLineError m, MonadIO m)
 class NextLineHandler m where
   nextLine :: m ()
 

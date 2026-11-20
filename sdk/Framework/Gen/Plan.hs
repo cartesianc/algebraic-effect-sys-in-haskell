@@ -42,7 +42,7 @@ data ScopePlan = ScopePlan
 data ValueType = NativeType String | RefinedType String
   deriving (Eq, Ord, Show, Read)
 
-data Capability = ReadsType ValueType | StreamsType ValueType | HasRaw | WritesRaw | EmitsItem | EndsSource | EndsSubscription | ObservesHooks | PureMonad | IOMonad
+data Capability = ReadsType ValueType | StreamsType ValueType | HasRaw | WritesRaw | EmitsItem | EndsSource | MasksExceptions | EndsSubscription | ObservesHooks | PureMonad | IOMonad
   deriving (Eq, Show, Read)
 
 -- 每个入口的解释已经确定；Emit 仅把该操作翻译成现有 runtime 包装，不再查看 typing。
@@ -232,7 +232,7 @@ unitTerminals unit = nub [(mountTerminal mount, mountMethod mount)
   | mount <- assemblyMounts (unitAssembly unit), mountRole mount == Prototype.NodeChain]
 
 reference :: TypeRef -> String
-reference (TypeRef typeName) = typeName
+reference (TypeRef typeName _) = typeName
 reference (OutputRef cause value) = "SDK.Output (" ++ reference cause ++ ") (" ++ reference value ++ ")"
 
 -- 含空格且尚未整体括起的类型加括号。

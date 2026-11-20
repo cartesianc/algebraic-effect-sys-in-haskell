@@ -7,7 +7,7 @@ module Framework.Generated
   ( module Framework.SDK
   , module Framework.Prototype
   , module Framework.Prototype.Structure
-  , App, TypeRef(..)
+  , App, TypeRef(..), typeRef, MonadThrow, MonadCatch, MonadMask
   , Target, targetApp, SessionSteps, receiveSteps, deriveSteps
   , failEffect, handleFailure, withErrorPath, withErrorHandlers, ErrorHandler(..)
   , readContext, readStreamContext, readStreamHistory
@@ -27,7 +27,7 @@ import Framework.Runtime.Protocol
 import Framework.Runtime.Context
   ( readContext, readStreamContext, readStreamHistory, callContext
   , chooseCase, atomicHandle, atomicScope )
-import Framework.Language.Registration (TypeRef(..))
+import Framework.Language.Registration (TypeRef(..), typeRef)
 import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, deriveSteps)
 import Framework.Runtime.App
   ( emittedInput, emitToParser, superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation )
@@ -36,6 +36,7 @@ import Framework.Program (initializePrototype, runProgram)
 import Framework.Prototype
 import Framework.Prototype.Structure
 import Control.DeepSeq (NFData)
+import Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask)
 import Control.Exception (evaluate)
 -- 生成的读取入口用它把资产的名义类型解成表示类型。
 import Data.Coerce (coerce)

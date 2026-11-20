@@ -24,18 +24,19 @@ import Framework.Runtime.Scope
 import Framework.Runtime.Graph
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame (ExecutionFrame, owningFrame, captureFrameInput)
-import Framework.Runtime.Session (Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..), View, awaitView)
+import Framework.Runtime.Session (Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..), View, lastBinding, awaitView)
 import Framework.Prototype (NodeId)
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, evaluate, fromException, mask, mask_, throwIO, try, finally)
 import Control.Monad (filterM, forM, forM_, when)
+import Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask)
 import Control.Monad.Except (ExceptT(..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Reader (ReaderT(..), ask, asks, local, runReaderT)
 import Data.Foldable (toList)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (find, nub)
-import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
+import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, mapMaybe)
 import Data.Sequence ((|>))
 import qualified Data.Sequence as Seq
 import Data.Unique (Unique, newUnique)
@@ -140,7 +141,7 @@ instance Show Completed where show _ = "SDK lifecycle operation already complete
 instance Exception Completed
 
 newtype App env cause value = AppRun (ReaderT (Environment env cause) (ExceptT (Failure cause) IO) value)
-  deriving (Functor, Applicative, Monad, MonadError (Failure cause))
+  deriving (Functor, Applicative, Monad, MonadError (Failure cause), MonadThrow, MonadCatch, MonadMask)
 
 rawIO :: IO value -> App env cause value
 rawIO = AppRun . liftIO
@@ -713,12 +714,6 @@ deliveryAllowed :: Environment env cause -> Bool
 deliveryAllowed environment = isNothing (originalFailure environment) && not (cleaningScopes environment)
   && null (closings environment)
 
--- 当前值的身份来自固定视图最后一条，既不新建生产身份，也不重读后台会话。
-lastBinding :: View env cause -> Maybe (Bound env cause)
-lastBinding view = case Seq.viewr view of
-  Seq.EmptyR -> Nothing
-  _ Seq.:> value -> Just value
-
 -- 固定交付沿用 Binding 的生产身份；资产自身若含资源容器，不在此推断容器内所有资源的存续。
 rememberView :: Environment env cause -> String -> View env cause -> App env cause ()
 rememberView environment source view = when (deliveryAllowed environment) $
@@ -984,7 +979,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
       -- 覆盖选择和候选；普通节点在结果消费后释放。scope 自己的资源快照不成为外部根。
       captured <- readIORef values >>= filterM (fmap isNothing . readBindingOwner . snd)
       capturedViews <- readIORef delivered
-      keepBindings (launchRetention launch) (map snd captured ++ concatMap (toList . snd) capturedViews)
+      keepBindings (launchRetention launch) (map snd captured ++ mapMaybe (lastBinding . snd) capturedViews)
       -- 显式 launchUser 由外层生产步骤负责撤销；Receive 的逐条 parser 持有自己的嵌套使用。
       -- 跨步骤待用由会话执行帧保持，不把本步 ScopeUser 留到会话停止。
       -- 节点进度由 Execution 在本调用（含交接）返回后完成，再回收相关 Scoped。

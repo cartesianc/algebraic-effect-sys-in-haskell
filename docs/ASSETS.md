@@ -29,7 +29,7 @@
 | 没有 import；导出列表省略，或以 `T(..)` 列出全部类型 | `import System.IO (Handle)`、只导出类型不导出构造器 |
 | `Asset @T` 的 `T` 是 `String`、`[String]` 或 `Types.hs` 中的类型 | `Asset @Int "Beat"`、`Asset @[FileHandle] "Files"` |
 
-`Asset @T` 的 `T` 来自注册的 `Typeable`：`FilePath` 与 `String` 在类型身份上无法区分，所以注册里写 `Asset @FilePath` 仍按 `String` 接受；`Types.hs` 的字段按源码文本检查，必须写成 `String`。
+gen 按注册中 `Typeable` 的定义模块和编译单元核对 `Asset @T`。同一个本地类型可通过限定导入或重导出注册；其他模块即使也定义了同名、同字段的类型，仍会在生成期报错。`FilePath` 与 `String` 在类型身份上无法区分，所以注册里写 `Asset @FilePath` 仍按 `String` 接受；`Types.hs` 的字段按源码文本检查，必须写成 `String`。
 
 **为什么这样约束。** 资产是在 effect 之间传递、被保存为历史、在 scope 间共享并按值比较的数据。只由字符串构造，资产就总能比较、显示、记录，不会把活对象（句柄、连接、函数）带进 Binding、历史或快照。几种结果的区分交给 effect：一个 Excu 的输出挂几个 Context，各自只在自己的情况下解析成功，`alternative` 按哪个成功选择候选（[主设计：alternative](CORE_DESIGN.md#workflow)），不需要和类型。
 

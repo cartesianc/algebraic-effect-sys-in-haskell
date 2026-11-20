@@ -492,6 +492,8 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
 | 有限调用取得的固定值 | 调用、诊断和受控结果消费结束；alternative 的选择捕获保留到所选候选结束 |
 | 合法后继可读的最新绑定 | 仍有执行帧待用；值被新发布替换、位置完成或跳过后重新判断 |
 
+历史读取取得的 `x :> xs` 中，只有本次的 `x` 是当前交接的 Binding 和 scope 开启参数。`xs` 仍可读作历史数据。队列中另有游标尚未领取的条目及其伴随绑定，继续按各自的交付义务保留。
+
 领取和有限快照读取在 scope 关闭预约的共同协调锁内先登记保留，再推进游标或返回值。队列裁剪只撤销队列的义务，不把领取当成执行完成。撤销执行保留、裁剪资源条目或替换旧绑定后，在锁外按原 owner 和其 ScopeTree 祖先调用现有回收器。冻结的 cleanup 快照不成为实例自己的保留根；订阅和值持有也不增加 ScopeTree 父子边。
 
 **会话的待用关系。** runtime 复用 Prototype 的会话挂载与 `protoScopeOpenings`，在根帧下登记一份会话待用帧。它表示后续仍可能执行的生产位置，不把所有曾经打开的实例都视为仍在使用。启动时已经固定的普通参数优先按原生产身份匹配；Derive 的持续参数按本次固定交付及游标下一条的具体生产身份判断；领取时在同一协调锁内更新固定身份后才推进游标，等待期间不把全部旧实例视作待用。会话预约不成为参数的新生产帧，也不改变原 Binding 的归属；具体查询见[开启计划与待用](EFFECT_GRAPH.md#scope-opening-retention)。
@@ -512,21 +514,22 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
 **代码长什么样。** Stream handler 的结果为 `m ()`，Layer 提供 `Emits` 与 `StreamEnds`。以下是 LinesDemo 的来源和外层 workflow。
 
     -- demo/LinesDemo/Generated/Effects.hs（生成）
-    type NextLineLayer m = (SDK.Reads InputFile m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextLineError m, MonadIO m)
+    type NextLineLayer m = (SDK.Reads InputFile m, SDK.Emits m, SDK.StreamEnds m, SDK.MonadMask m, SDK.Raises NextLineError m, MonadIO m)
     class NextLineHandler m where
       nextLine :: m ()
 
     -- demo/LinesDemo/Handlers.hs（手写）
     instance NextLineLayer m => NextLineHandler m where
       nextLine = do
-        InputFile _ file <- require @InputFile
-        let readLines = do
-              finished <- liftIO (hIsEOF file)
-              if finished then streamEnd else do
-                line <- liftIO (hGetLine file)
-                rawemit line
-                readLines
-        readLines
+        InputFile path <- require @InputFile
+        bracket (liftIO (openFile path ReadMode)) (liftIO . hClose) $ \file -> do
+          let readLines = do
+                finished <- liftIO (hIsEOF file)
+                if finished then streamEnd else do
+                  line <- liftIO (hGetLine file)
+                  rawemit line
+                  readLines
+          readLines
 
     -- demo/LinesDemo/AST.hs
     ast = chained [chained [node "Announce"], monitorLines, chained [node "Report"]]
@@ -537,7 +540,7 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
           ]
       ]
 
-LinesDemo 读完四行后 `streamEnd`，打印与统计单元排空后退出并封住 `RunningTotal`；显示单元领完统计增量后退出，lifelong 返回，`Report` 读取最终统计（输出复用见 [4.2 节](#derive)）。`TextLine` 的读取方全部离开时会话退役，输入文件随之关闭，早于 `Report`。parser、Excu、Scoped 的 Layer 里没有 `StreamEnds`，在它们的方法体里写 `streamEnd` 由 GHC 拒绝。
+LinesDemo 读完四行后 `streamEnd`，打印与统计单元排空后退出并封住 `RunningTotal`；显示单元领完统计增量后退出，lifelong 返回，`Report` 读取最终统计（输出复用见 [4.2 节](#derive)）。原生文件由来源在 `bracket` 内逐行读取，离开读取操作时关闭，解析失败或取消也走同一释放路径。`TextLine` 的读取方全部离开后会话退役，再由 scope GC 判断是否调用 `InputSession` 的 close。parser、Excu、Scoped 的 Layer 里没有 `StreamEnds`，在它们的方法体里写 `streamEnd` 由 GHC 拒绝。
 
 **交付与结束。** 一次来源调用可以反复交付。只有 `streamEnd` 表示来源主动正常结束；失败与取消各走原协议。
 

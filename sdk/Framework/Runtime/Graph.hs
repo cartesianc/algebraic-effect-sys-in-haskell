@@ -19,14 +19,13 @@ import Control.Monad (forM, forM_, void)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (isPrefixOf, nub)
 import Data.Maybe (fromMaybe, isJust)
-import qualified Data.Sequence as Seq
 import Framework.Runtime.Protocol (ContextFault(..))
 import Framework.Prototype.Graph (MethodRole(..))
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame
 import Framework.Runtime.Binding (Binding(..), readBindingOwner)
 import Framework.Runtime.Retention
-import Framework.Runtime.Session (Session, SessionKey, View, newSession, stopSession, currentView
+import Framework.Runtime.Session (Session, SessionKey, View, lastBinding, newSession, stopSession, currentView
   , attachReader, leaveSession, feedSession, breakSession, upstreamOf, awaitUpstream, pendingBindings)
 import Framework.Runtime.Scope
   ( Scopes, ScopeBinding, ScopeBindings, ScopeUser(..), ScopeHandler(..), ScopeInstance(..), ScopeRecord(..), ScopeInput(..)
@@ -150,9 +149,6 @@ retainedInstance graph slot = case runtimePrototype graph of
         ownsAny future
   where
     ownsAny values = or <$> mapM (fmap (maybe False ((== scopeRecord slot) . scopeRecord . snd)) . readBindingOwner) values
-    lastBinding view = case Seq.viewr view of
-      Seq.EmptyR -> Nothing
-      _ Seq.:> value -> Just value
 
 -- 保留根的寿命由调用/轮帧/派生步骤包围，不由 Haskell 对象何时 GC 决定。
 withRuntimeRetention :: RuntimeGraph environment cause -> (Retention environment cause -> IO value) -> IO value
@@ -260,14 +256,10 @@ reachableInstance graph slot = case runtimePrototype graph of
                       Nothing -> pure False
                       Just session -> do
                         view <- currentView session
-                        pure $ case view >>= lastProduction of
+                        pure $ case view >>= lastBinding >>= bindingProduction of
                           Just current -> current == production
                           Nothing -> False
     or <$> mapM (\(frame, opening, delivered) -> matches slot frame delivered opening) candidates
-  where
-    lastProduction view = case Seq.viewr view of
-      Seq.EmptyR -> Nothing
-      _ Seq.:> value -> bindingProduction value
 
 -- 节点退休后只检查其开启位置及 ScopeTree 祖先。预约在进度写入的锁外进行，
 -- 业务 close 失败和普通 IO 异常留作汇总；只有取消停止后续执行。

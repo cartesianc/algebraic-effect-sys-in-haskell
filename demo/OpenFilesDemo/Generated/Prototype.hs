@@ -1,9 +1,11 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- 自动生成；gen 编译出的静态结构，由 Program 交给 interpreter，运行前校验。
 module OpenFilesDemo.Generated.Prototype (generatedPrototype) where
 
 import qualified Framework.Generated as SDK
+import qualified OpenFilesDemo.Types as AssetTypes
 import OpenFilesDemo.Generated.Effects (MethodGen(..))
 
 -- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
@@ -15,7 +17,7 @@ generatedPrototype =
         [ SDK.EffectSpec
             { SDK.name = "FileLocations"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "FileNames" (SDK.TypeRef "[[Char]]")) (Just "listFiles") True False
+                SDK.Context (SDK.AssetDecl "FileNames" (SDK.typeRef @[[Char]])) (Just "listFiles") True False
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -23,7 +25,7 @@ generatedPrototype =
             { SDK.name = "FileResources"
             , SDK.typing =
                 SDK.Context
-                  (SDK.AssetDecl "OpenedFiles" (SDK.TypeRef "FileHandles"))
+                  (SDK.AssetDecl "OpenedFiles" (SDK.typeRef @AssetTypes.FileHandles))
                   (Just "acquireFiles")
                   True
                   False
@@ -59,7 +61,7 @@ generatedPrototype =
             { SDK.name = "InspectionSnapshot"
             , SDK.typing =
                 SDK.Context
-                  (SDK.AssetDecl "InspectedFiles" (SDK.TypeRef "FileHandles"))
+                  (SDK.AssetDecl "InspectedFiles" (SDK.typeRef @AssetTypes.FileHandles))
                   (Just "snapshotFiles")
                   True
                   False

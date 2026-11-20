@@ -1,9 +1,11 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- 自动生成；gen 编译出的静态结构，由 Program 交给 interpreter，运行前校验。
 module FileDemo.Generated.Prototype (generatedPrototype) where
 
 import qualified Framework.Generated as SDK
+import qualified FileDemo.Types as AssetTypes
 import FileDemo.Generated.Effects (MethodGen(..))
 
 -- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
@@ -27,14 +29,18 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "FileLocation"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "FileName" (SDK.TypeRef "[Char]")) (Just "parseFileName") True False
+                SDK.Context (SDK.AssetDecl "FileName" (SDK.typeRef @[Char])) (Just "parseFileName") True False
             , SDK.input = "ValidateFileName"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "FileResource"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "OpenedFile" (SDK.TypeRef "FileHandle")) (Just "acquireFile") True False
+                SDK.Context
+                  (SDK.AssetDecl "OpenedFile" (SDK.typeRef @AssetTypes.FileHandle))
+                  (Just "acquireFile")
+                  True
+                  False
             , SDK.input = "Root"
             , SDK.demands = [SDK.Demand SDK.RequestAccess "FileName", SDK.Demand SDK.RequireAccess "FileName"]
             }
@@ -64,7 +70,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "BlankText"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "FileBlank" (SDK.TypeRef "EmptyText")) (Just "parseBlankText") True False
+                SDK.Context
+                  (SDK.AssetDecl "FileBlank" (SDK.typeRef @AssetTypes.EmptyText))
+                  (Just "parseBlankText")
+                  True
+                  False
             , SDK.input = "ReadFile"
             , SDK.demands = []
             }
@@ -72,7 +82,7 @@ generatedPrototype =
             { SDK.name = "FilledText"
             , SDK.typing =
                 SDK.Context
-                  (SDK.AssetDecl "FileWritten" (SDK.TypeRef "WrittenText"))
+                  (SDK.AssetDecl "FileWritten" (SDK.typeRef @AssetTypes.WrittenText))
                   (Just "parseWrittenText")
                   True
                   False

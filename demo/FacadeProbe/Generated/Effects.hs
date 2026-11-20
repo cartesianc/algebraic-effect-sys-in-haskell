@@ -242,7 +242,7 @@ newtype DescribeFilledError = DescribeFilledError String
 instance SDK.HandlerError DescribeFilledError Errors where raised (DescribeFilledError description) = (DescribeFilledFailure, description)
 
 -- handler nextA：绑定到 FeedA。
-type NextALayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextAError m, MonadIO m)
+type NextALayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.MonadMask m, SDK.Raises NextAError m, MonadIO m)
 class NextAHandler m where
   nextA :: m ()
 
@@ -252,7 +252,7 @@ newtype NextAError = NextAError String
 instance SDK.HandlerError NextAError Errors where raised (NextAError description) = (NextAFailure, description)
 
 -- handler nextB：绑定到 FeedB。
-type NextBLayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextBError m, MonadIO m)
+type NextBLayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.MonadMask m, SDK.Raises NextBError m, MonadIO m)
 class NextBHandler m where
   nextB :: m ()
 

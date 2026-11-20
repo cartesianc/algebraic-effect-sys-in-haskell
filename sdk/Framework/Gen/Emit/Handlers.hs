@@ -95,7 +95,9 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       , "-- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。"
       , "newtype " ++ wrap ++ (if hooked then " (hooks :: [FrameworkTypes.Symbol])" else "")
           ++ " (effect :: FrameworkTypes.Symbol) (method :: FrameworkTypes.Symbol) value = " ++ wrap ++ " { " ++ runWrap ++ " :: FrameworkGenerated.App value }"
-      , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)"
+      , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO"
+          ++ (if any (elem MasksExceptions . signatureLayer) (unitSignatures unit)
+              then ", FrameworkRuntime.MonadThrow, FrameworkRuntime.MonadCatch, FrameworkRuntime.MonadMask" else "") ++ ")"
       , ""
       , "-- 类型标签上的名字：effect 名与方法名只写在标签上，需要字符串时从这里取。"
       , nameOf ++ " :: forall name. FrameworkTypes.KnownSymbol name => String"

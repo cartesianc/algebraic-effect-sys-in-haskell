@@ -301,7 +301,7 @@ buildEffectProtos specifications = do
             valid (validContractName (contractOf declared))
               ("Asset name must be a type name such as StartURL: " ++ contractOf declared ++ " in " ++ name specification)
             case representation declared of
-              TypeRef _ -> pure ()
+              TypeRef _ _ -> pure ()
               _ -> Left (InvalidPrototype ("Context.request must wrap a business value, not Output: " ++ name specification))
             valid (null [() | anchorName <- maybeToList (anchorOf [] (input specification))
               , anchor <- specifications, name anchor == anchorName

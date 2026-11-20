@@ -1,9 +1,11 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- 自动生成；gen 编译出的静态结构，由 Program 交给 interpreter，运行前校验。
 module Crawler.Generated.Prototype (generatedPrototype) where
 
 import qualified Framework.Generated as SDK
+import qualified Crawler.Types as AssetTypes
 import Crawler.Generated.Effects (MethodGen(..))
 
 -- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
@@ -15,14 +17,22 @@ generatedPrototype =
         [ SDK.EffectSpec
             { SDK.name = "StartPage"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "StartURL" (SDK.TypeRef "PageURL")) (Just "startURL") True False
+                SDK.Context
+                  (SDK.AssetDecl "StartURL" (SDK.typeRef @AssetTypes.PageURL))
+                  (Just "startURL")
+                  True
+                  False
             , SDK.input = "Root"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "LinkedPage"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "LinkedURL" (SDK.TypeRef "PageURL")) (Just "linkedURL") True False
+                SDK.Context
+                  (SDK.AssetDecl "LinkedURL" (SDK.typeRef @AssetTypes.PageURL))
+                  (Just "linkedURL")
+                  True
+                  False
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -46,7 +56,7 @@ generatedPrototype =
             { SDK.name = "ExtractPage"
             , SDK.typing =
                 SDK.Context
-                  (SDK.AssetDecl "StartPageSummary" (SDK.TypeRef "PageSummary"))
+                  (SDK.AssetDecl "StartPageSummary" (SDK.typeRef @AssetTypes.PageSummary))
                   (Just "extractSummary")
                   True
                   False
@@ -79,7 +89,7 @@ generatedPrototype =
             { SDK.name = "ExtractLinkedPage"
             , SDK.typing =
                 SDK.Context
-                  (SDK.AssetDecl "LinkedPageSummary" (SDK.TypeRef "PageSummary"))
+                  (SDK.AssetDecl "LinkedPageSummary" (SDK.typeRef @AssetTypes.PageSummary))
                   (Just "extractSummary")
                   True
                   False
@@ -96,7 +106,7 @@ generatedPrototype =
             { SDK.name = "SessionContext"
             , SDK.typing =
                 SDK.Context
-                  (SDK.AssetDecl "CrawlSessionInfo" (SDK.TypeRef "SessionInfo"))
+                  (SDK.AssetDecl "CrawlSessionInfo" (SDK.typeRef @AssetTypes.SessionInfo))
                   (Just "sessionInfo")
                   True
                   False

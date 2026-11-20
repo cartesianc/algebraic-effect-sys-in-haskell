@@ -13,6 +13,7 @@ module LinesDemo.Handlers () where
 import Framework.SDK (Emits(rawemit), Hooks(hook), Operation(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), Streams(..), rawoutput)
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
+import Control.Monad.Catch (bracket)
 import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (toList)
 import System.FilePath ((</>))
@@ -45,14 +46,14 @@ instance CloseInputLayer m => CloseInputHandler m where
 instance NextLineLayer m => NextLineHandler m where
   nextLine = do
     InputFile path <- require @InputFile
-    file <- liftIO (openFile path ReadMode)
-    let readLines = do
-          finished <- liftIO (hIsEOF file)
-          if finished then liftIO (hClose file) >> streamEnd else do
-            line <- liftIO (hGetLine file)
-            rawemit line
-            readLines
-    readLines
+    bracket (liftIO (openFile path ReadMode)) (liftIO . hClose) $ \file -> do
+      let readLines = do
+            finished <- liftIO (hIsEOF file)
+            if finished then streamEnd else do
+              line <- liftIO (hGetLine file)
+              rawemit line
+              readLines
+      readLines
 
 instance TraceLineLayer m => TraceLineHandler m where
   traceLine = do

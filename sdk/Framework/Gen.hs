@@ -58,7 +58,7 @@ compileWorkflow namespace = do
   -- 类型检查、顶层白名单与资产目录；通过后才更新生成区，未变文件保留时间戳
   assets <- checkAssets namespace
     [("Effects", contracts), ("Prototype", prototypeModule), ("Program", program), ("Handlers", handlers)]
-    (nub [reference (assetRepresentation declared) | declared <- unitAssets unit])
+    (nub (map assetRepresentation (unitAssets unit)))
     (map assetContract (unitAssets unit)) (fmap handlerText source)
   createDirectoryIfMissing True generated
   changed <- sequence

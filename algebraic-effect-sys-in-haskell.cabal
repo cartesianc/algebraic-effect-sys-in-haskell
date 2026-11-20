@@ -52,6 +52,7 @@ common runtime-program
       base >= 4.21 && < 5
     , containers
     , deepseq
+    , exceptions >= 0.10 && < 0.11
     , mtl >= 2.3 && < 2.4
     , filepath
     , process >= 1.6 && < 1.7
@@ -208,6 +209,7 @@ executable effect-codegen
       base >= 4.21 && < 5
     , containers
     , deepseq
+    , exceptions >= 0.10 && < 0.11
     , filepath
     , process >= 1.6 && < 1.7
     , directory

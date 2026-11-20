@@ -190,7 +190,7 @@ bindProgram namespace prepared declarations assembly controlled = do
           , routeView route == ContinuousView, streamsContract unit (declarationName specification) (routeContract route) ]))
       ++ [HasRaw | readsRaw specification method, Just _ <- [rawSource unit specification]]
       ++ [WritesRaw | resultOf specification == NativeType "[String]"]
-      ++ (if kindOf specification == StreamKind then [EmitsItem, EndsSource] else [])
+      ++ (if kindOf specification == StreamKind then [EmitsItem, EndsSource, MasksExceptions] else [])
       ++ [EndsSubscription | consumesStream unit specification]
       ++ [if kindOf specification == PureKind then PureMonad else IOMonad]
 
@@ -231,6 +231,7 @@ bindProgram namespace prepared declarations assembly controlled = do
           WritesRaw -> "SDK.RawOutputs m"
           EmitsItem -> "SDK.Emits m"
           EndsSource -> "SDK.StreamEnds m"
+          MasksExceptions -> "SDK.MonadMask m"
           EndsSubscription -> "SDK.EndsStream m"
           ObservesHooks -> "SDK.Hooks m"
           PureMonad -> "Monad m"
@@ -266,7 +267,7 @@ bindProgram namespace prepared declarations assembly controlled = do
           unless (validTypeName contractType) $
             Left ("Asset name must be a type name such as StartURL: " ++ contractType ++ " in " ++ owner)
           case representation' of
-            TypeRef _ -> pure ()
+            TypeRef _ _ -> pure ()
             _ -> Left ("Context asset must wrap a business value, not Output: " ++ owner))
         (unitAssets unit)
       where

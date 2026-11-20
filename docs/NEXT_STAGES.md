@@ -6,9 +6,7 @@
 <a id="urgent"></a>
 ## Urgent stage · 持续资产按 x:xs 读取、资产固定形式与 alternative
 
-五项均来自 2026-11-21 的设计讨论。**U1、U4、U5（同输入的 option）已实现（2026-11-21）**；U2、U3 按用户确认暂不实施，真 race 尚未实现。每项分三部分：“上下文”说明问题和代码证据；“已定”是用户确认的结论，实施时不再重新讨论；“待确认”是讨论中提出、尚未拍板的方案，动手前须逐条取得确认。五项都会改变注册写法、handler 能力或可观察运行行为，按工作约定须单独确认。`AGENTS.md`、[COMPOSITION](COMPOSITION.md#ad-hoc) 与 [STREAM_LIFELONG](STREAM_LIFELONG.md#contracts) 中“累计记录由业务资产表达、不设历史类型特例”的表述已随 U1 改为[按 x:xs 读取](STREAM_LIFELONG.md#flow)。
-
-建议顺序：U1 → U2、U3（与 U1 共用运行时改动）→ U4（依赖 U1 去掉 `IORef`）。U5 与前四项独立。
+2026-11-21 已完成 U1、U4 和 U5 中的同输入 option。U2、U3 暂缓，真正的 race 仍待设计。持续资产的当前读取契约见[按 x:xs 读取](STREAM_LIFELONG.md#flow)。
 
 <a id="urgent-flow"></a>
 ### U1　持续资产按 x:xs 读取（已实现）
@@ -107,27 +105,12 @@ printLine = do                              -- 只读增量的写法不变
 
 - demo 随之改写：数字字段保存原文本、读取方在 handler 中解析（LinesDemo `Total String String`，StreamDemo `Temperature String`、`Tick String`，FacadeProbe `LineCount`／`Level`）；资源资产只记路径（FileDemo、FacadeProbe、LinesDemo、OpenFilesDemo、ScopeInstancesDemo、ScopeReuseDemo），读写的 handler 按路径打开文件；Crawler 去掉 `Generic`。
 - OpenFilesDemo 与 ScopeInstancesDemo 原本检查真实 `Handle` 是否开着，改为由 Scoped 的 open 侧（资源 Context）创建、close 删除文件旁的 `<path>.open` 标记，检查语义与输出保持不变。ScopeReuseDemo 的三个写入者重叠时同时追加同一文件，GHC 的单进程文件锁会让后到者报 `resource busy`，写入者在方法体内局部重试。
-- 限制：`Asset @T` 的 `T` 来自 `Typeable`，`FilePath` 等 `String` 同义词无法区分，按 `String` 接受；`Types.hs` 的字段按源码文本检查，必须写 `String`。下文“`Flow T`”的写法未采用，持续资产仍用 `Asset @T` 加 `stream = True`。LSP 的 DTO 协议本身不在本项范围内。
-- 验证：重新生成全部 8 个命名空间，`cabal build all` 无警告；`scripts/check.ps1 -Skip crawler-demo` 全部通过（crawler-demo 需要网络，未运行；构建通过），FacadeProbe 按其 README 单独编译运行，输出与改写前相同。
+- 限制：`Asset @T` 的 `T` 来自 `Typeable`，`FilePath` 等 `String` 同义词无法区分，按 `String` 接受；`Types.hs` 的字段按源码文本检查，必须写 `String`。持续资产使用 `Asset @T` 加 `stream = True`。LSP 的 DTO 协议本身不在本项范围内。
+- U4 首次实施时的验证：重新生成全部 8 个命名空间，`cabal build all` 无警告；`scripts/check.ps1 -Skip crawler-demo` 全部通过（crawler-demo 需要网络，未运行；构建通过），FacadeProbe 按其 README 单独编译运行，输出与改写前相同。
 
-**上下文（实施前）。** LSP 要把 before-gen 的资产声明双向转换成 DTO，需要一种可以唯一解析的写法。现在 `Types.hs` 允许 instance，资产的表示类型可以带 `IORef` 和 `Handle`。
+本次修正已用两个都叫 `FileHandle` 的类型验证：在 FileDemo 注册另一个模块定义的类型会由 gen 拒绝，重导出 FileDemo 自己的类型仍生成相同的 Haskell。
 
-**已定。**
-
-- instance 不属于资产。资产是由 `String` 或 `[String]` 构造的值。
-- LSP 只对 before-gen 的声明做 DTO，不对运行时内存做 DTO。
-- LSP 能解析的固定形式由 LSP 协议规定。gen 能接受但不在固定形式内的手写代码仍然允许，LSP 只读展示。
-
-**待确认。**
-
-- 固定形式：
-  - `Types.hs` 只写 `data` 和 `newtype`，固定 `deriving (Eq, Show)`，模块导出全部类型及构造器，不写 imports；
-  - 字段类型只能是 `String`、`[String]` 或本模块的另一个表示类型；
-  - 资产类型写成 `T`（值资产）或 `Flow T`（持续资产），`T` 可以直接是 `String` 或 `[String]`；
-  - 不允许 instance、`type` 同义词、类型参数、GADT 语法、严格标记和中缀构造器。
-- 现有 demo 有数字字段：`Total Int Int`、`Temperature Int Double [Double]`、`Level Int Int`，以及 `Asset @Int "Beat"`。要么改成 String 系，要么把 `Int`、`Double` 加进字段类型。
-- `Handle` 这类真正的外部对象和来源游标，是否保留为单独一类资源资产，只给描述、不进 DTO。
-- 由 gen 拒绝固定形式之外的资产，还是只在 LSP 协议里区分。
+LSP 从 beforegen 声明生成 DTO；可编辑的资产形状遵循同一份[固定形式规范](ASSETS.md#fixed-form)。运行时的 Binding 和会话视图属于 SDK 内部。
 
 <a id="urgent-race"></a>
 ### U5　alternative 改为 race（同输入的 option 已实现）

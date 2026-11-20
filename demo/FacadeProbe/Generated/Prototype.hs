@@ -1,9 +1,11 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- 自动生成；gen 编译出的静态结构，由 Program 交给 interpreter，运行前校验。
 module FacadeProbe.Generated.Prototype (generatedPrototype) where
 
 import qualified Framework.Generated as SDK
+import qualified FacadeProbe.Types as AssetTypes
 import FacadeProbe.Generated.Effects (MethodGen(..))
 
 -- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
@@ -15,35 +17,47 @@ generatedPrototype =
         [ SDK.EffectSpec
             { SDK.name = "ReportLocation"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "ReportPath" (SDK.TypeRef "[Char]")) (Just "reportLocation") True False
+                SDK.Context (SDK.AssetDecl "ReportPath" (SDK.typeRef @[Char])) (Just "reportLocation") True False
             , SDK.input = "Root"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "ReplyLocation"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "ReplyPath" (SDK.TypeRef "[Char]")) (Just "replyLocation") True False
+                SDK.Context (SDK.AssetDecl "ReplyPath" (SDK.typeRef @[Char])) (Just "replyLocation") True False
             , SDK.input = "Root"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "ReportDraft"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "ReportBody" (SDK.TypeRef "Body")) (Just "reportDraft") True False
+                SDK.Context
+                  (SDK.AssetDecl "ReportBody" (SDK.typeRef @AssetTypes.Body))
+                  (Just "reportDraft")
+                  True
+                  False
             , SDK.input = "Root"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "ReplyDraft"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "ReplyBody" (SDK.TypeRef "Body")) (Just "replyDraft") True False
+                SDK.Context
+                  (SDK.AssetDecl "ReplyBody" (SDK.typeRef @AssetTypes.Body))
+                  (Just "replyDraft")
+                  True
+                  False
             , SDK.input = "Root"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "ReportFile"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "OpenedReport" (SDK.TypeRef "TextFile")) (Just "acquireFile") True False
+                SDK.Context
+                  (SDK.AssetDecl "OpenedReport" (SDK.typeRef @AssetTypes.TextFile))
+                  (Just "acquireFile")
+                  True
+                  False
             , SDK.input = "Root"
             , SDK.demands =
                 [SDK.Demand SDK.RequestAccess "ReportPath", SDK.Demand SDK.RequireAccess "ReportPath"]
@@ -51,7 +65,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "ReplyFile"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "OpenedReply" (SDK.TypeRef "TextFile")) (Just "acquireFile") True False
+                SDK.Context
+                  (SDK.AssetDecl "OpenedReply" (SDK.typeRef @AssetTypes.TextFile))
+                  (Just "acquireFile")
+                  True
+                  False
             , SDK.input = "Root"
             , SDK.demands =
                 [SDK.Demand SDK.RequestAccess "ReplyPath", SDK.Demand SDK.RequireAccess "ReplyPath"]
@@ -111,14 +129,22 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "ReportCounter"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "ReportStats" (SDK.TypeRef "LineCount")) (Just "countLines") True False
+                SDK.Context
+                  (SDK.AssetDecl "ReportStats" (SDK.typeRef @AssetTypes.LineCount))
+                  (Just "countLines")
+                  True
+                  False
             , SDK.input = "ReadReport"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "ReplyCounter"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "ReplyStats" (SDK.TypeRef "LineCount")) (Just "countLines") True False
+                SDK.Context
+                  (SDK.AssetDecl "ReplyStats" (SDK.typeRef @AssetTypes.LineCount))
+                  (Just "countLines")
+                  True
+                  False
             , SDK.input = "ReadReply"
             , SDK.demands = []
             }
@@ -144,7 +170,7 @@ generatedPrototype =
             { SDK.name = "ReportBlank"
             , SDK.typing =
                 SDK.Context
-                  (SDK.AssetDecl "ReportEmpty" (SDK.TypeRef "EmptyReport"))
+                  (SDK.AssetDecl "ReportEmpty" (SDK.typeRef @AssetTypes.EmptyReport))
                   (Just "parseBlankReport")
                   True
                   False
@@ -154,7 +180,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "ReportFilled"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "ReportText" (SDK.TypeRef "Body")) (Just "parseFilledReport") True False
+                SDK.Context
+                  (SDK.AssetDecl "ReportText" (SDK.typeRef @AssetTypes.Body))
+                  (Just "parseFilledReport")
+                  True
+                  False
             , SDK.input = "InspectReport"
             , SDK.demands = []
             }
@@ -185,14 +215,14 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "ParserA"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "LevelA" (SDK.TypeRef "Level")) (Just "parseLevel") True True
+                SDK.Context (SDK.AssetDecl "LevelA" (SDK.typeRef @AssetTypes.Level)) (Just "parseLevel") True True
             , SDK.input = "FeedA"
             , SDK.demands = []
             }
         , SDK.EffectSpec
             { SDK.name = "ParserB"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "LevelB" (SDK.TypeRef "Level")) (Just "parseLevel") True True
+                SDK.Context (SDK.AssetDecl "LevelB" (SDK.typeRef @AssetTypes.Level)) (Just "parseLevel") True True
             , SDK.input = "FeedB"
             , SDK.demands = []
             }

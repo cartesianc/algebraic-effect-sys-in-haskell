@@ -1,9 +1,11 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- 自动生成；gen 编译出的静态结构，由 Program 交给 interpreter，运行前校验。
 module ScopeReuseDemo.Generated.Prototype (generatedPrototype) where
 
 import qualified Framework.Generated as SDK
+import qualified ScopeReuseDemo.Types as AssetTypes
 import ScopeReuseDemo.Generated.Effects (MethodGen(..))
 
 -- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
@@ -15,7 +17,11 @@ generatedPrototype =
         [ SDK.EffectSpec
             { SDK.name = "FileLocations"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "FilePaths" (SDK.TypeRef "SharedPaths")) (Just "sharedPaths") True False
+                SDK.Context
+                  (SDK.AssetDecl "FilePaths" (SDK.typeRef @AssetTypes.SharedPaths))
+                  (Just "sharedPaths")
+                  True
+                  False
             , SDK.input = "Root"
             , SDK.demands = []
             }
@@ -29,7 +35,11 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "FileResource"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "OpenedFile" (SDK.TypeRef "SharedFile")) (Just "acquireFile") True False
+                SDK.Context
+                  (SDK.AssetDecl "OpenedFile" (SDK.typeRef @AssetTypes.SharedFile))
+                  (Just "acquireFile")
+                  True
+                  False
             , SDK.input = "Root"
             , SDK.demands = [SDK.Demand SDK.RequireAccess "FilePaths"]
             }

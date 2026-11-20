@@ -17,6 +17,7 @@ renderCapability capability = case capability of
   WritesRaw -> "SDK.RawOutputs m"
   EmitsItem -> "SDK.Emits m"
   EndsSource -> "SDK.StreamEnds m"
+  MasksExceptions -> "SDK.MonadMask m"
   EndsSubscription -> "SDK.EndsStream m"
   ObservesHooks -> "SDK.Hooks m"
   PureMonad -> "Monad m"

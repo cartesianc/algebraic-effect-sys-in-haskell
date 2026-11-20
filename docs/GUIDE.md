@@ -1044,15 +1044,18 @@ snapshotAst = chained [node "Announce", node "Report"]
   -- demo/LinesDemo/Handlers.hs（节选）；需要 import Framework.SDK (Emits(..), StreamEnds(..))
   instance NextLineLayer m => NextLineHandler m where
     nextLine = do
-      InputFile _ file <- require @InputFile
-      let readLines = do
-            finished <- liftIO (hIsEOF file)
-            if finished then streamEnd else do
-              line <- liftIO (hGetLine file)
-              rawemit line
-              readLines
-      readLines
+      InputFile path <- require @InputFile
+      bracket (liftIO (openFile path ReadMode)) (liftIO . hClose) $ \file -> do
+        let readLines = do
+              finished <- liftIO (hIsEOF file)
+              if finished then streamEnd else do
+                line <- liftIO (hGetLine file)
+                rawemit line
+                readLines
+        readLines
   ```
+
+  示例从 `Control.Monad.Catch` 导入 `bracket`。成功打开的文件在 EOF、逐条解析失败或运行被取消时都会关闭。
 
   LinesDemo 在具名 `monitorLines` 上挂载 `TraceLine`，捕获 Stream 和 Scoped。每条 `RawEmit name text` 的日志写完后才启动该条数据的 parser。[挂载声明](../demo/LinesDemo/Hanging.hs)
 

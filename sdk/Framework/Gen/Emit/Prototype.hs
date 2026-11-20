@@ -12,11 +12,13 @@ import qualified Framework.Prototype as P
 renderPrototypeModule :: String -> String -> String
 renderPrototypeModule namespace structure = unlines
   [ "{-# LANGUAGE DuplicateRecordFields #-}"
+  , "{-# LANGUAGE TypeApplications #-}"
   , ""
   , "-- 自动生成；gen 编译出的静态结构，由 Program 交给 interpreter，运行前校验。"
   , "module " ++ namespace ++ ".Generated.Prototype (generatedPrototype) where"
   , ""
   , "import qualified Framework.Generated as SDK"
+  , "import qualified " ++ namespace ++ ".Types as AssetTypes"
   , "import " ++ namespace ++ ".Generated.Effects (MethodGen(..))"
   , ""
   ] ++ structure
@@ -138,7 +140,9 @@ renderAsset :: R.Asset -> String
 renderAsset (R.AssetDecl selected representation) = constructor "AssetDecl" [showArg selected, group (renderType representation)]
 
 renderType :: R.TypeRef -> String
-renderType (R.TypeRef selected) = constructor "TypeRef" [showArg selected]
+-- 从已核对的本地类型重建身份，避免把 gen 的 GHCi home unit 写死到最终程序。
+renderType (R.TypeRef selected Nothing) = "SDK.typeRef @" ++ selected
+renderType (R.TypeRef selected (Just _)) = "SDK.typeRef @AssetTypes." ++ selected
 renderType (R.OutputRef cause value) = constructor "OutputRef" [group (renderType cause), group (renderType value)]
 
 renderHandles :: R.Handles -> String

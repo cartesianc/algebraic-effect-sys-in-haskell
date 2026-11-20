@@ -11,6 +11,7 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Data (Data, cast, gmapQ)
 import Data.List (intercalate, isInfixOf, isPrefixOf, nub, sortOn, stripPrefix)
 import Framework.Gen.Frontend.Ghc (modulePath, withSourceTargets)
+import qualified Framework.Language.Registration as R
 import Framework.Prototype.Catalog
 import GHC
 import GHC.Core.DataCon (dataConName, dataConOrigArgTys)
@@ -27,7 +28,7 @@ import GHC.Types.Name.Reader (rdrNameOcc)
 import GHC.Types.Name.Occurrence (occNameString)
 import GHC.Types.Unique.Set (nonDetEltsUniqSet)
 import GHC.Types.Var (Var, varName, varType)
-import GHC.Unit.Module (moduleNameString)
+import GHC.Unit.Module (moduleNameString, moduleUnit, unitString)
 import GHC.Utils.Outputable (ppr, showSDocUnsafe)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.FilePath (normalise, takeExtension, takeFileName)
@@ -36,7 +37,7 @@ import Text.Read (readMaybe)
 -- 新契约及副本只作为内存 target；检查失败不改写 Generated。
 -- 同时加载手写与生成模块，但不在同一业务导入链混入两份 instance。
 -- roots 是资产的表示类型，contracts 是生成的资产类型；二者组成资产目录。
-checkAssets :: String -> [(String, String)] -> [String] -> [String] -> Maybe String -> IO [Asset]
+checkAssets :: String -> [(String, String)] -> [R.TypeRef] -> [String] -> Maybe String -> IO [Asset]
 checkAssets namespace generated roots contracts native = do
   files <- sourceFiles (modulePath namespace)
   withSourceTargets $ \memoryTarget -> do
@@ -45,8 +46,8 @@ checkAssets namespace generated roots contracts native = do
           ["{-# LANGUAGE DataKinds, TypeOperators, TypeFamilies #-}"
           , "module " ++ rootModule ++ " where", "import " ++ namespace ++ ".Types"
           , "import qualified " ++ namespace ++ ".Generated.Effects as GeneratedContracts"]
-          ++ ["type AssetRoot" ++ show index ++ " = " ++ contract
-               | (index, contract) <- zip [0 :: Int ..] roots]
+          ++ ["type AssetRoot" ++ show index ++ " = " ++ R.contractName root
+               | (index, root) <- zip [0 :: Int ..] roots]
           ++ ["type GeneratedContract" ++ show index ++ " = GeneratedContracts." ++ contract
                | (index, contract) <- zip [0 :: Int ..] contracts]
         candidates = case native of
@@ -142,22 +143,25 @@ describeName name = AssetSymbol
 -- 导出全部类型及构造器。资产的表示类型（Asset @T）只能是 String、[String] 或本模块的类型。
 -- 文件句柄等原生对象只在 handler 自己的执行中持有，不进入资产。
 -- 资产的表示类型来自注册的 Typeable：FilePath 等 String 的同义词与 String 无法区分，这里按 String 接受。
-checkFixedForm :: [String] -> TypecheckedModule -> [String]
+checkFixedForm :: [R.TypeRef] -> TypecheckedModule -> [String]
 checkFixedForm roots checked =
   [ at (getLocA located) ++ "Types.hs must not import modules; asset fields are String, [String] or types of this module"
   | located <- hsmodImports parsed ]
   ++ exportFailures
   ++ concatMap declaration (hsmodDecls parsed)
-  ++ [ "Asset representation " ++ shown root ++ " is not String, [String] or a type declared in Types.hs"
-       ++ "; refine a single-constructor type of String fields instead"
-     | root <- roots, root `notElem` ["[Char]", "[[Char]]"], root `notElem` localNames ]
+  ++ [ "Asset representation " ++ registeredName root ++ " must be String, [String] or a type defined in "
+       ++ moduleNameString (moduleName typesModule) ++ "; imports and re-exports retain the defining type"
+     | root <- roots, not (validRoot root) ]
   where
     parsed = unLoc (pm_parsed_source (tm_parsed_module checked))
     localNames = [occNameString (rdrNameOcc (unLoc name)) | L _ (TyClD _ DataDecl { tcdLName = name }) <- hsmodDecls parsed]
-    shown root = case root of
-      "[Char]" -> "String"
-      "[[Char]]" -> "[String]"
-      other -> other
+    typesModule = ms_mod (pm_mod_summary (tm_parsed_module checked))
+    owner = (unitString (moduleUnit typesModule), moduleNameString (moduleName typesModule))
+    validRoot (R.TypeRef name Nothing) = name == "[Char]" || name == "[[Char]]"
+    validRoot (R.TypeRef name (Just origin)) = origin == owner && name `elem` localNames
+    validRoot R.OutputRef{} = False
+    registeredName (R.TypeRef name (Just (unit, definingModule))) = unit ++ ":" ++ definingModule ++ "." ++ name
+    registeredName root = R.contractName root
     exportFailures = case hsmodExports parsed of
       Nothing -> []
       Just (L location exported) ->

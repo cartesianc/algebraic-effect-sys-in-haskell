@@ -26,6 +26,7 @@ import qualified GHC.TypeLits as FrameworkTypes
 import Framework.SDK (Emits(rawemit), Hooks(hook), Operation(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), Streams(..), rawoutput)
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
+import Control.Monad.Catch (bracket)
 import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (toList)
 import System.FilePath ((</>))
@@ -58,14 +59,14 @@ instance CloseInputLayer m => CloseInputHandler m where
 instance NextLineLayer m => NextLineHandler m where
   nextLine = do
     InputFile path <- require @InputFile
-    file <- liftIO (openFile path ReadMode)
-    let readLines = do
-          finished <- liftIO (hIsEOF file)
-          if finished then liftIO (hClose file) >> streamEnd else do
-            line <- liftIO (hGetLine file)
-            rawemit line
-            readLines
-    readLines
+    bracket (liftIO (openFile path ReadMode)) (liftIO . hClose) $ \file -> do
+      let readLines = do
+            finished <- liftIO (hIsEOF file)
+            if finished then streamEnd else do
+              line <- liftIO (hGetLine file)
+              rawemit line
+              readLines
+      readLines
 
 instance TraceLineLayer m => TraceLineHandler m where
   traceLine = do
@@ -116,12 +117,12 @@ instance ReportLayer m => ReportHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "51aeb52fcfb739f5bbac1466fc9903ff"
+handlerSourceFingerprint = Just "3f39278c48136875b3662ba3ff377477"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
 newtype Wrap (hooks :: [FrameworkTypes.Symbol]) (effect :: FrameworkTypes.Symbol) (method :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
-  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
+  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO, SDK.MonadThrow, SDK.MonadCatch, SDK.MonadMask)
 
 -- 类型标签上的名字：effect 名与方法名只写在标签上，需要字符串时从这里取。
 nameOf :: forall name. FrameworkTypes.KnownSymbol name => String

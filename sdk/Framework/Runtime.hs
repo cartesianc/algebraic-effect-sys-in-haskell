@@ -31,11 +31,9 @@ import Control.Concurrent.MVar (MVar, modifyMVar, newEmptyMVar, newMVar, putMVar
 import Control.Exception
   (SomeAsyncException, SomeException, evaluate, finally, fromException, mask, onException, throwIO, try, uninterruptibleMask_)
 import Control.Monad (filterM, forM, forM_, forever, void, when)
-import Data.Foldable (toList)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (nubBy)
-import Data.Maybe (isJust, isNothing)
-import qualified Data.Sequence as Seq
+import Data.Maybe (isJust, isNothing, mapMaybe)
 
 -- 末端句柄与调用交接 -----------------------------------------------------------
 
@@ -111,9 +109,7 @@ pendingInput frame source production = case lookup source (frameSessions frame) 
             Just value -> pure (Just (bindingProduction value == Just production))
             Nothing -> fallback session
   where
-    matchesView view = case Seq.viewr view of
-      Seq.EmptyR -> False
-      _ Seq.:> value -> bindingProduction value == Just production
+    matchesView view = (lastBinding view >>= bindingProduction) == Just production
     fallback session
       | framePublishes frame source = Just . maybe False matchesView <$> currentView session
       | otherwise = pure (Just False)
@@ -230,7 +226,7 @@ lowerTarget graph retention location executionFrame frame (Handoff given views) 
         { launchBindings = given ++ companions, launchViews = merged, launchPort = NoStreamPort
         , launchSinks = sinks, launchDeliver = \source -> frame >>= (`frameRead` source)
         , launchUser = Nothing, launchFrame = executionFrame, launchRetention = retention }
-  keepBindings retention (map snd (given ++ companions) ++ concatMap (toList . snd) merged)
+  keepBindings retention (map snd (given ++ companions) ++ mapMaybe (lastBinding . snd) merged)
   captureFrameDeliveries executionFrame
     [(originNode (executionOrigin (bindingOrigin value)), source, production)
       | (source, value) <- companions, Just production <- [bindingProduction value]
@@ -312,7 +308,7 @@ sessionLauncher graph steps onBroken session
             views <- readIORef selected
             next <- readIORef upcoming >>= maybe (pure Nothing)
               (\(sourceName, peek) -> if sourceName == name then peek else pure Nothing)
-            let fixed = any ((== Just production) . bindingProduction) . toList <$> lookup name views
+            let fixed = fmap (\view -> (lastBinding view >>= bindingProduction) == Just production) (lookup name views)
                 queued = (== Just production) . bindingProduction <$> next
             -- 固定的本步身份与游标下一条都是具体义务；等待不把所有旧实例都保活。
             pure $ case (fixed, queued) of

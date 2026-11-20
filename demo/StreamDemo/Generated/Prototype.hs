@@ -1,9 +1,11 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- 自动生成；gen 编译出的静态结构，由 Program 交给 interpreter，运行前校验。
 module StreamDemo.Generated.Prototype (generatedPrototype) where
 
 import qualified Framework.Generated as SDK
+import qualified StreamDemo.Types as AssetTypes
 import StreamDemo.Generated.Effects (MethodGen(..))
 
 -- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
@@ -28,7 +30,7 @@ generatedPrototype =
             { SDK.name = "TemperatureParser"
             , SDK.typing =
                 SDK.Context
-                  (SDK.AssetDecl "TemperatureSample" (SDK.TypeRef "Temperature"))
+                  (SDK.AssetDecl "TemperatureSample" (SDK.typeRef @AssetTypes.Temperature))
                   (Just "parseTemperature")
                   True
                   True
@@ -44,7 +46,7 @@ generatedPrototype =
         , SDK.EffectSpec
             { SDK.name = "Heartbeat"
             , SDK.typing =
-                SDK.Context (SDK.AssetDecl "Beat" (SDK.TypeRef "Tick")) (Just "parseBeat") True True
+                SDK.Context (SDK.AssetDecl "Beat" (SDK.typeRef @AssetTypes.Tick)) (Just "parseBeat") True True
             , SDK.input = "HeartbeatClock"
             , SDK.demands = []
             }

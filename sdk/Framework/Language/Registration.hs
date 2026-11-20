@@ -22,7 +22,7 @@ import Framework.Language.Handler (Output)
 import Control.DeepSeq (NFData)
 import GHC.Generics (Generic)
 import Data.Proxy (Proxy(..))
-import Data.Typeable (Typeable, splitTyConApp, typeRep, typeRepTyCon)
+import Data.Typeable (Typeable, splitTyConApp, typeRep, typeRepTyCon, tyConModule, tyConPackage)
 
 -- 每个字段写 handler 名：handler 是不带参数的类方法，可以被多个注册复用。
 -- effect 自己的方法由 gen 按 effect 名或资产名生成，只在生成区使用。
@@ -101,7 +101,9 @@ effectKind Middleware {} = MiddlewareKind
 
 -- 表示类型引用 Types.hs 中的原生类型；不复制其 ADT 结构。
 -- 识别 Output 以拒绝把完成协议声明为业务产物；业务 ADT 仍是不透明名称。
-data TypeRef = TypeRef String | OutputRef TypeRef TypeRef
+-- 内建的两种字符串表示按 TypeRep 精确识别；业务类型另存定义它的 unit 和模块。
+-- 短名仅用于 Haskell 拼写。通过别名或重导出引用时，Typeable 仍给出原定义身份。
+data TypeRef = TypeRef String (Maybe (String, String)) | OutputRef TypeRef TypeRef
   deriving (Eq, Show, Read, Generic, NFData)
 
 typeRef :: forall value. Typeable value => TypeRef
@@ -111,10 +113,13 @@ typeRef = describe (typeRep (Proxy :: Proxy value))
     describe representation' = case splitTyConApp representation' of
       (constructor, [cause, value]) | constructor == outputConstructor ->
         OutputRef (describe cause) (describe value)
-      _ -> TypeRef (show representation')
+      (constructor, _)
+        | representation' == typeRep (Proxy @String) || representation' == typeRep (Proxy @[String]) ->
+            TypeRef (show representation') Nothing
+        | otherwise -> TypeRef (show representation') (Just (tyConPackage constructor, tyConModule constructor))
 
 contractName :: TypeRef -> String
-contractName (TypeRef selected) = selected
+contractName (TypeRef selected _) = selected
 contractName (OutputRef cause value) = "Output (" ++ contractName cause ++ ") (" ++ contractName value ++ ")"
 
 data EffectSpec = EffectSpec

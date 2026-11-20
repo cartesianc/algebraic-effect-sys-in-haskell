@@ -1,11 +1,11 @@
 -- 生产会话的交付队列、广播通知、消费游标及停止句柄。
--- 只保留尚未领取的积压和最新一条；值的内部结构由业务资产定义，SDK 不累计业务历史。
+-- 队列保留积压与最新值；标记了历史读取的会话另存已发布前缀。
 -- Runtime 启动并登记生产线程；本模块不执行生产方法，只保存交付并取消／等待该线程。
 -- Runtime/Graph 控制会话的唯一登记和整体停止；Workflow/Execution 持有各单元游标。
 -- 会话按（lifelong 边界，生产该资产的 Context 注册名）区分；注册名与运行时绑定来源同名。
 -- Nothing 边界是 interpreter 托管的会话。
 module Framework.Runtime.Session
-  ( SessionKey, View, Delivery, Broken, Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..)
+  ( SessionKey, View, lastBinding, Delivery, Broken, Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..)
   , Session, sessionKey, sessionBindings, sessionViews
   , newSession, appendDelivery, breakSession, endSession, wakeSession, setSessionWorker, stopSession, sessionStopping
   , setSessionRetirement, retireSession, departSession, sessionIdle
@@ -19,7 +19,7 @@ import Control.Exception (Exception, SomeException, finally, mask, onException, 
 import Control.Monad (forM, void, when)
 import Data.Foldable (toList)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, maybeToList)
 import Data.Sequence (Seq, (|>))
 import qualified Data.Sequence as Seq
 import Framework.Language.Handler (Failure)
@@ -30,7 +30,7 @@ import Framework.Prototype (NodeId)
 
 type SessionKey = (Maybe NodeId, String)
 
--- 固定交付视图，只含本次选中的 Binding；容器用于已有捕获与交接协议，不表示业务序列。
+-- 固定交付视图按发布时间排列，最后一条是本次选中的 Binding；此前的条目只用于业务历史读取。
 -- 绑定保留自己的生产身份、执行帧和共享归属。
 type View environment cause = Seq (ScopeBinding environment cause)
 
@@ -173,7 +173,7 @@ changeState session update = mask $ \restore -> do
       putMVar (sessionState session) changed
       sessionNotify session
       -- 被替换的最新资源可能早已不在待交付索引中，也需要重新检查它的后继义务。
-      let previous = filter bindingResource (maybe [] toList (latestView (stateEntries state)))
+      let previous = filter bindingResource (latestBindings (stateEntries state))
       restore (sessionCollect session (released ++ previous))
   where
     settle changed = do
@@ -316,13 +316,17 @@ wholeView state = case stateHistory state of
 
 -- 执行保留只登记视图的最后一条（本次值）；历史中更早的发布不延长资源的使用期。
 latestBindings :: View environment cause -> [ScopeBinding environment cause]
-latestBindings = maybe [] toList . latestView
+latestBindings = maybeToList . lastBinding
 
 -- 固定最后一个绑定，不让一次有限读取持有整条交付队列。
 latestView :: Seq value -> Maybe (Seq value)
-latestView entries = case Seq.viewr entries of
+latestView = fmap Seq.singleton . lastBinding
+
+-- 交接、scope 开启参数和待用判断只使用本次交付的身份，历史前缀不产生使用义务。
+lastBinding :: Seq value -> Maybe value
+lastBinding entries = case Seq.viewr entries of
   Seq.EmptyR -> Nothing
-  _ Seq.:> value -> Just (Seq.singleton value)
+  _ Seq.:> value -> Just value
 
 -- 消费游标属于（单元，会话）：记录已经交付的条数，每次交付推进一条。
 -- 单元逐轮推进同一个游标；一轮内并发读取由 Runtime.Frame 的领取槽合并，

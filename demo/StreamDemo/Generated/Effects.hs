@@ -52,7 +52,7 @@ newtype DisconnectSensorError = DisconnectSensorError String
 instance SDK.HandlerError DisconnectSensorError Errors where raised (DisconnectSensorError description) = (DisconnectSensorFailure, description)
 
 -- handler nextReading：绑定到 TemperatureFeed。
-type NextReadingLayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextReadingError m, MonadIO m)
+type NextReadingLayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.MonadMask m, SDK.Raises NextReadingError m, MonadIO m)
 class NextReadingHandler m where
   nextReading :: m ()
 
@@ -72,7 +72,7 @@ newtype ParseTemperatureError = ParseTemperatureError String
 instance SDK.HandlerError ParseTemperatureError Errors where raised (ParseTemperatureError description) = (ParseTemperatureFailure, description)
 
 -- handler nextBeat：绑定到 HeartbeatClock。
-type NextBeatLayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextBeatError m, MonadIO m)
+type NextBeatLayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.MonadMask m, SDK.Raises NextBeatError m, MonadIO m)
 class NextBeatHandler m where
   nextBeat :: m ()
 
