@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -42,6 +43,7 @@ class PrepareSensorHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "prepareSensor" 匹配。
 newtype PrepareSensorError = PrepareSensorError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError PrepareSensorError Errors where raised (PrepareSensorError description) = (PrepareSensorFailure, description)
 
 -- handler connectSensor：绑定到 SensorLink。
 type ConnectSensorLayer m = (SDK.Reads SensorMemory m, SDK.RawOutputs m, SDK.Raises ConnectSensorError m, MonadIO m)
@@ -51,6 +53,7 @@ class ConnectSensorHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "connectSensor" 匹配。
 newtype ConnectSensorError = ConnectSensorError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ConnectSensorError Errors where raised (ConnectSensorError description) = (ConnectSensorFailure, description)
 
 -- handler disconnectSensor：绑定到 SensorLink。
 type DisconnectSensorLayer m = (SDK.Reads SensorMemory m, SDK.RawOutputs m, SDK.Raises DisconnectSensorError m, MonadIO m)
@@ -60,6 +63,7 @@ class DisconnectSensorHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "disconnectSensor" 匹配。
 newtype DisconnectSensorError = DisconnectSensorError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError DisconnectSensorError Errors where raised (DisconnectSensorError description) = (DisconnectSensorFailure, description)
 
 -- handler nextReading：绑定到 TemperatureFeed。
 type NextReadingLayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextReadingError m, MonadIO m)
@@ -69,6 +73,7 @@ class NextReadingHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "nextReading" 匹配。
 newtype NextReadingError = NextReadingError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError NextReadingError Errors where raised (NextReadingError description) = (NextReadingFailure, description)
 
 -- handler parseTemperature：绑定到 TemperatureParser。
 type ParseTemperatureLayer m = (SDK.Reads SensorMemory m, SDK.Raw m, SDK.Raises ParseTemperatureError m, MonadIO m)
@@ -78,6 +83,7 @@ class ParseTemperatureHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseTemperature" 匹配。
 newtype ParseTemperatureError = ParseTemperatureError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ParseTemperatureError Errors where raised (ParseTemperatureError description) = (ParseTemperatureFailure, description)
 
 -- handler nextBeat：绑定到 HeartbeatClock。
 type NextBeatLayer m = (SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextBeatError m, MonadIO m)
@@ -87,6 +93,7 @@ class NextBeatHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "nextBeat" 匹配。
 newtype NextBeatError = NextBeatError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError NextBeatError Errors where raised (NextBeatError description) = (NextBeatFailure, description)
 
 -- handler parseBeat：绑定到 Heartbeat。
 type ParseBeatLayer m = (SDK.Reads SensorMemory m, SDK.Raw m, SDK.Raises ParseBeatError m, MonadIO m)
@@ -96,6 +103,7 @@ class ParseBeatHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseBeat" 匹配。
 newtype ParseBeatError = ParseBeatError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ParseBeatError Errors where raised (ParseBeatError description) = (ParseBeatFailure, description)
 
 -- handler announce：绑定到 Announce。
 type AnnounceLayer m = (SDK.RawOutputs m, SDK.Raises AnnounceError m, MonadIO m)
@@ -105,6 +113,7 @@ class AnnounceHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "announce" 匹配。
 newtype AnnounceError = AnnounceError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError AnnounceError Errors where raised (AnnounceError description) = (AnnounceFailure, description)
 
 -- handler showTemperature：绑定到 ShowTemperature。
 type ShowTemperatureLayer m = (SDK.Reads Temperature m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ShowTemperatureError m, MonadIO m)
@@ -114,6 +123,7 @@ class ShowTemperatureHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "showTemperature" 匹配。
 newtype ShowTemperatureError = ShowTemperatureError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ShowTemperatureError Errors where raised (ShowTemperatureError description) = (ShowTemperatureFailure, description)
 
 -- handler checkTrend：绑定到 CheckTrend。
 type CheckTrendLayer m = (SDK.Reads Temperature m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises CheckTrendError m, MonadIO m)
@@ -123,6 +133,7 @@ class CheckTrendHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "checkTrend" 匹配。
 newtype CheckTrendError = CheckTrendError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError CheckTrendError Errors where raised (CheckTrendError description) = (CheckTrendFailure, description)
 
 -- handler reportHeartbeat：绑定到 ReportHeartbeat。
 type ReportHeartbeatLayer m = (SDK.Reads Int m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ReportHeartbeatError m, MonadIO m)
@@ -132,6 +143,7 @@ class ReportHeartbeatHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "reportHeartbeat" 匹配。
 newtype ReportHeartbeatError = ReportHeartbeatError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ReportHeartbeatError Errors where raised (ReportHeartbeatError description) = (ReportHeartbeatFailure, description)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
 data Errors = PrepareSensorFailure | ConnectSensorFailure | DisconnectSensorFailure | NextReadingFailure | ParseTemperatureFailure | NextBeatFailure | ParseBeatFailure | AnnounceFailure | ShowTemperatureFailure | CheckTrendFailure | ReportHeartbeatFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault

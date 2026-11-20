@@ -15,13 +15,13 @@ module Framework.Generated
   , atomicHandle, atomicScope, emittedInput, emitToParser, endSource, endSubscription
   , openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler
-  , Root(..), superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation
+  , Root(..), HandlerError(..), superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation
   , Generic, NFData, coerce, interpreter
   ) where
 
 import Framework.SDK
 import Framework.Runtime.Protocol
-  ( Root(..), failEffect, ErrorStore(handleFailure, withErrorPath, withErrorHandlers), ErrorHandler(..)
+  ( Root(..), HandlerError(..), failEffect, ErrorStore(handleFailure, withErrorPath, withErrorHandlers), ErrorHandler(..)
   , ContextStore(enterHandler, endSource, endSubscription)
   , ScopeStore(openScope, closeScope, withScopeDependencies) )
 import Framework.Runtime.Context

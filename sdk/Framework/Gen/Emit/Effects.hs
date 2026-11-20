@@ -20,6 +20,7 @@ renderEffects unit = unlines (contractHeader ++ runtimeAliases ++ generatedContr
       , "{-# LANGUAGE FlexibleContexts #-}"
       , "{-# LANGUAGE FlexibleInstances #-}"
       , "{-# LANGUAGE MonoLocalBinds #-}"
+      , "{-# LANGUAGE MultiParamTypeClasses #-}"
       , "{-# LANGUAGE StandaloneDeriving #-}"
       , "{-# LANGUAGE UndecidableInstances #-}"
       , ""
@@ -67,6 +68,8 @@ renderEffects unit = unlines (contractHeader ++ runtimeAliases ++ generatedContr
       , "-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy " ++ show handler' ++ " 匹配。"
       , "newtype " ++ handlerError handler' ++ " = " ++ handlerError handler' ++ " String"
       , "  deriving (Eq, Show, Read)"
+      , "instance SDK.HandlerError " ++ handlerError handler' ++ " Errors where raised ("
+          ++ handlerError handler' ++ " description) = (" ++ handlerFailure handler' ++ ", description)"
       , ""
       ]
       where layer = map renderCapability capabilities

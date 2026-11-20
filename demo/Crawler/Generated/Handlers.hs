@@ -1,4 +1,5 @@
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
@@ -142,94 +143,76 @@ handlerSourceFingerprint = Just "f8c100e855fb22092ce2e75164d11d60"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) (method :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance SDK.Root (Wrap effect) value
+-- 类型标签上的名字：effect 名与方法名只写在标签上，需要字符串时从这里取。
+nameOf :: forall name. FrameworkTypes.KnownSymbol name => String
+nameOf = FrameworkTypes.symbolVal (FrameworkProxy.Proxy @name)
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.StartURLError (Wrap effect) where
-  raise (Effects.StartURLError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.StartURLFailure description)
+-- 在标签下执行 handler，交给 Root 的 superhandler；方法名取自标签。close 的调用点用 callClose。
+call :: forall effect method value. (FrameworkTypes.KnownSymbol method, SDK.Root (Wrap effect method) value)
+  => Wrap effect method value -> Effects.App value
+call handler = runWrap (SDK.super (nameOf @method) handler)
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.LinkedURLError (Wrap effect) where
-  raise (Effects.LinkedURLError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.LinkedURLFailure description)
+callClose :: forall effect method value. (FrameworkTypes.KnownSymbol method, SDK.Root (Wrap effect method) value)
+  => Wrap effect method value -> Effects.App value
+callClose handler = runWrap (SDK.superClose (nameOf @method) handler)
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.FetchPageError (Wrap effect) where
-  raise (Effects.FetchPageError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.FetchPageFailure description)
+instance SDK.Root (Wrap effect method) value
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.DropBlankBodiesError (Wrap effect) where
-  raise (Effects.DropBlankBodiesError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.DropBlankBodiesFailure description)
+instance (SDK.HandlerError problem Effects.Errors, FrameworkTypes.KnownSymbol effect)
+    => SDK.Raises problem (Wrap effect method) where
+  raise problem = Wrap (SDK.failEffect (nameOf @effect) failure description)
+    where (failure, description) = SDK.raised problem
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ExtractSummaryError (Wrap effect) where
-  raise (Effects.ExtractSummaryError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ExtractSummaryFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.PrintSummaryError (Wrap effect) where
-  raise (Effects.PrintSummaryError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.PrintSummaryFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.SessionInfoError (Wrap effect) where
-  raise (Effects.SessionInfoError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.SessionInfoFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.OpenSessionError (Wrap effect) where
-  raise (Effects.OpenSessionError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.OpenSessionFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.CloseSessionError (Wrap effect) where
-  raise (Effects.CloseSessionError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.CloseSessionFailure description)
-
-instance SDK.Reads PageURL (Wrap "FetchPage") where
+instance SDK.Reads PageURL (Wrap "FetchPage" method) where
   require = Wrap (SDK.coerce <$> readStartURL)
 
-instance SDK.Reads SessionInfo (Wrap "FetchPage") where
+instance SDK.Reads SessionInfo (Wrap "FetchPage" method) where
   require = Wrap (SDK.coerce <$> readCrawlSessionInfo)
 
-instance SDK.Reads PageURL (Wrap "ExtractPage") where
+instance SDK.Reads PageURL (Wrap "ExtractPage" method) where
   require = Wrap (SDK.coerce <$> readStartURL)
 
-instance SDK.Reads PageSummary (Wrap "PrintPage") where
+instance SDK.Reads PageSummary (Wrap "PrintPage" method) where
   require = Wrap (SDK.coerce <$> readStartPageSummary)
 
-instance SDK.Reads PageURL (Wrap "FetchLinkedPage") where
+instance SDK.Reads PageURL (Wrap "FetchLinkedPage" method) where
   require = Wrap (SDK.coerce <$> readLinkedURL)
 
-instance SDK.Reads SessionInfo (Wrap "FetchLinkedPage") where
+instance SDK.Reads SessionInfo (Wrap "FetchLinkedPage" method) where
   require = Wrap (SDK.coerce <$> readCrawlSessionInfo)
 
-instance SDK.Reads PageURL (Wrap "ExtractLinkedPage") where
+instance SDK.Reads PageURL (Wrap "ExtractLinkedPage" method) where
   require = Wrap (SDK.coerce <$> readLinkedURL)
 
-instance SDK.Reads PageSummary (Wrap "PrintLinkedPage") where
+instance SDK.Reads PageSummary (Wrap "PrintLinkedPage" method) where
   require = Wrap (SDK.coerce <$> readLinkedPageSummary)
 
-instance SDK.Reads SessionInfo (Wrap "CrawlSession") where
+instance SDK.Reads SessionInfo (Wrap "CrawlSession" method) where
   require = Wrap (SDK.coerce <$> readCrawlSessionInfo)
 
-instance SDK.Raw (Wrap "KeepPageBody") where
+instance SDK.Raw (Wrap "KeepPageBody" "dropBlankBodies") where
   rawinput = Wrap runFetchPage
 
-instance SDK.Raw (Wrap "ExtractPage") where
+instance SDK.Raw (Wrap "ExtractPage" "extractSummary") where
   rawinput = Wrap runKeepPageBody
 
-instance SDK.Raw (Wrap "KeepLinkedPageBody") where
+instance SDK.Raw (Wrap "KeepLinkedPageBody" "dropBlankBodies") where
   rawinput = Wrap runFetchLinkedPage
 
-instance SDK.Raw (Wrap "ExtractLinkedPage") where
+instance SDK.Raw (Wrap "ExtractLinkedPage" "extractSummary") where
   rawinput = Wrap runKeepLinkedPageBody
 
-instance SDK.RawOutputs (Wrap effect)
+instance SDK.RawOutputs (Wrap effect method)
 
 getStartURL :: Effects.App Effects.StartURL
 getStartURL =
   SDK.handleFailure
   . SDK.callContext "StartPage"
       (\value bindings -> bindings { Effects.boundStartPage = Just value }) $
-    Effects.StartURL <$> runWrap @"StartPage" (SDK.super "startURL" Effects.startURL)
+    Effects.StartURL <$> call @"StartPage" @"startURL" Effects.startURL
 
 readStartURL :: Effects.App Effects.StartURL
 readStartURL =
@@ -241,7 +224,7 @@ getLinkedURL =
   SDK.handleFailure
   . SDK.callContext "LinkedPage"
       (\value bindings -> bindings { Effects.boundLinkedPage = Just value }) $
-    Effects.LinkedURL <$> runWrap @"LinkedPage" (SDK.super "linkedURL" Effects.linkedURL)
+    Effects.LinkedURL <$> call @"LinkedPage" @"linkedURL" Effects.linkedURL
 
 readLinkedURL :: Effects.App Effects.LinkedURL
 readLinkedURL =
@@ -255,14 +238,14 @@ runFetchPage =
   . SDK.atomicHandle "runFetchPage" [("ExtractPage", () <$ getStartPageSummary)] []
   . SDK.withScopeDependencies ["CrawlSession"]
   . SDK.enterHandler "FetchPage" $
-    getStartURL >> openCrawlSession >> runWrap @"FetchPage" (SDK.super "fetchPage" Effects.fetchPage)
+    getStartURL >> openCrawlSession >> call @"FetchPage" @"fetchPage" Effects.fetchPage
 
 runKeepPageBody :: Effects.App [String]
 runKeepPageBody =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies ["CrawlSession"] $
-    runWrap @"KeepPageBody" (SDK.super "dropBlankBodies" Effects.dropBlankBodies)
+    call @"KeepPageBody" @"dropBlankBodies" Effects.dropBlankBodies
 
 getStartPageSummary :: Effects.App Effects.StartPageSummary
 getStartPageSummary =
@@ -271,7 +254,7 @@ getStartPageSummary =
   . SDK.withScopeDependencies ["CrawlSession"]
   . SDK.callContext "ExtractPage"
       (\value bindings -> bindings { Effects.boundExtractPage = Just value }) $
-    Effects.StartPageSummary <$> runWrap @"ExtractPage" (SDK.super "extractSummary" Effects.extractSummary)
+    Effects.StartPageSummary <$> call @"ExtractPage" @"extractSummary" Effects.extractSummary
 
 readStartPageSummary :: Effects.App Effects.StartPageSummary
 readStartPageSummary =
@@ -284,7 +267,7 @@ runPrintPage =
   SDK.handleFailure
   . SDK.atomicHandle "runPrintPage" [] []
   . SDK.enterHandler "PrintPage" $
-    runWrap @"PrintPage" (SDK.super "printSummary" Effects.printSummary)
+    call @"PrintPage" @"printSummary" Effects.printSummary
 
 runFetchLinkedPage :: Effects.App [String]
 runFetchLinkedPage =
@@ -293,14 +276,14 @@ runFetchLinkedPage =
   . SDK.atomicHandle "runFetchLinkedPage" [("ExtractLinkedPage", () <$ getLinkedPageSummary)] []
   . SDK.withScopeDependencies ["CrawlSession"]
   . SDK.enterHandler "FetchLinkedPage" $
-    getLinkedURL >> openCrawlSession >> runWrap @"FetchLinkedPage" (SDK.super "fetchPage" Effects.fetchPage)
+    getLinkedURL >> openCrawlSession >> call @"FetchLinkedPage" @"fetchPage" Effects.fetchPage
 
 runKeepLinkedPageBody :: Effects.App [String]
 runKeepLinkedPageBody =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies ["CrawlSession"] $
-    runWrap @"KeepLinkedPageBody" (SDK.super "dropBlankBodies" Effects.dropBlankBodies)
+    call @"KeepLinkedPageBody" @"dropBlankBodies" Effects.dropBlankBodies
 
 getLinkedPageSummary :: Effects.App Effects.LinkedPageSummary
 getLinkedPageSummary =
@@ -309,7 +292,7 @@ getLinkedPageSummary =
   . SDK.withScopeDependencies ["CrawlSession"]
   . SDK.callContext "ExtractLinkedPage"
       (\value bindings -> bindings { Effects.boundExtractLinkedPage = Just value }) $
-    Effects.LinkedPageSummary <$> runWrap @"ExtractLinkedPage" (SDK.super "extractSummary" Effects.extractSummary)
+    Effects.LinkedPageSummary <$> call @"ExtractLinkedPage" @"extractSummary" Effects.extractSummary
 
 readLinkedPageSummary :: Effects.App Effects.LinkedPageSummary
 readLinkedPageSummary =
@@ -322,14 +305,14 @@ runPrintLinkedPage =
   SDK.handleFailure
   . SDK.atomicHandle "runPrintLinkedPage" [] []
   . SDK.enterHandler "PrintLinkedPage" $
-    runWrap @"PrintLinkedPage" (SDK.super "printSummary" Effects.printSummary)
+    call @"PrintLinkedPage" @"printSummary" Effects.printSummary
 
 getCrawlSessionInfo :: Effects.App Effects.CrawlSessionInfo
 getCrawlSessionInfo =
   SDK.handleFailure
   . SDK.callContext "SessionContext"
       (\value bindings -> bindings { Effects.boundSessionContext = Just value }) $
-    Effects.CrawlSessionInfo <$> runWrap @"SessionContext" (SDK.super "sessionInfo" Effects.sessionInfo)
+    Effects.CrawlSessionInfo <$> call @"SessionContext" @"sessionInfo" Effects.sessionInfo
 
 readCrawlSessionInfo :: Effects.App Effects.CrawlSessionInfo
 readCrawlSessionInfo =
@@ -343,7 +326,7 @@ openCrawlSession =
   . SDK.atomicScope "openCrawlSession" [] []
   . SDK.openScope "CrawlSession" Effects.ScopeBindingError (Just (() <$ closeCrawlSession))
   . SDK.enterHandler "CrawlSession" $
-    getCrawlSessionInfo >> runWrap @"CrawlSession" (SDK.super "openSession" Effects.openSession)
+    getCrawlSessionInfo >> call @"CrawlSession" @"openSession" Effects.openSession
 
 closeCrawlSession :: Effects.App [String]
 closeCrawlSession =
@@ -352,7 +335,7 @@ closeCrawlSession =
   . SDK.atomicScope "closeCrawlSession" [] []
   . SDK.closeScope "CrawlSession" Effects.ScopeBindingError
   . SDK.enterHandler "CrawlSession" $
-    runWrap @"CrawlSession" (SDK.superClose "closeSession" Effects.closeSession)
+    callClose @"CrawlSession" @"closeSession" Effects.closeSession
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]

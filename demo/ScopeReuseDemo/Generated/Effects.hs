@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -38,6 +39,7 @@ class SharedPathsHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "sharedPaths" 匹配。
 newtype SharedPathsError = SharedPathsError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError SharedPathsError Errors where raised (SharedPathsError description) = (SharedPathsFailure, description)
 
 -- handler prepareProbe：绑定到 PrepareProbe。
 type PrepareProbeLayer m = (SDK.Reads SharedPaths m, SDK.RawOutputs m, SDK.Raises PrepareProbeError m, MonadIO m)
@@ -47,6 +49,7 @@ class PrepareProbeHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "prepareProbe" 匹配。
 newtype PrepareProbeError = PrepareProbeError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError PrepareProbeError Errors where raised (PrepareProbeError description) = (PrepareProbeFailure, description)
 
 -- handler acquireFile：绑定到 FileResource。
 type AcquireFileLayer m = (SDK.Reads SharedPaths m, SDK.Raises AcquireFileError m, MonadIO m)
@@ -56,6 +59,7 @@ class AcquireFileHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "acquireFile" 匹配。
 newtype AcquireFileError = AcquireFileError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError AcquireFileError Errors where raised (AcquireFileError description) = (AcquireFileFailure, description)
 
 -- handler openSharedFile：绑定到 SharedFileScope。
 type OpenSharedFileLayer m = (SDK.Reads SharedFile m, SDK.RawOutputs m, SDK.Raises OpenSharedFileError m, MonadIO m)
@@ -65,6 +69,7 @@ class OpenSharedFileHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openSharedFile" 匹配。
 newtype OpenSharedFileError = OpenSharedFileError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError OpenSharedFileError Errors where raised (OpenSharedFileError description) = (OpenSharedFileFailure, description)
 
 -- handler closeSharedFile：绑定到 SharedFileScope。
 type CloseSharedFileLayer m = (SDK.Reads SharedFile m, SDK.RawOutputs m, SDK.Raises CloseSharedFileError m, MonadIO m)
@@ -74,6 +79,7 @@ class CloseSharedFileHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeSharedFile" 匹配。
 newtype CloseSharedFileError = CloseSharedFileError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError CloseSharedFileError Errors where raised (CloseSharedFileError description) = (CloseSharedFileFailure, description)
 
 -- handler writeFirst：绑定到 WriteFirst。
 type WriteFirstLayer m = (SDK.Reads SharedFile m, SDK.RawOutputs m, SDK.Raises WriteFirstError m, MonadIO m)
@@ -83,6 +89,7 @@ class WriteFirstHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeFirst" 匹配。
 newtype WriteFirstError = WriteFirstError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError WriteFirstError Errors where raised (WriteFirstError description) = (WriteFirstFailure, description)
 
 -- handler writeSecond：绑定到 WriteSecond。
 type WriteSecondLayer m = (SDK.Reads SharedFile m, SDK.RawOutputs m, SDK.Raises WriteSecondError m, MonadIO m)
@@ -92,6 +99,7 @@ class WriteSecondHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeSecond" 匹配。
 newtype WriteSecondError = WriteSecondError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError WriteSecondError Errors where raised (WriteSecondError description) = (WriteSecondFailure, description)
 
 -- handler writeThird：绑定到 WriteThird。
 type WriteThirdLayer m = (SDK.Reads SharedFile m, SDK.RawOutputs m, SDK.Raises WriteThirdError m, MonadIO m)
@@ -101,6 +109,7 @@ class WriteThirdHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeThird" 匹配。
 newtype WriteThirdError = WriteThirdError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError WriteThirdError Errors where raised (WriteThirdError description) = (WriteThirdFailure, description)
 
 -- handler verifyReuse：绑定到 VerifyReuse。
 type VerifyReuseLayer m = (SDK.Reads SharedPaths m, SDK.RawOutputs m, SDK.Raises VerifyReuseError m, MonadIO m)
@@ -110,6 +119,7 @@ class VerifyReuseHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "verifyReuse" 匹配。
 newtype VerifyReuseError = VerifyReuseError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError VerifyReuseError Errors where raised (VerifyReuseError description) = (VerifyReuseFailure, description)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
 data Errors = SharedPathsFailure | PrepareProbeFailure | AcquireFileFailure | OpenSharedFileFailure | CloseSharedFileFailure | WriteFirstFailure | WriteSecondFailure | WriteThirdFailure | VerifyReuseFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault

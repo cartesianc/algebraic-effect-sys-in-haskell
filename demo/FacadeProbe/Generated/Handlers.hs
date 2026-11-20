@@ -1,4 +1,5 @@
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
@@ -155,188 +156,113 @@ handlerSourceFingerprint = Just "0a0b686cffa24a432689b625d717b103"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) (method :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance SDK.Root (Wrap effect) value
+-- 类型标签上的名字：effect 名与方法名只写在标签上，需要字符串时从这里取。
+nameOf :: forall name. FrameworkTypes.KnownSymbol name => String
+nameOf = FrameworkTypes.symbolVal (FrameworkProxy.Proxy @name)
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ReportLocationError (Wrap effect) where
-  raise (Effects.ReportLocationError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ReportLocationFailure description)
+-- 在标签下执行 handler，交给 Root 的 superhandler；方法名取自标签。close 的调用点用 callClose。
+call :: forall effect method value. (FrameworkTypes.KnownSymbol method, SDK.Root (Wrap effect method) value)
+  => Wrap effect method value -> Effects.App value
+call handler = runWrap (SDK.super (nameOf @method) handler)
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ReplyLocationError (Wrap effect) where
-  raise (Effects.ReplyLocationError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ReplyLocationFailure description)
+callClose :: forall effect method value. (FrameworkTypes.KnownSymbol method, SDK.Root (Wrap effect method) value)
+  => Wrap effect method value -> Effects.App value
+callClose handler = runWrap (SDK.superClose (nameOf @method) handler)
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ReportDraftError (Wrap effect) where
-  raise (Effects.ReportDraftError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ReportDraftFailure description)
+instance SDK.Root (Wrap effect method) value
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ReplyDraftError (Wrap effect) where
-  raise (Effects.ReplyDraftError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ReplyDraftFailure description)
+instance (SDK.HandlerError problem Effects.Errors, FrameworkTypes.KnownSymbol effect)
+    => SDK.Raises problem (Wrap effect method) where
+  raise problem = Wrap (SDK.failEffect (nameOf @effect) failure description)
+    where (failure, description) = SDK.raised problem
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.AcquireFileError (Wrap effect) where
-  raise (Effects.AcquireFileError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.AcquireFileFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.OpenTextFileError (Wrap effect) where
-  raise (Effects.OpenTextFileError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.OpenTextFileFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.CloseTextFileError (Wrap effect) where
-  raise (Effects.CloseTextFileError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.CloseTextFileFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.WriteTextError (Wrap effect) where
-  raise (Effects.WriteTextError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.WriteTextFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.MarkReadError (Wrap effect) where
-  raise (Effects.MarkReadError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.MarkReadFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ReadTextError (Wrap effect) where
-  raise (Effects.ReadTextError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ReadTextFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.CountLinesError (Wrap effect) where
-  raise (Effects.CountLinesError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.CountLinesFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ShowCountError (Wrap effect) where
-  raise (Effects.ShowCountError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ShowCountFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.InspectFileError (Wrap effect) where
-  raise (Effects.InspectFileError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.InspectFileFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.DescribeBlankError (Wrap effect) where
-  raise (Effects.DescribeBlankError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.DescribeBlankFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.DescribeFilledError (Wrap effect) where
-  raise (Effects.DescribeFilledError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.DescribeFilledFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.NewCounterError (Wrap effect) where
-  raise (Effects.NewCounterError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.NewCounterFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.OpenCounterError (Wrap effect) where
-  raise (Effects.OpenCounterError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.OpenCounterFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.NextAError (Wrap effect) where
-  raise (Effects.NextAError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.NextAFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.NextBError (Wrap effect) where
-  raise (Effects.NextBError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.NextBFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ParseLevelError (Wrap effect) where
-  raise (Effects.ParseLevelError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ParseLevelFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ShowLevelError (Wrap effect) where
-  raise (Effects.ShowLevelError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ShowLevelFailure description)
-
-instance SDK.Reads [Char] (Wrap "ReportFile") where
+instance SDK.Reads [Char] (Wrap "ReportFile" method) where
   require = Wrap (SDK.coerce <$> readReportPath)
 
-instance SDK.Reads [Char] (Wrap "ReplyFile") where
+instance SDK.Reads [Char] (Wrap "ReplyFile" method) where
   require = Wrap (SDK.coerce <$> readReplyPath)
 
-instance SDK.Reads TextFile (Wrap "ReportScope") where
+instance SDK.Reads TextFile (Wrap "ReportScope" method) where
   require = Wrap (SDK.coerce <$> readOpenedReport)
 
-instance SDK.Reads TextFile (Wrap "ReplyScope") where
+instance SDK.Reads TextFile (Wrap "ReplyScope" method) where
   require = Wrap (SDK.coerce <$> readOpenedReply)
 
-instance SDK.Reads TextFile (Wrap "WriteReport") where
+instance SDK.Reads TextFile (Wrap "WriteReport" method) where
   require = Wrap (SDK.coerce <$> readOpenedReport)
 
-instance SDK.Reads Body (Wrap "WriteReport") where
+instance SDK.Reads Body (Wrap "WriteReport" method) where
   require = Wrap (SDK.coerce <$> readReportBody)
 
-instance SDK.Reads TextFile (Wrap "WriteReply") where
+instance SDK.Reads TextFile (Wrap "WriteReply" method) where
   require = Wrap (SDK.coerce <$> readOpenedReply)
 
-instance SDK.Reads Body (Wrap "WriteReply") where
+instance SDK.Reads Body (Wrap "WriteReply" method) where
   require = Wrap (SDK.coerce <$> readReplyBody)
 
-instance SDK.Reads [Char] (Wrap "ReadReport") where
+instance SDK.Reads [Char] (Wrap "ReadReport" method) where
   require = Wrap (SDK.coerce <$> readReportPath)
 
-instance SDK.Reads [Char] (Wrap "ReadReply") where
+instance SDK.Reads [Char] (Wrap "ReadReply" method) where
   require = Wrap (SDK.coerce <$> readReplyPath)
 
-instance SDK.Reads LineCount (Wrap "ShowReport") where
+instance SDK.Reads LineCount (Wrap "ShowReport" method) where
   require = Wrap (SDK.coerce <$> readReportStats)
 
-instance SDK.Reads LineCount (Wrap "ShowReply") where
+instance SDK.Reads LineCount (Wrap "ShowReply" method) where
   require = Wrap (SDK.coerce <$> readReplyStats)
 
-instance SDK.Reads [Char] (Wrap "ReportInspect") where
+instance SDK.Reads [Char] (Wrap "ReportInspect" method) where
   require = Wrap (SDK.coerce <$> readReportPath)
 
-instance SDK.Reads () (Wrap "OnBlank") where
+instance SDK.Reads () (Wrap "OnBlank" method) where
   require = Wrap (SDK.projectContext "ReportInspect" "ReportStateBlank" Effects.ContextBindingError (\(Effects.ReportState value) -> case value of { Blank -> Just (); _ -> Nothing }) (readReportState))
 
-instance SDK.Reads Body (Wrap "OnFilled") where
+instance SDK.Reads Body (Wrap "OnFilled" method) where
   require = Wrap (SDK.projectContext "ReportInspect" "ReportStateFilled" Effects.ContextBindingError (\(Effects.ReportState value) -> case value of { Filled field -> Just field; _ -> Nothing }) (readReportState))
 
-instance SDK.Reads FeedCounter (Wrap "FeedScopeA") where
+instance SDK.Reads FeedCounter (Wrap "FeedScopeA" method) where
   require = Wrap (SDK.coerce <$> readCountA)
 
-instance SDK.Reads FeedCounter (Wrap "FeedScopeB") where
+instance SDK.Reads FeedCounter (Wrap "FeedScopeB" method) where
   require = Wrap (SDK.coerce <$> readCountB)
 
-instance SDK.Reads FeedCounter (Wrap "FeedA") where
+instance SDK.Reads FeedCounter (Wrap "FeedA" method) where
   require = Wrap (SDK.coerce <$> readCountA)
 
-instance SDK.Reads FeedCounter (Wrap "FeedB") where
+instance SDK.Reads FeedCounter (Wrap "FeedB" method) where
   require = Wrap (SDK.coerce <$> readCountB)
 
-instance SDK.Reads Level (Wrap "ShowA") where
+instance SDK.Reads Level (Wrap "ShowA" method) where
   require = Wrap (SDK.coerce <$> streamLevelA)
 
-instance SDK.Reads Level (Wrap "ShowB") where
+instance SDK.Reads Level (Wrap "ShowB" method) where
   require = Wrap (SDK.coerce <$> streamLevelB)
 
-instance SDK.Raw (Wrap "ReportCounter") where
+instance SDK.Raw (Wrap "ReportCounter" "countLines") where
   rawinput = Wrap runReadReport
 
-instance SDK.Raw (Wrap "ReplyCounter") where
+instance SDK.Raw (Wrap "ReplyCounter" "countLines") where
   rawinput = Wrap runReadReply
 
-instance SDK.Raw (Wrap "ParserA") where
+instance SDK.Raw (Wrap "ParserA" "parseLevel") where
   rawinput = Wrap SDK.emittedInput
 
-instance SDK.Raw (Wrap "ParserB") where
+instance SDK.Raw (Wrap "ParserB" "parseLevel") where
   rawinput = Wrap SDK.emittedInput
 
-instance SDK.RawOutputs (Wrap effect)
+instance SDK.RawOutputs (Wrap effect method)
 
-instance SDK.Emits (Wrap "FeedA") where
+instance SDK.Emits (Wrap effect method) where
   rawemit text = Wrap (SDK.emitToParser text)
 
-instance SDK.Emits (Wrap "FeedB") where
-  rawemit text = Wrap (SDK.emitToParser text)
-
-instance SDK.StreamEnds (Wrap "FeedA") where
+instance SDK.StreamEnds (Wrap effect method) where
   streamEnd = Wrap SDK.endSource
 
-instance SDK.StreamEnds (Wrap "FeedB") where
-  streamEnd = Wrap SDK.endSource
-
-instance SDK.EndsStream (Wrap "ShowA") where
-  endStream = Wrap SDK.endSubscription
-
-instance SDK.EndsStream (Wrap "ShowB") where
+instance SDK.EndsStream (Wrap effect method) where
   endStream = Wrap SDK.endSubscription
 
 getReportPath :: Effects.App Effects.ReportPath
@@ -344,7 +270,7 @@ getReportPath =
   SDK.handleFailure
   . SDK.callContext "ReportLocation"
       (\value bindings -> bindings { Effects.boundReportLocation = Just value }) $
-    Effects.ReportPath <$> runWrap @"ReportLocation" (SDK.super "reportLocation" Effects.reportLocation)
+    Effects.ReportPath <$> call @"ReportLocation" @"reportLocation" Effects.reportLocation
 
 readReportPath :: Effects.App Effects.ReportPath
 readReportPath =
@@ -356,7 +282,7 @@ getReplyPath =
   SDK.handleFailure
   . SDK.callContext "ReplyLocation"
       (\value bindings -> bindings { Effects.boundReplyLocation = Just value }) $
-    Effects.ReplyPath <$> runWrap @"ReplyLocation" (SDK.super "replyLocation" Effects.replyLocation)
+    Effects.ReplyPath <$> call @"ReplyLocation" @"replyLocation" Effects.replyLocation
 
 readReplyPath :: Effects.App Effects.ReplyPath
 readReplyPath =
@@ -368,7 +294,7 @@ getReportBody =
   SDK.handleFailure
   . SDK.callContext "ReportDraft"
       (\value bindings -> bindings { Effects.boundReportDraft = Just value }) $
-    Effects.ReportBody <$> runWrap @"ReportDraft" (SDK.super "reportDraft" Effects.reportDraft)
+    Effects.ReportBody <$> call @"ReportDraft" @"reportDraft" Effects.reportDraft
 
 readReportBody :: Effects.App Effects.ReportBody
 readReportBody =
@@ -380,7 +306,7 @@ getReplyBody =
   SDK.handleFailure
   . SDK.callContext "ReplyDraft"
       (\value bindings -> bindings { Effects.boundReplyDraft = Just value }) $
-    Effects.ReplyBody <$> runWrap @"ReplyDraft" (SDK.super "replyDraft" Effects.replyDraft)
+    Effects.ReplyBody <$> call @"ReplyDraft" @"replyDraft" Effects.replyDraft
 
 readReplyBody :: Effects.App Effects.ReplyBody
 readReplyBody =
@@ -392,7 +318,7 @@ getOpenedReport =
   SDK.handleFailure
   . SDK.callContext "ReportFile"
       (\value bindings -> bindings { Effects.boundReportFile = Just value }) $
-    getReportPath >> Effects.OpenedReport <$> runWrap @"ReportFile" (SDK.super "acquireFile" Effects.acquireFile)
+    getReportPath >> Effects.OpenedReport <$> call @"ReportFile" @"acquireFile" Effects.acquireFile
 
 readOpenedReport :: Effects.App Effects.OpenedReport
 readOpenedReport =
@@ -404,7 +330,7 @@ getOpenedReply =
   SDK.handleFailure
   . SDK.callContext "ReplyFile"
       (\value bindings -> bindings { Effects.boundReplyFile = Just value }) $
-    getReplyPath >> Effects.OpenedReply <$> runWrap @"ReplyFile" (SDK.super "acquireFile" Effects.acquireFile)
+    getReplyPath >> Effects.OpenedReply <$> call @"ReplyFile" @"acquireFile" Effects.acquireFile
 
 readOpenedReply :: Effects.App Effects.OpenedReply
 readOpenedReply =
@@ -418,7 +344,7 @@ openReportScope =
   . SDK.atomicScope "openReportScope" [] []
   . SDK.openScope "ReportScope" Effects.ScopeBindingError (Just (() <$ closeReportScope))
   . SDK.enterHandler "ReportScope" $
-    getOpenedReport >> runWrap @"ReportScope" (SDK.super "openTextFile" Effects.openTextFile)
+    getOpenedReport >> call @"ReportScope" @"openTextFile" Effects.openTextFile
 
 closeReportScope :: Effects.App [String]
 closeReportScope =
@@ -427,7 +353,7 @@ closeReportScope =
   . SDK.atomicScope "closeReportScope" [] []
   . SDK.closeScope "ReportScope" Effects.ScopeBindingError
   . SDK.enterHandler "ReportScope" $
-    runWrap @"ReportScope" (SDK.superClose "closeTextFile" Effects.closeTextFile)
+    callClose @"ReportScope" @"closeTextFile" Effects.closeTextFile
 
 openReplyScope :: Effects.App [String]
 openReplyScope =
@@ -436,7 +362,7 @@ openReplyScope =
   . SDK.atomicScope "openReplyScope" [] []
   . SDK.openScope "ReplyScope" Effects.ScopeBindingError (Just (() <$ closeReplyScope))
   . SDK.enterHandler "ReplyScope" $
-    getOpenedReply >> runWrap @"ReplyScope" (SDK.super "openTextFile" Effects.openTextFile)
+    getOpenedReply >> call @"ReplyScope" @"openTextFile" Effects.openTextFile
 
 closeReplyScope :: Effects.App [String]
 closeReplyScope =
@@ -445,7 +371,7 @@ closeReplyScope =
   . SDK.atomicScope "closeReplyScope" [] []
   . SDK.closeScope "ReplyScope" Effects.ScopeBindingError
   . SDK.enterHandler "ReplyScope" $
-    runWrap @"ReplyScope" (SDK.superClose "closeTextFile" Effects.closeTextFile)
+    callClose @"ReplyScope" @"closeTextFile" Effects.closeTextFile
 
 runWriteReport :: Effects.App [String]
 runWriteReport =
@@ -454,7 +380,7 @@ runWriteReport =
   . SDK.atomicHandle "runWriteReport" [] []
   . SDK.withScopeDependencies ["ReportScope"]
   . SDK.enterHandler "WriteReport" $
-    getReportBody >> openReportScope >> runWrap @"WriteReport" (SDK.super "writeText" Effects.writeText)
+    getReportBody >> openReportScope >> call @"WriteReport" @"writeText" Effects.writeText
 
 runWriteReply :: Effects.App [String]
 runWriteReply =
@@ -463,35 +389,35 @@ runWriteReply =
   . SDK.atomicHandle "runWriteReply" [] []
   . SDK.withScopeDependencies ["ReplyScope"]
   . SDK.enterHandler "WriteReply" $
-    getReplyBody >> openReplyScope >> runWrap @"WriteReply" (SDK.super "writeText" Effects.writeText)
+    getReplyBody >> openReplyScope >> call @"WriteReply" @"writeText" Effects.writeText
 
 runMarkReply :: Effects.App [String]
 runMarkReply =
   SDK.handleFailure
   . SDK.atomicHandle "runMarkReply" [] []
   . SDK.enterHandler "MarkReply" $
-    runWrap @"MarkReply" (SDK.super "markRead" Effects.markRead)
+    call @"MarkReply" @"markRead" Effects.markRead
 
 runReadReport :: Effects.App [String]
 runReadReport =
   SDK.handleFailure
   . SDK.atomicHandle "runReadReport" [("ReportCounter", () <$ getReportStats)] []
   . SDK.enterHandler "ReadReport" $
-    runWrap @"ReadReport" (SDK.super "readText" Effects.readText)
+    call @"ReadReport" @"readText" Effects.readText
 
 runReadReply :: Effects.App [String]
 runReadReply =
   SDK.handleFailure
   . SDK.atomicHandle "runReadReply" [("ReplyCounter", () <$ getReplyStats)] []
   . SDK.enterHandler "ReadReply" $
-    runMarkReply >> runWrap @"ReadReply" (SDK.super "readText" Effects.readText)
+    runMarkReply >> call @"ReadReply" @"readText" Effects.readText
 
 getReportStats :: Effects.App Effects.ReportStats
 getReportStats =
   SDK.handleFailure
   . SDK.callContext "ReportCounter"
       (\value bindings -> bindings { Effects.boundReportCounter = Just value }) $
-    Effects.ReportStats <$> runWrap @"ReportCounter" (SDK.super "countLines" Effects.countLines)
+    Effects.ReportStats <$> call @"ReportCounter" @"countLines" Effects.countLines
 
 readReportStats :: Effects.App Effects.ReportStats
 readReportStats =
@@ -503,7 +429,7 @@ getReplyStats =
   SDK.handleFailure
   . SDK.callContext "ReplyCounter"
       (\value bindings -> bindings { Effects.boundReplyCounter = Just value }) $
-    Effects.ReplyStats <$> runWrap @"ReplyCounter" (SDK.super "countLines" Effects.countLines)
+    Effects.ReplyStats <$> call @"ReplyCounter" @"countLines" Effects.countLines
 
 readReplyStats :: Effects.App Effects.ReplyStats
 readReplyStats =
@@ -515,21 +441,21 @@ runShowReport =
   SDK.handleFailure
   . SDK.atomicHandle "runShowReport" [] []
   . SDK.enterHandler "ShowReport" $
-    runWrap @"ShowReport" (SDK.super "showCount" Effects.showCount)
+    call @"ShowReport" @"showCount" Effects.showCount
 
 runShowReply :: Effects.App [String]
 runShowReply =
   SDK.handleFailure
   . SDK.atomicHandle "runShowReply" [] []
   . SDK.enterHandler "ShowReply" $
-    runWrap @"ShowReply" (SDK.super "showCount" Effects.showCount)
+    call @"ShowReply" @"showCount" Effects.showCount
 
 getReportState :: Effects.App Effects.ReportState
 getReportState =
   SDK.handleFailure
   . SDK.callContext "ReportInspect"
       (\value bindings -> bindings { Effects.boundReportInspect = Just value }) $
-    Effects.ReportState <$> runWrap @"ReportInspect" (SDK.super "inspectFile" Effects.inspectFile)
+    Effects.ReportState <$> call @"ReportInspect" @"inspectFile" Effects.inspectFile
 
 readReportState :: Effects.App Effects.ReportState
 readReportState =
@@ -541,21 +467,21 @@ runOnBlank =
   SDK.handleFailure
   . SDK.atomicHandle "runOnBlank" [] []
   . SDK.enterHandler "OnBlank" $
-    runWrap @"OnBlank" (SDK.super "describeBlank" Effects.describeBlank)
+    call @"OnBlank" @"describeBlank" Effects.describeBlank
 
 runOnFilled :: Effects.App [String]
 runOnFilled =
   SDK.handleFailure
   . SDK.atomicHandle "runOnFilled" [] []
   . SDK.enterHandler "OnFilled" $
-    runWrap @"OnFilled" (SDK.super "describeFilled" Effects.describeFilled)
+    call @"OnFilled" @"describeFilled" Effects.describeFilled
 
 getCountA :: Effects.App Effects.CountA
 getCountA =
   SDK.handleFailure
   . SDK.callContext "CounterA"
       (\value bindings -> bindings { Effects.boundCounterA = Just value }) $
-    Effects.CountA <$> runWrap @"CounterA" (SDK.super "newCounter" Effects.newCounter)
+    Effects.CountA <$> call @"CounterA" @"newCounter" Effects.newCounter
 
 readCountA :: Effects.App Effects.CountA
 readCountA =
@@ -567,7 +493,7 @@ getCountB =
   SDK.handleFailure
   . SDK.callContext "CounterB"
       (\value bindings -> bindings { Effects.boundCounterB = Just value }) $
-    Effects.CountB <$> runWrap @"CounterB" (SDK.super "newCounter" Effects.newCounter)
+    Effects.CountB <$> call @"CounterB" @"newCounter" Effects.newCounter
 
 readCountB :: Effects.App Effects.CountB
 readCountB =
@@ -581,7 +507,7 @@ openFeedScopeA =
   . SDK.atomicScope "openFeedScopeA" [] []
   . SDK.openScope "FeedScopeA" Effects.ScopeBindingError Nothing
   . SDK.enterHandler "FeedScopeA" $
-    getCountA >> runWrap @"FeedScopeA" (SDK.super "openCounter" Effects.openCounter)
+    getCountA >> call @"FeedScopeA" @"openCounter" Effects.openCounter
 
 openFeedScopeB :: Effects.App [String]
 openFeedScopeB =
@@ -590,7 +516,7 @@ openFeedScopeB =
   . SDK.atomicScope "openFeedScopeB" [] []
   . SDK.openScope "FeedScopeB" Effects.ScopeBindingError Nothing
   . SDK.enterHandler "FeedScopeB" $
-    getCountB >> runWrap @"FeedScopeB" (SDK.super "openCounter" Effects.openCounter)
+    getCountB >> call @"FeedScopeB" @"openCounter" Effects.openCounter
 
 nextFeedA :: Effects.App ()
 nextFeedA =
@@ -598,7 +524,7 @@ nextFeedA =
   . SDK.handleFailure
   . SDK.withScopeDependencies ["FeedScopeA"]
   . SDK.enterHandler "FeedA" $
-    openFeedScopeA >> runWrap @"FeedA" (SDK.super "nextA" Effects.nextA)
+    openFeedScopeA >> call @"FeedA" @"nextA" Effects.nextA
 
 nextFeedB :: Effects.App ()
 nextFeedB =
@@ -606,7 +532,7 @@ nextFeedB =
   . SDK.handleFailure
   . SDK.withScopeDependencies ["FeedScopeB"]
   . SDK.enterHandler "FeedB" $
-    openFeedScopeB >> runWrap @"FeedB" (SDK.super "nextB" Effects.nextB)
+    openFeedScopeB >> call @"FeedB" @"nextB" Effects.nextB
 
 getLevelA :: Effects.App Effects.LevelA
 getLevelA =
@@ -615,7 +541,7 @@ getLevelA =
   . SDK.withScopeDependencies ["FeedScopeA"]
   . SDK.callContext "ParserA"
       (\value bindings -> bindings { Effects.boundParserA = Just value }) $
-    Effects.LevelA <$> runWrap @"ParserA" (SDK.super "parseLevel" Effects.parseLevel)
+    Effects.LevelA <$> call @"ParserA" @"parseLevel" Effects.parseLevel
 
 streamLevelA :: Effects.App Effects.LevelA
 streamLevelA =
@@ -630,7 +556,7 @@ getLevelB =
   . SDK.withScopeDependencies ["FeedScopeB"]
   . SDK.callContext "ParserB"
       (\value bindings -> bindings { Effects.boundParserB = Just value }) $
-    Effects.LevelB <$> runWrap @"ParserB" (SDK.super "parseLevel" Effects.parseLevel)
+    Effects.LevelB <$> call @"ParserB" @"parseLevel" Effects.parseLevel
 
 streamLevelB :: Effects.App Effects.LevelB
 streamLevelB =
@@ -643,14 +569,14 @@ runShowA =
   SDK.handleFailure
   . SDK.atomicHandle "runShowA" [] []
   . SDK.enterHandler "ShowA" $
-    runWrap @"ShowA" (SDK.super "showLevel" Effects.showLevel)
+    call @"ShowA" @"showLevel" Effects.showLevel
 
 runShowB :: Effects.App [String]
 runShowB =
   SDK.handleFailure
   . SDK.atomicHandle "runShowB" [] []
   . SDK.enterHandler "ShowB" $
-    runWrap @"ShowB" (SDK.super "showLevel" Effects.showLevel)
+    call @"ShowB" @"showLevel" Effects.showLevel
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]

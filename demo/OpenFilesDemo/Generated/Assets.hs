@@ -6,23 +6,23 @@ import Framework.Prototype.Catalog (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "FileNames", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 20, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "FileNames", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 21, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "FileNames", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 20, assetColumn = 21}
+          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "FileNames", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 21, assetColumn = 21}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "InspectedFiles", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "InspectedFiles", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "InspectedFiles", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 26}
+          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "InspectedFiles", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 26}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "OpenedFiles", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 24, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "OpenedFiles", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 25, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "OpenedFiles", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 24, assetColumn = 23}
+          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "OpenedFiles", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 25, assetColumn = 23}
           ]
       , assetFields = []
       }

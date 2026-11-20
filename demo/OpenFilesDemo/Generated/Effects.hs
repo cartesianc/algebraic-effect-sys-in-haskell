@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -42,6 +43,7 @@ class ListFilesHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "listFiles" 匹配。
 newtype ListFilesError = ListFilesError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ListFilesError Errors where raised (ListFilesError description) = (ListFilesFailure, description)
 
 -- handler acquireFiles：绑定到 FileResources。
 type AcquireFilesLayer m = (SDK.Reads [[Char]] m, SDK.Raises AcquireFilesError m, MonadIO m)
@@ -51,6 +53,7 @@ class AcquireFilesHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "acquireFiles" 匹配。
 newtype AcquireFilesError = AcquireFilesError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError AcquireFilesError Errors where raised (AcquireFilesError description) = (AcquireFilesFailure, description)
 
 -- handler openFiles：绑定到 FileSession。
 type OpenFilesLayer m = (SDK.Reads [FileHandle] m, SDK.RawOutputs m, SDK.Raises OpenFilesError m, MonadIO m)
@@ -60,6 +63,7 @@ class OpenFilesHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openFiles" 匹配。
 newtype OpenFilesError = OpenFilesError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError OpenFilesError Errors where raised (OpenFilesError description) = (OpenFilesFailure, description)
 
 -- handler closeFiles：绑定到 FileSession。
 type CloseFilesLayer m = (SDK.Reads [FileHandle] m, SDK.RawOutputs m, SDK.Raises CloseFilesError m, MonadIO m)
@@ -69,6 +73,7 @@ class CloseFilesHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeFiles" 匹配。
 newtype CloseFilesError = CloseFilesError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError CloseFilesError Errors where raised (CloseFilesError description) = (CloseFilesFailure, description)
 
 -- handler holdFiles：绑定到 HoldFiles、ReleaseFiles。
 type HoldFilesLayer m = (SDK.RawOutputs m, SDK.Raises HoldFilesError m, MonadIO m)
@@ -78,6 +83,7 @@ class HoldFilesHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "holdFiles" 匹配。
 newtype HoldFilesError = HoldFilesError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError HoldFilesError Errors where raised (HoldFilesError description) = (HoldFilesFailure, description)
 
 -- handler inspectFiles：绑定到 InspectFiles。
 type InspectFilesLayer m = (SDK.Reads [FileHandle] m, SDK.RawOutputs m, SDK.Raises InspectFilesError m, MonadIO m)
@@ -87,6 +93,7 @@ class InspectFilesHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "inspectFiles" 匹配。
 newtype InspectFilesError = InspectFilesError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError InspectFilesError Errors where raised (InspectFilesError description) = (InspectFilesFailure, description)
 
 -- handler snapshotFiles：绑定到 InspectionSnapshot。
 type SnapshotFilesLayer m = (SDK.Reads [FileHandle] m, SDK.Raw m, SDK.Raises SnapshotFilesError m, MonadIO m)
@@ -96,6 +103,7 @@ class SnapshotFilesHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "snapshotFiles" 匹配。
 newtype SnapshotFilesError = SnapshotFilesError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError SnapshotFilesError Errors where raised (SnapshotFilesError description) = (SnapshotFilesFailure, description)
 
 -- handler finishInspection：绑定到 FinishInspection。
 type FinishInspectionLayer m = (SDK.Reads [FileHandle] m, SDK.RawOutputs m, SDK.Raises FinishInspectionError m, MonadIO m)
@@ -105,6 +113,7 @@ class FinishInspectionHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "finishInspection" 匹配。
 newtype FinishInspectionError = FinishInspectionError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError FinishInspectionError Errors where raised (FinishInspectionError description) = (FinishInspectionFailure, description)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
 data Errors = ListFilesFailure | AcquireFilesFailure | OpenFilesFailure | CloseFilesFailure | HoldFilesFailure | InspectFilesFailure | SnapshotFilesFailure | FinishInspectionFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault

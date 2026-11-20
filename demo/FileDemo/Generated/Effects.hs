@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -42,6 +43,7 @@ class LocateFileHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "locateFile" 匹配。
 newtype LocateFileError = LocateFileError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError LocateFileError Errors where raised (LocateFileError description) = (LocateFileFailure, description)
 
 -- handler validateFileName：绑定到 ValidateFileName。
 type ValidateFileNameLayer m = (SDK.Raw m, SDK.RawOutputs m, SDK.Raises ValidateFileNameError m, Monad m)
@@ -51,6 +53,7 @@ class ValidateFileNameHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "validateFileName" 匹配。
 newtype ValidateFileNameError = ValidateFileNameError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ValidateFileNameError Errors where raised (ValidateFileNameError description) = (ValidateFileNameFailure, description)
 
 -- handler parseFileName：绑定到 FileLocation。
 type ParseFileNameLayer m = (SDK.Raw m, SDK.Raises ParseFileNameError m, MonadIO m)
@@ -60,6 +63,7 @@ class ParseFileNameHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseFileName" 匹配。
 newtype ParseFileNameError = ParseFileNameError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ParseFileNameError Errors where raised (ParseFileNameError description) = (ParseFileNameFailure, description)
 
 -- handler acquireFile：绑定到 FileResource。
 type AcquireFileLayer m = (SDK.Reads [Char] m, SDK.Raises AcquireFileError m, MonadIO m)
@@ -69,6 +73,7 @@ class AcquireFileHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "acquireFile" 匹配。
 newtype AcquireFileError = AcquireFileError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError AcquireFileError Errors where raised (AcquireFileError description) = (AcquireFileFailure, description)
 
 -- handler openSession：绑定到 FileSession。
 type OpenSessionLayer m = (SDK.Reads FileHandle m, SDK.RawOutputs m, SDK.Raises OpenSessionError m, MonadIO m)
@@ -78,6 +83,7 @@ class OpenSessionHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openSession" 匹配。
 newtype OpenSessionError = OpenSessionError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError OpenSessionError Errors where raised (OpenSessionError description) = (OpenSessionFailure, description)
 
 -- handler closeSession：绑定到 FileSession。
 type CloseSessionLayer m = (SDK.Reads FileHandle m, SDK.RawOutputs m, SDK.Raises CloseSessionError m, MonadIO m)
@@ -87,6 +93,7 @@ class CloseSessionHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeSession" 匹配。
 newtype CloseSessionError = CloseSessionError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError CloseSessionError Errors where raised (CloseSessionError description) = (CloseSessionFailure, description)
 
 -- handler detectFileSession：绑定到 FileRecovery。
 type DetectFileSessionLayer m = (SDK.Reads FileHandle m, SDK.Raises DetectFileSessionError m, MonadIO m)
@@ -96,6 +103,7 @@ class DetectFileSessionHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "detectFileSession" 匹配。
 newtype DetectFileSessionError = DetectFileSessionError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError DetectFileSessionError Errors where raised (DetectFileSessionError description) = (DetectFileSessionFailure, description)
 
 -- handler resolveFileSession：绑定到 FileRecovery。
 type ResolveFileSessionLayer m = (SDK.Reads FileHandle m, SDK.Raises ResolveFileSessionError m, MonadIO m)
@@ -105,6 +113,7 @@ class ResolveFileSessionHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "resolveFileSession" 匹配。
 newtype ResolveFileSessionError = ResolveFileSessionError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ResolveFileSessionError Errors where raised (ResolveFileSessionError description) = (ResolveFileSessionFailure, description)
 
 -- handler readFileContent：绑定到 ReadFile。
 type ReadFileContentLayer m = (SDK.Reads FileHandle m, SDK.RawOutputs m, SDK.Raises ReadFileContentError m, MonadIO m)
@@ -114,6 +123,7 @@ class ReadFileContentHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "readFileContent" 匹配。
 newtype ReadFileContentError = ReadFileContentError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ReadFileContentError Errors where raised (ReadFileContentError description) = (ReadFileContentFailure, description)
 
 -- handler parseFileText：绑定到 ExtractFileText。
 type ParseFileTextLayer m = (SDK.Raw m, SDK.Raises ParseFileTextError m, MonadIO m)
@@ -123,6 +133,7 @@ class ParseFileTextHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseFileText" 匹配。
 newtype ParseFileTextError = ParseFileTextError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ParseFileTextError Errors where raised (ParseFileTextError description) = (ParseFileTextFailure, description)
 
 -- handler writeFirstLine：绑定到 WriteFirstLine。
 type WriteFirstLineLayer m = (SDK.Reads () m, SDK.Reads FileHandle m, SDK.RawOutputs m, SDK.Raises WriteFirstLineError m, MonadIO m)
@@ -132,6 +143,7 @@ class WriteFirstLineHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeFirstLine" 匹配。
 newtype WriteFirstLineError = WriteFirstLineError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError WriteFirstLineError Errors where raised (WriteFirstLineError description) = (WriteFirstLineFailure, description)
 
 -- handler appendLine：绑定到 AppendLine。
 type AppendLineLayer m = (SDK.Reads FileHandle m, SDK.Reads String m, SDK.RawOutputs m, SDK.Raises AppendLineError m, MonadIO m)
@@ -141,6 +153,7 @@ class AppendLineHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "appendLine" 匹配。
 newtype AppendLineError = AppendLineError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError AppendLineError Errors where raised (AppendLineError description) = (AppendLineFailure, description)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
 data Errors = LocateFileFailure | ValidateFileNameFailure | ParseFileNameFailure | AcquireFileFailure | OpenSessionFailure | CloseSessionFailure | DetectFileSessionFailure | ResolveFileSessionFailure | ReadFileContentFailure | ParseFileTextFailure | WriteFirstLineFailure | AppendLineFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault

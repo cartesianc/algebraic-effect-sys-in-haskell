@@ -6,23 +6,23 @@ import Framework.Prototype.Catalog (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileName", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 20, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileName", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 21, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileName", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 20, assetColumn = 20}
+          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileName", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 21, assetColumn = 20}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileText", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileText", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileText", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 28, assetColumn = 20}
+          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileText", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 20}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 24, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 25, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 24, assetColumn = 22}
+          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "OpenedFile", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 25, assetColumn = 22}
           ]
       , assetFields = []
       }

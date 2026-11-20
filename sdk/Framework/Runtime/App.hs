@@ -877,7 +877,7 @@ superWith :: (Operation -> App env cause ()) -> String -> App env cause value ->
 superWith capture name body = capture (Enter name) >> body
 
 -- close 的调用点由 gen 选定。本次是否持有 GC 的关闭预约只有运行时知道。
-superClosing :: (Operation -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
+superClosing :: (Operation -> App env cause ()) -> String -> App env cause value -> App env cause value
 superClosing capture name body = do
   environment <- AppRun ask
   if cleaningScopes environment && not (null (closings environment))

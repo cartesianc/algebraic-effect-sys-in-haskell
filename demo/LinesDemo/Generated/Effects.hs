@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -42,6 +43,7 @@ class AnnounceHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "announce" 匹配。
 newtype AnnounceError = AnnounceError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError AnnounceError Errors where raised (AnnounceError description) = (AnnounceFailure, description)
 
 -- handler acquireInput：绑定到 InputResource。
 type AcquireInputLayer m = (SDK.Raises AcquireInputError m, MonadIO m)
@@ -51,6 +53,7 @@ class AcquireInputHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "acquireInput" 匹配。
 newtype AcquireInputError = AcquireInputError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError AcquireInputError Errors where raised (AcquireInputError description) = (AcquireInputFailure, description)
 
 -- handler openInput：绑定到 InputSession。
 type OpenInputLayer m = (SDK.Reads InputFile m, SDK.RawOutputs m, SDK.Raises OpenInputError m, MonadIO m)
@@ -60,6 +63,7 @@ class OpenInputHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openInput" 匹配。
 newtype OpenInputError = OpenInputError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError OpenInputError Errors where raised (OpenInputError description) = (OpenInputFailure, description)
 
 -- handler closeInput：绑定到 InputSession。
 type CloseInputLayer m = (SDK.Reads InputFile m, SDK.RawOutputs m, SDK.Raises CloseInputError m, MonadIO m)
@@ -69,6 +73,7 @@ class CloseInputHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeInput" 匹配。
 newtype CloseInputError = CloseInputError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError CloseInputError Errors where raised (CloseInputError description) = (CloseInputFailure, description)
 
 -- handler nextLine：绑定到 LineFeed。
 type NextLineLayer m = (SDK.Reads InputFile m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextLineError m, MonadIO m)
@@ -78,6 +83,7 @@ class NextLineHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "nextLine" 匹配。
 newtype NextLineError = NextLineError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError NextLineError Errors where raised (NextLineError description) = (NextLineFailure, description)
 
 -- handler traceLine：绑定到 TraceLine。
 type TraceLineLayer m = (SDK.Hooks m, SDK.RawOutputs m, SDK.Raises TraceLineError m, MonadIO m)
@@ -87,6 +93,7 @@ class TraceLineHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "traceLine" 匹配。
 newtype TraceLineError = TraceLineError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError TraceLineError Errors where raised (TraceLineError description) = (TraceLineFailure, description)
 
 -- handler parseLine：绑定到 LineParser。
 type ParseLineLayer m = (SDK.Raw m, SDK.Raises ParseLineError m, MonadIO m)
@@ -96,6 +103,7 @@ class ParseLineHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseLine" 匹配。
 newtype ParseLineError = ParseLineError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ParseLineError Errors where raised (ParseLineError description) = (ParseLineFailure, description)
 
 -- handler printLine：绑定到 PrintLine。
 type PrintLineLayer m = (SDK.Reads Line m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises PrintLineError m, MonadIO m)
@@ -105,6 +113,7 @@ class PrintLineHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "printLine" 匹配。
 newtype PrintLineError = PrintLineError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError PrintLineError Errors where raised (PrintLineError description) = (PrintLineFailure, description)
 
 -- handler countText：绑定到 TextCounter。
 type CountTextLayer m = (SDK.Reads InputFile m, SDK.Reads Line m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises CountTextError m, MonadIO m)
@@ -114,6 +123,7 @@ class CountTextHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "countText" 匹配。
 newtype CountTextError = CountTextError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError CountTextError Errors where raised (CountTextError description) = (CountTextFailure, description)
 
 -- handler parseTotal：绑定到 CountParser。
 type ParseTotalLayer m = (SDK.Raw m, SDK.Raises ParseTotalError m, MonadIO m)
@@ -123,6 +133,7 @@ class ParseTotalHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseTotal" 匹配。
 newtype ParseTotalError = ParseTotalError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ParseTotalError Errors where raised (ParseTotalError description) = (ParseTotalFailure, description)
 
 -- handler showTotal：绑定到 ShowTotal。
 type ShowTotalLayer m = (SDK.Reads Total m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ShowTotalError m, MonadIO m)
@@ -132,6 +143,7 @@ class ShowTotalHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "showTotal" 匹配。
 newtype ShowTotalError = ShowTotalError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ShowTotalError Errors where raised (ShowTotalError description) = (ShowTotalFailure, description)
 
 -- handler report：绑定到 Report。
 type ReportLayer m = (SDK.Reads Total m, SDK.RawOutputs m, SDK.Raises ReportError m, MonadIO m)
@@ -141,6 +153,7 @@ class ReportHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "report" 匹配。
 newtype ReportError = ReportError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ReportError Errors where raised (ReportError description) = (ReportFailure, description)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
 data Errors = AnnounceFailure | AcquireInputFailure | OpenInputFailure | CloseInputFailure | NextLineFailure | TraceLineFailure | ParseLineFailure | PrintLineFailure | CountTextFailure | ParseTotalFailure | ShowTotalFailure | ReportFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault

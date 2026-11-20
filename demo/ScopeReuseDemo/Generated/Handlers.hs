@@ -1,4 +1,5 @@
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
@@ -140,76 +141,58 @@ handlerSourceFingerprint = Just "46df5382e1875f64d669496bd64d138b"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) (method :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance SDK.Root (Wrap effect) value
+-- 类型标签上的名字：effect 名与方法名只写在标签上，需要字符串时从这里取。
+nameOf :: forall name. FrameworkTypes.KnownSymbol name => String
+nameOf = FrameworkTypes.symbolVal (FrameworkProxy.Proxy @name)
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.SharedPathsError (Wrap effect) where
-  raise (Effects.SharedPathsError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.SharedPathsFailure description)
+-- 在标签下执行 handler，交给 Root 的 superhandler；方法名取自标签。close 的调用点用 callClose。
+call :: forall effect method value. (FrameworkTypes.KnownSymbol method, SDK.Root (Wrap effect method) value)
+  => Wrap effect method value -> Effects.App value
+call handler = runWrap (SDK.super (nameOf @method) handler)
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.PrepareProbeError (Wrap effect) where
-  raise (Effects.PrepareProbeError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.PrepareProbeFailure description)
+callClose :: forall effect method value. (FrameworkTypes.KnownSymbol method, SDK.Root (Wrap effect method) value)
+  => Wrap effect method value -> Effects.App value
+callClose handler = runWrap (SDK.superClose (nameOf @method) handler)
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.AcquireFileError (Wrap effect) where
-  raise (Effects.AcquireFileError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.AcquireFileFailure description)
+instance SDK.Root (Wrap effect method) value
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.OpenSharedFileError (Wrap effect) where
-  raise (Effects.OpenSharedFileError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.OpenSharedFileFailure description)
+instance (SDK.HandlerError problem Effects.Errors, FrameworkTypes.KnownSymbol effect)
+    => SDK.Raises problem (Wrap effect method) where
+  raise problem = Wrap (SDK.failEffect (nameOf @effect) failure description)
+    where (failure, description) = SDK.raised problem
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.CloseSharedFileError (Wrap effect) where
-  raise (Effects.CloseSharedFileError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.CloseSharedFileFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.WriteFirstError (Wrap effect) where
-  raise (Effects.WriteFirstError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.WriteFirstFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.WriteSecondError (Wrap effect) where
-  raise (Effects.WriteSecondError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.WriteSecondFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.WriteThirdError (Wrap effect) where
-  raise (Effects.WriteThirdError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.WriteThirdFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.VerifyReuseError (Wrap effect) where
-  raise (Effects.VerifyReuseError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.VerifyReuseFailure description)
-
-instance SDK.Reads SharedPaths (Wrap "PrepareProbe") where
+instance SDK.Reads SharedPaths (Wrap "PrepareProbe" method) where
   require = Wrap (SDK.coerce <$> readFilePaths)
 
-instance SDK.Reads SharedPaths (Wrap "FileResource") where
+instance SDK.Reads SharedPaths (Wrap "FileResource" method) where
   require = Wrap (SDK.coerce <$> readFilePaths)
 
-instance SDK.Reads SharedFile (Wrap "SharedFileScope") where
+instance SDK.Reads SharedFile (Wrap "SharedFileScope" method) where
   require = Wrap (SDK.coerce <$> readOpenedFile)
 
-instance SDK.Reads SharedFile (Wrap "WriteFirst") where
+instance SDK.Reads SharedFile (Wrap "WriteFirst" method) where
   require = Wrap (SDK.coerce <$> readOpenedFile)
 
-instance SDK.Reads SharedFile (Wrap "WriteSecond") where
+instance SDK.Reads SharedFile (Wrap "WriteSecond" method) where
   require = Wrap (SDK.coerce <$> readOpenedFile)
 
-instance SDK.Reads SharedFile (Wrap "WriteThird") where
+instance SDK.Reads SharedFile (Wrap "WriteThird" method) where
   require = Wrap (SDK.coerce <$> readOpenedFile)
 
-instance SDK.Reads SharedPaths (Wrap "VerifyReuse") where
+instance SDK.Reads SharedPaths (Wrap "VerifyReuse" method) where
   require = Wrap (SDK.coerce <$> readFilePaths)
 
-instance SDK.RawOutputs (Wrap effect)
+instance SDK.RawOutputs (Wrap effect method)
 
 getFilePaths :: Effects.App Effects.FilePaths
 getFilePaths =
   SDK.handleFailure
   . SDK.callContext "FileLocations"
       (\value bindings -> bindings { Effects.boundFileLocations = Just value }) $
-    Effects.FilePaths <$> runWrap @"FileLocations" (SDK.super "sharedPaths" Effects.sharedPaths)
+    Effects.FilePaths <$> call @"FileLocations" @"sharedPaths" Effects.sharedPaths
 
 readFilePaths :: Effects.App Effects.FilePaths
 readFilePaths =
@@ -221,14 +204,14 @@ runPrepareProbe =
   SDK.handleFailure
   . SDK.atomicHandle "runPrepareProbe" [] []
   . SDK.enterHandler "PrepareProbe" $
-    getFilePaths >> runWrap @"PrepareProbe" (SDK.super "prepareProbe" Effects.prepareProbe)
+    getFilePaths >> call @"PrepareProbe" @"prepareProbe" Effects.prepareProbe
 
 getOpenedFile :: Effects.App Effects.OpenedFile
 getOpenedFile =
   SDK.handleFailure
   . SDK.callContext "FileResource"
       (\value bindings -> bindings { Effects.boundFileResource = Just value }) $
-    Effects.OpenedFile <$> runWrap @"FileResource" (SDK.super "acquireFile" Effects.acquireFile)
+    Effects.OpenedFile <$> call @"FileResource" @"acquireFile" Effects.acquireFile
 
 readOpenedFile :: Effects.App Effects.OpenedFile
 readOpenedFile =
@@ -242,7 +225,7 @@ openSharedFileScope =
   . SDK.atomicScope "openSharedFileScope" [] []
   . SDK.openScope "SharedFileScope" Effects.ScopeBindingError (Just (() <$ closeSharedFileScope))
   . SDK.enterHandler "SharedFileScope" $
-    getOpenedFile >> runWrap @"SharedFileScope" (SDK.super "openSharedFile" Effects.openSharedFile)
+    getOpenedFile >> call @"SharedFileScope" @"openSharedFile" Effects.openSharedFile
 
 closeSharedFileScope :: Effects.App [String]
 closeSharedFileScope =
@@ -251,7 +234,7 @@ closeSharedFileScope =
   . SDK.atomicScope "closeSharedFileScope" [] []
   . SDK.closeScope "SharedFileScope" Effects.ScopeBindingError
   . SDK.enterHandler "SharedFileScope" $
-    runWrap @"SharedFileScope" (SDK.superClose "closeSharedFile" Effects.closeSharedFile)
+    callClose @"SharedFileScope" @"closeSharedFile" Effects.closeSharedFile
 
 runWriteFirst :: Effects.App [String]
 runWriteFirst =
@@ -260,7 +243,7 @@ runWriteFirst =
   . SDK.atomicHandle "runWriteFirst" [] []
   . SDK.withScopeDependencies ["SharedFileScope"]
   . SDK.enterHandler "WriteFirst" $
-    openSharedFileScope >> runWrap @"WriteFirst" (SDK.super "writeFirst" Effects.writeFirst)
+    openSharedFileScope >> call @"WriteFirst" @"writeFirst" Effects.writeFirst
 
 runWriteSecond :: Effects.App [String]
 runWriteSecond =
@@ -269,7 +252,7 @@ runWriteSecond =
   . SDK.atomicHandle "runWriteSecond" [] []
   . SDK.withScopeDependencies ["SharedFileScope"]
   . SDK.enterHandler "WriteSecond" $
-    openSharedFileScope >> runWrap @"WriteSecond" (SDK.super "writeSecond" Effects.writeSecond)
+    openSharedFileScope >> call @"WriteSecond" @"writeSecond" Effects.writeSecond
 
 runWriteThird :: Effects.App [String]
 runWriteThird =
@@ -278,14 +261,14 @@ runWriteThird =
   . SDK.atomicHandle "runWriteThird" [] []
   . SDK.withScopeDependencies ["SharedFileScope"]
   . SDK.enterHandler "WriteThird" $
-    openSharedFileScope >> runWrap @"WriteThird" (SDK.super "writeThird" Effects.writeThird)
+    openSharedFileScope >> call @"WriteThird" @"writeThird" Effects.writeThird
 
 runVerifyReuse :: Effects.App [String]
 runVerifyReuse =
   SDK.handleFailure
   . SDK.atomicHandle "runVerifyReuse" [] []
   . SDK.enterHandler "VerifyReuse" $
-    getFilePaths >> runWrap @"VerifyReuse" (SDK.super "verifyReuse" Effects.verifyReuse)
+    getFilePaths >> call @"VerifyReuse" @"verifyReuse" Effects.verifyReuse
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]

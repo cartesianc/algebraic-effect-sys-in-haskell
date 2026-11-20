@@ -135,13 +135,13 @@ class WriteFirstLineHandler m where
 newtype WriteFirstLineError = WriteFirstLineError String
 ```
 
-资产类型把 `Asset @TextState "FileText"` 细化成具名资产，只在生成区使用；handler 契约由 handler 名和它的各个绑定推出。`Generated/Handlers.hs` 是运行副本：方法体原样复制，每个 effect 一个类型标签 `Wrap "名字"` 和一个入口，读取由按标签区分的 instance 在编译期路由到细化资产：
+资产类型把 `Asset @TextState "FileText"` 细化成具名资产，只在生成区使用；handler 契约由 handler 名和它的各个绑定推出。`Generated/Handlers.hs` 是运行副本：方法体原样复制，每个 effect 一个类型标签 `Wrap "名字" "handler 名"` 和一个入口，读取由按标签区分的 instance 在编译期路由到细化资产：
 
 ```haskell
 runWriteFirstLine = ⟨入口包装⟩ $
-  openFileSession >> runWrap @"WriteFirstLine" (SDK.super "writeFirstLine" Effects.writeFirstLine)
+  openFileSession >> call @"WriteFirstLine" @"writeFirstLine" Effects.writeFirstLine
 
-instance SDK.Reads FileHandle (Wrap "WriteFirstLine") where
+instance SDK.Reads FileHandle (Wrap "WriteFirstLine" method) where
   require = Wrap (SDK.coerce <$> readOpenedFile)
 ```
 
@@ -404,7 +404,7 @@ EffectSpec
 ### `name`
 
 - **唯一身份**：AST 的 `node`、其他 effect 的 `input`、Error 的 `ScopeFaultIn`／`ContextFaultIn` 都用这个名字引用它，在注册集合中不能重复。
-- **生成的名字**：生成器据此产出类型标签 `Wrap "名字"`、结果构造器 `名字Result` 和内部入口方法（见下表），所以 `name` 须是大写字母开头的 Haskell 类型名。handler 的类、Layer 与错误类型由 handler 名推出，不由 effect 名推出。
+- **生成的名字**：生成器据此产出类型标签 `Wrap "名字" …`、结果构造器 `名字Result` 和内部入口方法（见下表），所以 `name` 须是大写字母开头的 Haskell 类型名。handler 的类、Layer 与错误类型由 handler 名推出，不由 effect 名推出。
 
 ### `typing`：七种类别
 

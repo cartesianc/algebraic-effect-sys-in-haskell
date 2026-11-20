@@ -1,9 +1,10 @@
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE TypeOperators #-}
 -- handler 是不带参数的类方法；SDK 按注册装配上游、会话与读取来源，运行编译 Generated 副本。
 {-# LANGUAGE ConstraintKinds #-}
@@ -129,106 +130,91 @@ handlerSourceFingerprint = Just "65972ef14476f7caeea09207461d7d9d"
 newtype Wrap (hooks :: [FrameworkTypes.Symbol]) (effect :: FrameworkTypes.Symbol) (method :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
+-- 类型标签上的名字：effect 名与方法名只写在标签上，需要字符串时从这里取。
+nameOf :: forall name. FrameworkTypes.KnownSymbol name => String
+nameOf = FrameworkTypes.symbolVal (FrameworkProxy.Proxy @name)
+
+-- 在标签下执行 handler，交给 Root 的 superhandler；方法名取自标签。close 的调用点用 callClose。
+call :: forall hooks effect method value. (FrameworkTypes.KnownSymbol method, SDK.Root (Wrap hooks effect method) value)
+  => Wrap hooks effect method value -> Effects.App value
+call handler = runWrap (SDK.super (nameOf @method) handler)
+
+callClose :: forall hooks effect method value. (FrameworkTypes.KnownSymbol method, SDK.Root (Wrap hooks effect method) value)
+  => Wrap hooks effect method value -> Effects.App value
+callClose handler = runWrap (SDK.superClose (nameOf @method) handler)
+
+-- 每个 effect 的类别：Root 与显式操作按它取 Captures 的选择。
+class KindOf (effect :: FrameworkTypes.Symbol) (kind :: SDK.EffectKind) | effect -> kind
+instance KindOf "Announce" 'SDK.ExcuKind
+instance KindOf "InputResource" 'SDK.ContextKind
+instance KindOf "InputSession" 'SDK.ScopedKind
+instance KindOf "LineFeed" 'SDK.StreamKind
+instance KindOf "LineParser" 'SDK.ContextKind
+instance KindOf "PrintLine" 'SDK.ExcuKind
+instance KindOf "TextCounter" 'SDK.ExcuKind
+instance KindOf "CountParser" 'SDK.ContextKind
+instance KindOf "ShowTotal" 'SDK.ExcuKind
+instance KindOf "Report" 'SDK.ExcuKind
+
 -- superhandler 的静态选择：hooks 是覆盖本次挂载的 Middleware（注册顺序），kind 是捕获类别。
--- 默认方法即空选择：不捕获，super 直接执行 action。
+-- 默认即空选择：不捕获，super 直接执行 action。
 class Captures (hooks :: [FrameworkTypes.Symbol]) (kind :: SDK.EffectKind) where
-  captureAt :: SDK.Operation -> Effects.App ()
-  captureAt _ = pure ()
-  superWrap :: String -> Effects.App value -> Effects.App value
-  closeWrap :: String -> Effects.App [String] -> Effects.App [String]
-  superWrap _ = id
-  closeWrap _ = id
+  selected :: Maybe (SDK.Operation -> Effects.App ())
+  selected = Nothing
 
 -- 入口对 hooks 多态：每个被拦截的类别都有该列表的选择。
 type Captured hooks = (Captures hooks 'SDK.StreamKind, Captures hooks 'SDK.ScopedKind)
 
 instance Captures '[] 'SDK.StreamKind
-
 instance Captures '[] 'SDK.ScopedKind
-
 instance Captures '["TraceLine"] 'SDK.StreamKind where
-  captureAt event = hookTraceLine event >> pure ()
-  superWrap = SDK.superWith (captureAt @'["TraceLine"] @'SDK.StreamKind)
-
+  selected = Just (\event -> hookTraceLine event >> pure ())
 instance Captures '["TraceLine"] 'SDK.ScopedKind where
-  captureAt event = hookTraceLine event >> pure ()
-  superWrap = SDK.superWith (captureAt @'["TraceLine"] @'SDK.ScopedKind)
-  closeWrap = SDK.superClosing (captureAt @'["TraceLine"] @'SDK.ScopedKind)
+  selected = Just (\event -> hookTraceLine event >> pure ())
+instance Captures hooks 'SDK.ExcuKind
+instance Captures hooks 'SDK.ContextKind
 
+selection :: forall hooks effect kind. (KindOf effect kind, Captures hooks kind)
+  => Maybe (SDK.Operation -> Effects.App ())
+selection = selected @hooks @kind
+
+-- 显式操作的捕获点：把本 handler 的操作交给选中的 Middleware，操作名取自标签。
+notifyAt :: forall kind hooks effect method. (Captures hooks kind, FrameworkTypes.KnownSymbol method)
+  => (String -> SDK.Operation) -> Wrap hooks effect method ()
+notifyAt event = Wrap (maybe (pure ()) ($ event (nameOf @method)) (selected @hooks @kind))
+
+notify :: forall hooks effect method kind. (KindOf effect kind, Captures hooks kind, FrameworkTypes.KnownSymbol method)
+  => (String -> SDK.Operation) -> Wrap hooks effect method ()
+notify = notifyAt @kind
 
 -- Middleware 的标签：handler 在这里执行，用 hook 读取触发本次调用的 Operation。
 newtype Hook (effect :: FrameworkTypes.Symbol) value = Hook { runHook :: SDK.HookApp Effects.ContextValues Effects.Errors value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance SDK.Hooks (Hook "TraceLine") where
+instance SDK.Hooks (Hook effect) where
   hook = Hook SDK.currentOperation
 
-instance SDK.RawOutputs (Hook "TraceLine")
+instance SDK.RawOutputs (Hook effect)
 
-instance SDK.Raises Effects.TraceLineError (Hook "TraceLine") where
-  raise (Effects.TraceLineError description) = Hook (SDK.liftHookApp
-    (SDK.failEffect "TraceLine" Effects.TraceLineFailure description))
+instance (SDK.HandlerError problem Effects.Errors, FrameworkTypes.KnownSymbol effect)
+    => SDK.Raises problem (Hook effect) where
+  raise problem = Hook (SDK.liftHookApp (SDK.failEffect (nameOf @effect) failure description))
+    where (failure, description) = SDK.raised problem
 
 hookTraceLine :: SDK.Operation -> Effects.App [String]
 hookTraceLine event = SDK.runHookApp event (runHook @"TraceLine" (SDK.super "traceLine" Effects.traceLine))
 
 instance SDK.Root (Hook effect) value
 
-instance SDK.Root (Wrap hooks "Announce" method) value
+instance (KindOf effect kind, Captures hooks kind) => SDK.Root (Wrap hooks effect method) value where
+  super name (Wrap action) = Wrap (maybe (const id) SDK.superWith (selection @hooks @effect) name action)
+  superClose name (Wrap action) = Wrap (maybe (const id) SDK.superClosing (selection @hooks @effect) name action)
 
-instance SDK.Root (Wrap hooks "InputResource" method) value
-
-instance Captures hooks 'SDK.ScopedKind => SDK.Root (Wrap hooks "InputSession" method) [String] where
-  super name (Wrap action) = Wrap (superWrap @hooks @'SDK.ScopedKind name action)
-  superClose name (Wrap action) = Wrap (closeWrap @hooks @'SDK.ScopedKind name action)
-
-instance Captures hooks 'SDK.StreamKind => SDK.Root (Wrap hooks "LineFeed" method) () where
-  super name (Wrap action) = Wrap (superWrap @hooks @'SDK.StreamKind name action)
-
-instance SDK.Root (Wrap hooks "LineParser" method) value
-
-instance SDK.Root (Wrap hooks "PrintLine" method) value
-
-instance SDK.Root (Wrap hooks "TextCounter" method) value
-
-instance SDK.Root (Wrap hooks "CountParser" method) value
-
-instance SDK.Root (Wrap hooks "ShowTotal" method) value
-
-instance SDK.Root (Wrap hooks "Report" method) value
-
-instance SDK.Raises Effects.AnnounceError (Wrap hooks "Announce" method) where
-  raise (Effects.AnnounceError description) = Wrap (SDK.failEffect "Announce" Effects.AnnounceFailure description)
-
-instance SDK.Raises Effects.AcquireInputError (Wrap hooks "InputResource" method) where
-  raise (Effects.AcquireInputError description) = Wrap (SDK.failEffect "InputResource" Effects.AcquireInputFailure description)
-
-instance Captured hooks => SDK.Raises Effects.OpenInputError (Wrap hooks "InputSession" method) where
-  raise (Effects.OpenInputError description) = Wrap (captureAt @hooks @'SDK.ScopedKind (SDK.Raise "openInput" description) >> SDK.failEffect "InputSession" Effects.OpenInputFailure description)
-
-instance Captured hooks => SDK.Raises Effects.CloseInputError (Wrap hooks "InputSession" method) where
-  raise (Effects.CloseInputError description) = Wrap (captureAt @hooks @'SDK.ScopedKind (SDK.Raise "closeInput" description) >> SDK.failEffect "InputSession" Effects.CloseInputFailure description)
-
-instance Captured hooks => SDK.Raises Effects.NextLineError (Wrap hooks "LineFeed" method) where
-  raise (Effects.NextLineError description) = Wrap (captureAt @hooks @'SDK.StreamKind (SDK.Raise "nextLine" description) >> SDK.failEffect "LineFeed" Effects.NextLineFailure description)
-
-instance SDK.Raises Effects.ParseLineError (Wrap hooks "LineParser" method) where
-  raise (Effects.ParseLineError description) = Wrap (SDK.failEffect "LineParser" Effects.ParseLineFailure description)
-
-instance SDK.Raises Effects.PrintLineError (Wrap hooks "PrintLine" method) where
-  raise (Effects.PrintLineError description) = Wrap (SDK.failEffect "PrintLine" Effects.PrintLineFailure description)
-
-instance SDK.Raises Effects.CountTextError (Wrap hooks "TextCounter" method) where
-  raise (Effects.CountTextError description) = Wrap (SDK.failEffect "TextCounter" Effects.CountTextFailure description)
-
-instance SDK.Raises Effects.ParseTotalError (Wrap hooks "CountParser" method) where
-  raise (Effects.ParseTotalError description) = Wrap (SDK.failEffect "CountParser" Effects.ParseTotalFailure description)
-
-instance SDK.Raises Effects.ShowTotalError (Wrap hooks "ShowTotal" method) where
-  raise (Effects.ShowTotalError description) = Wrap (SDK.failEffect "ShowTotal" Effects.ShowTotalFailure description)
-
-instance SDK.Raises Effects.ReportError (Wrap hooks "Report" method) where
-  raise (Effects.ReportError description) = Wrap (SDK.failEffect "Report" Effects.ReportFailure description)
+instance (SDK.HandlerError problem Effects.Errors, FrameworkTypes.KnownSymbol effect
+         , KindOf effect kind, Captures hooks kind, FrameworkTypes.KnownSymbol method)
+    => SDK.Raises problem (Wrap hooks effect method) where
+  raise problem = notify (`SDK.Raise` description) >> Wrap (SDK.failEffect (nameOf @effect) failure description)
+    where (failure, description) = SDK.raised problem
 
 instance SDK.Reads InputFile (Wrap hooks "InputSession" method) where
   require = Wrap (SDK.coerce <$> readOpenedInput)
@@ -251,41 +237,22 @@ instance SDK.Reads Total (Wrap hooks "ShowTotal" method) where
 instance SDK.Reads Total (Wrap hooks "Report" method) where
   require = Wrap (SDK.coerce <$> streamRunningTotal)
 
-instance Captured hooks => SDK.Raw (Wrap hooks "LineParser" method) where
-  rawinput = Wrap (SDK.emittedInput >>= \value -> captureAt @hooks @'SDK.StreamKind (SDK.RawInput "parseLine" value) >> pure value)
+instance Captured hooks => SDK.Raw (Wrap hooks "LineParser" "parseLine") where
+  rawinput = Wrap SDK.emittedInput >>= \value -> value <$ notifyAt @'SDK.StreamKind (`SDK.RawInput` value)
 
-instance Captured hooks => SDK.Raw (Wrap hooks "CountParser" method) where
+instance Captured hooks => SDK.Raw (Wrap hooks "CountParser" "parseTotal") where
   rawinput = Wrap (runTextCounter @hooks)
 
-instance SDK.RawOutputs (Wrap hooks "Announce" "announce")
+instance (KindOf effect kind, Captures hooks kind, FrameworkTypes.KnownSymbol method) => SDK.RawOutputs (Wrap hooks effect method) where
+  rawoutput value = value <$ notify (`SDK.RawOutput` value)
 
-instance Captured hooks => SDK.RawOutputs (Wrap hooks "InputSession" "openInput") where
-  rawoutput value = Wrap (captureAt @hooks @'SDK.ScopedKind (SDK.RawOutput "openInput" value) >> pure value)
+instance (KindOf effect kind, Captures hooks kind, FrameworkTypes.KnownSymbol method) => SDK.Emits (Wrap hooks effect method) where
+  rawemit text = notify (`SDK.RawEmit` text) >> Wrap (SDK.emitToParser text)
 
-instance Captured hooks => SDK.RawOutputs (Wrap hooks "InputSession" "closeInput") where
-  rawoutput value = Wrap (captureAt @hooks @'SDK.ScopedKind (SDK.RawOutput "closeInput" value) >> pure value)
-
-instance SDK.RawOutputs (Wrap hooks "PrintLine" "printLine")
-
-instance SDK.RawOutputs (Wrap hooks "TextCounter" "countText")
-
-instance SDK.RawOutputs (Wrap hooks "ShowTotal" "showTotal")
-
-instance SDK.RawOutputs (Wrap hooks "Report" "report")
-
-instance Captured hooks => SDK.Emits (Wrap hooks "LineFeed" method) where
-  rawemit text = Wrap (captureAt @hooks @'SDK.StreamKind (SDK.RawEmit "nextLine" text) >> SDK.emitToParser text)
-
-instance SDK.StreamEnds (Wrap hooks "LineFeed" method) where
+instance SDK.StreamEnds (Wrap hooks effect method) where
   streamEnd = Wrap SDK.endSource
 
-instance SDK.EndsStream (Wrap hooks "PrintLine" method) where
-  endStream = Wrap SDK.endSubscription
-
-instance SDK.EndsStream (Wrap hooks "TextCounter" method) where
-  endStream = Wrap SDK.endSubscription
-
-instance SDK.EndsStream (Wrap hooks "ShowTotal" method) where
+instance SDK.EndsStream (Wrap hooks effect method) where
   endStream = Wrap SDK.endSubscription
 
 runAnnounce :: forall hooks. Captured hooks => Effects.App [String]
@@ -293,14 +260,14 @@ runAnnounce =
   SDK.handleFailure
   . SDK.atomicHandle "runAnnounce" [] []
   . SDK.enterHandler "Announce" $
-    runWrap @hooks @"Announce" @"announce" (SDK.super "announce" Effects.announce)
+    call @hooks @"Announce" @"announce" Effects.announce
 
 getOpenedInput :: forall hooks. Captured hooks => Effects.App Effects.OpenedInput
 getOpenedInput =
   SDK.handleFailure
   . SDK.callContext "InputResource"
       (\value bindings -> bindings { Effects.boundInputResource = Just value }) $
-    Effects.OpenedInput <$> runWrap @hooks @"InputResource" @"acquireInput" (SDK.super "acquireInput" Effects.acquireInput)
+    Effects.OpenedInput <$> call @hooks @"InputResource" @"acquireInput" Effects.acquireInput
 
 readOpenedInput :: Effects.App Effects.OpenedInput
 readOpenedInput =
@@ -314,7 +281,7 @@ openInputSession =
   . SDK.atomicScope "openInputSession" [] []
   . SDK.openScope "InputSession" Effects.ScopeBindingError (Just (() <$ closeInputSession @hooks))
   . SDK.enterHandler "InputSession" $
-    getOpenedInput @hooks >> runWrap @hooks @"InputSession" @"openInput" (SDK.super "openInput" Effects.openInput)
+    getOpenedInput @hooks >> call @hooks @"InputSession" @"openInput" Effects.openInput
 
 closeInputSession :: forall hooks. Captured hooks => Effects.App [String]
 closeInputSession =
@@ -323,7 +290,7 @@ closeInputSession =
   . SDK.atomicScope "closeInputSession" [] []
   . SDK.closeScope "InputSession" Effects.ScopeBindingError
   . SDK.enterHandler "InputSession" $
-    runWrap @hooks @"InputSession" @"closeInput" (SDK.superClose "closeInput" Effects.closeInput)
+    callClose @hooks @"InputSession" @"closeInput" Effects.closeInput
 
 nextLineFeed :: forall hooks. Captured hooks => Effects.App ()
 nextLineFeed =
@@ -331,7 +298,7 @@ nextLineFeed =
   . SDK.handleFailure
   . SDK.withScopeDependencies ["InputSession"]
   . SDK.enterHandler "LineFeed" $
-    openInputSession @hooks >> runWrap @hooks @"LineFeed" @"nextLine" (SDK.super "nextLine" Effects.nextLine)
+    openInputSession @hooks >> call @hooks @"LineFeed" @"nextLine" Effects.nextLine
 
 getTextLine :: forall hooks. Captured hooks => Effects.App Effects.TextLine
 getTextLine =
@@ -340,7 +307,7 @@ getTextLine =
   . SDK.withScopeDependencies ["InputSession"]
   . SDK.callContext "LineParser"
       (\value bindings -> bindings { Effects.boundLineParser = Just value }) $
-    Effects.TextLine <$> runWrap @hooks @"LineParser" @"parseLine" (SDK.super "parseLine" Effects.parseLine)
+    Effects.TextLine <$> call @hooks @"LineParser" @"parseLine" Effects.parseLine
 
 streamTextLine :: Effects.App Effects.TextLine
 streamTextLine =
@@ -353,7 +320,7 @@ runPrintLine =
   SDK.handleFailure
   . SDK.atomicHandle "runPrintLine" [] []
   . SDK.enterHandler "PrintLine" $
-    runWrap @hooks @"PrintLine" @"printLine" (SDK.super "printLine" Effects.printLine)
+    call @hooks @"PrintLine" @"printLine" Effects.printLine
 
 runTextCounter :: forall hooks. Captured hooks => Effects.App [String]
 runTextCounter =
@@ -362,7 +329,7 @@ runTextCounter =
   . SDK.atomicHandle "runTextCounter" [] [("CountParser", () <$ getRunningTotal @hooks)]
   . SDK.withScopeDependencies ["InputSession"]
   . SDK.enterHandler "TextCounter" $
-    openInputSession @hooks >> runWrap @hooks @"TextCounter" @"countText" (SDK.super "countText" Effects.countText)
+    openInputSession @hooks >> call @hooks @"TextCounter" @"countText" Effects.countText
 
 getRunningTotal :: forall hooks. Captured hooks => Effects.App Effects.RunningTotal
 getRunningTotal =
@@ -371,7 +338,7 @@ getRunningTotal =
   . SDK.withScopeDependencies ["InputSession"]
   . SDK.callContext "CountParser"
       (\value bindings -> bindings { Effects.boundCountParser = Just value }) $
-    Effects.RunningTotal <$> runWrap @hooks @"CountParser" @"parseTotal" (SDK.super "parseTotal" Effects.parseTotal)
+    Effects.RunningTotal <$> call @hooks @"CountParser" @"parseTotal" Effects.parseTotal
 
 streamRunningTotal :: Effects.App Effects.RunningTotal
 streamRunningTotal =
@@ -384,14 +351,14 @@ runShowTotal =
   SDK.handleFailure
   . SDK.atomicHandle "runShowTotal" [] []
   . SDK.enterHandler "ShowTotal" $
-    runWrap @hooks @"ShowTotal" @"showTotal" (SDK.super "showTotal" Effects.showTotal)
+    call @hooks @"ShowTotal" @"showTotal" Effects.showTotal
 
 runReport :: forall hooks. Captured hooks => Effects.App [String]
 runReport =
   SDK.handleFailure
   . SDK.atomicHandle "runReport" [] []
   . SDK.enterHandler "Report" $
-    runWrap @hooks @"Report" @"report" (SDK.super "report" Effects.report)
+    call @hooks @"Report" @"report" Effects.report
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]

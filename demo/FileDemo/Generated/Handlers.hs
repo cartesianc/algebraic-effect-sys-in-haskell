@@ -1,4 +1,5 @@
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
@@ -153,112 +154,82 @@ handlerSourceFingerprint = Just "b01d99cca0f1ce9183a891f133f9e576"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
-newtype Wrap (effect :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
+newtype Wrap (effect :: FrameworkTypes.Symbol) (method :: FrameworkTypes.Symbol) value = Wrap { runWrap :: Effects.App value }
   deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)
 
-instance SDK.Root (Wrap effect) value
+-- 类型标签上的名字：effect 名与方法名只写在标签上，需要字符串时从这里取。
+nameOf :: forall name. FrameworkTypes.KnownSymbol name => String
+nameOf = FrameworkTypes.symbolVal (FrameworkProxy.Proxy @name)
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.LocateFileError (Wrap effect) where
-  raise (Effects.LocateFileError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.LocateFileFailure description)
+-- 在标签下执行 handler，交给 Root 的 superhandler；方法名取自标签。close 的调用点用 callClose。
+call :: forall effect method value. (FrameworkTypes.KnownSymbol method, SDK.Root (Wrap effect method) value)
+  => Wrap effect method value -> Effects.App value
+call handler = runWrap (SDK.super (nameOf @method) handler)
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ValidateFileNameError (Wrap effect) where
-  raise (Effects.ValidateFileNameError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ValidateFileNameFailure description)
+callClose :: forall effect method value. (FrameworkTypes.KnownSymbol method, SDK.Root (Wrap effect method) value)
+  => Wrap effect method value -> Effects.App value
+callClose handler = runWrap (SDK.superClose (nameOf @method) handler)
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ParseFileNameError (Wrap effect) where
-  raise (Effects.ParseFileNameError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ParseFileNameFailure description)
+instance SDK.Root (Wrap effect method) value
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.AcquireFileError (Wrap effect) where
-  raise (Effects.AcquireFileError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.AcquireFileFailure description)
+instance (SDK.HandlerError problem Effects.Errors, FrameworkTypes.KnownSymbol effect)
+    => SDK.Raises problem (Wrap effect method) where
+  raise problem = Wrap (SDK.failEffect (nameOf @effect) failure description)
+    where (failure, description) = SDK.raised problem
 
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.OpenSessionError (Wrap effect) where
-  raise (Effects.OpenSessionError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.OpenSessionFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.CloseSessionError (Wrap effect) where
-  raise (Effects.CloseSessionError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.CloseSessionFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.DetectFileSessionError (Wrap effect) where
-  raise (Effects.DetectFileSessionError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.DetectFileSessionFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ResolveFileSessionError (Wrap effect) where
-  raise (Effects.ResolveFileSessionError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ResolveFileSessionFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ReadFileContentError (Wrap effect) where
-  raise (Effects.ReadFileContentError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ReadFileContentFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.ParseFileTextError (Wrap effect) where
-  raise (Effects.ParseFileTextError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.ParseFileTextFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.WriteFirstLineError (Wrap effect) where
-  raise (Effects.WriteFirstLineError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.WriteFirstLineFailure description)
-
-instance FrameworkTypes.KnownSymbol effect => SDK.Raises Effects.AppendLineError (Wrap effect) where
-  raise (Effects.AppendLineError description) = Wrap (SDK.failEffect
-    (FrameworkTypes.symbolVal (FrameworkProxy.Proxy :: FrameworkProxy.Proxy effect)) Effects.AppendLineFailure description)
-
-instance SDK.Reads [Char] (Wrap "FileResource") where
+instance SDK.Reads [Char] (Wrap "FileResource" method) where
   require = Wrap (SDK.coerce <$> readFileName)
 
-instance SDK.Reads FileHandle (Wrap "FileSession") where
+instance SDK.Reads FileHandle (Wrap "FileSession" method) where
   require = Wrap (SDK.coerce <$> readOpenedFile)
 
-instance SDK.Reads FileHandle (Wrap "FileRecovery") where
+instance SDK.Reads FileHandle (Wrap "FileRecovery" method) where
   require = Wrap (SDK.coerce <$> readOpenedFile)
 
-instance SDK.Reads FileHandle (Wrap "ReadFile") where
+instance SDK.Reads FileHandle (Wrap "ReadFile" method) where
   require = Wrap (SDK.coerce <$> readOpenedFile)
 
-instance SDK.Reads () (Wrap "WriteFirstLine") where
+instance SDK.Reads () (Wrap "WriteFirstLine" method) where
   require = Wrap (SDK.projectContext "ExtractFileText" "FileTextBlank" Effects.ContextBindingError (\(Effects.FileText value) -> case value of { Blank -> Just (); _ -> Nothing }) (readFileText))
 
-instance SDK.Reads FileHandle (Wrap "WriteFirstLine") where
+instance SDK.Reads FileHandle (Wrap "WriteFirstLine" method) where
   require = Wrap (SDK.coerce <$> readOpenedFile)
 
-instance SDK.Reads String (Wrap "AppendLine") where
+instance SDK.Reads String (Wrap "AppendLine" method) where
   require = Wrap (SDK.projectContext "ExtractFileText" "FileTextWritten" Effects.ContextBindingError (\(Effects.FileText value) -> case value of { Written field -> Just field; _ -> Nothing }) (readFileText))
 
-instance SDK.Reads FileHandle (Wrap "AppendLine") where
+instance SDK.Reads FileHandle (Wrap "AppendLine" method) where
   require = Wrap (SDK.coerce <$> readOpenedFile)
 
-instance SDK.Raw (Wrap "ValidateFileName") where
+instance SDK.Raw (Wrap "ValidateFileName" "validateFileName") where
   rawinput = Wrap runLocateFile
 
-instance SDK.Raw (Wrap "FileLocation") where
+instance SDK.Raw (Wrap "FileLocation" "parseFileName") where
   rawinput = Wrap runValidateFileName
 
-instance SDK.Raw (Wrap "ExtractFileText") where
+instance SDK.Raw (Wrap "ExtractFileText" "parseFileText") where
   rawinput = Wrap runReadFile
 
-instance SDK.RawOutputs (Wrap effect)
+instance SDK.RawOutputs (Wrap effect method)
 
 runLocateFile :: Effects.App [String]
 runLocateFile =
   SDK.handleFailure
   . SDK.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] []
   . SDK.enterHandler "LocateFile" $
-    runWrap @"LocateFile" (SDK.super "locateFile" Effects.locateFile)
+    call @"LocateFile" @"locateFile" Effects.locateFile
 
 runValidateFileName :: Effects.App [String]
 runValidateFileName =
   SDK.handleFailure $
-    runWrap @"ValidateFileName" (SDK.super "validateFileName" Effects.validateFileName)
+    call @"ValidateFileName" @"validateFileName" Effects.validateFileName
 
 getFileName :: Effects.App Effects.FileName
 getFileName =
   SDK.handleFailure
   . SDK.callContext "FileLocation"
       (\value bindings -> bindings { Effects.boundFileLocation = Just value }) $
-    Effects.FileName <$> runWrap @"FileLocation" (SDK.super "parseFileName" Effects.parseFileName)
+    Effects.FileName <$> call @"FileLocation" @"parseFileName" Effects.parseFileName
 
 readFileName :: Effects.App Effects.FileName
 readFileName =
@@ -270,7 +241,7 @@ getOpenedFile =
   SDK.handleFailure
   . SDK.callContext "FileResource"
       (\value bindings -> bindings { Effects.boundFileResource = Just value }) $
-    getFileName >> Effects.OpenedFile <$> runWrap @"FileResource" (SDK.super "acquireFile" Effects.acquireFile)
+    getFileName >> Effects.OpenedFile <$> call @"FileResource" @"acquireFile" Effects.acquireFile
 
 readOpenedFile :: Effects.App Effects.OpenedFile
 readOpenedFile =
@@ -284,7 +255,7 @@ openFileSession =
   . SDK.atomicScope "openFileSession" [] []
   . SDK.openScope "FileSession" Effects.ScopeBindingError (Just (() <$ closeFileSession))
   . SDK.enterHandler "FileSession" $
-    getOpenedFile >> runWrap @"FileSession" (SDK.super "openSession" Effects.openSession)
+    getOpenedFile >> call @"FileSession" @"openSession" Effects.openSession
 
 closeFileSession :: Effects.App [String]
 closeFileSession =
@@ -293,7 +264,7 @@ closeFileSession =
   . SDK.atomicScope "closeFileSession" [] []
   . SDK.closeScope "FileSession" Effects.ScopeBindingError
   . SDK.enterHandler "FileSession" $
-    runWrap @"FileSession" (SDK.superClose "closeSession" Effects.closeSession)
+    callClose @"FileSession" @"closeSession" Effects.closeSession
 
 detectFileRecovery :: Effects.App ()
 detectFileRecovery =
@@ -301,7 +272,7 @@ detectFileRecovery =
   . SDK.handleFailure
   . SDK.withScopeDependencies ["FileSession"]
   . SDK.enterHandler "FileRecovery" $
-    runWrap @"FileRecovery" (SDK.super "detectFileSession" Effects.detectFileSession)
+    call @"FileRecovery" @"detectFileSession" Effects.detectFileSession
 
 resolveFileRecovery :: Effects.App ()
 resolveFileRecovery =
@@ -309,7 +280,7 @@ resolveFileRecovery =
   . SDK.handleFailure
   . SDK.withScopeDependencies ["FileSession"]
   . SDK.enterHandler "FileRecovery" $
-    runWrap @"FileRecovery" (SDK.super "resolveFileSession" Effects.resolveFileSession)
+    call @"FileRecovery" @"resolveFileSession" Effects.resolveFileSession
 
 runReadFile :: Effects.App [String]
 runReadFile =
@@ -318,7 +289,7 @@ runReadFile =
   . SDK.atomicHandle "runReadFile" [("ExtractFileText", () <$ getFileText)] []
   . SDK.withScopeDependencies ["FileSession"]
   . SDK.enterHandler "ReadFile" $
-    openFileSession >> runWrap @"ReadFile" (SDK.super "readFileContent" Effects.readFileContent)
+    openFileSession >> call @"ReadFile" @"readFileContent" Effects.readFileContent
 
 getFileText :: Effects.App Effects.FileText
 getFileText =
@@ -327,7 +298,7 @@ getFileText =
   . SDK.withScopeDependencies ["FileSession"]
   . SDK.callContext "ExtractFileText"
       (\value bindings -> bindings { Effects.boundExtractFileText = Just value }) $
-    Effects.FileText <$> runWrap @"ExtractFileText" (SDK.super "parseFileText" Effects.parseFileText)
+    Effects.FileText <$> call @"ExtractFileText" @"parseFileText" Effects.parseFileText
 
 readFileText :: Effects.App Effects.FileText
 readFileText =
@@ -342,7 +313,7 @@ runWriteFirstLine =
   . SDK.atomicHandle "runWriteFirstLine" [] []
   . SDK.withScopeDependencies ["FileSession"]
   . SDK.enterHandler "WriteFirstLine" $
-    openFileSession >> runWrap @"WriteFirstLine" (SDK.super "writeFirstLine" Effects.writeFirstLine)
+    openFileSession >> call @"WriteFirstLine" @"writeFirstLine" Effects.writeFirstLine
 
 runAppendLine :: Effects.App [String]
 runAppendLine =
@@ -351,7 +322,7 @@ runAppendLine =
   . SDK.atomicHandle "runAppendLine" [] []
   . SDK.withScopeDependencies ["FileSession"]
   . SDK.enterHandler "AppendLine" $
-    openFileSession >> runWrap @"AppendLine" (SDK.super "appendLine" Effects.appendLine)
+    openFileSession >> call @"AppendLine" @"appendLine" Effects.appendLine
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]

@@ -6,7 +6,7 @@
 -- 生成代码经 Framework.Generated 调用这些协议；handler 的能力类与完成结果属于源语言（Framework.Language.Handler）。
 -- 通用 Context 组合在 Runtime/Context.hs，IO 解释在 Runtime/App.hs。
 module Framework.Runtime.Protocol
-  ( Root(..), failEffect, ErrorHandler(..), ErrorStore(..), runErrorHandler
+  ( Root(..), HandlerError(..), failEffect, ErrorHandler(..), ErrorStore(..), runErrorHandler
   , ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault(..), ScopeInput(..)
   , RawOutput(..)
   ) where
@@ -137,6 +137,11 @@ runErrorHandler selected (ErrorHandler name _ detecting resolving) = do
   pure (ErrorReport selected name detection resolution)
   where
     attempt action = (Succ <$> action) `catchError` (pure . Failed)
+
+-- 生成的错误类型到失败分类的对应，写在 Generated/Effects.hs 的错误声明旁；
+-- 生成的 Raises instance 按它取分类与描述，所有标签共用一份实现。
+class HandlerError problem cause where
+  raised :: problem -> (cause, String)
 
 -- 生成的 Raises instance 统一实现 raise：origin 是发生位置的 effect 名，cause 是 handler 的错误分类。
 failEffect :: MonadError (Failure cause) m => String -> cause -> String -> m value

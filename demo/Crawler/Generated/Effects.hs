@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -50,6 +51,7 @@ class StartURLHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "startURL" 匹配。
 newtype StartURLError = StartURLError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError StartURLError Errors where raised (StartURLError description) = (StartURLFailure, description)
 
 -- handler linkedURL：绑定到 LinkedPage。
 type LinkedURLLayer m = (SDK.Raises LinkedURLError m, MonadIO m)
@@ -59,6 +61,7 @@ class LinkedURLHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "linkedURL" 匹配。
 newtype LinkedURLError = LinkedURLError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError LinkedURLError Errors where raised (LinkedURLError description) = (LinkedURLFailure, description)
 
 -- handler fetchPage：绑定到 FetchPage、FetchLinkedPage。
 type FetchPageLayer m = (SDK.Reads PageURL m, SDK.Reads SessionInfo m, SDK.RawOutputs m, SDK.Raises FetchPageError m, MonadIO m)
@@ -68,6 +71,7 @@ class FetchPageHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "fetchPage" 匹配。
 newtype FetchPageError = FetchPageError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError FetchPageError Errors where raised (FetchPageError description) = (FetchPageFailure, description)
 
 -- handler dropBlankBodies：绑定到 KeepPageBody、KeepLinkedPageBody。
 type DropBlankBodiesLayer m = (SDK.Raw m, SDK.RawOutputs m, SDK.Raises DropBlankBodiesError m, Monad m)
@@ -77,6 +81,7 @@ class DropBlankBodiesHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "dropBlankBodies" 匹配。
 newtype DropBlankBodiesError = DropBlankBodiesError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError DropBlankBodiesError Errors where raised (DropBlankBodiesError description) = (DropBlankBodiesFailure, description)
 
 -- handler extractSummary：绑定到 ExtractPage、ExtractLinkedPage。
 type ExtractSummaryLayer m = (SDK.Reads PageURL m, SDK.Raw m, SDK.Raises ExtractSummaryError m, MonadIO m)
@@ -86,6 +91,7 @@ class ExtractSummaryHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "extractSummary" 匹配。
 newtype ExtractSummaryError = ExtractSummaryError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ExtractSummaryError Errors where raised (ExtractSummaryError description) = (ExtractSummaryFailure, description)
 
 -- handler printSummary：绑定到 PrintPage、PrintLinkedPage。
 type PrintSummaryLayer m = (SDK.Reads PageSummary m, SDK.RawOutputs m, SDK.Raises PrintSummaryError m, MonadIO m)
@@ -95,6 +101,7 @@ class PrintSummaryHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "printSummary" 匹配。
 newtype PrintSummaryError = PrintSummaryError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError PrintSummaryError Errors where raised (PrintSummaryError description) = (PrintSummaryFailure, description)
 
 -- handler sessionInfo：绑定到 SessionContext。
 type SessionInfoLayer m = (SDK.Raises SessionInfoError m, MonadIO m)
@@ -104,6 +111,7 @@ class SessionInfoHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "sessionInfo" 匹配。
 newtype SessionInfoError = SessionInfoError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError SessionInfoError Errors where raised (SessionInfoError description) = (SessionInfoFailure, description)
 
 -- handler openSession：绑定到 CrawlSession。
 type OpenSessionLayer m = (SDK.Reads SessionInfo m, SDK.RawOutputs m, SDK.Raises OpenSessionError m, MonadIO m)
@@ -113,6 +121,7 @@ class OpenSessionHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openSession" 匹配。
 newtype OpenSessionError = OpenSessionError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError OpenSessionError Errors where raised (OpenSessionError description) = (OpenSessionFailure, description)
 
 -- handler closeSession：绑定到 CrawlSession。
 type CloseSessionLayer m = (SDK.Reads SessionInfo m, SDK.RawOutputs m, SDK.Raises CloseSessionError m, MonadIO m)
@@ -122,6 +131,7 @@ class CloseSessionHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeSession" 匹配。
 newtype CloseSessionError = CloseSessionError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError CloseSessionError Errors where raised (CloseSessionError description) = (CloseSessionFailure, description)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
 data Errors = StartURLFailure | LinkedURLFailure | FetchPageFailure | DropBlankBodiesFailure | ExtractSummaryFailure | PrintSummaryFailure | SessionInfoFailure | OpenSessionFailure | CloseSessionFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault

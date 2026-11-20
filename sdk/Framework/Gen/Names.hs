@@ -37,7 +37,7 @@ reservedValues :: [String]
 reservedValues = ["emptyContexts", "interpreter", "compiledEntries", "generatedPrototype"]
 
 -- 两个输出模块共用同一份拼写。先分配 effect 入口，再分配辅助名，因而逻辑入口
--- closeWrap 与内部包装方法 closeWrap 可以同时存在。Prototype 仍使用原来的逻辑入口名。
+-- 与同名的生成辅助（如 call）可以同时存在。Prototype 仍使用原来的逻辑入口名。
 data HandlerNames = HandlerNames
   { entryName :: String -> String
   , helperName :: String -> String
@@ -48,7 +48,8 @@ nameHandlers visible methods = HandlerNames (entries Map.!) (helpers Map.!)
   where
     (withEntries, entries) = allocate visible methods
     (_, helpers) = allocate withEntries
-      ["Wrap", "runWrap", "Hook", "runHook", "Captures", "Captured", "captureAt", "superWrap", "closeWrap"
+      ["Wrap", "runWrap", "Hook", "runHook", "Captures", "Captured", "KindOf", "selected", "selection"
+      , "notify", "notifyAt", "nameOf", "call", "callClose"
       , "newScopeHandlers", "errorHandlers", "handlerSourceFingerprint"]
     allocate occupied preferred =
       let (used, pairs) = mapAccumL choose occupied preferred in (used, Map.fromList pairs)

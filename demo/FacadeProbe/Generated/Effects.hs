@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -82,6 +83,7 @@ class ReportLocationHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "reportLocation" 匹配。
 newtype ReportLocationError = ReportLocationError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ReportLocationError Errors where raised (ReportLocationError description) = (ReportLocationFailure, description)
 
 -- handler replyLocation：绑定到 ReplyLocation。
 type ReplyLocationLayer m = (SDK.Raises ReplyLocationError m, MonadIO m)
@@ -91,6 +93,7 @@ class ReplyLocationHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "replyLocation" 匹配。
 newtype ReplyLocationError = ReplyLocationError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ReplyLocationError Errors where raised (ReplyLocationError description) = (ReplyLocationFailure, description)
 
 -- handler reportDraft：绑定到 ReportDraft。
 type ReportDraftLayer m = (SDK.Raises ReportDraftError m, MonadIO m)
@@ -100,6 +103,7 @@ class ReportDraftHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "reportDraft" 匹配。
 newtype ReportDraftError = ReportDraftError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ReportDraftError Errors where raised (ReportDraftError description) = (ReportDraftFailure, description)
 
 -- handler replyDraft：绑定到 ReplyDraft。
 type ReplyDraftLayer m = (SDK.Raises ReplyDraftError m, MonadIO m)
@@ -109,6 +113,7 @@ class ReplyDraftHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "replyDraft" 匹配。
 newtype ReplyDraftError = ReplyDraftError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ReplyDraftError Errors where raised (ReplyDraftError description) = (ReplyDraftFailure, description)
 
 -- handler acquireFile：绑定到 ReportFile、ReplyFile。
 type AcquireFileLayer m = (SDK.Reads [Char] m, SDK.Raises AcquireFileError m, MonadIO m)
@@ -118,6 +123,7 @@ class AcquireFileHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "acquireFile" 匹配。
 newtype AcquireFileError = AcquireFileError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError AcquireFileError Errors where raised (AcquireFileError description) = (AcquireFileFailure, description)
 
 -- handler openTextFile：绑定到 ReportScope、ReplyScope。
 type OpenTextFileLayer m = (SDK.Reads TextFile m, SDK.RawOutputs m, SDK.Raises OpenTextFileError m, MonadIO m)
@@ -127,6 +133,7 @@ class OpenTextFileHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openTextFile" 匹配。
 newtype OpenTextFileError = OpenTextFileError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError OpenTextFileError Errors where raised (OpenTextFileError description) = (OpenTextFileFailure, description)
 
 -- handler closeTextFile：绑定到 ReportScope、ReplyScope。
 type CloseTextFileLayer m = (SDK.Reads TextFile m, SDK.RawOutputs m, SDK.Raises CloseTextFileError m, MonadIO m)
@@ -136,6 +143,7 @@ class CloseTextFileHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "closeTextFile" 匹配。
 newtype CloseTextFileError = CloseTextFileError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError CloseTextFileError Errors where raised (CloseTextFileError description) = (CloseTextFileFailure, description)
 
 -- handler writeText：绑定到 WriteReport、WriteReply。
 type WriteTextLayer m = (SDK.Reads Body m, SDK.Reads TextFile m, SDK.RawOutputs m, SDK.Raises WriteTextError m, MonadIO m)
@@ -145,6 +153,7 @@ class WriteTextHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "writeText" 匹配。
 newtype WriteTextError = WriteTextError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError WriteTextError Errors where raised (WriteTextError description) = (WriteTextFailure, description)
 
 -- handler markRead：绑定到 MarkReply。
 type MarkReadLayer m = (SDK.RawOutputs m, SDK.Raises MarkReadError m, MonadIO m)
@@ -154,6 +163,7 @@ class MarkReadHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "markRead" 匹配。
 newtype MarkReadError = MarkReadError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError MarkReadError Errors where raised (MarkReadError description) = (MarkReadFailure, description)
 
 -- handler readText：绑定到 ReadReport、ReadReply。
 type ReadTextLayer m = (SDK.Reads [Char] m, SDK.RawOutputs m, SDK.Raises ReadTextError m, MonadIO m)
@@ -163,6 +173,7 @@ class ReadTextHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "readText" 匹配。
 newtype ReadTextError = ReadTextError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ReadTextError Errors where raised (ReadTextError description) = (ReadTextFailure, description)
 
 -- handler countLines：绑定到 ReportCounter、ReplyCounter。
 type CountLinesLayer m = (SDK.Raw m, SDK.Raises CountLinesError m, MonadIO m)
@@ -172,6 +183,7 @@ class CountLinesHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "countLines" 匹配。
 newtype CountLinesError = CountLinesError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError CountLinesError Errors where raised (CountLinesError description) = (CountLinesFailure, description)
 
 -- handler showCount：绑定到 ShowReport、ShowReply。
 type ShowCountLayer m = (SDK.Reads LineCount m, SDK.RawOutputs m, SDK.Raises ShowCountError m, MonadIO m)
@@ -181,6 +193,7 @@ class ShowCountHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "showCount" 匹配。
 newtype ShowCountError = ShowCountError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ShowCountError Errors where raised (ShowCountError description) = (ShowCountFailure, description)
 
 -- handler inspectFile：绑定到 ReportInspect。
 type InspectFileLayer m = (SDK.Reads [Char] m, SDK.Raises InspectFileError m, MonadIO m)
@@ -190,6 +203,7 @@ class InspectFileHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "inspectFile" 匹配。
 newtype InspectFileError = InspectFileError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError InspectFileError Errors where raised (InspectFileError description) = (InspectFileFailure, description)
 
 -- handler describeBlank：绑定到 OnBlank。
 type DescribeBlankLayer m = (SDK.Reads () m, SDK.RawOutputs m, SDK.Raises DescribeBlankError m, MonadIO m)
@@ -199,6 +213,7 @@ class DescribeBlankHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "describeBlank" 匹配。
 newtype DescribeBlankError = DescribeBlankError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError DescribeBlankError Errors where raised (DescribeBlankError description) = (DescribeBlankFailure, description)
 
 -- handler describeFilled：绑定到 OnFilled。
 type DescribeFilledLayer m = (SDK.Reads Body m, SDK.RawOutputs m, SDK.Raises DescribeFilledError m, MonadIO m)
@@ -208,6 +223,7 @@ class DescribeFilledHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "describeFilled" 匹配。
 newtype DescribeFilledError = DescribeFilledError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError DescribeFilledError Errors where raised (DescribeFilledError description) = (DescribeFilledFailure, description)
 
 -- handler newCounter：绑定到 CounterA、CounterB。
 type NewCounterLayer m = (SDK.Raises NewCounterError m, MonadIO m)
@@ -217,6 +233,7 @@ class NewCounterHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "newCounter" 匹配。
 newtype NewCounterError = NewCounterError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError NewCounterError Errors where raised (NewCounterError description) = (NewCounterFailure, description)
 
 -- handler openCounter：绑定到 FeedScopeA、FeedScopeB。
 type OpenCounterLayer m = (SDK.Reads FeedCounter m, SDK.RawOutputs m, SDK.Raises OpenCounterError m, MonadIO m)
@@ -226,6 +243,7 @@ class OpenCounterHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "openCounter" 匹配。
 newtype OpenCounterError = OpenCounterError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError OpenCounterError Errors where raised (OpenCounterError description) = (OpenCounterFailure, description)
 
 -- handler nextA：绑定到 FeedA。
 type NextALayer m = (SDK.Reads FeedCounter m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextAError m, MonadIO m)
@@ -235,6 +253,7 @@ class NextAHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "nextA" 匹配。
 newtype NextAError = NextAError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError NextAError Errors where raised (NextAError description) = (NextAFailure, description)
 
 -- handler nextB：绑定到 FeedB。
 type NextBLayer m = (SDK.Reads FeedCounter m, SDK.Emits m, SDK.StreamEnds m, SDK.Raises NextBError m, MonadIO m)
@@ -244,6 +263,7 @@ class NextBHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "nextB" 匹配。
 newtype NextBError = NextBError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError NextBError Errors where raised (NextBError description) = (NextBFailure, description)
 
 -- handler parseLevel：绑定到 ParserA、ParserB。
 type ParseLevelLayer m = (SDK.Raw m, SDK.Raises ParseLevelError m, MonadIO m)
@@ -253,6 +273,7 @@ class ParseLevelHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseLevel" 匹配。
 newtype ParseLevelError = ParseLevelError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ParseLevelError Errors where raised (ParseLevelError description) = (ParseLevelFailure, description)
 
 -- handler showLevel：绑定到 ShowA、ShowB。
 type ShowLevelLayer m = (SDK.Reads Level m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ShowLevelError m, MonadIO m)
@@ -262,6 +283,7 @@ class ShowLevelHandler m where
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "showLevel" 匹配。
 newtype ShowLevelError = ShowLevelError String
   deriving (Eq, Show, Read)
+instance SDK.HandlerError ShowLevelError Errors where raised (ShowLevelError description) = (ShowLevelFailure, description)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
 data Errors = ReportLocationFailure | ReplyLocationFailure | ReportDraftFailure | ReplyDraftFailure | AcquireFileFailure | OpenTextFileFailure | CloseTextFileFailure | WriteTextFailure | MarkReadFailure | ReadTextFailure | CountLinesFailure | ShowCountFailure | InspectFileFailure | DescribeBlankFailure | DescribeFilledFailure | NewCounterFailure | OpenCounterFailure | NextAFailure | NextBFailure | ParseLevelFailure | ShowLevelFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
