@@ -333,7 +333,7 @@ generatedPrototype =
                 , GetFileWrittenGen
                 ]
             , SDK.chainDrives = ["FileBlank","FileName","FileWritten"]
-            , SDK.chainReads = []
+            , SDK.chainReads = ["FileBlank","FileWritten"]
             , SDK.chainScopePaths = [[OpenFileSessionGen]]
             }
         ]
@@ -572,7 +572,11 @@ generatedPrototype =
           , SDK.scopeUndetermined = []
           }
     , SDK.protoScopeNames = [(OpenFileSessionGen, "FileSession")]
-    , SDK.protoSources = [(SDK.ReadPoint [1] "FileWritten", SDK.FromChains [[-1]])]
+    , SDK.protoSources =
+        [ (SDK.ReadPoint [1] "FileWritten", SDK.FromChains [[-1]])
+        , (SDK.ReadPoint [-1] "FileBlank", SDK.FromOwnChain)
+        , (SDK.ReadPoint [-1] "FileWritten", SDK.FromOwnChain)
+        ]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
             { SDK.openingNode = [1]

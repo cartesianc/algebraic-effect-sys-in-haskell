@@ -65,28 +65,47 @@ callContext selected synchronize produce = do
   recordContextInput selected
   pure value
 
--- alternative 的选择读取（option）：执行一次共同的 Excu，按候选的声明顺序把同一份输出交给各自的
--- 判定 Context，返回第一个解析成功的 Context 名；它的发布被本次调用捕获，交给选中的候选。
--- 执行 Excu 时以首个判定 Context 为调用者，挂接注入因此不重复执行这些 parser；
--- 判定失败只算放弃，全部放弃时报第一个失败，消息列出每个候选各自的原因。
+-- alternative 的选择读取（option）：race 等待某一支有值，再走那一支。
+-- 先执行一次共同的 Excu，按候选的声明顺序把同一份输出交给各自的判定 Context；第一个解析成功的
+-- 候选胜出，它的发布被本次调用捕获，交给选中的候选。执行 Excu 时以首个判定 Context 为调用者，
+-- 挂接注入因此不重复执行这些 parser。判定 parser 的 raise 只表示这一支没有值，不是失败。
+-- 都没有值时按 require 的等待协议等待任一判定 Context 发布（gen 已为选择读取登记静态来源），
+-- 醒来后按声明顺序重读；已证明生产机会耗尽仍没有值时，按普通缺值报 ContextNotInitialized。
 chooseCase
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> m [String] -> [(String, m ())] -> m String
-chooseCase method upstream cases = do
+  => String -> (ContextFault -> cause) -> m [String] -> [(String, m ())] -> m String
+chooseCase method wrap upstream cases = do
   output <- maybe id enterHandler (fst <$> safeHead cases) upstream
-  attempt output [] cases
+  attempt output cases
   where
     safeHead (first : _) = Just first
     safeHead [] = Nothing
-    attempt _ failures [] = case failures of
-      (_, first) : _ -> throwError first { message = "no alternative case matched: "
-        ++ concatMap (\(name, problem) -> "[" ++ name ++ "] " ++ message problem ++ " ") failures }
+    attempt _ [] = awaitCase
+    attempt output ((name, produce) : rest) = do
+      outcome <- (True <$ attemptOutput method (RawOutput True output) produce) `catchError` (\_ -> pure False)
+      if outcome then pure name else attempt output rest
+    -- 先取等待动作再读：读取之后、开始等待之前的发布也会唤醒这次等待。
+    awaitCase = do
+      waits <- mapM (awaitContext . fst) cases
+      bound <- firstBound cases
+      case bound of
+        Just name -> pure name
+        Nothing -> do
+          changed <- anyChanged [wait | Just wait <- waits]
+          if changed then awaitCase else firstBound cases >>= maybe notInitialized pure
+    -- 共享信号由任一发布或节点进度唤醒；只要有一个来源仍可能发布，就等到变化后重读全部候选。
+    anyChanged [] = pure False
+    anyChanged (wait : rest) = wait >>= \changed -> if changed then pure True else anyChanged rest
+    firstBound [] = pure Nothing
+    firstBound ((name, _) : rest) = do
+      resolved <- readContextBinding name (const (Just ()))
+      case resolved of
+        Left problem -> failEffect name (wrap problem) (show problem)
+        Right (Just ()) -> Just name <$ recordContextInput name
+        Right Nothing -> firstBound rest
+    notInitialized = case cases of
+      (name, _) : _ -> failEffect name (wrap ContextNotInitialized) (show ContextNotInitialized)
       [] -> error "SDK: an alternative without candidates; regenerate the program"
-    attempt output failures ((name, produce) : rest) = do
-      outcome <- (Right <$> attemptOutput method (RawOutput True output) produce) `catchError` (pure . Left)
-      case outcome of
-        Right () -> pure name
-        Left problem -> attempt output (failures ++ [(name, problem)]) rest
 
 -- streamT 的生成入口：从本次固定交付或有限读取的捕获值取得业务表示类型。
 -- 是否继续被增量驱动由组合计划决定；这里执行一次读取，不包装或解释业务数据。

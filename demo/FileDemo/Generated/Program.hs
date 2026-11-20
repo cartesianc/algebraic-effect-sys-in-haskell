@@ -28,7 +28,7 @@ compiledEntries = do
     ( [ target "WriteFirstLine" (WriteFirstLineResult () <$ Handlers.runWriteFirstLine)
       , target "AppendLine" (AppendLineResult () <$ Handlers.runAppendLine)
       ]
-    , [ target "ReadFile" (SDK.chooseCase "runReadFile" (Handlers.runReadFile) [("BlankText", () <$ Handlers.getFileBlank), ("FilledText", () <$ Handlers.getFileWritten)])
+    , [ target "ReadFile" (SDK.chooseCase "runReadFile" ContextBindingError (Handlers.runReadFile) [("BlankText", () <$ Handlers.getFileBlank), ("FilledText", () <$ Handlers.getFileWritten)])
       ]
     , []
     )

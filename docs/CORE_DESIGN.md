@@ -710,7 +710,7 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 
 AST 只列候选，不写条件。gencode 将共同 Excu、选择读取路径和候选 NodeId 到判定 Context 的对应保存为 WorkflowTree 的 AlternativeProto（`alternativeSource`、`alternativeSelector`、`alternativeCases`）。
 
-选择读取执行共同的 Excu 一次，再按候选的声明顺序把同一份输出交给各自的判定 Context（`chooseCase`），第一个解析成功的候选执行，结果确定、不依赖时序；其他候选不执行。判定 Context 的 `raise` 只算放弃，不触发 Error 处置；全部放弃时 alternative 以声明顺序中的第一个失败结束，消息列出每个候选各自的原因。执行 Excu 时挂接注入不重复执行这些判定 parser；该 Excu 上其他挂接的 Context 在选择读取中也不注入。选择阶段捕获的无 owner 绑定（包括选中候选的判定资产）经 Handoff 交给候选，两段读取同一快照，其他调用的驱动不改写它。执行只在已装配的闭包间选择，不在链中间重组。
+选择读取执行共同的 Excu 一次，再按候选的声明顺序把同一份输出交给各自的判定 Context（`chooseCase`），第一个解析成功的候选执行，结果确定、不依赖时序；其他候选不执行。alternative 的本质是等待某一支有值，再走那一支：判定 Context 的 `raise` 只表示这一支没有值，不是失败，不触发 Error 处置。这次输出都没有值时，选择读取按 require 的等待协议等待任一判定 Context 发布，醒来后按声明顺序重读，先有值的候选执行。能等谁由 gen 在生成期确定：选择读取的每个判定资产登记一个 ReadPoint，来源是其他能到达该 Context 生产入口的链（例如另一处执行同一 Excu 时的挂接注入），选择链自身不算；没有其他来源时登记为 FromOwnChain，运行时不等待。已证明生产机会耗尽仍没有值时，按普通缺值以首个判定 Context 报 `ContextNotInitialized`。执行 Excu 时挂接注入不重复执行这些判定 parser；该 Excu 上其他挂接的 Context 在选择读取中也不注入。选择阶段捕获的无 owner 绑定（包括选中候选的判定资产）经 Handoff 交给候选，两段读取同一快照，其他调用的驱动不改写它。执行只在已装配的闭包间选择，不在链中间重组。
 
 选择读取有独立入口使用登记，以共同 Excu 的名字登记末端，NodeId 为 alternative 路径加 [-1]，参与构图与 ScopeTree。validatePrototype 核对共同 Excu、判定 Context 互不相同且与候选的 requires 一致；执行 fold 与 --structure 使用同一原型匹配当前 AST，不一致时在业务前拒绝。
 

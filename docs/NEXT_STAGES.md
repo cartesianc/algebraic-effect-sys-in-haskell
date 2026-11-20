@@ -135,9 +135,10 @@ printLine = do                              -- 只读增量的写法不变
 **状态：同输入的 option 已实现（2026-11-21）；真 race 尚未实现，gen 拒绝。** 当前规则见[主设计：alternative 的依据](CORE_DESIGN.md#workflow)与[指南：alternative](GUIDE.md#workflow)。用户确认先做同输入的 option，和类型与分支契约整体删除（`SumTypes`、`effectBranches`、`BranchContract`、`CaseNotSelected`、`projectContext` 均已移除）。
 
 - 静态（`Gen/Booter.hs`、`Prototype/Query.hs` 的 `candidateCases`）：各候选恰好 `requires` 一份由同一个 Excu 的输出直接或经 Pure 解析出的非持续资产，这些资产的 Context 互不相同；共同的 Excu 必须唯一；同一个 Excu 上的多个 alternative 必须判定同一组 Context。`AlternativeProto` 记录 `alternativeSource`（该 Excu）与 `alternativeCases`（候选 → 判定 Context）。
-- 运行（`Runtime/Context.hs` 的 `chooseCase`）：执行一次该 Excu，把同一份原始输出按候选声明顺序交给各 Context 解析（`attemptOutput`），第一个成功的候选启动；全部失败时抛出第一个失败，消息前缀 `no alternative case matched`。输家的 `raise` 只算放弃，不向外传播。
+- 运行（`Runtime/Context.hs` 的 `chooseCase`）：执行一次该 Excu，把同一份原始输出按候选声明顺序交给各 Context 解析（`attemptOutput`），第一个成功的候选启动。判定 parser 的 `raise` 只表示这一支没有值，不是失败。都没有值时按 require 的等待协议等待任一判定 Context 发布，先有值的候选启动；已证明生产机会耗尽仍没有值时按普通缺值报 `ContextNotInitialized`（用户确认，2026-11-21：race 的本质是等值再分支，没有值就等待）。能等谁由 gen 确定：`Gen/Composition.hs` 的 `resolveSources` 为每个选择读取的判定资产登记 ReadPoint，来源是其他能到达该 Context 生产入口的链，选择链自身不算；没有其他来源时为 `FromOwnChain`，运行时不等待。
 - demo：FileDemo 的 `TextState` 改为 `ReadFile` 下的 `BlankText`／`FilledText`；FacadeProbe 的 `FileState` 改为 `InspectReport` 下的 `ReportBlank`／`ReportFilled`。两个分支都实测过。
-- 未覆盖：全部失败的路径没有实际触发；选择时执行该 Excu 所处的帧内，该 Excu 下其他锚定的 Context 不随之注入；真 race（不同上游、按时序）、输家取消与 scope 收尾、lifelong 中的真 race 均未实现。
+- 等待路径的验证（临时探针，未提交）：两个判定 parser 第一次都不成立、并行分支 1 秒后再执行同一 Excu 并解析成功时，选择读取等待后选中对应候选（连跑 3 次）；没有其他来源时立即报 `ContextNotInitialized`（0.16 秒）；并行的另一处也解析不出值时，等它结束后报 `ContextNotInitialized`。
+- 未覆盖：选择时执行该 Excu 所处的帧内，该 Excu 下其他锚定的 Context 不随之注入；真 race（不同上游、按时序）、输家取消与 scope 收尾、lifelong 中的真 race 均未实现。
 
 **上下文（实施前）。** 现在的 `alternative` 按和类型资产的当前构造器选择候选（[workflow](CORE_DESIGN.md#workflow) 的类型边界），所以标准资产里必须有和类型。`FileDemo` 中，`ReadFile` 的输出被解析成 `TextState = Blank | Written String`，`WriteFirstLine` 和 `AppendLine` 分别 `requires` 两个分支契约。`FacadeProbe` 的 `FileState` 也是这样。
 

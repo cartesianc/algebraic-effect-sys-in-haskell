@@ -54,7 +54,7 @@ renderProgram names hangingSources unit = unlines (programHeader ++ astInterpret
           | (terminal, method) <- unitTerminals unit, hooks <- variantsOf NodeChain terminal ]
       , "    , " ++ renderList "      "
           [ wrapTarget (variantLabel source hooks) ("SDK.chooseCase " ++ show (selectorEntry selectedSelector)
-              ++ " (" ++ handlers hooks (selectorEntry selectedSelector) ++ ") ["
+              ++ " ContextBindingError (" ++ handlers hooks (selectorEntry selectedSelector) ++ ") ["
               ++ intercalate ", " [ "(" ++ show context ++ ", () <$ " ++ handlers hooks request ++ ")"
                                   | (context, request) <- selectorCases selectedSelector ] ++ "]")
           | selectedSelector <- selectors

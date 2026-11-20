@@ -761,7 +761,7 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 
 - **只列候选，不写条件**：选哪一个由 effect 的差异决定，AST 不暴露业务状态。当前实现 option：各候选的分叉点是**同一个 Excu 的输出**。
 - **候选怎么对应**：同一个 Excu 下挂几个 Context，各自只在自己的情况下解析成功（不成立时 `raise`）。每个候选（末端及其 Input 链上游）在 `demands` 里 `requires` 恰好一份由这个 Excu 的输出直接或经 Pure 解析出的非持续资产，各候选的资产互不相同。FileDemo 中 `ReadFile` 下挂 `BlankText`（产出 `FileBlank`）和 `FilledText`（产出 `FileWritten`），`WriteFirstLine` 依赖 `FileBlank`，`AppendLine` 依赖 `FileWritten`。
-- **运行时**：选择时执行一次这个 Excu，把它的输出按候选声明顺序交给各自的 Context 解析，第一个解析成功的候选被启动，解析出的值交给它；没被选中的候选不执行，也不出现在结果中。全部解析失败时以第一个失败返回，消息为 `no alternative case matched`。
+- **运行时**：选择时执行一次这个 Excu，把它的输出按候选声明顺序交给各自的 Context 解析，第一个解析成功的候选被启动，解析出的值交给它；没被选中的候选不执行，也不出现在结果中。这次输出都没解析出值时不算失败：和 `require` 一样等待任一判定 Context 由别处发布（例如另一个节点也执行了这个 Excu），先有值的候选被启动；能等的来源由 gen 在生成期确定，没有其他来源或来源都已结束仍没有值时，按普通缺值报 `ContextNotInitialized`。
 - **同一个 Excu 上的多个 alternative** 必须按同样的顺序判定同样的 Context；分叉来自不同上游的 race 尚未实现，gen 拒绝。
 
 #### `lifelong`

@@ -726,7 +726,7 @@ generatedPrototype =
             , SDK.chainEntry = RunInspectReportGen
             , SDK.chainReaches = [RunInspectReportGen, ReadReportPathGen, GetReportEmptyGen, GetReportTextGen]
             , SDK.chainDrives = ["ReportEmpty","ReportText"]
-            , SDK.chainReads = ["ReportPath"]
+            , SDK.chainReads = ["ReportEmpty","ReportPath","ReportText"]
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
@@ -1280,6 +1280,8 @@ generatedPrototype =
         , (SDK.ReadPoint [2,0] "ReportStats", SDK.FromChains [[1,0]])
         , (SDK.ReadPoint [1,1] "ReplyPath", SDK.FromChains [[0,1]])
         , (SDK.ReadPoint [1,0] "ReportPath", SDK.FromChains [[0,0]])
+        , (SDK.ReadPoint [3,-1] "ReportEmpty", SDK.FromOwnChain)
+        , (SDK.ReadPoint [3,-1] "ReportText", SDK.FromOwnChain)
         ]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan

@@ -1043,6 +1043,7 @@ resolveSources checked connections definitions defaultReaders prototype = do
                                                 , contractType == readContract point]))
                             in if null candidates then FromOwnChain else FromChains candidates)
         | (point, sources) <- assetReads facts]
+        ++ selectorReads
       annotate chain = chain
         { chainDrives = sort (nub [contractType | (node', contractType) <- assetDrives facts ++ assetAvailable facts, node' == chainNode chain])
         , chainReads = sort (nub [readContract point | (point, _) <- reads, readNode point == chainNode chain])
@@ -1054,6 +1055,19 @@ resolveSources checked connections definitions defaultReaders prototype = do
   where
     effects = protoEffects prototype
     lifelongs = workflowLifelongs (protoWorkflow prototype)
+    -- 选择读取在本次判定都没有值时等待判定 Context 的发布。可能的来源是其他能到达该 Context
+    -- 生产入口的链（例如另一处执行同一 Excu 时的挂接注入）；选择链自身已经执行过，不算来源。
+    -- 没有其他来源时是 FromOwnChain：运行时不等待，直接按普通缺值报出。
+    selectorReads =
+      [ (ReadPoint selector contractType, if null candidates then FromOwnChain else FromChains candidates)
+      | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype)
+      , let selector = alternativeSelector choice
+      , (_, caseName) <- alternativeCases choice
+      , effect <- effects, effectName effect == caseName
+      , Just contractType <- [effectProduces effect]
+      , let producers = [method | (ContextRequest, method) <- effectMethods effect]
+            candidates = sort (nub [chainNode chain | chain <- protoChains prototype
+              , chainNode chain /= selector, any (`elem` chainReaches chain) producers]) ]
     -- 上界是有限的（挂载，资产）对；不模拟业务次数或累积无限轮次。
     settle available = do
       found <- analyze available False
