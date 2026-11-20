@@ -119,8 +119,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
             , "  hookedOutput = " ++ hookTag ++ " FrameworkRuntime.hookOutput"
             , "  hookedRaw = " ++ hookTag ++ " FrameworkRuntime.hookRaw"
             , "  hookedError = " ++ hookTag ++ " FrameworkRuntime.hookError"
-            , hookCallback "rawoutputhook" "onRawOutput"
-            , hookCallback "rawemithook" "onEmit"
+            , "  rawhook action = " ++ hookTag ++ " (FrameworkRuntime.onRawHook (\\operation -> " ++ runHook ++ " (action operation)))"
             , ""
             , "instance FrameworkRuntime.RawOutputs (" ++ hookTag ++ " " ++ show effect ++ ")"
             , ""
@@ -135,8 +134,6 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
           | binding <- middlewareBindings
           , let effect = bindingEffect binding
                 handler' = bindingHandler binding ]
-    hookCallback method adapter = "  " ++ method ++ " action = " ++ hookTag ++ " (FrameworkRuntime." ++ adapter
-      ++ " (\\name value -> " ++ runHook ++ " (action name value)))"
     selectedKinds = nub (map selectionKind (unitSupers unit))
     middlewareMethod selected = case [bindingMethod binding | binding <- middlewareBindings, bindingEffect binding == selected] of
       method : _ -> entry method

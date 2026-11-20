@@ -10,7 +10,7 @@
 
 module LinesDemo.Handlers () where
 
-import Framework.SDK (Emits(rawemit), Hooks(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), rawoutput)
+import Framework.SDK (Emits(rawemit), Hooks(rawhook), RawHook(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), rawoutput)
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
 import Control.Monad.IO.Class (liftIO)
@@ -57,9 +57,14 @@ instance NextLineLayer m => NextLineHandler m where
 
 instance TraceLineLayer m => TraceLineHandler m where
   traceLine = do
-    rawinputhook $ \parser fields -> liftIO (putStrLn ("[input] " ++ parser ++ ": " ++ show fields))
-    rawoutputhook $ \handler fields -> liftIO (putStrLn ("[output] " ++ handler ++ ": " ++ show fields))
-    rawemithook $ \source line -> liftIO (putStrLn ("[emit] " ++ source ++ ": " ++ line))
+    rawhook $ \operation -> case operation of
+      RawEmitHook name@"nextLine" text ->
+        liftIO (putStrLn ("[emit] " ++ name ++ ": " ++ text))
+      RawInputHook name@"parseLine" fields ->
+        liftIO (putStrLn ("[input] " ++ name ++ ": " ++ show fields))
+      RawOutputHook name fields ->
+        liftIO (putStrLn ("[output] " ++ name ++ ": " ++ show fields))
+      _ -> pure ()
     rawoutput []
 
 instance ParseLineLayer m => ParseLineHandler m where

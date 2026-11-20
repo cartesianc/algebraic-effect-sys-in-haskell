@@ -470,7 +470,7 @@ ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "Wri
   - 进入 super：前驱已经完成，`hookedEnter` 给出即将运行的 handler 名。回放直接返回已交出的值时，整个 action 都会跳过。对于 scope，进入表示一次调用尝试；若需在方法内读取开启参数才判定复用，可能只观察到进入。
   - 方法成功返回时的输出捕获适用于Excu.run、Scoped.open／close、Pure.run 这次调用成功交出的 `[String]`，handler 名是被调用的 handler。scope 复用跳过 open 方法体、或注入回放本次输出时，没有新的交出值。
   - rawinput：读取方 handler（挂接的 parser 或 Pure）经 `rawinput` 读到的值；类别取被读取的那次原子调用的类别，在 Stream 下，每次读取本条输入时按 StreamKind 通知。注入时 parser 经回放读取，同样是一次 rawinput 读取。
-  - 显式操作对应 Middleware 类方法 `rawinputhook`、`rawoutputhook`、`rawemithook`、`raisehook`，回调参数为 handler 名与该次负载。Stream 的 `hookedOutput` 在 emit 处得到单元素列表；来源方法返回 `()` 时没有输出负载。
+  - `rawhook` 在显式 raw 操作处交付 `RawInputHook handlerName fields`、`RawOutputHook handlerName fields` 或 `RawEmitHook handlerName text`。第一个字段由 gen 取绑定的方法名，第二个字段是本次读取或交出的原值（前两项为 `[String]`，emit 为 `String`）。方法名可在模式里匹配；同一方法的多个绑定共用这个名字，挂载范围仍由 AST 决定。`rawinputhook`、`rawoutputhook`、`rawemithook` 分别选择其中一种操作，`raisehook` 单独观察 `raise`。Stream 的 `hookedOutput` 在 emit 处得到单元素列表；来源方法返回 `()` 时没有输出负载。
   - raise：handler `raise` 时先捕获 (handler 名, 描述)，再以原失败退出。
 - **同步与顺序。** Middleware 是类方法，在调用点同步执行，调用点在它们完成后才继续。多个 Middleware 按注册顺序依次调用；每个都读到同一份捕获。它们的 IO 按此顺序发生，某个 Middleware 抛出失败会中止本次后续派发。Middleware handler 在自己的 `Hook` 标签下执行，那里的调用点不调用 `captureAt`，它自己不再被捕获。它交出的 `[String]` 没有挂接点。
 - **能力只给 Middleware。** gen 只为 Middleware 的标签生成 `Hooks (Hook "M")`，Layer 也只给 Middleware 加 `Hooks m`；普通 handler 写 `hookedOutput` 不能通过类型检查。Middleware 的能力只来自它的 handler 写法。

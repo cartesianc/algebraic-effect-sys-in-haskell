@@ -29,7 +29,7 @@ import qualified Control.Monad.IO.Class as FrameworkIO
 import qualified Data.Proxy as FrameworkProxy
 import qualified GHC.TypeLits as FrameworkTypes
 import LinesDemo.Types
-import Framework.SDK (Emits(rawemit), Hooks(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), rawoutput)
+import Framework.SDK (Emits(rawemit), Hooks(rawhook), RawHook(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), rawoutput)
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
 import Control.Monad.IO.Class (liftIO)
@@ -76,9 +76,14 @@ instance NextLineLayer m => NextLineHandler m where
 
 instance TraceLineLayer m => TraceLineHandler m where
   traceLine = do
-    rawinputhook $ \parser fields -> liftIO (putStrLn ("[input] " ++ parser ++ ": " ++ show fields))
-    rawoutputhook $ \handler fields -> liftIO (putStrLn ("[output] " ++ handler ++ ": " ++ show fields))
-    rawemithook $ \source line -> liftIO (putStrLn ("[emit] " ++ source ++ ": " ++ line))
+    rawhook $ \operation -> case operation of
+      RawEmitHook name@"nextLine" text ->
+        liftIO (putStrLn ("[emit] " ++ name ++ ": " ++ text))
+      RawInputHook name@"parseLine" fields ->
+        liftIO (putStrLn ("[input] " ++ name ++ ": " ++ show fields))
+      RawOutputHook name fields ->
+        liftIO (putStrLn ("[output] " ++ name ++ ": " ++ show fields))
+      _ -> pure ()
     rawoutput []
 
 instance ParseLineLayer m => ParseLineHandler m where
@@ -125,7 +130,7 @@ instance ReportLayer m => ReportHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "caef51f83e8bc32dadd1871a9ffe6aa6"
+handlerSourceFingerprint = Just "81f000b285d337304bea880b7feecf20"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -166,8 +171,7 @@ instance FrameworkRuntime.Hooks (Hook "TraceLine") where
   hookedOutput = Hook FrameworkRuntime.hookOutput
   hookedRaw = Hook FrameworkRuntime.hookRaw
   hookedError = Hook FrameworkRuntime.hookError
-  rawoutputhook action = Hook (FrameworkRuntime.onRawOutput (\name value -> runHook (action name value)))
-  rawemithook action = Hook (FrameworkRuntime.onEmit (\name value -> runHook (action name value)))
+  rawhook action = Hook (FrameworkRuntime.onRawHook (\operation -> runHook (action operation)))
 
 instance FrameworkRuntime.RawOutputs (Hook "TraceLine")
 

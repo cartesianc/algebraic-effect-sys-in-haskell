@@ -821,7 +821,7 @@ ast = parallel
 ```
 
 - **何时执行。** 在标注覆盖的位置，Root 的 `super` 会为匹配 `intercept` 的原子调用通知进入和成功返回。读取 `rawinput`（按上游类别匹配）或显式 `raise` 也会通知对应的 middleware。一次写文件可以先记录开始、执行原有业务 IO、再记录输出。业务 handler 保持原写法，整个推进过程由 SDK 负责。
-- **按操作写 hook**：在 Middleware handler 内写 `rawemithook $ \source text -> liftIO (print (source, text))`。读取与显式列表输出对应 `rawinputhook` 和 `rawoutputhook`，负载为 `[String]`。显式输出与整个原子方法成功返回是两个位置，`hookedOutput` 仍可观察后者。hook 自身的 `rawoutput []` 直接返回。
+- **按操作与方法名匹配。** 在手写 middleware 中导入 `Framework.SDK (Hooks(rawhook), RawHook(..))`。例如 LinesDemo 在 `rawhook` 的回调里匹配 `RawEmitHook name@"nextLine" text`，从同一次 emit 取得来源方法名与一条字符串。parser 随后调用 `rawinput` 时，`RawInputHook name@"parseLine" fields` 取得字段列表。显式列表输出用 `RawOutputHook name fields`；完整写法见 [TraceLine](../demo/LinesDemo/Handlers.hs)。`hookedOutput` 继续观察原子方法的成功返回，middleware 自身的 `rawoutput []` 直接返回。
 - **同步执行**：Middleware 是类方法，在调用点上执行完，原调用才继续；它只读捕获，不改变原值。多个 Middleware 按注册顺序依次执行，不要让它们依赖彼此。
 - **透明**：标注不改变子树的执行顺序、NodeId 和 lifelong 的单元划分。范围只看位置：标注覆盖整个 `lifelong` 时，它的生产会话里执行的调用（例如会话开启的 `open`）也被捕获；只覆盖 lifelong 里的子树时，只捕获这些节点。`--structure` 列出标注与每个启动位置生效的 Middleware。标注是给 gen 的标记，注入在生成期完成：改动标注后要重新生成。
 - **失败**：Middleware 与普通 Excu 一样 `raise`，失败从调用点传播，origin 是 Middleware 的注册名。
@@ -1062,7 +1062,7 @@ snapshotAst = chained [node "Announce", node "Report"]
       readLines
   ```
 
-  LinesDemo 在 lifelong 上挂载 `TraceLine`，注册为 `intercept = [StreamKind, ScopedKind]`。它的 handler 用 `rawemithook $ \source line -> liftIO (print (source, line))` 逐条记录。每次 hook 完成才启动该条的 parser。
+  LinesDemo 在 lifelong 上挂载 `TraceLine`，注册为 `intercept = [StreamKind, ScopedKind]`。它的 handler 在 `rawhook` 回调里匹配 `RawEmitHook name@"nextLine" text`，逐条打印来源名和当前行。每次 hook 完成才启动该条的 parser。
 
   上面的 LinesDemo AST 将 `Report` 放在 lifelong 之后；单元处理完所需交付并结束，才会继续执行它。
 

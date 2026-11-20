@@ -3,7 +3,7 @@
 -- handler 在源语言中能用的全部能力，以及业务能观察到的完成结果。
 -- 能力类的实例由 gen 按注册生成（Framework.Gen.Emit.Handlers）；执行载体的协议在 Framework.Runtime.Protocol。
 module Framework.Language.Handler
-  ( Reads(..), Raw(..), Emits(..), RawOutputs(..), Raises(..), StreamEnds(..), EndsStream(..), Hooks(..)
+  ( Reads(..), Raw(..), Emits(..), RawOutputs(..), Raises(..), StreamEnds(..), EndsStream(..), Hooks(..), RawHook(..)
   , Failure(..), Output(..), ErrorReport(..)
   ) where
 
@@ -44,6 +44,12 @@ class StreamEnds m where
 class EndsStream m where
   endStream :: m value
 
+-- 每次显式 raw 操作的只读视图。名称标识业务 handler，负载沿用操作本身的类型。
+data RawHook
+  = RawInputHook String [String]
+  | RawOutputHook String [String]
+  | RawEmitHook String String
+
 -- 只给 Middleware handler：拆出本次 Root 级调用点捕获的内容，不是这一种时为 Nothing。
 -- hookedEnter：Root 即将执行的 handler 名；hookedOutput：它交出的值；hookedRaw：读取方经 rawinput 读到的值；
 -- hookedError：handler raise 的错误描述。每项都带 handler 名；捕获只读，不改变原调用。
@@ -53,11 +59,22 @@ class Monad m => Hooks m where
   hookedRaw :: m (Maybe (String, [String]))
   hookedError :: m (Maybe (String, String))
 
-  -- 在对应操作处执行回调。名字与负载由该次调用的生成实例提供。
+  -- 每个 raw 操作只通知一次；其他调用点直接返回。
+  rawhook :: (RawHook -> m ()) -> m ()
+
   rawinputhook :: (String -> [String] -> m ()) -> m ()
-  rawinputhook action = hookedRaw >>= mapM_ (uncurry action)
+  rawinputhook action = rawhook $ \operation -> case operation of
+    RawInputHook name fields -> action name fields
+    _ -> pure ()
   rawoutputhook :: (String -> [String] -> m ()) -> m ()
+  rawoutputhook action = rawhook $ \operation -> case operation of
+    RawOutputHook name fields -> action name fields
+    _ -> pure ()
   rawemithook :: (String -> String -> m ()) -> m ()
+  rawemithook action = rawhook $ \operation -> case operation of
+    RawEmitHook name text -> action name text
+    _ -> pure ()
+
   raisehook :: (String -> String -> m ()) -> m ()
   raisehook action = hookedError >>= mapM_ (uncurry action)
 

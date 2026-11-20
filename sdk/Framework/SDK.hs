@@ -4,7 +4,7 @@
 -- 业务 main 使用本程序 Generated.Program 的 interpreter；生成包装和执行装配使用 Framework.Generated，
 -- 不在这里暴露存储、scope 控制对象或裸运行入口。
 module Framework.SDK
-  ( Reads(..), Raw(..), Emits(..), RawOutputs(..), Raises(..), StreamEnds(..), EndsStream(..), Hooks(..)
+  ( Reads(..), Raw(..), Emits(..), RawOutputs(..), Raises(..), StreamEnds(..), EndsStream(..), Hooks(..), RawHook(..)
   , EffectTyping(..), EffectKind(..), allEffects, EffectSpec(..), Asset(..), Handles(..)
   , Demand(..), Access(..), requests, requires, streams
   , Output(..), Failure(..), ErrorReport(..), caughtFailure
@@ -13,7 +13,7 @@ module Framework.SDK
   ) where
 
 import Framework.Language.AST (AST, EffectNode, node, chained, parallel, alternative, lifelong, middleware)
-import Framework.Language.Handler (Reads(..), Raw(..), Emits(..), RawOutputs(..), Raises(..), StreamEnds(..), EndsStream(..), Hooks(..), Output(..), Failure(..), ErrorReport(..))
+import Framework.Language.Handler (Reads(..), Raw(..), Emits(..), RawOutputs(..), Raises(..), StreamEnds(..), EndsStream(..), Hooks(..), RawHook(..), Output(..), Failure(..), ErrorReport(..))
 import Framework.Language.Registration
   ( EffectTyping(..), EffectKind(..), allEffects, EffectSpec(..), Asset(..), Handles(..), Demand(..), Access(..)
   , requests, requires, streams )

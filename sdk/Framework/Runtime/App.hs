@@ -13,7 +13,7 @@
 -- 本文件保留共享 Environment 的解释器实现，按绑定、Store、诊断、生命周期和根调用分组。
 module Framework.Runtime.App
   ( App, Launch(..), StreamPort(..), emitToParser, emittedInput, runAppWith
-  , superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError, onRawOutput, onEmit
+  , superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError, onRawHook
   ) where
 
 import Framework.Runtime.Binding
@@ -947,14 +947,11 @@ hookError = HookApp (asks (\event -> case event of
   _ -> Nothing))
 
 -- 分派对象已由 gen 选定；这里只把当前调用点的具体值交给类型匹配的回调。
-onRawOutput :: (String -> [String] -> HookApp env cause ()) -> HookApp env cause ()
-onRawOutput action = HookApp ask >>= \event -> case event of
-  RawOutputEvent name output -> action name output
-  _ -> pure ()
-
-onEmit :: (String -> String -> HookApp env cause ()) -> HookApp env cause ()
-onEmit action = HookApp ask >>= \event -> case event of
-  EmitEvent name text -> action name text
+onRawHook :: (RawHook -> HookApp env cause ()) -> HookApp env cause ()
+onRawHook action = HookApp ask >>= \event -> case event of
+  RawEvent name fields -> action (RawInputHook name fields)
+  RawOutputEvent name fields -> action (RawOutputHook name fields)
+  EmitEvent name text -> action (RawEmitHook name text)
   _ -> pure ()
 
 -- 完整调用边界 ---------------------------------------------------------------

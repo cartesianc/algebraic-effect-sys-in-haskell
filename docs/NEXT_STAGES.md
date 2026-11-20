@@ -33,7 +33,7 @@ Middleware 首版与 Root 的 `super` 已经实现，[superhandler 的生成期�
 **后续事项。**
 
 - **`requires`。** 若允许 Middleware 读取配置资产，须把它计入来源证明与等待环分析：它在调用点同步执行，读取等待可能与被捕获调用所在的生产形成等待环。
-- **更多捕获类型。** Stream 的逐条交付已接入 Middleware（2026-11-20），写法见[指南](GUIDE.md#middleware)。Context parser 交出的业务 ADT 与其他类别的扩展仍待设计。
+- **更多捕获类型。** Middleware 已支持在 `rawhook` 中按操作和方法名匹配 rawinput、rawoutput 和 rawemit（2026-11-20），写法见[指南](GUIDE.md#middleware)。Context parser 交出的业务 ADT 与其他类别的扩展仍待设计。
 - **mock。** SDK 目前没有 mock 运行模式；Middleware 的 `raise` 在正常运行时按普通失败传播。
 - **Hanging 与装卸。** 与 Middleware 的挂起、恢复和装卸关系另行设计。
 
