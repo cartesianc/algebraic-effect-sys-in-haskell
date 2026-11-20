@@ -84,8 +84,9 @@ data SessionState environment cause = SessionState
   -- 仍可能领取交付的游标。Nothing：读取方尚未登记（lifelong 的会话在进入边界时启动，
   -- 各单元随后登记），此前的发布全部保留。interpreter 托管的会话没有游标，从创建起就是空表。
   , stateReaders :: Maybe [Cursor]
-  -- 有 handler 以 stream @T 读取 x:xs 时（原型 effectHistory）从会话开头保留全部发布，不受 release 裁剪；
+  -- 有 handler 以 stream @T 读取 x:xs 时（原型 effectHistory）从会话开头保留全部发布，不受游标裁剪；
   -- 交付与有限读取的视图是到该条为止的整段，最后一条是本次值。否则为 Nothing，视图只有一条。
+  -- 来源停止且读取方全部离开时由 release 放掉（end GC）；从不停止的来源会一直保留到运行结束。
   , stateHistory :: Maybe (Seq (ScopeBinding environment cause))
   }
 
@@ -180,7 +181,7 @@ changeState session update = mask $ \restore -> do
       release changed { stateSignal = fresh }
 
 -- 放掉没有读取义务的发布：只留最早未领取位置之后的积压，以及最新一条。
--- 最新一条供有限读取与后继读取；保存全部业务历史的节点应自己生产相应资产。
+-- 最新一条供有限读取与后继读取；x:xs 的历史另存在 stateHistory，只在 end GC 时放掉。
 -- 伴随发布只随交付领取：全部读取方都领取过的那些换成空值，与条目是否保留无关。
 -- 游标由各读取方自己推进，这里读到的位置只会偏早，保留的只会偏多。
 -- 新状态在写回前求值，不让旧序列挂在未求值的计算上。
@@ -205,9 +206,14 @@ release state = case stateReaders state of
               <> Seq.replicate (cleared - blanked) [] <> Seq.drop (cleared - kept) companions
         (removed, resources) = Seq.spanl ((< pending) . fst) (stateResources state)
         released = concatMap snd (toList removed)
-    kept `seq` cleared `seq` entries `seq` emptied `seq` resources `seq` pure
+        -- end GC：来源已停止且读取方全部离开，不会再有交付领取，x:xs 的历史随之放掉；
+        -- 会话仍留在登记表中供 lifelong 之后的有限读取，读到的是上面保留的最新一条。
+        history
+          | isJust (stateStopped state) && null readers = Nothing
+          | otherwise = stateHistory state
+    kept `seq` cleared `seq` entries `seq` emptied `seq` resources `seq` history `seq` pure
       (state { stateBase = kept, stateEntries = entries, stateCompanions = emptied
-             , stateCleared = cleared, stateResources = resources }, released)
+             , stateCleared = cleared, stateResources = resources, stateHistory = history }, released)
 
 -- 游标登记、离开与领取后的裁剪共用入口；状态已提交才在锁外回收。
 modifySession :: Session environment cause

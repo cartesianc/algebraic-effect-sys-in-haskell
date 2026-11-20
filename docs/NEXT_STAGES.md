@@ -13,7 +13,7 @@
 <a id="urgent-flow"></a>
 ### U1　持续资产按 x:xs 读取（已实现）
 
-**状态：已实现（2026-11-21）。** 当前规则见 [STREAM_LIFELONG：按 x:xs 读取](STREAM_LIFELONG.md#flow)。实施按下面的方案与分层表完成，未增加声明语法。三个 demo 同时去掉了只为承载 `IORef` 而存在的注册：LinesDemo 的 `TextCounter` 不再读 `OpenedInput`（Input 改为 Root），StreamDemo 删去 `SensorResource`，FacadeProbe 删去 `CounterA/B` 与 `FeedScopeA/B`。未覆盖：被标记会话的保留没有上限（无限来源随运行增长，归 [U3](#urgent-backpressure)），流结束后的保存归 [U2](#urgent-history)。
+**状态：已实现（2026-11-21）。** 当前规则见 [STREAM_LIFELONG：按 x:xs 读取](STREAM_LIFELONG.md#flow)。实施按下面的方案与分层表完成，未增加声明语法。三个 demo 同时去掉了只为承载 `IORef` 而存在的注册：LinesDemo 的 `TextCounter` 不再读 `OpenedInput`（Input 改为 Root），StreamDemo 删去 `SensorResource`，FacadeProbe 删去 `CounterA/B` 与 `FeedScopeA/B`。历史的回收按用户确认的暂行方案只做 end GC：来源停止且读取方全部离开时放掉（`Runtime/Session.hs` 的 `release`），没有容量上限，从不停止的来源保留到运行结束。流结束后的保存（[U2](#urgent-history)）与背压（[U3](#urgent-backpressure)）暂不实施。
 
 **上下文（实施前）。** 当时的持续资产只实现了驱动，作为数据的一半没有实现。
 
@@ -79,7 +79,7 @@ printLine = do                              -- 只读增量的写法不变
 
 **上下文。** COMPOSITION 中的 history 指流结束、会话退役并回收之后，数据仍由另一个位置保存下来，供后来的读取方使用，此时可能还没有消费链读过它。现行规则让托管派生在首次登记时“从当时最新一条开始”（`attachReader`，见[有限读取](STREAM_LIFELONG.md#production)），登记晚于发布时，history 会丢失。
 
-**已定。** 有两层历史：运行中的 `x:xs` 由 U1 提供；流结束后的保存属于组合关系。
+**已定。** 有两层历史：运行中的 `x:xs` 由 U1 提供；流结束后的保存属于组合关系。2026-11-21 用户确认：目前流结束后历史随 end GC 放掉即可，保存者暂不实施；下面的方案保留待以后确认。
 
 **待确认。**
 
@@ -92,7 +92,7 @@ printLine = do                              -- 只读增量的写法不变
 
 **上下文。** 见下文[持续交付的背压](#backpressure)。
 
-**已定。** U1 的 `x:xs` 惰性求值。由此，单读取方和无读取方两种情形自然解决：没有需求时来源停在 `rawemit`，托管会话也不再在有限读取返回后继续生产。
+**已定。** U1 的 `x:xs` 惰性求值。由此，单读取方和无读取方两种情形自然解决：没有需求时来源停在 `rawemit`，托管会话也不再在有限读取返回后继续生产。2026-11-21 用户确认：U1 实现的是只读过去的 `xs`，历史保留暂行靠 end GC 回收，惰性尾部与背压暂不实施。
 
 **待确认。**
 

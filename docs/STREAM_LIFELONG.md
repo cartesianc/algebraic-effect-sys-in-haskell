@@ -120,10 +120,10 @@ countText = do
 ```
 
 - **x 是本次，xs 是过去。** `x` 是本次交付（有限读取时是捕获的那一条），`xs` 是同一会话中更早的交付，最新在前。它与 `require @T` 取同一个固定视图，同一次调用里两者一致。`xs` 都已发布：读取不等待后续发布，也不驱动来源。
-- **会话边界。** 历史从会话开头算起，与读取方何时登记无关；会话结束并回收后，历史随之放掉。要在流结束后保存数据，属于 [history 组合](NEXT_STAGES.md#urgent-history)，尚未设计。
+- **会话边界与 end GC。** 历史从会话开头算起，与读取方何时登记无关。来源停止（`streamEnd`、失败或退役）且读取方全部离开后，会话不再有交付可领取，历史随之放掉；会话仍留在登记表中，lifelong 之后的有限读取读到的是最新一条。要在流结束后保存数据，属于 [history 组合](NEXT_STAGES.md#urgent-history)，暂不设计。
 - **静态保留。** gen 从方法体中的 `stream @T` 收集被历史读取的契约，只允许持续资产；在生产它的 Context 原型上标 `effectHistory = True`。只有被标记的会话从开头保留全部交付（见[保留范围](#retention)），其他资产不受影响。
 - **refine 在元素上。** 契约仍生成 `newtype TextLine = TextLine Line`；`Flow` 的参数是 representational 角色，生成的 `Streams` 实例直接把 `Flow TextLine` `coerce` 成 `Flow Line`。
-- **未覆盖。** 惰性的未来尾部与背压见 [U3](NEXT_STAGES.md#urgent-backpressure)；被标记会话的保留没有上限，无限来源会随运行增长。
+- **暂行边界。** 保留只靠 end GC 回收，没有容量上限：从不停止的来源（如 StreamDemo）随运行增长，直到 interpreter 退出。惰性的未来尾部与背压见 [U3](NEXT_STAGES.md#urgent-backpressure)，暂不实施。
 
 ### 3.4 原子输入与源码约束
 
@@ -366,7 +366,7 @@ ReuseOutput 沿用原调用的 ScopeUser，没有独立生产任务；资源按[
 
 | 读取关系 | 保留范围 |
 | --- | --- |
-| 原型标了 `effectHistory`（有 `stream @T` 读取，见[按 x:xs 读取](#flow)） | 会话开头起的全部交付，不随游标裁剪；交付视图是开头到本条 |
+| 原型标了 `effectHistory`（有 `stream @T` 读取，见[按 x:xs 读取](#flow)） | 会话开头起的全部交付，不随游标裁剪；交付视图是开头到本条。来源停止且读取方全部离开时放掉，只留最新一条（end GC） |
 | lifelong 的单元与独立 Derive 会话 | 最慢游标之后的未领取交付，加上最新一条 |
 | 没有未领取交付，或只有普通有限读取 | 最新一条 |
 | lifelong 尚在完成初始读取方登记 | 暂保留已经发布的交付，登记完成后按游标裁剪 |
