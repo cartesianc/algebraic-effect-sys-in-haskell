@@ -346,7 +346,7 @@ Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必�
 | `Reads T m` | 绑定它的 effect streams 了持续资产；T 是资产表示类型 | `require @T` |
 | `Raw m` | 绑定成挂接的 parser 或 Pure | `rawinput :: m [String]` |
 | `Raises XxxError m` | 总是 | `raise (XxxError "...")` |
-| `Hooks m` | 绑定成 Middleware | `hookedEnter` 读取进入的 handler 名。输出、rawinput 与 raise 分别由 `hookedOutput`、`hookedRaw`、`hookedError` 读取 |
+| `Hooks m` | 绑定成 Middleware | `op <- hook` 读取当前操作，按 `Operation` 的构造器匹配方法名和负载 |
 | `Emits m` | Stream | `rawemit text` 同步交付一条，返回后来源继续 |
 | `RawOutputs m` | 返回原子列表的 handler 和 Middleware | `rawoutput fields` |
 | `StreamEnds m` | 绑定成 Stream 的 handler | `streamEnd`：来源没有下一份输入，正常结束 |
@@ -442,8 +442,10 @@ EffectSpec { name = "TraceOutput", typing = Middleware { handler = Just "traceOu
 -- handler：每个调用点执行一次，拆出本次捕获
 instance TraceOutputLayer m => TraceOutputHandler m where
   traceOutput = do
-    output <- hookedOutput      -- Maybe (handler 名, 交出的 [String])
-    forM_ output (liftIO . print)
+    op <- hook
+    case op of
+      Returned name fields -> liftIO (print (name, fields))
+      _ -> pure ()
     rawoutput []
 
 -- AST：透明标注一棵子树
@@ -470,7 +472,8 @@ ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "Wri
   - 进入 super：前驱已经完成，`hookedEnter` 给出即将运行的 handler 名。回放直接返回已交出的值时，整个 action 都会跳过。对于 scope，进入表示一次调用尝试；若需在方法内读取开启参数才判定复用，可能只观察到进入。
   - 方法成功返回时的输出捕获适用于Excu.run、Scoped.open／close、Pure.run 这次调用成功交出的 `[String]`，handler 名是被调用的 handler。scope 复用跳过 open 方法体、或注入回放本次输出时，没有新的交出值。
   - rawinput：读取方 handler（挂接的 parser 或 Pure）经 `rawinput` 读到的值；类别取被读取的那次原子调用的类别，在 Stream 下，每次读取本条输入时按 StreamKind 通知。注入时 parser 经回放读取，同样是一次 rawinput 读取。
-  - `rawhook` 在显式 raw 操作处交付 `RawInputHook handlerName fields`、`RawOutputHook handlerName fields` 或 `RawEmitHook handlerName text`。第一个字段由 gen 取绑定的方法名，第二个字段是本次读取或交出的原值（前两项为 `[String]`，emit 为 `String`）。方法名可在模式里匹配；同一方法的多个绑定共用这个名字，挂载范围仍由 AST 决定。`rawinputhook`、`rawoutputhook`、`rawemithook` 分别选择其中一种操作，`raisehook` 单独观察 `raise`。Stream 的 `hookedOutput` 在 emit 处得到单元素列表；来源方法返回 `()` 时没有输出负载。
+  - Middleware 用 `op <- hook` 读取触发本次调用的 `Operation`。其六种构造为 `Enter name`、`RawInput name fields`、`RawOutput name fields`、`RawEmit name text`、`Raise name reason` 和 `Returned name fields`。gen 写入绑定的方法名，运行时填入本次操作的负载。同一 handler 多次绑定仍使用同一个方法名，挂载范围由 AST 决定。`RawOutput` 对应显式交出列表，`Returned` 对应整个列表方法成功返回；Stream 的每条发送产生一次 `RawEmit`，来源方法返回 `()` 时没有 `Returned`。
+  - `rawhook`、各操作的回调和 `hooked*` 沿用原接口，从同一 `Operation` 取值。`hookedOutput` 在 `Returned` 时取得最终列表，在 `RawEmit` 时取得单元素列表。
   - raise：handler `raise` 时先捕获 (handler 名, 描述)，再以原失败退出。
 - **同步与顺序。** Middleware 是类方法，在调用点同步执行，调用点在它们完成后才继续。多个 Middleware 按注册顺序依次调用；每个都读到同一份捕获。它们的 IO 按此顺序发生，某个 Middleware 抛出失败会中止本次后续派发。Middleware handler 在自己的 `Hook` 标签下执行，那里的调用点不调用 `captureAt`，它自己不再被捕获。它交出的 `[String]` 没有挂接点。
 - **能力只给 Middleware。** gen 只为 Middleware 的标签生成 `Hooks (Hook "M")`，Layer 也只给 Middleware 加 `Hooks m`；普通 handler 写 `hookedOutput` 不能通过类型检查。Middleware 的能力只来自它的 handler 写法。

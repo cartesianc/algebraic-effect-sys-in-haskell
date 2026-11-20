@@ -260,7 +260,7 @@ Layer 是方法体可用能力的边界，同样不由业务填写，而是从�
 | `Reads T` | demands 中 `requires` 或 `streams` 的资产，T 为其声明表示类型；单独的 `requests` 不带来读取 |
 | `Raw` | 只有挂接的 parser 与 Pure |
 | `Raises` | 每个 handler 的本地错误，由输出时补入 |
-| `Hooks`（`hookedEnter`／`hookedOutput`／`hookedRaw`／`hookedError`） | 只有 Middleware |
+| `Hooks`（`hook :: m Operation`） | 只有 Middleware |
 | `StreamEnds`（`streamEnd`） | 绑定成 Stream 的 handler |
 | `EndsStream`（`endStream`） | 自己声明了 `streams` 的 Excu；同链的前驱与 lifelong 里不订阅的普通节点不给 |
 | `MonadIO` | Pure 以外 |
@@ -277,7 +277,7 @@ Middleware 是由 Root 级入口驱动的 Excu：注册给出 handler 与拦截�
 | 观察一段子树里交出的值、rawinput 与失败 | Middleware 注册（`input = "None"`）；AST 写 `middleware [node "M"] 子树` | 剥离标注后照常编号；标注位置存为 `drivingMiddleware` | 子树的结构、NodeId 与单元划分不变 | [Middleware](CORE_DESIGN.md#middleware) |
 | 只捕获某几类 effect | `intercept = [ExcuKind, ...]`，或 `allEffects` | Injector 为绑定选定捕获类别；`Injector.Super` 为每个 (列表, 类别) 选定 Middleware；gen 把每次原子调用交给相应标签的 Root.super | 匹配的调用在进入、交出结果或执行 rawinput、rawoutput、rawemit、raise 时同步通知；直接实例执行原 action | 同上 |
 | 同一 handler 在不同子树表现不同 | 一处挂载在标注内，另一处不在 | 每个挂载的 Middleware 列表（`drivingHooks`），按位置前缀取覆盖它的标注之并，会话步骤同样；入口对列表多态，挂载登记时在类型上给出列表，调用点经入口约束 `Captured hooks` 取得该列表在本类别上的选择 | 按静态登记名选取已编译的 Target；未覆盖的挂载以空列表登记 | 同上 |
-| 拆出本次捕获 | 方法体 `hookedEnter`／`hookedOutput`／`hookedRaw`／`hookedError` | 只为 Middleware 的标签生成 `Hooks` 实例 | 对应当前捕获点的读取返回 `Just` | 同上 |
+| 读取本次操作 | `op <- hook` | 只为 Middleware 的标签生成 `Hooks` 实例 | `op` 是触发该次调用的操作 | 同上 |
 | Middleware 与被捕获的链不成环 | 无需写法 | 任何 effect 的 Input 都不能指向 Middleware；Middleware 没有 demands；Middleware 在自己的标签下执行，那里的调用点不调用 `captureAt` | Middleware 自己不再被捕获 | 同上 |
 
 Middleware 与普通 Excu 一样可以 `raise`，失败从调用点传播；后续事项见 [Next stages](NEXT_STAGES.md#middleware)。

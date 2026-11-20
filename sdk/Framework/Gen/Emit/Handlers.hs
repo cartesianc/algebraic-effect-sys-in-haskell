@@ -100,7 +100,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
           [ "-- superhandler 的静态选择：hooks 是覆盖本次挂载的 Middleware（注册顺序），kind 是捕获类别。"
           , "-- 默认方法即空选择：不捕获，super 直接执行 action。"
           , "class " ++ captures ++ " (hooks :: [FrameworkTypes.Symbol]) (kind :: FrameworkRuntime.EffectKind) where"
-          , "  " ++ captureAt ++ " :: FrameworkRuntime.HookEvent -> FrameworkGenerated.App ()"
+          , "  " ++ captureAt ++ " :: FrameworkRuntime.Operation -> FrameworkGenerated.App ()"
           , "  " ++ captureAt ++ " _ = pure ()"
           , "  " ++ superWrap ++ ", " ++ closeWrap ++ " :: String -> FrameworkGenerated.App [String] -> FrameworkGenerated.App [String]"
           , "  " ++ superWrap ++ " _ = id"
@@ -110,16 +110,12 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
           , "type " ++ captured ++ " hooks = (" ++ intercalate ", " [captures ++ " hooks " ++ promoted kind | kind <- selectedKinds] ++ ")"
           , "" ] ++ concatMap selectionInstance (unitSupers unit) ++
           [ ""
-          , "-- Middleware 的标签：handler 在这里执行，用 hooked* 读本次调用点捕获的 (handler 名, 值)。"
+          , "-- Middleware 的标签：handler 在这里执行，用 hook 读取触发本次调用的 Operation。"
           , "newtype " ++ hookTag ++ " (effect :: FrameworkTypes.Symbol) value = " ++ hookTag ++ " { " ++ runHook ++ " :: FrameworkRuntime.HookApp FrameworkGenerated.ContextValues FrameworkGenerated.Errors value }"
           , "  deriving (Functor, Applicative, Monad, FrameworkIO.MonadIO)"
           , "" ] ++ concat
           [ [ "instance FrameworkRuntime.Hooks (" ++ hookTag ++ " " ++ show effect ++ ") where"
-            , "  hookedEnter = " ++ hookTag ++ " FrameworkRuntime.hookEnter"
-            , "  hookedOutput = " ++ hookTag ++ " FrameworkRuntime.hookOutput"
-            , "  hookedRaw = " ++ hookTag ++ " FrameworkRuntime.hookRaw"
-            , "  hookedError = " ++ hookTag ++ " FrameworkRuntime.hookError"
-            , "  rawhook action = " ++ hookTag ++ " (FrameworkRuntime.onRawHook (\\operation -> " ++ runHook ++ " (action operation)))"
+            , "  hook = " ++ hookTag ++ " FrameworkRuntime.currentOperation"
             , ""
             , "instance FrameworkRuntime.RawOutputs (" ++ hookTag ++ " " ++ show effect ++ ")"
             , ""
@@ -127,7 +123,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
             , "  raise (FrameworkGenerated." ++ handlerError handler' ++ " description) = " ++ hookTag ++ " (FrameworkRuntime.liftHookApp"
             , "    (FrameworkRuntime.failEffect " ++ show effect ++ " FrameworkGenerated." ++ handlerFailure handler' ++ " description))"
             , ""
-            , entry (bindingMethod binding) ++ " :: FrameworkRuntime.HookEvent -> FrameworkGenerated.App [String]"
+            , entry (bindingMethod binding) ++ " :: FrameworkRuntime.Operation -> FrameworkGenerated.App [String]"
             , entry (bindingMethod binding) ++ " event = FrameworkRuntime.runHookApp event (" ++ runHook ++ " @" ++ show effect ++ " "
                 ++ atomicCall MiddlewareOperation handler' ++ ")"
             , "" ]
@@ -158,7 +154,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
               Just StreamKind ->
                 [ "instance " ++ captures ++ " hooks " ++ promoted StreamKind ++ " => FrameworkRuntime.Root " ++ tag (show effect) ++ " () where"
                 , "  super name (" ++ wrap ++ " action) = " ++ wrap ++ " ("
-                    ++ capture StreamKind "FrameworkRuntime.EnterEvent name" ++ "action)"
+                    ++ capture StreamKind "FrameworkRuntime.Enter name" ++ "action)"
                 , "" ]
               Just kind ->
                 [ "instance " ++ captures ++ " hooks " ++ promoted kind ++ " => FrameworkRuntime.Root " ++ tag (show effect) ++ " [String] where"
@@ -174,7 +170,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       | hooked = concat
           [ [ "instance " ++ context ++ "FrameworkRuntime.Raises FrameworkGenerated." ++ handlerError handler' ++ " " ++ tag (show effect) ++ " where"
             , "  raise (FrameworkGenerated." ++ handlerError handler' ++ " description) = " ++ wrap ++ " ("
-                ++ maybe "" (\kind -> capture kind ("FrameworkRuntime.ErrorEvent " ++ show handler' ++ " description")) captureKind
+                ++ maybe "" (\kind -> capture kind ("FrameworkRuntime.Raise " ++ show handler' ++ " description")) captureKind
                 ++ "FrameworkRuntime.failEffect " ++ show effect ++ " FrameworkGenerated." ++ handlerFailure handler' ++ " description)"
             , "" ]
           | (effect, captureKind) <- nub [(bindingEffect b, bindingCaptureKind b) | b <- unitBindings unit, bindingHandler b == handler'] ]
@@ -215,7 +211,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     callSource (RawStream method) = RawStream method
     capturedRaw binding reading = case bindingRawKind binding of
       Just kind ->
-        reading ++ " >>= \\value -> " ++ capture kind ("FrameworkRuntime.RawEvent " ++ show (bindingHandler binding) ++ " value") ++ "pure value"
+        reading ++ " >>= \\value -> " ++ capture kind ("FrameworkRuntime.RawInput " ++ show (bindingHandler binding) ++ " value") ++ "pure value"
       _ -> reading
     -- 能力已经由组合计算确定；这里只为对应标签输出实例，不重新解释 effect 类别或 demands。
     -- Scoped 的 open 和 close 共用 effect 标签，method 标签区分两处输出的业务名称。
@@ -225,7 +221,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       | otherwise = concat (nub
           [ [ "instance " ++ context ++ "FrameworkRuntime.RawOutputs " ++ methodTag (show (bindingEffect binding)) (show handler') ++ " where"
             , "  rawoutput value = " ++ wrap ++ " ("
-                ++ maybe "" (\kind -> capture kind ("FrameworkRuntime.RawOutputEvent " ++ show handler' ++ " value"))
+                ++ maybe "" (\kind -> capture kind ("FrameworkRuntime.RawOutput " ++ show handler' ++ " value"))
                      (bindingCaptureKind binding)
                 ++ "pure value)"
             , "" ]
@@ -234,7 +230,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     endInstances = concat
       [ [ "instance " ++ context ++ "FrameworkRuntime.Emits " ++ tag (show (bindingEffect binding)) ++ " where"
         , "  rawemit text = " ++ wrap ++ " ("
-            ++ maybe "" (\kind -> capture kind ("FrameworkRuntime.EmitEvent " ++ show (bindingHandler binding) ++ " text"))
+            ++ maybe "" (\kind -> capture kind ("FrameworkRuntime.RawEmit " ++ show (bindingHandler binding) ++ " text"))
                  (bindingCaptureKind binding)
             ++ "FrameworkRuntime.emitToParser text)"
         , "" ]

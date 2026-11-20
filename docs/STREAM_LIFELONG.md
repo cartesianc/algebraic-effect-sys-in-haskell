@@ -193,9 +193,9 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
           _ -> raise (ParseTotalError "the counter gives a line count and a character count")
 
     -- demo/LinesDemo/AST.hs
-    ast = chained
+    ast = middleware [node "TraceLine"] $ chained
       [ chained [node "Announce"]
-      , middleware [node "TraceLine"] $ lifelong
+      , lifelong
           [ parallel
               [ chained [node "PrintLine", node "TextCounter"]
               , chained [node "ShowTotal"]
@@ -513,9 +513,9 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
         readLines
 
     -- demo/LinesDemo/AST.hs
-    ast = chained
+    ast = middleware [node "TraceLine"] $ chained
       [ chained [node "Announce"]
-      , middleware [node "TraceLine"] $ lifelong
+      , lifelong
           [ parallel
               [ chained [node "PrintLine", node "TextCounter"]
               , chained [node "ShowTotal"]

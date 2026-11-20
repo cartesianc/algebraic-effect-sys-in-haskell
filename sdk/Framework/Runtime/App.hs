@@ -13,7 +13,7 @@
 -- 本文件保留共享 Environment 的解释器实现，按绑定、Store、诊断、生命周期和根调用分组。
 module Framework.Runtime.App
   ( App, Launch(..), StreamPort(..), emitToParser, emittedInput, runAppWith
-  , superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError, onRawHook
+  , superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation
   ) where
 
 import Framework.Runtime.Binding
@@ -871,28 +871,24 @@ runClose name wrap (AppRun action) = AppRun $ do
 
 -- gen 按挂载标注特化 Root 的进入／返回、rawinput 与 raise 捕获，运行时没有 Middleware 目录。
 -- 这里只提供 Middleware handler 的载体：本次调用点的捕获作为只读环境，执行期间不进入调用中的 open／close 尝试。
-data HookEvent
-  = EnterEvent String | OutputEvent String [String] | RawEvent String [String]
-  | RawOutputEvent String [String] | EmitEvent String String | ErrorEvent String String
-
 -- 注入 v6：super 收到尚未执行的 action。前驱、requests、回放和 scope 外层协议均在调用方。
 -- gen 已按 (Middleware 列表, 类别) 选定实例；空选择直接执行 action，不经过这里。
-superWith :: (HookEvent -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
-superWith capture name body = capture (EnterEvent name) >> returning capture name body
+superWith :: (Operation -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
+superWith capture name body = capture (Enter name) >> returning capture name body
 
 -- 执行一次 action，成功交出时通知输出并交回原值。
-returning :: (HookEvent -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
+returning :: (Operation -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
 returning capture name body = do
   output <- body
-  capture (OutputEvent name output)
+  capture (Returned name output)
   pure output
 
 -- close 的调用点由 gen 选定。本次是否持有 GC 的关闭预约只有运行时知道。
-superClosing :: (HookEvent -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
+superClosing :: (Operation -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
 superClosing capture name body = do
   environment <- AppRun ask
   if cleaningScopes environment && not (null (closings environment))
-    then protectedClose (capture (EnterEvent name)) body (returning capture name body)
+    then protectedClose (capture (Enter name)) body (returning capture name body)
     else superWith capture name body
   where
     -- GC 已消费本轮的关闭预约。进入通知失败或被取消时也要尝试实际 close 一次；
@@ -913,7 +909,7 @@ superClosing capture name body = do
             pure (closed >> Left problem)
           Right (Right ()) -> restore (run observed)
 
-newtype HookApp env cause value = HookApp (ReaderT HookEvent (App env cause) value)
+newtype HookApp env cause value = HookApp (ReaderT Operation (App env cause) value)
   deriving (Functor, Applicative, Monad)
 
 instance MonadIO (HookApp env cause) where
@@ -922,37 +918,14 @@ instance MonadIO (HookApp env cause) where
 liftHookApp :: App env cause value -> HookApp env cause value
 liftHookApp action = HookApp (ReaderT (const action))
 
-runHookApp :: HookEvent -> HookApp env cause value -> App env cause value
+runHookApp :: Operation -> HookApp env cause value -> App env cause value
 runHookApp event (HookApp action) = case runReaderT action event of
   AppRun inner -> AppRun $ local (\environment -> environment
     { caller = Nothing, contexts = [], openings = [], closings = [], replays = [] }) inner
 
-hookEnter :: HookApp env cause (Maybe String)
-hookEnter = HookApp (asks (\event -> case event of
-  EnterEvent handler -> Just handler
-  _ -> Nothing))
-
-hookOutput, hookRaw :: HookApp env cause (Maybe (String, [String]))
-hookOutput = HookApp (asks (\event -> case event of
-  OutputEvent handler output -> Just (handler, output)
-  EmitEvent handler text -> Just (handler, [text])
-  _ -> Nothing))
-hookRaw = HookApp (asks (\event -> case event of
-  RawEvent handler value -> Just (handler, value)
-  _ -> Nothing))
-
-hookError :: HookApp env cause (Maybe (String, String))
-hookError = HookApp (asks (\event -> case event of
-  ErrorEvent handler description -> Just (handler, description)
-  _ -> Nothing))
-
--- 分派对象已由 gen 选定；这里只把当前调用点的具体值交给类型匹配的回调。
-onRawHook :: (RawHook -> HookApp env cause ()) -> HookApp env cause ()
-onRawHook action = HookApp ask >>= \event -> case event of
-  RawEvent name fields -> action (RawInputHook name fields)
-  RawOutputEvent name fields -> action (RawOutputHook name fields)
-  EmitEvent name text -> action (RawEmitHook name text)
-  _ -> pure ()
+-- ReaderT 在每次派发时绑定该操作；同一次 middleware 调用可重复读取。
+currentOperation :: HookApp env cause Operation
+currentOperation = HookApp ask
 
 -- 完整调用边界 ---------------------------------------------------------------
 

@@ -15,7 +15,7 @@ module Framework.Generated
   , atomicHandle, atomicScope, emittedInput, emitToParser, endSource, endSubscription
   , openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler
-  , Root(..), superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError, onRawHook
+  , Root(..), superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation
   , Generic, NFData, interpreter
   ) where
 
@@ -30,7 +30,7 @@ import Framework.Runtime.Context
 import Framework.Language.Registration (TypeRef(..))
 import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, deriveSteps)
 import Framework.Runtime.App
-  ( emittedInput, emitToParser, superWith, superClosing, HookEvent(..), HookApp, runHookApp, liftHookApp, hookEnter, hookOutput, hookRaw, hookError, onRawHook )
+  ( emittedInput, emitToParser, superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation )
 import Framework.Runtime.Scope (ScopeHandler, newScopeHandler)
 import Framework.Program (initializePrototype, runProgram)
 import Framework.Prototype

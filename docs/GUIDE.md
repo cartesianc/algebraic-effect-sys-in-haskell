@@ -629,7 +629,7 @@ Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，
 | `value <- require @T`（持续资产） | 声明 streams 时读本次交付，声明 requires 时读本次固定值；不会自动包装此前的全部发布 |
 | `output <- rawinput` | 挂接的 parser 或 Pure 读取直接 Input 本次交出的 `[String]`，句柄不再执行一遍；挂在 Stream 下时是会话本次取得的那份原始输入（单元素 list） |
 | `raise (ReadFileContentError "message")` | 以本 handler 的错误失败；错误类型是 handler 名首字母大写加 `Error` |
-| `hookedEnter`、`hookedOutput`、`hookedRaw`、`hookedError` | Middleware 用第一个读取即将运行的 handler 名，其余分别读取输出、rawinput 和 raise 的负载。当前捕获点对应的读取返回 `Just` |
+| `op <- hook` | Middleware 使用 `case op of` 匹配触发本次调用的操作，取得 handler 名和对应负载。见 [middleware 写法](#middleware) |
 | `rawoutput [info]`、`rawoutput (x : rest)` | 以 `rawoutput` 返回原子列表，显式调用处可执行 `rawoutputhook`。Excu、Scoped.open 和 Pure 的输出可由下游 Pure 或 Context 读取 |
 | `liftIO (...)` | 执行 IO（Pure 不可用） |
 
@@ -794,38 +794,38 @@ monitor = lifelong
 #### `middleware`
 
 ```haskell
--- Effects.hs：没有 Input（保留名 "None"），没有 demands；intercept 选捕获的类别
+-- Effects.hs：effects 列表中的一项，allEffects 从 Framework.SDK 导入
 EffectSpec
-  { name = "TraceOutput"
-  , typing = Middleware { handler = Just "traceOutput", intercept = [ExcuKind, ScopedKind] }
+  { name = "TraceLine"
+  , typing = Middleware { handler = Just "traceLine", intercept = allEffects }
   , input = "None"
   , demands = []
   }
 
--- Handlers.hs：Layer 是 Hooks、Raises、MonadIO；每个调用点执行一次
-instance TraceOutputLayer m => TraceOutputHandler m where
-  traceOutput = do
-    entering <- hookedEnter
-    forM_ entering (\name -> liftIO (putStrLn ("starting " ++ name)))
-    output <- hookedOutput             -- Just (handler 名, 交出的 list)，不是交出值时为 Nothing
-    forM_ output (liftIO . print)
-    failure <- hookedError             -- Just (handler 名, raise 的描述)
-    forM_ failure (liftIO . print)
+-- Handlers.hs
+-- import Framework.SDK (Hooks(hook), Operation(..), rawoutput)
+instance TraceLineLayer m => TraceLineHandler m where
+  traceLine = do
+    op <- hook
+    case op of
+      Enter name -> liftIO (putStrLn ("[enter] " ++ name))
+      RawInput name fields -> liftIO (print ("input", name, fields))
+      RawOutput name fields -> liftIO (print ("output", name, fields))
+      RawEmit name text -> liftIO (print ("emit", name, text))
+      Raise name reason -> liftIO (print ("raise", name, reason))
+      Returned name fields -> liftIO (print ("returned", name, fields))
     rawoutput []
 
--- AST.hs：只有左支的 WriteReport 被捕获
-ast = parallel
-  [ middleware [node "TraceOutput"] (chained [node "Prepare", node "WriteReport"])
-  , chained [node "WriteReport"]
-  ]
+-- AST.hs：businessWorkflow 是已有的业务子树
+ast = middleware [node "TraceLine"] businessWorkflow
 ```
 
 - **何时执行。** 在标注覆盖的位置，Root 的 `super` 会为匹配 `intercept` 的原子调用通知进入和成功返回。读取 `rawinput`（按上游类别匹配）或显式 `raise` 也会通知对应的 middleware。一次写文件可以先记录开始、执行原有业务 IO、再记录输出。业务 handler 保持原写法，整个推进过程由 SDK 负责。
-- **按操作与方法名匹配。** 在手写 middleware 中导入 `Framework.SDK (Hooks(rawhook), RawHook(..))`。例如 LinesDemo 在 `rawhook` 的回调里匹配 `RawEmitHook name@"nextLine" text`，从同一次 emit 取得来源方法名与一条字符串。parser 随后调用 `rawinput` 时，`RawInputHook name@"parseLine" fields` 取得字段列表。显式列表输出用 `RawOutputHook name fields`；完整写法见 [TraceLine](../demo/LinesDemo/Handlers.hs)。`hookedOutput` 继续观察原子方法的成功返回，middleware 自身的 `rawoutput []` 直接返回。
+- **按操作与方法名匹配。** `RawEmit name text` 接受任意来源，`RawEmit "nextLine" text` 只匹配指定方法。每次读取 `hook` 都取得触发本次 middleware 的同一项。`allEffects` 包含 Excu、Scoped、Pure 和 Stream；parser 可观察的 rawinput 按上游类别匹配。middleware 自身的 `rawoutput []` 直接返回。完整示例见 [LinesDemo](../demo/LinesDemo/Handlers.hs)。
 - **同步执行**：Middleware 是类方法，在调用点上执行完，原调用才继续；它只读捕获，不改变原值。多个 Middleware 按注册顺序依次执行，不要让它们依赖彼此。
 - **透明**：标注不改变子树的执行顺序、NodeId 和 lifelong 的单元划分。范围只看位置：标注覆盖整个 `lifelong` 时，它的生产会话里执行的调用（例如会话开启的 `open`）也被捕获；只覆盖 lifelong 里的子树时，只捕获这些节点。`--structure` 列出标注与每个启动位置生效的 Middleware。标注是给 gen 的标记，注入在生成期完成：改动标注后要重新生成。
 - **失败**：Middleware 与普通 Excu 一样 `raise`，失败从调用点传播，origin 是 Middleware 的注册名。
-- **限制**：标注列表只能写 Middleware；Middleware 不能作为 `node` 末端，也不能作为其他 effect 的 `input`；`hooked*` 只有 Middleware 的 handler 能用。
+- **限制**：标注列表只能写 Middleware；Middleware 不能作为 `node` 末端，也不能作为其他 effect 的 `input`；只有 Middleware 的 handler 获得 `Hooks` 能力。
 
 ### 文件组织
 
@@ -1062,7 +1062,7 @@ snapshotAst = chained [node "Announce", node "Report"]
       readLines
   ```
 
-  LinesDemo 在 lifelong 上挂载 `TraceLine`，注册为 `intercept = [StreamKind, ScopedKind]`。它的 handler 在 `rawhook` 回调里匹配 `RawEmitHook name@"nextLine" text`，逐条打印来源名和当前行。每次 hook 完成才启动该条的 parser。
+  LinesDemo 在整棵 workflow 上挂载 `TraceLine`，注册为 `intercept = allEffects`。它匹配 `RawEmit name text` 逐条打印来源方法名和当前行。每条发送的日志写完后才启动这一条的 parser。
 
   上面的 LinesDemo AST 将 `Report` 放在 lifelong 之后；单元处理完所需交付并结束，才会继续执行它。
 

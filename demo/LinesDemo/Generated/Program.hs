@@ -25,6 +25,7 @@ compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
     ( [ SDK.targetApp "Announce" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (AnnounceResult <$> (() <$ (Handlers.runAnnounce @'[]))))
+      , SDK.targetApp "Announce@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (AnnounceResult <$> (() <$ (Handlers.runAnnounce @'["TraceLine"]))))
       , SDK.targetApp "PrintLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (PrintLineResult <$> (() <$ (Handlers.runPrintLine @'[]))))
       , SDK.targetApp "PrintLine@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (PrintLineResult <$> (() <$ (Handlers.runPrintLine @'["TraceLine"]))))
       , SDK.targetApp "TextCounter" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (TextCounterResult <$> (() <$ (Handlers.runTextCounter @'[]))))
@@ -32,11 +33,11 @@ compiledEntries = do
       , SDK.targetApp "ShowTotal" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ShowTotalResult <$> (() <$ (Handlers.runShowTotal @'[]))))
       , SDK.targetApp "ShowTotal@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ShowTotalResult <$> (() <$ (Handlers.runShowTotal @'["TraceLine"]))))
       , SDK.targetApp "Report" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ReportResult <$> (() <$ (Handlers.runReport @'[]))))
+      , SDK.targetApp "Report@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ReportResult <$> (() <$ (Handlers.runReport @'["TraceLine"]))))
       ]
     , []
     , [ ("LineParser@TraceLine", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers ((Handlers.nextLineFeed @'["TraceLine"])))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getTextLine @'["TraceLine"])))))
-      , ("LineParser", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers ((Handlers.nextLineFeed @'[])))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getTextLine @'[])))))
-      , ("CountParser", SDK.deriveSteps (SDK.targetApp "CountParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getRunningTotal @'[])))))
+      , ("CountParser@TraceLine", SDK.deriveSteps (SDK.targetApp "CountParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getRunningTotal @'["TraceLine"])))))
       ]
     )
 
@@ -81,7 +82,8 @@ generatedPrototype =
             }
         , SDK.EffectSpec
             { SDK.name = "TraceLine"
-            , SDK.typing = SDK.Middleware (Just "traceLine") ([SDK.StreamKind, SDK.ScopedKind])
+            , SDK.typing =
+                SDK.Middleware (Just "traceLine") ([SDK.ExcuKind, SDK.ScopedKind, SDK.PureKind, SDK.StreamKind])
             , SDK.input = "None"
             , SDK.demands = []
             }
@@ -898,8 +900,8 @@ generatedPrototype =
               , ("LineParser", GetTextLineGen)
               , ("CountParser", GetRunningTotalGen)
               ]
-          , SDK.drivingMiddleware = [([1],["TraceLine"])]
+          , SDK.drivingMiddleware = [([],["TraceLine"])]
           , SDK.drivingHooks =
-              [([1,0,0,0],["TraceLine"]),([1,0,0,1],["TraceLine"]),([1,0,1,0],["TraceLine"]),([1,-1,0,0],["TraceLine"]),([1,-1,0,1],["TraceLine"])]
+              [([0,0],["TraceLine"]),([1,0,0,0],["TraceLine"]),([1,0,0,1],["TraceLine"]),([1,0,1,0],["TraceLine"]),([2,0],["TraceLine"]),([1,-1,0,0],["TraceLine"]),([1,-1,0,1],["TraceLine"]),([-2,0,0],["TraceLine"]),([-2,0,1],["TraceLine"]),([-2,1,0],["TraceLine"])]
           }
     }

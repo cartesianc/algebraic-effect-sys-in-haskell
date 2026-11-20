@@ -10,7 +10,7 @@
 
 module LinesDemo.Handlers () where
 
-import Framework.SDK (Emits(rawemit), Hooks(rawhook), RawHook(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), rawoutput)
+import Framework.SDK (Emits(rawemit), Hooks(hook), Operation(..), StreamEnds(..), Raises(..), Raw(..), Reads(..), rawoutput)
 import LinesDemo.Generated.Effects
 import LinesDemo.Types
 import Control.Monad.IO.Class (liftIO)
@@ -57,14 +57,14 @@ instance NextLineLayer m => NextLineHandler m where
 
 instance TraceLineLayer m => TraceLineHandler m where
   traceLine = do
-    rawhook $ \operation -> case operation of
-      RawEmitHook name@"nextLine" text ->
-        liftIO (putStrLn ("[emit] " ++ name ++ ": " ++ text))
-      RawInputHook name@"parseLine" fields ->
-        liftIO (putStrLn ("[input] " ++ name ++ ": " ++ show fields))
-      RawOutputHook name fields ->
-        liftIO (putStrLn ("[output] " ++ name ++ ": " ++ show fields))
-      _ -> pure ()
+    op <- hook
+    case op of
+      Enter name -> liftIO (putStrLn ("[enter] " ++ name))
+      RawInput name fields -> liftIO (putStrLn ("[input] " ++ name ++ ": " ++ show fields))
+      RawOutput name fields -> liftIO (putStrLn ("[output] " ++ name ++ ": " ++ show fields))
+      RawEmit name text -> liftIO (putStrLn ("[emit] " ++ name ++ ": " ++ text))
+      Raise name reason -> liftIO (putStrLn ("[raise] " ++ name ++ ": " ++ reason))
+      Returned name fields -> liftIO (putStrLn ("[returned] " ++ name ++ ": " ++ show fields))
     rawoutput []
 
 instance ParseLineLayer m => ParseLineHandler m where
