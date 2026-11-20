@@ -103,8 +103,8 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       , ""
       , "-- 在标签下执行 handler，交给 Root 的 superhandler；方法名取自标签。close 的调用点用 " ++ callClose ++ "。"
       ] ++ concat
-      [ [ name ++ " :: forall " ++ (if hooked then "hooks " else "") ++ "effect method value. (FrameworkTypes.KnownSymbol method, FrameworkRuntime.Root "
-            ++ tag "effect" ++ " value)"
+      [ [ name ++ " :: forall " ++ (if hooked then "hooks effect method kind" else "effect method") ++ " value. (FrameworkTypes.KnownSymbol method"
+            ++ (if hooked then ", " ++ kindOf ++ " effect kind, " ++ captures ++ " hooks kind" else "") ++ ")"
         , "  => " ++ tagType ++ " value -> FrameworkGenerated.App value"
         , name ++ " handler = " ++ runWrap ++ " (FrameworkRuntime." ++ method ++ " " ++ symbolOf "method" ++ " handler)"
         , "" ]

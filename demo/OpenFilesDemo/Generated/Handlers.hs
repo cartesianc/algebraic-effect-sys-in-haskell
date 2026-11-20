@@ -131,11 +131,11 @@ nameOf :: forall name. FrameworkTypes.KnownSymbol name => String
 nameOf = FrameworkTypes.symbolVal (FrameworkProxy.Proxy @name)
 
 -- 在标签下执行 handler，交给 Root 的 superhandler；方法名取自标签。close 的调用点用 callClose。
-call :: forall effect method value. (FrameworkTypes.KnownSymbol method, SDK.Root (Wrap effect method) value)
+call :: forall effect method value. (FrameworkTypes.KnownSymbol method)
   => Wrap effect method value -> Effects.App value
 call handler = runWrap (SDK.super (nameOf @method) handler)
 
-callClose :: forall effect method value. (FrameworkTypes.KnownSymbol method, SDK.Root (Wrap effect method) value)
+callClose :: forall effect method value. (FrameworkTypes.KnownSymbol method)
   => Wrap effect method value -> Effects.App value
 callClose handler = runWrap (SDK.superClose (nameOf @method) handler)
 
