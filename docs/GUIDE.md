@@ -1221,6 +1221,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 修改手写文件后，按[命令行与执行阶段](#commands)完成“生成 → 按需查看结构 → 运行”；整个仓库的编译使用 `cabal build all`。生成命令显式执行，普通构建不会更新 Generated。
 
 - **编辑器支持**：`Handlers.hs` 是普通 Haskell，可以在编辑器里用 HLS 检查（配置见 `hie.yaml`，HLS 需匹配 GHC 9.12.2）。它依赖的 `Generated/Effects.hs` 要先生成出来。
+- **整体回归**：`powershell -ExecutionPolicy Bypass -File scripts/check.ps1` 依次重新生成 `demo/` 下全部命名空间、`cabal build all`、运行每个 `*-demo`，只按退出码判断，不保存期望输出。离线时用 `-Skip crawler-demo` 跳过需要网络的 demo；持续运行的 stream-demo 运行数秒无故障即结束。生成结果与已提交版本不同时只提示。
 - **新 effect 的顺序**：先注册、生成接口，再写 handler，然后再生成一次。复用已有 handler 的注册不需要新写 handler。
 - **检查分工**：HLS／GHC 检查 Haskell 语法与类型（越过 Layer 的读取由 GHC 拒绝）；gencode 另检查注册、handler 绑定、读取路由、可提取的结构和顶层定义；运行与结构查看再核对生成快照是否仍与当前程序一致。
 
