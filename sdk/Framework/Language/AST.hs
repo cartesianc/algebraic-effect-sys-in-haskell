@@ -2,8 +2,8 @@
 
 -- Workflow 的可序列化结构与引用收集；不启动节点。
 module Framework.Language.AST
-  ( WorkflowF(..), AST, EffectNode, node, chained, parallel, alternative, lifelong, middleware
-  , foldAST, toWorkflowF, stripMiddleware, stripAST
+  ( WorkflowF(..), AST, EffectNode, node, chained, parallel, alternative, lifelong
+  , HangingTree, MiddlewareMount, hanging, middleware, hangingRows, foldAST, toWorkflowF
   ) where
 
 import Framework.Recursion (Fix(..), Algebra, cata)
@@ -19,8 +19,6 @@ data WorkflowF next
   -- Lifelong 订阅持续资产。每个单元按交付重复执行，所有单元结束后本分支成功返回。
   -- 直接子项各为一个单元，直接子项是 parallel 时拆这一层；其余子树作为有限单元整体重复。
   | Lifelong [next]
-  -- 透明标注：为子树中 Root 级调用点挂载 Middleware，不改变子树的执行结构与 NodeId。
-  | Hooked [String] next
   deriving (Eq, Functor, Show, Read)
 
 -- 对外区分原子节点与完整 branch，不导出构造器或原始树转换。
@@ -52,29 +50,20 @@ alternative children = AST (Fix (Alternative (map childTree children)))
 lifelong :: BranchChild child => [child] -> AST
 lifelong children = AST (Fix (Lifelong (map childTree children)))
 
--- 第一个参数引用 Middleware 注册，第二个参数是已写明驱动方式的一棵子树。
-middleware :: [EffectNode] -> AST -> AST
-middleware hooks (AST tree) = AST (Fix (Hooked [selected | EffectNode selected <- hooks] tree))
+-- Hanging 是独立的编译期声明。AST 引用由 GHC 类检，gen 从其定义名确定业务树中的全部位置。
+data MiddlewareMount = MiddlewareMount [EffectNode] [AST]
+newtype HangingTree = HangingTree [MiddlewareMount]
 
--- 去掉 middleware 标注：子树占据标注所在的位置，路径编号与没有标注时相同。
--- 同时返回 (标注位置, hook 名) ，按先序排列；嵌套在同一位置的标注各占一项。
-stripMiddleware :: Fix WorkflowF -> (Fix WorkflowF, [([Int], [String])])
-stripMiddleware = strip []
-  where
-    strip path (Fix layer) = case layer of
-      Hooked hooks child -> let (inner, marks) = strip path child in (inner, (path, hooks) : marks)
-      Node selected -> (Fix (Node selected), [])
-      Chained children -> rebuild Chained children
-      Parallel children -> rebuild Parallel children
-      Alternative children -> rebuild Alternative children
-      Lifelong children -> rebuild Lifelong children
-      where
-        rebuild make children =
-          let results = [strip (path ++ [index]) child | (index, child) <- zip [0 ..] children]
-          in (Fix (make (map fst results)), concatMap snd results)
+middleware :: [EffectNode] -> [AST] -> MiddlewareMount
+middleware = MiddlewareMount
 
-stripAST :: AST -> (AST, [([Int], [String])])
-stripAST (AST tree) = let (inner, marks) = stripMiddleware tree in (AST inner, marks)
+hanging :: [MiddlewareMount] -> HangingTree
+hanging = HangingTree
+
+-- 名字和顺序沿用声明求值的结果；目标身份另由前端从具名引用取得。
+hangingRows :: HangingTree -> [([String], Int)]
+hangingRows (HangingTree mounts) =
+  [([name | EffectNode name <- hooks], length targets) | MiddlewareMount hooks targets <- mounts]
 
 -- 解释器只折叠已经构造好的 branch，不能据此把裸 node 提升为 AST。
 foldAST :: Algebra WorkflowF value -> AST -> value

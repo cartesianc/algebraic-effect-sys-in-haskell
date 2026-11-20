@@ -291,7 +291,7 @@ cabal run file-demo
 | 一、资产 | `Types.hs` | 业务数据的构造器、字段和类型 |
 | 二、effect 注册 | `Effects.hs` | 类别、绑定的 handler 名、前驱和读取关系 |
 | 三、handler | `Handlers.hs` | 按表示类型读取、模式匹配、解析与 IO |
-| 四、workflow | `AST.hs`、`Workflow/*.hs` | 具名 branch 与末端挂载 |
+| 四、workflow | `AST.hs`、`Workflow/*.hs` | 具名 branch 与末端挂载；可选的 `Hanging.hs` 指定 Middleware 的作用分支 |
 | 生成接口与结构 | `Generated/` | 类型契约、协议包装、Prototype |
 | 运行入口 | `Main.hs` | interpreter 启动整份结构 |
 
@@ -369,7 +369,7 @@ newtype StartURL = StartURL PageURL
 
 生成器每次都会检查业务模块的顶层：
 
-- **顶层只有声明**：`Types.hs`、`Handlers.hs` 的顶层只允许类型声明和 instance；`Effects.hs` 只定义 `effects`（局部辅助写在它的 `where` 里），`AST.hs` 与 `Workflow/*.hs` 只定义类型为 `AST` 的命名值，`Main.hs` 只定义 `main`。顶层普通函数、类声明、foreign 声明和 rewrite rule 都被拒绝。
+- **顶层只有声明**：`Types.hs`、`Handlers.hs` 的顶层只允许类型声明和 instance；`Effects.hs` 只定义 `effects`（局部辅助写在它的 `where` 里），`AST.hs` 与 `Workflow/*.hs` 只定义类型为 `AST` 的命名值，可选的 `Hanging.hs` 只定义 `hangingTree :: HangingTree`，`Main.hs` 只定义 `main`。顶层普通函数、类声明、foreign 声明和 rewrite rule 都被拒绝。
 - **值操作写在 handler 里**：所有值操作写进 handler 方法体，经注册进入 effect 链，才能被静态分析。方法体内的 `let`／`where` 局部函数与 lambda 不限制；需要在多处使用的逻辑注册成 handler，通过 effect 组合。
 - **资产目录**：生成的 `Generated/Assets.hs` 列出资产的类型、构造器、字段及定义位置，供 review 和编辑器使用，运行时不加载。
 
@@ -725,7 +725,7 @@ ast = operateFile
 | --- | --- | --- | --- |
 | node | `node "effect名"` | `EffectNode` | 选择一条操作链的末端 effect |
 | branch | `chained`、`parallel`、`alternative` 或 `lifelong` 加子项列表 | `AST` | 组合 node 或其他 branch |
-| 标注 | `middleware [node "M"] 子树` | `AST` | 为一棵子树挂载 Middleware，不改变它的结构，见 [`middleware`](#middleware) |
+| 独立挂载（`Hanging.hs`） | `hanging [middleware [node "M"] [branch]]` | `HangingTree` | 将 Middleware 挂到具名分支的全部使用位置，见[示例](#middleware) |
 
 - **node 不是 AST**：顶层和每个模块都必须是 branch，单个 node 也要包进一个 branch。
 - **子项列表同质**：一个列表要么全是 node，要么全是 branch，不能混排。
@@ -794,10 +794,10 @@ monitor = lifelong
 #### `middleware`
 
 ```haskell
--- Effects.hs：effects 列表中的一项，allEffects 从 Framework.SDK 导入
+-- LinesDemo/Effects.hs，EffectKind 构造器从 Framework.SDK 导入
 EffectSpec
   { name = "TraceLine"
-  , typing = Middleware { handler = Just "traceLine", intercept = allEffects }
+  , typing = Middleware { handler = Just "traceLine", intercept = [StreamKind, ScopedKind] }
   , input = "None"
   , demands = []
   }
@@ -816,21 +816,27 @@ instance TraceLineLayer m => TraceLineHandler m where
       Returned name fields -> liftIO (print ("returned", name, fields))
     rawoutput []
 
--- AST.hs：businessWorkflow 是已有的业务子树
-ast = middleware [node "TraceLine"] businessWorkflow
+-- LinesDemo/AST.hs，monitorLines 是具名 lifelong 分支
+ast = chained [chained [node "Announce"], monitorLines, chained [node "Report"]]
+
+-- LinesDemo/Hanging.hs
+-- import Framework.SDK (HangingTree, hanging, middleware, node)
+-- import LinesDemo.AST (monitorLines)
+hangingTree :: HangingTree
+hangingTree = hanging [middleware [node "TraceLine"] [monitorLines]]
 ```
 
 - **何时执行。** 在标注覆盖的位置，Root 的 `super` 会为匹配 `intercept` 的原子调用通知进入和成功返回。读取 `rawinput`（按上游类别匹配）或显式 `raise` 也会通知对应的 middleware。一次写文件可以先记录开始、执行原有业务 IO、再记录输出。业务 handler 保持原写法，整个推进过程由 SDK 负责。
-- **按操作与方法名匹配。** `RawEmit name text` 接受任意来源，`RawEmit "nextLine" text` 只匹配指定方法。每次读取 `hook` 都取得触发本次 middleware 的同一项。`allEffects` 包含 Excu、Scoped、Pure 和 Stream；parser 可观察的 rawinput 按上游类别匹配。middleware 自身的 `rawoutput []` 直接返回。完整示例见 [LinesDemo](../demo/LinesDemo/Handlers.hs)。
+- **按操作与方法名匹配。** `RawEmit name text` 匹配送达的每条发送，`RawEmit "nextLine" text` 进一步限定方法名。`_` 匹配已经送达的全部操作。在上例中 `printLine` 是 Excu，在同一子树里照常执行，日志只收到 Stream 和 Scoped 捕获点的通知。`parseLine` 的 `RawInput` 属于它读取的上游 Stream。若要观察全部已支持的类别，可将 `intercept` 写为 `allEffects`（Excu、Scoped、Pure、Stream）。[完整 handler](../demo/LinesDemo/Handlers.hs)
 - **同步执行**：Middleware 是类方法，在调用点上执行完，原调用才继续；它只读捕获，不改变原值。多个 Middleware 按注册顺序依次执行，不要让它们依赖彼此。
-- **透明**：标注不改变子树的执行顺序、NodeId 和 lifelong 的单元划分。范围只看位置：标注覆盖整个 `lifelong` 时，它的生产会话里执行的调用（例如会话开启的 `open`）也被捕获；只覆盖 lifelong 里的子树时，只捕获这些节点。`--structure` 列出标注与每个启动位置生效的 Middleware。标注是给 gen 的标记，注入在生成期完成：改动标注后要重新生成。
+- **透明**：标注不改变子树的执行顺序、NodeId 和 lifelong 的单元划分。范围只看位置：标注覆盖整个 `lifelong` 时，它的生产会话里执行的调用（例如会话开启的 `open`）也被捕获；只覆盖 lifelong 里的子树时，只捕获这些节点。`--structure` 列出挂载目标和每个启动位置覆盖的 Middleware。该位置内的具体操作还须满足注册的 `intercept`。标注是给 gen 的标记，注入在生成期完成：改动标注后要重新生成。
 - **失败**：Middleware 与普通 Excu 一样 `raise`，失败从调用点传播，origin 是 Middleware 的注册名。
 - **限制**：标注列表只能写 Middleware；Middleware 不能作为 `node` 末端，也不能作为其他 effect 的 `input`；只有 Middleware 的 handler 获得 `Hooks` 能力。
 
 ### 文件组织
 
 - 每个 branch 放在 `Workflow/` 下单独的文件里，顶层 `AST.hs` 用非限定 import 只组合这些名字。
-- `AST.hs` 和 `Workflow/*.hs` 不导入 `Generated` 或 `Handlers`。
+- `AST.hs` 和 `Workflow/*.hs` 不导入 `Generated` 或 `Handlers`。使用 Middleware 时，在同一命名空间的 `Hanging.hs` 导入目标分支，导出 `hangingTree`。无挂载的程序可省略该文件。
 
 ### 运行与查看
 
@@ -1040,7 +1046,7 @@ snapshotAst :: AST
 snapshotAst = chained [node "Announce", node "Report"]
 ```
 
-选用 `ast = snapshotAst` 并按[生成流程](#commands)重新生成后，Report 仍声明 `requires "RunningTotal"`，其 handler 仍读 `require @Total`。gen 计算出 `RunningTotal` 由 TextCounter 的持续消费生产，按 Derive 建立 TextLine 的上游；Report 只取得一次 Total 并返回，不需要挂入 lifelong，也不因上游继续更新而再次执行。读取时可取得的统计取决于已完成的生产，不承诺恰好第一行或全部四行。
+选用 `ast = snapshotAst` 时，将 `Hanging.hs` 的目标也改为 `snapshotAst`（或使用 `hanging []`），再按[生成流程](#commands)重新生成后，Report 仍声明 `requires "RunningTotal"`，其 handler 仍读 `require @Total`。gen 计算出 `RunningTotal` 由 TextCounter 的持续消费生产，按 Derive 建立 TextLine 的上游；Report 只取得一次 Total 并返回，不需要挂入 lifelong，也不因上游继续更新而再次执行。读取时可取得的统计取决于已完成的生产，不承诺恰好第一行或全部四行。
 
 同样的 requires 可以写在普通 Context 生产链中：该链消费本次固定值，完成一次自己的解析与发布。生产方仍是持续资产，读取方的有限性质不改变其类型。SDK 根据组合确定这些关系，不根据业务是否叫“记录”或“统计”选择行为。
 
@@ -1062,7 +1068,7 @@ snapshotAst = chained [node "Announce", node "Report"]
       readLines
   ```
 
-  LinesDemo 在整棵 workflow 上挂载 `TraceLine`，注册为 `intercept = allEffects`。它匹配 `RawEmit name text` 逐条打印来源方法名和当前行。每条发送的日志写完后才启动这一条的 parser。
+  LinesDemo 在具名 `monitorLines` 上挂载 `TraceLine`，捕获 Stream 和 Scoped。每条 `RawEmit name text` 的日志写完后才启动该条数据的 parser。[挂载声明](../demo/LinesDemo/Hanging.hs)
 
   上面的 LinesDemo AST 将 `Report` 放在 lifelong 之后；单元处理完所需交付并结束，才会继续执行它。
 

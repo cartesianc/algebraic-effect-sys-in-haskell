@@ -25,7 +25,6 @@ compiledEntries = do
   scopes <- Handlers.newScopeHandlers
   pure
     ( [ SDK.targetApp "Announce" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (AnnounceResult <$> (() <$ (Handlers.runAnnounce @'[]))))
-      , SDK.targetApp "Announce@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (AnnounceResult <$> (() <$ (Handlers.runAnnounce @'["TraceLine"]))))
       , SDK.targetApp "PrintLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (PrintLineResult <$> (() <$ (Handlers.runPrintLine @'[]))))
       , SDK.targetApp "PrintLine@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (PrintLineResult <$> (() <$ (Handlers.runPrintLine @'["TraceLine"]))))
       , SDK.targetApp "TextCounter" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (TextCounterResult <$> (() <$ (Handlers.runTextCounter @'[]))))
@@ -33,17 +32,17 @@ compiledEntries = do
       , SDK.targetApp "ShowTotal" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ShowTotalResult <$> (() <$ (Handlers.runShowTotal @'[]))))
       , SDK.targetApp "ShowTotal@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ShowTotalResult <$> (() <$ (Handlers.runShowTotal @'["TraceLine"]))))
       , SDK.targetApp "Report" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ReportResult <$> (() <$ (Handlers.runReport @'[]))))
-      , SDK.targetApp "Report@TraceLine" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (ReportResult <$> (() <$ (Handlers.runReport @'["TraceLine"]))))
       ]
     , []
     , [ ("LineParser@TraceLine", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers ((Handlers.nextLineFeed @'["TraceLine"])))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getTextLine @'["TraceLine"])))))
-      , ("CountParser@TraceLine", SDK.deriveSteps (SDK.targetApp "CountParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getRunningTotal @'["TraceLine"])))))
+      , ("LineParser", SDK.receiveSteps (SDK.targetApp "LineFeed" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers ((Handlers.nextLineFeed @'[])))) (SDK.targetApp "LineParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getTextLine @'[])))))
+      , ("CountParser", SDK.deriveSteps (SDK.targetApp "CountParser" emptyContexts scopes (SDK.withErrorHandlers Handlers.errorHandlers (() <$ (Handlers.getRunningTotal @'[])))))
       ]
     )
 
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "LinesDemo" [("demo/LinesDemo/Handlers.hs", Handlers.handlerSourceFingerprint)] generatedPrototype compiledEntries
+interpreter = SDK.interpreter "LinesDemo" [("demo/LinesDemo/Handlers.hs", Handlers.handlerSourceFingerprint), ("demo/LinesDemo/AST.hs",Just "b4a07283844f0afccce4353729b0ceb6"), ("demo/LinesDemo/Hanging.hs",Just "2d3a4e4f9d49fba66e4c6b11f7e10a76")] generatedPrototype compiledEntries
 -- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
 -- NodeId 只在这份 AST 快照中有效；运行时校验后装配闭包。
 generatedPrototype :: SDK.Prototype MethodGen
@@ -82,8 +81,7 @@ generatedPrototype =
             }
         , SDK.EffectSpec
             { SDK.name = "TraceLine"
-            , SDK.typing =
-                SDK.Middleware (Just "traceLine") ([SDK.ExcuKind, SDK.ScopedKind, SDK.PureKind, SDK.StreamKind])
+            , SDK.typing = SDK.Middleware (Just "traceLine") ([SDK.StreamKind, SDK.ScopedKind])
             , SDK.input = "None"
             , SDK.demands = []
             }
@@ -900,8 +898,8 @@ generatedPrototype =
               , ("LineParser", GetTextLineGen)
               , ("CountParser", GetRunningTotalGen)
               ]
-          , SDK.drivingMiddleware = [([],["TraceLine"])]
+          , SDK.drivingMiddleware = [([1],["TraceLine"])]
           , SDK.drivingHooks =
-              [([0,0],["TraceLine"]),([1,0,0,0],["TraceLine"]),([1,0,0,1],["TraceLine"]),([1,0,1,0],["TraceLine"]),([2,0],["TraceLine"]),([1,-1,0,0],["TraceLine"]),([1,-1,0,1],["TraceLine"]),([-2,0,0],["TraceLine"]),([-2,0,1],["TraceLine"]),([-2,1,0],["TraceLine"])]
+              [([1,0,0,0],["TraceLine"]),([1,0,0,1],["TraceLine"]),([1,0,1,0],["TraceLine"]),([1,-1,0,0],["TraceLine"]),([1,-1,0,1],["TraceLine"])]
           }
     }

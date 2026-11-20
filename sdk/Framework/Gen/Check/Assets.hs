@@ -130,10 +130,10 @@ describeName name = AssetSymbol
     slash '\\' = '/'
     slash character = character
 
-data ModuleRole = EffectsModule | WorkflowModule | MainModule | OtherModule deriving Eq
+data ModuleRole = EffectsModule | WorkflowModule | HangingModule | MainModule | OtherModule deriving Eq
 
 -- 业务模块的顶层只允许类型声明、instance，以及固定的注册、workflow 与入口值：
--- Effects 的 effects，AST 与 Workflow 模块中类型为 AST 的命名 workflow，Main 的 main。
+-- Effects 的 effects，AST 与 Workflow 的具名 AST，Hanging 的 hangingTree，以及 Main 的 main。
 -- 顶层普通函数一律拒绝：值操作写在 handler 方法体内，经注册进入 effect 链，才能被静态分析。
 -- 方法体内的局部函数与 lambda 不受限制。
 checkTopLevel :: String -> TypecheckedModule -> [String]
@@ -155,22 +155,26 @@ checkTopLevel namespace checked = case tm_renamed_source checked of
     sourceModule = moduleNameString (moduleName (ms_mod (pm_mod_summary (tm_parsed_module checked))))
     role
       | sourceModule == namespace ++ ".Effects" = EffectsModule
+      | sourceModule == namespace ++ ".Hanging" = HangingModule
       | sourceModule == namespace ++ ".Main" = MainModule
       | sourceModule == namespace ++ ".AST" || (namespace ++ ".Workflow.") `isPrefixOf` sourceModule = WorkflowModule
       | otherwise = OtherModule
     allowed binder = case role of
+      HangingModule -> occNameString (nameOccName binder) == "hangingTree"
+        && any (declarationType "HangingTree" . snd) (filter ((== binder) . fst) typed)
       EffectsModule -> occNameString (nameOccName binder) == "effects"
       MainModule -> occNameString (nameOccName binder) == "main"
-      WorkflowModule -> any (workflowType . snd) (filter ((== binder) . fst) typed)
+      WorkflowModule -> any (declarationType "AST" . snd) (filter ((== binder) . fst) typed)
       OtherModule -> False
     advice = case role of
+      HangingModule -> "Hanging.hs defines only hangingTree :: HangingTree"
       EffectsModule -> "Effects.hs defines only effects; local helpers may stay in its where clause"
       WorkflowModule -> "workflow modules define only named AST values"
       MainModule -> "Main.hs defines only main"
       OtherModule -> "write value operations inside handler methods (local functions there are fine)"
-    workflowType selected = case splitTyConApp_maybe selected of
+    declarationType expected selected = case splitTyConApp_maybe selected of
       Just (constructor, []) -> let name = tyConName constructor
-        in occNameString (nameOccName name) == "AST"
+        in occNameString (nameOccName name) == expected
           && fmap (moduleNameString . moduleName) (nameModule_maybe name) == Just "Framework.Language.AST"
       _ -> False
     typed = typedVariables (tm_typechecked_source checked)

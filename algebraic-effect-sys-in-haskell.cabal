@@ -156,6 +156,7 @@ executable lines-demo
   main-is: LinesDemo/Main.hs
   other-modules:
       LinesDemo.AST
+      LinesDemo.Hanging
       LinesDemo.Effects
       LinesDemo.Types
       LinesDemo.Generated.Effects
@@ -169,6 +170,7 @@ executable effect-codegen
   other-modules:
       Framework.Gen
       Framework.Gen.Frontend.Source
+      Framework.Gen.Frontend.Hanging
       Framework.Gen.Frontend.Ghc
       Framework.Gen.Composition
       Framework.Gen.Plan

@@ -47,7 +47,7 @@ caseOfReportState (ReportState value) = case value of
 
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "FacadeProbe" [("demo/FacadeProbe/Handlers.hs", Handlers.handlerSourceFingerprint), ("demo/FacadeProbe/Types.hs", Just "77b89f72aad76fb3fe15e313eaa47ff4")] generatedPrototype compiledEntries
+interpreter = SDK.interpreter "FacadeProbe" [("demo/FacadeProbe/Handlers.hs", Handlers.handlerSourceFingerprint), ("demo/FacadeProbe/Types.hs", Just "77b89f72aad76fb3fe15e313eaa47ff4"), ("demo/FacadeProbe/Hanging.hs",Nothing)] generatedPrototype compiledEntries
 -- 生成时完成注册、方法、origin/ctx 链、资产来源、Workflow 和 scope 的统一分析。
 -- NodeId 只在这份 AST 快照中有效；运行时校验后装配闭包。
 generatedPrototype :: SDK.Prototype MethodGen

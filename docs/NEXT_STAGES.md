@@ -35,7 +35,11 @@ Middleware 首版与 Root 的 `super` 已经实现，[superhandler 的生成期�
 - **`requires`。** 若允许 Middleware 读取配置资产，须把它计入来源证明与等待环分析：它在调用点同步执行，读取等待可能与被捕获调用所在的生产形成等待环。
 - **更多捕获类型。** 六种已支持的通知已统一通过 `op <- hook` 读取（2026-11-20），写法见[指南](GUIDE.md#middleware)。Context parser 交出的业务 ADT 与其他类别的扩展仍待设计。
 - **mock。** SDK 目前没有 mock 运行模式；Middleware 的 `raise` 在正常运行时按普通失败传播。
-- **Hanging 与装卸。** 与 Middleware 的挂起、恢复和装卸关系另行设计。
+
+<a id="hanging-tree"></a>
+## 独立 Hanging Tree 与具名 workflow 分支
+
+**已实现（2026-11-20）。** `Hanging.hs` 单独声明 Middleware 覆盖的具名分支。同一绑定的全部使用位置都受该声明覆盖。gen 根据 GHC 的定义名定位使用位置，沿用 Booter 的挂载计划和 Injector.Super 的 `intercept` 筛选。运行期装卸仍属开放专题。写法见[指南](GUIDE.md#middleware)，规则见[主设计](CORE_DESIGN.md#middleware)。
 
 <a id="backpressure"></a>
 ## 延期专题：持续交付的容量与背压
@@ -86,7 +90,7 @@ Middleware 首版与 Root 的 `super` 已经实现，[superhandler 的生成期�
 | 故障恢复 | Error 驱动链、常驻 scope 失效与修复、局部失败、已展开 continuation 恢复及跨调用诊断；当前 resolve 不调用 close，处置成功仍传播原失败 |
 | 内存与诊断 | 业务惰性状态链是否需要处理，以及关闭失败记录长期累积的报告策略；强制求值或改变报告时机须另行确认 |
 | 模块与接口 | 独立生成模块组合、跨语言 schema |
-| Hanging 与装卸 | 与 Middleware 的挂起、恢复、装卸关系另行设计，见 [Middleware 后续事项](#middleware)。 |
+| Middleware 运行期装卸 | 与 Middleware 的挂起、恢复、装卸关系另行设计，见 [Middleware 后续事项](#middleware)。 |
 | 外部工具 | LSP 侧的订阅、会话、单元与来源可视化，及穷举模型对 Stream／lifelong 的覆盖。 |
 
 <a id="review"></a>

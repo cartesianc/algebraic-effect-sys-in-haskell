@@ -18,7 +18,7 @@ module Framework.Gen.Composition
   , PendingComposition, CompositionResult(..)
   ) where
 
-import Control.Monad (foldM, unless, when)
+import Control.Monad (foldM, forM_, unless, when)
 import Control.Monad.State.Strict (StateT, evalStateT, execStateT, gets, lift, modify')
 import Data.Char (isAlphaNum, isLower, isSpace, isUpper)
 import Data.Graph (SCC(..), stronglyConnComp)
@@ -31,7 +31,7 @@ import Framework.Gen.Plan
 import Framework.Gen.Injector
 import Framework.Gen.Injector.Super (superSelections)
 import Framework.Gen.Booter
-import Framework.Language.AST (WorkflowF(..), stripMiddleware)
+import Framework.Language.AST (WorkflowF(..), HangingTree, hangingRows)
 import Framework.Language.Registration hiding (effectKind)
 import qualified Framework.Language.Registration as Registration
 import Framework.Prototype.Graph
@@ -45,8 +45,8 @@ import Framework.Recursion (Fix(..), cata, Algebra)
 -- 每次迁移在 Either 中完成后才交出下一状态；错误不会留下半份可输出的结果。
 -- 多次遍历服务于不同关系（调用图/控制路径/来源），不是多套独立调度器。
 data CompositionState
-  = Declared String [EffectSpec] (Fix WorkflowF) SumTypes
-  | Related String [EffectSpec] [EffectProto String] (Fix WorkflowF) SumTypes
+  = Declared String [EffectSpec] (Fix WorkflowF) [(NodeId, [String])] SumTypes
+  | Related String [EffectSpec] [EffectProto String] (Fix WorkflowF) [(NodeId, [String])] SumTypes
   | Numbered String PrototypePlan SumTypes
   | AwaitingBodies Unit
   | ResolvingBodies Unit (Maybe [(String, MethodShape String)])
@@ -66,13 +66,12 @@ data CompositionResult = CompositionResult
 -- 唯一状态转换入口。缓存只替换 BuildingStructure/ProvingSources；验证和驱动检查不会跳过。
 advanceComposition :: CompositionState -> Either String CompositionState
 advanceComposition state = case state of
-  Declared namespace specifications tree sumTypes -> do
+  Declared namespace specifications tree marks sumTypes -> do
     effects <- diagnostic (buildEffectProtos specifications sumTypes)
-    pure (Related namespace specifications effects tree sumTypes)
-  -- middleware 标注是透明的：先剥离标注再编号，标注位置按剥离后的路径记录。
-  Related namespace specifications effects tree sumTypes -> do
-    let (inner, marks) = stripMiddleware tree
-    workflow <- diagnostic (numberWorkflow effects inner)
+    pure (Related namespace specifications effects tree marks sumTypes)
+  -- 业务树独立编号；Hanging 只贡献挂载范围，类型筛选仍由 Injector.Super 完成。
+  Related namespace specifications effects tree marks sumTypes -> do
+    workflow <- diagnostic (numberWorkflow effects tree)
     diagnostic (checkMiddleware effects marks)
     pure (Numbered namespace (PrototypePlan specifications effects workflow marks) sumTypes)
   Numbered namespace plan sumTypes -> do
@@ -110,9 +109,18 @@ settleComposition state = case state of
   _ -> advanceComposition state >>= settleComposition
 
 -- 声明加载进程返回同一机器的接口检查点。Unit 只含纯 ADT，可 Show/Read；没有 GHC AST 或类字典。
-beginComposition :: String -> [EffectSpec] -> Fix WorkflowF -> SumTypes -> Either String Unit
-beginComposition namespace specifications tree sumTypes = do
-  state <- settleComposition (Declared namespace specifications tree sumTypes)
+beginComposition :: String -> [EffectSpec] -> Fix WorkflowF -> HangingTree -> [[(String, [NodeId])]] -> SumTypes -> Either String Unit
+beginComposition namespace specifications tree mounts targets sumTypes = do
+  let rows = hangingRows mounts
+  unless (length rows == length targets) (Left "Hanging source differs from its declaration")
+  marks <- concat <$> sequence
+    [ do
+        unless (arity == length refs && arity > 0) (Left "middleware needs a nonempty list of named workflow branches")
+        unless (unique (map fst refs)) (Left "middleware lists a workflow branch twice")
+        forM_ refs $ \(name, paths) -> when (null paths) (Left ("Hanging target is unreachable from AST.ast: " ++ name))
+        pure [(path, hooks) | (_, paths) <- refs, path <- paths]
+    | ((hooks, arity), refs) <- zip rows targets ]
+  state <- settleComposition (Declared namespace specifications tree marks sumTypes)
   case state of
     AwaitingBodies unit -> pure unit
     _ -> Left "Composition did not reach the interface checkpoint"

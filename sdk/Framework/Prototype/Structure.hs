@@ -33,7 +33,7 @@ renderStructure prototype workflowAST = do
     tree = protoScopes prototype
     rendered =
       ["Workflow"] ++ renderWorkflow 1 (protoWorkflow prototype)
-      ++ concat [["", "Middleware (annotated subtree: hooks; effective hooks per launch position)"]
+      ++ concat [["", "Middleware (Hanging mounts and covered launch positions; intercept limits capture by effect kind)"]
           ++ ["  at " ++ show node ++ " " ++ unwords hooks | (node, hooks) <- drivingMiddleware (protoDriving prototype)]
           ++ ["  launch " ++ show node ++ " " ++ unwords hooks | (node, hooks) <- drivingHooks (protoDriving prototype)]
         | not (null (drivingMiddleware (protoDriving prototype)))]

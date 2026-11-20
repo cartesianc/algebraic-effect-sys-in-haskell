@@ -23,6 +23,7 @@
 | `Types.hs`、`Handlers.hs` 及其他业务模块 | 类型声明（`data`／`newtype`／`type`）与 deriving、instance |
 | `Effects.hs` | 以上声明，以及 `effects`；局部辅助写在 `effects` 的 `where` 里 |
 | `AST.hs`、`Workflow/*.hs` | 以上声明，以及类型为 `AST` 的命名 workflow |
+| `Hanging.hs`（可选） | 以上声明，以及 `hangingTree :: HangingTree` |
 | `Main.hs` | 以上声明，以及 `main` |
 
 顶层普通函数与顶层值、类声明（handler 类由注册生成）、foreign 声明和 rewrite rule 都被拒绝，诊断给出位置和建议。

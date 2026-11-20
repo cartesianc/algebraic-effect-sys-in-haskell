@@ -24,7 +24,7 @@
 | 持续执行与资源收尾 | 两侧结束、后继读取、交付保留、会话退役及持续值参数已实现；交付与业务数据中的资源持有继续收敛 | [阶段状态](NEXT_STAGES.md#stages)、[当前限制](NEXT_STAGES.md#current-limits) |
 | 嵌套 lifelong、背压与交付容量等 | 后续专题，本轮不扩展 | [开放事项](NEXT_STAGES.md#deferred) |
 | Middleware 按 AST 挂载注入 Root 的 `super`，观察进入、输出、rawinput 和 raise | 已实现（2026-11-19） | [Middleware](#middleware)、[后续事项](NEXT_STAGES.md#middleware) |
-| Generic Map、Hanging、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [开放事项](NEXT_STAGES.md#deferred) |
+| Generic Map、Middleware 运行期装卸、跨 interpreter 存续 | 尚未实现，具体语义需继续收敛 | [开放事项](NEXT_STAGES.md#deferred) |
 
 实现状态说明代码已接入的范围，不代表全部并发交错或资源逃逸已获证明。过去的编译及 demo 结果概述见 [已有基础与验证边界](NEXT_STAGES.md#baseline)。
 
@@ -289,7 +289,7 @@ gen 分开处理结构共享、同次输出复用与 scope 实例共享。相同
 <a id="registration"></a>
 ### 4.1 注册与 handler 契约
 
-统一使用 EffectSpec 注册，effect typing 有 Pure、Excu、Scoped、Error、Context、Stream、Middleware 七类；Stream 是持续数据源，只由生产会话驱动，规则见第 7 章；Middleware 只由 AST 标注挂载，规则见 [Middleware](#middleware)。typing 的字段写 handler 名：handler 是不带参数的原子类方法，一个 handler 可以注册到多个 effect。effect 是业务配置，给出类别、绑定、前驱（input）与资产访问（demands）；effect 自身的入口方法名由 gen 内部生成，用户不写也不调用。对外产值的细化解析归 Context，生产链中的纯值变换归 Pure，不另设 Map。
+统一使用 EffectSpec 注册，effect typing 有 Pure、Excu、Scoped、Error、Context、Stream、Middleware 七类；Stream 是持续数据源，只由生产会话驱动，规则见第 7 章；Middleware 通过独立 Hanging Tree 挂载到具名 AST 分支，规则见 [Middleware](#middleware)。typing 的字段写 handler 名：handler 是不带参数的原子类方法，一个 handler 可以注册到多个 effect。effect 是业务配置，给出类别、绑定、前驱（input）与资产访问（demands）；effect 自身的入口方法名由 gen 内部生成，用户不写也不调用。对外产值的细化解析归 Context，生产链中的纯值变换归 Pure，不另设 Map。
 
 | 注册类别 | 绑定的 handler | handler 签名 | gen 生成的内部入口 | SDK 执行责任 |
 | --- | --- | --- | --- | --- |
@@ -448,14 +448,18 @@ instance TraceOutputLayer m => TraceOutputHandler m where
       _ -> pure ()
     rawoutput []
 
--- AST：透明标注一棵子树
-ast = parallel [middleware [node "TraceOutput"] reportBranch, chained [node "WriteReport"]]
+-- AST.hs
+ast = parallel [reportBranch, chained [node "WriteReport"]]
+
+-- Hanging.hs，导入同一 reportBranch
+hangingTree :: HangingTree
+hangingTree = hanging [middleware [node "TraceOutput"] [reportBranch]]
 ```
 
 - **注册。** `input` 写保留名 `"None"`：没有 Input 注入，沿用 Input 的组合逻辑而不另设注册构造器。只有 Middleware 能写 `"None"`，Middleware 也只能写 `"None"`；任何 effect 的 Input 都不能指向 Middleware，因此 Middleware 与被捕获的链之间不会成环。`"None"` 与 `"Root"` 一样不能作为 effect 名。首版不允许 demands。`intercept` 非空、不重复，接受 `ExcuKind`、`ScopedKind`、`PureKind` 和 `StreamKind`，`allEffects` 包含这四类。
-- **挂载。** `middleware :: [EffectNode] -> AST -> AST` 包住恰好一棵子树。列表只接受 Middleware 注册名，普通 `node` 也不能引用 Middleware。标注是透明的：gen 先剥离标注再编号，NodeId、单元划分（包括 `lifelong` 对直接 `parallel` 子项的拆分）与无标注时相同；标注位置与 Middleware 名作为 `drivingMiddleware` 存入 Prototype，运行与 `--structure` 剥离当前 AST 后核对骨架，并核对标注与编译时一致。
+- **挂载。** 可选的 `Hanging.hs` 将 Middleware 注册名挂到 `AST.hs` 或 `Workflow` 模块的具名 `AST`。gen 读取 GHC 解析出的定义名，沿 `ast` 的分支引用收集该定义出现的全部位置。两个不同定义即使形状相同也可分别挂载。挂载目标须从 `ast` 可达，涉及目标的引用路径须能从显式子项列表和具名绑定定位。业务树单独编号，挂载位置写入 Prototype 的 `drivingMiddleware`。修改挂载声明或相关具名分支后重新生成，执行与 `--structure` 共用这份计划。
 - **集合与类型类注入。** gen 为每个挂载（节点、选择读取、会话步骤）求覆盖它的全部标注之并，按注册顺序去重；Booter 把它存为 `drivingHooks`。注册了 Middleware 时，标签写作 `Wrap hooks effect method`，每个 effect 入口只生成一份，对 `hooks` 多态（`runX :: forall hooks. Captured hooks => App …`），入口之间以 `@hooks` 互相调用，所以前驱、`requests` 驱动、rawinput 读取的句柄、挂接的 parser 与自动收尾的 close 都处在同一个列表下。生成的 Haskell 把 `Captured hooks`（每个被拦截类别一条 `Captures hooks kind`）写在入口的类型签名上。Program 为每个挂载登记时在类型上给出列表（例如 `Handlers.runReport @'["Audit"]`，被覆盖的挂载另以 `名字@Audit` 登记），GHC 在编译期选定实例；运行时只按 Prototype 的静态登记名（`entryLabel`）选取已编译的 Target，没有目录或分发。
-- **生成期选择。** `Gen.Injector.Super` 对入口实际实例化的每个列表（空列表、各挂载与会话步骤的列表）和每个被拦截的类别，按注册顺序选出拦截该类别的 Middleware；Emit 把每条选择写成一个 `Captures` 实例。例如 `Audit` 拦截 Excu 与 Scoped、`Timer` 拦截全部类别时：
+- **生成期选择。** `intercept` 限定捕获点的 effect 类别。`hook :: m Operation` 保留完整 ADT，handler 中的 `_` 只匹配已经送达的通知。 `Gen.Injector.Super` 对入口实际实例化的每个列表（空列表、各挂载与会话步骤的列表）和每个被拦截的类别，按注册顺序选出拦截该类别的 Middleware；Emit 把每条选择写成一个 `Captures` 实例。例如 `Audit` 拦截 Excu 与 Scoped、`Timer` 拦截全部类别时：
 
   ```haskell
   instance Captures '["Audit", "Timer"] 'ExcuKind where
@@ -673,7 +677,6 @@ SDK 将 node 与 branch 分成两个抽象类型：
 ```haskell
 node :: String -> EffectNode
 chained, parallel, alternative, lifelong :: BranchChild child => [child] -> AST
-middleware :: [EffectNode] -> AST -> AST  -- 透明标注，见 [Middleware](#middleware)
 ```
 
 BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两个实例；业务不增加 class、instance 或转换调用。同一列表只能全是 node 或全是 branch，裸 node 不能赋给 AST，原始 AST 构造器与子项转换不公开。单节点模块用 `chained [node "目标"]`。整个程序必须至少挂载一个末端。有限 workflow 内可用 `chained ([] :: [AST])` 表达一个成功返回空结果的子分支。内部递归表示与 algebra 不变，通过 foldAST 使用 cata。
@@ -838,7 +841,7 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 
 | 阶段 | 实现位置 | 输入 → 输出与检查 |
 | --- | --- | --- |
-| 读取声明 | `Gen.Frontend.Source` | GHC 解析 Types 的和类型，在独立 ghci 中加载 effects 与 ast；保留原文与位置 |
+| 读取声明 | `Gen.Frontend.Source`、`Gen.Frontend.Hanging` | GHC 解析 Types 的和类型与挂载目标的定义名；独立 ghci 加载 effects、ast 和可选的 hangingTree |
 | 解释注册 | `Gen.Composition` | 唯一资产来源、访问、Input、方法角色与绑定；`Names` 只拼写已选角色的名字 |
 | 合成驱动 | `Gen.Booter` | 以解析后的 effect 原型编号 workflow，确定 alternative、会话、挂载、输出连接及控制流已经承担的读取 |
 | 合成装配 | `Gen.Injector` | 以已解析声明计算 Layer、读取路由、有序 requests／Input、rawinput、入口操作、scope 与 Error 回调；检查表示类型与共享签名。`Injector.Super` 按挂载列表与捕获类别预选 superhandler 要调用的 Middleware |

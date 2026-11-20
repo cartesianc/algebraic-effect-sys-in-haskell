@@ -193,15 +193,12 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
           _ -> raise (ParseTotalError "the counter gives a line count and a character count")
 
     -- demo/LinesDemo/AST.hs
-    ast = middleware [node "TraceLine"] $ chained
-      [ chained [node "Announce"]
-      , lifelong
-          [ parallel
-              [ chained [node "PrintLine", node "TextCounter"]
-              , chained [node "ShowTotal"]
-              ]
+    ast = chained [chained [node "Announce"], monitorLines, chained [node "Report"]]
+    monitorLines = lifelong
+      [ parallel
+          [ chained [node "PrintLine", node "TextCounter"]
+          , chained [node "ShowTotal"]
           ]
-      , chained [node "Report"]
       ]
 
 `countText` 的累计保存在 InputFile 的业务状态中，`parseTotal` 只解析本次原子输出。两者是普通的 Excu handler 与 parser，没有新的 effect 类别、关键字或 handler 能力。AST 的一个单元打印并执行 `TextCounter`；gen 把 `RunningTotal` 装配为 ReuseOutput，会话接收这次原子输出经 `CountParser` 解析后的资产。另一个单元的 `ShowTotal` 领取该发布，不另行执行统计，显示与原行文本可以交错。原子方法仍然不知道它的输出将由谁消费。
@@ -513,15 +510,12 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
         readLines
 
     -- demo/LinesDemo/AST.hs
-    ast = middleware [node "TraceLine"] $ chained
-      [ chained [node "Announce"]
-      , lifelong
-          [ parallel
-              [ chained [node "PrintLine", node "TextCounter"]
-              , chained [node "ShowTotal"]
-              ]
+    ast = chained [chained [node "Announce"], monitorLines, chained [node "Report"]]
+    monitorLines = lifelong
+      [ parallel
+          [ chained [node "PrintLine", node "TextCounter"]
+          , chained [node "ShowTotal"]
           ]
-      , chained [node "Report"]
       ]
 
 LinesDemo 读完四行后 `streamEnd`，打印与统计单元排空后退出并封住 `RunningTotal`；显示单元领完统计增量后退出，lifelong 返回，`Report` 读取最终统计（输出复用见 [4.2 节](#derive)）。`TextLine` 的读取方全部离开时会话退役，输入文件随之关闭，早于 `Report`。parser、Excu、Scoped 的 Layer 里没有 `StreamEnds`，在它们的方法体里写 `streamEnd` 由 GHC 拒绝。

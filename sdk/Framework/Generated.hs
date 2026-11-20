@@ -40,8 +40,9 @@ import Control.Exception (evaluate)
 import GHC.Fingerprint (fingerprintString)
 import GHC.Generics (Generic)
 import System.Environment (getArgs)
+import System.FilePath (takeFileName)
 import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, hSetNewlineMode, stdout, universalNewlineMode, utf8, withFile)
-import System.IO.Error (tryIOError)
+import System.IO.Error (isDoesNotExistError, tryIOError)
 import System.Process (callProcess)
 
 -- Generated.Program 提供本次生成引用的手写源文件路径与指纹。
@@ -84,6 +85,7 @@ verifySource namespace path expected = do
   case actual of
     Right fingerprint | expected == Just fingerprint -> pure ()
     Right _ -> staleGenerated namespace (path ++ " changed or has not been generated")
+    Left problem | takeFileName path == "Hanging.hs" && expected == Nothing && isDoesNotExistError problem -> pure ()
     Left problem -> staleGenerated namespace ("Cannot verify " ++ path ++ ": " ++ show problem)
 
 staleGenerated :: String -> String -> IO value

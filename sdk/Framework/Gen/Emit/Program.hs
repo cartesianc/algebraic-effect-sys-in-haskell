@@ -9,8 +9,8 @@ import Framework.Gen.Names (HandlerNames, entryName, helperName)
 import Framework.Gen.Plan
 import Framework.Prototype (ChainRole(..), variantLabel)
 
-renderProgram :: HandlerNames -> Maybe String -> Unit -> String
-renderProgram names typesFingerprint unit = unlines (programHeader ++ astInterpreter)
+renderProgram :: HandlerNames -> Maybe String -> [(FilePath, Maybe String)] -> Unit -> String
+renderProgram names typesFingerprint hangingSources unit = unlines (programHeader ++ astInterpreter)
   where
     namespace = unitNamespace unit
     helper name = "Handlers." ++ helperName names name
@@ -72,6 +72,7 @@ renderProgram names typesFingerprint unit = unlines (programHeader ++ astInterpr
       ]
     sourceChecks = ["(" ++ sourcePath "Handlers.hs" ++ ", " ++ helper "handlerSourceFingerprint" ++ ")"]
       ++ ["(" ++ sourcePath "Types.hs" ++ ", " ++ show typesFingerprint ++ ")" | not (null selectors)]
+      ++ map show hangingSources
     sourcePath file = show ("demo/" ++ map (\c -> if c == '.' then '/' else c) namespace ++ "/" ++ file)
     -- 按 Context 注册名登记（与运行时绑定来源同名）。Receive：Stream 方法内每次 rawemit 驱动一次 parser 解析并发布。
     -- Derive：领取一条上游交付后只执行 parser，它沿 Input 链执行被驱动的句柄并发布。
