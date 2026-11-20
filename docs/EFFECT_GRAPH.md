@@ -340,7 +340,7 @@ App／IO 的生成入口沿 Input／requests 关系查找最近的 scope，遇�
 
 ## 查看初始化结果
 
-生成的 `Generated.Prototype` 导出静态的纯值，`Generated.Program` 把它交给 interpreter：
+生成的 `Generated.Prototype` 定义静态的纯值。`Generated.Program` 也导出同一个值，并把它交给 interpreter。
 
 ```haskell
 generatedPrototype :: SDK.Prototype MethodGen

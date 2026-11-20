@@ -1,5 +1,5 @@
 ﻿# 本地回归检查：重新生成全部命名空间、编译全部组件、逐个运行 demo。
-# 不保存期望输出，只看每一步是否成功；结果打印在终端，不写入仓库。
+# 有限 demo 须以 Succ 完成，持续 demo 须运行到观察期结束。结果打印在终端。
 #
 # 用法（在仓库根目录）：
 #   powershell -ExecutionPolicy Bypass -File scripts/check.ps1
@@ -74,7 +74,7 @@ if ($LASTEXITCODE -ne 0) {
   exit 1
 }
 
-# 3. 运行 cabal 文件中的每个 *-demo，按退出码判断。
+# 3. 有限 demo 的业务结果由 interpreter 打印。Failed 也可以正常退出。
 Write-Step '运行 demo'
 $demos = Select-String -Path *.cabal -Pattern '^executable\s+(\S+-demo)\s*$' |
   ForEach-Object { $_.Matches[0].Groups[1].Value }
@@ -107,9 +107,21 @@ foreach ($demo in $demos) {
       Write-Host "  $demo 超过 $limit 秒未结束" -ForegroundColor Red
       Write-Tail $stdout 10
     }
+  } elseif ($isContinuous) {
+    $failures.Add("$demo（在观察期内退出，退出码 $($process.ExitCode)）")
+    Write-Host "  $demo 提前退出" -ForegroundColor Red
+    Write-Tail $stdout 10
+    Write-Tail $stderr 10
   } elseif ($process.ExitCode -eq 0) {
     $last = Get-Content -Path $stdout -Encoding UTF8 -Tail 1
-    Write-Host "  $demo 通过：$last" -ForegroundColor Green
+    if ($last -cmatch '^Succ(?:\s|$)') {
+      Write-Host "  $demo 通过：$last" -ForegroundColor Green
+    } else {
+      $failures.Add("$demo（未返回 Succ）")
+      Write-Host "  $demo 业务未成功" -ForegroundColor Red
+      Write-Tail $stdout 10
+      Write-Tail $stderr 10
+    }
   } else {
     $failures.Add("$demo（退出码 $($process.ExitCode)）")
     Write-Host "  $demo 失败，退出码 $($process.ExitCode)" -ForegroundColor Red
