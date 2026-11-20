@@ -1,7 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 
--- 输出 Generated/Program.hs 的程序部分：末端入口、选择读取与会话步骤的登记，以及绑定好元数据的 interpreter。
--- 原型本身由 Framework.Gen.Emit.Prototype 渲染并追加在后面。
+-- 输出 Generated/Program.hs：末端入口、选择读取与会话步骤的登记，以及绑定好元数据的 interpreter。
+-- 原型数据由 Framework.Gen.Emit.Prototype 写成单独的 Generated/Prototype.hs，这里只引用。
 module Framework.Gen.Emit.Program (renderProgram) where
 
 import Data.List (intercalate)
@@ -21,12 +21,13 @@ renderProgram names typesFingerprint hangingSources unit = unlines (programHeade
       ++ (if hooked then ["{-# LANGUAGE DataKinds #-}", "{-# LANGUAGE TypeApplications #-}"] else [])
       ++
       [ ""
-      , "-- 自动生成；只登记末端入口与原型，执行由 SDK 的 interpreter 完成。"
+      , "-- 自动生成；只登记末端入口，原型在 Generated/Prototype.hs，执行由 SDK 的 interpreter 完成。"
       , "module " ++ namespace ++ ".Generated.Program where"
       , ""
       , "import Framework.Generated (EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))"
       , "import qualified Framework.Generated as SDK"
       , "import " ++ namespace ++ ".Generated.Effects"
+      , "import " ++ namespace ++ ".Generated.Prototype (generatedPrototype)"
       , "import qualified " ++ namespace ++ ".Generated.Handlers as Handlers"
       , "import " ++ namespace ++ ".Types"
       , ""

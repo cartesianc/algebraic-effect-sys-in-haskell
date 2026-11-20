@@ -69,6 +69,7 @@ executable crawler-demo
       Crawler.Types
       Crawler.Generated.Effects
       Crawler.Generated.Program
+      Crawler.Generated.Prototype
       Crawler.Generated.Handlers
   ghc-options: -main-is Crawler.Main
   build-depends:
@@ -85,6 +86,7 @@ executable file-demo
       FileDemo.Types
       FileDemo.Generated.Effects
       FileDemo.Generated.Program
+      FileDemo.Generated.Prototype
       FileDemo.Generated.Handlers
   ghc-options: -main-is FileDemo.Main
 
@@ -99,6 +101,7 @@ executable open-files-demo
       OpenFilesDemo.Types
       OpenFilesDemo.Generated.Effects
       OpenFilesDemo.Generated.Program
+      OpenFilesDemo.Generated.Prototype
       OpenFilesDemo.Generated.Handlers
   ghc-options: -main-is OpenFilesDemo.Main
   build-depends:
@@ -116,6 +119,7 @@ executable scope-reuse-demo
       ScopeReuseDemo.Types
       ScopeReuseDemo.Generated.Effects
       ScopeReuseDemo.Generated.Program
+      ScopeReuseDemo.Generated.Prototype
       ScopeReuseDemo.Generated.Handlers
   ghc-options: -main-is ScopeReuseDemo.Main
   build-depends:
@@ -132,6 +136,7 @@ executable scope-instances-demo
       ScopeInstancesDemo.Types
       ScopeInstancesDemo.Generated.Effects
       ScopeInstancesDemo.Generated.Program
+      ScopeInstancesDemo.Generated.Prototype
       ScopeInstancesDemo.Generated.Handlers
   ghc-options: -main-is ScopeInstancesDemo.Main
   build-depends:
@@ -148,6 +153,7 @@ executable stream-demo
       StreamDemo.Types
       StreamDemo.Generated.Effects
       StreamDemo.Generated.Program
+      StreamDemo.Generated.Prototype
       StreamDemo.Generated.Handlers
   ghc-options: -main-is StreamDemo.Main
 
@@ -161,6 +167,7 @@ executable lines-demo
       LinesDemo.Types
       LinesDemo.Generated.Effects
       LinesDemo.Generated.Program
+      LinesDemo.Generated.Prototype
       LinesDemo.Generated.Handlers
   ghc-options: -main-is LinesDemo.Main
 

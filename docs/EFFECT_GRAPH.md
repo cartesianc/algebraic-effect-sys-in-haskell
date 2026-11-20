@@ -340,7 +340,7 @@ App／IO 的生成入口沿 Input／requests 关系查找最近的 scope，遇�
 
 ## 查看初始化结果
 
-生成的 `Generated.Program` 导出静态的纯值：
+生成的 `Generated.Prototype` 导出静态的纯值，`Generated.Program` 把它交给 interpreter：
 
 ```haskell
 generatedPrototype :: SDK.Prototype MethodGen
@@ -357,7 +357,7 @@ generatedPrototype :: SDK.Prototype MethodGen
 
 key 未变时复用纯原型和渲染文本，仍运行 `validatePrototype`、`checkDriven` 及源码资产检查；首次没有 Handlers 时仍按原协议跳过驱动检查、先提供契约。原子业务 IO 的修改若不改变方法结构，可复用原型，同时更新业务包装副本及源码指纹。每份生成文件都先比较完整内容，内容相同就不写回；这减少结构重算和无变化文件写入，不等于跳过整条生成命令，也不是逐方法热点生成、文件监听或运行中热重载。
 
-`Generated.Program` 仍是派生产物。手改 `generatedPrototype` 中的 `protoScopes` 后，运行校验读取这些显式字段，不会重新推导父边；它只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。下一次 gencode 会按源声明和方法结构恢复生成结果，缓存不把手改文件当作权威。不增加手工 edge override 层，也不承诺保留生成文件中的手改。
+`Generated.Prototype` 仍是派生产物。手改 `generatedPrototype` 中的 `protoScopes` 后，运行校验读取这些显式字段，不会重新推导父边；它只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。下一次 gencode 会按源声明和方法结构恢复生成结果，缓存不把手改文件当作权威。不增加手工 edge override 层，也不承诺保留生成文件中的手改。
 
 本轮沿用项目的普通编译要求，不新增测试、负例或检查门槛。
 

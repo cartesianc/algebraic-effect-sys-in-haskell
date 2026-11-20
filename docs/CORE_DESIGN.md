@@ -926,8 +926,8 @@ sdk/Framework/
       Types.hs              已计算的表示类型与能力约束的 Haskell 渲染
       Effects.hs            Generated/Effects.hs
       Handlers.hs           Generated/Handlers.hs：方法体副本、Wrap 路由与 effect 方法
-      Program.hs            Generated/Program.hs 的程序部分
-      Prototype.hs          Prototype 的 Haskell 值渲染
+      Program.hs            Generated/Program.hs：末端登记与 interpreter
+      Prototype.hs          Generated/Prototype.hs：Prototype 的 Haskell 值渲染
       Assets.hs             结构化资产目录的 Haskell 渲染
   Prototype.hs              编译产物门面：生成、执行、展示共用的静态模型
   Prototype/

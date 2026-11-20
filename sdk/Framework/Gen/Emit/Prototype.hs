@@ -1,11 +1,25 @@
 -- 输出：把 Prototype（编译产物）渲染为 Generated/Program.hs 中的 Haskell 值；只渲染数据，不再推导结构。
-module Framework.Gen.Emit.Prototype (renderPrototype) where
+module Framework.Gen.Emit.Prototype (renderPrototype, renderPrototypeModule) where
 
 import Data.Char (toUpper)
 import Data.List (intercalate)
 import qualified Framework.Prototype.Graph as G
 import qualified Framework.Language.Registration as R
 import qualified Framework.Prototype as P
+
+-- Generated/Prototype.hs 只放 gen 编译出的结构数据；Program 引用它交给 interpreter。
+-- 结构正文可来自构图缓存，模块头随命名空间另加。
+renderPrototypeModule :: String -> String -> String
+renderPrototypeModule namespace structure = unlines
+  [ "{-# LANGUAGE DuplicateRecordFields #-}"
+  , ""
+  , "-- 自动生成；gen 编译出的静态结构，由 Program 交给 interpreter，运行前校验。"
+  , "module " ++ namespace ++ ".Generated.Prototype (generatedPrototype) where"
+  , ""
+  , "import qualified Framework.Generated as SDK"
+  , "import " ++ namespace ++ ".Generated.Effects (MethodGen(..))"
+  , ""
+  ] ++ structure
 
 renderPrototype :: P.Prototype String -> String
 renderPrototype prototype = unlines

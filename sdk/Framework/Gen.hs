@@ -10,7 +10,7 @@ import Framework.Gen.Emit.Assets (renderAssets)
 import Framework.Gen.Emit.Effects (renderEffects)
 import Framework.Gen.Emit.Handlers (renderHandlers)
 import Framework.Gen.Emit.Program (renderProgram)
-import Framework.Gen.Emit.Prototype (renderPrototype)
+import Framework.Gen.Emit.Prototype (renderPrototype, renderPrototypeModule)
 import Framework.Gen.Names (handlerClass, nameHandlers)
 import Framework.Gen.Frontend.Hanging (loadHanging)
 import Framework.Gen.Frontend.Shape (shapeHandlers)
@@ -53,16 +53,18 @@ compileWorkflow namespace = do
       names = nameHandlers (maybe mempty handlerScopeNames source) (allMethods unit)
   handlers <- either (ioError . userError) pure (renderHandlers names unit source)
   -- 输出只读取机器完成态的接口事实。
-  let program = renderProgram names typesFingerprint hangingSources unit ++ structure
+  let program = renderProgram names typesFingerprint hangingSources unit
+      prototypeModule = renderPrototypeModule namespace structure
   _ <- evaluate (length structure)
   -- 类型检查、顶层白名单与资产目录；通过后才更新生成区，未变文件保留时间戳
   assets <- checkAssets namespace
-    [("Effects", contracts), ("Program", program), ("Handlers", handlers)]
+    [("Effects", contracts), ("Prototype", prototypeModule), ("Program", program), ("Handlers", handlers)]
     (nub [reference (assetRepresentation declared) | declared <- unitAssets unit])
     (map assetContract (unitAssets unit)) (fmap handlerText source)
   createDirectoryIfMissing True generated
   changed <- sequence
     [ writeIfChanged (generated </> "Effects.hs") contracts
+    , writeIfChanged (generated </> "Prototype.hs") prototypeModule
     , writeIfChanged (generated </> "Program.hs") program
     , writeIfChanged (generated </> "Handlers.hs") handlers
     , writeIfChanged (generated </> "Assets.hs") (renderAssets namespace assets)

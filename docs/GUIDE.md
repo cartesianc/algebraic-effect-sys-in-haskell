@@ -145,9 +145,9 @@ instance SDK.Reads FileHandle (Wrap "WriteFirstLine" method) where
   require = Wrap (SDK.coerce <$> readOpenedFile)
 ```
 
-Generated/Effects 提供可检查的接口，Generated/Program 保存末端登记和静态 Prototype；运行副本及协议由生成器维护。
+Generated/Effects 提供可检查的接口，Generated/Program 保存末端登记，Generated/Prototype 保存静态 Prototype；运行副本及协议由生成器维护。
 
-[Generated/Effects.hs](../demo/FileDemo/Generated/Effects.hs) · [Generated/Program.hs](../demo/FileDemo/Generated/Program.hs) · [生成与更新流程](#development)
+[Generated/Effects.hs](../demo/FileDemo/Generated/Effects.hs) · [Generated/Program.hs](../demo/FileDemo/Generated/Program.hs) · [Generated/Prototype.hs](../demo/FileDemo/Generated/Prototype.hs) · [生成与更新流程](#development)
 
 <a id="quickstart"></a>
 
@@ -251,7 +251,7 @@ FileDemo 会创建或追加 `demo/FileDemo/output.txt`，完成后自动关闭�
 cabal run file-demo -- --structure
 ```
 
-它展示 `Generated/Program.hs` 中的同一份 `generatedPrototype`，先检查注册、手写源码指纹和 AST 是否与生成结果一致。输出可按下面的顺序阅读：
+它展示 `Generated/Prototype.hs` 中的同一份 `generatedPrototype`，先检查注册、手写源码指纹和 AST 是否与生成结果一致。输出可按下面的顺序阅读：
 
 | 输出标题 | 查看内容 |
 | --- | --- |
