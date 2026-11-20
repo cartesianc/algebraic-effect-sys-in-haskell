@@ -63,24 +63,31 @@ effects =
       , input = "FileSession"
       , demands = [requires "OpenedFile"]
       }
-  -- 文件状态是和类型资产：每个构造器另有分支契约 FileTextBlank、FileTextWritten。
+  -- 同一次读取的输出挂两个 Context：文件为空时 BlankText 解析成功，非空时 FilledText 解析成功。
   , EffectSpec
-      { name = "ExtractFileText"
-      , typing = Context { asset = Asset @TextState "FileText", parser = Just "parseFileText", require = True, stream = False }
+      { name = "BlankText"
+      , typing = Context { asset = Asset @EmptyText "FileBlank", parser = Just "parseBlankText", require = True, stream = False }
       , input = "ReadFile"
       , demands = []
       }
-  -- alternative 的两个候选：各自 requires 一个分支契约，由此对应文件状态的一个构造器。
+  , EffectSpec
+      { name = "FilledText"
+      , typing = Context { asset = Asset @WrittenText "FileWritten", parser = Just "parseWrittenText", require = True, stream = False }
+      , input = "ReadFile"
+      , demands = []
+      }
+  -- alternative 的两个候选：各自 requires 由 ReadFile 输出解析出的一份资产；选择时 ReadFile 执行一次，
+  -- 按候选顺序取第一个解析成功的。
   , EffectSpec
       { name = "WriteFirstLine"
       , typing = Excu { handler = Just "writeFirstLine" }
       , input = "FileSession"
-      , demands = [requires "FileTextBlank", requires "OpenedFile"]
+      , demands = [requires "FileBlank", requires "OpenedFile"]
       }
   , EffectSpec
       { name = "AppendLine"
       , typing = Excu { handler = Just "appendLine" }
       , input = "FileSession"
-      , demands = [requires "FileTextWritten", requires "OpenedFile"]
+      , demands = [requires "FileWritten", requires "OpenedFile"]
       }
   ]

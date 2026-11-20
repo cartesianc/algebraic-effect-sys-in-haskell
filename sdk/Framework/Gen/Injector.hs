@@ -14,8 +14,8 @@ import Framework.Prototype.Types
 import Framework.Prototype.Query
 import qualified Framework.Prototype as Prototype
 
-bindProgram :: String -> PrototypePlan -> [EffectDeclaration] -> Assembly String -> SumTypes -> [(String, String)] -> Either String Unit
-bindProgram namespace prepared declarations assembly sumTypes controlled = do
+bindProgram :: String -> PrototypePlan -> [EffectDeclaration] -> Assembly String -> [(String, String)] -> Either String Unit
+bindProgram namespace prepared declarations assembly controlled = do
   checkGenerated unit
   when (null (unitTerminals unit)) (Left "Select at least one terminal effect for generation")
   mapM_ (checkRepresentations unit) (declarations)
@@ -26,7 +26,6 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
       { unitNamespace = namespace
       , unitPlan = prepared
       , unitAssets = assets
-      , unitBranches = branches
       , unitHandlers = nub [handler' | specification <- declarations, (_, handler') <- [(method, handler) | (method, handler, _) <- declarationBindings specification]]
       , unitSignatures = []
       , unitBindings =
@@ -69,13 +68,6 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
       [ AssetDeclaration (contractOf declared) (representation declared) (declarationName specification)
       | specification <- [declared | declared <- declarations, Just _ <- [declarationAsset declared]]
       , Just declared <- [declarationAsset specification] ]
-    branches =
-      [ BranchContract (base ++ constructor) base constructor field owner
-      | AssetDeclaration base (TypeRef typeName) owner <- assets
-      , (branch, constructor) <- Prototype.effectBranches (protoOf unit owner)
-      , Just constructors <- [lookup typeName sumTypes]
-      , Just field <- [lookup constructor constructors]
-      , branch == base ++ constructor ]
 
     -- 绑定解释与校验只在本阶段可见；后续算法和 Emit 读取 Unit 中的确定事实。
     typeSpelling :: ValueType -> String
@@ -91,10 +83,9 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
       where
         contractType = demandContract resolved
         producer = demandProvider resolved
-        view = case [branch | branch <- unitBranches unit, branchName branch == contractType] of
-          branch : _ -> BranchView branch
-          _ | continuousContract unit contractType -> ContinuousView
-            | otherwise -> ValueView
+        view
+          | continuousContract unit contractType = ContinuousView
+          | otherwise = ValueView
 
     entryResult specification = case declarationAsset specification of
       Just declared -> RefinedType (contractOf declared)
@@ -117,11 +108,10 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
       [ Prototype.effectContinuous (protoOf unit (assetOwner declared))
       | declared <- unitAssets unit, assetContract declared == contractType ]
 
-    -- 契约读到的表示类型：基础契约是声明的表示类型，分支契约是构造器的字段（无字段为 ()）。
+    -- 契约读到的表示类型就是资产声明的表示类型。
     representationOf :: Unit -> String -> String
-    representationOf unit contractType = case [branch | branch <- unitBranches unit, branchName branch == contractType] of
-      branch : _ -> maybe "()" id (branchField branch)
-      [] -> case [reference (assetRepresentation declared) | declared <- unitAssets unit, assetContract declared == contractType] of
+    representationOf unit contractType =
+      case [reference (assetRepresentation declared) | declared <- unitAssets unit, assetContract declared == contractType] of
         found : _ -> found
         [] -> error ("Validated demand has no asset: " ++ contractType)
 
@@ -259,15 +249,15 @@ bindProgram namespace prepared declarations assembly sumTypes controlled = do
     -- 资产名与 handler 派生名都进入生成区的同一命名空间，不能重名或与固定名冲突。
     checkGenerated :: Unit -> Either String ()
     checkGenerated unit = do
-      let declared = map assetContract (unitAssets unit) ++ map branchName (unitBranches unit)
+      let declared = map assetContract (unitAssets unit)
           derived = concat [[handlerClass handler', handlerLayer handler', handlerError handler', handlerFailure handler'] | handler' <- unitHandlers unit]
           reserved = reservedTypes ++ derived
       case [contractType | contractType <- nub declared, length (filter (== contractType) declared) > 1] of
-        contractType : _ -> Left ("Contract " ++ contractType ++ " comes from more than one asset or branch; rename one of them")
+        contractType : _ -> Left ("Contract " ++ contractType ++ " comes from more than one asset; rename one of them")
         [] -> pure ()
       case [contractType | contractType <- nub declared, contractType `elem` reserved] of
-        contractType : _ -> Left ("Asset or branch contract " ++ contractType
-          ++ " collides with a generated name; rename the asset or constructor")
+        contractType : _ -> Left ("Asset contract " ++ contractType
+          ++ " collides with a generated name; rename the asset")
         [] -> pure ()
       case [handler' | handler' <- unitHandlers unit, not (validMethodName handler') || handler' `elem` reservedValues] of
         handler' : _ -> Left ("Handler name must be a lowercase identifier not used by generated code: " ++ handler')

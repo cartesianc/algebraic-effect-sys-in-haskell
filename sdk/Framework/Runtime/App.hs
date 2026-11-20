@@ -514,6 +514,8 @@ instance ContextStore env (App env cause) where
         inside = environment { caller = Nothing, errorHandlers = []
                              , replays = (method, raw) : replays environment }
     when allowed $ () <$ liftIO (runExceptT (runReaderT action inside))
+  attemptOutput method raw (AppRun action) = AppRun $ local (\inside -> inside
+    { caller = Nothing, errorHandlers = [], replays = (method, raw) : replays inside }) action
   -- 仍在原始操作的执行帧与资源使用登记内解析；只覆盖 rawinput，不另外 lower 一次生产链。
   -- 持续 parser 的失败保留原来的诊断和监督路径，不能套用普通挂接的吞错规则。
   injectStreamOutput method raw (AppRun action) = AppRun $ do

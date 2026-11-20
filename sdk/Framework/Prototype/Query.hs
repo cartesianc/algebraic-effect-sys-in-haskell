@@ -5,13 +5,13 @@ module Framework.Prototype.Query
   , workflowNode, workflowChildren, workflowTerminals, workflowLifelongs, workflowSelectors
   , allWorkflow, lookupChain, lookupWorkflow, precedes, exclusive
   , driveSet, readPoints, scopeOpeningsAt, drivingAssets, bootPlan, sessionSteps, sessionAssets
-  , finiteSessions, candidateCase, findEffectProto, ordinaryEntry, selectorMethod, calledMethods, reachableMethods
+  , finiteSessions, candidateCases, findEffectProto, ordinaryEntry, calledMethods, reachableMethods
   , hooksAt, variantLabel, entryLabel
   ) where
 
 import Data.List (intercalate, isPrefixOf, nub)
 import Data.Maybe (listToMaybe)
-import Framework.Language.Registration (Access(..))
+import Framework.Language.Registration (Access(..), EffectKind(..))
 import Framework.Prototype.Graph
 import Framework.Prototype.Types
 
@@ -38,7 +38,7 @@ workflowLifelongs tree = [(identifier, described) | LifelongAt identifier descri
 
 workflowSelectors :: WorkflowTree -> [String]
 workflowSelectors tree = case tree of
-  AlternativeAt _ selected children -> alternativeContract selected : concatMap workflowSelectors children
+  AlternativeAt _ selected children -> alternativeSource selected : concatMap workflowSelectors children
   _ -> concatMap workflowSelectors (workflowChildren tree)
 
 allWorkflow :: WorkflowTree -> [WorkflowTree]
@@ -135,27 +135,25 @@ finiteSessions effects =
     selected = [(contractType, bootPlan effects effect) | contractType <- assets, effect <- effects
       , effectProduces effect == Just contractType]
 
--- 候选对应只读 effect 原型中的 requires 与 Input 祖先；生成和加载校验共用。
-candidateCase :: [EffectProto method] -> NodeId -> WorkflowTree
-              -> Either (PrototypeError method) (String, String)
-candidateCase effects path subtree = do
-  cases <- mapM terminalCase (workflowTerminals subtree)
-  case nub cases of
-    [selected] -> pure selected
-    _ -> invalid "Every candidate terminal must select the same constructor"
+-- 候选可用的判定：候选各末端（连同 Input 祖先）requires 的、由某个 Excu 的输出直接（或经 Pure）解析出的
+-- 非持续资产，记为（该 Excu，解析它的 Context）。各末端共有的才算；生成和加载校验共用。
+candidateCases :: [EffectProto method] -> NodeId -> WorkflowTree
+               -> Either (PrototypeError method) [(String, String)]
+candidateCases effects path subtree = do
+  options <- mapM terminalCases (workflowTerminals subtree)
+  case options of
+    [] -> Left (InvalidAlternative path "Candidate has no terminal")
+    first : rest -> pure (foldr (\other kept -> filter (`elem` other) kept) first rest)
   where
-    terminalCase selected = do
+    terminalCases selected = do
       effect <- findEffectProto effects selected
       let inherited = selected : effectInputChain effect
-          cases = nub [(base, constructor)
-            | consumer <- effects, effectName consumer `elem` inherited
-            , demand <- effectDemands consumer, demandAccess demand == RequireAccess
-            , producer <- effects, Just base <- [effectProduces producer]
-            , (branch, constructor) <- effectBranches producer, branch == demandContract demand]
-      case cases of
-        [selectedCase] -> pure selectedCase
-        _ -> invalid ("Candidate must require exactly one branch contract: " ++ selected)
-    invalid reason = Left (InvalidAlternative path reason)
+      pure (nub [ (anchorName, effectName producer)
+        | consumer <- effects, effectName consumer `elem` inherited
+        , demand <- effectDemands consumer, demandAccess demand == RequireAccess
+        , producer <- effects, effectProduces producer == Just (demandContract demand)
+        , not (effectContinuous producer), Just anchorName <- [effectAnchor producer]
+        , anchor <- effects, effectName anchor == anchorName, effectKind anchor == ExcuKind ])
 
 findEffectProto :: [EffectProto method] -> String -> Either (PrototypeError method) (EffectProto method)
 findEffectProto effects selected = case filter ((== selected) . effectName) effects of
@@ -166,11 +164,6 @@ ordinaryEntry :: EffectProto method -> Either (PrototypeError method) method
 ordinaryEntry effect = case [method | (role, method) <- effectMethods effect, role `elem` [HandlerMethod, ScopeOpen]] of
   method : _ -> pure method
   [] -> Left (InvalidPrototype ("Effect has no callable entry (no handler or open handler): " ++ effectName effect))
-
--- alternative 选择读取的入口：自己驱动转折资产（生产入口，相当于 requests）；
--- 持续资产由会话驱动，选择读取它的读取入口，领取本次交付。
-selectorMethod :: EffectProto method -> Maybe method
-selectorMethod effect = lookup (if effectContinuous effect then ContextRequire else ContextRequest) (effectMethods effect)
 
 calledMethods :: MethodShape method -> [method]
 calledMethods Empty = []

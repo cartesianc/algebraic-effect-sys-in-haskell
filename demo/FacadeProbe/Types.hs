@@ -10,4 +10,4 @@ newtype LineCount = LineCount Int deriving Show
 
 newtype Level = Level Int deriving Show
 
-data FileState = Blank | Filled Body deriving Show
+newtype EmptyReport = EmptyReport String deriving Show

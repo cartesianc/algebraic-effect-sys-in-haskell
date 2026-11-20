@@ -32,10 +32,12 @@ effects =
   , context "ReplyCounter" (Asset @LineCount "ReplyStats") "countLines" "ReadReply" []
   , excu "ShowReport" "showCount" "Root" [requires "ReportStats"]
   , excu "ShowReply" "showCount" "Root" [requires "ReplyStats"]
-    -- 分支契约由构造器推出；alternative 按资产状态选择候选
-  , context "ReportInspect" (Asset @FileState "ReportState") "inspectFile" "Root" [requires "ReportPath"]
-  , excu "OnBlank" "describeBlank" "Root" [requires "ReportStateBlank"]
-  , excu "OnFilled" "describeFilled" "Root" [requires "ReportStateFilled"]
+    -- 同一次读取的输出挂两个 Context，只有一个解析成功；alternative 按候选 requires 的那一个选择
+  , excu "InspectReport" "inspectFile" "Root" [requires "ReportPath"]
+  , context "ReportBlank" (Asset @EmptyReport "ReportEmpty") "parseBlankReport" "InspectReport" []
+  , context "ReportFilled" (Asset @Body "ReportText") "parseFilledReport" "InspectReport" []
+  , excu "OnBlank" "describeBlank" "Root" [requires "ReportEmpty"]
+  , excu "OnFilled" "describeFilled" "Root" [requires "ReportText"]
     -- 同一个 Stream 解析器和消费者；Stream 方法体各不相同。交付编号由消费者以 stream @Level 读取 x:xs 得到
   , stream "FeedA" "nextA"
   , stream "FeedB" "nextB"

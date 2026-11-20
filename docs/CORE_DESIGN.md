@@ -38,8 +38,8 @@
 
 ```haskell
 EffectSpec
-  { name = "ExtractFileText"
-  , typing = Context { asset = Asset @TextState "FileText", parser = Just "parseFileText", require = True, stream = False }
+  { name = "FilledText"
+  , typing = Context { asset = Asset @WrittenText "FileWritten", parser = Just "parseWrittenText", require = True, stream = False }
   , input = "ReadFile"
   , demands = []
   }
@@ -48,20 +48,19 @@ EffectSpec
 `Handlers.hs` 中它绑定的 handler，模块头和导入见 FileDemo 源码：
 
 ```haskell
-instance ParseFileTextLayer m => ParseFileTextHandler m where
-  parseFileText = do
+instance ParseWrittenTextLayer m => ParseWrittenTextHandler m where
+  parseWrittenText = do
     contents <- rawinput
-    text <- case contents of
-      [whole] -> pure whole
-      _ -> raise (ParseFileTextError "File read returned no text")
-    pure (if null text then Blank else Written text)
+    case contents of
+      [whole] | not (null whole) -> pure (WrittenText whole)
+      _ -> raise (ParseWrittenTextError "the file is empty")
 ```
 
 注册给出类别、绑定、前驱与产物，handler 给出原子的读取、解析和 IO。`rawinput` 是读取句柄这次交出的 list，parser 把它细化成资产的表示类型。沿代码中出现的结构进入对应子模块：
 
 | 看到的代码形态 | 继续阅读 |
 | --- | --- |
-| `data TextState = Blank \| Written String` | [资产写法](GUIDE.md#types)、[资产约束](ASSETS.md) |
+| `newtype WrittenText = WrittenText String` | [资产写法](GUIDE.md#types)、[资产约束](ASSETS.md) |
 | `EffectSpec`、`typing`、`input`、`demands` | [注册写法](GUIDE.md#effects)、[方法契约](#registration) |
 | `instance XxxLayer m => XxxHandler m where` | [handler 写法](GUIDE.md#handlers)、[handler 契约](#registration)、[入口装配](#calls) |
 | `requests`、`require @T`、`rawinput` | [Context 驱动与读取](#context)、[Pure](#pure) |
@@ -147,7 +146,7 @@ flowchart LR
 
 原子行为由 handler 方法实现，包括 IO、解析、ADT 模式匹配和局部计算；handler 不调用上游，也不调用其他 handler。Input 声明前驱，gencode 把它装配进入口、在方法体之前执行；demands 声明驱动与读取，requests 在入口驱动生产，handler 的 require 按表示类型读取；AST branch 规定完整链何时启动。多个 effect 可以共享一个原子 handler，各自的 Input 与 demands 决定它在哪条链上、读哪份资产。声明、原子实现与 SDK 执行责任因此都有明确边界。
 
-例如 `demands = [requires "FileTextWritten"]` 声明读取，handler 中的 `require @String` 经路由读到该分支资产；workflow 再选择该消费链的末端并组织启动。声明可以被静态检查、序列化和第三方工具生成，实际返回值、IO 成败及阻塞行为仍由原子实现和运行协议决定。声明式结构不要求 handler 全部是纯函数；SDK 只执行声明的前驱与驱动。
+例如 `demands = [requires "FileWritten"]` 声明读取，handler 中的 `require @WrittenText` 经路由读到该资产；workflow 再选择该消费链的末端并组织启动。声明可以被静态检查、序列化和第三方工具生成，实际返回值、IO 成败及阻塞行为仍由原子实现和运行协议决定。声明式结构不要求 handler 全部是纯函数；SDK 只执行声明的前驱与驱动。
 
 SDK 将 effect、资产与 workflow 作为结构数据运算，推出类型能力、精细化装配和执行计划。同一原子 handler 可绑定不同业务关系，生产与消费角色也由关系确定；解释的依据与拒绝要求见[组合多态原则](#composition-polymorphism)。
 
@@ -168,7 +167,7 @@ SDK 将 effect、资产与 workflow 作为结构数据运算，推出类型能�
 
 **值操作**由 Context 的生产、解析与资产承载，消费方通过 demands 声明驱动与读取。生产链中对句柄输出的纯变换（去重、排序、过滤）由 Pure 承担，Context 只做细化解析。requests 在入口驱动生产，require 按既有来源与捕获读取，不生产，还没有值时等待发布；持续资产的读取返回本次确定的资产值；重复执行由驱动关系决定。handler 用原生 ADT 模式匹配和计算处理这些值；值只经资产流动，跨 handler 的业务产值通过 Context 发布。资产来源与 scope 的资源关闭归属分别管理。
 
-两者通过 Context 衔接：Excu.handler／Scoped.open 交出的 `[String]` 交给挂接的 Context 解析为业务资产，中间可以经过一串 Pure；Stream 的原始输入交给挂在它下面的 Context 解析，写法与挂在原子句柄下的 Context 相同。比如 FileDemo 中，`readFileContent` 执行读取操作，挂在它下面的 `parseFileText` 用 `rawinput` 把读取结果解析为 `FileText`，消费方通过 `requires "FileTextBlank"` 或 `requires "FileTextWritten"` 读取对应分支资产。前驱关系和资产读取关系都能从注册与 handler 的读取中读出，详见[原子输出挂接](#context)与[持续生产](#stream)。
+两者通过 Context 衔接：Excu.handler／Scoped.open 交出的 `[String]` 交给挂接的 Context 解析为业务资产，中间可以经过一串 Pure；Stream 的原始输入交给挂在它下面的 Context 解析，写法与挂在原子句柄下的 Context 相同。比如 FileDemo 中，`readFileContent` 执行读取操作，挂在它下面的 `parseBlankText`、`parseWrittenText` 用 `rawinput` 把同一次读取结果分别解析为 `FileBlank`（文件为空）或 `FileWritten`（非空时的全文），消费方通过 `requires "FileBlank"` 或 `requires "FileWritten"` 读取。前驱关系和资产读取关系都能从注册与 handler 的读取中读出，详见[原子输出挂接](#context)与[持续生产](#stream)。
 
 这种分离是职责与契约的划分，不新增独立 impl 层。值操作写在 handler 方法体内，业务模块顶层不定义普通函数，见[源码资产约束](ASSETS.md)；同一个 handler 可以先读取，再用读到的值完成原子操作。
 
@@ -231,7 +230,7 @@ prebeta 以现行协议作为 LSP 的实现依据。后续专题与当前保证�
 
 依赖只从上往下：源语言不导入其他层；gen 导入源语言与 Prototype 的数据模型，不导入运行时；运行时导入源语言与 Prototype，不导入 gen。demo 的可执行程序不链接 `Framework.Gen.*`，`effect-codegen` 不链接 `Framework.Runtime.*`。Generated/Assets.hs 是审查用的资产目录，不进入运行导入链。
 
-能在生成期判定的组合、读取路由与合法性问题，都由 gen 报错。启动时核对注册快照、Handlers 指纹与 AST 层级，并校验 Prototype 自洽。生成了 alternative 选择器的程序还核对 `Types.hs` 指纹，确保构造器分派表来自当时读取的类型定义。读取按生成的来源表取值，缺值时等待发布，读取权限在生成期确定。
+能在生成期判定的组合、读取路由与合法性问题，都由 gen 报错。启动时核对注册快照、Handlers 指纹与 AST 层级，并校验 Prototype 自洽。读取按生成的来源表取值，缺值时等待发布，读取权限在生成期确定。
 
 `Gen.Composition` 统一编译入口、阶段转换与装配事实：声明、资产来源、workflow 挂载、会话连接、handler 类型能力、入口装配、方法图和来源证明按依赖顺序计算。各阶段仍使用专门算法，没有通用的规则匹配或固定点求解器。输出阶段读取结果生成类型约束、精细化 DI 与 Prototype，不重新选择组合解释。内部装配记录只在 gen 存在；方法摘要缓存只保存纯结构，不包含业务值或活实例，运行时仍逐挂载、逐调用执行。
 
@@ -366,7 +365,7 @@ Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 
 newtype Wrap (effect :: Symbol) (method :: Symbol) value = Wrap { runWrap :: App value }
 ```
 
-handler 方法体原样复制，在 `Wrap "effect 名" "handler 名"` 上实例化；effect 名与方法名只写在标签上，生成代码需要字符串时用 `nameOf` 从标签取出。Reads 与 Raw 按标签生成 instance：`Reads T (Wrap "E" method)` 把读取路由到 E 的 demands 中表示类型为 T 的那份细化资产，普通资产解包 readT，分支契约经 projectContext 投影当前构造器，持续资产解包 streamT，只 requires 一个持续资产时经 latestContext 取最新一条；`Raw (Wrap "E" "handler")` 由 E 的直接 Input 回答。其余能力对所有标签只有一份实现，handler 能用哪些仍由它的 Layer 决定：`Raises` 按 Generated/Effects.hs 中错误声明旁的 `HandlerError` 事实（如 `instance SDK.HandlerError WriteFirstLineError Errors where raised (WriteFirstLineError description) = (WriteFirstLineFailure, description)`）取得 Errors 中的分类，以标签上的 effect 名报告；`StreamEnds` 结束标签所在的生产会话，只出现在 Stream handler 的 Layer 中；`EndsStream` 结束本次调用所在的那一处订阅，只出现在持续消费链上 Excu 的 Layer 中。GHC 在编译期按标签选定读取，运行时不按调用者查表。
+handler 方法体原样复制，在 `Wrap "effect 名" "handler 名"` 上实例化；effect 名与方法名只写在标签上，生成代码需要字符串时用 `nameOf` 从标签取出。Reads 与 Raw 按标签生成 instance：`Reads T (Wrap "E" method)` 把读取路由到 E 的 demands 中表示类型为 T 的那份细化资产，普通资产解包 readT，持续资产解包 streamT，只 requires 一个持续资产时经 latestContext 取最新一条；`Raw (Wrap "E" "handler")` 由 E 的直接 Input 回答。其余能力对所有标签只有一份实现，handler 能用哪些仍由它的 Layer 决定：`Raises` 按 Generated/Effects.hs 中错误声明旁的 `HandlerError` 事实（如 `instance SDK.HandlerError WriteFirstLineError Errors where raised (WriteFirstLineError description) = (WriteFirstLineFailure, description)`）取得 Errors 中的分类，以标签上的 effect 名报告；`StreamEnds` 结束标签所在的生产会话，只出现在 Stream handler 的 Layer 中；`EndsStream` 结束本次调用所在的那一处订阅，只出现在持续消费链上 Excu 的 Layer 中。GHC 在编译期按标签选定读取，运行时不按调用者查表。
 
 ```haskell
 instance SDK.Reads FileHandle (Wrap "WriteFirstLine" method) where
@@ -528,12 +527,12 @@ newtype LinkedPageSummary = LinkedPageSummary PageSummary
 
 同一表示类型往往有不同来源和含义，例如起始页与链接页的摘要都是 PageSummary。细化为两个名义类型后，每份资产只有一个生产方，读取被锁定到注册选择的来源（来源锁）。同一个 handler 注册到两个 effect 时，由各自的 demands 决定读哪一份；一个 effect 内不能读两份同表示类型的资产，需要两个同类型值的操作用不同的表示类型（角色类型）区分。
 
-细化只分配身份，不承担数据结构。和类型的分支契约是在细化资产之上按构造器再细化（`FileTextBlank`、`FileTextWritten`），表示类型是构造器的字段，无字段时为 ()。资产名同时决定生成的方法名（getT、readT、streamT）；同一份数据需要两个独立来源时，各自细化为不同资产。
+细化只分配身份，不承担数据结构。资产名同时决定生成的方法名（getT、readT、streamT）；同一份数据需要两个独立来源时，各自细化为不同资产。
 
 <a id="demand-contract"></a>
 #### 资产来源与访问约束
 
-**每个 refined asset 固定一个表示 ADT 和唯一 Context 来源。** 这一点对普通和持续资产相同，也检查当前没有消费者的声明。requests、requires、streams 是同一资产的访问方式；同一消费者可以为同一资产声明多种合法方式，也可以依赖多个不同资产。访问方式和不同运行时 publication 不创建新的静态来源身份。分支契约继续由基础资产的唯一生产方投影。
+**每个 refined asset 固定一个表示 ADT 和唯一 Context 来源。** 这一点对普通和持续资产相同，也检查当前没有消费者的声明。requests、requires、streams 是同一资产的访问方式；同一消费者可以为同一资产声明多种合法方式，也可以依赖多个不同资产。访问方式和不同运行时 publication 不创建新的静态来源身份。
 
 ```haskell
 -- 同一个资源资产：开启前驱动生产，open／close 读取
@@ -550,11 +549,11 @@ instance CloseSessionLayer m => CloseSessionHandler m where
     rawoutput []
 ```
 
-handler 直接在 `<-` 左侧匹配表示类型的构造器，或先具名绑定再 case；和类型的业务分支用 case 或 lambda-case 表达，失败用 raise。SDK 不增加 MonadFail，不把类型类约束当作执行过模式匹配的证明。Stage 1 对资产包装构造器的接收形态检查已随 Stage 2 取消：handler 不写资产类型。持续读取也直接匹配声明表示类型，SDK 不要求额外的历史构造器。
+handler 直接在 `<-` 左侧匹配表示类型的构造器，或先具名绑定再 case；业务分支用 case 或 lambda-case 表达，失败用 raise。SDK 不增加 MonadFail，不把类型类约束当作执行过模式匹配的证明。Stage 1 对资产包装构造器的接收形态检查已随 Stage 2 取消：handler 不写资产类型。持续读取也直接匹配声明表示类型，SDK 不要求额外的历史构造器。
 
 每个 requires／streams 声明的资产须有读取依据：绑定的 handler 中对该表示类型的读取，或现有 Prototype 中 alternative 选择／streams 交付的控制读取。完全没有依据的声明在 gencode 报错。检查以 effect 和资产为单位，不强制每条路径都读一次。
 
-当前返回形态统一由资产声明确定：普通资产与持续资产都返回表示类型，分支契约返回当前构造器的字段。`streams` 还把声明它的位置接到持续驱动，`requires` 只取固定值；读取类型相同不合并驱动关系。业务表示可以是记录、累计统计或其他 ADT，SDK 不根据其内容附加历史语义，详见[持续资产读取](STREAM_LIFELONG.md#contracts)。
+当前返回形态统一由资产声明确定：普通资产与持续资产都返回表示类型。`streams` 还把声明它的位置接到持续驱动，`requires` 只取固定值；读取类型相同不合并驱动关系。业务表示可以是记录、累计统计或其他 ADT，SDK 不根据其内容附加历史语义，详见[持续资产读取](STREAM_LIFELONG.md#contracts)。
 
 Gen.Composition 统一计算唯一来源、访问结果、绑定的读取路由与读取依据；Prototype 保存运行所需的解析事实；运行时继续执行已确定的捕获、共享供值、缺值等待与 ownership 协议。结构检查不移动取值、不提前求值、不合并重复驱动，也不证明所有路径、字段使用、case 穷尽或业务计算正确。
 
@@ -692,17 +691,32 @@ chained 按声明顺序执行，遇失败停止；parallel 并发执行，等待
 
 空 branch 成功并返回空结果。AST 只在最终边界封装一次 Output，汇总产物不隐含共享绑定或自动传给后继。节点结果与 Context 发布是不同通道。
 
-#### alternative 的类型边界
+#### alternative 的依据：effect 的差异（option）
 
-当前支持至少两个构造器、每个构造器至多一个字段的和类型；无字段分支包装 ()。每个候选的完整 Input 链恰好依赖同一基础资产的一个分支契约，并覆盖全部构造器。分支契约只能 require；当前构造器不匹配时报 CaseNotSelected，不新增业务状态。
+alternative 按 effect 图上的差异选择，不按资产的构造器。当前实现 option：各候选的分叉点是**同一个 Excu 的输出**。每个候选（连同各末端的 Input 祖先）恰好 `requires` 一份由该 Excu 的输出直接或经 Pure 解析出的非持续资产，判定这些资产的 Context 互不相同。不再需要和类型，也没有分支契约。
+
+```haskell
+-- demo/FileDemo/Effects.hs（节选）：同一次读取的输出挂两个 Context
+, EffectSpec { name = "BlankText", typing = Context { asset = Asset @EmptyText "FileBlank", parser = Just "parseBlankText", ... }, input = "ReadFile", demands = [] }
+, EffectSpec { name = "FilledText", typing = Context { asset = Asset @WrittenText "FileWritten", parser = Just "parseWrittenText", ... }, input = "ReadFile", demands = [] }
+, EffectSpec { name = "WriteFirstLine", ..., demands = [requires "FileBlank", requires "OpenedFile"] }
+, EffectSpec { name = "AppendLine", ..., demands = [requires "FileWritten", requires "OpenedFile"] }
+
+-- demo/FileDemo/Workflow/OperateFile.hs
+operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
+```
+
+分叉来自不同上游、按时序决定的真 race 尚未实现，gen 拒绝。共用同一 Excu 的多个 alternative 须判定同一组 Context。
 
 #### alternative 的选择与交接
 
-AST 只列候选，不写条件。gencode 将转折契约、选择读取路径和候选 NodeId 到构造器的关系保存为 WorkflowTree 的 AlternativeProto；分支契约目录保存在 EffectProto。
+AST 只列候选，不写条件。gencode 将共同 Excu、选择读取路径和候选 NodeId 到判定 Context 的对应保存为 WorkflowTree 的 AlternativeProto（`alternativeSource`、`alternativeSelector`、`alternativeCases`）。
 
-选择读取自己驱动转折资产，相当于写了 `requests`：运行时先执行它的生产链并发布，再只启动匹配构造器的候选，其他候选不执行。持续资产由会话驱动，选择读取领取本次交付。选择阶段捕获的无 owner 绑定经 Handoff 交给候选，两段读取同一快照，其他调用的驱动不改写它。执行只在已装配的闭包间选择，不在链中间重组。
+选择读取执行共同的 Excu 一次，再按候选的声明顺序把同一份输出交给各自的判定 Context（`chooseCase`），第一个解析成功的候选执行，结果确定、不依赖时序；其他候选不执行。判定 Context 的 `raise` 只算放弃，不触发 Error 处置；全部放弃时 alternative 以声明顺序中的第一个失败结束，消息列出每个候选各自的原因。执行 Excu 时挂接注入不重复执行这些判定 parser；该 Excu 上其他挂接的 Context 在选择读取中也不注入。选择阶段捕获的无 owner 绑定（包括选中候选的判定资产）经 Handoff 交给候选，两段读取同一快照，其他调用的驱动不改写它。执行只在已装配的闭包间选择，不在链中间重组。
 
-选择读取有独立入口使用登记，以契约名登记末端，NodeId 为 alternative 路径加 [-1]，参与构图与 ScopeTree。validatePrototype 核对转折契约、构造器唯一及覆盖完整；执行 fold 与 --structure 使用同一原型匹配当前 AST，不一致时在业务前拒绝。
+选择读取有独立入口使用登记，以共同 Excu 的名字登记末端，NodeId 为 alternative 路径加 [-1]，参与构图与 ScopeTree。validatePrototype 核对共同 Excu、判定 Context 互不相同且与候选的 requires 一致；执行 fold 与 --structure 使用同一原型匹配当前 AST，不一致时在业务前拒绝。
+
+静态保证比和类型弱：互斥与覆盖完整只能在运行时知道，gen 只检查结构。判定 Context 的 parser 不应做 IO：选择时它们依次执行，放弃的候选已执行的 IO 不回滚。
 
 <a id="lifelong-control"></a>
 #### lifelong 的控制流
@@ -831,7 +845,7 @@ FileDemo 的 FileRecovery 演示：handles 写 `RaisedBy "readFileContent"` 等 
 
 #### 匹配身份与唯一性
 
-handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler 的 `XxxFailure` 分类匹配，不论失败发生在哪个绑定；ScopeFaultIn／ContextFaultIn 按 effect 名匹配。Context 协议故障，包括未声明的读取及 CaseNotSelected，origin 使用生产方 effect 注册名，不使用资产名。同一 scope 下同一故障类型只允许一个 Error 注册。
+handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler 的 `XxxFailure` 分类匹配，不论失败发生在哪个绑定；ScopeFaultIn／ContextFaultIn 按 effect 名匹配。Context 协议故障，包括未声明的读取，origin 使用生产方 effect 注册名，不使用资产名。同一 scope 下同一故障类型只允许一个 Error 注册。
 
 <a id="generation"></a>
 ### 4.9 编译流水线、运行入口与源码同步
@@ -842,7 +856,7 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 
 | 阶段 | 实现位置 | 输入 → 输出与检查 |
 | --- | --- | --- |
-| 读取声明 | `Gen.Frontend.Source`、`Gen.Frontend.Hanging` | GHC 解析 Types 的和类型与挂载目标的定义名；独立 ghci 加载 effects、ast 和可选的 hangingTree |
+| 读取声明 | `Gen.Frontend.Source`、`Gen.Frontend.Hanging` | GHC 解析挂载目标的定义名；独立 ghci 加载 effects、ast 和可选的 hangingTree |
 | 解释注册 | `Gen.Composition` | 唯一资产来源、访问、Input、方法角色与绑定；`Names` 只拼写已选角色的名字 |
 | 合成驱动 | `Gen.Booter` | 以解析后的 effect 原型编号 workflow，确定 alternative、会话、挂载、输出连接及控制流已经承担的读取 |
 | 合成装配 | `Gen.Injector` | 以已解析声明计算 Layer、读取路由、有序 requests／Input、rawinput、入口操作、scope 与 Error 回调；检查表示类型与共享签名。`Injector.Super` 按挂载列表与捕获类别预选 superhandler 要调用的 Middleware |

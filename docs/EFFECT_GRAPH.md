@@ -63,7 +63,7 @@ data Execution
 有限 workflow 使用以下两种启动边界：
 
 1. **AST 启动**：Node 或 alternative 的选择读取启动选定入口，建立本次 origin 及入口使用登记。
-2. **Context 启动**：实际生产（`requests` 驱动的 getT）建立 ctx chain 记录，包住生产、成功发布和返回。嵌套 ctx 启动继承外层 origin 和入口使用登记；返回只结束本次生产记录，不撤销整个入口对 scope 的使用。读取不生产，也没有新 activation；选择读取驱动转折资产、挂接注入实际生产时经过同一启动边界。
+2. **Context 启动**：实际生产（`requests` 驱动的 getT）建立 ctx chain 记录，包住生产、成功发布和返回。嵌套 ctx 启动继承外层 origin 和入口使用登记；返回只结束本次生产记录，不撤销整个入口对 scope 的使用。读取不生产，也没有新 activation；alternative 的判定 Context、挂接注入实际生产时经过同一启动边界。
 
 Stage 3 复用这两个 Boot 构造：Receive／Derive 的每个独立生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。独立会话每次生产使用新的 ScopeUser，其中 Receive 的来源与逐条 parser 各自持有本次使用；跨步骤的待用由会话执行帧保持。lifelong 的消费 target 同样每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
 
@@ -127,7 +127,7 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 <a id="lifecycle-reads"></a>
 ### close 方法的资源读取
 
-`composeMethods` 按每个绑定检查有资源 Context 的 Scoped：已声明的 close 方法体必须包含该资源的读取。检查使用 `resolve` 已完成的表示类型到细化资产路由；另一生命周期方法的读取、入口自动装配的 requests、其他资产的读取都不能代替本方法的读取。同一个 handler 绑定到多个 effect 时，分别按各自资源检查；读取该资源的分支契约也计入，因为投影首先读取同一个资源 Binding。诊断包含 Scoped、close 角色、handler、资源资产及 Context 来源。
+`composeMethods` 按每个绑定检查有资源 Context 的 Scoped：已声明的 close 方法体必须包含该资源的读取。检查使用 `resolve` 已完成的表示类型到细化资产路由；另一生命周期方法的读取、入口自动装配的 requests、其他资产的读取都不能代替本方法的读取。同一个 handler 绑定到多个 effect 时，分别按各自资源检查。诊断包含 Scoped、close 角色、handler、资源资产及 Context 来源。
 
 这落实的是 close 的实例定位契约。open 的资源已由生成入口按 requests 生产并认领，open 方法体可以不读取资源，例如 FileDemo 的 `openSession = rawoutput []`；close 则依赖读取来定位实例和取得关闭锁。无资源 Context 的 scope、未声明的 close 不需要这项读取。首次缺少 Handlers 的契约生成暂不检查；已有方法体时每次在图缓存查询之前检查。
 
@@ -136,13 +136,12 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 <a id="protocol-faults"></a>
 ### 协议故障的判定归属
 
-以下覆盖当前 `Runtime.Protocol` 的 3 个 ContextFault 和 11 个 ScopeFault。归属按触发条件划分，同一构造器可同时承载结构违规、运行状态或 SDK 不变量故障。生成成功只说明已完成这些静态检查；runtime 的防线全部保留。合法结构发生绑定丢失、重复关闭等问题时应修复 SDK，不能用新禁令拒绝业务组合。
+以下覆盖当前 `Runtime.Protocol` 的 2 个 ContextFault 和 11 个 ScopeFault。归属按触发条件划分，同一构造器可同时承载结构违规、运行状态或 SDK 不变量故障。生成成功只说明已完成这些静态检查；runtime 的防线全部保留。合法结构发生绑定丢失、重复关闭等问题时应修复 SDK，不能用新禁令拒绝业务组合。
 
 | 故障 | gen 已处理的结构条件 | 留在 runtime 的条件与理由 |
 | --- | --- | --- |
 | `ContextNotInitialized` | [无来源诊断](#missing-source)覆盖的普通读取完全没有合法供值；资源读取缺少本链所属 scope；持续启动关系不合法 | 合法生产失败、零发布结束、条件路径未发布；会话／收尾局部快照缺值。已经生产的 Binding 因交接丢失属于 SDK 漏洞 |
 | `AmbiguousContextBinding` | 普通资产改用共享最新值，不再以多次生产为歧义；持续后继的会话边界歧义仍由 gen 拒绝 | 当前普通读取路径不再产生此故障构造 |
-| `CaseNotSelected` | alternative 检查分支契约及候选覆盖、读取路由 | 资产实际值的构造器与所读分支契约不符，类型结构不能决定业务值 |
 | `ScopeNotOpen` | 自动 close 只为已取得实例登记，不提供业务直接驱动 close 的方法组合 | 关闭一个未开启实例；正常自动路径出现时检查 SDK 登记与状态不变量 |
 | `ScopeIsClosed` | 资源业务读取要求本链开启所属 scope | 已捕获 Binding 的具体 owner 已关闭；实际存续与实例身份只能运行时检查，资源逃逸的扩展保证仍待设计 |
 | `ScopeReentry` | Input／方法图的递归和 scope 依赖环拒绝；handler 直接调用其他 handler 被拒绝 | 同一实例处于 opening／closing 等不允许重入的状态；保留生命周期锁内的状态防线 |
@@ -221,7 +220,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 生成阶段按[主设计的编译流水线](CORE_DESIGN.md#generation)推进；本节只解释图与来源的产物关系，阶段状态和检查点不在这里另行定义。`Gen.Composition` 内部步骤可以使用 `Prototype.Query` 的共享纯关系查询：
 
-1. **声明与挂载。** 解析注册、资产与 Input。AST 已用 `node` 指定末端，给每次挂载编号；检查 alternative 的分支契约及覆盖，定下持续会话与输出复用位置。末端不是从全图寻找的叶子。
+1. **声明与挂载。** 解析注册、资产与 Input。AST 已用 `node` 指定末端，给每次挂载编号；检查 alternative 的共同 Excu 与判定 Context，定下持续会话与输出复用位置。末端不是从全图寻找的叶子。
 2. **接口与方法组成。** 计算挂载、选择器、会话步骤、输出连接、有序 requests／Input、rawinput 来源和读取路由，并据此形成 handler 类型能力。前端用本次契约对手写 Handlers 做 GHC 名称解析与类型检查。`Gen.Frontend.Shape` 按原始语法提取控制流，按每个变量使用位置的 GHC `Name` 识别 SDK 的 `require` 和 `rawinput`。例如，`Payload{..} -> rawoutput [rawinput]` 中的 `rawinput` 是局部字段值；同一模块经重导出调用 SDK 的 `rawinput`，仍产生挂接输入的读取形状。机器再把形状代换成对应 effect 方法的结构，每个绑定保留各自的入口与路由。
 3. **方法图。** 从同一装配结果建立挂接注入的分析副本，只消去对同次原子输出的再次索取。方法索引与活动栈检查引用，完成态摘要缓存 scope 路径与图。辅助／主 algebra 共用归约结果，不按调用次数复制展开树。
 4. **ScopeTree。** 从方法图的路径求共同必经前序，补入注册前提并检查环。先有方法图及路径，再有 ScopeTree；实例共享与关闭仍由运行时的生产身份、实际使用和待用关系决定。
@@ -238,7 +237,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 | 方法目录、链定义共享 | 同一静态注册／方法身份 | 每个 AST 挂载仍有自己的 NodeId，每次调用仍执行 |
 | 原子输出的挂接解析 | parser 正在接收这次调用的原始输出 | 解析不重新执行句柄；另一次独立驱动仍可执行句柄 |
 | 持续资产的 ReuseOutput | 同一 lifelong 内已挂载的原子输出位置；多个位置须属于同一单元且互斥 | 保留原 AST 调用，不为订阅再启动派生生产 |
-| alternative 的交接 | 选择阶段确定的一份转折资产及其构造器 | 只启动选中候选并交接捕获；候选自身的 Input／requests 照常执行 |
+| alternative 的交接 | 选择阶段第一个判定成功的 Context 及其发布 | 只启动选中候选并交接捕获；候选自身的 Input／requests 照常执行 |
 | scope 实例共享 | 同一 Scoped 注册及相同参数生产身份，实例仍可用 | 由运行协议复用实例，ScopeTree 提供依赖与清理顺序 |
 
 当前没有通用的“寻找最长公共前缀，然后只执行一次”的优化。两条链共有一个 Excu 上游，也可能要求各执行一次 IO；没有 requests 或 close 不构成幂等或可合并的证据。例如 A、B 都以 AppendAudit 为 Input，分别启动 A、B 会追加两次日志，按方法名去重会改变行为。即使某个外部操作幂等，省略调用也仍需保证返回值、失败和可观察时序符合原契约。
@@ -364,7 +363,7 @@ key 未变时复用纯原型和渲染文本，仍运行 `validatePrototype`、`c
 
 ## Context 的剧本驱动检查
 
-AST node 末端必须是原始句柄，不能是 Context。gencode 从每个挂载末端沿显式方法引用求可达集合：读取方法不连到生产方法，生产只经 `requests` 驱动到达；挂接句柄可达时，其 Context 生产也视为可达；alternative 的选择读取末端驱动转折资产，同样作为起点。
+AST node 末端必须是原始句柄，不能是 Context。gencode 从每个挂载末端沿显式方法引用求可达集合：读取方法不连到生产方法，生产只经 `requests` 驱动到达；挂接句柄可达时，其 Context 生产也视为可达；alternative 的选择读取末端执行共同的 Excu（及其判定 Context），同样作为起点。
 
 任一 Context 的生产方法无法从这些入口到达时，生成器报错。挂接的 Context 经其他方法回到原句柄同样报错，不把直接输出回答与间接递归混为一谈。驱动检查与末端检查每次生成执行，缓存命中不跳过；首次缺少 Handlers、尚无方法结构时先生成契约，待方法实现后补齐完整检查。
 

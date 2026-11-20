@@ -259,29 +259,21 @@ executionAlgebra prototype store entries selectors layer expected = do
       parts <- map compiledRun <$> compiledChildren
       chain <- lookupChain prototype (alternativeSelector description)
       unless (chainRole chain == SelectorChain
-          && chainTerminal chain == alternativeContract description) $
+          && chainTerminal chain == alternativeSource description) $
         Left (InvalidAlternative location "Selector chain differs from its alternative")
       selector <- resolve selectors (entryLabel (protoDriving prototype) (alternativeSelector description) (chainTerminal chain))
-      source <- producerOf (alternativeContract description)
       constructors <- mapM (constructorAt description . workflowNode) expectedChildren
       let candidates = zip constructors (zip (map workflowNode expectedChildren) parts)
           members = driveMembers (nodeDriveAt prototype location)
-      -- 转折资产是本 lifelong 的会话资产时，选择读取先领取本次交付，候选共享这次领取。
+      -- 选择读取执行共同的 Excu 一次，按声明顺序取第一个判定成功的候选；它的捕获交给该候选。
       -- 候选中的节点都已结束订阅时，选择读取不再执行，整个 alternative 跳过。
-      -- 转折资产由本单元发布时：本轮没有新发布则本轮跳过；已封口并排空则候选都不会再被选中，记为结束。
       single $ \run handoff -> ExceptT $ withRuntimeRetention store $ \retention -> do
        ended <- endedNodes run
        if not (null members) && all (`elem` ended) members then pure (Right []) else do
-        chosen <- withFrameNode store run (alternativeSelector description) $ do
-          ready <- awaitDeliveries run [source]
-          case ready of
-            Left halt -> pure (Left halt)
-            Right Quiet -> pure (Right Nothing)
-            Right Exhausted -> endNodes run members >> pure (Right Nothing)
-            Right Driven -> draining run $ do
-              (selected, captured) <- lowerTarget store retention (alternativeSelector description)
-                (runExecutionFrame run) (runDeliveryFrame run) handoff selector
-              pure (fmap (\constructor -> Just (constructor, captured)) selected)
+        chosen <- withFrameNode store run (alternativeSelector description) $ draining run $ do
+          (selected, captured) <- lowerTarget store retention (alternativeSelector description)
+            (runExecutionFrame run) (runDeliveryFrame run) handoff selector
+          pure (fmap (\context -> Just (context, captured)) selected)
         case chosen of
           -- 选择读取失败或来源耗尽时不启动候选。
           Left halt -> pure (Left halt)
@@ -292,7 +284,7 @@ executionAlgebra prototype store entries selectors layer expected = do
                 [node | (_, (node, _)) <- candidates, node /= selectedNode]
               collectRuntimeScopes store retired
               runExceptT (candidate run captured)
-            Nothing -> ioError (userError ("No alternative candidate for case " ++ constructor
+            Nothing -> ioError (userError ("No alternative candidate for the Context " ++ constructor
               ++ "; regenerate with the SDK effect-codegen command"))
     -- 进入 lifelong 时取得本边界的会话（按需启动生产），各单元并发、互不等待地重复执行。
     -- 单元在所需来源结束并排空后各自正常结束；全部单元结束后，停止本边界的生产任务并等待其收尾，
@@ -360,12 +352,8 @@ executionAlgebra prototype store entries selectors layer expected = do
     resolve compiled selected =
       maybe (Left (UnknownPrototypeTarget selected)) Right (lookup selected compiled)
     constructorAt description location =
-      maybe (Left (InvalidAlternative location "Missing candidate constructor")) Right
+      maybe (Left (InvalidAlternative location "Missing candidate Context")) Right
         (lookup location (alternativeCases description))
-    -- 运行时以生产该资产的 Context 注册名识别绑定来源与会话。
-    producerOf asset = case [effectName effect | effect <- protoEffects prototype, effectProduces effect == Just asset] of
-      [source] -> Right source
-      _ -> Left (UnknownPrototypeTarget asset)
     -- 单元的游标属于（单元，会话），进入 lifelong 时从会话首条开始。
     -- 每次执行是新的 frame：先移出该单元上一次执行的 Origin，执行结果不累积；
     -- 同一单元逐次处理，本次结束后才领取下一条。所需来源结束并排空时单元正常结束，不再开始下一次执行；

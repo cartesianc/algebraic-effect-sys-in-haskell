@@ -3,7 +3,7 @@
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Runtime.Context
   ( ContextFault(..), readContext, callContext
-  , projectContext, atomicHandle, atomicScope, readStreamContext, readStreamHistory
+  , chooseCase, atomicHandle, atomicScope, readStreamContext, readStreamHistory
   ) where
 
 import Framework.Runtime.Protocol
@@ -65,14 +65,28 @@ callContext selected synchronize produce = do
   recordContextInput selected
   pure value
 
--- 和类型资产的分支契约是基础契约的投影：读取基础契约，资产当前是该构造器时取出其字段，
--- 否则报 CaseNotSelected。不新增状态，也不单独生产。故障来源是生产方的注册名，与 ContextFaultIn 的匹配一致。
-projectContext
+-- alternative 的选择读取（option）：执行一次共同的 Excu，按候选的声明顺序把同一份输出交给各自的
+-- 判定 Context，返回第一个解析成功的 Context 名；它的发布被本次调用捕获，交给选中的候选。
+-- 执行 Excu 时以首个判定 Context 为调用者，挂接注入因此不重复执行这些 parser；
+-- 判定失败只算放弃，全部放弃时报第一个失败，消息列出每个候选各自的原因。
+chooseCase
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> String -> (ContextFault -> cause) -> (base -> Maybe branch) -> m base -> m branch
-projectContext producer contract wrap project readBase = do
-  base <- readBase
-  maybe (failEffect producer (wrap (CaseNotSelected contract)) (show (CaseNotSelected contract))) pure (project base)
+  => String -> m [String] -> [(String, m ())] -> m String
+chooseCase method upstream cases = do
+  output <- maybe id enterHandler (fst <$> safeHead cases) upstream
+  attempt output [] cases
+  where
+    safeHead (first : _) = Just first
+    safeHead [] = Nothing
+    attempt _ failures [] = case failures of
+      (_, first) : _ -> throwError first { message = "no alternative case matched: "
+        ++ concatMap (\(name, problem) -> "[" ++ name ++ "] " ++ message problem ++ " ") failures }
+      [] -> error "SDK: an alternative without candidates; regenerate the program"
+    attempt output failures ((name, produce) : rest) = do
+      outcome <- (Right <$> attemptOutput method (RawOutput True output) produce) `catchError` (pure . Left)
+      case outcome of
+        Right () -> pure name
+        Left problem -> attempt output (failures ++ [(name, problem)]) rest
 
 -- streamT 的生成入口：从本次固定交付或有限读取的捕获值取得业务表示类型。
 -- 是否继续被增量驱动由组合计划决定；这里执行一次读取，不包装或解释业务数据。

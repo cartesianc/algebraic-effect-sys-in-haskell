@@ -50,9 +50,13 @@ newtype ReplyStats = ReplyStats LineCount
 deriving instance Eq LineCount => Eq ReplyStats
 deriving instance Show LineCount => Show ReplyStats
 
-newtype ReportState = ReportState FileState
-deriving instance Eq FileState => Eq ReportState
-deriving instance Show FileState => Show ReportState
+newtype ReportEmpty = ReportEmpty EmptyReport
+deriving instance Eq EmptyReport => Eq ReportEmpty
+deriving instance Show EmptyReport => Show ReportEmpty
+
+newtype ReportText = ReportText Body
+deriving instance Eq Body => Eq ReportText
+deriving instance Show Body => Show ReportText
 
 newtype LevelA = LevelA Level
 deriving instance Eq Level => Eq LevelA
@@ -63,7 +67,7 @@ deriving instance Eq Level => Eq LevelB
 deriving instance Show Level => Show LevelB
 
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = GetReportPathGen | ReadReportPathGen | GetReplyPathGen | ReadReplyPathGen | GetReportBodyGen | ReadReportBodyGen | GetReplyBodyGen | ReadReplyBodyGen | GetOpenedReportGen | ReadOpenedReportGen | GetOpenedReplyGen | ReadOpenedReplyGen | OpenReportScopeGen | CloseReportScopeGen | OpenReplyScopeGen | CloseReplyScopeGen | RunWriteReportGen | RunWriteReplyGen | RunMarkReplyGen | RunReadReportGen | RunReadReplyGen | GetReportStatsGen | ReadReportStatsGen | GetReplyStatsGen | ReadReplyStatsGen | RunShowReportGen | RunShowReplyGen | GetReportStateGen | ReadReportStateGen | RunOnBlankGen | RunOnFilledGen | NextFeedAGen | NextFeedBGen | GetLevelAGen | StreamLevelAGen | GetLevelBGen | StreamLevelBGen | RunShowAGen | RunShowBGen
+data MethodGen = GetReportPathGen | ReadReportPathGen | GetReplyPathGen | ReadReplyPathGen | GetReportBodyGen | ReadReportBodyGen | GetReplyBodyGen | ReadReplyBodyGen | GetOpenedReportGen | ReadOpenedReportGen | GetOpenedReplyGen | ReadOpenedReplyGen | OpenReportScopeGen | CloseReportScopeGen | OpenReplyScopeGen | CloseReplyScopeGen | RunWriteReportGen | RunWriteReplyGen | RunMarkReplyGen | RunReadReportGen | RunReadReplyGen | GetReportStatsGen | ReadReportStatsGen | GetReplyStatsGen | ReadReplyStatsGen | RunShowReportGen | RunShowReplyGen | RunInspectReportGen | GetReportEmptyGen | ReadReportEmptyGen | GetReportTextGen | ReadReportTextGen | RunOnBlankGen | RunOnFilledGen | NextFeedAGen | NextFeedBGen | GetLevelAGen | StreamLevelAGen | GetLevelBGen | StreamLevelBGen | RunShowAGen | RunShowBGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
@@ -187,18 +191,38 @@ newtype ShowCountError = ShowCountError String
   deriving (Eq, Show, Read)
 instance SDK.HandlerError ShowCountError Errors where raised (ShowCountError description) = (ShowCountFailure, description)
 
--- handler inspectFile：绑定到 ReportInspect。
-type InspectFileLayer m = (SDK.Reads [Char] m, SDK.Raises InspectFileError m, MonadIO m)
+-- handler inspectFile：绑定到 InspectReport。
+type InspectFileLayer m = (SDK.Reads [Char] m, SDK.RawOutputs m, SDK.Raises InspectFileError m, MonadIO m)
 class InspectFileHandler m where
-  inspectFile :: m FileState
+  inspectFile :: m [String]
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "inspectFile" 匹配。
 newtype InspectFileError = InspectFileError String
   deriving (Eq, Show, Read)
 instance SDK.HandlerError InspectFileError Errors where raised (InspectFileError description) = (InspectFileFailure, description)
 
+-- handler parseBlankReport：绑定到 ReportBlank。
+type ParseBlankReportLayer m = (SDK.Raw m, SDK.Raises ParseBlankReportError m, MonadIO m)
+class ParseBlankReportHandler m where
+  parseBlankReport :: m EmptyReport
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseBlankReport" 匹配。
+newtype ParseBlankReportError = ParseBlankReportError String
+  deriving (Eq, Show, Read)
+instance SDK.HandlerError ParseBlankReportError Errors where raised (ParseBlankReportError description) = (ParseBlankReportFailure, description)
+
+-- handler parseFilledReport：绑定到 ReportFilled。
+type ParseFilledReportLayer m = (SDK.Raw m, SDK.Raises ParseFilledReportError m, MonadIO m)
+class ParseFilledReportHandler m where
+  parseFilledReport :: m Body
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseFilledReport" 匹配。
+newtype ParseFilledReportError = ParseFilledReportError String
+  deriving (Eq, Show, Read)
+instance SDK.HandlerError ParseFilledReportError Errors where raised (ParseFilledReportError description) = (ParseFilledReportFailure, description)
+
 -- handler describeBlank：绑定到 OnBlank。
-type DescribeBlankLayer m = (SDK.Reads () m, SDK.RawOutputs m, SDK.Raises DescribeBlankError m, MonadIO m)
+type DescribeBlankLayer m = (SDK.Reads EmptyReport m, SDK.RawOutputs m, SDK.Raises DescribeBlankError m, MonadIO m)
 class DescribeBlankHandler m where
   describeBlank :: m [String]
 
@@ -258,7 +282,7 @@ newtype ShowLevelError = ShowLevelError String
 instance SDK.HandlerError ShowLevelError Errors where raised (ShowLevelError description) = (ShowLevelFailure, description)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
-data Errors = ReportLocationFailure | ReplyLocationFailure | ReportDraftFailure | ReplyDraftFailure | AcquireFileFailure | OpenTextFileFailure | CloseTextFileFailure | WriteTextFailure | MarkReadFailure | ReadTextFailure | CountLinesFailure | ShowCountFailure | InspectFileFailure | DescribeBlankFailure | DescribeFilledFailure | NextAFailure | NextBFailure | ParseLevelFailure | ShowLevelFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+data Errors = ReportLocationFailure | ReplyLocationFailure | ReportDraftFailure | ReplyDraftFailure | AcquireFileFailure | OpenTextFileFailure | CloseTextFileFailure | WriteTextFailure | MarkReadFailure | ReadTextFailure | CountLinesFailure | ShowCountFailure | InspectFileFailure | ParseBlankReportFailure | ParseFilledReportFailure | DescribeBlankFailure | DescribeFilledFailure | NextAFailure | NextBFailure | ParseLevelFailure | ShowLevelFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。
@@ -271,11 +295,12 @@ data ContextValues = ContextValues
   , boundReplyFile :: Maybe OpenedReply
   , boundReportCounter :: Maybe ReportStats
   , boundReplyCounter :: Maybe ReplyStats
-  , boundReportInspect :: Maybe ReportState
+  , boundReportBlank :: Maybe ReportEmpty
+  , boundReportFilled :: Maybe ReportText
   , boundParserA :: Maybe LevelA
   , boundParserB :: Maybe LevelB
   }
 
 emptyContexts :: ContextValues
-emptyContexts = ContextValues Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+emptyContexts = ContextValues Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 

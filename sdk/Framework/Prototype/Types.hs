@@ -6,7 +6,7 @@
 -- Prototype 的唯一数据模型，也就是 gen 的编译产物（中间表示）。这里只保存可发射、可校验的静态事实，
 -- 不引入执行句柄或资源。构建算法在 Framework.Gen.Composition，执行与展示只读取它。
 module Framework.Prototype.Types
-  ( NodeId, SumTypes, Prototype(..), PrototypePlan(..), EffectProto(..), effectProto
+  ( NodeId, Prototype(..), PrototypePlan(..), EffectProto(..), effectProto
   , WorkflowTree(..), AlternativeProto(..), LifelongProto(..), SessionProto(..), BootPlan(..)
   , ChainRole(..), ChainProto(..), ChainKind(..), ChainDefinition(..)
   , ReadPoint(..), Source(..), PrototypeError(..), ResolvedDemand(..)
@@ -21,10 +21,8 @@ import GHC.Generics (Generic)
 
 -- 当前 AST 快照内的挂载路径，不是运行调用序号；Context 链定义自身没有 AST 位置。
 type NodeId = [Int]
--- Types.hs 中的和类型：类型名 → [(构造器名, 唯一字段的类型原文)]；由 gen 解析 Types.hs 得到。
-type SumTypes = [(String, [(String, Maybe String)])]
 
--- 降级后的 demand：访问方式、契约（资产名或分支契约）与唯一的生产方 effect。
+-- 降级后的 demand：访问方式与契约（资产名）。
 data ResolvedDemand = ResolvedDemand
   { demandAccess :: Access
   , demandContract :: String
@@ -64,7 +62,6 @@ data EffectProto method = EffectProto
   , effectMethods :: [(MethodRole, method)]
   , effectDemands :: [ResolvedDemand]
   , effectProduces :: Maybe String
-  , effectBranches :: [(String, String)]
   , effectAnchor :: Maybe String
   , effectScopes :: [String]
   , effectErrorScope :: Maybe String
@@ -85,7 +82,7 @@ data EffectProto method = EffectProto
 effectProto :: String -> EffectKind -> String -> EffectProto method
 effectProto name kind input = EffectProto
   { effectName = name, effectKind = kind, effectInput = input
-  , effectMethods = [], effectDemands = [], effectProduces = Nothing, effectBranches = []
+  , effectMethods = [], effectDemands = [], effectProduces = Nothing
   , effectAnchor = Nothing, effectScopes = [], effectErrorScope = Nothing, effectInputChain = []
   , effectScopeParents = [], effectOpeningInputs = [], effectNearestScopes = [], effectResource = Nothing
   , effectContextDependencies = [], effectContinuous = False, effectHistory = False
@@ -99,8 +96,11 @@ data WorkflowTree
   | LifelongAt NodeId LifelongProto [WorkflowTree]
   deriving (Eq, Show, Read, Generic, NFData)
 
+-- alternative 的 option 判定：各候选 requires 一份由同一原子句柄（alternativeSource）的输出解析出的资产。
+-- 选择时执行该句柄一次，按候选的声明顺序把同一份输出交给各自的 Context，第一个成功的候选执行。
+-- alternativeCases：候选路径 → 判定它的 Context 注册名。
 data AlternativeProto = AlternativeProto
-  { alternativeContract :: String
+  { alternativeSource :: String
   , alternativeSelector :: NodeId
   , alternativeCases :: [(NodeId, String)]
   } deriving (Eq, Show, Read, Generic, NFData)

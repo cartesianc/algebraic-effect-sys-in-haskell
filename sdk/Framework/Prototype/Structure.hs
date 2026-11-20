@@ -116,7 +116,7 @@ renderStructure prototype workflowAST = do
         ChainedAt node children -> branch node "Chained" children
         ParallelAt node children -> branch node "Parallel" children
         AlternativeAt node description children ->
-          branch node ("Alternative on " ++ alternativeContract description
+          branch node ("Alternative on the output of " ++ alternativeSource description
             ++ " (selector " ++ show (alternativeSelector description)
             ++ ", cases " ++ show (alternativeCases description) ++ ")") children
         LifelongAt node description children ->

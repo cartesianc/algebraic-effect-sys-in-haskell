@@ -68,7 +68,7 @@ instance CloseSessionLayer m => CloseSessionHandler m where
     liftIO (putStrLn ("[close] " ++ path))
     rawoutput []
 
--- 读取是原子句柄：只执行 IO，把读到的文本交出；FileText 由挂在它下面的 ExtractFileText 解析。
+-- 读取是原子句柄：只执行 IO，把读到的文本交出；挂在它下面的 BlankText、FilledText 各自解析。
 -- Input FileSession 已在它之前开启（同份已开启的 scope 不再执行 open）。
 instance ReadFileContentLayer m => ReadFileContentHandler m where
   readFileContent = do
@@ -84,15 +84,21 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
     contents <- either (raise . ReadFileContentError . displayException) pure outcome
     rawoutput [contents]
 
--- parser 挂在读取句柄下：rawinput 是句柄本次交出的 list（一段文本），解析成文件状态（和类型）。
--- alternative 的选择读取驱动它：rawinput 执行读取句柄，读一次文件。
-instance ParseFileTextLayer m => ParseFileTextHandler m where
-  parseFileText = do
+-- 两个 parser 挂在读取句柄下：rawinput 是句柄本次交出的 list（一段文本）。
+-- 不符合自己的情形就 raise：在 alternative 的选择中只算放弃，另一个候选的 parser 接着判定。
+instance ParseBlankTextLayer m => ParseBlankTextHandler m where
+  parseBlankText = do
     contents <- rawinput
-    text <- case contents of
-      [whole] -> pure whole
-      _ -> raise (ParseFileTextError "File read returned no text")
-    pure (if null text then Blank else Written text)
+    case contents of
+      [""] -> pure (EmptyText "")
+      _ -> raise (ParseBlankTextError "the file is not empty")
+
+instance ParseWrittenTextLayer m => ParseWrittenTextHandler m where
+  parseWrittenText = do
+    contents <- rawinput
+    case contents of
+      [whole] | not (null whole) -> pure (WrittenText whole)
+      _ -> raise (ParseWrittenTextError "the file is empty")
 
 instance DetectFileSessionLayer m => DetectFileSessionHandler m where
   detectFileSession = do
@@ -107,7 +113,7 @@ instance DetectFileSessionLayer m => DetectFileSessionHandler m where
 instance ResolveFileSessionLayer m => ResolveFileSessionHandler m where
   resolveFileSession = pure ()
 
--- 两个候选都是完整的写入链：Input FileSession 先开启文件，分支契约决定由哪个候选执行。
+-- 两个候选都是完整的写入链：Input FileSession 先开启文件，ReadFile 输出的判定决定由哪个候选执行。
 -- 选择在 AST 的 alternative 中自动完成，候选本身不判断条件；链退出后自动关闭文件。
 instance WriteFirstLineLayer m => WriteFirstLineHandler m where
   writeFirstLine = do
@@ -124,7 +130,7 @@ instance WriteFirstLineLayer m => WriteFirstLineHandler m where
 
 instance AppendLineLayer m => AppendLineHandler m where
   appendLine = do
-    contents <- require @String
+    WrittenText contents <- require @WrittenText
     FileHandle path file <- require @FileHandle
     -- 明确消费读出的文本；只追加，不截断已有内容。
     let line = "file-demo: read " ++ show (length contents) ++ " characters before this append.\n"

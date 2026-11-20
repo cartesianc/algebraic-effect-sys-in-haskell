@@ -86,7 +86,22 @@ instance InspectFileLayer m => InspectFileHandler m where
   inspectFile = do
     path <- require @FilePath
     contents <- liftIO (readFile' path)
-    pure (if null contents then Blank else Filled (Body contents))
+    rawoutput [contents]
+
+-- 两个 parser 读同一次输出；不符合自己的情形就 raise，在 alternative 的选择中只算放弃。
+instance ParseBlankReportLayer m => ParseBlankReportHandler m where
+  parseBlankReport = do
+    output <- rawinput
+    case output of
+      [""] -> pure (EmptyReport "")
+      _ -> raise (ParseBlankReportError "the report is not empty")
+
+instance ParseFilledReportLayer m => ParseFilledReportHandler m where
+  parseFilledReport = do
+    output <- rawinput
+    case output of
+      [text] | not (null text) -> pure (Body text)
+      _ -> raise (ParseFilledReportError "the report is empty")
 
 instance DescribeBlankLayer m => DescribeBlankHandler m where
   describeBlank = do

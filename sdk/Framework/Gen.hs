@@ -14,7 +14,7 @@ import Framework.Gen.Emit.Prototype (renderPrototype, renderPrototypeModule)
 import Framework.Gen.Names (handlerClass, nameHandlers)
 import Framework.Gen.Frontend.Hanging (loadHanging)
 import Framework.Gen.Frontend.Shape (shapeHandlers)
-import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, handlerText, handlerScopeNames)
+import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, namespaceDirectory, handlerText, handlerScopeNames)
 import Data.List (nub)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Exit (die)
@@ -29,9 +29,8 @@ compileWorkflow namespace = do
   let generated = namespaceDirectory namespace </> "Generated"
       cachePath = generated </> ".scope-cache"
   -- 同一组合机器在声明进程中走到接口检查点；首次无 Handlers 也能生成同步契约。
-  (sumTypes, typesFingerprint) <- loadSumTypes namespace
   (hasHanging, targets, hangingSources) <- loadHanging namespace
-  interface <- loadComposition namespace sumTypes hasHanging targets
+  interface <- loadComposition namespace hasHanging targets
   let contracts = renderEffects interface
       handlersInScope = [(handlerClass handler', handler') | handler' <- unitHandlers interface]
   source <- loadHandlers namespace contracts
@@ -53,7 +52,7 @@ compileWorkflow namespace = do
       names = nameHandlers (maybe mempty handlerScopeNames source) (allMethods unit ++ historyEntries unit)
   handlers <- either (ioError . userError) pure (renderHandlers names unit source)
   -- 输出只读取机器完成态的接口事实。
-  let program = renderProgram names typesFingerprint hangingSources unit
+  let program = renderProgram names hangingSources unit
       prototypeModule = renderPrototypeModule namespace structure
   _ <- evaluate (length structure)
   -- 类型检查、顶层白名单与资产目录；通过后才更新生成区，未变文件保留时间戳

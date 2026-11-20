@@ -9,8 +9,8 @@ import Framework.Gen.Names (HandlerNames, entryName, helperName)
 import Framework.Gen.Plan
 import Framework.Prototype (ChainRole(..), variantLabel)
 
-renderProgram :: HandlerNames -> Maybe String -> [(FilePath, Maybe String)] -> Unit -> String
-renderProgram names typesFingerprint hangingSources unit = unlines (programHeader ++ astInterpreter)
+renderProgram :: HandlerNames -> [(FilePath, Maybe String)] -> Unit -> String
+renderProgram names hangingSources unit = unlines (programHeader ++ astInterpreter)
   where
     namespace = unitNamespace unit
     helper name = "Handlers." ++ helperName names name
@@ -29,7 +29,6 @@ renderProgram names typesFingerprint hangingSources unit = unlines (programHeade
       , "import " ++ namespace ++ ".Generated.Effects"
       , "import " ++ namespace ++ ".Generated.Prototype (generatedPrototype)"
       , "import qualified " ++ namespace ++ ".Generated.Handlers as Handlers"
-      , "import " ++ namespace ++ ".Types"
       , ""
       ]
     selectors = unitSelectors unit
@@ -40,7 +39,7 @@ renderProgram names typesFingerprint hangingSources unit = unlines (programHeade
       , "  deriving Show"
       , ""
       , "-- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。"
-      , "-- 第二个列表是各转折契约的选择末端：驱动资产（持续资产领取本次交付），返回它当前的构造器名。"
+      , "-- 第二个列表是各 alternative 的选择末端：执行共同的 Excu，返回第一个判定成功的 Context 名。"
       , "-- 第三个列表是各持续资产的生产步骤：会话按需启动，Receive 在每次 rawemit 时调用 parser，Derive 每领取一条上游交付调用一次。"
       , "compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]"
       , "                     , [(String, SDK.SessionSteps ContextValues Errors)])"
@@ -54,28 +53,23 @@ renderProgram names typesFingerprint hangingSources unit = unlines (programHeade
           [ wrapTarget (variantLabel terminal hooks) (terminal ++ "Result () <$ " ++ handlers hooks method)
           | (terminal, method) <- unitTerminals unit, hooks <- variantsOf NodeChain terminal ]
       , "    , " ++ renderList "      "
-          [ wrapTarget (variantLabel contractType hooks) ("caseOf" ++ contractType ++ " <$> " ++ handlers hooks selector)
+          [ wrapTarget (variantLabel source hooks) ("SDK.chooseCase " ++ show (selectorEntry selectedSelector)
+              ++ " (" ++ handlers hooks (selectorEntry selectedSelector) ++ ") ["
+              ++ intercalate ", " [ "(" ++ show context ++ ", () <$ " ++ handlers hooks request ++ ")"
+                                  | (context, request) <- selectorCases selectedSelector ] ++ "]")
           | selectedSelector <- selectors
-          , let contractType = selectorContract selectedSelector
-                selector = selectorEntry selectedSelector
-          , hooks <- variantsOf SelectorChain contractType ]
+          , let source = selectorSource selectedSelector
+          , hooks <- variantsOf SelectorChain source ]
       , "    , " ++ renderList "      " sessionSteps
       , "    )"
       , ""
-      ] ++ concat
-      [ [ "caseOf" ++ contractType ++ " :: " ++ contractType ++ " -> String"
-        , "caseOf" ++ contractType ++ " (" ++ contractType ++ " value) = case value of" ]
-        ++ [ "  " ++ constructor ++ " {} -> " ++ show constructor | constructor <- selectorConstructors selectedSelector ]
-        ++ [ "" ]
-      | selectedSelector <- selectors
-      , let contractType = selectorContract selectedSelector ] ++
+      ] ++
       [ "-- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。"
       , "interpreter :: SDK.AST -> [EffectSpec] -> IO ()"
       , "interpreter = SDK.interpreter " ++ show namespace
           ++ " [" ++ intercalate ", " sourceChecks ++ "] generatedPrototype compiledEntries"
       ]
     sourceChecks = ["(" ++ sourcePath "Handlers.hs" ++ ", " ++ helper "handlerSourceFingerprint" ++ ")"]
-      ++ ["(" ++ sourcePath "Types.hs" ++ ", " ++ show typesFingerprint ++ ")" | not (null selectors)]
       ++ map show hangingSources
     sourcePath file = show ("demo/" ++ map (\c -> if c == '.' then '/' else c) namespace ++ "/" ++ file)
     -- 按 Context 注册名登记（与运行时绑定来源同名）。Receive：Stream 方法内每次 rawemit 驱动一次 parser 解析并发布。

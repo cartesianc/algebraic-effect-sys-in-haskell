@@ -160,7 +160,6 @@ renderEffect effect = update
     [ changed P.effectMethods "effectMethods" (list (pair tag genName))
     , changed P.effectDemands "effectDemands" (list renderResolved)
     , changed P.effectProduces "effectProduces" show
-    , changed P.effectBranches "effectBranches" show
     , changed P.effectAnchor "effectAnchor" show
     , changed P.effectScopes "effectScopes" show
     , changed P.effectErrorScope "effectErrorScope" show
@@ -209,7 +208,7 @@ renderWorkflow (P.LifelongAt node lifelong children) =
 
 renderAlternative :: P.AlternativeProto -> String
 renderAlternative alternative = record "AlternativeProto"
-  [ ("alternativeContract", show (P.alternativeContract alternative))
+  [ ("alternativeSource", show (P.alternativeSource alternative))
   , ("alternativeSelector", show (P.alternativeSelector alternative))
   , ("alternativeCases", show (P.alternativeCases alternative))
   ]

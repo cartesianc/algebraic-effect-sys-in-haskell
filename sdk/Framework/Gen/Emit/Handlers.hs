@@ -197,25 +197,14 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
           ++ wrap ++ " (FrameworkRuntime.failEffect " ++ symbolOf "effect" ++ " failure description)"
       , "    where (failure, description) = FrameworkRuntime.raised problem"
       , "" ]
-    -- demands 按表示类型路由到资产的读取入口；持续与有限调用都读声明的 T，分支契约投影构造器字段。
+    -- demands 按表示类型路由到资产的读取入口；持续与有限调用都读声明的 T。
     routeInstances = concat
       [ [ "instance FrameworkRuntime.Reads " ++ parenthesized (renderValueType "FrameworkRuntime." "FrameworkGenerated." (routeType route)) ++ " "
             ++ tag (show (routeEffect route)) ++ " where"
         , "  require = " ++ wrap ++ " " ++ parenthesized (routeExpression route)
         , "" ]
       | route <- unitRoutes unit ]
-    routeExpression route = case routeView route of
-      BranchView (BranchContract _ base constructor field _) ->
-        "FrameworkRuntime.projectContext " ++ show producer ++ " "
-        ++ show contractType ++ " FrameworkGenerated.ContextBindingError (\\(FrameworkGenerated." ++ base
-        ++ " value) -> case value of { " ++ constructor ++ maybe " -> Just ()" (const " field -> Just field") field
-        ++ "; _ -> Nothing }) (" ++ reader ++ ")"
-      ContinuousView -> "FrameworkRuntime.coerce <$> " ++ reader
-      ValueView -> "FrameworkRuntime.coerce <$> " ++ reader
-      where
-        contractType = routeContract route
-        producer = routeProvider route
-        reader = entry (routeReader route)
+    routeExpression route = "FrameworkRuntime.coerce <$> " ++ entry (routeReader route)
     -- streams 读取的持续资产另有 x:xs 入口；Flow 的参数是 representational 角色，契约细化直接 coerce 掉。
     streamInstances = concat
       [ [ "instance FrameworkRuntime.Streams " ++ parenthesized (renderValueType "FrameworkRuntime." "FrameworkGenerated." (routeType route)) ++ " "

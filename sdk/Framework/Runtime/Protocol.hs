@@ -64,6 +64,10 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 同次输出交接给持续 parser，失败按持续执行协议传播，不吞掉。
   injectStreamOutput :: String -> RawOutput -> m () -> m ()
   injectStreamOutput _ _ = id
+  -- alternative 判定：以根调用身份把同次输出交给一个候选的 Context；失败照常返回给调用方，
+  -- 由选择逻辑记为放弃，不触发 Error 处置，也不进入原链。
+  attemptOutput :: String -> RawOutput -> m () -> m ()
+  attemptOutput _ _ = id
   -- 持续资产仍返回声明的表示类型：从本次固定交付或已经捕获的绑定投影。
   readContextValue :: String -> (environment -> Maybe value) -> m (Maybe value)
   readContextValue _ _ = pure Nothing
@@ -90,9 +94,8 @@ data RawOutput = RawOutput
   , info :: [String]
   } deriving (Eq, Show)
 
--- CaseNotSelected：读取和类型资产的某个分支契约，而资产当前是另一个构造器。
 data ContextFault = ContextNotInitialized
-  | AmbiguousContextBinding String | CaseNotSelected String
+  | AmbiguousContextBinding String
   deriving (Eq, Show)
 
 -- Scope 参数与生命周期能力 ----------------------------------------------------

@@ -26,12 +26,16 @@ newtype OpenedFile = OpenedFile FileHandle
 deriving instance Eq FileHandle => Eq OpenedFile
 deriving instance Show FileHandle => Show OpenedFile
 
-newtype FileText = FileText TextState
-deriving instance Eq TextState => Eq FileText
-deriving instance Show TextState => Show FileText
+newtype FileBlank = FileBlank EmptyText
+deriving instance Eq EmptyText => Eq FileBlank
+deriving instance Show EmptyText => Show FileBlank
+
+newtype FileWritten = FileWritten WrittenText
+deriving instance Eq WrittenText => Eq FileWritten
+deriving instance Show WrittenText => Show FileWritten
 
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = RunLocateFileGen | RunValidateFileNameGen | GetFileNameGen | ReadFileNameGen | GetOpenedFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | DetectFileRecoveryGen | ResolveFileRecoveryGen | RunReadFileGen | GetFileTextGen | ReadFileTextGen | RunWriteFirstLineGen | RunAppendLineGen
+data MethodGen = RunLocateFileGen | RunValidateFileNameGen | GetFileNameGen | ReadFileNameGen | GetOpenedFileGen | ReadOpenedFileGen | OpenFileSessionGen | CloseFileSessionGen | DetectFileRecoveryGen | ResolveFileRecoveryGen | RunReadFileGen | GetFileBlankGen | ReadFileBlankGen | GetFileWrittenGen | ReadFileWrittenGen | RunWriteFirstLineGen | RunAppendLineGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
@@ -125,18 +129,28 @@ newtype ReadFileContentError = ReadFileContentError String
   deriving (Eq, Show, Read)
 instance SDK.HandlerError ReadFileContentError Errors where raised (ReadFileContentError description) = (ReadFileContentFailure, description)
 
--- handler parseFileText：绑定到 ExtractFileText。
-type ParseFileTextLayer m = (SDK.Raw m, SDK.Raises ParseFileTextError m, MonadIO m)
-class ParseFileTextHandler m where
-  parseFileText :: m TextState
+-- handler parseBlankText：绑定到 BlankText。
+type ParseBlankTextLayer m = (SDK.Raw m, SDK.Raises ParseBlankTextError m, MonadIO m)
+class ParseBlankTextHandler m where
+  parseBlankText :: m EmptyText
 
--- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseFileText" 匹配。
-newtype ParseFileTextError = ParseFileTextError String
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseBlankText" 匹配。
+newtype ParseBlankTextError = ParseBlankTextError String
   deriving (Eq, Show, Read)
-instance SDK.HandlerError ParseFileTextError Errors where raised (ParseFileTextError description) = (ParseFileTextFailure, description)
+instance SDK.HandlerError ParseBlankTextError Errors where raised (ParseBlankTextError description) = (ParseBlankTextFailure, description)
+
+-- handler parseWrittenText：绑定到 FilledText。
+type ParseWrittenTextLayer m = (SDK.Raw m, SDK.Raises ParseWrittenTextError m, MonadIO m)
+class ParseWrittenTextHandler m where
+  parseWrittenText :: m WrittenText
+
+-- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseWrittenText" 匹配。
+newtype ParseWrittenTextError = ParseWrittenTextError String
+  deriving (Eq, Show, Read)
+instance SDK.HandlerError ParseWrittenTextError Errors where raised (ParseWrittenTextError description) = (ParseWrittenTextFailure, description)
 
 -- handler writeFirstLine：绑定到 WriteFirstLine。
-type WriteFirstLineLayer m = (SDK.Reads () m, SDK.Reads FileHandle m, SDK.RawOutputs m, SDK.Raises WriteFirstLineError m, MonadIO m)
+type WriteFirstLineLayer m = (SDK.Reads EmptyText m, SDK.Reads FileHandle m, SDK.RawOutputs m, SDK.Raises WriteFirstLineError m, MonadIO m)
 class WriteFirstLineHandler m where
   writeFirstLine :: m [String]
 
@@ -146,7 +160,7 @@ newtype WriteFirstLineError = WriteFirstLineError String
 instance SDK.HandlerError WriteFirstLineError Errors where raised (WriteFirstLineError description) = (WriteFirstLineFailure, description)
 
 -- handler appendLine：绑定到 AppendLine。
-type AppendLineLayer m = (SDK.Reads FileHandle m, SDK.Reads String m, SDK.RawOutputs m, SDK.Raises AppendLineError m, MonadIO m)
+type AppendLineLayer m = (SDK.Reads FileHandle m, SDK.Reads WrittenText m, SDK.RawOutputs m, SDK.Raises AppendLineError m, MonadIO m)
 class AppendLineHandler m where
   appendLine :: m [String]
 
@@ -156,16 +170,17 @@ newtype AppendLineError = AppendLineError String
 instance SDK.HandlerError AppendLineError Errors where raised (AppendLineError description) = (AppendLineFailure, description)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
-data Errors = LocateFileFailure | ValidateFileNameFailure | ParseFileNameFailure | AcquireFileFailure | OpenSessionFailure | CloseSessionFailure | DetectFileSessionFailure | ResolveFileSessionFailure | ReadFileContentFailure | ParseFileTextFailure | WriteFirstLineFailure | AppendLineFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+data Errors = LocateFileFailure | ValidateFileNameFailure | ParseFileNameFailure | AcquireFileFailure | OpenSessionFailure | CloseSessionFailure | DetectFileSessionFailure | ResolveFileSessionFailure | ReadFileContentFailure | ParseBlankTextFailure | ParseWrittenTextFailure | WriteFirstLineFailure | AppendLineFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。
 data ContextValues = ContextValues
   { boundFileLocation :: Maybe FileName
   , boundFileResource :: Maybe OpenedFile
-  , boundExtractFileText :: Maybe FileText
+  , boundBlankText :: Maybe FileBlank
+  , boundFilledText :: Maybe FileWritten
   }
 
 emptyContexts :: ContextValues
-emptyContexts = ContextValues Nothing Nothing Nothing
+emptyContexts = ContextValues Nothing Nothing Nothing Nothing
 

@@ -1,7 +1,7 @@
 -- 读取源程序（前端）：在声明加载进程中求值 effects 与 ast 并计算到接口检查点 Unit，
 -- 解析 Types.hs 的和类型；用本次生成的契约对 Handlers.hs 做无代码类型检查，取得 GHC 解析的名称。
 module Framework.Gen.Frontend.Source
-  ( HandlerSource(..), NameUses, nameAtUse, loadComposition, loadHandlers, loadSumTypes, namespaceDirectory, sourceOffset
+  ( HandlerSource(..), NameUses, nameAtUse, loadComposition, loadHandlers, namespaceDirectory, sourceOffset
   ) where
 
 import Control.Exception (evaluate)
@@ -10,7 +10,6 @@ import Data.Data (Data, cast, gmapQ)
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Framework.Prototype.Types (SumTypes)
 import Framework.Gen.Plan (Unit)
 import Framework.Gen.Frontend.Ghc (withSourceTargets)
 import GHC (GhcPs, GhcRn, LoadHowMuch(..), SuccessFlag(..), getModSummary, getModuleInfo, getSessionDynFlags,
@@ -40,12 +39,12 @@ import System.Process (CreateProcess(..), StdStream(..), proc, readProcess, wait
 import Text.Read (readMaybe)
 
 -- effects 与 ast 是 Haskell 值，只有加载业务模块才能求值：在独立的 ghci 进程里调用
--- Framework.Gen.Composition.beginComposition，打印接口检查点再读回。和类型的构造器信息以字面量传入。
-loadComposition :: String -> SumTypes -> Bool -> [[(String, [[Int]])]] -> IO Unit
-loadComposition namespace sumTypes hasHanging targets = do
+-- Framework.Gen.Composition.beginComposition，打印接口检查点再读回。
+loadComposition :: String -> Bool -> [[(String, [[Int]])]] -> IO Unit
+loadComposition namespace hasHanging targets = do
   let directory = namespaceDirectory namespace
       expression = "print (Framework.Gen.Composition.beginComposition " ++ show namespace ++ " " ++ namespace ++ ".Effects.effects"
-        ++ " (Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast) " ++ mounts ++ " " ++ show targets ++ " " ++ show sumTypes ++ ")"
+        ++ " (Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast) " ++ mounts ++ " " ++ show targets ++ ")"
       mounts = if hasHanging then namespace ++ ".Hanging.hangingTree" else "(Framework.Language.AST.hanging [])"
   -- GHC 的诊断直接写到本进程的 stderr，不经管道读回：GHC 按自己的区域编码输出，
   -- 读回时的解码可能与之不一致（中文 Windows 上 chcp 65001 后即如此），会把诊断本身变成解码异常。
@@ -158,38 +157,6 @@ parseSourceFile inputPath = do
     case unP Parser.parseModule state of
       PFailed _ -> liftIO (ioError (userError ("Cannot parse " ++ inputPath ++ "; check its Haskell syntax")))
       POk _ parsed -> pure (source, unLoc parsed)
-
--- Types.hs 中的和类型：至少两个构造器、每个构造器至多一个字段；字段类型取源码原文。
--- 多字段和类型仍是合法业务 ADT；这里只支持上述自动投影形状，其余不生成分支契约。
-loadSumTypes :: String -> IO (SumTypes, Maybe String)
-loadSumTypes namespace = do
-  let inputPath = namespaceDirectory namespace </> "Types.hs"
-  exists <- doesFileExist inputPath
-  if not exists then pure ([], Nothing) else do
-    (source, parsed) <- parseSourceFile inputPath
-    let text located = case getLocA located of
-          RealSrcSpan span _ ->
-            let start = sourceOffset source (srcSpanStartLine span) (srcSpanStartCol span)
-                end = sourceOffset source (srcSpanEndLine span) (srcSpanEndCol span)
-            in Just (dropWhile (`elem` "!~ ") (take (end - start) (drop start source)))
-          _ -> Nothing
-        fields declaration = case unLoc declaration of
-          ConDeclH98 { con_name = constructor, con_args = arguments } ->
-            let named = occNameString (rdrNameOcc (unLoc constructor))
-            in case arguments of
-              PrefixCon _ [] -> Just (named, Nothing)
-              PrefixCon _ [HsScaled _ argument] -> (\found -> (named, Just found)) <$> text argument
-              RecCon (L _ [L _ ConDeclField { cd_fld_names = [_], cd_fld_type = argument }]) ->
-                (\found -> (named, Just found)) <$> text argument
-              _ -> Nothing
-          _ -> Nothing
-    let sums =
-          [ (occNameString (rdrNameOcc typeName), constructors)
-          | L _ (TyClD _ DataDecl { tcdLName = L _ typeName, tcdDataDefn = HsDataDefn { dd_cons = declared } }) <- hsmodDecls parsed
-          , let candidates = map fields (toList declared)
-          , length candidates > 1, all (/= Nothing) candidates
-          , let constructors = [found | Just found <- candidates] ]
-    pure (sums, Just (show (fingerprintString source)))
 
 -- 行列号（列按 GHC 的制表位规则）换算为源码字符偏移。
 sourceOffset :: String -> Int -> Int -> Int

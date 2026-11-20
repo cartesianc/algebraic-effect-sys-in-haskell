@@ -8,7 +8,6 @@ import qualified Framework.Generated as SDK
 import FileDemo.Generated.Effects
 import FileDemo.Generated.Prototype (generatedPrototype)
 import qualified FileDemo.Generated.Handlers as Handlers
-import FileDemo.Types
 
 
 -- 仅汇总所选末端的成功结果，不保存共享绑定或增加完成包装。
@@ -16,7 +15,7 @@ data Results = WriteFirstLineResult () | AppendLineResult ()
   deriving Show
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
--- 第二个列表是各转折契约的选择末端：驱动资产（持续资产领取本次交付），返回它当前的构造器名。
+-- 第二个列表是各 alternative 的选择末端：执行共同的 Excu，返回第一个判定成功的 Context 名。
 -- 第三个列表是各持续资产的生产步骤：会话按需启动，Receive 在每次 rawemit 时调用 parser，Derive 每领取一条上游交付调用一次。
 compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]
                      , [(String, SDK.SessionSteps ContextValues Errors)])
@@ -29,16 +28,11 @@ compiledEntries = do
     ( [ target "WriteFirstLine" (WriteFirstLineResult () <$ Handlers.runWriteFirstLine)
       , target "AppendLine" (AppendLineResult () <$ Handlers.runAppendLine)
       ]
-    , [ target "FileText" (caseOfFileText <$> Handlers.getFileText)
+    , [ target "ReadFile" (SDK.chooseCase "runReadFile" (Handlers.runReadFile) [("BlankText", () <$ Handlers.getFileBlank), ("FilledText", () <$ Handlers.getFileWritten)])
       ]
     , []
     )
 
-caseOfFileText :: FileText -> String
-caseOfFileText (FileText value) = case value of
-  Blank {} -> "Blank"
-  Written {} -> "Written"
-
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "FileDemo" [("demo/FileDemo/Handlers.hs", Handlers.handlerSourceFingerprint), ("demo/FileDemo/Types.hs", Just "009315feb6ea88d9892bf958d9c746dc"), ("demo/FileDemo/Hanging.hs",Nothing)] generatedPrototype compiledEntries
+interpreter = SDK.interpreter "FileDemo" [("demo/FileDemo/Handlers.hs", Handlers.handlerSourceFingerprint), ("demo/FileDemo/Hanging.hs",Nothing)] generatedPrototype compiledEntries

@@ -45,9 +45,9 @@ import Framework.Recursion (Fix(..), cata, Algebra)
 -- 每次迁移在 Either 中完成后才交出下一状态；错误不会留下半份可输出的结果。
 -- 多次遍历服务于不同关系（调用图/控制路径/来源），不是多套独立调度器。
 data CompositionState
-  = Declared String [EffectSpec] (Fix WorkflowF) [(NodeId, [String])] SumTypes
-  | Related String [EffectSpec] [EffectProto String] (Fix WorkflowF) [(NodeId, [String])] SumTypes
-  | Numbered String PrototypePlan SumTypes
+  = Declared String [EffectSpec] (Fix WorkflowF) [(NodeId, [String])]
+  | Related String [EffectSpec] [EffectProto String] (Fix WorkflowF) [(NodeId, [String])]
+  | Numbered String PrototypePlan
   | AwaitingBodies Unit
   | ResolvingBodies Unit (Maybe [(String, MethodShape String)])
   | AwaitingGraph PendingComposition
@@ -67,19 +67,19 @@ data CompositionResult = CompositionResult
 -- 唯一状态转换入口。缓存只替换 BuildingStructure/ProvingSources；验证和驱动检查不会跳过。
 advanceComposition :: CompositionState -> Either String CompositionState
 advanceComposition state = case state of
-  Declared namespace specifications tree marks sumTypes -> do
-    effects <- diagnostic (buildEffectProtos specifications sumTypes)
-    pure (Related namespace specifications effects tree marks sumTypes)
+  Declared namespace specifications tree marks -> do
+    effects <- diagnostic (buildEffectProtos specifications)
+    pure (Related namespace specifications effects tree marks)
   -- 业务树独立编号；Hanging 只贡献挂载范围，类型筛选仍由 Injector.Super 完成。
-  Related namespace specifications effects tree marks sumTypes -> do
+  Related namespace specifications effects tree marks -> do
     workflow <- diagnostic (numberWorkflow effects tree)
     diagnostic (checkMiddleware effects marks)
-    pure (Numbered namespace (PrototypePlan specifications effects workflow marks) sumTypes)
-  Numbered namespace plan sumTypes -> do
+    pure (Numbered namespace (PrototypePlan specifications effects workflow marks))
+  Numbered namespace plan -> do
     assembly <- diagnostic (assembleProgram plan)
-    unit <- bindProgram namespace plan (declareEffects (plannedRegistrations plan)) assembly sumTypes
+    unit <- bindProgram namespace plan (declareEffects (plannedRegistrations plan)) assembly
       (controlReads (plannedEffects plan) (plannedWorkflow plan))
-    let (selectors, sessions) = entryPlans (mountHooks unit) (plannedEffects plan) assembly (unitBranches unit)
+    let (selectors, sessions) = entryPlans (mountHooks unit) (plannedEffects plan) (plannedWorkflow plan) assembly
         entered = unit { unitSelectors = selectors, unitSessionEntries = sessions }
     pure (AwaitingBodies entered { unitSupers = superSelections entered })
   ResolvingBodies unit supplied -> do
@@ -111,8 +111,8 @@ settleComposition state = case state of
   _ -> advanceComposition state >>= settleComposition
 
 -- 声明加载进程返回同一机器的接口检查点。Unit 只含纯 ADT，可 Show/Read；没有 GHC AST 或类字典。
-beginComposition :: String -> [EffectSpec] -> Fix WorkflowF -> HangingTree -> [[(String, [NodeId])]] -> SumTypes -> Either String Unit
-beginComposition namespace specifications tree mounts targets sumTypes = do
+beginComposition :: String -> [EffectSpec] -> Fix WorkflowF -> HangingTree -> [[(String, [NodeId])]] -> Either String Unit
+beginComposition namespace specifications tree mounts targets = do
   let rows = hangingRows mounts
   unless (length rows == length targets) (Left "Hanging source differs from its declaration")
   marks <- concat <$> sequence
@@ -122,7 +122,7 @@ beginComposition namespace specifications tree mounts targets sumTypes = do
         forM_ refs $ \(name, paths) -> when (null paths) (Left ("Hanging target is unreachable from AST.ast: " ++ name))
         pure [(path, hooks) | (_, paths) <- refs, path <- paths]
     | ((hooks, arity), refs) <- zip rows targets ]
-  state <- settleComposition (Declared namespace specifications tree marks sumTypes)
+  state <- settleComposition (Declared namespace specifications tree marks)
   case state of
     AwaitingBodies unit -> pure unit
     _ -> Left "Composition did not reach the interface checkpoint"
@@ -151,8 +151,8 @@ completeComposition pending@(PendingComposition unit checked _ _) cached = do
 -- ========================================================================
 
 -- 注册关系的标准解析：同时完成注册级检查。之后的绑定与输出只读取这些事实，不再自行推导。
-buildEffectProtos :: [EffectSpec] -> SumTypes -> Either (PrototypeError String) [EffectProto String]
-buildEffectProtos specifications sumTypes = do
+buildEffectProtos :: [EffectSpec] -> Either (PrototypeError String) [EffectProto String]
+buildEffectProtos specifications = do
   valid (unique (map name specifications)) "Duplicate effect name"
   valid (all ((/= "Root") . name) specifications) "Root is reserved"
   valid (all ((/= "None") . name) specifications) "None is reserved"
@@ -160,8 +160,8 @@ buildEffectProtos specifications sumTypes = do
   mapM_ (\specification -> mapM_ (\demand -> valid (validContractName (contract demand))
       ("Demanded contract must be a contract name such as StartURL: " ++ contract demand
         ++ " in " ++ name specification)) (demands specification)) specifications
-  resolved <- mapM (fromRegistration . resolveDemands branchTable specifications) specifications
-  dependencies <- mapM (fromRegistration . contextNames branchTable specifications . pure . name) specifications
+  resolved <- mapM (fromRegistration . resolveDemands specifications) specifications
+  dependencies <- mapM (fromRegistration . contextNames specifications . pure . name) specifications
   let table = zip (map name specifications) resolved
       resolvedOf selected = maybe [] id (lookup selected table)
       providers mode specification = nub
@@ -224,7 +224,6 @@ buildEffectProtos specifications sumTypes = do
         , effectMethods = registeredMethods specifications specification
         , effectDemands = resolvedOf (name specification)
         , effectProduces = contractOf <$> contextAsset (typing specification)
-        , effectBranches = branchesOf specification
         , effectAnchor = case typing specification of
             Context {} -> anchorOf [] (input specification)
             _ -> Nothing
@@ -347,8 +346,6 @@ buildEffectProtos specifications sumTypes = do
               [] -> Left (InvalidPrototype ("Error " ++ name specification ++ " has no scope on its Input chain; Error only handles scope failures"))
               _ -> Left (InvalidPrototype ("Error capability reaches several nearest scopes: " ++ name specification))
           _ -> pure ()
-        valid (null [demand | demand <- demands specification, access demand == RequestAccess,
-          contract demand `elem` map fst branchTable]) ("Branch contracts can only be required: " ++ name specification)
         valid (null [() | demand <- demands specification, access demand == StreamAccess]
           || Registration.effectKind (typing specification) `elem` [ExcuKind, ScopedKind])
           ("Only Excu and Scoped effects may subscribe with streams: " ++ name specification)
@@ -369,14 +366,6 @@ buildEffectProtos specifications sumTypes = do
     validContractName selected = case selected of
       first : rest -> isUpper first && all (\character -> isAlphaNum character || character `elem` "_'") rest
       [] -> False
-    branchesOf specification = case typing specification of
-      Context { asset = declared } | TypeRef typeName <- representation declared
-        , Just constructors <- lookup typeName sumTypes, length constructors > 1 ->
-          [(contractOf declared ++ constructor, constructor) | (constructor, _) <- constructors]
-      _ -> []
-    branchTable = [(branch, contractOf declared)
-      | specification <- specifications, Just declared <- [contextAsset (typing specification)]
-      , (branch, _) <- branchesOf specification]
 
     -- 声明解释的私有运算；其他阶段只取得 EffectProto，不能直接重做解析。
     -- input 是 Stream 的 Context 是它的 parser：会话每取得一份原始输入就调用一次 getT。
@@ -411,9 +400,8 @@ buildEffectProtos specifications sumTypes = do
 
     -- 资产名在注册集合中唯一，因此每个契约恰好对应一个生产方。
     -- requires 需要生产方缓存（require = True），streams 需要持续资产。
-    -- branches：和类型资产的分支契约 → 基础契约；分支契约由基础契约的生产方提供（投影）。
-    resolveDemands :: [(String, String)] -> [EffectSpec] -> EffectSpec -> Either String [ResolvedDemand]
-    resolveDemands branches specifications consumer = do
+    resolveDemands :: [EffectSpec] -> EffectSpec -> Either String [ResolvedDemand]
+    resolveDemands specifications consumer = do
       validateAssetSources specifications
       let keys = [(access demand, contract demand) | demand <- demands consumer]
       unless (length keys == length (nub keys)) $
@@ -421,13 +409,12 @@ buildEffectProtos specifications sumTypes = do
       mapM resolveOne (demands consumer)
       where
         resolveOne demand = do
-          let producedContract = maybe (contract demand) id (lookup (contract demand) branches)
           provider <- case [specification | specification <- specifications
-                , name specification /= name consumer, produced specification == Just producedContract] of
+                , name specification /= name consumer, produced specification == Just (contract demand)] of
             [specification] -> pure specification
             [] -> Left ("No Context produces contract " ++ contract demand ++ " for " ++ name consumer
               ++ "; a contract is the asset name declared by its producer Context")
-            _ -> Left ("Several Context effects produce contract " ++ producedContract)
+            _ -> Left ("Several Context effects produce contract " ++ contract demand)
           case (access demand, typing provider) of
             (RequestAccess, _) | continuousContext provider -> Left ("Contract " ++ contract demand
               ++ " is a continuous asset produced by its session, so " ++ name consumer ++ " cannot request it")
@@ -436,14 +423,12 @@ buildEffectProtos specifications sumTypes = do
             (StreamAccess, _) | not (continuousContext provider) -> Left ("Contract " ++ contract demand
               ++ " is not a continuous asset (its Context declares stream = False), so "
               ++ name consumer ++ " cannot subscribe to it")
-            (StreamAccess, _) | producedContract /= contract demand -> Left ("Branch contract " ++ contract demand
-              ++ " cannot be subscribed; subscribe to " ++ producedContract ++ " in " ++ name consumer)
             _ -> pure ()
           pure (ResolvedDemand (access demand) (contract demand) (name provider))
 
     -- 收集声明前提所需的 Context，按依赖顺序去重；不根据业务值合并调用。
-    contextNames :: [(String, String)] -> [EffectSpec] -> [String] -> Either String [String]
-    contextNames branches specifications selected = nub . concat <$> mapM (visit []) selected
+    contextNames :: [EffectSpec] -> [String] -> Either String [String]
+    contextNames specifications selected = nub . concat <$> mapM (visit []) selected
       where
         visit _ "Root" = Right []
         visit _ "None" = Right []
@@ -451,7 +436,7 @@ buildEffectProtos specifications sumTypes = do
           | selectedName `elem` seen = Left ("Cyclic input/demand: " ++ selectedName)
           | otherwise = do
               specification <- findEffect specifications selectedName
-              resolved <- resolveDemands branches specifications specification
+              resolved <- resolveDemands specifications specification
               let providers = nub (map demandProvider resolved)
               upstream <- concat <$> mapM (visit (selectedName : seen)) (nub (input specification : providers))
               pure (upstream ++ providers)
@@ -478,7 +463,7 @@ buildEffectProtos specifications sumTypes = do
 
 -- 算法说明 v1（2026-11-15）：末端来自 node 的显式选择，不从全图寻找出度为零的节点。
 -- cata 给每次挂载分配 AST 路径；同一 effect 重复挂载仍保留不同 NodeId，不能按名字合并。
--- alternative 根据候选 Input 链的分支契约定位同一资产与构造器，检查完整覆盖后登记选择入口。
+-- alternative 按候选 requires 的、由同一原子句柄的输出解析出的资产定位判定 Context，登记选择入口。
 -- 此处不提取候选的最长公共前缀，也不改写它们的 Input；选择绑定的交接由运行协议完成。
 -- 编号遍历本身随 AST 大小增长，但每处的注册查询、候选检查与 planSessions 分析另计。
 -- ========================================================================
@@ -545,13 +530,12 @@ composeMethods checkReads effects bindings required handlerShapes = do
     -- checked 为 False 的首次契约生成跳过；正常生成在图缓存查询前每次检查。
     checkCloseResourceRead (binding, _, used)
       | bindingOperation binding == CloseResource = mapM_ check
-          [(effectName producer, contractType, contractType : map fst (effectBranches producer))
+          [(effectName producer, contractType, [contractType])
             | scope <- effects, effectName scope == bindingEffect binding
             , producer <- effects, effectResource scope == Just (effectName producer)
             , Just contractType <- [effectProduces producer]]
       | otherwise = pure ()
       where
-        -- 分支契约投影也先读取同一个资源 Binding，因此同样完成实例定位。
         check (source, contractType, readable) = unless (any (`elem` used) readable) $
           Left ("Scoped " ++ bindingEffect binding ++ " close handler " ++ bindingHandler binding
             ++ " does not read its resource " ++ contractType ++ " (Context " ++ source ++ ")"

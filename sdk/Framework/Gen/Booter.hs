@@ -2,10 +2,10 @@
 -- 驱动合成 v1（2026-11-18）：从 Composition 的已解析事实构造挂载与会话，
 -- 之后补全运行所需静态标记；不执行 handler，不读取业务源码。
 module Framework.Gen.Booter (numberWorkflow, checkMiddleware, assembleProgram, completeDriving, entryPlans, controlReads) where
-import Control.Monad (unless, when)
+import Control.Monad (forM_, unless, when)
 import Data.Maybe (listToMaybe)
 import Data.Graph (SCC(..), stronglyConnComp)
-import Data.List (intercalate, isPrefixOf, nub, nubBy, sort)
+import Data.List (intercalate, intersect, isPrefixOf, nub, nubBy, sort)
 import Framework.Gen.Plan
 import Framework.Language.AST (WorkflowF(..))
 import Framework.Language.Registration (EffectKind(..), Access(..))
@@ -48,19 +48,27 @@ numberWorkflow effects tree = cata number tree [] False
       -- 先沿用本边界已经挂载的操作输出，再为其余订阅建立独立生产；副产物也登记为会话资产。
       sessions <- planSessions effects path parts subscriptions
       pure (LifelongAt path (LifelongProto units subscriptions sessions) parts)
+    -- option v1（2026-11-21）：分叉点是同一个 Excu 的输出。每个候选恰好 requires 一份由它的输出解析出的
+    -- 资产，判定这些资产的 Context 互不相同；选择时按候选的声明顺序取第一个解析成功的。
+    -- 分叉来自不同上游的真 race 尚未实现，这里拒绝。
     number (Alternative children) path inside = do
       nonEmpty path inside children
       parts <- descend path inside children
-      cases <- mapM (candidateCase effects path) parts
-      contractType <- case nub (map fst cases) of
+      options <- mapM (candidateCases effects path) parts
+      source <- case foldr intersect (nub (concatMap (map fst) options)) (map (nub . map fst) options) of
         [selected] -> Right selected
-        _ -> invalid path "Candidates must depend on the same branch contract"
-      let constructors = map snd cases
-          declared = concat [map snd (effectBranches effect) | effect <- effects, effectProduces effect == Just contractType]
-      unless (unique constructors && sort constructors == sort declared) $
-        invalid path "Candidates must cover every constructor exactly once"
-      pure (AlternativeAt path (AlternativeProto contractType (path ++ [-1])
-        (zip (map workflowNode parts) constructors)) parts)
+        [] -> invalid path ("Candidates must each require an asset parsed from the output of the same Excu"
+          ++ "; alternatives over different upstreams (race) are not supported yet")
+        several -> invalid path ("Candidates require assets parsed from several shared outputs ("
+          ++ intercalate ", " several ++ "); the decisive output is ambiguous")
+      cases <- mapM (\(part, option) -> case [context | (anchor, context) <- option, anchor == source] of
+          [selected] -> Right selected
+          _ -> invalid (workflowNode part) ("Candidate must require exactly one asset parsed from the output of " ++ source))
+        (zip parts options)
+      unless (unique cases) $
+        invalid path "Candidates must require different assets; the first candidate would always be chosen"
+      pure (AlternativeAt path (AlternativeProto source (path ++ [-1])
+        (zip (map workflowNode parts) cases)) parts)
     descend path inside children = sequence [child (path ++ [index]) inside | (index, child) <- zip [0 ..] children]
     invalid path reason = Left (InvalidAlternative path reason)
     -- lifelong 内每条成功路径都要领取新交付；挂载的 target 都订阅持续资产，所以只需拒绝空分支。
@@ -91,17 +99,10 @@ numberWorkflow effects tree = cata number tree [] False
       [demandContract demand | effect <- originEffects effects selected, demand <- effectDemands effect
       , demandAccess demand == StreamAccess]
 
-    -- 分支契约按其基础契约计入：读取持续和类型资产的分支即读取该资产。
     continuousReads :: [EffectProto method] -> String -> [String]
     continuousReads effects selected = nub
-      [base | effect <- originEffects effects selected, demand <- effectDemands effect
-      , let base = baseContract (demandContract demand)
-      , producer <- effects, effectContinuous producer, effectProduces producer == Just base]
-      where
-        baseContract contractType = case [produced | producer <- effects, Just produced <- [effectProduces producer]
-                                         , (branch, _) <- effectBranches producer, branch == contractType] of
-          produced : _ -> produced
-          [] -> contractType
+      [demandContract demand | effect <- originEffects effects selected, demand <- effectDemands effect
+      , producer <- effects, effectContinuous producer, effectProduces producer == Just (demandContract demand)]
 
 -- ========================================================================
 -- 持续生产连接及启动证明
@@ -158,17 +159,13 @@ planSessions effects boundary children subscriptions = do
         ++ "; a producer cannot wait for a target that needs its own publication"))
       where
         graph = [(key, key, dependencies) | (key, dependencies) <- edges]
-        edges = [(Left node', nub (Right asset : previous node' ++ selectors node'))
+        edges = [(Left node', nub (Right asset : previous node'))
           | (node', asset) <- subscriptions]
           ++ [(Right (sessionAsset session), case sessionPlan session of
               Receive _ -> []
               Derive upstream -> [Right upstream]
               ReuseOutput nodes -> map Left nodes) | session <- sessions]
         previous node' = [Left before | (before, _) <- mounted, precedes workflow before node']
-        selectors node' = [Right (alternativeContract choice)
-          | AlternativeAt _ choice branches <- allWorkflow workflow
-          , any (\branch -> workflowNode branch `isPrefixOf` node') branches
-          , alternativeContract choice `elem` map sessionAsset sessions]
         describe (Left node') = "target " ++ show node'
         describe (Right asset) = "asset " ++ asset
     -- 同一单元只有完成本轮后才能进入下一轮。每条能到达订阅的路径都必须
@@ -221,6 +218,13 @@ planSessions effects boundary children subscriptions = do
 assembleProgram :: PrototypePlan -> Either (PrototypeError String) (Assembly String)
 assembleProgram plan = do
   mounted <- concat <$> mapM mountedNode (allWorkflow workflow)
+  -- 选择入口按共同 Excu 登记一次；同一 Excu 上的多个 alternative 必须判定同一组 Context。
+  forM_ (nub [alternativeSource choice | AlternativeAt _ choice _ <- allWorkflow workflow]) $ \source ->
+    case nub [map snd (alternativeCases choice) | AlternativeAt _ choice _ <- allWorkflow workflow
+        , alternativeSource choice == source] of
+      [_] -> pure ()
+      _ -> Left (InvalidPrototype ("Alternatives over the output of " ++ source
+        ++ " decide different Contexts; use the same candidates in the same order, or another Excu"))
   selectors <- mapM mountedSelector [selected | selected@AlternativeAt {} <- allWorkflow workflow]
   sessions <- concat <$> mapM mountedSession
     describedSessions
@@ -235,12 +239,12 @@ assembleProgram plan = do
       method <- ordinaryEntry effect
       pure [EntryMount identifier NodeChain selected selected method]
     mountedNode _ = pure []
-    mountedSelector (AlternativeAt _ selected _) = case
-      [method | effect <- effects, effectProduces effect == Just (alternativeContract selected)
-        , Just method <- [selectorMethod effect]] of
-      [method] -> pure (EntryMount (alternativeSelector selected) SelectorChain
-        (alternativeContract selected) (alternativeContract selected) method)
-      _ -> Left (UnknownPrototypeTarget (alternativeContract selected))
+    -- 选择入口执行共同的 Excu；它的输出由运行时逐个交给判定 Context。
+    mountedSelector (AlternativeAt _ selected _) = do
+      effect <- findEffectProto effects (alternativeSource selected)
+      method <- ordinaryEntry effect
+      pure (EntryMount (alternativeSelector selected) SelectorChain
+        (alternativeSource selected) (alternativeSource selected) method)
     mountedSelector _ = Left (InvalidPrototype "Expected alternative selector")
     mountedSession described = do
       producer <- case [effect | effect <- effects, effectProduces effect == Just (sessionAsset described)] of
@@ -311,9 +315,6 @@ completeDriving prototype = prototype { protoDriving = DrivingPlan nodes units s
     positions = nub (map workflowNode workflow ++ map chainNode chains)
     rootNodes = [chainNode chain | chain <- chains, chainRole chain /= SessionChain]
     boundaryOf node = listToMaybe [boundary | (boundary, _) <- lifelongs, boundary `isPrefixOf` node]
-    selections = [(alternativeSelector choice, alternativeContract choice,
-          [node | child <- children, NodeAt node _ <- allWorkflow child])
-      | AlternativeAt _ choice children <- workflow]
     members position = [node | NodeAt node _ <- workflow, position `isPrefixOf` node]
     captures reader = reverse [alternativeSelector choice | AlternativeAt _ choice children <- workflow
       , any (\child -> workflowNode child `isPrefixOf` reader) children]
@@ -334,8 +335,6 @@ completeDriving prototype = prototype { protoDriving = DrivingPlan nodes units s
       [ReadAt node | (node, selected) <- lifelongSubscriptions description, selected == asset, unit `isPrefixOf` node]
       ++ [ReadAt (readNode point) | (point, FromSession) <- protoSources prototype
          , readContract point == asset, unit `isPrefixOf` readNode point]
-      ++ [ChooseAmong candidates' | (selector, selected, candidates') <- selections
-         , selected == asset, unit `isPrefixOf` selector]
     rooted unit description asset = case [sessionPlan session | session <- lifelongSessions description, sessionAsset session == asset] of
       [ReuseOutput publishers] -> not (null publishers) && all (unit `isPrefixOf`) publishers
       [Derive upstream] -> rooted unit description upstream
@@ -368,7 +367,7 @@ sessionEntries hooksAtMount effects assembly = nubBy sameEntry
     sameEntry (DeriveEntry owner a) (DeriveEntry owner' a') = owner == owner' && key a == key a'
     sameEntry _ _ = False
 
--- workflow 控制流已经使用的读取：lifelong 订阅的 streams，以及 alternative 候选选择所依据的分支契约。
+-- workflow 控制流已经使用的读取：lifelong 订阅的 streams，以及 alternative 判定候选所依据的资产。
 -- 输入链上的声明参与选择／交付，因此这些 demand 不要求 handler 方法体再读一次。
 controlReads :: [Prototype.EffectProto method] -> Prototype.WorkflowTree -> [(String, String)]
 controlReads effects tree = nub (walk tree ++ driven)
@@ -388,18 +387,22 @@ controlReads effects tree = nub (walk tree ++ driven)
       , (consumer, demand) <- demandsOf selectedName
       , demandAccess demand == StreamAccess, demandContract demand == contractType ]
     here (Prototype.AlternativeAt _ description _) =
-      [ (consumer, demandContract demand) | (path, constructor) <- Prototype.alternativeCases description
+      [ (consumer, demandContract demand) | (path, context) <- Prototype.alternativeCases description
       , Just subtree <- [Prototype.lookupWorkflow tree path]
       , selectedName <- Prototype.workflowTerminals subtree
       , (consumer, demand) <- demandsOf selectedName, readsAccess (demandAccess demand)
-      , producer <- effects, Prototype.effectProduces producer == Just (Prototype.alternativeContract description)
-      , (branch, selectedConstructor) <- Prototype.effectBranches producer
-      , branch == demandContract demand, selectedConstructor == constructor ]
+      , producer <- effects, Prototype.effectName producer == context
+      , Prototype.effectProduces producer == Just (demandContract demand) ]
     here _ = []
 
 
-entryPlans :: (NodeId -> [String]) -> [EffectProto String] -> Assembly String -> [BranchContract] -> ([SelectorPlan], [SessionEntry])
-entryPlans hooksAtMount effects assembly branches =
-  ( [SelectorPlan contract method [branchConstructor branch | branch <- branches, branchBase branch == contract]
-    | (contract, method) <- nub [(mountTerminal mount, mountMethod mount) | mount <- assemblyMounts assembly, mountRole mount == SelectorChain]]
+-- 选择入口按共同 Excu 登记：同一 Excu 上的 alternative 须判定同一组 Context（gen 在此拒绝不一致）。
+entryPlans :: (NodeId -> [String]) -> [EffectProto String] -> WorkflowTree -> Assembly String -> ([SelectorPlan], [SessionEntry])
+entryPlans hooksAtMount effects workflow assembly =
+  ( [ SelectorPlan source method
+        [ (context, request) | context <- concat (take 1 cases), effect <- effects, effectName effect == context
+        , Just request <- [lookup ContextRequest (effectMethods effect)] ]
+    | (source, method) <- nub [(mountTerminal mount, mountMethod mount) | mount <- assemblyMounts assembly, mountRole mount == SelectorChain]
+    , let cases = nub [map snd (alternativeCases choice) | AlternativeAt _ choice _ <- allWorkflow workflow
+            , alternativeSource choice == source] ]
   , sessionEntries hooksAtMount effects assembly )

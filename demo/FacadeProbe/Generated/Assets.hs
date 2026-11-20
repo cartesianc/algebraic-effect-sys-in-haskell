@@ -6,16 +6,16 @@ import Framework.Prototype.Catalog (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelA", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 57, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelA", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 61, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelA", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 57, assetColumn = 18}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelA", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 61, assetColumn = 18}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelB", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 61, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelB", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 65, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelB", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 61, assetColumn = 18}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelB", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 65, assetColumn = 18}
           ]
       , assetFields = []
       }
@@ -62,16 +62,16 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportPath", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 21, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportEmpty", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 53, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportPath", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 21, assetColumn = 22}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportEmpty", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 53, assetColumn = 23}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportState", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 53, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportPath", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 21, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportState", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 53, assetColumn = 23}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportPath", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 21, assetColumn = 22}
           ]
       , assetFields = []
       }
@@ -83,6 +83,13 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportText", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 57, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportText", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 57, assetColumn = 22}
+          ]
+      , assetFields = []
+      }
+  , Asset
       { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "Body", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 7, assetColumn = 1}
       , assetConstructors =
           [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "Body", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 7, assetColumn = 16}
@@ -90,10 +97,9 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "FileState", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 13, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "EmptyReport", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 13, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "Blank", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 13, assetColumn = 18}
-          , AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "Filled", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 13, assetColumn = 26}
+          [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "EmptyReport", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 13, assetColumn = 23}
           ]
       , assetFields = []
       }

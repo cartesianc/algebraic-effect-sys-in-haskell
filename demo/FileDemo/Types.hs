@@ -1,4 +1,4 @@
-module FileDemo.Types (FileHandle(..), TextState(..)) where
+module FileDemo.Types (FileHandle(..), EmptyText(..), WrittenText(..)) where
 
 import System.IO (Handle)
 
@@ -7,7 +7,10 @@ import System.IO (Handle)
 data FileHandle = FileHandle FilePath Handle
   deriving Show
 
--- 文件当前内容的状态：和类型。生成器为每个构造器产出分支契约（FileTextBlank、FileTextWritten），
--- alternative 的候选分别 require 其中一个，运行时按资产当前的构造器选择候选。
-data TextState = Blank | Written String
-  deriving Show
+-- 读到的文件内容按两种结果解析：为空、或非空时的全文。两个 Context 挂在同一次读取下，
+-- 只有一个解析成功；alternative 按候选各自 requires 的那一个选择。
+newtype EmptyText = EmptyText String
+  deriving (Eq, Show)
+
+newtype WrittenText = WrittenText String
+  deriving (Eq, Show)

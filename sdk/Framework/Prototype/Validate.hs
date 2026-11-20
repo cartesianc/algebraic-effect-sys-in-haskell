@@ -256,13 +256,13 @@ validatePrototype prototype = do
         AlternativeAt identifier choice children -> do
           valid (alternativeSelector choice == identifier ++ [-1]) "Alternative selector has an invalid NodeId"
           valid (map fst (alternativeCases choice) == map workflowNode children) "Alternative case paths differ from children"
-          let constructors = concat [map snd (effectBranches effect) | effect <- effects,
-                effectProduces effect == Just (alternativeContract choice)]
-              selectedCases = map snd (alternativeCases choice)
-          valid (not (null constructors) && unique selectedCases && sameSet selectedCases constructors)
-            "Alternative cases do not cover the contract constructors"
-          declaredCases <- mapM (candidateCase effects identifier) children
-          valid (declaredCases == [(alternativeContract choice, constructor) | constructor <- selectedCases])
+          source <- findEffectProto effects (alternativeSource choice)
+          valid (effectKind source == ExcuKind) "Alternative source is not an Excu"
+          let selectedCases = map snd (alternativeCases choice)
+          valid (unique selectedCases) "Alternative cases repeat a Context"
+          declaredCases <- mapM (candidateCases effects identifier) children
+          valid (and [ [context | (anchor, context) <- options, anchor == alternativeSource choice] == [selected]
+              | (options, selected) <- zip declaredCases selectedCases ])
             "Alternative cases differ from candidate requirements"
         LifelongAt identifier described children -> do
           let inner = concatMap allWorkflow children
@@ -321,9 +321,11 @@ validatePrototype prototype = do
           _ -> Left (InvalidPrototype "Node chain has no workflow node")
         SelectorChain -> case [choice | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype),
             alternativeSelector choice == chainNode chain] of
-          [choice] -> valid (alternativeContract choice == chainTerminal chain
-            && chainEntry chain `elem` [method | effect <- effects, effectProduces effect == Just (chainTerminal chain)
-              , Just method <- [selectorMethod effect]]) "Selector chain differs from alternative"
+          [choice] -> do
+            source <- findEffectProto effects (alternativeSource choice)
+            entry <- ordinaryEntry source
+            valid (alternativeSource choice == chainTerminal chain && chainEntry chain == entry)
+              "Selector chain differs from alternative"
           _ -> Left (InvalidPrototype "Selector chain has no alternative")
         SessionChain -> case [ (session, step)
             | session <- concatMap (lifelongSessions . snd) (workflowLifelongs (protoWorkflow prototype))

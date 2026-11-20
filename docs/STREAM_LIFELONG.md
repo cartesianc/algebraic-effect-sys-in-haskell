@@ -95,7 +95,7 @@ parser 没有另外的输入方法：`rawinput` 由会话本次取得的输入�
 | `streams "Asset"` | 本次交付的 T | `x :> xs`：本次交付及同一会话中更早的交付 | 在 lifelong 原始消费链或持续 Context 生产链上，由该资产的交付推进 |
 | `requires "Asset"` | 本次已捕获的 T；尚未捕获时取得许可来源的当前值 | 不提供 | 只读取，不因此重复启动当前链 |
 
-同一资产可声明两种访问方式；它们给出同一个表示类型和读取路由，不产生重复 Reads 实例。普通资产保持原来的读取协议；持续资产不能声明 `requests`。只有持续资产的基础资产可以被订阅，分支契约通过基础资产的固定值投影。只有 Excu、Scoped 可以声明 streams。
+同一资产可声明两种访问方式；它们给出同一个表示类型和读取路由，不产生重复 Reads 实例。普通资产保持原来的读取协议；持续资产不能声明 `requests`。只有 Excu、Scoped 可以声明 streams。
 
 **生产持续性与消费重复性分别计算。** A 的 Input 链订阅 B 时，A 可以继续随 B 的新交付生产；普通链 C 只 `requires` A，就只取得一次确定的值。A 不需要额外挂入 AST 的 lifelong，C 也不因读取 A 而变成 lifelong。C 若要随 A 的新交付反复执行，仍按既有规则在 lifelong 中声明 streams。普通 Context 生产链同样可只 require 持续资产并发布一次普通产物。
 
@@ -247,7 +247,7 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
 ### 5.2 lifelong 合法性
 
 1. lifelong 内每个挂载的 target 恰好订阅一个持续资产。
-2. 这些 target 的 original chain 不再读取（requires／streams）其他持续资产；否则执行结果取决于读取时刻。分支契约按其基础契约计入：读取所订阅资产的分支是同一资产，读取其他持续资产的分支同样被拒绝。多个来源的触发组合另行设计。
+2. 这些 target 的 original chain 不再读取（requires／streams）其他持续资产；否则执行结果取决于读取时刻。多个来源的触发组合另行设计。
 3. 只有普通 requests／requires 的末端不能进入 lifelong；一次性准备放在外部 chained。streams 末端不能出现在 lifelong 之外。
 4. Stream、Context 不作为 target，Stream 也不能进入 original chain；带 streams 的 Excu／Scoped 可以挂载到 AST 并向挂接 Context 提供同次输出。gen 按本 lifelong 的具体位置确定 ReuseOutput，不能证明来源唯一或启动可推进时拒绝。
 5. lifelong 不嵌套；lifelong 内不能有空分支。因为每个 target 都订阅，单元每条成功路径都至少领取一条新交付。
@@ -309,7 +309,7 @@ lifelong 安装订阅后不冒充整个 branch 的 Succ，否则外部 chained �
 每个单元逐次执行：一次执行结束后才开始下一次，同一单元的调用不重叠。一次执行就是一个 frame：
 
 - **boot 条件**：控制流到达某个 target 时，若本 frame 尚未领取它订阅的资产，先领取一条新交付；有积压时立即领取，没有新发布时挂起等待。领取到交付后才 boot target。不在生产调用栈里同步执行消费业务，也不反复调用 handler 试探数据。
-- **每个资产只领取一次**：同一 frame 中后续 target、alternative 的选择读取与候选、内部 parallel 中同时需要它的节点，都共享第一次领取的视图。alternative 的转折资产若是本 lifelong 的会话资产，选择读取先领取，候选共享；持续的和类型资产按本次交付的最新条目选择候选。lifelong 外的 alternative 以持续资产为转折时，同样按选择读取取得的视图的最新条目分派。
+- **每个资产只领取一次**：同一 frame 中后续 target、alternative 的选择读取与候选、内部 parallel 中同时需要它的节点，都共享第一次领取的视图。alternative 的选择读取执行共同的 Excu，它读到的持续资产与候选共享本次领取；判定 Context 只能是非持续资产。
 - **首次读取领取**：frame 中尚未领取的本 lifelong 会话资产，在第一次读取时领取（例如被生产链读取）。
 - **结束**：单元每轮新建调用捕获和交付视图；开始新一轮时清理旧步骤的 Origin 输出索引，运行级普通最新值继续保留，执行结果不累积。
 - **来源耗尽**：领取时来源已结束且积压已领完，这个位置不 boot，单元正常结束，见 [9.4 节](#end)。
@@ -645,7 +645,7 @@ ReuseOutput 的发布位置同样按节点计：节点结束订阅时立即撤�
 - **本地范围**：直接 ReuseOutput 的全部发布位置须属于当前单元；沿 Prototype 的单一 Derive 上游递归追溯，只有根是本单元 ReuseOutput 的派生会话才同样属于本地。Receive 和其他单元的发布保持外部来源的等待规则。
 - **本轮稳定**：实际轮 `ExecutionFrame` 中全部发布位置为 `Completed` 或 `Skipped`，才表示本轮不会再从这些位置发布。`Pending`、`Running` 与未知位置都继续等待；alternative 未选路径由既有的跳过记录体现。派生会话还须逐级完成上游已发布的全部步骤：只在一次解析与发布成功返回后推进 `stateProcessed`，与上游累计发布数 `stateBase + 队列长度` 比较，领取游标不证明处理完成。
 - **交付优先**：已有交付立即领取；没有交付时，等待同一共享通知上的会话变化或节点退休。判定本轮稳定后再读会话状态，优先交付刚完成的发布或传播真实终态，仍无交付才返回 `Undriven`。这不会把尚在运行的并行生产或异步派生当成本轮没有输出。
-- 订阅节点与转折资产的选择读取，收到 `Undriven` 时只跳过本轮；会话封口且排空时，这些位置的订阅结束（alternative 的候选都记为结束），不因此结束单元。多个互斥发布位置尚未全部结束时，后续轮次仍可由其他候选产生新交付。
+- 订阅节点收到 `Undriven` 时只跳过本轮；会话封口且排空时，这些位置的订阅结束，不因此结束单元。多个互斥发布位置尚未全部结束时，后续轮次仍可由其他候选产生新交付。
 - 只 `require` 本地资产的位置，在本轮稳定而无新交付、或会话封口排空时读已有的那一条；一条都没有发布过时按缺值报 `ContextNotInitialized`。
 
 本轮稳定只免去等待本单元下一轮的发布，不停止外部来源，也不预测任意原子 IO 是否会返回。

@@ -1,7 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 -- 编译检查点的纯计划。这里不执行组合解释；运行时所需结构属于 Prototype。
 module Framework.Gen.Plan
-  ( EffectDeclaration(..), ErrorPlan(..), ScopePlan(..), Unit(..), Binding(..), Signature(..), AssetDeclaration(..), BranchContract(..)
+  ( EffectDeclaration(..), ErrorPlan(..), ScopePlan(..), Unit(..), Binding(..), Signature(..), AssetDeclaration(..)
   , ValueType(..), Capability(..), EntryOperation(..), ReadRoute(..), ReadView(..)
   , ReaderPlan(..), SelectorPlan(..), SessionEntry(..), SuperSelection(..)
   , Assembly(..), EntryMount(..), OutputConnection(..), EntryStep(..), RawSource(..)
@@ -53,7 +53,7 @@ data EntryOperation
 
 -- 读取结果始终是声明的表示类型。持续来源使用固定交付；是否反复执行由挂载/会话计划决定。
 -- 业务可以把记录或统计声明为普通 ADT，编译器不为这类内容另外包装或选驱动。
-data ReadView = ValueView | ContinuousView | BranchView BranchContract
+data ReadView = ValueView | ContinuousView
   deriving (Eq, Show, Read)
 
 data ReadRoute = ReadRoute
@@ -65,9 +65,10 @@ data ReaderPlan = ReaderPlan
   { readerEffect :: String, readerMethod :: String, readerContract :: String, readerContinuous :: Bool
   } deriving (Eq, Show, Read)
 
+-- alternative 的选择入口：共同 Excu 的入口方法，以及按候选声明顺序排列的（判定 Context，其生产方法）。
 data SelectorPlan = SelectorPlan
-  { selectorContract :: String, selectorEntry :: String
-  , selectorConstructors :: [String]
+  { selectorSource :: String, selectorEntry :: String
+  , selectorCases :: [(String, String)]
   } deriving (Eq, Show, Read)
 
 data SessionEntry
@@ -155,22 +156,11 @@ data AssetDeclaration = AssetDeclaration
   , assetOwner :: String
   } deriving (Eq, Show, Read)
 
--- 表示类型是和类型（至少两个构造器）时，每个构造器另有分支契约：契约名加构造器名。
--- 分支契约是基础契约的投影，读到构造器的字段（无字段为 ()）。
-data BranchContract = BranchContract
-  { branchName :: String
-  , branchBase :: String
-  , branchConstructor :: String
-  , branchField :: Maybe String
-  , branchOwner :: String
-  } deriving (Eq, Show, Read)
-
--- 一份程序的绑定结果：降级计划加上 gen 推出的资产、分支契约、handler 签名、绑定与末端入口。
+-- 一份程序的绑定结果：降级计划加上 gen 推出的资产、handler 签名、绑定与末端入口。
 data Unit = Unit
   { unitNamespace :: String
   , unitPlan :: PrototypePlan
   , unitAssets :: [AssetDeclaration]
-  , unitBranches :: [BranchContract]
   , unitHandlers :: [String]
   , unitSignatures :: [Signature]
   , unitBindings :: [Binding]

@@ -13,7 +13,7 @@ data TextFile = TextFile FilePath Handle deriving Show
 newtype Body = Body String deriving Show
 newtype LineCount = LineCount Int deriving Show
 newtype Level = Level Int deriving Show
-data FileState = Blank | Filled Body deriving Show
+newtype EmptyReport = EmptyReport String deriving Show
 ```
 
 ### 2. Effects.hs：effect 是业务配置

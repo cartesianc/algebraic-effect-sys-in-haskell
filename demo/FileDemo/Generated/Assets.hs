@@ -6,6 +6,13 @@ import Framework.Prototype.Catalog (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
+      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileBlank", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileBlank", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 21}
+          ]
+      , assetFields = []
+      }
+  , Asset
       { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileName", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 21, assetColumn = 1}
       , assetConstructors =
           [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileName", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 21, assetColumn = 20}
@@ -13,9 +20,9 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileText", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileWritten", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 33, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileText", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 20}
+          [ AssetSymbol {assetModule = "FileDemo.Generated.Effects", assetName = "FileWritten", assetFile = "demo/FileDemo/Generated/Effects.hs", assetLine = 33, assetColumn = 23}
           ]
       , assetFields = []
       }
@@ -27,6 +34,13 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
+      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "EmptyText", assetFile = "demo/FileDemo/Types.hs", assetLine = 12, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "EmptyText", assetFile = "demo/FileDemo/Types.hs", assetLine = 12, assetColumn = 21}
+          ]
+      , assetFields = []
+      }
+  , Asset
       { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileHandle", assetFile = "demo/FileDemo/Types.hs", assetLine = 7, assetColumn = 1}
       , assetConstructors =
           [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileHandle", assetFile = "demo/FileDemo/Types.hs", assetLine = 7, assetColumn = 19}
@@ -34,10 +48,9 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "TextState", assetFile = "demo/FileDemo/Types.hs", assetLine = 12, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "WrittenText", assetFile = "demo/FileDemo/Types.hs", assetLine = 15, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "Blank", assetFile = "demo/FileDemo/Types.hs", assetLine = 12, assetColumn = 18}
-          , AssetSymbol {assetModule = "FileDemo.Types", assetName = "Written", assetFile = "demo/FileDemo/Types.hs", assetLine = 12, assetColumn = 26}
+          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "WrittenText", assetFile = "demo/FileDemo/Types.hs", assetLine = 15, assetColumn = 23}
           ]
       , assetFields = []
       }

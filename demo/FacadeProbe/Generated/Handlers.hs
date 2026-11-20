@@ -15,7 +15,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module FacadeProbe.Generated.Handlers (handlerSourceFingerprint, getReportPath, readReportPath, getReplyPath, readReplyPath, getReportBody, readReportBody, getReplyBody, readReplyBody, getOpenedReport, readOpenedReport, getOpenedReply, readOpenedReply, openReportScope, closeReportScope, openReplyScope, closeReplyScope, runWriteReport, runWriteReply, runMarkReply, runReadReport, runReadReply, getReportStats, readReportStats, getReplyStats, readReplyStats, runShowReport, runShowReply, getReportState, readReportState, runOnBlank, runOnFilled, nextFeedA, nextFeedB, getLevelA, streamLevelA, getLevelB, streamLevelB, runShowA, runShowB, historyLevelA, historyLevelB, newScopeHandlers, errorHandlers) where
+module FacadeProbe.Generated.Handlers (handlerSourceFingerprint, getReportPath, readReportPath, getReplyPath, readReplyPath, getReportBody, readReportBody, getReplyBody, readReplyBody, getOpenedReport, readOpenedReport, getOpenedReply, readOpenedReply, openReportScope, closeReportScope, openReplyScope, closeReplyScope, runWriteReport, runWriteReply, runMarkReply, runReadReport, runReadReply, getReportStats, readReportStats, getReplyStats, readReplyStats, runShowReport, runShowReply, runInspectReport, getReportEmpty, readReportEmpty, getReportText, readReportText, runOnBlank, runOnFilled, nextFeedA, nextFeedB, getLevelA, streamLevelA, getLevelB, streamLevelB, runShowA, runShowB, historyLevelA, historyLevelB, newScopeHandlers, errorHandlers) where
 
 import qualified Framework.Generated as SDK
 import qualified FacadeProbe.Generated.Effects as Effects
@@ -97,7 +97,22 @@ instance InspectFileLayer m => InspectFileHandler m where
   inspectFile = do
     path <- require @FilePath
     contents <- liftIO (readFile' path)
-    pure (if null contents then Blank else Filled (Body contents))
+    rawoutput [contents]
+
+-- 两个 parser 读同一次输出；不符合自己的情形就 raise，在 alternative 的选择中只算放弃。
+instance ParseBlankReportLayer m => ParseBlankReportHandler m where
+  parseBlankReport = do
+    output <- rawinput
+    case output of
+      [""] -> pure (EmptyReport "")
+      _ -> raise (ParseBlankReportError "the report is not empty")
+
+instance ParseFilledReportLayer m => ParseFilledReportHandler m where
+  parseFilledReport = do
+    output <- rawinput
+    case output of
+      [text] | not (null text) -> pure (Body text)
+      _ -> raise (ParseFilledReportError "the report is empty")
 
 instance DescribeBlankLayer m => DescribeBlankHandler m where
   describeBlank = do
@@ -140,7 +155,7 @@ instance ShowLevelLayer m => ShowLevelHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "e86501422369c5a5564521577a3d3b0b"
+handlerSourceFingerprint = Just "710998abc9c8bdf2317ac3b4caabf36f"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -203,14 +218,14 @@ instance SDK.Reads LineCount (Wrap "ShowReport" method) where
 instance SDK.Reads LineCount (Wrap "ShowReply" method) where
   require = Wrap (SDK.coerce <$> readReplyStats)
 
-instance SDK.Reads [Char] (Wrap "ReportInspect" method) where
+instance SDK.Reads [Char] (Wrap "InspectReport" method) where
   require = Wrap (SDK.coerce <$> readReportPath)
 
-instance SDK.Reads () (Wrap "OnBlank" method) where
-  require = Wrap (SDK.projectContext "ReportInspect" "ReportStateBlank" Effects.ContextBindingError (\(Effects.ReportState value) -> case value of { Blank -> Just (); _ -> Nothing }) (readReportState))
+instance SDK.Reads EmptyReport (Wrap "OnBlank" method) where
+  require = Wrap (SDK.coerce <$> readReportEmpty)
 
 instance SDK.Reads Body (Wrap "OnFilled" method) where
-  require = Wrap (SDK.projectContext "ReportInspect" "ReportStateFilled" Effects.ContextBindingError (\(Effects.ReportState value) -> case value of { Filled field -> Just field; _ -> Nothing }) (readReportState))
+  require = Wrap (SDK.coerce <$> readReportText)
 
 instance SDK.Reads Level (Wrap "ShowA" method) where
   require = Wrap (SDK.coerce <$> streamLevelA)
@@ -229,6 +244,12 @@ instance SDK.Raw (Wrap "ReportCounter" "countLines") where
 
 instance SDK.Raw (Wrap "ReplyCounter" "countLines") where
   rawinput = Wrap runReadReply
+
+instance SDK.Raw (Wrap "ReportBlank" "parseBlankReport") where
+  rawinput = Wrap runInspectReport
+
+instance SDK.Raw (Wrap "ReportFilled" "parseFilledReport") where
+  rawinput = Wrap runInspectReport
 
 instance SDK.Raw (Wrap "ParserA" "parseLevel") where
   rawinput = Wrap SDK.emittedInput
@@ -432,17 +453,36 @@ runShowReply =
   . SDK.enterHandler "ShowReply" $
     call @"ShowReply" @"showCount" Effects.showCount
 
-getReportState :: Effects.App Effects.ReportState
-getReportState =
+runInspectReport :: Effects.App [String]
+runInspectReport =
   SDK.handleFailure
-  . SDK.callContext "ReportInspect"
-      (\value bindings -> bindings { Effects.boundReportInspect = Just value }) $
-    Effects.ReportState <$> call @"ReportInspect" @"inspectFile" Effects.inspectFile
+  . SDK.atomicHandle "runInspectReport" [("ReportBlank", () <$ getReportEmpty), ("ReportFilled", () <$ getReportText)] []
+  . SDK.enterHandler "InspectReport" $
+    call @"InspectReport" @"inspectFile" Effects.inspectFile
 
-readReportState :: Effects.App Effects.ReportState
-readReportState =
+getReportEmpty :: Effects.App Effects.ReportEmpty
+getReportEmpty =
+  SDK.handleFailure
+  . SDK.callContext "ReportBlank"
+      (\value bindings -> bindings { Effects.boundReportBlank = Just value }) $
+    Effects.ReportEmpty <$> call @"ReportBlank" @"parseBlankReport" Effects.parseBlankReport
+
+readReportEmpty :: Effects.App Effects.ReportEmpty
+readReportEmpty =
   SDK.handleFailure $
-    SDK.readContext "ReportInspect" Effects.ContextBindingError Effects.boundReportInspect
+    SDK.readContext "ReportBlank" Effects.ContextBindingError Effects.boundReportBlank
+
+getReportText :: Effects.App Effects.ReportText
+getReportText =
+  SDK.handleFailure
+  . SDK.callContext "ReportFilled"
+      (\value bindings -> bindings { Effects.boundReportFilled = Just value }) $
+    Effects.ReportText <$> call @"ReportFilled" @"parseFilledReport" Effects.parseFilledReport
+
+readReportText :: Effects.App Effects.ReportText
+readReportText =
+  SDK.handleFailure $
+    SDK.readContext "ReportFilled" Effects.ContextBindingError Effects.boundReportFilled
 
 runOnBlank :: Effects.App [String]
 runOnBlank =
