@@ -10,8 +10,8 @@ import FacadeProbe.Types
 
 effects :: [EffectSpec]
 effects =
-  [ context "ReportLocation" (Asset @FilePath "ReportPath") "reportLocation" "Root" []
-  , context "ReplyLocation" (Asset @FilePath "ReplyPath") "replyLocation" "Root" []
+  [ context "ReportLocation" (Asset @String "ReportPath") "reportLocation" "Root" []
+  , context "ReplyLocation" (Asset @String "ReplyPath") "replyLocation" "Root" []
   , context "ReportDraft" (Asset @Body "ReportBody") "reportDraft" "Root" []
   , context "ReplyDraft" (Asset @Body "ReplyBody") "replyDraft" "Root" []
     -- 两份资产，同一个获取 handler；两个 Scoped 注册共用开关 handler，彼此独立。

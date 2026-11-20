@@ -371,7 +371,7 @@ handler 方法体原样复制，在 `Wrap "effect 名" "handler 名"` 上实例�
 instance SDK.Reads FileHandle (Wrap "WriteFirstLine" method) where
   require = Wrap (SDK.coerce <$> readOpenedFile)
 
-instance SDK.Raw (Wrap "ExtractFileText" "parseFileText") where
+instance SDK.Raw (Wrap "BlankText" "parseBlankText") where
   rawinput = Wrap runReadFile
 ```
 
@@ -510,7 +510,7 @@ data PageSummary = PageSummary
   , summaryTitle :: String
   , summaryContent :: String
   , summaryLinks :: [String]
-  } deriving (Show, Read, Generic)
+  } deriving (Eq, Show)
 
 -- Effects.hs：把同一个表示类型细化为两个资产，共用一个 parser
 typing = Context { asset = Asset @PageSummary "StartPageSummary", parser = Just "extractSummary", require = True, stream = False }
@@ -542,9 +542,7 @@ demands = [requests "OpenedFile", requires "OpenedFile"]
 -- Handlers.hs 节选
 instance CloseSessionLayer m => CloseSessionHandler m where
   closeSession = do
-    FileHandle path file <- require @FileHandle
-    outcome <- liftIO (tryIOError (hClose file))
-    either (raise . CloseSessionError . displayException) pure outcome
+    FileHandle path <- require @FileHandle   -- 资源只记路径；句柄只在读写它的 handler 执行中持有
     liftIO (putStrLn ("[close] " ++ path))
     rawoutput []
 ```
@@ -573,7 +571,7 @@ Gen.Composition 统一计算唯一来源、访问结果、绑定的读取路由�
 
 AST 组织链的启动次序。Crawler 中 parallel 先抓取并注入解析两页，chained 再打印；共用的打印 handler 按各自 refined asset 读取摘要，不重复抓取。普通读取也可在独立并行分支等待生产。
 
-业务表示类型在 Types.hs 用原生 data/newtype 单独定义，注册以 `Asset @表示类型 "资产名"` 引用并细化为资产。TypeRef 通过 Typeable 识别 SDK 的 Output 构造器以拒绝嵌套完成协议，不解析显示字符串；其余业务类型保存显示名称，Generated 模块须能解析该类型名。它不保存完整数据定义，也不代表任意 Haskell 类型结构都能被第三方工具解释或被 Generic Map 自动适配。
+业务表示类型在 Types.hs 用原生 data/newtype 单独定义，注册以 `Asset @表示类型 "资产名"` 引用并细化为资产。表示类型是固定形式：单构造器、字段只由 `String`、`[String]` 或本模块的类型构造、固定 `deriving (Eq, Show)`；资产里没有句柄等原生对象，它们只在 handler 自己的执行中持有。gen 在生成期拒绝其他写法，见 [ASSETS：固定形式](ASSETS.md#fixed-form)。TypeRef 通过 Typeable 识别 SDK 的 Output 构造器以拒绝嵌套完成协议，不解析显示字符串；其余业务类型保存显示名称，Generated 模块须能解析该类型名。它不保存完整数据定义，也不代表任意 Haskell 类型结构都能被第三方工具解释或被 Generic Map 自动适配。
 
 当前完成结果为 Succ value 或 Failed failure。SDK 按 handler 生成错误类型、按标签的 Raises 实例与 Errors 分类；用户写 `raise (ExtractSummaryError message)`。Except 使普通 do 短路，上游失败原样传播，lower 只解释登记的末端，最终边界只封装一次 Output。当前不设 Pending；运行图提供活动 chain 的调用身份与关联，逐方法传播历史及通用 IO 异常接入仍未实现。
 
@@ -601,7 +599,7 @@ FileDemo 的文件名生产链：句柄交出路径，Pure 检查后原样交下
 EffectSpec { name = "LocateFile", typing = Excu { handler = Just "locateFile" }, input = "Root", demands = [] }
 EffectSpec { name = "ValidateFileName", typing = Pure { handler = Just "validateFileName" }, input = "LocateFile", demands = [] }
 EffectSpec { name = "FileLocation"
-           , typing = Context { asset = Asset @FilePath "FileName", parser = Just "parseFileName", require = True, stream = False }
+           , typing = Context { asset = Asset @String "FileName", parser = Just "parseFileName", require = True, stream = False }
            , input = "ValidateFileName", demands = [] }
 
 -- Handlers.hs 节选
@@ -762,7 +760,7 @@ Scoped 的 `requests` 资源 demand 指向资源 Context；资源 parser 声明�
 
 一个资源绑定只有唯一关闭归属。open 在 `scopeCoordinator` 内首次认领无 owner 的共享单元；同实例认领幂等，其他 scope 或同注册的不同实例认领时报 `ScopeContextMismatch`，不覆盖 owner，也不为冲突实例登记 cleanup。认领先于等待生命周期锁，认领到保存资源绑定保持 masked。认领不删除 publication，不改变值、生产身份、执行出身或重新发布；所有捕获副本看见同一归属。
 
-无 owner 的资源绑定在发布／读取返回前登记当前 `ScopeUser`；认领时把仍活跃的持有者接入实例，入口退出在同一协调锁内撤销待认领与实例使用。普通资产不登记待认领使用者。资源快照按共享归属单元去重，不合并独立生产；两次生产私下包装同一底层 Handle 的物理别名不在追踪范围。
+无 owner 的资源绑定在发布／读取返回前登记当前 `ScopeUser`；认领时把仍活跃的持有者接入实例，入口退出在同一协调锁内撤销待认领与实例使用。普通资产不登记待认领使用者。资源快照按共享归属单元去重，不合并独立生产；两次生产私下指向同一外部资源（例如同一路径）的别名不在追踪范围。
 
 共享实例的并发 open 在等待 opening 前先登记使用。有效实例复用时跳过资源获取及剩余 open 方法体；不同参数生产的实例独立。开启失败／中断后实例失效，不自动恢复或重开；普通下游失败不自动使 scope 失效。资源 producer 返回到发布采用 masked 交接，open 失败／中断时已发布的资源仍纳入清理，未发布的部分获取由原子 IO 负责。
 

@@ -23,7 +23,7 @@ generatedPrototype =
             { SDK.name = "FileResources"
             , SDK.typing =
                 SDK.Context
-                  (SDK.AssetDecl "OpenedFiles" (SDK.TypeRef "[FileHandle]"))
+                  (SDK.AssetDecl "OpenedFiles" (SDK.TypeRef "FileHandles"))
                   (Just "acquireFiles")
                   True
                   False
@@ -59,7 +59,7 @@ generatedPrototype =
             { SDK.name = "InspectionSnapshot"
             , SDK.typing =
                 SDK.Context
-                  (SDK.AssetDecl "InspectedFiles" (SDK.TypeRef "[FileHandle]"))
+                  (SDK.AssetDecl "InspectedFiles" (SDK.TypeRef "FileHandles"))
                   (Just "snapshotFiles")
                   True
                   False

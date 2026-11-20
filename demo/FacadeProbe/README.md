@@ -8,12 +8,14 @@
 
 ### 1. Types.hs：只写数据结构
 
+资产都由 `String` 构造（[固定形式](../../docs/ASSETS.md#fixed-form)）：文件资源只记路径，行数与读数保存十进制文本。
+
 ```haskell
-data TextFile = TextFile FilePath Handle deriving Show
-newtype Body = Body String deriving Show
-newtype LineCount = LineCount Int deriving Show
-newtype Level = Level Int deriving Show
-newtype EmptyReport = EmptyReport String deriving Show
+newtype TextFile = TextFile String deriving (Eq, Show)
+newtype Body = Body String deriving (Eq, Show)
+newtype LineCount = LineCount String deriving (Eq, Show)
+newtype Level = Level String deriving (Eq, Show)
+newtype EmptyReport = EmptyReport String deriving (Eq, Show)
 ```
 
 ### 2. Effects.hs：effect 是业务配置
@@ -53,15 +55,15 @@ effects =
 ```haskell
 instance OpenTextFileLayer m => OpenTextFileHandler m where
   openTextFile = do
-    TextFile path _ <- require @TextFile
+    TextFile path <- require @TextFile
     liftIO (putStrLn ("[open] " ++ path))
     rawoutput []
 
 instance WriteTextLayer m => WriteTextHandler m where
   writeText = do
-    TextFile path file <- require @TextFile
+    TextFile path <- require @TextFile
     Body text <- require @Body
-    liftIO (hPutStr file text >> hFlush file >> putStrLn ("[write] " ++ path))
+    liftIO (appendFile path text >> putStrLn ("[write] " ++ path))
     rawoutput []
 
 instance CountLinesLayer m => CountLinesHandler m where
@@ -70,14 +72,14 @@ instance CountLinesLayer m => CountLinesHandler m where
     contents <- case output of
       [text] -> pure text
       _ -> raise (CountLinesError "no text")
-    pure (LineCount (length (lines contents)))
+    pure (LineCount (show (length (lines contents))))
 
 instance ShowLevelLayer m => ShowLevelHandler m where
   showLevel = do
     Level value <- require @Level
     seen <- stream @Level
     let number = length seen
-    liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show number))
+    liftIO (putStrLn ("[level] " ++ value ++ " at delivery " ++ show number))
     when (number >= 3) (raise (ShowLevelError "enough deliveries"))
     rawoutput []
 ```
@@ -101,7 +103,7 @@ ast = chained
 每个 handler 一个类和一份 Layer，内容由它的各个绑定推出（[Generated/Effects.hs](Generated/Effects.hs)）：
 
 ```haskell
-type WriteTextLayer m = (SDK.Reads (Body) m, SDK.Reads (TextFile) m, SDK.Raises WriteTextError m, MonadIO m)
+type WriteTextLayer m = (SDK.Reads Body m, SDK.Reads TextFile m, SDK.RawOutputs m, SDK.Raises WriteTextError m, MonadIO m)
 class WriteTextHandler m where
   writeText :: m [String]
 ```
@@ -126,7 +128,7 @@ instance FrameworkRuntime.Raw (Wrap "ReportCounter") where
 2026-11-08，与 2026-11-07 的手写原型（当时的 Contracts.hs、Facade.hs 与手改的 Generated/Handlers.hs）运行结果对比：
 
 - 除 `parallel` 的交错和两个 lifelong 单元的交错外，输出行相同；写入的 `report.txt`、`reply.txt` 内容相同；每个 scope 各开关一次。
-- `alternative` 按资产状态选择候选（`[state] filled, 42 characters`）；Stream parser 和 lifelong 消费者按各自资产工作。
+- `alternative` 按资产状态选择候选（`[state] filled, 42 characters`）；2026-11-21 起改为按 `InspectReport` 输出下哪个 Context 解析成功选择（[U5](../../docs/NEXT_STAGES.md#urgent-race)），资产改为固定形式（[U4](../../docs/NEXT_STAGES.md#urgent-assets)），输出不变；Stream parser 和 lifelong 消费者按各自资产工作。
 - lifelong 结束时报 `origin = "ShowA"`；`detail` 由原型的 `ShowAFailure` 变为 `ShowLevelFailure`：失败属于 handler，发生在哪个 effect 记在 `origin`。
 - 原型实测时 GHC 放过的“handler 调用另一个 handler 的类方法”，现在由 gencode 报错；读取未声明的表示类型、在非挂接 handler 中使用 `rawinput`，同样在生成期报错。以上报错路径本次没有逐一触发。
 

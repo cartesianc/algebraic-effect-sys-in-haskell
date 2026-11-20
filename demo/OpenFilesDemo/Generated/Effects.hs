@@ -22,13 +22,13 @@ newtype FileNames = FileNames [[Char]]
 deriving instance Eq [[Char]] => Eq FileNames
 deriving instance Show [[Char]] => Show FileNames
 
-newtype OpenedFiles = OpenedFiles [FileHandle]
-deriving instance Eq [FileHandle] => Eq OpenedFiles
-deriving instance Show [FileHandle] => Show OpenedFiles
+newtype OpenedFiles = OpenedFiles FileHandles
+deriving instance Eq FileHandles => Eq OpenedFiles
+deriving instance Show FileHandles => Show OpenedFiles
 
-newtype InspectedFiles = InspectedFiles [FileHandle]
-deriving instance Eq [FileHandle] => Eq InspectedFiles
-deriving instance Show [FileHandle] => Show InspectedFiles
+newtype InspectedFiles = InspectedFiles FileHandles
+deriving instance Eq FileHandles => Eq InspectedFiles
+deriving instance Show FileHandles => Show InspectedFiles
 
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
 data MethodGen = GetFileNamesGen | ReadFileNamesGen | GetOpenedFilesGen | ReadOpenedFilesGen | OpenFileSessionGen | CloseFileSessionGen | RunHoldFilesGen | RunInspectFilesGen | RunReleaseFilesGen | GetInspectedFilesGen | ReadInspectedFilesGen | RunFinishInspectionGen
@@ -48,7 +48,7 @@ instance SDK.HandlerError ListFilesError Errors where raised (ListFilesError des
 -- handler acquireFiles：绑定到 FileResources。
 type AcquireFilesLayer m = (SDK.Reads [[Char]] m, SDK.Raises AcquireFilesError m, MonadIO m)
 class AcquireFilesHandler m where
-  acquireFiles :: m [FileHandle]
+  acquireFiles :: m FileHandles
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "acquireFiles" 匹配。
 newtype AcquireFilesError = AcquireFilesError String
@@ -56,7 +56,7 @@ newtype AcquireFilesError = AcquireFilesError String
 instance SDK.HandlerError AcquireFilesError Errors where raised (AcquireFilesError description) = (AcquireFilesFailure, description)
 
 -- handler openFiles：绑定到 FileSession。
-type OpenFilesLayer m = (SDK.Reads [FileHandle] m, SDK.RawOutputs m, SDK.Raises OpenFilesError m, MonadIO m)
+type OpenFilesLayer m = (SDK.Reads FileHandles m, SDK.RawOutputs m, SDK.Raises OpenFilesError m, MonadIO m)
 class OpenFilesHandler m where
   openFiles :: m [String]
 
@@ -66,7 +66,7 @@ newtype OpenFilesError = OpenFilesError String
 instance SDK.HandlerError OpenFilesError Errors where raised (OpenFilesError description) = (OpenFilesFailure, description)
 
 -- handler closeFiles：绑定到 FileSession。
-type CloseFilesLayer m = (SDK.Reads [FileHandle] m, SDK.RawOutputs m, SDK.Raises CloseFilesError m, MonadIO m)
+type CloseFilesLayer m = (SDK.Reads FileHandles m, SDK.RawOutputs m, SDK.Raises CloseFilesError m, MonadIO m)
 class CloseFilesHandler m where
   closeFiles :: m [String]
 
@@ -86,7 +86,7 @@ newtype HoldFilesError = HoldFilesError String
 instance SDK.HandlerError HoldFilesError Errors where raised (HoldFilesError description) = (HoldFilesFailure, description)
 
 -- handler inspectFiles：绑定到 InspectFiles。
-type InspectFilesLayer m = (SDK.Reads [FileHandle] m, SDK.RawOutputs m, SDK.Raises InspectFilesError m, MonadIO m)
+type InspectFilesLayer m = (SDK.Reads FileHandles m, SDK.RawOutputs m, SDK.Raises InspectFilesError m, MonadIO m)
 class InspectFilesHandler m where
   inspectFiles :: m [String]
 
@@ -96,9 +96,9 @@ newtype InspectFilesError = InspectFilesError String
 instance SDK.HandlerError InspectFilesError Errors where raised (InspectFilesError description) = (InspectFilesFailure, description)
 
 -- handler snapshotFiles：绑定到 InspectionSnapshot。
-type SnapshotFilesLayer m = (SDK.Reads [FileHandle] m, SDK.Raw m, SDK.Raises SnapshotFilesError m, MonadIO m)
+type SnapshotFilesLayer m = (SDK.Reads FileHandles m, SDK.Raw m, SDK.Raises SnapshotFilesError m, MonadIO m)
 class SnapshotFilesHandler m where
-  snapshotFiles :: m [FileHandle]
+  snapshotFiles :: m FileHandles
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "snapshotFiles" 匹配。
 newtype SnapshotFilesError = SnapshotFilesError String
@@ -106,7 +106,7 @@ newtype SnapshotFilesError = SnapshotFilesError String
 instance SDK.HandlerError SnapshotFilesError Errors where raised (SnapshotFilesError description) = (SnapshotFilesFailure, description)
 
 -- handler finishInspection：绑定到 FinishInspection。
-type FinishInspectionLayer m = (SDK.Reads [FileHandle] m, SDK.RawOutputs m, SDK.Raises FinishInspectionError m, MonadIO m)
+type FinishInspectionLayer m = (SDK.Reads FileHandles m, SDK.RawOutputs m, SDK.Raises FinishInspectionError m, MonadIO m)
 class FinishInspectionHandler m where
   finishInspection :: m [String]
 

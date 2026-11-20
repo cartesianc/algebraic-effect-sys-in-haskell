@@ -34,23 +34,23 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "EmptyText", assetFile = "demo/FileDemo/Types.hs", assetLine = 12, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "EmptyText", assetFile = "demo/FileDemo/Types.hs", assetLine = 11, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "EmptyText", assetFile = "demo/FileDemo/Types.hs", assetLine = 12, assetColumn = 21}
+          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "EmptyText", assetFile = "demo/FileDemo/Types.hs", assetLine = 11, assetColumn = 21}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileHandle", assetFile = "demo/FileDemo/Types.hs", assetLine = 7, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileHandle", assetFile = "demo/FileDemo/Types.hs", assetLine = 6, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileHandle", assetFile = "demo/FileDemo/Types.hs", assetLine = 7, assetColumn = 19}
+          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "FileHandle", assetFile = "demo/FileDemo/Types.hs", assetLine = 6, assetColumn = 22}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "WrittenText", assetFile = "demo/FileDemo/Types.hs", assetLine = 15, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FileDemo.Types", assetName = "WrittenText", assetFile = "demo/FileDemo/Types.hs", assetLine = 14, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "WrittenText", assetFile = "demo/FileDemo/Types.hs", assetLine = 15, assetColumn = 23}
+          [ AssetSymbol {assetModule = "FileDemo.Types", assetName = "WrittenText", assetFile = "demo/FileDemo/Types.hs", assetLine = 14, assetColumn = 23}
           ]
       , assetFields = []
       }

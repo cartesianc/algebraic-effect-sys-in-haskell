@@ -31,7 +31,7 @@ effects =
       }
   , EffectSpec
       { name = "FileLocation"
-      , typing = Context { asset = Asset @FilePath "FileName", parser = Just "parseFileName", require = True, stream = False }
+      , typing = Context { asset = Asset @String "FileName", parser = Just "parseFileName", require = True, stream = False }
       , input = "ValidateFileName"
       , demands = []
       }

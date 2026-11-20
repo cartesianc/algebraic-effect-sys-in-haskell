@@ -22,7 +22,7 @@ generatedAssets =
   , Asset
       { assetType = AssetSymbol {assetModule = "ScopeInstancesDemo.Types", assetName = "FileHandle", assetFile = "demo/ScopeInstancesDemo/Types.hs", assetLine = 6, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "ScopeInstancesDemo.Types", assetName = "FileHandle", assetFile = "demo/ScopeInstancesDemo/Types.hs", assetLine = 6, assetColumn = 19}
+          [ AssetSymbol {assetModule = "ScopeInstancesDemo.Types", assetName = "FileHandle", assetFile = "demo/ScopeInstancesDemo/Types.hs", assetLine = 6, assetColumn = 22}
           ]
       , assetFields = []
       }

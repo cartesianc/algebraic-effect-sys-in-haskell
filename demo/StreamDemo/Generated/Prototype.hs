@@ -43,7 +43,8 @@ generatedPrototype =
             }
         , SDK.EffectSpec
             { SDK.name = "Heartbeat"
-            , SDK.typing = SDK.Context (SDK.AssetDecl "Beat" (SDK.TypeRef "Int")) (Just "parseBeat") True True
+            , SDK.typing =
+                SDK.Context (SDK.AssetDecl "Beat" (SDK.TypeRef "Tick")) (Just "parseBeat") True True
             , SDK.input = "HeartbeatClock"
             , SDK.demands = []
             }

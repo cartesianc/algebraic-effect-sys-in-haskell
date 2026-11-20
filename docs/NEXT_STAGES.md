@@ -6,7 +6,7 @@
 <a id="urgent"></a>
 ## Urgent stage · 持续资产按 x:xs 读取、资产固定形式与 alternative
 
-五项均来自 2026-11-21 的设计讨论。**U1 已实现（2026-11-21）**，其余四项**尚未实现**。每项分三部分：“上下文”说明问题和代码证据；“已定”是用户确认的结论，实施时不再重新讨论；“待确认”是讨论中提出、尚未拍板的方案，动手前须逐条取得确认。五项都会改变注册写法、handler 能力或可观察运行行为，按工作约定须单独确认。`AGENTS.md`、[COMPOSITION](COMPOSITION.md#ad-hoc) 与 [STREAM_LIFELONG](STREAM_LIFELONG.md#contracts) 中“累计记录由业务资产表达、不设历史类型特例”的表述已随 U1 改为[按 x:xs 读取](STREAM_LIFELONG.md#flow)。
+五项均来自 2026-11-21 的设计讨论。**U1、U4、U5（同输入的 option）已实现（2026-11-21）**；U2、U3 按用户确认暂不实施，真 race 尚未实现。每项分三部分：“上下文”说明问题和代码证据；“已定”是用户确认的结论，实施时不再重新讨论；“待确认”是讨论中提出、尚未拍板的方案，动手前须逐条取得确认。五项都会改变注册写法、handler 能力或可观察运行行为，按工作约定须单独确认。`AGENTS.md`、[COMPOSITION](COMPOSITION.md#ad-hoc) 与 [STREAM_LIFELONG](STREAM_LIFELONG.md#contracts) 中“累计记录由业务资产表达、不设历史类型特例”的表述已随 U1 改为[按 x:xs 读取](STREAM_LIFELONG.md#flow)。
 
 建议顺序：U1 → U2、U3（与 U1 共用运行时改动）→ U4（依赖 U1 去掉 `IORef`）。U5 与前四项独立。
 
@@ -101,9 +101,16 @@ printLine = do                              -- 只读增量的写法不变
 - 已离开、未注销的读取方要及时从位置表中移除，沿用现有的读取方离开与撤销待用机制。
 
 <a id="urgent-assets"></a>
-### U4　资产的固定形式
+### U4　资产的固定形式（已实现）
 
-**上下文。** LSP 要把 before-gen 的资产声明双向转换成 DTO，需要一种可以唯一解析的写法。现在 `Types.hs` 允许 instance，资产的表示类型可以带 `IORef` 和 `Handle`。
+**状态：已实现（2026-11-21）。** 当前规则见 [ASSETS：固定形式](ASSETS.md#fixed-form)与[指南：资产书写](GUIDE.md#types)。用户确认：一切资产本质上都是不同形式的 `String`；固定形式之外的资产由 gen 在生成期报错（`Gen/Check/Assets.hs` 的 `checkFixedForm`，检查 `程序名.Types` 模块和全部 `Asset @T` 的表示类型）；没有资源资产这一类：文件句柄等 OS 对象只在 handler 自己的执行中持有，作为 handler 本身由运行时持有，不作为资产被持有。
+
+- demo 随之改写：数字字段保存原文本、读取方在 handler 中解析（LinesDemo `Total String String`，StreamDemo `Temperature String`、`Tick String`，FacadeProbe `LineCount`／`Level`）；资源资产只记路径（FileDemo、FacadeProbe、LinesDemo、OpenFilesDemo、ScopeInstancesDemo、ScopeReuseDemo），读写的 handler 按路径打开文件；Crawler 去掉 `Generic`。
+- OpenFilesDemo 与 ScopeInstancesDemo 原本检查真实 `Handle` 是否开着，改为由 Scoped 的 open 侧（资源 Context）创建、close 删除文件旁的 `<path>.open` 标记，检查语义与输出保持不变。ScopeReuseDemo 的三个写入者重叠时同时追加同一文件，GHC 的单进程文件锁会让后到者报 `resource busy`，写入者在方法体内局部重试。
+- 限制：`Asset @T` 的 `T` 来自 `Typeable`，`FilePath` 等 `String` 同义词无法区分，按 `String` 接受；`Types.hs` 的字段按源码文本检查，必须写 `String`。下文“`Flow T`”的写法未采用，持续资产仍用 `Asset @T` 加 `stream = True`。LSP 的 DTO 协议本身不在本项范围内。
+- 验证：重新生成全部 8 个命名空间，`cabal build all` 无警告；`scripts/check.ps1 -Skip crawler-demo` 全部通过（crawler-demo 需要网络，未运行；构建通过），FacadeProbe 按其 README 单独编译运行，输出与改写前相同。
+
+**上下文（实施前）。** LSP 要把 before-gen 的资产声明双向转换成 DTO，需要一种可以唯一解析的写法。现在 `Types.hs` 允许 instance，资产的表示类型可以带 `IORef` 和 `Handle`。
 
 **已定。**
 
@@ -123,9 +130,16 @@ printLine = do                              -- 只读增量的写法不变
 - 由 gen 拒绝固定形式之外的资产，还是只在 LSP 协议里区分。
 
 <a id="urgent-race"></a>
-### U5　alternative 改为 race
+### U5　alternative 改为 race（同输入的 option 已实现）
 
-**上下文。** 现在的 `alternative` 按和类型资产的当前构造器选择候选（[workflow](CORE_DESIGN.md#workflow) 的类型边界），所以标准资产里必须有和类型。`FileDemo` 中，`ReadFile` 的输出被解析成 `TextState = Blank | Written String`，`WriteFirstLine` 和 `AppendLine` 分别 `requires` 两个分支契约。`FacadeProbe` 的 `FileState` 也是这样。
+**状态：同输入的 option 已实现（2026-11-21）；真 race 尚未实现，gen 拒绝。** 当前规则见[主设计：alternative 的依据](CORE_DESIGN.md#workflow)与[指南：alternative](GUIDE.md#workflow)。用户确认先做同输入的 option，和类型与分支契约整体删除（`SumTypes`、`effectBranches`、`BranchContract`、`CaseNotSelected`、`projectContext` 均已移除）。
+
+- 静态（`Gen/Booter.hs`、`Prototype/Query.hs` 的 `candidateCases`）：各候选恰好 `requires` 一份由同一个 Excu 的输出直接或经 Pure 解析出的非持续资产，这些资产的 Context 互不相同；共同的 Excu 必须唯一；同一个 Excu 上的多个 alternative 必须判定同一组 Context。`AlternativeProto` 记录 `alternativeSource`（该 Excu）与 `alternativeCases`（候选 → 判定 Context）。
+- 运行（`Runtime/Context.hs` 的 `chooseCase`）：执行一次该 Excu，把同一份原始输出按候选声明顺序交给各 Context 解析（`attemptOutput`），第一个成功的候选启动；全部失败时抛出第一个失败，消息前缀 `no alternative case matched`。输家的 `raise` 只算放弃，不向外传播。
+- demo：FileDemo 的 `TextState` 改为 `ReadFile` 下的 `BlankText`／`FilledText`；FacadeProbe 的 `FileState` 改为 `InspectReport` 下的 `ReportBlank`／`ReportFilled`。两个分支都实测过。
+- 未覆盖：全部失败的路径没有实际触发；选择时执行该 Excu 所处的帧内，该 Excu 下其他锚定的 Context 不随之注入；真 race（不同上游、按时序）、输家取消与 scope 收尾、lifelong 中的真 race 均未实现。
+
+**上下文（实施前）。** 现在的 `alternative` 按和类型资产的当前构造器选择候选（[workflow](CORE_DESIGN.md#workflow) 的类型边界），所以标准资产里必须有和类型。`FileDemo` 中，`ReadFile` 的输出被解析成 `TextState = Blank | Written String`，`WriteFirstLine` 和 `AppendLine` 分别 `requires` 两个分支契约。`FacadeProbe` 的 `FileState` 也是这样。
 
 **已定。** `alternative` 的依据是 effect 的差异，而不是细化资产的差异。在 effect 图中，取各候选链从 Root 起的共链段，在最短的差异位置之下，谁先有值就走哪条分支。option 是 race 的特例，race 不一定是 option，所以用 race 表达更强。和类型因此不再是 `alternative` 的必需条件。
 

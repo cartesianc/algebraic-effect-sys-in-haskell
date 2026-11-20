@@ -7,7 +7,7 @@
 | 任务 | 阅读位置 |
 | --- | --- |
 | 先看同一业务在各模块中的代码形态 | [代码长什么样](#code-shape) |
-| 定义表示类型和分支契约 | [资产书写](#types) |
+| 定义表示类型 | [资产书写](#types) |
 | 查注册类别、Input 和 demands | [effect 注册](#effects) |
 | 写 handler、读取与失败处理 | [handler 书写](#handlers) |
 | 组织 chained、parallel、alternative | [workflow 书写](#workflow) |
@@ -26,11 +26,14 @@
 ### 1. Types.hs：先看到业务资产的结构
 
 ```haskell
-data TextState = Blank | Written String
-  deriving Show
+newtype EmptyText = EmptyText String
+  deriving (Eq, Show)
+
+newtype WrittenText = WrittenText String
+  deriving (Eq, Show)
 ```
 
-文件状态只有 `Blank` 和 `Written` 两种构造，这个 ADT 说明数据长什么样。负责资产生产与解析的 effect 称为 **Context**：它把表示类型细化为具名资产，由绑定的 parser handler 产生值，消费方按资产名声明读取。下面通过 `ExtractFileText` 的注册和 handler 展示这层关系。
+资产都由 `String` 构造：读到的文件内容要么为空，要么是非空的全文，两种结果各用一个表示类型说明数据长什么样。负责资产生产与解析的 effect 称为 **Context**：它把表示类型细化为具名资产，由绑定的 parser handler 产生值，消费方按资产名声明读取。下面通过 `BlankText` 的注册和 handler 展示这层关系。
 
 [完整 Types.hs](../demo/FileDemo/Types.hs) · [资产定义与使用规则](#types)
 
@@ -40,8 +43,8 @@ data TextState = Blank | Written String
 
 ```haskell
 EffectSpec
-  { name = "ExtractFileText"
-  , typing = Context { asset = Asset @TextState "FileText", parser = Just "parseFileText", require = True, stream = False }
+  { name = "BlankText"
+  , typing = Context { asset = Asset @EmptyText "FileBlank", parser = Just "parseBlankText", require = True, stream = False }
   , input = "ReadFile"
   , demands = []
   }
@@ -54,40 +57,37 @@ EffectSpec
   { name = "WriteFirstLine"
   , typing = Excu { handler = Just "writeFirstLine" }
   , input = "FileSession"
-  , demands = [requires "FileTextBlank", requires "OpenedFile"]
+  , demands = [requires "FileBlank", requires "OpenedFile"]
   }
 ```
 
-字段里写的是 handler 名：`parseFileText`、`writeFirstLine` 是下面 Handlers.hs 中的类方法。`input` 是前驱，gen 在 handler 之前执行它，这里先开启 `FileSession`；`demands` 选出要读的资产。`FileTextBlank` 是 `FileText` 的 `Blank` 分支契约，`OpenedFile` 提供文件资源。另一个候选 `AppendLine` 使用 `FileTextWritten`。
+字段里写的是 handler 名：`parseBlankText`、`writeFirstLine` 是下面 Handlers.hs 中的类方法。`input` 是前驱，gen 在 handler 之前执行它，这里先开启 `FileSession`；`demands` 选出要读的资产。`FileBlank` 只在文件为空时解析成功，`OpenedFile` 提供文件资源（文件路径）。同一次 `ReadFile` 的输出还挂着 `FilledText`，产出 `FileWritten`；另一个候选 `AppendLine` 使用它。
 
 [完整 Effects.hs](../demo/FileDemo/Effects.hs) · [注册字段与类别](#effects)
 
 ### 3. Handlers.hs：让声明落到原生类方法
 
-parser 挂在 `ReadFile` 下，用 `rawinput` 读取读取句柄本次交出的 list（这里是一段文本），返回表示类型的值：
+parser 挂在 `ReadFile` 下，用 `rawinput` 读取读取句柄本次交出的 list（这里是一段文本），返回表示类型的值；内容不为空时以 `raise` 表示这次解析不成立：
 
 ```haskell
-instance ParseFileTextLayer m => ParseFileTextHandler m where
-  parseFileText = do
+instance ParseBlankTextLayer m => ParseBlankTextHandler m where
+  parseBlankText = do
     contents <- rawinput
-    text <- case contents of
-      [whole] -> pure whole
-      _ -> raise (ParseFileTextError "File read returned no text")
-    pure (if null text then Blank else Written text)
+    case contents of
+      [""] -> pure (EmptyText "")
+      _ -> raise (ParseBlankTextError "the file is not empty")
 ```
 
-消费方的 handler 只读取资源、执行写入；以下保留它的完整实现：
+消费方的 handler 只读取资源、执行写入；资源只记路径，文件由本次执行按路径打开。以下保留它的完整实现：
 
 ```haskell
 instance WriteFirstLineLayer m => WriteFirstLineHandler m where
   writeFirstLine = do
-    FileHandle path file <- require @FileHandle
+    FileHandle path <- require @FileHandle
     let line = "file-demo: the file was empty; this is the first line.\n"
     outcome <- liftIO $ tryIOError $ do
       putStrLn "[read] (empty file)"
-      hSeek file SeekFromEnd 0
-      hPutStr file line
-      hFlush file
+      appendFile path line
       putStrLn ("[write] " ++ path ++ ": " ++ line)
     either (raise . WriteFirstLineError . displayException) pure outcome
     rawoutput []
@@ -116,7 +116,7 @@ ast :: AST
 ast = operateFile
 ```
 
-`alternative` 的候选通过前面的分支契约对应 `Blank`／`Written`，AST 只列末端。每个末端代表自己的完整 original chain：gen 沿 Input 把前驱装配在 handler 之前，Context 的生产通过取值关系接入。
+`alternative` 的两个候选各自 `requires` 由同一次 `ReadFile` 输出解析出的一份资产（`FileBlank`／`FileWritten`）：选择时 `ReadFile` 执行一次，哪个 Context 解析成功就启动哪个候选。AST 只列末端。每个末端代表自己的完整 original chain：gen 沿 Input 把前驱装配在 handler 之前，Context 的生产通过取值关系接入。
 
 [OperateFile.hs](../demo/FileDemo/Workflow/OperateFile.hs) · [AST.hs](../demo/FileDemo/AST.hs) · [branch 与节点规则](#workflow)
 
@@ -125,17 +125,17 @@ ast = operateFile
 下面节选生成的资产类型和一个 handler 的契约，派生实例与其他接口见源码：
 
 ```haskell
-newtype FileText = FileText (TextState)
+newtype FileBlank = FileBlank EmptyText
 
 -- handler writeFirstLine：绑定到 WriteFirstLine。
-type WriteFirstLineLayer m = (SDK.Reads (()) m, SDK.Reads (FileHandle) m, SDK.Raises WriteFirstLineError m, MonadIO m)
+type WriteFirstLineLayer m = (SDK.Reads EmptyText m, SDK.Reads FileHandle m, SDK.RawOutputs m, SDK.Raises WriteFirstLineError m, MonadIO m)
 class WriteFirstLineHandler m where
   writeFirstLine :: m [String]
 
 newtype WriteFirstLineError = WriteFirstLineError String
 ```
 
-资产类型把 `Asset @TextState "FileText"` 细化成具名资产，只在生成区使用；handler 契约由 handler 名和它的各个绑定推出。`Generated/Handlers.hs` 是运行副本：方法体原样复制，每个 effect 一个类型标签 `Wrap "名字" "handler 名"` 和一个入口，读取由按标签区分的 instance 在编译期路由到细化资产：
+资产类型把 `Asset @EmptyText "FileBlank"` 细化成具名资产，只在生成区使用；handler 契约由 handler 名和它的各个绑定推出。`Generated/Handlers.hs` 是运行副本：方法体原样复制，每个 effect 一个类型标签 `Wrap "名字" "handler 名"` 和一个入口，读取由按标签区分的 instance 在编译期路由到细化资产：
 
 ```haskell
 runWriteFirstLine = ⟨入口包装⟩ $
@@ -311,30 +311,36 @@ cabal run file-demo
 
 ## 一、资产书写（`Types.hs`）
 
-FileDemo 的状态资产先写成这样的原生 ADT：
+资产都是不同形式的字符串：每个表示类型只有一个构造器，字段只由 `String` 构造。FileDemo 的资产写成这样：
 
 ```haskell
-data TextState = Blank | Written String
-  deriving Show
+newtype FileHandle = FileHandle String
+  deriving (Eq, Show)
+
+newtype EmptyText = EmptyText String
+  deriving (Eq, Show)
 ```
 
-下面展开类型、生成的资产类型和使用规则。资产是在 effect 之间传递的业务数据：Context 的产物、消费方读到的值，以及它们字段里递归包含的业务类型。`String`、`Handle` 等库类型不是资产。
+下面展开类型、生成的资产类型和使用规则。资产是在 effect 之间传递的业务数据：Context 的产物、消费方读到的值，以及它们字段里递归包含的业务类型。
 
-### 表示类型（手写）
+### 表示类型（手写，固定形式）
 
-在 `Types.hs` 用原生 `data`／`newtype` 定义，作为 `Asset @表示类型 "资产名"` 中的表示类型：
+在 `Types.hs` 用原生 `data`／`newtype` 定义，作为 `Asset @表示类型 "资产名"` 中的表示类型。gen 在生成期检查固定形式，不符合就报错：
 
 ```haskell
-data PageURL = PageURL { pageAddress :: String }   -- 记录
-data FileHandle = FileHandle FilePath Handle       -- 包装库类型
-data TextState = Blank | Written String            -- 和类型
+newtype Line = Line String                                       -- 单字段
+data Total = Total String String                                 -- 多字段
+data PageSummary = PageSummary { summaryURL :: String, summaryLinks :: [String] }   -- 记录
+newtype SharedFile = SharedFile SharedPaths                      -- 字段是本模块的另一个表示类型
 ```
 
-- **只写值的结构**：资产类型由生成器产出，不需要再手写一层 newtype。单值可以直接用 Prelude 类型，例如 `Asset @FilePath "FileName"`。
-- **库类型**：含 `Handle` 等需要导入的库类型时，在 `Types.hs` 定义一个记录包装它。
-- **scope 开启参数**：按绑定的生产身份共享，参数和资源都不因 scope 匹配而需要 `Eq`。
-- **`Show`**：需要打印结果时派生。
-- **不导入生成区**：`Types.hs` 不导入 `Generated` 或 `Handlers`。
+- **单构造器**：每个类型恰好一个构造器（前缀或记录写法），至少一个字段；没有类型参数、GADT 语法、中缀构造器和严格标记。没有和类型：几种结果由几个 Context 分别解析，`alternative` 按 effect 选择，见[workflow 书写](#workflow)。
+- **字段只由 `String` 构造**：字段类型写作 `String`、`[String]` 或本模块的另一个表示类型。数字、时间等值保存原文本，读取方在 handler 中自己解析，例如 `read value :: Double`；`FilePath` 等同义词在字段里也写成 `String`。
+- **没有原生对象**：文件句柄、连接等 OS 资源不进入资产。资源资产只记路径等字符串；handler 在自己的执行中按路径打开并关闭句柄，句柄随 handler 本身由运行时持有，不随资产保存。
+- **固定 deriving**：每个类型写 `deriving (Eq, Show)`，不写其他 deriving、instance 或类型同义词。
+- **不导入任何模块**：`Types.hs` 没有 import（自然也不导入 `Generated` 或 `Handlers`）。导出列表要么省略，要么以 `T(..)` 列出全部类型。
+- **资产的表示类型**：`Asset @T` 中的 `T` 只能是 `String`、`[String]` 或 `Types.hs` 中的类型，例如 `Asset @String "FileName"`。资产类型由生成器产出，不需要再手写一层 newtype。
+- **scope 开启参数**：按绑定的生产身份共享，参数和资源都不因 scope 匹配而需要比较。
 
 ### 细化资产（生成）
 
@@ -349,27 +355,14 @@ newtype StartURL = StartURL PageURL
 - **只在生成区使用**：细化资产类型由 Generated 的存储、路由和入口使用，handler 不写它。字段和构造器仍是 `Types.hs` 里的表示类型；要看结构就看 `Types.hs`，或 `Generated/Assets.hs` 的资产目录。
 
 - 资产名须是 Haskell 类型名，按业务含义起名；不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
-- 表示类型有 `Eq`／`Show` 时，资产类型才有 `Eq`／`Show`；不派生 `Read`。
+- 表示类型固定派生 `Eq`／`Show`，资产类型随之有 `Eq`／`Show`；不派生 `Read`。
 - 持续资产（`stream = True`）也按声明表示类型写 `require @T`。`streams` 接收增量驱动，`requires` 只取得本次固定值，见[持续资产与 lifelong](#stream)。
-
-### 分支契约（生成）
-
-表示类型是和类型（至少两个构造器，每个构造器至多一个字段）时，生成器为每个构造器产出一个分支契约。以 FileDemo 的 `Asset @TextState "FileText"` 为例：
-
-| 构造器 | 分支契约 |
-| --- | --- |
-| `Blank` | `newtype FileTextBlank = FileTextBlank ()` |
-| `Written String` | `newtype FileTextWritten = FileTextWritten String` |
-
-- **命名**：资产名加构造器名，包装该构造器的字段；没有字段时包装 `()`。
-- **读取**：分支契约的表示类型就是构造器的字段类型（没有字段时是 `()`），handler 写 `require @String`、`require @()`。资产当前是这个构造器时才能取到值，否则报 `CaseNotSelected`。分支契约由基础资产的生产方提供，只能 `requires`。
-- **用途**：`alternative` 据此决定启动哪个候选（见[workflow 书写](#workflow)）。候选声明的分支契约是选择依据，handler 不必读取它。
 
 ### 使用规则
 
 生成器每次都会检查业务模块的顶层：
 
-- **顶层只有声明**：`Types.hs`、`Handlers.hs` 的顶层只允许类型声明和 instance；`Effects.hs` 只定义 `effects`（局部辅助写在它的 `where` 里），`AST.hs` 与 `Workflow/*.hs` 只定义类型为 `AST` 的命名值，可选的 `Hanging.hs` 只定义 `hangingTree :: HangingTree`，`Main.hs` 只定义 `main`。顶层普通函数、类声明、foreign 声明和 rewrite rule 都被拒绝。
+- **顶层只有声明**：`Types.hs` 只允许上面固定形式的类型声明；`Handlers.hs` 的顶层只允许类型声明和 instance；`Effects.hs` 只定义 `effects`（局部辅助写在它的 `where` 里），`AST.hs` 与 `Workflow/*.hs` 只定义类型为 `AST` 的命名值，可选的 `Hanging.hs` 只定义 `hangingTree :: HangingTree`，`Main.hs` 只定义 `main`。顶层普通函数、类声明、foreign 声明和 rewrite rule 都被拒绝。
 - **值操作写在 handler 里**：所有值操作写进 handler 方法体，经注册进入 effect 链，才能被静态分析。方法体内的 `let`／`where` 局部函数与 lambda 不限制；需要在多处使用的逻辑注册成 handler，通过 effect 组合。
 - **资产目录**：生成的 `Generated/Assets.hs` 列出资产的类型、构造器、字段及定义位置，供 review 和编辑器使用，运行时不加载。
 
@@ -539,7 +532,7 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 - **来源自动确定**：每个资产恰好由一个 Context 声明，生成器按资产名自动接上，不用指名生产方。
 - **读取按表示类型路由**：handler 的 `require @T` 由 gen 按“表示类型 + effect”路由到这个 effect 声明的那份细化资产；一个 effect 的 demands 里同一表示类型只能出现一次。同一种数据有不同含义时，声明成不同的资产，例如 Crawler 的 `StartURL` 和 `LinkedURL`，再由各自的 effect 选择。
 - **同一资产可以声明多种合法访问方式**：同一资产的同一种方式只能声明一次。
-- **限制**：Scoped 至多 `requests` 一个资源 Context；分支契约（见[资产书写](#types)）只能 `requires`；`requires` 需要生产方 `require = True`；持续资产不能 `requests`；`streams` 只能由 Excu、Scoped 声明，只能订阅持续资产的基础资产（`stream = True`）。
+- **限制**：Scoped 至多 `requests` 一个资源 Context；`requires` 需要生产方 `require = True`；持续资产不能 `requests`；`streams` 只能由 Excu、Scoped 声明，只能订阅持续资产的基础资产（`stream = True`）。
 - **同一资产只有一个 Context 来源**：访问方式不改变资产的 ADT 或生产方；不限制一个消费者只能声明一个资产。
 - **声明须有读取依据**：每个 `requires`／`streams` 的资产须在绑定的 handler 中读取，或参与现有 alternative 选择／streams 交付。
 - **声明即权限**：handler 读取了 effect 没有声明的表示类型，生成器报错；读取实例只为声明了 `requires`／`streams` 的 effect 生成，运行时不再查声明表。
@@ -633,7 +626,7 @@ Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，
 | `rawoutput [info]`、`rawoutput (x : rest)` | 以 `rawoutput` 返回原子列表，匹配的 Middleware 在显式调用处收到 `RawOutput name fields`。Excu、Scoped.open 和 Pure 的输出可由下游 Pure 或 Context 读取 |
 | `liftIO (...)` | 执行 IO（Pure 不可用） |
 
-- **按表示类型读取**：`require` 必须显式写类型应用，例如 `FileHandle path file <- require @FileHandle`；可以直接在绑定处匹配表示类型的构造器，也可以先具名接收再 `case`。和类型的失败分支用 `raise`。
+- **按表示类型读取**：`require` 必须显式写类型应用，例如 `FileHandle path <- require @FileHandle`；表示类型只有一个构造器，可以直接在绑定处匹配。字段里的文本由 handler 自己解析，解析不成立时用 `raise`。
 - **失败属于 handler**：错误类型由 handler 名决定，不随绑定改变；失败发生在哪个 effect 由 SDK 记录为 `origin`，Error 用 `RaisedBy "handler名"` 匹配。
 - **刷新写在注册里**：方法体没有 `request`；需要重新生产的资产在注册里写 `requests`，由入口在 handler 之前驱动。
 
@@ -659,14 +652,12 @@ instance OpenSessionLayer m => OpenSessionHandler m where
 
 instance CloseSessionLayer m => CloseSessionHandler m where
   closeSession = do
-    FileHandle path file <- require @FileHandle
-    outcome <- liftIO (tryIOError (hClose file))
-    either (raise . CloseSessionError . displayException) pure outcome
+    FileHandle path <- require @FileHandle
     liftIO (putStrLn ("[close] " ++ path))
     rawoutput []
 ```
 
-- **资源获取写在资源 Context 的 parser**：FileDemo 中打开文件的是 `acquireFile`；Scoped 注册 `requests "OpenedFile"`，gen 在 `open` 之前驱动它，`open` 本身不必读取资源。
+- **资源获取写在资源 Context 的 parser**：FileDemo 中取得文件的是 `acquireFile`，它确保文件存在并返回 `FileHandle path`；资源只记路径，读写的 handler 在自己的执行中按路径打开文件。需要可观察的开启状态时由 `open`／`close` 维护外部标记（OpenFilesDemo、ScopeInstancesDemo 用文件旁的 `<path>.open`）。Scoped 注册 `requests "OpenedFile"`，gen 在 `open` 之前驱动它，`open` 本身不必读取资源。
 - **使用方不调用 `open`**：effect 的 `input` 是 Scoped 时，gen 在入口中开启它；实例已开启时 SDK 直接复用，跳过 `open` 的方法体。
 - **不安排 `close`**：SDK 在使用闭包退出时自动清理（见「运行时行为」），handler 不调用 `close`。
 
@@ -675,11 +666,10 @@ instance CloseSessionLayer m => CloseSessionHandler m where
 ```haskell
 instance DetectFileSessionLayer m => DetectFileSessionHandler m where
   detectFileSession = do
-    FileHandle _ file <- require @FileHandle
-    outcome <- liftIO (tryIOError (hIsClosed file))
-    closed <- either (raise . DetectFileSessionError . displayException) pure outcome
-    unless closed $
-      raise (DetectFileSessionError "File handle is still open; failure not located in FileSession")
+    FileHandle path <- require @FileHandle
+    outcome <- liftIO (tryIOError (readFile' path))
+    unless (either (const True) (const False) outcome) $
+      raise (DetectFileSessionError "File is still readable; failure not located in FileSession")
 
 -- TODO：Error 的处置是另一条驱动链，设计确定前 resolve 不做任何事。
 instance ResolveFileSessionLayer m => ResolveFileSessionHandler m where
@@ -769,10 +759,10 @@ parsePages = parallel [node "FetchPage", node "FetchLinkedPage"]
 operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 ```
 
-- **只列候选，不写条件**：选哪一个由一个和类型资产的当前构造器决定，AST 不暴露业务状态。
-- **候选怎么对应构造器**：每个候选（末端及其 Input 链上游）在 `demands` 里 `requires` 恰好一个同一资产的分支契约，生成器据此推出它对应的构造器。候选必须覆盖全部构造器，且不能重复。FileDemo 中 `WriteFirstLine` 依赖 `FileTextBlank`，`AppendLine` 依赖 `FileTextWritten`。
-- **运行时**：选择读取自己驱动这个资产，相当于写了 `requests`：先执行它的生产链（FileDemo 里是读文件再解析），再启动对应的候选，并把选择时取得的值交给候选；没被选中的候选不执行，也不出现在结果中。持续资产由会话驱动，选择读取领取本次交付。
-- 分支契约怎么产生，见[资产书写](#types)。
+- **只列候选，不写条件**：选哪一个由 effect 的差异决定，AST 不暴露业务状态。当前实现 option：各候选的分叉点是**同一个 Excu 的输出**。
+- **候选怎么对应**：同一个 Excu 下挂几个 Context，各自只在自己的情况下解析成功（不成立时 `raise`）。每个候选（末端及其 Input 链上游）在 `demands` 里 `requires` 恰好一份由这个 Excu 的输出直接或经 Pure 解析出的非持续资产，各候选的资产互不相同。FileDemo 中 `ReadFile` 下挂 `BlankText`（产出 `FileBlank`）和 `FilledText`（产出 `FileWritten`），`WriteFirstLine` 依赖 `FileBlank`，`AppendLine` 依赖 `FileWritten`。
+- **运行时**：选择时执行一次这个 Excu，把它的输出按候选声明顺序交给各自的 Context 解析，第一个解析成功的候选被启动，解析出的值交给它；没被选中的候选不执行，也不出现在结果中。全部解析失败时以第一个失败返回，消息为 `no alternative case matched`。
+- **同一个 Excu 上的多个 alternative** 必须按同样的顺序判定同样的 Context；分叉来自不同上游的 race 尚未实现，gen 拒绝。
 
 #### `lifelong`
 
@@ -876,7 +866,7 @@ EffectSpec
 
 EffectSpec
   { name = "Heartbeat"
-  , typing = Context { asset = Asset @Int "Beat", parser = Just "parseBeat", require = True, stream = True }
+  , typing = Context { asset = Asset @Tick "Beat", parser = Just "parseBeat", require = True, stream = True }
   , input = "HeartbeatClock"
   , demands = []
   }
@@ -1163,7 +1153,7 @@ EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope
 
 SDK 不主动检查健康，不自动恢复或重开失效实例。资源共享只交接带 owner 的绑定，scope 快照中的普通辅助值仍按来源表读取。诊断和 cleanup 中的新产物只留局部快照。
 
-每次生产的绑定保留自己的值、生产身份、出身和共享 ownership。资源被 scope 首次认领后，已有引用看见同一个 owner；其他实例不能再次认领。SDK 同时接入仍活跃的使用者，防止认领后提前关闭；两次生产私下包装同一个底层 Handle 的物理别名仍不追踪。完整规则见[主设计：scope](CORE_DESIGN.md#scope)。
+每次生产的绑定保留自己的值、生产身份、出身和共享 ownership。资源被 scope 首次认领后，已有引用看见同一个 owner；其他实例不能再次认领。SDK 同时接入仍活跃的使用者，防止认领后提前关闭；两次生产私下指向同一个外部资源（例如同一路径）的别名仍不追踪。完整规则见[主设计：scope](CORE_DESIGN.md#scope)。
 
 ### 失败与 Error 处置
 
@@ -1187,7 +1177,6 @@ SDK 不主动检查健康，不自动恢复或重开失效实例。资源共享�
 | --- | --- | --- |
 | `ContextNotInitialized` | 普通读取已确定生产耗尽，重读后仍缺值；或在不等待的场合缺值：Error 诊断、自动收尾与 close 期间、资源 Context 没有本链已开启实例的绑定、持续资产在不能启动会话时没有本次视图，或来源没有发布就已经 `streamEnd`。未知或仍可能生产的普通读取继续等待 | 在读取之前的链上用 `requests` 驱动它，并检查生产失败；资源只在 scope 内读取（Input 链上有对应的 Scoped） |
 | `AmbiguousContextBinding` | 当前普通共享读取不再产生这个故障 | 多次生产同一 refined asset 按最新值读取，固定捕获不变 |
-| `CaseNotSelected 契约` | 读取和类型资产的分支契约（例如 `FileTextBlank`），资产当前却是另一个构造器 | 分支契约只在选中对应构造器的 alternative 候选中读取；其他地方读取基础资产再 `case` |
 
 **资源故障（`ScopeFault`）**
 
@@ -1229,7 +1218,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | 情况 | 处理方式 |
 | --- | --- |
 | effect 名重复，或用了保留名 `Root`；资产名与 effect 名、生成区名字重名；handler 名不是小写标识符，或与生成的入口方法名重名 | 换一个按业务含义起的 effect 名、资产名或 handler 名 |
-| 两个 Context 声明同一资产名；资产名与某个和类型资产的分支契约重名 | 每个 refined asset 保留唯一来源；不同业务来源使用不同资产名 |
+| 两个 Context 声明同一资产名 | 每个 refined asset 保留唯一来源；不同业务来源使用不同资产名 |
 | 资产名不是类型名的形式；资产的表示类型是 SDK 的 `Output` | 资产名用大写开头的名字，如 `StartURL`；表示类型用业务 ADT |
 | `demands` 里的资产名没有对应的生产方；同一项 demand 写了两次；`input` 或 `node` 引用了不存在的 effect | 检查名字：资产名就是生产方 `Asset` 声明的名字，effect 名就是注册的 `name`；删掉重复的 demand |
 | Context、Pure 或 Stream 没有绑定 handler；作为 Input 的 Scoped 没有同时声明 `open` 和 `close` | 补上 handler 名 |
@@ -1247,13 +1236,14 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | `Handlers.hs` 没有直接导入生成的 `Generated.Effects`，结构分析找不到 handler 类 | 直接 `import 程序名.Generated.Effects` |
 | 业务模块顶层定义了普通函数、类、foreign 声明或 rewrite rule | 值操作移进 handler 方法体；`Effects.hs` 的辅助写进 `effects` 的 `where` |
 | `input` 指向 Context 或 Error；Error 的 `handles` 为空、关联不到恰好一个 scope，或与同一 scope 下的另一个 Error 处理同一种失败；`RaisedBy` 写的不是已注册的 handler 名 | Context 经 demands 接入；Error 的 Input 链上要有 Scoped；同一 scope 下每种失败只由一个 Error 处理；`RaisedBy` 写 handler 名 |
-| `alternative` 的候选没有依赖分支契约、依赖了多个，或候选没覆盖和类型的全部构造器；分支契约被写成 `requests` | 每个候选 `requires` 恰好一个分支契约，候选覆盖全部构造器；分支契约只能 `requires` |
+| `alternative` 的候选没有都 `requires` 由同一个 Excu 的输出解析出的资产（分叉来自不同上游的 race 尚未实现），共同的 Excu 不止一个，某个候选依赖了它的多份资产，或两个候选依赖同一份；同一个 Excu 上的多个 alternative 判定不同的 Context | 在同一个 Excu 下为每种情况挂一个 Context，每个候选 `requires` 恰好其中一份，互不相同；同一个 Excu 上的 alternative 使用同样的候选与顺序 |
+| `Types.hs` 不是固定形式：和类型、非 `String` 字段、缺少或多余的 deriving、import、instance、类型同义词等；`Asset @T` 的 `T` 不是 `String`、`[String]` 或 `Types.hs` 中的类型 | 按[资产书写](#types)改成单构造器、`String` 字段、`deriving (Eq, Show)`；数字保存文本，句柄留在 handler 执行中 |
 | AST 的 node 选中了 Pure、Context、Error 或 Stream；别的方法直接调用到 Stream 的 handler | node 只挂 Excu 或 Scoped；Pure 与 Context 在生产链中由挂接、驱动、合法读取或生产会话带起；Stream 只由生产会话和挂在它下面的 parser 调用，Error 由失败协议调用 |
 | 挂接的 Context 经别的方法、而不是直接或经 Pure 用 `rawinput` 到达它挂接的句柄 | parser 用 `rawinput` 读取挂接句柄，中间只经过 Pure |
 | 某个 Context 从 AST 出发永远到不了：没有挂接句柄、`requests` 驱动或选择读取，也没有 lifelong 订阅生产会话带起它（只被 `requires` 读取不算） | 在读取它的链上写 `requests` 驱动它，或把带起它的消费链加进 AST，或删掉这个 Context |
 | 已到达的普通读取没有可启动的供值或捕获 | 在等待前或独立分支驱动生产；require 不自行生产。详见供值固定点与等待规则 |
 | 持续后继有多个互不先后的已结束 lifelong 会话 | 明确会话的先后或细化资产；普通资产多处发布使用共享最新值，不适用此歧义规则 |
-| 持续资产的声明不成立：Context 的 `stream` 与 Input 链是否持续驱动不一致，或 `stream = True` 却没有 `require = True`；Stream 下不是恰好一个 Context，或 parser 以外的 effect 以 Stream 为 `input`；`streams` 订阅了普通资产或分支契约，或由 Excu、Scoped 以外的 effect 声明 | 按[持续资产的声明规则](#stream)修正 |
+| 持续资产的声明不成立：Context 的 `stream` 与 Input 链是否持续驱动不一致，或 `stream = True` 却没有 `require = True`；Stream 下不是恰好一个 Context，或 parser 以外的 effect 以 Stream 为 `input`；`streams` 订阅了普通资产，或由 Excu、Scoped 以外的 effect 声明 | 按[持续资产的声明规则](#stream)修正 |
 | `streams` 写在 lifelong 外的末端上；lifelong 嵌套或含空分支；lifelong 里的末端没有恰好订阅一个持续资产，或另外读取了别的持续资产 | 按 [lifelong 的规则](#stream)调整注册或 AST |
 | lifelong 中持续资产的生产链读取驱动资产以外的持续资产，或输出复用的位置产生启动环 | 一条链只由一份持续资产驱动；保证负责发布的位置可以先执行，不先等待它自己将来才会产生的交付 |
 | 同一持续资产的 AST 输出发布位置存在歧义 | 在同一个 lifelong 内保持静态可确定的发布关系，不依赖并行完成顺序；重复使用 handler 不会自动合并独立执行 |

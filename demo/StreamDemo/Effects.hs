@@ -38,7 +38,7 @@ effects =
       }
   , EffectSpec
       { name = "Heartbeat"
-      , typing = Context { asset = Asset @Int "Beat", parser = Just "parseBeat", require = True, stream = True }
+      , typing = Context { asset = Asset @Tick "Beat", parser = Just "parseBeat", require = True, stream = True }
       , input = "HeartbeatClock"
       , demands = []
       }

@@ -25,17 +25,15 @@ import qualified GHC.TypeLits as FrameworkTypes
 import Framework.SDK (Raises(..), Reads(..), rawoutput)
 import ScopeReuseDemo.Generated.Effects
 import ScopeReuseDemo.Types
-import Control.Exception (bracketOnError, displayException)
+import Control.Concurrent (threadDelay)
+import Control.Exception (displayException)
 import Control.Monad (unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.List (sort)
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>), takeDirectory)
-import System.IO
-  ( IOMode(AppendMode)
-  , hClose, hFlush, hPutStr
-  , hSetEncoding, openFile, readFile', utf8 )
-import System.IO.Error (tryIOError)
+import System.IO (readFile')
+import System.IO.Error (isAlreadyInUseError, tryIOError)
 
 instance SharedPathsLayer m => SharedPathsHandler m where
   sharedPaths = pure (SharedPaths
@@ -56,58 +54,61 @@ instance PrepareProbeLayer m => PrepareProbeHandler m where
 instance AcquireFileLayer m => AcquireFileHandler m where
   acquireFile = do
     paths@(SharedPaths path journal) <- require @SharedPaths
-    outcome <- liftIO $ tryIOError $
-      bracketOnError (openFile path AppendMode) hClose $ \file -> do
-        hSetEncoding file utf8
-        -- 记录真实资源获取；日志独立于 Context，重新产值不会清零它。
-        appendFile journal "file-open\n"
-        pure (SharedFile paths file)
+    outcome <- liftIO $ tryIOError $ do
+      appendFile path ""
+      -- 记录资源获取；日志独立于 Context，重新产值不会清零它。
+      appendFile journal "file-open\n"
     either (raise . AcquireFileError . displayException) pure outcome
+    pure (SharedFile paths)
 
--- requests 在开启前驱动 FileResource 打开文件。
+-- requests 在开启前驱动 FileResource 取得文件。
 instance OpenSharedFileLayer m => OpenSharedFileHandler m where
   openSharedFile = do
-    SharedFile (SharedPaths _ journal) _ <- require @SharedFile
+    SharedFile (SharedPaths _ journal) <- require @SharedFile
     outcome <- liftIO (tryIOError (appendFile journal "open-body\n"))
     either (raise . OpenSharedFileError . displayException) pure outcome
     rawoutput []
 
 instance CloseSharedFileLayer m => CloseSharedFileHandler m where
   closeSharedFile = do
-    SharedFile (SharedPaths _ journal) file <- require @SharedFile
+    SharedFile (SharedPaths _ journal) <- require @SharedFile
     outcome <- liftIO $ tryIOError $ do
       appendFile journal "close-body\n"
-      hClose file
       appendFile journal "file-close\n"
     either (raise . CloseSharedFileError . displayException) pure outcome
     rawoutput []
 
 -- 每条链先由 requests 刷新参数，再经 Input 开启；scope 内 require 稳定参数，重叠使用时可共享实例。
 -- 不在业务中加打开标志或互斥锁，也不为尚未开始的 Node 预留资源。
+-- 资源只记路径，写入者在自己的执行中按路径追加；重叠的写入者同时追加时，GHC 的单进程文件锁
+-- 会让后到者暂时失败（resource busy），稍后重试。
 instance WriteFirstLayer m => WriteFirstHandler m where
   writeFirst = do
-    SharedFile _ file <- require @SharedFile
-    outcome <- liftIO $ tryIOError $ do
-      hPutStr file "first\n"
-      hFlush file
+    SharedFile (SharedPaths path _) <- require @SharedFile
+    let append remaining = tryIOError (appendFile path "first\n") >>= either
+          (\failure -> if isAlreadyInUseError failure && remaining > (0 :: Int)
+             then threadDelay 10000 >> append (remaining - 1) else ioError failure) pure
+    outcome <- liftIO (tryIOError (append 50))
     either (raise . WriteFirstError . displayException) pure outcome
     rawoutput []
 
 instance WriteSecondLayer m => WriteSecondHandler m where
   writeSecond = do
-    SharedFile _ file <- require @SharedFile
-    outcome <- liftIO $ tryIOError $ do
-      hPutStr file "second\n"
-      hFlush file
+    SharedFile (SharedPaths path _) <- require @SharedFile
+    let append remaining = tryIOError (appendFile path "second\n") >>= either
+          (\failure -> if isAlreadyInUseError failure && remaining > (0 :: Int)
+             then threadDelay 10000 >> append (remaining - 1) else ioError failure) pure
+    outcome <- liftIO (tryIOError (append 50))
     either (raise . WriteSecondError . displayException) pure outcome
     rawoutput []
 
 instance WriteThirdLayer m => WriteThirdHandler m where
   writeThird = do
-    SharedFile _ file <- require @SharedFile
-    outcome <- liftIO $ tryIOError $ do
-      hPutStr file "third\n"
-      hFlush file
+    SharedFile (SharedPaths path _) <- require @SharedFile
+    let append remaining = tryIOError (appendFile path "third\n") >>= either
+          (\failure -> if isAlreadyInUseError failure && remaining > (0 :: Int)
+             then threadDelay 10000 >> append (remaining - 1) else ioError failure) pure
+    outcome <- liftIO (tryIOError (append 50))
     either (raise . WriteThirdError . displayException) pure outcome
     rawoutput []
 
@@ -137,7 +138,7 @@ instance VerifyReuseLayer m => VerifyReuseHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "46df5382e1875f64d669496bd64d138b"
+handlerSourceFingerprint = Just "3064667593881e7ee18e00db631b7366"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。

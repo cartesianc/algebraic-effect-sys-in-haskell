@@ -14,12 +14,12 @@ module ScopeInstancesDemo.Handlers () where
 import Framework.SDK (Raises(..), Reads(..), rawoutput)
 import ScopeInstancesDemo.Generated.Effects
 import ScopeInstancesDemo.Types
-import Control.Exception (bracketOnError, displayException)
+import Control.Exception (displayException)
 import Control.Monad (unless)
 import Control.Monad.IO.Class (liftIO)
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile)
 import System.FilePath ((</>), takeFileName)
-import System.IO (IOMode(AppendMode), hClose, hFlush, hIsClosed, hPutStrLn, openFile, readFile')
+import System.IO (readFile')
 import System.IO.Error (tryIOError)
 
 instance PrepareFilesLayer m => PrepareFilesHandler m where
@@ -61,18 +61,20 @@ instance SelectedFileLayer m => SelectedFileHandler m where
 
 instance AcquireFileLayer m => AcquireFileHandler m where
   acquireFile = do
-    path <- require @FilePath
+    path <- require @String
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
-    outcome <- liftIO $ tryIOError $
-      bracketOnError (openFile path AppendMode) hClose $ \file -> do
-        appendFile journal ("acquire " ++ path ++ "\n")
-        pure (FileHandle path file)
+    -- 取得时确保文件存在，并在旁边记下开启标记 <path>.open；资产只记路径。
+    outcome <- liftIO $ tryIOError $ do
+      appendFile path ""
+      writeFile (path ++ ".open") ""
+      appendFile journal ("acquire " ++ path ++ "\n")
     either (raise . AcquireFileError . displayException) pure outcome
+    pure (FileHandle path)
 
--- requests 在开启前驱动 FileResource 打开文件；open／close 只读取 scope 内的资源。
+-- requests 在开启前驱动 FileResource 取得文件；open／close 只读取 scope 内的资源。
 instance OpenSelectedFileLayer m => OpenSelectedFileHandler m where
   openSelectedFile = do
-    FileHandle path _ <- require @FileHandle
+    FileHandle path <- require @FileHandle
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     outcome <- liftIO (tryIOError (appendFile journal ("open " ++ path ++ "\n")))
     either (raise . OpenSelectedFileError . displayException) pure outcome
@@ -80,10 +82,10 @@ instance OpenSelectedFileLayer m => OpenSelectedFileHandler m where
 
 instance CloseSelectedFileLayer m => CloseSelectedFileHandler m where
   closeSelectedFile = do
-    FileHandle path file <- require @FileHandle
+    FileHandle path <- require @FileHandle
     let journal = "demo" </> "ScopeInstancesDemo" </> "output" </> "events.txt"
     outcome <- liftIO $ tryIOError $ do
-      hClose file
+      removeFile (path ++ ".open")
       appendFile journal ("close " ++ path ++ "\n")
     either (raise . CloseSelectedFileError . displayException) pure outcome
     rawoutput []
@@ -91,16 +93,15 @@ instance CloseSelectedFileLayer m => CloseSelectedFileHandler m where
 -- UseFirst、UseSecond、ReopenFirst 共用：scope 内 require 稳定参数与本条闭包选中的实例。
 instance CheckSelectionLayer m => CheckSelectionHandler m where
   checkSelection = do
-    selected <- require @FilePath
-    FileHandle path file <- require @FileHandle
-    closed <- liftIO (hIsClosed file)
-    unless (path == selected && not closed) $
+    selected <- require @String
+    FileHandle path <- require @FileHandle
+    live <- liftIO (doesFileExist (path ++ ".open"))
+    unless (path == selected && live) $
       raise (CheckSelectionError ("The instance does not match the current argument " ++ selected))
-    outcome <- liftIO $ tryIOError $ do
-      hPutStrLn file "used"
-      hFlush file
+    -- 写入时由本 handler 按路径打开文件，写完即关闭。
+    outcome <- liftIO (tryIOError (appendFile path "used\n"))
     either (raise . CheckSelectionError . displayException) pure outcome
-    liftIO (putStrLn ("[use] " ++ takeFileName path ++ ": the current argument selected this instance; its Handle is live"))
+    liftIO (putStrLn ("[use] " ++ takeFileName path ++ ": the current argument selected this instance; it is open"))
     rawoutput []
 
 -- 各使用闭包已退出并自动关闭实例；此处只读日志和文件，不 require 旧资源。
@@ -124,6 +125,9 @@ instance CheckJournalLayer m => CheckJournalHandler m where
       raise (CheckJournalError ("Unexpected lifecycle or extra Context evaluation: " ++ show events))
     unless (first == ["used", "used"] && second == ["used"]) $
       raise (CheckJournalError ("Unexpected file contents: " ++ show (first, second)))
+    markers <- liftIO (mapM (doesFileExist . (++ ".open")) [firstFile, secondFile])
+    unless (not (or markers)) $
+      raise (CheckJournalError "An instance is still open after its use closure exited")
     liftIO $ do
       putStrLn "[check] each use closure opened the instance its current argument selected and closed it on exit"
       putStrLn "[check] actual acquisitions/closures: file 1 = 2/2; file 2 = 1/1"

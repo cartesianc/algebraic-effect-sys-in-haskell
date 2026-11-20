@@ -22,9 +22,9 @@ newtype TemperatureSample = TemperatureSample Temperature
 deriving instance Eq Temperature => Eq TemperatureSample
 deriving instance Show Temperature => Show TemperatureSample
 
-newtype Beat = Beat Int
-deriving instance Eq Int => Eq Beat
-deriving instance Show Int => Show Beat
+newtype Beat = Beat Tick
+deriving instance Eq Tick => Eq Beat
+deriving instance Show Tick => Show Beat
 
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
 data MethodGen = OpenSensorLinkGen | CloseSensorLinkGen | NextTemperatureFeedGen | GetTemperatureSampleGen | StreamTemperatureSampleGen | NextHeartbeatClockGen | GetBeatGen | StreamBeatGen | RunAnnounceGen | RunShowTemperatureGen | RunCheckTrendGen | RunReportHeartbeatGen
@@ -84,7 +84,7 @@ instance SDK.HandlerError NextBeatError Errors where raised (NextBeatError descr
 -- handler parseBeat：绑定到 Heartbeat。
 type ParseBeatLayer m = (SDK.Raw m, SDK.Raises ParseBeatError m, MonadIO m)
 class ParseBeatHandler m where
-  parseBeat :: m Int
+  parseBeat :: m Tick
 
 -- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "parseBeat" 匹配。
 newtype ParseBeatError = ParseBeatError String
@@ -122,7 +122,7 @@ newtype CheckTrendError = CheckTrendError String
 instance SDK.HandlerError CheckTrendError Errors where raised (CheckTrendError description) = (CheckTrendFailure, description)
 
 -- handler reportHeartbeat：绑定到 ReportHeartbeat。
-type ReportHeartbeatLayer m = (SDK.Reads Int m, SDK.Streams Int m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ReportHeartbeatError m, MonadIO m)
+type ReportHeartbeatLayer m = (SDK.Reads Tick m, SDK.Streams Tick m, SDK.RawOutputs m, SDK.EndsStream m, SDK.Raises ReportHeartbeatError m, MonadIO m)
 class ReportHeartbeatHandler m where
   reportHeartbeat :: m [String]
 

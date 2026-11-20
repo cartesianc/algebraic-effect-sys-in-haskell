@@ -26,4 +26,11 @@ generatedAssets =
           ]
       , assetFields = []
       }
+  , Asset
+      { assetType = AssetSymbol {assetModule = "StreamDemo.Types", assetName = "Tick", assetFile = "demo/StreamDemo/Types.hs", assetLine = 9, assetColumn = 1}
+      , assetConstructors =
+          [ AssetSymbol {assetModule = "StreamDemo.Types", assetName = "Tick", assetFile = "demo/StreamDemo/Types.hs", assetLine = 9, assetColumn = 16}
+          ]
+      , assetFields = []
+      }
   ]

@@ -23,32 +23,32 @@ instance AnnounceLayer m => AnnounceHandler m where
     liftIO (putStrLn "Reading the input line by line.")
     rawoutput []
 
--- 输入文件在第一次读行时由 InputSession 取得，之后的各步骤共用同一个 Handle。
+-- 输入文件在第一次读行时由 InputSession 取得；资产只记路径。
 instance AcquireInputLayer m => AcquireInputHandler m where
   acquireInput = do
     let path = "demo" </> "LinesDemo" </> "input.txt"
-    file <- liftIO (openFile path ReadMode)
-    pure (InputFile path file)
+    pure (InputFile path)
 
 instance OpenInputLayer m => OpenInputHandler m where
   openInput = do
-    InputFile path _ <- require @InputFile
+    InputFile path <- require @InputFile
     liftIO (putStrLn ("[open] " ++ path))
     rawoutput []
 
 instance CloseInputLayer m => CloseInputHandler m where
   closeInput = do
-    InputFile path file <- require @InputFile
-    liftIO (hClose file >> putStrLn ("[close] " ++ path))
+    InputFile path <- require @InputFile
+    liftIO (putStrLn ("[close] " ++ path))
     rawoutput []
 
--- 在一次来源调用内持续读取。每个 rawemit 都完成这行的解析与发布，再读取下一行。
+-- 在一次来源调用内持续读取。文件句柄由这次调用自己打开和关闭；每个 rawemit 都完成这行的解析与发布，再读取下一行。
 instance NextLineLayer m => NextLineHandler m where
   nextLine = do
-    InputFile _ file <- require @InputFile
+    InputFile path <- require @InputFile
+    file <- liftIO (openFile path ReadMode)
     let readLines = do
           finished <- liftIO (hIsEOF file)
-          if finished then streamEnd else do
+          if finished then liftIO (hClose file) >> streamEnd else do
             line <- liftIO (hGetLine file)
             rawemit line
             readLines
@@ -86,17 +86,17 @@ instance ParseTotalLayer m => ParseTotalHandler m where
   parseTotal = do
     fields <- rawinput
     case fields of
-      [count, size] -> pure (Total (read count) (read size))
+      [count, size] -> pure (Total count size)
       _ -> raise (ParseTotalError "the counter gives a line count and a character count")
 
 instance ShowTotalLayer m => ShowTotalHandler m where
   showTotal = do
     Total count size <- require @Total
-    liftIO (putStrLn ("  so far: " ++ show count ++ " lines, " ++ show size ++ " characters"))
+    liftIO (putStrLn ("  so far: " ++ count ++ " lines, " ++ size ++ " characters"))
     rawoutput []
 
 instance ReportLayer m => ReportHandler m where
   report = do
     Total count size <- require @Total
-    liftIO (putStrLn ("The selected total is: " ++ show count ++ " lines, " ++ show size ++ " characters."))
+    liftIO (putStrLn ("The selected total is: " ++ count ++ " lines, " ++ size ++ " characters."))
     rawoutput []

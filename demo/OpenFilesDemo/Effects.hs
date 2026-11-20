@@ -12,13 +12,13 @@ effects :: [EffectSpec]
 effects =
   [ EffectSpec
       { name = "FileLocations"
-      , typing = Context { asset = Asset @[FilePath] "FileNames", parser = Just "listFiles", require = True, stream = False }
+      , typing = Context { asset = Asset @[String] "FileNames", parser = Just "listFiles", require = True, stream = False }
       , input = "Root"
       , demands = []
       }
   , EffectSpec
       { name = "FileResources"
-      , typing = Context { asset = Asset @[FileHandle] "OpenedFiles", parser = Just "acquireFiles", require = True, stream = False }
+      , typing = Context { asset = Asset @FileHandles "OpenedFiles", parser = Just "acquireFiles", require = True, stream = False }
       , input = "Root"
       , demands = [requires "FileNames"]
       }
@@ -50,7 +50,7 @@ effects =
   -- 挂在 ReleaseFiles 下：它成功后记下本链持有的文件，scope 关闭后仍可读取。
   , EffectSpec
       { name = "InspectionSnapshot"
-      , typing = Context { asset = Asset @[FileHandle] "InspectedFiles", parser = Just "snapshotFiles", require = True, stream = False }
+      , typing = Context { asset = Asset @FileHandles "InspectedFiles", parser = Just "snapshotFiles", require = True, stream = False }
       , input = "ReleaseFiles"
       , demands = [requires "OpenedFiles"]
       }

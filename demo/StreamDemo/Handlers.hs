@@ -42,8 +42,8 @@ instance NextReadingLayer m => NextReadingHandler m where
 instance ParseTemperatureLayer m => ParseTemperatureHandler m where
   parseTemperature = do
     reading <- concat <$> rawinput
-    case reads reading of
-      [(value, "")] -> pure (Temperature value)
+    case reads reading :: [(Double, String)] of
+      [(_, "")] -> pure (Temperature reading)
       _ -> raise (ParseTemperatureError ("unreadable sensor output: " ++ reading))
 
 -- 心跳也是 Stream：每两秒交出一次单调时钟的秒数，由挂在它下面的 parser 解析。
@@ -57,7 +57,7 @@ instance ParseBeatLayer m => ParseBeatHandler m where
   parseBeat = do
     tick <- concat <$> rawinput
     case reads tick :: [(Int, String)] of
-      [(seconds, "")] -> pure seconds
+      [(_, "")] -> pure (Tick tick)
       _ -> raise (ParseBeatError ("unreadable clock output: " ++ tick))
 
 instance AnnounceLayer m => AnnounceHandler m where
@@ -71,13 +71,13 @@ instance ShowTemperatureLayer m => ShowTemperatureHandler m where
   showTemperature = do
     Temperature value <- require @Temperature
     seen <- stream @Temperature
-    liftIO (printf "reading #%d: %.1f C\n" (length seen) value)
+    liftIO (printf "reading #%d: %s C\n" (length seen) value)
     rawoutput []
 
 instance CheckTrendLayer m => CheckTrendHandler m where
   checkTrend = do
     seen <- stream @Temperature
-    let recent = take 5 [value | Temperature value <- toList seen]
+    let recent = take 5 [read value :: Double | Temperature value <- toList seen]
         average = sum recent / fromIntegral (length recent)
     case recent of
       current : previous : _ ->
@@ -88,6 +88,6 @@ instance CheckTrendLayer m => CheckTrendHandler m where
 
 instance ReportHeartbeatLayer m => ReportHeartbeatHandler m where
   reportHeartbeat = do
-    beats <- stream @Int
+    beats <- stream @Tick
     liftIO (putStrLn ("[heartbeat] #" ++ show (length beats)))
     rawoutput []

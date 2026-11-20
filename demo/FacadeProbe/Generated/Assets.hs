@@ -90,37 +90,37 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "Body", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 7, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "Body", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 6, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "Body", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 7, assetColumn = 16}
+          [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "Body", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 6, assetColumn = 16}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "EmptyReport", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 13, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "EmptyReport", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 12, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "EmptyReport", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 13, assetColumn = 23}
+          [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "EmptyReport", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 12, assetColumn = 23}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "Level", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 11, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "Level", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 10, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "Level", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 11, assetColumn = 17}
+          [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "Level", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 10, assetColumn = 17}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "LineCount", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 9, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "LineCount", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 8, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "LineCount", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 9, assetColumn = 21}
+          [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "LineCount", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 8, assetColumn = 21}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "TextFile", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 5, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "TextFile", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 4, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "TextFile", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 5, assetColumn = 17}
+          [ AssetSymbol {assetModule = "FacadeProbe.Types", assetName = "TextFile", assetFile = "demo/FacadeProbe/Types.hs", assetLine = 4, assetColumn = 20}
           ]
       , assetFields = []
       }

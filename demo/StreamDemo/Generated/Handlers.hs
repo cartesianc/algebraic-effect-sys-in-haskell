@@ -53,8 +53,8 @@ instance NextReadingLayer m => NextReadingHandler m where
 instance ParseTemperatureLayer m => ParseTemperatureHandler m where
   parseTemperature = do
     reading <- concat <$> rawinput
-    case reads reading of
-      [(value, "")] -> pure (Temperature value)
+    case reads reading :: [(Double, String)] of
+      [(_, "")] -> pure (Temperature reading)
       _ -> raise (ParseTemperatureError ("unreadable sensor output: " ++ reading))
 
 -- 心跳也是 Stream：每两秒交出一次单调时钟的秒数，由挂在它下面的 parser 解析。
@@ -68,7 +68,7 @@ instance ParseBeatLayer m => ParseBeatHandler m where
   parseBeat = do
     tick <- concat <$> rawinput
     case reads tick :: [(Int, String)] of
-      [(seconds, "")] -> pure seconds
+      [(_, "")] -> pure (Tick tick)
       _ -> raise (ParseBeatError ("unreadable clock output: " ++ tick))
 
 instance AnnounceLayer m => AnnounceHandler m where
@@ -82,13 +82,13 @@ instance ShowTemperatureLayer m => ShowTemperatureHandler m where
   showTemperature = do
     Temperature value <- require @Temperature
     seen <- stream @Temperature
-    liftIO (printf "reading #%d: %.1f C\n" (length seen) value)
+    liftIO (printf "reading #%d: %s C\n" (length seen) value)
     rawoutput []
 
 instance CheckTrendLayer m => CheckTrendHandler m where
   checkTrend = do
     seen <- stream @Temperature
-    let recent = take 5 [value | Temperature value <- toList seen]
+    let recent = take 5 [read value :: Double | Temperature value <- toList seen]
         average = sum recent / fromIntegral (length recent)
     case recent of
       current : previous : _ ->
@@ -99,13 +99,13 @@ instance CheckTrendLayer m => CheckTrendHandler m where
 
 instance ReportHeartbeatLayer m => ReportHeartbeatHandler m where
   reportHeartbeat = do
-    beats <- stream @Int
+    beats <- stream @Tick
     liftIO (putStrLn ("[heartbeat] #" ++ show (length beats)))
     rawoutput []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "1461d43856ff83ae6322c4f89ae47a69"
+handlerSourceFingerprint = Just "283600bbe5020a5f40d83f7d7e94ead3"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -138,7 +138,7 @@ instance SDK.Reads Temperature (Wrap "ShowTemperature" method) where
 instance SDK.Reads Temperature (Wrap "CheckTrend" method) where
   require = Wrap (SDK.coerce <$> streamTemperatureSample)
 
-instance SDK.Reads Int (Wrap "ReportHeartbeat" method) where
+instance SDK.Reads Tick (Wrap "ReportHeartbeat" method) where
   require = Wrap (SDK.coerce <$> streamBeat)
 
 instance SDK.Streams Temperature (Wrap "ShowTemperature" method) where
@@ -147,7 +147,7 @@ instance SDK.Streams Temperature (Wrap "ShowTemperature" method) where
 instance SDK.Streams Temperature (Wrap "CheckTrend" method) where
   stream = Wrap (SDK.coerce <$> historyTemperatureSample)
 
-instance SDK.Streams Int (Wrap "ReportHeartbeat" method) where
+instance SDK.Streams Tick (Wrap "ReportHeartbeat" method) where
   stream = Wrap (SDK.coerce <$> historyBeat)
 
 instance SDK.Raw (Wrap "TemperatureParser" "parseTemperature") where

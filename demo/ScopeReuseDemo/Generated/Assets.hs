@@ -20,16 +20,16 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "SharedFile", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 10, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "SharedFile", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 8, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "SharedFile", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 10, assetColumn = 19}
+          [ AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "SharedFile", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 8, assetColumn = 22}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "SharedPaths", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 6, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "SharedPaths", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 4, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "SharedPaths", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 6, assetColumn = 20}
+          [ AssetSymbol {assetModule = "ScopeReuseDemo.Types", assetName = "SharedPaths", assetFile = "demo/ScopeReuseDemo/Types.hs", assetLine = 4, assetColumn = 20}
           ]
       , assetFields = []
       }

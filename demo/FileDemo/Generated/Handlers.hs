@@ -25,15 +25,11 @@ import qualified GHC.TypeLits as FrameworkTypes
 import Framework.SDK (Raises(..), Raw(..), Reads(..), rawoutput)
 import FileDemo.Generated.Effects
 import FileDemo.Types
-import Control.Exception (bracketOnError, displayException)
+import Control.Exception (displayException)
 import Control.Monad (unless)
 import Control.Monad.IO.Class (liftIO)
-import Data.Function (fix)
 import System.FilePath ((</>))
-import System.IO
-  ( IOMode(ReadWriteMode), SeekMode(AbsoluteSeek, SeekFromEnd)
-  , hClose, hFlush, hGetChar, hIsClosed, hIsEOF, hPutStr, hSeek, hSetEncoding
-  , openFile, utf8 )
+import System.IO (readFile')
 import System.IO.Error (tryIOError)
 
 -- 示例专用文件：首次运行创建，后续追加；在项目根目录运行。原子句柄交出路径 list。
@@ -56,26 +52,23 @@ instance ParseFileNameLayer m => ParseFileNameHandler m where
       [path] -> pure path
       _ -> raise (ParseFileNameError "Expected exactly one file name")
 
--- 文件名由 requests 驱动，生产时已经过 ValidateFileName 的检查。
+-- 文件名由 requests 驱动，生产时已经过 ValidateFileName 的检查。取得资源时确保文件存在，资产只记路径。
 instance AcquireFileLayer m => AcquireFileHandler m where
   acquireFile = do
-    path <- require @FilePath
-    outcome <- liftIO $ tryIOError $
-      bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
-        hSetEncoding file utf8
-        putStrLn ("[open] " ++ path)
-        pure (FileHandle path file)
+    path <- require @String
+    outcome <- liftIO $ tryIOError $ do
+      appendFile path ""
+      putStrLn ("[open] " ++ path)
     either (raise . AcquireFileError . displayException) pure outcome
+    pure (FileHandle path)
 
--- requests 在开启前驱动 FileResource 打开文件；开启期间 Context 保存真实 Handle，后续 require 复用它。
+-- requests 在开启前驱动 FileResource 取得文件；开启期间各 handler 按同一路径读写。
 instance OpenSessionLayer m => OpenSessionHandler m where
   openSession = rawoutput []
 
 instance CloseSessionLayer m => CloseSessionHandler m where
   closeSession = do
-    FileHandle path file <- require @FileHandle
-    outcome <- liftIO (tryIOError (hClose file))
-    either (raise . CloseSessionError . displayException) pure outcome
+    FileHandle path <- require @FileHandle
     liftIO (putStrLn ("[close] " ++ path))
     rawoutput []
 
@@ -83,15 +76,9 @@ instance CloseSessionLayer m => CloseSessionHandler m where
 -- Input FileSession 已在它之前开启（同份已开启的 scope 不再执行 open）。
 instance ReadFileContentLayer m => ReadFileContentHandler m where
   readFileContent = do
-    FileHandle _ file <- require @FileHandle
-    outcome <- liftIO $ tryIOError $ do
-      hSeek file AbsoluteSeek 0
-      -- 读完仍保留当前 Handle，供同一链随后写入；不使用会关闭它的 hGetContents。
-      fix (\next characters -> do
-        finished <- hIsEOF file
-        if finished
-          then pure (reverse characters)
-          else hGetChar file >>= \character -> next (character : characters)) []
+    FileHandle path <- require @FileHandle
+    -- 严格读取：读完即关闭文件，同一链随后的写入再按路径打开。
+    outcome <- liftIO (tryIOError (readFile' path))
     contents <- either (raise . ReadFileContentError . displayException) pure outcome
     rawoutput [contents]
 
@@ -113,12 +100,11 @@ instance ParseWrittenTextLayer m => ParseWrittenTextHandler m where
 
 instance DetectFileSessionLayer m => DetectFileSessionHandler m where
   detectFileSession = do
-    FileHandle _ file <- require @FileHandle
-    outcome <- liftIO (tryIOError (hIsClosed file))
-    closed <- either (raise . DetectFileSessionError . displayException) pure outcome
-    -- handles 已按 handler 粗定位；detect 只做值级细化：文件已关闭才归此处。
-    unless closed $
-      raise (DetectFileSessionError "File handle is still open; failure not located in FileSession")
+    FileHandle path <- require @FileHandle
+    outcome <- liftIO (tryIOError (readFile' path))
+    -- handles 已按 handler 粗定位；detect 只做值级细化：文件已无法读取才归此处。
+    unless (either (const True) (const False) outcome) $
+      raise (DetectFileSessionError "File is still readable; failure not located in FileSession")
 
 -- TODO：Error 的处置是另一条驱动链，设计确定前 resolve 不做任何事；不调用 close，也不重放读写。
 instance ResolveFileSessionLayer m => ResolveFileSessionHandler m where
@@ -128,13 +114,11 @@ instance ResolveFileSessionLayer m => ResolveFileSessionHandler m where
 -- 选择在 AST 的 alternative 中自动完成，候选本身不判断条件；链退出后自动关闭文件。
 instance WriteFirstLineLayer m => WriteFirstLineHandler m where
   writeFirstLine = do
-    FileHandle path file <- require @FileHandle
+    FileHandle path <- require @FileHandle
     let line = "file-demo: the file was empty; this is the first line.\n"
     outcome <- liftIO $ tryIOError $ do
       putStrLn "[read] (empty file)"
-      hSeek file SeekFromEnd 0
-      hPutStr file line
-      hFlush file
+      appendFile path line
       putStrLn ("[write] " ++ path ++ ": " ++ line)
     either (raise . WriteFirstLineError . displayException) pure outcome
     rawoutput []
@@ -142,21 +126,19 @@ instance WriteFirstLineLayer m => WriteFirstLineHandler m where
 instance AppendLineLayer m => AppendLineHandler m where
   appendLine = do
     WrittenText contents <- require @WrittenText
-    FileHandle path file <- require @FileHandle
+    FileHandle path <- require @FileHandle
     -- 明确消费读出的文本；只追加，不截断已有内容。
     let line = "file-demo: read " ++ show (length contents) ++ " characters before this append.\n"
     outcome <- liftIO $ tryIOError $ do
       putStrLn ("[read] " ++ contents)
-      hSeek file SeekFromEnd 0
-      hPutStr file line
-      hFlush file
+      appendFile path line
       putStrLn ("[write] " ++ path ++ ": " ++ line)
     either (raise . AppendLineError . displayException) pure outcome
     rawoutput []
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "b224323bfba45921696c6ceee21e11b7"
+handlerSourceFingerprint = Just "dfaf82ce66ae2ef135c435eaded1a621"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。

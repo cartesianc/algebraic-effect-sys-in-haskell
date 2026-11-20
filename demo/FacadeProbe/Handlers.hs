@@ -18,7 +18,7 @@ import Control.Concurrent (threadDelay)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
 import System.FilePath ((</>))
-import System.IO (IOMode(WriteMode), hClose, hFlush, hPutStr, openFile, readFile')
+import System.IO (readFile')
 
 instance ReportLocationLayer m => ReportLocationHandler m where
   reportLocation = pure ("demo" </> "FacadeProbe" </> "output" </> "report.txt")
@@ -34,27 +34,27 @@ instance ReplyDraftLayer m => ReplyDraftHandler m where
 
 instance AcquireFileLayer m => AcquireFileHandler m where
   acquireFile = do
-    path <- require @FilePath
-    file <- liftIO (openFile path WriteMode)
-    pure (TextFile path file)
+    path <- require @String
+    liftIO (writeFile path "")
+    pure (TextFile path)
 
 instance OpenTextFileLayer m => OpenTextFileHandler m where
   openTextFile = do
-    TextFile path _ <- require @TextFile
+    TextFile path <- require @TextFile
     liftIO (putStrLn ("[open] " ++ path))
     rawoutput []
 
 instance CloseTextFileLayer m => CloseTextFileHandler m where
   closeTextFile = do
-    TextFile path file <- require @TextFile
-    liftIO (hClose file >> putStrLn ("[close] " ++ path))
+    TextFile path <- require @TextFile
+    liftIO (putStrLn ("[close] " ++ path))
     rawoutput []
 
 instance WriteTextLayer m => WriteTextHandler m where
   writeText = do
-    TextFile path file <- require @TextFile
+    TextFile path <- require @TextFile
     Body text <- require @Body
-    liftIO (hPutStr file text >> hFlush file >> putStrLn ("[write] " ++ path))
+    liftIO (appendFile path text >> putStrLn ("[write] " ++ path))
     rawoutput []
 
 instance MarkReadLayer m => MarkReadHandler m where
@@ -64,7 +64,7 @@ instance MarkReadLayer m => MarkReadHandler m where
 
 instance ReadTextLayer m => ReadTextHandler m where
   readText = do
-    path <- require @FilePath
+    path <- require @String
     contents <- liftIO (readFile' path)
     rawoutput [contents]
 
@@ -74,17 +74,17 @@ instance CountLinesLayer m => CountLinesHandler m where
     contents <- case output of
       [text] -> pure text
       _ -> raise (CountLinesError "no text")
-    pure (LineCount (length (lines contents)))
+    pure (LineCount (show (length (lines contents))))
 
 instance ShowCountLayer m => ShowCountHandler m where
   showCount = do
     LineCount count <- require @LineCount
-    liftIO (putStrLn ("[lines] " ++ show count))
+    liftIO (putStrLn ("[lines] " ++ count))
     rawoutput []
 
 instance InspectFileLayer m => InspectFileHandler m where
   inspectFile = do
-    path <- require @FilePath
+    path <- require @String
     contents <- liftIO (readFile' path)
     rawoutput [contents]
 
@@ -127,8 +127,8 @@ instance NextBLayer m => NextBHandler m where
 instance ParseLevelLayer m => ParseLevelHandler m where
   parseLevel = do
     reading <- concat <$> rawinput
-    case reads reading of
-      [(value, "")] -> pure (Level value)
+    case reads reading :: [(Int, String)] of
+      [(_, "")] -> pure (Level reading)
       _ -> raise (ParseLevelError reading)
 
 -- ShowA 与 ShowB 共用；失败按 handler 固定为 ShowLevelError，origin 仍是具体的 effect。
@@ -138,6 +138,6 @@ instance ShowLevelLayer m => ShowLevelHandler m where
     Level value <- require @Level
     seen <- stream @Level
     let number = length seen
-    liftIO (putStrLn ("[level] " ++ show value ++ " at delivery " ++ show number))
+    liftIO (putStrLn ("[level] " ++ value ++ " at delivery " ++ show number))
     when (number >= 3) (raise (ShowLevelError "enough deliveries"))
     rawoutput []

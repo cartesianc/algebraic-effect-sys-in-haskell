@@ -14,15 +14,12 @@ module OpenFilesDemo.Handlers () where
 import Framework.SDK (Raises(..), Reads(..), rawoutput)
 import OpenFilesDemo.Generated.Effects
 import OpenFilesDemo.Types
-import Control.Exception (bracketOnError, displayException)
-import Control.Monad (forM_, unless)
+import Control.Exception (displayException)
+import Control.Monad (filterM, forM_, unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.List (nub)
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile)
 import System.FilePath ((</>), takeDirectory)
-import System.IO
-  ( IOMode(ReadWriteMode), SeekMode(SeekFromEnd)
-  , hClose, hFlush, hIsClosed, hPutStrLn, hSeek, hSetEncoding, openFile, utf8 )
 import System.IO.Error (tryIOError)
 import System.Mem (performGC)
 
@@ -34,36 +31,33 @@ instance ListFilesLayer m => ListFilesHandler m where
 
 instance AcquireFilesLayer m => AcquireFilesHandler m where
   acquireFiles = do
-    paths <- require @[FilePath]
-    -- 整批获取是本 Context 的原子操作；中途失败释放此前已打开的文件。
-    outcome <- liftIO $ tryIOError $
-      foldr (\path acquireRest -> do
-        createDirectoryIfMissing True (takeDirectory path)
-        bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
-          hSetEncoding file utf8
-          rest <- acquireRest
-          pure (FileHandle path file : rest)) (pure []) paths
+    paths <- require @[String]
+    -- 整批取得：确保每个文件存在并在旁边记下开启标记 <path>.open；资产只记路径。
+    outcome <- liftIO $ tryIOError $ forM_ paths $ \path -> do
+      createDirectoryIfMissing True (takeDirectory path)
+      appendFile path ""
+      writeFile (path ++ ".open") ""
     either (raise . AcquireFilesError . displayException) pure outcome
+    pure (FileHandles paths)
 
--- requests 在开启前驱动 FileResources 打开整批文件。
+-- requests 在开启前驱动 FileResources 取得整批文件。
 instance OpenFilesLayer m => OpenFilesHandler m where
   openFiles = do
-    files <- require @[FileHandle]
-    liftIO (putStrLn ("[open] acquired " ++ show (length files) ++ " files"))
+    FileHandles paths <- require @FileHandles
+    liftIO (putStrLn ("[open] acquired " ++ show (length paths) ++ " files"))
     rawoutput []
 
 instance CloseFilesLayer m => CloseFilesHandler m where
   closeFiles = do
-    held <- require @[FileHandle]
-    let files = [(path, file) | FileHandle path file <- held]
-    outcome <- liftIO (tryIOError (mapM_ (hClose . snd) files))
+    FileHandles paths <- require @FileHandles
+    outcome <- liftIO (tryIOError (mapM_ (removeFile . (++ ".open")) paths))
     either (raise . CloseFilesError . displayException) pure outcome
-    liftIO (putStrLn ("[close] released " ++ show (length files) ++ " files"))
+    liftIO (putStrLn ("[close] released " ++ show (length paths) ++ " files"))
     rawoutput []
 
 -- 挂在 ReleaseFiles 下，记下本链持有的文件；值只经资产流动，关闭后的检查读取这份快照，不再 require 已关闭的资源。
 instance SnapshotFilesLayer m => SnapshotFilesHandler m where
-  snapshotFiles = require @[FileHandle]
+  snapshotFiles = require @FileHandles
 
 -- HoldFiles 与 ReleaseFiles 共用：Input 已开启文件，本链只持有它们，链退出后 SDK 自动关闭。
 instance HoldFilesLayer m => HoldFilesHandler m where
@@ -72,36 +66,34 @@ instance HoldFilesLayer m => HoldFilesHandler m where
 instance InspectFilesLayer m => InspectFilesHandler m where
   inspectFiles = do
     -- 前一 Node 的使用已经结束；本条链经 Input 重新开启，并持有自己的资源绑定。
-    held <- require @[FileHandle]
-    let files = [(path, file) | FileHandle path file <- held]
-    unless (length files == 10 && length (nub (map fst files)) == 10) $
+    FileHandles paths <- require @FileHandles
+    unless (length paths == 10 && length (nub paths) == 10) $
       raise (InspectFilesError "Expected ten distinct files")
+    let openCount = length <$> filterM (doesFileExist . (++ ".open")) paths
     outcome <- liftIO $ tryIOError $ do
-      beforeGC <- mapM (hIsClosed . snd) files
-      putStrLn ("[check] current chain: " ++ show (length (filter not beforeGC)) ++ "/10 open")
+      beforeGC <- openCount
+      putStrLn ("[check] current chain: " ++ show beforeGC ++ "/10 open")
       performGC
-      afterGC <- mapM (hIsClosed . snd) files
-      putStrLn ("[check] after GC, scope still retained: " ++ show (length (filter not afterGC)) ++ "/10 open")
-      pure (all not beforeGC && all not afterGC)
+      afterGC <- openCount
+      putStrLn ("[check] after GC, scope still retained: " ++ show afterGC ++ "/10 open")
+      pure (beforeGC == 10 && afterGC == 10)
     remainedOpen <- either (raise . InspectFilesError . displayException) pure outcome
     unless remainedOpen (raise (InspectFilesError "A file closed without calling closeFiles"))
-    written <- liftIO $ tryIOError $ forM_ files $ \(_, file) -> do
-      hSeek file SeekFromEnd 0
-      hPutStrLn file "Still writable during this chain after GC; closeFiles has not run."
-      hFlush file
+    -- 写入时由本 handler 按路径打开文件，写完即关闭。
+    written <- liftIO $ tryIOError $ forM_ paths $ \path ->
+      appendFile path "Still writable during this chain after GC; closeFiles has not run.\n"
     either (raise . InspectFilesError . displayException) pure written
     liftIO (putStrLn "[check] write and flush: 10/10 succeeded before close")
     -- 链退出后自动关闭；后续 Node 不继承这份活资源。
     rawoutput []
 
--- 前一个 node 的链已经退出，SDK 已关闭它持有的文件；这里只检查快照中的 Handle。
+-- 前一个 node 的链已经退出，SDK 已关闭它持有的文件；这里只检查快照中各文件的开启标记。
 instance FinishInspectionLayer m => FinishInspectionHandler m where
   finishInspection = do
-    held <- require @[FileHandle]
-    let files = [(path, file) | FileHandle path file <- held]
-    outcome <- liftIO (tryIOError (mapM (hIsClosed . snd) files))
-    closed <- either (raise . FinishInspectionError . displayException) pure outcome
-    unless (length closed == 10 && and closed) $
+    FileHandles paths <- require @FileHandles
+    outcome <- liftIO (tryIOError (length <$> filterM (doesFileExist . (++ ".open")) paths))
+    stillOpen <- either (raise . FinishInspectionError . displayException) pure outcome
+    unless (length paths == 10 && stillOpen == 0) $
       raise (FinishInspectionError "Not all files closed after the scope closed")
     liftIO (putStrLn "[check] after the scope closed: 10/10 closed")
     rawoutput []

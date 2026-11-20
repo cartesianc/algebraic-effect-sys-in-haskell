@@ -66,16 +66,15 @@ EffectSpec
 ```haskell
 instance AcquireFileLayer m => AcquireFileHandler m where
   acquireFile = do
-    path <- require @FilePath
-    outcome <- liftIO $ tryIOError $
-      bracketOnError (openFile path ReadWriteMode) hClose $ \file -> do
-        hSetEncoding file utf8
-        putStrLn ("[open] " ++ path)
-        pure (FileHandle path file)
+    path <- require @String
+    outcome <- liftIO $ tryIOError $ do
+      appendFile path ""
+      putStrLn ("[open] " ++ path)
     either (raise . AcquireFileError . displayException) pure outcome
+    pure (FileHandle path)
 ```
 
-这段注册同时表达“驱动 FileName 的生产”和“读取该资产”。gen 据此确定有序生产步骤、唯一读取路由与 `Reads FilePath` 能力；`acquireFile` 不调用生产者。换一个合法绑定可以复用这份原子实现，资产来源仍由那个 effect 的声明确定。完整资产、instance、workflow 和入口沿[指南的代码形态](GUIDE.md#code-shape)阅读。
+这段注册同时表达“驱动 FileName 的生产”和“读取该资产”。gen 据此确定有序生产步骤、唯一读取路由与 `Reads String` 能力；`acquireFile` 不调用生产者。换一个合法绑定可以复用这份原子实现，资产来源仍由那个 effect 的声明确定。完整资产、instance、workflow 和入口沿[指南的代码形态](GUIDE.md#code-shape)阅读。
 
 SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` 这样的业务组合方法。组合的能力不能只靠方法名清单呈现，因此后文按“声明组合 → 推导事实 → 运行行为”登记；这些类比不代表与其他框架同名操作的语义完全相同。
 

@@ -6,7 +6,7 @@ module ScopeReuseDemo.Effects (effects) where
 import Framework.SDK (EffectSpec(..), EffectTyping(..), Asset(..), requests, requires)
 import ScopeReuseDemo.Types
 
--- Context 保存路径与活文件；Scoped 管理开启／关闭，日志记录实际开闭次数。
+-- Context 保存路径；Scoped 管理开启／关闭，日志记录实际开闭次数。
 -- 三个 Excu 写入者读取 PrepareProbe 的同一次路径生产，按生产身份共享 SharedFileScope。
 effects :: [EffectSpec]
 effects =

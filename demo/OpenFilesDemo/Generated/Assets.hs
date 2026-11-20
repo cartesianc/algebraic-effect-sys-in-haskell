@@ -27,9 +27,9 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Types", assetName = "FileHandle", assetFile = "demo/OpenFilesDemo/Types.hs", assetLine = 7, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Types", assetName = "FileHandles", assetFile = "demo/OpenFilesDemo/Types.hs", assetLine = 7, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "OpenFilesDemo.Types", assetName = "FileHandle", assetFile = "demo/OpenFilesDemo/Types.hs", assetLine = 7, assetColumn = 19}
+          [ AssetSymbol {assetModule = "OpenFilesDemo.Types", assetName = "FileHandles", assetFile = "demo/OpenFilesDemo/Types.hs", assetLine = 7, assetColumn = 23}
           ]
       , assetFields = []
       }

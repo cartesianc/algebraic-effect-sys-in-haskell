@@ -5,6 +5,8 @@
 module Framework.Gen.Check.Assets (checkAssets) where
 
 import Control.Monad (forM, unless)
+import Data.Foldable (toList)
+import Data.Maybe (isJust)
 import Control.Monad.IO.Class (liftIO)
 import Data.Data (Data, cast, gmapQ)
 import Data.List (intercalate, isInfixOf, isPrefixOf, nub, sortOn, stripPrefix)
@@ -21,6 +23,7 @@ import GHC.Hs
 import GHC.Hs.Utils (CollectFlag(..), collectHsBindBinders)
 import GHC.Types.FieldLabel (flSelector)
 import GHC.Types.Name (nameModule_maybe, nameOccName, nameSrcSpan)
+import GHC.Types.Name.Reader (rdrNameOcc)
 import GHC.Types.Name.Occurrence (occNameString)
 import GHC.Types.Unique.Set (nonDetEltsUniqSet)
 import GHC.Types.Var (Var, varName, varType)
@@ -78,7 +81,10 @@ checkAssets namespace generated roots contracts native = do
         generatedTypes = [constructor | (_ :: Int, body) <- rootAliases "GeneratedContract"
           , constructor <- typeConstructors body, isAlgTyCon constructor, constructor `notElem` localTypes]
         assets = nub (assetClosure localTypes rootTypes ++ generatedTypes)
+        typesModule = [checkedModule | checkedModule <- checked
+          , moduleNameString (moduleName (ms_mod (pm_mod_summary (tm_parsed_module checkedModule)))) == namespace ++ ".Types"]
         failures = concatMap (checkTopLevel namespace) checked
+          ++ concatMap (checkFixedForm roots) typesModule
     unless (null failures) $
       liftIO (ioError (userError (intercalate "\n" failures)))
     pure (sortOn assetType (map describeAsset assets))
@@ -129,6 +135,70 @@ describeName name = AssetSymbol
       _ -> ("", 0, 0)
     slash '\\' = '/'
     slash character = character
+
+-- 资产固定形式 v1（2026-11-21）：资产都是由 String 构造的值，LSP 据此把 before-gen 的声明唯一地转换成 DTO。
+-- Types.hs 只写单构造器的 data／newtype：至少一个字段，字段类型只能是 String、[String] 或本模块的另一个表示类型，
+-- 固定 deriving (Eq, Show)；没有 import、instance、类型同义词、类型参数、GADT 语法、严格标记和中缀构造器，
+-- 导出全部类型及构造器。资产的表示类型（Asset @T）只能是 String、[String] 或本模块的类型。
+-- 文件句柄等原生对象只在 handler 自己的执行中持有，不进入资产。
+-- 资产的表示类型来自注册的 Typeable：FilePath 等 String 的同义词与 String 无法区分，这里按 String 接受。
+checkFixedForm :: [String] -> TypecheckedModule -> [String]
+checkFixedForm roots checked =
+  [ at (getLocA located) ++ "Types.hs must not import modules; asset fields are String, [String] or types of this module"
+  | located <- hsmodImports parsed ]
+  ++ exportFailures
+  ++ concatMap declaration (hsmodDecls parsed)
+  ++ [ "Asset representation " ++ shown root ++ " is not String, [String] or a type declared in Types.hs"
+       ++ "; refine a single-constructor type of String fields instead"
+     | root <- roots, root `notElem` ["[Char]", "[[Char]]"], root `notElem` localNames ]
+  where
+    parsed = unLoc (pm_parsed_source (tm_parsed_module checked))
+    localNames = [occNameString (rdrNameOcc (unLoc name)) | L _ (TyClD _ DataDecl { tcdLName = name }) <- hsmodDecls parsed]
+    shown root = case root of
+      "[Char]" -> "String"
+      "[[Char]]" -> "[String]"
+      other -> other
+    exportFailures = case hsmodExports parsed of
+      Nothing -> []
+      Just (L location exported) ->
+        let entries = [compact (showSDocUnsafe (ppr entry)) | entry <- exported]
+            complete = [name ++ "(..)" | name <- localNames]
+        in [ at (locA location) ++ "Types.hs must export every type with all constructors, e.g. T(..), or omit the export list"
+           | not (all (`elem` complete) entries && all (`elem` entries) complete) ]
+    declaration :: LHsDecl GhcPs -> [String]
+    declaration (L location item) = case item of
+      TyClD _ DataDecl { tcdLName = name, tcdTyVars = variables, tcdDataDefn = definition } ->
+        let typeName = occNameString (rdrNameOcc (unLoc name))
+            constructors = toList (dd_cons definition)
+            derived = [compact (showSDocUnsafe (ppr clause)) | clause <- dd_derivs definition]
+        in [ at (locA location) ++ typeName ++ " has type parameters; asset types have none"
+           | not (null (hsq_explicit variables)) ]
+           ++ [ at (locA location) ++ typeName ++ " must have exactly one constructor; alternatives are decided by effects, not by sum types"
+              | length constructors /= 1 ]
+           ++ concatMap (constructorFailures typeName) constructors
+           ++ [ at (locA location) ++ typeName ++ " must derive exactly (Eq, Show)"
+              | derived `notElem` [["deriving(Eq,Show)"], ["deriving(Show,Eq)"]] ]
+      _ -> [ at (locA location) ++ "only single-constructor data and newtype declarations are allowed in Types.hs; found "
+             ++ takeWhile (/= '\n') (showSDocUnsafe (ppr item)) ]
+    constructorFailures :: String -> LConDecl GhcPs -> [String]
+    constructorFailures typeName (L location constructor) = case constructor of
+      ConDeclH98 { con_args = arguments, con_ex_tvs = existentials, con_mb_cxt = context } ->
+        [ at (locA location) ++ typeName ++ " uses existential variables or a context" | not (null existentials) || isJust context ]
+        ++ case arguments of
+          PrefixCon _ fields -> fieldFailures [hsScaledThing field | field <- fields]
+          RecCon (L _ fields) -> fieldFailures [cd_fld_type field | L _ field <- fields]
+          InfixCon _ _ -> [at (locA location) ++ typeName ++ " uses an infix constructor; write it in prefix form"]
+      _ -> [at (locA location) ++ typeName ++ " uses GADT syntax; write a single prefix or record constructor"]
+      where
+        fieldFailures :: [LHsType GhcPs] -> [String]
+        fieldFailures [] = [at (locA location) ++ typeName ++ " has no field; an asset is built from String values"]
+        fieldFailures fields =
+          [ at (getLocA field) ++ typeName ++ " has field type " ++ text
+              ++ "; fields are String, [String] or a type of this module, without strictness marks"
+          | field <- fields, let text = compact (showSDocUnsafe (ppr field))
+          , text `notElem` ("String" : "[String]" : localNames) ]
+    compact = filter (/= ' ')
+    at location = showSDocUnsafe (ppr location) ++ ": "
 
 data ModuleRole = EffectsModule | WorkflowModule | HangingModule | MainModule | OtherModule deriving Eq
 
