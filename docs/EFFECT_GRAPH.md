@@ -237,7 +237,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 | 方法目录、链定义共享 | 同一静态注册／方法身份 | 每个 AST 挂载仍有自己的 NodeId，每次调用仍执行 |
 | 原子输出的挂接解析 | parser 正在接收这次调用的原始输出 | 解析不重新执行句柄；另一次独立驱动仍可执行句柄 |
 | 持续资产的 ReuseOutput | 同一 lifelong 内已挂载的原子输出位置；多个位置须属于同一单元且互斥 | 保留原 AST 调用，不为订阅再启动派生生产 |
-| alternative 的交接 | 选择阶段第一个判定成功的 Context 及其发布 | 只启动选中候选并交接捕获；候选自身的 Input／requests 照常执行 |
+| alternative 的交接 | 共同 Excu 的同次输出按顺序只交给候选判定 parser。首个成功者发布；全失败时读取已有绑定或等待其他可供值的挂载 | 只启动选中候选并交接捕获；同一 Excu 上的其他普通 parser 须有独立的生产路径才能供值 |
 | scope 实例共享 | 同一 Scoped 注册及相同参数生产身份，实例仍可用 | 由运行协议复用实例，ScopeTree 提供依赖与清理顺序 |
 
 当前没有通用的“寻找最长公共前缀，然后只执行一次”的优化。两条链共有一个 Excu 上游，也可能要求各执行一次 IO；没有 requests 或 close 不构成幂等或可合并的证据。例如 A、B 都以 AppendAudit 为 Input，分别启动 A、B 会追加两次日志，按方法名去重会改变行为。即使某个外部操作幂等，省略调用也仍需保证返回值、失败和可观察时序符合原契约。

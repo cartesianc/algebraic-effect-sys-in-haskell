@@ -726,7 +726,7 @@ generatedPrototype =
             , SDK.chainEntry = RunOnFilledGen
             , SDK.chainReaches = [RunOnFilledGen, ReadReportTextGen]
             , SDK.chainDrives = []
-            , SDK.chainReads = ["ReportText"]
+            , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
@@ -1304,8 +1304,7 @@ generatedPrototype =
           }
     , SDK.protoScopeNames = [(OpenReportScopeGen, "ReportScope"), (OpenReplyScopeGen, "ReplyScope")]
     , SDK.protoSources =
-        [ (SDK.ReadPoint [3,1] "ReportText", SDK.FromChains [[3,-1]])
-        , (SDK.ReadPoint [3,-1] "ReportPath", SDK.FromChains [[0,0]])
+        [ (SDK.ReadPoint [3,-1] "ReportPath", SDK.FromChains [[0,0]])
         , (SDK.ReadPoint [2,1] "ReplyStats", SDK.FromChains [[1,1]])
         , (SDK.ReadPoint [2,0] "ReportStats", SDK.FromChains [[1,0]])
         , (SDK.ReadPoint [1,1] "ReplyPath", SDK.FromChains [[0,1]])

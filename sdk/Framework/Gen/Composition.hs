@@ -1043,7 +1043,7 @@ resolveSources checked connections definitions defaultReaders prototype = do
                                                 , contractType == readContract point]))
                             in if null candidates then FromOwnChain else FromChains candidates)
         | (point, sources) <- assetReads facts]
-        ++ selectorReads
+        ++ selectorReads (assetAvailable facts)
       annotate chain = chain
         { chainDrives = sort (nub [contractType | (node', contractType) <- assetDrives facts ++ assetAvailable facts, node' == chainNode chain])
         , chainReads = sort (nub [readContract point | (point, _) <- reads, readNode point == chainNode chain])
@@ -1055,19 +1055,16 @@ resolveSources checked connections definitions defaultReaders prototype = do
   where
     effects = protoEffects prototype
     lifelongs = workflowLifelongs (protoWorkflow prototype)
-    -- 选择读取在本次判定都没有值时等待判定 Context 的发布。可能的来源是其他能到达该 Context
-    -- 生产入口的链（例如另一处执行同一 Excu 时的挂接注入）；选择链自身已经执行过，不算来源。
-    -- 没有其他来源时是 FromOwnChain：运行时不等待，直接按普通缺值报出。
-    selectorReads =
+    -- 判定全失败后只等待其他挂载实际可能发布的契约。chainReaches 包含普通入口的挂接，
+    -- 它本身不能证明这些 parser 在选择读取时也会执行。
+    selectorReads available =
       [ (ReadPoint selector contractType, if null candidates then FromOwnChain else FromChains candidates)
       | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype)
       , let selector = alternativeSelector choice
       , (_, caseName) <- alternativeCases choice
       , effect <- effects, effectName effect == caseName
       , Just contractType <- [effectProduces effect]
-      , let producers = [method | (ContextRequest, method) <- effectMethods effect]
-            candidates = sort (nub [chainNode chain | chain <- protoChains prototype
-              , chainNode chain /= selector, any (`elem` chainReaches chain) producers]) ]
+      , let candidates = [origin | (origin, produced) <- available, produced == contractType, origin /= selector] ]
     -- 上界是有限的（挂载，资产）对；不模拟业务次数或累积无限轮次。
     settle available = do
       found <- analyze available False
@@ -1331,12 +1328,7 @@ resolveSources checked connections definitions defaultReaders prototype = do
             ContextRequire | selected `elem` defaultReaders ->
               readAsset entered effect state
             -- 生产入口每次调用都生产并发布：requests 驱动、选择读取、注入与会话步骤。
-            ContextRequest -> do
-              body <- shape entered (methodBody definition) state
-              successes (\after -> do
-                published <- publish call effect after
-                observed <- observeOpeningInput call effect published
-                pure [AssetExit True observed]) body
+            ContextRequest -> shape entered (methodBody definition) state >>= publishRequest call effect
             -- 持续入口由会话步骤或被许可 AST 输出的挂接调用；成功即发布一次交付。
             ContextStream -> do
               body <- shape entered (methodBody definition) state
@@ -1370,6 +1362,11 @@ resolveSources checked connections definitions defaultReaders prototype = do
             ErrorResolve -> shape (entered { assetClosing = True }) (methodBody definition) state
             _ -> shape entered (methodBody definition) state >>= inject call selected
           pure (nub (map (retainExit (assetRelevant call)) (withFailures state exits)))
+    publishRequest :: AssetCall -> EffectProto String -> [AssetExit] -> AssetAnalysis [AssetExit]
+    publishRequest call effect = successes $ \after -> do
+      published <- publish call effect after
+      observed <- observeOpeningInput call effect published
+      pure [AssetExit True observed]
     inject :: AssetCall -> String -> [AssetExit] -> AssetAnalysis [AssetExit]
     inject call anchor exits = do
       let anchored = [(outputProducer connection, outputParser connection, outputRole connection)
@@ -1409,12 +1406,52 @@ resolveSources checked connections definitions defaultReaders prototype = do
         parts <- mapM (\child -> workflow child future publications handoff) children
         pure (foldl (combine future) [(True, retainPublications future publications)] parts)
       AlternativeAt _ choice children -> do
-        selected <- root (alternativeSelector choice) (nub (concatMap readsIn children ++ future)) handoff publications
-        nub . concat <$> mapM (\(AssetExit succeeded state) -> if not succeeded
-          then pure [(False, [])]
-          else nub . concat <$> mapM (\child -> workflow child future (assetPublications state)
-              [(contractType, origin) | (contractType, Just origin') <- assetCaptures state
-                , contractType `notElem` resourceContracts, let origin = Just origin']) children) selected
+        let selector = alternativeSelector choice
+        chain <- lift (lookupChain prototype selector)
+        cases <- mapM (\(child, (_, name')) -> case
+            [(effect, contractType, parser) | effect <- effects, effectName effect == name'
+              , Just contractType <- [effectProduces effect], Just parser <- [lookup ContextRequest (effectMethods effect)]] of
+          [(effect, contractType, parser)] -> do
+            definition <- definitionFor parser
+            pure (child, effect, contractType, definition)
+          _ -> lift (Left (InvalidPrototype ("Missing alternative decision parser for " ++ name'))))
+          (zip children (alternativeCases choice))
+        let relevant = nub (readsAt selector ++ concatMap readsIn children ++ future ++
+                [contractType | (_, _, contractType, _) <- cases])
+            anchor = chainEntry chain
+            call = AssetCall selector (snd <$> listToMaybe (alternativeCases choice)) [] [] [] False relevant
+            runChild child state = workflow child future (assetPublications state)
+              [(contractType, Just origin) | (contractType, Just origin) <- assetCaptures state
+                , contractType `notElem` resourceContracts]
+            -- chooseCase 只运行一次共同句柄。第一个成功的判定 parser 交接捕获；
+            -- 失败前缀中的其他发布仍有效，但失败的 parser 不发布自己的结果。
+            attempt [] states = nub . concat <$> mapM (firstBound cases) states
+            attempt ((child, effect, _, definition) : rest) states = do
+              let parserCall = call { assetCaller = Just (effectName effect), assetReplays = [anchor]
+                    , assetActiveMethods = [methodIdentity definition] }
+                  tryParser state = do
+                    body <- shape parserCall (methodBody definition) state
+                    -- 即使 rawinput 重放成功，业务模式匹配仍可能拒绝这份输出。
+                    publishRequest parserCall effect (withFailures state body)
+              exits <- nub . concat <$> mapM tryParser states
+              selected <- mapM (runChild child) [state | AssetExit True state <- exits]
+              later <- attempt rest [state | AssetExit False state <- exits]
+              pure (nub (concat selected ++ later))
+            -- 本次尝试全失败时，既有捕获优先；其他挂载可能在等待期间发布。
+            firstBound [] _ = pure [(False, [])]
+            firstBound ((child, _, contractType, _) : rest) state = do
+              available <- gets assetAvailable
+              let captured = lookup contractType (assetCaptures state)
+                  published = [Just origin | (origin, produced) <- assetPublications state, produced == contractType]
+                  shared = [Just origin | (origin, produced) <- available, produced == contractType
+                    , origin /= selector || any (\(boundary, _) -> boundary `isPrefixOf` selector) lifelongs]
+                  origins = maybe (nub (published ++ shared)) (:[]) captured
+              selected <- mapM (\origin -> runChild child (capture contractType origin state)) origins
+              later <- if captured == Nothing && null published then firstBound rest state else pure []
+              pure (nub (concat selected ++ later))
+        upstream <- method call anchor (retainState relevant (AssetState publications handoff [] []))
+        selected <- attempt cases [state | AssetExit True state <- upstream]
+        pure (nub ([(False, []) | any (\(AssetExit ok _) -> not ok) upstream] ++ selected))
       LifelongAt boundary described _ -> do
         -- 复用原型中的实际消费单元，只拆 lifelong 直接子项的那一层 parallel。
         units <- lift $ mapM (\node' -> case lookupWorkflow tree node' of
