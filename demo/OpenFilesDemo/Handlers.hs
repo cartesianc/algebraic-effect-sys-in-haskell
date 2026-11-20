@@ -14,7 +14,7 @@ module OpenFilesDemo.Handlers () where
 import Framework.SDK (Raises(..), Reads(..), rawoutput)
 import OpenFilesDemo.Generated.Effects
 import OpenFilesDemo.Types
-import Control.Exception (displayException)
+import Control.Exception (bracketOnError, displayException)
 import Control.Monad (filterM, forM_, unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.List (nub)
@@ -33,10 +33,15 @@ instance AcquireFilesLayer m => AcquireFilesHandler m where
   acquireFiles = do
     paths <- require @[String]
     -- 整批取得：确保每个文件存在并在旁边记下开启标记 <path>.open；资产只记路径。
-    outcome <- liftIO $ tryIOError $ forM_ paths $ \path -> do
-      createDirectoryIfMissing True (takeDirectory path)
-      appendFile path ""
-      writeFile (path ++ ".open") ""
+    -- 取得整批之后才由 scope 的 close 接管；中途失败则逆序撤销本批新建的标记。
+    let acquire path rest = do
+          createDirectoryIfMissing True (takeDirectory path)
+          appendFile path ""
+          let marker = path ++ ".open"
+          existing <- doesFileExist marker
+          if existing then rest else
+            bracketOnError (writeFile marker "") (const (removeFile marker)) (const rest)
+    outcome <- liftIO $ tryIOError $ foldr acquire (pure ()) paths
     either (raise . AcquireFilesError . displayException) pure outcome
     pure (FileHandles paths)
 

@@ -25,7 +25,7 @@ import qualified GHC.TypeLits as FrameworkTypes
 import Framework.SDK (Raises(..), Reads(..), rawoutput)
 import OpenFilesDemo.Generated.Effects
 import OpenFilesDemo.Types
-import Control.Exception (displayException)
+import Control.Exception (bracketOnError, displayException)
 import Control.Monad (filterM, forM_, unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.List (nub)
@@ -44,10 +44,15 @@ instance AcquireFilesLayer m => AcquireFilesHandler m where
   acquireFiles = do
     paths <- require @[String]
     -- 整批取得：确保每个文件存在并在旁边记下开启标记 <path>.open；资产只记路径。
-    outcome <- liftIO $ tryIOError $ forM_ paths $ \path -> do
-      createDirectoryIfMissing True (takeDirectory path)
-      appendFile path ""
-      writeFile (path ++ ".open") ""
+    -- 取得整批之后才由 scope 的 close 接管；中途失败则逆序撤销本批新建的标记。
+    let acquire path rest = do
+          createDirectoryIfMissing True (takeDirectory path)
+          appendFile path ""
+          let marker = path ++ ".open"
+          existing <- doesFileExist marker
+          if existing then rest else
+            bracketOnError (writeFile marker "") (const (removeFile marker)) (const rest)
+    outcome <- liftIO $ tryIOError $ foldr acquire (pure ()) paths
     either (raise . AcquireFilesError . displayException) pure outcome
     pure (FileHandles paths)
 
@@ -111,7 +116,7 @@ instance FinishInspectionLayer m => FinishInspectionHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "a57bfea5605adc298bf9f975563718ac"
+handlerSourceFingerprint = Just "d0962cbfa9434a71979b9378c09a332d"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
