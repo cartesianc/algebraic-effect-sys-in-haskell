@@ -10,6 +10,8 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Framework.Gen.Frontend.Ghc (modulePath, withSourceTargets)
 import GHC
+import GHC.Builtin.Names (dollarIdKey)
+import GHC.Types.Unique (getUnique)
 import GHC.Fingerprint (fingerprintString)
 import GHC.Hs
 import GHC.Types.Name (nameModule_maybe, nameOccName)
@@ -108,7 +110,7 @@ variable expr = case unparen expr of
 application :: LHsExpr GhcRn -> (Maybe Name, [LHsExpr GhcRn])
 application expr = case unparen expr of
   HsApp _ fun arg -> append fun arg
-  OpApp _ fun operator arg | Just op <- variable operator, qualified op == "GHC.Internal.Base.$" -> append fun arg
+  OpApp _ fun operator arg | Just op <- variable operator, getUnique op == dollarIdKey -> append fun arg
   _ -> (variable expr, [])
   where append fun arg = let (name, args) = application fun in (name, args ++ [arg])
 

@@ -44,7 +44,7 @@ renderHandlers names unit loaded = do
 -- 生成区的装配：effect 标签、handler 能力的实例与 effect 方法。
 -- 注入 v6（2026-11-19）：生成入口把原子 action 交给 Root.super；hooks 由挂载决定，类别由绑定决定。
 -- Injector.Super 已为每个 (列表, 类别) 选定 Middleware，这里把选择写成 Captures 实例：
--- 有捕获的 super 管理进入与成功返回，rawinput、raise 在 action 内调用 captureAt @hooks @kind。
+-- super 通知进入，然后执行 action；显式操作在各自的调用点通知 Middleware。
 -- GHC 在编译期按挂载登记的列表选定实例，入口只有一份，运行时不分发、不筛选。
 support :: HandlerNames -> Unit -> String
 support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances ++ concatMap raisesInstance ordinaryHandlers ++ routeInstances ++ rawInstances
@@ -102,7 +102,8 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
           , "class " ++ captures ++ " (hooks :: [FrameworkTypes.Symbol]) (kind :: FrameworkRuntime.EffectKind) where"
           , "  " ++ captureAt ++ " :: FrameworkRuntime.Operation -> FrameworkGenerated.App ()"
           , "  " ++ captureAt ++ " _ = pure ()"
-          , "  " ++ superWrap ++ ", " ++ closeWrap ++ " :: String -> FrameworkGenerated.App [String] -> FrameworkGenerated.App [String]"
+          , "  " ++ superWrap ++ " :: String -> FrameworkGenerated.App value -> FrameworkGenerated.App value"
+          , "  " ++ closeWrap ++ " :: String -> FrameworkGenerated.App [String] -> FrameworkGenerated.App [String]"
           , "  " ++ superWrap ++ " _ = id"
           , "  " ++ closeWrap ++ " _ = id"
           , ""
@@ -139,9 +140,8 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       ["instance " ++ captures ++ " " ++ hookList hooks ++ " " ++ promoted kind, ""]
     selectionInstance (SuperSelection hooks kind selected) =
       [ "instance " ++ captures ++ " " ++ hookList hooks ++ " " ++ promoted kind ++ " where"
-      , "  " ++ captureAt ++ " event = " ++ concatMap (\hook -> middlewareMethod hook ++ " event >> ") selected ++ "pure ()" ]
-      ++ [ "  " ++ superWrap ++ " = FrameworkRuntime.superWith (" ++ captureAt ++ " @" ++ hookList hooks ++ " @" ++ promoted kind ++ ")"
-         | kind /= StreamKind ]
+      , "  " ++ captureAt ++ " event = " ++ concatMap (\hook -> middlewareMethod hook ++ " event >> ") selected ++ "pure ()"
+      , "  " ++ superWrap ++ " = FrameworkRuntime.superWith (" ++ captureAt ++ " @" ++ hookList hooks ++ " @" ++ promoted kind ++ ")" ]
       ++ [ "  " ++ closeWrap ++ " = FrameworkRuntime.superClosing (" ++ captureAt ++ " @" ++ hookList hooks ++ " @" ++ promoted kind ++ ")"
          | kind == ScopedKind ]
       ++ [""]
@@ -151,14 +151,10 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       | otherwise = ["instance FrameworkRuntime.Root (" ++ hookTag ++ " effect) value", ""] ++ concat
           [ case captureKind of
               Nothing -> ["instance FrameworkRuntime.Root " ++ tag (show effect) ++ " value", ""]
-              Just StreamKind ->
-                [ "instance " ++ captures ++ " hooks " ++ promoted StreamKind ++ " => FrameworkRuntime.Root " ++ tag (show effect) ++ " () where"
-                , "  super name (" ++ wrap ++ " action) = " ++ wrap ++ " ("
-                    ++ capture StreamKind "FrameworkRuntime.Enter name" ++ "action)"
-                , "" ]
               Just kind ->
-                [ "instance " ++ captures ++ " hooks " ++ promoted kind ++ " => FrameworkRuntime.Root " ++ tag (show effect) ++ " [String] where"
-                , rootMethod "super" superWrap kind ]
+                let result = if kind == StreamKind then "()" else "[String]"
+                in [ "instance " ++ captures ++ " hooks " ++ promoted kind ++ " => FrameworkRuntime.Root " ++ tag (show effect) ++ " " ++ result ++ " where"
+                   , rootMethod "super" superWrap kind ]
                 ++ [ rootMethod "superClose" closeWrap kind | kind == ScopedKind ]
                 ++ [ "" ]
           | (effect, captureKind) <- nub [(bindingEffect b, bindingCaptureKind b) | b <- unitBindings unit,

@@ -8,7 +8,7 @@ import Framework.Gen.Plan
 import Framework.Language.Registration (EffectKind)
 
 -- 某类别是否有 Middleware 拦截。没有时调用点不经捕获，Root 直接执行 action。
--- 进入、成功返回与 raise 用当前绑定的类别；rawinput 用被读取的那次原子调用的类别。
+-- 进入、rawoutput、rawemit 与 raise 用当前绑定的类别；rawinput 用被读取的那次原子调用的类别。
 captureKindOf :: [EffectDeclaration] -> EffectKind -> Maybe EffectKind
 captureKindOf declarations kind
   | any (elem kind . declarationIntercept) declarations = Just kind

@@ -432,7 +432,7 @@ openFileSession = (… . FrameworkRuntime.openScope "FileSession" FrameworkGener
 
 每个原子类方法作为一个尚未执行的 action 交给 Root 的 `super`。例如，生成入口在完成 requests 和 Input 前驱后，执行 `runWrap @hooks @"FileSession" @"openSession" (FrameworkRuntime.super "openSession" FrameworkGenerated.openSession)`。同一手写 instance 仍可绑定到不同 effect。Injector 确定绑定可捕获的类别，Booter 给出挂载的 middleware 列表，生成代码里的类型标签把两者交给对应的 Root 实例。
 
-有匹配的 middleware 时，`super` 先通知进入，再执行一次业务 action，原子列表方法成功时通知返回值。Stream 在每次 rawemit 处通知输出。方法内的操作各在执行处触发对应的 hook。Middleware 在自己的标签上运行，Root 在这个标签上直接执行，避免递归触发。业务和 middleware 的 instance 都无需手写推进操作。
+有匹配的 middleware 时，`super` 先通知进入，再执行一次业务 action 并原样返回结果。方法内每次显式调用 `rawinput`、`rawoutput`、`rawemit` 或 `raise`，在该操作的执行位置通知匹配的 Middleware。Middleware 在自己的标签上运行，Root 在这个标签上直接执行，避免递归触发。
 
 ```haskell
 -- 注册：没有 Input 前驱，也没有 demands
@@ -444,7 +444,7 @@ instance TraceOutputLayer m => TraceOutputHandler m where
   traceOutput = do
     op <- hook
     case op of
-      Returned name fields -> liftIO (print (name, fields))
+      RawOutput name fields -> liftIO (print (name, fields))
       _ -> pure ()
     rawoutput []
 
@@ -473,15 +473,14 @@ hangingTree = hanging [middleware [node "TraceOutput"] [reportBranch]]
   `Generated.Handlers` 的入口、包装方法、Middleware 方法和登记表由 `Gen.Names` 统一命名。gen 收集手写模块中可不加限定使用的名字以及业务 `Types` 的导出，先分配入口名，再分配辅助名；遇到重名就追加撇号，直到名字可用。例如业务已导入 `hookTrace` 时，生成入口写作 `hookTrace'`。`Generated.Program` 按同一份名字表引用导出；Prototype 仍以注册时的逻辑名定位入口。
 - **open／close 归谁。** 规则只看挂载位置，不为会话另设：lifelong 的会话步骤位于该 lifelong 路径下（`边界 ++ [-1, 序号, 步骤]`），标注覆盖整个 lifelong 或它的祖先时，会话步骤以该列表登记，它执行的 open 就是 `open… @hooks`；标注只覆盖 lifelong 内的子树时，只有这些节点带上列表。close 由 open 入口在同一列表下带上（`openScope … (Just (closeX @hooks))`），收尾调用同一列表下的 close。同一 handler 复用在不同子树时，只有被标注覆盖的那次挂载被捕获。
 - **superhandler 与 Root 级调用。** `super` 是 Root 提供的 superhandler，捕获分两层：
-  - 进入 super：前驱已经完成，`hookedEnter` 给出即将运行的 handler 名。回放直接返回已交出的值时，整个 action 都会跳过。对于 scope，进入表示一次调用尝试；若需在方法内读取开启参数才判定复用，可能只观察到进入。
-  - 方法成功返回时的输出捕获适用于Excu.run、Scoped.open／close、Pure.run 这次调用成功交出的 `[String]`，handler 名是被调用的 handler。scope 复用跳过 open 方法体、或注入回放本次输出时，没有新的交出值。
+  - 进入 super：前驱已经完成，`Enter name` 给出即将运行的 handler 名。回放直接返回已交出的值时，整个 action 都会跳过。对于 scope，进入表示一次调用尝试；若需在方法内读取开启参数才判定复用，可能只观察到进入。
+  - Excu、Scoped.open／close、Pure 的 `rawoutput fields` 在显式调用处产生一次 `RawOutput name fields`，并将原列表交回方法体。业务 action 的返回值照常进入原有的执行或解析流程。
   - rawinput：读取方 handler（挂接的 parser 或 Pure）经 `rawinput` 读到的值；类别取被读取的那次原子调用的类别，在 Stream 下，每次读取本条输入时按 StreamKind 通知。注入时 parser 经回放读取，同样是一次 rawinput 读取。
-  - Middleware 用 `op <- hook` 读取触发本次调用的 `Operation`。其六种构造为 `Enter name`、`RawInput name fields`、`RawOutput name fields`、`RawEmit name text`、`Raise name reason` 和 `Returned name fields`。gen 写入绑定的方法名，运行时填入本次操作的负载。同一 handler 多次绑定仍使用同一个方法名，挂载范围由 AST 决定。`RawOutput` 对应显式交出列表，`Returned` 对应整个列表方法成功返回；Stream 的每条发送产生一次 `RawEmit`，来源方法返回 `()` 时没有 `Returned`。
-  - `rawhook`、各操作的回调和 `hooked*` 沿用原接口，从同一 `Operation` 取值。`hookedOutput` 在 `Returned` 时取得最终列表，在 `RawEmit` 时取得单元素列表。
+  - Middleware 用 `op <- hook` 读取本次 `Operation`，按 `Enter name`、`RawInput name fields`、`RawOutput name fields`、`RawEmit name text` 或 `Raise name reason` 进行模式匹配。gen 写入方法名，运行时提供本次操作的负载。一个 handler 被多处绑定时，Hanging 的挂载范围与 `intercept` 共同决定通知位置。
   - raise：handler `raise` 时先捕获 (handler 名, 描述)，再以原失败退出。
 - **同步与顺序。** Middleware 是类方法，在调用点同步执行，调用点在它们完成后才继续。多个 Middleware 按注册顺序依次调用；每个都读到同一份捕获。它们的 IO 按此顺序发生，某个 Middleware 抛出失败会中止本次后续派发。Middleware handler 在自己的 `Hook` 标签下执行，那里的调用点不调用 `captureAt`，它自己不再被捕获。它交出的 `[String]` 没有挂接点。
-- **能力只给 Middleware。** gen 只为 Middleware 的标签生成 `Hooks (Hook "M")`，Layer 也只给 Middleware 加 `Hooks m`；普通 handler 写 `hookedOutput` 不能通过类型检查。Middleware 的能力只来自它的 handler 写法。
-- **失败。** Middleware 与普通 Excu 一样 `raise`，例如 mock 时用来判断 Middleware 是否写对。失败的 origin 是 Middleware 注册名，从调用点沿被捕获调用的入口包装传播，适用的 Error 可以用 `RaisedBy` 匹配。原生 IO 异常沿既有异常路径传播。`hookedError` 捕获的是显式 `raise`。
+- **能力只给 Middleware。** gen 只为 Middleware 的标签生成 `Hooks (Hook "M")`，Layer 也只给 Middleware 加 `Hooks m`；普通 handler 写 `hook` 不能通过类型检查。Middleware 的能力只来自它的 handler 写法。
+- **失败。** Middleware 与普通 Excu 一样 `raise`，例如 mock 时用来判断 Middleware 是否写对。失败的 origin 是 Middleware 注册名，从调用点沿被捕获调用的入口包装传播，适用的 Error 可以用 `RaisedBy` 匹配。原生 IO 异常沿既有异常路径传播。Middleware 通过 `Raise name reason` 观察显式 `raise`。
 - **自动收尾。** 调用前的 middleware 失败时，普通调用在运行方法体前退出。scope GC 已经预约的 close 仍须尝试一次并完成收尾，随后按原协议报告故障或传播取消。close 的调用点由 gen 按绑定操作写成 `superClose`，只有它在运行时检查本次是否持有关闭预约；其他调用点不做这项检查。
 - **生成代码。** 每个入口共用一份方法体。登记表为实际用到的不同列表保留各自的特化入口，同一持续来源可在不同子树使用不同列表。`Captures` 实例的条数是“用到的列表数 × 被拦截的类别数”，每条只有几行，不随入口数增长。没有注册 Middleware 的程序使用单态标签，Root 的默认 `super` 直接执行 action。
 
@@ -623,7 +622,7 @@ instance ParseFileNameLayer m => ParseFileNameHandler m where
       _ -> raise (ParseFileNameError "Expected exactly one file name")
 ```
 
-**原子输入和输出。** `rawinput :: Raw m => m [String]` 读取直接 Input 交出的列表。`rawoutput :: RawOutputs m => [String] -> m [String]` 将同一列表交还业务代码，显式调用处可以执行 `rawoutputhook`。已挂载并匹配的 Middleware 在整个 handler 成功返回时观察一次输出。Context parser 返回资产表示值时仍可用 `pure`。
+**原子输入和输出。** `rawinput :: Raw m => m [String]` 读取直接 Input 交出的列表。`rawoutput :: RawOutputs m => [String] -> m [String]` 将同一列表交还业务代码，每次显式调用为已挂载并匹配的 Middleware 产生一次 `RawOutput`。Context parser 返回资产表示值时仍可用 `pure`。
 
 **原子输出统一是 list。** Excu 与 Scoped 的 open／close 交出 `[String]`。`rawoutput []` 表示空列表，`rawoutput [x]` 交出一项，多项结果用 `:` 或 `concat` 组合。list 的顺序与拼接允许下游用 `foldMap` 计数、构造集合或合并文本。层次数据可以在元素里编码（例如完整路径），由 parser 还原。Stream 可在一次调用中多次 `rawemit text`，其 parser 每次用 `rawinput` 读到 `[text]`。
 

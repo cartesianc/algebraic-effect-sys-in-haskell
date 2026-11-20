@@ -83,7 +83,6 @@ instance TraceLineLayer m => TraceLineHandler m where
       RawOutput name fields -> liftIO (putStrLn ("[output] " ++ name ++ ": " ++ show fields))
       RawEmit name text -> liftIO (putStrLn ("[emit] " ++ name ++ ": " ++ text))
       Raise name reason -> liftIO (putStrLn ("[raise] " ++ name ++ ": " ++ reason))
-      Returned name fields -> liftIO (putStrLn ("[returned] " ++ name ++ ": " ++ show fields))
     rawoutput []
 
 instance ParseLineLayer m => ParseLineHandler m where
@@ -130,7 +129,7 @@ instance ReportLayer m => ReportHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "265307e54d92540dc0485431607d9f6a"
+handlerSourceFingerprint = Just "65972ef14476f7caeea09207461d7d9d"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -142,7 +141,8 @@ newtype Wrap (hooks :: [FrameworkTypes.Symbol]) (effect :: FrameworkTypes.Symbol
 class Captures (hooks :: [FrameworkTypes.Symbol]) (kind :: FrameworkRuntime.EffectKind) where
   captureAt :: FrameworkRuntime.Operation -> FrameworkGenerated.App ()
   captureAt _ = pure ()
-  superWrap, closeWrap :: String -> FrameworkGenerated.App [String] -> FrameworkGenerated.App [String]
+  superWrap :: String -> FrameworkGenerated.App value -> FrameworkGenerated.App value
+  closeWrap :: String -> FrameworkGenerated.App [String] -> FrameworkGenerated.App [String]
   superWrap _ = id
   closeWrap _ = id
 
@@ -155,6 +155,7 @@ instance Captures '[] 'FrameworkRuntime.ScopedKind
 
 instance Captures '["TraceLine"] 'FrameworkRuntime.StreamKind where
   captureAt event = hookTraceLine event >> pure ()
+  superWrap = FrameworkRuntime.superWith (captureAt @'["TraceLine"] @'FrameworkRuntime.StreamKind)
 
 instance Captures '["TraceLine"] 'FrameworkRuntime.ScopedKind where
   captureAt event = hookTraceLine event >> pure ()
@@ -189,7 +190,7 @@ instance Captures hooks 'FrameworkRuntime.ScopedKind => FrameworkRuntime.Root (W
   superClose name (Wrap action) = Wrap (closeWrap @hooks @'FrameworkRuntime.ScopedKind name action)
 
 instance Captures hooks 'FrameworkRuntime.StreamKind => FrameworkRuntime.Root (Wrap hooks "LineFeed" method) () where
-  super name (Wrap action) = Wrap (captureAt @hooks @'FrameworkRuntime.StreamKind (FrameworkRuntime.Enter name) >> action)
+  super name (Wrap action) = Wrap (superWrap @hooks @'FrameworkRuntime.StreamKind name action)
 
 instance FrameworkRuntime.Root (Wrap hooks "LineParser" method) value
 

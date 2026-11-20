@@ -64,7 +64,6 @@ instance TraceLineLayer m => TraceLineHandler m where
       RawOutput name fields -> liftIO (putStrLn ("[output] " ++ name ++ ": " ++ show fields))
       RawEmit name text -> liftIO (putStrLn ("[emit] " ++ name ++ ": " ++ text))
       Raise name reason -> liftIO (putStrLn ("[raise] " ++ name ++ ": " ++ reason))
-      Returned name fields -> liftIO (putStrLn ("[returned] " ++ name ++ ": " ++ show fields))
     rawoutput []
 
 instance ParseLineLayer m => ParseLineHandler m where

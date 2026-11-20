@@ -869,31 +869,24 @@ runClose name wrap (AppRun action) = AppRun $ do
 
 -- Middleware 的执行载体 ---------------------------------------------------------
 
--- gen 按挂载标注特化 Root 的进入／返回、rawinput 与 raise 捕获，运行时没有 Middleware 目录。
+-- gen 按挂载位置与类别选择 Middleware；Root 通知进入，方法内的显式操作在各自调用点通知。
 -- 这里只提供 Middleware handler 的载体：本次调用点的捕获作为只读环境，执行期间不进入调用中的 open／close 尝试。
 -- 注入 v6：super 收到尚未执行的 action。前驱、requests、回放和 scope 外层协议均在调用方。
 -- gen 已按 (Middleware 列表, 类别) 选定实例；空选择直接执行 action，不经过这里。
-superWith :: (Operation -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
-superWith capture name body = capture (Enter name) >> returning capture name body
-
--- 执行一次 action，成功交出时通知输出并交回原值。
-returning :: (Operation -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
-returning capture name body = do
-  output <- body
-  capture (Returned name output)
-  pure output
+superWith :: (Operation -> App env cause ()) -> String -> App env cause value -> App env cause value
+superWith capture name body = capture (Enter name) >> body
 
 -- close 的调用点由 gen 选定。本次是否持有 GC 的关闭预约只有运行时知道。
 superClosing :: (Operation -> App env cause ()) -> String -> App env cause [String] -> App env cause [String]
 superClosing capture name body = do
   environment <- AppRun ask
   if cleaningScopes environment && not (null (closings environment))
-    then protectedClose (capture (Enter name)) body (returning capture name body)
+    then protectedClose (capture (Enter name)) body
     else superWith capture name body
   where
     -- GC 已消费本轮的关闭预约。进入通知失败或被取消时也要尝试实际 close 一次；
-    -- 正常路径只运行 execute。收尾自己的失败仍交给原有生命周期协议。
-    protectedClose (AppRun before) (AppRun close) (AppRun observed) = AppRun $ ReaderT $ \env -> ExceptT $
+    -- 进入成功时按原掩码运行同一个 close。收尾自己的失败仍交给原有生命周期协议。
+    protectedClose (AppRun before) (AppRun close) = AppRun $ ReaderT $ \env -> ExceptT $
       mask $ \restore -> do
         let run action = runExceptT (runReaderT action env)
         entered <- try (restore (run before))
@@ -907,7 +900,7 @@ superClosing capture name body = do
           Right (Left problem) -> do
             closed <- run close
             pure (closed >> Left problem)
-          Right (Right ()) -> restore (run observed)
+          Right (Right ()) -> restore (run close)
 
 newtype HookApp env cause value = HookApp (ReaderT Operation (App env cause) value)
   deriving (Functor, Applicative, Monad)

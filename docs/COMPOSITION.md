@@ -275,7 +275,7 @@ Middleware 是由 Root 级入口驱动的 Excu：注册给出 handler 与拦截�
 | 行为 | 组合 | 推导 | 驱动 | 规范 |
 | --- | --- | --- | --- | --- |
 | 观察具名分支中的原子操作 | `Hanging.hs` 将 Middleware 挂到具名 AST；注册以 `intercept` 声明类别 | 按定义身份定位全部使用位置；Booter 求覆盖列表，Injector.Super 与捕获点的类别取交集 | `hook` 的通配模式只处理送达的通知；业务树的顺序与单元划分保持原义 | [Middleware](CORE_DESIGN.md#middleware) |
-| 只捕获某几类 effect | `intercept = [ExcuKind, ...]`，或 `allEffects` | Injector 为绑定选定捕获类别；`Injector.Super` 为每个 (列表, 类别) 选定 Middleware；gen 把每次原子调用交给相应标签的 Root.super | 匹配的调用在进入、交出结果或执行 rawinput、rawoutput、rawemit、raise 时同步通知；直接实例执行原 action | 同上 |
+| 只捕获某几类 effect | `intercept = [ExcuKind, ...]`，或 `allEffects` | Injector 为绑定选定捕获类别；`Injector.Super` 为每个 (列表, 类别) 选定 Middleware；gen 把每次原子调用交给相应标签的 Root.super | 匹配的调用在进入以及显式执行 rawinput、rawoutput、rawemit、raise 时同步通知；直接实例执行原 action | 同上 |
 | 同一 handler 在不同子树表现不同 | 一处挂载在标注内，另一处不在 | 每个挂载的 Middleware 列表（`drivingHooks`），按位置前缀取覆盖它的标注之并，会话步骤同样；入口对列表多态，挂载登记时在类型上给出列表，调用点经入口约束 `Captured hooks` 取得该列表在本类别上的选择 | 按静态登记名选取已编译的 Target；未覆盖的挂载以空列表登记 | 同上 |
 | 读取本次操作 | `op <- hook` | 只为 Middleware 的标签生成 `Hooks` 实例 | `op` 是触发该次调用的操作 | 同上 |
 | Middleware 与被捕获的链不成环 | 无需写法 | 任何 effect 的 Input 都不能指向 Middleware；Middleware 没有 demands；Middleware 在自己的标签下执行，那里的调用点不调用 `captureAt` | Middleware 自己不再被捕获 | 同上 |

@@ -630,7 +630,7 @@ Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，
 | `output <- rawinput` | 挂接的 parser 或 Pure 读取直接 Input 本次交出的 `[String]`，句柄不再执行一遍；挂在 Stream 下时是会话本次取得的那份原始输入（单元素 list） |
 | `raise (ReadFileContentError "message")` | 以本 handler 的错误失败；错误类型是 handler 名首字母大写加 `Error` |
 | `op <- hook` | Middleware 使用 `case op of` 匹配触发本次调用的操作，取得 handler 名和对应负载。见 [middleware 写法](#middleware) |
-| `rawoutput [info]`、`rawoutput (x : rest)` | 以 `rawoutput` 返回原子列表，显式调用处可执行 `rawoutputhook`。Excu、Scoped.open 和 Pure 的输出可由下游 Pure 或 Context 读取 |
+| `rawoutput [info]`、`rawoutput (x : rest)` | 以 `rawoutput` 返回原子列表，匹配的 Middleware 在显式调用处收到 `RawOutput name fields`。Excu、Scoped.open 和 Pure 的输出可由下游 Pure 或 Context 读取 |
 | `liftIO (...)` | 执行 IO（Pure 不可用） |
 
 - **按表示类型读取**：`require` 必须显式写类型应用，例如 `FileHandle path file <- require @FileHandle`；可以直接在绑定处匹配表示类型的构造器，也可以先具名接收再 `case`。和类型的失败分支用 `raise`。
@@ -813,7 +813,6 @@ instance TraceLineLayer m => TraceLineHandler m where
       RawOutput name fields -> liftIO (print ("output", name, fields))
       RawEmit name text -> liftIO (print ("emit", name, text))
       Raise name reason -> liftIO (print ("raise", name, reason))
-      Returned name fields -> liftIO (print ("returned", name, fields))
     rawoutput []
 
 -- LinesDemo/AST.hs，monitorLines 是具名 lifelong 分支
@@ -826,7 +825,7 @@ hangingTree :: HangingTree
 hangingTree = hanging [middleware [node "TraceLine"] [monitorLines]]
 ```
 
-- **何时执行。** 在标注覆盖的位置，Root 的 `super` 会为匹配 `intercept` 的原子调用通知进入和成功返回。读取 `rawinput`（按上游类别匹配）或显式 `raise` 也会通知对应的 middleware。一次写文件可以先记录开始、执行原有业务 IO、再记录输出。业务 handler 保持原写法，整个推进过程由 SDK 负责。
+- **何时执行。** 在挂载覆盖的位置，`super` 先为匹配 `intercept` 的原子调用发送 `Enter`，再执行业务方法。比如 `openInput` 打开文件后调用一次 `rawoutput []`，日志 handler 就收到一次 `RawOutput "openInput" []`。打印由 middleware 的 `putStrLn` 执行。
 - **按操作与方法名匹配。** `RawEmit name text` 匹配送达的每条发送，`RawEmit "nextLine" text` 进一步限定方法名。`_` 匹配已经送达的全部操作。在上例中 `printLine` 是 Excu，在同一子树里照常执行，日志只收到 Stream 和 Scoped 捕获点的通知。`parseLine` 的 `RawInput` 属于它读取的上游 Stream。若要观察全部已支持的类别，可将 `intercept` 写为 `allEffects`（Excu、Scoped、Pure、Stream）。[完整 handler](../demo/LinesDemo/Handlers.hs)
 - **同步执行**：Middleware 是类方法，在调用点上执行完，原调用才继续；它只读捕获，不改变原值。多个 Middleware 按注册顺序依次执行，不要让它们依赖彼此。
 - **透明**：标注不改变子树的执行顺序、NodeId 和 lifelong 的单元划分。范围只看位置：标注覆盖整个 `lifelong` 时，它的生产会话里执行的调用（例如会话开启的 `open`）也被捕获；只覆盖 lifelong 里的子树时，只捕获这些节点。`--structure` 列出挂载目标和每个启动位置覆盖的 Middleware。该位置内的具体操作还须满足注册的 `intercept`。标注是给 gen 的标记，注入在生成期完成：改动标注后要重新生成。
