@@ -1,11 +1,13 @@
 -- effect-codegen 的命令行入口：准备进程环境，校验命名空间，然后交给编译流水线 Framework.Gen。
 module Framework.Gen.Main (main) where
 
+import Control.Exception (catch)
 import Data.Char (isAlphaNum, isUpper)
 import Framework.Gen (compileWorkflow)
 import System.Environment (getArgs, getExecutablePath, lookupEnv)
 import System.Exit (die, exitWith)
 import System.IO (hSetEncoding, stderr, utf8)
+import System.IO.Error (ioeGetErrorString, isUserError)
 import System.Process (rawSystem)
 
 main :: IO ()
@@ -22,8 +24,13 @@ main = do
       rawSystem "cabal" (["exec", "--", executable] ++ arguments) >>= exitWith
     Just _ -> pure ()
   case arguments of
-    ["workflow", namespace] | validNamespace namespace -> compileWorkflow namespace
+    ["workflow", namespace] | validNamespace namespace -> reportRejection (compileWorkflow namespace)
     _ -> die "Usage: effect-codegen workflow Namespace"
+
+-- 生成器拒绝输入时以 userError 退出：只打印一行原因，GHC 诊断已在上方给出；其他异常照常抛出。
+reportRejection :: IO () -> IO ()
+reportRejection action = action `catch` \problem ->
+  if isUserError problem then die ("effect-codegen: " ++ ioeGetErrorString problem) else ioError problem
 
 -- 命名空间会进入模块引用；只接受完整的 Haskell 模块名。
 validNamespace :: String -> Bool
