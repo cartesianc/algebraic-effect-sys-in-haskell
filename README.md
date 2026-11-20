@@ -8,7 +8,7 @@
 
 ## 能用它做什么
 
-你可以把文件操作、网页抓取等业务组织成可复用的操作链，再用 workflow 安排顺序执行、并行执行和按业务状态选择分支。对于持续输入，也可以由资产更新驱动消费链反复执行。这些组合的代码形态见[workflow 指南](docs/GUIDE.md#workflow)，持续执行的例子见[Stream 指南](docs/GUIDE.md#stream)。
+你可以把文件操作、网页抓取等业务组织成可复用的操作链，再安排顺序或并行执行。例如，同一次文件读取可以依据内容选择写首行或追加。持续输入也可以逐条驱动消费链，业务方法既能处理当前读数，也能用已经收到的读数计算趋势。[workflow 指南](docs/GUIDE.md#workflow) · [持续读取示例](docs/GUIDE.md#stream)
 
 框架还提供资产依赖与来源检查、资源共享和自动清理，以及失败检测与处置，让业务方法沿用统一的取值和资源管理协议。具体保证见[运行时行为](docs/GUIDE.md#runtime-behavior)。
 
@@ -35,7 +35,7 @@ main = interpreter ast effects
 
 | 组件 | 负责什么 |
 | --- | --- |
-| [Asset（资产）](docs/GUIDE.md#types) | 用 Haskell ADT 表达跨操作传递的业务数据，按名字细化成各自来源的资产。 |
+| [Asset（资产）](docs/GUIDE.md#types) | 用字符串或由字符串构成的业务类型传递数据，按契约名区分来源。 |
 | [Effect](docs/GUIDE.md#effects) | 声明操作的类别、绑定的 handler、前驱，以及驱动或读取的资产。 |
 | [Handler](docs/GUIDE.md#handlers) | 用原生类方法实现原子的读取、解析和 IO，可以注册到多个 effect。 |
 | [Workflow／AST](docs/GUIDE.md#workflow) | 选择完整操作链的末端，规定这些链何时、以什么方式启动。 |

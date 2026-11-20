@@ -62,9 +62,10 @@ socket、event、behavior 描述业务来源的取值方式。三种来源的现
 | 方法 | 职责 |
 | --- | --- |
 | `getT` | 执行 parser 并包装发布一个资产；会话每取得一份原始输入调用一次 |
-| `streamT` | 读取本次固定的持续资产值（SDK 实现，消费方经路由的 `require` 使用） |
+| `streamT` | `require @T` 经类型路由读取固定交付的当前元素 |
+| `historyT` | `stream @T` 经类型路由读取同一交付的 `Flow` 视图 |
 
-parser 没有另外的输入方法：`rawinput` 由会话本次取得的输入回答，读作单元素 list（`(: []) <$> next名字`），不再执行 Stream handler，与挂在原子句柄下的 Context 读取句柄输出相同（[主设计 4.3](CORE_DESIGN.md#context) 的原子输出挂接）。首次生成契约后才编写 Handlers。
+Stream handler 每调用一次 `rawemit text`，SDK 就把 `[text]` 同步交给挂接的 parser。parser 的 `rawinput` 读这一份输入。一次 handler 调用可以多次交付，正常返回后生产循环才进入下一步。首次生成契约后即可编写两个 handler。
 
 同一 refined asset 的所有访问方式共享固定表示 ADT 和唯一 Context 来源；读取的返回形态不同，不会产生第二种资产身份。声明与读取依据统一见[主设计：资产来源与访问约束](CORE_DESIGN.md#demand-contract)，包括 streams 在 Prototype 中的交付依据。
 
@@ -99,10 +100,10 @@ parser 没有另外的输入方法：`rawinput` 由会话本次取得的输入�
 
 **生产持续性与消费重复性分别计算。** A 的 Input 链订阅 B 时，A 可以继续随 B 的新交付生产；普通链 C 只 `requires` A，就只取得一次确定的值。A 不需要额外挂入 AST 的 lifelong，C 也不因读取 A 而变成 lifelong。C 若要随 A 的新交付反复执行，仍按既有规则在 lifelong 中声明 streams。普通 Context 生产链同样可只 require 持续资产并发布一次普通产物。
 
-T 可以是业务的任意 ADT。确定的是本次 Binding；后台发布不改写已经捕获的 Binding。可变资源对象本身的业务行为仍由其类型与原子方法决定。
+`T` 遵循[资产表示类型的固定形式](ASSETS.md#fixed-form)。一次调用捕获一个 Binding，后台随后发布的新值只对后续捕获可见。
 
 <a id="flow"></a>
-**按 x:xs 读取。** 持续资产是第三种资产：既驱动消费，也是一串交付。`stream = True` 的 `Asset @Line "TextLine"` 就是元素为 `Line` 的流，声明与 demands 都不写 `Flow`。以 `streams "TextLine"` 读取它的 effect，Layer 中有 `SDK.Streams Line m`：
+**按 x:xs 读取。** `stream = True` 的 `Asset @Line "TextLine"` 逐条发布 `Line`。注册和 `demands` 仍然使用资产名，以 `streams "TextLine"` 订阅的 handler 同时具有 `SDK.Reads Line m` 与 `SDK.Streams Line m`。后一项提供历史视图：
 
 ```haskell
 -- Framework.Language.Handler，经 Framework.SDK 导出
@@ -119,11 +120,12 @@ countText = do
   rawoutput [show (length seen), show (sum [length text | Line text <- toList seen])]
 ```
 
-- **x 是本次，xs 是过去。** `x` 是本次交付（有限读取时是捕获的那一条），`xs` 是同一会话中更早的交付，最新在前。它与 `require @T` 取同一个固定视图，同一次调用里两者一致。`xs` 都已发布：读取不等待后续发布，也不驱动来源。
-- **会话边界与 end GC。** 历史从会话开头算起，与读取方何时登记无关。来源停止（`streamEnd`、失败或退役）且读取方全部离开后，会话不再有交付可领取，历史随之放掉；会话仍留在登记表中，lifelong 之后的有限读取读到的是最新一条。要在流结束后保存数据，属于 [history 组合](NEXT_STAGES.md#urgent-history)，暂不设计。
-- **静态保留。** gen 从方法体中的 `stream @T` 收集被历史读取的契约，只允许持续资产；在生产它的 Context 原型上标 `effectHistory = True`。只有被标记的会话从开头保留全部交付（见[保留范围](#retention)），其他资产不受影响。
+- **`x` 是本次，`xs` 是过去。** `x` 与同一调用中 `require @T` 取得的元素相同。`xs` 从新到旧列出这个会话在 `x` 之前已发布的元素，以 `Done` 收尾。`Done` 表示已读到这段历史的起点。生产会话由 `streamEnd` 结束；从未发布过的会话结束时，消费者不会收到一次内容为 `Done` 的交付。
+  例如依次发布 `a`、`b`、`c`，处理 `b` 的调用读到 `b :> a :> Done`。即使 `c` 已经发布，该调用再次读取的仍是同一前缀。
+- **会话边界与 end GC。** 历史从会话开头算起，与读取方何时登记无关。来源停止（`streamEnd`、失败或退役）且读取方全部离开后，会话不再有交付可领取，历史随之放掉；会话仍留在登记表中，lifelong 之后的有限读取读到的是最新一条。要在流结束后保存数据，属于 [结束后保存完整记录的延期设计](NEXT_STAGES.md#urgent-history)，暂不设计。
+- **保留条件由 gen 计算。** `streams "T"` 决定 handler 可用的能力。gen 从方法体中的 `stream @T` 找到实际读取历史的资产，并在对应 Context 的原型上标记 `effectHistory = True`。只用 `require @T` 读取本次值不产生这个标记。见[保留范围](#retention)。
 - **refine 在元素上。** 契约仍生成 `newtype TextLine = TextLine Line`；`Flow` 的参数是 representational 角色，生成的 `Streams` 实例直接把 `Flow TextLine` `coerce` 成 `Flow Line`。
-- **暂行边界。** 保留只靠 end GC 回收，没有容量上限：从不停止的来源（如 StreamDemo）随运行增长，直到 interpreter 退出。惰性的未来尾部与背压见 [U3](NEXT_STAGES.md#urgent-backpressure)，暂不实施。
+- **空间与边界。** 标记了历史读取的会话在运行期间保留已发布前缀。非终止来源的这部分存储会随发布次数增长，读取方只取五条也一样。等待未来元素的尾部和生产者背压留作[独立专题](NEXT_STAGES.md#urgent-backpressure)。
 
 ### 3.4 原子输入与源码约束
 
@@ -207,7 +209,7 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
       parseTotal = do
         fields <- rawinput
         case fields of
-          [count, size] -> pure (Total (read count) (read size))
+          [count, size] -> pure (Total count size)
           _ -> raise (ParseTotalError "the counter gives a line count and a character count")
 
     -- demo/LinesDemo/AST.hs
@@ -219,7 +221,7 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
           ]
       ]
 
-`countText` 以 `stream @Line` 读取本次及更早的行算出累计，`parseTotal` 只解析本次原子输出。两者是普通的 Excu handler 与 parser，没有新的 effect 类别、关键字或 handler 能力。AST 的一个单元打印并执行 `TextCounter`；gen 把 `RunningTotal` 装配为 ReuseOutput，会话接收这次原子输出经 `CountParser` 解析后的资产。另一个单元的 `ShowTotal` 领取该发布，不另行执行统计，显示与原行文本可以交错。原子方法仍然不知道它的输出将由谁消费。
+`countText` 以 `stream @Line` 读取本次及更早的行算出累计，`parseTotal` 只解析本次原子输出。两者是普通的 Excu handler 与 parser，派生装配复用已有的 `streams` 声明与 AST 入口。AST 的一个单元打印并执行 `TextCounter`；gen 把 `RunningTotal` 装配为 ReuseOutput，会话接收这次原子输出经 `CountParser` 解析后的资产。另一个单元的 `ShowTotal` 领取该发布，不另行执行统计，显示与原行文本可以交错。原子方法仍然不知道它的输出将由谁消费。
 
 **为什么产出声明为持续资产。** 链上有 `streams` demand，执行机会来自那份资产的交付，连续成功执行会产生一串增量。`stream = True` 把这个结构关系写在源码里；写成 `False` 或通过 `requests` 再驱动它由生成期拒绝。发布只发生于实际执行且成功解析的位置，alternative 未选中的位置不凭空产生交付。
 
@@ -234,7 +236,7 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
 - **失败**：持续挂接 parser 失败进入现有 Stream 失败与监督协议，不能沿用普通 Context 注入失败只留在注入内的规则。已完成操作与之前的发布不回滚，失败不重跑原操作。普通 Context 的注入规则保持不变。
 - **读取与保留**：两种派生资产均交付声明表示类型的值。`streams` 在驱动位置领取本次交付，`requires` 只捕获一次值；普通链可在 lifelong 外按独立 Derive 计划建立生产关系。独立 Derive 登记上游读取方，ReuseOutput 沿用原消费单元的上游读取，不额外登记一份。交付按 7.1 的读取义务保留。
 - **普通副产物**：ReuseOutput 只交付持续资产；原 AST 调用的普通发布写入运行级最新值。它不自动成为其他单元的固定捕获；独立 Receive／Derive 的伴随发布仍按交付固定。
-- **仅供后继或暂时无人读取**：AST 挂接的持续副产物也进入本边界的会话集合，不要求一定有 `streams` 订阅者。没有未领取义务时只保留最新一条，供合法后继 `requires` 读取；会话存储本身不驱动原子操作，也不产生额外生产任务。
+- **仅供后继或暂时无人读取。** AST 挂接的持续副产物也进入本边界的会话集合。没有待领取项时，交付队列保留最新绑定供合法后继 `requires` 读取。标记了历史读取的会话同时遵循[历史保留规则](#retention)。保存绑定本身不会额外执行原子操作。
 - **不提供**：手写跳过出口、多份持续资产合并驱动一条链、缓冲策略与窗口。消费方结束与读取方计数归零时停产见 [9.5 节](#consumer-end)。
 
 <a id="static"></a>
@@ -362,11 +364,11 @@ ReuseOutput 沿用原调用的 ScopeUser，没有独立生产任务；资源按[
 <a id="retention"></a>
 ### 7.1 会话保留多少发布
 
-会话保存的是交付协议需要的绑定。每个读取方按自己的游标领取；SDK 保留尚未被全部读取方领取的增量，以及供有限读取和合法后继读取的最新一条。有 handler 以 `stream @T` 读取的资产另外保留会话的全部交付。
+一次发布涉及两类读取义务。交付队列按各读取方的游标保留未领取增量、随交付传递的绑定和最新值。需要 `stream @T` 的会话还保存各次发布的元素，用来构造固定的历史前缀。两者的释放时机分别如下。
 
 | 读取关系 | 保留范围 |
 | --- | --- |
-| 原型标了 `effectHistory`（有 `stream @T` 读取，见[按 x:xs 读取](#flow)） | 会话开头起的全部交付，不随游标裁剪；交付视图是开头到本条。来源停止且读取方全部离开时放掉，只留最新一条（end GC） |
+| 原型带 `effectHistory` 标记（见[按 x:xs 读取](#flow)） | 另存从首条发布到本条的元素。游标前进时仍可读取前缀。来源停止且所有登记的读取方离开后，会话释放这部分历史，保留最新绑定 |
 | lifelong 的单元与独立 Derive 会话 | 最慢游标之后的未领取交付，加上最新一条 |
 | 没有未领取交付，或只有普通有限读取 | 最新一条 |
 | lifelong 尚在完成初始读取方登记 | 暂保留已经发布的交付，登记完成后按游标裁剪 |
@@ -376,8 +378,8 @@ ReuseOutput 沿用原调用的 ScopeUser，没有独立生产任务；资源按[
 - **停止**：lifelong 内的独立会话按[读取方计数](#consumer-end)退役；interpreter 托管会话保持到运行结束，避免后续有限读取意外重启来源。
 - **伴随发布**只随交付领取：全部读取方领取过后，SDK 放掉该条伴随发布的引用。
 - **积压不合并**：相等值的两次发布仍是两次交付。不丢弃尚未领取的值，也不因没有新交付而补跑来源。
-- **没有硬容量与背压**：慢消费者仍可能造成无界积压。没有 `stream @T` 读取时，SDK 不保留已经全部消费的发布。
-- **固定捕获**：消费者已经取得的 Binding 独立于队列裁剪。释放 SDK 的队列引用不改变本次读取结果，也不等于关闭值中可能引用的资源。
+- **积压与历史的空间开销。** 慢消费者可以造成无界积压。即使游标都已赶上，标记了 `effectHistory` 的活动会话仍保留前缀。
+- **固定捕获与资源寿命。** 调用已经取得的视图仍然有效。资源待用与 scope 开启按本次 Binding 的生产身份判断。向前遍历历史只读过去的业务值，不会为旧交付重新登记 scope 使用。
 
 <a id="retention-cost"></a>
 ### 7.2 保留与离开的时间复杂度
@@ -389,9 +391,9 @@ R 为一个会话当前登记的读取方数量，N 为保留的条目数。会�
 | 发布一条 | O(R + log N) | 追加条目后，扫描游标并裁剪已领取前缀 |
 | 领取一条 | O(R + log N) | 定位一条交付、推进游标并裁剪 |
 | 登记或离开读取方 | O(R + log N) | 更新游标表并重新计算保留位置 |
-| 取得已经捕获的资产 | 不随队列长度增长 | 复用固定 Binding，不遍历此前发布 |
+| 通过 `require @T` 取得已经捕获的当前值 | 不随队列长度增长 | 直接读取固定 Binding。通过 `stream @T` 遍历整段前缀时，业务还需逐个访问历史元素 |
 
-上述代价只描述交付队列的基础操作，不包含资源保留匹配、scope 回收和业务值的解析、求值或累计数据操作。资源保留另有仅包含已声明资源的索引；裁剪只处理移出的资源项，回收查询仍会扫描保留的资源项和活动读取义务，未承诺常数时间。普通资产积压不进入该索引。R 个读取方各领取一次会有 R 次游标扫描，不能将一次发布的全部交付承诺为 O(R)。队列大小由尚未领取的积压决定，窗口、容量与背压另行设计。
+上述代价只描述交付队列的基础操作，不包含资源保留匹配、scope 回收和业务值的解析、求值或累计数据操作。资源保留另有仅包含已声明资源的索引；裁剪只处理移出的资源项，回收查询仍会扫描保留的资源项和活动读取义务，未承诺常数时间。普通资产积压不进入该索引。R 个读取方各领取一次会有 R 次游标扫描，不能将一次发布的全部交付承诺为 O(R)。交付队列随积压增长，历史前缀随标记会话的发布次数增长。窗口、容量与背压另行设计。
 
 <a id="production"></a>
 ## 8. 生产与普通读取
@@ -480,7 +482,7 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
 
 **保证范围（2026-11-18 修订）：** 保留实际执行、持续待用和已有 Binding ownership 能定位的资源；注册指定的资源 Context 在认领前也保持同一归属单元。Context／Pure 把本次原子输出解析或变换成普通业务数据，不因此让新 ADT 继承生产方法用过的全部资源。资产、注册、handler 与 workflow 写法不变；保活不让链外资源读取变得合法；普通共享供值遵循独立的 Context 协议。
 
-**资产契约的边界。** 普通业务数据经原子操作的字符串 rawoutput（当前批量接口为 `[String]`）、Pure 变换与 Context 解析进入资产。已声明资源 Context 的 Binding 另由 SDK 的 ownership 协议管理。任意业务 ADT 内嵌资源的自动追踪与保活不属于当前资产契约，也不列为待实现能力；这不减少已登记资源 Binding 的交付、捕获和 close 保证。Haskell 类型允许定义字段，不等于 SDK 承诺追踪其中任意资源对象的寿命。
+**资产契约的边界。** 原子操作交出 `[String]`，Stream 每次交出一个 `String`，Pure 可以变换原始字段，Context 将其解析成业务资产。`Types.hs` 的字段遵循[资产固定形式](ASSETS.md#fixed-form)。已声明资源的寿命由 SDK 跟踪其 Binding 的 ownership，历史中可读取的字符串描述本身不会延长资源的寿命。
 
 | 持有者 | 保留到什么时候 |
 | --- | --- |

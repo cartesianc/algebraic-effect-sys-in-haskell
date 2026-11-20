@@ -108,6 +108,8 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 这能接受 `parallel [readX, produceX]`，也能逐步解开独立分支的依赖。只有 `chained [readX, produceX]`、没有其他 X 的生产时，后继不能启动，因此没有初始供值，gen 拒绝。互等且没有启动种子的分支同理。诊断指出读取资产、target 与 NodeId，要求提供可启动的生产路径，而非把“已经注册生产者”当作充分条件。
 
+例如，`FileDemo` 的 `alternative` 只尝试 `BlankText` 和 `FilledText`。假设再给 `ReadFile` 挂一个普通 `AuditParser` 并在后继读取 `AuditText`，选择入口的 `chainReaches` 即使包含该方法，这里也没有它的发布事实。若另有普通 `ReadFile` 挂载，成功注入就能在那个 `NodeId` 供值。判定资产的等待来源也取自同一发布固定点，排除本次选择位置。
+
 备用 interpreter 会话先不加入供值。只有结构推演到达有限持续读取，才分析它及其 Derive 上游；实际 lifelong 的会话在该边界能启动时分析。固定点收敛后，备用挂载仍单独生成结构和 scope 计划，但不反过来冒充实际运行的供值入口。
 
 这是对有限形状的保守推演：不执行业务 IO，不证明条件可达、解析必成功或所有等待终止。它允许分支和多轮可能发布的过近似；同一读取点只要存在可能供值就不因其他缺值路径拒绝。资源读取和诊断、close 的局部规则单独检查；备用 SessionChain 的空环境也不用于证明业务必缺值。无需 `SiteRef`、方法体插桩或新的 facade 声明。
@@ -206,13 +208,13 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 `MethodDefinition.methodIdentity` 表示当前方法；`methodEffect` 使用同一 effect 的首个注册入口的 Gen 身份，将该 effect 的方法归为一组，不增加 effect key。例如 `openFileSession` 与 `closeFileSession` 的方法身份不同，但 `methodEffect` 都为 `OpenFileSessionGen`。scope 的静态身份使用其 open 方法身份。
 
-生成器通过 GHC 解析器查看手写 handler 方法体中的读取：`require @T` 记为按表示类型的读取原子，`rawinput` 记为挂接输入原子，形成每个 handler 的原子形状。再按每个绑定把表示类型代换成该 effect 声明的细化资产的读取方法、把 rawinput 代换成直接 Input 的入口，并在前面接上驱动（requests 的 getT）与 Input 前驱，组成 effect 方法的纯结构副本。表示类型按规范化的类型原文比较（例如 `String` 与 `[Char]` 视为同一类型）。副本剥离业务值、模式匹配所得数据、纯计算结果和实际 IO，只保留读取与入口引用及其结构关系。调用顺序、分支和重复读取不能被简单的名称集合代替；静态分支保留可能路径，不执行条件表达式来选择业务分支。驱动还是读取由注册决定，不能仅按方法名判断是否重新生产。
+生成器通过 GHC 解析器查看手写 handler 方法体中的读取：`require @T` 与 `stream @T` 均按表示类型路由。`stream @T` 还提供历史读取事实，组合阶段据此标记对应 Context 的 `effectHistory`。`rawinput` 在方法形状中记为挂接输入。再按每个绑定把表示类型代换成该 effect 声明的细化资产的读取方法、把 rawinput 代换成直接 Input 的入口，并在前面接上驱动（requests 的 getT）与 Input 前驱，组成 effect 方法的纯结构副本。表示类型按规范化的类型原文比较（例如 `String` 与 `[Char]` 视为同一类型）。副本剥离业务值、模式匹配所得数据、纯计算结果和实际 IO，只保留读取与入口引用及其结构关系。调用顺序、分支和重复读取不能被简单的名称集合代替；静态分支保留可能路径，不执行条件表达式来选择业务分支。驱动还是读取由注册决定，不能仅按方法名判断是否重新生产。
 
 结构副本描述带包装的句柄：原子句柄（Excu.handler、Scoped.open）的生成入口在方法体返回后注入挂在它下面（可经一串 Pure）的 Context，构图时该句柄的定义因此在方法体之后接一个可选分支，内容是这些 Context 的方法结构，其中对句柄的 rawinput 记为空（注入期间由本次输出回答，不再执行句柄），中间的 Pure 入口就地展开，同样回答到句柄为止。注入路径由此进入 effect graph 与 ScopeTree，不形成环；挂接的 Context 经 Pure 以外的方法又回到该句柄时生成器报错。Pure 的入口在来源分析和运行时都不改变调用者，句柄据此认出经 Pure 拉取它的 Context，不重复注入。
 
 业务执行副本把方法体原样复制到按 effect 的类型标签 `Wrap "名字"` 上，另生成入口、按标签的路由与包装，不改写业务表达式。新的边界是读取 handler 的读取结构并按绑定生成独立结构，不解释任意业务值语义，不要求用户补写 layer 或另一份调用声明。结构提取也不证明任意 Haskell 函数的行为、动态调用次数或物理资源依赖。
 
-当前 source 结构支持 `require @T`／`rawinput` 读取、原生 `do`、`if`／`case` 和已识别的标准组合，包括顺序／绑定运算、`when`／`unless`、`either`／`maybe` 及 `catchError`。条件和待匹配的值本身不能隐藏读取。handler 直接调用其他 handler 或 effect 方法、未知高阶组合中的读取、含读取的循环组合（如 `forM_`／`replicateM_`）以及没有类型应用的 `require` 会报告错误，不静默生成空图。没有读取的原子业务表达式可在 handler 方法体内使用原生 Haskell 语法，结构副本将其擦除；方法内直接以标准组合完成 IO 迭代或数据计算，不受上述限制。生成器还检查每个读取在每个绑定下都能路由到唯一资产、同一 handler 的各绑定推出相同签名与 Layer、声明的 requires／streams 都有读取依据。[源码资产检查](ASSETS.md) 另行约束业务模块的顶层定义；顶层检查与 effect 图提取是两个不同边界。
+当前 source 结构支持 `require @T`／`stream @T`／`rawinput` 读取、原生 `do`、`if`／`case` 和已识别的标准组合，包括顺序／绑定运算、`when`／`unless`、`either`／`maybe` 及 `catchError`。条件和待匹配的值本身不能隐藏读取。handler 直接调用其他 handler 或 effect 方法、未知高阶组合中的读取、含读取的循环组合（如 `forM_`／`replicateM_`）以及省略类型应用的 `require`／`stream` 会报告错误，不静默生成空图。没有读取的原子业务表达式可在 handler 方法体内使用原生 Haskell 语法，结构副本将其擦除；方法内直接以标准组合完成 IO 迭代或数据计算，不受上述限制。生成器还检查每个读取在每个绑定下都能路由到唯一资产、同一 handler 的各绑定推出相同签名与 Layer、声明的 requires／streams 都有读取依据。[源码资产检查](ASSETS.md) 另行约束业务模块的顶层定义；顶层检查与 effect 图提取是两个不同边界。
 
 `catchError body recovery` 使用独立的 `Recover` 结构。scope 分析保留正文的正常路径，并为每条正文路径的任意 scope 前缀接入 recovery 路径；前缀包括空前缀和完整前缀，不假定正文一定全部执行后才进入 recovery。这是保守的静态路径集合，不执行业务来验证成功条件，也不证明某个 scope 已成功获取资源。
 

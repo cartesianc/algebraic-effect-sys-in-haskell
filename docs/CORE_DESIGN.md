@@ -16,8 +16,8 @@
 | 统一 Prototype、运行图、静态来源与缺值等待 | Stage 1/2 已实现 | [图与来源](EFFECT_GRAPH.md) |
 | 普通 require 共享供值与等待结束 | 运行级最新值、固定捕获与最低限度供值推演已实现；完整进展证明未承诺 | [共享发布与等待](#await-visibility) |
 | scope 的单例与多例：`requires` 引用已有的一次生产、`requests` 发起新的生产，由此决定实例的共享与清理；按可达性回收、运行结束关闭、close 可选 | 已实现（2026-11-13） | [单例与多例](#scope-identity)、[按可达性回收](#scope-gc) |
-| 资产目录与业务模块的顶层白名单 | 当前已实现（Stage 2 取代普通函数的资产检查与构造器归属） | [源码资产](ASSETS.md) |
-| Stream 与挂在它下面的解析器 Context、持续资产交付与 lifelong | 已实现；lifelong 中的失败暂按临时规则终止整次运行 | [第 7 章](#stream)及[完整规范](STREAM_LIFELONG.md) |
+| 资产表示、目录与业务模块顶层约束 | 已实现。注册校验表示类型的定义身份，跨模块重导出沿用原类型身份 | [固定形式](ASSETS.md#fixed-form) |
+| Stream、持续交付与 lifelong | 已实现。本条读取和历史读取共享一次固定交付，lifelong 的失败仍按整次运行传播 | [持续读取](STREAM_LIFELONG.md#contracts) |
 | lifelong 消费原子输出复用为持续资产 | 已实现（2026-11-15）；不新增 facade 语法或 handler 能力 | [输出复用](STREAM_LIFELONG.md#derive)、[实施记录](NEXT_STAGES.md#stage-6-reuse) |
 | 原子 handler 复用、前驱与驱动装配、按标签路由 | 已实现（Stage 2，2026-11-08）；本文第 4 章即当前协议 | [Next stages](NEXT_STAGES.md#stage-2) |
 | gen 作为编译器：SDK 分为源语言、gen、编译产物、运行时四层，生成按阶段执行 | 已实现（2026-11-08） | [gen 是编译器](#compiler)、[编译流水线](#generation)、[SDK 分工](#sdk-layout) |
@@ -161,11 +161,11 @@ SDK 将 effect、资产与 workflow 作为结构数据运算，推出类型能�
 <a id="handles-and-values"></a>
 ### 3.4 句柄操作和值操作分离
 
-框架分别表达“执行哪些操作、按什么前驱组合”和“产生什么业务值、怎样按资产读取”。这里的句柄指原子句柄类 effect（Excu、Scoped）及其 handler；文件、连接等资源对象则由对应资产表达。
+框架分别表达“执行哪些操作、按什么前驱组合”和“产生什么业务值、怎样按资产读取”。这里的句柄指原子句柄类 effect（Excu、Scoped）及其 handler；文件或连接可以用路径、标识等资产数据描述；实际对象由执行 IO 的 handler 管理。
 
 **句柄操作**由注册的 Input 组合：gen 把 Input 装配为前驱，在 handler 之前执行；方法体不调用上游。Input 不传递业务值；前驱失败原样传播，改道写在 AST 的 alternative 中。
 
-**值操作**由 Context 的生产、解析与资产承载，消费方通过 demands 声明驱动与读取。生产链中对句柄输出的纯变换（去重、排序、过滤）由 Pure 承担，Context 只做细化解析。requests 在入口驱动生产，require 按既有来源与捕获读取，不生产，还没有值时等待发布；持续资产的读取返回本次确定的资产值；重复执行由驱动关系决定。handler 用原生 ADT 模式匹配和计算处理这些值；值只经资产流动，跨 handler 的业务产值通过 Context 发布。资产来源与 scope 的资源关闭归属分别管理。
+**值操作**由 Context 的生产、解析与资产承载，消费方通过 demands 声明驱动与读取。生产链中对句柄输出的纯变换（去重、排序、过滤）由 Pure 承担，Context 只做细化解析。requests 在入口驱动生产，require 按既有来源与捕获读取，不生产，还没有值时等待发布；持续资产可读取本条值，也可在声明 `streams` 后读取截至本条的固定历史；驱动关系决定何时再次执行。handler 用原生 ADT 模式匹配和计算处理这些值；值只经资产流动，跨 handler 的业务产值通过 Context 发布。资产来源与 scope 的资源关闭归属分别管理。
 
 两者通过 Context 衔接：Excu.handler／Scoped.open 交出的 `[String]` 交给挂接的 Context 解析为业务资产，中间可以经过一串 Pure；Stream 的原始输入交给挂在它下面的 Context 解析，写法与挂在原子句柄下的 Context 相同。比如 FileDemo 中，`readFileContent` 执行读取操作，挂在它下面的 `parseBlankText`、`parseWrittenText` 用 `rawinput` 把同一次读取结果分别解析为 `FileBlank`（文件为空）或 `FileWritten`（非空时的全文），消费方通过 `requires "FileBlank"` 或 `requires "FileWritten"` 读取。前驱关系和资产读取关系都能从注册与 handler 的读取中读出，详见[原子输出挂接](#context)与[持续生产](#stream)。
 
@@ -341,7 +341,7 @@ Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必�
 | 约束 | 什么时候有 | 方法体可写 |
 | --- | --- | --- |
 | `Reads T m` | 绑定它的 effect requires 了表示类型为 T 的资产 | `require @T` |
-| `Reads T m` | 绑定它的 effect streams 了持续资产；T 是资产表示类型 | `require @T` |
+| `Reads T m`、`Streams T m` | 绑定的 effect 以 `streams` 读取元素表示类型为 T 的持续资产 | `require @T` 读本条，`stream @T` 读本条及更早的交付 |
 | `Raw m` | 绑定成挂接的 parser 或 Pure | `rawinput :: m [String]` |
 | `Raises XxxError m` | 总是 | `raise (XxxError "...")` |
 | `Hooks m` | 绑定成 Middleware | `op <- hook` 读取当前操作，按 `Operation` 的构造器匹配方法名和负载 |
@@ -351,7 +351,7 @@ Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必�
 | `EndsStream m` | 以 `streams` 订阅持续资产的 Excu（规则见 [Stream 9.5](STREAM_LIFELONG.md#consumer-end)） | `endStream`：结束本处订阅，按读取方计数停产 |
 | `MonadIO m` | Pure 以外总是 | `liftIO` |
 
-Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 handler 的类或 request；单独的 requests 不带来 Reads。一个 handler 只有一份 Layer，各绑定推出的方法类型与 Layer 必须一致，否则 gencode 报错。`Reads`、`Raw`、`RawOutputs`、`Emits`、`Raises`、`StreamEnds`、`EndsStream`、`Hooks` 定义在 Framework.Language.Handler，由 Framework.SDK 导出；`Raw`、`Raises` 是暂定名。
+Layer 不含 Input 的 effect 类、effect 能力标记、细化资产、其他 handler 的类或 request；单独的 requests 不带来 Reads。一个 handler 只有一份 Layer，各绑定推出的方法类型与 Layer 必须一致，否则 gencode 报错。`Reads`、`Streams`、`Raw`、`RawOutputs`、`Emits`、`Raises`、`StreamEnds`、`EndsStream`、`Hooks` 定义在 Framework.Language.Handler，由 Framework.SDK 导出；`Raw`、`Raises` 是暂定名。
 
 失败属于 handler：raise 的错误类型由 handler 名决定，不随绑定改变，Errors 中的分类是 `XxxFailure`；发生在哪个 effect 由 SDK 记为 Failure.origin，只是诊断位置。原始 Failure 保存 origin、detail 分类和 message，传播或次生失败不覆盖原故障；不要求用户声明错误 ADT。
 
@@ -547,7 +547,7 @@ instance CloseSessionLayer m => CloseSessionHandler m where
     rawoutput []
 ```
 
-handler 直接在 `<-` 左侧匹配表示类型的构造器，或先具名绑定再 case；业务分支用 case 或 lambda-case 表达，失败用 raise。SDK 不增加 MonadFail，不把类型类约束当作执行过模式匹配的证明。Stage 1 对资产包装构造器的接收形态检查已随 Stage 2 取消：handler 不写资产类型。持续读取也直接匹配声明表示类型，SDK 不要求额外的历史构造器。
+handler 直接在 `<-` 左侧匹配表示类型的构造器，或先具名绑定再 case；业务分支用 case 或 lambda-case 表达，失败用 raise。SDK 不增加 MonadFail，不把类型类约束当作执行过模式匹配的证明。Stage 1 对资产包装构造器的接收形态检查已随 Stage 2 取消：handler 不写资产类型。持续读取中，`require @T` 返回表示类型 `T`，`stream @T` 返回同一固定视图的 `Flow T`。
 
 每个 requires／streams 声明的资产须有读取依据：绑定的 handler 中对该表示类型的读取，或现有 Prototype 中 alternative 选择／streams 交付的控制读取。完全没有依据的声明在 gencode 报错。检查以 effect 和资产为单位，不强制每条路径都读一次。
 
@@ -571,19 +571,19 @@ Gen.Composition 统一计算唯一来源、访问结果、绑定的读取路由�
 
 AST 组织链的启动次序。Crawler 中 parallel 先抓取并注入解析两页，chained 再打印；共用的打印 handler 按各自 refined asset 读取摘要，不重复抓取。普通读取也可在独立并行分支等待生产。
 
-业务表示类型在 Types.hs 用原生 data/newtype 单独定义，注册以 `Asset @表示类型 "资产名"` 引用并细化为资产。表示类型是固定形式：单构造器、字段只由 `String`、`[String]` 或本模块的类型构造、固定 `deriving (Eq, Show)`；资产里没有句柄等原生对象，它们只在 handler 自己的执行中持有。gen 在生成期拒绝其他写法，见 [ASSETS：固定形式](ASSETS.md#fixed-form)。TypeRef 通过 Typeable 识别 SDK 的 Output 构造器以拒绝嵌套完成协议，不解析显示字符串；其余业务类型保存显示名称，Generated 模块须能解析该类型名。它不保存完整数据定义，也不代表任意 Haskell 类型结构都能被第三方工具解释或被 Generic Map 自动适配。
+业务注册用 `Asset @T "资产名"` 将表示类型细化为契约。`T` 可以是 `String`、`[String]` 或本程序 `Types.hs` 定义的类型。对业务类型，`TypeRef` 同时保存类型名、定义模块和编译单元。gen 由此能接受重导出的原类型，也能指出另一个模块定义的同名类型。`Output` 单独识别并在作为资产时拒绝。字段和派生实例遵循[资产固定形式](ASSETS.md#fixed-form)。
 
 当前完成结果为 Succ value 或 Failed failure。SDK 按 handler 生成错误类型、按标签的 Raises 实例与 Errors 分类；用户写 `raise (ExtractSummaryError message)`。Except 使普通 do 短路，上游失败原样传播，lower 只解释登记的末端，最终边界只封装一次 Output。当前不设 Pending；运行图提供活动 chain 的调用身份与关联，逐方法传播历史及通用 IO 异常接入仍未实现。
 
 #### 消费声明与读取权限
 
-同一消费者对同一资产的同一访问方式只能声明一次。requires "T" 或 streams "T" 授予读取权限，读取本身不刷新；requests "T" 只驱动，不授予读取权限；持续资产经会话发布与交付，不能 requests。Scoped 至多 requests 一个资源 Context。声明检查由生成器执行。
+同一消费者对同一资产的同一访问方式只能声明一次。`requires "T"` 授予 `require`；`streams "T"` 同时授予 `require` 与 `stream`，两种读取都使用本次视图；requests "T" 只驱动，不授予读取权限；持续资产经会话发布与交付，不能 requests。Scoped 至多 requests 一个资源 Context。声明检查由生成器执行。
 
 #### 原子输出挂接与失败隔离
 
 Excu.handler／Scoped.open 成功后，SDK 以根调用身份执行挂接 Context 的 getT；parser 的 rawinput 由本次输出回答（中间可以经过一串 Pure，见 [Pure](#pure)），不重复执行句柄。挂在 Stream 下的 parser 沿用同一写法：会话每取得一份原始输入调用一次 parser，rawinput 由这份输入回答（见第 7 章）。普通 Context 的注入失败留在注入内部，不进入原链也不触发 Error；资产没有发布，之后读取它的位置按上述等待规则处理：仍可能发布则等待，已确定耗尽则报缺值。
 
-parser 被 requests 驱动或被选择读取驱动时，rawinput 直接执行句柄入口，不再次注入；复用 open、重复 close、诊断与自动收尾不产生新的挂接注入。close 没有挂接点；scope 的资源 Context 不能挂在请求它的 Scoped 下。生成入口通过 atomicHandle／atomicScope 包装，挂接的 parser 由 gen 写在句柄入口上。
+显式 `requests` 驱动挂接的 Context 时，parser 的 `rawinput` 可以启动所挂句柄。`alternative` 则先运行共同 Excu，判定 parser 的 `rawinput` 重放这次输出。复用 open、重复 close、诊断与自动收尾沿用既有注入限制，close 没有挂接点。scope 的资源 Context 不能挂在请求它的 Scoped 下。[选择与交接](#alternative-selection)
 
 这是普通 Context 的基线；持续 Context 的 parser 故障不在注入内隔离，包括 ReuseOutput 沿用消费原子输出的解析，均进入现有 Stream 失败与监督协议，见 [Stream 第 9 节](STREAM_LIFELONG.md#failures)。
 
@@ -638,9 +638,9 @@ instance ParseFileNameLayer m => ParseFileNameHandler m where
 **执行。** 挂在一串 Pure 下的 Context，挂接点是这串 Pure 最上面的原子句柄：
 
 - **注入**：句柄在操作链里成功返回后，SDK 以根调用身份执行挂接 Context 的 getT；parser 的 rawinput 经这串 Pure 读到句柄本次的输出，句柄不再执行。
-- **驱动**：requests 或 alternative 的选择读取进入 getT 时，parser 的 rawinput 执行 Pure 的入口，Pure 的 rawinput 再执行句柄入口，由此启动整条生产链。
+- **驱动与重放**：显式 `requests` 启动 parser 后，Pure 可以沿 `rawinput` 取得原子句柄的输出。选择读取已经取得共同 Excu 的输出，Pure 使用该份输出完成变换。
 - **调用者**：Pure 的入口不改变调用者身份，句柄据此认出是被挂接的 Context 自己经 Pure 拉取，不重复注入。生成期的注入副本把中间的 Pure 就地展开，同样回答到句柄为止。
-- **失败**：Pure 的 `raise` 与 parser 失败相同：普通 Context 注入时留在注入内部，资产不发布；显式驱动时沿驱动方传播；持续 Context 的输出复用走 Stream 失败协议。
+- **失败**：Pure 的 `raise` 与 parser 失败相同：普通 Context 注入时留在注入内部，资产不发布；显式 `requests` 时沿驱动方传播；判定 parser 经 Pure 失败时继续尝试下一候选；持续 Context 的输出复用走 Stream 失败协议。
 
 <a id="await-visibility"></a>
 #### 共享发布、固定捕获与等待结束
@@ -695,22 +695,25 @@ alternative 按 effect 图上的差异选择，不按资产的构造器。当前
 
 ```haskell
 -- demo/FileDemo/Effects.hs（节选）：同一次读取的输出挂两个 Context
-, EffectSpec { name = "BlankText", typing = Context { asset = Asset @EmptyText "FileBlank", parser = Just "parseBlankText", ... }, input = "ReadFile", demands = [] }
-, EffectSpec { name = "FilledText", typing = Context { asset = Asset @WrittenText "FileWritten", parser = Just "parseWrittenText", ... }, input = "ReadFile", demands = [] }
-, EffectSpec { name = "WriteFirstLine", ..., demands = [requires "FileBlank", requires "OpenedFile"] }
-, EffectSpec { name = "AppendLine", ..., demands = [requires "FileWritten", requires "OpenedFile"] }
+, EffectSpec { name = "BlankText", typing = Context { asset = Asset @EmptyText "FileBlank", parser = Just "parseBlankText", require = True, stream = False }, input = "ReadFile", demands = [] }
+, EffectSpec { name = "FilledText", typing = Context { asset = Asset @WrittenText "FileWritten", parser = Just "parseWrittenText", require = True, stream = False }, input = "ReadFile", demands = [] }
+, EffectSpec { name = "WriteFirstLine", typing = Excu { handler = Just "writeFirstLine" }, input = "FileSession", demands = [requires "FileBlank", requires "OpenedFile"] }
+, EffectSpec { name = "AppendLine", typing = Excu { handler = Just "appendLine" }, input = "FileSession", demands = [requires "FileWritten", requires "OpenedFile"] }
 
 -- demo/FileDemo/Workflow/OperateFile.hs
 operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 ```
 
-分叉来自不同上游、按时序决定的真 race 尚未实现，gen 拒绝。共用同一 Excu 的多个 alternative 须判定同一组 Context。
+共用同一判定 Excu 的多个 `alternative` 须使用相同的判定 Context 和相同顺序。跨不同上游的 race 尚待设计。
 
+<a id="alternative-selection"></a>
 #### alternative 的选择与交接
 
 AST 只列候选，不写条件。gencode 将共同 Excu、选择读取路径和候选 NodeId 到判定 Context 的对应保存为 WorkflowTree 的 AlternativeProto（`alternativeSource`、`alternativeSelector`、`alternativeCases`）。
 
-选择读取执行共同的 Excu 一次，再按候选的声明顺序把同一份输出交给各自的判定 Context（`chooseCase`），第一个解析成功的候选执行，结果确定、不依赖时序；其他候选不执行。alternative 的本质是等待某一支有值，再走那一支：判定 Context 的 `raise` 只表示这一支没有值，不是失败，不触发 Error 处置。这次输出都没有值时，选择读取按 require 的等待协议等待任一判定 Context 发布，醒来后按声明顺序重读，先有值的候选执行。能等谁由 gen 在生成期确定：选择读取的每个判定资产登记一个 ReadPoint，来源是其他能到达该 Context 生产入口的链（例如另一处执行同一 Excu 时的挂接注入），选择链自身不算；没有其他来源时登记为 FromOwnChain，运行时不等待。已证明生产机会耗尽仍没有值时，按普通缺值以首个判定 Context 报 `ContextNotInitialized`。执行 Excu 时挂接注入不重复执行这些判定 parser；该 Excu 上其他挂接的 Context 在选择读取中也不注入。选择阶段捕获的无 owner 绑定（包括选中候选的判定资产）经 Handoff 交给候选，两段读取同一快照，其他调用的驱动不改写它。执行只在已装配的闭包间选择，不在链中间重组。
+1. **取得同一份输入。** 选择入口运行共同 Excu 一次，把原始输出按 AST 候选顺序交给各判定 Context。parser 可以经 Pure 读取这份输出。首个解析成功者发布资产，SDK 随即启动对应候选。判定 parser 的 `raise` 表示放弃本次尝试；共同 Excu 自身的失败仍沿原链传播。
+2. **全部拒绝时读取已有绑定。** SDK 按声明顺序检查各判定资产，多个已有值同时可读时取排在前面的。全部缺值且其他位置仍可能供值时，等待发布或执行进度变化，再按同一顺序检查。可观察到哪些值可以受调度影响。已能证明来源耗尽，最后一次检查仍无值时，以首个判定 Context 报 `ContextNotInitialized`。
+3. **交接选中路径。** 选择阶段捕获的无 owner 绑定经 Handoff 交给选中候选，其 Input 与显式 `requests` 照常执行。共同 Excu 上的其他普通 parser 在此选择位置没有发布机会；独立执行同一 Excu 时，普通挂接才可在那个位置供值。[生成期来源证明](EFFECT_GRAPH.md#missing-source)
 
 选择读取有独立入口使用登记，以共同 Excu 的名字登记末端，NodeId 为 alternative 路径加 [-1]，参与构图与 ScopeTree。validatePrototype 核对共同 Excu、判定 Context 互不相同且与候选的 requires 一致；执行 fold 与 --structure 使用同一原型匹配当前 AST，不一致时在业务前拒绝。
 
@@ -839,7 +842,7 @@ open／close 内部持锁时延后诊断，退到生命周期锁外再执行；�
 
 Error 是另一条驱动链：resolve 不调用 close，也不重放业务方法，设计确定前 FileDemo 的 resolve 为 `pure ()`（TODO）。Error 协议不因定位成功自动 invalidate、close、reopen 或重放业务方法。定位成功只表示用户的检测条件成立，实际 scope 状态仍由生命周期操作决定。按可达性回收独立于是否配置 Error 检测；撤销链的使用须等待本次诊断结束。现有 ExceptT 的失败短路仍保留，不自动恢复已展开的 continuation，也不因业务 Failure 取消其他已经运行的并行分支。
 
-FileDemo 的 FileRecovery 演示：handles 写 `RaisedBy "readFileContent"` 等 handler 名；detect 读取文件句柄，用 hIsClosed 检查意外关闭，已关闭时返回 ()，否则 raise 表示未定位；resolve 暂不操作 scope。正常路径不注入故障，文件读写仍由原末端执行。
+FileDemo 的 `FileRecovery` 通过 `RaisedBy` 关联文件操作。`detectFileSession` 读取 `FileHandle path`，以 `readFile' path` 检查文件是否仍能读取。读取失败时 `detect` 正常返回并进入 `resolve`，仍可读取时用 `raise` 表示这次故障没有定位到 `FileSession`。`resolveFileSession` 当前返回 `()`。[FileDemo 的 handler](../demo/FileDemo/Handlers.hs)
 
 #### 匹配身份与唯一性
 
@@ -953,7 +956,7 @@ sdk/Framework/
   Runtime.hs                Target、交付视图、交接与会话装配
   Runtime/
     Protocol.hs             ContextStore／ScopeStore／ErrorStore 协议与协议故障
-    Context.hs              取值、分支投影与原子入口包装
+    Context.hs              Context 读写、候选判定与原子入口包装
     Binding.hs              生产身份、执行帧与共享归属
     Frame.hs                根帧／轮帧及节点进度
     Scope.hs                scope 实例、使用登记与物理清理
@@ -1007,7 +1010,7 @@ Stream 提供持续来源，Context 将每次原子输出解析成资产，lifel
 
 | 主题 | 本章所属规范 |
 | --- | --- |
-| 资产命名、Context 声明匹配、读取类型与 beforegen | [Stream 第 3 节](STREAM_LIFELONG.md#contracts) |
+| 资产命名、Context 声明与读取类型 | [消费权限](STREAM_LIFELONG.md#contracts) · [本条与历史前缀](STREAM_LIFELONG.md#flow) |
 | Receive／Derive／ReuseOutput 的推导与启动依赖 | [Stream 第 4 节](STREAM_LIFELONG.md#bootplan) |
 | 消费摘要、lifelong 合法性与原型中的表示 | [Stream 第 5 节](STREAM_LIFELONG.md#static) |
 | 单元、就绪检查与有限完成边界 | [Stream 第 6 节](STREAM_LIFELONG.md#scheduling) |

@@ -39,7 +39,7 @@ newtype WrittenText = WrittenText String
 
 ### 2. Effects.hs：为生产和消费写出关系
 
-以下是 `effects` 列表中的两个注册。生产方声明资产名、表示类型、绑定的 parser handler，以及是否缓存：
+以下是 `effects` 列表中的两个注册。生产方声明资产名、表示类型、parser，以及消费方能否通过 `requires` 读取它。
 
 ```haskell
 EffectSpec
@@ -116,7 +116,7 @@ ast :: AST
 ast = operateFile
 ```
 
-`alternative` 的两个候选各自 `requires` 由同一次 `ReadFile` 输出解析出的一份资产（`FileBlank`／`FileWritten`）：选择时 `ReadFile` 执行一次，哪个 Context 解析成功就启动哪个候选。AST 只列末端。每个末端代表自己的完整 original chain：gen 沿 Input 把前驱装配在 handler 之前，Context 的生产通过取值关系接入。
+`ReadFile` 只执行一次。SDK 先把输出交给 `BlankText`，匹配空文件时启动 `WriteFirstLine`；解析拒绝才尝试 `FilledText` 并在成功时启动 `AppendLine`。AST 只列末端，每个末端都保留自己的 Input 前驱和资产依赖。
 
 [OperateFile.hs](../demo/FileDemo/Workflow/OperateFile.hs) · [AST.hs](../demo/FileDemo/AST.hs) · [branch 与节点规则](#workflow)
 
@@ -217,7 +217,7 @@ main = interpreter ast effects
 cabal run effect-codegen -- workflow FileDemo
 ```
 
-生成器输出契约接口 `Effects.hs`、带协议包装的 `Handlers.hs`、保存静态原型与装配入口的 `Program.hs`、资产目录 `Assets.hs`，以及结构缓存 `.scope-cache`。第一次还没有手写 `Handlers.hs` 时先生成接口与空实现模块，随后填写 instance，再生成完整执行副本。
+生成器把契约接口写入 `Generated/Effects.hs`，带协议包装的执行副本写入 `Generated/Handlers.hs`，静态原型写入 `Generated/Prototype.hs`，业务入口与目标装配写入 `Generated/Program.hs`。`Generated/Assets.hs` 是资产目录，`.scope-cache` 保存生成缓存。第一次还没有手写 `Handlers.hs` 时，先生成接口与空实现模块，再填写 instance 并生成执行副本。
 
 `--generate` 只是已有 Main 的快捷入口：Main 的导入链必须先能编译，interpreter 才能转调同一个生成器。它不会在生成后继续执行业务；下一次运行会编译更新后的代码。日常统一使用独立 `effect-codegen` 即可，不需要把两个生成入口都执行一遍。
 
@@ -228,7 +228,7 @@ gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提
 | 文件 | 用途与清理边界 |
 | --- | --- |
 | Types、Effects、Handlers、AST／Workflow、Main | 手写业务源码，持续维护 |
-| `Generated/Effects.hs`、`Handlers.hs`、`Program.hs`、`Assets.hs` | gen 输出的可审查源码，随项目提交，供编译、HLS 和结构查看使用；不作为临时文件删除 |
+| `Generated/Effects.hs`、`Handlers.hs`、`Prototype.hs`、`Program.hs`、`Assets.hs` | 随项目提交的可审查源码，供编译、HLS 和结构查看使用 |
 | `Generated/.scope-cache` | 可删除的结构缓存；下次 gencode 重建，不影响已生成源码 |
 | `dist-newstyle/` | 可删除的 Cabal 构建产物和缓存；下次构建重建 |
 | 各 demo 在 `.gitignore` 中列出的输出文件／目录 | 示例运行产物，可删除后重跑；输入样例和源码不是输出 |
@@ -336,7 +336,7 @@ newtype SharedFile = SharedFile SharedPaths                      -- 字段是本
 
 - **单构造器**：每个类型恰好一个构造器（前缀或记录写法），至少一个字段；没有类型参数、GADT 语法、中缀构造器和严格标记。没有和类型：几种结果由几个 Context 分别解析，`alternative` 按 effect 选择，见[workflow 书写](#workflow)。
 - **字段只由 `String` 构造**：字段类型写作 `String`、`[String]` 或本模块的另一个表示类型。数字、时间等值保存原文本，读取方在 handler 中自己解析，例如 `read value :: Double`；`FilePath` 等同义词在字段里也写成 `String`。
-- **没有原生对象**：文件句柄、连接等 OS 资源不进入资产。资源资产只记路径等字符串；handler 在自己的执行中按路径打开并关闭句柄，句柄随 handler 本身由运行时持有，不随资产保存。
+- **没有原生对象**：文件句柄、连接等 OS 资源不进入资产。资源资产只记路径等字符串；handler 在自己的执行中按路径打开并关闭句柄。
 - **固定 deriving**：每个类型写 `deriving (Eq, Show)`，不写其他 deriving、instance 或类型同义词。
 - **不导入任何模块**：`Types.hs` 没有 import（自然也不导入 `Generated` 或 `Handlers`）。导出列表要么省略，要么以 `T(..)` 列出全部类型。
 - **资产的表示类型**：`Asset @T` 中的 `T` 只能是 `String`、`[String]` 或 `Types.hs` 中的类型，例如 `Asset @String "FileName"`。资产类型由生成器产出，不需要再手写一层 newtype。
@@ -426,7 +426,7 @@ typing = Context { asset = Asset @PageURL "StartURL", parser = Just "startURL", 
 
 - **`asset = Asset @表示类型 "资产名"`**：把表示类型细化为资产，生成器产出 `newtype StartURL = StartURL PageURL`；表示类型怎么写见[资产书写](#types)。
 - **`parser`**（必填）：产出表示类型值的 handler，签名 `m 表示类型`，直接返回 `pure (PageURL ...)`，不包资产构造器。gen 生成 `getStartURL`：执行 Input 前驱和 parser，再包成资产发布。parser 是细化 parser：挂在句柄或 Pure 下时，它把 `rawinput` 读到的 list 解析成表示类型，作用类似 tokenize；值的变换交给 Pure。
-- **`require`**：`True` 时 SDK 缓存最新值并生成读取方法 `readStartURL`，消费方才能 `requires` 它；`False` 不缓存，消费方不能 `requires`。
+- **`require`**：对普通 Context，`True` 开放 `requires` 和生成的读取方法（例如 `readStartURL`），`False` 关闭这条读取路径。显式 `requests` 的成功生产仍走发布协议。
 - **`stream`**：`True` 声明持续资产，读取方法是 `streamStartURL`。当且仅当它的 Input 链被持续驱动时声明（挂在 Stream 下，或链上有 `streams` demand），且必须同时 `require = True`。资产值的表示仍由业务声明，见[持续资产与 lifelong](#stream)。
 - **不能作为 AST 末端**：Context 在它挂接的句柄执行时产出，被 `requests` 驱动或被 alternative 的选择读取驱动时产出；被读取时不产出。
 - **命名**：资产名决定资产类型和入口方法名，要按业务含义起名（`StartURL`，而不是 `LoadStartURL`），不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
@@ -526,7 +526,7 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 | --- | --- | --- |
 | `requests "T"` | 不写 | 驱动：入口在 Input 之前重新生产一次 `T`，结果保存为当前绑定。单独的 `requests` 不带来读取权限 |
 | `requires "T"` | `x <- require @表示类型` | 读取已有的值，不在入口驱动，也不在读取处生产；缺值时等待，已确定生产耗尽则报缺值 |
-| `streams "T"` | `value <- require @表示类型` | 由持续资产 T 的新交付驱动，同时取得读取权限；位于 lifelong 的原始消费链，或另一份持续资产的生产链，见[持续资产与 lifelong](#stream) |
+| `streams "T"` | `require @表示类型` 或 `stream @表示类型` | 由 T 的交付驱动；前者取本条，后者取截至本条的固定前缀。[持续资产与 lifelong](#stream) |
 
 - **驱动与读取分开写**：既要刷新又要读取的资产写两项，例如 Crawler 的 `[requests "StartURL", requires "StartURL"]`。入口顺序是驱动 → Input → handler，因此 `requests` 驱动的值在前驱和 handler 中都已就绪。
 - **来源自动确定**：每个资产恰好由一个 Context 声明，生成器按资产名自动接上，不用指名生产方。
@@ -544,13 +544,12 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 先看一个完整 handler 的形态，模块头和导入在后文给出：
 
 ```haskell
-instance ParseFileTextLayer m => ParseFileTextHandler m where
-  parseFileText = do
+instance ParseWrittenTextLayer m => ParseWrittenTextHandler m where
+  parseWrittenText = do
     contents <- rawinput
-    text <- case contents of
-      [whole] -> pure whole
-      _ -> raise (ParseFileTextError "File read returned no text")
-    pure (if null text then Blank else Written text)
+    case contents of
+      [whole] | not (null whole) -> pure (WrittenText whole)
+      _ -> raise (ParseWrittenTextError "the file is empty")
 ```
 
 handler 是不带参数的类方法。注册里出现的每个 handler 名，在 `Handlers.hs` 中实现一个生成的类：Layer 指定方法体可用的能力，方法体写实际的读取、解析和 IO。方法体里不出现上游 effect、scope、细化资产或 effect 错误，这些由 gen 按注册装配。手写代码由 HLS 检查，运行时编译 `Generated/Handlers.hs` 中原样复制的方法体。下面依次展开文件头、instance 头和方法体规则。
@@ -575,7 +574,7 @@ import FileDemo.Types
 ```
 
 - `-Werror=missing-methods` 保证每个声明的方法都有实现。
-- `Reads(..)`、`Raw(..)`、`Raises(..)` 按类导入：`require` 同时是注册字段名，按名字单独导入会产生歧义。只用到其中一部分时只导入需要的类；Stream handler 要报告来源结束时另导入 `StreamEnds(..)`，消费方要结束订阅时另导入 `EndsStream(..)`。持续读取同样使用 `Reads`，不另导入历史包装。
+- 按能力类导入方法。`Reads(..)` 提供 `require`，`Streams(..)` 提供 `stream`；要匹配 `x :> xs` 时再导入 `Flow(..)`。来源报告结束用 `StreamEnds(..)`，消费方主动结束订阅用 `EndsStream(..)`。
 - `rawinput` 随 `Raw(..)` 导入，`rawoutput` 是 SDK 单独导出的函数。迁移已有 handler 时，把原来的 `raw` 读取改为 `rawinput`，更新显式导入列表，再重新生成编译副本。
 
 ### instance 头
@@ -590,7 +589,7 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
 | 约束 | 什么时候有 | 方法体可写 |
 | --- | --- | --- |
 | `Reads T m` | 绑定它的 effect `requires` 了表示类型为 T 的资产 | `require @T` |
-| `Reads T m` | 绑定它的 effect `streams` 了表示类型为 T 的持续资产 | `require @T` |
+| `Reads T m`、`Streams T m` | 绑定的 effect 以 `streams` 订阅元素为 T 的持续资产 | `require @T`、`stream @T` |
 | `Raw m` | 绑定成挂接的 parser 或 Pure | `rawinput` |
 | `Raises 名字Error m` | 总是 | `raise (名字Error "...")` |
 | `StreamEnds m` | 绑定成 Stream 的 handler | `streamEnd` |
@@ -604,7 +603,7 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
 
 | 绑定方式 | 签名 | 返回什么 |
 | --- | --- | --- |
-| Context.parser | `m 表示类型` | 表示类型的值，例如 `pure (Written text)` |
+| Context.parser | `m 表示类型` | 表示类型的值，例如 `pure (WrittenText text)` |
 | Pure | `m [String]` | 变换后的 list，交给下面的 Pure 或 Context |
 | Excu | `m [String]` | 交给挂接 Context 的 list，没有就 `rawoutput []` |
 | Scoped.open／close | `m [String]` | 同上；`close` 的输出没有挂接点 |
@@ -612,14 +611,15 @@ instance ReadFileContentLayer m => ReadFileContentHandler m where
 | Stream | `m ()` | 每次 `rawemit text` 同步解析一份原始输入 |
 | Middleware | `m [String]` | 没有挂接点，通常 `rawoutput []`；见 [`middleware`](#middleware) |
 
-Context 的读取方法（`readT`／`streamT`）和全部入口由 SDK 生成，不用写。
+Context 的读取方法（如 `readT`、`streamT`、`historyT`）和全部入口由 SDK 生成，不用写。
 
 ### 方法体里的写法
 
 | 写法 | 作用 |
 | --- | --- |
 | `x <- require @T`（普通资产） | 读取绑定的 effect 所声明、表示类型为 `T` 的资产；缺值时等待发布，不生产；已确定生产耗尽则报缺值 |
-| `value <- require @T`（持续资产） | 声明 streams 时读本次交付，声明 requires 时读本次固定值；不会自动包装此前的全部发布 |
+| `value <- require @T`（持续资产） | 声明 `streams` 时读取本次交付，普通 `requires` 读取本次捕获的值 |
+| `seen <- stream @T` | 须声明 `streams`。返回 `Flow T`，头是本条，尾是同一会话更早的发布，最新在前 |
 | `output <- rawinput` | 挂接的 parser 或 Pure 读取直接 Input 本次交出的 `[String]`，句柄不再执行一遍；挂在 Stream 下时是会话本次取得的那份原始输入（单元素 list） |
 | `raise (ReadFileContentError "message")` | 以本 handler 的错误失败；错误类型是 handler 名首字母大写加 `Error` |
 | `op <- hook` | Middleware 使用 `case op of` 匹配触发本次调用的操作，取得 handler 名和对应负载。见 [middleware 写法](#middleware) |
@@ -658,6 +658,7 @@ instance CloseSessionLayer m => CloseSessionHandler m where
 ```
 
 - **资源获取写在资源 Context 的 parser**：FileDemo 中取得文件的是 `acquireFile`，它确保文件存在并返回 `FileHandle path`；资源只记路径，读写的 handler 在自己的执行中按路径打开文件。需要可观察的开启状态时由 `open`／`close` 维护外部标记（OpenFilesDemo、ScopeInstancesDemo 用文件旁的 `<path>.open`）。Scoped 注册 `requests "OpenedFile"`，gen 在 `open` 之前驱动它，`open` 本身不必读取资源。
+- **整批获取由谁回滚**：`OpenFilesDemo.acquireFiles` 为十个路径创建 `.open` 标记。如果第二个路径获取失败，资源尚未发布，parser 用 `bracketOnError` 逆序撤销本批新建的标记，保留原有标记和数据文件。整批成功后才由 `closeFiles` 接管。[完整 handler](../demo/OpenFilesDemo/Handlers.hs)
 - **使用方不调用 `open`**：effect 的 `input` 是 Scoped 时，gen 在入口中开启它；实例已开启时 SDK 直接复用，跳过 `open` 的方法体。
 - **不安排 `close`**：SDK 在使用闭包退出时自动清理（见「运行时行为」），handler 不调用 `close`。
 
@@ -761,7 +762,7 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 
 - **只列候选，不写条件**：选哪一个由 effect 的差异决定，AST 不暴露业务状态。当前实现 option：各候选的分叉点是**同一个 Excu 的输出**。
 - **候选怎么对应**：同一个 Excu 下挂几个 Context，各自只在自己的情况下解析成功（不成立时 `raise`）。每个候选（末端及其 Input 链上游）在 `demands` 里 `requires` 恰好一份由这个 Excu 的输出直接或经 Pure 解析出的非持续资产，各候选的资产互不相同。FileDemo 中 `ReadFile` 下挂 `BlankText`（产出 `FileBlank`）和 `FilledText`（产出 `FileWritten`），`WriteFirstLine` 依赖 `FileBlank`，`AppendLine` 依赖 `FileWritten`。
-- **运行时**：选择时执行一次这个 Excu，把它的输出按候选声明顺序交给各自的 Context 解析，第一个解析成功的候选被启动，解析出的值交给它；没被选中的候选不执行，也不出现在结果中。这次输出都没解析出值时不算失败：和 `require` 一样等待任一判定 Context 由别处发布（例如另一个节点也执行了这个 Excu），先有值的候选被启动；能等的来源由 gen 在生成期确定，没有其他来源或来源都已结束仍没有值时，按普通缺值报 `ContextNotInitialized`。
+- **运行时**：按候选顺序尝试同一份输出，首个成功的 parser 发布并启动对应分支。全部拒绝时，SDK 先按同一顺序检查已有绑定；若都缺值且其他位置仍可发布，则等待变化并重查。两个值都可读时，选排在前面的候选。生产机会耗尽、重查仍无值才报 `ContextNotInitialized`。[选择与交接](CORE_DESIGN.md#alternative-selection)
 - **同一个 Excu 上的多个 alternative** 必须按同样的顺序判定同样的 Context；分叉来自不同上游的 race 尚未实现，gen 拒绝。
 
 #### `lifelong`
@@ -913,21 +914,21 @@ instance NextReadingLayer m => NextReadingHandler m where
 instance ParseTemperatureLayer m => ParseTemperatureHandler m where
   parseTemperature = do
     reading <- concat <$> rawinput
-    case reads reading of
-      [(value, "")] -> pure (Temperature value)
+    case reads reading :: [(Double, String)] of
+      [(_, "")] -> pure (Temperature reading)
       _ -> raise (ParseTemperatureError ("unreadable sensor output: " ++ reading))
 
 instance ShowTemperatureLayer m => ShowTemperatureHandler m where
   showTemperature = do
     Temperature value <- require @Temperature
     seen <- stream @Temperature
-    liftIO (printf "reading #%d: %.1f C\n" (length seen) value)
+    liftIO (printf "reading #%d: %s C\n" (length seen) value)
     rawoutput []
 
 instance CheckTrendLayer m => CheckTrendHandler m where
   checkTrend = do
     seen <- stream @Temperature
-    let recent = take 5 [value | Temperature value <- toList seen]
+    let recent = take 5 [read value :: Double | Temperature value <- toList seen]
     ...
 ```
 
@@ -996,7 +997,7 @@ instance ParseTotalLayer m => ParseTotalHandler m where
   parseTotal = do
     fields <- rawinput
     case fields of
-      [count, size] -> pure (Total (read count) (read size))
+      [count, size] -> pure (Total count size)
       _ -> raise (ParseTotalError "the counter gives a line count and a character count")
 ```
 
@@ -1123,8 +1124,8 @@ reading #2: 24.0 C
 ### 挂在句柄下的 Context
 
 - **句柄在操作链里执行时**：句柄返回后，SDK 自动用这次的输出运行挂在下面的 parser（`rawinput` 由本次输出回答），产出的值保存起来，不会再执行一次句柄。普通 Context 的解析失败只留在这次注入里，不改变原链结果；值没有发布，之后读取按当前等待规则处理：仍可能发布则等待，已确定耗尽则报缺值。持续 Context 的输出复用走 Stream 失败协议，见[持续资产与 lifelong](#stream)。
-- **被驱动时**：`requests` 或 alternative 的选择读取进入 Context 的 `getT`，parser 的 `rawinput` 执行所挂句柄的入口，由此启动生产链。
-- **中间有一串 Pure 时**：挂接点是最上面的句柄，句柄的输出依次经过每个 Pure 再交给 parser。注入时 Pure 读到的是本次输出，不重新执行句柄；被驱动时 Pure 的 `rawinput` 执行句柄入口。Pure 的 `raise` 按解析失败处理：普通 Context 注入时留在注入里，显式驱动时向上传播，持续 Context 的输出复用走 Stream 失败协议。
+- **显式驱动与选择读取**：`requests` 启动 parser 后，`rawinput` 可以驱动所挂句柄。`alternative` 已经执行了共同 Excu，只让候选的判定 parser 重读同一份输出。仅挂在该 Excu 上的其他普通 parser 要由另一次合法生产驱动。
+- **中间有一串 Pure 时**：挂接点是最上面的句柄，句柄的输出依次经过每个 Pure 再交给 parser。注入时 Pure 读到的是本次输出，不重新执行句柄；显式 `requests` 可经 Pure 执行句柄入口，选择判定则经 Pure 变换已取得的输出。Pure 的 `raise` 按解析失败处理：普通 Context 注入时留在注入里，显式驱动时向上传播，持续 Context 的输出复用走 Stream 失败协议。
 
 所以 Crawler 先并行抓取，打印时直接 `require` 解析好的摘要，不再重新抓取。
 
@@ -1231,7 +1232,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | 一个 effect 的 demands 里有两个表示类型相同的资产 | 用不同的表示类型（角色类型）区分，或拆成两个 effect |
 | handler 读取了绑定它的某个 effect 没有声明的表示类型；或非挂接的 handler 使用 `rawinput` | 在该 effect 的 demands 里补上声明；`rawinput` 只给挂接的 parser 与 Pure |
 | Pure 写了 demands、`input` 是 Root 或 Stream、下面没有 Context 或 Pure，或被 Excu／Scoped／Stream／Error 当作 `input` | Pure 只在生产链中：值从上层句柄或 Pure 的 `rawinput` 来，交给下面的 Pure 或 Context |
-| `require` 没有写类型应用 | 写成 `require @表示类型` |
+| `require` 或 `stream` 没有写类型应用 | 写成 `require @表示类型` 或 `stream @表示类型` |
 | 同一个 handler 的各个绑定推出不同的签名或 Layer | 对照诊断列出的 Haskell 结果类型与能力约束，只在绑定方式与读取一致处复用，否则拆成两个 handler |
 | effect 声明的 `requires`／`streams` 资产，绑定的 handler 既不读取，也不参与 alternative 选择／streams 交付 | 读取它，或删掉无用声明 |
 | handler 直接调用另一个 handler 的类方法 | 通过注册（`input`、`demands`）和 AST 组合 |
@@ -1269,7 +1270,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | --- | --- | --- |
 | [FileDemo](../demo/FileDemo) | 文件资源的开启、读写、自动关闭，Error 处置；按文件状态用 `alternative` 选择写首行或追加 | `cabal run file-demo` |
 | [Crawler](../demo/Crawler) | 并行抓取、挂接的 Context 解析，顺序打印时读取解析结果；两条链共用抓取、解析与打印 handler，用不同资产区分同类数据 | `cabal run crawler-demo` |
-| [OpenFilesDemo](../demo/OpenFilesDemo) | 一个资源持有多个文件；检查快照挂在释放链下，链结束后自动关闭与重开 | `cabal run open-files-demo` |
+| [OpenFilesDemo](../demo/OpenFilesDemo) | 一份资产保存多个文件路径；批量获取失败时回滚标记，成功后由 scope 自动清理 | `cabal run open-files-demo` |
 | [ScopeInstancesDemo](../demo/ScopeInstancesDemo) | 三条使用闭包共用一个 handler，按当前参数各自开启实例，退出时关闭，后一条重新开启 | `cabal run scope-instances-demo` |
 | [ScopeReuseDemo](../demo/ScopeReuseDemo) | 并行的链共享同一个资源实例 | `cabal run scope-reuse-demo` |
 | [StreamDemo](../demo/StreamDemo) | 持续读数与心跳（各为 Stream＋parser）、lifelong 的两个独立单元；会话跨步骤保持传感器连接 | `cabal run stream-demo`（持续运行，Ctrl-C 结束） |
