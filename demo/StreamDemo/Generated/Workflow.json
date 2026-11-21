@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "namespace": "StreamDemo",
+  "sources": [
+    {"file": "demo/StreamDemo/AST.hs", "md5": "665c3a883353bbffbd29a6bf6ad424dd"},
+    {"file": "demo/StreamDemo/Workflow/Monitor.hs", "md5": "d4e9cbe16a016c5606040cb0258f6d0a"},
+    {"file": "demo/StreamDemo/Workflow/Setup.hs", "md5": "c523eca1274e9095d95e4859a6cd75b7"},
+    {"file": "demo/StreamDemo/Hanging.hs", "md5": null}
+  ],
+  "source": {
+    "path": [],
+    "kind": "chain",
+    "names": ["StreamDemo.AST.ast"],
+    "range": {"file": "demo/StreamDemo/AST.hs", "start": [9, 7], "end": [9, 29]},
+    "readable": true,
+    "children": [
+      {
+        "path": [0],
+        "kind": "chain",
+        "names": ["StreamDemo.Workflow.Setup.setup"],
+        "range": {"file": "demo/StreamDemo/Workflow/Setup.hs", "start": [7, 9], "end": [7, 32]},
+        "readable": true,
+        "children": [
+          {
+            "path": [0, 0],
+            "kind": "node",
+            "effect": "Announce",
+            "names": [],
+            "range": {"file": "demo/StreamDemo/Workflow/Setup.hs", "start": [7, 16], "end": [7, 31]},
+            "readable": true,
+            "children": []
+          }
+        ]
+      },
+      {
+        "path": [1],
+        "kind": "lifelong",
+        "names": ["StreamDemo.Workflow.Monitor.monitor"],
+        "range": {"file": "demo/StreamDemo/Workflow/Monitor.hs", "start": [9, 11], "end": [12, 4]},
+        "readable": true,
+        "children": [
+          {
+            "path": [1, 0],
+            "kind": "chain",
+            "names": [],
+            "range": {"file": "demo/StreamDemo/Workflow/Monitor.hs", "start": [10, 5], "end": [10, 54]},
+            "readable": true,
+            "children": [
+              {
+                "path": [1, 0, 0],
+                "kind": "node",
+                "effect": "ShowTemperature",
+                "names": [],
+                "range": {"file": "demo/StreamDemo/Workflow/Monitor.hs", "start": [10, 12], "end": [10, 34]},
+                "readable": true,
+                "children": []
+              },
+              {
+                "path": [1, 0, 1],
+                "kind": "node",
+                "effect": "CheckTrend",
+                "names": [],
+                "range": {"file": "demo/StreamDemo/Workflow/Monitor.hs", "start": [10, 36], "end": [10, 53]},
+                "readable": true,
+                "children": []
+              }
+            ]
+          },
+          {
+            "path": [1, 1],
+            "kind": "chain",
+            "names": [],
+            "range": {"file": "demo/StreamDemo/Workflow/Monitor.hs", "start": [11, 5], "end": [11, 35]},
+            "readable": true,
+            "children": [
+              {
+                "path": [1, 1, 0],
+                "kind": "node",
+                "effect": "ReportHeartbeat",
+                "names": [],
+                "range": {"file": "demo/StreamDemo/Workflow/Monitor.hs", "start": [11, 12], "end": [11, 34]},
+                "readable": true,
+                "children": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "workflow": {
+    "path": [],
+    "kind": "chain",
+    "sourcePaths": [[]],
+    "children": [
+      {"path": [0], "kind": "node", "effect": "Announce", "sourcePaths": [[0], [0, 0]], "children": []},
+      {
+        "path": [1],
+        "kind": "lifelong",
+        "sourcePaths": [[1]],
+        "children": [
+          {
+            "path": [1, 0],
+            "kind": "chain",
+            "sourcePaths": [[1, 0]],
+            "children": [
+              {"path": [1, 0, 0], "kind": "node", "effect": "ShowTemperature", "sourcePaths": [[1, 0, 0]], "children": []},
+              {"path": [1, 0, 1], "kind": "node", "effect": "CheckTrend", "sourcePaths": [[1, 0, 1]], "children": []}
+            ]
+          },
+          {"path": [1, 1], "kind": "node", "effect": "ReportHeartbeat", "sourcePaths": [[1, 1], [1, 1, 0]], "children": []}
+        ]
+      }
+    ]
+  },
+  "hanging": [],
+  "diagnostics": []
+}

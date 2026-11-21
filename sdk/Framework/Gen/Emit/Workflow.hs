@@ -1,4 +1,5 @@
--- `effect-codegen ast` 的输出：业务树的原样结构及其源码位置、规范形式、Hanging 挂载与结构诊断，编码为 JSON。
+-- `effect-codegen ast` 的输出与 Generated/Workflow.json 的内容：业务树的原样结构及其源码位置、规范形式、
+-- Hanging 挂载、结构诊断，以及这些结论所依据的源码文件指纹，编码为 JSON。
 -- 结构事实都来自 Gen.Workflow 与 Language.AST 的规范化；这里只组织字段。
 module Framework.Gen.Emit.Workflow (renderWorkflowReport) where
 
@@ -10,10 +11,14 @@ import Framework.Recursion (Fix(..))
 import Numeric (showHex)
 
 -- rows 是 Hanging 各行求值得到的 hook 与目标数，targets 是前端从源码给出的目标名与源码位置。
-renderWorkflowReport :: String -> Fix WorkflowF -> [([String], Int)] -> [[(String, [[Int]])]] -> [SourceSite] -> String
-renderWorkflowReport namespace tree rows targets sites = encode $ JObject
+-- sources 是已加载的 AST、Workflow、Hanging 文件与其字节的 MD5（十六进制）；不存在的 Hanging 为 null。
+-- 读取方重新计算这些文件的 MD5，全部一致时这份结果仍对应当前源码，无需再运行 SDK。
+renderWorkflowReport :: String -> Fix WorkflowF -> [([String], Int)] -> [[(String, [[Int]])]] -> [SourceSite]
+                     -> [(FilePath, Maybe String)] -> String
+renderWorkflowReport namespace tree rows targets sites sources = encode $ JObject
   [ ("schemaVersion", JNumber 1)
   , ("namespace", JText namespace)
+  , ("sources", JArray [JObject [("file", JText file), ("md5", maybe JNull JText digest)] | (file, digest) <- sources])
   , ("source", source [] tree)
   , ("workflow", normal [] normalized)
   , ("hanging", JArray [mount hooks row | ((hooks, _), row) <- zip rows targets])
@@ -64,16 +69,29 @@ renderWorkflowReport namespace tree rows targets sites = encode $ JObject
 
 data Json = JNull | JBool Bool | JNumber Int | JText String | JArray [Json] | JObject [(String, Json)]
 
+-- 带缩进输出，生成区里的文件因此可以按行比较。只含标量与标量数组的小结构（路径、范围）写在一行。
 -- 非 ASCII 字符按 UTF-8 原样输出；控制字符与孤立代理用四位十六进制转义。
 encode :: Json -> String
-encode value = case value of
-  JNull -> "null"
-  JBool flag -> if flag then "true" else "false"
-  JNumber number -> show number
-  JText text -> quote text
-  JArray items -> "[" ++ intercalate "," (map encode items) ++ "]"
-  JObject fields -> "{" ++ intercalate "," [quote key ++ ":" ++ encode item | (key, item) <- fields] ++ "}"
+encode = render 0
   where
+    render depth value = case value of
+      JNull -> "null"
+      JBool flag -> if flag then "true" else "false"
+      JNumber number -> show number
+      JText text -> quote text
+      JArray items
+        | all flat items -> "[" ++ intercalate ", " (map (render depth) items) ++ "]"
+        | otherwise -> "[\n" ++ intercalate ",\n" [pad (depth + 1) ++ render (depth + 1) item | item <- items]
+            ++ "\n" ++ pad depth ++ "]"
+      JObject fields
+        | all (flat . snd) fields -> "{" ++ intercalate ", " [quote key ++ ": " ++ render depth item | (key, item) <- fields] ++ "}"
+        | otherwise -> "{\n" ++ intercalate ",\n" [pad (depth + 1) ++ quote key ++ ": " ++ render (depth + 1) item | (key, item) <- fields]
+            ++ "\n" ++ pad depth ++ "}"
+    flat item = case item of
+      JArray items -> all flat items
+      JObject _ -> False
+      _ -> True
+    pad depth = replicate (2 * depth) ' '
     quote text = "\"" ++ concatMap escape text ++ "\""
     escape '"' = "\\\""
     escape '\\' = "\\\\"

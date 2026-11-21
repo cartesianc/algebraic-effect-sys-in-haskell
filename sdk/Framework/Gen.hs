@@ -13,7 +13,7 @@ import Framework.Gen.Emit.Program (renderProgram)
 import Framework.Gen.Emit.Prototype (renderPrototype, renderPrototypeModule)
 import Framework.Gen.Emit.Workflow (renderWorkflowReport)
 import Framework.Gen.Names (handlerClass, nameHandlers)
-import Framework.Gen.Frontend.Hanging (loadHanging, loadOutline)
+import Framework.Gen.Frontend.Hanging (Outline(..), loadOutline)
 import Framework.Gen.Frontend.Shape (shapeHandlers)
 import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, loadWorkflowTree, namespaceDirectory, handlerText, handlerScopeNames)
 import Data.List (nub)
@@ -30,8 +30,8 @@ compileWorkflow namespace = do
   let generated = namespaceDirectory namespace </> "Generated"
       cachePath = generated </> ".scope-cache"
   -- 同一组合机器在声明进程中走到接口检查点；首次无 Handlers 也能生成同步契约。
-  (hasHanging, targets, hangingSources) <- loadHanging namespace
-  interface <- loadComposition namespace hasHanging targets
+  outline <- loadOutline namespace
+  (interface, tree, rows) <- loadComposition namespace (outlineHasHanging outline) (outlineTargets outline)
   let contracts = renderEffects interface
       handlersInScope = [(handlerClass handler', handler') | handler' <- unitHandlers interface]
   source <- loadHandlers namespace contracts
@@ -53,7 +53,9 @@ compileWorkflow namespace = do
       names = nameHandlers (maybe mempty handlerScopeNames source) (allMethods unit ++ historyEntries unit)
   handlers <- either (ioError . userError) pure (renderHandlers names unit source)
   -- 输出只读取机器完成态的接口事实。
-  let program = renderProgram names hangingSources unit
+  let program = renderProgram names (outlineChecks outline) unit
+      workflow = renderWorkflowReport namespace tree rows (outlineTargets outline) (outlineSites outline)
+        (outlineSources outline)
       prototypeModule = renderPrototypeModule namespace structure
   _ <- evaluate (length structure)
   -- 类型检查、顶层白名单与资产目录；通过后才更新生成区，未变文件保留时间戳
@@ -68,20 +70,22 @@ compileWorkflow namespace = do
     , writeIfChanged (generated </> "Program.hs") program
     , writeIfChanged (generated </> "Handlers.hs") handlers
     , writeIfChanged (generated </> "Assets.hs") (renderAssets namespace assets)
+    , writeIfChanged (generated </> "Workflow.json") (workflow ++ "\n")
     ]
   _ <- writeIfChanged cachePath (show (cacheKey, prototype, structure))
   putStrLn ("Generated " ++ generated ++ " (" ++ show (length (filter id changed))
     ++ " files updated; structure " ++ (if reused then "reused" else "rebuilt") ++ ")")
 
 -- AST 的独立分析：只加载 AST、Workflow 与可选的 Hanging，不读注册与 handler，不写生成区。
--- 输出原样结构及其源码位置、规范形式与 NodeId、Hanging 挂载和结构诊断（JSON）。
--- 结构诊断不影响退出码；不能加载这些模块时照常以 GHC 诊断失败。
+-- 输出与完整生成写入的 Generated/Workflow.json 格式相同：原样结构及其源码位置、规范形式与 NodeId、
+-- Hanging 挂载、结构诊断和源码文件指纹。结构诊断不影响退出码；不能加载这些模块时照常以 GHC 诊断失败。
 inspectWorkflow :: String -> IO ()
 inspectWorkflow namespace = do
-  (hasHanging, targets, sites) <- loadOutline namespace
-  (tree, rows) <- loadWorkflowTree namespace hasHanging
+  outline <- loadOutline namespace
+  (tree, rows) <- loadWorkflowTree namespace (outlineHasHanging outline)
   hSetEncoding stdout utf8
-  putStrLn (renderWorkflowReport namespace tree rows targets sites)
+  putStrLn (renderWorkflowReport namespace tree rows (outlineTargets outline) (outlineSites outline)
+    (outlineSources outline))
 
 -- 构图缓存连同算法及渲染器源码精确比较，避免 SDK 改动后复用旧结构；声明与 Handlers 快照仍每次读取。
 structureSources :: [FilePath]

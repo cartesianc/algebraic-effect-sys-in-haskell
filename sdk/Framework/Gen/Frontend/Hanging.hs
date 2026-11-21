@@ -1,6 +1,6 @@
 -- GHC names identify branches before evaluating AST.ast erases their binding identity.
 -- The same module load gives Hanging its target positions and the AST command its source outline.
-module Framework.Gen.Frontend.Hanging (loadHanging, loadOutline) where
+module Framework.Gen.Frontend.Hanging (Outline(..), loadOutline) where
 
 import Control.Exception (evaluate)
 import Control.Monad (forM, unless)
@@ -14,40 +14,38 @@ import Framework.Gen.Workflow (SourceRange(..), SourceSite(..))
 import GHC
 import GHC.Builtin.Names (dollarIdKey)
 import GHC.Data.FastString (unpackFS)
-import GHC.Parser.Annotation (getLocA)
 import GHC.Types.Unique (getUnique)
-import GHC.Fingerprint (fingerprintString)
+import GHC.Fingerprint (fingerprintString, getFileHash)
 import GHC.Hs
 import GHC.Types.Name (nameModule_maybe, nameOccName)
 import GHC.Types.Name.Occurrence (occNameString)
-import GHC.Types.SrcLoc (SrcSpan(..), srcSpanFile, srcSpanStartLine, srcSpanStartCol, srcSpanEndLine, srcSpanEndCol)
 import System.Directory (doesFileExist)
 import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, hSetNewlineMode, universalNewlineMode, utf8, withFile)
 
 type Targets = [[(String, [[Int]])]]
 type SourceChecks = [(FilePath, Maybe String)]
 
-loadHanging :: String -> IO (Bool, Targets, SourceChecks)
-loadHanging namespace = do
-  exists <- doesFileExist (hangingFile namespace)
-  if not exists then pure (False, [], [(hangingFile namespace, Nothing)]) else
-    withSourceTargets $ \_ -> do
-      (definitions, checks) <- loadWorkflowModules namespace True
-      root <- exported (astModule namespace) "ast"
-      targets <- hangingTargets namespace definitions root
-      pure (True, targets, checks)
+-- 一次加载 AST、Workflow 与可选的 Hanging 模块得到的源码事实；不需要注册或 handler。
+data Outline = Outline
+  { outlineHasHanging :: Bool
+  , outlineTargets :: Targets              -- Hanging 各行目标的限定名与全部源码位置
+  , outlineChecks :: SourceChecks          -- 生成的 Program 在运行前核对的 Hanging 输入指纹
+  , outlineSites :: [SourceSite]           -- 从 ast 出发能从源码读出的每个位置
+  , outlineSources :: [(FilePath, Maybe String)]  -- 每个已加载模块文件字节的 MD5；Hanging 不存在时为 Nothing
+  }
 
--- AST 的源码轮廓：从 ast 出发能从源码读出的每个位置，以及 Hanging 目标的源码位置。
--- 只加载 AST、Workflow 与可选的 Hanging 模块，不需要注册或 handler。
-loadOutline :: String -> IO (Bool, Targets, [SourceSite])
+loadOutline :: String -> IO Outline
 loadOutline namespace = do
   exists <- doesFileExist (hangingFile namespace)
   withSourceTargets $ \_ -> do
-    (definitions, _) <- loadWorkflowModules namespace exists
+    (definitions, checks) <- loadWorkflowModules namespace exists
     root <- exported (astModule namespace) "ast"
     targets <- if exists then hangingTargets namespace definitions root else pure []
     sites <- either abort pure (outline (Map.map layoutOf definitions) root)
-    pure (exists, targets, sites)
+    hashes <- liftIO (mapM (\(path, _) -> (,) path . Just . show <$> getFileHash path) checks)
+    let absent = [(hangingFile namespace, Nothing) | not exists]
+    -- 没有 Hanging 时 Program 只核对它仍不存在，与此前的生成结果一致。
+    pure (Outline exists targets (if exists then checks else absent) sites (hashes ++ absent))
 
 loadWorkflowModules :: String -> Bool -> Ghc (Map.Map Name (HsBind GhcRn), SourceChecks)
 loadWorkflowModules namespace withHanging = do

@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "namespace": "ScopeReuseDemo",
+  "sources": [
+    {"file": "demo/ScopeReuseDemo/AST.hs", "md5": "14478f28ba100485dbdbf2d4191fa212"},
+    {"file": "demo/ScopeReuseDemo/Workflow/PrepareProbe.hs", "md5": "054a04f8cf04ec2554448bf5213e3061"},
+    {"file": "demo/ScopeReuseDemo/Workflow/VerifyReuse.hs", "md5": "d55b3c30f86fa12b6edcba400f560c36"},
+    {"file": "demo/ScopeReuseDemo/Workflow/WriteInParallel.hs", "md5": "7d43ecf9102a9e874e9fd75b825d81a7"},
+    {"file": "demo/ScopeReuseDemo/Hanging.hs", "md5": null}
+  ],
+  "source": {
+    "path": [],
+    "kind": "chain",
+    "names": ["ScopeReuseDemo.AST.ast"],
+    "range": {"file": "demo/ScopeReuseDemo/AST.hs", "start": [11, 7], "end": [15, 4]},
+    "readable": true,
+    "children": [
+      {
+        "path": [0],
+        "kind": "chain",
+        "names": ["ScopeReuseDemo.Workflow.PrepareProbe.prepareProbe"],
+        "range": {"file": "demo/ScopeReuseDemo/Workflow/PrepareProbe.hs", "start": [6, 16], "end": [8, 4]},
+        "readable": true,
+        "children": [
+          {
+            "path": [0, 0],
+            "kind": "node",
+            "effect": "PrepareProbe",
+            "names": [],
+            "range": {"file": "demo/ScopeReuseDemo/Workflow/PrepareProbe.hs", "start": [7, 5], "end": [7, 24]},
+            "readable": true,
+            "children": []
+          }
+        ]
+      },
+      {
+        "path": [1],
+        "kind": "parallel",
+        "names": ["ScopeReuseDemo.Workflow.WriteInParallel.writeInParallel"],
+        "range": {"file": "demo/ScopeReuseDemo/Workflow/WriteInParallel.hs", "start": [6, 19], "end": [10, 4]},
+        "readable": true,
+        "children": [
+          {
+            "path": [1, 0],
+            "kind": "node",
+            "effect": "WriteFirst",
+            "names": [],
+            "range": {"file": "demo/ScopeReuseDemo/Workflow/WriteInParallel.hs", "start": [7, 5], "end": [7, 22]},
+            "readable": true,
+            "children": []
+          },
+          {
+            "path": [1, 1],
+            "kind": "node",
+            "effect": "WriteSecond",
+            "names": [],
+            "range": {"file": "demo/ScopeReuseDemo/Workflow/WriteInParallel.hs", "start": [8, 5], "end": [8, 23]},
+            "readable": true,
+            "children": []
+          },
+          {
+            "path": [1, 2],
+            "kind": "node",
+            "effect": "WriteThird",
+            "names": [],
+            "range": {"file": "demo/ScopeReuseDemo/Workflow/WriteInParallel.hs", "start": [9, 5], "end": [9, 22]},
+            "readable": true,
+            "children": []
+          }
+        ]
+      },
+      {
+        "path": [2],
+        "kind": "chain",
+        "names": ["ScopeReuseDemo.Workflow.VerifyReuse.verifyReuse"],
+        "range": {"file": "demo/ScopeReuseDemo/Workflow/VerifyReuse.hs", "start": [6, 15], "end": [8, 4]},
+        "readable": true,
+        "children": [
+          {
+            "path": [2, 0],
+            "kind": "node",
+            "effect": "VerifyReuse",
+            "names": [],
+            "range": {"file": "demo/ScopeReuseDemo/Workflow/VerifyReuse.hs", "start": [7, 5], "end": [7, 23]},
+            "readable": true,
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  "workflow": {
+    "path": [],
+    "kind": "chain",
+    "sourcePaths": [[]],
+    "children": [
+      {"path": [0], "kind": "node", "effect": "PrepareProbe", "sourcePaths": [[0], [0, 0]], "children": []},
+      {
+        "path": [1],
+        "kind": "parallel",
+        "sourcePaths": [[1]],
+        "children": [
+          {"path": [1, 0], "kind": "node", "effect": "WriteFirst", "sourcePaths": [[1, 0]], "children": []},
+          {"path": [1, 1], "kind": "node", "effect": "WriteSecond", "sourcePaths": [[1, 1]], "children": []},
+          {"path": [1, 2], "kind": "node", "effect": "WriteThird", "sourcePaths": [[1, 2]], "children": []}
+        ]
+      },
+      {"path": [2], "kind": "node", "effect": "VerifyReuse", "sourcePaths": [[2], [2, 0]], "children": []}
+    ]
+  },
+  "hanging": [],
+  "diagnostics": []
+}

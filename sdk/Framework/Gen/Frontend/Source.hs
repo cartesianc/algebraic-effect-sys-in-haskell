@@ -42,29 +42,36 @@ import Text.Read (readMaybe)
 
 -- effects 与 ast 是 Haskell 值，只有加载业务模块才能求值：在独立的 ghci 进程里调用
 -- Framework.Gen.Composition.beginComposition，打印接口检查点再读回。
-loadComposition :: String -> Bool -> [[(String, [[Int]])]] -> IO Unit
+-- 同一次求值也打印原样业务树与 Hanging 各行，供 Generated/Workflow.json 使用。
+loadComposition :: String -> Bool -> [[(String, [[Int]])]] -> IO (Unit, Fix WorkflowF, [([String], Int)])
 loadComposition namespace hasHanging targets = do
   let directory = namespaceDirectory namespace
-      expression = "print (Framework.Gen.Composition.beginComposition " ++ show namespace ++ " " ++ namespace ++ ".Effects.effects"
-        ++ " (Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast) " ++ mounts ++ " " ++ show targets ++ ")"
+      tree = "(Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast)"
+      expression = "print (" ++ tree ++ ", " ++ hangingRowsOf namespace hasHanging
+        ++ ", Framework.Gen.Composition.beginComposition " ++ show namespace ++ " " ++ namespace ++ ".Effects.effects "
+        ++ tree ++ " " ++ mounts ++ " " ++ show targets ++ ")"
       mounts = if hasHanging then namespace ++ ".Hanging.hangingTree" else "(Framework.Language.AST.hanging [])"
   output <- printedByGhci
     (["sdk/Framework/Gen/Composition.hs", directory </> "Effects.hs", directory </> "AST.hs"]
       ++ [directory </> "Hanging.hs" | hasHanging]) expression
-  case readMaybe output of
+  case readMaybe output :: Maybe (Fix WorkflowF, [([String], Int)], Either String Unit) of
     Nothing -> die "Cannot read the SDK generation plan"
-    Just (Left problem) -> die problem
-    Just (Right plan) -> pure plan
+    Just (_, _, Left problem) -> die problem
+    Just (source, rows, Right plan) -> pure (plan, source, rows)
 
 -- 只求值业务树和 Hanging 各行的 hook 与目标数，不加载注册与 handler；树是业务写下的原样结构。
 loadWorkflowTree :: String -> Bool -> IO (Fix WorkflowF, [([String], Int)])
 loadWorkflowTree namespace hasHanging = do
   let directory = namespaceDirectory namespace
-      rows = if hasHanging then "Framework.Language.AST.hangingRows " ++ namespace ++ ".Hanging.hangingTree"
-        else "([] :: [([String], Int)])"
-      expression = "print (Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast, " ++ rows ++ ")"
+      expression = "print (Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast, "
+        ++ hangingRowsOf namespace hasHanging ++ ")"
   output <- printedByGhci ([directory </> "AST.hs"] ++ [directory </> "Hanging.hs" | hasHanging]) expression
   maybe (die "Cannot read the workflow tree") pure (readMaybe output)
+
+hangingRowsOf :: String -> Bool -> String
+hangingRowsOf namespace hasHanging
+  | hasHanging = "Framework.Language.AST.hangingRows " ++ namespace ++ ".Hanging.hangingTree"
+  | otherwise = "([] :: [([String], Int)])"
 
 -- 在独立的 ghci 进程里加载业务模块并打印一个表达式。
 -- GHC 的诊断直接写到本进程的 stderr，不经管道读回：GHC 按自己的区域编码输出，

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "namespace": "FileDemo",
+  "sources": [
+    {"file": "demo/FileDemo/AST.hs", "md5": "f65034bc89afd9dad85b7d988ac2712f"},
+    {"file": "demo/FileDemo/Workflow/OperateFile.hs", "md5": "fb01251b550b6b23550e15dec87cdaf5"},
+    {"file": "demo/FileDemo/Hanging.hs", "md5": null}
+  ],
+  "source": {
+    "path": [],
+    "kind": "alternative",
+    "names": ["FileDemo.AST.ast", "FileDemo.Workflow.OperateFile.operateFile"],
+    "range": {"file": "demo/FileDemo/Workflow/OperateFile.hs", "start": [8, 15], "end": [11, 4]},
+    "readable": true,
+    "children": [
+      {
+        "path": [0],
+        "kind": "node",
+        "effect": "WriteFirstLine",
+        "names": [],
+        "range": {"file": "demo/FileDemo/Workflow/OperateFile.hs", "start": [9, 5], "end": [9, 26]},
+        "readable": true,
+        "children": []
+      },
+      {
+        "path": [1],
+        "kind": "node",
+        "effect": "AppendLine",
+        "names": [],
+        "range": {"file": "demo/FileDemo/Workflow/OperateFile.hs", "start": [10, 5], "end": [10, 22]},
+        "readable": true,
+        "children": []
+      }
+    ]
+  },
+  "workflow": {
+    "path": [],
+    "kind": "alternative",
+    "sourcePaths": [[]],
+    "children": [
+      {"path": [0], "kind": "node", "effect": "WriteFirstLine", "sourcePaths": [[0]], "children": []},
+      {"path": [1], "kind": "node", "effect": "AppendLine", "sourcePaths": [[1]], "children": []}
+    ]
+  },
+  "hanging": [],
+  "diagnostics": []
+}

@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "namespace": "OpenFilesDemo",
+  "sources": [
+    {"file": "demo/OpenFilesDemo/AST.hs", "md5": "81c04ee32e9f094f91644c38fe5a5bfd"},
+    {"file": "demo/OpenFilesDemo/Workflow/FinishInspection.hs", "md5": "8c4a91cc0a21f99cc8a24fee18bab4d5"},
+    {"file": "demo/OpenFilesDemo/Workflow/HoldAndInspectFiles.hs", "md5": "5fb8dacfe1614f07684ee028f371ab42"},
+    {"file": "demo/OpenFilesDemo/Hanging.hs", "md5": null}
+  ],
+  "source": {
+    "path": [],
+    "kind": "chain",
+    "names": ["OpenFilesDemo.AST.ast"],
+    "range": {"file": "demo/OpenFilesDemo/AST.hs", "start": [10, 7], "end": [13, 4]},
+    "readable": true,
+    "children": [
+      {
+        "path": [0],
+        "kind": "chain",
+        "names": ["OpenFilesDemo.Workflow.HoldAndInspectFiles.holdAndInspectFiles"],
+        "range": {"file": "demo/OpenFilesDemo/Workflow/HoldAndInspectFiles.hs", "start": [7, 23], "end": [10, 4]},
+        "readable": true,
+        "children": [
+          {
+            "path": [0, 0],
+            "kind": "node",
+            "effect": "HoldFiles",
+            "names": [],
+            "range": {"file": "demo/OpenFilesDemo/Workflow/HoldAndInspectFiles.hs", "start": [8, 5], "end": [8, 21]},
+            "readable": true,
+            "children": []
+          },
+          {
+            "path": [0, 1],
+            "kind": "node",
+            "effect": "InspectFiles",
+            "names": [],
+            "range": {"file": "demo/OpenFilesDemo/Workflow/HoldAndInspectFiles.hs", "start": [9, 5], "end": [9, 24]},
+            "readable": true,
+            "children": []
+          }
+        ]
+      },
+      {
+        "path": [1],
+        "kind": "chain",
+        "names": ["OpenFilesDemo.Workflow.FinishInspection.finishInspection"],
+        "range": {"file": "demo/OpenFilesDemo/Workflow/FinishInspection.hs", "start": [7, 20], "end": [10, 4]},
+        "readable": true,
+        "children": [
+          {
+            "path": [1, 0],
+            "kind": "node",
+            "effect": "ReleaseFiles",
+            "names": [],
+            "range": {"file": "demo/OpenFilesDemo/Workflow/FinishInspection.hs", "start": [8, 5], "end": [8, 24]},
+            "readable": true,
+            "children": []
+          },
+          {
+            "path": [1, 1],
+            "kind": "node",
+            "effect": "FinishInspection",
+            "names": [],
+            "range": {"file": "demo/OpenFilesDemo/Workflow/FinishInspection.hs", "start": [9, 5], "end": [9, 28]},
+            "readable": true,
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  "workflow": {
+    "path": [],
+    "kind": "chain",
+    "sourcePaths": [[]],
+    "children": [
+      {"path": [0], "kind": "node", "effect": "HoldFiles", "sourcePaths": [[0, 0]], "children": []},
+      {"path": [1], "kind": "node", "effect": "InspectFiles", "sourcePaths": [[0, 1]], "children": []},
+      {"path": [2], "kind": "node", "effect": "ReleaseFiles", "sourcePaths": [[1, 0]], "children": []},
+      {"path": [3], "kind": "node", "effect": "FinishInspection", "sourcePaths": [[1, 1]], "children": []}
+    ]
+  },
+  "hanging": [],
+  "diagnostics": []
+}

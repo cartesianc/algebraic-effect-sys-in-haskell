@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "namespace": "Crawler",
+  "sources": [
+    {"file": "demo/Crawler/AST.hs", "md5": "6736d2e6f20f9c01dfae65adb42c9e52"},
+    {"file": "demo/Crawler/Workflow/ParsePages.hs", "md5": "fc92d34a995ead0e8f17890f0a6cc811"},
+    {"file": "demo/Crawler/Workflow/PrintPages.hs", "md5": "50877db0c2d6996fe4eba076cc7cf4f8"},
+    {"file": "demo/Crawler/Hanging.hs", "md5": null}
+  ],
+  "source": {
+    "path": [],
+    "kind": "chain",
+    "names": ["Crawler.AST.ast"],
+    "range": {"file": "demo/Crawler/AST.hs", "start": [11, 7], "end": [14, 4]},
+    "readable": true,
+    "children": [
+      {
+        "path": [0],
+        "kind": "parallel",
+        "names": ["Crawler.Workflow.ParsePages.parsePages"],
+        "range": {"file": "demo/Crawler/Workflow/ParsePages.hs", "start": [8, 14], "end": [11, 4]},
+        "readable": true,
+        "children": [
+          {
+            "path": [0, 0],
+            "kind": "node",
+            "effect": "FetchPage",
+            "names": [],
+            "range": {"file": "demo/Crawler/Workflow/ParsePages.hs", "start": [9, 5], "end": [9, 21]},
+            "readable": true,
+            "children": []
+          },
+          {
+            "path": [0, 1],
+            "kind": "node",
+            "effect": "FetchLinkedPage",
+            "names": [],
+            "range": {"file": "demo/Crawler/Workflow/ParsePages.hs", "start": [10, 5], "end": [10, 27]},
+            "readable": true,
+            "children": []
+          }
+        ]
+      },
+      {
+        "path": [1],
+        "kind": "chain",
+        "names": ["Crawler.Workflow.PrintPages.printPages"],
+        "range": {"file": "demo/Crawler/Workflow/PrintPages.hs", "start": [7, 14], "end": [10, 4]},
+        "readable": true,
+        "children": [
+          {
+            "path": [1, 0],
+            "kind": "node",
+            "effect": "PrintPage",
+            "names": [],
+            "range": {"file": "demo/Crawler/Workflow/PrintPages.hs", "start": [8, 5], "end": [8, 21]},
+            "readable": true,
+            "children": []
+          },
+          {
+            "path": [1, 1],
+            "kind": "node",
+            "effect": "PrintLinkedPage",
+            "names": [],
+            "range": {"file": "demo/Crawler/Workflow/PrintPages.hs", "start": [9, 5], "end": [9, 27]},
+            "readable": true,
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  "workflow": {
+    "path": [],
+    "kind": "chain",
+    "sourcePaths": [[]],
+    "children": [
+      {
+        "path": [0],
+        "kind": "parallel",
+        "sourcePaths": [[0]],
+        "children": [
+          {"path": [0, 0], "kind": "node", "effect": "FetchPage", "sourcePaths": [[0, 0]], "children": []},
+          {"path": [0, 1], "kind": "node", "effect": "FetchLinkedPage", "sourcePaths": [[0, 1]], "children": []}
+        ]
+      },
+      {"path": [1], "kind": "node", "effect": "PrintPage", "sourcePaths": [[1, 0]], "children": []},
+      {"path": [2], "kind": "node", "effect": "PrintLinkedPage", "sourcePaths": [[1, 1]], "children": []}
+    ]
+  },
+  "hanging": [],
+  "diagnostics": []
+}

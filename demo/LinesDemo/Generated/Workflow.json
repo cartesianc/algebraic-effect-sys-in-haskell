@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "namespace": "LinesDemo",
+  "sources": [
+    {"file": "demo/LinesDemo/AST.hs", "md5": "289ad04ca056cf2a7f6de53c3ddfd050"},
+    {"file": "demo/LinesDemo/Hanging.hs", "md5": "f022f17d22969f2a2e800eaa6a62c606"}
+  ],
+  "source": {
+    "path": [],
+    "kind": "chain",
+    "names": ["LinesDemo.AST.ast"],
+    "range": {"file": "demo/LinesDemo/AST.hs", "start": [8, 7], "end": [12, 4]},
+    "readable": true,
+    "children": [
+      {
+        "path": [0],
+        "kind": "chain",
+        "names": [],
+        "range": {"file": "demo/LinesDemo/AST.hs", "start": [9, 5], "end": [9, 28]},
+        "readable": true,
+        "children": [
+          {
+            "path": [0, 0],
+            "kind": "node",
+            "effect": "Announce",
+            "names": [],
+            "range": {"file": "demo/LinesDemo/AST.hs", "start": [9, 12], "end": [9, 27]},
+            "readable": true,
+            "children": []
+          }
+        ]
+      },
+      {
+        "path": [1],
+        "kind": "lifelong",
+        "names": ["LinesDemo.AST.monitorLines"],
+        "range": {"file": "demo/LinesDemo/AST.hs", "start": [15, 16], "end": [18, 4]},
+        "readable": true,
+        "children": [
+          {
+            "path": [1, 0],
+            "kind": "chain",
+            "names": [],
+            "range": {"file": "demo/LinesDemo/AST.hs", "start": [16, 5], "end": [16, 49]},
+            "readable": true,
+            "children": [
+              {
+                "path": [1, 0, 0],
+                "kind": "node",
+                "effect": "PrintLine",
+                "names": [],
+                "range": {"file": "demo/LinesDemo/AST.hs", "start": [16, 12], "end": [16, 28]},
+                "readable": true,
+                "children": []
+              },
+              {
+                "path": [1, 0, 1],
+                "kind": "node",
+                "effect": "TextCounter",
+                "names": [],
+                "range": {"file": "demo/LinesDemo/AST.hs", "start": [16, 30], "end": [16, 48]},
+                "readable": true,
+                "children": []
+              }
+            ]
+          },
+          {
+            "path": [1, 1],
+            "kind": "chain",
+            "names": [],
+            "range": {"file": "demo/LinesDemo/AST.hs", "start": [17, 5], "end": [17, 29]},
+            "readable": true,
+            "children": [
+              {
+                "path": [1, 1, 0],
+                "kind": "node",
+                "effect": "ShowTotal",
+                "names": [],
+                "range": {"file": "demo/LinesDemo/AST.hs", "start": [17, 12], "end": [17, 28]},
+                "readable": true,
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "path": [2],
+        "kind": "chain",
+        "names": [],
+        "range": {"file": "demo/LinesDemo/AST.hs", "start": [11, 5], "end": [11, 26]},
+        "readable": true,
+        "children": [
+          {
+            "path": [2, 0],
+            "kind": "node",
+            "effect": "Report",
+            "names": [],
+            "range": {"file": "demo/LinesDemo/AST.hs", "start": [11, 12], "end": [11, 25]},
+            "readable": true,
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  "workflow": {
+    "path": [],
+    "kind": "chain",
+    "sourcePaths": [[]],
+    "children": [
+      {"path": [0], "kind": "node", "effect": "Announce", "sourcePaths": [[0], [0, 0]], "children": []},
+      {
+        "path": [1],
+        "kind": "lifelong",
+        "sourcePaths": [[1]],
+        "children": [
+          {
+            "path": [1, 0],
+            "kind": "chain",
+            "sourcePaths": [[1, 0]],
+            "children": [
+              {"path": [1, 0, 0], "kind": "node", "effect": "PrintLine", "sourcePaths": [[1, 0, 0]], "children": []},
+              {"path": [1, 0, 1], "kind": "node", "effect": "TextCounter", "sourcePaths": [[1, 0, 1]], "children": []}
+            ]
+          },
+          {"path": [1, 1], "kind": "node", "effect": "ShowTotal", "sourcePaths": [[1, 1], [1, 1, 0]], "children": []}
+        ]
+      },
+      {"path": [2], "kind": "node", "effect": "Report", "sourcePaths": [[2], [2, 0]], "children": []}
+    ]
+  },
+  "hanging": [
+    {
+      "hooks": ["TraceLine"],
+      "targets": [
+        {"name": "LinesDemo.AST.monitorLines", "sourcePaths": [[1]], "paths": [[1]]}
+      ]
+    }
+  ],
+  "diagnostics": []
+}
