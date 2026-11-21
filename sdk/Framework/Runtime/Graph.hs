@@ -23,7 +23,6 @@ import qualified Data.Map.Strict as Map
 import Data.List (nub)
 import Data.Maybe (fromMaybe, isJust)
 import Framework.Runtime.Protocol (ContextFault(..))
-import Framework.Prototype.Graph (MethodRole(..))
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame
 import Framework.Runtime.Binding (Binding(..), readBindingOwner)

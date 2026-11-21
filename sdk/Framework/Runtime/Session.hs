@@ -15,7 +15,7 @@ module Framework.Runtime.Session
 import Control.Concurrent (ThreadId, killThread)
 import Control.Concurrent.MVar
   (MVar, newEmptyMVar, newMVar, modifyMVar, modifyMVar_, putMVar, readMVar, takeMVar, tryPutMVar, tryReadMVar)
-import Control.Exception (Exception, SomeException, finally, mask, onException, uninterruptibleMask_)
+import Control.Exception (Exception, SomeException, mask, onException, uninterruptibleMask_)
 import Control.Monad (forM, void, when)
 import Data.Foldable (toList)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)

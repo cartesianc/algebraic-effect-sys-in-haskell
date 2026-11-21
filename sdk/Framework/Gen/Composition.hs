@@ -1389,19 +1389,15 @@ resolveSources checked connections definitions defaultReaders prototype = do
       pure [AssetExit True observed]
     inject :: AssetCall -> String -> [AssetExit] -> AssetAnalysis [AssetExit]
     inject call anchor exits = do
-      let anchored = [(outputProducer connection, outputParser connection, outputRole connection)
+      -- 只有持续 Context 挂在句柄输出上，且只在原型指定的发布位置沿用本次输出；解析失败沿会话失败协议传播。
+      let anchored = [(outputProducer connection, outputParser connection)
             | connection <- connections, outputAnchor connection == anchor
-            , outputRole connection == ContextRequest || outputRole connection == ContextStream
-                && reusedHere call (outputProducer connection)]
-          producing = [entry | entry@(_, _, role) <- anchored
-            , maybe True (`notElem` [owner | (owner, _, selected) <- anchored, selected == role]) (assetCaller call)]
+            , reusedHere call (outputProducer connection)]
+          producing = [entry | entry <- anchored
+            , maybe True (`notElem` map fst anchored) (assetCaller call)]
       successes (\state -> do
-        let injectOne (_, produced, role) before = do
-              results <- method (call { assetCaller = Nothing
-                , assetReplays = anchor : assetReplays call }) produced before
-              -- 普通注入保留原吞错协议；持续解析失败沿既有会话失败协议传播。
-              pure (if role == ContextStream then results
-                else nub [AssetExit True after | AssetExit _ after <- results])
+        let injectOne (_, produced) before = method (call { assetCaller = Nothing
+              , assetReplays = anchor : assetReplays call }) produced before
         sequential injectOne producing [AssetExit True state]) exits
     reusedHere call producer = or
       [ effectProduces effect == Just (sessionAsset session) && assetRoot call `elem` nodes

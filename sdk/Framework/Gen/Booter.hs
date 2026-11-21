@@ -256,12 +256,12 @@ assembleProgram plan = do
     -- 普通资产只经 requests 生产，句柄执行后不再注入挂在它下面的普通 Context；
     -- 只有持续 Context 仍挂在句柄输出上。同一 anchor 内按注册顺序。
     outputs =
-      [ OutputConnection anchorMethod parser (effectName producer) role
+      [ OutputConnection anchorMethod parser (effectName producer)
       | anchor <- effects, (anchorRole, anchorMethod) <- effectMethods anchor
       , anchorRole `elem` [HandlerMethod, ScopeOpen]
-      , role <- [ContextStream], producer <- effects
+      , producer <- effects
       , effectAnchor producer == Just (effectName anchor)
-      , Just parser <- [lookup role (effectMethods producer)] ]
+      , Just parser <- [lookup ContextStream (effectMethods producer)] ]
 
 
 -- 标注只能列出已注册的 Middleware；一处标注的 hook 是集合，不能为空或重复。
