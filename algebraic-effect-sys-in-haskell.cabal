@@ -179,6 +179,8 @@ executable effect-codegen
   other-modules:
       Framework.Gen
       Framework.Gen.Frontend.Source
+      Framework.Gen.Frontend.Effects
+      Framework.Gen.Console
       Framework.Gen.Frontend.Hanging
       Framework.Gen.Frontend.Ghc
       Framework.Gen.Composition

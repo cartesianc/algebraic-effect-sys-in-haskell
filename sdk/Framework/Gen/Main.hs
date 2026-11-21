@@ -3,10 +3,12 @@ module Framework.Gen.Main (main) where
 
 import Control.Exception (catch)
 import Data.Char (isAlphaNum, isUpper)
-import Framework.Gen (compileWorkflow, inspectWorkflow)
+import Framework.Gen (compileWorkflow, inspectConsole, inspectWorkflow)
+import Framework.Gen.Frontend.Effects (readEffect, readEffects, registrationSlot)
+import System.Directory (withCurrentDirectory)
 import System.Environment (getArgs, getExecutablePath, lookupEnv)
 import System.Exit (die, exitWith)
-import System.IO (hSetEncoding, stderr, utf8)
+import System.IO (hSetEncoding, stdin, stdout, stderr, utf8)
 import System.IO.Error (ioeGetErrorString, isUserError)
 import System.Process (rawSystem)
 
@@ -15,6 +17,19 @@ main = do
   -- 进程内 GHC 的诊断含非 ASCII 符号；固定为 UTF-8，避免按区域编码输出时诊断本身失败。
   hSetEncoding stderr utf8
   arguments <- getArgs
+  case arguments of
+    ["read-effect"] -> do
+      hSetEncoding stdin utf8
+      hSetEncoding stdout utf8
+      reportRejection readEffect
+    ["read-effects", namespace] | validNamespace namespace -> do
+      hSetEncoding stdout utf8
+      reportRejection (readEffects namespace)
+    ["registration-slot", namespace] | validNamespace namespace -> reportRejection (registrationSlot namespace)
+    _ -> workflow arguments
+
+workflow :: [String] -> IO ()
+workflow arguments = do
   -- GHC API 也需要 Cabal 的依赖可见性；复用项目 package environment，
   -- 不硬编码业务库白名单或本机 package-db 路径。
   packageEnvironment <- lookupEnv "GHC_ENVIRONMENT"
@@ -26,7 +41,11 @@ main = do
   case arguments of
     ["workflow", namespace] | validNamespace namespace -> reportRejection (compileWorkflow namespace)
     ["ast", namespace] | validNamespace namespace -> reportRejection (inspectWorkflow namespace)
-    _ -> die "Usage: effect-codegen workflow Namespace | effect-codegen ast Namespace"
+    ["console", namespace] | validNamespace namespace -> hSetEncoding stdout utf8 >> reportRejection (inspectConsole namespace)
+    ["console", namespace, "--source-root", root] | validNamespace namespace ->
+      hSetEncoding stdout utf8 >> withCurrentDirectory root (reportRejection (inspectConsole namespace))
+    _ -> die ("Usage: effect-codegen workflow Namespace | ast Namespace | console Namespace [--source-root DIR]"
+      ++ " | read-effect | read-effects Namespace | registration-slot Namespace")
 
 -- 生成器拒绝输入时以 userError 退出：只打印一行原因，GHC 诊断已在上方给出；其他异常照常抛出。
 reportRejection :: IO () -> IO ()

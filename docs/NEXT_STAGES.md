@@ -29,6 +29,10 @@
 <a id="code-shape"></a>
 ## LSP 从哪份代码开始
 
+网页添加注册时，`effect-codegen registration-slot Namespace` 从 GHC 解析树给出显式列表闭括号所在行（从 1 起）与行内字符偏移（从 0 起）。列表内已有的局部 helper 可保留。后端调用 `console Namespace --source-root DIR`，在本地项目的 Cabal 环境中分析候选副本。
+
+单条 Effect 注册的语法读取已落地。`effect-codegen read-effect` 从 UTF-8 标准输入解析 v1 表达式并输出 JSON。`effect-codegen read-effects Namespace` 按源码顺序读取已保存的注册，遇到 helper 构造的声明时从受信任模块求值并提供只读视图。`effect-codegen console Namespace` 在同一工作树完成组合分析，导出注册、直接方法引用、Handler 绑定及源码、有序 Workflow AST（规范形式，与 `ast` 的 `workflow` 相同），供可视化面板读取。三条命令都不会更新生成区。
+
 AST 的读取已可单独使用：`effect-codegen ast Namespace` 只加载 AST、Workflow 与 Hanging，输出原样结构及源码范围、规范形式与 NodeId、Hanging 挂载、结构诊断和源码文件的 MD5；完整生成把同样内容写入 `Generated/Workflow.json`，编辑器据 MD5 判断它是否仍对应当前源码，见[只分析 AST](GUIDE.md#ast-command)。
 
 LSP 面向开发者手写的 `Types.hs`、`Effects.hs`、`Handlers.hs`、`AST.hs` 和可选的 `Hanging.hs`。例如，定位一处 `require @T` 时，要结合当前 handler 的 effect 绑定和它声明的 demand；同一个 handler 可以被多个 effect 复用。Haskell 类型由 GHC 检查，资产来源和装配规则由 gen 确定。代码形态见[开发指南](GUIDE.md#code-shape)，已有的生成结果见[资产目录](ASSETS.md)与[静态图](EFFECT_GRAPH.md)。

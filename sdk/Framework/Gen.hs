@@ -1,11 +1,12 @@
 -- 编译器 IO 驱动：Source/Shape 提供结构，Composition 统一计算，Emit 渲染，Assets 类检。
 -- 流水线说明 v3（2026-11-17）：使用 Gen.Composition 的统一状态转换；本文件负责 IO。
-module Framework.Gen (compileWorkflow, inspectWorkflow) where
+module Framework.Gen (compileWorkflow, inspectConsole, inspectWorkflow) where
 
 import Control.Exception (evaluate)
 import Framework.Gen.Check.Assets (checkAssets)
 import Framework.Gen.Plan
 import Framework.Gen.Composition
+import Framework.Gen.Console (writeConsole)
 import Framework.Gen.Emit.Assets (renderAssets)
 import Framework.Gen.Emit.Effects (renderEffects)
 import Framework.Gen.Emit.Handlers (renderHandlers)
@@ -15,8 +16,10 @@ import Framework.Gen.Emit.Workflow (renderWorkflowReport)
 import Framework.Gen.Names (handlerClass, nameHandlers)
 import Framework.Gen.Frontend.Hanging (Outline(..), loadOutline)
 import Framework.Gen.Frontend.Shape (shapeHandlers)
-import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, loadWorkflowTree, namespaceDirectory, handlerText, handlerScopeNames)
+import Framework.Gen.Frontend.Source (HandlerSource, loadComposition, loadHandlers, loadWorkflowTree, namespaceDirectory, handlerText, handlerScopeNames)
 import Data.List (nub)
+import Framework.Language.AST (WorkflowF)
+import Framework.Recursion (Fix)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Exit (die)
 import System.FilePath ((</>))
@@ -29,14 +32,8 @@ compileWorkflow :: String -> IO ()
 compileWorkflow namespace = do
   let generated = namespaceDirectory namespace </> "Generated"
       cachePath = generated </> ".scope-cache"
-  -- 同一组合机器在声明进程中走到接口检查点；首次无 Handlers 也能生成同步契约。
-  outline <- loadOutline namespace
-  (interface, tree, rows) <- loadComposition namespace (outlineHasHanging outline) (outlineTargets outline)
-  let contracts = renderEffects interface
-      handlersInScope = [(handlerClass handler', handler') | handler' <- unitHandlers interface]
-  source <- loadHandlers namespace contracts
-  shapes <- either (ioError . userError) pure (traverse (shapeHandlers namespace handlersInScope) source)
-  pending <- either die pure (prepareComposition interface shapes)
+  (prepared, source, contracts) <- prepareNamespace namespace
+  let Prepared outline tree rows pending = prepared
   dependencies <- mapM readUtf8 structureSources
   let cacheKey = show (compositionKey pending, dependencies)
   cached <- tryIOError (readExisting cachePath)
@@ -75,6 +72,28 @@ compileWorkflow namespace = do
   _ <- writeIfChanged cachePath (show (cacheKey, prototype, structure))
   putStrLn ("Generated " ++ generated ++ " (" ++ show (length (filter id changed))
     ++ " files updated; structure " ++ (if reused then "reused" else "rebuilt") ++ ")")
+
+-- 生成与 console 共用的前半段：同一组合机器在声明进程中走到接口检查点，再读取 Handlers。
+-- 首次无 Handlers 也能生成同步契约。
+data Prepared = Prepared Outline (Fix WorkflowF) [([String], Int)] PendingComposition
+
+prepareNamespace :: String -> IO (Prepared, Maybe HandlerSource, String)
+prepareNamespace namespace = do
+  outline <- loadOutline namespace
+  (interface, tree, rows) <- loadComposition namespace (outlineHasHanging outline) (outlineTargets outline)
+  let contracts = renderEffects interface
+      handlersInScope = [(handlerClass handler', handler') | handler' <- unitHandlers interface]
+  source <- loadHandlers namespace contracts
+  shapes <- either (ioError . userError) pure (traverse (shapeHandlers namespace handlersInScope) source)
+  pending <- either die pure (prepareComposition interface shapes)
+  pure (Prepared outline tree rows pending, source, contracts)
+
+-- 在内存中完成组合并导出可视化面板所需的事实；不写生成区。
+inspectConsole :: String -> IO ()
+inspectConsole namespace = do
+  (Prepared _ _ _ pending, source, _) <- prepareNamespace namespace
+  result <- either die pure (completeComposition pending Nothing)
+  writeConsole result source
 
 -- AST 的独立分析：只加载 AST、Workflow 与可选的 Hanging，不读注册与 handler，不写生成区。
 -- 输出与完整生成写入的 Generated/Workflow.json 格式相同：原样结构及其源码位置、规范形式与 NodeId、
