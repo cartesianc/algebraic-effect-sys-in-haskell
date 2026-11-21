@@ -1,7 +1,7 @@
 -- 读取源程序（前端）：在声明加载进程中求值 effects 与 ast 并计算到接口检查点 Unit，
 -- 解析 Types.hs 的和类型；用本次生成的契约对 Handlers.hs 做无代码类型检查，取得 GHC 解析的名称。
 module Framework.Gen.Frontend.Source
-  ( HandlerSource(..), NameUses, nameAtUse, loadComposition, loadHandlers, namespaceDirectory, sourceOffset
+  ( HandlerSource(..), NameUses, nameAtUse, loadComposition, loadWorkflowTree, loadHandlers, namespaceDirectory, sourceOffset
   ) where
 
 import Control.Exception (evaluate)
@@ -12,6 +12,8 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Framework.Gen.Plan (Unit)
 import Framework.Gen.Frontend.Ghc (withSourceTargets)
+import Framework.Language.AST (WorkflowF)
+import Framework.Recursion (Fix)
 import GHC (GhcPs, GhcRn, LoadHowMuch(..), SuccessFlag(..), getModSummary, getModuleInfo, getSessionDynFlags,
             load, modInfoExports, ms_hspp_opts, ms_mod, parseModule, pm_parsed_source, runGhc, setTargets, tm_internals_,
             tm_renamed_source, typecheckModule)
@@ -46,25 +48,42 @@ loadComposition namespace hasHanging targets = do
       expression = "print (Framework.Gen.Composition.beginComposition " ++ show namespace ++ " " ++ namespace ++ ".Effects.effects"
         ++ " (Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast) " ++ mounts ++ " " ++ show targets ++ ")"
       mounts = if hasHanging then namespace ++ ".Hanging.hangingTree" else "(Framework.Language.AST.hanging [])"
-  -- GHC 的诊断直接写到本进程的 stderr，不经管道读回：GHC 按自己的区域编码输出，
-  -- 读回时的解码可能与之不一致（中文 Windows 上 chcp 65001 后即如此），会把诊断本身变成解码异常。
-  -- 只读回打印的结果，它经 show 转义，只含 ASCII。
+  output <- printedByGhci
+    (["sdk/Framework/Gen/Composition.hs", directory </> "Effects.hs", directory </> "AST.hs"]
+      ++ [directory </> "Hanging.hs" | hasHanging]) expression
+  case readMaybe output of
+    Nothing -> die "Cannot read the SDK generation plan"
+    Just (Left problem) -> die problem
+    Just (Right plan) -> pure plan
+
+-- 只求值业务树和 Hanging 各行的 hook 与目标数，不加载注册与 handler；树是业务写下的原样结构。
+loadWorkflowTree :: String -> Bool -> IO (Fix WorkflowF, [([String], Int)])
+loadWorkflowTree namespace hasHanging = do
+  let directory = namespaceDirectory namespace
+      rows = if hasHanging then "Framework.Language.AST.hangingRows " ++ namespace ++ ".Hanging.hangingTree"
+        else "([] :: [([String], Int)])"
+      expression = "print (Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast, " ++ rows ++ ")"
+  output <- printedByGhci ([directory </> "AST.hs"] ++ [directory </> "Hanging.hs" | hasHanging]) expression
+  maybe (die "Cannot read the workflow tree") pure (readMaybe output)
+
+-- 在独立的 ghci 进程里加载业务模块并打印一个表达式。
+-- GHC 的诊断直接写到本进程的 stderr，不经管道读回：GHC 按自己的区域编码输出，
+-- 读回时的解码可能与之不一致（中文 Windows 上 chcp 65001 后即如此），会把诊断本身变成解码异常。
+-- 只读回打印的结果，它经 show 转义，只含 ASCII。
+printedByGhci :: [FilePath] -> String -> IO String
+printedByGhci files expression = do
   let loader = (proc "ghci"
-        ([ "-ignore-dot-ghci", "-v0", "-XHaskell2010", "-idemo", "-isdk"
-        , "sdk/Framework/Gen/Composition.hs", directory </> "Effects.hs"
-        , directory </> "AST.hs"] ++ [directory </> "Hanging.hs" | hasHanging] ++ ["-e", expression])) { std_in = NoStream, std_out = CreatePipe, std_err = Inherit }
+        ([ "-ignore-dot-ghci", "-v0", "-XHaskell2010", "-idemo", "-isdk"] ++ files ++ ["-e", expression]))
+        { std_in = NoStream, std_out = CreatePipe, std_err = Inherit }
   (result, output) <- withCreateProcess loader $ \_ printed _ process -> case printed of
     Just handle -> do
       output <- hGetContents handle
       _ <- evaluate (length output)
       result <- waitForProcess process
       pure (result, output)
-    Nothing -> die "Cannot read the SDK generation plan"
+    Nothing -> die "Cannot read the ghci output"
   case result of
-    ExitSuccess -> case readMaybe output of
-      Nothing -> die "Cannot read the SDK generation plan"
-      Just (Left problem) -> die problem
-      Just (Right plan) -> pure plan
+    ExitSuccess -> pure output
     _ -> exitWith result
 
 -- 同一份源码的解析树保留业务写法，重命名树提供每处变量使用的定义身份。

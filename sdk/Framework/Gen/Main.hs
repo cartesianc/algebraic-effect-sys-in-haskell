@@ -3,7 +3,7 @@ module Framework.Gen.Main (main) where
 
 import Control.Exception (catch)
 import Data.Char (isAlphaNum, isUpper)
-import Framework.Gen (compileWorkflow)
+import Framework.Gen (compileWorkflow, inspectWorkflow)
 import System.Environment (getArgs, getExecutablePath, lookupEnv)
 import System.Exit (die, exitWith)
 import System.IO (hSetEncoding, stderr, utf8)
@@ -25,7 +25,8 @@ main = do
     Just _ -> pure ()
   case arguments of
     ["workflow", namespace] | validNamespace namespace -> reportRejection (compileWorkflow namespace)
-    _ -> die "Usage: effect-codegen workflow Namespace"
+    ["ast", namespace] | validNamespace namespace -> reportRejection (inspectWorkflow namespace)
+    _ -> die "Usage: effect-codegen workflow Namespace | effect-codegen ast Namespace"
 
 -- 生成器拒绝输入时以 userError 退出：只打印一行原因，GHC 诊断已在上方给出；其他异常照常抛出。
 reportRejection :: IO () -> IO ()

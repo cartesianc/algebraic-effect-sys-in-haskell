@@ -202,6 +202,7 @@ main = interpreter ast effects
 | 目的 | 命令 | 结果 | 执行 handler 业务 |
 | --- | --- | --- | --- |
 | gencode：生成或更新源码 | `cabal run effect-codegen -- workflow FileDemo` | 更新 `demo/FileDemo/Generated/` | 否 |
+| 只分析 AST | `cabal run effect-codegen -- ast FileDemo` | 打印 workflow 的 JSON 结构，不写文件 | 否 |
 | 编译 | `cabal build all` | 编译生成器及所有示例 | 否 |
 | runtime：运行 workflow | `cabal run file-demo` | 启动 AST，执行 IO、诊断与资源收尾，打印结果 | 是 |
 | structure：查看静态结构 | `cabal run file-demo -- --structure` | 校验并打印已生成的 Prototype | 否 |
@@ -220,6 +221,18 @@ cabal run effect-codegen -- workflow FileDemo
 生成器把契约接口写入 `Generated/Effects.hs`，带协议包装的执行副本写入 `Generated/Handlers.hs`，静态原型写入 `Generated/Prototype.hs`，业务入口与目标装配写入 `Generated/Program.hs`。`Generated/Assets.hs` 是资产目录，`.scope-cache` 保存生成缓存。第一次还没有手写 `Handlers.hs` 时，先生成接口与空实现模块，再填写 instance 并生成执行副本。
 
 `--generate` 只是已有 Main 的快捷入口：Main 的导入链必须先能编译，interpreter 才能转调同一个生成器。它不会在生成后继续执行业务；下一次运行会编译更新后的代码。日常统一使用独立 `effect-codegen` 即可，不需要把两个生成入口都执行一遍。
+
+<a id="ast-command"></a>
+**只分析 AST。** `effect-codegen ast FileDemo` 只加载 `AST.hs`、`Workflow/*.hs` 和可选的 `Hanging.hs`，不读注册与 handler，不写 Generated，因此 `Effects.hs` 或 `Handlers.hs` 有错误时也能用。它向标准输出打印一份 UTF-8 JSON：
+
+| 字段 | 内容 |
+| --- | --- |
+| `source` | 业务写下的原样结构。每层带 `path`、`kind`（`node`／`chain`／`parallel`／`alternative`／`lifelong`）、node 的 `effect`；能从源码读出的位置还带经过的具名绑定 `names`、源码范围 `range`（文件与起止行列，从 1 开始，结束列不含）和 `readable` |
+| `workflow` | [规范形式](CORE_DESIGN.md#workflow-normal-form)，`path` 即 `NodeId`；`sourcePaths` 列出化简进该节点的原样路径 |
+| `hanging` | 每个挂载的 hook，以及各目标的限定名、源码位置 `sourcePaths` 和规范形式中的位置 `paths` |
+| `diagnostics` | 结构诊断，与完整生成在这一阶段的报错相同；为空表示结构通过 |
+
+结构诊断不改变退出码；AST 模块无法加载时以 GHC 诊断失败。用普通 Haskell 计算得到的子树（例如 `chain (map node names)`）标为 `"readable": false`，没有下层的源码位置，但 `source` 仍按求值结果列出它的结构。末端类别、持续订阅和 alternative 的判定 Context 要读注册，只在完整生成时检查。
 
 gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提取 handler 方法体的读取形状、构图、输出源码，最后用 GHC 类型检查业务模块与输出并检查顶层白名单；任何一步报错都不写回 Generated，也不调用业务 handler。各阶段做什么、报告哪些错误见[编译流水线](CORE_DESIGN.md#generation)。缓存命中只复用纯构图结果，其余阶段仍会执行，内容未变的文件不会重写。详见[生成缓存边界](EFFECT_GRAPH.md#内容缓存与重跑边界)。
 

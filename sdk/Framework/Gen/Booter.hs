@@ -2,7 +2,7 @@
 -- 驱动合成 v1（2026-11-18）：从 Composition 的已解析事实构造挂载与会话，
 -- 之后补全运行所需静态标记；不执行 handler，不读取业务源码。
 module Framework.Gen.Booter (numberWorkflow, checkMiddleware, assembleProgram, completeDriving, entryPlans, controlReads) where
-import Control.Monad (forM_, unless, when)
+import Control.Monad (forM_, unless)
 import Data.Maybe (listToMaybe)
 import Data.Graph (SCC(..), stronglyConnComp)
 import Data.List (intercalate, intersect, isPrefixOf, nub, nubBy, sort)
@@ -16,10 +16,11 @@ import Framework.Prototype.Types
 import Framework.Prototype.Validate (valid, unique)
 import Framework.Recursion (Fix, cata)
 
+-- 输入是已通过 Gen.Workflow 结构检查的规范形式；这里只做要读注册的检查。
 numberWorkflow :: [EffectProto String] -> Fix WorkflowF -> Either (PrototypeError String) WorkflowTree
 numberWorkflow effects tree = cata number tree [] False
   where
-    -- inside：是否位于 lifelong 内。持续订阅只能挂在 lifelong 内；lifelong 不嵌套。
+    -- inside：是否位于 lifelong 内。持续订阅只能挂在 lifelong 内。
     number (Node selected) path inside = do
       effect <- findEffectProto effects selected
       valid (effectKind effect `notElem` [PureKind, ContextKind, ErrorKind, StreamKind, MiddlewareKind])
@@ -30,15 +31,9 @@ numberWorkflow effects tree = cata number tree [] False
       unless (inside || null subscribed) $ Left (InvalidLifelong path ("Node " ++ selected
         ++ " subscribes to " ++ intercalate ", " subscribed ++ " with streams; mount it inside lifelong"))
       pure (NodeAt path selected)
-    number (Chained children) path inside = do
-      nonEmpty path inside children
-      ChainedAt path <$> descend path inside children
-    number (Parallel children) path inside = do
-      nonEmpty path inside children
-      ParallelAt path <$> descend path inside children
-    number (Lifelong children) path inside = do
-      when inside $ Left (InvalidLifelong path "lifelong cannot be nested")
-      nonEmpty path True children
+    number (Chained children) path inside = ChainedAt path <$> descend path inside children
+    number (Parallel children) path inside = ParallelAt path <$> descend path inside children
+    number (Lifelong children) path _ = do
       parts <- descend path True children
       -- 每个直接子项是一个单元；子项里的 parallel 只在一轮之内并发。
       let units = map workflowNode parts
@@ -49,15 +44,8 @@ numberWorkflow effects tree = cata number tree [] False
     -- option v1（2026-11-21）：分叉点是同一个 Excu 的输出。每个候选恰好 requires 一份由它的输出解析出的
     -- 资产，判定这些资产的 Context 互不相同；选择时按候选的声明顺序取第一个解析成功的。
     -- 分叉来自不同上游的真 race 尚未实现，这里拒绝。
-    -- 只有一个候选时没有可选择的分支：要在 Excu 的输出上执行它，用 requests 声明驱动。
     number (Alternative children) path inside = do
-      unless (length children >= 2) $ invalid path ("alternative needs at least two candidates"
-        ++ "; to run a single branch on a parsed asset, declare requests for that asset instead")
       parts <- descend path inside children
-      -- 候选是末端：一个候选就是一条 original chain，判定 Context 由它（连同 Input 链）的 requires 确定。
-      -- 候选里要先执行的步骤写在注册的 Input 链上；规范化之后的单元素 chain 已经是 node。
-      unless (length [() | NodeAt {} <- parts] == length parts) $
-        invalid path ("alternative candidates must be nodes; put the steps before a candidate on its Input chain")
       options <- mapM (candidateCases effects path) parts
       source <- case foldr intersect (nub (concatMap (map fst) options)) (map (nub . map fst) options) of
         [selected] -> Right selected
@@ -75,9 +63,6 @@ numberWorkflow effects tree = cata number tree [] False
         (zip (map workflowNode parts) cases)) parts)
     descend path inside children = sequence [child (path ++ [index]) inside | (index, child) <- zip [0 ..] children]
     invalid path reason = Left (InvalidAlternative path reason)
-    -- lifelong 内每条成功路径都要领取新交付；挂载的 target 都订阅持续资产，所以只需拒绝空分支。
-    nonEmpty path inside children = when (inside && null children) $
-      Left (InvalidLifelong path "an empty branch inside lifelong never takes a delivery")
     -- 一个挂载的 target 恰好由一份持续资产驱动；链内不再读取其他持续资产的快照，
     -- 否则执行结果取决于读取时刻（多个来源的触发组合另行设计）。
     subscription (node', selected) = case streamedAssets effects selected of

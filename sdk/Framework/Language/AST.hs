@@ -3,7 +3,7 @@
 -- Workflow 的可序列化结构与引用收集；不启动节点。
 module Framework.Language.AST
   ( WorkflowF(..), AST, EffectNode, node, chain, parallel, alternative, lifelong
-  , HangingTree, MiddlewareMount, hanging, middleware, hangingRows, foldAST, toWorkflowF, normalizeWorkflow
+  , HangingTree, MiddlewareMount, hanging, middleware, hangingRows, foldAST, toWorkflowF, normalizeWorkflow, workflowOrigins
   ) where
 
 import Framework.Recursion (Fix(..), Algebra, cata)
@@ -87,12 +87,24 @@ toWorkflowF (AST tree) = tree
 normalizeWorkflow :: Fix WorkflowF -> (Fix WorkflowF, [Int] -> [[Int]])
 normalizeWorkflow tree = (strip shaped, relocate)
   where
-    shaped = general [] tree
+    shaped = shapeWorkflow tree
     placed = positions [] shaped
     original = childPaths [] tree
     relocate path = case lookup path placed of
       Just found -> [found]
       Nothing -> concatMap relocate (maybe [] id (lookup path original))
+    childPaths path (Fix layer) = (path, map fst (indexed path (members layer)))
+      : concat [childPaths at child | (at, child) <- indexed path (members layer)]
+    strip (Shaped _ layer) = Fix (fmap strip layer)
+
+-- 规范形式中每个节点化简自哪些原树路径：(原树路径, 规范路径)。
+-- 保留下来的节点与被消去的单子项 chain／parallel 各有一项；被拼入外层或删除的分支没有。
+workflowOrigins :: Fix WorkflowF -> [([Int], [Int])]
+workflowOrigins = positions [] . shapeWorkflow
+
+shapeWorkflow :: Fix WorkflowF -> Shaped
+shapeWorkflow = general []
+  where
     general path (Fix layer) = case layer of
       Node selected -> Shaped [path] (Node selected)
       Chained children -> gather path Chained isChained (indexed path children)
@@ -106,12 +118,13 @@ normalizeWorkflow tree = (strip shaped, relocate)
       | null (members layer) && (isChained layer || isParallel layer) = []
       | same layer = members layer
       | otherwise = [part]
-    indexed path children = [(path ++ [index], child) | (index, child) <- zip [0 ..] children]
-    positions path (Shaped origins layer) = [(origin, path) | origin <- origins]
-      ++ concat [positions (path ++ [index]) child | (index, child) <- zip [0 ..] (members layer)]
-    childPaths path (Fix layer) = (path, map fst (indexed path (members layer)))
-      : concat [childPaths at child | (at, child) <- indexed path (members layer)]
-    strip (Shaped _ layer) = Fix (fmap strip layer)
+
+positions :: [Int] -> Shaped -> [([Int], [Int])]
+positions path (Shaped origins layer) = [(origin, path) | origin <- origins]
+  ++ concat [positions (path ++ [index]) child | (index, child) <- zip [0 ..] (members layer)]
+
+indexed :: [Int] -> [child] -> [([Int], child)]
+indexed path children = [(path ++ [index], child) | (index, child) <- zip [0 ..] children]
 
 -- 规范化的中间结果：每个节点记下化简进它的原树路径。
 data Shaped = Shaped [[Int]] (WorkflowF Shaped)

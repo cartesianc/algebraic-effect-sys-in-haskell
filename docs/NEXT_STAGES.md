@@ -29,6 +29,8 @@
 <a id="code-shape"></a>
 ## LSP 从哪份代码开始
 
+AST 的读取已可单独使用：`effect-codegen ast Namespace` 只加载 AST、Workflow 与 Hanging，输出原样结构及源码范围、规范形式与 NodeId、Hanging 挂载和结构诊断，见[只分析 AST](GUIDE.md#ast-command)。
+
 LSP 面向开发者手写的 `Types.hs`、`Effects.hs`、`Handlers.hs`、`AST.hs` 和可选的 `Hanging.hs`。例如，定位一处 `require @T` 时，要结合当前 handler 的 effect 绑定和它声明的 demand；同一个 handler 可以被多个 effect 复用。Haskell 类型由 GHC 检查，资产来源和装配规则由 gen 确定。代码形态见[开发指南](GUIDE.md#code-shape)，已有的生成结果见[资产目录](ASSETS.md)与[静态图](EFFECT_GRAPH.md)。
 
 <a id="middleware"></a>

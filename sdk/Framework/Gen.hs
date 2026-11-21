@@ -1,6 +1,6 @@
 -- 编译器 IO 驱动：Source/Shape 提供结构，Composition 统一计算，Emit 渲染，Assets 类检。
 -- 流水线说明 v3（2026-11-17）：使用 Gen.Composition 的统一状态转换；本文件负责 IO。
-module Framework.Gen (compileWorkflow) where
+module Framework.Gen (compileWorkflow, inspectWorkflow) where
 
 import Control.Exception (evaluate)
 import Framework.Gen.Check.Assets (checkAssets)
@@ -11,15 +11,16 @@ import Framework.Gen.Emit.Effects (renderEffects)
 import Framework.Gen.Emit.Handlers (renderHandlers)
 import Framework.Gen.Emit.Program (renderProgram)
 import Framework.Gen.Emit.Prototype (renderPrototype, renderPrototypeModule)
+import Framework.Gen.Emit.Workflow (renderWorkflowReport)
 import Framework.Gen.Names (handlerClass, nameHandlers)
-import Framework.Gen.Frontend.Hanging (loadHanging)
+import Framework.Gen.Frontend.Hanging (loadHanging, loadOutline)
 import Framework.Gen.Frontend.Shape (shapeHandlers)
-import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, namespaceDirectory, handlerText, handlerScopeNames)
+import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, loadWorkflowTree, namespaceDirectory, handlerText, handlerScopeNames)
 import Data.List (nub)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Exit (die)
 import System.FilePath ((</>))
-import System.IO (IOMode(ReadMode, WriteMode), hGetContents, hPutStr, hSetEncoding, utf8, withFile)
+import System.IO (IOMode(ReadMode, WriteMode), hGetContents, hPutStr, hSetEncoding, stdout, utf8, withFile)
 import System.IO.Error (tryIOError)
 import Text.Read (readMaybe)
 
@@ -72,6 +73,16 @@ compileWorkflow namespace = do
   putStrLn ("Generated " ++ generated ++ " (" ++ show (length (filter id changed))
     ++ " files updated; structure " ++ (if reused then "reused" else "rebuilt") ++ ")")
 
+-- AST 的独立分析：只加载 AST、Workflow 与可选的 Hanging，不读注册与 handler，不写生成区。
+-- 输出原样结构及其源码位置、规范形式与 NodeId、Hanging 挂载和结构诊断（JSON）。
+-- 结构诊断不影响退出码；不能加载这些模块时照常以 GHC 诊断失败。
+inspectWorkflow :: String -> IO ()
+inspectWorkflow namespace = do
+  (hasHanging, targets, sites) <- loadOutline namespace
+  (tree, rows) <- loadWorkflowTree namespace hasHanging
+  hSetEncoding stdout utf8
+  putStrLn (renderWorkflowReport namespace tree rows targets sites)
+
 -- 构图缓存连同算法及渲染器源码精确比较，避免 SDK 改动后复用旧结构；声明与 Handlers 快照仍每次读取。
 structureSources :: [FilePath]
 structureSources =
@@ -85,6 +96,7 @@ structureSources =
   , "sdk/Framework/Gen/Plan.hs"
   , "sdk/Framework/Gen/Injector.hs"
   , "sdk/Framework/Gen/Booter.hs"
+  , "sdk/Framework/Gen/Workflow.hs"
   , "sdk/Framework/Gen/Emit/Prototype.hs"
   , "sdk/Framework/Gen/Emit/Types.hs"
   , "sdk/Framework/Language/Registration.hs"

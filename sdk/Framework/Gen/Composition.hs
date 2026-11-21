@@ -18,7 +18,7 @@ module Framework.Gen.Composition
   , PendingComposition, CompositionResult(..)
   ) where
 
-import Control.Monad (foldM, forM_, unless, when)
+import Control.Monad (foldM, unless, when)
 import Control.Monad.State.Strict (StateT, evalStateT, execStateT, gets, lift, modify')
 import Data.Char (isAlphaNum, isLower, isSpace, isUpper)
 import Data.Graph (SCC(..), stronglyConnComp)
@@ -31,7 +31,8 @@ import Framework.Gen.Plan
 import Framework.Gen.Injector
 import Framework.Gen.Injector.Super (superSelections)
 import Framework.Gen.Booter
-import Framework.Language.AST (WorkflowF(..), HangingTree, hangingRows, normalizeWorkflow)
+import Framework.Language.AST (WorkflowF(..), HangingTree, hangingRows)
+import Framework.Gen.Workflow (hangingMarks, prepareWorkflow)
 import Framework.Language.Registration hiding (effectKind)
 import qualified Framework.Language.Registration as Registration
 import Framework.Prototype.Graph
@@ -111,22 +112,12 @@ settleComposition state = case state of
   _ -> advanceComposition state >>= settleComposition
 
 -- 声明加载进程返回同一机器的接口检查点。Unit 只含纯 ADT，可 Show/Read；没有 GHC AST 或类字典。
--- tree 与 targets 是源码上的原样结构和挂载路径；编号使用规范形式，挂载随之迁移到覆盖同一子树的位置。
--- 被拼入外层的分支自身不执行调用，挂在它各子项上的覆盖范围与原来相同。
+-- tree 与 targets 是源码上的原样结构和挂载路径；Gen.Workflow 先给出规范形式与迁移后的挂载。
 beginComposition :: String -> [EffectSpec] -> Fix WorkflowF -> HangingTree -> [[(String, [NodeId])]] -> Either String Unit
 beginComposition namespace specifications tree mounts targets = do
-  let rows = hangingRows mounts
-  unless (length rows == length targets) (Left "Hanging source differs from its declaration")
-  marks <- concat <$> sequence
-    [ do
-        unless (arity == length refs && arity > 0) (Left "middleware needs a nonempty list of named workflow branches")
-        unless (unique (map fst refs)) (Left "middleware lists a workflow branch twice")
-        forM_ refs $ \(name, paths) -> when (null paths) (Left ("Hanging target is unreachable from AST.ast: " ++ name))
-        pure [(path, hooks) | (_, paths) <- refs, path <- paths]
-    | ((hooks, arity), refs) <- zip rows targets ]
-  let (normalized, relocate) = normalizeWorkflow tree
-  state <- settleComposition (Declared namespace specifications normalized
-    [(moved, hooks) | (path, hooks) <- marks, moved <- relocate path])
+  marks <- hangingMarks (hangingRows mounts) targets
+  (normalized, moved) <- either (Left . show) Right (prepareWorkflow tree marks)
+  state <- settleComposition (Declared namespace specifications normalized moved)
   case state of
     AwaitingBodies unit -> pure unit
     _ -> Left "Composition did not reach the interface checkpoint"

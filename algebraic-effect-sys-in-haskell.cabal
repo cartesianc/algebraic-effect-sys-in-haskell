@@ -11,6 +11,7 @@ extra-source-files:
     hie.yaml
     docs/*.md
     sdk/Framework/Gen/Composition.hs
+    sdk/Framework/Gen/Workflow.hs
     demo/*/Handlers.hs
     demo/*/Generated/Assets.hs
 
@@ -185,6 +186,7 @@ executable effect-codegen
       Framework.Gen.Injector
       Framework.Gen.Injector.Super
       Framework.Gen.Booter
+      Framework.Gen.Workflow
       Framework.Gen.Emit.Assets
       Framework.Gen.Emit.Types
       Framework.Gen.Names
@@ -193,6 +195,7 @@ executable effect-codegen
       Framework.Gen.Emit.Handlers
       Framework.Gen.Emit.Program
       Framework.Gen.Emit.Prototype
+      Framework.Gen.Emit.Workflow
       Framework.Gen.Check.Assets
       Framework.Prototype.Catalog
       Framework.Recursion

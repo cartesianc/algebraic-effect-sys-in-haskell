@@ -1,5 +1,6 @@
 -- GHC names identify branches before evaluating AST.ast erases their binding identity.
-module Framework.Gen.Frontend.Hanging (loadHanging) where
+-- The same module load gives Hanging its target positions and the AST command its source outline.
+module Framework.Gen.Frontend.Hanging (loadHanging, loadOutline) where
 
 import Control.Exception (evaluate)
 import Control.Monad (forM, unless)
@@ -9,13 +10,17 @@ import Data.List (isPrefixOf, sort, sortOn)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Framework.Gen.Frontend.Ghc (modulePath, withSourceTargets)
+import Framework.Gen.Workflow (SourceRange(..), SourceSite(..))
 import GHC
 import GHC.Builtin.Names (dollarIdKey)
+import GHC.Data.FastString (unpackFS)
+import GHC.Parser.Annotation (getLocA)
 import GHC.Types.Unique (getUnique)
 import GHC.Fingerprint (fingerprintString)
 import GHC.Hs
 import GHC.Types.Name (nameModule_maybe, nameOccName)
 import GHC.Types.Name.Occurrence (occNameString)
+import GHC.Types.SrcLoc (SrcSpan(..), srcSpanFile, srcSpanStartLine, srcSpanStartCol, srcSpanEndLine, srcSpanEndCol)
 import System.Directory (doesFileExist)
 import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, hSetNewlineMode, universalNewlineMode, utf8, withFile)
 
@@ -24,47 +29,48 @@ type SourceChecks = [(FilePath, Maybe String)]
 
 loadHanging :: String -> IO (Bool, Targets, SourceChecks)
 loadHanging namespace = do
-  exists <- doesFileExist hangingFile
-  if not exists then pure (False, [], [(hangingFile, Nothing)]) else
+  exists <- doesFileExist (hangingFile namespace)
+  if not exists then pure (False, [], [(hangingFile namespace, Nothing)]) else
     withSourceTargets $ \_ -> do
-      setTargets =<< mapM (\file -> guessTarget file Nothing Nothing) [hangingFile, modulePath astModule ++ ".hs"]
-      result <- load LoadAllTargets
-      case result of
-        Failed -> abort "Cannot load Hanging and AST modules"
-        Succeeded -> pure ()
-      graph <- getModuleGraph
-      let moduleLabel summary = moduleNameString (moduleName (ms_mod summary))
-          relevant summary = let name = moduleLabel summary
-                             in name == hangingModule || workflowModule name
-      modules <- forM (sortOn moduleLabel (filter relevant (mgModSummaries graph))) $ \summary -> do
-        checked <- typecheckModule =<< parseModule summary
-        let name = moduleLabel summary
-            path = modulePath name ++ ".hs"
-        signature <- liftIO (fingerprint path)
-        case tm_renamed_source checked of
-          Just (group, _, _, _, _) -> pure (bindings (hs_valds group), (path, Just signature))
-          Nothing -> abort ("Missing renamed source for " ++ name)
-      let definitions = Map.fromList (concatMap fst modules)
-      root <- exported astModule "ast"
-      declaration <- exported hangingModule "hangingTree"
-      rows <- either abort pure $ do
-        body <- maybe (Left "Define hangingTree in Hanging.hs") singleBody (Map.lookup declaration definitions)
-        entries <- listArgument body
-        mapM (targetsOf workflowModule) entries
-      let wanted = Set.fromList (concat rows)
-      sites <- either abort pure (branchSites (Map.map layoutOf definitions) wanted root)
-      pure (True, [[(qualified n, sort (Map.findWithDefault [] n sites)) | n <- row] | row <- rows], map snd modules)
+      (definitions, checks) <- loadWorkflowModules namespace True
+      root <- exported (astModule namespace) "ast"
+      targets <- hangingTargets namespace definitions root
+      pure (True, targets, checks)
+
+-- AST 的源码轮廓：从 ast 出发能从源码读出的每个位置，以及 Hanging 目标的源码位置。
+-- 只加载 AST、Workflow 与可选的 Hanging 模块，不需要注册或 handler。
+loadOutline :: String -> IO (Bool, Targets, [SourceSite])
+loadOutline namespace = do
+  exists <- doesFileExist (hangingFile namespace)
+  withSourceTargets $ \_ -> do
+    (definitions, _) <- loadWorkflowModules namespace exists
+    root <- exported (astModule namespace) "ast"
+    targets <- if exists then hangingTargets namespace definitions root else pure []
+    sites <- either abort pure (outline (Map.map layoutOf definitions) root)
+    pure (exists, targets, sites)
+
+loadWorkflowModules :: String -> Bool -> Ghc (Map.Map Name (HsBind GhcRn), SourceChecks)
+loadWorkflowModules namespace withHanging = do
+  setTargets =<< mapM (\file -> guessTarget file Nothing Nothing)
+    ([hangingFile namespace | withHanging] ++ [modulePath (astModule namespace) ++ ".hs"])
+  result <- load LoadAllTargets
+  case result of
+    Failed -> abort (if withHanging then "Cannot load Hanging and AST modules" else "Cannot load AST modules")
+    Succeeded -> pure ()
+  graph <- getModuleGraph
+  let moduleLabel summary = moduleNameString (moduleName (ms_mod summary))
+      relevant summary = let name = moduleLabel summary
+                         in (withHanging && name == hangingModule namespace) || workflowModule namespace name
+  modules <- forM (sortOn moduleLabel (filter relevant (mgModSummaries graph))) $ \summary -> do
+    checked <- typecheckModule =<< parseModule summary
+    let name = moduleLabel summary
+        path = modulePath name ++ ".hs"
+    signature <- liftIO (fingerprint path)
+    case tm_renamed_source checked of
+      Just (group, _, _, _, _) -> pure (bindings (hs_valds group), (path, Just signature))
+      Nothing -> abort ("Missing renamed source for " ++ name)
+  pure (Map.fromList (concatMap fst modules), map snd modules)
   where
-    astModule = namespace ++ ".AST"
-    hangingModule = namespace ++ ".Hanging"
-    hangingFile = modulePath hangingModule ++ ".hs"
-    workflowModule name = name == astModule || isPrefixOf (namespace ++ ".Workflow.") name
-    exported owner local = do
-      summary <- getModSummary (mkModuleName owner)
-      info <- getModuleInfo (ms_mod summary)
-      case [n | n <- maybe [] modInfoExports info, spelling n == local] of
-        [n] -> pure n
-        _ -> abort (owner ++ " must export " ++ local)
     fingerprint path = withFile path ReadMode $ \file -> do
       hSetEncoding file utf8
       hSetNewlineMode file universalNewlineMode
@@ -72,6 +78,33 @@ loadHanging namespace = do
       let value = show (fingerprintString contents)
       _ <- evaluate (length value)
       pure value
+
+hangingTargets :: String -> Map.Map Name (HsBind GhcRn) -> Name -> Ghc Targets
+hangingTargets namespace definitions root = do
+  declaration <- exported (hangingModule namespace) "hangingTree"
+  rows <- either abort pure $ do
+    body <- maybe (Left "Define hangingTree in Hanging.hs") singleBody (Map.lookup declaration definitions)
+    entries <- listArgument body
+    mapM (targetsOf (workflowModule namespace)) entries
+  let wanted = Set.fromList (concat rows)
+  sites <- either abort pure (branchSites (Map.map layoutOf definitions) wanted root)
+  pure [[(qualified n, sort (Map.findWithDefault [] n sites)) | n <- row] | row <- rows]
+
+astModule, hangingModule, hangingFile :: String -> String
+astModule namespace = namespace ++ ".AST"
+hangingModule namespace = namespace ++ ".Hanging"
+hangingFile namespace = modulePath (hangingModule namespace) ++ ".hs"
+
+workflowModule :: String -> String -> Bool
+workflowModule namespace name = name == astModule namespace || isPrefixOf (namespace ++ ".Workflow.") name
+
+exported :: String -> String -> Ghc Name
+exported owner local = do
+  summary <- getModSummary (mkModuleName owner)
+  info <- getModuleInfo (ms_mod summary)
+  case [n | n <- maybe [] modInfoExports info, spelling n == local] of
+    [n] -> pure n
+    _ -> abort (owner ++ " must export " ++ local)
 
 abort :: String -> Ghc a
 abort = liftIO . ioError . userError
@@ -133,19 +166,20 @@ targetsOf permitted expr = case application expr of
                       | otherwise = Left "A Hanging target must reference a named AST or Workflow branch; give the subtree a name"
 
 -- A named alias does not add a path element. Unrelated Haskell computations need no interpretation.
-data Layout = Children [Layout] | Reference Name | Opaque [Name]
+-- Each structural expression keeps the source span where it is written.
+data Layout = Children SrcSpan [Layout] | Reference Name | Opaque SrcSpan [Name]
 
 layoutOf :: HsBind GhcRn -> Layout
-layoutOf binding = either (const (Opaque (uses binding))) descend (singleBody binding)
+layoutOf binding = either (const (Opaque noSrcSpan (uses binding))) descend (singleBody binding)
   where
     descend expr = case application expr of
       (Just n, []) -> Reference n
       (Just n, [arg]) | ownerOf n == "Framework.Language.AST" ->
         case spelling n of
-          "node" -> Children []
-          ctor | elem ctor ["chain","parallel","alternative","lifelong"], Right xs <- list arg -> Children (map descend xs)
-          _ -> Opaque (uses expr)
-      _ -> Opaque (uses expr)
+          "node" -> Children (getLocA expr) []
+          ctor | elem ctor ["chain","parallel","alternative","lifelong"], Right xs <- list arg -> Children (getLocA expr) (map descend xs)
+          _ -> Opaque (getLocA expr) (uses expr)
+      _ -> Opaque (getLocA expr) (uses expr)
     uses :: Data a => a -> [Name]
     uses x | Just (HsVar _ n) <- (cast x :: Maybe (HsExpr GhcRn)) = [unLoc n]
            | otherwise = concat (gmapQ uses x)
@@ -159,9 +193,9 @@ branchSites layouts wanted root = Map.fromListWith (++) <$> walk Set.empty [] ro
     closure seen (n:ns) | Set.member n seen = closure seen ns
                         | otherwise = closure (Set.insert n seen) (Map.findWithDefault [] n parents ++ ns)
     relevant = closure Set.empty (Set.toList wanted)
-    deps (Children xs) = concatMap deps xs
+    deps (Children _ xs) = concatMap deps xs
     deps (Reference n) = [n]
-    deps (Opaque ns) = ns
+    deps (Opaque _ ns) = ns
     walk seen path n
       | Set.notMember n relevant = Right []
       | Set.member n seen = Left ("Cyclic workflow reference at " ++ qualified n)
@@ -170,7 +204,28 @@ branchSites layouts wanted root = Map.fromListWith (++) <$> walk Set.empty [] ro
           nested <- visit (Set.insert n seen) path layout
           pure ([(n,[reverse path]) | Set.member n wanted] ++ nested)
     visit seen path (Reference n) = walk seen path n
-    visit seen path (Children xs) = concat <$> sequence [visit seen (i:path) x | (i,x) <- zip [0..] xs]
-    visit _ _ (Opaque ns) = do
+    visit seen path (Children _ xs) = concat <$> sequence [visit seen (i:path) x | (i,x) <- zip [0..] xs]
+    visit _ _ (Opaque _ ns) = do
       unless (all (flip Set.notMember relevant) ns) (Left "Cannot prove a Hanging target's location; compose named branches using explicit workflow child lists")
       pure []
+
+-- Every position reachable from ast. A named reference adds its name at the same position;
+-- an expression that is not an explicit node/branch is reported as unreadable, without children.
+outline :: Map.Map Name Layout -> Name -> Either String [SourceSite]
+outline layouts root = walk Set.empty [] [] root
+  where
+    walk seen path names n
+      | Set.member n seen = Left ("Cyclic workflow reference at " ++ qualified n)
+      | otherwise = case Map.lookup n layouts of
+          Nothing -> Right [SourceSite path (names ++ [qualified n]) Nothing False]
+          Just layout -> visit (Set.insert n seen) path (names ++ [qualified n]) layout
+    visit seen path names layout = case layout of
+      Reference n -> walk seen path names n
+      Children span xs -> (SourceSite path names (range span) True :) . concat
+        <$> sequence [visit seen (path ++ [index]) [] x | (index, x) <- zip [0 ..] xs]
+      Opaque span _ -> Right [SourceSite path names (range span) False]
+    range span = case span of
+      RealSrcSpan real _ -> Just (SourceRange (map slash (unpackFS (srcSpanFile real)))
+        (srcSpanStartLine real) (srcSpanStartCol real) (srcSpanEndLine real) (srcSpanEndCol real))
+      _ -> Nothing
+    slash c = if c == '\\' then '/' else c

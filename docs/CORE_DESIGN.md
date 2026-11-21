@@ -878,8 +878,9 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 | 阶段 | 实现位置 | 输入 → 输出与检查 |
 | --- | --- | --- |
 | 读取声明 | `Gen.Frontend.Source`、`Gen.Frontend.Hanging` | GHC 解析挂载目标的定义名；独立 ghci 加载 effects、ast 和可选的 hangingTree |
+| 业务树结构 | `Gen.Workflow` | 原样 AST 与源码挂载位置 → 规范形式与迁移后的挂载；检查 Hanging 行、lifelong 嵌套与空分支、alternative 的候选。不读注册，`effect-codegen ast` 单独运行这一阶段 |
 | 解释注册 | `Gen.Composition` | 唯一资产来源、访问、Input、方法角色与绑定；`Names` 只拼写已选角色的名字 |
-| 合成驱动 | `Gen.Booter` | 以解析后的 effect 原型编号 workflow，确定 alternative、会话、挂载、输出连接及控制流已经承担的读取 |
+| 合成驱动 | `Gen.Booter` | 以解析后的 effect 原型编号规范形式的 workflow（末端类别、持续订阅、alternative 的判定 Context），确定 alternative、会话、挂载、输出连接及控制流已经承担的读取 |
 | 合成装配 | `Gen.Injector` | 以已解析声明计算 Layer、读取路由、有序 requests／Input、rawinput、入口操作、scope 与 Error 回调；检查表示类型与共享签名。`Injector.Super` 按挂载列表与捕获类别预选 superhandler 要调用的 Middleware |
 | 读取方法形状 | `Gen.Frontend.Shape` | handler 语法树 → 读取与控制结构；不解释来源或驱动 |
 | 方法、图与来源 | `Gen.Composition` | 组成方法、检查读取、计算 EffectGraph、ScopeTree 与供值／开启计划；完成后调用 Booter 补齐运行所需的静态驱动标记 |
