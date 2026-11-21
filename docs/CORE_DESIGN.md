@@ -695,7 +695,7 @@ gencode 通过统一 Prototype 保存注册、纯方法结构、workflow、链�
 
 Target 保留未执行末端和内部空状态；Node algebra 负责 lower。Context 的实际生产有独立 RequestBoot 活动记录，继承外层 Execution 和 ScopeUser，不新增提前 cleanup 的边界。
 
-本节引用 [EFFECT_GRAPH.md](EFFECT_GRAPH.md) 作为完整结构规范，包含 NodeId／Origin／ActivationId、绑定出身、来源证明、ScopeTree 构树、源码结构提取、缓存与运行校验。这里不再复制这些算法。
+本节引用 [EFFECT_GRAPH.md](EFFECT_GRAPH.md) 作为完整结构规范，包含 NodeId／Origin／ActivationId、绑定出身、来源证明、ScopeTree 构树、源码结构提取、重跑边界与运行校验。这里不再复制这些算法。
 
 <a id="workflow"></a>
 ### 4.5 Workflow branch
@@ -905,7 +905,7 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 
 [gen 是编译器](#compiler)。手写业务只导入 [Framework.SDK](../sdk/Framework/SDK.hs)：注册、handler 能力、故障观察和 AST 组合，定义在 `Framework/Language/`；Types、Effects、AST 不导入 Generated 或 Handlers，handler 的类、Layer 与错误类型由 gen 生成，无须手写。生成代码只导入 [Framework.Generated](../sdk/Framework/Generated.hs)：Prototype 的数据模型、运行协议与装配操作，以及程序命令的适配。Generated.Program 绑定程序元数据后，业务仍写 `interpreter ast effects`。
 
-[Framework.Gen](../sdk/Framework/Gen.hs) 负责文件、缓存和生成流程，[Gen/Main.hs](../sdk/Framework/Gen/Main.hs) 是 `effect-codegen` 的命令行入口。组合含义由 [Gen.Composition](../sdk/Framework/Gen/Composition.hs) 的状态转换统一计算，并调用 Injector 与 Booter 合成装配和驱动计划；前端、类检与文本输出各守边界。任何阶段失败即停止，全部通过后才写回 Generated，未变文件保留时间戳。整个过程不执行 handler 业务：
+[Framework.Gen](../sdk/Framework/Gen.hs) 负责文件与生成流程，[Gen/Main.hs](../sdk/Framework/Gen/Main.hs) 是 `effect-codegen` 的命令行入口。组合含义由 [Gen.Composition](../sdk/Framework/Gen/Composition.hs) 的状态转换统一计算，并调用 Injector 与 Booter 合成装配和驱动计划；前端、类检与文本输出各守边界。任何阶段失败即停止，全部通过后才写回 Generated，未变文件保留时间戳。整个过程不执行 handler 业务：
 
 | 阶段 | 实现位置 | 输入 → 输出与检查 |
 | --- | --- | --- |
@@ -917,7 +917,7 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 | 读取方法形状 | `Gen.Frontend.Shape` | handler 语法树 → 读取与控制结构；不解释来源或驱动 |
 | 方法、图与来源 | `Gen.Composition` | 组成方法、检查读取、计算 EffectGraph、ScopeTree 与供值／开启计划；完成后调用 Booter 补齐运行所需的静态驱动标记 |
 | 文本输出 | `Gen.Emit.*` | 渲染已确定的契约、入口与 Prototype；保留手写方法体；渲染注册快照不等于重新选择装配 |
-| 类检与目录 | `Gen.Check.Assets` → `Gen.Emit.Assets` | GHC 在内存中检查手写与生成模块，检查顶层约束并提取结构化目录，再将目录渲染为文本 |
+| 类检与目录 | `Gen.Check.Assets`、`Gen.Check.TopLevel` → `Gen.Emit.Assets` | GHC 在内存中检查手写业务模块与本次契约，检查顶层约束并提取结构化目录，再将目录渲染为文本；生成的 Program／Prototype／Handlers 与 Main 留给构建做类型检查 |
 
 Injector 回答一个入口怎样得到能力与前驱装配，Booter 回答计算由什么结构驱动；二者都是编译端计算，不是运行时的新调度器。Composition 协调它们，公共方法身份、挂载及输出连接复用同一份计划。内部阶段可以有数据转换，但不能各自维护一份同义决定。
 
@@ -932,14 +932,13 @@ beginComposition
 prepareComposition（补入 Maybe handler 形状）
   ResolvingBodies → AwaitingGraph PendingComposition
 
-completeComposition（补入可选缓存原型）
+completeComposition
   BuildingStructure → ProvingSources → Checking → Complete
-                                    缓存命中 ──┘
 ```
 
-`Frontend.Source.loadComposition` 在 ghci 中加载声明并调用 `beginComposition`，返回可 Eq／Show／Read 的纯 `Unit`。它保存 `ReadRoute`、`ReaderPlan`、`SelectorPlan`、`SessionEntry`、`Capability` 等接口与装配事实，不包含 GHC AST、类字典或执行函数。首次没有 Handlers 时先交出契约；`prepareComposition` 接收 `Nothing` 表示缺少文件，`Just shapes` 表示已经提取方法体，即使 shapes 为空也不是缺少文件。后者继续进行读取与驱动检查。`completeComposition` 最终交出 `CompositionResult`（Unit 与 Prototype），缓存命中仍经过校验；完整缓存协议只在[图规范的缓存边界](EFFECT_GRAPH.md#cache)维护。
+`Frontend.Source.loadComposition` 在 ghci 中加载声明并调用 `beginComposition`，返回可 Eq／Show／Read 的纯 `Unit`。它保存 `ReadRoute`、`ReaderPlan`、`SelectorPlan`、`SessionEntry`、`Capability` 等接口与装配事实，不包含 GHC AST、类字典或执行函数。首次没有 Handlers 时先交出契约；`prepareComposition` 接收 `Nothing` 表示缺少文件，`Just shapes` 表示已经提取方法体，即使 shapes 为空也不是缺少文件。后者继续进行读取与驱动检查。`completeComposition` 最终交出 `CompositionResult`（Unit 与 Prototype）。构图每次重算，不设结构缓存，见[图规范的重跑边界](EFFECT_GRAPH.md#cache)。
 
-这是按依赖阶段组织的编译状态机。声明合法性、会话连接、接口绑定、图与来源证明各有计算入口；统一的是阶段次序与结果归属，没有将它们变成同一种算法。运行驱动标记由 Booter 在来源证明完成后补全，缓存命中直接校验并读取这些标记，不在运行时推导兜底。`Prototype.Query` 保存机器和原型校验共用的纯关系查询；源码提取、资产类检与文本渲染保持原有边界。各组合从哪里进入计算见[规则定位](COMPOSITION.md#pipeline)。
+这是按依赖阶段组织的编译状态机。声明合法性、会话连接、接口绑定、图与来源证明各有计算入口；统一的是阶段次序与结果归属，没有将它们变成同一种算法。运行驱动标记由 Booter 在来源证明完成后补全，不在运行时推导兜底。`Prototype.Query` 保存机器和原型校验共用的纯关系查询；源码提取、资产类检与文本渲染保持原有边界。各组合从哪里进入计算见[规则定位](COMPOSITION.md#pipeline)。
 
 首次没有 Handlers.hs 时，形状为空，不检查读取与驱动，只生成契约和空的 Handlers 模块；填写 handler 后再次生成并编译 Main，命令与使用顺序见[指南：命令行与执行阶段](GUIDE.md#commands)。业务执行编译 Generated/Handlers：handler 方法体原样复制到按 effect 的类型标签上，后接 gen 生成的入口与路由；不回写手写源码或新增业务类型类。手写实现变更后须重新生成。
 
@@ -960,7 +959,7 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 
 运行时先求值并校验原型、注册与源码，再一次 cata 装配当前 AST。RuntimeGraph 复用静态定义并保存活动关系；ScopeTree 单独保持无环。不重跑 handler 建图，也不记录无限方法历史。
 
-结构、来源证明、ScopeTree 算法及缓存细节统一引用 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)。
+结构、来源证明、ScopeTree 算法及重跑边界统一引用 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)。
 
 <a id="sdk-layout"></a>
 ### SDK 的职责与阅读顺序
@@ -988,7 +987,8 @@ sdk/Framework/
     Plan.hs                 编译检查点的纯计划及共享投影
     Names.hs                按已确定角色拼写生成名字
     Check/
-      Assets.hs             GHC 类检、顶层约束、源码资产目录提取
+      Assets.hs             GHC 类检、Types 固定形式、源码资产目录提取
+      TopLevel.hs           业务模块的顶层白名单
     Emit/
       Types.hs              已计算的表示类型与能力约束的 Haskell 渲染
       Effects.hs            Generated/Effects.hs
@@ -1038,7 +1038,7 @@ sdk/Framework/
 | [AGENTS](../AGENTS.md) | 工作约束、任务路由和源码定位 |
 | [GUIDE](GUIDE.md) | 当前代码形态、环境准备、生成／编译／运行／结构查看及开发流程 |
 | 本文 | 设计原则、当前协议和新语义的统一入口 |
-| [EFFECT_GRAPH](EFFECT_GRAPH.md) | Prototype、来源分析、运行图、ScopeTree 和缓存 |
+| [EFFECT_GRAPH](EFFECT_GRAPH.md) | Prototype、来源分析、运行图、ScopeTree 和重跑边界 |
 | [ASSETS](ASSETS.md) | 源码资产集合、顶层白名单和资产目录 |
 | [STREAM_LIFELONG](STREAM_LIFELONG.md) | 第 7 章引用的持续执行完整规范 |
 | [COMPOSITION](COMPOSITION.md) | 组合多态的核心理念、确定性要求、产物和规则定位；业务组合 → gen 事实 → 运行驱动的对照，详细协议引用所属专题 |

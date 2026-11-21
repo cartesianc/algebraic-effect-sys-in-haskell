@@ -218,7 +218,7 @@ main = interpreter ast effects
 cabal run effect-codegen -- workflow FileDemo
 ```
 
-生成器把契约接口写入 `Generated/Effects.hs`，带协议包装的执行副本写入 `Generated/Handlers.hs`，静态原型写入 `Generated/Prototype.hs`，业务入口与目标装配写入 `Generated/Program.hs`。`Generated/Assets.hs` 是资产目录，`Generated/Workflow.json` 是本次生成所用 AST 的 JSON 快照（格式见[只分析 AST](#ast-command)），`.scope-cache` 保存生成缓存。第一次还没有手写 `Handlers.hs` 时，先生成接口与空实现模块，再填写 instance 并生成执行副本。
+生成器把契约接口写入 `Generated/Effects.hs`，带协议包装的执行副本写入 `Generated/Handlers.hs`，静态原型写入 `Generated/Prototype.hs`，业务入口与目标装配写入 `Generated/Program.hs`。`Generated/Assets.hs` 是资产目录，`Generated/Workflow.json` 是本次生成所用 AST 的 JSON 快照（格式见[只分析 AST](#ast-command)）。第一次还没有手写 `Handlers.hs` 时，先生成接口与空实现模块，再填写 instance 并生成执行副本。
 
 `--generate` 只是已有 Main 的快捷入口：Main 的导入链必须先能编译，interpreter 才能转调同一个生成器。它不会在生成后继续执行业务；下一次运行会编译更新后的代码。日常统一使用独立 `effect-codegen` 即可，不需要把两个生成入口都执行一遍。
 
@@ -237,7 +237,7 @@ cabal run effect-codegen -- workflow FileDemo
 
 `Generated/Workflow.json` 让读取方不必每次都运行 SDK：按同样方式重新计算 `sources` 中各文件的 MD5（Python：`hashlib.md5(data.replace(b"\r\n", b"\n")).hexdigest()`），与记录相同（`null` 表示该文件仍不存在）时，这份 JSON 和生成的 `Prototype.hs` 仍对应当前的 AST 源码；不同就说明改过 AST 而尚未重新生成，此时可以调用 `ast` 取得当前结构。文件缺失表示这个命名空间还没有生成过。`sources` 只覆盖 workflow 结构，注册与 handler 的变化不在其中。用普通 Haskell 计算得到的子树（例如 `chain (map node names)`）标为 `"readable": false`，没有下层的源码位置，但 `source` 仍按求值结果列出它的结构。末端类别、持续订阅和 alternative 的判定 Context 要读注册，只在完整生成时检查。
 
-gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提取 handler 方法体的读取形状、构图、输出源码，最后用 GHC 类型检查业务模块与输出并检查顶层白名单；任何一步报错都不写回 Generated，也不调用业务 handler。各阶段做什么、报告哪些错误见[编译流水线](CORE_DESIGN.md#generation)。缓存命中只复用纯构图结果，其余阶段仍会执行，内容未变的文件不会重写。详见[生成缓存边界](EFFECT_GRAPH.md#内容缓存与重跑边界)。
+gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提取 handler 方法体的读取形状、构图、输出源码，最后用 GHC 类型检查业务模块与本次契约，并检查顶层白名单与资产；任何一步报错都不写回 Generated，也不调用业务 handler。生成的 Program／Prototype／Handlers 与手写 Main 是普通 Haskell，gencode 不重复类型检查，错误由随后的 `cabal build` 报告。各阶段做什么、报告哪些错误见[编译流水线](CORE_DESIGN.md#generation)。每次生成都从头构图，内容未变的文件不会重写，见[重跑边界](EFFECT_GRAPH.md#cache)。
 
 ### 哪些文件需要保留
 
@@ -246,8 +246,7 @@ gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提
 | Types、Effects、Handlers、AST／Workflow、Main | 手写业务源码，持续维护 |
 | `Generated/Effects.hs`、`Handlers.hs`、`Prototype.hs`、`Program.hs`、`Assets.hs` | 随项目提交的可审查源码，供编译、HLS 和结构查看使用 |
 | `Generated/Workflow.json` | 随项目提交的 AST 快照，供编辑器显示；运行时不读取 |
-| `Generated/.scope-cache` | 可删除的结构缓存；下次 gencode 重建，不影响已生成源码 |
-| `dist-newstyle/` | 可删除的 Cabal 构建产物和缓存；下次构建重建 |
+| `dist-newstyle/` | 可删除的 Cabal 构建产物和缓存（含 gencode 的接口缓存 `effect-codegen-interfaces`）；下次构建或生成重建 |
 | 各 demo 在 `.gitignore` 中列出的输出文件／目录 | 示例运行产物，可删除后重跑；输入样例和源码不是输出 |
 
 Cabal 中七个可执行示例通过 `common runtime-program` 共用 SDK 运行模块与依赖清单，各 executable 只列自己的业务模块和附加依赖。`effect-codegen` 单独列编译器模块，保持 gen 与 runtime 的分工。目录职责与源码入口见[SDK 的职责与阅读顺序](CORE_DESIGN.md#sdk-layout)。

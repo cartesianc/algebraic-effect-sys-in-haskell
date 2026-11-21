@@ -8,6 +8,7 @@ import Control.Monad (unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.Char (ord)
 import Data.List (intercalate, sort)
+import Framework.Gen.Frontend.Ghc (libraryDirectory)
 import Framework.Gen.Frontend.Source (namespaceDirectory, parseSourceFile, sourceOffset)
 import qualified Framework.Language.Registration as R
 import GHC (getSessionDynFlags, runGhc)
@@ -56,7 +57,7 @@ output fields = putStrLn (encode (JSObject (("schemaVersion", JSInt 1) : fields)
 readEffect :: IO ()
 readEffect = do
   source <- getContents
-  library <- takeWhile (\c -> c /= '\n' && c /= '\r') <$> readProcess "ghc" ["--print-libdir"] ""
+  library <- libraryDirectory
   runGhc (Just library) $ do
     flags <- getSessionDynFlags
     (enabled, _, _) <- parseDynamicFilePragma flags [noLoc "-XTypeApplications"]

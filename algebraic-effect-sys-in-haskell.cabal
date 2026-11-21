@@ -201,6 +201,7 @@ executable effect-codegen
       Framework.Gen.Emit.Prototype
       Framework.Gen.Emit.Workflow
       Framework.Gen.Check.Assets
+      Framework.Gen.Check.TopLevel
       Framework.Prototype.Catalog
       Framework.Recursion
       Framework.Language.AST

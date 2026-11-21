@@ -40,7 +40,7 @@
 | 改 requests／require／rawinput／注入 | [运行语义：Context](docs/CORE_DESIGN.md#context)、[入口装配](docs/CORE_DESIGN.md#calls)、[图与来源](docs/EFFECT_GRAPH.md) |
 | 改 branch 或启动 | [运行语义：workflow](docs/CORE_DESIGN.md#workflow)、[图与身份](docs/EFFECT_GRAPH.md) |
 | 改 scope、归属、cleanup 或 Error | [运行语义：scope](docs/CORE_DESIGN.md#scope)、[Error](docs/CORE_DESIGN.md#error)、[ScopeTree](docs/EFFECT_GRAPH.md) |
-| 改 gen：流水线阶段、结构、缓存或资产检查 | [gen 是编译器](docs/CORE_DESIGN.md#compiler)、[编译流水线](docs/CORE_DESIGN.md#generation)、[图与生成](docs/EFFECT_GRAPH.md)、[资产约束](docs/ASSETS.md) |
+| 改 gen：流水线阶段、结构、重跑边界或资产检查 | [gen 是编译器](docs/CORE_DESIGN.md#compiler)、[编译流水线](docs/CORE_DESIGN.md#generation)、[图与生成](docs/EFFECT_GRAPH.md)、[资产约束](docs/ASSETS.md) |
 | 改 Stream／lifelong | [主设计第 7 章](docs/CORE_DESIGN.md#stream)、[完整规范](docs/STREAM_LIFELONG.md)、[Next stages](docs/NEXT_STAGES.md)，以及将修改的当前协议 |
 | 设计持续执行的结束与清理 | [阶段计划](docs/NEXT_STAGES.md#stages)、[主设计第 7 章](docs/CORE_DESIGN.md#stream)、[运行语义：scope](docs/CORE_DESIGN.md#scope) |
 | 设计 Middleware 与 Hanging | [prebeta 覆盖范围](docs/NEXT_STAGES.md#middleware)、[Root 入口包装](docs/CORE_DESIGN.md#calls) |

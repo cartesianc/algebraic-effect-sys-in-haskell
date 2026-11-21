@@ -14,7 +14,7 @@
 -- 工作表/递归栈是同一计算中的局部证据，不能当作另一套装配结论或运行状态。
 -- 统一入口不降低路径分析的最坏复杂度；保留先投影再组合、缺值路径与分支相关性。
 module Framework.Gen.Composition
-  ( beginComposition, beginCompositionRows, prepareComposition, completeComposition, compositionKey
+  ( beginComposition, beginCompositionRows, prepareComposition, completeComposition
   , PendingComposition, CompositionResult(..)
   ) where
 
@@ -134,14 +134,9 @@ prepareComposition unit shapes = do
     AwaitingGraph pending -> pure pending
     _ -> Left "Composition did not reach the graph checkpoint"
 
-compositionKey :: PendingComposition -> String
-compositionKey (PendingComposition unit checked methods histories) = show (unitPlan unit, unitAssembly unit, checked, methods, histories)
-
-completeComposition :: PendingComposition -> Maybe (Prototype String) -> Either String CompositionResult
-completeComposition pending@(PendingComposition unit checked _ _) cached = do
-  state <- settleComposition (case cached of
-    Just prototype -> Checking unit checked prototype
-    Nothing -> BuildingStructure pending)
+completeComposition :: PendingComposition -> Either String CompositionResult
+completeComposition pending = do
+  state <- settleComposition (BuildingStructure pending)
   case state of
     Complete result -> pure result
     _ -> Left "Composition did not complete"

@@ -1,6 +1,6 @@
 # 静态 Prototype、运行图与 ScopeTree
 
-本文是[主设计第 5 章](CORE_DESIGN.md)引用的详细规范，负责 Prototype、来源分析、RuntimeGraph、ScopeTree 与缓存。范围为 Stage 1/2 的协议；Stream／lifelong 在原型中的表示（`LifelongAt`、会话挂载、`protoSessions`、`FromSession`）见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static)，运行接入见[第 7 节](STREAM_LIFELONG.md#sessions)。
+本文是[主设计第 5 章](CORE_DESIGN.md)引用的详细规范，负责 Prototype、来源分析、RuntimeGraph、ScopeTree 与重跑边界。范围为 Stage 1/2 的协议；Stream／lifelong 在原型中的表示（`LifelongAt`、会话挂载、`protoSessions`、`FromSession`）见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static)，运行接入见[第 7 节](STREAM_LIFELONG.md#sessions)。
 
 
 业务入口仍为 `main = interpreter ast effects`，手写 handler 仍使用原生 Haskell 的 `instance`、`do`、模式匹配和读取（`require @T`、`rawinput`）。gen 的组合状态机（[Framework.Gen.Composition](../sdk/Framework/Gen/Composition.hs)）统一计算注册、方法、workflow、链定义与挂载、effect graph 和 ScopeTree，输出唯一的 `generatedPrototype :: SDK.Prototype MethodGen` 显式 ADT 常量；数据模型在 `Framework.Prototype`。运行时校验并直接使用这份原型，不预执行 Context 或资源 IO。
@@ -227,7 +227,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 3. **方法图。** 从同一装配结果建立挂接注入的分析副本，只消去对同次原子输出的再次索取。方法索引与活动栈检查引用，完成态摘要缓存 scope 路径与图。辅助／主 algebra 共用归约结果，不按调用次数复制展开树。
 4. **ScopeTree。** 从方法图的路径求共同必经前序，补入注册前提并检查环。先有方法图及路径，再有 ScopeTree；实例共享与关闭仍由运行时的生产身份、实际使用和待用关系决定。
 5. **来源、驱动标记与完成校验。** 结合方法结构、链挂载和 workflow 形成读取来源与 scope 开启计划，保留相关路径差异并裁剪无关状态。Booter 补齐单元与来源的运行关联；原型自洽和 Context 驱动检查完成后，结果才交给输出阶段。
-6. **输出与类检。** Emit 读取结果，生成普通 Haskell 的契约、入口和 `generatedPrototype`。GHC 在内存中完成类型及源码资产检查，再写回 Generated；`Generated/Assets.hs` 是独立资产目录。
+6. **输出与类检。** Emit 读取结果，生成普通 Haskell 的契约、入口和 `generatedPrototype`。GHC 在内存中检查业务模块与本次契约、顶层白名单和源码资产，再写回 Generated；`Generated/Assets.hs` 是独立资产目录。生成的 Program、Prototype 与 Handlers 副本只是普通 Haskell，它们的类型检查交给构建，gencode 不重复。
 
 各阶段使用不同的专门算法，按依赖关系消费前一步事实；统一状态转换控制次序，最终装配结果供生成和运行共用。分支路径、方法缓存和来源集合仍是各算法的工作数据。源码加载、语法提取、文件写入和 Haskell 渲染保持各自职责，不重新选择组合解释。
 
@@ -353,13 +353,13 @@ generatedPrototype :: SDK.Prototype MethodGen
 该分支通过纯校验核对当前 AST 与原型快照，以可读格式显示带 `NodeId` 的 workflow、origin／ctx 链定义、链挂载、方法及其 effect 归属、方法引用、scope 层次与共享父节点、各入口路径，以及双向实证和未定关系。它读取同一份原型，不调用 `createEntries`，不创建运行 scope 句柄，也不装配或执行 handler。普通启动在自己的单次执行装配 fold 中核对相同挂载规则。修改注册、AST 或手写 handler 后须重新生成。
 
 <a id="cache"></a>
-## 内容缓存与重跑边界
+## 重跑边界
 
-每次 gencode 仍加载声明并读取 Handlers 快照；结构分析和执行副本共用该快照，顶层检查与资产目录另用 GHC 名称解析同一快照，每次执行。`Generated/.scope-cache` 保存输入 key、纯 `Prototype String` 与已经渲染的 Haskell 源码。缓存 key 为 `show (compositionKey pending, dependencies)`：`compositionKey` 精确编码 `unitPlan`、`unitAssembly`、表示是否已有 Handlers 的 `checked` 标记及组成后的方法结构，`dependencies` 是相关 SDK 源码的完整文本。统一计算模块 `Gen/Composition.hs` 在其中，完整依赖列表由 [Framework.Gen](../sdk/Framework/Gen.hs) 的 `structureSources` 维护，不在文档复制。缓存命中只替代 `BuildingStructure`／`ProvingSources` 的计算，`completeComposition` 仍进入 `Checking`。首次尚无 Handlers 与已有 Handlers 的生成使用不同 key，不能以首次契约阶段的缓存绕过已有方法体的来源检查。它不能按方法名或 mtime 猜测，也不加载 `Generated.Program` 来读取缓存。
+每次 gencode 都读取声明与 Handlers 快照，从头完成组合：结构分析和执行副本共用该快照，顶层检查与资产目录另用 GHC 名称解析同一快照。构图本身只需数毫秒，不设结构缓存（读取并比较缓存比重算更慢），`validatePrototype`、`checkDriven` 与源码资产检查每次执行；首次没有 Handlers 时仍按原协议跳过驱动检查、先提供契约。每份生成文件都先比较完整内容，内容相同就不写回，未变文件保留时间戳；这不是逐方法热点生成、文件监听或运行中热重载。
 
-key 未变时复用纯原型和渲染文本，仍运行 `validatePrototype`、`checkDriven` 及源码资产检查；首次没有 Handlers 时仍按原协议跳过驱动检查、先提供契约。原子业务 IO 的修改若不改变方法结构，可复用原型，同时更新业务包装副本及源码指纹。每份生成文件都先比较完整内容，内容相同就不写回；这减少结构重算和无变化文件写入，不等于跳过整条生成命令，也不是逐方法热点生成、文件监听或运行中热重载。
+生成时间主要花在 GHC 会话上。会话只做类型检查（不生成代码），并把接口写入 `dist-newstyle/effect-codegen-interfaces`：SDK 与未改动的业务模块下次按源码哈希复用，源码或内存 target 变化时 GHC 照常重新检查该模块及其下游。接口里的名字不带源码位置，资产目录的定义位置因此取本次类型检查的结果。
 
-`Generated.Prototype` 仍是派生产物。手改 `generatedPrototype` 中的 `protoScopes` 后，运行校验读取这些显式字段，不会重新推导父边；它只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。下一次 gencode 会按源声明和方法结构恢复生成结果，缓存不把手改文件当作权威。不增加手工 edge override 层，也不承诺保留生成文件中的手改。
+`Generated.Prototype` 仍是派生产物。手改 `generatedPrototype` 中的 `protoScopes` 后，运行校验读取这些显式字段，不会重新推导父边；它只验证无环、字段一致等结构自洽性，不证明人工删边在业务上正确。下一次 gencode 会按源声明和方法结构恢复生成结果，不把手改文件当作权威。不增加手工 edge override 层，也不承诺保留生成文件中的手改。
 
 本轮沿用项目的普通编译要求，不新增测试、负例或检查门槛。
 
@@ -368,6 +368,6 @@ key 未变时复用纯原型和渲染文本，仍运行 `validatePrototype`、`c
 
 AST node 末端必须是原始句柄，不能是 Context。gencode 从每个挂载末端沿显式方法引用求可达集合：读取方法不连到生产方法，生产只经 `requests` 驱动到达；挂接句柄可达时，其 Context 生产也视为可达；alternative 的选择读取末端执行共同的 Excu（及其判定 Context），同样作为起点。
 
-任一 Context 的生产方法无法从这些入口到达时，生成器报错。挂接的 Context 经其他方法回到原句柄同样报错，不把直接输出回答与间接递归混为一谈。驱动检查与末端检查每次生成执行，缓存命中不跳过；首次缺少 Handlers、尚无方法结构时先生成契约，待方法实现后补齐完整检查。
+任一 Context 的生产方法无法从这些入口到达时，生成器报错。挂接的 Context 经其他方法回到原句柄同样报错，不把直接输出回答与间接递归混为一谈。驱动检查与末端检查每次生成执行；首次缺少 Handlers、尚无方法结构时先生成契约，待方法实现后补齐完整检查。
 
 这项静态检查证明存在允许的结构路径，不证明本次条件分支一定生产。Stream 的生产方式按 [BootPlan 规则](STREAM_LIFELONG.md#bootplan)只由生产方注册决定，不由可达性推出。

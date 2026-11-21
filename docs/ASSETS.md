@@ -75,9 +75,9 @@ handler 只按表示类型读取（`require @PageURL`），由 gen 按“表示�
 cabal run effect-codegen -- workflow Crawler
 ```
 
-生成器先从声明形成候选契约和纯结构，再用 GHC 的无代码生成模式取得手写源码的名称解析结果。候选 Generated 文件和本次读取的 Handlers 快照以内存 target 供分析使用；检查成功后才写回生成区。它不会调用 handler 或运行业务 IO。首次没有 Handlers 时，只分析可用声明与契约，仍可先生成接口；实现后再次生成才检查完整业务源码。
+生成器先从声明形成候选契约和纯结构，再用 GHC 的无代码生成模式取得手写源码的名称解析结果。本次契约（候选 `Generated/Effects.hs`）和读取的 Handlers 快照以内存 target 供分析使用；检查成功后才写回生成区。生成的 Program、Prototype 与 Handlers 副本以及手写 Main 是普通 Haskell，gencode 不再对它们做类型检查，类型错误由随后的构建报告。它不会调用 handler 或运行业务 IO。首次没有 Handlers 时，只分析可用声明与契约，仍可先生成接口；实现后再次生成才检查完整业务源码。
 
-检查覆盖命名空间目录内的手写 Haskell 模块，以及其导入链上的本地业务模块；GHC 需要它们的语法、导入和类型成立。使用 Cabal 项目 package environment 解析依赖，不维护外部函数白名单。顶层检查每次生成都执行，scope 结构缓存命中不会跳过它。
+检查覆盖命名空间目录内的手写 Haskell 模块，以及其导入链上的本地业务模块；GHC 需要它们的语法、导入和类型成立。手写 Handlers 在读取方法体时已用本次契约做过类型检查，它的顶层检查使用那次结果；Main 导入生成的 Program，只按语法检查它的顶层。使用 Cabal 项目 package environment 解析依赖，不维护外部函数白名单。顶层检查每次生成都执行。
 
 GHC／HLS 的普通类型检查不自行执行这项架构检查。当前接入点是 gencode，尚未实现语言服务器诊断推送或编译器插件。修改业务模块后应重新生成。启动时核对的源码依赖见[主设计](CORE_DESIGN.md#compiler)。
 

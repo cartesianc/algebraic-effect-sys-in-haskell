@@ -1,16 +1,18 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- 用 GHC 加载并类型检查业务模块与新生成的副本，检查顶层定义，并给出源码资产目录。
--- 只读取 GHC 已解析的名字和类型；不执行 handler。
+-- 用 GHC 加载并类型检查业务模块与本次契约，检查顶层定义与 Types 的固定形式，并给出源码资产目录。
+-- 生成的 Program／Prototype／Handlers 与手写 Main 不在这里编译：它们只是普通 Haskell，类型错误由构建报告；
+-- 手写 Handlers 已在读取方法体时用同一契约检查过。只读取 GHC 已解析的名字和类型；不执行 handler。
 module Framework.Gen.Check.Assets (checkAssets) where
 
 import Control.Monad (forM, unless)
 import Data.Foldable (toList)
 import Data.Maybe (isJust)
 import Control.Monad.IO.Class (liftIO)
-import Data.Data (Data, cast, gmapQ)
 import Data.List (intercalate, isInfixOf, isPrefixOf, nub, sortOn, stripPrefix)
+import Framework.Gen.Check.TopLevel (checkMainSource, checkTopLevel)
 import Framework.Gen.Frontend.Ghc (modulePath, withSourceTargets)
+import Framework.Gen.Frontend.Source (parseSourceFile)
 import qualified Framework.Language.Registration as R
 import Framework.Prototype.Catalog
 import GHC
@@ -18,28 +20,28 @@ import GHC.Core.DataCon (dataConName, dataConOrigArgTys)
 import GHC.Core.TyCon (isAlgTyCon, synTyConRhs_maybe, tyConDataCons, tyConFieldLabels, tyConName)
 import GHC.Core.TyCo.FVs (tyConsOfType)
 import GHC.Core.TyCo.Rep (scaledThing)
-import GHC.Core.Type (splitTyConApp_maybe)
 import GHC.Data.FastString (unpackFS)
 import GHC.Hs
-import GHC.Hs.Utils (CollectFlag(..), collectHsBindBinders)
 import GHC.Types.FieldLabel (flSelector)
 import GHC.Types.Name (nameModule_maybe, nameOccName, nameSrcSpan)
 import GHC.Types.Name.Reader (rdrNameOcc)
 import GHC.Types.Name.Occurrence (occNameString)
 import GHC.Types.Unique.Set (nonDetEltsUniqSet)
-import GHC.Types.Var (Var, varName, varType)
 import GHC.Unit.Module (moduleNameString, moduleUnit, unitString)
 import GHC.Utils.Outputable (ppr, showSDocUnsafe)
-import System.Directory (doesDirectoryExist, listDirectory)
-import System.FilePath (normalise, takeExtension, takeFileName)
+import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
+import System.FilePath (normalise, takeExtension)
 import Text.Read (readMaybe)
 
--- 新契约及副本只作为内存 target；检查失败不改写 Generated。
--- 同时加载手写与生成模块，但不在同一业务导入链混入两份 instance。
+-- 新契约只作为内存 target；检查失败不改写 Generated。
 -- roots 是资产的表示类型，contracts 是生成的资产类型；二者组成资产目录。
-checkAssets :: String -> [(String, String)] -> [R.TypeRef] -> [String] -> Maybe String -> IO [Asset]
-checkAssets namespace generated roots contracts native = do
+-- earlier 是此前阶段已得出的顶层检查失败（手写 Handlers），与这里的失败一起报告。
+checkAssets :: String -> String -> [R.TypeRef] -> [String] -> [String] -> IO [Asset]
+checkAssets namespace effects roots contracts earlier = do
   files <- sourceFiles (modulePath namespace)
+  let mainFile = modulePath (namespace ++ ".Main") ++ ".hs"
+  hasMain <- doesFileExist mainFile
+  mainFailures <- if hasMain then checkMainSource namespace . snd <$> parseSourceFile mainFile else pure []
   withSourceTargets $ \memoryTarget -> do
     let rootModule = namespace ++ ".Generated.AssetRoots"
         rootSource = unlines $
@@ -50,19 +52,13 @@ checkAssets namespace generated roots contracts native = do
                | (index, root) <- zip [0 :: Int ..] roots]
           ++ ["type GeneratedContract" ++ show index ++ " = GeneratedContracts." ++ contract
                | (index, contract) <- zip [0 :: Int ..] contracts]
-        candidates = case native of
-          Nothing -> filter ((== "Effects") . fst) generated
-          Just _ -> generated
         selectedFiles = [path | path <- files
-          , normalise path /= normalise (modulePath (namespace ++ ".Handlers") ++ ".hs")
-          , native /= Nothing || takeFileName path /= "Main.hs"]
+          , normalise path `notElem` map normalise [modulePath (namespace ++ ".Handlers") ++ ".hs", mainFile]]
     diskTargets <- mapM (\path -> guessTarget path Nothing Nothing) selectedFiles
-    setTargets (memoryTarget rootModule rootSource : diskTargets
-      ++ [memoryTarget (namespace ++ ".Generated." ++ suffix) source | (suffix, source) <- candidates]
-      ++ [memoryTarget (namespace ++ ".Handlers") source | Just source <- [native]])
+    setTargets (memoryTarget rootModule rootSource : memoryTarget (namespace ++ ".Generated.Effects") effects : diskTargets)
     result <- load LoadAllTargets
     case result of
-      Failed -> liftIO (ioError (userError "Cannot load the business and generated modules; fix the native Haskell diagnostics above"))
+      Failed -> liftIO (ioError (userError "Cannot load the business modules and contracts; fix the native Haskell diagnostics above"))
       Succeeded -> pure ()
     graph <- getModuleGraph
     let summaries = mgModSummaries graph
@@ -71,6 +67,11 @@ checkAssets namespace generated roots contracts native = do
     checked <- forM (filter business summaries) $ \summary -> do
       parsed <- parseModule summary
       typecheckModule parsed
+    -- 资产目录写出定义位置：模块可能从接口缓存加载（名字不带源码位置），
+    -- 所以资产一律换成本次类型检查得到的定义；生成的契约模块同样检查一次。
+    contractsChecked <- forM [summary | summary <- summaries
+        , moduleNameString (moduleName (ms_mod summary)) == namespace ++ ".Generated.Effects"] $ \summary ->
+      typecheckModule =<< parseModule summary
     rootSummary <- getModSummary (mkModuleName rootModule)
     rootInfo <- getModuleInfo (ms_mod rootSummary)
     let localTypes = [constructor | checkedModule <- checked
@@ -81,10 +82,15 @@ checkAssets namespace generated roots contracts native = do
         rootTypes = [constructor | (_ :: Int, body) <- rootAliases "AssetRoot", constructor <- typeConstructors body]
         generatedTypes = [constructor | (_ :: Int, body) <- rootAliases "GeneratedContract"
           , constructor <- typeConstructors body, isAlgTyCon constructor, constructor `notElem` localTypes]
-        assets = nub (assetClosure localTypes rootTypes ++ generatedTypes)
+        located = localTypes ++ [constructor | checkedModule <- contractsChecked
+          , ATyCon constructor <- modInfoTyThings (tm_checked_module_info checkedModule)]
+        definitionOf constructor = case [found | found <- located, found == constructor] of
+          found : _ -> found
+          [] -> constructor
+        assets = nub (map definitionOf (assetClosure localTypes rootTypes ++ generatedTypes))
         typesModule = [checkedModule | checkedModule <- checked
           , moduleNameString (moduleName (ms_mod (pm_mod_summary (tm_parsed_module checkedModule)))) == namespace ++ ".Types"]
-        failures = concatMap (checkTopLevel namespace) checked
+        failures = earlier ++ mainFailures ++ concatMap (checkTopLevel namespace) checked
           ++ concatMap (checkFixedForm roots) typesModule
     unless (null failures) $
       liftIO (ioError (userError (intercalate "\n" failures)))
@@ -203,66 +209,3 @@ checkFixedForm roots checked =
           , text `notElem` ("String" : "[String]" : localNames) ]
     compact = filter (/= ' ')
     at location = showSDocUnsafe (ppr location) ++ ": "
-
-data ModuleRole = EffectsModule | WorkflowModule | HangingModule | MainModule | OtherModule deriving Eq
-
--- 业务模块的顶层只允许类型声明、instance，以及固定的注册、workflow 与入口值：
--- Effects 的 effects，AST 与 Workflow 的具名 AST，Hanging 的 hangingTree，以及 Main 的 main。
--- 顶层普通函数一律拒绝：值操作写在 handler 方法体内，经注册进入 effect 链，才能被静态分析。
--- 方法体内的局部函数与 lambda 不受限制。
-checkTopLevel :: String -> TypecheckedModule -> [String]
-checkTopLevel namespace checked = case tm_renamed_source checked of
-  Nothing -> ["Top-level checking requires renamed source"]
-  Just (group, _, _, _, _) ->
-    [ at (getLocA binding) ++ "top-level definition " ++ occNameString (nameOccName binder) ++ " is not allowed in "
-        ++ sourceModule ++ "; " ++ advice
-    | binding <- topBindings (hs_valds group)
-    , binder <- collectHsBindBinders CollNoDictBinders (unLoc binding), not (allowed binder) ]
-    ++ [ at (getLocA declaration) ++ "class declaration " ++ occNameString (nameOccName (unLoc (tcdLName (unLoc declaration))))
-          ++ " is not allowed in " ++ sourceModule ++ "; handler classes are generated from registrations"
-       | classes <- hs_tyclds group, declaration@(L _ ClassDecl {}) <- group_tyclds classes ]
-    ++ [ at (getLocA declaration) ++ "foreign declaration is not allowed in " ++ sourceModule
-       | declaration <- hs_fords group ]
-    ++ [ at (getLocA declaration) ++ "rewrite rule is not allowed in " ++ sourceModule
-       | declaration <- hs_ruleds group ]
-  where
-    sourceModule = moduleNameString (moduleName (ms_mod (pm_mod_summary (tm_parsed_module checked))))
-    role
-      | sourceModule == namespace ++ ".Effects" = EffectsModule
-      | sourceModule == namespace ++ ".Hanging" = HangingModule
-      | sourceModule == namespace ++ ".Main" = MainModule
-      | sourceModule == namespace ++ ".AST" || (namespace ++ ".Workflow.") `isPrefixOf` sourceModule = WorkflowModule
-      | otherwise = OtherModule
-    allowed binder = case role of
-      HangingModule -> occNameString (nameOccName binder) == "hangingTree"
-        && any (declarationType "HangingTree" . snd) (filter ((== binder) . fst) typed)
-      EffectsModule -> occNameString (nameOccName binder) == "effects"
-      MainModule -> occNameString (nameOccName binder) == "main"
-      WorkflowModule -> any (declarationType "AST" . snd) (filter ((== binder) . fst) typed)
-      OtherModule -> False
-    advice = case role of
-      HangingModule -> "Hanging.hs defines only hangingTree :: HangingTree"
-      EffectsModule -> "Effects.hs defines only effects; local helpers may stay in its where clause"
-      WorkflowModule -> "workflow modules define only named AST values"
-      MainModule -> "Main.hs defines only main"
-      OtherModule -> "write value operations inside handler methods (local functions there are fine)"
-    declarationType expected selected = case splitTyConApp_maybe selected of
-      Just (constructor, []) -> let name = tyConName constructor
-        in occNameString (nameOccName name) == expected
-          && fmap (moduleNameString . moduleName) (nameModule_maybe name) == Just "Framework.Language.AST"
-      _ -> False
-    typed = typedVariables (tm_typechecked_source checked)
-    at location = showSDocUnsafe (ppr location) ++ ": "
-
-topBindings :: HsValBinds GhcRn -> [LHsBind GhcRn]
-topBindings bindings = case bindings of
-  ValBinds _ values _ -> values
-  XValBindsLR (NValBinds groups _) -> concatMap snd groups
-
--- 类型检查后的绑定名与其类型；不遍历类型本身。
-typedVariables :: Data value => value -> [(Name, Type)]
-typedVariables value
-  | Just (identifier :: Var) <- cast value = [(varName identifier, varType identifier)]
-  | Just (_ :: Type) <- cast value = []
-  | otherwise = concat (gmapQ typedVariables value)
-

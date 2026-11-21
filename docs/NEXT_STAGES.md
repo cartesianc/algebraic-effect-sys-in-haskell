@@ -106,6 +106,7 @@ Stage 1–7 在各自已确认的范围内完成。生成、编译和现有 demo
 | <a id="pure-pipeline"></a><a id="version-boundaries"></a>原子输入输出与 gen 分工 | [Pure 与原子输出](CORE_DESIGN.md#pure) · [编译器与 runtime](CORE_DESIGN.md#compiler) |
 | requests 前驱与运行时编号、坐标 | [普通资产只经 requests 生产](CORE_DESIGN.md#request-production) · [剧本化阶段](#request-chains) |
 | 消费链与生产分支 | [锚点注入与一次执行](CORE_DESIGN.md#consumer-chain) |
+| gencode 的读取与重跑 | [只分析 AST](GUIDE.md#ast-command) · [重跑边界与接口缓存](EFFECT_GRAPH.md#cache) |
 
 <a id="maintenance"></a>
 本页只跟踪已选定的工作。正式协议和已实现写法分别维护在[主设计](CORE_DESIGN.md)与[指南](GUIDE.md)。
