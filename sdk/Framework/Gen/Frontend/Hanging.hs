@@ -9,7 +9,7 @@ import Data.Data (Data, cast, gmapQ)
 import Data.List (isPrefixOf, sort, sortOn)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Framework.Gen.Frontend.Ghc (modulePath, withSourceTargets)
+import Framework.Gen.Frontend.Ghc (modulePath, sourceDirectory, withSourceTargets)
 import Framework.Gen.Workflow (SourceRange(..), SourceSite(..))
 import GHC
 import GHC.Builtin.Names (dollarIdKey)
@@ -39,21 +39,23 @@ data Outline = Outline
 
 loadOutline :: String -> IO Outline
 loadOutline namespace = do
-  exists <- doesFileExist (hangingFile namespace)
+  sourceDir <- sourceDirectory
+  let hangingFile = modulePath sourceDir (hangingModule namespace) ++ ".hs"
+  exists <- doesFileExist hangingFile
   withSourceTargets $ \_ -> do
-    (definitions, checks) <- loadWorkflowModules namespace exists
+    (definitions, checks) <- loadWorkflowModules sourceDir namespace exists
     root <- exported (astModule namespace) "ast"
     targets <- if exists then hangingTargets namespace definitions root else pure []
     sites <- either abort pure (outline (Map.map layoutOf definitions) root)
     hashes <- liftIO (mapM (\(path, _) -> (,) path . Just <$> sourceDigest path) checks)
-    let absent = [(hangingFile namespace, Nothing) | not exists]
+    let absent = [(hangingFile, Nothing) | not exists]
     -- 没有 Hanging 时 Program 只核对它仍不存在，与此前的生成结果一致。
     pure (Outline exists targets (if exists then checks else absent) sites (hashes ++ absent))
 
-loadWorkflowModules :: String -> Bool -> Ghc (Map.Map Name (HsBind GhcRn), SourceChecks)
-loadWorkflowModules namespace withHanging = do
+loadWorkflowModules :: FilePath -> String -> Bool -> Ghc (Map.Map Name (HsBind GhcRn), SourceChecks)
+loadWorkflowModules sourceDir namespace withHanging = do
   setTargets =<< mapM (\file -> guessTarget file Nothing Nothing)
-    ([hangingFile namespace | withHanging] ++ [modulePath (astModule namespace) ++ ".hs"])
+    ([modulePath sourceDir (hangingModule namespace) ++ ".hs" | withHanging] ++ [modulePath sourceDir (astModule namespace) ++ ".hs"])
   result <- load LoadAllTargets
   case result of
     Failed -> abort (if withHanging then "Cannot load Hanging and AST modules" else "Cannot load AST modules")
@@ -65,7 +67,7 @@ loadWorkflowModules namespace withHanging = do
   modules <- forM (sortOn moduleLabel (filter relevant (mgModSummaries graph))) $ \summary -> do
     checked <- typecheckModule =<< parseModule summary
     let name = moduleLabel summary
-        path = modulePath name ++ ".hs"
+        path = modulePath sourceDir name ++ ".hs"
     signature <- liftIO (fingerprint path)
     case tm_renamed_source checked of
       Just (group, _, _, _, _) -> pure (bindings (hs_valds group), (path, Just signature))
@@ -106,10 +108,9 @@ hangingTargets namespace definitions root = do
   sites <- either abort pure (branchSites (Map.map layoutOf definitions) wanted root)
   pure [[(qualified n, sort (Map.findWithDefault [] n sites)) | n <- row] | row <- rows]
 
-astModule, hangingModule, hangingFile :: String -> String
+astModule, hangingModule :: String -> String
 astModule namespace = namespace ++ ".AST"
 hangingModule namespace = namespace ++ ".Hanging"
-hangingFile namespace = modulePath (hangingModule namespace) ++ ".hs"
 
 workflowModule :: String -> String -> Bool
 workflowModule namespace name = name == astModule namespace || isPrefixOf (namespace ++ ".Workflow.") name

@@ -11,7 +11,7 @@ import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Framework.Gen.Plan (Unit)
-import Framework.Gen.Frontend.Ghc (withSourceTargets)
+import Framework.Gen.Frontend.Ghc (modulePath, sourceDirectory, withSourceTargets)
 import Framework.Language.AST (WorkflowF)
 import Framework.Recursion (Fix)
 import GHC (GhcPs, GhcRn, LoadHowMuch(..), SuccessFlag(..), getModSummary, getModuleInfo, getSessionDynFlags,
@@ -35,7 +35,7 @@ import GHC.Unit.Module (mkModule, mkModuleName, moduleUnit)
 import GHC.Types.SrcLoc
 import System.Directory (doesFileExist)
 import System.Exit (ExitCode(..), die, exitWith)
-import System.FilePath ((</>), pathSeparator)
+import System.FilePath ((</>))
 import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, hSetNewlineMode, universalNewlineMode, utf8, withFile)
 import System.Process (CreateProcess(..), StdStream(..), proc, readProcess, waitForProcess, withCreateProcess)
 import Text.Read (readMaybe)
@@ -45,8 +45,8 @@ import Text.Read (readMaybe)
 -- 同一次求值也打印原样业务树与 Hanging 各行，供 Generated/Workflow.json 使用。
 loadComposition :: String -> Bool -> [[(String, [[Int]])]] -> IO (Unit, Fix WorkflowF, [([String], Int)])
 loadComposition namespace hasHanging targets = do
-  let directory = namespaceDirectory namespace
-      tree = "(Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast)"
+  directory <- namespaceDirectory namespace
+  let tree = "(Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast)"
       expression = "print (" ++ tree ++ ", " ++ hangingRowsOf namespace hasHanging
         ++ ", Framework.Gen.Composition.beginComposition " ++ show namespace ++ " " ++ namespace ++ ".Effects.effects "
         ++ tree ++ " " ++ mounts ++ " " ++ show targets ++ ")"
@@ -62,8 +62,8 @@ loadComposition namespace hasHanging targets = do
 -- 只求值业务树和 Hanging 各行的 hook 与目标数，不加载注册与 handler；树是业务写下的原样结构。
 loadWorkflowTree :: String -> Bool -> IO (Fix WorkflowF, [([String], Int)])
 loadWorkflowTree namespace hasHanging = do
-  let directory = namespaceDirectory namespace
-      expression = "print (Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast, "
+  directory <- namespaceDirectory namespace
+  let expression = "print (Framework.Language.AST.toWorkflowF " ++ namespace ++ ".AST.ast, "
         ++ hangingRowsOf namespace hasHanging ++ ")"
   output <- printedByGhci ([directory </> "AST.hs"] ++ [directory </> "Hanging.hs" | hasHanging]) expression
   maybe (die "Cannot read the workflow tree") pure (readMaybe output)
@@ -79,8 +79,9 @@ hangingRowsOf namespace hasHanging
 -- 只读回打印的结果，它经 show 转义，只含 ASCII。
 printedByGhci :: [FilePath] -> String -> IO String
 printedByGhci files expression = do
+  sourceDir <- sourceDirectory
   let loader = (proc "ghci"
-        ([ "-ignore-dot-ghci", "-v0", "-XHaskell2010", "-idemo", "-isdk"] ++ files ++ ["-e", expression]))
+        ([ "-ignore-dot-ghci", "-v0", "-XHaskell2010", "-i" ++ sourceDir, "-isdk"] ++ files ++ ["-e", expression]))
         { std_in = NoStream, std_out = CreatePipe, std_err = Inherit }
   (result, output) <- withCreateProcess loader $ \_ printed _ process -> case printed of
     Just handle -> do
@@ -106,7 +107,8 @@ data HandlerSource = HandlerSource
 -- 首次生成时还没有 Handlers.hs：返回 Nothing，只生成契约。
 loadHandlers :: String -> String -> IO (Maybe HandlerSource)
 loadHandlers namespace contracts = do
-  let inputPath = namespaceDirectory namespace </> "Handlers.hs"
+  directory <- namespaceDirectory namespace
+  let inputPath = directory </> "Handlers.hs"
   exists <- doesFileExist inputPath
   if not exists then pure Nothing else do
     source <- readSource inputPath
@@ -157,8 +159,8 @@ nameAtUse names identifier = case getLocA identifier of
   RealSrcSpan span _ -> Map.lookup (span, rdrNameOcc (unLoc identifier)) names
   _ -> Nothing
 
-namespaceDirectory :: String -> FilePath
-namespaceDirectory namespace = "demo" </> map (\c -> if c == '.' then pathSeparator else c) namespace
+namespaceDirectory :: String -> IO FilePath
+namespaceDirectory namespace = (\dir -> modulePath dir namespace) <$> sourceDirectory
 
 readSource :: FilePath -> IO String
 readSource inputPath = withFile inputPath ReadMode $ \handle -> do

@@ -6,6 +6,7 @@ import Control.Monad (unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.Char (ord)
 import Data.List (intercalate, sort)
+import Framework.Gen.Frontend.Ghc (sourceDirectory)
 import Framework.Gen.Frontend.Source (namespaceDirectory, parseSourceFile, sourceOffset)
 import qualified Framework.Language.Registration as R
 import GHC (getSessionDynFlags, runGhc)
@@ -69,7 +70,8 @@ readEffect = do
 -- Only the outer list needs a source location. Its entries may use local helpers.
 registrationSlot :: String -> IO ()
 registrationSlot namespace = do
-  (source, parsed) <- parseSourceFile (namespaceDirectory namespace </> "Effects.hs")
+  directory <- namespaceDirectory namespace
+  (source, parsed) <- parseSourceFile (directory </> "Effects.hs")
   case [body | L _ (ValD _ FunBind {fun_id = L _ n, fun_matches = MG {mg_alts = L _
                 [L _ Match {m_grhss = GRHSs {grhssGRHSs = [L _ (GRHS _ [] body)]}}]}}) <- hsmodDecls parsed,
                 display n == "effects"] of
@@ -85,7 +87,8 @@ registrationSlot namespace = do
 
 readEffects :: String -> IO ()
 readEffects namespace = do
-  let path = namespaceDirectory namespace </> "Effects.hs"
+  directory <- namespaceDirectory namespace
+  let path = directory </> "Effects.hs"
   (_, parsed) <- parseSourceFile path
   case [body | L _ (ValD _ FunBind {fun_id = L _ n, fun_matches = MG {mg_alts = L _
                 [L _ Match {m_grhss = GRHSs {grhssGRHSs = [L _ (GRHS _ [] body)],
@@ -95,7 +98,8 @@ readEffects namespace = do
       output [("editable", JSBool True), ("registrations", JSArray rows)]
     _ -> do
       -- GHCi evaluates only the registration value; the workflow and handlers are not loaded.
-      let args = ["-ignore-dot-ghci", "-v0", "-idemo", "-isdk", path, "-e",
+      sourceDir <- sourceDirectory
+      let args = ["-ignore-dot-ghci", "-v0", "-i" ++ sourceDir, "-isdk", path, "-e",
                   "print (" ++ namespace ++ ".Effects.effects :: [Framework.Language.Registration.EffectSpec])"]
       printed <- readProcess "ghci" args ""
       specs <- maybe (fail "Cannot decode SDK registrations") pure (readMaybe printed)

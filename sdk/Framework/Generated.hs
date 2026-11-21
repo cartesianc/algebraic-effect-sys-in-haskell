@@ -43,7 +43,7 @@ import Data.Coerce (coerce)
 import GHC.Fingerprint (fingerprintString)
 import GHC.Generics (Generic)
 import System.Environment (getArgs, lookupEnv)
-import System.FilePath (takeFileName)
+import System.FilePath (takeDirectory, takeFileName)
 import System.IO (BufferMode(LineBuffering), IOMode(ReadMode), hGetContents, hSetBuffering, hSetEncoding, hSetNewlineMode, stdout, universalNewlineMode, utf8, withFile)
 import System.IO.Error (isDoesNotExistError, tryIOError)
 import System.Process (callProcess)
@@ -68,7 +68,7 @@ interpreter namespace sources prototype createEntries tree specifications = do
       verifyInputs
       (_, rendered) <- runProgram prototype createEntries tree
       putStrLn rendered
-    ["--generate"] -> generate namespace
+    ["--generate"] -> generate namespace [file | (file, _) <- sources, takeFileName file == "Handlers.hs"]
     ["--structure"] -> do
       verifyInputs
       initialized <- initializePrototype prototype
@@ -100,5 +100,10 @@ staleGenerated namespace reason = ioError (userError
   (reason ++ "; run from the repository root: cabal run effect-codegen -- workflow " ++ namespace))
 
 -- 仓库的生成命令适配；执行核心不启动编译器，也不依赖 GHC 源码解析 API。
-generate :: String -> IO ()
-generate namespace = callProcess "cabal" ["run", "effect-codegen", "--", "workflow", namespace]
+generate :: String -> [FilePath] -> IO ()
+generate namespace handlerFiles = callProcess "cabal" (["run", "effect-codegen", "--"] ++ options ++ ["workflow", namespace])
+  where
+    -- The generated source check names the actual file below the namespace's module root.
+    options = case handlerFiles of
+      [path] -> ["--source-dir", iterate takeDirectory path !! (2 + length (filter (== '.') namespace))]
+      _ -> []

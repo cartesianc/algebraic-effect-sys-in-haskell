@@ -195,6 +195,8 @@ main = interpreter ast effects
 
 本文的 **gencode** 指代码生成阶段，对应可执行目标 `effect-codegen`；**runtime** 指业务运行阶段，对应 `file-demo` 等程序的无参数启动。它们不是额外的命令或 `--runtime` 开关。
 
+业务项目可以自行命名。仓库示例把业务模块放在 `demo/`，其他目录通过工具的 `--source-dir` 指定。例如从项目根执行 `cabal run effect-codegen -- --source-dir src workflow Orders.App` 会读取 `src/Orders/App/`。Cabal 组件的 `hs-source-dirs` 应包含同一源码目录和 `sdk`。项目名称与 Haskell 模块命名空间分别配置。
+
 ### 命令总览
 
 以下全部使用 FileDemo。`FileDemo` 是 Haskell 模块命名空间，`file-demo` 是 [Cabal 文件](../algebraic-effect-sys-in-haskell.cabal)中的 executable 名称；其他程序的对应关系见[示例](#examples)。
