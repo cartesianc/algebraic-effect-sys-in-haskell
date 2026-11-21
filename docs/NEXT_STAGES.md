@@ -26,6 +26,28 @@
 
 **不同上游之间的 race 暂缓。** 当前 gen 要求候选共享一个判定 Excu。若引入不同生产链竞争，还须确定胜者、输家取消和已执行 IO、scope 的收尾规则。这些选择不属于已实现的 U5。
 
+<a id="request-chains"></a>
+## requests 剧本化
+
+消费链按剧本编译：`requests` 是前驱，`requires` 是被动读取。运行时的资产匹配提前到 gen 期。以下语义由用户确认，完成于 2026-11-21。
+
+| 阶段 | 已实现 | 规范 |
+| --- | --- | --- |
+| <a id="request-phase-1"></a>R1 requests 前驱 | gen 把被请求资产唯一的生产链展开进请求方入口；每个请求方每次执行各走一遍，成功值写入该资产的当前值。`requires` 只读这个值，被读取的普通资产必须有 effect `requests` 它（`Asset never requested`）。句柄单独执行不再注入挂在它下面的普通 Context。alternative 候选只 `requires` 自己的判定资产。 | [普通资产只经 requests 生产](CORE_DESIGN.md#request-production) · [Crawler](../demo/Crawler/Effects.hs) |
+| <a id="request-phase-2"></a>R2 运行时按身份寻址 | interpreter 启动时一次建索引。资产与 scope 按 gen 分配的 effect 编号存取，生成入口直接写出编号；执行位置按先序坐标寻址，子树判断是一次区间比较。普通 Context 的注入代码与 gen 中对应的分析分支已删除。 | [运行索引](CORE_DESIGN.md#request-production) |
+
+<a id="request-phase-3"></a>
+**R3 持续资产未改。** Stream 会话、lifelong 订阅与 `ReuseOutput` 仍按原协议驱动，持续 Context 继续挂在句柄输出上。用户已确定持续资产也要随剧本化调整，具体设计待写并确认后实现。
+
+**运行时仍按名字查的位置。** 这些查找都不在资产读写路径上：
+
+- 原子句柄的回放表，只在持续注入和选择判定期间使用；
+- alternative 选中后按 Context 名找候选分支，每次选择一次；
+- 会话步骤按标签取入口，每个会话启动一次；
+- Error 回调登记与 `Failure` 记录，属于诊断展示。
+
+requests 展开的前驱作为请求方入口里的静态代码执行，运行时没有它们各自的坐标。
+
 <a id="code-shape"></a>
 ## LSP 从哪份代码开始
 
@@ -77,6 +99,7 @@ Stage 1–7 在各自已确认的范围内完成。生成、编译和现有 demo
 | <a id="stage-3"></a><a id="stage-6"></a><a id="stage-6-reuse"></a>持续驱动、结束与同次输出复用 | [执行边界](STREAM_LIFELONG.md#execution-boundaries) · [消费结束](STREAM_LIFELONG.md#consumer-end) · [派生与复用](STREAM_LIFELONG.md#derive) |
 | <a id="stage-5"></a><a id="stage-7"></a><a id="scope-gc"></a>持续资产保活与 scope 回收 | [资源交接](STREAM_LIFELONG.md#binding-retention) · [可达性回收](CORE_DESIGN.md#scope-gc) |
 | <a id="pure-pipeline"></a><a id="version-boundaries"></a>原子输入输出与 gen 分工 | [Pure 与原子输出](CORE_DESIGN.md#pure) · [编译器与 runtime](CORE_DESIGN.md#compiler) |
+| requests 前驱与运行时编号、坐标 | [普通资产只经 requests 生产](CORE_DESIGN.md#request-production) · [剧本化阶段](#request-chains) |
 
 <a id="maintenance"></a>
 本页只跟踪已选定的工作。正式协议和已实现写法分别维护在[主设计](CORE_DESIGN.md)与[指南](GUIDE.md)。
