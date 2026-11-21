@@ -196,21 +196,15 @@ generatedPrototype =
     , SDK.protoWorkflow =
         SDK.ChainedAt
           []
-          [ SDK.ChainedAt
-              [0]
-              [ SDK.NodeAt [0,0] "HoldFiles"
-              , SDK.NodeAt [0,1] "InspectFiles"
-              ]
-          , SDK.ChainedAt
-              [1]
-              [ SDK.NodeAt [1,0] "ReleaseFiles"
-              , SDK.NodeAt [1,1] "FinishInspection"
-              ]
+          [ SDK.NodeAt [0] "HoldFiles"
+          , SDK.NodeAt [1] "InspectFiles"
+          , SDK.NodeAt [2] "ReleaseFiles"
+          , SDK.NodeAt [3] "FinishInspection"
           ]
     , SDK.protoSessions = []
     , SDK.protoChains =
         [ SDK.ChainProto
-            { SDK.chainNode = [0,0]
+            { SDK.chainNode = [0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "HoldFiles"
             , SDK.chainEntry = RunHoldFilesGen
@@ -227,7 +221,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[OpenFileSessionGen]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [0,1]
+            { SDK.chainNode = [1]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "InspectFiles"
             , SDK.chainEntry = RunInspectFilesGen
@@ -245,7 +239,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[OpenFileSessionGen]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,0]
+            { SDK.chainNode = [2]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ReleaseFiles"
             , SDK.chainEntry = RunReleaseFilesGen
@@ -264,7 +258,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[OpenFileSessionGen]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,1]
+            { SDK.chainNode = [3]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "FinishInspection"
             , SDK.chainEntry = RunFinishInspectionGen
@@ -449,41 +443,39 @@ generatedPrototype =
           , SDK.scopeUndetermined = []
           }
     , SDK.protoScopeNames = [(OpenFileSessionGen, "FileSession")]
-    , SDK.protoSources = [(SDK.ReadPoint [1,1] "InspectedFiles", SDK.FromChains [[1,0]])]
+    , SDK.protoSources = [(SDK.ReadPoint [3] "InspectedFiles", SDK.FromChains [[2]])]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
-            { SDK.openingNode = [1,0]
+            { SDK.openingNode = [2]
             , SDK.openingScope = "FileSession"
-            , SDK.openingSources = [("FileLocations", SDK.FromChains [[1,0]])]
+            , SDK.openingSources = [("FileLocations", SDK.FromChains [[2]])]
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [0,1]
+            { SDK.openingNode = [1]
             , SDK.openingScope = "FileSession"
-            , SDK.openingSources = [("FileLocations", SDK.FromChains [[0,1]])]
+            , SDK.openingSources = [("FileLocations", SDK.FromChains [[1]])]
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [0,0]
+            { SDK.openingNode = [0]
             , SDK.openingScope = "FileSession"
-            , SDK.openingSources = [("FileLocations", SDK.FromChains [[0,0]])]
+            , SDK.openingSources = [("FileLocations", SDK.FromChains [[0]])]
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         ]
     , SDK.protoDriving =
         SDK.DrivingPlan
           { SDK.drivingNodes =
-              [ SDK.NodeDrive [] [[0,0],[0,1],[1,0],[1,1]] [] Nothing [] [] []
-              , SDK.NodeDrive [0] [[0,0],[0,1]] [] Nothing [] [] []
-              , SDK.NodeDrive [0,0] [[0,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [0,1] [[0,1]] [] Nothing [] [] []
-              , SDK.NodeDrive [1] [[1,0],[1,1]] [] Nothing [] [] []
-              , SDK.NodeDrive [1,0] [[1,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [1,1] [[1,1]] [] Nothing [] [] []
+              [ SDK.NodeDrive [] [[0],[1],[2],[3]] [] Nothing [] [] []
+              , SDK.NodeDrive [0] [[0]] [] Nothing [] [] []
+              , SDK.NodeDrive [1] [[1]] [] Nothing [] [] []
+              , SDK.NodeDrive [2] [[2]] [] Nothing [] [] []
+              , SDK.NodeDrive [3] [[3]] [] Nothing [] [] []
               ]
           , SDK.drivingUnits = []
           , SDK.drivingSessions = []
-          , SDK.drivingRootNodes = [[0,0],[0,1],[1,0],[1,1]]
+          , SDK.drivingRootNodes = [[0],[1],[2],[3]]
           , SDK.drivingOutputSites = []
           , SDK.drivingRequests =
               [ ("FileLocations", GetFileNamesGen)

@@ -22,7 +22,7 @@
 | scope 开启计划 | `protoScopeOpenings` | 每个开启位置的参数生产节点／会话来源及可能类别；不代替实际绑定 |
 | 运行实例 | 活动 chain、Context 生产身份、执行帧、scope 实例与入口使用登记 | 运行图共享静态原型，根据实际调用更新；不反向修改定义 |
 
-`NodeId = [Int]` 是当前原型快照内的 AST 下标路径：根为 `[]`，普通子项从零编号；alternative 的选择读取链使用该分支路径加 `[-1]`；lifelong 的会话步骤使用 lifelong 路径加 `[-1, 会话序号, 步骤]`，interpreter 托管的会话步骤使用 `[-2, 会话序号, 步骤]`。同一个 origin 末端挂载两次会有两个 `NodeId`，共享方法定义。Context 链经 demand 或挂接进入，定义本身没有虚构的 AST 位置。编辑 AST 后重新生成编号；这些路径不充当跨快照稳定 key 或运行调用序号。
+`NodeId = [Int]` 是当前原型快照内 AST [规范形式](CORE_DESIGN.md#workflow-normal-form)的下标路径：根为 `[]`，普通子项从零编号；alternative 的选择读取链使用该分支路径加 `[-1]`；lifelong 的会话步骤使用 lifelong 路径加 `[-1, 会话序号, 步骤]`，interpreter 托管的会话步骤使用 `[-2, 会话序号, 步骤]`。同一个 origin 末端挂载两次会有两个 `NodeId`，共享方法定义。Context 链经 demand 或挂接进入，定义本身没有虚构的 AST 位置。编辑 AST 后重新生成编号；这些路径不充当跨快照稳定 key 或运行调用序号。
 
 链事实和标准查询由 `Framework.Prototype` 统一提供：`Prototype.Types` 保存纯模型，`Prototype.Graph` 保存方法图与 ScopeTree 的数据，`Prototype.Query` 提供只读查询，`Prototype.Validate` 校验自洽并核对 AST 快照。构建算法由 `Gen.Composition` 统一持有：从声明和方法形状逐步推导装配、图与来源，不让不同输出模块另行解释同一组合。内部状态与最终 Prototype 均不复制业务注册；gen 的输出阶段读取已确定事实生成接口与包装，Execution 读取挂载关系装配闭包，运行图共享这份原型并保存活动实例关系。运行图不累计完整方法调用历史。Stage 2 由 `chainDrives`、`chainReads` 和 `protoSources` 保存可能生产、缺值读取与供值机会；runtime 读取共享最新值，保留固定捕获。清理与 Error 边界保留。SDK 当前采用 Haskell ADT，不增加 JSON 或外部 LSP 协议。
 
@@ -266,7 +266,7 @@ Assembly 是组合机器内部的装配结果，不是第二份业务注册或 R
 
 ### 运行时初始化与执行
 
-运行时先核对注册与源码快照，执行 `evaluate (force generatedPrototype)` 和 `validatePrototype`，检查身份、引用、挂载、父子关系、层次与无环性；随后对当前 AST 做一次 `cata`，逐位置匹配 `protoWorkflow`，按 `NodeId` 读取入口和 alternative 对应关系，并装配尚未执行的 action。所有分支及挂载核对通过后，才安装 scope 关系并执行业务。`ProgramStructure`、`initializeGeneratedStructure` 和旧的分散结构常量已删除。运行时不重新展开方法、运行 `zygo` 或推导父边；AST 的位置或结构变化也须重新生成。
+运行时先核对注册与源码快照，执行 `evaluate (force generatedPrototype)` 和 `validatePrototype`，检查身份、引用、挂载、父子关系、层次与无环性；随后对当前 AST 的规范形式做一次 `cata`（`foldAST` 先经同一个 `normalizeWorkflow`），逐位置匹配 `protoWorkflow`，按 `NodeId` 读取入口和 alternative 对应关系，并装配尚未执行的 action。所有分支及挂载核对通过后，才安装 scope 关系并执行业务。`ProgramStructure`、`initializeGeneratedStructure` 和旧的分散结构常量已删除。运行时不重新展开方法、运行 `zygo` 或推导父边；AST 的位置或结构变化也须重新生成。
 
 执行 fold 的结果为 `Either`，其中携带已收集的入口及尚未执行的 `ExceptT / IO` 动作。顺序和并行分支均先检查全部子分支，完成入口集合比较后才运行 action；不会靠执行业务来强制结构求值。创建 Target 仅分配空的运行状态，不打开资源，scope 实例、使用计数和锁仍按已有运行协议管理。
 

@@ -266,7 +266,7 @@ lifelong 写入统一 Prototype，运行装配、来源分析与 `--structure` �
     LifelongAt NodeId LifelongProto [WorkflowTree]
 
     LifelongProto
-      { lifelongUnits         :: [NodeId]            -- 单元：直接子项；直接子项是 parallel 时为它的子项
+      { lifelongUnits         :: [NodeId]            -- 单元：规范形式中的直接子项（源码中直接子项的 parallel 已拆开）
       , lifelongSubscriptions :: [(NodeId, String)]  -- 每个挂载 target 订阅的资产
       , lifelongSessions      :: [SessionProto] }    -- 订阅资产、上游资产及 AST 持续副产物各一份会话
 

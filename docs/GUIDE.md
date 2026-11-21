@@ -721,6 +721,7 @@ ast = operateFile
 - **node 不是 AST**：顶层和每个模块都必须是 branch，单个 node 也要包进一个 branch。
 - **子项列表同质**：一个列表要么全是 node，要么全是 branch，不能混排。
 - **空列表**：须标注元素类型，例如 `chained ([] :: [AST])`。
+- **规范形式**：嵌套的同类 branch 会被拼平，只有一个子项的 `chained`／`parallel` 等于这个子项，空的 `chained`／`parallel` 被删除。`chained [chained [node "Announce"], monitorLines]` 与 `chained [node "Announce", monitorLines]` 执行相同，`--structure` 中 `Announce` 位于 `[0]`。lifelong 的单元与 alternative 的候选保持各自的边界。[规范形式的完整规则](CORE_DESIGN.md#workflow-normal-form)
 
 ### node
 
@@ -764,6 +765,7 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 - **候选怎么对应**：同一个 Excu 下挂几个 Context，各自只在自己的情况下解析成功（不成立时 `raise`）。每个候选（末端及其 Input 链上游）在 `demands` 里 `requires` 恰好一份由这个 Excu 的输出直接或经 Pure 解析出的非持续资产，各候选的资产互不相同。FileDemo 中 `ReadFile` 下挂 `BlankText`（产出 `FileBlank`）和 `FilledText`（产出 `FileWritten`），`WriteFirstLine` 依赖 `FileBlank`，`AppendLine` 依赖 `FileWritten`。
 - **运行时**：按候选顺序尝试同一份输出，首个成功的 parser 发布并启动对应分支。全部拒绝时，SDK 先按同一顺序检查已有绑定；若都缺值且其他位置仍可发布，则等待变化并重查。两个值都可读时，选排在前面的候选。生产机会耗尽、重查仍无值才报 `ContextNotInitialized`。[选择与交接](CORE_DESIGN.md#alternative-selection)
 - **同一个 Excu 上的多个 alternative** 必须按同样的顺序判定同样的 Context；分叉来自不同上游的 race 尚未实现，gen 拒绝。
+- **至少两个候选**：只有一个候选时没有可选择的分支，gen 拒绝。只想在解析出的资产上执行一个分支，给它声明 `requests`。
 
 #### `lifelong`
 
@@ -819,7 +821,7 @@ hangingTree = hanging [middleware [node "TraceLine"] [monitorLines]]
 - **何时执行。** 在挂载覆盖的位置，`super` 先为匹配 `intercept` 的原子调用发送 `Enter`，再执行业务方法。比如 `openInput` 打开文件后调用一次 `rawoutput []`，日志 handler 就收到一次 `RawOutput "openInput" []`。打印由 middleware 的 `putStrLn` 执行。
 - **按操作与方法名匹配。** `RawEmit name text` 匹配送达的每条发送，`RawEmit "nextLine" text` 进一步限定方法名。`_` 匹配已经送达的全部操作。在上例中 `printLine` 是 Excu，在同一子树里照常执行，日志只收到 Stream 和 Scoped 捕获点的通知。`parseLine` 的 `RawInput` 属于它读取的上游 Stream。若要观察全部已支持的类别，可将 `intercept` 写为 `allEffects`（Excu、Scoped、Pure、Stream）。[完整 handler](../demo/LinesDemo/Handlers.hs)
 - **同步执行**：Middleware 是类方法，在调用点上执行完，原调用才继续；它只读捕获，不改变原值。多个 Middleware 按注册顺序依次执行，不要让它们依赖彼此。
-- **透明**：标注不改变子树的执行顺序、NodeId 和 lifelong 的单元划分。范围只看位置：标注覆盖整个 `lifelong` 时，它的生产会话里执行的调用（例如会话开启的 `open`）也被捕获；只覆盖 lifelong 里的子树时，只捕获这些节点。`--structure` 列出挂载目标和每个启动位置覆盖的 Middleware。该位置内的具体操作还须满足注册的 `intercept`。标注是给 gen 的标记，注入在生成期完成：改动标注后要重新生成。
+- **透明**：标注不改变子树的执行顺序、NodeId 和 lifelong 的单元划分。目标分支在规范形式中被拼入外层时（例如 `chained [setup, rest]` 中的 `rest = chained [monitor, report]`），挂载落到它各子项的位置，覆盖范围不变。范围只看位置：标注覆盖整个 `lifelong` 时，它的生产会话里执行的调用（例如会话开启的 `open`）也被捕获；只覆盖 lifelong 里的子树时，只捕获这些节点。`--structure` 列出挂载目标和每个启动位置覆盖的 Middleware。该位置内的具体操作还须满足注册的 `intercept`。标注是给 gen 的标记，注入在生成期完成：改动标注后要重新生成。
 - **失败**：Middleware 与普通 Excu 一样 `raise`，失败从调用点传播，origin 是 Middleware 的注册名。
 - **限制**：标注列表只能写 Middleware；Middleware 不能作为 `node` 末端，也不能作为其他 effect 的 `input`；只有 Middleware 的 handler 获得 `Hooks` 能力。
 

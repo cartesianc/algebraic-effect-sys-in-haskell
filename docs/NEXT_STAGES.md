@@ -49,7 +49,7 @@ LSP 面向开发者手写的 `Types.hs`、`Effects.hs`、`Handlers.hs`、`AST.hs
 <a id="ast-nesting"></a>
 ### AST 嵌套与 workflow 边界
 
-现有 `chained`、`parallel` 和 `alternative` 可以嵌套，也可以放在 `lifelong` 内。gen 目前拒绝在 `lifelong` 的后代中再次挂载 `lifelong`。嵌套持续执行单独设计。以「每份订单启动一条消息流」为例，需要决定外层何时能接下一单、内层结束或取消传到哪里、哪个执行帧持有订阅和 scope。[静态规则](STREAM_LIFELONG.md#static) · [执行边界](STREAM_LIFELONG.md#execution-boundaries)
+同类嵌套、单子项与空 branch 已按[规范形式](CORE_DESIGN.md#workflow-normal-form)化简：gen 与运行时共用 `normalizeWorkflow`，`NodeId` 取自规范形式，Hanging 挂载随之迁移；只有一个候选的 alternative 由 gen 拒绝。现有 `chained`、`parallel` 和 `alternative` 可以嵌套，也可以放在 `lifelong` 内。gen 目前拒绝在 `lifelong` 的后代中再次挂载 `lifelong`。嵌套持续执行单独设计。以「每份订单启动一条消息流」为例，需要决定外层何时能接下一单、内层结束或取消传到哪里、哪个执行帧持有订阅和 scope。[静态规则](STREAM_LIFELONG.md#static) · [执行边界](STREAM_LIFELONG.md#execution-boundaries)
 
 <a id="review"></a>
 <a id="current-limits"></a>

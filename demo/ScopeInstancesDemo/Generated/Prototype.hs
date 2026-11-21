@@ -229,24 +229,18 @@ generatedPrototype =
     , SDK.protoWorkflow =
         SDK.ChainedAt
           []
-          [ SDK.ChainedAt
-              [0]
-              [ SDK.NodeAt [0,0] "PrepareFiles"
-              ]
-          , SDK.ChainedAt
-              [1]
-              [ SDK.NodeAt [1,0] "UseFirst"
-              , SDK.NodeAt [1,1] "SelectSecond"
-              , SDK.NodeAt [1,2] "UseSecond"
-              , SDK.NodeAt [1,3] "SelectFirst"
-              , SDK.NodeAt [1,4] "ReopenFirst"
-              , SDK.NodeAt [1,5] "CheckJournal"
-              ]
+          [ SDK.NodeAt [0] "PrepareFiles"
+          , SDK.NodeAt [1] "UseFirst"
+          , SDK.NodeAt [2] "SelectSecond"
+          , SDK.NodeAt [3] "UseSecond"
+          , SDK.NodeAt [4] "SelectFirst"
+          , SDK.NodeAt [5] "ReopenFirst"
+          , SDK.NodeAt [6] "CheckJournal"
           ]
     , SDK.protoSessions = []
     , SDK.protoChains =
         [ SDK.ChainProto
-            { SDK.chainNode = [0,0]
+            { SDK.chainNode = [0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "PrepareFiles"
             , SDK.chainEntry = RunPrepareFilesGen
@@ -256,7 +250,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,0]
+            { SDK.chainNode = [1]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "UseFirst"
             , SDK.chainEntry = RunUseFirstGen
@@ -273,7 +267,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[OpenFileSessionGen]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,1]
+            { SDK.chainNode = [2]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "SelectSecond"
             , SDK.chainEntry = RunSelectSecondGen
@@ -283,7 +277,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,2]
+            { SDK.chainNode = [3]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "UseSecond"
             , SDK.chainEntry = RunUseSecondGen
@@ -300,7 +294,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[OpenFileSessionGen]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,3]
+            { SDK.chainNode = [4]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "SelectFirst"
             , SDK.chainEntry = RunSelectFirstGen
@@ -310,7 +304,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,4]
+            { SDK.chainNode = [5]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ReopenFirst"
             , SDK.chainEntry = RunReopenFirstGen
@@ -327,7 +321,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[OpenFileSessionGen]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,5]
+            { SDK.chainNode = [6]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "CheckJournal"
             , SDK.chainEntry = RunCheckJournalGen
@@ -545,41 +539,39 @@ generatedPrototype =
     , SDK.protoSources = []
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
-            { SDK.openingNode = [1,4]
+            { SDK.openingNode = [5]
             , SDK.openingScope = "FileSession"
-            , SDK.openingSources = [("FileLocation", SDK.FromChains [[1,4]])]
+            , SDK.openingSources = [("FileLocation", SDK.FromChains [[5]])]
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [1,2]
+            { SDK.openingNode = [3]
             , SDK.openingScope = "FileSession"
-            , SDK.openingSources = [("FileLocation", SDK.FromChains [[1,2]])]
+            , SDK.openingSources = [("FileLocation", SDK.FromChains [[3]])]
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [1,0]
+            { SDK.openingNode = [1]
             , SDK.openingScope = "FileSession"
-            , SDK.openingSources = [("FileLocation", SDK.FromChains [[1,0]])]
+            , SDK.openingSources = [("FileLocation", SDK.FromChains [[1]])]
             , SDK.openingKinds = [SDK.ExecutionMultiple]
             }
         ]
     , SDK.protoDriving =
         SDK.DrivingPlan
           { SDK.drivingNodes =
-              [ SDK.NodeDrive [] [[0,0],[1,0],[1,1],[1,2],[1,3],[1,4],[1,5]] [] Nothing [] [] []
-              , SDK.NodeDrive [0] [[0,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [0,0] [[0,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [1] [[1,0],[1,1],[1,2],[1,3],[1,4],[1,5]] [] Nothing [] [] []
-              , SDK.NodeDrive [1,0] [[1,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [1,1] [[1,1]] [] Nothing [] [] []
-              , SDK.NodeDrive [1,2] [[1,2]] [] Nothing [] [] []
-              , SDK.NodeDrive [1,3] [[1,3]] [] Nothing [] [] []
-              , SDK.NodeDrive [1,4] [[1,4]] [] Nothing [] [] []
-              , SDK.NodeDrive [1,5] [[1,5]] [] Nothing [] [] []
+              [ SDK.NodeDrive [] [[0],[1],[2],[3],[4],[5],[6]] [] Nothing [] [] []
+              , SDK.NodeDrive [0] [[0]] [] Nothing [] [] []
+              , SDK.NodeDrive [1] [[1]] [] Nothing [] [] []
+              , SDK.NodeDrive [2] [[2]] [] Nothing [] [] []
+              , SDK.NodeDrive [3] [[3]] [] Nothing [] [] []
+              , SDK.NodeDrive [4] [[4]] [] Nothing [] [] []
+              , SDK.NodeDrive [5] [[5]] [] Nothing [] [] []
+              , SDK.NodeDrive [6] [[6]] [] Nothing [] [] []
               ]
           , SDK.drivingUnits = []
           , SDK.drivingSessions = []
-          , SDK.drivingRootNodes = [[0,0],[1,0],[1,1],[1,2],[1,3],[1,4],[1,5]]
+          , SDK.drivingRootNodes = [[0],[1],[2],[3],[4],[5],[6]]
           , SDK.drivingOutputSites = []
           , SDK.drivingRequests = [("FileLocation", GetFileNameGen), ("FileResource", GetOpenedFileGen)]
           , SDK.drivingMiddleware = []

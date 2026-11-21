@@ -577,45 +577,42 @@ generatedPrototype =
               [ SDK.NodeAt [1,0] "ReadReport"
               , SDK.NodeAt [1,1] "ReadReply"
               ]
-          , SDK.ChainedAt
-              [2]
-              [ SDK.NodeAt [2,0] "ShowReport"
-              , SDK.NodeAt [2,1] "ShowReply"
-              ]
+          , SDK.NodeAt [2] "ShowReport"
+          , SDK.NodeAt [3] "ShowReply"
           , SDK.AlternativeAt
-              [3]
+              [4]
               (
                 SDK.AlternativeProto
                   { SDK.alternativeSource = "InspectReport"
-                  , SDK.alternativeSelector = [3,-1]
-                  , SDK.alternativeCases = [([3,0],"ReportBlank"),([3,1],"ReportFilled")]
+                  , SDK.alternativeSelector = [4,-1]
+                  , SDK.alternativeCases = [([4,0],"ReportBlank"),([4,1],"ReportFilled")]
                   }
               )
-              [ SDK.NodeAt [3,0] "OnBlank"
-              , SDK.NodeAt [3,1] "OnFilled"
+              [ SDK.NodeAt [4,0] "OnBlank"
+              , SDK.NodeAt [4,1] "OnFilled"
               ]
           , SDK.LifelongAt
-              [4]
+              [5]
               (
                 SDK.LifelongProto
-                  { SDK.lifelongUnits = [[4,0],[4,1]]
-                  , SDK.lifelongSubscriptions = [([4,0],"LevelA"),([4,1],"LevelB")]
+                  { SDK.lifelongUnits = [[5,0],[5,1]]
+                  , SDK.lifelongSubscriptions = [([5,0],"LevelA"),([5,1],"LevelB")]
                   , SDK.lifelongSessions =
                       [ SDK.SessionProto
                           { SDK.sessionAsset = "LevelA"
                           , SDK.sessionPlan = SDK.Receive "FeedA"
-                          , SDK.sessionMounts = [[4,-1,0,0],[4,-1,0,1]]
+                          , SDK.sessionMounts = [[5,-1,0,0],[5,-1,0,1]]
                           }
                       , SDK.SessionProto
                           { SDK.sessionAsset = "LevelB"
                           , SDK.sessionPlan = SDK.Receive "FeedB"
-                          , SDK.sessionMounts = [[4,-1,1,0],[4,-1,1,1]]
+                          , SDK.sessionMounts = [[5,-1,1,0],[5,-1,1,1]]
                           }
                       ]
                   }
               )
-              [ SDK.NodeAt [4,0] "ShowA"
-              , SDK.NodeAt [4,1] "ShowB"
+              [ SDK.NodeAt [5,0] "ShowA"
+              , SDK.NodeAt [5,1] "ShowB"
               ]
           ]
     , SDK.protoSessions =
@@ -690,7 +687,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [2,0]
+            { SDK.chainNode = [2]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ShowReport"
             , SDK.chainEntry = RunShowReportGen
@@ -700,7 +697,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [2,1]
+            { SDK.chainNode = [3]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ShowReply"
             , SDK.chainEntry = RunShowReplyGen
@@ -710,7 +707,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [3,0]
+            { SDK.chainNode = [4,0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "OnBlank"
             , SDK.chainEntry = RunOnBlankGen
@@ -720,7 +717,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [3,1]
+            { SDK.chainNode = [4,1]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "OnFilled"
             , SDK.chainEntry = RunOnFilledGen
@@ -730,7 +727,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [4,0]
+            { SDK.chainNode = [5,0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ShowA"
             , SDK.chainEntry = RunShowAGen
@@ -740,7 +737,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [4,1]
+            { SDK.chainNode = [5,1]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ShowB"
             , SDK.chainEntry = RunShowBGen
@@ -750,7 +747,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [3,-1]
+            { SDK.chainNode = [4,-1]
             , SDK.chainRole = SDK.SelectorChain
             , SDK.chainTerminal = "InspectReport"
             , SDK.chainEntry = RunInspectReportGen
@@ -760,7 +757,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [4,-1,0,0]
+            { SDK.chainNode = [5,-1,0,0]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "LevelA"
             , SDK.chainEntry = NextFeedAGen
@@ -770,7 +767,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [4,-1,0,1]
+            { SDK.chainNode = [5,-1,0,1]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "LevelA"
             , SDK.chainEntry = GetLevelAGen
@@ -780,7 +777,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [4,-1,1,0]
+            { SDK.chainNode = [5,-1,1,0]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "LevelB"
             , SDK.chainEntry = NextFeedBGen
@@ -790,7 +787,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [4,-1,1,1]
+            { SDK.chainNode = [5,-1,1,1]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "LevelB"
             , SDK.chainEntry = GetLevelBGen
@@ -1304,13 +1301,13 @@ generatedPrototype =
           }
     , SDK.protoScopeNames = [(OpenReportScopeGen, "ReportScope"), (OpenReplyScopeGen, "ReplyScope")]
     , SDK.protoSources =
-        [ (SDK.ReadPoint [3,-1] "ReportPath", SDK.FromChains [[0,0]])
-        , (SDK.ReadPoint [2,1] "ReplyStats", SDK.FromChains [[1,1]])
-        , (SDK.ReadPoint [2,0] "ReportStats", SDK.FromChains [[1,0]])
+        [ (SDK.ReadPoint [4,-1] "ReportPath", SDK.FromChains [[0,0]])
+        , (SDK.ReadPoint [3] "ReplyStats", SDK.FromChains [[1,1]])
+        , (SDK.ReadPoint [2] "ReportStats", SDK.FromChains [[1,0]])
         , (SDK.ReadPoint [1,1] "ReplyPath", SDK.FromChains [[0,1]])
         , (SDK.ReadPoint [1,0] "ReportPath", SDK.FromChains [[0,0]])
-        , (SDK.ReadPoint [3,-1] "ReportEmpty", SDK.FromOwnChain)
-        , (SDK.ReadPoint [3,-1] "ReportText", SDK.FromOwnChain)
+        , (SDK.ReadPoint [4,-1] "ReportEmpty", SDK.FromOwnChain)
+        , (SDK.ReadPoint [4,-1] "ReportText", SDK.FromOwnChain)
         ]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
@@ -1329,43 +1326,42 @@ generatedPrototype =
     , SDK.protoDriving =
         SDK.DrivingPlan
           { SDK.drivingNodes =
-              [ SDK.NodeDrive [] [[0,0],[0,1],[1,0],[1,1],[2,0],[2,1],[3,0],[3,1],[4,0],[4,1]] [] Nothing [] [] []
+              [ SDK.NodeDrive [] [[0,0],[0,1],[1,0],[1,1],[2],[3],[4,0],[4,1],[5,0],[5,1]] [] Nothing [] [] []
               , SDK.NodeDrive [0] [[0,0],[0,1]] [] Nothing [] [] []
               , SDK.NodeDrive [0,0] [[0,0]] [] Nothing [] [] []
               , SDK.NodeDrive [0,1] [[0,1]] [] Nothing [] [] []
               , SDK.NodeDrive [1] [[1,0],[1,1]] [] Nothing [] [] []
               , SDK.NodeDrive [1,0] [[1,0]] [] Nothing [] [] []
               , SDK.NodeDrive [1,1] [[1,1]] [] Nothing [] [] []
-              , SDK.NodeDrive [2] [[2,0],[2,1]] [] Nothing [] [] []
-              , SDK.NodeDrive [2,0] [[2,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [2,1] [[2,1]] [] Nothing [] [] []
-              , SDK.NodeDrive [3] [[3,0],[3,1]] [] Nothing [] [] []
-              , SDK.NodeDrive [3,0] [[3,0]] [] Nothing [[3,-1]] [] []
-              , SDK.NodeDrive [3,1] [[3,1]] [] Nothing [[3,-1]] [] []
-              , SDK.NodeDrive [4] [[4,0],[4,1]] [] (Just [4]) [] [] []
-              , SDK.NodeDrive [4,0] [[4,0]] ["ParserA"] (Just [4]) [] [] []
-              , SDK.NodeDrive [4,1] [[4,1]] ["ParserB"] (Just [4]) [] [] []
-              , SDK.NodeDrive [3,-1] [] [] Nothing [] [] []
-              , SDK.NodeDrive [4,-1,0,0] [] [] (Just [4]) [] [] []
-              , SDK.NodeDrive [4,-1,0,1] [] [] (Just [4]) [] [] []
-              , SDK.NodeDrive [4,-1,1,0] [] [] (Just [4]) [] [] []
-              , SDK.NodeDrive [4,-1,1,1] [] [] (Just [4]) [] [] []
+              , SDK.NodeDrive [2] [[2]] [] Nothing [] [] []
+              , SDK.NodeDrive [3] [[3]] [] Nothing [] [] []
+              , SDK.NodeDrive [4] [[4,0],[4,1]] [] Nothing [] [] []
+              , SDK.NodeDrive [4,0] [[4,0]] [] Nothing [[4,-1]] [] []
+              , SDK.NodeDrive [4,1] [[4,1]] [] Nothing [[4,-1]] [] []
+              , SDK.NodeDrive [5] [[5,0],[5,1]] [] (Just [5]) [] [] []
+              , SDK.NodeDrive [5,0] [[5,0]] ["ParserA"] (Just [5]) [] [] []
+              , SDK.NodeDrive [5,1] [[5,1]] ["ParserB"] (Just [5]) [] [] []
+              , SDK.NodeDrive [4,-1] [] [] Nothing [] [] []
+              , SDK.NodeDrive [5,-1,0,0] [] [] (Just [5]) [] [] []
+              , SDK.NodeDrive [5,-1,0,1] [] [] (Just [5]) [] [] []
+              , SDK.NodeDrive [5,-1,1,0] [] [] (Just [5]) [] [] []
+              , SDK.NodeDrive [5,-1,1,1] [] [] (Just [5]) [] [] []
               , SDK.NodeDrive [-2,0,0] [] [] Nothing [] [] []
               , SDK.NodeDrive [-2,0,1] [] [] Nothing [] [] []
               , SDK.NodeDrive [-2,1,0] [] [] Nothing [] [] []
               , SDK.NodeDrive [-2,1,1] [] [] Nothing [] [] []
               ]
           , SDK.drivingUnits =
-              [ SDK.UnitDrive [4,0] [[4,0]] [("ParserA", [SDK.ReadAt [4,0]]), ("ParserB", [])] []
-              , SDK.UnitDrive [4,1] [[4,1]] [("ParserA", []), ("ParserB", [SDK.ReadAt [4,1]])] []
+              [ SDK.UnitDrive [5,0] [[5,0]] [("ParserA", [SDK.ReadAt [5,0]]), ("ParserB", [])] []
+              , SDK.UnitDrive [5,1] [[5,1]] [("ParserA", []), ("ParserB", [SDK.ReadAt [5,1]])] []
               ]
           , SDK.drivingSessions =
               [ SDK.SessionDrive Nothing "ParserA" "LevelA" Nothing
               , SDK.SessionDrive Nothing "ParserB" "LevelB" Nothing
-              , SDK.SessionDrive (Just [4]) "ParserA" "LevelA" Nothing
-              , SDK.SessionDrive (Just [4]) "ParserB" "LevelB" Nothing
+              , SDK.SessionDrive (Just [5]) "ParserA" "LevelA" Nothing
+              , SDK.SessionDrive (Just [5]) "ParserB" "LevelB" Nothing
               ]
-          , SDK.drivingRootNodes = [[0,0],[0,1],[1,0],[1,1],[2,0],[2,1],[3,0],[3,1],[4,0],[4,1],[3,-1]]
+          , SDK.drivingRootNodes = [[0,0],[0,1],[1,0],[1,1],[2],[3],[4,0],[4,1],[5,0],[5,1],[4,-1]]
           , SDK.drivingOutputSites = []
           , SDK.drivingRequests =
               [ ("ReportLocation", GetReportPathGen)

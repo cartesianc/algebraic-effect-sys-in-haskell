@@ -689,6 +689,27 @@ chained 按声明顺序执行，遇失败停止；parallel 并发执行，等待
 
 空 branch 成功并返回空结果。AST 只在最终边界封装一次 Output，汇总产物不隐含共享绑定或自动传给后继。节点结果与 Context 发布是不同通道。
 
+<a id="workflow-normal-form"></a>
+#### 规范形式
+
+同一个执行含义有多种写法：`chained [chained [node "A", node "B"], node "C"]` 与 `chained [node "A", node "B", node "C"]` 执行相同，只含一个 node 的 `chained [node "A"]` 与 `node "A"` 也相同。gen 编号、运行时逐层核对和 `--structure` 都使用 AST 的规范形式，`NodeId` 是规范形式中的路径。规范化由 `Framework.Language.AST.normalizeWorkflow` 定义，gen 与运行时共用，只做语义不变的改写：
+
+| 写法 | 规范形式 | 依据 |
+| --- | --- | --- |
+| chained 里的 chained、parallel 里的 parallel | 拼入外层 | 顺序执行与并发汇合都满足结合律：结果按声明顺序拼接，失败按声明顺序取第一个 |
+| chained、parallel 中的空 chained／parallel | 删除 | 空 branch 成功并返回空结果，是单位元 |
+| 只剩一个子项的 chained／parallel | 这个子项 | 子项列表同质只是源码写法，裸 node 与只含它的 chained 执行相同 |
+| `lifelong [parallel [a, b]]` | `lifelong [a, b]` | lifelong 本来就把直接子项中的 parallel 拆成单元 |
+
+两类边界不改写，否则含义会变：
+
+- **lifelong 的单元**：单元按自己的节奏领取交付、整体重复。`lifelong [chained [parallel [a, b]]]` 是一个单元，每轮等 a、b 都结束；`lifelong [parallel [a, b]]` 是两个独立单元。单元化简后若是 parallel，规范形式保留一层 chained。空单元仍由 gen 拒绝。
+- **alternative 的候选**：候选的判定 Context 取自整个候选子树，候选按位置保留，不拼入外层。`alternative [alternative [a, b], c]` 是两级选择，与 `alternative [a, b, c]` 不同。候选少于两个时没有可选的分支，gen 拒绝；只想在 Excu 的输出上执行一个分支时，用 `requests` 声明驱动。
+
+不成立、因而不做的改写：parallel 不交换子项，因为结果与失败都按声明顺序；`chained [x, x]` 执行两次，不去重；`chained [parallel [a, b], c]` 不能分配成 `parallel [chained [a, c], chained [b, c]]`，后者让 c 执行两次。
+
+Hanging 的挂载按源码位置给出。gen 规范化后把每处挂载迁移到覆盖同一子树的位置：保留下来的节点不变，被拼入外层的 chained／parallel 换成它各子项的位置。chained 与 parallel 自身不执行调用，覆盖范围与原来相同；lifelong 与 alternative 不会被消去，挂在它们上的会话与选择读取照常被覆盖。
+
 #### alternative 的依据：effect 的差异（option）
 
 alternative 按 effect 图上的差异选择，不按资产的构造器。当前实现 option：各候选的分叉点是**同一个 Excu 的输出**。每个候选（连同各末端的 Input 祖先）恰好 `requires` 一份由该 Excu 的输出直接或经 Pure 解析出的非持续资产，判定这些资产的 Context 互不相同。不再需要和类型，也没有分支契约。
@@ -903,7 +924,7 @@ completeComposition（补入可选缓存原型）
 
 gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effect 注册、方法结构、WorkflowTree、origin／Context 链定义和挂载、EffectGraph、ScopeTree 与来源表。
 
-`NodeId = [Int]` 是当前 AST 快照的位置；`Origin` 加入本次执行序号；`ActivationId` 标识活动 chain。绑定保存自己的 Execution 出身和共享 ownership，不能用节点位置替代实际实例身份。
+`NodeId = [Int]` 是当前 AST 快照规范形式中的位置（见[规范形式](#workflow-normal-form)）；`Origin` 加入本次执行序号；`ActivationId` 标识活动 chain。绑定保存自己的 Execution 出身和共享 ownership，不能用节点位置替代实际实例身份。
 
 运行时先求值并校验原型、注册与源码，再一次 cata 装配当前 AST。RuntimeGraph 复用静态定义并保存活动关系；ScopeTree 单独保持无环。不重跑 handler 建图，也不记录无限方法历史。
 

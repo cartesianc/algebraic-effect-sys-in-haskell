@@ -51,8 +51,10 @@ numberWorkflow effects tree = cata number tree [] False
     -- option v1（2026-11-21）：分叉点是同一个 Excu 的输出。每个候选恰好 requires 一份由它的输出解析出的
     -- 资产，判定这些资产的 Context 互不相同；选择时按候选的声明顺序取第一个解析成功的。
     -- 分叉来自不同上游的真 race 尚未实现，这里拒绝。
+    -- 只有一个候选时没有可选择的分支：要在 Excu 的输出上执行它，用 requests 声明驱动。
     number (Alternative children) path inside = do
-      nonEmpty path inside children
+      unless (length children >= 2) $ invalid path ("alternative needs at least two candidates"
+        ++ "; to run a single branch on a parsed asset, declare requests for that asset instead")
       parts <- descend path inside children
       options <- mapM (candidateCases effects path) parts
       source <- case foldr intersect (nub (concatMap (map fst) options)) (map (nub . map fst) options) of

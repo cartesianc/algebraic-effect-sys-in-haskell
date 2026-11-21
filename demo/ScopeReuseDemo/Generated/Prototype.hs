@@ -193,25 +193,19 @@ generatedPrototype =
     , SDK.protoWorkflow =
         SDK.ChainedAt
           []
-          [ SDK.ChainedAt
-              [0]
-              [ SDK.NodeAt [0,0] "PrepareProbe"
-              ]
+          [ SDK.NodeAt [0] "PrepareProbe"
           , SDK.ParallelAt
               [1]
               [ SDK.NodeAt [1,0] "WriteFirst"
               , SDK.NodeAt [1,1] "WriteSecond"
               , SDK.NodeAt [1,2] "WriteThird"
               ]
-          , SDK.ChainedAt
-              [2]
-              [ SDK.NodeAt [2,0] "VerifyReuse"
-              ]
+          , SDK.NodeAt [2] "VerifyReuse"
           ]
     , SDK.protoSessions = []
     , SDK.protoChains =
         [ SDK.ChainProto
-            { SDK.chainNode = [0,0]
+            { SDK.chainNode = [0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "PrepareProbe"
             , SDK.chainEntry = RunPrepareProbeGen
@@ -254,7 +248,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[OpenSharedFileScopeGen]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [2,0]
+            { SDK.chainNode = [2]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "VerifyReuse"
             , SDK.chainEntry = RunVerifyReuseGen
@@ -418,46 +412,44 @@ generatedPrototype =
           }
     , SDK.protoScopeNames = [(OpenSharedFileScopeGen, "SharedFileScope")]
     , SDK.protoSources =
-        [ (SDK.ReadPoint [1,2] "FilePaths", SDK.FromChains [[0,0], [2,0]])
-        , (SDK.ReadPoint [1,1] "FilePaths", SDK.FromChains [[0,0], [2,0]])
-        , (SDK.ReadPoint [1,0] "FilePaths", SDK.FromChains [[0,0], [2,0]])
+        [ (SDK.ReadPoint [1,2] "FilePaths", SDK.FromChains [[0], [2]])
+        , (SDK.ReadPoint [1,1] "FilePaths", SDK.FromChains [[0], [2]])
+        , (SDK.ReadPoint [1,0] "FilePaths", SDK.FromChains [[0], [2]])
         ]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
             { SDK.openingNode = [1,2]
             , SDK.openingScope = "SharedFileScope"
-            , SDK.openingSources = [("FileLocations", SDK.FromChains [[0,0], [2,0]])]
+            , SDK.openingSources = [("FileLocations", SDK.FromChains [[0], [2]])]
             , SDK.openingKinds = [SDK.ProductionSingleton]
             }
         , SDK.ScopeOpeningPlan
             { SDK.openingNode = [1,1]
             , SDK.openingScope = "SharedFileScope"
-            , SDK.openingSources = [("FileLocations", SDK.FromChains [[0,0], [2,0]])]
+            , SDK.openingSources = [("FileLocations", SDK.FromChains [[0], [2]])]
             , SDK.openingKinds = [SDK.ProductionSingleton]
             }
         , SDK.ScopeOpeningPlan
             { SDK.openingNode = [1,0]
             , SDK.openingScope = "SharedFileScope"
-            , SDK.openingSources = [("FileLocations", SDK.FromChains [[0,0], [2,0]])]
+            , SDK.openingSources = [("FileLocations", SDK.FromChains [[0], [2]])]
             , SDK.openingKinds = [SDK.ProductionSingleton]
             }
         ]
     , SDK.protoDriving =
         SDK.DrivingPlan
           { SDK.drivingNodes =
-              [ SDK.NodeDrive [] [[0,0],[1,0],[1,1],[1,2],[2,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [0] [[0,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [0,0] [[0,0]] [] Nothing [] [] []
+              [ SDK.NodeDrive [] [[0],[1,0],[1,1],[1,2],[2]] [] Nothing [] [] []
+              , SDK.NodeDrive [0] [[0]] [] Nothing [] [] []
               , SDK.NodeDrive [1] [[1,0],[1,1],[1,2]] [] Nothing [] [] []
-              , SDK.NodeDrive [1,0] [[1,0]] [] Nothing [] [] [[2,0]]
-              , SDK.NodeDrive [1,1] [[1,1]] [] Nothing [] [] [[2,0]]
-              , SDK.NodeDrive [1,2] [[1,2]] [] Nothing [] [] [[2,0]]
-              , SDK.NodeDrive [2] [[2,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [2,0] [[2,0]] [] Nothing [] [] []
+              , SDK.NodeDrive [1,0] [[1,0]] [] Nothing [] [] [[2]]
+              , SDK.NodeDrive [1,1] [[1,1]] [] Nothing [] [] [[2]]
+              , SDK.NodeDrive [1,2] [[1,2]] [] Nothing [] [] [[2]]
+              , SDK.NodeDrive [2] [[2]] [] Nothing [] [] []
               ]
           , SDK.drivingUnits = []
           , SDK.drivingSessions = []
-          , SDK.drivingRootNodes = [[0,0],[1,0],[1,1],[1,2],[2,0]]
+          , SDK.drivingRootNodes = [[0],[1,0],[1,1],[1,2],[2]]
           , SDK.drivingOutputSites = []
           , SDK.drivingRequests = [("FileLocations", GetFilePathsGen), ("FileResource", GetOpenedFileGen)]
           , SDK.drivingMiddleware = []

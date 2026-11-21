@@ -211,17 +211,13 @@ generatedPrototype =
     , SDK.protoWorkflow =
         SDK.ChainedAt
           []
-          [ SDK.ChainedAt
-              [0]
-              [ SDK.NodeAt [0,0] "Announce"
-              ]
+          [ SDK.NodeAt [0] "Announce"
           , SDK.LifelongAt
               [1]
               (
                 SDK.LifelongProto
-                  { SDK.lifelongUnits = [[1,0,0],[1,0,1]]
-                  , SDK.lifelongSubscriptions =
-                      [([1,0,0,0],"TextLine"),([1,0,0,1],"TextLine"),([1,0,1,0],"RunningTotal")]
+                  { SDK.lifelongUnits = [[1,0],[1,1]]
+                  , SDK.lifelongSubscriptions = [([1,0,0],"TextLine"),([1,0,1],"TextLine"),([1,1],"RunningTotal")]
                   , SDK.lifelongSessions =
                       [ SDK.SessionProto
                           { SDK.sessionAsset = "TextLine"
@@ -230,29 +226,20 @@ generatedPrototype =
                           }
                       , SDK.SessionProto
                           { SDK.sessionAsset = "RunningTotal"
-                          , SDK.sessionPlan = SDK.ReuseOutput [[1,0,0,1]]
+                          , SDK.sessionPlan = SDK.ReuseOutput [[1,0,1]]
                           , SDK.sessionMounts = []
                           }
                       ]
                   }
               )
-              [ SDK.ParallelAt
+              [ SDK.ChainedAt
                   [1,0]
-                  [ SDK.ChainedAt
-                      [1,0,0]
-                      [ SDK.NodeAt [1,0,0,0] "PrintLine"
-                      , SDK.NodeAt [1,0,0,1] "TextCounter"
-                      ]
-                  , SDK.ChainedAt
-                      [1,0,1]
-                      [ SDK.NodeAt [1,0,1,0] "ShowTotal"
-                      ]
+                  [ SDK.NodeAt [1,0,0] "PrintLine"
+                  , SDK.NodeAt [1,0,1] "TextCounter"
                   ]
+              , SDK.NodeAt [1,1] "ShowTotal"
               ]
-          , SDK.ChainedAt
-              [2]
-              [ SDK.NodeAt [2,0] "Report"
-              ]
+          , SDK.NodeAt [2] "Report"
           ]
     , SDK.protoSessions =
         [ SDK.SessionProto
@@ -268,7 +255,7 @@ generatedPrototype =
         ]
     , SDK.protoChains =
         [ SDK.ChainProto
-            { SDK.chainNode = [0,0]
+            { SDK.chainNode = [0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "Announce"
             , SDK.chainEntry = RunAnnounceGen
@@ -278,7 +265,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,0,0,0]
+            { SDK.chainNode = [1,0,0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "PrintLine"
             , SDK.chainEntry = RunPrintLineGen
@@ -288,7 +275,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,0,0,1]
+            { SDK.chainNode = [1,0,1]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "TextCounter"
             , SDK.chainEntry = RunTextCounterGen
@@ -298,7 +285,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,0,1,0]
+            { SDK.chainNode = [1,1]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ShowTotal"
             , SDK.chainEntry = RunShowTotalGen
@@ -308,7 +295,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [2,0]
+            { SDK.chainNode = [2]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "Report"
             , SDK.chainEntry = RunReportGen
@@ -544,8 +531,8 @@ generatedPrototype =
     , SDK.protoScopeNames = [(OpenInputSessionGen, "InputSession")]
     , SDK.protoSources =
         [ (SDK.ReadPoint [-2,1,0] "TextLine", SDK.FromSession)
-        , (SDK.ReadPoint [2,0] "RunningTotal", SDK.FromSession)
-        , (SDK.ReadPoint [1,0,1,0] "RunningTotal", SDK.FromSession)
+        , (SDK.ReadPoint [2] "RunningTotal", SDK.FromSession)
+        , (SDK.ReadPoint [1,1] "RunningTotal", SDK.FromSession)
         ]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
@@ -576,18 +563,14 @@ generatedPrototype =
     , SDK.protoDriving =
         SDK.DrivingPlan
           { SDK.drivingNodes =
-              [ SDK.NodeDrive [] [[0,0],[1,0,0,0],[1,0,0,1],[1,0,1,0],[2,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [0] [[0,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [0,0] [[0,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [1] [[1,0,0,0],[1,0,0,1],[1,0,1,0]] [] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,0] [[1,0,0,0],[1,0,0,1],[1,0,1,0]] [] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,0,0] [[1,0,0,0],[1,0,0,1]] [] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,0,0,0] [[1,0,0,0]] ["LineParser"] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,0,0,1] [[1,0,0,1]] ["LineParser"] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,0,1] [[1,0,1,0]] [] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,0,1,0] [[1,0,1,0]] ["CountParser"] (Just [1]) [] [] []
-              , SDK.NodeDrive [2] [[2,0]] [] Nothing [] [[1]] []
-              , SDK.NodeDrive [2,0] [[2,0]] [] Nothing [] [[1]] []
+              [ SDK.NodeDrive [] [[0],[1,0,0],[1,0,1],[1,1],[2]] [] Nothing [] [] []
+              , SDK.NodeDrive [0] [[0]] [] Nothing [] [] []
+              , SDK.NodeDrive [1] [[1,0,0],[1,0,1],[1,1]] [] (Just [1]) [] [] []
+              , SDK.NodeDrive [1,0] [[1,0,0],[1,0,1]] [] (Just [1]) [] [] []
+              , SDK.NodeDrive [1,0,0] [[1,0,0]] ["LineParser"] (Just [1]) [] [] []
+              , SDK.NodeDrive [1,0,1] [[1,0,1]] ["LineParser"] (Just [1]) [] [] []
+              , SDK.NodeDrive [1,1] [[1,1]] ["CountParser"] (Just [1]) [] [] []
+              , SDK.NodeDrive [2] [[2]] [] Nothing [] [[1]] []
               , SDK.NodeDrive [1,-1,0,0] [] [] (Just [1]) [] [] []
               , SDK.NodeDrive [1,-1,0,1] [] [] (Just [1]) [] [] []
               , SDK.NodeDrive [-2,0,0] [] [] Nothing [] [] []
@@ -596,11 +579,11 @@ generatedPrototype =
               ]
           , SDK.drivingUnits =
               [ SDK.UnitDrive
-                  [1,0,0]
-                  [[1,0,0,0],[1,0,0,1]]
-                  [("LineParser", [SDK.ReadAt [1,0,0,0], SDK.ReadAt [1,0,0,1]]), ("CountParser", [])]
-                  [("CountParser", SDK.PublishedAt [[1,0,0,1]])]
-              , SDK.UnitDrive [1,0,1] [[1,0,1,0]] [("LineParser", []), ("CountParser", [SDK.ReadAt [1,0,1,0]])] []
+                  [1,0]
+                  [[1,0,0],[1,0,1]]
+                  [("LineParser", [SDK.ReadAt [1,0,0], SDK.ReadAt [1,0,1]]), ("CountParser", [])]
+                  [("CountParser", SDK.PublishedAt [[1,0,1]])]
+              , SDK.UnitDrive [1,1] [[1,1]] [("LineParser", []), ("CountParser", [SDK.ReadAt [1,1]])] []
               ]
           , SDK.drivingSessions =
               [ SDK.SessionDrive Nothing "LineParser" "TextLine" Nothing
@@ -608,8 +591,8 @@ generatedPrototype =
               , SDK.SessionDrive (Just [1]) "LineParser" "TextLine" Nothing
               , SDK.SessionDrive (Just [1]) "CountParser" "RunningTotal" Nothing
               ]
-          , SDK.drivingRootNodes = [[0,0],[1,0,0,0],[1,0,0,1],[1,0,1,0],[2,0]]
-          , SDK.drivingOutputSites = [([1,0,0,1],"CountParser")]
+          , SDK.drivingRootNodes = [[0],[1,0,0],[1,0,1],[1,1],[2]]
+          , SDK.drivingOutputSites = [([1,0,1],"CountParser")]
           , SDK.drivingRequests =
               [ ("InputResource", GetOpenedInputGen)
               , ("LineParser", GetTextLineGen)
@@ -617,6 +600,6 @@ generatedPrototype =
               ]
           , SDK.drivingMiddleware = [([1],["TraceLine"])]
           , SDK.drivingHooks =
-              [([1,0,0,0],["TraceLine"]),([1,0,0,1],["TraceLine"]),([1,0,1,0],["TraceLine"]),([1,-1,0,0],["TraceLine"]),([1,-1,0,1],["TraceLine"])]
+              [([1,0,0],["TraceLine"]),([1,0,1],["TraceLine"]),([1,1],["TraceLine"]),([1,-1,0,0],["TraceLine"]),([1,-1,0,1],["TraceLine"])]
           }
     }

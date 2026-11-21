@@ -316,11 +316,8 @@ generatedPrototype =
               [ SDK.NodeAt [0,0] "FetchPage"
               , SDK.NodeAt [0,1] "FetchLinkedPage"
               ]
-          , SDK.ChainedAt
-              [1]
-              [ SDK.NodeAt [1,0] "PrintPage"
-              , SDK.NodeAt [1,1] "PrintLinkedPage"
-              ]
+          , SDK.NodeAt [1] "PrintPage"
+          , SDK.NodeAt [2] "PrintLinkedPage"
           ]
     , SDK.protoSessions = []
     , SDK.protoChains =
@@ -363,7 +360,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[OpenCrawlSessionGen]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,0]
+            { SDK.chainNode = [1]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "PrintPage"
             , SDK.chainEntry = RunPrintPageGen
@@ -373,7 +370,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,1]
+            { SDK.chainNode = [2]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "PrintLinkedPage"
             , SDK.chainEntry = RunPrintLinkedPageGen
@@ -642,8 +639,8 @@ generatedPrototype =
           }
     , SDK.protoScopeNames = [(OpenCrawlSessionGen, "CrawlSession")]
     , SDK.protoSources =
-        [ (SDK.ReadPoint [1,1] "LinkedPageSummary", SDK.FromChains [[0,1]])
-        , (SDK.ReadPoint [1,0] "StartPageSummary", SDK.FromChains [[0,0]])
+        [ (SDK.ReadPoint [2] "LinkedPageSummary", SDK.FromChains [[0,1]])
+        , (SDK.ReadPoint [1] "StartPageSummary", SDK.FromChains [[0,0]])
         ]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
@@ -662,17 +659,16 @@ generatedPrototype =
     , SDK.protoDriving =
         SDK.DrivingPlan
           { SDK.drivingNodes =
-              [ SDK.NodeDrive [] [[0,0],[0,1],[1,0],[1,1]] [] Nothing [] [] []
+              [ SDK.NodeDrive [] [[0,0],[0,1],[1],[2]] [] Nothing [] [] []
               , SDK.NodeDrive [0] [[0,0],[0,1]] [] Nothing [] [] []
               , SDK.NodeDrive [0,0] [[0,0]] [] Nothing [] [] []
               , SDK.NodeDrive [0,1] [[0,1]] [] Nothing [] [] []
-              , SDK.NodeDrive [1] [[1,0],[1,1]] [] Nothing [] [] []
-              , SDK.NodeDrive [1,0] [[1,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [1,1] [[1,1]] [] Nothing [] [] []
+              , SDK.NodeDrive [1] [[1]] [] Nothing [] [] []
+              , SDK.NodeDrive [2] [[2]] [] Nothing [] [] []
               ]
           , SDK.drivingUnits = []
           , SDK.drivingSessions = []
-          , SDK.drivingRootNodes = [[0,0],[0,1],[1,0],[1,1]]
+          , SDK.drivingRootNodes = [[0,0],[0,1],[1],[2]]
           , SDK.drivingOutputSites = []
           , SDK.drivingRequests =
               [ ("StartPage", GetStartURLGen)

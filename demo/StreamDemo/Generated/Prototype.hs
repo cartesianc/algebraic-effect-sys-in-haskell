@@ -177,17 +177,14 @@ generatedPrototype =
     , SDK.protoWorkflow =
         SDK.ChainedAt
           []
-          [ SDK.ChainedAt
-              [0]
-              [ SDK.NodeAt [0,0] "Announce"
-              ]
+          [ SDK.NodeAt [0] "Announce"
           , SDK.LifelongAt
               [1]
               (
                 SDK.LifelongProto
                   { SDK.lifelongUnits = [[1,0],[1,1]]
                   , SDK.lifelongSubscriptions =
-                      [([1,0,0],"TemperatureSample"),([1,0,1],"TemperatureSample"),([1,1,0],"Beat")]
+                      [([1,0,0],"TemperatureSample"),([1,0,1],"TemperatureSample"),([1,1],"Beat")]
                   , SDK.lifelongSessions =
                       [ SDK.SessionProto
                           { SDK.sessionAsset = "TemperatureSample"
@@ -207,10 +204,7 @@ generatedPrototype =
                   [ SDK.NodeAt [1,0,0] "ShowTemperature"
                   , SDK.NodeAt [1,0,1] "CheckTrend"
                   ]
-              , SDK.ChainedAt
-                  [1,1]
-                  [ SDK.NodeAt [1,1,0] "ReportHeartbeat"
-                  ]
+              , SDK.NodeAt [1,1] "ReportHeartbeat"
               ]
           ]
     , SDK.protoSessions =
@@ -227,7 +221,7 @@ generatedPrototype =
         ]
     , SDK.protoChains =
         [ SDK.ChainProto
-            { SDK.chainNode = [0,0]
+            { SDK.chainNode = [0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "Announce"
             , SDK.chainEntry = RunAnnounceGen
@@ -257,7 +251,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,1,0]
+            { SDK.chainNode = [1,1]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ReportHeartbeat"
             , SDK.chainEntry = RunReportHeartbeatGen
@@ -558,15 +552,13 @@ generatedPrototype =
     , SDK.protoDriving =
         SDK.DrivingPlan
           { SDK.drivingNodes =
-              [ SDK.NodeDrive [] [[0,0],[1,0,0],[1,0,1],[1,1,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [0] [[0,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [0,0] [[0,0]] [] Nothing [] [] []
-              , SDK.NodeDrive [1] [[1,0,0],[1,0,1],[1,1,0]] [] (Just [1]) [] [] []
+              [ SDK.NodeDrive [] [[0],[1,0,0],[1,0,1],[1,1]] [] Nothing [] [] []
+              , SDK.NodeDrive [0] [[0]] [] Nothing [] [] []
+              , SDK.NodeDrive [1] [[1,0,0],[1,0,1],[1,1]] [] (Just [1]) [] [] []
               , SDK.NodeDrive [1,0] [[1,0,0],[1,0,1]] [] (Just [1]) [] [] []
               , SDK.NodeDrive [1,0,0] [[1,0,0]] ["TemperatureParser"] (Just [1]) [] [] []
               , SDK.NodeDrive [1,0,1] [[1,0,1]] ["TemperatureParser"] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,1] [[1,1,0]] [] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,1,0] [[1,1,0]] ["Heartbeat"] (Just [1]) [] [] []
+              , SDK.NodeDrive [1,1] [[1,1]] ["Heartbeat"] (Just [1]) [] [] []
               , SDK.NodeDrive [1,-1,0,0] [] [] (Just [1]) [] [] []
               , SDK.NodeDrive [1,-1,0,1] [] [] (Just [1]) [] [] []
               , SDK.NodeDrive [1,-1,1,0] [] [] (Just [1]) [] [] []
@@ -582,7 +574,7 @@ generatedPrototype =
                   [[1,0,0],[1,0,1]]
                   [("TemperatureParser", [SDK.ReadAt [1,0,0], SDK.ReadAt [1,0,1]]), ("Heartbeat", [])]
                   []
-              , SDK.UnitDrive [1,1] [[1,1,0]] [("TemperatureParser", []), ("Heartbeat", [SDK.ReadAt [1,1,0]])] []
+              , SDK.UnitDrive [1,1] [[1,1]] [("TemperatureParser", []), ("Heartbeat", [SDK.ReadAt [1,1]])] []
               ]
           , SDK.drivingSessions =
               [ SDK.SessionDrive Nothing "TemperatureParser" "TemperatureSample" Nothing
@@ -590,7 +582,7 @@ generatedPrototype =
               , SDK.SessionDrive (Just [1]) "TemperatureParser" "TemperatureSample" Nothing
               , SDK.SessionDrive (Just [1]) "Heartbeat" "Beat" Nothing
               ]
-          , SDK.drivingRootNodes = [[0,0],[1,0,0],[1,0,1],[1,1,0]]
+          , SDK.drivingRootNodes = [[0],[1,0,0],[1,0,1],[1,1]]
           , SDK.drivingOutputSites = []
           , SDK.drivingRequests =
               [("TemperatureParser", GetTemperatureSampleGen), ("Heartbeat", GetBeatGen)]

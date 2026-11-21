@@ -31,7 +31,7 @@ import Framework.Gen.Plan
 import Framework.Gen.Injector
 import Framework.Gen.Injector.Super (superSelections)
 import Framework.Gen.Booter
-import Framework.Language.AST (WorkflowF(..), HangingTree, hangingRows)
+import Framework.Language.AST (WorkflowF(..), HangingTree, hangingRows, normalizeWorkflow)
 import Framework.Language.Registration hiding (effectKind)
 import qualified Framework.Language.Registration as Registration
 import Framework.Prototype.Graph
@@ -111,6 +111,8 @@ settleComposition state = case state of
   _ -> advanceComposition state >>= settleComposition
 
 -- 声明加载进程返回同一机器的接口检查点。Unit 只含纯 ADT，可 Show/Read；没有 GHC AST 或类字典。
+-- tree 与 targets 是源码上的原样结构和挂载路径；编号使用规范形式，挂载随之迁移到覆盖同一子树的位置。
+-- 被拼入外层的分支自身不执行调用，挂在它各子项上的覆盖范围与原来相同。
 beginComposition :: String -> [EffectSpec] -> Fix WorkflowF -> HangingTree -> [[(String, [NodeId])]] -> Either String Unit
 beginComposition namespace specifications tree mounts targets = do
   let rows = hangingRows mounts
@@ -122,7 +124,9 @@ beginComposition namespace specifications tree mounts targets = do
         forM_ refs $ \(name, paths) -> when (null paths) (Left ("Hanging target is unreachable from AST.ast: " ++ name))
         pure [(path, hooks) | (_, paths) <- refs, path <- paths]
     | ((hooks, arity), refs) <- zip rows targets ]
-  state <- settleComposition (Declared namespace specifications tree marks)
+  let (normalized, relocate) = normalizeWorkflow tree
+  state <- settleComposition (Declared namespace specifications normalized
+    [(moved, hooks) | (path, hooks) <- marks, moved <- relocate path])
   case state of
     AwaitingBodies unit -> pure unit
     _ -> Left "Composition did not reach the interface checkpoint"
