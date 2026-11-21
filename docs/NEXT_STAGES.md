@@ -39,7 +39,10 @@
 <a id="request-phase-3"></a>
 **R3 持续资产。** 对持续资产 `requests` 启动或加入它的会话，取当前一条固定给本次调用；`requires` 只读已有会话，不再启动会话，没人 requests 也没人 streams 的持续资产同样报 `Asset never requested`。此前 lifelong 边界的查找顺序在 gen 期排好。lifelong 订阅与 `ReuseOutput`（持续 Context 复用 lifelong 消费节点的同次输出）保留原协议。[持续资产的 requests](CORE_DESIGN.md#request-production) · [有限读取](STREAM_LIFELONG.md#finite-read)
 
-**编辑器读剧本。** `effect-codegen console` 的每个 binding 带 `before`（入口在方法体前依次执行的 requests、Input、会话步骤）与 `raw`（rawinput 读到的原子调用），即 gen 解析好的剧本；按步骤里的方法名找到对应 binding 即可递归展开，编辑器不必从注册重新推导。
+<a id="request-phase-4"></a>
+**R4 消费链与生产分支。** requests 的资产生产链上的 Excu／Scoped（锚点）注入为请求方的前驱，与声明的 Input 合并后约简，Pure 与 Context 是从锚点分出的生产分支；同一次调用中同一 effect 只执行一次，挂在同一锚点下的多份资产共用一次执行。互不在对方上游的父节点之间没有依赖，执行顺序只取声明顺序。[消费链与生产分支](CORE_DESIGN.md#consumer-chain)
+
+**编辑器读剧本。** `effect-codegen console` 的每个 binding 带 `before`（入口在方法体前依次执行的 input、anchor、requests、session 步骤）与 `raw`（rawinput 读到的原子调用）。`chains` 按 Excu／Scoped 给出约简后的父节点（`via` 为 `input` 或 `anchor`）与生产分支（`anchor`、自锚点之下的 `steps`、`session`），编辑器直接据此画消费链与生产分支，不必从注册重新推导。
 
 **运行时仍按名字查的位置。** 这些查找都不在资产读写路径上：
 
@@ -102,6 +105,7 @@ Stage 1–7 在各自已确认的范围内完成。生成、编译和现有 demo
 | <a id="stage-5"></a><a id="stage-7"></a><a id="scope-gc"></a>持续资产保活与 scope 回收 | [资源交接](STREAM_LIFELONG.md#binding-retention) · [可达性回收](CORE_DESIGN.md#scope-gc) |
 | <a id="pure-pipeline"></a><a id="version-boundaries"></a>原子输入输出与 gen 分工 | [Pure 与原子输出](CORE_DESIGN.md#pure) · [编译器与 runtime](CORE_DESIGN.md#compiler) |
 | requests 前驱与运行时编号、坐标 | [普通资产只经 requests 生产](CORE_DESIGN.md#request-production) · [剧本化阶段](#request-chains) |
+| 消费链与生产分支 | [锚点注入与一次执行](CORE_DESIGN.md#consumer-chain) |
 
 <a id="maintenance"></a>
 本页只跟踪已选定的工作。正式协议和已实现写法分别维护在[主设计](CORE_DESIGN.md)与[指南](GUIDE.md)。

@@ -584,16 +584,25 @@ AST 组织链的启动次序。Crawler 中两个打印各自 requests 本页摘�
 
 **状态：已实现（2026-11-21）。** 此前句柄成功后会顺带执行挂在它下面的普通 Context 并发布资产（原子输出挂接），消费方只 `requires` 也能读到；这条来源已取消。
 
-一条消费链是一份剧本：`requests "T"` 是请求方的前驱，gen 在编译期找到 T 唯一的生产链（T 的 Context 沿 Input 经一串 Pure 到句柄，句柄再带上自己的 Input 与驱动），把它展开进请求方的入口，在方法体之前执行。生成的入口直接调用这条链，运行时不按资产名寻找生产方。每个请求方每次执行各自走一遍生产链；成功的值经回调写入 T 的当前值。`requires "T"` 只被动读取这个当前值，不生产，也不触发生产。
+一条消费链是一份剧本：`requests "T"` 是请求方的前驱，gen 在编译期找到 T 唯一的生产链（T 的 Context 沿 Input 经一串 Pure 到句柄，句柄再带上自己的 Input 与驱动），把它展开进请求方的入口，在方法体之前执行。生成的入口直接调用这条链，运行时不按资产名寻找生产方。每个请求方每次执行各自走一遍生产链（同一次调用内到达同一 effect 只执行一次，见下文的消费链）；成功的值经回调写入 T 的当前值。`requires "T"` 只被动读取这个当前值，不生产，也不触发生产。
+
+<a id="consumer-chain"></a>
+**消费链与生产分支（2026-11-22）。** 资产的生产链分两部分：从生产 T 的 Context 沿 Input 跳过 Pure，遇到的第一个 Excu 或 Scoped 是 T 的**锚点**；锚点以下的 Pure 与 Context 是**生产分支**。gen 把锚点作为前驱注入请求方，和声明的 Input 一起构成请求方的消费链；生产分支读锚点的同一次输出，n 份资产挂在同一个锚点下时共用这一次执行。只有 Context 的生产链（Input 是 Root）没有锚点，持续资产由会话交付，也没有锚点。
+
+请求方 E 声明的 Input `I` 与注入的锚点 `H` 合并时：`H` 就是 `I`、或 `H` 在 `I` 的上游，`H` 不另列；`I` 在 `H` 的上游时，`I` 经 `H` 到达 `E`，不另列；多个锚点之间同理。剩下的父节点互不在对方上游，没有先后依赖，执行顺序只取声明顺序（Input 在前，requests 按书写顺序），不表示谁是谁的上游；有 scope 关系的两项必然一个在另一个上游，不会落到这里，ScopeTree 仍只由静态的 Input 与 requests 关系得出。入口在 handler 之前依次执行：主线各项，每项之后紧跟锚点在它之内的生产分支，最后是没有锚点的分支与持续资产的取得。Scoped 的开启输入（资源与参数）排在最前，因为 open 期间其他 IO 会先固定开启输入；锚点带上它所生产的 Context，它的 IO 按开启输入的生产对待。数据约束优先：某一项执行中读取的资产由本入口的另一分支生产时，那条分支先执行；约束成环或请求方经自己的 requests 到达自己时，生成失败。
+
+同一次调用中，同一 effect 只执行一次：Excu、Scoped.open 与 Pure 的入口由 `runOnce` 包装，再次到达时返回本次输出，不重复执行它和它的前驱；Context 已在本次发布时，再次请求返回本次捕获的发布。rawinput 因此读到锚点的同一次输出。记录随每次调用开始而清空，诊断与收尾各用自己的记录；不同调用（AST 上的不同挂载、lifelong 的每次交付、会话的每个步骤）各自执行。一次调用中同一个 Scoped 只开一个实例；要两个实例，注册两个 Scoped effect 复用同一 handler。
 
 ```haskell
 -- Crawler/Effects.hs 节选：打印前先抓取并解析本页
 EffectSpec { name = "PrintPage", typing = Excu { handler = Just "printSummary" }, input = "Root"
            , demands = [requests "StartPageSummary", requires "StartPageSummary"] }
 
--- Generated/Handlers.hs：requests 展开为前驱；getStartPageSummary 的 rawinput 依次是 runKeepPageBody、runFetchPage
+-- Generated/Handlers.hs：锚点 FetchPage 注入为前驱，生产分支 getStartPageSummary 的 rawinput
+-- 经 runKeepPageBody 读到 runFetchPage 本次的输出，不再抓取
 runPrintPage = ⟨入口包装⟩ $
-  getStartPageSummary >> call @"PrintPage" @"printSummary" Effects.printSummary
+  SDK.producingFor [SDK.Slot 4 "ExtractPage"] runFetchPage >> getStartPageSummary
+    >> call @"PrintPage" @"printSummary" Effects.printSummary
 ```
 
 运行时不再寻找生产方。interpreter 启动时把 Prototype 一次性编成按身份寻址的索引（`Framework.Prototype.Index`：按 NodeId 取链、驱动标记、开启计划，按读取点取静态来源，按来源取会话路由），节点调度、缺值等待与 scope 回收都从索引取 gen 写下的事实，不在运行中线性扫描原型或重新推导来源。
