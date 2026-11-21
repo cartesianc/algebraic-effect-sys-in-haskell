@@ -203,7 +203,7 @@ shapeArgument shape = group (renderShape shape)
 
 renderWorkflow :: P.WorkflowTree -> String
 renderWorkflow (P.NodeAt node selected) = constructor "NodeAt" [showArg node, showArg selected]
-renderWorkflow (P.ChainedAt node children) = blockConstructor "ChainedAt" [showArg node, blockList renderWorkflow children]
+renderWorkflow (P.ChainAt node children) = blockConstructor "ChainAt" [showArg node, blockList renderWorkflow children]
 renderWorkflow (P.ParallelAt node children) = blockConstructor "ParallelAt" [showArg node, blockList renderWorkflow children]
 renderWorkflow (P.AlternativeAt node alternative children) =
   blockConstructor "AlternativeAt" [showArg node, group (renderAlternative alternative), blockList renderWorkflow children]

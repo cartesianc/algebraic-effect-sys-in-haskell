@@ -143,7 +143,7 @@ layoutOf binding = either (const (Opaque (uses binding))) descend (singleBody bi
       (Just n, [arg]) | ownerOf n == "Framework.Language.AST" ->
         case spelling n of
           "node" -> Children []
-          ctor | elem ctor ["chained","parallel","alternative","lifelong"], Right xs <- list arg -> Children (map descend xs)
+          ctor | elem ctor ["chain","parallel","alternative","lifelong"], Right xs <- list arg -> Children (map descend xs)
           _ -> Opaque (uses expr)
       _ -> Opaque (uses expr)
     uses :: Data a => a -> [Name]

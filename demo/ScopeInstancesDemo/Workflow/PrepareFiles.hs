@@ -1,8 +1,8 @@
 module ScopeInstancesDemo.Workflow.PrepareFiles (prepareFiles) where
 
-import Framework.SDK (AST, chained, node)
+import Framework.SDK (AST, chain, node)
 
 prepareFiles :: AST
-prepareFiles = chained
+prepareFiles = chain
   [ node "PrepareFiles"
   ]

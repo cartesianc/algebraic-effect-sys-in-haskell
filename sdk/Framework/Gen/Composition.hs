@@ -1400,7 +1400,7 @@ resolveSources checked connections definitions defaultReaders prototype = do
       NodeAt node' _ -> do
         exits <- root node' future handoff publications
         pure (nub [retainOutcome future (succeeded, assetPublications state) | AssetExit succeeded state <- exits])
-      ChainedAt _ children -> workflowSequence children future [(True, publications)] handoff
+      ChainAt _ children -> workflowSequence children future [(True, publications)] handoff
       ParallelAt _ children -> do
         -- 每个兄弟保留自己的捕获路径；跨兄弟供值由外层固定点传入，出口只组合后续所需事实。
         parts <- mapM (\child -> workflow child future publications handoff) children

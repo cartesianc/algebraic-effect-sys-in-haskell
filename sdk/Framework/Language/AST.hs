@@ -2,7 +2,7 @@
 
 -- Workflow 的可序列化结构与引用收集；不启动节点。
 module Framework.Language.AST
-  ( WorkflowF(..), AST, EffectNode, node, chained, parallel, alternative, lifelong
+  ( WorkflowF(..), AST, EffectNode, node, chain, parallel, alternative, lifelong
   , HangingTree, MiddlewareMount, hanging, middleware, hangingRows, foldAST, toWorkflowF
   ) where
 
@@ -13,7 +13,7 @@ import Framework.Recursion (Fix(..), Algebra, cata)
 -- 运行时先驱动该资产（相当于 requests；持续资产领取本次交付），再按它的构造器启动对应候选。
 data WorkflowF next
   = Node String
-  | Chained [next]
+  | Chain [next]
   | Parallel [next]
   | Alternative [next]
   -- Lifelong 订阅持续资产。每个单元按交付重复执行，所有单元结束后本分支成功返回。
@@ -38,8 +38,8 @@ instance BranchChild AST where
 node :: String -> EffectNode
 node = EffectNode
 
-chained :: BranchChild child => [child] -> AST
-chained children = AST (Fix (Chained (map childTree children)))
+chain :: BranchChild child => [child] -> AST
+chain children = AST (Fix (Chain (map childTree children)))
 
 parallel :: BranchChild child => [child] -> AST
 parallel children = AST (Fix (Parallel (map childTree children)))

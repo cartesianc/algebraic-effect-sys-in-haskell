@@ -9,10 +9,10 @@ module Framework.SDK
   , Demand(..), Access(..), requests, requires, streams
   , Output(..), Failure(..), ErrorReport(..), caughtFailure
   , ContextFault(..), ScopeFault(..)
-  , AST, EffectNode, node, chained, parallel, alternative, lifelong, HangingTree, MiddlewareMount, hanging, middleware
+  , AST, EffectNode, node, chain, parallel, alternative, lifelong, HangingTree, MiddlewareMount, hanging, middleware
   ) where
 
-import Framework.Language.AST (AST, EffectNode, node, chained, parallel, alternative, lifelong, HangingTree, MiddlewareMount, hanging, middleware)
+import Framework.Language.AST (AST, EffectNode, node, chain, parallel, alternative, lifelong, HangingTree, MiddlewareMount, hanging, middleware)
 import Framework.Language.Handler (Reads(..), Streams(..), Flow(..), Raw(..), Emits(..), RawOutputs(..), Raises(..), StreamEnds(..), EndsStream(..), Hooks(..), Operation(..), Output(..), Failure(..), ErrorReport(..))
 import Framework.Language.Registration
   ( EffectTyping(..), EffectKind(..), allEffects, EffectSpec(..), Asset(..), Handles(..), Demand(..), Access(..)

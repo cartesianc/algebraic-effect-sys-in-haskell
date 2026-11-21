@@ -45,4 +45,4 @@ compiledEntries = do
 
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "LinesDemo" [("demo/LinesDemo/Handlers.hs", Handlers.handlerSourceFingerprint), ("demo/LinesDemo/AST.hs",Just "b4a07283844f0afccce4353729b0ceb6"), ("demo/LinesDemo/Hanging.hs",Just "2d3a4e4f9d49fba66e4c6b11f7e10a76")] generatedPrototype compiledEntries
+interpreter = SDK.interpreter "LinesDemo" [("demo/LinesDemo/Handlers.hs", Handlers.handlerSourceFingerprint), ("demo/LinesDemo/AST.hs",Just "a534ba46c6aae3fbc616f1c2ec2eed8c"), ("demo/LinesDemo/Hanging.hs",Just "2d3a4e4f9d49fba66e4c6b11f7e10a76")] generatedPrototype compiledEntries

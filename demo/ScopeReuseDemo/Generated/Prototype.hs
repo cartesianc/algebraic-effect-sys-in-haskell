@@ -191,9 +191,9 @@ generatedPrototype =
             (SDK.Sequence [SDK.Call GetFilePathsGen, SDK.Call ReadFilePathsGen])
         ]
     , SDK.protoWorkflow =
-        SDK.ChainedAt
+        SDK.ChainAt
           []
-          [ SDK.ChainedAt
+          [ SDK.ChainAt
               [0]
               [ SDK.NodeAt [0,0] "PrepareProbe"
               ]
@@ -203,7 +203,7 @@ generatedPrototype =
               , SDK.NodeAt [1,1] "WriteSecond"
               , SDK.NodeAt [1,2] "WriteThird"
               ]
-          , SDK.ChainedAt
+          , SDK.ChainAt
               [2]
               [ SDK.NodeAt [2,0] "VerifyReuse"
               ]

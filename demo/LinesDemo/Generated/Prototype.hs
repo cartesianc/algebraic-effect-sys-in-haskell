@@ -209,9 +209,9 @@ generatedPrototype =
         , SDK.MethodDefinition RunReportGen RunReportGen SDK.HandlerMethod (SDK.Call StreamRunningTotalGen)
         ]
     , SDK.protoWorkflow =
-        SDK.ChainedAt
+        SDK.ChainAt
           []
-          [ SDK.ChainedAt
+          [ SDK.ChainAt
               [0]
               [ SDK.NodeAt [0,0] "Announce"
               ]
@@ -238,18 +238,18 @@ generatedPrototype =
               )
               [ SDK.ParallelAt
                   [1,0]
-                  [ SDK.ChainedAt
+                  [ SDK.ChainAt
                       [1,0,0]
                       [ SDK.NodeAt [1,0,0,0] "PrintLine"
                       , SDK.NodeAt [1,0,0,1] "TextCounter"
                       ]
-                  , SDK.ChainedAt
+                  , SDK.ChainAt
                       [1,0,1]
                       [ SDK.NodeAt [1,0,1,0] "ShowTotal"
                       ]
                   ]
               ]
-          , SDK.ChainedAt
+          , SDK.ChainAt
               [2]
               [ SDK.NodeAt [2,0] "Report"
               ]

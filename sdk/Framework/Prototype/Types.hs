@@ -90,7 +90,7 @@ effectProto name kind input = EffectProto
 
 data WorkflowTree
   = NodeAt NodeId String
-  | ChainedAt NodeId [WorkflowTree]
+  | ChainAt NodeId [WorkflowTree]
   | ParallelAt NodeId [WorkflowTree]
   | AlternativeAt NodeId AlternativeProto [WorkflowTree]
   | LifelongAt NodeId LifelongProto [WorkflowTree]

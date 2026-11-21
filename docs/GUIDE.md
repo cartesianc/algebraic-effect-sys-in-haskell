@@ -10,7 +10,7 @@
 | 定义表示类型 | [资产书写](#types) |
 | 查注册类别、Input 和 demands | [effect 注册](#effects) |
 | 写 handler、读取与失败处理 | [handler 书写](#handlers) |
-| 组织 chained、parallel、alternative | [workflow 书写](#workflow) |
+| 组织 chain、parallel、alternative | [workflow 书写](#workflow) |
 | 接入持续数据源、编写 lifelong 监控 | [持续资产与 lifelong](#stream) |
 | 构建并运行现有示例 | [快速开始](#quickstart) |
 | 区分 gencode、runtime、结构查看及启动命令 | [命令行与执行阶段](#commands) |
@@ -715,12 +715,12 @@ ast = operateFile
 | 构件 | 写法 | 类型 | 含义 |
 | --- | --- | --- | --- |
 | node | `node "effect名"` | `EffectNode` | 选择一条操作链的末端 effect |
-| branch | `chained`、`parallel`、`alternative` 或 `lifelong` 加子项列表 | `AST` | 组合 node 或其他 branch |
+| branch | `chain`、`parallel`、`alternative` 或 `lifelong` 加子项列表 | `AST` | 组合 node 或其他 branch |
 | 独立挂载（`Hanging.hs`） | `hanging [middleware [node "M"] [branch]]` | `HangingTree` | 将 Middleware 挂到具名分支的全部使用位置，见[示例](#middleware) |
 
 - **node 不是 AST**：顶层和每个模块都必须是 branch，单个 node 也要包进一个 branch。
 - **子项列表同质**：一个列表要么全是 node，要么全是 branch，不能混排。
-- **空列表**：须标注元素类型，例如 `chained ([] :: [AST])`。
+- **空列表**：须标注元素类型，例如 `chain ([] :: [AST])`。
 
 ### node
 
@@ -732,18 +732,18 @@ ast = operateFile
 
 | branch | 子项如何执行 | 失败时 | 结果 |
 | --- | --- | --- | --- |
-| `chained` | 按顺序逐个执行 | 立即停止，后面的子项不执行 | 各子项结果按顺序拼接 |
+| `chain` | 按顺序逐个执行 | 立即停止，后面的子项不执行 | 各子项结果按顺序拼接 |
 | `parallel` | 同时执行 | 等全部子项结束，按声明顺序取第一个失败 | 全部成功时按声明顺序拼接 |
 | `alternative` | 只执行一个候选 | 候选的失败原样传播 | 只有被选中候选的结果 |
 | `lifelong` | 各单元独立重复执行，到达 target 时等待其订阅资产的交付 | 终止整次运行（临时规则） | 全部单元因所需来源耗尽而正常结束后成功返回，不带结果；仍有消费单元未结束时不正常返回 |
 
 程序里含 `lifelong` 时，`parallel` 中任何子项失败也立即终止整次运行，不再等待其他子项结束。
 
-#### `chained`
+#### `chain`
 
 ```haskell
 -- Crawler/AST.hs：先并行抓取，全部成功后顺序打印
-ast = chained [parsePages, printPages]
+ast = chain [parsePages, printPages]
 ```
 
 #### `parallel`
@@ -770,8 +770,8 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 ```haskell
 -- StreamDemo/Workflow/Monitor.hs：每条新读数显示并分析一次，心跳单元独立推进
 monitor = lifelong
-  [ chained [node "ShowTemperature", node "CheckTrend"]
-  , chained [node "ReportHeartbeat"]
+  [ chain [node "ShowTemperature", node "CheckTrend"]
+  , chain [node "ReportHeartbeat"]
   ]
 ```
 
@@ -807,7 +807,7 @@ instance TraceLineLayer m => TraceLineHandler m where
     rawoutput []
 
 -- LinesDemo/AST.hs，monitorLines 是具名 lifelong 分支
-ast = chained [chained [node "Announce"], monitorLines, chained [node "Report"]]
+ast = chain [chain [node "Announce"], monitorLines, chain [node "Report"]]
 
 -- LinesDemo/Hanging.hs
 -- import Framework.SDK (HangingTree, hanging, middleware, node)
@@ -943,12 +943,12 @@ instance CheckTrendLayer m => CheckTrendHandler m where
 ```haskell
 -- Workflow/Monitor.hs
 monitor = lifelong
-  [ chained [node "ShowTemperature", node "CheckTrend"]
-  , chained [node "ReportHeartbeat"]
+  [ chain [node "ShowTemperature", node "CheckTrend"]
+  , chain [node "ReportHeartbeat"]
   ]
 
 -- AST.hs：先执行一次准备，再进入持续监控
-ast = chained [setup, monitor]
+ast = chain [setup, monitor]
 ```
 
 - **单元**：lifelong 的每个直接子项是一个单元；直接子项是 `parallel` 时拆开这一层，其子项分别是单元。各单元同时运行，互不等待。
@@ -956,7 +956,7 @@ ast = chained [setup, monitor]
 - **每次执行互相隔离**：上一次执行中产生的普通资产不会被这一次读到。
 - **订阅规则**：lifelong 里的每个末端（连同它的 Input 链）恰好订阅一个持续资产，并且不再读取别的持续资产；`streams` 不能用在 lifelong 外的末端。lifelong 不能嵌套，内部不能有空分支。
 - **会话**：同一个 lifelong 里订阅同一资产的单元共享会话，各自独立推进；不同 lifelong 的会话互相独立。启动时建立会话与读取关系，登记期间已产生的发布完整保留；AST 单元在登记完成后启动。已有 AST 输出的会话不另起任务。独立生产步骤用到的资源（例如 `SensorLink` 开启的连接）跨步骤持有，会话退役后接入现有 scope 回收。持续资产的生产链不能读取别的持续资产，驱动它的那一份除外。
-- **外部组合**：`chained [setup, monitor]` 先执行 setup；`chained [monitor, after]` 中 after 等 monitor 的全部单元结束后执行，仍有消费单元未结束时不会执行；`parallel [monitor, otherWork]` 两者同时运行。
+- **外部组合**：`chain [setup, monitor]` 先执行 setup；`chain [monitor, after]` 中 after 等 monitor 的全部单元结束后执行，仍有消费单元未结束时不会执行；`parallel [monitor, otherWork]` 两者同时运行。
 
 ### 由持续资产驱动的持续资产
 
@@ -1003,15 +1003,15 @@ instance ParseTotalLayer m => ParseTotalHandler m where
 
 ```haskell
 -- demo/LinesDemo/AST.hs：消费操作同时把输出交给挂接的 parser
-ast = chained
-  [ chained [node "Announce"]
+ast = chain
+  [ chain [node "Announce"]
   , lifelong
       [ parallel
-          [ chained [node "PrintLine", node "TextCounter"]
-          , chained [node "ShowTotal"]
+          [ chain [node "PrintLine", node "TextCounter"]
+          , chain [node "ShowTotal"]
           ]
       ]
-  , chained [node "Report"]
+  , chain [node "Report"]
   ]
 ```
 
@@ -1030,7 +1030,7 @@ ast = chained
 
 ```haskell
 snapshotAst :: AST
-snapshotAst = chained [node "Announce", node "Report"]
+snapshotAst = chain [node "Announce", node "Report"]
 ```
 
 选用 `ast = snapshotAst` 时，将 `Hanging.hs` 的目标也改为 `snapshotAst`（或使用 `hanging []`），再按[生成流程](#commands)重新生成后，Report 仍声明 `requires "RunningTotal"`，其 handler 仍读 `require @Total`。gen 计算出 `RunningTotal` 由 TextCounter 的持续消费生产，按 Derive 建立 TextLine 的上游；Report 只取得一次 Total 并返回，不需要挂入 lifelong，也不因上游继续更新而再次执行。读取时可取得的统计取决于已完成的生产，不承诺恰好第一行或全部四行。
@@ -1064,7 +1064,7 @@ snapshotAst = chained [node "Announce", node "Report"]
 
   `streamEnd` 不是失败，不进入 Error 诊断。它结束当前绑定的生产会话，不依赖消费方是否已经完成。结束动作本身不发布；同一次调用中已发布的交付仍可领取。单元在它要领取的来源已经结束并领完时结束：尚未执行的后继放弃，已完成的部分不回滚。全部单元结束后 lifelong 成功返回（不带结果），排在后面的节点继续执行。
 - **结束后能读什么**：普通资产每个 Context 保留最新发布，lifelong 切轮或结束不会清空它；后继和其他单元均可读取，第一次读取后固定为本次捕获。持续资产仍读所选会话最后一条，不重启已结束来源；多个互不先后的 lifelong 会话仍须消除选择歧义。
-- **消费方结束**：自身以 `streams` 订阅的 Excu 可以调用 `endStream`。本次调用放弃、不交出结果，该节点之后各轮跳过；本轮 chained 的后继和其他单元继续按各自依赖执行。同单元直接或经派生读取它产物的位置，仍等待本轮可能完成的发布；确定本轮稳定且无新交付时才跳过，封口排空后结束相应订阅。只 `require` 这份本地持续资产时可读已有值，一次都没有发布则报缺值。会话是否停产由剩余读取方决定，详细规则见[消费方结束](STREAM_LIFELONG.md#consumer-end)。
+- **消费方结束**：自身以 `streams` 订阅的 Excu 可以调用 `endStream`。本次调用放弃、不交出结果，该节点之后各轮跳过；本轮 chain 的后继和其他单元继续按各自依赖执行。同单元直接或经派生读取它产物的位置，仍等待本轮可能完成的发布；确定本轮稳定且无新交付时才跳过，封口排空后结束相应订阅。只 `require` 这份本地持续资产时可读已有值，一次都没有发布则报缺值。会话是否停产由剩余读取方决定，详细规则见[消费方结束](STREAM_LIFELONG.md#consumer-end)。
 
   ```haskell
   -- 示意：收到业务结束标记后离开；需要 import Framework.SDK (EndsStream(..))
@@ -1115,7 +1115,7 @@ reading #2: 24.0 C
 - **值从哪里来**：`requests` 驱动、alternative 的选择读取、挂接句柄的注入，以及 Stream 会话。要读的值必须有人驱动；例如 FileDemo 的 `FileResource` 写了 `[requests "FileName", requires "FileName"]`，取得文件前先驱动文件名的生产链（`LocateFile` → `ValidateFileName` → `FileLocation`），`acquireFile` 再读取它。
 - **跨 node 保存**：同一运行每个普通 Context 保存一份最新发布，不按 AST 位置过滤。并发更新按成功提交的先后覆盖，已有捕获保持原生产身份；资源 Context 仍沿本链 open 和 owner 定位。
 - **确定性保证什么**：refined asset 的 Context 来源与装配规则静态确定。同一来源并发更新时，首次读取可捕获不同次发布；SDK 按上述最新值协议处理，详见[确定性的边界](CORE_DESIGN.md#composition-polymorphism)。
-- **结构上没有来源先报错**：gen 从空供值集推演可启动的发布并求固定点；无供值且没有启动种子的读取被拒绝。`parallel [readX, produceX]` 可以等待；只有 `chained [readX, produceX]` 且没有其他 X 来源，后继被等待挡住，生成期拒绝。完整边界见[供值推演](EFFECT_GRAPH.md#missing-source)。
+- **结构上没有来源先报错**：gen 从空供值集推演可启动的发布并求固定点；无供值且没有启动种子的读取被拒绝。`parallel [readX, produceX]` 可以等待；只有 `chain [readX, produceX]` 且没有其他 X 来源，后继被等待挡住，生成期拒绝。完整边界见[供值推演](EFFECT_GRAPH.md#missing-source)。
 - **已确定等不到时结束等待**：已知生产机会退休，或有限生产位置须等当前阻塞调用返回时，再读仍无值就报 `ContextNotInitialized`。证据不足的持续机会保守等待，不使用超时。资源、诊断、cleanup、close 仍不等待。
 - **部分路径已取值合法**：已捕获路径直接用原 Binding，其他路径可读共享最新值。gen 不证明解析必成功或任意 IO 可终止，合法结构仍可能在业务运行时缺值。
 

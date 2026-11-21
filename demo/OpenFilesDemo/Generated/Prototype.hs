@@ -194,14 +194,14 @@ generatedPrototype =
             (SDK.Call ReadInspectedFilesGen)
         ]
     , SDK.protoWorkflow =
-        SDK.ChainedAt
+        SDK.ChainAt
           []
-          [ SDK.ChainedAt
+          [ SDK.ChainAt
               [0]
               [ SDK.NodeAt [0,0] "HoldFiles"
               , SDK.NodeAt [0,1] "InspectFiles"
               ]
-          , SDK.ChainedAt
+          , SDK.ChainAt
               [1]
               [ SDK.NodeAt [1,0] "ReleaseFiles"
               , SDK.NodeAt [1,1] "FinishInspection"

@@ -565,7 +565,7 @@ generatedPrototype =
             (SDK.Sequence [SDK.Call StreamLevelBGen, SDK.Call StreamLevelBGen])
         ]
     , SDK.protoWorkflow =
-        SDK.ChainedAt
+        SDK.ChainAt
           []
           [ SDK.ParallelAt
               [0]
@@ -577,7 +577,7 @@ generatedPrototype =
               [ SDK.NodeAt [1,0] "ReadReport"
               , SDK.NodeAt [1,1] "ReadReply"
               ]
-          , SDK.ChainedAt
+          , SDK.ChainAt
               [2]
               [ SDK.NodeAt [2,0] "ShowReport"
               , SDK.NodeAt [2,1] "ShowReply"

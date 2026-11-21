@@ -227,13 +227,13 @@ generatedPrototype =
         , SDK.MethodDefinition RunCheckJournalGen RunCheckJournalGen SDK.HandlerMethod SDK.Empty
         ]
     , SDK.protoWorkflow =
-        SDK.ChainedAt
+        SDK.ChainAt
           []
-          [ SDK.ChainedAt
+          [ SDK.ChainAt
               [0]
               [ SDK.NodeAt [0,0] "PrepareFiles"
               ]
-          , SDK.ChainedAt
+          , SDK.ChainAt
               [1]
               [ SDK.NodeAt [1,0] "UseFirst"
               , SDK.NodeAt [1,1] "SelectSecond"

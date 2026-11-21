@@ -222,7 +222,7 @@ executionAlgebra prototype store entries selectors layer expected = do
       compiledChildren = sequence (zipWith ($) children expectedChildren)
       children = case layer of
         Node _ -> []
-        Chained selected -> selected
+        Chain selected -> selected
         Parallel selected -> selected
         Alternative selected -> selected
         Lifelong selected -> selected
@@ -246,7 +246,7 @@ executionAlgebra prototype store entries selectors layer expected = do
             Right Driven -> withRuntimeRetention store $ \retention ->
               subscribing run location $ draining run $ fmap (: []) . fst <$>
                 lowerTarget store retention location (runExecutionFrame run) (runDeliveryFrame run) handoff entry
-    (Chained _, _) -> do
+    (Chain _, _) -> do
       parts <- map compiledRun <$> compiledChildren
       single (\run handoff -> concat <$> sequence [part run handoff | part <- parts])
     (Parallel _, _) -> do

@@ -1,11 +1,12 @@
 -- 编译器 IO 驱动：Source/Shape 提供结构，Composition 统一计算，Emit 渲染，Assets 类检。
 -- 流水线说明 v3（2026-11-17）：使用 Gen.Composition 的统一状态转换；本文件负责 IO。
-module Framework.Gen (compileWorkflow) where
+module Framework.Gen (compileWorkflow, inspectConsole) where
 
 import Control.Exception (evaluate)
 import Framework.Gen.Check.Assets (checkAssets)
 import Framework.Gen.Plan
 import Framework.Gen.Composition
+import Framework.Gen.Console (writeConsole)
 import Framework.Gen.Emit.Assets (renderAssets)
 import Framework.Gen.Emit.Effects (renderEffects)
 import Framework.Gen.Emit.Handlers (renderHandlers)
@@ -14,7 +15,7 @@ import Framework.Gen.Emit.Prototype (renderPrototype, renderPrototypeModule)
 import Framework.Gen.Names (handlerClass, nameHandlers)
 import Framework.Gen.Frontend.Hanging (loadHanging)
 import Framework.Gen.Frontend.Shape (shapeHandlers)
-import Framework.Gen.Frontend.Source (loadComposition, loadHandlers, namespaceDirectory, handlerText, handlerScopeNames)
+import Framework.Gen.Frontend.Source (HandlerSource, loadComposition, loadHandlers, namespaceDirectory, handlerText, handlerScopeNames)
 import Data.List (nub)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Exit (die)
@@ -28,14 +29,7 @@ compileWorkflow :: String -> IO ()
 compileWorkflow namespace = do
   let generated = namespaceDirectory namespace </> "Generated"
       cachePath = generated </> ".scope-cache"
-  -- 同一组合机器在声明进程中走到接口检查点；首次无 Handlers 也能生成同步契约。
-  (hasHanging, targets, hangingSources) <- loadHanging namespace
-  interface <- loadComposition namespace hasHanging targets
-  let contracts = renderEffects interface
-      handlersInScope = [(handlerClass handler', handler') | handler' <- unitHandlers interface]
-  source <- loadHandlers namespace contracts
-  shapes <- either (ioError . userError) pure (traverse (shapeHandlers namespace handlersInScope) source)
-  pending <- either die pure (prepareComposition interface shapes)
+  (pending, source, contracts, hangingSources) <- prepareNamespace namespace
   dependencies <- mapM readUtf8 structureSources
   let cacheKey = show (compositionKey pending, dependencies)
   cached <- tryIOError (readExisting cachePath)
@@ -72,7 +66,24 @@ compileWorkflow namespace = do
   putStrLn ("Generated " ++ generated ++ " (" ++ show (length (filter id changed))
     ++ " files updated; structure " ++ (if reused then "reused" else "rebuilt") ++ ")")
 
--- 构图缓存连同算法及渲染器源码精确比较，避免 SDK 改动后复用旧结构；声明与 Handlers 快照仍每次读取。
+prepareNamespace :: String -> IO (PendingComposition, Maybe HandlerSource, String, [(FilePath, Maybe String)])
+prepareNamespace namespace = do
+  (hasHanging, targets, hangingSources) <- loadHanging namespace
+  interface <- loadComposition namespace hasHanging targets
+  let contracts = renderEffects interface
+      handlersInScope = [(handlerClass h, h) | h <- unitHandlers interface]
+  source <- loadHandlers namespace contracts
+  shapes <- either (ioError . userError) pure (traverse (shapeHandlers namespace handlersInScope) source)
+  pending <- either die pure (prepareComposition interface shapes)
+  pure (pending, source, contracts, hangingSources)
+
+inspectConsole :: String -> IO ()
+inspectConsole namespace = do
+  (pending, source, _, _) <- prepareNamespace namespace
+  result <- either die pure (completeComposition pending Nothing)
+  writeConsole result source
+
+-- 构图缓存连同算法及渲染器源码精确比较，避免 SDK 改动后复用旧结构。
 structureSources :: [FilePath]
 structureSources =
   [ "sdk/Framework/Prototype.hs"

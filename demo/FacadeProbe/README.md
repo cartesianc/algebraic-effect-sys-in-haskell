@@ -89,10 +89,10 @@ instance ShowLevelLayer m => ShowLevelHandler m where
 ### 4. AST.hs：不变
 
 ```haskell
-ast = chained
+ast = chain
   [ parallel [node "WriteReport", node "WriteReply"]
   , parallel [node "ReadReport", node "ReadReply"]
-  , chained [node "ShowReport", node "ShowReply"]
+  , chain [node "ShowReport", node "ShowReply"]
   , alternative [node "OnBlank", node "OnFilled"]
   , lifelong [node "ShowA", node "ShowB"]
   ]

@@ -1,8 +1,8 @@
 module ScopeReuseDemo.Workflow.PrepareProbe (prepareProbe) where
 
-import Framework.SDK (AST, chained, node)
+import Framework.SDK (AST, chain, node)
 
 prepareProbe :: AST
-prepareProbe = chained
+prepareProbe = chain
   [ node "PrepareProbe"
   ]

@@ -42,9 +42,9 @@ import Control.Exception (evaluate)
 import Data.Coerce (coerce)
 import GHC.Fingerprint (fingerprintString)
 import GHC.Generics (Generic)
-import System.Environment (getArgs)
+import System.Environment (getArgs, lookupEnv)
 import System.FilePath (takeFileName)
-import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, hSetNewlineMode, stdout, universalNewlineMode, utf8, withFile)
+import System.IO (BufferMode(LineBuffering), IOMode(ReadMode), hGetContents, hSetBuffering, hSetEncoding, hSetNewlineMode, stdout, universalNewlineMode, utf8, withFile)
 import System.IO.Error (isDoesNotExistError, tryIOError)
 import System.Process (callProcess)
 
@@ -58,6 +58,10 @@ interpreter
   -> AST -> [EffectSpec] -> IO ()
 interpreter namespace sources prototype createEntries tree specifications = do
   hSetEncoding stdout utf8
+  streaming <- lookupEnv "EFFECT_CONSOLE_STREAM"
+  case streaming of
+    Just "1" -> hSetBuffering stdout LineBuffering
+    _ -> pure ()
   arguments <- getArgs
   case arguments of
     [] -> do

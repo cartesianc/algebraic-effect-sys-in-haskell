@@ -1,7 +1,7 @@
 -- 读取源程序（前端）：在声明加载进程中求值 effects 与 ast 并计算到接口检查点 Unit，
 -- 解析 Types.hs 的和类型；用本次生成的契约对 Handlers.hs 做无代码类型检查，取得 GHC 解析的名称。
 module Framework.Gen.Frontend.Source
-  ( HandlerSource(..), NameUses, nameAtUse, loadComposition, loadHandlers, namespaceDirectory, sourceOffset
+  ( HandlerSource(..), NameUses, nameAtUse, loadComposition, loadHandlers, namespaceDirectory, sourceOffset, parseSourceFile
   ) where
 
 import Control.Exception (evaluate)

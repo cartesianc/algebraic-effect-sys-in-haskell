@@ -30,9 +30,9 @@ numberWorkflow effects tree = cata number tree [] False
       unless (inside || null subscribed) $ Left (InvalidLifelong path ("Node " ++ selected
         ++ " subscribes to " ++ intercalate ", " subscribed ++ " with streams; mount it inside lifelong"))
       pure (NodeAt path selected)
-    number (Chained children) path inside = do
+    number (Chain children) path inside = do
       nonEmpty path inside children
-      ChainedAt path <$> descend path inside children
+      ChainAt path <$> descend path inside children
     number (Parallel children) path inside = do
       nonEmpty path inside children
       ParallelAt path <$> descend path inside children
@@ -147,7 +147,7 @@ planSessions effects boundary children subscriptions = do
       let selected = if null nodes then bootPlan effects producer else ReuseOutput nodes
       pure (SessionProto contractType selected
         [boundary ++ [-1, index, step] | step <- [0 .. sessionSteps selected - 1]])
-    -- 订阅边之外，还要计入 workflow 的启动前置。否则 chained [读 A, 产 A]
+    -- 订阅边之外，还要计入 workflow 的启动前置。否则 chain [读 A, 产 A]
     -- 虽然注册关系无环，第一条增量仍只能由正在等待它的后继产生。
     -- 保守地纳入所有候选前驱：不依赖运行时恰好选中某个分支才具有进展。
     -- SCC 只检测这份启动依赖图；发现环就拒绝，不删边来强行安排运行。
@@ -199,7 +199,7 @@ planSessions effects boundary children subscriptions = do
             Nothing -> Left (InvalidLifelong unit "Missing unit for an output subscription")
         covered sources target available tree = case tree of
           NodeAt node' _ -> node' /= target || available
-          ChainedAt _ parts -> sequenceCovered parts available
+          ChainAt _ parts -> sequenceCovered parts available
           ParallelAt _ parts -> and
             [covered sources target (available || any (produces sources) others) child
             | child <- parts, let others = filter ((/= workflowNode child) . workflowNode) parts]

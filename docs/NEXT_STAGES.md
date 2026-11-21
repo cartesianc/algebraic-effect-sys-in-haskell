@@ -29,6 +29,10 @@
 <a id="code-shape"></a>
 ## LSP 从哪份代码开始
 
+网页添加注册时，`effect-codegen registration-slot Namespace` 从 GHC 解析树给出显式列表闭括号所在行（从 1 起）与行内字符偏移（从 0 起）。列表内已有的局部 helper 可保留。后端调用 `console Namespace --source-root DIR`，在本地项目的 Cabal 环境中分析候选副本。
+
+单条 Effect 注册的语法读取已落地。`effect-codegen read-effect` 从 UTF-8 标准输入解析 v1 表达式并输出 JSON。`effect-codegen read-effects Namespace` 按源码顺序读取已保存的注册，遇到 helper 构造的声明时从受信任模块求值并提供只读视图。`effect-codegen console Namespace` 在同一工作树完成组合分析，导出注册、直接方法引用、Handler 绑定及源码、有序 Workflow AST，供可视化面板读取。三条命令都不会更新生成区。
+
 LSP 面向开发者手写的 `Types.hs`、`Effects.hs`、`Handlers.hs`、`AST.hs` 和可选的 `Hanging.hs`。例如，定位一处 `require @T` 时，要结合当前 handler 的 effect 绑定和它声明的 demand；同一个 handler 可以被多个 effect 复用。Haskell 类型由 GHC 检查，资产来源和装配规则由 gen 确定。代码形态见[开发指南](GUIDE.md#code-shape)，已有的生成结果见[资产目录](ASSETS.md)与[静态图](EFFECT_GRAPH.md)。
 
 <a id="middleware"></a>
@@ -49,7 +53,7 @@ LSP 面向开发者手写的 `Types.hs`、`Effects.hs`、`Handlers.hs`、`AST.hs
 <a id="ast-nesting"></a>
 ### AST 嵌套与 workflow 边界
 
-现有 `chained`、`parallel` 和 `alternative` 可以嵌套，也可以放在 `lifelong` 内。gen 目前拒绝在 `lifelong` 的后代中再次挂载 `lifelong`。嵌套持续执行单独设计。以「每份订单启动一条消息流」为例，需要决定外层何时能接下一单、内层结束或取消传到哪里、哪个执行帧持有订阅和 scope。[静态规则](STREAM_LIFELONG.md#static) · [执行边界](STREAM_LIFELONG.md#execution-boundaries)
+现有 `chain`、`parallel` 和 `alternative` 可以嵌套，也可以放在 `lifelong` 内。gen 目前拒绝在 `lifelong` 的后代中再次挂载 `lifelong`。嵌套持续执行单独设计。以「每份订单启动一条消息流」为例，需要决定外层何时能接下一单、内层结束或取消传到哪里、哪个执行帧持有订阅和 scope。[静态规则](STREAM_LIFELONG.md#static) · [执行边界](STREAM_LIFELONG.md#execution-boundaries)
 
 <a id="review"></a>
 <a id="current-limits"></a>
