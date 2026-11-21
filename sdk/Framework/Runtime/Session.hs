@@ -26,10 +26,10 @@ import Framework.Language.Handler (Failure)
 import Framework.Runtime.Binding (Binding(..))
 import Framework.Runtime.Scope (ScopeBinding, ScopeBindings)
 import Framework.Runtime.Retention (Retention, withRetentionLock, keepBindingsLocked)
-import Framework.Prototype (NodeId)
+import Framework.Prototype.Coordinate (Coord)
 import Framework.Prototype.Slot (Slot(..))
 
-type SessionKey = (Maybe NodeId, Slot)
+type SessionKey = (Maybe Coord, Slot)
 
 -- 固定交付视图按发布时间排列，最后一条是本次选中的 Binding；此前的条目只用于业务历史读取。
 -- 绑定保留自己的生产身份、执行帧和共享归属。

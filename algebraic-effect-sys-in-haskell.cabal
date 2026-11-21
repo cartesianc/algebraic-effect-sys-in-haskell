@@ -36,6 +36,7 @@ common runtime-program
       Framework.Prototype.Query
       Framework.Prototype.Index
       Framework.Prototype.Slot
+      Framework.Prototype.Coordinate
       Framework.Prototype.Validate
       Framework.Prototype.Structure
       Framework.Runtime
@@ -211,6 +212,7 @@ executable effect-codegen
       Framework.Prototype.Query
       Framework.Prototype.Index
       Framework.Prototype.Slot
+      Framework.Prototype.Coordinate
       Framework.Prototype.Structure
       Framework.Prototype.Validate
   ghc-options: -main-is Framework.Gen.Main

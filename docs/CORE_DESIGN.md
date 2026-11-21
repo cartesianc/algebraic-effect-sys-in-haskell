@@ -598,7 +598,9 @@ runPrintPage = ⟨入口包装⟩ $
 
 运行时不再寻找生产方。interpreter 启动时把 Prototype 一次性编成按身份寻址的索引（`Framework.Prototype.Index`：按 NodeId 取链、驱动标记、开启计划，按读取点取静态来源，按来源取会话路由），节点调度、缺值等待与 scope 回收都从索引取 gen 写下的事实，不在运行中线性扫描原型或重新推导来源。
 
-资产按 gen 分配的 effect 编号存取，不按名字匹配。编号是 effect 在 `protoEffects` 中的位置（`Framework.Prototype.Slot`）；生成入口直接写出编号字面量，例如 `SDK.readContext (SDK.Slot 4 "ExtractPage")`，名字只留作诊断与展示。运行级最新值、按 Origin 的伴随发布、调用捕获、固定交付、会话登记、执行帧捕获scope 的开启参数与资源绑定，以及 scope 自身（open／close、依赖、归属与收尾身份用 Scoped effect 的编号），都以编号为键；ScopeTree 的祖先闭包也在建索引时算好；原型里以名字记录的读取点、会话路由、开启计划与单元读取，在建索引时一次换算成编号。`Failure` 与 Error 回调登记是展示记录，仍写名字。一个编号恰对应一个 effect；同一 effect 在剧本中出现的多个执行位置由 NodeId 与 Origin 区分，不进入编号。
+资产按 gen 分配的 effect 编号存取，不按名字匹配。编号是 effect 在 `protoEffects` 中的位置（`Framework.Prototype.Slot`）；生成入口直接写出编号字面量，例如 `SDK.readContext (SDK.Slot 4 "ExtractPage")`，名字只留作诊断与展示。运行级最新值、按 Origin 的伴随发布、调用捕获、固定交付、会话登记、执行帧捕获scope 的开启参数与资源绑定，以及 scope 自身（open／close、依赖、归属与收尾身份用 Scoped effect 的编号），都以编号为键；ScopeTree 的祖先闭包也在建索引时算好；原型里以名字记录的读取点、会话路由、开启计划与单元读取，在建索引时一次换算成编号。`Failure` 与 Error 回调登记是展示记录，仍写名字。一个编号恰对应一个 effect；同一 effect 在剧本中出现的多个执行位置由坐标与 Origin 区分，不进入编号。
+
+执行位置按坐标寻址（`Framework.Prototype.Coordinate`）。原型以路径（NodeId）记录 AST 挂载、选择、会话步骤与 lifelong 单元；建索引时把这些路径补全前缀后按字典序排开，即位置树的先序遍历，坐标就是先序序号，并记下子树最后一个位置的序号。执行帧的进度、Origin、读取捕获、会话边界与开启计划都以坐标为键，“某位置在这棵子树里”（跳过未进入的分支、撤下发布位置、清除上一轮的伴随输出）是一次区间比较，不再比较路径前缀。坐标到 effect 是唯一的；effect 到坐标是一对多，这份关系由 gen 写进读取点的供值位置与会话挂载，运行时只查表，不从坐标反推 effect。诊断仍显示原路径。
 
 因此被 `requires` 的普通资产必须有某个 effect `requests` 它，否则 gencode 以 `Asset never requested` 报错。alternative 的判定资产例外：选择读取（chooseCase）先运行一次共同句柄，再把输出依次交给各判定 parser，第一个解析成功的候选执行，候选只 requires 自己的判定资产。持续资产由会话驱动，不在此列。
 

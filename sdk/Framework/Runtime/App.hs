@@ -25,7 +25,7 @@ import Framework.Runtime.Graph
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame (ExecutionFrame, owningFrame, captureFrameInput)
 import Framework.Runtime.Session (Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..), View, lastBinding, awaitView)
-import Framework.Prototype (NodeId)
+import Framework.Prototype.Coordinate (Coord)
 import Framework.Prototype.Slot (Slot(..))
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, evaluate, fromException, mask, mask_, throwIO, try, finally)
@@ -937,7 +937,7 @@ currentOperation = HookApp ask
 -- Launch 提供本次调用的初始捕获；返回完整捕获快照，由 Runtime 按交接边界选取。
 -- 普通 Handoff 过滤资源；同一 Receive 步骤的 parser 可接收来源已捕获的资源，
 -- 来源保持本次使用，解析期间持有收到的资源 Binding，原生产身份与关闭责任不变。
-runAppWith :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> NodeId -> Launch env cause
+runAppWith :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> Coord -> Launch env cause
            -> env -> App env cause value
            -> IO (Either (Failure cause) value, ScopeBindings env cause, [(Slot, View env cause)])
 runAppWith consume graph node launch initial action = do
@@ -948,7 +948,7 @@ runAppWith consume graph node launch initial action = do
   capturedViews <- readIORef delivered
   pure (outcome, captured, capturedViews)
 
-runAppIn :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> NodeId -> IORef (ScopeBindings env cause)
+runAppIn :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> Coord -> IORef (ScopeBindings env cause)
          -> IORef [(Slot, View env cause)] -> Launch env cause -> env -> App env cause value
          -> IO (Either (Failure cause) value)
 runAppIn consume graph node values delivered launch initial (AppRun action) = mask $ \restore -> do

@@ -25,8 +25,8 @@ import Framework.Runtime.Binding (Binding(..), readBindingOwner)
 import Framework.Runtime.Retention (Retention, keepBindings)
 import Framework.Runtime.Session
 import Framework.Runtime.Scope
-import Framework.Prototype
-import Framework.Prototype.Index (LocalSlot(..), hooksLabel, sessionDescriptionAt)
+import Framework.Prototype.Index (LocalSlot(..), SessionAt(..), hooksLabel, sessionAt)
+import Framework.Prototype.Coordinate (Coord)
 import Framework.Prototype.Slot (Slot(..))
 import Control.Concurrent (forkIOWithUnmask, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar, newEmptyMVar, newMVar, putMVar, readMVar, tryReadMVar)
@@ -154,7 +154,7 @@ frameAdmits :: DeliveryFrame environment cause -> IO Bool
 frameAdmits frame = not <$> frameStopping frame
 
 -- 进入 lifelong 时取得本边界的会话：生产步骤从进入时的交接开始，与来源分析给会话挂载的环境一致。
-boundarySession :: RuntimeGraph environment cause -> NodeId -> Slot -> Handoff environment cause
+boundarySession :: RuntimeGraph environment cause -> Coord -> Slot -> Handoff environment cause
                 -> IO (Session environment cause)
 boundarySession graph boundary source (Handoff given views) = obtainSession graph (Just boundary, source) given views
 
@@ -216,7 +216,7 @@ frameDeliveries frame = do
 -- 已领取交付的伴随发布作为已捕获绑定交给本次调用，交接中已经捕获的值优先（与来源分析一致）；
 -- 生成期保证读取伴随资产的位置在调用前已经领取了对应会话的交付。
 -- 原始链挂接只交付持续资产自身；普通产物仍写入运行级共享最新值，不作为该交付的伴随捕获。
-lowerTarget :: RuntimeGraph environment cause -> Retention environment cause -> NodeId -> ExecutionFrame -> Maybe (DeliveryFrame environment cause) -> Handoff environment cause
+lowerTarget :: RuntimeGraph environment cause -> Retention environment cause -> Coord -> ExecutionFrame -> Maybe (DeliveryFrame environment cause) -> Handoff environment cause
             -> Target environment cause value -> IO (Either (Failure cause) value, Handoff environment cause)
 lowerTarget graph retention location executionFrame frame (Handoff given views) target = do
   taken <- maybe (pure []) frameDeliveries frame
@@ -238,7 +238,7 @@ lowerTarget graph retention location executionFrame frame (Handoff given views) 
   handoffBindings <- filterM (fmap isNothing . readBindingOwner . snd) captured
   pure (outcome, Handoff handoffBindings delivered)
 
-lowerWith :: RuntimeGraph environment cause -> NodeId -> Launch environment cause -> Target environment cause value
+lowerWith :: RuntimeGraph environment cause -> Coord -> Launch environment cause -> Target environment cause value
           -> IO (Either (Failure cause) value, ScopeBindings environment cause, [(Slot, View environment cause)])
 lowerWith graph location launch (AppTarget _ environment _ action) =
   runAppWith (\value -> evaluate (foldr seq () (show value))) graph location launch environment action
@@ -291,7 +291,7 @@ sessionLauncher :: forall environment cause. RuntimeGraph environment cause -> [
                 -> (Broken cause -> IO ()) -> Session environment cause -> IO ()
 sessionLauncher graph steps onBroken session
   -- 已挂载的原始链提供输出：只登记会话的交付状态，不创建第二个驱动或资源使用者。
-  | Just (ReuseOutput _) <- sessionPlan <$> description = pure ()
+  | Just (Just _) <- sessionAtReuses <$> description = pure ()
   | otherwise = launch
   where
     launch = uninterruptibleMask_ $ do
@@ -352,7 +352,7 @@ sessionLauncher graph steps onBroken session
         when idle (retireSession selected)
     (boundary, source) = sessionKey session
     description = sessionDescriptionOf (runtimePrototype graph) boundary source
-    mounts = sessionMounts <$> description
+    mounts = sessionAtMounts <$> description
     -- 会话的各步骤位置被同一组标注覆盖；按首个步骤取 gen 特化的步骤。
     label = maybe (slotName source) (\nodes -> case nodes of
       first : _ -> referenceLabel (runtimePrototype graph) first (slotName source)
@@ -434,8 +434,8 @@ sessionLauncher graph steps onBroken session
     loop step = step >>= maybe (loop step) pure
 
 -- 会话计划与挂载只来自同一份原型；复用原始链输出的会话没有独立生产挂载。
-referenceLabel :: PrototypeReference -> NodeId -> String -> String
+referenceLabel :: PrototypeReference -> Coord -> String -> String
 referenceLabel (PrototypeReference index) = hooksLabel index
 
-sessionDescriptionOf :: PrototypeReference -> Maybe NodeId -> Slot -> Maybe SessionProto
-sessionDescriptionOf (PrototypeReference index) = sessionDescriptionAt index
+sessionDescriptionOf :: PrototypeReference -> Maybe Coord -> Slot -> Maybe SessionAt
+sessionDescriptionOf (PrototypeReference index) = sessionAt index
