@@ -3,7 +3,7 @@
   "namespace": "LinesDemo",
   "sources": [
     {"file": "demo/LinesDemo/AST.hs", "md5": "289ad04ca056cf2a7f6de53c3ddfd050"},
-    {"file": "demo/LinesDemo/Hanging.hs", "md5": "f022f17d22969f2a2e800eaa6a62c606"}
+    {"file": "demo/LinesDemo/Hanging.hs", "md5": "877dba12e7088d65abf79faacc597f3a"}
   ],
   "source": {
     "path": [],

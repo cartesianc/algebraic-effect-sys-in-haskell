@@ -227,7 +227,7 @@ cabal run effect-codegen -- workflow FileDemo
 
 | 字段 | 内容 |
 | --- | --- |
-| `sources` | 得出这份结果所加载的 AST、`Workflow/*.hs` 与 `Hanging.hs`，以及各文件字节的 MD5（十六进制）；没有 `Hanging.hs` 时它的 `md5` 为 `null` |
+| `sources` | 得出这份结果所加载的 AST、`Workflow/*.hs` 与 `Hanging.hs`，以及各文件的 MD5（十六进制，先把 CRLF 换成 LF 再计算，因此不随检出的换行方式变化）；没有 `Hanging.hs` 时它的 `md5` 为 `null` |
 | `source` | 业务写下的原样结构。每层带 `path`、`kind`（`node`／`chain`／`parallel`／`alternative`／`lifelong`）、node 的 `effect`；能从源码读出的位置还带经过的具名绑定 `names`、源码范围 `range`（文件与起止行列，从 1 开始，结束列不含）和 `readable` |
 | `workflow` | [规范形式](CORE_DESIGN.md#workflow-normal-form)，`path` 即 `NodeId`；`sourcePaths` 列出化简进该节点的原样路径 |
 | `hanging` | 每个挂载的 hook，以及各目标的限定名、源码位置 `sourcePaths` 和规范形式中的位置 `paths` |
@@ -235,7 +235,7 @@ cabal run effect-codegen -- workflow FileDemo
 
 结构诊断不改变退出码；AST 模块无法加载时以 GHC 诊断失败。
 
-`Generated/Workflow.json` 让读取方不必每次都运行 SDK：重新计算 `sources` 中各文件的 MD5，与记录相同（`null` 表示该文件仍不存在）时，这份 JSON 和生成的 `Prototype.hs` 仍对应当前的 AST 源码；不同就说明改过 AST 而尚未重新生成，此时可以调用 `ast` 取得当前结构。文件缺失表示这个命名空间还没有生成过。`sources` 只覆盖 workflow 结构，注册与 handler 的变化不在其中。用普通 Haskell 计算得到的子树（例如 `chain (map node names)`）标为 `"readable": false`，没有下层的源码位置，但 `source` 仍按求值结果列出它的结构。末端类别、持续订阅和 alternative 的判定 Context 要读注册，只在完整生成时检查。
+`Generated/Workflow.json` 让读取方不必每次都运行 SDK：按同样方式重新计算 `sources` 中各文件的 MD5（Python：`hashlib.md5(data.replace(b"\r\n", b"\n")).hexdigest()`），与记录相同（`null` 表示该文件仍不存在）时，这份 JSON 和生成的 `Prototype.hs` 仍对应当前的 AST 源码；不同就说明改过 AST 而尚未重新生成，此时可以调用 `ast` 取得当前结构。文件缺失表示这个命名空间还没有生成过。`sources` 只覆盖 workflow 结构，注册与 handler 的变化不在其中。用普通 Haskell 计算得到的子树（例如 `chain (map node names)`）标为 `"readable": false`，没有下层的源码位置，但 `source` 仍按求值结果列出它的结构。末端类别、持续订阅和 alternative 的判定 Context 要读注册，只在完整生成时检查。
 
 gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提取 handler 方法体的读取形状、构图、输出源码，最后用 GHC 类型检查业务模块与输出并检查顶层白名单；任何一步报错都不写回 Generated，也不调用业务 handler。各阶段做什么、报告哪些错误见[编译流水线](CORE_DESIGN.md#generation)。缓存命中只复用纯构图结果，其余阶段仍会执行，内容未变的文件不会重写。详见[生成缓存边界](EFFECT_GRAPH.md#内容缓存与重跑边界)。
 

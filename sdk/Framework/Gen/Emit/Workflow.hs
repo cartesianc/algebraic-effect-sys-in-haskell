@@ -11,7 +11,7 @@ import Framework.Recursion (Fix(..))
 import Numeric (showHex)
 
 -- rows 是 Hanging 各行求值得到的 hook 与目标数，targets 是前端从源码给出的目标名与源码位置。
--- sources 是已加载的 AST、Workflow、Hanging 文件与其字节的 MD5（十六进制）；不存在的 Hanging 为 null。
+-- sources 是已加载的 AST、Workflow、Hanging 文件与其 MD5（十六进制，CRLF 先换成 LF）；不存在的 Hanging 为 null。
 -- 读取方重新计算这些文件的 MD5，全部一致时这份结果仍对应当前源码，无需再运行 SDK。
 renderWorkflowReport :: String -> Fix WorkflowF -> [([String], Int)] -> [[(String, [[Int]])]] -> [SourceSite]
                      -> [(FilePath, Maybe String)] -> String

@@ -15,12 +15,15 @@ import GHC
 import GHC.Builtin.Names (dollarIdKey)
 import GHC.Data.FastString (unpackFS)
 import GHC.Types.Unique (getUnique)
-import GHC.Fingerprint (fingerprintString, getFileHash)
+import Data.Char (ord)
+import Data.Word (Word8)
+import Foreign.Marshal.Array (withArrayLen)
+import GHC.Fingerprint (fingerprintData, fingerprintString)
 import GHC.Hs
 import GHC.Types.Name (nameModule_maybe, nameOccName)
 import GHC.Types.Name.Occurrence (occNameString)
 import System.Directory (doesFileExist)
-import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, hSetNewlineMode, universalNewlineMode, utf8, withFile)
+import System.IO (IOMode(ReadMode), hGetContents, hSetEncoding, hSetNewlineMode, universalNewlineMode, utf8, withBinaryFile, withFile)
 
 type Targets = [[(String, [[Int]])]]
 type SourceChecks = [(FilePath, Maybe String)]
@@ -31,7 +34,7 @@ data Outline = Outline
   , outlineTargets :: Targets              -- Hanging 各行目标的限定名与全部源码位置
   , outlineChecks :: SourceChecks          -- 生成的 Program 在运行前核对的 Hanging 输入指纹
   , outlineSites :: [SourceSite]           -- 从 ast 出发能从源码读出的每个位置
-  , outlineSources :: [(FilePath, Maybe String)]  -- 每个已加载模块文件字节的 MD5；Hanging 不存在时为 Nothing
+  , outlineSources :: [(FilePath, Maybe String)]  -- 每个已加载模块的 MD5（换行统一为 LF）；Hanging 不存在时为 Nothing
   }
 
 loadOutline :: String -> IO Outline
@@ -42,7 +45,7 @@ loadOutline namespace = do
     root <- exported (astModule namespace) "ast"
     targets <- if exists then hangingTargets namespace definitions root else pure []
     sites <- either abort pure (outline (Map.map layoutOf definitions) root)
-    hashes <- liftIO (mapM (\(path, _) -> (,) path . Just . show <$> getFileHash path) checks)
+    hashes <- liftIO (mapM (\(path, _) -> (,) path . Just <$> sourceDigest path) checks)
     let absent = [(hangingFile namespace, Nothing) | not exists]
     -- 没有 Hanging 时 Program 只核对它仍不存在，与此前的生成结果一致。
     pure (Outline exists targets (if exists then checks else absent) sites (hashes ++ absent))
@@ -76,6 +79,21 @@ loadWorkflowModules namespace withHanging = do
       let value = show (fingerprintString contents)
       _ <- evaluate (length value)
       pure value
+
+-- 源码文件 MD5（十六进制），取 CRLF 换成 LF 后的字节：与 Program 的指纹一样不随检出的换行方式变化。
+-- 读取方用 hashlib.md5(data.replace(b"\r\n", b"\n")).hexdigest() 得到同一个值。
+sourceDigest :: FilePath -> IO String
+sourceDigest path = withBinaryFile path ReadMode $ \file -> do
+  contents <- hGetContents file
+  let bytes = map (fromIntegral . ord) (unix contents) :: [Word8]
+  digest <- withArrayLen bytes (\count pointer -> fingerprintData pointer count)
+  let value = show digest
+  _ <- evaluate (length value)
+  pure value
+  where
+    unix ('\r' : '\n' : rest) = '\n' : unix rest
+    unix (character : rest) = character : unix rest
+    unix [] = []
 
 hangingTargets :: String -> Map.Map Name (HsBind GhcRn) -> Name -> Ghc Targets
 hangingTargets namespace definitions root = do

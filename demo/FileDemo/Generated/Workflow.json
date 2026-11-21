@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "namespace": "FileDemo",
   "sources": [
-    {"file": "demo/FileDemo/AST.hs", "md5": "f65034bc89afd9dad85b7d988ac2712f"},
-    {"file": "demo/FileDemo/Workflow/OperateFile.hs", "md5": "fb01251b550b6b23550e15dec87cdaf5"},
+    {"file": "demo/FileDemo/AST.hs", "md5": "5939bda1fb2ff30802d0896bb7f524a1"},
+    {"file": "demo/FileDemo/Workflow/OperateFile.hs", "md5": "3520c271a552b9a6c342b74936921e0b"},
     {"file": "demo/FileDemo/Hanging.hs", "md5": null}
   ],
   "source": {

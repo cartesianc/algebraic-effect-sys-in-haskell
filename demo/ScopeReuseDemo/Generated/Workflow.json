@@ -5,7 +5,7 @@
     {"file": "demo/ScopeReuseDemo/AST.hs", "md5": "14478f28ba100485dbdbf2d4191fa212"},
     {"file": "demo/ScopeReuseDemo/Workflow/PrepareProbe.hs", "md5": "054a04f8cf04ec2554448bf5213e3061"},
     {"file": "demo/ScopeReuseDemo/Workflow/VerifyReuse.hs", "md5": "d55b3c30f86fa12b6edcba400f560c36"},
-    {"file": "demo/ScopeReuseDemo/Workflow/WriteInParallel.hs", "md5": "7d43ecf9102a9e874e9fd75b825d81a7"},
+    {"file": "demo/ScopeReuseDemo/Workflow/WriteInParallel.hs", "md5": "8fd3ba32cdd59afde4d92d6d9be57568"},
     {"file": "demo/ScopeReuseDemo/Hanging.hs", "md5": null}
   ],
   "source": {

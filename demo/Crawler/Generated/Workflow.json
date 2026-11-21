@@ -3,7 +3,7 @@
   "namespace": "Crawler",
   "sources": [
     {"file": "demo/Crawler/AST.hs", "md5": "6736d2e6f20f9c01dfae65adb42c9e52"},
-    {"file": "demo/Crawler/Workflow/ParsePages.hs", "md5": "fc92d34a995ead0e8f17890f0a6cc811"},
+    {"file": "demo/Crawler/Workflow/ParsePages.hs", "md5": "6fe02100c193fa5cc35c6eaaafec2b08"},
     {"file": "demo/Crawler/Workflow/PrintPages.hs", "md5": "50877db0c2d6996fe4eba076cc7cf4f8"},
     {"file": "demo/Crawler/Hanging.hs", "md5": null}
   ],
