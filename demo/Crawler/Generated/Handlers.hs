@@ -44,7 +44,7 @@ instance StartURLLayer m => StartURLHandler m where
   startURL = pure (PageURL "https://www.google.com")
 
 instance LinkedURLLayer m => LinkedURLHandler m where
-  linkedURL = pure (PageURL "https://www.baidu.com")
+  linkedURL = pure (PageURL "https://example.com")
 
 -- FetchPage 与 FetchLinkedPage 共用：Input CrawlSession 已开启，requests 已刷新 URL。
 instance FetchPageLayer m => FetchPageHandler m where
@@ -139,7 +139,7 @@ instance CloseSessionLayer m => CloseSessionHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "f8c100e855fb22092ce2e75164d11d60"
+handlerSourceFingerprint = Just "a548361ce474143faa352d3619e7e18f"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。

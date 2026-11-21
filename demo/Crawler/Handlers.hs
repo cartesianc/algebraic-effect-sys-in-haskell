@@ -33,7 +33,7 @@ instance StartURLLayer m => StartURLHandler m where
   startURL = pure (PageURL "https://www.google.com")
 
 instance LinkedURLLayer m => LinkedURLHandler m where
-  linkedURL = pure (PageURL "https://www.baidu.com")
+  linkedURL = pure (PageURL "https://example.com")
 
 -- FetchPage 与 FetchLinkedPage 共用：Input CrawlSession 已开启，requests 已刷新 URL。
 instance FetchPageLayer m => FetchPageHandler m where
