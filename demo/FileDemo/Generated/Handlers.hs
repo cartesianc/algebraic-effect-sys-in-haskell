@@ -205,21 +205,24 @@ instance SDK.RawOutputs (Wrap effect method)
 
 runLocateFile :: Effects.App [String]
 runLocateFile =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 0 "LocateFile")
+  . SDK.handleFailure
   . SDK.atomicHandle "runLocateFile" []
   . SDK.enterHandler (SDK.Slot 0 "LocateFile") $
     call @"LocateFile" @"locateFile" Effects.locateFile
 
 runValidateFileName :: Effects.App [String]
 runValidateFileName =
-  SDK.handleFailure $
+  SDK.runOnce (SDK.Slot 1 "ValidateFileName")
+  . SDK.handleFailure $
     call @"ValidateFileName" @"validateFileName" Effects.validateFileName
 
 getFileName :: Effects.App Effects.FileName
 getFileName =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 2 "FileLocation")
-      (\value bindings -> bindings { Effects.boundFileLocation = Just value }) $
+      (\value bindings -> bindings { Effects.boundFileLocation = Just value })
+      Effects.boundFileLocation $
     Effects.FileName <$> call @"FileLocation" @"parseFileName" Effects.parseFileName
 
 readFileName :: Effects.App Effects.FileName
@@ -231,8 +234,9 @@ getOpenedFile :: Effects.App Effects.OpenedFile
 getOpenedFile =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 3 "FileResource")
-      (\value bindings -> bindings { Effects.boundFileResource = Just value }) $
-    getFileName >> Effects.OpenedFile <$> call @"FileResource" @"acquireFile" Effects.acquireFile
+      (\value bindings -> bindings { Effects.boundFileResource = Just value })
+      Effects.boundFileResource $
+    SDK.producingFor [(SDK.Slot 2 "FileLocation")] (runLocateFile) >> getFileName >> Effects.OpenedFile <$> call @"FileResource" @"acquireFile" Effects.acquireFile
 
 readOpenedFile :: Effects.App Effects.OpenedFile
 readOpenedFile =
@@ -241,7 +245,8 @@ readOpenedFile =
 
 openFileSession :: Effects.App [String]
 openFileSession =
-  SDK.withErrorPath ["FileSession"]
+  SDK.runOnce (SDK.Slot 4 "FileSession")
+  . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicScope "openFileSession" []
   . SDK.openScope (SDK.Slot 4 "FileSession") Effects.ScopeBindingError (Just (() <$ closeFileSession))
@@ -275,7 +280,8 @@ resolveFileRecovery =
 
 runReadFile :: Effects.App [String]
 runReadFile =
-  SDK.withErrorPath ["FileSession"]
+  SDK.runOnce (SDK.Slot 6 "ReadFile")
+  . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runReadFile" []
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
@@ -288,7 +294,8 @@ getFileBlank =
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.callContext (SDK.Slot 7 "BlankText")
-      (\value bindings -> bindings { Effects.boundBlankText = Just value }) $
+      (\value bindings -> bindings { Effects.boundBlankText = Just value })
+      Effects.boundBlankText $
     Effects.FileBlank <$> call @"BlankText" @"parseBlankText" Effects.parseBlankText
 
 readFileBlank :: Effects.App Effects.FileBlank
@@ -303,7 +310,8 @@ getFileWritten =
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.callContext (SDK.Slot 8 "FilledText")
-      (\value bindings -> bindings { Effects.boundFilledText = Just value }) $
+      (\value bindings -> bindings { Effects.boundFilledText = Just value })
+      Effects.boundFilledText $
     Effects.FileWritten <$> call @"FilledText" @"parseWrittenText" Effects.parseWrittenText
 
 readFileWritten :: Effects.App Effects.FileWritten
@@ -314,7 +322,8 @@ readFileWritten =
 
 runWriteFirstLine :: Effects.App [String]
 runWriteFirstLine =
-  SDK.withErrorPath ["FileSession"]
+  SDK.runOnce (SDK.Slot 9 "WriteFirstLine")
+  . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runWriteFirstLine" []
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
@@ -323,7 +332,8 @@ runWriteFirstLine =
 
 runAppendLine :: Effects.App [String]
 runAppendLine =
-  SDK.withErrorPath ["FileSession"]
+  SDK.runOnce (SDK.Slot 10 "AppendLine")
+  . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runAppendLine" []
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]

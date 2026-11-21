@@ -56,6 +56,15 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 只有本次执行位置是原型指定的发布位置时才取得它们；普通注入和持续注入分别保持各自的失败协议。
   activeStreamContexts :: [(Slot, m ())] -> m [(Slot, m ())]
   activeStreamContexts _ = pure []
+  -- 同一次调用中每个 effect 只执行一次：Excu、Scoped.open 与 Pure 的本次输出，Context 是否已在本次发布。
+  -- 记录随调用开始而清空；诊断与收尾各有自己的记录。
+  recallOutput :: Slot -> m (Maybe [String])
+  recallOutput _ = pure Nothing
+  rememberOutput :: Slot -> [String] -> m ()
+  rememberOutput _ _ = pure ()
+  -- 锚点为这些 Context 生产：在 Scoped 的 open 中，它的 IO 属于开启输入的生产，与在 Context 里拉取时相同。
+  producingFor :: [Slot] -> m value -> m value
+  producingFor _ = id
   -- 持续注入与选择判定期间，挂接 Context 对该句柄的调用由本次 RawOutput 回答，不重复执行。
   replayedOutput :: String -> m (Maybe RawOutput)
   replayedOutput _ = pure Nothing

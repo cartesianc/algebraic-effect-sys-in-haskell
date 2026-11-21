@@ -2,7 +2,7 @@
 
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Runtime.Context
-  ( ContextFault(..), readContext, callContext
+  ( ContextFault(..), readContext, callContext, runOnce
   , chooseCase, atomicHandle, atomicScope, readStreamContext, readStreamHistory, requestStreamContext
   ) where
 
@@ -55,16 +55,39 @@ requestContext selected synchronize produce = enterRequest selected $
     publishContextBinding selected (synchronize value)
     pure value
 
--- getT 的生成入口：每次调用都生产并发布。只有 requests 驱动、alternative 的选择读取、
+-- getT 的生成入口：生产并发布。只有 requests 驱动、alternative 的选择读取、
 -- 挂接注入和会话步骤调用它；require 读取走 readContext，不经这里。
+-- 同一次调用中已经发布过时不再生产，返回本次捕获的那份发布（发布即捕获，捕获优先于其他调用的发布）。
 callContext
-  :: ContextStore environment m
-  => Slot -> (value -> environment -> environment)
+  :: (ContextStore environment m, MonadError (Failure cause) m)
+  => Slot -> (value -> environment -> environment) -> (environment -> Maybe value)
   -> m value -> m value
-callContext selected synchronize produce = do
-  value <- requestContext selected synchronize (enterContext selected produce)
+callContext selected synchronize select produce = do
+  produced <- recallOutput selected
+  captured <- case produced of
+    Just _ -> either (const Nothing) id <$> readContextBinding selected select
+    Nothing -> pure Nothing
+  value <- case captured of
+    Just value -> pure value
+    Nothing -> do
+      value <- requestContext selected synchronize (enterContext selected produce)
+      rememberOutput selected []
+      pure value
   recordContextInput selected
   pure value
+
+-- Excu、Scoped.open 与 Pure 入口的最外层：同一次调用中再次到达同一 effect 时返回它本次的 list，
+-- 不再执行（包括它的前驱）。rawinput 因此读到锚点的同一次输出，n 条生产分支共用一次执行。
+-- 失败不记录：失败照常沿原链传播。
+runOnce :: ContextStore environment m => Slot -> m [String] -> m [String]
+runOnce selected body = do
+  recalled <- recallOutput selected
+  case recalled of
+    Just output -> pure output
+    Nothing -> do
+      output <- body
+      rememberOutput selected output
+      pure output
 
 -- alternative 的选择读取（option）：race 等待某一支有值，再走那一支。
 -- 先执行一次共同的 Excu，按候选的声明顺序把同一份输出交给各自的判定 Context；第一个解析成功的

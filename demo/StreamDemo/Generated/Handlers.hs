@@ -169,7 +169,8 @@ instance SDK.EndsStream (Wrap effect method) where
 
 openSensorLink :: Effects.App [String]
 openSensorLink =
-  SDK.withErrorPath ["SensorLink"]
+  SDK.runOnce (SDK.Slot 0 "SensorLink")
+  . SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
   . SDK.atomicScope "openSensorLink" []
   . SDK.openScope (SDK.Slot 0 "SensorLink") Effects.ScopeBindingError (Just (() <$ closeSensorLink))
@@ -199,7 +200,8 @@ getTemperatureSample =
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 0 "SensorLink")]
   . SDK.callContext (SDK.Slot 2 "TemperatureParser")
-      (\value bindings -> bindings { Effects.boundTemperatureParser = Just value }) $
+      (\value bindings -> bindings { Effects.boundTemperatureParser = Just value })
+      Effects.boundTemperatureParser $
     Effects.TemperatureSample <$> call @"TemperatureParser" @"parseTemperature" Effects.parseTemperature
 
 streamTemperatureSample :: Effects.App Effects.TemperatureSample
@@ -228,7 +230,8 @@ getBeat =
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 0 "SensorLink")]
   . SDK.callContext (SDK.Slot 4 "Heartbeat")
-      (\value bindings -> bindings { Effects.boundHeartbeat = Just value }) $
+      (\value bindings -> bindings { Effects.boundHeartbeat = Just value })
+      Effects.boundHeartbeat $
     Effects.Beat <$> call @"Heartbeat" @"parseBeat" Effects.parseBeat
 
 streamBeat :: Effects.App Effects.Beat
@@ -245,28 +248,32 @@ historyBeat =
 
 runAnnounce :: Effects.App [String]
 runAnnounce =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 5 "Announce")
+  . SDK.handleFailure
   . SDK.atomicHandle "runAnnounce" []
   . SDK.enterHandler (SDK.Slot 5 "Announce") $
     call @"Announce" @"announce" Effects.announce
 
 runShowTemperature :: Effects.App [String]
 runShowTemperature =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 6 "ShowTemperature")
+  . SDK.handleFailure
   . SDK.atomicHandle "runShowTemperature" []
   . SDK.enterHandler (SDK.Slot 6 "ShowTemperature") $
     call @"ShowTemperature" @"showTemperature" Effects.showTemperature
 
 runCheckTrend :: Effects.App [String]
 runCheckTrend =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 7 "CheckTrend")
+  . SDK.handleFailure
   . SDK.atomicHandle "runCheckTrend" []
   . SDK.enterHandler (SDK.Slot 7 "CheckTrend") $
     call @"CheckTrend" @"checkTrend" Effects.checkTrend
 
 runReportHeartbeat :: Effects.App [String]
 runReportHeartbeat =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 8 "ReportHeartbeat")
+  . SDK.handleFailure
   . SDK.atomicHandle "runReportHeartbeat" []
   . SDK.enterHandler (SDK.Slot 8 "ReportHeartbeat") $
     call @"ReportHeartbeat" @"reportHeartbeat" Effects.reportHeartbeat

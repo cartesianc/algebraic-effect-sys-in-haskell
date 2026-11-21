@@ -75,15 +75,18 @@ data SessionEntry
   | DeriveEntry String (EntryMount String)
   deriving (Eq, Show, Read)
 
--- 调用顺序仍是 requests → Input → handler。角色用于保留装配依据；
--- 相同方法出现在两个步骤时仍执行两次，不能按名字或结构去重。
+-- 入口在 handler 之前依次执行的步骤，顺序由 Injector 的消费链排序确定（算法说明 v3）。
+-- InputStep：声明的 Input 前驱。AnchorStep：requests 的资产生产链上的 Excu／Scoped（锚点），
+-- 作为前驱注入，附带它为本入口生产的 Context（这些 Context 的 parser 读它的同一次输出）。
+-- RequestStep：普通资产的 Context 入口，即从锚点分出的生产分支。
 -- SessionRequestStep：requests 一份持续资产，记生产它的 Context；入口启动或加入它的会话并取当前一条，
 -- 不是方法调用，不进入方法图。
-data EntryStep method = RequestStep method | InputStep method | SessionRequestStep String
+-- 同一次调用中同一 effect 只执行一次：再次到达时运行时返回它本次的输出（Excu、Scoped、Pure）或发布（Context）。
+data EntryStep method = RequestStep method | InputStep method | AnchorStep method [String] | SessionRequestStep String
   deriving (Eq, Show, Read)
 
 -- rawinput 的直接输入在本模块的绑定转换中解析。RawStream 记录结构上的来源方法；运行时读取本次 rawemit 的单元素 list；
--- 其余输入交出 list。是否已有本次输出由现有 replay 协议决定，不缓存另一调用的结果。
+-- 其余输入交出 list。同一次调用中上游已执行时读它本次的输出（runOnce），不缓存另一调用的结果。
 data RawSource method = RawList method | RawStream method
   deriving (Eq, Show, Read)
 
@@ -227,6 +230,7 @@ bindingCalls binding = [method | step <- bindingBefore binding, method <- callOf
   where
     callOf (RequestStep method) = [method]
     callOf (InputStep method) = [method]
+    callOf (AnchorStep method _) = [method]
     callOf (SessionRequestStep _) = []
 
 -- 入口先取得的持续资产（生产它的 Context 名），在 Input 前驱与 handler 之前。

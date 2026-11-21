@@ -256,12 +256,19 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       , let method = bindingMethod binding
             handler' = bindingHandler binding
       , line <- definition True method (renderValueType "FrameworkRuntime." "FrameworkGenerated." (bindingResult binding)) (wrapper binding)
-          (intercalate " >> " (map sessionRequest (bindingSessionRequests binding) ++ map call (bindingCalls binding)
-            ++ [handlerCall binding handler'])) ]
+          (intercalate " >> " (map entryStep (bindingBefore binding) ++ [handlerCall binding handler'])) ]
       ++ concat [ readerDefinition reader | reader <- unitReaders unit, readerEffect reader == selectedName ]
       ++ concat [ historyDefinition reader | reader <- unitReaders unit, readerEffect reader == selectedName
                 , readerContinuous reader, historyEntry (readerContract reader) `elem` historyEntries unit ]
       where
+        -- 步骤按 Injector 排定的顺序执行。锚点带上它为本入口生产的 Context：
+        -- 在 Scoped 的 open 中，锚点的 IO 属于这些开启输入的生产，不提前固定开启输入。
+        entryStep (SessionRequestStep producer) = sessionRequest producer
+        entryStep (RequestStep method) = call method
+        entryStep (InputStep method) = call method
+        entryStep (AnchorStep method []) = call method
+        entryStep (AnchorStep method produced) = "FrameworkRuntime.producingFor [" ++ intercalate ", " (map slot produced)
+          ++ "] (" ++ call method ++ ")"
         -- 持续资产的 requests：启动或加入会话，取当前一条，本次调用的 requires 读它。
         sessionRequest producer = "FrameworkRuntime.requestStreamContext " ++ slot producer
           ++ " FrameworkGenerated.ContextBindingError FrameworkGenerated.bound" ++ producer
@@ -275,17 +282,24 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         scoped = ["FrameworkRuntime.withScopeDependencies [" ++ intercalate ", " (map slot scopes) ++ "]" | not (null scopes)]
           where scopes = Prototype.effectScopes (protoOf unit selectedName)
         entered = scoped ++ ["FrameworkRuntime.enterHandler " ++ slot selectedName]
-        wrapper binding = rootWrapper selectedName ++ case bindingOperation binding of
-          -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
-          OpenResource -> scopeWrapper binding "openScope " (" " ++ cleanupOf selectedName)
-          CloseResource -> scopeWrapper binding "closeScope " ""
-          AtomicOperation -> ("FrameworkRuntime.atomicHandle " ++ show (bindingMethod binding) ++ anchoredOf binding) : entered
-          SourceStep -> entered
-          PureOperation -> scoped
-          PublishAsset _ -> scoped ++ ["FrameworkRuntime.callContext " ++ slot selectedName
-            ++ "\n      (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"]
-          ErrorOperation -> entered
-          MiddlewareOperation -> entered
+        -- 同一次调用中再次到达时返回本次输出，不重复执行：Excu、Scoped.open 与 Pure 的 list，见 runOnce；
+        -- Context 的发布由 callContext 按本次捕获返回。
+        once binding = ["FrameworkRuntime.runOnce " ++ slot selectedName | bindingResult binding == NativeType "[String]"]
+        wrapper binding = case bindingOperation binding of
+          OpenResource -> once binding ++ rootWrapper selectedName ++ scopeWrapper binding "openScope " (" " ++ cleanupOf selectedName)
+          AtomicOperation -> once binding ++ rootWrapper selectedName
+            ++ (("FrameworkRuntime.atomicHandle " ++ show (bindingMethod binding) ++ anchoredOf binding) : entered)
+          PureOperation -> once binding ++ rootWrapper selectedName ++ scoped
+          operation -> rootWrapper selectedName ++ case operation of
+            -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
+            CloseResource -> scopeWrapper binding "closeScope " ""
+            SourceStep -> entered
+            PublishAsset _ -> scoped ++ ["FrameworkRuntime.callContext " ++ slot selectedName
+              ++ "\n      (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"
+              ++ "\n      FrameworkGenerated.bound" ++ selectedName]
+            ErrorOperation -> entered
+            MiddlewareOperation -> entered
+            _ -> entered
         scopeWrapper binding operation cleanup =
           [ "FrameworkRuntime.atomicScope " ++ show (bindingMethod binding) ++ anchoredOf binding
           , "FrameworkRuntime." ++ operation ++ slot selectedName ++ " FrameworkGenerated.ScopeBindingError" ++ cleanup ] ++ entered

@@ -35,6 +35,7 @@ import Control.Monad.Except (ExceptT(..), MonadError, catchError, runExceptT, th
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Reader (ReaderT(..), ask, asks, local, runReaderT)
 import Data.Foldable (toList)
+import qualified Data.IntMap.Strict as IntMap
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (find, nub)
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, mapMaybe)
@@ -70,6 +71,8 @@ data Environment env cause = Environment
   , bindingRetention :: Retention env cause
   -- 注入期间各原子句柄的本次输出。
   , replays :: [(String, RawOutput)]
+  -- 本次调用中已执行的 effect 及其输出（按 effect 编号）；同一 effect 再次到达时直接返回。
+  , performed :: IORef (IntMap.IntMap [String])
   -- 持续资产在本次调用的固定交付：lifelong 交付或此前的会话读取；其他调用之后的发布不改写它。
   , views :: IORef [(Slot, View env cause)]
   -- Receive 来源取得同步交付函数，parser 只取得本条原始输入。
@@ -483,6 +486,13 @@ instance ContextStore env (App env cause) where
         selected <- rawIO (readIORef (holding attempt))
         rawIO (maybe (pure ()) (\slot -> saveBinding slot source value) selected)
       _ -> pure ()
+  recallOutput source = do
+    environment <- AppRun ask
+    rawIO (IntMap.lookup (slotNumber source) <$> readIORef (performed environment))
+  rememberOutput source output = do
+    environment <- AppRun ask
+    rawIO (atomicModifyIORef' (performed environment) (\current -> (IntMap.insert (slotNumber source) output current, ())))
+  producingFor sources (AppRun action) = AppRun $ local (\env -> env { contexts = sources ++ contexts env }) action
   currentHandler = AppRun (asks caller)
   enterHandler name (AppRun action) = AppRun (local (\env -> env { caller = Just name }) action)
   enterContext name (AppRun action) = AppRun $ local
@@ -650,9 +660,10 @@ runDiagnostic environment problem selected callback = do
       restored = foldr (\(source, value) values -> bind source value values) capturedHere saved
       execute = do
         values <- newIORef restored
+        isolated <- newIORef IntMap.empty
         let inside = environment
               { bindings = values, caller = Nothing, contexts = [], openings = [], closings = []
-              , originalFailure = Just problem, diagnosticOwner = owner, replays = [] }
+              , originalFailure = Just problem, diagnosticOwner = owner, replays = [], performed = isolated }
             AppRun action = runErrorHandler selected callback
         result <- runExceptT (runReaderT action inside)
         -- runErrorHandler 接回 detect/resolve 的 Failure；不捕获取消等原生 IO 异常。
@@ -767,13 +778,14 @@ captureScopeCleanup openingEnvironment attempt slot =
         let snapshot = foldr (\(source, value) values -> bind source value values) captured saved
             isolated permit action = mask $ \restore -> do
               values <- newIORef snapshot
+              closing <- newIORef IntMap.empty
               let cleanupExecution = CleanupExecution (executionOrigin (execution environment)) name (scopeIdentity slot)
               cleanupUser <- newScopeUser (scopes environment) cleanupExecution
               let inside = environment
                     { bindings = values, caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
                     , errorPath = []
                     , originalFailure = Nothing, diagnosticOwner = Nothing, cleaningScopes = True
-                    , replays = []
+                    , replays = [], performed = closing
                     , consumer = cleanupUser, cleanupPermit = Just (permit, slot)
                     , activeActivation = Nothing, execution = cleanupExecution
                     , cleanupBusy = Just (fault name (wrapFault attempt) ScopeInUse) }
@@ -964,6 +976,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
       handlers = runtimeScopes graph
   user <- maybe (newScopeUser handlers currentExecution) pure (launchUser launch)
   activation <- beginActivation graph Nothing (launchFrame launch) currentExecution (TargetedBoot node) values user
+  performedHere <- newIORef IntMap.empty
   let environment = Environment
         { emptyValues = initial, bindings = values, scopes = handlers
         , caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
@@ -972,7 +985,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
         , activeActivation = Just (activationId activation), execution = currentExecution
         , currentFrame = launchFrame launch, bindingRetention = launchRetention launch
-        , replays = []
+        , replays = [], performed = performedHere
         , views = delivered, streamPort = launchPort launch, sessionSinks = launchSinks launch
         , frameDeliver = launchDeliver launch }
   (do

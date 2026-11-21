@@ -272,7 +272,8 @@ getReportPath :: Effects.App Effects.ReportPath
 getReportPath =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 0 "ReportLocation")
-      (\value bindings -> bindings { Effects.boundReportLocation = Just value }) $
+      (\value bindings -> bindings { Effects.boundReportLocation = Just value })
+      Effects.boundReportLocation $
     Effects.ReportPath <$> call @"ReportLocation" @"reportLocation" Effects.reportLocation
 
 readReportPath :: Effects.App Effects.ReportPath
@@ -284,7 +285,8 @@ getReplyPath :: Effects.App Effects.ReplyPath
 getReplyPath =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 1 "ReplyLocation")
-      (\value bindings -> bindings { Effects.boundReplyLocation = Just value }) $
+      (\value bindings -> bindings { Effects.boundReplyLocation = Just value })
+      Effects.boundReplyLocation $
     Effects.ReplyPath <$> call @"ReplyLocation" @"replyLocation" Effects.replyLocation
 
 readReplyPath :: Effects.App Effects.ReplyPath
@@ -296,7 +298,8 @@ getReportBody :: Effects.App Effects.ReportBody
 getReportBody =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 2 "ReportDraft")
-      (\value bindings -> bindings { Effects.boundReportDraft = Just value }) $
+      (\value bindings -> bindings { Effects.boundReportDraft = Just value })
+      Effects.boundReportDraft $
     Effects.ReportBody <$> call @"ReportDraft" @"reportDraft" Effects.reportDraft
 
 readReportBody :: Effects.App Effects.ReportBody
@@ -308,7 +311,8 @@ getReplyBody :: Effects.App Effects.ReplyBody
 getReplyBody =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 3 "ReplyDraft")
-      (\value bindings -> bindings { Effects.boundReplyDraft = Just value }) $
+      (\value bindings -> bindings { Effects.boundReplyDraft = Just value })
+      Effects.boundReplyDraft $
     Effects.ReplyBody <$> call @"ReplyDraft" @"replyDraft" Effects.replyDraft
 
 readReplyBody :: Effects.App Effects.ReplyBody
@@ -320,7 +324,8 @@ getOpenedReport :: Effects.App Effects.OpenedReport
 getOpenedReport =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 4 "ReportFile")
-      (\value bindings -> bindings { Effects.boundReportFile = Just value }) $
+      (\value bindings -> bindings { Effects.boundReportFile = Just value })
+      Effects.boundReportFile $
     getReportPath >> Effects.OpenedReport <$> call @"ReportFile" @"acquireFile" Effects.acquireFile
 
 readOpenedReport :: Effects.App Effects.OpenedReport
@@ -332,7 +337,8 @@ getOpenedReply :: Effects.App Effects.OpenedReply
 getOpenedReply =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 5 "ReplyFile")
-      (\value bindings -> bindings { Effects.boundReplyFile = Just value }) $
+      (\value bindings -> bindings { Effects.boundReplyFile = Just value })
+      Effects.boundReplyFile $
     getReplyPath >> Effects.OpenedReply <$> call @"ReplyFile" @"acquireFile" Effects.acquireFile
 
 readOpenedReply :: Effects.App Effects.OpenedReply
@@ -342,7 +348,8 @@ readOpenedReply =
 
 openReportScope :: Effects.App [String]
 openReportScope =
-  SDK.withErrorPath ["ReportScope"]
+  SDK.runOnce (SDK.Slot 6 "ReportScope")
+  . SDK.withErrorPath ["ReportScope"]
   . SDK.handleFailure
   . SDK.atomicScope "openReportScope" []
   . SDK.openScope (SDK.Slot 6 "ReportScope") Effects.ScopeBindingError (Just (() <$ closeReportScope))
@@ -360,7 +367,8 @@ closeReportScope =
 
 openReplyScope :: Effects.App [String]
 openReplyScope =
-  SDK.withErrorPath ["ReplyScope"]
+  SDK.runOnce (SDK.Slot 7 "ReplyScope")
+  . SDK.withErrorPath ["ReplyScope"]
   . SDK.handleFailure
   . SDK.atomicScope "openReplyScope" []
   . SDK.openScope (SDK.Slot 7 "ReplyScope") Effects.ScopeBindingError (Just (() <$ closeReplyScope))
@@ -378,39 +386,44 @@ closeReplyScope =
 
 runWriteReport :: Effects.App [String]
 runWriteReport =
-  SDK.withErrorPath ["ReportScope"]
+  SDK.runOnce (SDK.Slot 8 "WriteReport")
+  . SDK.withErrorPath ["ReportScope"]
   . SDK.handleFailure
   . SDK.atomicHandle "runWriteReport" []
   . SDK.withScopeDependencies [(SDK.Slot 6 "ReportScope")]
   . SDK.enterHandler (SDK.Slot 8 "WriteReport") $
-    getReportBody >> openReportScope >> call @"WriteReport" @"writeText" Effects.writeText
+    openReportScope >> getReportBody >> call @"WriteReport" @"writeText" Effects.writeText
 
 runWriteReply :: Effects.App [String]
 runWriteReply =
-  SDK.withErrorPath ["ReplyScope"]
+  SDK.runOnce (SDK.Slot 9 "WriteReply")
+  . SDK.withErrorPath ["ReplyScope"]
   . SDK.handleFailure
   . SDK.atomicHandle "runWriteReply" []
   . SDK.withScopeDependencies [(SDK.Slot 7 "ReplyScope")]
   . SDK.enterHandler (SDK.Slot 9 "WriteReply") $
-    getReplyBody >> openReplyScope >> call @"WriteReply" @"writeText" Effects.writeText
+    openReplyScope >> getReplyBody >> call @"WriteReply" @"writeText" Effects.writeText
 
 runMarkReply :: Effects.App [String]
 runMarkReply =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 10 "MarkReply")
+  . SDK.handleFailure
   . SDK.atomicHandle "runMarkReply" []
   . SDK.enterHandler (SDK.Slot 10 "MarkReply") $
     call @"MarkReply" @"markRead" Effects.markRead
 
 runReadReport :: Effects.App [String]
 runReadReport =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 11 "ReadReport")
+  . SDK.handleFailure
   . SDK.atomicHandle "runReadReport" []
   . SDK.enterHandler (SDK.Slot 11 "ReadReport") $
     call @"ReadReport" @"readText" Effects.readText
 
 runReadReply :: Effects.App [String]
 runReadReply =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 12 "ReadReply")
+  . SDK.handleFailure
   . SDK.atomicHandle "runReadReply" []
   . SDK.enterHandler (SDK.Slot 12 "ReadReply") $
     runMarkReply >> call @"ReadReply" @"readText" Effects.readText
@@ -419,7 +432,8 @@ getReportStats :: Effects.App Effects.ReportStats
 getReportStats =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 13 "ReportCounter")
-      (\value bindings -> bindings { Effects.boundReportCounter = Just value }) $
+      (\value bindings -> bindings { Effects.boundReportCounter = Just value })
+      Effects.boundReportCounter $
     Effects.ReportStats <$> call @"ReportCounter" @"countLines" Effects.countLines
 
 readReportStats :: Effects.App Effects.ReportStats
@@ -431,7 +445,8 @@ getReplyStats :: Effects.App Effects.ReplyStats
 getReplyStats =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 14 "ReplyCounter")
-      (\value bindings -> bindings { Effects.boundReplyCounter = Just value }) $
+      (\value bindings -> bindings { Effects.boundReplyCounter = Just value })
+      Effects.boundReplyCounter $
     Effects.ReplyStats <$> call @"ReplyCounter" @"countLines" Effects.countLines
 
 readReplyStats :: Effects.App Effects.ReplyStats
@@ -441,21 +456,24 @@ readReplyStats =
 
 runShowReport :: Effects.App [String]
 runShowReport =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 15 "ShowReport")
+  . SDK.handleFailure
   . SDK.atomicHandle "runShowReport" []
   . SDK.enterHandler (SDK.Slot 15 "ShowReport") $
-    getReportStats >> call @"ShowReport" @"showCount" Effects.showCount
+    SDK.producingFor [(SDK.Slot 13 "ReportCounter")] (runReadReport) >> getReportStats >> call @"ShowReport" @"showCount" Effects.showCount
 
 runShowReply :: Effects.App [String]
 runShowReply =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 16 "ShowReply")
+  . SDK.handleFailure
   . SDK.atomicHandle "runShowReply" []
   . SDK.enterHandler (SDK.Slot 16 "ShowReply") $
-    getReplyStats >> call @"ShowReply" @"showCount" Effects.showCount
+    SDK.producingFor [(SDK.Slot 14 "ReplyCounter")] (runReadReply) >> getReplyStats >> call @"ShowReply" @"showCount" Effects.showCount
 
 runInspectReport :: Effects.App [String]
 runInspectReport =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 17 "InspectReport")
+  . SDK.handleFailure
   . SDK.atomicHandle "runInspectReport" []
   . SDK.enterHandler (SDK.Slot 17 "InspectReport") $
     call @"InspectReport" @"inspectFile" Effects.inspectFile
@@ -464,7 +482,8 @@ getReportEmpty :: Effects.App Effects.ReportEmpty
 getReportEmpty =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 18 "ReportBlank")
-      (\value bindings -> bindings { Effects.boundReportBlank = Just value }) $
+      (\value bindings -> bindings { Effects.boundReportBlank = Just value })
+      Effects.boundReportBlank $
     Effects.ReportEmpty <$> call @"ReportBlank" @"parseBlankReport" Effects.parseBlankReport
 
 readReportEmpty :: Effects.App Effects.ReportEmpty
@@ -476,7 +495,8 @@ getReportText :: Effects.App Effects.ReportText
 getReportText =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 19 "ReportFilled")
-      (\value bindings -> bindings { Effects.boundReportFilled = Just value }) $
+      (\value bindings -> bindings { Effects.boundReportFilled = Just value })
+      Effects.boundReportFilled $
     Effects.ReportText <$> call @"ReportFilled" @"parseFilledReport" Effects.parseFilledReport
 
 readReportText :: Effects.App Effects.ReportText
@@ -486,14 +506,16 @@ readReportText =
 
 runOnBlank :: Effects.App [String]
 runOnBlank =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 20 "OnBlank")
+  . SDK.handleFailure
   . SDK.atomicHandle "runOnBlank" []
   . SDK.enterHandler (SDK.Slot 20 "OnBlank") $
     call @"OnBlank" @"describeBlank" Effects.describeBlank
 
 runOnFilled :: Effects.App [String]
 runOnFilled =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 21 "OnFilled")
+  . SDK.handleFailure
   . SDK.atomicHandle "runOnFilled" []
   . SDK.enterHandler (SDK.Slot 21 "OnFilled") $
     call @"OnFilled" @"describeFilled" Effects.describeFilled
@@ -514,7 +536,8 @@ getLevelA :: Effects.App Effects.LevelA
 getLevelA =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 24 "ParserA")
-      (\value bindings -> bindings { Effects.boundParserA = Just value }) $
+      (\value bindings -> bindings { Effects.boundParserA = Just value })
+      Effects.boundParserA $
     Effects.LevelA <$> call @"ParserA" @"parseLevel" Effects.parseLevel
 
 streamLevelA :: Effects.App Effects.LevelA
@@ -531,7 +554,8 @@ getLevelB :: Effects.App Effects.LevelB
 getLevelB =
   SDK.handleFailure
   . SDK.callContext (SDK.Slot 25 "ParserB")
-      (\value bindings -> bindings { Effects.boundParserB = Just value }) $
+      (\value bindings -> bindings { Effects.boundParserB = Just value })
+      Effects.boundParserB $
     Effects.LevelB <$> call @"ParserB" @"parseLevel" Effects.parseLevel
 
 streamLevelB :: Effects.App Effects.LevelB
@@ -546,14 +570,16 @@ historyLevelB =
 
 runShowA :: Effects.App [String]
 runShowA =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 26 "ShowA")
+  . SDK.handleFailure
   . SDK.atomicHandle "runShowA" []
   . SDK.enterHandler (SDK.Slot 26 "ShowA") $
     call @"ShowA" @"showLevel" Effects.showLevel
 
 runShowB :: Effects.App [String]
 runShowB =
-  SDK.handleFailure
+  SDK.runOnce (SDK.Slot 27 "ShowB")
+  . SDK.handleFailure
   . SDK.atomicHandle "runShowB" []
   . SDK.enterHandler (SDK.Slot 27 "ShowB") $
     call @"ShowB" @"showLevel" Effects.showLevel

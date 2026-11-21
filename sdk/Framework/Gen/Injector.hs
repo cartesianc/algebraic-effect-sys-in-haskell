@@ -4,7 +4,7 @@ module Framework.Gen.Injector (bindProgram) where
 import Control.Monad (unless, when)
 import Data.Char (isAlphaNum, isLower, isUpper)
 import Data.List (intercalate, nub, nubBy, sortOn)
-import Data.Maybe (maybeToList)
+import Data.Maybe (listToMaybe, maybeToList)
 import Framework.Gen.Plan
 import Framework.Gen.Names
 import Framework.Gen.Injector.Super (captureKindOf)
@@ -17,6 +17,8 @@ import qualified Framework.Prototype as Prototype
 bindProgram :: String -> PrototypePlan -> [EffectDeclaration] -> Assembly String -> [(String, String)] -> Either String Unit
 bindProgram namespace prepared declarations assembly controlled = do
   checkGenerated unit
+  mapM_ (\specification -> scriptOf (declarationName specification))
+    [specification | specification <- declarations, Just _ <- [methodOf (declarationName specification)]]
   when (null (unitTerminals unit)) (Left "Select at least one terminal effect for generation")
   mapM_ (checkRepresentations unit) (declarations)
   signatures <- mapM (signatureOf unit) (unitHandlers unit)
@@ -128,17 +130,127 @@ bindProgram namespace prepared declarations assembly controlled = do
       Just method -> method
       Nothing -> error ("Validated demand has no reader: " ++ provider)
 
-    -- 驱动：requests 声明的资产在入口先调用 getT，沿 Input 驱动它的整条 Context 链。
-    drives :: Unit -> EffectDeclaration -> [String]
-    drives unit specification =
-      [ getter | resolved <- resolvedOf unit (declarationName specification), demandAccess resolved == RequestAccess
+    -- 普通资产的 requests：生产它的 Context 与入口方法 getT。持续资产不在此列，见 sessionDemands。
+    ordinaryDemands :: String -> [(ResolvedDemand, String)]
+    ordinaryDemands selected =
+      [ (resolved, getter) | resolved <- resolvedOf unit selected, demandAccess resolved == RequestAccess
+      , not (continuousContract unit (demandContract resolved))
       , Just getter <- [producerMethodOf (demandProvider resolved)] ]
 
     -- 持续资产的 requests：入口启动或加入它的会话，取当前一条作为本次调用的固定交付。
-    sessionRequests :: Unit -> EffectDeclaration -> [String]
-    sessionRequests unit specification =
-      [ demandProvider resolved | resolved <- resolvedOf unit (declarationName specification)
+    sessionDemands :: String -> [ResolvedDemand]
+    sessionDemands selected =
+      [ resolved | resolved <- resolvedOf unit selected
       , demandAccess resolved == RequestAccess, continuousContract unit (demandContract resolved) ]
+
+    -- 算法说明 v3（2026-11-22）：消费链与生产分支。
+    -- 一份普通资产的锚点：从生产它的 Context 沿 Input 跳过 Pure，遇到的第一个 Excu 或 Scoped。
+    -- 锚点作为前驱注入请求方（消费链），Context 与中间的 Pure 是从锚点分出的生产分支，读锚点的同一次输出。
+    -- 只有 Context 的生产链（Input 是 Root）没有锚点；持续资产的生产在会话里，也没有锚点。
+    anchorOf :: String -> Maybe String
+    anchorOf provider = walk (inputNamed provider) [provider]
+      where
+        walk selected seen
+          | selected `elem` ["Root", "None"] || selected `elem` seen = Nothing
+          | kindNamed selected == PureKind = walk (inputNamed selected) (selected : seen)
+          | kindNamed selected `elem` [ExcuKind, ScopedKind] = Just selected
+          | otherwise = Nothing
+    kindNamed selected = effectKind (protoOf unit selected)
+    inputNamed selected = effectInput (protoOf unit selected)
+
+    -- 一个入口执行时会到达的 effect：声明的 Input、requests 的锚点与生产分支、rawinput 读到的上游，递归闭包。
+    -- 约简只去掉闭包里已有的项，所以按未约简的关系求闭包即可；seen 防止有环时不终止，环由 scriptOf 报出。
+    reaches :: String -> [String]
+    reaches selected = case lookup selected reachTable of
+      Just found -> found
+      Nothing -> close [] [selected]
+    reachTable = [(declarationName specification, close [] [declarationName specification]) | specification <- declarations]
+    close seen [] = reverse seen
+    close seen (next : rest)
+      | next `elem` seen = close seen rest
+      | otherwise = close (next : seen) (structural next ++ rest)
+    structural selected = case [specification | specification <- declarations, declarationName specification == selected] of
+      specification : _ ->
+        declaredInputs specification
+          ++ [anchor | (resolved, _) <- ordinaryDemands selected, Just anchor <- [anchorOf (demandProvider resolved)]]
+          ++ [demandProvider resolved | (resolved, _) <- ordinaryDemands selected]
+          ++ [inputOf specification | Just (RawList _) <- [rawSource unit specification]]
+      [] -> []
+    declaredInputs specification = [inputOf specification | not (null (predecessor unit specification))]
+
+    -- 一个入口在 handler 之前的步骤：
+    -- 1. 主线是声明的 Input 与各 requests 的锚点；某一项已在另一项的执行中到达时去掉它
+    --    （锚点就是 Input 或在 Input 之上；Input 在锚点之上；锚点在另一锚点之上）。
+    --    剩下的项互不在对方上游，没有先后依赖：执行顺序只取声明顺序（Input 先，requests 按书写顺序），
+    --    不表示谁是谁的上游；有 scope 关系的项必然一个在另一个之上，不会落到这里。
+    -- 2. 生产分支紧跟它的锚点所在的主线项；没有锚点的分支与持续资产的取得放在主线之后、handler 之前。
+    -- 3. Scoped 的开启输入（资源与参数）排在最前：open 期间其他 IO 会先固定开启输入。
+    -- 4. 数据约束优先于以上顺序：某项执行中读取的资产由本入口的另一分支生产时，生产分支先执行。
+    --    约束成环、或某项的执行又到达本 effect 时，生成失败。
+    scriptOf :: String -> Either String [EntryStep String]
+    scriptOf selected = do
+      case [item | item <- structural selected, item /= selected, selected `elem` reaches item] of
+        item : _ -> Left ("Effect " ++ selected ++ " reaches itself through " ++ item
+          ++ ": an asset it requests is produced from its own chain; remove the requests or the Input that closes the cycle")
+        [] -> pure ()
+      order selected planned
+      where
+        specification = specOf unit selected
+        demands' = ordinaryDemands selected
+        indexed = zip [0 :: Int ..] demands'
+        sessions = zip [0 :: Int ..] (sessionDemands selected)
+        inputs0 = declaredInputs specification
+        anchors0 = nub [anchor | (resolved, _) <- demands', Just anchor <- [anchorOf (demandProvider resolved)]]
+        anchors = [ anchor | anchor <- anchors0, anchor `notElem` inputs0
+          , not (any (\input -> anchor `elem` reaches input) inputs0)
+          , not (any (\other -> other /= anchor && anchor `elem` reaches other) anchors0) ]
+        inputs = [input | input <- inputs0, not (any (\anchor -> input `elem` reaches anchor) anchors)]
+        mainline = zip [0 :: Int ..] (inputs ++ anchors)
+        holder resolved = anchorOf (demandProvider resolved) >>= \anchor ->
+          listToMaybe [position | (position, item) <- mainline, item == anchor || anchor `elem` reaches item]
+        proto = protoOf unit selected
+        opening = effectOpeningInputs proto ++ maybeToList (effectResource proto)
+        isOpening resolved = kindNamed selected == ScopedKind && demandProvider resolved `elem` opening
+        openingHolders = nub [position | (_, (resolved, _)) <- indexed, isOpening resolved, Just position <- [holder resolved]]
+        produced position = [demandProvider resolved | (resolved, _) <- demands', holder resolved == Just position]
+        mainStep (position, item)
+          | item `elem` inputs = InputStep (entry item)
+          | otherwise = AnchorStep (entry item) (produced position)
+        planned =
+          [ (mainStep main, if fst main `elem` openingHolders then [0, fst main] else [2, fst main, 0], [], reaches (snd main))
+          | main <- mainline ]
+          ++ [ (RequestStep getter, key, [demandContract resolved], reaches (demandProvider resolved))
+             | (index, (resolved, getter)) <- indexed
+             , let key | isOpening resolved = [1, index]
+                       | Just position <- holder resolved, position `elem` openingHolders = [1, 1000 + index]
+                       | Just position <- holder resolved = [2, position, 1, index]
+                       | otherwise = [3, index] ]
+          ++ [ (SessionRequestStep (demandProvider resolved), if isOpening resolved then [1, 2000 + index] else [3, 1000 + index]
+               , [demandContract resolved], [])
+             | (index, resolved) <- sessions ]
+        entry item = case methodOf item of
+          Just method -> method
+          Nothing -> error ("Validated chain has no entry: " ++ item)
+
+    -- 按键排序的拓扑排序：数据约束是硬约束，键只在已经可以执行的项之间选择。
+    order :: String -> [(EntryStep String, [Int], [String], [String])] -> Either String [EntryStep String]
+    order selected = go []
+      where
+        go done [] = pure (reverse done)
+        go done remaining =
+          case sortOn key [item | item <- remaining, ready remaining item] of
+            item : _ -> go (step item : done) (filter ((/= key item) . key) remaining)
+            [] -> Left ("Effect " ++ selected ++ " cannot order its requests: "
+              ++ intercalate "; " (map describe remaining)
+              ++ "; each of these reads an asset another one produces")
+        ready remaining item = not (any (\other -> key other /= key item && blocks other item) remaining)
+        blocks producer consumer = any (`elem` readsOf consumer) (producesOf producer)
+        readsOf (_, _, _, reached) = nub [demandContract resolved | effect <- reached, effect /= selected
+          , resolved <- resolvedOf unit effect, readsAccess (demandAccess resolved)]
+        producesOf (_, _, produced', _) = produced'
+        step (value, _, _, _) = value
+        key (_, value, _, _) = value
+        describe (value, _, produced', _) = show value ++ (if null produced' then "" else " produces " ++ intercalate ", " produced')
 
     -- 挂接的 parser 与 Pure 用 rawinput 读取直接 Input 的输出，不把 Input 当前驱执行：
     -- Input 是 Excu、Scoped、Pure 时读它交出的 list，是 Stream 时读会话本次取得的一份输入。
@@ -165,16 +277,14 @@ bindProgram namespace prepared declarations assembly controlled = do
       | Just _ <- rawSource unit specification = []
       | otherwise = maybeToList (methodOf (inputOf specification))
 
-    -- 算法说明 v2（2026-11-16）：绑定时计算一次，composeMethods 与 Emit 都读取 bindingBefore。
-    -- 先 requests 驱动，再 Input 前驱，最后 handler；close 与 Error 方法只执行 handler。
-    -- 即使驱动链与 Input 链包含相同方法，也不能在这里 nub：两个声明的调用仍是两次执行。
-    -- rawinput 的同次输出回放与 scope 的活实例共享在各自协议中判定，不由方法名相同推出。
+    -- 绑定时计算一次，composeMethods 与 Emit 都读取 bindingBefore；close 与 Error 方法只执行 handler。
+    -- 同一次调用中同一 effect 只执行一次（运行时记录本次输出），所以步骤之间共享的上游不会重复执行。
     -- handler 绑定复用只复用实现，不合并不同 effect 的路由或不同挂载的调用。
+    -- scriptOf 的错误已在 bindProgram 开头报出，这里只取结果。
     beforeOf :: Unit -> EffectDeclaration -> String -> [EntryStep String]
-    beforeOf unit specification method
+    beforeOf _ specification method
       | Just method == methodOf (declarationName specification) =
-          map SessionRequestStep (sessionRequests unit specification)
-            ++ map RequestStep (drives unit specification) ++ map InputStep (predecessor unit specification)
+          either (error . ("Validated script failed: " ++)) id (scriptOf (declarationName specification))
       | otherwise = []
 
     resultOf specification = declarationResult specification

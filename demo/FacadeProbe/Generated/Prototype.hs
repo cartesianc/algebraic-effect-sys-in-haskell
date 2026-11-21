@@ -485,8 +485,8 @@ generatedPrototype =
             SDK.HandlerMethod
             (
               SDK.Sequence
-                [ SDK.Call GetReportBodyGen
-                , SDK.Call OpenReportScopeGen
+                [ SDK.Call OpenReportScopeGen
+                , SDK.Call GetReportBodyGen
                 , SDK.Call ReadOpenedReportGen
                 , SDK.Call ReadReportBodyGen
                 ]
@@ -497,8 +497,8 @@ generatedPrototype =
             SDK.HandlerMethod
             (
               SDK.Sequence
-                [ SDK.Call GetReplyBodyGen
-                , SDK.Call OpenReplyScopeGen
+                [ SDK.Call OpenReplyScopeGen
+                , SDK.Call GetReplyBodyGen
                 , SDK.Call ReadOpenedReplyGen
                 , SDK.Call ReadReplyBodyGen
                 ]
@@ -526,12 +526,12 @@ generatedPrototype =
             RunShowReportGen
             RunShowReportGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call GetReportStatsGen, SDK.Call ReadReportStatsGen])
+            (SDK.Sequence [SDK.Call RunReadReportGen, SDK.Call GetReportStatsGen, SDK.Call ReadReportStatsGen])
         , SDK.MethodDefinition
             RunShowReplyGen
             RunShowReplyGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call GetReplyStatsGen, SDK.Call ReadReplyStatsGen])
+            (SDK.Sequence [SDK.Call RunReadReplyGen, SDK.Call GetReplyStatsGen, SDK.Call ReadReplyStatsGen])
         , SDK.MethodDefinition
             RunInspectReportGen
             RunInspectReportGen
@@ -634,12 +634,12 @@ generatedPrototype =
             , SDK.chainEntry = RunWriteReportGen
             , SDK.chainReaches =
                 [ RunWriteReportGen
-                , GetReportBodyGen
                 , OpenReportScopeGen
                 , GetOpenedReportGen
                 , GetReportPathGen
                 , ReadReportPathGen
                 , ReadOpenedReportGen
+                , GetReportBodyGen
                 , ReadReportBodyGen
                 ]
             , SDK.chainDrives = ["ReportBody","ReportPath"]
@@ -653,12 +653,12 @@ generatedPrototype =
             , SDK.chainEntry = RunWriteReplyGen
             , SDK.chainReaches =
                 [ RunWriteReplyGen
-                , GetReplyBodyGen
                 , OpenReplyScopeGen
                 , GetOpenedReplyGen
                 , GetReplyPathGen
                 , ReadReplyPathGen
                 , ReadOpenedReplyGen
+                , GetReplyBodyGen
                 , ReadReplyBodyGen
                 ]
             , SDK.chainDrives = ["ReplyBody","ReplyPath"]
@@ -671,7 +671,7 @@ generatedPrototype =
             , SDK.chainTerminal = "ShowReport"
             , SDK.chainEntry = RunShowReportGen
             , SDK.chainReaches =
-                [RunShowReportGen, GetReportStatsGen, RunReadReportGen, ReadReportPathGen, ReadReportStatsGen]
+                [RunShowReportGen, RunReadReportGen, ReadReportPathGen, GetReportStatsGen, ReadReportStatsGen]
             , SDK.chainDrives = ["ReportStats"]
             , SDK.chainReads = ["ReportPath"]
             , SDK.chainScopePaths = [[]]
@@ -683,10 +683,10 @@ generatedPrototype =
             , SDK.chainEntry = RunShowReplyGen
             , SDK.chainReaches =
                 [ RunShowReplyGen
-                , GetReplyStatsGen
                 , RunReadReplyGen
                 , RunMarkReplyGen
                 , ReadReplyPathGen
+                , GetReplyStatsGen
                 , ReadReplyStatsGen
                 ]
             , SDK.chainDrives = ["ReplyStats"]
@@ -917,12 +917,12 @@ generatedPrototype =
             , SDK.definitionEntry = RunWriteReportGen
             , SDK.definitionReaches =
                 [ RunWriteReportGen
-                , GetReportBodyGen
                 , OpenReportScopeGen
                 , GetOpenedReportGen
                 , GetReportPathGen
                 , ReadReportPathGen
                 , ReadOpenedReportGen
+                , GetReportBodyGen
                 , ReadReportBodyGen
                 ]
             }
@@ -932,12 +932,12 @@ generatedPrototype =
             , SDK.definitionEntry = RunWriteReplyGen
             , SDK.definitionReaches =
                 [ RunWriteReplyGen
-                , GetReplyBodyGen
                 , OpenReplyScopeGen
                 , GetOpenedReplyGen
                 , GetReplyPathGen
                 , ReadReplyPathGen
                 , ReadOpenedReplyGen
+                , GetReplyBodyGen
                 , ReadReplyBodyGen
                 ]
             }
@@ -988,7 +988,7 @@ generatedPrototype =
             , SDK.definitionEffect = "ShowReport"
             , SDK.definitionEntry = RunShowReportGen
             , SDK.definitionReaches =
-                [RunShowReportGen, GetReportStatsGen, RunReadReportGen, ReadReportPathGen, ReadReportStatsGen]
+                [RunShowReportGen, RunReadReportGen, ReadReportPathGen, GetReportStatsGen, ReadReportStatsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
@@ -996,10 +996,10 @@ generatedPrototype =
             , SDK.definitionEntry = RunShowReplyGen
             , SDK.definitionReaches =
                 [ RunShowReplyGen
-                , GetReplyStatsGen
                 , RunReadReplyGen
                 , RunMarkReplyGen
                 , ReadReplyPathGen
+                , GetReplyStatsGen
                 , ReadReplyStatsGen
                 ]
             }
@@ -1103,13 +1103,12 @@ generatedPrototype =
                   SDK.HandlerMethod
                   (
                     SDK.Sequence
-                      [ SDK.Call GetReportBodyGen
-                      , SDK.Call OpenReportScopeGen
+                      [ SDK.Call OpenReportScopeGen
+                      , SDK.Call GetReportBodyGen
                       , SDK.Call ReadOpenedReportGen
                       , SDK.Call ReadReportBodyGen
                       ]
                   )
-              , SDK.MethodDefinition GetReportBodyGen GetReportBodyGen SDK.ContextRequest SDK.Empty
               , SDK.MethodDefinition
                   OpenReportScopeGen
                   OpenReportScopeGen
@@ -1123,6 +1122,7 @@ generatedPrototype =
               , SDK.MethodDefinition GetReportPathGen GetReportPathGen SDK.ContextRequest SDK.Empty
               , SDK.MethodDefinition ReadReportPathGen GetReportPathGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition ReadOpenedReportGen GetOpenedReportGen SDK.ContextRequire SDK.Empty
+              , SDK.MethodDefinition GetReportBodyGen GetReportBodyGen SDK.ContextRequest SDK.Empty
               , SDK.MethodDefinition ReadReportBodyGen GetReportBodyGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition
                   RunWriteReplyGen
@@ -1130,13 +1130,12 @@ generatedPrototype =
                   SDK.HandlerMethod
                   (
                     SDK.Sequence
-                      [ SDK.Call GetReplyBodyGen
-                      , SDK.Call OpenReplyScopeGen
+                      [ SDK.Call OpenReplyScopeGen
+                      , SDK.Call GetReplyBodyGen
                       , SDK.Call ReadOpenedReplyGen
                       , SDK.Call ReadReplyBodyGen
                       ]
                   )
-              , SDK.MethodDefinition GetReplyBodyGen GetReplyBodyGen SDK.ContextRequest SDK.Empty
               , SDK.MethodDefinition
                   OpenReplyScopeGen
                   OpenReplyScopeGen
@@ -1150,35 +1149,36 @@ generatedPrototype =
               , SDK.MethodDefinition GetReplyPathGen GetReplyPathGen SDK.ContextRequest SDK.Empty
               , SDK.MethodDefinition ReadReplyPathGen GetReplyPathGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition ReadOpenedReplyGen GetOpenedReplyGen SDK.ContextRequire SDK.Empty
+              , SDK.MethodDefinition GetReplyBodyGen GetReplyBodyGen SDK.ContextRequest SDK.Empty
               , SDK.MethodDefinition ReadReplyBodyGen GetReplyBodyGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition
                   RunShowReportGen
                   RunShowReportGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call GetReportStatsGen, SDK.Call ReadReportStatsGen])
-              , SDK.MethodDefinition
-                  GetReportStatsGen
-                  GetReportStatsGen
-                  SDK.ContextRequest
-                  (SDK.Call RunReadReportGen)
+                  (SDK.Sequence [SDK.Call RunReadReportGen, SDK.Call GetReportStatsGen, SDK.Call ReadReportStatsGen])
               , SDK.MethodDefinition
                   RunReadReportGen
                   RunReadReportGen
                   SDK.HandlerMethod
                   (SDK.Call ReadReportPathGen)
+              , SDK.MethodDefinition
+                  GetReportStatsGen
+                  GetReportStatsGen
+                  SDK.ContextRequest
+                  (SDK.Call RunReadReportGen)
               , SDK.MethodDefinition ReadReportStatsGen GetReportStatsGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition
                   RunShowReplyGen
                   RunShowReplyGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call GetReplyStatsGen, SDK.Call ReadReplyStatsGen])
-              , SDK.MethodDefinition GetReplyStatsGen GetReplyStatsGen SDK.ContextRequest (SDK.Call RunReadReplyGen)
+                  (SDK.Sequence [SDK.Call RunReadReplyGen, SDK.Call GetReplyStatsGen, SDK.Call ReadReplyStatsGen])
               , SDK.MethodDefinition
                   RunReadReplyGen
                   RunReadReplyGen
                   SDK.HandlerMethod
                   (SDK.Sequence [SDK.Call RunMarkReplyGen, SDK.Call ReadReplyPathGen])
               , SDK.MethodDefinition RunMarkReplyGen RunMarkReplyGen SDK.HandlerMethod SDK.Empty
+              , SDK.MethodDefinition GetReplyStatsGen GetReplyStatsGen SDK.ContextRequest (SDK.Call RunReadReplyGen)
               , SDK.MethodDefinition ReadReplyStatsGen GetReplyStatsGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition RunOnBlankGen RunOnBlankGen SDK.HandlerMethod SDK.Empty
               , SDK.MethodDefinition RunOnFilledGen RunOnFilledGen SDK.HandlerMethod (SDK.Call ReadReportTextGen)
@@ -1221,31 +1221,33 @@ generatedPrototype =
               , GetLevelBGen
               ]
           , SDK.graphReferences =
-              [ (RunWriteReportGen, GetReportBodyGen)
-              , (RunWriteReportGen, OpenReportScopeGen)
+              [ (RunWriteReportGen, OpenReportScopeGen)
+              , (RunWriteReportGen, GetReportBodyGen)
               , (RunWriteReportGen, ReadOpenedReportGen)
               , (RunWriteReportGen, ReadReportBodyGen)
               , (OpenReportScopeGen, GetOpenedReportGen)
               , (OpenReportScopeGen, ReadOpenedReportGen)
               , (GetOpenedReportGen, GetReportPathGen)
               , (GetOpenedReportGen, ReadReportPathGen)
-              , (RunWriteReplyGen, GetReplyBodyGen)
               , (RunWriteReplyGen, OpenReplyScopeGen)
+              , (RunWriteReplyGen, GetReplyBodyGen)
               , (RunWriteReplyGen, ReadOpenedReplyGen)
               , (RunWriteReplyGen, ReadReplyBodyGen)
               , (OpenReplyScopeGen, GetOpenedReplyGen)
               , (OpenReplyScopeGen, ReadOpenedReplyGen)
               , (GetOpenedReplyGen, GetReplyPathGen)
               , (GetOpenedReplyGen, ReadReplyPathGen)
+              , (RunShowReportGen, RunReadReportGen)
               , (RunShowReportGen, GetReportStatsGen)
               , (RunShowReportGen, ReadReportStatsGen)
-              , (GetReportStatsGen, RunReadReportGen)
               , (RunReadReportGen, ReadReportPathGen)
+              , (GetReportStatsGen, RunReadReportGen)
+              , (RunShowReplyGen, RunReadReplyGen)
               , (RunShowReplyGen, GetReplyStatsGen)
               , (RunShowReplyGen, ReadReplyStatsGen)
-              , (GetReplyStatsGen, RunReadReplyGen)
               , (RunReadReplyGen, RunMarkReplyGen)
               , (RunReadReplyGen, ReadReplyPathGen)
+              , (GetReplyStatsGen, RunReadReplyGen)
               , (RunOnFilledGen, ReadReportTextGen)
               , (RunShowAGen, StreamLevelAGen)
               , (RunShowBGen, StreamLevelBGen)
