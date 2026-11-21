@@ -134,6 +134,12 @@ bindProgram namespace prepared declarations assembly controlled = do
       [ getter | resolved <- resolvedOf unit (declarationName specification), demandAccess resolved == RequestAccess
       , Just getter <- [producerMethodOf (demandProvider resolved)] ]
 
+    -- 持续资产的 requests：入口启动或加入它的会话，取当前一条作为本次调用的固定交付。
+    sessionRequests :: Unit -> EffectDeclaration -> [String]
+    sessionRequests unit specification =
+      [ demandProvider resolved | resolved <- resolvedOf unit (declarationName specification)
+      , demandAccess resolved == RequestAccess, continuousContract unit (demandContract resolved) ]
+
     -- 挂接的 parser 与 Pure 用 rawinput 读取直接 Input 的输出，不把 Input 当前驱执行：
     -- Input 是 Excu、Scoped、Pure 时读它交出的 list，是 Stream 时读会话本次取得的一份输入。
     methodOf selected = declarationEntry (specOf unit selected)
@@ -167,7 +173,8 @@ bindProgram namespace prepared declarations assembly controlled = do
     beforeOf :: Unit -> EffectDeclaration -> String -> [EntryStep String]
     beforeOf unit specification method
       | Just method == methodOf (declarationName specification) =
-          map RequestStep (drives unit specification) ++ map InputStep (predecessor unit specification)
+          map SessionRequestStep (sessionRequests unit specification)
+            ++ map RequestStep (drives unit specification) ++ map InputStep (predecessor unit specification)
       | otherwise = []
 
     resultOf specification = declarationResult specification

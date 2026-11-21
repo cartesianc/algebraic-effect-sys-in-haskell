@@ -519,9 +519,10 @@ instance ContextStore env (App env cause) where
       { caller = Nothing, replays = (method, raw) : replays inside }) action
   -- 值与 x:xs 读取同一个固定视图，只差投影：valueOf 取最后一条，historyOf 取整段。
   readContextValue source select = readContextWith source (valueOf source select)
-  awaitContextValue source select = awaitContextWith source (valueOf source select)
+  awaitContextValue source select = awaitContextWith False source (valueOf source select)
+  requestContextValue source select = awaitContextWith True source (valueOf source select)
   readContextHistory source select = readContextWith source (historyOf source select)
-  awaitContextHistory source select = awaitContextWith source (historyOf source select)
+  awaitContextHistory source select = awaitContextWith False source (historyOf source select)
   endSource = rawIO (throwIO SourceEnded)
   endSubscription = rawIO (throwIO SubscriptionEnded)
   recordContextInput source = do
@@ -680,17 +681,23 @@ readContextWith source project = do
           >>= maybe (rawIO (throwIO DeliveryDrained)) (pure . Just)
     Nothing -> pure Nothing
 
--- 诊断、收尾与 close 期间不启动会话；读到的绑定捕获为本次视图。
+-- 诊断、收尾与 close 期间不读取会话；读到的绑定捕获为本次视图。
 -- 会话已结束时仍可读最后一次发布，不重新启动来源；零发布结束按缺值报出。
--- 合法的先前 lifelong 会话优先，否则取得编译器为该资产安排的 interpreter 托管会话。
-awaitContextWith :: Slot -> (View env cause -> Maybe value) -> App env cause (Maybe value)
-awaitContextWith source project = do
+-- 合法的先前 lifelong 会话优先，其次是已经启动的 interpreter 托管会话。
+-- starting 只由 requests 给出：没有可读会话时启动编译器为该资产安排的托管会话；require 不启动。
+awaitContextWith :: Bool -> Slot -> (View env cause -> Maybe value) -> App env cause (Maybe value)
+awaitContextWith starting source project = do
   environment <- AppRun ask
   if not (deliveryAllowed environment) || isJust (frameDeliver environment source) then pure Nothing else do
     let graph = runtimeGraph environment
-    ended <- rawIO (endedSession graph (originNode (executionOrigin (execution environment))) source)
-    session <- maybe (rawIO (obtainSession graph (Nothing, source) [] [])) pure ended
-    captureDelivery environment source project (rawIO (awaitView session (bindingRetention environment)))
+    existing <- rawIO (readerSession graph (originNode (executionOrigin (execution environment))) source)
+    session <- case existing of
+      Just found -> pure (Just found)
+      Nothing | starting -> Just <$> rawIO (obtainSession graph (Nothing, source) [] [])
+              | otherwise -> pure Nothing
+    case session of
+      Nothing -> pure Nothing
+      Just found -> captureDelivery environment source project (rawIO (awaitView found (bindingRetention environment)))
 
 -- stream @T 的投影：视图整段，本次值在前，其后是同会话更早的发布。
 historyOf :: Slot -> (env -> Maybe value) -> View env cause -> Maybe [value]

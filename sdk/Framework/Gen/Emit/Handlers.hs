@@ -256,11 +256,15 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       , let method = bindingMethod binding
             handler' = bindingHandler binding
       , line <- definition True method (renderValueType "FrameworkRuntime." "FrameworkGenerated." (bindingResult binding)) (wrapper binding)
-          (intercalate " >> " (map call (bindingCalls binding) ++ [handlerCall binding handler'])) ]
+          (intercalate " >> " (map sessionRequest (bindingSessionRequests binding) ++ map call (bindingCalls binding)
+            ++ [handlerCall binding handler'])) ]
       ++ concat [ readerDefinition reader | reader <- unitReaders unit, readerEffect reader == selectedName ]
       ++ concat [ historyDefinition reader | reader <- unitReaders unit, readerEffect reader == selectedName
                 , readerContinuous reader, historyEntry (readerContract reader) `elem` historyEntries unit ]
       where
+        -- 持续资产的 requests：启动或加入会话，取当前一条，本次调用的 requires 读它。
+        sessionRequest producer = "FrameworkRuntime.requestStreamContext " ++ slot producer
+          ++ " FrameworkGenerated.ContextBindingError FrameworkGenerated.bound" ++ producer
         -- close 的调用点用 callClose：是否 close 由绑定的操作在生成期确定。
         handlerCall binding handler' =
           let caller = if bindingOperation binding == CloseResource then callClose else callHandler

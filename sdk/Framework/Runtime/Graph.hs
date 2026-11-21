@@ -11,7 +11,7 @@ module Framework.Runtime.Graph
   , newRuntimeGraph, configureRuntimeScopes, collectRuntimeScopes, finishRuntime, newOrigin
   , beginActivation, endActivation, withRuntimeRetention, collectRetainedScopes
   , publishAsset, publicationSignal, readPublishedAsset, contextMayPublish, resetOrigins
-  , installSessionLauncher, obtainSession, endedSession, stopSessions, currentPublications, reusesOutputAt
+  , installSessionLauncher, obtainSession, readerSession, stopSessions, currentPublications, reusesOutputAt
   ) where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
@@ -21,7 +21,7 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 import Data.List (nub)
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, listToMaybe)
 import Framework.Runtime.Protocol (ContextFault(..))
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame
@@ -512,23 +512,21 @@ sessionUpstreamSource (PrototypeReference index) (Nothing, source) = case sessio
   Just upstream -> Right upstream
   Nothing -> Left ("No interpreter session driver for " ++ slotName source ++ "; regenerate the program")
 
--- lifelong 之后读取持续资产：取已经结束、且在 AST 中先于读取位置的那个 lifelong 的会话，不另行启动来源。
--- 生成期保证这样的 lifelong 彼此先后；登记表按创建先后倒序，第一个即最近结束的。
-endedSession :: RuntimeGraph environment cause -> Coord -> Slot -> IO (Maybe (Session environment cause))
-endedSession graph reader source = case runtimePrototype graph of
+-- 有限读取的会话：此前已结束的 lifelong 优先，其次是已经启动的 interpreter 托管会话。查询从不创建会话。
+-- lifelong 之后读取时取已经结束、且在 AST 中先于读取位置的 lifelong 的会话，不另行启动来源；
+-- 生成期保证这样的 lifelong 彼此先后，索引把它们按先序坐标从后往前排好，第一个登记过的即最近结束的。
+readerSession :: RuntimeGraph environment cause -> Coord -> Slot -> IO (Maybe (Session environment cause))
+readerSession graph reader source = case runtimePrototype graph of
   PrototypeReference index -> do
     registry <- readMVar (runtimeSessions graph)
-    pure (priorSession index (fromMaybe [] registry) reader source)
+    pure (sessionForReader index (fromMaybe [] registry) reader source)
 
 -- 实际读取与 scope 待用共用同一个会话选择：最近合法的已结束边界优先；
 -- 没有此前边界时才考虑 interpreter 托管会话。查询从不创建会话。
 priorSession :: PrototypeIndex method -> [(SessionKey, Session environment cause)] -> Coord -> Slot
              -> Maybe (Session environment cause)
-priorSession index registry reader source = case
-  [session | ((Just boundary, selected), session) <- registry
-    , selected == source, boundary `elem` nodePriorBoundaries (driveAt index reader)] of
-  session : _ -> Just session
-  [] -> Nothing
+priorSession index registry reader source = listToMaybe
+  [session | boundary <- nodePriorBoundaries (driveAt index reader), Just session <- [lookup (Just boundary, source) registry]]
 
 sessionForReader :: PrototypeIndex method -> [(SessionKey, Session environment cause)] -> Coord -> Slot
                  -> Maybe (Session environment cause)

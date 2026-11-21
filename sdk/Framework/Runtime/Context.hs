@@ -3,7 +3,7 @@
 -- Context 的读取与成功发布；存储由运行载体提供。
 module Framework.Runtime.Context
   ( ContextFault(..), readContext, callContext
-  , chooseCase, atomicHandle, atomicScope, readStreamContext, readStreamHistory
+  , chooseCase, atomicHandle, atomicScope, readStreamContext, readStreamHistory, requestStreamContext
   ) where
 
 import Framework.Runtime.Protocol
@@ -120,9 +120,26 @@ readStreamContext contextName wrap select = do
     Nothing -> do
       delivered <- awaitContextValue contextName select
       maybe (failEffect (slotName contextName) (wrap ContextNotInitialized)
-        (slotName contextName ++ ": no delivery here (no stream session can deliver, or the stream ended without publishing)")) pure delivered
+        (slotName contextName ++ ": no delivery here (no started stream session can deliver; requests it to start one,"
+          ++ " or the stream ended without publishing)")) pure delivered
   recordContextInput contextName
   pure value
+
+-- 持续资产 requests 的生成入口：在方法体之前执行。本次调用已有固定交付（lifelong 交付或此前的取得）时不再取得；
+-- 否则启动或加入该资产的会话，取当前一条固定给本次调用，之后的 requires 读它。
+requestStreamContext
+  :: (ContextStore environment m, MonadError (Failure cause) m)
+  => Slot -> (ContextFault -> cause) -> (environment -> Maybe value) -> m ()
+requestStreamContext contextName wrap select = do
+  captured <- readContextValue contextName select
+  case captured of
+    Just _ -> pure ()
+    Nothing -> do
+      delivered <- requestContextValue contextName select
+      maybe (failEffect (slotName contextName) (wrap ContextNotInitialized)
+        (slotName contextName ++ ": no delivery (the session cannot start here, or the stream ended without publishing)"))
+        (const (pure ())) delivered
+  recordContextInput contextName
 
 -- stream @T 的生成入口：与 readStreamContext 领取同一次交付，返回 x :> xs。
 -- x 是本次值，xs 是同一会话更早的发布（最新在前），都已发布；读取不等待后续发布，也不驱动来源。
@@ -136,7 +153,8 @@ readStreamHistory contextName wrap select = do
     Nothing -> do
       delivered <- awaitContextHistory contextName select
       maybe (failEffect (slotName contextName) (wrap ContextNotInitialized)
-        (slotName contextName ++ ": no delivery here (no stream session can deliver, or the stream ended without publishing)")) pure delivered
+        (slotName contextName ++ ": no delivery here (no started stream session can deliver; requests it to start one,"
+          ++ " or the stream ended without publishing)")) pure delivered
   recordContextInput contextName
   pure (foldr (:>) Done values)
 

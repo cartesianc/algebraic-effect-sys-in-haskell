@@ -69,10 +69,14 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 持续资产仍返回声明的表示类型：从本次固定交付或已经捕获的绑定投影。
   readContextValue :: Slot -> (environment -> Maybe value) -> m (Maybe value)
   readContextValue _ _ = pure Nothing
-  -- 没有固定交付时，按已生成的会话计划取得一次当前值；这次读取不会重复启动调用者。
-  -- Nothing 表示当前不允许启动会话（诊断、收尾）；会话失败时传播它的原失败。
+  -- 没有固定交付时，从已有会话取得一次当前值：先找此前已结束的 lifelong，再找已经启动的托管会话。
+  -- require 是被动读取，从不启动会话；Nothing 表示没有可读的会话（或诊断、收尾期间）。会话失败时传播它的原失败。
   awaitContextValue :: Slot -> (environment -> Maybe value) -> m (Maybe value)
   awaitContextValue _ _ = pure Nothing
+  -- requests 一份持续资产：没有固定交付时启动或加入它的会话，取当前一条作为本次调用的固定交付。
+  -- 此前已结束的 lifelong 会话优先，否则是编译器为该资产安排的 interpreter 托管会话。
+  requestContextValue :: Slot -> (environment -> Maybe value) -> m (Maybe value)
+  requestContextValue _ _ = pure Nothing
   -- stream @T：与上面两者取同一个固定视图，返回本次值及同会话更早的发布，最新在前。
   readContextHistory :: Slot -> (environment -> Maybe value) -> m (Maybe [value])
   readContextHistory _ _ = pure Nothing

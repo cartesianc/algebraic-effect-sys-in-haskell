@@ -5,7 +5,7 @@ module Framework.Gen.Plan
   , ValueType(..), Capability(..), EntryOperation(..), ReadRoute(..), ReadView(..)
   , ReaderPlan(..), SelectorPlan(..), SessionEntry(..), SuperSelection(..)
   , Assembly(..), EntryMount(..), OutputConnection(..), EntryStep(..), RawSource(..)
-  , stepMethod, rawMethod, bindingCalls, unitTerminals, mountHooks, unitVariants
+  , rawMethod, bindingCalls, bindingSessionRequests, unitTerminals, mountHooks, unitVariants
   , effectPrototypes, protoOf, effectSlot, slotLiteral, allMethods, streamedRoutes, historyEntry, historyEntries
   , reference, parenthesized, normalizeType, readsAccess ) where
 
@@ -77,12 +77,10 @@ data SessionEntry
 
 -- 调用顺序仍是 requests → Input → handler。角色用于保留装配依据；
 -- 相同方法出现在两个步骤时仍执行两次，不能按名字或结构去重。
-data EntryStep method = RequestStep method | InputStep method
+-- SessionRequestStep：requests 一份持续资产，记生产它的 Context；入口启动或加入它的会话并取当前一条，
+-- 不是方法调用，不进入方法图。
+data EntryStep method = RequestStep method | InputStep method | SessionRequestStep String
   deriving (Eq, Show, Read)
-
-stepMethod :: EntryStep method -> method
-stepMethod (RequestStep method) = method
-stepMethod (InputStep method) = method
 
 -- rawinput 的直接输入在本模块的绑定转换中解析。RawStream 记录结构上的来源方法；运行时读取本次 rawemit 的单元素 list；
 -- 其余输入交出 list。是否已有本次输出由现有 replay 协议决定，不缓存另一调用的结果。
@@ -225,7 +223,15 @@ historyEntries :: Unit -> [String]
 historyEntries unit = nub [historyEntry (routeContract route) | route <- streamedRoutes unit]
 
 bindingCalls :: Binding -> [String]
-bindingCalls = map stepMethod . bindingBefore
+bindingCalls binding = [method | step <- bindingBefore binding, method <- callOf step]
+  where
+    callOf (RequestStep method) = [method]
+    callOf (InputStep method) = [method]
+    callOf (SessionRequestStep _) = []
+
+-- 入口先取得的持续资产（生产它的 Context 名），在 Input 前驱与 handler 之前。
+bindingSessionRequests :: Binding -> [String]
+bindingSessionRequests binding = [producer | SessionRequestStep producer <- bindingBefore binding]
 
 -- 一个挂载被哪些 Middleware 覆盖（注册顺序）；与 Prototype 的 drivingHooks 用同一计算。
 mountHooks :: Unit -> NodeId -> [String]

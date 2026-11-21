@@ -162,7 +162,9 @@ buildEffectProtos specifications = do
       resolvedOf selected = maybe [] id (lookup selected table)
       providers mode specification = nub
         [demandProvider demand | demand <- resolvedOf (name specification), demandAccess demand == mode]
-      requested = providers RequestAccess
+      -- 持续资产的 requests 启动或加入它的会话，生产链在会话里执行，不是请求方的前驱。
+      continuousNames = [name specification | specification <- specifications, continuousContext specification]
+      requested specification = filter (`notElem` continuousNames) (providers RequestAccess specification)
       required = providers RequireAccess
       requestSource = listToMaybe . requested
       operations specification = nub (input specification : requested specification)
@@ -412,8 +414,6 @@ buildEffectProtos specifications = do
               ++ "; a contract is the asset name declared by its producer Context")
             _ -> Left ("Several Context effects produce contract " ++ contract demand)
           case (access demand, typing provider) of
-            (RequestAccess, _) | continuousContext provider -> Left ("Contract " ++ contract demand
-              ++ " is a continuous asset produced by its session, so " ++ name consumer ++ " cannot request it")
             (RequireAccess, Context { require = False }) -> Left ("Contract " ++ contract demand
               ++ " is not cached (require = False), so " ++ name consumer ++ " cannot require it")
             (StreamAccess, _) | not (continuousContext provider) -> Left ("Contract " ++ contract demand
@@ -743,18 +743,20 @@ withProducerReferences connections definitions =
 checkRequested :: [EffectProto String] -> WorkflowTree -> Either (PrototypeError String) ()
 checkRequested effects workflow = valid (null missing)
   ("Asset never requested: " ++ intercalate "; " missing
-    ++ ". Ordinary assets are produced only by requests; add requests \"<asset>\" to the reader or to an effect"
-    ++ " on its Input chain")
+    ++ ". Assets are produced only by requests (a continuous asset also by a lifelong that streams it);"
+    ++ " add requests \"<asset>\" to the reader or to an effect on its Input chain")
   where
     requested = [demandContract demand | effect <- effects, demand <- effectDemands effect
       , demandAccess demand == RequestAccess]
-    continuous = [contract | effect <- effects, effectContinuous effect, Just contract <- [effectProduces effect]]
+    -- 持续资产由 lifelong 的订阅驱动；有限读取只读已有会话，不启动它。
+    streamed = [demandContract demand | effect <- effects, demand <- effectDemands effect
+      , demandAccess demand == StreamAccess]
     deciding = [contract | AlternativeAt _ choice _ <- allWorkflow workflow, (_, caseName) <- alternativeCases choice
       , effect <- effects, effectName effect == caseName, Just contract <- [effectProduces effect]]
     missing = nub [contract ++ " (required by " ++ effectName effect ++ ")"
       | effect <- effects, demand <- effectDemands effect, demandAccess demand == RequireAccess
       , let contract = demandContract demand
-      , contract `notElem` requested, contract `notElem` continuous, contract `notElem` deciding]
+      , contract `notElem` requested, contract `notElem` streamed, contract `notElem` deciding]
 
 -- 首次尚无 Handlers 时仅生成契约；有源码快照后必须另外执行这个驱动检查。
 checkDriven :: Assembly String -> Prototype String -> Either (PrototypeError String) ()

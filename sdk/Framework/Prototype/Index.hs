@@ -13,7 +13,8 @@ module Framework.Prototype.Index
   ) where
 
 import qualified Data.IntSet as IntSet
-import Data.List (nub)
+import Data.List (nub, sortOn)
+import Data.Ord (Down(..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Maybe (fromMaybe)
@@ -149,8 +150,9 @@ indexPrototype prototype = PrototypeIndex
     source FromSession = SessionSourced
     indexedOpening opening = IndexedOpening (at (openingNode opening)) (named (openingScope opening))
       [(named name, source plan) | (name, plan) <- openingSources opening] (openingKinds opening)
+    -- 此前的 lifelong 边界按先序坐标从后往前：彼此先后的边界中，最近结束的排在前面。
     nodeView node = DriveAt (map at (driveMembers node)) (map named (driveSubscriptions node))
-      (at <$> driveBoundary node) (map at (driveCaptures node)) (map at (drivePriorBoundaries node))
+      (at <$> driveBoundary node) (map at (driveCaptures node)) (sortOn Down (map at (drivePriorBoundaries node)))
       (map at (driveBlockedPublishers node))
     unitView unit = UnitAt (map at (driveFrameNodes unit))
       [(named name, map reader sites) | (name, sites) <- driveReaders unit]
