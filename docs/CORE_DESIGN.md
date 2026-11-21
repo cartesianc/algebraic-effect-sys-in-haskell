@@ -412,14 +412,14 @@ Input 表达操作的前提关系，业务值来源单独由 demands 表达；Co
 
 #### Root 的统一入口包装
 
-生成入口统一包装原协议：withErrorPath 记录失败路径上的 scope，handleFailure 接入 Failure 捕获与 Error 处置，atomicHandle／atomicScope 与 openScope／closeScope 包装原子句柄和 scope 生命周期，Receive 为 Stream 的 rawemit 安装本会话的 parser，callContext／readContext 包装 Context 的生产、挂接注入与读取。业务不写 handler／super 前缀。
+生成入口统一包装原协议：withErrorPath 记录失败路径上的 scope，handleFailure 接入 Failure 捕获与 Error 处置，atomicHandle／atomicScope 与 openScope／closeScope 包装原子句柄和 scope 生命周期，Receive 为 Stream 的 rawemit 安装本会话的 parser，callContext／readContext 包装 Context 的生产与读取。业务不写 handler／super 前缀。
 
-入口按标签已知的闭包由 gen 直接写在包装上，运行时不按名字查表：atomicHandle／atomicScope 带上挂在本句柄下的 parser（普通挂接与持续挂接两组），openScope 带上本 scope 的 close，开启成功时登记为自动收尾。
+入口按标签已知的闭包由 gen 直接写在包装上，运行时不按名字查表：atomicHandle／atomicScope 带上挂在本句柄下的持续 parser（普通 Context 只经 requests 生产，不在句柄上注入），openScope 带上本 scope 的 close，开启成功时登记为自动收尾。
 
 ```haskell
 runLocateFile =
   SDK.handleFailure
-  . SDK.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] []
+  . SDK.atomicHandle "runLocateFile" []
   . SDK.enterHandler "LocateFile" $
     call @"LocateFile" @"locateFile" Effects.locateFile
 ```
@@ -595,6 +595,8 @@ EffectSpec { name = "PrintPage", typing = Excu { handler = Just "printSummary" }
 runPrintPage = ⟨入口包装⟩ $
   getStartPageSummary >> call @"PrintPage" @"printSummary" Effects.printSummary
 ```
+
+运行时不再寻找生产方。interpreter 启动时把 Prototype 一次性编成按身份寻址的索引（`Framework.Prototype.Index`：按 NodeId 取链、驱动标记、开启计划，按读取点取静态来源，按来源取会话路由），节点调度、缺值等待与 scope 回收都从索引取 gen 写下的事实，不在运行中线性扫描原型或重新推导来源。
 
 因此被 `requires` 的普通资产必须有某个 effect `requests` 它，否则 gencode 以 `Asset never requested` 报错。alternative 的判定资产例外：选择读取（chooseCase）先运行一次共同句柄，再把输出依次交给各判定 parser，第一个解析成功的候选执行，候选只 requires 自己的判定资产。持续资产由会话驱动，不在此列。
 

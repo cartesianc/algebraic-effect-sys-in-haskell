@@ -171,7 +171,7 @@ openSensorLink :: Effects.App [String]
 openSensorLink =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.atomicScope "openSensorLink" [] []
+  . SDK.atomicScope "openSensorLink" []
   . SDK.openScope "SensorLink" Effects.ScopeBindingError (Just (() <$ closeSensorLink))
   . SDK.enterHandler "SensorLink" $
     call @"SensorLink" @"connectSensor" Effects.connectSensor
@@ -180,7 +180,7 @@ closeSensorLink :: Effects.App [String]
 closeSensorLink =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeSensorLink" [] []
+  . SDK.atomicScope "closeSensorLink" []
   . SDK.closeScope "SensorLink" Effects.ScopeBindingError
   . SDK.enterHandler "SensorLink" $
     callClose @"SensorLink" @"disconnectSensor" Effects.disconnectSensor
@@ -246,28 +246,28 @@ historyBeat =
 runAnnounce :: Effects.App [String]
 runAnnounce =
   SDK.handleFailure
-  . SDK.atomicHandle "runAnnounce" [] []
+  . SDK.atomicHandle "runAnnounce" []
   . SDK.enterHandler "Announce" $
     call @"Announce" @"announce" Effects.announce
 
 runShowTemperature :: Effects.App [String]
 runShowTemperature =
   SDK.handleFailure
-  . SDK.atomicHandle "runShowTemperature" [] []
+  . SDK.atomicHandle "runShowTemperature" []
   . SDK.enterHandler "ShowTemperature" $
     call @"ShowTemperature" @"showTemperature" Effects.showTemperature
 
 runCheckTrend :: Effects.App [String]
 runCheckTrend =
   SDK.handleFailure
-  . SDK.atomicHandle "runCheckTrend" [] []
+  . SDK.atomicHandle "runCheckTrend" []
   . SDK.enterHandler "CheckTrend" $
     call @"CheckTrend" @"checkTrend" Effects.checkTrend
 
 runReportHeartbeat :: Effects.App [String]
 runReportHeartbeat =
   SDK.handleFailure
-  . SDK.atomicHandle "runReportHeartbeat" [] []
+  . SDK.atomicHandle "runReportHeartbeat" []
   . SDK.enterHandler "ReportHeartbeat" $
     call @"ReportHeartbeat" @"reportHeartbeat" Effects.reportHeartbeat
 

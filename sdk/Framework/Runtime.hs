@@ -26,6 +26,7 @@ import Framework.Runtime.Retention (Retention, keepBindings)
 import Framework.Runtime.Session
 import Framework.Runtime.Scope
 import Framework.Prototype
+import Framework.Prototype.Index (hooksLabel, sessionDescriptionAt)
 import Control.Concurrent (forkIOWithUnmask, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar, newEmptyMVar, newMVar, putMVar, readMVar, tryReadMVar)
 import Control.Exception
@@ -433,8 +434,7 @@ sessionLauncher graph steps onBroken session
 
 -- 会话计划与挂载只来自同一份原型；复用原始链输出的会话没有独立生产挂载。
 referenceLabel :: PrototypeReference -> NodeId -> String -> String
-referenceLabel (PrototypeReference prototype) = entryLabel (protoDriving prototype)
+referenceLabel (PrototypeReference index) = hooksLabel index
 
 sessionDescriptionOf :: PrototypeReference -> Maybe NodeId -> String -> Maybe SessionProto
-sessionDescriptionOf (PrototypeReference prototype) boundary source =
-  sessionDriveAt prototype boundary source >>= describedSession prototype
+sessionDescriptionOf (PrototypeReference index) = sessionDescriptionAt index

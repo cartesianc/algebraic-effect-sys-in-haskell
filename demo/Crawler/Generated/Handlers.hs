@@ -235,7 +235,7 @@ runFetchPage :: Effects.App [String]
 runFetchPage =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runFetchPage" [] []
+  . SDK.atomicHandle "runFetchPage" []
   . SDK.withScopeDependencies ["CrawlSession"]
   . SDK.enterHandler "FetchPage" $
     getStartURL >> openCrawlSession >> call @"FetchPage" @"fetchPage" Effects.fetchPage
@@ -266,7 +266,7 @@ runPrintPage :: Effects.App [String]
 runPrintPage =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runPrintPage" [] []
+  . SDK.atomicHandle "runPrintPage" []
   . SDK.withScopeDependencies ["CrawlSession"]
   . SDK.enterHandler "PrintPage" $
     getStartPageSummary >> call @"PrintPage" @"printSummary" Effects.printSummary
@@ -275,7 +275,7 @@ runFetchLinkedPage :: Effects.App [String]
 runFetchLinkedPage =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runFetchLinkedPage" [] []
+  . SDK.atomicHandle "runFetchLinkedPage" []
   . SDK.withScopeDependencies ["CrawlSession"]
   . SDK.enterHandler "FetchLinkedPage" $
     getLinkedURL >> openCrawlSession >> call @"FetchLinkedPage" @"fetchPage" Effects.fetchPage
@@ -306,7 +306,7 @@ runPrintLinkedPage :: Effects.App [String]
 runPrintLinkedPage =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runPrintLinkedPage" [] []
+  . SDK.atomicHandle "runPrintLinkedPage" []
   . SDK.withScopeDependencies ["CrawlSession"]
   . SDK.enterHandler "PrintLinkedPage" $
     getLinkedPageSummary >> call @"PrintLinkedPage" @"printSummary" Effects.printSummary
@@ -327,7 +327,7 @@ openCrawlSession :: Effects.App [String]
 openCrawlSession =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "openCrawlSession" [] []
+  . SDK.atomicScope "openCrawlSession" []
   . SDK.openScope "CrawlSession" Effects.ScopeBindingError (Just (() <$ closeCrawlSession))
   . SDK.enterHandler "CrawlSession" $
     getCrawlSessionInfo >> call @"CrawlSession" @"openSession" Effects.openSession
@@ -336,7 +336,7 @@ closeCrawlSession :: Effects.App [String]
 closeCrawlSession =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeCrawlSession" [] []
+  . SDK.atomicScope "closeCrawlSession" []
   . SDK.closeScope "CrawlSession" Effects.ScopeBindingError
   . SDK.enterHandler "CrawlSession" $
     callClose @"CrawlSession" @"closeSession" Effects.closeSession

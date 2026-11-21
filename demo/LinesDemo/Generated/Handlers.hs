@@ -258,7 +258,7 @@ instance SDK.EndsStream (Wrap hooks effect method) where
 runAnnounce :: forall hooks. Captured hooks => Effects.App [String]
 runAnnounce =
   SDK.handleFailure
-  . SDK.atomicHandle "runAnnounce" [] []
+  . SDK.atomicHandle "runAnnounce" []
   . SDK.enterHandler "Announce" $
     call @hooks @"Announce" @"announce" Effects.announce
 
@@ -278,7 +278,7 @@ openInputSession :: forall hooks. Captured hooks => Effects.App [String]
 openInputSession =
   SDK.withErrorPath ["InputSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "openInputSession" [] []
+  . SDK.atomicScope "openInputSession" []
   . SDK.openScope "InputSession" Effects.ScopeBindingError (Just (() <$ closeInputSession @hooks))
   . SDK.enterHandler "InputSession" $
     getOpenedInput @hooks >> call @hooks @"InputSession" @"openInput" Effects.openInput
@@ -287,7 +287,7 @@ closeInputSession :: forall hooks. Captured hooks => Effects.App [String]
 closeInputSession =
   SDK.withErrorPath ["InputSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeInputSession" [] []
+  . SDK.atomicScope "closeInputSession" []
   . SDK.closeScope "InputSession" Effects.ScopeBindingError
   . SDK.enterHandler "InputSession" $
     callClose @hooks @"InputSession" @"closeInput" Effects.closeInput
@@ -324,14 +324,14 @@ historyTextLine =
 runPrintLine :: forall hooks. Captured hooks => Effects.App [String]
 runPrintLine =
   SDK.handleFailure
-  . SDK.atomicHandle "runPrintLine" [] []
+  . SDK.atomicHandle "runPrintLine" []
   . SDK.enterHandler "PrintLine" $
     call @hooks @"PrintLine" @"printLine" Effects.printLine
 
 runTextCounter :: forall hooks. Captured hooks => Effects.App [String]
 runTextCounter =
   SDK.handleFailure
-  . SDK.atomicHandle "runTextCounter" [] [("CountParser", () <$ getRunningTotal @hooks)]
+  . SDK.atomicHandle "runTextCounter" [("CountParser", () <$ getRunningTotal @hooks)]
   . SDK.enterHandler "TextCounter" $
     call @hooks @"TextCounter" @"countText" Effects.countText
 
@@ -355,14 +355,14 @@ historyRunningTotal =
 runShowTotal :: forall hooks. Captured hooks => Effects.App [String]
 runShowTotal =
   SDK.handleFailure
-  . SDK.atomicHandle "runShowTotal" [] []
+  . SDK.atomicHandle "runShowTotal" []
   . SDK.enterHandler "ShowTotal" $
     call @hooks @"ShowTotal" @"showTotal" Effects.showTotal
 
 runReport :: forall hooks. Captured hooks => Effects.App [String]
 runReport =
   SDK.handleFailure
-  . SDK.atomicHandle "runReport" [] []
+  . SDK.atomicHandle "runReport" []
   . SDK.enterHandler "Report" $
     call @hooks @"Report" @"report" Effects.report
 

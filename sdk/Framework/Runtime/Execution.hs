@@ -18,6 +18,7 @@ import Framework.Runtime.Session
   ( Broken, Stopped(..), DeliveryDrained(..), SubscriptionEnded(..), admitReaders, leaveSession, departSession
   , retireSession, feedSession, endSession, breakSession )
 import Framework.Prototype
+import Framework.Prototype.Index
 import Framework.Recursion (Algebra)
 import Framework.Language.AST (AST, WorkflowF(..), foldAST)
 import Control.Concurrent (MVar, ThreadId, forkIOWithUnmask, killThread, newEmptyMVar, putMVar, readMVar, tryPutMVar)
@@ -199,12 +200,12 @@ joined outcomes = case ([problem | Left (Problem problem) <- outcomes], [() | Le
 -- 一次 cata 得到等待原型位置的装配函数：同一层同时核对 AST 骨架和装配动作。
 -- 父节点把已经生成的子树描述交给各子闭包；运行时没有另一份链展开或 alternative 推导。
 executionAlgebra
-  :: Prototype method
+  :: PrototypeIndex method
   -> RuntimeGraph environment cause
   -> [(String, Target environment cause value)]
   -> [(String, Target environment cause String)]
   -> Algebra WorkflowF (Prepared method environment cause value)
-executionAlgebra prototype store entries selectors layer expected = do
+executionAlgebra index store entries selectors layer expected = do
   expectedChildren <- matchWorkflowLayer layer expected
   let location = workflowNode expected
       -- 每棵子树退出都撤销未进入的后继；parallel 的退出发生在等待所有子任务之后。
@@ -222,12 +223,12 @@ executionAlgebra prototype store entries selectors layer expected = do
         Lifelong selected -> selected
   case (layer, expected) of
     (Node selected, NodeAt _ _) -> do
-      chain <- lookupChain prototype location
+      chain <- chainAt index location
       unless (chainRole chain == NodeChain && chainTerminal chain == selected) $
         Left (InvalidPrototype ("Node chain differs at " ++ show location))
       -- 被 middleware 标注覆盖的挂载使用 gen 特化的 Target；运行时只按静态登记名选取。
-      entry <- resolve entries (entryLabel (protoDriving prototype) location (chainTerminal chain))
-      let subscribed = driveSubscriptions (nodeDriveAt prototype location)
+      entry <- resolve entries (hooksLabel index location (chainTerminal chain))
+      let subscribed = driveSubscriptions (nodeDriveOf index location)
       -- 已经结束订阅的节点不再执行，也不领取交付；退出时由 managed 把它记为跳过。
       single $ \run handoff -> ExceptT $ do
         ended <- endedNodes run
@@ -251,14 +252,14 @@ executionAlgebra prototype store entries selectors layer expected = do
       single execution
     (Alternative _, AlternativeAt _ description _) -> do
       parts <- compiledChildren
-      chain <- lookupChain prototype (alternativeSelector description)
+      chain <- chainAt index (alternativeSelector description)
       unless (chainRole chain == SelectorChain
           && chainTerminal chain == alternativeSource description) $
         Left (InvalidAlternative location "Selector chain differs from its alternative")
-      selector <- resolve selectors (entryLabel (protoDriving prototype) (alternativeSelector description) (chainTerminal chain))
+      selector <- resolve selectors (hooksLabel index (alternativeSelector description) (chainTerminal chain))
       constructors <- mapM (constructorAt description . workflowNode) expectedChildren
       let candidates = zip constructors (zip (map workflowNode expectedChildren) parts)
-          members = driveMembers (nodeDriveAt prototype location)
+          members = driveMembers (nodeDriveOf index location)
       -- 选择读取执行共同的 Excu 一次，按声明顺序取第一个判定成功的候选；它的捕获交给该候选。
       -- 候选中的节点都已结束订阅时，选择读取不再执行，整个 alternative 跳过。
       single $ \run handoff -> ExceptT $ withRuntimeRetention store $ \retention -> do
@@ -292,13 +293,13 @@ executionAlgebra prototype store entries selectors layer expected = do
       compiled <- zip (map workflowNode expectedChildren) <$> compiledChildren
       units <- mapM (\unit -> (,) unit <$> maybe (Left (InvalidLifelong unit "Missing compiled unit")) Right (lookup unit compiled))
         (lifelongUnits description)
-      sources <- mapM (\session -> case [route | route <- drivingSessions (protoDriving prototype)
+      sources <- mapM (\session -> case [route | route <- drivingSessions (protoDriving (indexedPrototype index))
           , driveSessionBoundary route == Just location, driveSessionAsset route == sessionAsset session] of
         [route] -> Right (sessionAsset session, sessionPlan session, driveSessionSource route)
         _ -> Left (InvalidLifelong location "Missing generated session driver")) (lifelongSessions description)
       -- 读取位置与派生关联由 Booter 给出；这里只检查本单元实际结束的位置。
       let access ended _ source unit = any (available ended)
-            (maybe [] id (lookup source (driveReaders (unitDriveAt prototype unit))))
+            (maybe [] id (lookup source (driveReaders (unitDriveOf index unit))))
           available ended (ReadAt position) = live ended position
           available ended (ChooseAmong members) = any (live ended) members
           live ended position = not (any (`isPrefixOf` position) ended)
@@ -328,7 +329,7 @@ executionAlgebra prototype store entries selectors layer expected = do
                 (Just [], Right ()) -> endSession session
                 _ -> pure ()
         -- 本单元发布及其 Derive 后继已在 gen 标出；运行时等待协议只读该关系。
-        let local unit = driveLocalSources (unitDriveAt prototype unit)
+        let local unit = driveLocalSources (unitDriveOf index unit)
         outcomes <- runParalleled
           [ do
               outcome <- repeatUnit location run handoff
@@ -365,7 +366,7 @@ executionAlgebra prototype store entries selectors layer expected = do
     repeatUnit boundary run handoff cursors local needed withdraw (unit, execute) = do
       ended <- newIORef []
       held <- newIORef cursors
-      let members = driveMembers (nodeDriveAt prototype unit)
+      let members = driveMembers (nodeDriveOf index unit)
           settle seen = do
             current <- readIORef ended
             let fresh = filter (`notElem` seen) current
@@ -382,7 +383,7 @@ executionAlgebra prototype store entries selectors layer expected = do
               resetOrigins store unit
               outcome <- withRuntimeRetention store $ \retention -> mask $ \restore -> do
                 frame <- newChildFrame (runExecutionFrame run) boundary
-                  (driveFrameNodes (unitDriveAt prototype unit))
+                  (driveFrameNodes (unitDriveOf index unit))
                 delivery <- readIORef held >>= newDeliveryFrame retention frame local [(source, session) | (source, (session, _)) <- cursors]
                 retireAfter
                   (restore (runExceptT (execute run { runExecutionFrame = frame, runDeliveryFrame = Just delivery
@@ -412,10 +413,12 @@ runStructuredAST
   -> [(String, SessionSteps environment cause)]
   -> IO (Output cause [value])
 runStructuredAST prototype tree entries selectors sessions = do
-  store <- newRuntimeGraph prototype (scopeHandlers entries)
+  -- 原型只编一次索引；运行中按 NodeId 与来源名直接取 gen 写下的事实。
+  let index = indexPrototype prototype
+  store <- newRuntimeGraph index (scopeHandlers entries)
   -- 挂载来自已校验的 Prototype；运行时只折叠实际的业务树。
   prepared <- either (ioError . userError . show) pure $
-    foldAST (executionAlgebra prototype store compiled readers) tree (protoWorkflow prototype)
+    foldAST (executionAlgebra index store compiled readers) tree (protoWorkflow prototype)
   configureRuntimeScopes store
   retireAfter (if null (drivingUnits (protoDriving prototype))
     then do

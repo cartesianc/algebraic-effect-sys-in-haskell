@@ -507,14 +507,6 @@ instance ContextStore env (App env cause) where
       , source `elem` map fst (sessionSinks environment)
       , reusesOutputAt (runtimeGraph environment) node source]
   replayedOutput method = AppRun (asks (lookup method . replays))
-  -- 诊断与收尾期间不注入。注入以根调用身份运行，失败只留在注入内：资产不发布，
-  -- 原链照常继续；之后 require 按等待／耗尽协议处理缺值，不在读取处补产。
-  injectOutput method raw (AppRun action) = AppRun $ do
-    environment <- ask
-    let allowed = not (isJust (originalFailure environment)) && not (cleaningScopes environment)
-        inside = environment { caller = Nothing, errorHandlers = []
-                             , replays = (method, raw) : replays environment }
-    when allowed $ () <$ liftIO (runExceptT (runReaderT action inside))
   attemptOutput method raw (AppRun action) = AppRun $ local (\inside -> inside
     { caller = Nothing, errorHandlers = [], replays = (method, raw) : replays inside }) action
   -- 仍在原始操作的执行帧与资源使用登记内解析；只覆盖 rawinput，不另外 lower 一次生产链。

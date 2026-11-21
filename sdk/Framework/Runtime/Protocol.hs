@@ -55,12 +55,9 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 只有本次执行位置是原型指定的发布位置时才取得它们；普通注入和持续注入分别保持各自的失败协议。
   activeStreamContexts :: [(String, m ())] -> m [(String, m ())]
   activeStreamContexts _ = pure []
-  -- 注入期间，挂接 Context 对该句柄的调用由本次 RawOutput 回答，不重复执行。
+  -- 持续注入与选择判定期间，挂接 Context 对该句柄的调用由本次 RawOutput 回答，不重复执行。
   replayedOutput :: String -> m (Maybe RawOutput)
   replayedOutput _ = pure Nothing
-  -- 以根调用身份运行一次注入；失败留在注入内，不进入原链，也不触发 Error 诊断。
-  injectOutput :: String -> RawOutput -> m () -> m ()
-  injectOutput _ _ _ = pure ()
   -- 同次输出交接给持续 parser，失败按持续执行协议传播，不吞掉。
   injectStreamOutput :: String -> RawOutput -> m () -> m ()
   injectStreamOutput _ _ = id

@@ -285,8 +285,9 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         scopeWrapper binding operation cleanup =
           [ "FrameworkRuntime.atomicScope " ++ show (bindingMethod binding) ++ anchoredOf binding
           , "FrameworkRuntime." ++ operation ++ show selectedName ++ " FrameworkGenerated.ScopeBindingError" ++ cleanup ] ++ entered
-    -- 挂在原子句柄下的 parser：句柄成功交出时，普通挂接注入后吞错，持续挂接按本次执行位置筛选后传播失败。
-    anchoredOf binding = " " ++ connectionsOf ContextRequest ++ " " ++ connectionsOf ContextStream
+    -- 挂在原子句柄下的持续 parser：句柄成功交出时按本次执行位置筛选后注入，失败按持续协议传播。
+    -- 普通 Context 不注入，只经 requests 或选择读取生产。
+    anchoredOf binding = " " ++ connectionsOf ContextStream
       where
         connectionsOf role = "[" ++ intercalate ", "
           [ "(" ++ show (outputProducer connection) ++ ", () <$ " ++ call (outputParser connection) ++ ")"
