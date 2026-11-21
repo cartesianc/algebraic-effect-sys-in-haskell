@@ -309,7 +309,7 @@ generatedPrototype =
             (SDK.Call ReadCrawlSessionInfoGen)
         ]
     , SDK.protoWorkflow =
-        SDK.ChainedAt
+        SDK.ChainAt
           []
           [ SDK.ParallelAt
               [0]

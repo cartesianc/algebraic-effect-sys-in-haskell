@@ -175,7 +175,7 @@ generatedPrototype =
             (SDK.Call StreamBeatGen)
         ]
     , SDK.protoWorkflow =
-        SDK.ChainedAt
+        SDK.ChainAt
           []
           [ SDK.NodeAt [0] "Announce"
           , SDK.LifelongAt
@@ -199,7 +199,7 @@ generatedPrototype =
                       ]
                   }
               )
-              [ SDK.ChainedAt
+              [ SDK.ChainAt
                   [1,0]
                   [ SDK.NodeAt [1,0,0] "ShowTemperature"
                   , SDK.NodeAt [1,0,1] "CheckTrend"

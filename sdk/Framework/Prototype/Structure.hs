@@ -113,7 +113,7 @@ renderStructure prototype workflowAST = do
             (prefix ++ show node ++ " " ++ label) : concatMap (renderWorkflow (depth + 1)) children
       in case workflow of
         NodeAt node selected -> [prefix ++ show node ++ " Node " ++ show selected]
-        ChainedAt node children -> branch node "Chained" children
+        ChainAt node children -> branch node "Chain" children
         ParallelAt node children -> branch node "Parallel" children
         AlternativeAt node description children ->
           branch node ("Alternative on the output of " ++ alternativeSource description

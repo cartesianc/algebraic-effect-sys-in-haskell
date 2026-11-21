@@ -29,7 +29,7 @@ sameSet left right = sort (nub left) == sort (nub right)
 matchWorkflowLayer :: WorkflowF child -> WorkflowTree -> Either (PrototypeError method) [WorkflowTree]
 matchWorkflowLayer (Node selected) (NodeAt _ expected)
   | selected == expected = pure []
-matchWorkflowLayer (Chained children) (ChainedAt _ expected)
+matchWorkflowLayer (Chain children) (ChainAt _ expected)
   | length children == length expected = pure expected
 matchWorkflowLayer (Parallel children) (ParallelAt _ expected)
   | length children == length expected = pure expected
@@ -47,7 +47,7 @@ validateWorkflow prototype ast = foldAST check ast (protoWorkflow prototype)
       children <- matchWorkflowLayer layer expected
       sequence_ (zipWith ($) (childChecks layer) children)
     childChecks (Node _) = []
-    childChecks (Chained children) = children
+    childChecks (Chain children) = children
     childChecks (Parallel children) = children
     childChecks (Alternative children) = children
     childChecks (Lifelong children) = children

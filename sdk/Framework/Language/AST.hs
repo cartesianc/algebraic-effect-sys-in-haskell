@@ -13,7 +13,7 @@ import Framework.Recursion (Fix(..), Algebra, cata)
 -- 运行时先驱动该资产（相当于 requests；持续资产领取本次交付），再按它的构造器启动对应候选。
 data WorkflowF next
   = Node String
-  | Chained [next]
+  | Chain [next]
   | Parallel [next]
   | Alternative [next]
   -- Lifelong 订阅持续资产。每个直接子项是一个单元，按交付整体重复执行，所有单元结束后本分支成功返回。
@@ -39,7 +39,7 @@ node :: String -> EffectNode
 node = EffectNode
 
 chain :: BranchChild child => [child] -> AST
-chain children = AST (Fix (Chained (map childTree children)))
+chain children = AST (Fix (Chain (map childTree children)))
 
 parallel :: BranchChild child => [child] -> AST
 parallel children = AST (Fix (Parallel (map childTree children)))
@@ -107,7 +107,7 @@ shapeWorkflow = general []
   where
     general path (Fix layer) = case layer of
       Node selected -> Shaped [path] (Node selected)
-      Chained children -> gather path Chained isChained (indexed path children)
+      Chain children -> gather path Chain isChain (indexed path children)
       Parallel children -> gather path Parallel isParallel (indexed path children)
       Alternative children -> Shaped [path] (Alternative [general at child | (at, child) <- indexed path children])
       Lifelong children -> Shaped [path] (Lifelong [general at child | (at, child) <- indexed path children])
@@ -115,7 +115,7 @@ shapeWorkflow = general []
       [Shaped origins only] -> Shaped (path : origins) only
       remaining -> Shaped [path] (constructor remaining)
     splice same part@(Shaped _ layer)
-      | null (members layer) && (isChained layer || isParallel layer) = []
+      | null (members layer) && (isChain layer || isParallel layer) = []
       | same layer = members layer
       | otherwise = [part]
 
@@ -132,14 +132,14 @@ data Shaped = Shaped [[Int]] (WorkflowF Shaped)
 members :: WorkflowF child -> [child]
 members layer = case layer of
   Node _ -> []
-  Chained children -> children
+  Chain children -> children
   Parallel children -> children
   Alternative children -> children
   Lifelong children -> children
 
-isChained :: WorkflowF child -> Bool
-isChained (Chained _) = True
-isChained _ = False
+isChain :: WorkflowF child -> Bool
+isChain (Chain _) = True
+isChain _ = False
 
 isParallel :: WorkflowF child -> Bool
 isParallel (Parallel _) = True

@@ -50,13 +50,13 @@ renderWorkflowReport namespace tree rows targets sites = encode $ JObject
     effect _ = []
     kind layer = case layer of
       Node _ -> "node"
-      Chained _ -> "chain"
+      Chain _ -> "chain"
       Parallel _ -> "parallel"
       Alternative _ -> "alternative"
       Lifelong _ -> "lifelong"
     childrenOf layer = case layer of
       Node _ -> []
-      Chained children -> children
+      Chain children -> children
       Parallel children -> children
       Alternative children -> children
       Lifelong children -> children

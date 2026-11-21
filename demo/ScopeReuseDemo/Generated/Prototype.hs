@@ -191,7 +191,7 @@ generatedPrototype =
             (SDK.Sequence [SDK.Call GetFilePathsGen, SDK.Call ReadFilePathsGen])
         ]
     , SDK.protoWorkflow =
-        SDK.ChainedAt
+        SDK.ChainAt
           []
           [ SDK.NodeAt [0] "PrepareProbe"
           , SDK.ParallelAt

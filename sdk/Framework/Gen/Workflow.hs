@@ -51,7 +51,7 @@ checkWorkflowShape = check [] False
     -- inside：是否位于 lifelong 内。lifelong 不嵌套；其中每条成功路径都要领取交付，所以不能有空分支。
     check path inside (Fix layer) = case layer of
       Node _ -> pure ()
-      Chained children -> nonEmpty path inside children >> descend path inside children
+      Chain children -> nonEmpty path inside children >> descend path inside children
       Parallel children -> nonEmpty path inside children >> descend path inside children
       Lifelong children -> do
         when inside $ Left (InvalidLifelong path "lifelong cannot be nested")

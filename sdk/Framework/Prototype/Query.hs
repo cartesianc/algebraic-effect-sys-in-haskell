@@ -17,14 +17,14 @@ import Framework.Prototype.Types
 
 workflowNode :: WorkflowTree -> NodeId
 workflowNode (NodeAt identifier _) = identifier
-workflowNode (ChainedAt identifier _) = identifier
+workflowNode (ChainAt identifier _) = identifier
 workflowNode (ParallelAt identifier _) = identifier
 workflowNode (AlternativeAt identifier _ _) = identifier
 workflowNode (LifelongAt identifier _ _) = identifier
 
 workflowChildren :: WorkflowTree -> [WorkflowTree]
 workflowChildren (NodeAt _ _) = []
-workflowChildren (ChainedAt _ children) = children
+workflowChildren (ChainAt _ children) = children
 workflowChildren (ParallelAt _ children) = children
 workflowChildren (AlternativeAt _ _ children) = children
 workflowChildren (LifelongAt _ _ children) = children
@@ -64,7 +64,7 @@ precedes :: WorkflowTree -> NodeId -> NodeId -> Bool
 precedes tree before after = knownWorkflowPosition tree before && knownWorkflowPosition tree after
   && any orders (allWorkflow tree)
   where
-    orders (ChainedAt _ children) = or
+    orders (ChainAt _ children) = or
       [workflowNode left `isPrefixOf` before && workflowNode right `isPrefixOf` after
       | (index, left) <- zip [0 :: Int ..] children, right <- drop (index + 1) children]
     orders (AlternativeAt _ selected children) = before == alternativeSelector selected

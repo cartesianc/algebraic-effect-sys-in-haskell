@@ -31,7 +31,7 @@ numberWorkflow effects tree = cata number tree [] False
       unless (inside || null subscribed) $ Left (InvalidLifelong path ("Node " ++ selected
         ++ " subscribes to " ++ intercalate ", " subscribed ++ " with streams; mount it inside lifelong"))
       pure (NodeAt path selected)
-    number (Chained children) path inside = ChainedAt path <$> descend path inside children
+    number (Chain children) path inside = ChainAt path <$> descend path inside children
     number (Parallel children) path inside = ParallelAt path <$> descend path inside children
     number (Lifelong children) path _ = do
       parts <- descend path True children
@@ -186,7 +186,7 @@ planSessions effects boundary children subscriptions = do
             Nothing -> Left (InvalidLifelong unit "Missing unit for an output subscription")
         covered sources target available tree = case tree of
           NodeAt node' _ -> node' /= target || available
-          ChainedAt _ parts -> sequenceCovered parts available
+          ChainAt _ parts -> sequenceCovered parts available
           ParallelAt _ parts -> and
             [covered sources target (available || any (produces sources) others) child
             | child <- parts, let others = filter ((/= workflowNode child) . workflowNode) parts]

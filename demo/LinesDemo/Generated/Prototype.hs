@@ -209,7 +209,7 @@ generatedPrototype =
         , SDK.MethodDefinition RunReportGen RunReportGen SDK.HandlerMethod (SDK.Call StreamRunningTotalGen)
         ]
     , SDK.protoWorkflow =
-        SDK.ChainedAt
+        SDK.ChainAt
           []
           [ SDK.NodeAt [0] "Announce"
           , SDK.LifelongAt
@@ -232,7 +232,7 @@ generatedPrototype =
                       ]
                   }
               )
-              [ SDK.ChainedAt
+              [ SDK.ChainAt
                   [1,0]
                   [ SDK.NodeAt [1,0,0] "PrintLine"
                   , SDK.NodeAt [1,0,1] "TextCounter"
