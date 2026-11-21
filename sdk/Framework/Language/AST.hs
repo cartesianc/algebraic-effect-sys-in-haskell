@@ -2,7 +2,7 @@
 
 -- Workflow 的可序列化结构与引用收集；不启动节点。
 module Framework.Language.AST
-  ( WorkflowF(..), AST, EffectNode, node, chained, parallel, alternative, lifelong
+  ( WorkflowF(..), AST, EffectNode, node, chain, parallel, alternative, lifelong
   , HangingTree, MiddlewareMount, hanging, middleware, hangingRows, foldAST, toWorkflowF, normalizeWorkflow
   ) where
 
@@ -16,8 +16,8 @@ data WorkflowF next
   | Chained [next]
   | Parallel [next]
   | Alternative [next]
-  -- Lifelong 订阅持续资产。每个单元按交付重复执行，所有单元结束后本分支成功返回。
-  -- 直接子项各为一个单元，直接子项是 parallel 时拆这一层；其余子树作为有限单元整体重复。
+  -- Lifelong 订阅持续资产。每个直接子项是一个单元，按交付整体重复执行，所有单元结束后本分支成功返回。
+  -- 子项里的 parallel 只是一轮之内的并发汇合，不再划分单元。
   | Lifelong [next]
   deriving (Eq, Functor, Show, Read)
 
@@ -38,8 +38,8 @@ instance BranchChild AST where
 node :: String -> EffectNode
 node = EffectNode
 
-chained :: BranchChild child => [child] -> AST
-chained children = AST (Fix (Chained (map childTree children)))
+chain :: BranchChild child => [child] -> AST
+chain children = AST (Fix (Chained (map childTree children)))
 
 parallel :: BranchChild child => [child] -> AST
 parallel children = AST (Fix (Parallel (map childTree children)))
@@ -76,15 +76,14 @@ toWorkflowF :: AST -> Fix WorkflowF
 toWorkflowF (AST tree) = tree
 
 -- 规范形式只做语义不变的改写，是 NodeId 的唯一来源：
---   * chained 里的 chained、parallel 里的 parallel 拼入外层（顺序执行与并行汇合都满足结合律）；
---   * chained 与 parallel 中的空 chained／parallel 删除（单位元）；
---   * 只剩一个子项的 chained／parallel 就是这个子项（裸 node 与只含它的 chained 等价）。
--- 两处边界不改写：alternative 的每个候选按位置保留（候选的判定 Context 取自整个候选子树）；
--- lifelong 的直接子项是单元，直接子项是 parallel 时拆开这一层，拆出的各项仍是单元。
--- 单元化简后若是 parallel，保留一层 chained，否则会被当作拆开的那一层而改变单元划分。
--- 空单元、空候选和空 lifelong 原样保留，由 gen 拒绝；lifelong 与 alternative 本身不会被消去。
+--   * chain 里的 chain、parallel 里的 parallel 拼入外层（顺序执行与并行汇合都满足结合律）；
+--   * chain 与 parallel 中的空 chain／parallel 删除（单位元）；
+--   * 只剩一个子项的 chain／parallel 就是这个子项（裸 node 与只含它的 chain 等价）。
+-- 这些改写在任何位置都成立，包括 lifelong 的单元内部和 alternative 的候选。
+-- lifelong 与 alternative 自身不拼入外层：lifelong 的每个直接子项是一个单元，alternative 的候选按位置保留。
+-- 空单元、空候选和空 lifelong 原样保留，由 gen 拒绝。
 -- 第二个结果把原树中的路径映射到规范形式中覆盖同一子树的位置：保留下来的节点映射到自身，
--- 被拼入外层或删除的 chained／parallel 映射到它各子项的位置（空的映射为空）。
+-- 被拼入外层或删除的 chain／parallel 映射到它各子项的位置（空的映射为空）。
 normalizeWorkflow :: Fix WorkflowF -> (Fix WorkflowF, [Int] -> [[Int]])
 normalizeWorkflow tree = (strip shaped, relocate)
   where
@@ -99,7 +98,7 @@ normalizeWorkflow tree = (strip shaped, relocate)
       Chained children -> gather path Chained isChained (indexed path children)
       Parallel children -> gather path Parallel isParallel (indexed path children)
       Alternative children -> Shaped [path] (Alternative [general at child | (at, child) <- indexed path children])
-      Lifelong children -> Shaped [path] (Lifelong (concat [units at child | (at, child) <- indexed path children]))
+      Lifelong children -> Shaped [path] (Lifelong [general at child | (at, child) <- indexed path children])
     gather path constructor same children = case concatMap (splice same) [general at child | (at, child) <- children] of
       [Shaped origins only] -> Shaped (path : origins) only
       remaining -> Shaped [path] (constructor remaining)
@@ -107,11 +106,6 @@ normalizeWorkflow tree = (strip shaped, relocate)
       | null (members layer) && (isChained layer || isParallel layer) = []
       | same layer = members layer
       | otherwise = [part]
-    units path (Fix (Parallel children)) = [unit at child | (at, child) <- indexed path children]
-    units path child = [unit path child]
-    unit path child = case general path child of
-      part@(Shaped _ (Parallel _)) -> Shaped [] (Chained [part])
-      part -> part
     indexed path children = [(path ++ [index], child) | (index, child) <- zip [0 ..] children]
     positions path (Shaped origins layer) = [(origin, path) | origin <- origins]
       ++ concat [positions (path ++ [index]) child | (index, child) <- zip [0 ..] (members layer)]

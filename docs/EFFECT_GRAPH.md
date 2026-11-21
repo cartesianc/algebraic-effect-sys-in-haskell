@@ -67,7 +67,7 @@ data Execution
 
 Stage 3 复用这两个 Boot 构造：Receive／Derive 的每个独立生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。独立会话每次生产使用新的 ScopeUser，其中 Receive 的来源与逐条 parser 各自持有本次使用；跨步骤的待用由会话执行帧保持。lifelong 的消费 target 同样每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
 
-本轮 ReuseOutput 连接沿用已有 AST 执行：`SessionProto.sessionPlan` 保存 `ReuseOutput [NodeId]`，指向同一 lifelong 内的具体原子输出发布位置，`sessionMounts` 为空。gen 沿 target 自身与 original Input 链定位挂接句柄；所有这些持续副产物都进入会话集合，包括仅供后继读取的产物。gen 仍保留 original chain 与 Context chain 的独立定义；执行时挂接 parser 用同次原子输出，不另建根调用或生产 worker。parser 的 `RequestBoot` 继承原节点的 Origin、执行帧和 ScopeUser。其交付只含持续资产，原 AST 调用的普通产物写入运行级最新值，不作为该交付的固定伴随值。多个发布位置只允许同单元、两两 alternative 互斥；不按调度选取，不合并同名 handler 的独立调用。组合机器以订阅、chained 前置和持续 alternative 选择读取建立启动依赖，拒绝有环组合。完整规则见 [Stream 第 4.2 节](STREAM_LIFELONG.md#derive)，实现状态见 [Next stages](NEXT_STAGES.md#stage-6-reuse)。
+本轮 ReuseOutput 连接沿用已有 AST 执行：`SessionProto.sessionPlan` 保存 `ReuseOutput [NodeId]`，指向同一 lifelong 内的具体原子输出发布位置，`sessionMounts` 为空。gen 沿 target 自身与 original Input 链定位挂接句柄；所有这些持续副产物都进入会话集合，包括仅供后继读取的产物。gen 仍保留 original chain 与 Context chain 的独立定义；执行时挂接 parser 用同次原子输出，不另建根调用或生产 worker。parser 的 `RequestBoot` 继承原节点的 Origin、执行帧和 ScopeUser。其交付只含持续资产，原 AST 调用的普通产物写入运行级最新值，不作为该交付的固定伴随值。多个发布位置只允许同单元、两两 alternative 互斥；不按调度选取，不合并同名 handler 的独立调用。组合机器以订阅、chain 前置和持续 alternative 选择读取建立启动依赖，拒绝有环组合。完整规则见 [Stream 第 4.2 节](STREAM_LIFELONG.md#derive)，实现状态见 [Next stages](NEXT_STAGES.md#stage-6-reuse)。
 
 启动图之外还检查同单元的路径覆盖：直接订阅或经独立 Derive 间接依赖自身输出时，每条到达订阅的 workflow 路径都须先经过发布位置，或同轮有并行且必经的发布路径；alternative 取各候选的必经交集。跨单元可以条件发布，无须每轮都产出。ReuseOutput parser 及其 requests 路径只允许读取原操作的驱动持续资产，避免挂接过程中再等待其他持续来源；普通资产读取仍按原来源协议检查。
 
@@ -81,7 +81,7 @@ Context 的生产记录在生产、发布及返回结束后通过 `finally` 删�
 
 `Binding.bindingOrigin :: Execution` 保存不变的执行出身，`bindingProduction :: Maybe ActivationId` 保存成功生产身份，`bindingFrame :: ExecutionFrame` 保存归属帧。生产失败不替换旧绑定，无资源 scope 的内部占位绑定没有生产身份。`bindingOwnership` 是该次生产独有的共享 `IORef`，保存可选 owner 与待认领使用者。当前捕获、权威表、scope 快照和 Handoff 保留同一绑定；认领不改变值、生产身份、帧、origin 或 publication，scope 复用也不重新发布。
 
-`Framework.Runtime.Frame` 保存有限运行根帧、lifelong 每轮子帧及独立生产会话的待用帧。实际执行按节点记录待执行、执行中、完成和跳过；会话帧保留后续生产挂载的待用预约到生产任务退出，不充当业务调用的执行结果。节点完成晚于诊断与受控结果消费；chained 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本轮已领取的普通伴随资产的 `(生产节点, Context 来源, ActivationId)`，只保存生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。Runtime 中领取会话交付的 `DeliveryFrame` 仍管理视图领取，和这份执行进度分开。Frame 的根与子帧共享发布通知，`frameSignal` 取得当前信号，`notifyFrame` 在普通发布、会话状态提交或节点退休后唤醒等待者；Graph 的 `publicationSignal` 转发到同一通知。普通最新值在运行级共享；保守等待结束复用这些进度事实，不要求另建按帧资产表。
+`Framework.Runtime.Frame` 保存有限运行根帧、lifelong 每轮子帧及独立生产会话的待用帧。实际执行按节点记录待执行、执行中、完成和跳过；会话帧保留后续生产挂载的待用预约到生产任务退出，不充当业务调用的执行结果。节点完成晚于诊断与受控结果消费；chain 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本轮已领取的普通伴随资产的 `(生产节点, Context 来源, ActivationId)`，只保存生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。Runtime 中领取会话交付的 `DeliveryFrame` 仍管理视图领取，和这份执行进度分开。Frame 的根与子帧共享发布通知，`frameSignal` 取得当前信号，`notifyFrame` 在普通发布、会话状态提交或节点退休后唤醒等待者；Graph 的 `publicationSignal` 转发到同一通知。普通最新值在运行级共享；保守等待结束复用这些进度事实，不要求另建按帧资产表。
 
 Scope 实例保存实际参数生产身份与归属帧，Graph 把待用查询装入 ScopeHandler。查询与节点进度、关闭预约共用 scope 协调锁：实例既无实际使用者，也不再被帧内待用节点或子 scope 保留时，Scope 同步清理。完整运行规则见[主设计](CORE_DESIGN.md#scope-gc)。
 
@@ -106,7 +106,7 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 来源算法 v5（2026-11-18）先从空供值集推演 workflow。一次结构分析已经能够到达的发布位置形成有限的 `(NodeId, asset)` 事实；将这些事实作为普通共享供值重新分析，直到不再增加。`require` 无捕获也无供值时停止该成功路径，不自行启动生产。并行兄弟、其他已能启动的消费单元或生产步骤可以提供事实，不按 AST 可见性筛掉。
 
-这能接受 `parallel [readX, produceX]`，也能逐步解开独立分支的依赖。只有 `chained [readX, produceX]`、没有其他 X 的生产时，后继不能启动，因此没有初始供值，gen 拒绝。互等且没有启动种子的分支同理。诊断指出读取资产、target 与 NodeId，要求提供可启动的生产路径，而非把“已经注册生产者”当作充分条件。
+这能接受 `parallel [readX, produceX]`，也能逐步解开独立分支的依赖。只有 `chain [readX, produceX]`、没有其他 X 的生产时，后继不能启动，因此没有初始供值，gen 拒绝。互等且没有启动种子的分支同理。诊断指出读取资产、target 与 NodeId，要求提供可启动的生产路径，而非把“已经注册生产者”当作充分条件。
 
 例如，`FileDemo` 的 `alternative` 只尝试 `BlankText` 和 `FilledText`。假设再给 `ReadFile` 挂一个普通 `AuditParser` 并在后继读取 `AuditText`，选择入口的 `chainReaches` 即使包含该方法，这里也没有它的发布事实。若另有普通 `ReadFile` 挂载，成功注入就能在那个 `NodeId` 供值。判定资产的等待来源也取自同一发布固定点，排除本次选择位置。
 

@@ -268,9 +268,7 @@ validatePrototype prototype = do
           let inner = concatMap allWorkflow children
               mounted = [(node', terminal) | NodeAt node' terminal <- inner]
           valid (null [() | LifelongAt {} <- inner]) "Lifelong is nested"
-          valid (sameSet (lifelongUnits described) (concat [case child of
-              ParallelAt _ grand -> map workflowNode grand
-              _ -> [workflowNode child] | child <- children])) "Lifelong units differ from its children"
+          valid (lifelongUnits described == map workflowNode children) "Lifelong units differ from its children"
           valid (sameSet (map fst (lifelongSubscriptions described)) (map fst mounted)
             && unique (map fst (lifelongSubscriptions described))) "Lifelong subscriptions differ from its targets"
           let positions producer = [node' | Just anchor <- [effectAnchor producer], (node', terminal) <- mounted

@@ -54,14 +54,8 @@ data Halt cause = Finished | Problem (Failure cause)
 type Execution environment cause value =
   Run environment cause -> Handoff environment cause -> ExceptT (Halt cause) IO [value]
 
--- 作为 lifelong 子项时的单元划分：直接子项是 parallel 时拆这一层，其余子树整体是一个单元。
-data Compiled environment cause value = Compiled
-  { compiledRun :: Execution environment cause value
-  , compiledUnits :: [(NodeId, Execution environment cause value)]
-  }
-
 type Prepared method environment cause value =
-  WorkflowTree -> Either (PrototypeError method) (Compiled environment cause value)
+  WorkflowTree -> Either (PrototypeError method) (Execution environment cause value)
 
 type Worker value = (ThreadId, MVar (Either SomeException value))
 
@@ -218,7 +212,7 @@ executionAlgebra prototype store entries selectors layer expected = do
         retireAfter (runExceptT (execution run handoff)) $ \restore -> do
           retired <- skipFrameSubtree (runExecutionFrame run) location
           restore (collectRuntimeScopes store retired)
-      single execution = let wrapped = managed execution in pure (Compiled wrapped [(location, wrapped)])
+      single execution = pure (managed execution)
       compiledChildren = sequence (zipWith ($) children expectedChildren)
       children = case layer of
         Node _ -> []
@@ -247,16 +241,16 @@ executionAlgebra prototype store entries selectors layer expected = do
               subscribing run location $ draining run $ fmap (: []) . fst <$>
                 lowerTarget store retention location (runExecutionFrame run) (runDeliveryFrame run) handoff entry
     (Chained _, _) -> do
-      parts <- map compiledRun <$> compiledChildren
+      parts <- compiledChildren
       single (\run handoff -> concat <$> sequence [part run handoff | part <- parts])
     (Parallel _, _) -> do
-      parts <- map compiledRun <$> compiledChildren
+      parts <- compiledChildren
       let execution run handoff = ExceptT $ do
             outcomes <- runParalleled [runExceptT (part run handoff) | part <- parts]
             pure (concat <$> joined outcomes)
-      pure (Compiled (managed execution) (zip (map workflowNode expectedChildren) parts))
+      single execution
     (Alternative _, AlternativeAt _ description _) -> do
-      parts <- map compiledRun <$> compiledChildren
+      parts <- compiledChildren
       chain <- lookupChain prototype (alternativeSelector description)
       unless (chainRole chain == SelectorChain
           && chainTerminal chain == alternativeSource description) $
@@ -295,7 +289,7 @@ executionAlgebra prototype store entries selectors layer expected = do
     -- 由某份资产驱动的会话也是它的读取方，与单元一同登记，游标交给那份会话的生产任务，
     -- 它在上游结束并排空后结束并离开。
     (Lifelong _, LifelongAt _ description _) -> do
-      compiled <- concatMap compiledUnits <$> compiledChildren
+      compiled <- zip (map workflowNode expectedChildren) <$> compiledChildren
       units <- mapM (\unit -> (,) unit <$> maybe (Left (InvalidLifelong unit "Missing compiled unit")) Right (lookup unit compiled))
         (lifelongUnits description)
       sources <- mapM (\session -> case [route | route <- drivingSessions (protoDriving prototype)
@@ -426,7 +420,7 @@ runStructuredAST prototype tree entries selectors sessions = do
   retireAfter (if null (drivingUnits (protoDriving prototype))
     then do
       installSessionLauncher store (sessionLauncher store sessions (const (pure ())))
-      runExceptT (compiledRun prepared (Run (runtimeRootFrame store) Nothing (const (pure ())) Nothing (const (pure ()))) noHandoff)
+      runExceptT (prepared (Run (runtimeRootFrame store) Nothing (const (pure ())) Nothing (const (pure ()))) noHandoff)
         >>= completed
     else do
       -- 第一个失败或原生异常结束整次运行：取消 AST 中的全部任务并等待其收尾，再停止会话，
@@ -435,7 +429,7 @@ runStructuredAST prototype tree entries selectors sessions = do
       let settle = void . tryPutMVar settled
           run = Run (runtimeRootFrame store) Nothing (settle . Left) Nothing (const (pure ()))
           work = do
-            outcome <- try (runExceptT (compiledRun prepared run noHandoff))
+            outcome <- try (runExceptT (prepared run noHandoff))
             settle (either (Left . Left) Right outcome)
       installSessionLauncher store (sessionLauncher store sessions (settle . Left))
       result <- withWorkers [work] (const (readMVar settled))

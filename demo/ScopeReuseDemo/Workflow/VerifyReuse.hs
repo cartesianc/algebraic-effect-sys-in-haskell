@@ -1,8 +1,8 @@
 module ScopeReuseDemo.Workflow.VerifyReuse (verifyReuse) where
 
-import Framework.SDK (AST, chained, node)
+import Framework.SDK (AST, chain, node)
 
 verifyReuse :: AST
-verifyReuse = chained
+verifyReuse = chain
   [ node "VerifyReuse"
   ]

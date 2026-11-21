@@ -213,12 +213,10 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
           _ -> raise (ParseTotalError "the counter gives a line count and a character count")
 
     -- demo/LinesDemo/AST.hs
-    ast = chained [chained [node "Announce"], monitorLines, chained [node "Report"]]
+    ast = chain [chain [node "Announce"], monitorLines, chain [node "Report"]]
     monitorLines = lifelong
-      [ parallel
-          [ chained [node "PrintLine", node "TextCounter"]
-          , chained [node "ShowTotal"]
-          ]
+      [ chain [node "PrintLine", node "TextCounter"]
+      , chain [node "ShowTotal"]
       ]
 
 `countText` 以 `stream @Line` 读取本次及更早的行算出累计，`parseTotal` 只解析本次原子输出。两者是普通的 Excu handler 与 parser，派生装配复用已有的 `streams` 声明与 AST 入口。AST 的一个单元打印并执行 `TextCounter`；gen 把 `RunningTotal` 装配为 ReuseOutput，会话接收这次原子输出经 `CountParser` 解析后的资产。另一个单元的 `ShowTotal` 领取该发布，不另行执行统计，显示与原行文本可以交错。原子方法仍然不知道它的输出将由谁消费。
@@ -229,7 +227,7 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
 
 - **已有 AST 执行**：gen 在同一个 lifelong 内沿 target 自身及 original Input 链确定 Context 所挂原子句柄的发布位置，写入 `ReuseOutput [NodeId]`；不把任意 requests 生产链中的同名操作算成全局复用者。会话没有独立 worker 或虚构的生产挂载；原子入口成功后调用挂接 parser，`rawinput` 由本次输出回答。parser 的生产记录继承原节点的 Origin、执行帧和 ScopeUser，资产保持这次生产的身份。不同独立调用不因 handler 名或值相同而合并。
 - **独立派生**：没有上述 AST 发布位置时使用 Derive。会话每领取一条上游交付执行一次 parser 及其 Input 链，成功后发布一条；无新增量时等待，不能用 `requests` 补产。可以继续逐级派生。
-- **来源与驱动**：一条派生链只由一份持续资产驱动，不再读取其他持续资产。ReuseOutput 默认只接受一个发布位置；多个位置须处于同一个重复单元，且两两是 alternative 的互斥候选。gen 另把 target 订阅、chained 前置和持续资产的 alternative 选择读取纳入启动依赖检查，保守拒绝存在启动环的候选组合，不依赖 IO 时序证明进展。Input／demand 的环也照常拒绝。
+- **来源与驱动**：一条派生链只由一份持续资产驱动，不再读取其他持续资产。ReuseOutput 默认只接受一个发布位置；多个位置须处于同一个重复单元，且两两是 alternative 的互斥候选。gen 另把 target 订阅、chain 前置和持续资产的 alternative 选择读取纳入启动依赖检查，保守拒绝存在启动环的候选组合，不依赖 IO 时序证明进展。Input／demand 的环也照常拒绝。
 - **同单元的路径覆盖**：单元直接订阅或经独立 Derive 间接依赖自己产出的资产时，每条到达订阅的 workflow 路径必须此前已经过发布位置，或同轮有并行启动且必经的发布路径。alternative 只有每个候选都能供值才算必经，不能用其他候选可能发布来证明当前路径。跨单元的条件发布不要求每轮产出；读取方可以等待后续增量，或在发布单元结束并排空后退出。
 - **scope 输出的边界**：Scoped.open 复用活实例时可以跳过方法体，没有新的原子输出。因此同单元直接订阅或经 Derive 等待这类 ReuseOutput 当前由 gen 保守拒绝；没有把“经过 open 位置”当成本轮必有新发布。跨单元仍可等待实际发布或来源结束，独立 Derive 不受这项拒绝影响；精确识别必定 fresh 的开启后放行留待后续。
 - **结束**：Derive 在上游结束并排空、或被驱动链上的 Excu 调用 `endStream` 时，先封住自己的发布，再离开并按需退役上游。ReuseOutput 的发布位置按节点计，节点 `endStream` 时立即撤下，所在单元结束时撤下其余位置，全部撤下后封住发布并通知排空；单次 target 成功或单轮结束都不撤下。同单元读取等本轮发布及派生处理稳定后，仍无新交付才跳过；不会等本单元下一轮来补值。见 [9.5 节](#consumer-end)。
@@ -250,7 +248,7 @@ ReuseOutput 只绑定本 lifelong 内经过来源和启动检查的具体 AST �
 
 1. lifelong 内每个挂载的 target 恰好订阅一个持续资产。
 2. 这些 target 的 original chain 不再读取（requires／streams）其他持续资产；否则执行结果取决于读取时刻。多个来源的触发组合另行设计。
-3. 只有普通 requests／requires 的末端不能进入 lifelong；一次性准备放在外部 chained。streams 末端不能出现在 lifelong 之外。
+3. 只有普通 requests／requires 的末端不能进入 lifelong；一次性准备放在外部 chain。streams 末端不能出现在 lifelong 之外。
 4. Stream、Context 不作为 target，Stream 也不能进入 original chain；带 streams 的 Excu／Scoped 可以挂载到 AST 并向挂接 Context 提供同次输出。gen 按本 lifelong 的具体位置确定 ReuseOutput，不能证明来源唯一或启动可推进时拒绝。
 5. lifelong 不嵌套；lifelong 内不能有空分支。因为每个 target 都订阅，单元每条成功路径都至少领取一条新交付。
 6. 合法 Haskell 不自动等于结构可提取；未知高阶 effect、隐藏的 effect 循环等继续使用现有诊断。
@@ -266,7 +264,7 @@ lifelong 写入统一 Prototype，运行装配、来源分析与 `--structure` �
     LifelongAt NodeId LifelongProto [WorkflowTree]
 
     LifelongProto
-      { lifelongUnits         :: [NodeId]            -- 单元：规范形式中的直接子项（源码中直接子项的 parallel 已拆开）
+      { lifelongUnits         :: [NodeId]            -- 单元：规范形式中的直接子项
       , lifelongSubscriptions :: [(NodeId, String)]  -- 每个挂载 target 订阅的资产
       , lifelongSessions      :: [SessionProto] }    -- 订阅资产、上游资产及 AST 持续副产物各一份会话
 
@@ -278,7 +276,7 @@ lifelong 写入统一 Prototype，运行装配、来源分析与 `--structure` �
 - `protoSessions` 保存独立 Receive／Derive 的 interpreter 托管计划，挂载为 `[-2, 序号, 步骤]`。首次有限持续需求启动对应上游，读取者不因此订阅；备用计划本身不等于已启动的供值。ReuseOutput 仍只连接具体 lifelong 的 AST 位置。
 - ReuseOutput 的位置来自同一 lifelong 的 original Input 链。即使没有订阅者、只供后继 `requires`，AST 挂接的持续副产物也纳入会话集合。`Gen.Composition` 在生成期检查供值位置的唯一性以及订阅、顺序前驱、选择读取组成的启动图；运行时直接执行已确定的计划。
 - 来源分析仍按消费单元裁剪生产步骤的成功出口并保留固定伴随捕获；普通供值另外通过运行级固定点传播，允许独立分支共享。同次交付中的已有捕获优先于普通最新值，缺失辅助值时不补产。普通读取不再按生产挂载与读取位置的先后过滤；算法只在[图规范](EFFECT_GRAPH.md#missing-source)维护。
-- 分析裁剪：以 `lifelongUnits` 确定单元，不穿透单元内的 chained、alternative 或 parallel。每个生产挂载保留本单元可能读取的契约及生产链自身的读取依赖，成功出口再按单元相关契约投影、去重，然后逐步组合 Receive 的步骤和各会话状态。仍分析全部会话，避免遗漏其他会话造成的来源冲突；不把成功出口取并集。生产链的 read／drive 事实独立累计。
+- 分析裁剪：以 `lifelongUnits` 确定单元，不穿透单元内的 chain、alternative 或 parallel。每个生产挂载保留本单元可能读取的契约及生产链自身的读取依赖，成功出口再按单元相关契约投影、去重，然后逐步组合 Receive 的步骤和各会话状态。仍分析全部会话，避免遗漏其他会话造成的来源冲突；不把成功出口取并集。生产链的 read／drive 事实独立累计。
 - 读取点来源 `FromSession` 表示持续资产经会话交付，不查询普通来源表。读取已捕获的交付优先；合法先前 lifelong 的会话优先于独立托管计划。有限读取不复用尚未发生的 AST 输出，也不能把 ReuseOutput 位置解释成补跑该位置的许可。
 - `--structure` 在 Workflow 中列出每个 lifelong 的单元、会话（生产方式与挂载）和订阅，并单独列出 interpreter 会话。
 
@@ -287,15 +285,15 @@ lifelong 写入统一 Prototype，运行装配、来源分析与 `--structure` �
 
 ### 6.1 单元划分
 
-lifelong 的直接子项分别形成独立单元；直接子项为 parallel 时，只拆这一层。其余子树作为有限单元，不穿透 chained、alternative 或更深的 parallel。
+lifelong 的每个直接子项形成一个独立单元。单元内部是有限子树，parallel 在其中只是一轮之内的并发汇合，不再划分单元。
 
-    lifelong [parallel [chained [a, b], c]]
+    lifelong [chain [a, b], c]
 
-得到单元 `chained [a, b]` 和单元 `c`，两者独立推进：b 等待 a 本次调用成功；c 不等待 a、b 完成才领取下一条。
+得到单元 `chain [a, b]` 和单元 `c`，两者独立推进：b 等待 a 本次调用成功；c 不等待 a、b 完成才领取下一条。
 
-    lifelong [chained [parallel [a, b], c]]
+    lifelong [parallel [a, b], c]
 
-这是一个单元；内部 parallel 保留局部汇合，再执行 c。拆分边界写入 Prototype（`lifelongUnits`），运行时不推测或递归拉平。不存在整个 lifelong 的统一轮次。
+`parallel [a, b]` 是一个单元：每轮 a、b 领取同一条交付，都结束后才进入下一轮；c 仍是另一个单元。单元写入 Prototype（`lifelongUnits`），即规范形式中的直接子项，运行时不推测。不存在整个 lifelong 的统一轮次。
 
 ### 6.2 两个完成边界
 
@@ -304,7 +302,7 @@ lifelong 的直接子项分别形成独立单元；直接子项为 parallel 时�
 | 一次 target 调用 | 既有成功／失败协议；本次 original chain 完成，有自己的 Origin |
 | 持续订阅／lifelong | 全部单元正常结束后返回一次 Succ，不带结果；仍有消费单元未结束时不正常返回，另因失败或取消退出 |
 
-lifelong 安装订阅后不冒充整个 branch 的 Succ，否则外部 chained 无法表达完成依赖。两个 Succ 各管一层：一次执行的 Succ 决定单元内的后继是否执行，lifelong 的 Succ 决定外层的后继是否执行。Stream 自己不给 Succ。
+lifelong 安装订阅后不冒充整个 branch 的 Succ，否则外部 chain 无法表达完成依赖。两个 Succ 各管一层：一次执行的 Succ 决定单元内的后继是否执行，lifelong 的 Succ 决定外层的后继是否执行。Stream 自己不给 Succ。
 
 ### 6.3 就绪与一次执行
 
@@ -323,9 +321,9 @@ lifelong 安装订阅后不冒充整个 branch 的 Succ，否则外部 chained �
 | 写法 | 行为 |
 | --- | --- |
 | `parallel [monitor, otherWork]` | 两者同时运行；monitor 等待增量不阻止 otherWork |
-| `chained [setup, monitor]` | setup 成功后进入 monitor |
-| `chained [monitor, after]` | after 等待 monitor 结束：monitor 的全部单元正常结束后 after 执行；仍有消费单元未结束时 after 不执行 |
-| `chained [parallel [monitor, otherWork], after]` | 内层分支的完成仍是 after 的前提 |
+| `chain [setup, monitor]` | setup 成功后进入 monitor |
+| `chain [monitor, after]` | after 等待 monitor 结束：monitor 的全部单元正常结束后 after 执行；仍有消费单元未结束时 after 不执行 |
+| `chain [parallel [monitor, otherWork], after]` | 内层分支的完成仍是 after 的前提 |
 
 monitor 表示 lifelong 模块。并发运行与整个 branch 已完成是不同概念。
 
@@ -463,7 +461,7 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
 1. **适用范围**：只在 AST 中包含 lifelong 时生效；不包含 lifelong 的程序，失败处理保持现状（interpreter 会话的生产失败只传给等待它的读取方）。
 2. **触发**：生产失败、解析失败、消费单元失败、AST 中任何 node 或 alternative 选择读取的失败，以及上述任务中的原生异常。
 3. **处理**：结构化 Failure 先完成既有 Error 协议的诊断与处置，原生异常直接通知运行监督。随后终止整次运行：停止启动新工作，取消全部任务（会话、等待中的单元、执行中的 target、其他并行分支）并等待受控收尾，走 interpreter 退出清理；结构化失败报告最初的 `Failed`，原生异常重新抛出。
-4. **不做**：不只终止局部的 lifelong，不让外层 chained 继续执行后继，不重试。
+4. **不做**：不只终止局部的 lifelong，不让外层 chain 继续执行后继，不重试。
 
 失败在发生处直接通知运行监督，因此 `parallel [monitor, otherWork]` 中 otherWork 的失败不会因等待永不结束的 monitor 而被吞掉。失败的会话不再接受新发布，等待它的读取方收到原失败。
 
@@ -534,12 +532,10 @@ Stream 的独立生产步骤与 lifelong 的消费轮次都由 SDK 在推进条�
           readLines
 
     -- demo/LinesDemo/AST.hs
-    ast = chained [chained [node "Announce"], monitorLines, chained [node "Report"]]
+    ast = chain [chain [node "Announce"], monitorLines, chain [node "Report"]]
     monitorLines = lifelong
-      [ parallel
-          [ chained [node "PrintLine", node "TextCounter"]
-          , chained [node "ShowTotal"]
-          ]
+      [ chain [node "PrintLine", node "TextCounter"]
+      , chain [node "ShowTotal"]
       ]
 
 LinesDemo 读完四行后 `streamEnd`，打印与统计单元排空后退出并封住 `RunningTotal`；显示单元领完统计增量后退出，lifelong 返回，`Report` 读取最终统计（输出复用见 [4.2 节](#derive)）。原生文件由来源在 `bracket` 内逐行读取，离开读取操作时关闭，解析失败或取消也走同一释放路径。`TextLine` 的读取方全部离开后会话退役，再由 scope GC 判断是否调用 `InputSession` 的 close。parser、Excu、Scoped 的 Layer 里没有 `StreamEnds`，在它们的方法体里写 `streamEnd` 由 GHC 拒绝。
@@ -570,7 +566,7 @@ LinesDemo 读完四行后 `streamEnd`，打印与统计单元排空后退出并�
 
 **单元结束。** 单元要领取某个资产的交付、而它已耗尽时，这个位置不 boot，也不伪造一次节点成功，单元正常结束：
 
-- chained：尚未执行的后继不再执行，已完成的前缀不回滚。
+- chain：尚未执行的后继不再执行，已完成的前缀不回滚。
 - alternative：选择读取耗尽时不启动候选。
 - 单元内部的 parallel：某一路耗尽时通知本单元，唤醒尚未 boot、仍在等其他来源的路径并让它们退出；已经 boot 的有限链执行完再汇合。这项通知只针对等待交付的位置，不强制结束不返回的业务 IO。
 - 已经 boot 的调用在方法体第一次读取时才领取交付、而它已耗尽：这次调用放弃，单元同样正常结束。
@@ -634,7 +630,7 @@ LinesDemo 读完四行后 `streamEnd`，打印与统计单元排空后退出并�
 
 | 位置 | 立即效果 |
 | --- | --- |
-| lifelong 节点（含 ReuseOutput 的发布节点） | 本节点的订阅结束；同一轮中 chained 的后继、parallel 的其他路径照常执行 |
+| lifelong 节点（含 ReuseOutput 的发布节点） | 本节点的订阅结束；同一轮中 chain 的后继、parallel 的其他路径照常执行 |
 | Derive 会话的被驱动链 | 这一步不发布；派生会话先封住发布，再离开并按需退役上游；订阅它的单元仍可排空后结束 |
 
 **三层计数。** 读取方逐层离开，上一层归零才影响下一层：
@@ -664,7 +660,7 @@ ReuseOutput 的发布位置同样按节点计：节点结束订阅时立即撤�
 
 生产任务可能停在业务 IO 里（等待下一份输入），所以停止用取消，与 lifelong 返回时的停止相同；退役在会话状态锁外进行。恢复未完成的退役不重试业务 close，scope 仍按既有状态执行一次关闭。interpreter 托管的 Derive 同样登记并撤销上游游标，供逐条交付和队列保留使用；普通有限 require 本身不登记订阅。托管会话不安装按读取方计数执行的退役动作，读取方归零也不提前停止，仍在 interpreter 退出时收尾。ReuseOutput 没有独立任务，计数归零不封口，仍按发布位置封口。lifelong 返回时逆序退役其余会话。失败与取消路径只离开、不退役，停止交给既有收尾；Derive 的生产任务失败时同样只离开上游，先报告监督。Derive 正常结束先封住自己的发布，再离开上游；只有满足上述 lifelong 边界与读取方条件的上游才随之退役，托管上游只撤销读取登记；异常收尾覆盖处理及离开的全过程，取消不会遗留上游读取登记。
 
-**`require` 与订阅无关。** 读取方计数只统计领取交付的位置。`chained [A, D]` 中 A `endStream` 后，D 照常执行：D 有自己的订阅，自己驱动。D 若 `requests` A 链上的资产，由自己驱动生产；若只 `require` A 这一轮的普通产物，A 被跳过后按缺值规则报 `ContextNotInitialized`，确定失败，不挂起，也不读旧值。
+**`require` 与订阅无关。** 读取方计数只统计领取交付的位置。`chain [A, D]` 中 A `endStream` 后，D 照常执行：D 有自己的订阅，自己驱动。D 若 `requests` A 链上的资产，由自己驱动生产；若只 `require` A 这一轮的普通产物，A 被跳过后按缺值规则报 `ContextNotInitialized`，确定失败，不挂起，也不读旧值。
 
 **代价。** 节点结束后的读取关系重新计算每轮最多一次；发布位置在节点结束时立即撤下。会话的计数判断与离开同在一次 `release` 内，为 O(R)（R 为该会话的读取方个数）。本轮稳定检查沿已生成的单上游关系查询发布节点进度和派生完成水位，只在唤醒后重查，不轮询；新增完成计数不随发布总数分配存储。
 

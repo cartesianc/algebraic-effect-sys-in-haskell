@@ -236,7 +236,7 @@ reachableInstance graph slot = case runtimePrototype graph of
         matchesSession frame opening source production = do
           captured <- capturedFrameInputs frame
           let reader = openingNode opening
-              -- 只有 alternative 把捕获交给候选；chained 不隐式传递前一调用的视图。
+              -- 只有 alternative 把捕获交给候选；chain 不隐式传递前一调用的视图。
               selectors = driveCaptures (nodeDriveAt prototype reader)
               selected = [value | at <- reader : selectors
                 , (node, context, value) <- captured, node == at, context == source]

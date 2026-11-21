@@ -450,7 +450,7 @@ instance TraceOutputLayer m => TraceOutputHandler m where
     rawoutput []
 
 -- AST.hs
-ast = parallel [reportBranch, chained [node "WriteReport"]]
+ast = parallel [reportBranch, chain [node "WriteReport"]]
 
 -- Hanging.hs，导入同一 reportBranch
 hangingTree :: HangingTree
@@ -569,7 +569,7 @@ Gen.Composition 统一计算唯一来源、访问结果、绑定的读取路由�
 
 读取权限在生成期确定：gencode 拒绝 handler 读取未声明的表示类型，只为声明了 requires／streams 的 effect 生成读取实例，运行时不按当前消费者查声明表。SDK 不预初始化 Context，未声明的上游不执行。
 
-AST 组织链的启动次序。Crawler 中 parallel 先抓取并注入解析两页，chained 再打印；共用的打印 handler 按各自 refined asset 读取摘要，不重复抓取。普通读取也可在独立并行分支等待生产。
+AST 组织链的启动次序。Crawler 中 parallel 先抓取并注入解析两页，chain 再打印；共用的打印 handler 按各自 refined asset 读取摘要，不重复抓取。普通读取也可在独立并行分支等待生产。
 
 业务注册用 `Asset @T "资产名"` 将表示类型细化为契约。`T` 可以是 `String`、`[String]` 或本程序 `Types.hs` 定义的类型。对业务类型，`TypeRef` 同时保存类型名、定义模块和编译单元。gen 由此能接受重导出的原类型，也能指出另一个模块定义的同名类型。`Output` 单独识别并在作为资产时拒绝。字段和派生实例遵循[资产固定形式](ASSETS.md#fixed-form)。
 
@@ -668,47 +668,46 @@ Target 保留未执行末端和内部空状态；Node algebra 负责 lower。Con
 <a id="workflow"></a>
 ### 4.5 Workflow branch
 
-branch 是 workflow 的模块单位，node 是其内部挂载 effect 链的叶子。每个 branch 在 `Workflow/*.hs` 单独定义，导出有业务含义的名称；`AST.hs` 只组合这些名称。使用非限定 import，组合表达式保持 `chained [parsePages, printPages]`，不写模块前缀。模块名称区别于 chained／parallel 这种控制类别；空闲 scope 由 SDK 自动清理，不为此新增收尾 branch。
+branch 是 workflow 的模块单位，node 是其内部挂载 effect 链的叶子。每个 branch 在 `Workflow/*.hs` 单独定义，导出有业务含义的名称；`AST.hs` 只组合这些名称。使用非限定 import，组合表达式保持 `chain [parsePages, printPages]`，不写模块前缀。模块名称区别于 chain／parallel 这种控制类别；空闲 scope 由 SDK 自动清理，不为此新增收尾 branch。
 
 SDK 将 node 与 branch 分成两个抽象类型：
 
 ```haskell
 node :: String -> EffectNode
-chained, parallel, alternative, lifelong :: BranchChild child => [child] -> AST
+chain, parallel, alternative, lifelong :: BranchChild child => [child] -> AST
 ```
 
-BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两个实例；业务不增加 class、instance 或转换调用。同一列表只能全是 node 或全是 branch，裸 node 不能赋给 AST，原始 AST 构造器与子项转换不公开。单节点模块用 `chained [node "目标"]`。整个程序必须至少挂载一个末端。有限 workflow 内可用 `chained ([] :: [AST])` 表达一个成功返回空结果的子分支。内部递归表示与 algebra 不变，通过 foldAST 使用 cata。
+BranchChild 为不导出的 SDK 内部约束，只提供 EffectNode 与 AST 两个实例；业务不增加 class、instance 或转换调用。同一列表只能全是 node 或全是 branch，裸 node 不能赋给 AST，原始 AST 构造器与子项转换不公开。单节点模块用 `chain [node "目标"]`。整个程序必须至少挂载一个末端。有限 workflow 内可用 `chain ([] :: [AST])` 表达一个成功返回空结果的子分支。内部递归表示与 algebra 不变，通过 foldAST 使用 cata。
 
 这项类型约束不证明分支来自独立文件，也不禁止内联子分支或直接构造叶模块。独立文件、顶层只引用模块名属于声明格式：正文采用固定 branch 构造、显式列表、node 与直接模块引用，不借任意 lambda／map／条件计算隐藏结构，引用保持有限无环。未来 LSP 保存模块定义、引用和源码位置，并检查该格式；当前执行 AST 不保留源码身份，不新增运行时模块 key。
 
-分文件不建立新 interpreter、注册环境、Context 或 scope。同一模块多次挂载意味着多次执行，不去重调用；原有串行短路、并发汇合与资源共享规则保持。六个 workflow demo（含 StreamDemo）已按此拆分。chained、parallel、alternative 是有限 branch；lifelong 用于持续执行，见本节末的 [lifelong 的控制流](#lifelong-control)。
+分文件不建立新 interpreter、注册环境、Context 或 scope。同一模块多次挂载意味着多次执行，不去重调用；原有串行短路、并发汇合与资源共享规则保持。六个 workflow demo（含 StreamDemo）已按此拆分。chain、parallel、alternative 是有限 branch；lifelong 用于持续执行，见本节末的 [lifelong 的控制流](#lifelong-control)。
 
 #### 有限执行的完成规则
 
-chained 按声明顺序执行，遇失败停止；parallel 并发执行，等待全部分支后汇总，结果按声明顺序排列。有失败时保留声明顺序中首个失败的来源和负载，不按完成先后选择，不自动取消已运行的其他有限分支。已完成 IO 不回滚。
+chain 按声明顺序执行，遇失败停止；parallel 并发执行，等待全部分支后汇总，结果按声明顺序排列。有失败时保留声明顺序中首个失败的来源和负载，不按完成先后选择，不自动取消已运行的其他有限分支。已完成 IO 不回滚。
 
 空 branch 成功并返回空结果。AST 只在最终边界封装一次 Output，汇总产物不隐含共享绑定或自动传给后继。节点结果与 Context 发布是不同通道。
 
 <a id="workflow-normal-form"></a>
 #### 规范形式
 
-同一个执行含义有多种写法：`chained [chained [node "A", node "B"], node "C"]` 与 `chained [node "A", node "B", node "C"]` 执行相同，只含一个 node 的 `chained [node "A"]` 与 `node "A"` 也相同。gen 编号、运行时逐层核对和 `--structure` 都使用 AST 的规范形式，`NodeId` 是规范形式中的路径。规范化由 `Framework.Language.AST.normalizeWorkflow` 定义，gen 与运行时共用，只做语义不变的改写：
+同一个执行含义有多种写法：`chain [chain [node "A", node "B"], node "C"]` 与 `chain [node "A", node "B", node "C"]` 执行相同，只含一个 node 的 `chain [node "A"]` 与 `node "A"` 也相同。gen 编号、运行时逐层核对和 `--structure` 都使用 AST 的规范形式，`NodeId` 是规范形式中的路径。规范化由 `Framework.Language.AST.normalizeWorkflow` 定义，gen 与运行时共用，只做语义不变的改写：
 
 | 写法 | 规范形式 | 依据 |
 | --- | --- | --- |
-| chained 里的 chained、parallel 里的 parallel | 拼入外层 | 顺序执行与并发汇合都满足结合律：结果按声明顺序拼接，失败按声明顺序取第一个 |
-| chained、parallel 中的空 chained／parallel | 删除 | 空 branch 成功并返回空结果，是单位元 |
-| 只剩一个子项的 chained／parallel | 这个子项 | 子项列表同质只是源码写法，裸 node 与只含它的 chained 执行相同 |
-| `lifelong [parallel [a, b]]` | `lifelong [a, b]` | lifelong 本来就把直接子项中的 parallel 拆成单元 |
+| chain 里的 chain、parallel 里的 parallel | 拼入外层 | 顺序执行与并发汇合都满足结合律：结果按声明顺序拼接，失败按声明顺序取第一个 |
+| chain、parallel 中的空 chain／parallel | 删除 | 空 branch 成功并返回空结果，是单位元 |
+| 只剩一个子项的 chain／parallel | 这个子项 | 子项列表同质只是源码写法，裸 node 与只含它的 chain 执行相同 |
 
-两类边界不改写，否则含义会变：
+这些改写在任何位置都成立，包括 lifelong 的单元内部和 alternative 的候选。lifelong 与 alternative 自身有专门的结构，不拼入外层：
 
-- **lifelong 的单元**：单元按自己的节奏领取交付、整体重复。`lifelong [chained [parallel [a, b]]]` 是一个单元，每轮等 a、b 都结束；`lifelong [parallel [a, b]]` 是两个独立单元。单元化简后若是 parallel，规范形式保留一层 chained。空单元仍由 gen 拒绝。
-- **alternative 的候选**：候选的判定 Context 取自整个候选子树，候选按位置保留，不拼入外层。`alternative [alternative [a, b], c]` 是两级选择，与 `alternative [a, b, c]` 不同。候选少于两个时没有可选的分支，gen 拒绝；只想在 Excu 的输出上执行一个分支时，用 `requests` 声明驱动。
+- **lifelong 的单元**：lifelong 的每个直接子项是一个单元，按自己的节奏领取交付、整体重复；parallel 在哪里都只是一轮之内的并发汇合，不划分单元。`lifelong [a, b]` 是两个独立推进的单元；`lifelong [parallel [a, b]]` 是一个单元，每轮 a、b 领取同一条交付、都结束后才进入下一轮。lifelong 不嵌套，空单元由 gen 拒绝。
+- **alternative 的候选**：候选是 node，按位置保留。一个候选就是一条 original chain，判定 Context 由它及其 Input 链的 `requires` 确定，候选之前要执行的步骤写在注册的 Input 链上。规范化之后仍是 branch 的候选由 gen 拒绝，`alternative [chain [node "A"], node "B"]` 化简为 `alternative [node "A", node "B"]` 后合法。候选少于两个时没有可选的分支，gen 拒绝；只想在 Excu 的输出上执行一个分支时，用 `requests` 声明驱动。
 
-不成立、因而不做的改写：parallel 不交换子项，因为结果与失败都按声明顺序；`chained [x, x]` 执行两次，不去重；`chained [parallel [a, b], c]` 不能分配成 `parallel [chained [a, c], chained [b, c]]`，后者让 c 执行两次。
+不成立、因而不做的改写：parallel 不交换子项，因为结果与失败都按声明顺序；`chain [x, x]` 执行两次，不去重；`chain [parallel [a, b], c]` 不能分配成 `parallel [chain [a, c], chain [b, c]]`，后者让 c 执行两次。
 
-Hanging 的挂载按源码位置给出。gen 规范化后把每处挂载迁移到覆盖同一子树的位置：保留下来的节点不变，被拼入外层的 chained／parallel 换成它各子项的位置。chained 与 parallel 自身不执行调用，覆盖范围与原来相同；lifelong 与 alternative 不会被消去，挂在它们上的会话与选择读取照常被覆盖。
+Hanging 的挂载按源码位置给出。gen 规范化后把每处挂载迁移到覆盖同一子树的位置：保留下来的节点不变，被拼入外层的 chain／parallel 换成它各子项的位置。chain 与 parallel 自身不执行调用，覆盖范围与原来相同；lifelong 与 alternative 不会被消去，挂在它们上的会话与选择读取照常被覆盖。
 
 #### alternative 的依据：effect 的差异（option）
 
@@ -747,16 +746,16 @@ lifelong 是第四种 branch，在交付就绪时反复 boot 其中的 target。
 
 ```haskell
 -- StreamDemo：先完成一次准备，再进入持续监控
-ast = chained [setup, monitor]
+ast = chain [setup, monitor]
 monitor = lifelong
-  [ chained [node "ShowTemperature", node "CheckTrend"]
-  , chained [node "ReportHeartbeat"]
+  [ chain [node "ShowTemperature", node "CheckTrend"]
+  , chain [node "ReportHeartbeat"]
   ]
 ```
 
-- **单元**：直接子项各为一个单元，直接子项是 parallel 时只拆这一层；单元之间独立推进、互不等待。拆分写入 Prototype，运行时不推测。
+- **单元**：每个直接子项是一个单元，子项里的 parallel 只在一轮之内并发；单元之间独立推进、互不等待。单元写入 Prototype，运行时不推测。
 - **一次执行**：单元逐次执行，每次执行是一个 frame。控制流到达 target 时先领取其订阅资产的一条新交付（有积压立即领取，没有就挂起），再 boot target；同一 frame 内每个资产只领取一次，各调用共享这份视图。target 调用按上文的有限完成规则结束，本次执行结束后才开始下一次，交付与调用捕获逐轮新建，普通资产的共享最新值继续保留。
-- **正常结束**：Stream handler 以 `streamEnd` 报告来源结束；会话封住发布，已发布的交付仍可领取。消费方 handler 以 `endStream` 结束自己的订阅：节点之后各轮跳过，同单元直接或经派生订阅它产物的位置，按本轮发布进度等待、跳过或结束订阅；单元不再有活读取位置时离开会话，会话的读取方全部离开时停止生产并回收只在会话中开启的 scope（[消费方结束](STREAM_LIFELONG.md#consumer-end)）。单元在所需来源结束并排空、或节点都结束订阅后正常结束，全部单元结束后 lifelong 返回一次 Succ（不带结果）。`chained [setup, monitor]` 先完成 setup；`chained [monitor, after]` 中 after 在 monitor 结束后执行，仍有消费单元未结束时不执行；`parallel [monitor, otherWork]` 两者同时运行。后继 `require` 读每个来源最新一次发布（含 lifelong 内部的发布与已结束会话的最后一条），单元交付逐轮固定，普通值沿用共享发布；资源持有见既有 scope 协议。规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
+- **正常结束**：Stream handler 以 `streamEnd` 报告来源结束；会话封住发布，已发布的交付仍可领取。消费方 handler 以 `endStream` 结束自己的订阅：节点之后各轮跳过，同单元直接或经派生订阅它产物的位置，按本轮发布进度等待、跳过或结束订阅；单元不再有活读取位置时离开会话，会话的读取方全部离开时停止生产并回收只在会话中开启的 scope（[消费方结束](STREAM_LIFELONG.md#consumer-end)）。单元在所需来源结束并排空、或节点都结束订阅后正常结束，全部单元结束后 lifelong 返回一次 Succ（不带结果）。`chain [setup, monitor]` 先完成 setup；`chain [monitor, after]` 中 after 在 monitor 结束后执行，仍有消费单元未结束时不执行；`parallel [monitor, otherWork]` 两者同时运行。后继 `require` 读每个来源最新一次发布（含 lifelong 内部的发布与已结束会话的最后一条），单元交付逐轮固定，普通值沿用共享发布；资源持有见既有 scope 协议。规则见 [Stream 规范：正常结束](STREAM_LIFELONG.md#end)。
 - **失败**：含 lifelong 的程序中，任何失败按临时规则终止整次运行（[Stream 第 9 节](STREAM_LIFELONG.md#failures)），不同于有限 parallel 不取消其他分支的规则。正常结束与节点订阅结束已由[结束传播阶段](NEXT_STAGES.md#stage-6)实现，不作为 Failure；局部失败恢复仍属开放专题。
 - **合法性**：lifelong 不嵌套、不含空分支；其中每个 target 恰好用 `streams` 订阅一个持续资产，见 [Stream 第 5.2 节](STREAM_LIFELONG.md#static)。
 
@@ -833,7 +832,7 @@ EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope
 **状态：已实现（2026-11-13）。** SDK 同时观察当前使用者与剩余程序：仍可能触达的实例保留，不可达时同步回收。handler 只实现怎样关闭，AST、Input 与 demands 提供何时不再使用的依据。
 
 - **当前使用**：每次 AST 入口完整 chain 建立一份 `ScopeUser`，open／require 选中的实例加入其中，等待 opening 也计入。同一入口内的 Context 生产继承该登记。业务、Error 诊断和受控结果消费全部结束后才撤销。每次 rawemit 的 parser 继承来源已使用的实例，并在该条解析结束后撤销自己的登记，Derive 每次处理独立登记；会话跨步骤复用由待用帧保持，不累积实际使用。
-- **待用关系**：gen 在 `protoScopeOpenings` 中记录每个开启位置各参数可能的生产节点或会话来源，包括本节点和 alternative 交接的捕获。执行帧保存待执行、执行中、完成和跳过的节点。有限运行使用根帧，lifelong 单元每轮使用子帧，独立生产会话另有后续步骤的待用帧；节点完成、chained 短路及 alternative 排除候选都会撤销相应待用关系，更新幂等。
+- **待用关系**：gen 在 `protoScopeOpenings` 中记录每个开启位置各参数可能的生产节点或会话来源，包括本节点和 alternative 交接的捕获。执行帧保存待执行、执行中、完成和跳过的节点。有限运行使用根帧，lifelong 单元每轮使用子帧，独立生产会话另有后续步骤的待用帧；节点完成、chain 短路及 alternative 排除候选都会撤销相应待用关系，更新幂等。
 - **实际匹配**：运行时比较参数 Binding 的生产身份，不把 NodeId 当实例身份。根帧下所有待用帧参与查询，固定捕获和伴随交付优先，未捕获的普通参数使用共享最新值；确定重新生产参数的未开始开启不保留旧实例。最新值被覆盖也会重新检查依赖该参数的 scope。执行帧不复制值表，跨帧读取不改变 Binding 的归属帧；完整规则见[Scope 开启计划与待用查询](EFFECT_GRAPH.md#scope-opening-retention)。
 - **值保留**：待交付、已捕获和合法后继可读的 Binding，按已有 ownership 参与回收判断；领取先登记执行持有，再撤销队列持有。资源范围与撤销边界见[Stream 资源边界](STREAM_LIFELONG.md#binding-retention)。
 - **依赖与执行**：没有当前使用者、没有匹配的待用节点或值保留、没有仍保留它的子 scope 时执行 close。ScopeTree 提供父子候选，运行时由同一受控链实际使用的实例补齐子实例的 `scopeParents`；子实例只保留这些具体父实例，不保留同注册的全部实例。关闭遵守子先父后，在触发不可达的线程中同步完成后才继续后继，不另设清理线程。仅保存普通资产快照不自动延长生产资源的存续；仍需实际使用或匹配的后继待用依据。

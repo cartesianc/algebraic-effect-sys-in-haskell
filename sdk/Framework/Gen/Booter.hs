@@ -40,10 +40,8 @@ numberWorkflow effects tree = cata number tree [] False
       when inside $ Left (InvalidLifelong path "lifelong cannot be nested")
       nonEmpty path True children
       parts <- descend path True children
-      -- 直接子项各为一个单元；直接子项是 parallel 时拆这一层，不穿透更深的结构。
-      let units = concat [case part of
-            ParallelAt _ inner -> map workflowNode inner
-            _ -> [workflowNode part] | part <- parts]
+      -- 每个直接子项是一个单元；子项里的 parallel 只在一轮之内并发。
+      let units = map workflowNode parts
       subscriptions <- mapM subscription [(node', selected) | part <- parts, NodeAt node' selected <- allWorkflow part]
       -- 先沿用本边界已经挂载的操作输出，再为其余订阅建立独立生产；副产物也登记为会话资产。
       sessions <- planSessions effects path parts subscriptions
@@ -56,6 +54,10 @@ numberWorkflow effects tree = cata number tree [] False
       unless (length children >= 2) $ invalid path ("alternative needs at least two candidates"
         ++ "; to run a single branch on a parsed asset, declare requests for that asset instead")
       parts <- descend path inside children
+      -- 候选是末端：一个候选就是一条 original chain，判定 Context 由它（连同 Input 链）的 requires 确定。
+      -- 候选里要先执行的步骤写在注册的 Input 链上；规范化之后的单元素 chain 已经是 node。
+      unless (length [() | NodeAt {} <- parts] == length parts) $
+        invalid path ("alternative candidates must be nodes; put the steps before a candidate on its Input chain")
       options <- mapM (candidateCases effects path) parts
       source <- case foldr intersect (nub (concatMap (map fst) options)) (map (nub . map fst) options) of
         [selected] -> Right selected
@@ -121,9 +123,7 @@ planSessions effects boundary children subscriptions = do
   checkCoverage sessions
   pure sessions
   where
-    units = concat [case child of
-      ParallelAt _ inner -> map workflowNode inner
-      _ -> [workflowNode child] | child <- children]
+    units = map workflowNode children
     workflow = LifelongAt boundary (LifelongProto units subscriptions []) children
     mounted = [(node', effect) | NodeAt node' selected <- concatMap allWorkflow children
       , effect <- effects, effectName effect == selected]
@@ -149,7 +149,7 @@ planSessions effects boundary children subscriptions = do
       let selected = if null nodes then bootPlan effects producer else ReuseOutput nodes
       pure (SessionProto contractType selected
         [boundary ++ [-1, index, step] | step <- [0 .. sessionSteps selected - 1]])
-    -- 订阅边之外，还要计入 workflow 的启动前置。否则 chained [读 A, 产 A]
+    -- 订阅边之外，还要计入 workflow 的启动前置。否则 chain [读 A, 产 A]
     -- 虽然注册关系无环，第一条增量仍只能由正在等待它的后继产生。
     -- 保守地纳入所有候选前驱：不依赖运行时恰好选中某个分支才具有进展。
     -- SCC 只检测这份启动依赖图；发现环就拒绝，不删边来强行安排运行。
