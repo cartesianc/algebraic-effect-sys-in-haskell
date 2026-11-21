@@ -235,7 +235,7 @@ runFetchPage :: Effects.App [String]
 runFetchPage =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runFetchPage" [("ExtractPage", () <$ getStartPageSummary)] []
+  . SDK.atomicHandle "runFetchPage" [] []
   . SDK.withScopeDependencies ["CrawlSession"]
   . SDK.enterHandler "FetchPage" $
     getStartURL >> openCrawlSession >> call @"FetchPage" @"fetchPage" Effects.fetchPage
@@ -264,16 +264,18 @@ readStartPageSummary =
 
 runPrintPage :: Effects.App [String]
 runPrintPage =
-  SDK.handleFailure
+  SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure
   . SDK.atomicHandle "runPrintPage" [] []
+  . SDK.withScopeDependencies ["CrawlSession"]
   . SDK.enterHandler "PrintPage" $
-    call @"PrintPage" @"printSummary" Effects.printSummary
+    getStartPageSummary >> call @"PrintPage" @"printSummary" Effects.printSummary
 
 runFetchLinkedPage :: Effects.App [String]
 runFetchLinkedPage =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runFetchLinkedPage" [("ExtractLinkedPage", () <$ getLinkedPageSummary)] []
+  . SDK.atomicHandle "runFetchLinkedPage" [] []
   . SDK.withScopeDependencies ["CrawlSession"]
   . SDK.enterHandler "FetchLinkedPage" $
     getLinkedURL >> openCrawlSession >> call @"FetchLinkedPage" @"fetchPage" Effects.fetchPage
@@ -302,10 +304,12 @@ readLinkedPageSummary =
 
 runPrintLinkedPage :: Effects.App [String]
 runPrintLinkedPage =
-  SDK.handleFailure
+  SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure
   . SDK.atomicHandle "runPrintLinkedPage" [] []
+  . SDK.withScopeDependencies ["CrawlSession"]
   . SDK.enterHandler "PrintLinkedPage" $
-    call @"PrintLinkedPage" @"printSummary" Effects.printSummary
+    getLinkedPageSummary >> call @"PrintLinkedPage" @"printSummary" Effects.printSummary
 
 getCrawlSessionInfo :: Effects.App Effects.CrawlSessionInfo
 getCrawlSessionInfo =

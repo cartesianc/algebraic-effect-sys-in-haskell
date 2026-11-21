@@ -253,12 +253,13 @@ assembleProgram plan = do
       valid (length steps == length (sessionMounts described)) ("Session steps differ for " ++ sessionAsset described)
       pure [EntryMount mount SessionChain (sessionAsset described) target method
         | (mount, (target, method)) <- zip (sessionMounts described) steps]
-    -- 保留原注入顺序：同一 anchor 内先普通 Context，再持续 Context，各自按注册顺序。
+    -- 普通资产只经 requests 生产，句柄执行后不再注入挂在它下面的普通 Context；
+    -- 只有持续 Context 仍挂在句柄输出上。同一 anchor 内按注册顺序。
     outputs =
       [ OutputConnection anchorMethod parser (effectName producer) role
       | anchor <- effects, (anchorRole, anchorMethod) <- effectMethods anchor
       , anchorRole `elem` [HandlerMethod, ScopeOpen]
-      , role <- [ContextRequest, ContextStream], producer <- effects
+      , role <- [ContextStream], producer <- effects
       , effectAnchor producer == Just (effectName anchor)
       , Just parser <- [lookup role (effectMethods producer)] ]
 

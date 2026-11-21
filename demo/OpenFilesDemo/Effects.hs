@@ -47,17 +47,11 @@ effects =
       , input = "HoldFiles"
       , demands = []
       }
-  -- 挂在 ReleaseFiles 下：它成功后记下本链持有的文件，scope 关闭后仍可读取。
-  , EffectSpec
-      { name = "InspectionSnapshot"
-      , typing = Context { asset = Asset @FileHandles "InspectedFiles", parser = Just "snapshotFiles", require = True, stream = False }
-      , input = "ReleaseFiles"
-      , demands = [requires "OpenedFiles"]
-      }
+  -- 只 requests 文件名（不开启文件），检查前一条链关闭后各文件都已释放。
   , EffectSpec
       { name = "FinishInspection"
       , typing = Excu { handler = Just "finishInspection" }
       , input = "Root"
-      , demands = [requires "InspectedFiles"]
+      , demands = [requests "FileNames", requires "FileNames"]
       }
   ]

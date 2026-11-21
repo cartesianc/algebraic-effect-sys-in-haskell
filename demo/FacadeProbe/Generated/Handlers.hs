@@ -404,14 +404,14 @@ runMarkReply =
 runReadReport :: Effects.App [String]
 runReadReport =
   SDK.handleFailure
-  . SDK.atomicHandle "runReadReport" [("ReportCounter", () <$ getReportStats)] []
+  . SDK.atomicHandle "runReadReport" [] []
   . SDK.enterHandler "ReadReport" $
     call @"ReadReport" @"readText" Effects.readText
 
 runReadReply :: Effects.App [String]
 runReadReply =
   SDK.handleFailure
-  . SDK.atomicHandle "runReadReply" [("ReplyCounter", () <$ getReplyStats)] []
+  . SDK.atomicHandle "runReadReply" [] []
   . SDK.enterHandler "ReadReply" $
     runMarkReply >> call @"ReadReply" @"readText" Effects.readText
 
@@ -444,19 +444,19 @@ runShowReport =
   SDK.handleFailure
   . SDK.atomicHandle "runShowReport" [] []
   . SDK.enterHandler "ShowReport" $
-    call @"ShowReport" @"showCount" Effects.showCount
+    getReportStats >> call @"ShowReport" @"showCount" Effects.showCount
 
 runShowReply :: Effects.App [String]
 runShowReply =
   SDK.handleFailure
   . SDK.atomicHandle "runShowReply" [] []
   . SDK.enterHandler "ShowReply" $
-    call @"ShowReply" @"showCount" Effects.showCount
+    getReplyStats >> call @"ShowReply" @"showCount" Effects.showCount
 
 runInspectReport :: Effects.App [String]
 runInspectReport =
   SDK.handleFailure
-  . SDK.atomicHandle "runInspectReport" [("ReportBlank", () <$ getReportEmpty), ("ReportFilled", () <$ getReportText)] []
+  . SDK.atomicHandle "runInspectReport" [] []
   . SDK.enterHandler "InspectReport" $
     call @"InspectReport" @"inspectFile" Effects.inspectFile
 

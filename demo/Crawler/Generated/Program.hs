@@ -11,7 +11,7 @@ import qualified Crawler.Generated.Handlers as Handlers
 
 
 -- 仅汇总所选末端的成功结果，不保存共享绑定或增加完成包装。
-data Results = FetchPageResult () | FetchLinkedPageResult () | PrintPageResult () | PrintLinkedPageResult ()
+data Results = PrintPageResult () | PrintLinkedPageResult ()
   deriving Show
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
@@ -25,9 +25,7 @@ compiledEntries = do
       target label action = SDK.targetApp label emptyContexts scopes
         (SDK.withErrorHandlers Handlers.errorHandlers action)
   pure
-    ( [ target "FetchPage" (FetchPageResult () <$ Handlers.runFetchPage)
-      , target "FetchLinkedPage" (FetchLinkedPageResult () <$ Handlers.runFetchLinkedPage)
-      , target "PrintPage" (PrintPageResult () <$ Handlers.runPrintPage)
+    ( [ target "PrintPage" (PrintPageResult () <$ Handlers.runPrintPage)
       , target "PrintLinkedPage" (PrintLinkedPageResult () <$ Handlers.runPrintLinkedPage)
       ]
     , []

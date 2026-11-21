@@ -65,7 +65,6 @@ executable crawler-demo
   main-is: Crawler/Main.hs
   other-modules:
       Crawler.AST
-      Crawler.Workflow.ParsePages
       Crawler.Workflow.PrintPages
       Crawler.Effects
       Crawler.Types

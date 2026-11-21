@@ -77,6 +77,7 @@ advanceComposition state = case state of
     diagnostic (checkMiddleware effects marks)
     pure (Numbered namespace (PrototypePlan specifications effects workflow marks))
   Numbered namespace plan -> do
+    diagnostic (checkRequested (plannedEffects plan) (plannedWorkflow plan))
     assembly <- diagnostic (assembleProgram plan)
     unit <- bindProgram namespace plan (declareEffects (plannedRegistrations plan)) assembly
       (controlReads (plannedEffects plan) (plannedWorkflow plan))
@@ -735,6 +736,26 @@ withProducerReferences connections definitions =
       | connection <- connections, outputAnchor connection == methodIdentity definition]) }
   | definition <- definitions]
 
+-- 普通资产只由 requests 生产：requests 是前驱，在请求方入口执行该资产的整条生产链，
+-- 回调更新资产的当前值；requires 只被动读取这个值。因此被 requires 的普通资产必须有某个
+-- effect requests 它。alternative 的判定资产由选择读取（chooseCase）产生，不在此列；
+-- 持续资产由会话驱动，另按持续协议检查。
+checkRequested :: [EffectProto String] -> WorkflowTree -> Either (PrototypeError String) ()
+checkRequested effects workflow = valid (null missing)
+  ("Asset never requested: " ++ intercalate "; " missing
+    ++ ". Ordinary assets are produced only by requests; add requests \"<asset>\" to the reader or to an effect"
+    ++ " on its Input chain")
+  where
+    requested = [demandContract demand | effect <- effects, demand <- effectDemands effect
+      , demandAccess demand == RequestAccess]
+    continuous = [contract | effect <- effects, effectContinuous effect, Just contract <- [effectProduces effect]]
+    deciding = [contract | AlternativeAt _ choice _ <- allWorkflow workflow, (_, caseName) <- alternativeCases choice
+      , effect <- effects, effectName effect == caseName, Just contract <- [effectProduces effect]]
+    missing = nub [contract ++ " (required by " ++ effectName effect ++ ")"
+      | effect <- effects, demand <- effectDemands effect, demandAccess demand == RequireAccess
+      , let contract = demandContract demand
+      , contract `notElem` requested, contract `notElem` continuous, contract `notElem` deciding]
+
 -- 首次尚无 Handlers 时仅生成契约；有源码快照后必须另外执行这个驱动检查。
 checkDriven :: Assembly String -> Prototype String -> Either (PrototypeError String) ()
 checkDriven assembly prototype = valid (null undriven)
@@ -742,7 +763,11 @@ checkDriven assembly prototype = valid (null undriven)
     ++ "; no terminal reaches its production or the handle it hangs below")
   where
     reached = reachableMethods (withProducerReferences (assemblyOutputs assembly) (protoMethods prototype))
-      (map chainEntry (protoChains prototype))
+      (map chainEntry (protoChains prototype) ++ deciding)
+    -- alternative 的选择读取（chooseCase）自己运行各判定 parser，不经句柄注入。
+    deciding = [parser | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype)
+      , (_, caseName) <- alternativeCases choice, effect <- protoEffects prototype, effectName effect == caseName
+      , Just parser <- [lookup ContextRequest (effectMethods effect)]]
     undriven = [methodIdentity definition | definition <- protoMethods prototype
       , methodRole definition == ContextRequest, methodIdentity definition `notElem` reached]
 

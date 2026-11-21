@@ -445,7 +445,7 @@ typing = Context { asset = Asset @PageURL "StartURL", parser = Just "startURL", 
 - **`parser`**（必填）：产出表示类型值的 handler，签名 `m 表示类型`，直接返回 `pure (PageURL ...)`，不包资产构造器。gen 生成 `getStartURL`：执行 Input 前驱和 parser，再包成资产发布。parser 是细化 parser：挂在句柄或 Pure 下时，它把 `rawinput` 读到的 list 解析成表示类型，作用类似 tokenize；值的变换交给 Pure。
 - **`require`**：对普通 Context，`True` 开放 `requires` 和生成的读取方法（例如 `readStartURL`），`False` 关闭这条读取路径。显式 `requests` 的成功生产仍走发布协议。
 - **`stream`**：`True` 声明持续资产，读取方法是 `streamStartURL`。当且仅当它的 Input 链被持续驱动时声明（挂在 Stream 下，或链上有 `streams` demand），且必须同时 `require = True`。资产值的表示仍由业务声明，见[持续资产与 lifelong](#stream)。
-- **不能作为 AST 末端**：Context 在它挂接的句柄执行时产出，被 `requests` 驱动或被 alternative 的选择读取驱动时产出；被读取时不产出。
+- **不能作为 AST 末端**：普通 Context 只在被 `requests` 驱动或被 alternative 的选择读取驱动时产出，它挂接的句柄单独执行时不产出；持续 Context 由会话驱动；被读取时不产出。
 - **命名**：资产名决定资产类型和入口方法名，要按业务含义起名（`StartURL`，而不是 `LoadStartURL`），不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
 
 #### `Pure`
@@ -524,8 +524,8 @@ input = "FileSession"
 - **取值**：`"Root"`（没有上游），或另一个**非 Context、非 Error、非 Middleware** 的 effect 名；Middleware 自己写保留名 `"None"`，其他类别不能写 `"None"`。Context 只能经 `demands` 接入，不能写在 `input` 里。只有 Context 和 Pure 可以把 Pure 写在 `input` 里。
 - **含义**：前驱。gen 在这个 effect 的入口中先执行 `input` 指向的 effect（连同它自己的前驱），再执行绑定的 handler；方法体不调用上游，也不捕获前驱的失败。前驱失败后的改道用 AST 的 `alternative`。
 - **已开启的 scope 不重开**：前驱是 Scoped 时，同一条链里已开启的实例直接复用，不再执行 `open`。
-- **挂接**：Context 的 `input` 指向 Excu、Scoped 或 Stream 时，它就挂在这个句柄下，parser 用 `rawinput` 读取句柄入口（`handler`／`open`）本次交出的 list；`close` 没有挂接点。挂接的 Context 不把句柄当作前驱重跑。例如 [FacadeProbe](../demo/FacadeProbe/Effects.hs) 的 `ReportCounter` 挂在 `ReadReport` 下，把读到的文本解析成行数。
-- **经 Pure 挂接**：Context 或 Pure 的 `input` 指向 Pure 时，`rawinput` 读的是这个 Pure 变换后的 list；整串 Pure 的挂接点是最上面的句柄。例如 [Crawler](../demo/Crawler/Effects.hs) 的 `FetchPage` → `KeepPageBody`（Pure，去掉空白正文）→ `ExtractPage`（Context，解析成摘要）：抓取在 AST 中执行后，本次输出经 Pure 注入解析；[FileDemo](../demo/FileDemo/Effects.hs) 的 `LocateFile` → `ValidateFileName`（Pure）→ `FileLocation`（Context）则由 `requests` 驱动。
+- **挂接**：Context 的 `input` 指向 Excu、Scoped 或 Stream 时，它就挂在这个句柄下，parser 用 `rawinput` 读取句柄入口（`handler`／`open`）本次交出的 list；`close` 没有挂接点。挂接的 Context 不把句柄当作前驱重跑：被 `requests` 时，parser 的 `rawinput` 启动这个句柄。例如 [FacadeProbe](../demo/FacadeProbe/Effects.hs) 的 `ReportCounter` 挂在 `ReadReport` 下，`ShowReport` requests 它的行数时先读取文本，再解析成行数。
+- **经 Pure 挂接**：Context 或 Pure 的 `input` 指向 Pure 时，`rawinput` 读的是这个 Pure 变换后的 list；整串 Pure 的挂接点是最上面的句柄。例如 [Crawler](../demo/Crawler/Effects.hs) 的 `FetchPage` → `KeepPageBody`（Pure，去掉空白正文）→ `ExtractPage`（Context，解析成摘要）：`PrintPage` requests 摘要时依次执行抓取、Pure 与解析；[FileDemo](../demo/FileDemo/Effects.hs) 的 `LocateFile` → `ValidateFileName`（Pure）→ `FileLocation`（Context）同样由 `requests` 驱动。
 - **限制**：
   - input 链不能成环；
   - 链上的 Scoped 必须声明 `open`；`close` 可为 `Nothing`，此时实例不可达后只移出运行表；
@@ -760,15 +760,15 @@ ast = operateFile
 #### `chain`
 
 ```haskell
--- Crawler/AST.hs：先并行抓取，全部成功后顺序打印
-ast = chain [parsePages, printPages]
+-- Crawler/Workflow/PrintPages.hs：依次打印；每个打印经 requests 先抓取并解析本页
+printPages = chain [node "PrintPage", node "PrintLinkedPage"]
 ```
 
 #### `parallel`
 
 ```haskell
--- Crawler/Workflow/ParsePages.hs
-parsePages = parallel [node "FetchPage", node "FetchLinkedPage"]
+-- FacadeProbe/AST.hs 节选：两份文件同时写入
+parallel [node "WriteReport", node "WriteReply"]
 ```
 
 #### `alternative`
@@ -1129,7 +1129,7 @@ reading #2: 24.0 C
 
 - **`requests` 驱动**：入口在 Input 之前执行资产的 `getT`，每次重新生产，成功后以当前入口的 origin 保存并替换该 origin 的绑定；生产失败时不覆盖旧值，原失败继续传播。
 - **`require` 读取**：handler 的 `require @T` 按 effect 路由到 refined asset。先读调用捕获，否则读运行级最新 Binding，缺值等待；读取不生产。读到后固定，其他调用的新发布不覆盖它。
-- **值从哪里来**：`requests` 驱动、alternative 的选择读取、挂接句柄的注入，以及 Stream 会话。要读的值必须有人驱动；例如 FileDemo 的 `FileResource` 写了 `[requests "FileName", requires "FileName"]`，取得文件前先驱动文件名的生产链（`LocateFile` → `ValidateFileName` → `FileLocation`），`acquireFile` 再读取它。
+- **值从哪里来**：`requests` 驱动、alternative 的选择读取，以及 Stream 会话。被 `requires` 的普通资产必须有某个 effect `requests` 它，否则生成时报 `Asset never requested`；例如 FileDemo 的 `FileResource` 写了 `[requests "FileName", requires "FileName"]`，取得文件前先驱动文件名的生产链（`LocateFile` → `ValidateFileName` → `FileLocation`），`acquireFile` 再读取它。
 - **跨 node 保存**：同一运行每个普通 Context 保存一份最新发布，不按 AST 位置过滤。并发更新按成功提交的先后覆盖，已有捕获保持原生产身份；资源 Context 仍沿本链 open 和 owner 定位。
 - **确定性保证什么**：refined asset 的 Context 来源与装配规则静态确定。同一来源并发更新时，首次读取可捕获不同次发布；SDK 按上述最新值协议处理，详见[确定性的边界](CORE_DESIGN.md#composition-polymorphism)。
 - **结构上没有来源先报错**：gen 从空供值集推演可启动的发布并求固定点；无供值且没有启动种子的读取被拒绝。`parallel [readX, produceX]` 可以等待；只有 `chain [readX, produceX]` 且没有其他 X 来源，后继被等待挡住，生成期拒绝。完整边界见[供值推演](EFFECT_GRAPH.md#missing-source)。
@@ -1140,9 +1140,9 @@ reading #2: 24.0 C
 
 ### 挂在句柄下的 Context
 
-- **句柄在操作链里执行时**：句柄返回后，SDK 自动用这次的输出运行挂在下面的 parser（`rawinput` 由本次输出回答），产出的值保存起来，不会再执行一次句柄。普通 Context 的解析失败只留在这次注入里，不改变原链结果；值没有发布，之后读取按当前等待规则处理：仍可能发布则等待，已确定耗尽则报缺值。持续 Context 的输出复用走 Stream 失败协议，见[持续资产与 lifelong](#stream)。
+- **requests 是前驱**：`requests "T"` 让 gen 把 T 的整条生产链（Context 沿 Input 经 Pure 到句柄，句柄再带上自己的前驱）展开进请求方的入口，在方法体之前执行。每个请求方每次执行各走一遍；成功的值写入 T 的当前值，`requires "T"` 读这个值。句柄单独在操作链里执行时，不运行挂在它下面的普通 parser。持续 Context 的输出复用走 Stream 失败协议，见[持续资产与 lifelong](#stream)。
 - **显式驱动与选择读取**：`requests` 启动 parser 后，`rawinput` 可以驱动所挂句柄。`alternative` 已经执行了共同 Excu，只让候选的判定 parser 重读同一份输出。仅挂在该 Excu 上的其他普通 parser 要由另一次合法生产驱动。
-- **中间有一串 Pure 时**：挂接点是最上面的句柄，句柄的输出依次经过每个 Pure 再交给 parser。注入时 Pure 读到的是本次输出，不重新执行句柄；显式 `requests` 可经 Pure 执行句柄入口，选择判定则经 Pure 变换已取得的输出。Pure 的 `raise` 按解析失败处理：普通 Context 注入时留在注入里，显式驱动时向上传播，持续 Context 的输出复用走 Stream 失败协议。
+- **中间有一串 Pure 时**：挂接点是最上面的句柄，句柄的输出依次经过每个 Pure 再交给 parser。`requests` 经 Pure 执行句柄入口，选择判定则经 Pure 变换已取得的输出。Pure 的 `raise` 按解析失败处理：`requests` 驱动时向请求方传播，选择判定时只表示这一支没有值，持续 Context 的输出复用走 Stream 失败协议。
 
 所以 Crawler 先并行抓取，打印时直接 `require` 解析好的摘要，不再重新抓取。
 
@@ -1261,7 +1261,8 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | `Types.hs` 不是固定形式：和类型、非 `String` 字段、缺少或多余的 deriving、import、instance、类型同义词等；`Asset @T` 的 `T` 不是 `String`、`[String]` 或 `Types.hs` 中的类型 | 按[资产书写](#types)改成单构造器、`String` 字段、`deriving (Eq, Show)`；数字保存文本，句柄留在 handler 执行中 |
 | AST 的 node 选中了 Pure、Context、Error 或 Stream；别的方法直接调用到 Stream 的 handler | node 只挂 Excu 或 Scoped；Pure 与 Context 在生产链中由挂接、驱动、合法读取或生产会话带起；Stream 只由生产会话和挂在它下面的 parser 调用，Error 由失败协议调用 |
 | 挂接的 Context 经别的方法、而不是直接或经 Pure 用 `rawinput` 到达它挂接的句柄 | parser 用 `rawinput` 读取挂接句柄，中间只经过 Pure |
-| 某个 Context 从 AST 出发永远到不了：没有挂接句柄、`requests` 驱动或选择读取，也没有 lifelong 订阅生产会话带起它（只被 `requires` 读取不算） | 在读取它的链上写 `requests` 驱动它，或把带起它的消费链加进 AST，或删掉这个 Context |
+| 某个 Context 从 AST 出发永远到不了：没有 `requests` 驱动或选择读取，也没有 lifelong 订阅生产会话带起它（只被 `requires` 读取、或只挂在被执行的句柄下都不算） | 在读取它的链上写 `requests` 驱动它，或把带起它的消费链加进 AST，或删掉这个 Context |
+| `Asset never requested`：某个普通资产被 `requires`，但没有任何 effect `requests` 它 | 给读取方或它 Input 链上的 effect 加上 `requests "资产名"`；alternative 的判定资产与持续资产不受此限 |
 | 已到达的普通读取没有可启动的供值或捕获 | 在等待前或独立分支驱动生产；require 不自行生产。详见供值固定点与等待规则 |
 | 持续后继有多个互不先后的已结束 lifelong 会话 | 明确会话的先后或细化资产；普通资产多处发布使用共享最新值，不适用此歧义规则 |
 | 持续资产的声明不成立：Context 的 `stream` 与 Input 链是否持续驱动不一致，或 `stream = True` 却没有 `require = True`；Stream 下不是恰好一个 Context，或 parser 以外的 effect 以 Stream 为 `input`；`streams` 订阅了普通资产，或由 Excu、Scoped 以外的 effect 声明 | 按[持续资产的声明规则](#stream)修正 |
@@ -1286,7 +1287,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | 示例 | 演示内容 | 运行 |
 | --- | --- | --- |
 | [FileDemo](../demo/FileDemo) | 文件资源的开启、读写、自动关闭，Error 处置；按文件状态用 `alternative` 选择写首行或追加 | `cabal run file-demo` |
-| [Crawler](../demo/Crawler) | 并行抓取、挂接的 Context 解析，顺序打印时读取解析结果；两条链共用抓取、解析与打印 handler，用不同资产区分同类数据 | `cabal run crawler-demo` |
+| [Crawler](../demo/Crawler) | 每个打印 requests 本页摘要，gen 把抓取、去空白、解析展开为它的前驱；两条链共用抓取、解析与打印 handler，用不同资产区分同类数据 | `cabal run crawler-demo` |
 | [OpenFilesDemo](../demo/OpenFilesDemo) | 一份资产保存多个文件路径；批量获取失败时回滚标记，成功后由 scope 自动清理 | `cabal run open-files-demo` |
 | [ScopeInstancesDemo](../demo/ScopeInstancesDemo) | 三条使用闭包共用一个 handler，按当前参数各自开启实例，退出时关闭，后一条重新开启 | `cabal run scope-instances-demo` |
 | [ScopeReuseDemo](../demo/ScopeReuseDemo) | 并行的链共享同一个资源实例 | `cabal run scope-reuse-demo` |

@@ -2,7 +2,7 @@ module Crawler.Workflow.PrintPages (printPages) where
 
 import Framework.SDK (AST, chain, node)
 
--- 打印 instance require 解析模块产出的摘要，不再抓取。
+-- 两次打印依次执行；每次先经 requests 抓取并解析本页，再打印摘要。
 printPages :: AST
 printPages = chain
   [ node "PrintPage"

@@ -206,7 +206,7 @@ instance SDK.RawOutputs (Wrap effect method)
 runLocateFile :: Effects.App [String]
 runLocateFile =
   SDK.handleFailure
-  . SDK.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] []
+  . SDK.atomicHandle "runLocateFile" [] []
   . SDK.enterHandler "LocateFile" $
     call @"LocateFile" @"locateFile" Effects.locateFile
 
@@ -277,7 +277,7 @@ runReadFile :: Effects.App [String]
 runReadFile =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runReadFile" [("BlankText", () <$ getFileBlank), ("FilledText", () <$ getFileWritten)] []
+  . SDK.atomicHandle "runReadFile" [] []
   . SDK.withScopeDependencies ["FileSession"]
   . SDK.enterHandler "ReadFile" $
     openFileSession >> call @"ReadFile" @"readFileContent" Effects.readFileContent

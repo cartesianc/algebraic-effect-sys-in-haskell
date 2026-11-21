@@ -37,9 +37,12 @@ effects =
   , excu "MarkReply" "markRead" "Root" []
   , excu "ReadReport" "readText" "Root" [requires "ReportPath"]
   , excu "ReadReply" "readText" "MarkReply" [requires "ReplyPath"]
-    -- 同一个 parser，挂在不同的句柄下
+    -- 同一个 parser，挂在不同的句柄下；只在被 requests 时执行
   , context "ReportCounter" (Asset @LineCount "ReportStats") "countLines" "ReadReport" []
   , context "ReplyCounter" (Asset @LineCount "ReplyStats") "countLines" "ReadReply" []
+    -- 打印 requests 行数：gen 把读取链展开为它的前驱
+  , excu "ShowReport" "showCount" "Root" [requests "ReportStats", requires "ReportStats"]
+  , excu "ShowReply" "showCount" "Root" [requests "ReplyStats", requires "ReplyStats"]
     -- 同一个 Stream parser 和消费者
   , stream "FeedA" "nextA"                  -- Input 为 Root 的 Stream
   , continuous "ParserA" (Asset @Level "LevelA") "parseLevel" "FeedA"
@@ -86,12 +89,13 @@ instance ShowLevelLayer m => ShowLevelHandler m where
 
 交付编号是 `stream @Level` 读到的 x:xs 的长度：本次交付加上同一会话中更早的交付（[持续资产按 x:xs 读取](../../docs/STREAM_LIFELONG.md#flow)）。两个来源共用 parser 和消费 handler，各自的会话分别计数。
 
-### 4. AST.hs：不变
+### 4. AST.hs
+
+读取不单独挂载：ShowReport、ShowReply 经 requests 在自己的入口里先读取、解析，再打印。
 
 ```haskell
 ast = chain
   [ parallel [node "WriteReport", node "WriteReply"]
-  , parallel [node "ReadReport", node "ReadReply"]
   , chain [node "ShowReport", node "ShowReply"]
   , alternative [node "OnBlank", node "OnFilled"]
   , lifelong [node "ShowA", node "ShowB"]

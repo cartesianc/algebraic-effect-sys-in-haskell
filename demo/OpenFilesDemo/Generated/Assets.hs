@@ -13,13 +13,6 @@ generatedAssets =
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "InspectedFiles", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 1}
-      , assetConstructors =
-          [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "InspectedFiles", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 26}
-          ]
-      , assetFields = []
-      }
-  , Asset
       { assetType = AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "OpenedFiles", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 25, assetColumn = 1}
       , assetConstructors =
           [ AssetSymbol {assetModule = "OpenFilesDemo.Generated.Effects", assetName = "OpenedFiles", assetFile = "demo/OpenFilesDemo/Generated/Effects.hs", assetLine = 25, assetColumn = 23}

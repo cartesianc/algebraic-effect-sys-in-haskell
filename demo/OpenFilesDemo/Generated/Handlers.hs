@@ -15,7 +15,7 @@
 
 {-# OPTIONS_GHC -Werror=missing-methods #-}
 
-module OpenFilesDemo.Generated.Handlers (handlerSourceFingerprint, getFileNames, readFileNames, getOpenedFiles, readOpenedFiles, openFileSession, closeFileSession, runHoldFiles, runInspectFiles, runReleaseFiles, getInspectedFiles, readInspectedFiles, runFinishInspection, newScopeHandlers, errorHandlers) where
+module OpenFilesDemo.Generated.Handlers (handlerSourceFingerprint, getFileNames, readFileNames, getOpenedFiles, readOpenedFiles, openFileSession, closeFileSession, runHoldFiles, runInspectFiles, runReleaseFiles, runFinishInspection, newScopeHandlers, errorHandlers) where
 
 import qualified Framework.Generated as SDK
 import qualified OpenFilesDemo.Generated.Effects as Effects
@@ -71,10 +71,6 @@ instance CloseFilesLayer m => CloseFilesHandler m where
     liftIO (putStrLn ("[close] released " ++ show (length paths) ++ " files"))
     rawoutput []
 
--- 挂在 ReleaseFiles 下，记下本链持有的文件；值只经资产流动，关闭后的检查读取这份快照，不再 require 已关闭的资源。
-instance SnapshotFilesLayer m => SnapshotFilesHandler m where
-  snapshotFiles = require @FileHandles
-
 -- HoldFiles 与 ReleaseFiles 共用：Input 已开启文件，本链只持有它们，链退出后 SDK 自动关闭。
 instance HoldFilesLayer m => HoldFilesHandler m where
   holdFiles = rawoutput []
@@ -103,10 +99,11 @@ instance InspectFilesLayer m => InspectFilesHandler m where
     -- 链退出后自动关闭；后续 Node 不继承这份活资源。
     rawoutput []
 
--- 前一个 node 的链已经退出，SDK 已关闭它持有的文件；这里只检查快照中各文件的开启标记。
+-- 前一个 node 的链已经退出，SDK 已关闭它持有的文件；这里重新列出文件名，只检查各文件的开启标记，
+-- 不 require 已关闭的资源。
 instance FinishInspectionLayer m => FinishInspectionHandler m where
   finishInspection = do
-    FileHandles paths <- require @FileHandles
+    paths <- require @[String]
     outcome <- liftIO (tryIOError (length <$> filterM (doesFileExist . (++ ".open")) paths))
     stillOpen <- either (raise . FinishInspectionError . displayException) pure outcome
     unless (length paths == 10 && stillOpen == 0) $
@@ -116,7 +113,7 @@ instance FinishInspectionLayer m => FinishInspectionHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "d0962cbfa9434a71979b9378c09a332d"
+handlerSourceFingerprint = Just "846b99532877f92c6311f81b31352316"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -152,14 +149,8 @@ instance SDK.Reads FileHandles (Wrap "FileSession" method) where
 instance SDK.Reads FileHandles (Wrap "InspectFiles" method) where
   require = Wrap (SDK.coerce <$> readOpenedFiles)
 
-instance SDK.Reads FileHandles (Wrap "InspectionSnapshot" method) where
-  require = Wrap (SDK.coerce <$> readOpenedFiles)
-
-instance SDK.Reads FileHandles (Wrap "FinishInspection" method) where
-  require = Wrap (SDK.coerce <$> readInspectedFiles)
-
-instance SDK.Raw (Wrap "InspectionSnapshot" "snapshotFiles") where
-  rawinput = Wrap runReleaseFiles
+instance SDK.Reads [[Char]] (Wrap "FinishInspection" method) where
+  require = Wrap (SDK.coerce <$> readFileNames)
 
 instance SDK.RawOutputs (Wrap effect method)
 
@@ -227,32 +218,17 @@ runReleaseFiles :: Effects.App [String]
 runReleaseFiles =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runReleaseFiles" [("InspectionSnapshot", () <$ getInspectedFiles)] []
+  . SDK.atomicHandle "runReleaseFiles" [] []
   . SDK.withScopeDependencies ["FileSession"]
   . SDK.enterHandler "ReleaseFiles" $
     runHoldFiles >> call @"ReleaseFiles" @"holdFiles" Effects.holdFiles
-
-getInspectedFiles :: Effects.App Effects.InspectedFiles
-getInspectedFiles =
-  SDK.withErrorPath ["FileSession"]
-  . SDK.handleFailure
-  . SDK.withScopeDependencies ["FileSession"]
-  . SDK.callContext "InspectionSnapshot"
-      (\value bindings -> bindings { Effects.boundInspectionSnapshot = Just value }) $
-    Effects.InspectedFiles <$> call @"InspectionSnapshot" @"snapshotFiles" Effects.snapshotFiles
-
-readInspectedFiles :: Effects.App Effects.InspectedFiles
-readInspectedFiles =
-  SDK.withErrorPath ["FileSession"]
-  . SDK.handleFailure $
-    SDK.readContext "InspectionSnapshot" Effects.ContextBindingError Effects.boundInspectionSnapshot
 
 runFinishInspection :: Effects.App [String]
 runFinishInspection =
   SDK.handleFailure
   . SDK.atomicHandle "runFinishInspection" [] []
   . SDK.enterHandler "FinishInspection" $
-    call @"FinishInspection" @"finishInspection" Effects.finishInspection
+    getFileNames >> call @"FinishInspection" @"finishInspection" Effects.finishInspection
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]

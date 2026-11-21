@@ -63,7 +63,7 @@ data Execution
 有限 workflow 使用以下两种启动边界：
 
 1. **AST 启动**：Node 或 alternative 的选择读取启动选定入口，建立本次 origin 及入口使用登记。
-2. **Context 启动**：实际生产（`requests` 驱动的 getT）建立 ctx chain 记录，包住生产、成功发布和返回。嵌套 ctx 启动继承外层 origin 和入口使用登记；返回只结束本次生产记录，不撤销整个入口对 scope 的使用。读取不生产，也没有新 activation；alternative 的判定 Context、挂接注入实际生产时经过同一启动边界。
+2. **Context 启动**：实际生产（`requests` 驱动的 getT）建立 ctx chain 记录，包住生产、成功发布和返回。嵌套 ctx 启动继承外层 origin 和入口使用登记；返回只结束本次生产记录，不撤销整个入口对 scope 的使用。读取不生产，也没有新 activation；alternative 的判定 Context、持续 Context 的挂接注入实际生产时经过同一启动边界。
 
 Stage 3 复用这两个 Boot 构造：Receive／Derive 的每个独立生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。独立会话每次生产使用新的 ScopeUser，其中 Receive 的来源与逐条 parser 各自持有本次使用；跨步骤的待用由会话执行帧保持。lifelong 的消费 target 同样每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
 
@@ -93,7 +93,7 @@ ScopeTree 仍是独立的静态构树结果，保留路径分析、注册前提�
 
 refined asset 固定唯一 Context 和表示 ADT；该生产链可以由多个位置驱动。每次成功生产保留独立的 `ActivationId` 与 Binding，普通资产的运行级最新值按 Context 覆盖，已捕获 Binding 不随覆盖变化。AST 顺序控制启动，执行帧记录进度，二者不作为普通值的读取权限。
 
-来源计算位于 `Gen.Composition.resolveSources`，输入是装配后的有限方法结构、workflow 和输出连接。它仍区分显式 requests、选择读取、挂接注入与会话步骤；读取本身不生产。`chainDrives`、`chainReads` 与 scope 开启计划来自同一次计算：
+来源计算位于 `Gen.Composition.resolveSources`，输入是装配后的有限方法结构、workflow 和输出连接。它区分显式 requests、选择读取、持续 Context 的挂接注入与会话步骤；普通 Context 只经 requests 或选择读取生产（[普通资产只经 requests 生产](CORE_DESIGN.md#request-production)），读取本身不生产。`chainDrives`、`chainReads` 与 scope 开启计划来自同一次计算：
 
 ```haskell
 data Source = FromOwnChain | FromChains [NodeId] | FromSession
@@ -108,7 +108,7 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 这能接受 `parallel [readX, produceX]`，也能逐步解开独立分支的依赖。只有 `chain [readX, produceX]`、没有其他 X 的生产时，后继不能启动，因此没有初始供值，gen 拒绝。互等且没有启动种子的分支同理。诊断指出读取资产、target 与 NodeId，要求提供可启动的生产路径，而非把“已经注册生产者”当作充分条件。
 
-例如，`FileDemo` 的 `alternative` 只尝试 `BlankText` 和 `FilledText`。假设再给 `ReadFile` 挂一个普通 `AuditParser` 并在后继读取 `AuditText`，选择入口的 `chainReaches` 即使包含该方法，这里也没有它的发布事实。若另有普通 `ReadFile` 挂载，成功注入就能在那个 `NodeId` 供值。判定资产的等待来源也取自同一发布固定点，排除本次选择位置。
+例如，`FileDemo` 的 `alternative` 只尝试 `BlankText` 和 `FilledText`。假设再给 `ReadFile` 挂一个普通 `AuditParser` 并在后继读取 `AuditText`，选择读取不会发布它；读取方须 `requests "AuditText"`，由自己的前驱执行 `ReadFile` 与 `AuditParser`。判定资产的等待来源也取自同一发布固定点，排除本次选择位置。
 
 备用 interpreter 会话先不加入供值。只有结构推演到达有限持续读取，才分析它及其 Derive 上游；实际 lifelong 的会话在该边界能启动时分析。固定点收敛后，备用挂载仍单独生成结构和 scope 计划，但不反过来冒充实际运行的供值入口。
 
@@ -210,7 +210,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 生成器通过 GHC 解析器查看手写 handler 方法体中的读取：`require @T` 与 `stream @T` 均按表示类型路由。`stream @T` 还提供历史读取事实，组合阶段据此标记对应 Context 的 `effectHistory`。`rawinput` 在方法形状中记为挂接输入。再按每个绑定把表示类型代换成该 effect 声明的细化资产的读取方法、把 rawinput 代换成直接 Input 的入口，并在前面接上驱动（requests 的 getT）与 Input 前驱，组成 effect 方法的纯结构副本。表示类型按规范化的类型原文比较（例如 `String` 与 `[Char]` 视为同一类型）。副本剥离业务值、模式匹配所得数据、纯计算结果和实际 IO，只保留读取与入口引用及其结构关系。调用顺序、分支和重复读取不能被简单的名称集合代替；静态分支保留可能路径，不执行条件表达式来选择业务分支。驱动还是读取由注册决定，不能仅按方法名判断是否重新生产。
 
-结构副本描述带包装的句柄：原子句柄（Excu.handler、Scoped.open）的生成入口在方法体返回后注入挂在它下面（可经一串 Pure）的 Context，构图时该句柄的定义因此在方法体之后接一个可选分支，内容是这些 Context 的方法结构，其中对句柄的 rawinput 记为空（注入期间由本次输出回答，不再执行句柄），中间的 Pure 入口就地展开，同样回答到句柄为止。注入路径由此进入 effect graph 与 ScopeTree，不形成环；挂接的 Context 经 Pure 以外的方法又回到该句柄时生成器报错。Pure 的入口在来源分析和运行时都不改变调用者，句柄据此认出经 Pure 拉取它的 Context，不重复注入。
+结构副本描述带包装的句柄：原子句柄（Excu.handler、Scoped.open）的生成入口在方法体返回后注入挂在它下面（可经一串 Pure）的持续 Context（普通 Context 不注入，只经 requests 生产），构图时该句柄的定义因此在方法体之后接一个可选分支，内容是这些 Context 的方法结构，其中对句柄的 rawinput 记为空（注入期间由本次输出回答，不再执行句柄），中间的 Pure 入口就地展开，同样回答到句柄为止。注入路径由此进入 effect graph 与 ScopeTree，不形成环；挂接的 Context 经 Pure 以外的方法又回到该句柄时生成器报错。Pure 的入口在来源分析和运行时都不改变调用者，句柄据此认出经 Pure 拉取它的 Context，不重复注入。
 
 业务执行副本把方法体原样复制到按 effect 的类型标签 `Wrap "名字"` 上，另生成入口、按标签的路由与包装，不改写业务表达式。新的边界是读取 handler 的读取结构并按绑定生成独立结构，不解释任意业务值语义，不要求用户补写 layer 或另一份调用声明。结构提取也不证明任意 Haskell 函数的行为、动态调用次数或物理资源依赖。
 
@@ -259,7 +259,7 @@ Assembly 是组合机器内部的装配结果，不是第二份业务注册或 R
 | `EntryMount` | 组合机器的 ChainProto、Emit.Program 的入口登记 | NodeId、入口角色、结构末端、运行诊断标签、方法身份；相同方法的多个挂载仍独立 |
 | `EntryStep` | 组合机器的方法组成、Emit.Handlers | 有序 RequestStep／InputStep；两处都使用 bindingBefore，不重新推导或去重 |
 | `RawSource` | 结构中的 rawinput 引用、生成的 Raw 实例 | 直接 Input 的结构引用。Stream parser 的生成实例读本次 emit 的固定输入 [text]，静态来源仍指向该 Stream |
-| `OutputConnection` | 组合机器的注入结构、驱动与来源证明；Emit 的注入表 | 当前 anchor → parser，以及普通／持续注入角色；保持原有注入顺序和错误协议 |
+| `OutputConnection` | 组合机器的注入结构、驱动与来源证明；Emit 的注入表 | 当前 anchor → 持续 parser；普通 Context 不再有注入连接 |
 | `BootPlan.ReuseOutput` | 组合结果、Prototype 与现有 runtime | 机器确定的具体 AST 输出位置，不新增独立生产步骤 |
 
 完整方法结构仍保留顺序、分支和每次调用；最终方法目录共享定义，方法摘要在 gen 内共享。alternative 仍按契约选择并交接捕获，没有把公共前段提升到候选之外。runtime 只取得本次输出、Binding 与活 scope 实例，不重新寻找共线或尾部。scope 仍按参数生产身份匹配，本次不增加 Eq 约束或同值复用。

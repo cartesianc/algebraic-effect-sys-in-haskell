@@ -51,7 +51,7 @@ effects =
       { name = "PrintPage"
       , typing = Excu { handler = Just "printSummary" }
       , input = "Root"
-      , demands = [requires "StartPageSummary"]
+      , demands = [requests "StartPageSummary", requires "StartPageSummary"]
       }
   , EffectSpec
       { name = "FetchLinkedPage"
@@ -75,7 +75,7 @@ effects =
       { name = "PrintLinkedPage"
       , typing = Excu { handler = Just "printSummary" }
       , input = "Root"
-      , demands = [requires "LinkedPageSummary"]
+      , demands = [requests "LinkedPageSummary", requires "LinkedPageSummary"]
       }
   -- 会话信息由 Context 生产；scope 开启前由 requests 驱动，抓取链读取 scope 内保存的值。
   , EffectSpec
