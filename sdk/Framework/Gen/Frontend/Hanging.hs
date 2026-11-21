@@ -9,7 +9,7 @@ import Data.Data (Data, cast, gmapQ)
 import Data.List (isPrefixOf, sort, sortOn)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Framework.Gen.Frontend.Ghc (modulePath, withSourceTargets)
+import Framework.Gen.Frontend.Ghc (modulePath, sourceDirectory, withSourceTargets)
 import Framework.Gen.Workflow (SourceRange(..), SourceSite(..))
 import Framework.Language.AST (WorkflowF(..))
 import qualified Framework.Language.Registration as R
@@ -53,10 +53,12 @@ data Outline = Outline
 -- types 给出注册里写的资产类型时，同一次加载也加载 Effects 模块并解析这些类型。
 loadOutline :: String -> Maybe [String] -> IO Outline
 loadOutline namespace types = do
-  exists <- doesFileExist (hangingFile namespace)
+  sourceDir <- sourceDirectory
+  let hangingFile = modulePath sourceDir (hangingModule namespace) ++ ".hs"
+  exists <- doesFileExist hangingFile
   withSourceTargets $ \_ -> do
-    (definitions, checks) <- loadWorkflowModules namespace exists
-      [modulePath (namespace ++ ".Effects") ++ ".hs" | Just _ <- [types]]
+    (definitions, checks) <- loadWorkflowModules sourceDir namespace exists
+      [modulePath sourceDir (namespace ++ ".Effects") ++ ".hs" | Just _ <- [types]]
     root <- exported (astModule namespace) "ast"
     targets <- if exists then hangingTargets namespace definitions root else pure []
     sites <- either abort pure (outline (Map.map layoutOf definitions) root)
@@ -65,7 +67,7 @@ loadOutline namespace types = do
       then (\declaration -> syntacticRows definitions declaration) <$> exported (hangingModule namespace) "hangingTree"
       else pure (Just [])
     resolved <- maybe (pure []) (resolveTypes namespace) types
-    let absent = [(hangingFile namespace, Nothing) | not exists]
+    let absent = [(hangingFile, Nothing) | not exists]
         tree = (,) <$> syntacticTree definitions root <*> rows
     -- 没有 Hanging 时 Program 只核对它仍不存在，与此前的生成结果一致。
     pure (Outline exists targets (if exists then checks else absent) sites (hashes ++ absent) tree resolved)
@@ -150,10 +152,10 @@ typeNames x = case (cast x :: Maybe (HsType GhcRn)) of
   Just (HsTyVar _ _ n) -> [unLoc n]
   _ -> concat (gmapQ typeNames x)
 
-loadWorkflowModules :: String -> Bool -> [FilePath] -> Ghc (Map.Map Name (HsBind GhcRn), SourceChecks)
-loadWorkflowModules namespace withHanging extra = do
+loadWorkflowModules :: FilePath -> String -> Bool -> [FilePath] -> Ghc (Map.Map Name (HsBind GhcRn), SourceChecks)
+loadWorkflowModules sourceDir namespace withHanging extra = do
   setTargets =<< mapM (\file -> guessTarget file Nothing Nothing)
-    ([hangingFile namespace | withHanging] ++ [modulePath (astModule namespace) ++ ".hs"] ++ extra)
+    ([modulePath sourceDir (hangingModule namespace) ++ ".hs" | withHanging] ++ [modulePath sourceDir (astModule namespace) ++ ".hs"] ++ extra)
   result <- load LoadAllTargets
   case result of
     Failed -> abort (if withHanging then "Cannot load Hanging and AST modules" else "Cannot load AST modules")
@@ -165,7 +167,7 @@ loadWorkflowModules namespace withHanging extra = do
   modules <- forM (sortOn moduleLabel (filter relevant (mgModSummaries graph))) $ \summary -> do
     checked <- typecheckModule =<< parseModule summary
     let name = moduleLabel summary
-        path = modulePath name ++ ".hs"
+        path = modulePath sourceDir name ++ ".hs"
     signature <- liftIO (fingerprint path)
     case tm_renamed_source checked of
       Just (group, _, _, _, _) -> pure (bindings (hs_valds group), (path, Just signature))
@@ -206,10 +208,9 @@ hangingTargets namespace definitions root = do
   sites <- either abort pure (branchSites (Map.map layoutOf definitions) wanted root)
   pure [[(qualified n, sort (Map.findWithDefault [] n sites)) | n <- row] | row <- rows]
 
-astModule, hangingModule, hangingFile :: String -> String
+astModule, hangingModule :: String -> String
 astModule namespace = namespace ++ ".AST"
 hangingModule namespace = namespace ++ ".Hanging"
-hangingFile namespace = modulePath (hangingModule namespace) ++ ".hs"
 
 workflowModule :: String -> String -> Bool
 workflowModule namespace name = name == astModule namespace || isPrefixOf (namespace ++ ".Workflow.") name

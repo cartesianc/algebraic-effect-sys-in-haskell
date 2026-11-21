@@ -31,7 +31,8 @@ import Text.Read (readMaybe)
 -- 编译一个命名空间的 workflow 程序；程序只经 AST 启动，入口是 AST 中各 node 选中的末端。
 compileWorkflow :: String -> IO ()
 compileWorkflow namespace = do
-  let generated = namespaceDirectory namespace </> "Generated"
+  directory <- namespaceDirectory namespace
+  let generated = directory </> "Generated"
       cachePath = generated </> ".scope-cache"
   (prepared, source, contracts) <- prepareNamespace namespace
   let Prepared outline tree rows pending = prepared
@@ -51,7 +52,7 @@ compileWorkflow namespace = do
       names = nameHandlers (maybe mempty handlerScopeNames source) (allMethods unit ++ historyEntries unit)
   handlers <- either (ioError . userError) pure (renderHandlers names unit source)
   -- 输出只读取机器完成态的接口事实。
-  let program = renderProgram names (outlineChecks outline) unit
+  let program = renderProgram directory names (outlineChecks outline) unit
       workflow = renderWorkflowReport namespace tree rows (outlineTargets outline) (outlineSites outline)
         (outlineSources outline)
       prototypeModule = renderPrototypeModule namespace structure

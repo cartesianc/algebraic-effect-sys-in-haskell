@@ -8,6 +8,7 @@ import Control.Monad (unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.Char (ord)
 import Data.List (intercalate, sort)
+import Framework.Gen.Frontend.Ghc (sourceDirectory)
 import Framework.Gen.Frontend.Source (namespaceDirectory, parseSourceFile, sourceOffset)
 import qualified Framework.Language.Registration as R
 import GHC (getSessionDynFlags, runGhc)
@@ -71,7 +72,8 @@ readEffect = do
 -- Only the outer list needs a source location. Its entries may use local helpers.
 registrationSlot :: String -> IO ()
 registrationSlot namespace = do
-  (source, parsed) <- parseSourceFile (namespaceDirectory namespace </> "Effects.hs")
+  directory <- namespaceDirectory namespace
+  (source, parsed) <- parseSourceFile (directory </> "Effects.hs")
   case [body | L _ (ValD _ FunBind {fun_id = L _ n, fun_matches = MG {mg_alts = L _
                 [L _ Match {m_grhss = GRHSs {grhssGRHSs = [L _ (GRHS _ [] body)]}}]}}) <- hsmodDecls parsed,
                 display n == "effects"] of
@@ -88,7 +90,8 @@ registrationSlot namespace = do
 -- 固定形式（v1）的注册按语法读出，不求值；超出 v1 的写法（helper、where 等）为 Nothing，由调用方求值。
 syntacticRegistrations :: String -> IO (Maybe [JsonDoc])
 syntacticRegistrations namespace = do
-  (_, parsed) <- parseSourceFile (namespaceDirectory namespace </> "Effects.hs")
+  directory <- namespaceDirectory namespace
+  (_, parsed) <- parseSourceFile (directory </> "Effects.hs")
   pure $ case [body | L _ (ValD _ FunBind {fun_id = L _ n, fun_matches = MG {mg_alts = L _
                 [L _ Match {m_grhss = GRHSs {grhssGRHSs = [L _ (GRHS _ [] body)],
                   grhssLocalBinds = EmptyLocalBinds {}}}]}}) <- hsmodDecls parsed, display n == "effects"] of
@@ -159,7 +162,8 @@ field _ _ = Nothing
 
 readEffects :: String -> IO ()
 readEffects namespace = do
-  let path = namespaceDirectory namespace </> "Effects.hs"
+  directory <- namespaceDirectory namespace
+  let path = directory </> "Effects.hs"
   (_, parsed) <- parseSourceFile path
   case [body | L _ (ValD _ FunBind {fun_id = L _ n, fun_matches = MG {mg_alts = L _
                 [L _ Match {m_grhss = GRHSs {grhssGRHSs = [L _ (GRHS _ [] body)],
@@ -169,7 +173,8 @@ readEffects namespace = do
       output [("editable", JSBool True), ("registrations", JSArray rows)]
     _ -> do
       -- GHCi evaluates only the registration value; the workflow and handlers are not loaded.
-      let args = ["-ignore-dot-ghci", "-v0", "-idemo", "-isdk", path, "-e",
+      sourceDir <- sourceDirectory
+      let args = ["-ignore-dot-ghci", "-v0", "-i" ++ sourceDir, "-isdk", path, "-e",
                   "print (" ++ namespace ++ ".Effects.effects :: [Framework.Language.Registration.EffectSpec])"]
       printed <- readProcess "ghci" args ""
       specs <- maybe (fail "Cannot decode SDK registrations") pure (readMaybe printed)

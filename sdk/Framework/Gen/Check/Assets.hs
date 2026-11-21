@@ -10,7 +10,7 @@ import Data.Maybe (isJust)
 import Control.Monad.IO.Class (liftIO)
 import Data.Data (Data, cast, gmapQ)
 import Data.List (intercalate, isInfixOf, isPrefixOf, nub, sortOn, stripPrefix)
-import Framework.Gen.Frontend.Ghc (modulePath, withSourceTargets)
+import Framework.Gen.Frontend.Ghc (modulePath, sourceDirectory, withSourceTargets)
 import qualified Framework.Language.Registration as R
 import Framework.Prototype.Catalog
 import GHC
@@ -39,7 +39,8 @@ import Text.Read (readMaybe)
 -- roots 是资产的表示类型，contracts 是生成的资产类型；二者组成资产目录。
 checkAssets :: String -> [(String, String)] -> [R.TypeRef] -> [String] -> Maybe String -> IO [Asset]
 checkAssets namespace generated roots contracts native = do
-  files <- sourceFiles (modulePath namespace)
+  sourceDir <- sourceDirectory
+  files <- sourceFiles (modulePath sourceDir namespace)
   withSourceTargets $ \memoryTarget -> do
     let rootModule = namespace ++ ".Generated.AssetRoots"
         rootSource = unlines $
@@ -54,7 +55,7 @@ checkAssets namespace generated roots contracts native = do
           Nothing -> filter ((== "Effects") . fst) generated
           Just _ -> generated
         selectedFiles = [path | path <- files
-          , normalise path /= normalise (modulePath (namespace ++ ".Handlers") ++ ".hs")
+          , normalise path /= normalise (modulePath sourceDir (namespace ++ ".Handlers") ++ ".hs")
           , native /= Nothing || takeFileName path /= "Main.hs"]
     diskTargets <- mapM (\path -> guessTarget path Nothing Nothing) selectedFiles
     setTargets (memoryTarget rootModule rootSource : diskTargets
