@@ -1,6 +1,8 @@
 -- Parse one v1 registration without loading any business code. Namespace mode can
 -- also inspect evaluated declarations in a trusted project, marking them read-only.
-module Framework.Gen.Frontend.Effects (readEffect, readEffects, registrationSlot, semantic, output) where
+module Framework.Gen.Frontend.Effects
+  ( readEffect, readEffects, registrationSlot, semantic, output
+  , syntacticRegistrations, assetSpellings, specFromJson ) where
 
 import Control.Monad (unless)
 import Control.Monad.IO.Class (liftIO)
@@ -82,6 +84,78 @@ registrationSlot namespace = do
     listEmpty (L _ (ExplicitList _ entries)) = Just (null entries)
     listEmpty e | var e == "[]" = Just True
     listEmpty _ = Nothing
+
+-- 固定形式（v1）的注册按语法读出，不求值；超出 v1 的写法（helper、where 等）为 Nothing，由调用方求值。
+syntacticRegistrations :: String -> IO (Maybe [JsonDoc])
+syntacticRegistrations namespace = do
+  (_, parsed) <- parseSourceFile (namespaceDirectory namespace </> "Effects.hs")
+  pure $ case [body | L _ (ValD _ FunBind {fun_id = L _ n, fun_matches = MG {mg_alts = L _
+                [L _ Match {m_grhss = GRHSs {grhssGRHSs = [L _ (GRHS _ [] body)],
+                  grhssLocalBinds = EmptyLocalBinds {}}}]}}) <- hsmodDecls parsed, display n == "effects"] of
+    [e] | var e == "[]" -> Just []
+    [L _ (ExplicitList _ entries)] -> either (const Nothing) Just (traverse registration entries)
+    _ -> Nothing
+
+-- 注册里写出的资产表示类型，交给 GHC 会话解析为 TypeRef。
+assetSpellings :: [JsonDoc] -> [String]
+assetSpellings rows = [spelling | row <- rows, Just typing <- [field "typing" row], Just declared <- [field "asset" typing]
+  , Just (JSString spelling) <- [field "type" declared]]
+
+-- 语法读出的注册换成 EffectSpec；与求值 Effects.effects 得到的值相同。类型写法解析不了时为 Nothing。
+specFromJson :: [(String, R.TypeRef)] -> JsonDoc -> Maybe R.EffectSpec
+specFromJson types row = do
+  name' <- text "name" row
+  typing' <- field "typing" row >>= typingOf
+  input' <- text "input" row
+  JSArray demands' <- field "demands" row
+  R.EffectSpec name' typing' input' <$> mapM demandOf demands'
+  where
+    typingOf value = do
+      JSString tag <- field "kind" value
+      case tag of
+        "Pure" -> R.Pure <$> optional "handler" value
+        "Excu" -> R.Excu <$> optional "handler" value
+        "Stream" -> R.Stream <$> optional "handler" value
+        "Scoped" -> R.Scoped <$> optional "open" value <*> optional "close" value
+        "Error" -> do
+          JSArray handled <- field "handles" value
+          R.Error <$> optional "detect" value <*> optional "resolve" value <*> mapM handlesOf handled
+        "Context" -> do
+          declared <- field "asset" value
+          spelling <- text "type" declared
+          contract' <- text "contract" declared
+          reference <- lookup spelling types
+          JSBool required <- field "require" value
+          JSBool streamed <- field "stream" value
+          (\parser' -> R.Context (R.AssetDecl contract' reference) parser' required streamed) <$> optional "parser" value
+        "Middleware" -> do
+          JSArray kinds <- field "intercept" value
+          R.Middleware <$> optional "handler" value <*> mapM (\kind -> case kind of JSString k -> readMaybe k; _ -> Nothing) kinds
+        _ -> Nothing
+    handlesOf value = do
+      JSString tag <- field "kind" value
+      target <- text "target" value
+      case tag of
+        "RaisedBy" -> Just (R.RaisedBy target)
+        "ScopeFaultIn" -> Just (R.ScopeFaultIn target)
+        "ContextFaultIn" -> Just (R.ContextFaultIn target)
+        _ -> Nothing
+    demandOf value = do
+      JSString access' <- field "access" value
+      contract' <- text "contract" value
+      mode <- lookup access' [("requests", R.RequestAccess), ("requires", R.RequireAccess), ("streams", R.StreamAccess)]
+      Just (R.Demand mode contract')
+    optional key value = case field key value of
+      Just JSNull -> Just Nothing
+      Just (JSString found) -> Just (Just found)
+      _ -> Nothing
+    text key value = case field key value of
+      Just (JSString found) -> Just found
+      _ -> Nothing
+
+field :: String -> JsonDoc -> Maybe JsonDoc
+field key (JSObject fields) = lookup key fields
+field _ _ = Nothing
 
 readEffects :: String -> IO ()
 readEffects namespace = do

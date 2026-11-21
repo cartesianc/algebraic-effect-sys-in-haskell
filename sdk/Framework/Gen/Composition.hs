@@ -14,7 +14,7 @@
 -- 工作表/递归栈是同一计算中的局部证据，不能当作另一套装配结论或运行状态。
 -- 统一入口不降低路径分析的最坏复杂度；保留先投影再组合、缺值路径与分支相关性。
 module Framework.Gen.Composition
-  ( beginComposition, prepareComposition, completeComposition, compositionKey
+  ( beginComposition, beginCompositionRows, prepareComposition, completeComposition, compositionKey
   , PendingComposition, CompositionResult(..)
   ) where
 
@@ -115,8 +115,12 @@ settleComposition state = case state of
 -- 声明加载进程返回同一机器的接口检查点。Unit 只含纯 ADT，可 Show/Read；没有 GHC AST 或类字典。
 -- tree 与 targets 是源码上的原样结构和挂载路径；Gen.Workflow 先给出规范形式与迁移后的挂载。
 beginComposition :: String -> [EffectSpec] -> Fix WorkflowF -> HangingTree -> [[(String, [NodeId])]] -> Either String Unit
-beginComposition namespace specifications tree mounts targets = do
-  marks <- hangingMarks (hangingRows mounts) targets
+beginComposition namespace specifications tree mounts = beginCompositionRows namespace specifications tree (hangingRows mounts)
+
+-- 组合只用到 Hanging 各行的 hook 与目标数；语法读取 Hanging 时直接给出这些行。
+beginCompositionRows :: String -> [EffectSpec] -> Fix WorkflowF -> [([String], Int)] -> [[(String, [NodeId])]] -> Either String Unit
+beginCompositionRows namespace specifications tree rows targets = do
+  marks <- hangingMarks rows targets
   (normalized, moved) <- either (Left . show) Right (prepareWorkflow tree marks)
   state <- settleComposition (Declared namespace specifications normalized moved)
   case state of

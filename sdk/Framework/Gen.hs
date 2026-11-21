@@ -14,6 +14,7 @@ import Framework.Gen.Emit.Program (renderProgram)
 import Framework.Gen.Emit.Prototype (renderPrototype, renderPrototypeModule)
 import Framework.Gen.Emit.Workflow (renderWorkflowReport)
 import Framework.Gen.Names (handlerClass, nameHandlers)
+import Framework.Gen.Frontend.Effects (assetSpellings, specFromJson, syntacticRegistrations)
 import Framework.Gen.Frontend.Hanging (Outline(..), loadOutline)
 import Framework.Gen.Frontend.Shape (shapeHandlers)
 import Framework.Gen.Frontend.Source (HandlerSource, loadComposition, loadHandlers, loadWorkflowTree, namespaceDirectory, handlerText, handlerScopeNames)
@@ -79,8 +80,19 @@ data Prepared = Prepared Outline (Fix WorkflowF) [([String], Int)] PendingCompos
 
 prepareNamespace :: String -> IO (Prepared, Maybe HandlerSource, String)
 prepareNamespace namespace = do
-  outline <- loadOutline namespace
-  (interface, tree, rows) <- loadComposition namespace (outlineHasHanging outline) (outlineTargets outline)
+  -- 固定形式的注册、AST 与 Hanging 按语法读出，组合在本进程执行；只有写法超出固定形式时才起 ghci 求值。
+  registrations <- syntacticRegistrations namespace
+  outline <- loadOutline namespace (assetSpellings <$> registrations)
+  let syntactic = do
+        rows' <- registrations
+        specifications <- mapM (specFromJson (outlineTypes outline)) rows'
+        (tree', hanging') <- outlineTree outline
+        pure (specifications, tree', hanging')
+  (interface, tree, rows) <- case syntactic of
+    Just (specifications, tree', hanging') ->
+      either die (\plan -> pure (plan, tree', hanging'))
+        (beginCompositionRows namespace specifications tree' hanging' (outlineTargets outline))
+    Nothing -> loadComposition namespace (outlineHasHanging outline) (outlineTargets outline)
   let contracts = renderEffects interface
       handlersInScope = [(handlerClass handler', handler') | handler' <- unitHandlers interface]
   source <- loadHandlers namespace contracts
@@ -100,8 +112,8 @@ inspectConsole namespace = do
 -- Hanging 挂载、结构诊断和源码文件指纹。结构诊断不影响退出码；不能加载这些模块时照常以 GHC 诊断失败。
 inspectWorkflow :: String -> IO ()
 inspectWorkflow namespace = do
-  outline <- loadOutline namespace
-  (tree, rows) <- loadWorkflowTree namespace (outlineHasHanging outline)
+  outline <- loadOutline namespace Nothing
+  (tree, rows) <- maybe (loadWorkflowTree namespace (outlineHasHanging outline)) pure (outlineTree outline)
   hSetEncoding stdout utf8
   putStrLn (renderWorkflowReport namespace tree rows (outlineTargets outline) (outlineSites outline)
     (outlineSources outline))
