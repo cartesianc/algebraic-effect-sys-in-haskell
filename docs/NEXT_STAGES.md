@@ -37,7 +37,9 @@
 | <a id="request-phase-2"></a>R2 运行时按身份寻址 | interpreter 启动时一次建索引。资产与 scope 按 gen 分配的 effect 编号存取，生成入口直接写出编号；执行位置按先序坐标寻址，子树判断是一次区间比较。普通 Context 的注入代码与 gen 中对应的分析分支已删除。 | [运行索引](CORE_DESIGN.md#request-production) |
 
 <a id="request-phase-3"></a>
-**R3 持续资产未改。** Stream 会话、lifelong 订阅与 `ReuseOutput` 仍按原协议驱动，持续 Context 继续挂在句柄输出上。用户已确定持续资产也要随剧本化调整，具体设计待写并确认后实现。
+**R3 持续资产。** 对持续资产 `requests` 启动或加入它的会话，取当前一条固定给本次调用；`requires` 只读已有会话，不再启动会话，没人 requests 也没人 streams 的持续资产同样报 `Asset never requested`。此前 lifelong 边界的查找顺序在 gen 期排好。lifelong 订阅与 `ReuseOutput`（持续 Context 复用 lifelong 消费节点的同次输出）保留原协议。[持续资产的 requests](CORE_DESIGN.md#request-production) · [有限读取](STREAM_LIFELONG.md#finite-read)
+
+**编辑器读剧本。** `effect-codegen console` 的每个 binding 带 `before`（入口在方法体前依次执行的 requests、Input、会话步骤）与 `raw`（rawinput 读到的原子调用），即 gen 解析好的剧本；按步骤里的方法名找到对应 binding 即可递归展开，编辑器不必从注册重新推导。
 
 **运行时仍按名字查的位置。** 这些查找都不在资产读写路径上：
 

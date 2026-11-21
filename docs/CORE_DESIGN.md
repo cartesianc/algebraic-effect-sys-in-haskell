@@ -602,7 +602,9 @@ runPrintPage = ⟨入口包装⟩ $
 
 执行位置按坐标寻址（`Framework.Prototype.Coordinate`）。原型以路径（NodeId）记录 AST 挂载、选择、会话步骤与 lifelong 单元；建索引时把这些路径补全前缀后按字典序排开，即位置树的先序遍历，坐标就是先序序号，并记下子树最后一个位置的序号。执行帧的进度、Origin、读取捕获、会话边界与开启计划都以坐标为键，“某位置在这棵子树里”（跳过未进入的分支、撤下发布位置、清除上一轮的伴随输出）是一次区间比较，不再比较路径前缀。坐标到 effect 是唯一的；effect 到坐标是一对多，这份关系由 gen 写进读取点的供值位置与会话挂载，运行时只查表，不从坐标反推 effect。诊断仍显示原路径。
 
-因此被 `requires` 的普通资产必须有某个 effect `requests` 它，否则 gencode 以 `Asset never requested` 报错。alternative 的判定资产例外：选择读取（chooseCase）先运行一次共同句柄，再把输出依次交给各判定 parser，第一个解析成功的候选执行，候选只 requires 自己的判定资产。持续资产由会话驱动，不在此列。
+因此被 `requires` 的普通资产必须有某个 effect `requests` 它，否则 gencode 以 `Asset never requested` 报错。alternative 的判定资产例外：选择读取（chooseCase）先运行一次共同句柄，再把输出依次交给各判定 parser，第一个解析成功的候选执行，候选只 requires 自己的判定资产。
+
+持续资产（`stream = True`）同样按剧本取得，但生产在会话里进行，不展开进请求方入口。`requests "T"` 在入口的方法体之前启动或加入 T 的会话：此前已结束的 lifelong 会话优先，否则是 gen 为 T 安排的 interpreter 托管会话；取当前一条，固定为本次调用的交付，本次的 `requires "T"` 读它。已有固定交付（lifelong 单元领取的交付，或本次此前的取得）时不再取得。`requires "T"` 只读已有会话，从不启动会话；没有可读会话时按缺值报出。因此被 `requires` 的持续资产也必须有 effect `requests` 它，或被某个 lifelong 末端 `streams`，否则同样报 `Asset never requested`。此前 lifelong 边界的查找顺序由 gen 写进索引（最近结束的在前），运行时只按序查登记表。
 
 句柄单独挂在 AST 上执行时，不再解析挂在它下面的普通 Context；需要它的输出时，由消费方 requests 对应资产。requests 驱动的 parser 失败沿请求方传播，不在注入内隔离。复用 open、重复 close、诊断与自动收尾沿用既有限制，close 没有挂接点。scope 的资源 Context 不能挂在请求它的 Scoped 下。[选择与交接](#alternative-selection)
 

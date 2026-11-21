@@ -373,7 +373,7 @@ newtype StartURL = StartURL PageURL
 
 - 资产名须是 Haskell 类型名，按业务含义起名；不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
 - 表示类型固定派生 `Eq`／`Show`，资产类型随之有 `Eq`／`Show`；不派生 `Read`。
-- 持续资产（`stream = True`）也按声明表示类型写 `require @T`。`streams` 接收增量驱动，`requires` 只取得本次固定值，见[持续资产与 lifelong](#stream)。
+- 持续资产（`stream = True`）也按声明表示类型写 `require @T`。`streams` 接收增量驱动，`requires` 只取得本次固定值（会话须已由 `requests` 或 lifelong 启动），见[持续资产与 lifelong](#stream)。
 
 ### 使用规则
 
@@ -549,7 +549,7 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 - **来源自动确定**：每个资产恰好由一个 Context 声明，生成器按资产名自动接上，不用指名生产方。
 - **读取按表示类型路由**：handler 的 `require @T` 由 gen 按“表示类型 + effect”路由到这个 effect 声明的那份细化资产；一个 effect 的 demands 里同一表示类型只能出现一次。同一种数据有不同含义时，声明成不同的资产，例如 Crawler 的 `StartURL` 和 `LinkedURL`，再由各自的 effect 选择。
 - **同一资产可以声明多种合法访问方式**：同一资产的同一种方式只能声明一次。
-- **限制**：Scoped 至多 `requests` 一个资源 Context；`requires` 需要生产方 `require = True`；持续资产不能 `requests`；`streams` 只能由 Excu、Scoped 声明，只能订阅持续资产的基础资产（`stream = True`）。
+- **限制**：Scoped 至多 `requests` 一个资源 Context；`requires` 需要生产方 `require = True`；对持续资产 `requests` 启动或加入它的会话并取当前一条，不执行生产链；`streams` 只能由 Excu、Scoped 声明，只能订阅持续资产的基础资产（`stream = True`）。
 - **同一资产只有一个 Context 来源**：访问方式不改变资产的 ADT 或生产方；不限制一个消费者只能声明一个资产。
 - **声明须有读取依据**：每个 `requires`／`streams` 的资产须在绑定的 handler 中读取，或参与现有 alternative 选择／streams 交付。
 - **声明即权限**：handler 读取了 effect 没有声明的表示类型，生成器报错；读取实例只为声明了 `requires`／`streams` 的 effect 生成，运行时不再查声明表。
@@ -903,7 +903,7 @@ EffectSpec
 
 - **`stream = True` 当且仅当 Context 的 Input 链被持续驱动**：直接 Input 是 Stream，或链上有 `streams` demand；必须同时 `require = True`。被驱动的链不能声明成普通资产，没有驱动的链也不能声明成持续资产。
 - **一个 Stream 恰好有一个 Context 以它为 `input`**，作为它的 parser。
-- **持续资产经会话发布与交付**：消费方不能 `requests` 它；已有消费操作的输出可交给挂接 Context 发布，不必另开生产任务。
+- **持续资产经会话发布与交付**：消费方 `requests` 它时启动或加入会话、取当前一条，`requires` 只读已有会话；已有消费操作的输出可交给挂接 Context 发布，不必另开生产任务。
 - **订阅**：消费方写 `streams "T"`，表示由 T 的新交付驱动，同时取得读取权限；handler 用 `require @表示类型` 取得本次交付，用 `stream @表示类型` 取得 x:xs（本次交付及同一会话中更早的交付，最新在前）。
 - **只读固定值**：`requires "T"` 的 handler 同样用 `require @表示类型`；已有捕获时复用，没有时取许可来源的最新值。读取不会使当前链反复执行。
 
@@ -1262,7 +1262,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | AST 的 node 选中了 Pure、Context、Error 或 Stream；别的方法直接调用到 Stream 的 handler | node 只挂 Excu 或 Scoped；Pure 与 Context 在生产链中由挂接、驱动、合法读取或生产会话带起；Stream 只由生产会话和挂在它下面的 parser 调用，Error 由失败协议调用 |
 | 挂接的 Context 经别的方法、而不是直接或经 Pure 用 `rawinput` 到达它挂接的句柄 | parser 用 `rawinput` 读取挂接句柄，中间只经过 Pure |
 | 某个 Context 从 AST 出发永远到不了：没有 `requests` 驱动或选择读取，也没有 lifelong 订阅生产会话带起它（只被 `requires` 读取、或只挂在被执行的句柄下都不算） | 在读取它的链上写 `requests` 驱动它，或把带起它的消费链加进 AST，或删掉这个 Context |
-| `Asset never requested`：某个普通资产被 `requires`，但没有任何 effect `requests` 它 | 给读取方或它 Input 链上的 effect 加上 `requests "资产名"`；alternative 的判定资产与持续资产不受此限 |
+| `Asset never requested`：某个普通资产被 `requires`，但没有任何 effect `requests` 它 | 给读取方或它 Input 链上的 effect 加上 `requests "资产名"`；alternative 的判定资产与被 `streams` 的持续资产不受此限。持续资产只 `requires` 时同样需要 `requests` 来启动会话 |
 | 已到达的普通读取没有可启动的供值或捕获 | 在等待前或独立分支驱动生产；require 不自行生产。详见供值固定点与等待规则 |
 | 持续后继有多个互不先后的已结束 lifelong 会话 | 明确会话的先后或细化资产；普通资产多处发布使用共享最新值，不适用此歧义规则 |
 | 持续资产的声明不成立：Context 的 `stream` 与 Input 链是否持续驱动不一致，或 `stream = True` 却没有 `require = True`；Stream 下不是恰好一个 Context，或 parser 以外的 effect 以 Stream 为 `input`；`streams` 订阅了普通资产，或由 Excu、Scoped 以外的 effect 声明 | 按[持续资产的声明规则](#stream)修正 |
