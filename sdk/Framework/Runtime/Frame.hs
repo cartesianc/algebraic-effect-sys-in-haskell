@@ -15,13 +15,14 @@ import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef,
 import Data.List (isPrefixOf, nub, nubBy)
 import Framework.Prototype (NodeId)
 import Framework.Runtime.Identity (ActivationId)
+import Framework.Prototype.Slot (Slot)
 
 data NodeProgress = Pending | Running | Completed | Skipped
   deriving (Eq, Show)
 
 -- 身份记录，不保存值、资源引用或历史。frameDelivered 的 NodeId 是普通伴随资产的
 -- 发布位置；frameCaptures 的 NodeId 是固定该视图的读取位置，两张表不混用。
-type DeliveryIdentity = (NodeId, String, ActivationId)
+type DeliveryIdentity = (NodeId, Slot, ActivationId)
 
 data ExecutionFrame = ExecutionFrame
   { frameParent :: Maybe ExecutionFrame
@@ -34,7 +35,7 @@ data ExecutionFrame = ExecutionFrame
   , frameChildren :: IORef [ExecutionFrame]
   -- v1（2026-11-17）：本轮会话的已选/下一条身份查询；不领取、不启动来源。
   -- 查询只读领取槽与会话状态，不能获取帧协调锁或运行 handler。
-  , frameSessionInputs :: IORef (String -> ActivationId -> IO (Maybe Bool))
+  , frameSessionInputs :: IORef (Slot -> ActivationId -> IO (Maybe Bool))
   -- 普通读取、持续读取与 alternative 交接已固定的值；只保留身份，不保留历史。
   , frameCaptures :: IORef [DeliveryIdentity]
   -- 根帧和子帧共用一个变化信号；普通发布与节点退休都叫醒缺值读取。
@@ -52,7 +53,7 @@ newExecutionFrame coordinator parent boundary nodes =
 
 -- 初始化捕获和查询后才发布到父帧，避免并行回收观察到不完整的会话预约。
 newPreparedFrame :: MVar () -> Maybe ExecutionFrame -> Maybe NodeId -> [NodeId] -> [DeliveryIdentity]
-                 -> (String -> ActivationId -> IO (Maybe Bool)) -> IO ExecutionFrame
+                 -> (Slot -> ActivationId -> IO (Maybe Bool)) -> IO ExecutionFrame
 newPreparedFrame coordinator parent boundary nodes delivered query = uninterruptibleMask_ $ do
   changed <- maybe (newEmptyMVar >>= newIORef) (pure . frameChanged) parent
   frame <- ExecutionFrame parent (maybe 0 ((+ 1) . frameDepth) parent) boundary coordinator
@@ -69,7 +70,7 @@ newChildFrame parent boundary = newExecutionFrame (frameCoordinator parent) (Jus
 -- 它只预约未来使用，不作为发布的归属帧；interpreter 托管会话没有 AST 边界。
 -- 生产停止后仍按既有排空规则保留预约，直到会话退役才摘除。
 newSessionFrame :: ExecutionFrame -> Maybe NodeId -> [NodeId] -> [DeliveryIdentity]
-                -> (String -> ActivationId -> IO (Maybe Bool)) -> IO ExecutionFrame
+                -> (Slot -> ActivationId -> IO (Maybe Bool)) -> IO ExecutionFrame
 newSessionFrame parent = newPreparedFrame (frameCoordinator parent) (Just parent)
 
 -- 执行帧与 scope 归属共用的内存协调锁。Graph 的发布/保留交接也在这里串行化，
@@ -119,10 +120,10 @@ framePendingViews frame = do
   pure ((frame, nodes, delivered) : descendants)
 
 -- 安装发生在本轮启动前；查询在 scope 协调锁内执行，结束时清掉闭包。
-installSessionInputs :: ExecutionFrame -> (String -> ActivationId -> IO (Maybe Bool)) -> IO ()
+installSessionInputs :: ExecutionFrame -> (Slot -> ActivationId -> IO (Maybe Bool)) -> IO ()
 installSessionInputs frame = writeIORef (frameSessionInputs frame)
 
-pendingSessionInput :: ExecutionFrame -> String -> ActivationId -> IO (Maybe Bool)
+pendingSessionInput :: ExecutionFrame -> Slot -> ActivationId -> IO (Maybe Bool)
 pendingSessionInput frame source production = do
   query <- readIORef (frameSessionInputs frame)
   query source production
@@ -130,12 +131,12 @@ pendingSessionInput frame source production = do
 capturedFrameInputs :: ExecutionFrame -> IO [DeliveryIdentity]
 capturedFrameInputs = readIORef . frameCaptures
 
-captureFrameInput :: ExecutionFrame -> NodeId -> String -> ActivationId -> IO ()
+captureFrameInput :: ExecutionFrame -> NodeId -> Slot -> ActivationId -> IO ()
 captureFrameInput frame node source production = withFrameLock frame $
   captureFrameInputLocked frame node source production
 
 -- 普通共享值的选择与捕获在同一协调锁内提交，避免覆盖发布后的回收抢先关闭参数实例。
-captureFrameInputLocked :: ExecutionFrame -> NodeId -> String -> ActivationId -> IO ()
+captureFrameInputLocked :: ExecutionFrame -> NodeId -> Slot -> ActivationId -> IO ()
 captureFrameInputLocked frame node source production = do
   current <- readIORef (frameCaptures frame)
   let updated = (node, source, production) : filter (\(at, context, _) -> at /= node || context /= source) current

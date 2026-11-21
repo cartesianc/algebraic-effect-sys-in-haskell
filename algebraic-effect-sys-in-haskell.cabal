@@ -35,6 +35,7 @@ common runtime-program
       Framework.Prototype.Graph
       Framework.Prototype.Query
       Framework.Prototype.Index
+      Framework.Prototype.Slot
       Framework.Prototype.Validate
       Framework.Prototype.Structure
       Framework.Runtime
@@ -209,6 +210,7 @@ executable effect-codegen
       Framework.Prototype.Graph
       Framework.Prototype.Query
       Framework.Prototype.Index
+      Framework.Prototype.Slot
       Framework.Prototype.Validate
   ghc-options: -main-is Framework.Gen.Main
   build-depends:

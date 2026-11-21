@@ -27,8 +27,9 @@ import Framework.Runtime.Binding (Binding(..))
 import Framework.Runtime.Scope (ScopeBinding, ScopeBindings)
 import Framework.Runtime.Retention (Retention, withRetentionLock, keepBindingsLocked)
 import Framework.Prototype (NodeId)
+import Framework.Prototype.Slot (Slot(..))
 
-type SessionKey = (Maybe NodeId, String)
+type SessionKey = (Maybe NodeId, Slot)
 
 -- 固定交付视图按发布时间排列，最后一条是本次选中的 Binding；此前的条目只用于业务历史读取。
 -- 绑定保留自己的生产身份、执行帧和共享归属。
@@ -108,7 +109,7 @@ data Retirement = Unretired (IO ()) | Retiring (MVar ()) | Retired
 data Session environment cause = Session
   { sessionKey :: SessionKey
   , sessionBindings :: ScopeBindings environment cause
-  , sessionViews :: [(String, View environment cause)]
+  , sessionViews :: [(Slot, View environment cause)]
   , sessionState :: MVar (SessionState environment cause)
   , sessionWorker :: MVar SessionWorker
   -- 由另一份持续资产驱动的会话：上游会话，以及本会话在其中的游标。上游在进入 lifelong 时登记读取方，
@@ -122,7 +123,7 @@ data Session environment cause = Session
   }
 
 newSession :: IO () -> ([ScopeBinding environment cause] -> IO ()) -> Bool -> SessionKey -> ScopeBindings environment cause
-           -> [(String, View environment cause)] -> IO (Session environment cause)
+           -> [(Slot, View environment cause)] -> IO (Session environment cause)
 newSession notify collect history key bindings views = do
   signal <- newEmptyMVar
   let readers = maybe (Just []) (const Nothing) (fst key)
@@ -433,7 +434,7 @@ takeDeliveryOn signal session cursor retention interrupted =
 
 takeDeliveryOnWith :: IO (MVar ()) -> Session environment cause -> Cursor -> Retention environment cause -> IO (Maybe (Stopped cause))
                    -> (Delivery environment cause -> IO ()) -> IO (Either (Stopped cause) (Delivery environment cause))
-takeDeliveryOnWith _ session Idle _ _ _ = ioError (userError ("A lifelong unit takes a delivery of " ++ snd (sessionKey session)
+takeDeliveryOnWith _ session Idle _ _ _ = ioError (userError ("A lifelong unit takes a delivery of " ++ slotName (snd (sessionKey session))
   ++ " without a read point in the prototype; regenerate with the SDK effect-codegen command"))
 takeDeliveryOnWith signal session (Reading position) retention interrupted selected = do
   delivered <- readIORef position

@@ -22,6 +22,7 @@ import Framework.Language.Handler (Failure(..))
 import Framework.Runtime.Protocol (ScopeFault(..), ScopeInput(..))
 import Framework.Runtime.Identity (Execution)
 import Framework.Runtime.Frame (ExecutionFrame)
+import Framework.Prototype.Slot (Slot(..), scopeResourceSlot)
 import Control.Concurrent.MVar (MVar, newMVar, newEmptyMVar, modifyMVar, readMVar, withMVar, putMVar)
 import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, mask, try, finally, uninterruptibleMask_)
 import Control.Monad (forM, forM_, when, void)
@@ -89,8 +90,10 @@ type Scopes environment cause = [ScopeHandler environment cause]
 -- 同一注册的实例集合；锁只保护查找／创建，不覆盖不同实例的业务 IO。
 data ScopeHandler environment cause = ScopeHandler
   { scopeName :: String
-  , scopeInputSources :: [String]
-  , scopeContextSource :: Maybe String
+  -- 开启参数与资源 Context 按 effect 编号匹配；resource 是资源绑定的编号（无业务 Context 时为内部 unit 绑定）。
+  , scopeInputSources :: [Slot]
+  , scopeContextSource :: Maybe Slot
+  , scopeResource :: Slot
   , scopeInstances :: MVar [ScopeInstance environment cause]
   , scopeCoordinator :: IORef (MVar ())
   , scopePeers :: IORef (Scopes environment cause)
@@ -144,9 +147,9 @@ data ScopeCleanup cause = ScopeCleanup
   (Unique -> SomeException -> IO (Failure cause, Maybe SomeException))
   (Unique -> IO (Either (Failure cause) ()))
 
-newScopeHandler :: String -> [String] -> Maybe String -> IO (ScopeHandler environment cause)
+newScopeHandler :: Slot -> [Slot] -> Maybe Slot -> IO (ScopeHandler environment cause)
 newScopeHandler selected inputs source = do
-  handler <- ScopeHandler selected inputs source <$> newMVar []
+  handler <- ScopeHandler (slotName selected) inputs source (maybe (scopeResourceSlot selected) id source) <$> newMVar []
     <*> (newMVar () >>= newIORef) <*> newIORef [] <*> newIORef []
     <*> newIORef (const (pure False)) <*> newIORef []
   writeIORef (scopePeers handler) [handler]

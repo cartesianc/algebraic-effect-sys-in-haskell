@@ -7,6 +7,7 @@ module Framework.Runtime.Binding
 import Data.IORef (IORef, newIORef, readIORef)
 import Framework.Runtime.Identity (Execution, ActivationId)
 import Framework.Runtime.Frame (ExecutionFrame)
+import Framework.Prototype.Slot (Slot)
 
 data Binding environment owner user = Binding
   { bindingValues :: environment
@@ -27,7 +28,8 @@ data BindingOwnership owner user = BindingOwnership
   , bindingUsers :: [user]
   }
 
-type Bindings environment owner user = [(String, Binding environment owner user)]
+-- 按 gen 分配的 effect 编号寻址；名字只留在 Slot 里供诊断。
+type Bindings environment owner user = [(Slot, Binding environment owner user)]
 
 newBinding :: environment -> Execution -> Maybe ActivationId -> ExecutionFrame -> Bool -> Maybe owner
            -> IO (Binding environment owner user)
@@ -37,5 +39,5 @@ newBinding values origin production frame resource owner =
 readBindingOwner :: Binding environment owner user -> IO (Maybe owner)
 readBindingOwner = fmap bindingOwner . readIORef . bindingOwnership
 
-bind :: String -> Binding environment owner user -> Bindings environment owner user -> Bindings environment owner user
+bind :: Slot -> Binding environment owner user -> Bindings environment owner user -> Bindings environment owner user
 bind source value values = (source, value) : filter ((/= source) . fst) values

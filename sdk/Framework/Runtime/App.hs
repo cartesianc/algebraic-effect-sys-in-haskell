@@ -26,6 +26,7 @@ import Framework.Runtime.Identity
 import Framework.Runtime.Frame (ExecutionFrame, owningFrame, captureFrameInput)
 import Framework.Runtime.Session (Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..), View, lastBinding, awaitView)
 import Framework.Prototype (NodeId)
+import Framework.Prototype.Slot (Slot(..))
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, evaluate, fromException, mask, mask_, throwIO, try, finally)
 import Control.Monad (filterM, forM, forM_, when)
@@ -49,9 +50,9 @@ data Environment env cause = Environment
   { emptyValues :: env
   , bindings :: IORef (ScopeBindings env cause)
   , scopes :: Scopes env cause
-  , caller :: Maybe String
+  , caller :: Maybe Slot
   , dependencies :: [String]
-  , contexts :: [String]
+  , contexts :: [Slot]
   , openings :: [Opening env cause]
   , closings :: [Closing env cause]
   , errorHandlers :: [(Maybe String, ErrorHandler cause (App env cause))]
@@ -70,24 +71,24 @@ data Environment env cause = Environment
   -- 注入期间各原子句柄的本次输出。
   , replays :: [(String, RawOutput)]
   -- 持续资产在本次调用的固定交付：lifelong 交付或此前的会话读取；其他调用之后的发布不改写它。
-  , views :: IORef [(String, View env cause)]
+  , views :: IORef [(Slot, View env cause)]
   -- Receive 来源取得同步交付函数，parser 只取得本条原始输入。
   , streamPort :: StreamPort env cause
   -- 这些来源的发布进入会话队列，而不是按 Origin 的业务资产表：
   -- 会话步骤的本资产，以及原始链沿用本次输出的持续 parser 产物。
-  , sessionSinks :: [(String, Bound env cause -> IO ())]
+  , sessionSinks :: [(Slot, Bound env cause -> IO ())]
   -- lifelong 单元执行中：本次 frame 对会话资产的领取（同一 frame 只领取一次，各调用共享）。
-  , frameDeliver :: String -> Maybe (IO (Either (Stopped cause) (View env cause)))
+  , frameDeliver :: Slot -> Maybe (IO (Either (Stopped cause) (View env cause)))
   }
 
 -- 一次末端调用的起点：交接的绑定与视图；会话步骤另带原始输入，lifelong 单元另带本次 frame。
 -- 会话步骤共用会话的使用登记：生产资源跨步骤保持，停止会话时才撤销这份使用。
 data Launch env cause = Launch
   { launchBindings :: ScopeBindings env cause
-  , launchViews :: [(String, View env cause)]
+  , launchViews :: [(Slot, View env cause)]
   , launchPort :: StreamPort env cause
-  , launchSinks :: [(String, Bound env cause -> IO ())]
-  , launchDeliver :: String -> Maybe (IO (Either (Stopped cause) (View env cause)))
+  , launchSinks :: [(Slot, Bound env cause -> IO ())]
+  , launchDeliver :: Slot -> Maybe (IO (Either (Stopped cause) (View env cause)))
   , launchUser :: Maybe (ScopeUser env cause)
   , launchFrame :: ExecutionFrame
   , launchRetention :: Retention env cause
@@ -121,7 +122,7 @@ data Opening env cause = Opening
   -- gen 写在 open 入口上的本 scope close；开启成功时登记为自动收尾。
   , closeAction :: Maybe (App env cause ())
   , observed :: IORef [ScopeInput]
-  , observedFrames :: IORef [(String, ExecutionFrame)]
+  , observedFrames :: IORef [(Slot, ExecutionFrame)]
   , produced :: IORef (ScopeBindings env cause)
   , holding :: IORef (Maybe (ScopeInstance env cause))
   , token :: Unique
@@ -162,15 +163,15 @@ instance MonadIO (App env cause) where
       _ -> pure ()
     rawIO action
 
-inputName :: ScopeInput -> String
+inputName :: ScopeInput -> Slot
 inputName (ScopeInput name _) = name
 
 fault :: String -> (ScopeFault -> cause) -> ScopeFault -> Failure cause
 fault name wrap problem = Failure name (wrap problem) (show problem) [] [] Nothing []
 
 -- 没有业务 Context 的 scope 使用内部 unit 绑定；不是新增业务 effect 或配置 key。
-resourceSource :: ScopeHandler env cause -> String
-resourceSource handler = fromMaybe ("$scope:" ++ scopeName handler) (scopeContextSource handler)
+resourceSource :: ScopeHandler env cause -> Slot
+resourceSource = scopeResource
 
 ownedNames :: Environment env cause -> [String]
 ownedNames environment = map (scopeName . family) (openings environment)
@@ -179,13 +180,13 @@ ownedNames environment = map (scopeName . family) (openings environment)
 -- 绑定捕获、发布与资源定位 -------------------------------------------------------
 
 -- 捕获：只写入本次调用；用于读取已有绑定、恢复 scope 快照和认领归属，不改写运行级 state。
-captureBinding :: Environment env cause -> String -> Bound env cause -> IO ()
+captureBinding :: Environment env cause -> Slot -> Bound env cause -> IO ()
 captureBinding environment source value =
   atomicModifyIORef' (bindings environment) $ \current -> (bind source value current, ())
 
 -- 尚未认领的资源也要记录本次使用；以后认领时一并接入实际实例。
 -- 普通资产没有认领入口，只需读取其共享归属单元。
-observeBindingOwner :: Environment env cause -> String -> Bound env cause
+observeBindingOwner :: Environment env cause -> Slot -> Bound env cause
                     -> IO (Maybe (String, ScopeInstance env cause))
 observeBindingOwner environment source value
   | any ((== Just source) . scopeContextSource) (scopes environment) =
@@ -194,7 +195,7 @@ observeBindingOwner environment source value
 
 -- 发布：普通业务更新运行级最新值并保留实际 Origin；诊断与自动收尾只更新隔离快照。
 -- 资源绑定仍归具体 scope 实例；捕获、复用和认领归属不向业务资产表重新发布旧值。
-publishBinding :: Environment env cause -> String -> Bound env cause -> IO ()
+publishBinding :: Environment env cause -> Slot -> Bound env cause -> IO ()
 publishBinding environment source value = do
   owner <- observeBindingOwner environment source value
   captureBinding environment source value
@@ -212,7 +213,7 @@ publishBinding environment source value = do
 
 -- 已合法捕获的绑定保持快照。资源只能来自本链 open 的捕获；不从仍活着的其他实例猜测。
 -- scope 保存的无 owner 辅助值不能盖过运行级最新发布。
-resolveBinding :: Environment env cause -> String -> IO (Either ContextFault (Maybe (Bound env cause)))
+resolveBinding :: Environment env cause -> Slot -> IO (Either ContextFault (Maybe (Bound env cause)))
 resolveBinding environment source = do
   current <- lookup source <$> readIORef (bindings environment)
   case current of
@@ -290,7 +291,7 @@ setPhase :: ScopeInstance env cause -> ScopePhase cause -> IO ()
 setPhase slot phase = atomicModifyIORef' (scopeRecord slot) $ \record ->
   (record { scopePhase = phase }, ())
 
-saveBinding :: ScopeInstance env cause -> String -> Bound env cause -> IO ()
+saveBinding :: ScopeInstance env cause -> Slot -> Bound env cause -> IO ()
 saveBinding slot source value = atomicModifyIORef' (scopeRecord slot) $ \record ->
   (record { scopeBindings = bind source value (scopeBindings record) }, ())
 
@@ -315,7 +316,7 @@ ensureOpen environment attempt = do
           name = scopeName handler
           missing = filter (`notElem` map inputName inputs) (scopeInputSources handler)
       if not (null missing)
-        then pure (Left (fault name (wrapFault attempt) (ScopeInputsMissing missing)))
+        then pure (Left (fault name (wrapFault attempt) (ScopeInputsMissing (map slotName missing))))
         else do
           parameterFrames <- map snd <$> readIORef (observedFrames attempt)
           let ownerFrame = owningFrame (runtimeRootFrame (runtimeGraph environment)) parameterFrames
@@ -351,7 +352,7 @@ ensureOpen environment attempt = do
 
 missingClose :: Closing env cause -> Failure cause
 missingClose attempt = fault (scopeName (closeFamily attempt)) (closeFault attempt)
-  (ScopeContextMissing (resourceSource (closeFamily attempt)))
+  (ScopeContextMissing (slotName (resourceSource (closeFamily attempt))))
 
 permitFor :: Environment env cause -> ScopeInstance env cause -> Maybe Unique
 permitFor environment slot = case cleanupPermit environment of
@@ -371,7 +372,7 @@ beginClose environment attempt value = do
     Just (slot, _) -> case owner of
       Just selected | scopeRecord selected == scopeRecord slot -> pure (Right ())
       _ -> pure (Left (fault (scopeName (closeFamily attempt)) (closeFault attempt)
-            (ScopeContextMismatch (resourceSource (closeFamily attempt)))))
+            (ScopeContextMismatch (slotName (resourceSource (closeFamily attempt))))))
     Nothing -> case owner of
       Nothing -> pure (Left (missingClose attempt))
       Just slot -> mask $ \_ -> do
@@ -437,7 +438,7 @@ instance ContextStore env (App env cause) where
           attempt : _ | resourceSource (family attempt) == source -> do
             selected <- rawIO (readIORef (holding attempt))
             let name = scopeName (family attempt)
-                mismatch = fault name (wrapFault attempt) (ScopeContextMismatch source)
+                mismatch = fault name (wrapFault attempt) (ScopeContextMismatch (slotName source))
             case observedOwner of
               Nothing -> pure ()
               Just (ownerName, _)
@@ -535,12 +536,12 @@ instance ContextStore env (App env cause) where
         (value, frame) <- case captured of
           Just bound | Just production <- bindingProduction bound ->
             pure (ScopeInput source production, bindingFrame bound)
-          _ -> throwError (fault (scopeName (family attempt)) (wrapFault attempt) (ScopeInputsMissing [source]))
+          _ -> throwError (fault (scopeName (family attempt)) (wrapFault attempt) (ScopeInputsMissing [slotName source]))
         previous <- rawIO (readIORef (observed attempt))
         started <- rawIO (readIORef (holding attempt))
         case started of
           Just _ | value `notElem` previous -> throwError
-            (fault (scopeName (family attempt)) (wrapFault attempt) (ScopeInputAfterOpen (inputName value)))
+            (fault (scopeName (family attempt)) (wrapFault attempt) (ScopeInputAfterOpen (slotName (inputName value))))
           _ -> pure ()
         let updated = value : filter ((/= inputName value) . inputName) previous
         rawIO $ writeIORef (observed attempt) updated
@@ -663,7 +664,7 @@ runDiagnostic environment problem selected callback = do
 -- 本次已有视图时直接读取；lifelong 单元中尚未领取的会话资产在第一次读取时领取本次 frame 的交付。
 -- 这时才发现来源已结束并排空：本次调用无法继续，以内部信号交回单元调度，由它正常结束单元。
 -- 本单元发布、一条都还没有发布过的会话（Undriven）：没有可读的值，按缺值处理（awaitContextWith 不另找来源）。
-readContextWith :: String -> (View env cause -> Maybe value) -> App env cause (Maybe value)
+readContextWith :: Slot -> (View env cause -> Maybe value) -> App env cause (Maybe value)
 readContextWith source project = do
   environment <- AppRun ask
   captured <- rawIO (lookup source <$> readIORef (views environment))
@@ -680,7 +681,7 @@ readContextWith source project = do
 -- 诊断、收尾与 close 期间不启动会话；读到的绑定捕获为本次视图。
 -- 会话已结束时仍可读最后一次发布，不重新启动来源；零发布结束按缺值报出。
 -- 合法的先前 lifelong 会话优先，否则取得编译器为该资产安排的 interpreter 托管会话。
-awaitContextWith :: String -> (View env cause -> Maybe value) -> App env cause (Maybe value)
+awaitContextWith :: Slot -> (View env cause -> Maybe value) -> App env cause (Maybe value)
 awaitContextWith source project = do
   environment <- AppRun ask
   if not (deliveryAllowed environment) || isJust (frameDeliver environment source) then pure Nothing else do
@@ -690,16 +691,16 @@ awaitContextWith source project = do
     captureDelivery environment source project (rawIO (awaitView session (bindingRetention environment)))
 
 -- stream @T 的投影：视图整段，本次值在前，其后是同会话更早的发布。
-historyOf :: String -> (env -> Maybe value) -> View env cause -> Maybe [value]
+historyOf :: Slot -> (env -> Maybe value) -> View env cause -> Maybe [value]
 historyOf source select view = case toList (Seq.reverse view) of
   [] -> Nothing
-  bindings -> Just [fromMaybe (error ("SDK: a delivery of " ++ source ++ " carries no value; regenerate the program"))
+  bindings -> Just [fromMaybe (error ("SDK: a delivery of " ++ slotName source ++ " carries no value; regenerate the program"))
     (select (bindingValues binding)) | binding <- bindings]
 
 -- 捕获的是本次交付的 Binding（视图最后一条）。
-valueOf :: String -> (env -> Maybe value) -> View env cause -> Maybe value
+valueOf :: Slot -> (env -> Maybe value) -> View env cause -> Maybe value
 valueOf source select view = fmap (\binding ->
-  fromMaybe (error ("SDK: a delivery of " ++ source ++ " carries no value; regenerate the program"))
+  fromMaybe (error ("SDK: a delivery of " ++ slotName source ++ " carries no value; regenerate the program"))
     (select (bindingValues binding))) (lastBinding view)
 
 deliveryAllowed :: Environment env cause -> Bool
@@ -707,7 +708,7 @@ deliveryAllowed environment = isNothing (originalFailure environment) && not (cl
   && null (closings environment)
 
 -- 固定交付沿用 Binding 的生产身份；资产自身若含资源容器，不在此推断容器内所有资源的存续。
-rememberView :: Environment env cause -> String -> View env cause -> App env cause ()
+rememberView :: Environment env cause -> Slot -> View env cause -> App env cause ()
 rememberView environment source view = when (deliveryAllowed environment) $
   forM_ (lastBinding view >>= bindingProduction) $ \production ->
     rawIO (captureFrameInput (currentFrame environment)
@@ -715,7 +716,7 @@ rememberView environment source view = when (deliveryAllowed environment) $
 
 -- 会话失败时传播它的原失败或原生异常；取得的视图捕获为本次视图，之后的发布不改写它。
 -- Nothing：来源已正常结束且没有可交付的视图，由调用方按各自的协议处理。
-captureDelivery :: Environment env cause -> String -> (View env cause -> Maybe value)
+captureDelivery :: Environment env cause -> Slot -> (View env cause -> Maybe value)
                 -> App env cause (Either (Stopped cause) (View env cause)) -> App env cause (Maybe value)
 captureDelivery environment source project deliver = do
   delivered <- deliver
@@ -804,7 +805,7 @@ runOpen name wrap cleanup (AppRun action) = AppRun $ do
           forM_ selected $ \slot -> do
             saved <- liftIO (scopeBindings <$> readIORef (scopeRecord slot))
             when (resourceSource handler `notElem` map fst saved) $
-              throwError (fault name wrap (ScopeContextMissing (resourceSource handler)))
+              throwError (fault name wrap (ScopeContextMissing (slotName (resourceSource handler))))
           pure value
     outcome <- try (restore (runExceptT execute))
     acquired <- readIORef (holding attempt)
@@ -933,7 +934,7 @@ currentOperation = HookApp ask
 -- 来源保持本次使用，解析期间持有收到的资源 Binding，原生产身份与关闭责任不变。
 runAppWith :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> NodeId -> Launch env cause
            -> env -> App env cause value
-           -> IO (Either (Failure cause) value, ScopeBindings env cause, [(String, View env cause)])
+           -> IO (Either (Failure cause) value, ScopeBindings env cause, [(Slot, View env cause)])
 runAppWith consume graph node launch initial action = do
   values <- newIORef (launchBindings launch)
   delivered <- newIORef (launchViews launch)
@@ -943,7 +944,7 @@ runAppWith consume graph node launch initial action = do
   pure (outcome, captured, capturedViews)
 
 runAppIn :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> NodeId -> IORef (ScopeBindings env cause)
-         -> IORef [(String, View env cause)] -> Launch env cause -> env -> App env cause value
+         -> IORef [(Slot, View env cause)] -> Launch env cause -> env -> App env cause value
          -> IO (Either (Failure cause) value)
 runAppIn consume graph node values delivered launch initial (AppRun action) = mask $ \restore -> do
   origin <- newOrigin graph node

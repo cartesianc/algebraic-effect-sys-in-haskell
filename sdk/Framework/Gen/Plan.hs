@@ -6,7 +6,7 @@ module Framework.Gen.Plan
   , ReaderPlan(..), SelectorPlan(..), SessionEntry(..), SuperSelection(..)
   , Assembly(..), EntryMount(..), OutputConnection(..), EntryStep(..), RawSource(..)
   , stepMethod, rawMethod, bindingCalls, unitTerminals, mountHooks, unitVariants
-  , effectPrototypes, protoOf, allMethods, streamedRoutes, historyEntry, historyEntries
+  , effectPrototypes, protoOf, effectSlot, slotLiteral, allMethods, streamedRoutes, historyEntry, historyEntries
   , reference, parenthesized, normalizeType, readsAccess ) where
 
 import Data.Char (isSpace, isUpper)
@@ -196,6 +196,18 @@ protoOf :: Unit -> String -> Prototype.EffectProto String
 protoOf unit selectedName = case [effect | effect <- effectPrototypes unit, Prototype.effectName effect == selectedName] of
   effect : _ -> effect
   [] -> error ("Validated prototype has no effect: " ++ selectedName)
+
+-- gen 的 effect 编号：effect 在 plannedEffects（即 Prototype 的 protoEffects）中的位置。
+-- 运行时的原型索引按同一规则编号，生成代码里的 Slot 字面量因此与 Prototype 一致。
+effectSlot :: Unit -> String -> Int
+effectSlot unit selectedName = case [number | (number, effect) <- zip [0 ..] (effectPrototypes unit)
+    , Prototype.effectName effect == selectedName] of
+  number : _ -> number
+  [] -> error ("Validated prototype has no effect: " ++ selectedName)
+
+-- 生成代码中的编号字面量；名字只用于诊断与展示。prefix 是 SDK 模块的限定名。
+slotLiteral :: String -> Unit -> String -> String
+slotLiteral prefix unit selectedName = "(" ++ prefix ++ "Slot " ++ show (effectSlot unit selectedName) ++ " " ++ show selectedName ++ ")"
 
 allMethods :: Unit -> [String]
 allMethods unit = [method | effect <- effectPrototypes unit, (_, method) <- Prototype.effectMethods effect]

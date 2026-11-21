@@ -14,7 +14,7 @@ module Framework.Generated
   , callContext, chooseCase, enterHandler
   , atomicHandle, atomicScope, emittedInput, emitToParser, endSource, endSubscription
   , openScope, closeScope, withScopeDependencies
-  , ScopeHandler, newScopeHandler
+  , ScopeHandler, newScopeHandler, Slot(..)
   , Root(..), HandlerError(..), superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation
   , Generic, NFData, coerce, interpreter
   ) where
@@ -32,6 +32,7 @@ import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, de
 import Framework.Runtime.App
   ( emittedInput, emitToParser, superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation )
 import Framework.Runtime.Scope (ScopeHandler, newScopeHandler)
+import Framework.Prototype.Slot (Slot(..))
 import Framework.Program (initializePrototype, runProgram)
 import Framework.Prototype
 import Framework.Prototype.Structure

@@ -8,7 +8,7 @@ module Framework.Runtime.Execution (runStructuredAST) where
 
 import Framework.Language.Handler (Failure, Output(..))
 import Framework.Runtime
-  ( Target, Handoff, SessionSteps, DeliveryFrame, LocalSource(..), noHandoff, targetName, lowerTarget, scopeHandlers
+  ( Target, Handoff, SessionSteps, DeliveryFrame, noHandoff, targetName, lowerTarget, scopeHandlers
   , newDeliveryFrame, frameDelivery, framePublishes, haltFrame, frameStopping, frameAdmits, boundarySession, sessionLauncher )
 import Framework.Runtime.Graph
   ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, installSessionLauncher
@@ -19,6 +19,7 @@ import Framework.Runtime.Session
   , retireSession, feedSession, endSession, breakSession )
 import Framework.Prototype
 import Framework.Prototype.Index
+import Framework.Prototype.Slot (Slot)
 import Framework.Recursion (Algebra)
 import Framework.Language.AST (AST, WorkflowF(..), foldAST)
 import Control.Concurrent (MVar, ThreadId, forkIOWithUnmask, killThread, newEmptyMVar, putMVar, readMVar, tryPutMVar)
@@ -132,7 +133,7 @@ supervised run action = do
 -- 等待者无论被结束通知还是被新数据唤醒，都在这里重新判定；通过的视作已启动，单元等它完成。
 -- 发布位置在本单元（含派生）的会话等待本轮稳定：确定没有新发布时位置本轮不执行（Quiet），
 -- 已封口并排空时只结束这个位置的订阅（Exhausted），不结束单元。
-awaitDeliveries :: Run environment cause -> [String] -> IO (Either (Halt cause) Drive)
+awaitDeliveries :: Run environment cause -> [Slot] -> IO (Either (Halt cause) Drive)
 awaitDeliveries run sources = case runDeliveryFrame run of
   Nothing -> pure (Right Driven)
   Just frame -> do
@@ -228,7 +229,7 @@ executionAlgebra index store entries selectors layer expected = do
         Left (InvalidPrototype ("Node chain differs at " ++ show location))
       -- 被 middleware 标注覆盖的挂载使用 gen 特化的 Target；运行时只按静态登记名选取。
       entry <- resolve entries (hooksLabel index location (chainTerminal chain))
-      let subscribed = driveSubscriptions (nodeDriveOf index location)
+      let subscribed = subscriptionsAt index location
       -- 已经结束订阅的节点不再执行，也不领取交付；退出时由 managed 把它记为跳过。
       single $ \run handoff -> ExceptT $ do
         ended <- endedNodes run
@@ -295,11 +296,11 @@ executionAlgebra index store entries selectors layer expected = do
         (lifelongUnits description)
       sources <- mapM (\session -> case [route | route <- drivingSessions (protoDriving (indexedPrototype index))
           , driveSessionBoundary route == Just location, driveSessionAsset route == sessionAsset session] of
-        [route] -> Right (sessionAsset session, sessionPlan session, driveSessionSource route)
+        [route] -> Right (sessionAsset session, sessionPlan session, slotOf index (driveSessionSource route))
         _ -> Left (InvalidLifelong location "Missing generated session driver")) (lifelongSessions description)
       -- 读取位置与派生关联由 Booter 给出；这里只检查本单元实际结束的位置。
       let access ended _ source unit = any (available ended)
-            (maybe [] id (lookup source (driveReaders (unitDriveOf index unit))))
+            (maybe [] id (lookup source (unitReadersAt index unit)))
           available ended (ReadAt position) = live ended position
           available ended (ChooseAmong members) = any (live ended) members
           live ended position = not (any (`isPrefixOf` position) ended)
@@ -329,7 +330,7 @@ executionAlgebra index store entries selectors layer expected = do
                 (Just [], Right ()) -> endSession session
                 _ -> pure ()
         -- 本单元发布及其 Derive 后继已在 gen 标出；运行时等待协议只读该关系。
-        let local unit = driveLocalSources (unitDriveOf index unit)
+        let local unit = unitLocalSourcesAt index unit
         outcomes <- runParalleled
           [ do
               outcome <- repeatUnit location run handoff

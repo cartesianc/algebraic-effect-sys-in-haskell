@@ -157,26 +157,26 @@ instance SDK.RawOutputs (Wrap effect method)
 getFileNames :: Effects.App Effects.FileNames
 getFileNames =
   SDK.handleFailure
-  . SDK.callContext "FileLocations"
+  . SDK.callContext (SDK.Slot 0 "FileLocations")
       (\value bindings -> bindings { Effects.boundFileLocations = Just value }) $
     Effects.FileNames <$> call @"FileLocations" @"listFiles" Effects.listFiles
 
 readFileNames :: Effects.App Effects.FileNames
 readFileNames =
   SDK.handleFailure $
-    SDK.readContext "FileLocations" Effects.ContextBindingError Effects.boundFileLocations
+    SDK.readContext (SDK.Slot 0 "FileLocations") Effects.ContextBindingError Effects.boundFileLocations
 
 getOpenedFiles :: Effects.App Effects.OpenedFiles
 getOpenedFiles =
   SDK.handleFailure
-  . SDK.callContext "FileResources"
+  . SDK.callContext (SDK.Slot 1 "FileResources")
       (\value bindings -> bindings { Effects.boundFileResources = Just value }) $
     Effects.OpenedFiles <$> call @"FileResources" @"acquireFiles" Effects.acquireFiles
 
 readOpenedFiles :: Effects.App Effects.OpenedFiles
 readOpenedFiles =
   SDK.handleFailure $
-    SDK.readContext "FileResources" Effects.ContextBindingError Effects.boundFileResources
+    SDK.readContext (SDK.Slot 1 "FileResources") Effects.ContextBindingError Effects.boundFileResources
 
 openFileSession :: Effects.App [String]
 openFileSession =
@@ -184,7 +184,7 @@ openFileSession =
   . SDK.handleFailure
   . SDK.atomicScope "openFileSession" []
   . SDK.openScope "FileSession" Effects.ScopeBindingError (Just (() <$ closeFileSession))
-  . SDK.enterHandler "FileSession" $
+  . SDK.enterHandler (SDK.Slot 2 "FileSession") $
     getOpenedFiles >> call @"FileSession" @"openFiles" Effects.openFiles
 
 closeFileSession :: Effects.App [String]
@@ -193,7 +193,7 @@ closeFileSession =
   . SDK.handleFailure
   . SDK.atomicScope "closeFileSession" []
   . SDK.closeScope "FileSession" Effects.ScopeBindingError
-  . SDK.enterHandler "FileSession" $
+  . SDK.enterHandler (SDK.Slot 2 "FileSession") $
     callClose @"FileSession" @"closeFiles" Effects.closeFiles
 
 runHoldFiles :: Effects.App [String]
@@ -202,7 +202,7 @@ runHoldFiles =
   . SDK.handleFailure
   . SDK.atomicHandle "runHoldFiles" []
   . SDK.withScopeDependencies ["FileSession"]
-  . SDK.enterHandler "HoldFiles" $
+  . SDK.enterHandler (SDK.Slot 3 "HoldFiles") $
     getFileNames >> openFileSession >> call @"HoldFiles" @"holdFiles" Effects.holdFiles
 
 runInspectFiles :: Effects.App [String]
@@ -211,7 +211,7 @@ runInspectFiles =
   . SDK.handleFailure
   . SDK.atomicHandle "runInspectFiles" []
   . SDK.withScopeDependencies ["FileSession"]
-  . SDK.enterHandler "InspectFiles" $
+  . SDK.enterHandler (SDK.Slot 4 "InspectFiles") $
     runHoldFiles >> call @"InspectFiles" @"inspectFiles" Effects.inspectFiles
 
 runReleaseFiles :: Effects.App [String]
@@ -220,20 +220,20 @@ runReleaseFiles =
   . SDK.handleFailure
   . SDK.atomicHandle "runReleaseFiles" []
   . SDK.withScopeDependencies ["FileSession"]
-  . SDK.enterHandler "ReleaseFiles" $
+  . SDK.enterHandler (SDK.Slot 5 "ReleaseFiles") $
     runHoldFiles >> call @"ReleaseFiles" @"holdFiles" Effects.holdFiles
 
 runFinishInspection :: Effects.App [String]
 runFinishInspection =
   SDK.handleFailure
   . SDK.atomicHandle "runFinishInspection" []
-  . SDK.enterHandler "FinishInspection" $
+  . SDK.enterHandler (SDK.Slot 6 "FinishInspection") $
     getFileNames >> call @"FinishInspection" @"finishInspection" Effects.finishInspection
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ SDK.newScopeHandler "FileSession" ["FileLocations"] (Just "FileResources")
+  [ SDK.newScopeHandler (SDK.Slot 2 "FileSession") [(SDK.Slot 0 "FileLocations")] (Just (SDK.Slot 1 "FileResources"))
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。

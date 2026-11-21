@@ -34,7 +34,7 @@ compiledEntries = do
       , target "ShowA" (ShowAResult () <$ Handlers.runShowA)
       , target "ShowB" (ShowBResult () <$ Handlers.runShowB)
       ]
-    , [ target "InspectReport" (SDK.chooseCase "runInspectReport" ContextBindingError (Handlers.runInspectReport) [("ReportBlank", () <$ Handlers.getReportEmpty), ("ReportFilled", () <$ Handlers.getReportText)])
+    , [ target "InspectReport" (SDK.chooseCase "runInspectReport" ContextBindingError (Handlers.runInspectReport) [((SDK.Slot 18 "ReportBlank"), () <$ Handlers.getReportEmpty), ((SDK.Slot 19 "ReportFilled"), () <$ Handlers.getReportText)])
       ]
     , [ ("ParserA", SDK.receiveSteps (target "FeedA" (Handlers.nextFeedA)) (target "ParserA" (() <$ Handlers.getLevelA)))
       , ("ParserB", SDK.receiveSteps (target "FeedB" (Handlers.nextFeedB)) (target "ParserB" (() <$ Handlers.getLevelB)))

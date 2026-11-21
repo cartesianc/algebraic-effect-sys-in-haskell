@@ -259,20 +259,20 @@ runAnnounce :: forall hooks. Captured hooks => Effects.App [String]
 runAnnounce =
   SDK.handleFailure
   . SDK.atomicHandle "runAnnounce" []
-  . SDK.enterHandler "Announce" $
+  . SDK.enterHandler (SDK.Slot 0 "Announce") $
     call @hooks @"Announce" @"announce" Effects.announce
 
 getOpenedInput :: forall hooks. Captured hooks => Effects.App Effects.OpenedInput
 getOpenedInput =
   SDK.handleFailure
-  . SDK.callContext "InputResource"
+  . SDK.callContext (SDK.Slot 1 "InputResource")
       (\value bindings -> bindings { Effects.boundInputResource = Just value }) $
     Effects.OpenedInput <$> call @hooks @"InputResource" @"acquireInput" Effects.acquireInput
 
 readOpenedInput :: Effects.App Effects.OpenedInput
 readOpenedInput =
   SDK.handleFailure $
-    SDK.readContext "InputResource" Effects.ContextBindingError Effects.boundInputResource
+    SDK.readContext (SDK.Slot 1 "InputResource") Effects.ContextBindingError Effects.boundInputResource
 
 openInputSession :: forall hooks. Captured hooks => Effects.App [String]
 openInputSession =
@@ -280,7 +280,7 @@ openInputSession =
   . SDK.handleFailure
   . SDK.atomicScope "openInputSession" []
   . SDK.openScope "InputSession" Effects.ScopeBindingError (Just (() <$ closeInputSession @hooks))
-  . SDK.enterHandler "InputSession" $
+  . SDK.enterHandler (SDK.Slot 2 "InputSession") $
     getOpenedInput @hooks >> call @hooks @"InputSession" @"openInput" Effects.openInput
 
 closeInputSession :: forall hooks. Captured hooks => Effects.App [String]
@@ -289,7 +289,7 @@ closeInputSession =
   . SDK.handleFailure
   . SDK.atomicScope "closeInputSession" []
   . SDK.closeScope "InputSession" Effects.ScopeBindingError
-  . SDK.enterHandler "InputSession" $
+  . SDK.enterHandler (SDK.Slot 2 "InputSession") $
     callClose @hooks @"InputSession" @"closeInput" Effects.closeInput
 
 nextLineFeed :: forall hooks. Captured hooks => Effects.App ()
@@ -297,7 +297,7 @@ nextLineFeed =
   SDK.withErrorPath ["InputSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies ["InputSession"]
-  . SDK.enterHandler "LineFeed" $
+  . SDK.enterHandler (SDK.Slot 3 "LineFeed") $
     openInputSession @hooks >> call @hooks @"LineFeed" @"nextLine" Effects.nextLine
 
 getTextLine :: forall hooks. Captured hooks => Effects.App Effects.TextLine
@@ -305,7 +305,7 @@ getTextLine =
   SDK.withErrorPath ["InputSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies ["InputSession"]
-  . SDK.callContext "LineParser"
+  . SDK.callContext (SDK.Slot 5 "LineParser")
       (\value bindings -> bindings { Effects.boundLineParser = Just value }) $
     Effects.TextLine <$> call @hooks @"LineParser" @"parseLine" Effects.parseLine
 
@@ -313,63 +313,63 @@ streamTextLine :: Effects.App Effects.TextLine
 streamTextLine =
   SDK.withErrorPath ["InputSession"]
   . SDK.handleFailure $
-    SDK.readStreamContext "LineParser" Effects.ContextBindingError Effects.boundLineParser
+    SDK.readStreamContext (SDK.Slot 5 "LineParser") Effects.ContextBindingError Effects.boundLineParser
 
 historyTextLine :: Effects.App (SDK.Flow Effects.TextLine)
 historyTextLine =
   SDK.withErrorPath ["InputSession"]
   . SDK.handleFailure $
-    SDK.readStreamHistory "LineParser" Effects.ContextBindingError Effects.boundLineParser
+    SDK.readStreamHistory (SDK.Slot 5 "LineParser") Effects.ContextBindingError Effects.boundLineParser
 
 runPrintLine :: forall hooks. Captured hooks => Effects.App [String]
 runPrintLine =
   SDK.handleFailure
   . SDK.atomicHandle "runPrintLine" []
-  . SDK.enterHandler "PrintLine" $
+  . SDK.enterHandler (SDK.Slot 6 "PrintLine") $
     call @hooks @"PrintLine" @"printLine" Effects.printLine
 
 runTextCounter :: forall hooks. Captured hooks => Effects.App [String]
 runTextCounter =
   SDK.handleFailure
-  . SDK.atomicHandle "runTextCounter" [("CountParser", () <$ getRunningTotal @hooks)]
-  . SDK.enterHandler "TextCounter" $
+  . SDK.atomicHandle "runTextCounter" [((SDK.Slot 8 "CountParser"), () <$ getRunningTotal @hooks)]
+  . SDK.enterHandler (SDK.Slot 7 "TextCounter") $
     call @hooks @"TextCounter" @"countText" Effects.countText
 
 getRunningTotal :: forall hooks. Captured hooks => Effects.App Effects.RunningTotal
 getRunningTotal =
   SDK.handleFailure
-  . SDK.callContext "CountParser"
+  . SDK.callContext (SDK.Slot 8 "CountParser")
       (\value bindings -> bindings { Effects.boundCountParser = Just value }) $
     Effects.RunningTotal <$> call @hooks @"CountParser" @"parseTotal" Effects.parseTotal
 
 streamRunningTotal :: Effects.App Effects.RunningTotal
 streamRunningTotal =
   SDK.handleFailure $
-    SDK.readStreamContext "CountParser" Effects.ContextBindingError Effects.boundCountParser
+    SDK.readStreamContext (SDK.Slot 8 "CountParser") Effects.ContextBindingError Effects.boundCountParser
 
 historyRunningTotal :: Effects.App (SDK.Flow Effects.RunningTotal)
 historyRunningTotal =
   SDK.handleFailure $
-    SDK.readStreamHistory "CountParser" Effects.ContextBindingError Effects.boundCountParser
+    SDK.readStreamHistory (SDK.Slot 8 "CountParser") Effects.ContextBindingError Effects.boundCountParser
 
 runShowTotal :: forall hooks. Captured hooks => Effects.App [String]
 runShowTotal =
   SDK.handleFailure
   . SDK.atomicHandle "runShowTotal" []
-  . SDK.enterHandler "ShowTotal" $
+  . SDK.enterHandler (SDK.Slot 9 "ShowTotal") $
     call @hooks @"ShowTotal" @"showTotal" Effects.showTotal
 
 runReport :: forall hooks. Captured hooks => Effects.App [String]
 runReport =
   SDK.handleFailure
   . SDK.atomicHandle "runReport" []
-  . SDK.enterHandler "Report" $
+  . SDK.enterHandler (SDK.Slot 10 "Report") $
     call @hooks @"Report" @"report" Effects.report
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ SDK.newScopeHandler "InputSession" [] (Just "InputResource")
+  [ SDK.newScopeHandler (SDK.Slot 2 "InputSession") [] (Just (SDK.Slot 1 "InputResource"))
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。

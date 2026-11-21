@@ -598,6 +598,8 @@ runPrintPage = ⟨入口包装⟩ $
 
 运行时不再寻找生产方。interpreter 启动时把 Prototype 一次性编成按身份寻址的索引（`Framework.Prototype.Index`：按 NodeId 取链、驱动标记、开启计划，按读取点取静态来源，按来源取会话路由），节点调度、缺值等待与 scope 回收都从索引取 gen 写下的事实，不在运行中线性扫描原型或重新推导来源。
 
+资产按 gen 分配的 effect 编号存取，不按名字匹配。编号是 effect 在 `protoEffects` 中的位置（`Framework.Prototype.Slot`）；生成入口直接写出编号字面量，例如 `SDK.readContext (SDK.Slot 4 "ExtractPage")`，名字只留作诊断与展示。运行级最新值、按 Origin 的伴随发布、调用捕获、固定交付、会话登记、执行帧捕获以及 scope 的开启参数与资源绑定，都以编号为键；原型里以名字记录的读取点、会话路由、开启计划与单元读取，在建索引时一次换算成编号。一个编号恰对应一个 effect；同一 effect 在剧本中出现的多个执行位置由 NodeId 与 Origin 区分，不进入编号。
+
 因此被 `requires` 的普通资产必须有某个 effect `requests` 它，否则 gencode 以 `Asset never requested` 报错。alternative 的判定资产例外：选择读取（chooseCase）先运行一次共同句柄，再把输出依次交给各判定 parser，第一个解析成功的候选执行，候选只 requires 自己的判定资产。持续资产由会话驱动，不在此列。
 
 句柄单独挂在 AST 上执行时，不再解析挂在它下面的普通 Context；需要它的输出时，由消费方 requests 对应资产。requests 驱动的 parser 失败沿请求方传播，不在注入内隔离。复用 open、重复 close、诊断与自动收尾沿用既有限制，close 没有挂接点。scope 的资源 Context 不能挂在请求它的 Scoped 下。[选择与交接](#alternative-selection)

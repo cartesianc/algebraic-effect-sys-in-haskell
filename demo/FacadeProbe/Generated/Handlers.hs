@@ -271,74 +271,74 @@ instance SDK.EndsStream (Wrap effect method) where
 getReportPath :: Effects.App Effects.ReportPath
 getReportPath =
   SDK.handleFailure
-  . SDK.callContext "ReportLocation"
+  . SDK.callContext (SDK.Slot 0 "ReportLocation")
       (\value bindings -> bindings { Effects.boundReportLocation = Just value }) $
     Effects.ReportPath <$> call @"ReportLocation" @"reportLocation" Effects.reportLocation
 
 readReportPath :: Effects.App Effects.ReportPath
 readReportPath =
   SDK.handleFailure $
-    SDK.readContext "ReportLocation" Effects.ContextBindingError Effects.boundReportLocation
+    SDK.readContext (SDK.Slot 0 "ReportLocation") Effects.ContextBindingError Effects.boundReportLocation
 
 getReplyPath :: Effects.App Effects.ReplyPath
 getReplyPath =
   SDK.handleFailure
-  . SDK.callContext "ReplyLocation"
+  . SDK.callContext (SDK.Slot 1 "ReplyLocation")
       (\value bindings -> bindings { Effects.boundReplyLocation = Just value }) $
     Effects.ReplyPath <$> call @"ReplyLocation" @"replyLocation" Effects.replyLocation
 
 readReplyPath :: Effects.App Effects.ReplyPath
 readReplyPath =
   SDK.handleFailure $
-    SDK.readContext "ReplyLocation" Effects.ContextBindingError Effects.boundReplyLocation
+    SDK.readContext (SDK.Slot 1 "ReplyLocation") Effects.ContextBindingError Effects.boundReplyLocation
 
 getReportBody :: Effects.App Effects.ReportBody
 getReportBody =
   SDK.handleFailure
-  . SDK.callContext "ReportDraft"
+  . SDK.callContext (SDK.Slot 2 "ReportDraft")
       (\value bindings -> bindings { Effects.boundReportDraft = Just value }) $
     Effects.ReportBody <$> call @"ReportDraft" @"reportDraft" Effects.reportDraft
 
 readReportBody :: Effects.App Effects.ReportBody
 readReportBody =
   SDK.handleFailure $
-    SDK.readContext "ReportDraft" Effects.ContextBindingError Effects.boundReportDraft
+    SDK.readContext (SDK.Slot 2 "ReportDraft") Effects.ContextBindingError Effects.boundReportDraft
 
 getReplyBody :: Effects.App Effects.ReplyBody
 getReplyBody =
   SDK.handleFailure
-  . SDK.callContext "ReplyDraft"
+  . SDK.callContext (SDK.Slot 3 "ReplyDraft")
       (\value bindings -> bindings { Effects.boundReplyDraft = Just value }) $
     Effects.ReplyBody <$> call @"ReplyDraft" @"replyDraft" Effects.replyDraft
 
 readReplyBody :: Effects.App Effects.ReplyBody
 readReplyBody =
   SDK.handleFailure $
-    SDK.readContext "ReplyDraft" Effects.ContextBindingError Effects.boundReplyDraft
+    SDK.readContext (SDK.Slot 3 "ReplyDraft") Effects.ContextBindingError Effects.boundReplyDraft
 
 getOpenedReport :: Effects.App Effects.OpenedReport
 getOpenedReport =
   SDK.handleFailure
-  . SDK.callContext "ReportFile"
+  . SDK.callContext (SDK.Slot 4 "ReportFile")
       (\value bindings -> bindings { Effects.boundReportFile = Just value }) $
     getReportPath >> Effects.OpenedReport <$> call @"ReportFile" @"acquireFile" Effects.acquireFile
 
 readOpenedReport :: Effects.App Effects.OpenedReport
 readOpenedReport =
   SDK.handleFailure $
-    SDK.readContext "ReportFile" Effects.ContextBindingError Effects.boundReportFile
+    SDK.readContext (SDK.Slot 4 "ReportFile") Effects.ContextBindingError Effects.boundReportFile
 
 getOpenedReply :: Effects.App Effects.OpenedReply
 getOpenedReply =
   SDK.handleFailure
-  . SDK.callContext "ReplyFile"
+  . SDK.callContext (SDK.Slot 5 "ReplyFile")
       (\value bindings -> bindings { Effects.boundReplyFile = Just value }) $
     getReplyPath >> Effects.OpenedReply <$> call @"ReplyFile" @"acquireFile" Effects.acquireFile
 
 readOpenedReply :: Effects.App Effects.OpenedReply
 readOpenedReply =
   SDK.handleFailure $
-    SDK.readContext "ReplyFile" Effects.ContextBindingError Effects.boundReplyFile
+    SDK.readContext (SDK.Slot 5 "ReplyFile") Effects.ContextBindingError Effects.boundReplyFile
 
 openReportScope :: Effects.App [String]
 openReportScope =
@@ -346,7 +346,7 @@ openReportScope =
   . SDK.handleFailure
   . SDK.atomicScope "openReportScope" []
   . SDK.openScope "ReportScope" Effects.ScopeBindingError (Just (() <$ closeReportScope))
-  . SDK.enterHandler "ReportScope" $
+  . SDK.enterHandler (SDK.Slot 6 "ReportScope") $
     getOpenedReport >> call @"ReportScope" @"openTextFile" Effects.openTextFile
 
 closeReportScope :: Effects.App [String]
@@ -355,7 +355,7 @@ closeReportScope =
   . SDK.handleFailure
   . SDK.atomicScope "closeReportScope" []
   . SDK.closeScope "ReportScope" Effects.ScopeBindingError
-  . SDK.enterHandler "ReportScope" $
+  . SDK.enterHandler (SDK.Slot 6 "ReportScope") $
     callClose @"ReportScope" @"closeTextFile" Effects.closeTextFile
 
 openReplyScope :: Effects.App [String]
@@ -364,7 +364,7 @@ openReplyScope =
   . SDK.handleFailure
   . SDK.atomicScope "openReplyScope" []
   . SDK.openScope "ReplyScope" Effects.ScopeBindingError (Just (() <$ closeReplyScope))
-  . SDK.enterHandler "ReplyScope" $
+  . SDK.enterHandler (SDK.Slot 7 "ReplyScope") $
     getOpenedReply >> call @"ReplyScope" @"openTextFile" Effects.openTextFile
 
 closeReplyScope :: Effects.App [String]
@@ -373,7 +373,7 @@ closeReplyScope =
   . SDK.handleFailure
   . SDK.atomicScope "closeReplyScope" []
   . SDK.closeScope "ReplyScope" Effects.ScopeBindingError
-  . SDK.enterHandler "ReplyScope" $
+  . SDK.enterHandler (SDK.Slot 7 "ReplyScope") $
     callClose @"ReplyScope" @"closeTextFile" Effects.closeTextFile
 
 runWriteReport :: Effects.App [String]
@@ -382,7 +382,7 @@ runWriteReport =
   . SDK.handleFailure
   . SDK.atomicHandle "runWriteReport" []
   . SDK.withScopeDependencies ["ReportScope"]
-  . SDK.enterHandler "WriteReport" $
+  . SDK.enterHandler (SDK.Slot 8 "WriteReport") $
     getReportBody >> openReportScope >> call @"WriteReport" @"writeText" Effects.writeText
 
 runWriteReply :: Effects.App [String]
@@ -391,178 +391,178 @@ runWriteReply =
   . SDK.handleFailure
   . SDK.atomicHandle "runWriteReply" []
   . SDK.withScopeDependencies ["ReplyScope"]
-  . SDK.enterHandler "WriteReply" $
+  . SDK.enterHandler (SDK.Slot 9 "WriteReply") $
     getReplyBody >> openReplyScope >> call @"WriteReply" @"writeText" Effects.writeText
 
 runMarkReply :: Effects.App [String]
 runMarkReply =
   SDK.handleFailure
   . SDK.atomicHandle "runMarkReply" []
-  . SDK.enterHandler "MarkReply" $
+  . SDK.enterHandler (SDK.Slot 10 "MarkReply") $
     call @"MarkReply" @"markRead" Effects.markRead
 
 runReadReport :: Effects.App [String]
 runReadReport =
   SDK.handleFailure
   . SDK.atomicHandle "runReadReport" []
-  . SDK.enterHandler "ReadReport" $
+  . SDK.enterHandler (SDK.Slot 11 "ReadReport") $
     call @"ReadReport" @"readText" Effects.readText
 
 runReadReply :: Effects.App [String]
 runReadReply =
   SDK.handleFailure
   . SDK.atomicHandle "runReadReply" []
-  . SDK.enterHandler "ReadReply" $
+  . SDK.enterHandler (SDK.Slot 12 "ReadReply") $
     runMarkReply >> call @"ReadReply" @"readText" Effects.readText
 
 getReportStats :: Effects.App Effects.ReportStats
 getReportStats =
   SDK.handleFailure
-  . SDK.callContext "ReportCounter"
+  . SDK.callContext (SDK.Slot 13 "ReportCounter")
       (\value bindings -> bindings { Effects.boundReportCounter = Just value }) $
     Effects.ReportStats <$> call @"ReportCounter" @"countLines" Effects.countLines
 
 readReportStats :: Effects.App Effects.ReportStats
 readReportStats =
   SDK.handleFailure $
-    SDK.readContext "ReportCounter" Effects.ContextBindingError Effects.boundReportCounter
+    SDK.readContext (SDK.Slot 13 "ReportCounter") Effects.ContextBindingError Effects.boundReportCounter
 
 getReplyStats :: Effects.App Effects.ReplyStats
 getReplyStats =
   SDK.handleFailure
-  . SDK.callContext "ReplyCounter"
+  . SDK.callContext (SDK.Slot 14 "ReplyCounter")
       (\value bindings -> bindings { Effects.boundReplyCounter = Just value }) $
     Effects.ReplyStats <$> call @"ReplyCounter" @"countLines" Effects.countLines
 
 readReplyStats :: Effects.App Effects.ReplyStats
 readReplyStats =
   SDK.handleFailure $
-    SDK.readContext "ReplyCounter" Effects.ContextBindingError Effects.boundReplyCounter
+    SDK.readContext (SDK.Slot 14 "ReplyCounter") Effects.ContextBindingError Effects.boundReplyCounter
 
 runShowReport :: Effects.App [String]
 runShowReport =
   SDK.handleFailure
   . SDK.atomicHandle "runShowReport" []
-  . SDK.enterHandler "ShowReport" $
+  . SDK.enterHandler (SDK.Slot 15 "ShowReport") $
     getReportStats >> call @"ShowReport" @"showCount" Effects.showCount
 
 runShowReply :: Effects.App [String]
 runShowReply =
   SDK.handleFailure
   . SDK.atomicHandle "runShowReply" []
-  . SDK.enterHandler "ShowReply" $
+  . SDK.enterHandler (SDK.Slot 16 "ShowReply") $
     getReplyStats >> call @"ShowReply" @"showCount" Effects.showCount
 
 runInspectReport :: Effects.App [String]
 runInspectReport =
   SDK.handleFailure
   . SDK.atomicHandle "runInspectReport" []
-  . SDK.enterHandler "InspectReport" $
+  . SDK.enterHandler (SDK.Slot 17 "InspectReport") $
     call @"InspectReport" @"inspectFile" Effects.inspectFile
 
 getReportEmpty :: Effects.App Effects.ReportEmpty
 getReportEmpty =
   SDK.handleFailure
-  . SDK.callContext "ReportBlank"
+  . SDK.callContext (SDK.Slot 18 "ReportBlank")
       (\value bindings -> bindings { Effects.boundReportBlank = Just value }) $
     Effects.ReportEmpty <$> call @"ReportBlank" @"parseBlankReport" Effects.parseBlankReport
 
 readReportEmpty :: Effects.App Effects.ReportEmpty
 readReportEmpty =
   SDK.handleFailure $
-    SDK.readContext "ReportBlank" Effects.ContextBindingError Effects.boundReportBlank
+    SDK.readContext (SDK.Slot 18 "ReportBlank") Effects.ContextBindingError Effects.boundReportBlank
 
 getReportText :: Effects.App Effects.ReportText
 getReportText =
   SDK.handleFailure
-  . SDK.callContext "ReportFilled"
+  . SDK.callContext (SDK.Slot 19 "ReportFilled")
       (\value bindings -> bindings { Effects.boundReportFilled = Just value }) $
     Effects.ReportText <$> call @"ReportFilled" @"parseFilledReport" Effects.parseFilledReport
 
 readReportText :: Effects.App Effects.ReportText
 readReportText =
   SDK.handleFailure $
-    SDK.readContext "ReportFilled" Effects.ContextBindingError Effects.boundReportFilled
+    SDK.readContext (SDK.Slot 19 "ReportFilled") Effects.ContextBindingError Effects.boundReportFilled
 
 runOnBlank :: Effects.App [String]
 runOnBlank =
   SDK.handleFailure
   . SDK.atomicHandle "runOnBlank" []
-  . SDK.enterHandler "OnBlank" $
+  . SDK.enterHandler (SDK.Slot 20 "OnBlank") $
     call @"OnBlank" @"describeBlank" Effects.describeBlank
 
 runOnFilled :: Effects.App [String]
 runOnFilled =
   SDK.handleFailure
   . SDK.atomicHandle "runOnFilled" []
-  . SDK.enterHandler "OnFilled" $
+  . SDK.enterHandler (SDK.Slot 21 "OnFilled") $
     call @"OnFilled" @"describeFilled" Effects.describeFilled
 
 nextFeedA :: Effects.App ()
 nextFeedA =
   SDK.handleFailure
-  . SDK.enterHandler "FeedA" $
+  . SDK.enterHandler (SDK.Slot 22 "FeedA") $
     call @"FeedA" @"nextA" Effects.nextA
 
 nextFeedB :: Effects.App ()
 nextFeedB =
   SDK.handleFailure
-  . SDK.enterHandler "FeedB" $
+  . SDK.enterHandler (SDK.Slot 23 "FeedB") $
     call @"FeedB" @"nextB" Effects.nextB
 
 getLevelA :: Effects.App Effects.LevelA
 getLevelA =
   SDK.handleFailure
-  . SDK.callContext "ParserA"
+  . SDK.callContext (SDK.Slot 24 "ParserA")
       (\value bindings -> bindings { Effects.boundParserA = Just value }) $
     Effects.LevelA <$> call @"ParserA" @"parseLevel" Effects.parseLevel
 
 streamLevelA :: Effects.App Effects.LevelA
 streamLevelA =
   SDK.handleFailure $
-    SDK.readStreamContext "ParserA" Effects.ContextBindingError Effects.boundParserA
+    SDK.readStreamContext (SDK.Slot 24 "ParserA") Effects.ContextBindingError Effects.boundParserA
 
 historyLevelA :: Effects.App (SDK.Flow Effects.LevelA)
 historyLevelA =
   SDK.handleFailure $
-    SDK.readStreamHistory "ParserA" Effects.ContextBindingError Effects.boundParserA
+    SDK.readStreamHistory (SDK.Slot 24 "ParserA") Effects.ContextBindingError Effects.boundParserA
 
 getLevelB :: Effects.App Effects.LevelB
 getLevelB =
   SDK.handleFailure
-  . SDK.callContext "ParserB"
+  . SDK.callContext (SDK.Slot 25 "ParserB")
       (\value bindings -> bindings { Effects.boundParserB = Just value }) $
     Effects.LevelB <$> call @"ParserB" @"parseLevel" Effects.parseLevel
 
 streamLevelB :: Effects.App Effects.LevelB
 streamLevelB =
   SDK.handleFailure $
-    SDK.readStreamContext "ParserB" Effects.ContextBindingError Effects.boundParserB
+    SDK.readStreamContext (SDK.Slot 25 "ParserB") Effects.ContextBindingError Effects.boundParserB
 
 historyLevelB :: Effects.App (SDK.Flow Effects.LevelB)
 historyLevelB =
   SDK.handleFailure $
-    SDK.readStreamHistory "ParserB" Effects.ContextBindingError Effects.boundParserB
+    SDK.readStreamHistory (SDK.Slot 25 "ParserB") Effects.ContextBindingError Effects.boundParserB
 
 runShowA :: Effects.App [String]
 runShowA =
   SDK.handleFailure
   . SDK.atomicHandle "runShowA" []
-  . SDK.enterHandler "ShowA" $
+  . SDK.enterHandler (SDK.Slot 26 "ShowA") $
     call @"ShowA" @"showLevel" Effects.showLevel
 
 runShowB :: Effects.App [String]
 runShowB =
   SDK.handleFailure
   . SDK.atomicHandle "runShowB" []
-  . SDK.enterHandler "ShowB" $
+  . SDK.enterHandler (SDK.Slot 27 "ShowB") $
     call @"ShowB" @"showLevel" Effects.showLevel
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ SDK.newScopeHandler "ReportScope" ["ReportLocation"] (Just "ReportFile")
-  , SDK.newScopeHandler "ReplyScope" ["ReplyLocation"] (Just "ReplyFile")
+  [ SDK.newScopeHandler (SDK.Slot 6 "ReportScope") [(SDK.Slot 0 "ReportLocation")] (Just (SDK.Slot 4 "ReportFile"))
+  , SDK.newScopeHandler (SDK.Slot 7 "ReplyScope") [(SDK.Slot 1 "ReplyLocation")] (Just (SDK.Slot 5 "ReplyFile"))
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。

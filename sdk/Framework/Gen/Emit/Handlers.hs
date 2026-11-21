@@ -76,6 +76,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     methodTag effect method = "(" ++ wrap ++ (if hooked then " hooks " else " ") ++ effect ++ " " ++ method ++ ")"
     hooksArgument = if hooked then " @hooks" else ""
     call method = entry method ++ hooksArgument
+    slot = slotLiteral "FrameworkRuntime." unit
     context = if hooked then captured ++ " hooks => " else ""
     signature resultType = if hooked
       then "forall hooks. " ++ context ++ "FrameworkGenerated.App " ++ resultType
@@ -270,7 +271,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
                _ -> action
         scoped = ["FrameworkRuntime.withScopeDependencies " ++ show scopes | not (null scopes)]
           where scopes = Prototype.effectScopes (protoOf unit selectedName)
-        entered = scoped ++ ["FrameworkRuntime.enterHandler " ++ show selectedName]
+        entered = scoped ++ ["FrameworkRuntime.enterHandler " ++ slot selectedName]
         wrapper binding = rootWrapper selectedName ++ case bindingOperation binding of
           -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
           OpenResource -> scopeWrapper binding "openScope " (" " ++ cleanupOf selectedName)
@@ -278,7 +279,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
           AtomicOperation -> ("FrameworkRuntime.atomicHandle " ++ show (bindingMethod binding) ++ anchoredOf binding) : entered
           SourceStep -> entered
           PureOperation -> scoped
-          PublishAsset _ -> scoped ++ ["FrameworkRuntime.callContext " ++ show selectedName
+          PublishAsset _ -> scoped ++ ["FrameworkRuntime.callContext " ++ slot selectedName
             ++ "\n      (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"]
           ErrorOperation -> entered
           MiddlewareOperation -> entered
@@ -290,7 +291,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     anchoredOf binding = " " ++ connectionsOf ContextStream
       where
         connectionsOf role = "[" ++ intercalate ", "
-          [ "(" ++ show (outputProducer connection) ++ ", () <$ " ++ call (outputParser connection) ++ ")"
+          [ "(" ++ slot (outputProducer connection) ++ ", () <$ " ++ call (outputParser connection) ++ ")"
           | connection <- assemblyOutputs (unitAssembly unit)
           , outputRole connection == role, outputAnchor connection == bindingMethod binding ] ++ "]"
     -- 自动收尾：open 带上本 scope 的 close，在同一 Middleware 列表下执行。
@@ -304,10 +305,10 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     readerDefinition reader
       | readerContinuous reader = definition False method
           ("FrameworkGenerated." ++ contractType) (rootWrapper selectedName)
-          ("FrameworkRuntime.readStreamContext " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError"
+          ("FrameworkRuntime.readStreamContext " ++ slot selectedName ++ " FrameworkGenerated.ContextBindingError"
             ++ " FrameworkGenerated.bound" ++ selectedName)
       | otherwise = definition False method ("FrameworkGenerated." ++ contractType) (rootWrapper selectedName)
-          ("FrameworkRuntime.readContext " ++ show selectedName ++ " FrameworkGenerated.ContextBindingError "
+          ("FrameworkRuntime.readContext " ++ slot selectedName ++ " FrameworkGenerated.ContextBindingError "
              ++ "FrameworkGenerated.bound" ++ selectedName)
       where
         selectedName = readerEffect reader
@@ -316,7 +317,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     -- x:xs：本次固定交付及其之前的同会话交付；与 streamT 取同一个视图，不另起读取。
     historyDefinition reader = definition False (historyEntry (readerContract reader))
       ("FrameworkRuntime.Flow FrameworkGenerated." ++ readerContract reader) (rootWrapper (readerEffect reader))
-      ("FrameworkRuntime.readStreamHistory " ++ show (readerEffect reader) ++ " FrameworkGenerated.ContextBindingError"
+      ("FrameworkRuntime.readStreamHistory " ++ slot (readerEffect reader) ++ " FrameworkGenerated.ContextBindingError"
         ++ " FrameworkGenerated.bound" ++ readerEffect reader)
     definition polymorphic method resultType wrapper body =
       [ entry method ++ " :: " ++ (if polymorphic then signature else ("FrameworkGenerated.App " ++)) (parenthesized resultType)
@@ -334,8 +335,9 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       ]
       where
         registered =
-          [ "FrameworkRuntime.newScopeHandler " ++ show (scopeEffect plan) ++ " " ++ show (scopeInputs plan)
-              ++ " " ++ showsPrec 11 (scopeResource plan) ""
+          [ "FrameworkRuntime.newScopeHandler " ++ slot (scopeEffect plan)
+              ++ " [" ++ intercalate ", " (map slot (scopeInputs plan)) ++ "] "
+              ++ maybe "Nothing" (\resource -> "(Just " ++ slot resource ++ ")") (scopeResource plan)
           | plan <- unitScopes unit ]
     -- Error 只指向 scope：按 handles 匹配故障，detect／resolve 是生成的 effect 方法；Error 不被拦截，按空列表执行。
     errorHandlers = unlines

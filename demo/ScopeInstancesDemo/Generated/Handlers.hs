@@ -204,32 +204,32 @@ runPrepareFiles :: Effects.App [String]
 runPrepareFiles =
   SDK.handleFailure
   . SDK.atomicHandle "runPrepareFiles" []
-  . SDK.enterHandler "PrepareFiles" $
+  . SDK.enterHandler (SDK.Slot 0 "PrepareFiles") $
     call @"PrepareFiles" @"prepareFiles" Effects.prepareFiles
 
 getFileName :: Effects.App Effects.FileName
 getFileName =
   SDK.handleFailure
-  . SDK.callContext "FileLocation"
+  . SDK.callContext (SDK.Slot 1 "FileLocation")
       (\value bindings -> bindings { Effects.boundFileLocation = Just value }) $
     Effects.FileName <$> call @"FileLocation" @"selectedFile" Effects.selectedFile
 
 readFileName :: Effects.App Effects.FileName
 readFileName =
   SDK.handleFailure $
-    SDK.readContext "FileLocation" Effects.ContextBindingError Effects.boundFileLocation
+    SDK.readContext (SDK.Slot 1 "FileLocation") Effects.ContextBindingError Effects.boundFileLocation
 
 getOpenedFile :: Effects.App Effects.OpenedFile
 getOpenedFile =
   SDK.handleFailure
-  . SDK.callContext "FileResource"
+  . SDK.callContext (SDK.Slot 2 "FileResource")
       (\value bindings -> bindings { Effects.boundFileResource = Just value }) $
     Effects.OpenedFile <$> call @"FileResource" @"acquireFile" Effects.acquireFile
 
 readOpenedFile :: Effects.App Effects.OpenedFile
 readOpenedFile =
   SDK.handleFailure $
-    SDK.readContext "FileResource" Effects.ContextBindingError Effects.boundFileResource
+    SDK.readContext (SDK.Slot 2 "FileResource") Effects.ContextBindingError Effects.boundFileResource
 
 openFileSession :: Effects.App [String]
 openFileSession =
@@ -237,7 +237,7 @@ openFileSession =
   . SDK.handleFailure
   . SDK.atomicScope "openFileSession" []
   . SDK.openScope "FileSession" Effects.ScopeBindingError (Just (() <$ closeFileSession))
-  . SDK.enterHandler "FileSession" $
+  . SDK.enterHandler (SDK.Slot 3 "FileSession") $
     getOpenedFile >> call @"FileSession" @"openSelectedFile" Effects.openSelectedFile
 
 closeFileSession :: Effects.App [String]
@@ -246,7 +246,7 @@ closeFileSession =
   . SDK.handleFailure
   . SDK.atomicScope "closeFileSession" []
   . SDK.closeScope "FileSession" Effects.ScopeBindingError
-  . SDK.enterHandler "FileSession" $
+  . SDK.enterHandler (SDK.Slot 3 "FileSession") $
     callClose @"FileSession" @"closeSelectedFile" Effects.closeSelectedFile
 
 runUseFirst :: Effects.App [String]
@@ -255,14 +255,14 @@ runUseFirst =
   . SDK.handleFailure
   . SDK.atomicHandle "runUseFirst" []
   . SDK.withScopeDependencies ["FileSession"]
-  . SDK.enterHandler "UseFirst" $
+  . SDK.enterHandler (SDK.Slot 4 "UseFirst") $
     getFileName >> openFileSession >> call @"UseFirst" @"checkSelection" Effects.checkSelection
 
 runSelectSecond :: Effects.App [String]
 runSelectSecond =
   SDK.handleFailure
   . SDK.atomicHandle "runSelectSecond" []
-  . SDK.enterHandler "SelectSecond" $
+  . SDK.enterHandler (SDK.Slot 5 "SelectSecond") $
     call @"SelectSecond" @"selectSecond" Effects.selectSecond
 
 runUseSecond :: Effects.App [String]
@@ -271,14 +271,14 @@ runUseSecond =
   . SDK.handleFailure
   . SDK.atomicHandle "runUseSecond" []
   . SDK.withScopeDependencies ["FileSession"]
-  . SDK.enterHandler "UseSecond" $
+  . SDK.enterHandler (SDK.Slot 6 "UseSecond") $
     getFileName >> openFileSession >> call @"UseSecond" @"checkSelection" Effects.checkSelection
 
 runSelectFirst :: Effects.App [String]
 runSelectFirst =
   SDK.handleFailure
   . SDK.atomicHandle "runSelectFirst" []
-  . SDK.enterHandler "SelectFirst" $
+  . SDK.enterHandler (SDK.Slot 7 "SelectFirst") $
     call @"SelectFirst" @"selectFirst" Effects.selectFirst
 
 runReopenFirst :: Effects.App [String]
@@ -287,20 +287,20 @@ runReopenFirst =
   . SDK.handleFailure
   . SDK.atomicHandle "runReopenFirst" []
   . SDK.withScopeDependencies ["FileSession"]
-  . SDK.enterHandler "ReopenFirst" $
+  . SDK.enterHandler (SDK.Slot 8 "ReopenFirst") $
     getFileName >> openFileSession >> call @"ReopenFirst" @"checkSelection" Effects.checkSelection
 
 runCheckJournal :: Effects.App [String]
 runCheckJournal =
   SDK.handleFailure
   . SDK.atomicHandle "runCheckJournal" []
-  . SDK.enterHandler "CheckJournal" $
+  . SDK.enterHandler (SDK.Slot 9 "CheckJournal") $
     call @"CheckJournal" @"checkJournal" Effects.checkJournal
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ SDK.newScopeHandler "FileSession" ["FileLocation"] (Just "FileResource")
+  [ SDK.newScopeHandler (SDK.Slot 3 "FileSession") [(SDK.Slot 1 "FileLocation")] (Just (SDK.Slot 2 "FileResource"))
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。
