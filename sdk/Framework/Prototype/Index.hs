@@ -7,21 +7,23 @@ module Framework.Prototype.Index
   , IndexedOpening(..), LocalSlot(..)
   , slotOf, chainAt, nodeDriveOf, unitDriveOf, sessionRouteOf, sessionUpstreamOf, sessionDescriptionAt
   , sourcePlanAt, sourcesAt, hooksLabel, openingsAt, historyOf, requestEntryOf
-  , subscriptionsAt, unitReadersAt, unitLocalSourcesAt, parameterScopesOf, isResourceSlot, outputSiteAt
+  , subscriptionsAt, unitReadersAt, unitLocalSourcesAt, parameterScopesOf, scopeClosureOf, isResourceSlot, outputSiteAt
   ) where
 
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Maybe (fromMaybe)
+import Data.List (nub)
 import Framework.Prototype.Query (describedSession, variantLabel)
+import Framework.Prototype.Structure (scopeRelations)
 import Framework.Prototype.Slot (Slot(..))
 import Framework.Prototype.Types
 
 -- 开启计划的编号视图：参数来源按 Context 编号匹配。
 data IndexedOpening = IndexedOpening
   { indexedOpeningNode :: NodeId
-  , indexedOpeningScope :: String
+  , indexedOpeningScope :: Slot
   , indexedOpeningSources :: [(Slot, Source)]
   , indexedOpeningKinds :: [ScopeKind]
   }
@@ -49,13 +51,15 @@ data PrototypeIndex method = PrototypeIndex
   , indexSubscriptions :: Map.Map NodeId [Slot]
   , indexUnitReaders :: Map.Map NodeId [(Slot, [ReaderSite])]
   , indexUnitLocals :: Map.Map NodeId [(Slot, LocalSlot)]
-  , indexParameterScopes :: Map.Map Slot [String]
+  , indexParameterScopes :: Map.Map Slot [Slot]
+  -- Scoped 编号 → 它与 ScopeTree 上全部祖先；回收按它展开，运行中不再沿关系表求闭包。
+  , indexScopeClosures :: Map.Map Slot [Slot]
   , indexResources :: IntSet.IntSet
   , indexOutputSites :: Set.Set (NodeId, Slot)
   }
 
 -- 重复身份是生成产物失配：保留第一个以便查询返回确定结果，Validate 在加载时已拒绝这类原型。
-indexPrototype :: Prototype method -> PrototypeIndex method
+indexPrototype :: Eq method => Prototype method -> PrototypeIndex method
 indexPrototype prototype = PrototypeIndex
   { indexedPrototype = prototype
   , indexSlots = slots
@@ -88,8 +92,10 @@ indexPrototype prototype = PrototypeIndex
   , indexUnitLocals = Map.fromList
       [(driveUnit unit, [(named source, local plan) | (source, plan) <- driveLocalSources unit]) | unit <- drivingUnits driving]
   , indexParameterScopes = Map.fromListWith (flip (++))
-      [ (named source, [openingScope opening]) | opening <- protoScopeOpenings prototype
+      [ (named source, [named (openingScope opening)]) | opening <- protoScopeOpenings prototype
       , (source, _) <- openingSources opening ]
+  , indexScopeClosures = Map.fromList
+      [ (named scope, nub (named scope : map named parents)) | (scope, parents) <- scopeRelations prototype ]
   , indexResources = IntSet.fromList
       [slotNumber (named resource) | effect <- protoEffects prototype, Just resource <- [effectResource effect]]
   , indexOutputSites = Set.fromList [(node, named source) | (node, source) <- drivingOutputSites driving]
@@ -107,7 +113,7 @@ indexPrototype prototype = PrototypeIndex
     -- 每份资产恰有一个 Context 来源（注册校验保证）。
     contexts = Map.fromList [(contract, named (effectName effect)) | effect <- protoEffects prototype
       , Just contract <- [effectProduces effect]]
-    indexedOpening opening = IndexedOpening (openingNode opening) (openingScope opening)
+    indexedOpening opening = IndexedOpening (openingNode opening) (named (openingScope opening))
       [(named source, plan) | (source, plan) <- openingSources opening] (openingKinds opening)
     local (PublishedAt nodes) = PublishedSlotAt nodes
     local (DerivedFrom upstream) = DerivedFromSlot (named upstream)
@@ -175,8 +181,12 @@ unitLocalSourcesAt :: PrototypeIndex method -> NodeId -> [(Slot, LocalSlot)]
 unitLocalSourcesAt index unit = Map.findWithDefault [] unit (indexUnitLocals index)
 
 -- 开启计划依赖该参数的 Scoped。
-parameterScopesOf :: PrototypeIndex method -> Slot -> [String]
+parameterScopesOf :: PrototypeIndex method -> Slot -> [Slot]
 parameterScopesOf index source = Map.findWithDefault [] source (indexParameterScopes index)
+
+-- 这些 Scoped 及其 ScopeTree 祖先。
+scopeClosureOf :: PrototypeIndex method -> [Slot] -> [Slot]
+scopeClosureOf index scopes = nub (concat [Map.findWithDefault [scope] scope (indexScopeClosures index) | scope <- scopes])
 
 -- 是否是某个 Scoped 的资源 Context。
 isResourceSlot :: PrototypeIndex method -> Slot -> Bool

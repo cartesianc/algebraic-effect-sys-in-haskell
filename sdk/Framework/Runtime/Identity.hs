@@ -23,7 +23,7 @@ data Boot = TargetedBoot NodeId | RequestBoot Slot
 -- 发布记录携带清理角色，具体实例引用继续保存在 bindingOwner 中。
 data Execution
   = BusinessExecution Origin
-  | CleanupExecution Origin String Int
+  | CleanupExecution Origin Slot Int
   deriving (Eq, Show)
 
 executionOrigin :: Execution -> Origin

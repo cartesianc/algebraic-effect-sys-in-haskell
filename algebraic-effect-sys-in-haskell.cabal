@@ -211,6 +211,7 @@ executable effect-codegen
       Framework.Prototype.Query
       Framework.Prototype.Index
       Framework.Prototype.Slot
+      Framework.Prototype.Structure
       Framework.Prototype.Validate
   ghc-options: -main-is Framework.Gen.Main
   build-depends:

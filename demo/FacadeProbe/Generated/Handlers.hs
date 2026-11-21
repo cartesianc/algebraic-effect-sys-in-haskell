@@ -345,7 +345,7 @@ openReportScope =
   SDK.withErrorPath ["ReportScope"]
   . SDK.handleFailure
   . SDK.atomicScope "openReportScope" []
-  . SDK.openScope "ReportScope" Effects.ScopeBindingError (Just (() <$ closeReportScope))
+  . SDK.openScope (SDK.Slot 6 "ReportScope") Effects.ScopeBindingError (Just (() <$ closeReportScope))
   . SDK.enterHandler (SDK.Slot 6 "ReportScope") $
     getOpenedReport >> call @"ReportScope" @"openTextFile" Effects.openTextFile
 
@@ -354,7 +354,7 @@ closeReportScope =
   SDK.withErrorPath ["ReportScope"]
   . SDK.handleFailure
   . SDK.atomicScope "closeReportScope" []
-  . SDK.closeScope "ReportScope" Effects.ScopeBindingError
+  . SDK.closeScope (SDK.Slot 6 "ReportScope") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 6 "ReportScope") $
     callClose @"ReportScope" @"closeTextFile" Effects.closeTextFile
 
@@ -363,7 +363,7 @@ openReplyScope =
   SDK.withErrorPath ["ReplyScope"]
   . SDK.handleFailure
   . SDK.atomicScope "openReplyScope" []
-  . SDK.openScope "ReplyScope" Effects.ScopeBindingError (Just (() <$ closeReplyScope))
+  . SDK.openScope (SDK.Slot 7 "ReplyScope") Effects.ScopeBindingError (Just (() <$ closeReplyScope))
   . SDK.enterHandler (SDK.Slot 7 "ReplyScope") $
     getOpenedReply >> call @"ReplyScope" @"openTextFile" Effects.openTextFile
 
@@ -372,7 +372,7 @@ closeReplyScope =
   SDK.withErrorPath ["ReplyScope"]
   . SDK.handleFailure
   . SDK.atomicScope "closeReplyScope" []
-  . SDK.closeScope "ReplyScope" Effects.ScopeBindingError
+  . SDK.closeScope (SDK.Slot 7 "ReplyScope") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 7 "ReplyScope") $
     callClose @"ReplyScope" @"closeTextFile" Effects.closeTextFile
 
@@ -381,7 +381,7 @@ runWriteReport =
   SDK.withErrorPath ["ReportScope"]
   . SDK.handleFailure
   . SDK.atomicHandle "runWriteReport" []
-  . SDK.withScopeDependencies ["ReportScope"]
+  . SDK.withScopeDependencies [(SDK.Slot 6 "ReportScope")]
   . SDK.enterHandler (SDK.Slot 8 "WriteReport") $
     getReportBody >> openReportScope >> call @"WriteReport" @"writeText" Effects.writeText
 
@@ -390,7 +390,7 @@ runWriteReply =
   SDK.withErrorPath ["ReplyScope"]
   . SDK.handleFailure
   . SDK.atomicHandle "runWriteReply" []
-  . SDK.withScopeDependencies ["ReplyScope"]
+  . SDK.withScopeDependencies [(SDK.Slot 7 "ReplyScope")]
   . SDK.enterHandler (SDK.Slot 9 "WriteReply") $
     getReplyBody >> openReplyScope >> call @"WriteReply" @"writeText" Effects.writeText
 

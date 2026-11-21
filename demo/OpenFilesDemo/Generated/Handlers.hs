@@ -183,7 +183,7 @@ openFileSession =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicScope "openFileSession" []
-  . SDK.openScope "FileSession" Effects.ScopeBindingError (Just (() <$ closeFileSession))
+  . SDK.openScope (SDK.Slot 2 "FileSession") Effects.ScopeBindingError (Just (() <$ closeFileSession))
   . SDK.enterHandler (SDK.Slot 2 "FileSession") $
     getOpenedFiles >> call @"FileSession" @"openFiles" Effects.openFiles
 
@@ -192,7 +192,7 @@ closeFileSession =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicScope "closeFileSession" []
-  . SDK.closeScope "FileSession" Effects.ScopeBindingError
+  . SDK.closeScope (SDK.Slot 2 "FileSession") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 2 "FileSession") $
     callClose @"FileSession" @"closeFiles" Effects.closeFiles
 
@@ -201,7 +201,7 @@ runHoldFiles =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runHoldFiles" []
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 2 "FileSession")]
   . SDK.enterHandler (SDK.Slot 3 "HoldFiles") $
     getFileNames >> openFileSession >> call @"HoldFiles" @"holdFiles" Effects.holdFiles
 
@@ -210,7 +210,7 @@ runInspectFiles =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runInspectFiles" []
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 2 "FileSession")]
   . SDK.enterHandler (SDK.Slot 4 "InspectFiles") $
     runHoldFiles >> call @"InspectFiles" @"inspectFiles" Effects.inspectFiles
 
@@ -219,7 +219,7 @@ runReleaseFiles =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runReleaseFiles" []
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 2 "FileSession")]
   . SDK.enterHandler (SDK.Slot 5 "ReleaseFiles") $
     runHoldFiles >> call @"ReleaseFiles" @"holdFiles" Effects.holdFiles
 

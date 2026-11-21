@@ -174,15 +174,12 @@ collectParameterScopes :: RuntimeGraph environment cause -> Slot -> IO ()
 collectParameterScopes graph source = case runtimePrototype graph of
   PrototypeReference index -> collectNamedScopes graph (parameterScopesOf index source)
 
-collectNamedScopes :: RuntimeGraph environment cause -> [String] -> IO ()
+collectNamedScopes :: RuntimeGraph environment cause -> [Slot] -> IO ()
 collectNamedScopes _ [] = pure ()
 collectNamedScopes graph selected = case runtimePrototype graph of
-  PrototypeReference (indexedPrototype -> prototype) -> do
-    let relations = scopeRelations prototype
-        ancestors names = let expanded = nub (names ++ concat [parents | (name, parents) <- relations, name `elem` names])
-                          in if expanded == names then names else ancestors expanded
-        relevant = ancestors (nub selected)
-    collectScopes graph (filter ((`elem` relevant) . scopeName) (runtimeScopes graph))
+  PrototypeReference index -> do
+    let relevant = scopeClosureOf index selected
+    collectScopes graph (filter ((`elem` relevant) . scopeSlot) (runtimeScopes graph))
 
 -- 待用查询 v5（2026-11-18）：普通参数先固定捕获、再共享最新值；持续参数沿固定视图/游标匹配。
 -- 查询在 scope 协调锁内，不领取、不生产；会话沿只读目录快照定位。
@@ -208,7 +205,7 @@ reachableInstance graph slot = case runtimePrototype graph of
     let candidates = [(frame, opening, delivered)
           | (frame, pending, delivered) <- pendingFrames
           , node <- pending, opening <- openingsAt index node
-          , indexedOpeningScope opening == scopeName (scopeFamily slot)]
+          , indexedOpeningScope opening == scopeSlot (scopeFamily slot)]
         matches instance' frame delivered opening =
           and <$> mapM (matchesInput frame delivered opening) (scopeInputs instance')
         matchesInput frame delivered opening (ScopeInput source production) = case lookup source (indexedOpeningSources opening) of
@@ -223,7 +220,7 @@ reachableInstance graph slot = case runtimePrototype graph of
                    , scopeContextSource (scopeFamily parent) == Just source
                    , Just value <- [lookup source values], bindingProduction value == Just production
                    , parentOpening <- openingsAt index (indexedOpeningNode opening)
-                   , indexedOpeningScope parentOpening == scopeName (scopeFamily parent)]
+                   , indexedOpeningScope parentOpening == scopeSlot (scopeFamily parent)]
             | otherwise -> do
                 captured <- capturedFrameInputs frame
                 let reader = indexedOpeningNode opening

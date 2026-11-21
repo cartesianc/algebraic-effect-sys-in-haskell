@@ -224,7 +224,7 @@ openSharedFileScope =
   SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
   . SDK.atomicScope "openSharedFileScope" []
-  . SDK.openScope "SharedFileScope" Effects.ScopeBindingError (Just (() <$ closeSharedFileScope))
+  . SDK.openScope (SDK.Slot 3 "SharedFileScope") Effects.ScopeBindingError (Just (() <$ closeSharedFileScope))
   . SDK.enterHandler (SDK.Slot 3 "SharedFileScope") $
     getOpenedFile >> call @"SharedFileScope" @"openSharedFile" Effects.openSharedFile
 
@@ -233,7 +233,7 @@ closeSharedFileScope =
   SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
   . SDK.atomicScope "closeSharedFileScope" []
-  . SDK.closeScope "SharedFileScope" Effects.ScopeBindingError
+  . SDK.closeScope (SDK.Slot 3 "SharedFileScope") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 3 "SharedFileScope") $
     callClose @"SharedFileScope" @"closeSharedFile" Effects.closeSharedFile
 
@@ -242,7 +242,7 @@ runWriteFirst =
   SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
   . SDK.atomicHandle "runWriteFirst" []
-  . SDK.withScopeDependencies ["SharedFileScope"]
+  . SDK.withScopeDependencies [(SDK.Slot 3 "SharedFileScope")]
   . SDK.enterHandler (SDK.Slot 4 "WriteFirst") $
     openSharedFileScope >> call @"WriteFirst" @"writeFirst" Effects.writeFirst
 
@@ -251,7 +251,7 @@ runWriteSecond =
   SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
   . SDK.atomicHandle "runWriteSecond" []
-  . SDK.withScopeDependencies ["SharedFileScope"]
+  . SDK.withScopeDependencies [(SDK.Slot 3 "SharedFileScope")]
   . SDK.enterHandler (SDK.Slot 5 "WriteSecond") $
     openSharedFileScope >> call @"WriteSecond" @"writeSecond" Effects.writeSecond
 
@@ -260,7 +260,7 @@ runWriteThird =
   SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
   . SDK.atomicHandle "runWriteThird" []
-  . SDK.withScopeDependencies ["SharedFileScope"]
+  . SDK.withScopeDependencies [(SDK.Slot 3 "SharedFileScope")]
   . SDK.enterHandler (SDK.Slot 6 "WriteThird") $
     openSharedFileScope >> call @"WriteThird" @"writeThird" Effects.writeThird
 

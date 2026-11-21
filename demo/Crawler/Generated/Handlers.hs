@@ -236,7 +236,7 @@ runFetchPage =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runFetchPage" []
-  . SDK.withScopeDependencies ["CrawlSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.enterHandler (SDK.Slot 2 "FetchPage") $
     getStartURL >> openCrawlSession >> call @"FetchPage" @"fetchPage" Effects.fetchPage
 
@@ -244,14 +244,14 @@ runKeepPageBody :: Effects.App [String]
 runKeepPageBody =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["CrawlSession"] $
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")] $
     call @"KeepPageBody" @"dropBlankBodies" Effects.dropBlankBodies
 
 getStartPageSummary :: Effects.App Effects.StartPageSummary
 getStartPageSummary =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["CrawlSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.callContext (SDK.Slot 4 "ExtractPage")
       (\value bindings -> bindings { Effects.boundExtractPage = Just value }) $
     Effects.StartPageSummary <$> call @"ExtractPage" @"extractSummary" Effects.extractSummary
@@ -267,7 +267,7 @@ runPrintPage =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runPrintPage" []
-  . SDK.withScopeDependencies ["CrawlSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.enterHandler (SDK.Slot 5 "PrintPage") $
     getStartPageSummary >> call @"PrintPage" @"printSummary" Effects.printSummary
 
@@ -276,7 +276,7 @@ runFetchLinkedPage =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runFetchLinkedPage" []
-  . SDK.withScopeDependencies ["CrawlSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.enterHandler (SDK.Slot 6 "FetchLinkedPage") $
     getLinkedURL >> openCrawlSession >> call @"FetchLinkedPage" @"fetchPage" Effects.fetchPage
 
@@ -284,14 +284,14 @@ runKeepLinkedPageBody :: Effects.App [String]
 runKeepLinkedPageBody =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["CrawlSession"] $
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")] $
     call @"KeepLinkedPageBody" @"dropBlankBodies" Effects.dropBlankBodies
 
 getLinkedPageSummary :: Effects.App Effects.LinkedPageSummary
 getLinkedPageSummary =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["CrawlSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.callContext (SDK.Slot 8 "ExtractLinkedPage")
       (\value bindings -> bindings { Effects.boundExtractLinkedPage = Just value }) $
     Effects.LinkedPageSummary <$> call @"ExtractLinkedPage" @"extractSummary" Effects.extractSummary
@@ -307,7 +307,7 @@ runPrintLinkedPage =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runPrintLinkedPage" []
-  . SDK.withScopeDependencies ["CrawlSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.enterHandler (SDK.Slot 9 "PrintLinkedPage") $
     getLinkedPageSummary >> call @"PrintLinkedPage" @"printSummary" Effects.printSummary
 
@@ -328,7 +328,7 @@ openCrawlSession =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
   . SDK.atomicScope "openCrawlSession" []
-  . SDK.openScope "CrawlSession" Effects.ScopeBindingError (Just (() <$ closeCrawlSession))
+  . SDK.openScope (SDK.Slot 11 "CrawlSession") Effects.ScopeBindingError (Just (() <$ closeCrawlSession))
   . SDK.enterHandler (SDK.Slot 11 "CrawlSession") $
     getCrawlSessionInfo >> call @"CrawlSession" @"openSession" Effects.openSession
 
@@ -337,7 +337,7 @@ closeCrawlSession =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
   . SDK.atomicScope "closeCrawlSession" []
-  . SDK.closeScope "CrawlSession" Effects.ScopeBindingError
+  . SDK.closeScope (SDK.Slot 11 "CrawlSession") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 11 "CrawlSession") $
     callClose @"CrawlSession" @"closeSession" Effects.closeSession
 

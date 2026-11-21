@@ -244,7 +244,7 @@ openFileSession =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicScope "openFileSession" []
-  . SDK.openScope "FileSession" Effects.ScopeBindingError (Just (() <$ closeFileSession))
+  . SDK.openScope (SDK.Slot 4 "FileSession") Effects.ScopeBindingError (Just (() <$ closeFileSession))
   . SDK.enterHandler (SDK.Slot 4 "FileSession") $
     getOpenedFile >> call @"FileSession" @"openSession" Effects.openSession
 
@@ -253,7 +253,7 @@ closeFileSession =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicScope "closeFileSession" []
-  . SDK.closeScope "FileSession" Effects.ScopeBindingError
+  . SDK.closeScope (SDK.Slot 4 "FileSession") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 4 "FileSession") $
     callClose @"FileSession" @"closeSession" Effects.closeSession
 
@@ -261,7 +261,7 @@ detectFileRecovery :: Effects.App ()
 detectFileRecovery =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 5 "FileRecovery") $
     call @"FileRecovery" @"detectFileSession" Effects.detectFileSession
 
@@ -269,7 +269,7 @@ resolveFileRecovery :: Effects.App ()
 resolveFileRecovery =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 5 "FileRecovery") $
     call @"FileRecovery" @"resolveFileSession" Effects.resolveFileSession
 
@@ -278,7 +278,7 @@ runReadFile =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runReadFile" []
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 6 "ReadFile") $
     openFileSession >> call @"ReadFile" @"readFileContent" Effects.readFileContent
 
@@ -286,7 +286,7 @@ getFileBlank :: Effects.App Effects.FileBlank
 getFileBlank =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.callContext (SDK.Slot 7 "BlankText")
       (\value bindings -> bindings { Effects.boundBlankText = Just value }) $
     Effects.FileBlank <$> call @"BlankText" @"parseBlankText" Effects.parseBlankText
@@ -301,7 +301,7 @@ getFileWritten :: Effects.App Effects.FileWritten
 getFileWritten =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.callContext (SDK.Slot 8 "FilledText")
       (\value bindings -> bindings { Effects.boundFilledText = Just value }) $
     Effects.FileWritten <$> call @"FilledText" @"parseWrittenText" Effects.parseWrittenText
@@ -317,7 +317,7 @@ runWriteFirstLine =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runWriteFirstLine" []
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 9 "WriteFirstLine") $
     openFileSession >> call @"WriteFirstLine" @"writeFirstLine" Effects.writeFirstLine
 
@@ -326,7 +326,7 @@ runAppendLine =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runAppendLine" []
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 10 "AppendLine") $
     openFileSession >> call @"AppendLine" @"appendLine" Effects.appendLine
 

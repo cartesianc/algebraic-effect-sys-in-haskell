@@ -172,7 +172,7 @@ openSensorLink =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
   . SDK.atomicScope "openSensorLink" []
-  . SDK.openScope "SensorLink" Effects.ScopeBindingError (Just (() <$ closeSensorLink))
+  . SDK.openScope (SDK.Slot 0 "SensorLink") Effects.ScopeBindingError (Just (() <$ closeSensorLink))
   . SDK.enterHandler (SDK.Slot 0 "SensorLink") $
     call @"SensorLink" @"connectSensor" Effects.connectSensor
 
@@ -181,7 +181,7 @@ closeSensorLink =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
   . SDK.atomicScope "closeSensorLink" []
-  . SDK.closeScope "SensorLink" Effects.ScopeBindingError
+  . SDK.closeScope (SDK.Slot 0 "SensorLink") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 0 "SensorLink") $
     callClose @"SensorLink" @"disconnectSensor" Effects.disconnectSensor
 
@@ -189,7 +189,7 @@ nextTemperatureFeed :: Effects.App ()
 nextTemperatureFeed =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["SensorLink"]
+  . SDK.withScopeDependencies [(SDK.Slot 0 "SensorLink")]
   . SDK.enterHandler (SDK.Slot 1 "TemperatureFeed") $
     openSensorLink >> call @"TemperatureFeed" @"nextReading" Effects.nextReading
 
@@ -197,7 +197,7 @@ getTemperatureSample :: Effects.App Effects.TemperatureSample
 getTemperatureSample =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["SensorLink"]
+  . SDK.withScopeDependencies [(SDK.Slot 0 "SensorLink")]
   . SDK.callContext (SDK.Slot 2 "TemperatureParser")
       (\value bindings -> bindings { Effects.boundTemperatureParser = Just value }) $
     Effects.TemperatureSample <$> call @"TemperatureParser" @"parseTemperature" Effects.parseTemperature
@@ -218,7 +218,7 @@ nextHeartbeatClock :: Effects.App ()
 nextHeartbeatClock =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["SensorLink"]
+  . SDK.withScopeDependencies [(SDK.Slot 0 "SensorLink")]
   . SDK.enterHandler (SDK.Slot 3 "HeartbeatClock") $
     openSensorLink >> call @"HeartbeatClock" @"nextBeat" Effects.nextBeat
 
@@ -226,7 +226,7 @@ getBeat :: Effects.App Effects.Beat
 getBeat =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["SensorLink"]
+  . SDK.withScopeDependencies [(SDK.Slot 0 "SensorLink")]
   . SDK.callContext (SDK.Slot 4 "Heartbeat")
       (\value bindings -> bindings { Effects.boundHeartbeat = Just value }) $
     Effects.Beat <$> call @"Heartbeat" @"parseBeat" Effects.parseBeat

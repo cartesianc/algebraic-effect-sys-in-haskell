@@ -236,7 +236,7 @@ openFileSession =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicScope "openFileSession" []
-  . SDK.openScope "FileSession" Effects.ScopeBindingError (Just (() <$ closeFileSession))
+  . SDK.openScope (SDK.Slot 3 "FileSession") Effects.ScopeBindingError (Just (() <$ closeFileSession))
   . SDK.enterHandler (SDK.Slot 3 "FileSession") $
     getOpenedFile >> call @"FileSession" @"openSelectedFile" Effects.openSelectedFile
 
@@ -245,7 +245,7 @@ closeFileSession =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicScope "closeFileSession" []
-  . SDK.closeScope "FileSession" Effects.ScopeBindingError
+  . SDK.closeScope (SDK.Slot 3 "FileSession") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 3 "FileSession") $
     callClose @"FileSession" @"closeSelectedFile" Effects.closeSelectedFile
 
@@ -254,7 +254,7 @@ runUseFirst =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runUseFirst" []
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 3 "FileSession")]
   . SDK.enterHandler (SDK.Slot 4 "UseFirst") $
     getFileName >> openFileSession >> call @"UseFirst" @"checkSelection" Effects.checkSelection
 
@@ -270,7 +270,7 @@ runUseSecond =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runUseSecond" []
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 3 "FileSession")]
   . SDK.enterHandler (SDK.Slot 6 "UseSecond") $
     getFileName >> openFileSession >> call @"UseSecond" @"checkSelection" Effects.checkSelection
 
@@ -286,7 +286,7 @@ runReopenFirst =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.atomicHandle "runReopenFirst" []
-  . SDK.withScopeDependencies ["FileSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 3 "FileSession")]
   . SDK.enterHandler (SDK.Slot 8 "ReopenFirst") $
     getFileName >> openFileSession >> call @"ReopenFirst" @"checkSelection" Effects.checkSelection
 

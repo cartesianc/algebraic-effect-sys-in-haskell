@@ -269,7 +269,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
           in case bindingOperation binding of
                PublishAsset contract -> "FrameworkGenerated." ++ contract ++ " <$> " ++ action
                _ -> action
-        scoped = ["FrameworkRuntime.withScopeDependencies " ++ show scopes | not (null scopes)]
+        scoped = ["FrameworkRuntime.withScopeDependencies [" ++ intercalate ", " (map slot scopes) ++ "]" | not (null scopes)]
           where scopes = Prototype.effectScopes (protoOf unit selectedName)
         entered = scoped ++ ["FrameworkRuntime.enterHandler " ++ slot selectedName]
         wrapper binding = rootWrapper selectedName ++ case bindingOperation binding of
@@ -285,7 +285,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
           MiddlewareOperation -> entered
         scopeWrapper binding operation cleanup =
           [ "FrameworkRuntime.atomicScope " ++ show (bindingMethod binding) ++ anchoredOf binding
-          , "FrameworkRuntime." ++ operation ++ show selectedName ++ " FrameworkGenerated.ScopeBindingError" ++ cleanup ] ++ entered
+          , "FrameworkRuntime." ++ operation ++ slot selectedName ++ " FrameworkGenerated.ScopeBindingError" ++ cleanup ] ++ entered
     -- 挂在原子句柄下的持续 parser：句柄成功交出时按本次执行位置筛选后注入，失败按持续协议传播。
     -- 普通 Context 不注入，只经 requests 或选择读取生产。
     anchoredOf binding = " " ++ connectionsOf ContextStream

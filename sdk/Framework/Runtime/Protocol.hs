@@ -109,12 +109,12 @@ data ScopeFault = ScopeNotOpen | ScopeIsClosed | ScopeReentry | ScopeInterrupted
   deriving (Eq, Show)
 
 class Monad m => ScopeStore cause m | m -> cause where
-  withScopeDependencies :: [String] -> m value -> m value
+  withScopeDependencies :: [Slot] -> m value -> m value
   -- Nothing 表示方法体没有执行：复用了同参的已开启实例，或重复 close 被跳过。
   -- open 带上本 scope 的 close 入口（gen 按开启它的同一 Middleware 列表写出），开启成功时登记为自动收尾。
-  openScope :: String -> (ScopeFault -> cause) -> Maybe (m ()) -> m value -> m (Maybe value)
-  closeScope :: String -> (ScopeFault -> cause) -> m value -> m (Maybe value)
-  invalidateScope :: String -> Failure cause -> m ()
+  openScope :: Slot -> (ScopeFault -> cause) -> Maybe (m ()) -> m value -> m (Maybe value)
+  closeScope :: Slot -> (ScopeFault -> cause) -> m value -> m (Maybe value)
+  invalidateScope :: Slot -> Failure cause -> m ()
 
 -- Error 回调与统一完成结果 -----------------------------------------------------
 

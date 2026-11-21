@@ -279,7 +279,7 @@ openInputSession =
   SDK.withErrorPath ["InputSession"]
   . SDK.handleFailure
   . SDK.atomicScope "openInputSession" []
-  . SDK.openScope "InputSession" Effects.ScopeBindingError (Just (() <$ closeInputSession @hooks))
+  . SDK.openScope (SDK.Slot 2 "InputSession") Effects.ScopeBindingError (Just (() <$ closeInputSession @hooks))
   . SDK.enterHandler (SDK.Slot 2 "InputSession") $
     getOpenedInput @hooks >> call @hooks @"InputSession" @"openInput" Effects.openInput
 
@@ -288,7 +288,7 @@ closeInputSession =
   SDK.withErrorPath ["InputSession"]
   . SDK.handleFailure
   . SDK.atomicScope "closeInputSession" []
-  . SDK.closeScope "InputSession" Effects.ScopeBindingError
+  . SDK.closeScope (SDK.Slot 2 "InputSession") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 2 "InputSession") $
     callClose @hooks @"InputSession" @"closeInput" Effects.closeInput
 
@@ -296,7 +296,7 @@ nextLineFeed :: forall hooks. Captured hooks => Effects.App ()
 nextLineFeed =
   SDK.withErrorPath ["InputSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["InputSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 2 "InputSession")]
   . SDK.enterHandler (SDK.Slot 3 "LineFeed") $
     openInputSession @hooks >> call @hooks @"LineFeed" @"nextLine" Effects.nextLine
 
@@ -304,7 +304,7 @@ getTextLine :: forall hooks. Captured hooks => Effects.App Effects.TextLine
 getTextLine =
   SDK.withErrorPath ["InputSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["InputSession"]
+  . SDK.withScopeDependencies [(SDK.Slot 2 "InputSession")]
   . SDK.callContext (SDK.Slot 5 "LineParser")
       (\value bindings -> bindings { Effects.boundLineParser = Just value }) $
     Effects.TextLine <$> call @hooks @"LineParser" @"parseLine" Effects.parseLine

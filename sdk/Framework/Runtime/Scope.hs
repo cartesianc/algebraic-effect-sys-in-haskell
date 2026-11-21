@@ -52,12 +52,12 @@ scopeFailure (ScopeInvalid failure) = Just failure
 scopeFailure (ScopeClosed failure) = Just failure
 scopeFailure _ = Nothing
 
-scopeFault :: String -> (ScopeFault -> cause) -> ScopeFault -> Failure cause
-scopeFault selected wrap fault = Failure selected (wrap fault) (show fault) [] [] Nothing []
+scopeFault :: Slot -> (ScopeFault -> cause) -> ScopeFault -> Failure cause
+scopeFault selected wrap fault = Failure (slotName selected) (wrap fault) (show fault) [] [] Nothing []
 
 -- True 才执行方法体；Active 的再次 open 和 Closed 的再次 close 均直接完成。
 -- Invalid 不自动重开；关闭仍可尝试释放已经取得的资源。
-beginScope :: ScopeOperation -> String -> (ScopeFault -> cause) -> ScopePhase cause
+beginScope :: ScopeOperation -> Slot -> (ScopeFault -> cause) -> ScopePhase cause
            -> Either (Failure cause) Bool
 beginScope OpenScope _ _ ScopeActive = Right False
 beginScope OpenScope _ _ ScopeIdle = Right True
@@ -69,7 +69,7 @@ beginScope CloseScope _ _ (ScopeClosed _) = Right False
 beginScope CloseScope selected wrap ScopeIdle = Left (scopeFault selected wrap ScopeNotOpen)
 beginScope _ selected wrap _ = Left (scopeFault selected wrap ScopeReentry)
 
-finishScope :: ScopeOperation -> String -> (ScopeFault -> cause) -> ScopePhase cause
+finishScope :: ScopeOperation -> Slot -> (ScopeFault -> cause) -> ScopePhase cause
             -> Either (Failure cause) () -> ScopePhase cause
 finishScope OpenScope _ _ (ScopeInvalid original) _ = ScopeInvalid original
 finishScope _ _ _ (ScopeInvalid original) (Left _) = ScopeInvalid original
@@ -77,7 +77,7 @@ finishScope _ _ _ _ (Left failure) = ScopeInvalid failure
 finishScope OpenScope _ _ _ (Right ()) = ScopeActive
 finishScope CloseScope selected wrap _ (Right ()) = ScopeClosed (scopeFault selected wrap ScopeIsClosed)
 
-interruptedScope :: String -> (ScopeFault -> cause) -> SomeException -> ScopePhase cause
+interruptedScope :: Slot -> (ScopeFault -> cause) -> SomeException -> ScopePhase cause
 interruptedScope selected wrap exception =
   ScopeInvalid (scopeFault selected wrap (ScopeInterrupted (displayException exception)))
 
@@ -89,7 +89,7 @@ type Scopes environment cause = [ScopeHandler environment cause]
 
 -- 同一注册的实例集合；锁只保护查找／创建，不覆盖不同实例的业务 IO。
 data ScopeHandler environment cause = ScopeHandler
-  { scopeName :: String
+  { scopeSlot :: Slot
   -- 开启参数与资源 Context 按 effect 编号匹配；resource 是资源绑定的编号（无业务 Context 时为内部 unit 绑定）。
   , scopeInputSources :: [Slot]
   , scopeContextSource :: Maybe Slot
@@ -97,19 +97,19 @@ data ScopeHandler environment cause = ScopeHandler
   , scopeInstances :: MVar [ScopeInstance environment cause]
   , scopeCoordinator :: IORef (MVar ())
   , scopePeers :: IORef (Scopes environment cause)
-  , scopeParentNames :: IORef [String]
+  , scopeParentSlots :: IORef [Slot]
   , scopeReachable :: IORef (ScopeInstance environment cause -> IO Bool)
   , scopePendingFailures :: IORef [(Maybe SomeException, Failure cause)]
   }
 
 type ScopeBinding environment cause =
-  Binding environment (String, ScopeInstance environment cause) (ScopeUser environment cause)
+  Binding environment (Slot, ScopeInstance environment cause) (ScopeUser environment cause)
 
 type ScopeBindings environment cause =
-  Bindings environment (String, ScopeInstance environment cause) (ScopeUser environment cause)
+  Bindings environment (Slot, ScopeInstance environment cause) (ScopeUser environment cause)
 
 type ScopeOwnership environment cause =
-  BindingOwnership (String, ScopeInstance environment cause) (ScopeUser environment cause)
+  BindingOwnership (Slot, ScopeInstance environment cause) (ScopeUser environment cause)
 
 data ScopeInstance environment cause = ScopeInstance
   { scopeInputs :: [ScopeInput]
@@ -149,7 +149,7 @@ data ScopeCleanup cause = ScopeCleanup
 
 newScopeHandler :: Slot -> [Slot] -> Maybe Slot -> IO (ScopeHandler environment cause)
 newScopeHandler selected inputs source = do
-  handler <- ScopeHandler (slotName selected) inputs source (maybe (scopeResourceSlot selected) id source) <$> newMVar []
+  handler <- ScopeHandler selected inputs source (maybe (scopeResourceSlot selected) id source) <$> newMVar []
     <*> (newMVar () >>= newIORef) <*> newIORef [] <*> newIORef []
     <*> newIORef (const (pure False)) <*> newIORef []
   writeIORef (scopePeers handler) [handler]
@@ -163,15 +163,17 @@ configureScopeRelations relations handlers@(first : _) = do
   forM_ handlers $ \handler -> do
     writeIORef (scopeCoordinator handler) coordinator
     writeIORef (scopePeers handler) handlers
-    forM_ (lookup (scopeName handler) relations) (writeIORef (scopeParentNames handler) . nub)
+    -- 原型以名字记录 ScopeTree；配置时一次换算成同批 handler 的编号。
+    forM_ (lookup (slotName (scopeSlot handler)) relations) $ \parents ->
+      writeIORef (scopeParentSlots handler) (nub [scopeSlot peer | name <- parents, peer <- handlers, slotName (scopeSlot peer) == name])
 
 -- Error 导航读取同一棵已校验树的祖先投影；不另存 Error 图。
 -- 同层保留 handler 顺序；尚未配置树的显式种子仍可进入诊断。
 scopeErrorPath :: Scopes environment cause -> [String] -> IO [String]
 scopeErrorPath handlers seeds = do
   relationships <- forM handlers $ \handler -> do
-    parents <- readIORef (scopeParentNames handler)
-    pure (scopeName handler, parents)
+    parents <- readIORef (scopeParentSlots handler)
+    pure (slotName (scopeSlot handler), map slotName parents)
   let selected = nub (seeds ++ concat [parents | (name, parents) <- relationships, name `elem` seeds])
       ordered = filter (`elem` selected) (nub (map fst relationships ++ selected))
       parents name = maybe [] id (lookup name relationships)
@@ -197,7 +199,7 @@ coordinatedUser user action = uninterruptibleMask_ $
 -- 已有 owner 只交回调用方，由原有 useScope / 生命周期检查处理。
 rememberUnownedBinding
   :: ScopeUser environment cause -> ScopeBinding environment cause
-  -> IO (Maybe (String, ScopeInstance environment cause))
+  -> IO (Maybe (Slot, ScopeInstance environment cause))
 rememberUnownedBinding user value = coordinatedUser user $ do
   let ownership = bindingOwnership value
   state <- readIORef ownership
@@ -213,7 +215,7 @@ rememberUnownedBinding user value = coordinatedUser user $ do
 
 -- 首次认领同时接入所有尚未退出的使用者；只有同一个实例可重复认领。
 -- 调用方已选定并持有开启实例；锁内不等待生命周期 gate，也不执行 handler。
-claimBindingOwner :: ScopeBinding environment cause -> String -> ScopeInstance environment cause -> IO Bool
+claimBindingOwner :: ScopeBinding environment cause -> Slot -> ScopeInstance environment cause -> IO Bool
 claimBindingOwner value name slot = coordinated (scopeFamily slot) $ do
   let ownership = bindingOwnership value
   state <- readIORef ownership
@@ -247,8 +249,8 @@ inheritScopeUse source parser = coordinatedUser source $
 
 rememberParent :: ScopeInstance environment cause -> ScopeInstance environment cause -> IO ()
 rememberParent child parent = do
-  candidates <- readIORef (scopeParentNames (scopeFamily child))
-  when (scopeName (scopeFamily parent) `elem` candidates) $ do
+  candidates <- readIORef (scopeParentSlots (scopeFamily child))
+  when (scopeSlot (scopeFamily parent) `elem` candidates) $ do
     parents <- readIORef (scopeParents child)
     when (all ((/= scopeRecord parent) . scopeRecord) parents) $
       writeIORef (scopeParents child) (parent : parents)
@@ -263,10 +265,10 @@ useScope user slot = coordinated (scopeFamily slot) $ do
 
 parentClosing :: ScopeUser environment cause -> ScopeHandler environment cause -> IO (Maybe (MVar ()))
 parentClosing user handler = do
-  parents <- readIORef (scopeParentNames handler)
+  parents <- readIORef (scopeParentSlots handler)
   used <- readIORef (scopeUserInstances user)
   states <- mapM (readIORef . scopeRetiring)
-    (filter ((`elem` parents) . scopeName . scopeFamily) used)
+    (filter ((`elem` parents) . scopeSlot . scopeFamily) used)
   pure $ case [finished | Just (_, finished) <- states] of
     [] -> Nothing
     first : _ -> Just first
@@ -325,8 +327,8 @@ hasLiveChildren slot = do
   let handler = scopeFamily slot
   peers <- readIORef (scopePeers handler)
   children <- fmap concat $ forM peers $ \child -> do
-    parents <- readIORef (scopeParentNames child)
-    if scopeName handler `elem` parents then readMVar (scopeInstances child) else pure []
+    parents <- readIORef (scopeParentSlots child)
+    if scopeSlot handler `elem` parents then readMVar (scopeInstances child) else pure []
   or <$> forM children (\child -> do
     parents <- readIORef (scopeParents child)
     if any ((== scopeRecord slot) . scopeRecord) parents then liveInstance child else pure False)
@@ -454,11 +456,11 @@ cleanupAvailable handlers = mask $ \restore -> sweep restore [] []
       removed <- coordinated (scopeFamily slot) (pruneInstance slot)
       pure (if removed then Just (scopeRecord slot, []) else Nothing)
 
-findScope :: Scopes environment cause -> String -> Maybe (ScopeHandler environment cause)
-findScope scopes selected = find ((== selected) . scopeName) scopes
+findScope :: Scopes environment cause -> Slot -> Maybe (ScopeHandler environment cause)
+findScope scopes selected = find ((== selected) . scopeSlot) scopes
 
-getScope :: Scopes environment cause -> String -> IO (ScopeHandler environment cause)
+getScope :: Scopes environment cause -> Slot -> IO (ScopeHandler environment cause)
 getScope scopes selected = case findScope scopes selected of
   Just handler -> pure handler
-  Nothing -> ioError (userError ("Missing generated scope handler: " ++ selected ++ "; regenerate handlers"))
+  Nothing -> ioError (userError ("Missing generated scope handler: " ++ slotName selected ++ "; regenerate handlers"))
 
