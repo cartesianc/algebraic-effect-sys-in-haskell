@@ -90,4 +90,10 @@ effects =
       , input = "FileSession"
       , demands = [requires "FileWritten", requires "OpenedFile"]
       }
+  , EffectSpec
+      { name = "Abc"
+      , typing = Excu { handler = Nothing }
+      , input = "FileSession"
+      , demands = []
+      }
   ]

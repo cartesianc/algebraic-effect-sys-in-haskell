@@ -103,6 +103,12 @@ generatedPrototype =
             , SDK.demands =
                 [SDK.Demand SDK.RequireAccess "FileWritten", SDK.Demand SDK.RequireAccess "OpenedFile"]
             }
+        , SDK.EffectSpec
+            { SDK.name = "Abc"
+            , SDK.typing = SDK.Excu Nothing
+            , SDK.input = "FileSession"
+            , SDK.demands = []
+            }
         ]
     , SDK.protoEffects =
         [ (SDK.effectProto "LocateFile" SDK.ExcuKind "Root")
@@ -205,6 +211,13 @@ generatedPrototype =
             , SDK.effectScopeParents = ["FileSession"]
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectContextDependencies = ["FileLocation","FileResource","FilledText"]
+            }
+        , (SDK.effectProto "Abc" SDK.ExcuKind "FileSession")
+            { SDK.effectScopes = ["FileSession"]
+            , SDK.effectInputChain = ["FileSession"]
+            , SDK.effectScopeParents = ["FileSession"]
+            , SDK.effectNearestScopes = ["FileSession"]
+            , SDK.effectContextDependencies = ["FileLocation","FileResource"]
             }
         ]
     , SDK.protoMethods =

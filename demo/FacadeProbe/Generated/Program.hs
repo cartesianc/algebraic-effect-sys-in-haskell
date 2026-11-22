@@ -11,7 +11,7 @@ import qualified FacadeProbe.Generated.Handlers as Handlers
 
 
 -- 仅汇总所选末端的成功结果，不保存共享绑定或增加完成包装。
-data Results = WriteReportResult () | WriteReplyResult () | ShowReportResult () | ShowReplyResult () | OnBlankResult () | OnFilledResult () | ShowAResult () | ShowBResult ()
+data Results = WriteReportResult () | WriteReplyResult () | ShowReportResult () | ShowReplyResult () | OnBlankResult () | OnFilledResult () | ShowAResult () | ShowBResult () | ReplyScopeResult ()
   deriving Show
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
@@ -33,6 +33,7 @@ compiledEntries = do
       , target "OnFilled" (OnFilledResult () <$ Handlers.runOnFilled)
       , target "ShowA" (ShowAResult () <$ Handlers.runShowA)
       , target "ShowB" (ShowBResult () <$ Handlers.runShowB)
+      , target "ReplyScope" (ReplyScopeResult () <$ Handlers.openReplyScope)
       ]
     , [ target "InspectReport" (SDK.chooseCase "runInspectReport" ContextBindingError (Handlers.runInspectReport) [((SDK.Slot 18 "ReportBlank"), () <$ Handlers.getReportEmpty), ((SDK.Slot 19 "ReportFilled"), () <$ Handlers.getReportText)])
       ]

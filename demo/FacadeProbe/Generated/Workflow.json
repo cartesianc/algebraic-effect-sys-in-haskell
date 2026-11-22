@@ -2,21 +2,22 @@
   "schemaVersion": 1,
   "namespace": "FacadeProbe",
   "sources": [
-    {"file": "demo/FacadeProbe/AST.hs", "md5": "192d30fb2cd81168a44a79a5858cf200"},
+    {"file": "demo/FacadeProbe/AST.hs", "md5": "87593adc237161b5147a70ba65857c3b"},
+    {"file": "demo/FacadeProbe/Workflow/Abc.hs", "md5": "a55cbb9c37ea909737d57fb601bdb732"},
     {"file": "demo/FacadeProbe/Hanging.hs", "md5": null}
   ],
   "source": {
     "path": [],
     "kind": "chain",
     "names": ["FacadeProbe.AST.ast"],
-    "range": {"file": "demo/FacadeProbe/AST.hs", "start": [6, 7], "end": [11, 4]},
+    "range": {"file": "demo/FacadeProbe/AST.hs", "start": [8, 7], "end": [13, 4]},
     "readable": true,
     "children": [
       {
         "path": [0],
         "kind": "parallel",
         "names": [],
-        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [7, 5], "end": [7, 53]},
+        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [9, 5], "end": [9, 53]},
         "readable": true,
         "children": [
           {
@@ -24,7 +25,7 @@
             "kind": "node",
             "effect": "WriteReport",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [7, 15], "end": [7, 33]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [9, 15], "end": [9, 33]},
             "readable": true,
             "children": []
           },
@@ -33,7 +34,7 @@
             "kind": "node",
             "effect": "WriteReply",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [7, 35], "end": [7, 52]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [9, 35], "end": [9, 52]},
             "readable": true,
             "children": []
           }
@@ -43,7 +44,7 @@
         "path": [1],
         "kind": "chain",
         "names": [],
-        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [8, 5], "end": [8, 48]},
+        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [10, 5], "end": [10, 48]},
         "readable": true,
         "children": [
           {
@@ -51,7 +52,7 @@
             "kind": "node",
             "effect": "ShowReport",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [8, 12], "end": [8, 29]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [10, 12], "end": [10, 29]},
             "readable": true,
             "children": []
           },
@@ -60,7 +61,7 @@
             "kind": "node",
             "effect": "ShowReply",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [8, 31], "end": [8, 47]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [10, 31], "end": [10, 47]},
             "readable": true,
             "children": []
           }
@@ -70,7 +71,7 @@
         "path": [2],
         "kind": "alternative",
         "names": [],
-        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [9, 5], "end": [9, 50]},
+        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [11, 5], "end": [11, 50]},
         "readable": true,
         "children": [
           {
@@ -78,7 +79,7 @@
             "kind": "node",
             "effect": "OnBlank",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [9, 18], "end": [9, 32]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [11, 18], "end": [11, 32]},
             "readable": true,
             "children": []
           },
@@ -87,7 +88,7 @@
             "kind": "node",
             "effect": "OnFilled",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [9, 34], "end": [9, 49]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [11, 34], "end": [11, 49]},
             "readable": true,
             "children": []
           }
@@ -97,7 +98,7 @@
         "path": [3],
         "kind": "lifelong",
         "names": [],
-        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [10, 5], "end": [10, 42]},
+        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [12, 5], "end": [12, 42]},
         "readable": true,
         "children": [
           {
@@ -105,7 +106,7 @@
             "kind": "node",
             "effect": "ShowA",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [10, 15], "end": [10, 27]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [12, 15], "end": [12, 27]},
             "readable": true,
             "children": []
           },
@@ -114,7 +115,25 @@
             "kind": "node",
             "effect": "ShowB",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [10, 29], "end": [10, 41]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [12, 29], "end": [12, 41]},
+            "readable": true,
+            "children": []
+          }
+        ]
+      },
+      {
+        "path": [4],
+        "kind": "parallel",
+        "names": ["FacadeProbe.Workflow.Abc.abc"],
+        "range": {"file": "demo/FacadeProbe/Workflow/Abc.hs", "start": [6, 7], "end": [6, 35]},
+        "readable": true,
+        "children": [
+          {
+            "path": [4, 0],
+            "kind": "node",
+            "effect": "ReplyScope",
+            "names": [],
+            "range": {"file": "demo/FacadeProbe/Workflow/Abc.hs", "start": [6, 17], "end": [6, 34]},
             "readable": true,
             "children": []
           }
@@ -155,7 +174,8 @@
           {"path": [4, 0], "kind": "node", "effect": "ShowA", "sourcePaths": [[3, 0]], "children": []},
           {"path": [4, 1], "kind": "node", "effect": "ShowB", "sourcePaths": [[3, 1]], "children": []}
         ]
-      }
+      },
+      {"path": [5], "kind": "node", "effect": "ReplyScope", "sourcePaths": [[4], [4, 0]], "children": []}
     ]
   },
   "hanging": [],

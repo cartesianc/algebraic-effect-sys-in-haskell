@@ -613,6 +613,7 @@ generatedPrototype =
               [ SDK.NodeAt [4,0] "ShowA"
               , SDK.NodeAt [4,1] "ShowB"
               ]
+          , SDK.NodeAt [5] "ReplyScope"
           ]
     , SDK.protoSessions =
         [ SDK.SessionProto
@@ -732,6 +733,17 @@ generatedPrototype =
             , SDK.chainDrives = []
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
+            }
+        , SDK.ChainProto
+            { SDK.chainNode = [5]
+            , SDK.chainRole = SDK.NodeChain
+            , SDK.chainTerminal = "ReplyScope"
+            , SDK.chainEntry = OpenReplyScopeGen
+            , SDK.chainReaches =
+                [OpenReplyScopeGen, GetOpenedReplyGen, GetReplyPathGen, ReadReplyPathGen, ReadOpenedReplyGen]
+            , SDK.chainDrives = ["ReplyPath"]
+            , SDK.chainReads = []
+            , SDK.chainScopePaths = [[OpenReplyScopeGen]]
             }
         , SDK.ChainProto
             { SDK.chainNode = [3,-1]
@@ -1214,6 +1226,7 @@ generatedPrototype =
               , RunOnFilledGen
               , RunShowAGen
               , RunShowBGen
+              , OpenReplyScopeGen
               , RunInspectReportGen
               , NextFeedAGen
               , GetLevelAGen
@@ -1266,6 +1279,7 @@ generatedPrototype =
               , (RunOnFilledGen, [[]])
               , (RunShowAGen, [[]])
               , (RunShowBGen, [[]])
+              , (OpenReplyScopeGen, [[OpenReplyScopeGen]])
               , (RunInspectReportGen, [[]])
               , (NextFeedAGen, [[]])
               , (GetLevelAGen, [[]])
@@ -1298,13 +1312,19 @@ generatedPrototype =
     , SDK.protoScopeNames = [(OpenReportScopeGen, "ReportScope"), (OpenReplyScopeGen, "ReplyScope")]
     , SDK.protoSources =
         [ (SDK.ReadPoint [3,-1] "ReportPath", SDK.FromChains [[0,0]])
-        , (SDK.ReadPoint [2] "ReplyPath", SDK.FromChains [[0,1]])
+        , (SDK.ReadPoint [2] "ReplyPath", SDK.FromChains [[0,1], [5]])
         , (SDK.ReadPoint [1] "ReportPath", SDK.FromChains [[0,0]])
         , (SDK.ReadPoint [3,-1] "ReportEmpty", SDK.FromOwnChain)
         , (SDK.ReadPoint [3,-1] "ReportText", SDK.FromOwnChain)
         ]
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
+            { SDK.openingNode = [5]
+            , SDK.openingScope = "ReplyScope"
+            , SDK.openingSources = [("ReplyLocation", SDK.FromChains [[5]])]
+            , SDK.openingKinds = [SDK.ExecutionMultiple]
+            }
+        , SDK.ScopeOpeningPlan
             { SDK.openingNode = [0,1]
             , SDK.openingScope = "ReplyScope"
             , SDK.openingSources = [("ReplyLocation", SDK.FromChains [[0,1]])]
@@ -1320,18 +1340,19 @@ generatedPrototype =
     , SDK.protoDriving =
         SDK.DrivingPlan
           { SDK.drivingNodes =
-              [ SDK.NodeDrive [] [[0,0],[0,1],[1],[2],[3,0],[3,1],[4,0],[4,1]] [] Nothing [] [] []
+              [ SDK.NodeDrive [] [[0,0],[0,1],[1],[2],[3,0],[3,1],[4,0],[4,1],[5]] [] Nothing [] [] []
               , SDK.NodeDrive [0] [[0,0],[0,1]] [] Nothing [] [] []
               , SDK.NodeDrive [0,0] [[0,0]] [] Nothing [] [] []
               , SDK.NodeDrive [0,1] [[0,1]] [] Nothing [] [] []
               , SDK.NodeDrive [1] [[1]] [] Nothing [] [] []
-              , SDK.NodeDrive [2] [[2]] [] Nothing [] [] []
+              , SDK.NodeDrive [2] [[2]] [] Nothing [] [] [[5]]
               , SDK.NodeDrive [3] [[3,0],[3,1]] [] Nothing [] [] []
               , SDK.NodeDrive [3,0] [[3,0]] [] Nothing [[3,-1]] [] []
               , SDK.NodeDrive [3,1] [[3,1]] [] Nothing [[3,-1]] [] []
               , SDK.NodeDrive [4] [[4,0],[4,1]] [] (Just [4]) [] [] []
               , SDK.NodeDrive [4,0] [[4,0]] ["ParserA"] (Just [4]) [] [] []
               , SDK.NodeDrive [4,1] [[4,1]] ["ParserB"] (Just [4]) [] [] []
+              , SDK.NodeDrive [5] [[5]] [] Nothing [] [[4]] []
               , SDK.NodeDrive [3,-1] [] [] Nothing [] [] []
               , SDK.NodeDrive [4,-1,0,0] [] [] (Just [4]) [] [] []
               , SDK.NodeDrive [4,-1,0,1] [] [] (Just [4]) [] [] []
@@ -1352,7 +1373,7 @@ generatedPrototype =
               , SDK.SessionDrive (Just [4]) "ParserA" "LevelA" Nothing
               , SDK.SessionDrive (Just [4]) "ParserB" "LevelB" Nothing
               ]
-          , SDK.drivingRootNodes = [[0,0],[0,1],[1],[2],[3,0],[3,1],[4,0],[4,1],[3,-1]]
+          , SDK.drivingRootNodes = [[0,0],[0,1],[1],[2],[3,0],[3,1],[4,0],[4,1],[5],[3,-1]]
           , SDK.drivingOutputSites = []
           , SDK.drivingRequests =
               [ ("ReportLocation", GetReportPathGen)
