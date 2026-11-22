@@ -11,7 +11,16 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Framework.Gen.Frontend.Ghc (modulePath, sourceDirectory, withSourceTargets)
 import Framework.Gen.Workflow (SourceRange(..), SourceSite(..))
+import Framework.Language.AST (WorkflowF(..))
+import qualified Framework.Language.Registration as R
+import Framework.Recursion (Fix(..))
 import GHC
+import GHC.Builtin.Types (mkListTy, stringTy)
+import GHC.Core.TyCon (isTypeSynonymTyCon, synTyConRhs_maybe)
+import GHC.Core.TyCo.Compare (eqType)
+import GHC.Unit.Types (unitString)
+import Data.List (nub)
+import Data.Maybe (catMaybes)
 import GHC.Builtin.Names (dollarIdKey)
 import GHC.Data.FastString (unpackFS)
 import GHC.Types.Unique (getUnique)
@@ -35,27 +44,119 @@ data Outline = Outline
   , outlineChecks :: SourceChecks          -- 生成的 Program 在运行前核对的 Hanging 输入指纹
   , outlineSites :: [SourceSite]           -- 从 ast 出发能从源码读出的每个位置
   , outlineSources :: [(FilePath, Maybe String)]  -- 每个已加载模块的 MD5（换行统一为 LF）；Hanging 不存在时为 Nothing
+  -- 从源码直接读出的原样业务树与 Hanging 各行；写法超出显式 node／组合列表时为 Nothing，由调用方求值。
+  , outlineTree :: Maybe (Fix WorkflowF, [([String], Int)])
+  -- 注册中资产表示类型的写法到 TypeRef 的解析（只在请求时，按 Effects 模块的作用域）。
+  , outlineTypes :: [(String, R.TypeRef)]
   }
 
-loadOutline :: String -> IO Outline
-loadOutline namespace = do
+-- types 给出注册里写的资产类型时，同一次加载也加载 Effects 模块并解析这些类型。
+loadOutline :: String -> Maybe [String] -> IO Outline
+loadOutline namespace types = do
   sourceDir <- sourceDirectory
   let hangingFile = modulePath sourceDir (hangingModule namespace) ++ ".hs"
   exists <- doesFileExist hangingFile
   withSourceTargets $ \_ -> do
     (definitions, checks) <- loadWorkflowModules sourceDir namespace exists
+      [modulePath sourceDir (namespace ++ ".Effects") ++ ".hs" | Just _ <- [types]]
     root <- exported (astModule namespace) "ast"
     targets <- if exists then hangingTargets namespace definitions root else pure []
     sites <- either abort pure (outline (Map.map layoutOf definitions) root)
     hashes <- liftIO (mapM (\(path, _) -> (,) path . Just <$> sourceDigest path) checks)
+    rows <- if exists
+      then (\declaration -> syntacticRows definitions declaration) <$> exported (hangingModule namespace) "hangingTree"
+      else pure (Just [])
+    resolved <- maybe (pure []) (resolveTypes namespace) types
     let absent = [(hangingFile, Nothing) | not exists]
+        tree = (,) <$> syntacticTree definitions root <*> rows
     -- 没有 Hanging 时 Program 只核对它仍不存在，与此前的生成结果一致。
-    pure (Outline exists targets (if exists then checks else absent) sites (hashes ++ absent))
+    pure (Outline exists targets (if exists then checks else absent) sites (hashes ++ absent) tree resolved)
 
-loadWorkflowModules :: FilePath -> String -> Bool -> Ghc (Map.Map Name (HsBind GhcRn), SourceChecks)
-loadWorkflowModules sourceDir namespace withHanging = do
+-- 原样业务树：node 的字面量、四种组合的显式列表与对命名分支的引用，与 toWorkflowF 求值的结果相同。
+-- 其他写法（helper 计算、非显式列表、外部定义）返回 Nothing。
+syntacticTree :: Map.Map Name (HsBind GhcRn) -> Name -> Maybe (Fix WorkflowF)
+syntacticTree definitions = named Set.empty
+  where
+    named seen n
+      | Set.member n seen = Nothing
+      | otherwise = do
+          binding <- Map.lookup n definitions
+          body <- either (const Nothing) Just (singleBody binding)
+          expression (Set.insert n seen) body
+    expression seen e = case application e of
+      (Just n, []) -> named seen n
+      (Just n, [argument]) | ownerOf n == "Framework.Language.AST" ->
+        let children = either (const Nothing) Just (list argument) >>= mapM (expression seen)
+        in case spelling n of
+          "node" -> Fix . Node <$> stringLiteral argument
+          "chain" -> Fix . Chain <$> children
+          "parallel" -> Fix . Parallel <$> children
+          "alternative" -> Fix . Alternative <$> children
+          "lifelong" -> Fix . Lifelong <$> children
+          _ -> Nothing
+      _ -> Nothing
+
+-- Hanging 各行的 hook 与目标数，与 hangingRows 求值的结果相同。
+syntacticRows :: Map.Map Name (HsBind GhcRn) -> Name -> Maybe [([String], Int)]
+syntacticRows definitions declaration = do
+  body <- Map.lookup declaration definitions >>= either (const Nothing) Just . singleBody
+  entries <- either (const Nothing) Just (listArgument body)
+  forM entries $ \entry -> case application entry of
+    (Just n, [hooks, targets]) | qualified n == "Framework.Language.AST.middleware" -> do
+      names <- either (const Nothing) Just (list hooks) >>= mapM hookName
+      branches <- either (const Nothing) Just (list targets)
+      pure (names, length branches)
+    _ -> Nothing
+  where
+    hookName e = case application e of
+      (Just n, [argument]) | qualified n == "Framework.Language.AST.node" -> stringLiteral argument
+      _ -> Nothing
+
+stringLiteral :: LHsExpr GhcRn -> Maybe String
+stringLiteral e = case unparen e of
+  HsLit _ (HsString _ text) -> Just (unpackFS text)
+  _ -> Nothing
+
+-- 与 typeRef 求值的结果相同：String（及其同义词）与 [String] 是内建表示，其余是定义模块中的 data／newtype。
+-- 解析不了的写法（其他同义词、歧义名字）不给出，调用方改用求值。
+resolveTypes :: String -> [String] -> Ghc [(String, R.TypeRef)]
+resolveTypes namespace spellings = do
+  -- 改名后的 Effects 模块给出注册里每个类型名的定义身份；不求值，也不需要解释执行。
+  summary <- getModSummary (mkModuleName (namespace ++ ".Effects"))
+  checked <- typecheckModule =<< parseModule summary
+  let written = case tm_renamed_source checked of
+        Just (group, _, _, _, _) -> nub (typeNames group)
+        Nothing -> []
+  fmap catMaybes $ forM (nub spellings) $ \spelled -> case spelled of
+    "[String]" -> pure (Just (spelled, R.TypeRef "[[Char]]" Nothing))
+    _ -> do
+      let local = reverse (takeWhile (/= '.') (reverse spelled))
+      things <- catMaybes <$> mapM lookupName [n | n <- written, spelling n == local]
+      pure $ case [constructor | ATyCon constructor <- things] of
+        [constructor] -> (,) spelled <$> refOf constructor
+        _ -> Nothing
+  where
+    refOf constructor
+      | isTypeSynonymTyCon constructor = case synTyConRhs_maybe constructor of
+          Just rhs | rhs `eqType` stringTy -> Just (R.TypeRef "[Char]" Nothing)
+                   | rhs `eqType` mkListTy stringTy -> Just (R.TypeRef "[[Char]]" Nothing)
+          _ -> Nothing
+      | otherwise = case nameModule_maybe (getName constructor) of
+          Just owner -> Just (R.TypeRef (spelling (getName constructor))
+            (Just (unitString (moduleUnit owner), moduleNameString (moduleName owner))))
+          Nothing -> Nothing
+
+-- 源码中写出的全部类型名（HsTyVar）。
+typeNames :: Data a => a -> [Name]
+typeNames x = case (cast x :: Maybe (HsType GhcRn)) of
+  Just (HsTyVar _ _ n) -> [unLoc n]
+  _ -> concat (gmapQ typeNames x)
+
+loadWorkflowModules :: FilePath -> String -> Bool -> [FilePath] -> Ghc (Map.Map Name (HsBind GhcRn), SourceChecks)
+loadWorkflowModules sourceDir namespace withHanging extra = do
   setTargets =<< mapM (\file -> guessTarget file Nothing Nothing)
-    ([modulePath sourceDir (hangingModule namespace) ++ ".hs" | withHanging] ++ [modulePath sourceDir (astModule namespace) ++ ".hs"])
+    ([modulePath sourceDir (hangingModule namespace) ++ ".hs" | withHanging]
+      ++ [modulePath sourceDir (astModule namespace) ++ ".hs"] ++ extra)
   result <- load LoadAllTargets
   case result of
     Failed -> abort (if withHanging then "Cannot load Hanging and AST modules" else "Cannot load AST modules")

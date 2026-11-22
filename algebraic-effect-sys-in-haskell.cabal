@@ -34,6 +34,9 @@ common runtime-program
       Framework.Prototype.Types
       Framework.Prototype.Graph
       Framework.Prototype.Query
+      Framework.Prototype.Index
+      Framework.Prototype.Slot
+      Framework.Prototype.Coordinate
       Framework.Prototype.Validate
       Framework.Prototype.Structure
       Framework.Runtime
@@ -65,7 +68,6 @@ executable crawler-demo
   main-is: Crawler/Main.hs
   other-modules:
       Crawler.AST
-      Crawler.Workflow.ParsePages
       Crawler.Workflow.PrintPages
       Crawler.Effects
       Crawler.Types
@@ -199,6 +201,7 @@ executable effect-codegen
       Framework.Gen.Emit.Prototype
       Framework.Gen.Emit.Workflow
       Framework.Gen.Check.Assets
+      Framework.Gen.Check.TopLevel
       Framework.Prototype.Catalog
       Framework.Recursion
       Framework.Language.AST
@@ -208,6 +211,10 @@ executable effect-codegen
       Framework.Prototype.Types
       Framework.Prototype.Graph
       Framework.Prototype.Query
+      Framework.Prototype.Index
+      Framework.Prototype.Slot
+      Framework.Prototype.Coordinate
+      Framework.Prototype.Structure
       Framework.Prototype.Validate
   ghc-options: -main-is Framework.Gen.Main
   build-depends:

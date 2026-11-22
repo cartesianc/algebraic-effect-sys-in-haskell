@@ -9,7 +9,7 @@
 module Framework.Runtime
   ( App, Target, targetApp
   , targetName, lowerTarget, Handoff, noHandoff, scopeHandlers, cleanupTargets
-  , DeliveryFrame, LocalSource(..), newDeliveryFrame, frameDelivery, framePublishes, haltFrame, frameStopping, frameAdmits, boundarySession
+  , DeliveryFrame, LocalSlot(..), newDeliveryFrame, frameDelivery, framePublishes, haltFrame, frameStopping, frameAdmits, boundarySession
   , SessionSteps, receiveSteps, deriveSteps, sessionLauncher
   ) where
 
@@ -25,7 +25,9 @@ import Framework.Runtime.Binding (Binding(..), readBindingOwner)
 import Framework.Runtime.Retention (Retention, keepBindings)
 import Framework.Runtime.Session
 import Framework.Runtime.Scope
-import Framework.Prototype
+import Framework.Prototype.Index (LocalSlot(..), SessionAt(..), hooksLabel, sessionAt)
+import Framework.Prototype.Coordinate (Coord)
+import Framework.Prototype.Slot (Slot(..))
 import Control.Concurrent (forkIOWithUnmask, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar, newEmptyMVar, newMVar, putMVar, readMVar, tryReadMVar)
 import Control.Exception
@@ -52,7 +54,7 @@ targetApp = AppTarget
 
 -- 交给下一段调用的已捕获绑定（只含无 scope 归属的资产）与持续资产的交付视图；内容不对外公开。
 -- alternative 用它把选择时读到的资产交给候选，使两段读同一份值。
-data Handoff environment cause = Handoff (ScopeBindings environment cause) [(String, View environment cause)]
+data Handoff environment cause = Handoff (ScopeBindings environment cause) [(Slot, View environment cause)]
 
 noHandoff :: Handoff environment cause
 noHandoff = Handoff [] []
@@ -65,19 +67,19 @@ noHandoff = Handoff [] []
 -- 只记录从本单元 ReuseOutput 可达的来源，其他单元与 Receive 仍通过未来增量驱动本单元。
 
 data DeliveryFrame environment cause = DeliveryFrame
-  { frameLocal :: [(String, LocalSource)]
+  { frameLocal :: [(Slot, LocalSlot)]
   , frameExecution :: ExecutionFrame
   , frameRetention :: Retention environment cause
   -- 稳定性查询保留本边界的会话引用；单元撤销自己的游标后，派生 worker 仍可能读取该上游。
-  , frameSources :: [(String, Session environment cause)]
-  , frameSessions :: [(String, (Session environment cause, Cursor))]
-  , frameTaken :: MVar [(String, MVar (Either (Stopped cause) (Delivery environment cause)))]
+  , frameSources :: [(Slot, Session environment cause)]
+  , frameSessions :: [(Slot, (Session environment cause, Cursor))]
+  , frameTaken :: MVar [(Slot, MVar (Either (Stopped cause) (Delivery environment cause)))]
   -- 本次执行所需的某个外部来源已结束并排空：单元正在结束，不再允许新的位置启动。
   , frameHalted :: IORef Bool
   }
 
-newDeliveryFrame :: Retention environment cause -> ExecutionFrame -> [(String, LocalSource)] -> [(String, Session environment cause)]
-                 -> [(String, (Session environment cause, Cursor))] -> IO (DeliveryFrame environment cause)
+newDeliveryFrame :: Retention environment cause -> ExecutionFrame -> [(Slot, LocalSlot)] -> [(Slot, Session environment cause)]
+                 -> [(Slot, (Session environment cause, Cursor))] -> IO (DeliveryFrame environment cause)
 newDeliveryFrame retention execution local sources sessions = do
   frame <- DeliveryFrame local execution retention sources sessions <$> newMVar [] <*> newIORef False
   installSessionInputs execution (pendingInput frame)
@@ -86,7 +88,7 @@ newDeliveryFrame retention execution local sources sessions = do
 -- 本轮已领取时比较固定视图；尚未领取时查看自己的游标，不看别的单元的进度。
 -- 领取进行中（槽尚空）保守持有，覆盖游标已推进、交付尚未填槽的交接窗口。
 -- 两把被读取的锁中都不运行 handler，也不获取 scope 协调锁。
-pendingInput :: DeliveryFrame environment cause -> String -> ActivationId -> IO (Maybe Bool)
+pendingInput :: DeliveryFrame environment cause -> Slot -> ActivationId -> IO (Maybe Bool)
 pendingInput frame source production = case lookup source (frameSessions frame) of
   Nothing -> pure Nothing
   Just (session, cursor) -> do
@@ -115,15 +117,15 @@ pendingInput frame source production = case lookup source (frameSessions frame) 
       | otherwise = pure (Just False)
 
 -- 本单元直接或经 Derive 发布的会话：耗尽只结束订阅该来源的位置，不结束整个单元。
-framePublishes :: DeliveryFrame environment cause -> String -> Bool
+framePublishes :: DeliveryFrame environment cause -> Slot -> Bool
 framePublishes frame source = source `elem` map fst (frameLocal frame)
 
 -- 顺序是证明的一部分：先确认上游稳定，再读取发布总数和派生完成水位。
 -- 查询实际轮帧，不用根帧的未来轮次预约；未知位置保守地继续等待。
-frameStable :: DeliveryFrame environment cause -> String -> IO Bool
+frameStable :: DeliveryFrame environment cause -> Slot -> IO Bool
 frameStable frame source = case lookup source (frameLocal frame) of
-  Just (PublishedAt nodes) -> all finished <$> mapM (frameNodeProgress (frameExecution frame)) nodes
-  Just (DerivedFrom upstream) -> do
+  Just (PublishedSlotAt nodes) -> all finished <$> mapM (frameNodeProgress (frameExecution frame)) nodes
+  Just (DerivedFromSlot upstream) -> do
     stable <- frameStable frame upstream
     if not stable then pure False else case (lookup source (frameSources frame), lookup upstream (frameSources frame)) of
       (Just session, Just parent) -> sessionCaughtUp session parent
@@ -152,7 +154,7 @@ frameAdmits :: DeliveryFrame environment cause -> IO Bool
 frameAdmits frame = not <$> frameStopping frame
 
 -- 进入 lifelong 时取得本边界的会话：生产步骤从进入时的交接开始，与来源分析给会话挂载的环境一致。
-boundarySession :: RuntimeGraph environment cause -> NodeId -> String -> Handoff environment cause
+boundarySession :: RuntimeGraph environment cause -> Coord -> Slot -> Handoff environment cause
                 -> IO (Session environment cause)
 boundarySession graph boundary source (Handoff given views) = obtainSession graph (Just boundary, source) given views
 
@@ -160,10 +162,10 @@ boundarySession graph boundary source (Handoff given views) = obtainSession grap
 -- 来源结束并排空时返回 Drained。单元正在结束时：已有交付照常取得（已经启动的调用继续用它完成），
 -- 需要等待才返回 Drained。是否允许启动新的位置不在这里决定，见 frameAdmits。
 -- 本单元直接/间接发布的会话等到本轮稳定；此后仍无新增量才返回 Undriven。
-frameDelivery :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Stopped cause) (View environment cause)))
+frameDelivery :: DeliveryFrame environment cause -> Slot -> Maybe (IO (Either (Stopped cause) (View environment cause)))
 frameDelivery frame source = fmap (fmap fst) <$> frameTake frame source
 
-frameTake :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Stopped cause) (Delivery environment cause)))
+frameTake :: DeliveryFrame environment cause -> Slot -> Maybe (IO (Either (Stopped cause) (Delivery environment cause)))
 frameTake frame source = do
   (session, cursor) <- lookup source (frameSessions frame)
   pure $ mask $ \restore -> do
@@ -188,7 +190,7 @@ frameTake frame source = do
 -- 方法体内第一次读取时领取（require 等不在节点订阅中的读取）。本单元发布的会话本轮没有新发布、
 -- 或已封口并排空时，读已有的那一条：require 读的是当作不变的值，不要求本轮更新，也不推进游标。
 -- 一条都没有发布过时为 Undriven，读取方按缺值处理。
-frameRead :: DeliveryFrame environment cause -> String -> Maybe (IO (Either (Stopped cause) (View environment cause)))
+frameRead :: DeliveryFrame environment cause -> Slot -> Maybe (IO (Either (Stopped cause) (View environment cause)))
 frameRead frame source = do
   deliver <- frameDelivery frame source
   (session, _) <- lookup source (frameSessions frame)
@@ -200,7 +202,7 @@ frameRead frame source = do
       _ -> pure outcome
   where existing session = maybe (Left Undriven) Right <$> retainedView session (frameRetention frame)
 
-frameDeliveries :: DeliveryFrame environment cause -> IO [(String, Delivery environment cause)]
+frameDeliveries :: DeliveryFrame environment cause -> IO [(Slot, Delivery environment cause)]
 frameDeliveries frame = do
   taken <- readMVar (frameTaken frame)
   fmap concat $ forM taken $ \(source, slot) -> do
@@ -214,7 +216,7 @@ frameDeliveries frame = do
 -- 已领取交付的伴随发布作为已捕获绑定交给本次调用，交接中已经捕获的值优先（与来源分析一致）；
 -- 生成期保证读取伴随资产的位置在调用前已经领取了对应会话的交付。
 -- 原始链挂接只交付持续资产自身；普通产物仍写入运行级共享最新值，不作为该交付的伴随捕获。
-lowerTarget :: RuntimeGraph environment cause -> Retention environment cause -> NodeId -> ExecutionFrame -> Maybe (DeliveryFrame environment cause) -> Handoff environment cause
+lowerTarget :: RuntimeGraph environment cause -> Retention environment cause -> Coord -> ExecutionFrame -> Maybe (DeliveryFrame environment cause) -> Handoff environment cause
             -> Target environment cause value -> IO (Either (Failure cause) value, Handoff environment cause)
 lowerTarget graph retention location executionFrame frame (Handoff given views) target = do
   taken <- maybe (pure []) frameDeliveries frame
@@ -236,8 +238,8 @@ lowerTarget graph retention location executionFrame frame (Handoff given views) 
   handoffBindings <- filterM (fmap isNothing . readBindingOwner . snd) captured
   pure (outcome, Handoff handoffBindings delivered)
 
-lowerWith :: RuntimeGraph environment cause -> NodeId -> Launch environment cause -> Target environment cause value
-          -> IO (Either (Failure cause) value, ScopeBindings environment cause, [(String, View environment cause)])
+lowerWith :: RuntimeGraph environment cause -> Coord -> Launch environment cause -> Target environment cause value
+          -> IO (Either (Failure cause) value, ScopeBindings environment cause, [(Slot, View environment cause)])
 lowerWith graph location launch (AppTarget _ environment _ action) =
   runAppWith (\value -> evaluate (foldr seq () (show value))) graph location launch environment action
 
@@ -289,13 +291,13 @@ sessionLauncher :: forall environment cause. RuntimeGraph environment cause -> [
                 -> (Broken cause -> IO ()) -> Session environment cause -> IO ()
 sessionLauncher graph steps onBroken session
   -- 已挂载的原始链提供输出：只登记会话的交付状态，不创建第二个驱动或资源使用者。
-  | Just (ReuseOutput _) <- sessionPlan <$> description = pure ()
+  | Just (Just _) <- sessionAtReuses <$> description = pure ()
   | otherwise = launch
   where
     launch = uninterruptibleMask_ $ do
       (firstMount, locations) <- case mounts of
         Just nodes@(mount : _) -> pure (mount, nodes)
-        _ -> ioError (userError ("No session steps for " ++ source ++ " at " ++ show boundary
+        _ -> ioError (userError ("No session steps for " ++ slotName source ++ " at " ++ show boundary
           ++ "; regenerate with the SDK effect-codegen command"))
       execution <- BusinessExecution <$> newOrigin graph firstMount
       -- 会话待用 v1（2026-11-18）：Composition 已确定挂载与参数来源，运行时只登记
@@ -350,11 +352,11 @@ sessionLauncher graph steps onBroken session
         when idle (retireSession selected)
     (boundary, source) = sessionKey session
     description = sessionDescriptionOf (runtimePrototype graph) boundary source
-    mounts = sessionMounts <$> description
+    mounts = sessionAtMounts <$> description
     -- 会话的各步骤位置被同一组标注覆盖；按首个步骤取 gen 特化的步骤。
-    label = maybe source (\nodes -> case nodes of
-      first : _ -> referenceLabel (runtimePrototype graph) first source
-      [] -> source) mounts
+    label = maybe (slotName source) (\nodes -> case nodes of
+      first : _ -> referenceLabel (runtimePrototype graph) first (slotName source)
+      [] -> slotName source) mounts
     produce execution future selected upcoming = case (lookup label steps, mounts) of
       (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ withStep execution $ \owner retention -> do
         -- 来源拥有本次调用的资源。每条 emit 在独立的 parser 调用与保留范围中发布，
@@ -403,7 +405,7 @@ sessionLauncher graph steps onBroken session
             Nothing -> endSession session >> departSession upstream cursor
             Just _ -> void (leaveSession upstream cursor)
           pure outcome) `onException` leaveSession upstream cursor
-      _ -> ioError (userError ("Session steps differ from the prototype mounts for " ++ source
+      _ -> ioError (userError ("Session steps differ from the prototype mounts for " ++ slotName source
         ++ "; regenerate with the SDK effect-codegen command"))
     sink = [(source, \value -> do
       companions <- currentPublications graph (maybe [] id mounts)
@@ -432,9 +434,8 @@ sessionLauncher graph steps onBroken session
     loop step = step >>= maybe (loop step) pure
 
 -- 会话计划与挂载只来自同一份原型；复用原始链输出的会话没有独立生产挂载。
-referenceLabel :: PrototypeReference -> NodeId -> String -> String
-referenceLabel (PrototypeReference prototype) = entryLabel (protoDriving prototype)
+referenceLabel :: PrototypeReference -> Coord -> String -> String
+referenceLabel (PrototypeReference index) = hooksLabel index
 
-sessionDescriptionOf :: PrototypeReference -> Maybe NodeId -> String -> Maybe SessionProto
-sessionDescriptionOf (PrototypeReference prototype) boundary source =
-  sessionDriveAt prototype boundary source >>= describedSession prototype
+sessionDescriptionOf :: PrototypeReference -> Maybe Coord -> Slot -> Maybe SessionAt
+sessionDescriptionOf (PrototypeReference index) = sessionAt index

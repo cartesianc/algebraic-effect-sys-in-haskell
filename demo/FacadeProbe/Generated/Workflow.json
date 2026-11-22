@@ -2,14 +2,14 @@
   "schemaVersion": 1,
   "namespace": "FacadeProbe",
   "sources": [
-    {"file": "demo/FacadeProbe/AST.hs", "md5": "4da1b1419ccdf9b4df9d195fd0cf60bf"},
+    {"file": "demo/FacadeProbe/AST.hs", "md5": "192d30fb2cd81168a44a79a5858cf200"},
     {"file": "demo/FacadeProbe/Hanging.hs", "md5": null}
   ],
   "source": {
     "path": [],
     "kind": "chain",
     "names": ["FacadeProbe.AST.ast"],
-    "range": {"file": "demo/FacadeProbe/AST.hs", "start": [6, 7], "end": [12, 4]},
+    "range": {"file": "demo/FacadeProbe/AST.hs", "start": [6, 7], "end": [11, 4]},
     "readable": true,
     "children": [
       {
@@ -41,26 +41,26 @@
       },
       {
         "path": [1],
-        "kind": "parallel",
+        "kind": "chain",
         "names": [],
-        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [8, 5], "end": [8, 51]},
+        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [8, 5], "end": [8, 48]},
         "readable": true,
         "children": [
           {
             "path": [1, 0],
             "kind": "node",
-            "effect": "ReadReport",
+            "effect": "ShowReport",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [8, 15], "end": [8, 32]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [8, 12], "end": [8, 29]},
             "readable": true,
             "children": []
           },
           {
             "path": [1, 1],
             "kind": "node",
-            "effect": "ReadReply",
+            "effect": "ShowReply",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [8, 34], "end": [8, 50]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [8, 31], "end": [8, 47]},
             "readable": true,
             "children": []
           }
@@ -68,26 +68,26 @@
       },
       {
         "path": [2],
-        "kind": "chain",
+        "kind": "alternative",
         "names": [],
-        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [9, 5], "end": [9, 48]},
+        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [9, 5], "end": [9, 50]},
         "readable": true,
         "children": [
           {
             "path": [2, 0],
             "kind": "node",
-            "effect": "ShowReport",
+            "effect": "OnBlank",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [9, 12], "end": [9, 29]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [9, 18], "end": [9, 32]},
             "readable": true,
             "children": []
           },
           {
             "path": [2, 1],
             "kind": "node",
-            "effect": "ShowReply",
+            "effect": "OnFilled",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [9, 31], "end": [9, 47]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [9, 34], "end": [9, 49]},
             "readable": true,
             "children": []
           }
@@ -95,53 +95,26 @@
       },
       {
         "path": [3],
-        "kind": "alternative",
+        "kind": "lifelong",
         "names": [],
-        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [10, 5], "end": [10, 50]},
+        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [10, 5], "end": [10, 42]},
         "readable": true,
         "children": [
           {
             "path": [3, 0],
             "kind": "node",
-            "effect": "OnBlank",
+            "effect": "ShowA",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [10, 18], "end": [10, 32]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [10, 15], "end": [10, 27]},
             "readable": true,
             "children": []
           },
           {
             "path": [3, 1],
             "kind": "node",
-            "effect": "OnFilled",
-            "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [10, 34], "end": [10, 49]},
-            "readable": true,
-            "children": []
-          }
-        ]
-      },
-      {
-        "path": [4],
-        "kind": "lifelong",
-        "names": [],
-        "range": {"file": "demo/FacadeProbe/AST.hs", "start": [11, 5], "end": [11, 42]},
-        "readable": true,
-        "children": [
-          {
-            "path": [4, 0],
-            "kind": "node",
-            "effect": "ShowA",
-            "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [11, 15], "end": [11, 27]},
-            "readable": true,
-            "children": []
-          },
-          {
-            "path": [4, 1],
-            "kind": "node",
             "effect": "ShowB",
             "names": [],
-            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [11, 29], "end": [11, 41]},
+            "range": {"file": "demo/FacadeProbe/AST.hs", "start": [10, 29], "end": [10, 41]},
             "readable": true,
             "children": []
           }
@@ -163,33 +136,24 @@
           {"path": [0, 1], "kind": "node", "effect": "WriteReply", "sourcePaths": [[0, 1]], "children": []}
         ]
       },
+      {"path": [1], "kind": "node", "effect": "ShowReport", "sourcePaths": [[1, 0]], "children": []},
+      {"path": [2], "kind": "node", "effect": "ShowReply", "sourcePaths": [[1, 1]], "children": []},
       {
-        "path": [1],
-        "kind": "parallel",
-        "sourcePaths": [[1]],
+        "path": [3],
+        "kind": "alternative",
+        "sourcePaths": [[2]],
         "children": [
-          {"path": [1, 0], "kind": "node", "effect": "ReadReport", "sourcePaths": [[1, 0]], "children": []},
-          {"path": [1, 1], "kind": "node", "effect": "ReadReply", "sourcePaths": [[1, 1]], "children": []}
+          {"path": [3, 0], "kind": "node", "effect": "OnBlank", "sourcePaths": [[2, 0]], "children": []},
+          {"path": [3, 1], "kind": "node", "effect": "OnFilled", "sourcePaths": [[2, 1]], "children": []}
         ]
       },
-      {"path": [2], "kind": "node", "effect": "ShowReport", "sourcePaths": [[2, 0]], "children": []},
-      {"path": [3], "kind": "node", "effect": "ShowReply", "sourcePaths": [[2, 1]], "children": []},
       {
         "path": [4],
-        "kind": "alternative",
+        "kind": "lifelong",
         "sourcePaths": [[3]],
         "children": [
-          {"path": [4, 0], "kind": "node", "effect": "OnBlank", "sourcePaths": [[3, 0]], "children": []},
-          {"path": [4, 1], "kind": "node", "effect": "OnFilled", "sourcePaths": [[3, 1]], "children": []}
-        ]
-      },
-      {
-        "path": [5],
-        "kind": "lifelong",
-        "sourcePaths": [[4]],
-        "children": [
-          {"path": [5, 0], "kind": "node", "effect": "ShowA", "sourcePaths": [[4, 0]], "children": []},
-          {"path": [5, 1], "kind": "node", "effect": "ShowB", "sourcePaths": [[4, 1]], "children": []}
+          {"path": [4, 0], "kind": "node", "effect": "ShowA", "sourcePaths": [[3, 0]], "children": []},
+          {"path": [4, 1], "kind": "node", "effect": "ShowB", "sourcePaths": [[3, 1]], "children": []}
         ]
       }
     ]

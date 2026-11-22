@@ -195,7 +195,7 @@ main = interpreter ast effects
 
 本文的 **gencode** 指代码生成阶段，对应可执行目标 `effect-codegen`；**runtime** 指业务运行阶段，对应 `file-demo` 等程序的无参数启动。它们不是额外的命令或 `--runtime` 开关。
 
-业务项目可以自行命名。仓库示例把业务模块放在 `demo/`，其他目录通过工具的 `--source-dir` 指定。例如从项目根执行 `cabal run effect-codegen -- --source-dir src workflow Orders.App` 会读取 `src/Orders/App/`。Cabal 组件的 `hs-source-dirs` 应包含同一源码目录和 `sdk`。项目名称与 Haskell 模块命名空间分别配置。
+业务项目可以自行命名。仓库示例把业务模块放在 `demo/`，其他目录通过工具的 `--source-dir` 指定。例如从项目根执行 `cabal run effect-codegen -- --source-dir src compiler Orders.App` 会读取 `src/Orders/App/`。Cabal 组件的 `hs-source-dirs` 应包含同一源码目录和 `sdk`。项目名称与 Haskell 模块命名空间分别配置。
 
 ### 命令总览
 
@@ -203,7 +203,7 @@ main = interpreter ast effects
 
 | 目的 | 命令 | 结果 | 执行 handler 业务 |
 | --- | --- | --- | --- |
-| gencode：生成或更新源码 | `cabal run effect-codegen -- workflow FileDemo` | 更新 `demo/FileDemo/Generated/` | 否 |
+| gencode：生成或更新源码 | `cabal run effect-codegen -- compiler FileDemo` | 更新 `demo/FileDemo/Generated/` | 否 |
 | 只分析 AST | `cabal run effect-codegen -- ast FileDemo` | 打印 workflow 的 JSON 结构，不写文件 | 否 |
 | 编译 | `cabal build all` | 编译生成器及所有示例 | 否 |
 | runtime：运行 workflow | `cabal run file-demo` | 启动 AST，执行 IO、诊断与资源收尾，打印结果 | 是 |
@@ -217,10 +217,10 @@ main = interpreter ast effects
 独立生成器只需要加载声明、AST 与手写源码，**不依赖当前业务 Main 能否编译**。因此首次建立程序、Generated 缺失、注册或类型接口变化时，使用：
 
 ```sh
-cabal run effect-codegen -- workflow FileDemo
+cabal run effect-codegen -- compiler FileDemo
 ```
 
-生成器把契约接口写入 `Generated/Effects.hs`，带协议包装的执行副本写入 `Generated/Handlers.hs`，静态原型写入 `Generated/Prototype.hs`，业务入口与目标装配写入 `Generated/Program.hs`。`Generated/Assets.hs` 是资产目录，`Generated/Workflow.json` 是本次生成所用 AST 的 JSON 快照（格式见[只分析 AST](#ast-command)），`.scope-cache` 保存生成缓存。第一次还没有手写 `Handlers.hs` 时，先生成接口与空实现模块，再填写 instance 并生成执行副本。
+生成器把契约接口写入 `Generated/Effects.hs`，带协议包装的执行副本写入 `Generated/Handlers.hs`，静态原型写入 `Generated/Prototype.hs`，业务入口与目标装配写入 `Generated/Program.hs`。`Generated/Assets.hs` 是资产目录，`Generated/Workflow.json` 是本次生成所用 AST 的 JSON 快照（格式见[只分析 AST](#ast-command)）。第一次还没有手写 `Handlers.hs` 时，先生成接口与空实现模块，再填写 instance 并生成执行副本。
 
 `--generate` 只是已有 Main 的快捷入口：Main 的导入链必须先能编译，interpreter 才能转调同一个生成器。它不会在生成后继续执行业务；下一次运行会编译更新后的代码。日常统一使用独立 `effect-codegen` 即可，不需要把两个生成入口都执行一遍。
 
@@ -239,7 +239,7 @@ cabal run effect-codegen -- workflow FileDemo
 
 `Generated/Workflow.json` 让读取方不必每次都运行 SDK：按同样方式重新计算 `sources` 中各文件的 MD5（Python：`hashlib.md5(data.replace(b"\r\n", b"\n")).hexdigest()`），与记录相同（`null` 表示该文件仍不存在）时，这份 JSON 和生成的 `Prototype.hs` 仍对应当前的 AST 源码；不同就说明改过 AST 而尚未重新生成，此时可以调用 `ast` 取得当前结构。文件缺失表示这个命名空间还没有生成过。`sources` 只覆盖 workflow 结构，注册与 handler 的变化不在其中。用普通 Haskell 计算得到的子树（例如 `chain (map node names)`）标为 `"readable": false`，没有下层的源码位置，但 `source` 仍按求值结果列出它的结构。末端类别、持续订阅和 alternative 的判定 Context 要读注册，只在完整生成时检查。
 
-gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提取 handler 方法体的读取形状、构图、输出源码，最后用 GHC 类型检查业务模块与输出并检查顶层白名单；任何一步报错都不写回 Generated，也不调用业务 handler。各阶段做什么、报告哪些错误见[编译流水线](CORE_DESIGN.md#generation)。缓存命中只复用纯构图结果，其余阶段仍会执行，内容未变的文件不会重写。详见[生成缓存边界](EFFECT_GRAPH.md#内容缓存与重跑边界)。
+gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提取 handler 方法体的读取形状、构图、输出源码，最后用 GHC 类型检查业务模块与本次契约，并检查顶层白名单与资产；任何一步报错都不写回 Generated，也不调用业务 handler。生成的 Program／Prototype／Handlers 与手写 Main 是普通 Haskell，gencode 不重复类型检查，错误由随后的 `cabal build` 报告。各阶段做什么、报告哪些错误见[编译流水线](CORE_DESIGN.md#generation)。每次生成都从头构图，内容未变的文件不会重写，见[重跑边界](EFFECT_GRAPH.md#cache)。
 
 ### 哪些文件需要保留
 
@@ -248,8 +248,7 @@ gencode 是这个 EDSL 的编译器：依次读取声明、降级、绑定、提
 | Types、Effects、Handlers、AST／Workflow、Main | 手写业务源码，持续维护 |
 | `Generated/Effects.hs`、`Handlers.hs`、`Prototype.hs`、`Program.hs`、`Assets.hs` | 随项目提交的可审查源码，供编译、HLS 和结构查看使用 |
 | `Generated/Workflow.json` | 随项目提交的 AST 快照，供编辑器显示；运行时不读取 |
-| `Generated/.scope-cache` | 可删除的结构缓存；下次 gencode 重建，不影响已生成源码 |
-| `dist-newstyle/` | 可删除的 Cabal 构建产物和缓存；下次构建重建 |
+| `dist-newstyle/` | 可删除的 Cabal 构建产物和缓存（含 gencode 的接口缓存 `effect-codegen-interfaces`）；下次构建或生成重建 |
 | 各 demo 在 `.gitignore` 中列出的输出文件／目录 | 示例运行产物，可删除后重跑；输入样例和源码不是输出 |
 
 Cabal 中七个可执行示例通过 `common runtime-program` 共用 SDK 运行模块与依赖清单，各 executable 只列自己的业务模块和附加依赖。`effect-codegen` 单独列编译器模块，保持 gen 与 runtime 的分工。目录职责与源码入口见[SDK 的职责与阅读顺序](CORE_DESIGN.md#sdk-layout)。
@@ -292,7 +291,7 @@ cabal run file-demo -- --structure
 修改 FileDemo 后的一组常用命令如下；结构查看按需执行，最后一行才会运行文件读写业务：
 
 ```sh
-cabal run effect-codegen -- workflow FileDemo
+cabal run effect-codegen -- compiler FileDemo
 cabal run file-demo -- --structure
 cabal run file-demo
 ```
@@ -322,7 +321,7 @@ cabal run file-demo
 
 1. 在 `Types.hs` 写表示类型。
 2. 在 `Effects.hs` 注册 effect，在 `AST.hs`／`Workflow/` 编排末端。
-3. 生成接口：`cabal run effect-codegen -- workflow 程序名`。
+3. 生成接口：`cabal run effect-codegen -- compiler 程序名`。
 4. 按 `Generated/Effects.hs` 中的接口写 `Handlers.hs`。
 5. 再生成一次，运行。
 
@@ -375,7 +374,7 @@ newtype StartURL = StartURL PageURL
 
 - 资产名须是 Haskell 类型名，按业务含义起名；不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
 - 表示类型固定派生 `Eq`／`Show`，资产类型随之有 `Eq`／`Show`；不派生 `Read`。
-- 持续资产（`stream = True`）也按声明表示类型写 `require @T`。`streams` 接收增量驱动，`requires` 只取得本次固定值，见[持续资产与 lifelong](#stream)。
+- 持续资产（`stream = True`）也按声明表示类型写 `require @T`。`streams` 接收增量驱动，`requires` 只取得本次固定值（会话须已由 `requests` 或 lifelong 启动），见[持续资产与 lifelong](#stream)。
 
 ### 使用规则
 
@@ -447,7 +446,7 @@ typing = Context { asset = Asset @PageURL "StartURL", parser = Just "startURL", 
 - **`parser`**（必填）：产出表示类型值的 handler，签名 `m 表示类型`，直接返回 `pure (PageURL ...)`，不包资产构造器。gen 生成 `getStartURL`：执行 Input 前驱和 parser，再包成资产发布。parser 是细化 parser：挂在句柄或 Pure 下时，它把 `rawinput` 读到的 list 解析成表示类型，作用类似 tokenize；值的变换交给 Pure。
 - **`require`**：对普通 Context，`True` 开放 `requires` 和生成的读取方法（例如 `readStartURL`），`False` 关闭这条读取路径。显式 `requests` 的成功生产仍走发布协议。
 - **`stream`**：`True` 声明持续资产，读取方法是 `streamStartURL`。当且仅当它的 Input 链被持续驱动时声明（挂在 Stream 下，或链上有 `streams` demand），且必须同时 `require = True`。资产值的表示仍由业务声明，见[持续资产与 lifelong](#stream)。
-- **不能作为 AST 末端**：Context 在它挂接的句柄执行时产出，被 `requests` 驱动或被 alternative 的选择读取驱动时产出；被读取时不产出。
+- **不能作为 AST 末端**：普通 Context 只在被 `requests` 驱动或被 alternative 的选择读取驱动时产出，它挂接的句柄单独执行时不产出；持续 Context 由会话驱动；被读取时不产出。
 - **命名**：资产名决定资产类型和入口方法名，要按业务含义起名（`StartURL`，而不是 `LoadStartURL`），不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
 
 #### `Pure`
@@ -526,8 +525,8 @@ input = "FileSession"
 - **取值**：`"Root"`（没有上游），或另一个**非 Context、非 Error、非 Middleware** 的 effect 名；Middleware 自己写保留名 `"None"`，其他类别不能写 `"None"`。Context 只能经 `demands` 接入，不能写在 `input` 里。只有 Context 和 Pure 可以把 Pure 写在 `input` 里。
 - **含义**：前驱。gen 在这个 effect 的入口中先执行 `input` 指向的 effect（连同它自己的前驱），再执行绑定的 handler；方法体不调用上游，也不捕获前驱的失败。前驱失败后的改道用 AST 的 `alternative`。
 - **已开启的 scope 不重开**：前驱是 Scoped 时，同一条链里已开启的实例直接复用，不再执行 `open`。
-- **挂接**：Context 的 `input` 指向 Excu、Scoped 或 Stream 时，它就挂在这个句柄下，parser 用 `rawinput` 读取句柄入口（`handler`／`open`）本次交出的 list；`close` 没有挂接点。挂接的 Context 不把句柄当作前驱重跑。例如 [FacadeProbe](../demo/FacadeProbe/Effects.hs) 的 `ReportCounter` 挂在 `ReadReport` 下，把读到的文本解析成行数。
-- **经 Pure 挂接**：Context 或 Pure 的 `input` 指向 Pure 时，`rawinput` 读的是这个 Pure 变换后的 list；整串 Pure 的挂接点是最上面的句柄。例如 [Crawler](../demo/Crawler/Effects.hs) 的 `FetchPage` → `KeepPageBody`（Pure，去掉空白正文）→ `ExtractPage`（Context，解析成摘要）：抓取在 AST 中执行后，本次输出经 Pure 注入解析；[FileDemo](../demo/FileDemo/Effects.hs) 的 `LocateFile` → `ValidateFileName`（Pure）→ `FileLocation`（Context）则由 `requests` 驱动。
+- **挂接**：Context 的 `input` 指向 Excu、Scoped 或 Stream 时，它就挂在这个句柄下，parser 用 `rawinput` 读取句柄入口（`handler`／`open`）本次交出的 list；`close` 没有挂接点。挂接的 Context 不把句柄当作前驱重跑：被 `requests` 时，parser 的 `rawinput` 启动这个句柄。例如 [FacadeProbe](../demo/FacadeProbe/Effects.hs) 的 `ReportCounter` 挂在 `ReadReport` 下，`ShowReport` requests 它的行数时先读取文本，再解析成行数。
+- **经 Pure 挂接**：Context 或 Pure 的 `input` 指向 Pure 时，`rawinput` 读的是这个 Pure 变换后的 list；整串 Pure 的挂接点是最上面的句柄。例如 [Crawler](../demo/Crawler/Effects.hs) 的 `FetchPage` → `KeepPageBody`（Pure，去掉空白正文）→ `ExtractPage`（Context，解析成摘要）：`PrintPage` requests 摘要时依次执行抓取、Pure 与解析；[FileDemo](../demo/FileDemo/Effects.hs) 的 `LocateFile` → `ValidateFileName`（Pure）→ `FileLocation`（Context）同样由 `requests` 驱动。
 - **限制**：
   - input 链不能成环；
   - 链上的 Scoped 必须声明 `open`；`close` 可为 `Nothing`，此时实例不可达后只移出运行表；
@@ -551,7 +550,7 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 - **来源自动确定**：每个资产恰好由一个 Context 声明，生成器按资产名自动接上，不用指名生产方。
 - **读取按表示类型路由**：handler 的 `require @T` 由 gen 按“表示类型 + effect”路由到这个 effect 声明的那份细化资产；一个 effect 的 demands 里同一表示类型只能出现一次。同一种数据有不同含义时，声明成不同的资产，例如 Crawler 的 `StartURL` 和 `LinkedURL`，再由各自的 effect 选择。
 - **同一资产可以声明多种合法访问方式**：同一资产的同一种方式只能声明一次。
-- **限制**：Scoped 至多 `requests` 一个资源 Context；`requires` 需要生产方 `require = True`；持续资产不能 `requests`；`streams` 只能由 Excu、Scoped 声明，只能订阅持续资产的基础资产（`stream = True`）。
+- **限制**：Scoped 至多 `requests` 一个资源 Context；`requires` 需要生产方 `require = True`；对持续资产 `requests` 启动或加入它的会话并取当前一条，不执行生产链；`streams` 只能由 Excu、Scoped 声明，只能订阅持续资产的基础资产（`stream = True`）。
 - **同一资产只有一个 Context 来源**：访问方式不改变资产的 ADT 或生产方；不限制一个消费者只能声明一个资产。
 - **声明须有读取依据**：每个 `requires`／`streams` 的资产须在绑定的 handler 中读取，或参与现有 alternative 选择／streams 交付。
 - **声明即权限**：handler 读取了 effect 没有声明的表示类型，生成器报错；读取实例只为声明了 `requires`／`streams` 的 effect 生成，运行时不再查声明表。
@@ -762,15 +761,15 @@ ast = operateFile
 #### `chain`
 
 ```haskell
--- Crawler/AST.hs：先并行抓取，全部成功后顺序打印
-ast = chain [parsePages, printPages]
+-- Crawler/Workflow/PrintPages.hs：依次打印；每个打印经 requests 先抓取并解析本页
+printPages = chain [node "PrintPage", node "PrintLinkedPage"]
 ```
 
 #### `parallel`
 
 ```haskell
--- Crawler/Workflow/ParsePages.hs
-parsePages = parallel [node "FetchPage", node "FetchLinkedPage"]
+-- FacadeProbe/AST.hs 节选：两份文件同时写入
+parallel [node "WriteReport", node "WriteReply"]
 ```
 
 #### `alternative`
@@ -905,7 +904,7 @@ EffectSpec
 
 - **`stream = True` 当且仅当 Context 的 Input 链被持续驱动**：直接 Input 是 Stream，或链上有 `streams` demand；必须同时 `require = True`。被驱动的链不能声明成普通资产，没有驱动的链也不能声明成持续资产。
 - **一个 Stream 恰好有一个 Context 以它为 `input`**，作为它的 parser。
-- **持续资产经会话发布与交付**：消费方不能 `requests` 它；已有消费操作的输出可交给挂接 Context 发布，不必另开生产任务。
+- **持续资产经会话发布与交付**：消费方 `requests` 它时启动或加入会话、取当前一条，`requires` 只读已有会话；已有消费操作的输出可交给挂接 Context 发布，不必另开生产任务。
 - **订阅**：消费方写 `streams "T"`，表示由 T 的新交付驱动，同时取得读取权限；handler 用 `require @表示类型` 取得本次交付，用 `stream @表示类型` 取得 x:xs（本次交付及同一会话中更早的交付，最新在前）。
 - **只读固定值**：`requires "T"` 的 handler 同样用 `require @表示类型`；已有捕获时复用，没有时取许可来源的最新值。读取不会使当前链反复执行。
 
@@ -1102,7 +1101,7 @@ snapshotAst = chain [node "Announce", node "Report"]
 ### 运行与查看
 
 ```sh
-cabal run effect-codegen -- workflow StreamDemo
+cabal run effect-codegen -- compiler StreamDemo
 cabal run stream-demo -- --structure
 cabal run stream-demo
 ```
@@ -1131,7 +1130,7 @@ reading #2: 24.0 C
 
 - **`requests` 驱动**：入口在 Input 之前执行资产的 `getT`，每次重新生产，成功后以当前入口的 origin 保存并替换该 origin 的绑定；生产失败时不覆盖旧值，原失败继续传播。
 - **`require` 读取**：handler 的 `require @T` 按 effect 路由到 refined asset。先读调用捕获，否则读运行级最新 Binding，缺值等待；读取不生产。读到后固定，其他调用的新发布不覆盖它。
-- **值从哪里来**：`requests` 驱动、alternative 的选择读取、挂接句柄的注入，以及 Stream 会话。要读的值必须有人驱动；例如 FileDemo 的 `FileResource` 写了 `[requests "FileName", requires "FileName"]`，取得文件前先驱动文件名的生产链（`LocateFile` → `ValidateFileName` → `FileLocation`），`acquireFile` 再读取它。
+- **值从哪里来**：`requests` 驱动、alternative 的选择读取，以及 Stream 会话。被 `requires` 的普通资产必须有某个 effect `requests` 它，否则生成时报 `Asset never requested`；例如 FileDemo 的 `FileResource` 写了 `[requests "FileName", requires "FileName"]`，取得文件前先驱动文件名的生产链（`LocateFile` → `ValidateFileName` → `FileLocation`），`acquireFile` 再读取它。
 - **跨 node 保存**：同一运行每个普通 Context 保存一份最新发布，不按 AST 位置过滤。并发更新按成功提交的先后覆盖，已有捕获保持原生产身份；资源 Context 仍沿本链 open 和 owner 定位。
 - **确定性保证什么**：refined asset 的 Context 来源与装配规则静态确定。同一来源并发更新时，首次读取可捕获不同次发布；SDK 按上述最新值协议处理，详见[确定性的边界](CORE_DESIGN.md#composition-polymorphism)。
 - **结构上没有来源先报错**：gen 从空供值集推演可启动的发布并求固定点；无供值且没有启动种子的读取被拒绝。`parallel [readX, produceX]` 可以等待；只有 `chain [readX, produceX]` 且没有其他 X 来源，后继被等待挡住，生成期拒绝。完整边界见[供值推演](EFFECT_GRAPH.md#missing-source)。
@@ -1142,9 +1141,9 @@ reading #2: 24.0 C
 
 ### 挂在句柄下的 Context
 
-- **句柄在操作链里执行时**：句柄返回后，SDK 自动用这次的输出运行挂在下面的 parser（`rawinput` 由本次输出回答），产出的值保存起来，不会再执行一次句柄。普通 Context 的解析失败只留在这次注入里，不改变原链结果；值没有发布，之后读取按当前等待规则处理：仍可能发布则等待，已确定耗尽则报缺值。持续 Context 的输出复用走 Stream 失败协议，见[持续资产与 lifelong](#stream)。
+- **requests 是前驱**：`requests "T"` 让 gen 把 T 的整条生产链（Context 沿 Input 经 Pure 到句柄，句柄再带上自己的前驱）展开进请求方的入口，在方法体之前执行。每个请求方每次执行各走一遍；成功的值写入 T 的当前值，`requires "T"` 读这个值。句柄单独在操作链里执行时，不运行挂在它下面的普通 parser。持续 Context 的输出复用走 Stream 失败协议，见[持续资产与 lifelong](#stream)。
 - **显式驱动与选择读取**：`requests` 启动 parser 后，`rawinput` 可以驱动所挂句柄。`alternative` 已经执行了共同 Excu，只让候选的判定 parser 重读同一份输出。仅挂在该 Excu 上的其他普通 parser 要由另一次合法生产驱动。
-- **中间有一串 Pure 时**：挂接点是最上面的句柄，句柄的输出依次经过每个 Pure 再交给 parser。注入时 Pure 读到的是本次输出，不重新执行句柄；显式 `requests` 可经 Pure 执行句柄入口，选择判定则经 Pure 变换已取得的输出。Pure 的 `raise` 按解析失败处理：普通 Context 注入时留在注入里，显式驱动时向上传播，持续 Context 的输出复用走 Stream 失败协议。
+- **中间有一串 Pure 时**：挂接点是最上面的句柄，句柄的输出依次经过每个 Pure 再交给 parser。`requests` 经 Pure 执行句柄入口，选择判定则经 Pure 变换已取得的输出。Pure 的 `raise` 按解析失败处理：`requests` 驱动时向请求方传播，选择判定时只表示这一支没有值，持续 Context 的输出复用走 Stream 失败协议。
 
 所以 Crawler 先并行抓取，打印时直接 `require` 解析好的摘要，不再重新抓取。
 
@@ -1263,7 +1262,8 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | `Types.hs` 不是固定形式：和类型、非 `String` 字段、缺少或多余的 deriving、import、instance、类型同义词等；`Asset @T` 的 `T` 不是 `String`、`[String]` 或 `Types.hs` 中的类型 | 按[资产书写](#types)改成单构造器、`String` 字段、`deriving (Eq, Show)`；数字保存文本，句柄留在 handler 执行中 |
 | AST 的 node 选中了 Pure、Context、Error 或 Stream；别的方法直接调用到 Stream 的 handler | node 只挂 Excu 或 Scoped；Pure 与 Context 在生产链中由挂接、驱动、合法读取或生产会话带起；Stream 只由生产会话和挂在它下面的 parser 调用，Error 由失败协议调用 |
 | 挂接的 Context 经别的方法、而不是直接或经 Pure 用 `rawinput` 到达它挂接的句柄 | parser 用 `rawinput` 读取挂接句柄，中间只经过 Pure |
-| 某个 Context 从 AST 出发永远到不了：没有挂接句柄、`requests` 驱动或选择读取，也没有 lifelong 订阅生产会话带起它（只被 `requires` 读取不算） | 在读取它的链上写 `requests` 驱动它，或把带起它的消费链加进 AST，或删掉这个 Context |
+| 某个 Context 从 AST 出发永远到不了：没有 `requests` 驱动或选择读取，也没有 lifelong 订阅生产会话带起它（只被 `requires` 读取、或只挂在被执行的句柄下都不算） | 在读取它的链上写 `requests` 驱动它，或把带起它的消费链加进 AST，或删掉这个 Context |
+| `Asset never requested`：某个普通资产被 `requires`，但没有任何 effect `requests` 它 | 给读取方或它 Input 链上的 effect 加上 `requests "资产名"`；alternative 的判定资产与被 `streams` 的持续资产不受此限。持续资产只 `requires` 时同样需要 `requests` 来启动会话 |
 | 已到达的普通读取没有可启动的供值或捕获 | 在等待前或独立分支驱动生产；require 不自行生产。详见供值固定点与等待规则 |
 | 持续后继有多个互不先后的已结束 lifelong 会话 | 明确会话的先后或细化资产；普通资产多处发布使用共享最新值，不适用此歧义规则 |
 | 持续资产的声明不成立：Context 的 `stream` 与 Input 链是否持续驱动不一致，或 `stream = True` 却没有 `require = True`；Stream 下不是恰好一个 Context，或 parser 以外的 effect 以 Stream 为 `input`；`streams` 订阅了普通资产，或由 Excu、Scoped 以外的 effect 声明 | 按[持续资产的声明规则](#stream)修正 |
@@ -1277,7 +1277,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 ### 新建一个程序
 
 1. **手写声明**：在 `demo/MyDemo/` 下写 `Types.hs`、`Effects.hs`、`AST.hs` 和 `Workflow/*.hs`。它们不能导入 `Generated` 或 `Handlers`。
-2. **生成接口**：运行 `cabal run effect-codegen -- workflow MyDemo`。此时还没有 `Handlers.hs`，生成器会先产出可编译的空实现模块。
+2. **生成接口**：运行 `cabal run effect-codegen -- compiler MyDemo`。此时还没有 `Handlers.hs`，生成器会先产出可编译的空实现模块。
 3. **写实现**：根据 `Generated/Effects.hs` 中的 handler 类与 Layer 编写 `Handlers.hs`，再生成一次，并写 `Main.hs`。
 4. **加入构建**：参考 [cabal 文件](../algebraic-effect-sys-in-haskell.cabal) 中的 `file-demo` 增加一个 executable。
 
@@ -1288,7 +1288,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | 示例 | 演示内容 | 运行 |
 | --- | --- | --- |
 | [FileDemo](../demo/FileDemo) | 文件资源的开启、读写、自动关闭，Error 处置；按文件状态用 `alternative` 选择写首行或追加 | `cabal run file-demo` |
-| [Crawler](../demo/Crawler) | 并行抓取、挂接的 Context 解析，顺序打印时读取解析结果；两条链共用抓取、解析与打印 handler，用不同资产区分同类数据 | `cabal run crawler-demo` |
+| [Crawler](../demo/Crawler) | 每个打印 requests 本页摘要，gen 把抓取、去空白、解析展开为它的前驱；两条链共用抓取、解析与打印 handler，用不同资产区分同类数据 | `cabal run crawler-demo` |
 | [OpenFilesDemo](../demo/OpenFilesDemo) | 一份资产保存多个文件路径；批量获取失败时回滚标记，成功后由 scope 自动清理 | `cabal run open-files-demo` |
 | [ScopeInstancesDemo](../demo/ScopeInstancesDemo) | 三条使用闭包共用一个 handler，按当前参数各自开启实例，退出时关闭，后一条重新开启 | `cabal run scope-instances-demo` |
 | [ScopeReuseDemo](../demo/ScopeReuseDemo) | 并行的链共享同一个资源实例 | `cabal run scope-reuse-demo` |

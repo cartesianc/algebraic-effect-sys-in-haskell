@@ -58,21 +58,11 @@ generatedPrototype =
             , SDK.demands = []
             }
         , SDK.EffectSpec
-            { SDK.name = "InspectionSnapshot"
-            , SDK.typing =
-                SDK.Context
-                  (SDK.AssetDecl "InspectedFiles" (SDK.typeRef @AssetTypes.FileHandles))
-                  (Just "snapshotFiles")
-                  True
-                  False
-            , SDK.input = "ReleaseFiles"
-            , SDK.demands = [SDK.Demand SDK.RequireAccess "OpenedFiles"]
-            }
-        , SDK.EffectSpec
             { SDK.name = "FinishInspection"
             , SDK.typing = SDK.Excu (Just "finishInspection")
             , SDK.input = "Root"
-            , SDK.demands = [SDK.Demand SDK.RequireAccess "InspectedFiles"]
+            , SDK.demands =
+                [SDK.Demand SDK.RequestAccess "FileNames", SDK.Demand SDK.RequireAccess "FileNames"]
             }
         ]
     , SDK.protoEffects =
@@ -125,23 +115,13 @@ generatedPrototype =
             , SDK.effectNearestScopes = ["FileSession"]
             , SDK.effectContextDependencies = ["FileLocations","FileResources"]
             }
-        , (SDK.effectProto "InspectionSnapshot" SDK.ContextKind "ReleaseFiles")
-            { SDK.effectMethods =
-                [(SDK.ContextRequest, GetInspectedFilesGen), (SDK.ContextRequire, ReadInspectedFilesGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "OpenedFiles" "FileResources"]
-            , SDK.effectProduces = Just "InspectedFiles"
-            , SDK.effectAnchor = Just "ReleaseFiles"
-            , SDK.effectScopes = ["FileSession"]
-            , SDK.effectInputChain = ["ReleaseFiles","HoldFiles","FileSession"]
-            , SDK.effectScopeParents = ["FileSession"]
-            , SDK.effectNearestScopes = ["FileSession"]
-            , SDK.effectContextDependencies = ["FileLocations","FileResources"]
-            }
         , (SDK.effectProto "FinishInspection" SDK.ExcuKind "Root")
             { SDK.effectMethods = [(SDK.HandlerMethod, RunFinishInspectionGen)]
-            , SDK.effectDemands = [SDK.ResolvedDemand SDK.RequireAccess "InspectedFiles" "InspectionSnapshot"]
-            , SDK.effectScopeParents = ["FileSession"]
-            , SDK.effectContextDependencies = ["FileLocations","FileResources","InspectionSnapshot"]
+            , SDK.effectDemands =
+                [ SDK.ResolvedDemand SDK.RequestAccess "FileNames" "FileLocations"
+                , SDK.ResolvedDemand SDK.RequireAccess "FileNames" "FileLocations"
+                ]
+            , SDK.effectContextDependencies = ["FileLocations"]
             }
         ]
     , SDK.protoMethods =
@@ -177,21 +157,12 @@ generatedPrototype =
             RunReleaseFilesGen
             RunReleaseFilesGen
             SDK.HandlerMethod
-            (
-              SDK.Sequence
-                [SDK.Call RunHoldFilesGen, SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Call ReadOpenedFilesGen]]]
-            )
-        , SDK.MethodDefinition
-            GetInspectedFilesGen
-            GetInspectedFilesGen
-            SDK.ContextRequest
-            (SDK.Call ReadOpenedFilesGen)
-        , SDK.MethodDefinition ReadInspectedFilesGen GetInspectedFilesGen SDK.ContextRequire SDK.Empty
+            (SDK.Call RunHoldFilesGen)
         , SDK.MethodDefinition
             RunFinishInspectionGen
             RunFinishInspectionGen
             SDK.HandlerMethod
-            (SDK.Call ReadInspectedFilesGen)
+            (SDK.Sequence [SDK.Call GetFileNamesGen, SDK.Call ReadFileNamesGen])
         ]
     , SDK.protoWorkflow =
         SDK.ChainAt
@@ -251,9 +222,8 @@ generatedPrototype =
                 , GetOpenedFilesGen
                 , ReadFileNamesGen
                 , ReadOpenedFilesGen
-                , GetInspectedFilesGen
                 ]
-            , SDK.chainDrives = ["FileNames","InspectedFiles"]
+            , SDK.chainDrives = ["FileNames"]
             , SDK.chainReads = []
             , SDK.chainScopePaths = [[OpenFileSessionGen]]
             }
@@ -262,9 +232,9 @@ generatedPrototype =
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "FinishInspection"
             , SDK.chainEntry = RunFinishInspectionGen
-            , SDK.chainReaches = [RunFinishInspectionGen, ReadInspectedFilesGen]
-            , SDK.chainDrives = []
-            , SDK.chainReads = ["InspectedFiles"]
+            , SDK.chainReaches = [RunFinishInspectionGen, GetFileNamesGen, ReadFileNamesGen]
+            , SDK.chainDrives = ["FileNames"]
+            , SDK.chainReads = []
             , SDK.chainScopePaths = [[]]
             }
         ]
@@ -339,26 +309,13 @@ generatedPrototype =
                 , GetOpenedFilesGen
                 , ReadFileNamesGen
                 , ReadOpenedFilesGen
-                , GetInspectedFilesGen
                 ]
-            }
-        , SDK.ChainDefinition
-            { SDK.definitionKind = SDK.ContextChain
-            , SDK.definitionEffect = "InspectionSnapshot"
-            , SDK.definitionEntry = GetInspectedFilesGen
-            , SDK.definitionReaches = [GetInspectedFilesGen, ReadOpenedFilesGen]
-            }
-        , SDK.ChainDefinition
-            { SDK.definitionKind = SDK.ContextChain
-            , SDK.definitionEffect = "InspectionSnapshot"
-            , SDK.definitionEntry = ReadInspectedFilesGen
-            , SDK.definitionReaches = [ReadInspectedFilesGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "FinishInspection"
             , SDK.definitionEntry = RunFinishInspectionGen
-            , SDK.definitionReaches = [RunFinishInspectionGen, ReadInspectedFilesGen]
+            , SDK.definitionReaches = [RunFinishInspectionGen, GetFileNamesGen, ReadFileNamesGen]
             }
         ]
     , SDK.protoGraph =
@@ -391,16 +348,12 @@ generatedPrototype =
                   RunReleaseFilesGen
                   RunReleaseFilesGen
                   SDK.HandlerMethod
-                  (
-                    SDK.Sequence
-                      [SDK.Call RunHoldFilesGen, SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Call ReadOpenedFilesGen]]]
-                  )
+                  (SDK.Call RunHoldFilesGen)
               , SDK.MethodDefinition
                   RunFinishInspectionGen
                   RunFinishInspectionGen
                   SDK.HandlerMethod
-                  (SDK.Call ReadInspectedFilesGen)
-              , SDK.MethodDefinition ReadInspectedFilesGen GetInspectedFilesGen SDK.ContextRequire SDK.Empty
+                  (SDK.Sequence [SDK.Call GetFileNamesGen, SDK.Call ReadFileNamesGen])
               ]
           , SDK.graphRoots =
               [RunHoldFilesGen, RunInspectFilesGen, RunReleaseFilesGen, RunFinishInspectionGen]
@@ -413,8 +366,8 @@ generatedPrototype =
               , (RunInspectFilesGen, RunHoldFilesGen)
               , (RunInspectFilesGen, ReadOpenedFilesGen)
               , (RunReleaseFilesGen, RunHoldFilesGen)
-              , (RunReleaseFilesGen, ReadOpenedFilesGen)
-              , (RunFinishInspectionGen, ReadInspectedFilesGen)
+              , (RunFinishInspectionGen, GetFileNamesGen)
+              , (RunFinishInspectionGen, ReadFileNamesGen)
               ]
           , SDK.graphScopes = [OpenFileSessionGen]
           , SDK.graphScopePaths = [[OpenFileSessionGen], []]
@@ -443,7 +396,7 @@ generatedPrototype =
           , SDK.scopeUndetermined = []
           }
     , SDK.protoScopeNames = [(OpenFileSessionGen, "FileSession")]
-    , SDK.protoSources = [(SDK.ReadPoint [3] "InspectedFiles", SDK.FromChains [[2]])]
+    , SDK.protoSources = []
     , SDK.protoScopeOpenings =
         [ SDK.ScopeOpeningPlan
             { SDK.openingNode = [2]
@@ -477,11 +430,7 @@ generatedPrototype =
           , SDK.drivingSessions = []
           , SDK.drivingRootNodes = [[0],[1],[2],[3]]
           , SDK.drivingOutputSites = []
-          , SDK.drivingRequests =
-              [ ("FileLocations", GetFileNamesGen)
-              , ("FileResources", GetOpenedFilesGen)
-              , ("InspectionSnapshot", GetInspectedFilesGen)
-              ]
+          , SDK.drivingRequests = [("FileLocations", GetFileNamesGen), ("FileResources", GetOpenedFilesGen)]
           , SDK.drivingMiddleware = []
           , SDK.drivingHooks = []
           }

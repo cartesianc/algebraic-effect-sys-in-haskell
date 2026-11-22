@@ -55,7 +55,7 @@ renderProgram directory names hangingSources unit = unlines (programHeader ++ as
       , "    , " ++ renderList "      "
           [ wrapTarget (variantLabel source hooks) ("SDK.chooseCase " ++ show (selectorEntry selectedSelector)
               ++ " ContextBindingError (" ++ handlers hooks (selectorEntry selectedSelector) ++ ") ["
-              ++ intercalate ", " [ "(" ++ show context ++ ", () <$ " ++ handlers hooks request ++ ")"
+              ++ intercalate ", " [ "(" ++ slotLiteral "SDK." unit context ++ ", () <$ " ++ handlers hooks request ++ ")"
                                   | (context, request) <- selectorCases selectedSelector ] ++ "]")
           | selectedSelector <- selectors
           , let source = selectorSource selectedSelector

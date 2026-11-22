@@ -136,8 +136,8 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 | --- | --- | --- | --- | --- |
 | 资产有唯一的生产方 | Context 以 `asset = Asset @T "名字"` 声明；消费方只写资产名 | 按资产名解析出唯一生产方，多个生产方即报错 | 不按距离或拓扑替用户选来源 | [Context](CORE_DESIGN.md#context)、[资产来源与访问约束](CORE_DESIGN.md#demand-contract) |
 | 驱动一次新的生产 | 消费方 `requests "T"` | 入口的驱动步骤，排在前驱与方法体之前 | 每次进入入口都重新执行 T 的生产链并发布；不合并重复驱动 | [入口装配](CORE_DESIGN.md#calls) |
-| 原子操作的输出解析成资产 | Context 的 Input 是 Excu 或 Scoped，parser 用 `rawinput` | 挂接连接（写在句柄入口的 atomicHandle／atomicScope 上）、rawinput 来源 | 句柄成功后，parser 读本次输出发布资产，句柄不重跑；普通 Context 的解析失败留在注入内部，资产不发布 | [原子输出挂接](CORE_DESIGN.md#context) |
-| 显式驱动挂接的 parser | 消费方 `requests` 它的资产 | parser 的 `rawinput` 沿生产链取得输入 | 本次独立执行生产，失败沿驱动方传播 | [原子输出挂接](CORE_DESIGN.md#context) |
+| 原子操作的输出解析成资产 | Context 的 Input 是 Excu、Scoped 或 Pure，parser 用 `rawinput`；消费方 `requests` 它的资产 | 锚点（生产链上的 Excu／Scoped）注入为请求方的前驱，Context 与 Pure 是从锚点分出的生产分支，读锚点的同一次输出 | 每个请求方各执行一次生产链，同一次调用内同一 effect 只执行一次，失败沿请求方传播；句柄单独执行时不解析挂在下面的普通 Context | [普通资产只经 requests 生产](CORE_DESIGN.md#request-production) |
+| 被读取的普通资产必须有人请求 | 消费方 `requires "T"` | 检查某个 effect `requests "T"`；alternative 的判定资产与被 `streams` 的持续资产除外 | 没有请求方时 gencode 报 `Asset never requested` | [普通资产只经 requests 生产](CORE_DESIGN.md#request-production) |
 | 输出的纯变换 | Input 链上串 Pure | Pure 链，挂接点是最上面的原子句柄 | 句柄输出经 Pure 依次变换后交给 parser；Pure 不改变调用者身份，不会重复注入 | [Pure](CORE_DESIGN.md#pure) |
 | 操作按顺序组合 | `input = "前驱"` | 入口的前驱步骤 | 在方法体之前执行前驱；不传值，前驱失败原样传播 | [句柄与值](CORE_DESIGN.md#handles-and-values) |
 | 每个生产方法都有人驱动 | 无需写法 | 从各 AST 末端和选择读取求可达集合 | 生产方法无法从任何入口到达时，生成期报错 | [图与来源](EFFECT_GRAPH.md) |
@@ -149,7 +149,7 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 | 行为 | 组合 | 推导 | 驱动 | 规范 |
 | --- | --- | --- | --- | --- |
 | 读取持续资产本次及更早的交付 | `streams "T"`，方法体 `stream @T` | 被历史读取的契约；生产它的 Context 原型标 `effectHistory`，Layer 带 `Streams T` | 会话从开头保留全部交付；读到 `x :> xs`，与 `require @T` 同一固定视图，遍历尾部无需等待未来发布 | [按 x:xs 读取](STREAM_LIFELONG.md#flow) |
-| 读取已有的值，不生产 | `requires "T"`，方法体 `require @T` | 读取权限与读取路由；读取点的来源（`protoSources`） | 先用本次捕获，再读许可来源的发布；没有值时等待，不补跑生产 | [Context](CORE_DESIGN.md#context) |
+| 读取已有的值，不生产 | `requires "T"`，方法体 `require @T` | 读取权限与读取路由；读取点的来源（`protoSources`） | 读 requests 回调写入的当前值；先用本次捕获，没有值时等待，不补跑生产 | [Context](CORE_DESIGN.md#context) |
 | 静态证明普通读取无来源 | 已到达的读取在所有已分析路径均无合法供值或捕获 | gen 在来源证明阶段拒绝，并定位读取点 | 不把结构错误交给运行时缺值处理 | [静态无来源诊断](EFFECT_GRAPH.md#missing-source) |
 | 按类型读取，读到哪份由注册决定 | 同一表示类型细化成多份资产；handler 只写 `require @T` | 每个 effect 按“表示类型 + effect”生成读取实例 | 同一个 handler 绑到不同 effect，各自读到 demands 里那份资产 | [Context](CORE_DESIGN.md#context) |
 | 读到哪一次发布 | 无需新写法；refined asset 决定唯一生产链 | 共享供值固定点与生产机会，持续资产另走会话 | 普通读取先用调用捕获，再取运行级最新 Binding；缺值等发布，不按 AST 位置过滤 | [图与来源](EFFECT_GRAPH.md#missing-source) |

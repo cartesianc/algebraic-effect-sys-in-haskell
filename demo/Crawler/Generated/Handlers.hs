@@ -210,137 +210,153 @@ instance SDK.RawOutputs (Wrap effect method)
 getStartURL :: Effects.App Effects.StartURL
 getStartURL =
   SDK.handleFailure
-  . SDK.callContext "StartPage"
-      (\value bindings -> bindings { Effects.boundStartPage = Just value }) $
+  . SDK.callContext (SDK.Slot 0 "StartPage")
+      (\value bindings -> bindings { Effects.boundStartPage = Just value })
+      Effects.boundStartPage $
     Effects.StartURL <$> call @"StartPage" @"startURL" Effects.startURL
 
 readStartURL :: Effects.App Effects.StartURL
 readStartURL =
   SDK.handleFailure $
-    SDK.readContext "StartPage" Effects.ContextBindingError Effects.boundStartPage
+    SDK.readContext (SDK.Slot 0 "StartPage") Effects.ContextBindingError Effects.boundStartPage
 
 getLinkedURL :: Effects.App Effects.LinkedURL
 getLinkedURL =
   SDK.handleFailure
-  . SDK.callContext "LinkedPage"
-      (\value bindings -> bindings { Effects.boundLinkedPage = Just value }) $
+  . SDK.callContext (SDK.Slot 1 "LinkedPage")
+      (\value bindings -> bindings { Effects.boundLinkedPage = Just value })
+      Effects.boundLinkedPage $
     Effects.LinkedURL <$> call @"LinkedPage" @"linkedURL" Effects.linkedURL
 
 readLinkedURL :: Effects.App Effects.LinkedURL
 readLinkedURL =
   SDK.handleFailure $
-    SDK.readContext "LinkedPage" Effects.ContextBindingError Effects.boundLinkedPage
+    SDK.readContext (SDK.Slot 1 "LinkedPage") Effects.ContextBindingError Effects.boundLinkedPage
 
 runFetchPage :: Effects.App [String]
 runFetchPage =
-  SDK.withErrorPath ["CrawlSession"]
+  SDK.runOnce (SDK.Slot 2 "FetchPage")
+  . SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runFetchPage" [("ExtractPage", () <$ getStartPageSummary)] []
-  . SDK.withScopeDependencies ["CrawlSession"]
-  . SDK.enterHandler "FetchPage" $
-    getStartURL >> openCrawlSession >> call @"FetchPage" @"fetchPage" Effects.fetchPage
+  . SDK.atomicHandle "runFetchPage" []
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
+  . SDK.enterHandler (SDK.Slot 2 "FetchPage") $
+    openCrawlSession >> getStartURL >> call @"FetchPage" @"fetchPage" Effects.fetchPage
 
 runKeepPageBody :: Effects.App [String]
 runKeepPageBody =
-  SDK.withErrorPath ["CrawlSession"]
+  SDK.runOnce (SDK.Slot 3 "KeepPageBody")
+  . SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["CrawlSession"] $
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")] $
     call @"KeepPageBody" @"dropBlankBodies" Effects.dropBlankBodies
 
 getStartPageSummary :: Effects.App Effects.StartPageSummary
 getStartPageSummary =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["CrawlSession"]
-  . SDK.callContext "ExtractPage"
-      (\value bindings -> bindings { Effects.boundExtractPage = Just value }) $
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
+  . SDK.callContext (SDK.Slot 4 "ExtractPage")
+      (\value bindings -> bindings { Effects.boundExtractPage = Just value })
+      Effects.boundExtractPage $
     Effects.StartPageSummary <$> call @"ExtractPage" @"extractSummary" Effects.extractSummary
 
 readStartPageSummary :: Effects.App Effects.StartPageSummary
 readStartPageSummary =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure $
-    SDK.readContext "ExtractPage" Effects.ContextBindingError Effects.boundExtractPage
+    SDK.readContext (SDK.Slot 4 "ExtractPage") Effects.ContextBindingError Effects.boundExtractPage
 
 runPrintPage :: Effects.App [String]
 runPrintPage =
-  SDK.handleFailure
-  . SDK.atomicHandle "runPrintPage" [] []
-  . SDK.enterHandler "PrintPage" $
-    call @"PrintPage" @"printSummary" Effects.printSummary
+  SDK.runOnce (SDK.Slot 5 "PrintPage")
+  . SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure
+  . SDK.atomicHandle "runPrintPage" []
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
+  . SDK.enterHandler (SDK.Slot 5 "PrintPage") $
+    SDK.producingFor [(SDK.Slot 4 "ExtractPage")] (runFetchPage) >> getStartPageSummary >> call @"PrintPage" @"printSummary" Effects.printSummary
 
 runFetchLinkedPage :: Effects.App [String]
 runFetchLinkedPage =
-  SDK.withErrorPath ["CrawlSession"]
+  SDK.runOnce (SDK.Slot 6 "FetchLinkedPage")
+  . SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runFetchLinkedPage" [("ExtractLinkedPage", () <$ getLinkedPageSummary)] []
-  . SDK.withScopeDependencies ["CrawlSession"]
-  . SDK.enterHandler "FetchLinkedPage" $
-    getLinkedURL >> openCrawlSession >> call @"FetchLinkedPage" @"fetchPage" Effects.fetchPage
+  . SDK.atomicHandle "runFetchLinkedPage" []
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
+  . SDK.enterHandler (SDK.Slot 6 "FetchLinkedPage") $
+    openCrawlSession >> getLinkedURL >> call @"FetchLinkedPage" @"fetchPage" Effects.fetchPage
 
 runKeepLinkedPageBody :: Effects.App [String]
 runKeepLinkedPageBody =
-  SDK.withErrorPath ["CrawlSession"]
+  SDK.runOnce (SDK.Slot 7 "KeepLinkedPageBody")
+  . SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["CrawlSession"] $
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")] $
     call @"KeepLinkedPageBody" @"dropBlankBodies" Effects.dropBlankBodies
 
 getLinkedPageSummary :: Effects.App Effects.LinkedPageSummary
 getLinkedPageSummary =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["CrawlSession"]
-  . SDK.callContext "ExtractLinkedPage"
-      (\value bindings -> bindings { Effects.boundExtractLinkedPage = Just value }) $
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
+  . SDK.callContext (SDK.Slot 8 "ExtractLinkedPage")
+      (\value bindings -> bindings { Effects.boundExtractLinkedPage = Just value })
+      Effects.boundExtractLinkedPage $
     Effects.LinkedPageSummary <$> call @"ExtractLinkedPage" @"extractSummary" Effects.extractSummary
 
 readLinkedPageSummary :: Effects.App Effects.LinkedPageSummary
 readLinkedPageSummary =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure $
-    SDK.readContext "ExtractLinkedPage" Effects.ContextBindingError Effects.boundExtractLinkedPage
+    SDK.readContext (SDK.Slot 8 "ExtractLinkedPage") Effects.ContextBindingError Effects.boundExtractLinkedPage
 
 runPrintLinkedPage :: Effects.App [String]
 runPrintLinkedPage =
-  SDK.handleFailure
-  . SDK.atomicHandle "runPrintLinkedPage" [] []
-  . SDK.enterHandler "PrintLinkedPage" $
-    call @"PrintLinkedPage" @"printSummary" Effects.printSummary
+  SDK.runOnce (SDK.Slot 9 "PrintLinkedPage")
+  . SDK.withErrorPath ["CrawlSession"]
+  . SDK.handleFailure
+  . SDK.atomicHandle "runPrintLinkedPage" []
+  . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
+  . SDK.enterHandler (SDK.Slot 9 "PrintLinkedPage") $
+    SDK.producingFor [(SDK.Slot 8 "ExtractLinkedPage")] (runFetchLinkedPage) >> getLinkedPageSummary >> call @"PrintLinkedPage" @"printSummary" Effects.printSummary
 
 getCrawlSessionInfo :: Effects.App Effects.CrawlSessionInfo
 getCrawlSessionInfo =
   SDK.handleFailure
-  . SDK.callContext "SessionContext"
-      (\value bindings -> bindings { Effects.boundSessionContext = Just value }) $
+  . SDK.callContext (SDK.Slot 10 "SessionContext")
+      (\value bindings -> bindings { Effects.boundSessionContext = Just value })
+      Effects.boundSessionContext $
     Effects.CrawlSessionInfo <$> call @"SessionContext" @"sessionInfo" Effects.sessionInfo
 
 readCrawlSessionInfo :: Effects.App Effects.CrawlSessionInfo
 readCrawlSessionInfo =
   SDK.handleFailure $
-    SDK.readContext "SessionContext" Effects.ContextBindingError Effects.boundSessionContext
+    SDK.readContext (SDK.Slot 10 "SessionContext") Effects.ContextBindingError Effects.boundSessionContext
 
 openCrawlSession :: Effects.App [String]
 openCrawlSession =
-  SDK.withErrorPath ["CrawlSession"]
+  SDK.runOnce (SDK.Slot 11 "CrawlSession")
+  . SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "openCrawlSession" [] []
-  . SDK.openScope "CrawlSession" Effects.ScopeBindingError (Just (() <$ closeCrawlSession))
-  . SDK.enterHandler "CrawlSession" $
+  . SDK.atomicScope "openCrawlSession" []
+  . SDK.openScope (SDK.Slot 11 "CrawlSession") Effects.ScopeBindingError (Just (() <$ closeCrawlSession))
+  . SDK.enterHandler (SDK.Slot 11 "CrawlSession") $
     getCrawlSessionInfo >> call @"CrawlSession" @"openSession" Effects.openSession
 
 closeCrawlSession :: Effects.App [String]
 closeCrawlSession =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeCrawlSession" [] []
-  . SDK.closeScope "CrawlSession" Effects.ScopeBindingError
-  . SDK.enterHandler "CrawlSession" $
+  . SDK.atomicScope "closeCrawlSession" []
+  . SDK.closeScope (SDK.Slot 11 "CrawlSession") Effects.ScopeBindingError
+  . SDK.enterHandler (SDK.Slot 11 "CrawlSession") $
     callClose @"CrawlSession" @"closeSession" Effects.closeSession
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ SDK.newScopeHandler "CrawlSession" [] (Just "SessionContext")
+  [ SDK.newScopeHandler (SDK.Slot 11 "CrawlSession") [] (Just (SDK.Slot 10 "SessionContext"))
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。

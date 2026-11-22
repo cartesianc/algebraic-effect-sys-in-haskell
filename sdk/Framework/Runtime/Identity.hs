@@ -3,11 +3,12 @@ module Framework.Runtime.Identity
   ( Origin(..), ActivationId(..), Boot(..), Execution(..), executionOrigin
   ) where
 
-import Framework.Prototype (NodeId)
+import Framework.Prototype.Coordinate (Coord)
+import Framework.Prototype.Slot (Slot)
 
--- NodeId 指向当前 Prototype 的挂载；序号只区分执行实例，不决定资产可见性。
+-- Coord 指向当前 Prototype 的挂载；序号只区分执行实例，不决定资产可见性。
 data Origin = Origin
-  { originNode :: NodeId
+  { originNode :: Coord
   , originSequence :: Integer
   } deriving (Eq, Ord, Show)
 
@@ -15,14 +16,14 @@ newtype ActivationId = ActivationId Integer
   deriving (Eq, Ord, Show)
 
 -- 使用现有 AST 位置和 Context 注册身份；不增加业务 key。
-data Boot = TargetedBoot NodeId | RequestBoot String
+data Boot = TargetedBoot Coord | RequestBoot Slot
   deriving (Eq, Show)
 
 -- 自动收尾保留最初的业务来源，同时明确本次执行属于哪个资源实例的清理。
 -- 发布记录携带清理角色，具体实例引用继续保存在 bindingOwner 中。
 data Execution
   = BusinessExecution Origin
-  | CleanupExecution Origin String Int
+  | CleanupExecution Origin Slot Int
   deriving (Eq, Show)
 
 executionOrigin :: Execution -> Origin

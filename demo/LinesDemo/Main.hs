@@ -1,4 +1,4 @@
--- 生成：cabal run effect-codegen -- workflow LinesDemo
+-- 生成：cabal run effect-codegen -- compiler LinesDemo
 -- 运行：cabal run lines-demo（读完输入文件后自行结束）
 module LinesDemo.Main (main) where
 

@@ -205,135 +205,145 @@ instance SDK.RawOutputs (Wrap effect method)
 
 runLocateFile :: Effects.App [String]
 runLocateFile =
-  SDK.handleFailure
-  . SDK.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] []
-  . SDK.enterHandler "LocateFile" $
+  SDK.runOnce (SDK.Slot 0 "LocateFile")
+  . SDK.handleFailure
+  . SDK.atomicHandle "runLocateFile" []
+  . SDK.enterHandler (SDK.Slot 0 "LocateFile") $
     call @"LocateFile" @"locateFile" Effects.locateFile
 
 runValidateFileName :: Effects.App [String]
 runValidateFileName =
-  SDK.handleFailure $
+  SDK.runOnce (SDK.Slot 1 "ValidateFileName")
+  . SDK.handleFailure $
     call @"ValidateFileName" @"validateFileName" Effects.validateFileName
 
 getFileName :: Effects.App Effects.FileName
 getFileName =
   SDK.handleFailure
-  . SDK.callContext "FileLocation"
-      (\value bindings -> bindings { Effects.boundFileLocation = Just value }) $
+  . SDK.callContext (SDK.Slot 2 "FileLocation")
+      (\value bindings -> bindings { Effects.boundFileLocation = Just value })
+      Effects.boundFileLocation $
     Effects.FileName <$> call @"FileLocation" @"parseFileName" Effects.parseFileName
 
 readFileName :: Effects.App Effects.FileName
 readFileName =
   SDK.handleFailure $
-    SDK.readContext "FileLocation" Effects.ContextBindingError Effects.boundFileLocation
+    SDK.readContext (SDK.Slot 2 "FileLocation") Effects.ContextBindingError Effects.boundFileLocation
 
 getOpenedFile :: Effects.App Effects.OpenedFile
 getOpenedFile =
   SDK.handleFailure
-  . SDK.callContext "FileResource"
-      (\value bindings -> bindings { Effects.boundFileResource = Just value }) $
-    getFileName >> Effects.OpenedFile <$> call @"FileResource" @"acquireFile" Effects.acquireFile
+  . SDK.callContext (SDK.Slot 3 "FileResource")
+      (\value bindings -> bindings { Effects.boundFileResource = Just value })
+      Effects.boundFileResource $
+    SDK.producingFor [(SDK.Slot 2 "FileLocation")] (runLocateFile) >> getFileName >> Effects.OpenedFile <$> call @"FileResource" @"acquireFile" Effects.acquireFile
 
 readOpenedFile :: Effects.App Effects.OpenedFile
 readOpenedFile =
   SDK.handleFailure $
-    SDK.readContext "FileResource" Effects.ContextBindingError Effects.boundFileResource
+    SDK.readContext (SDK.Slot 3 "FileResource") Effects.ContextBindingError Effects.boundFileResource
 
 openFileSession :: Effects.App [String]
 openFileSession =
-  SDK.withErrorPath ["FileSession"]
+  SDK.runOnce (SDK.Slot 4 "FileSession")
+  . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "openFileSession" [] []
-  . SDK.openScope "FileSession" Effects.ScopeBindingError (Just (() <$ closeFileSession))
-  . SDK.enterHandler "FileSession" $
+  . SDK.atomicScope "openFileSession" []
+  . SDK.openScope (SDK.Slot 4 "FileSession") Effects.ScopeBindingError (Just (() <$ closeFileSession))
+  . SDK.enterHandler (SDK.Slot 4 "FileSession") $
     getOpenedFile >> call @"FileSession" @"openSession" Effects.openSession
 
 closeFileSession :: Effects.App [String]
 closeFileSession =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeFileSession" [] []
-  . SDK.closeScope "FileSession" Effects.ScopeBindingError
-  . SDK.enterHandler "FileSession" $
+  . SDK.atomicScope "closeFileSession" []
+  . SDK.closeScope (SDK.Slot 4 "FileSession") Effects.ScopeBindingError
+  . SDK.enterHandler (SDK.Slot 4 "FileSession") $
     callClose @"FileSession" @"closeSession" Effects.closeSession
 
 detectFileRecovery :: Effects.App ()
 detectFileRecovery =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["FileSession"]
-  . SDK.enterHandler "FileRecovery" $
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
+  . SDK.enterHandler (SDK.Slot 5 "FileRecovery") $
     call @"FileRecovery" @"detectFileSession" Effects.detectFileSession
 
 resolveFileRecovery :: Effects.App ()
 resolveFileRecovery =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["FileSession"]
-  . SDK.enterHandler "FileRecovery" $
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
+  . SDK.enterHandler (SDK.Slot 5 "FileRecovery") $
     call @"FileRecovery" @"resolveFileSession" Effects.resolveFileSession
 
 runReadFile :: Effects.App [String]
 runReadFile =
-  SDK.withErrorPath ["FileSession"]
+  SDK.runOnce (SDK.Slot 6 "ReadFile")
+  . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runReadFile" [("BlankText", () <$ getFileBlank), ("FilledText", () <$ getFileWritten)] []
-  . SDK.withScopeDependencies ["FileSession"]
-  . SDK.enterHandler "ReadFile" $
+  . SDK.atomicHandle "runReadFile" []
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
+  . SDK.enterHandler (SDK.Slot 6 "ReadFile") $
     openFileSession >> call @"ReadFile" @"readFileContent" Effects.readFileContent
 
 getFileBlank :: Effects.App Effects.FileBlank
 getFileBlank =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["FileSession"]
-  . SDK.callContext "BlankText"
-      (\value bindings -> bindings { Effects.boundBlankText = Just value }) $
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
+  . SDK.callContext (SDK.Slot 7 "BlankText")
+      (\value bindings -> bindings { Effects.boundBlankText = Just value })
+      Effects.boundBlankText $
     Effects.FileBlank <$> call @"BlankText" @"parseBlankText" Effects.parseBlankText
 
 readFileBlank :: Effects.App Effects.FileBlank
 readFileBlank =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure $
-    SDK.readContext "BlankText" Effects.ContextBindingError Effects.boundBlankText
+    SDK.readContext (SDK.Slot 7 "BlankText") Effects.ContextBindingError Effects.boundBlankText
 
 getFileWritten :: Effects.App Effects.FileWritten
 getFileWritten =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["FileSession"]
-  . SDK.callContext "FilledText"
-      (\value bindings -> bindings { Effects.boundFilledText = Just value }) $
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
+  . SDK.callContext (SDK.Slot 8 "FilledText")
+      (\value bindings -> bindings { Effects.boundFilledText = Just value })
+      Effects.boundFilledText $
     Effects.FileWritten <$> call @"FilledText" @"parseWrittenText" Effects.parseWrittenText
 
 readFileWritten :: Effects.App Effects.FileWritten
 readFileWritten =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure $
-    SDK.readContext "FilledText" Effects.ContextBindingError Effects.boundFilledText
+    SDK.readContext (SDK.Slot 8 "FilledText") Effects.ContextBindingError Effects.boundFilledText
 
 runWriteFirstLine :: Effects.App [String]
 runWriteFirstLine =
-  SDK.withErrorPath ["FileSession"]
+  SDK.runOnce (SDK.Slot 9 "WriteFirstLine")
+  . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runWriteFirstLine" [] []
-  . SDK.withScopeDependencies ["FileSession"]
-  . SDK.enterHandler "WriteFirstLine" $
+  . SDK.atomicHandle "runWriteFirstLine" []
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
+  . SDK.enterHandler (SDK.Slot 9 "WriteFirstLine") $
     openFileSession >> call @"WriteFirstLine" @"writeFirstLine" Effects.writeFirstLine
 
 runAppendLine :: Effects.App [String]
 runAppendLine =
-  SDK.withErrorPath ["FileSession"]
+  SDK.runOnce (SDK.Slot 10 "AppendLine")
+  . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runAppendLine" [] []
-  . SDK.withScopeDependencies ["FileSession"]
-  . SDK.enterHandler "AppendLine" $
+  . SDK.atomicHandle "runAppendLine" []
+  . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
+  . SDK.enterHandler (SDK.Slot 10 "AppendLine") $
     openFileSession >> call @"AppendLine" @"appendLine" Effects.appendLine
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ SDK.newScopeHandler "FileSession" ["FileLocation"] (Just "FileResource")
+  [ SDK.newScopeHandler (SDK.Slot 4 "FileSession") [(SDK.Slot 2 "FileLocation")] (Just (SDK.Slot 3 "FileResource"))
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。

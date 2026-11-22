@@ -167,7 +167,7 @@ SDK 将 effect、资产与 workflow 作为结构数据运算，推出类型能�
 
 **值操作**由 Context 的生产、解析与资产承载，消费方通过 demands 声明驱动与读取。生产链中对句柄输出的纯变换（去重、排序、过滤）由 Pure 承担，Context 只做细化解析。requests 在入口驱动生产，require 按既有来源与捕获读取，不生产，还没有值时等待发布；持续资产可读取本条值，也可在声明 `streams` 后读取截至本条的固定历史；驱动关系决定何时再次执行。handler 用原生 ADT 模式匹配和计算处理这些值；值只经资产流动，跨 handler 的业务产值通过 Context 发布。资产来源与 scope 的资源关闭归属分别管理。
 
-两者通过 Context 衔接：Excu.handler／Scoped.open 交出的 `[String]` 交给挂接的 Context 解析为业务资产，中间可以经过一串 Pure；Stream 的原始输入交给挂在它下面的 Context 解析，写法与挂在原子句柄下的 Context 相同。比如 FileDemo 中，`readFileContent` 执行读取操作，挂在它下面的 `parseBlankText`、`parseWrittenText` 用 `rawinput` 把同一次读取结果分别解析为 `FileBlank`（文件为空）或 `FileWritten`（非空时的全文），消费方通过 `requires "FileBlank"` 或 `requires "FileWritten"` 读取。前驱关系和资产读取关系都能从注册与 handler 的读取中读出，详见[原子输出挂接](#context)与[持续生产](#stream)。
+两者通过 Context 衔接：Excu.handler／Scoped.open 交出的 `[String]` 交给挂接的 Context 解析为业务资产，中间可以经过一串 Pure；Stream 的原始输入交给挂在它下面的 Context 解析，写法与挂在原子句柄下的 Context 相同。比如 FileDemo 中，`readFileContent` 执行读取操作，挂在它下面的 `parseBlankText`、`parseWrittenText` 用 `rawinput` 把同一次读取结果分别解析为 `FileBlank`（文件为空）或 `FileWritten`（非空时的全文），消费方通过 `requires "FileBlank"` 或 `requires "FileWritten"` 读取。前驱关系和资产读取关系都能从注册与 handler 的读取中读出，详见[普通资产只经 requests 生产](#request-production)与[持续生产](#stream)。
 
 这种分离是职责与契约的划分，不新增独立 impl 层。值操作写在 handler 方法体内，业务模块顶层不定义普通函数，见[源码资产约束](ASSETS.md)；同一个 handler 可以先读取，再用读到的值完成原子操作。
 
@@ -326,7 +326,7 @@ typing = Middleware { handler = Just "traceOutput", intercept = [ExcuKind, Scope
 
 注册使用普通 ADT 的不同构造器携带各自属性，不因字段不同而引入 type family 或 data family。handler 名绑定使用 Maybe String，Nothing 表示未绑定，不把返回值改成 Maybe；handler = Nothing 的 effect 保留 Input 关系，被 target 选中时报没有入口；Pure 没有可选的入口，必须绑定 handler。SDK 不猜测 handler 名，也不生成默认成功操作。
 
-Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必填；`require :: Bool` 决定是否保留可读值并生成 readT；`stream :: Bool` 声明持续资产，读取方法为 streamT。`stream = True` 当且仅当直接 Input 是 Stream，或 Input 链上有 `streams` demand，且必须同时 `require = True`。普通资产由 requests 或原子输出挂接生产；持续资产由来源或上游增量驱动，gen 再确定独立派生还是复用本 lifelong 的 AST 输出。读取返回声明的表示类型，SDK 不额外包装业务历史。Context 的 request 角色与 RepeatRequest 已取消。
+Context 以 `asset = Asset @表示类型 "资产名"` 声明资产，parser 必填；`require :: Bool` 决定是否保留可读值并生成 readT；`stream :: Bool` 声明持续资产，读取方法为 streamT。`stream = True` 当且仅当直接 Input 是 Stream，或 Input 链上有 `streams` demand，且必须同时 `require = True`。普通资产只由 requests 生产（alternative 的判定资产由选择读取生产）；持续资产由来源或上游增量驱动，gen 再确定独立派生还是复用本 lifelong 的 AST 输出。读取返回声明的表示类型，SDK 不额外包装业务历史。Context 的 request 角色与 RepeatRequest 已取消。
 
 消费方 demands 以 requests／requires／streams "资产名" 引用资产，访问方式须对应生产方的声明：requires 需要 `require = True`，streams 需要 `stream = True`，持续资产不能 requests。Error 以 handles 声明处理的故障：RaisedBy 写 handler 名，ScopeFaultIn／ContextFaultIn 写 effect 名；关联 scope 沿 Input／requests 推导最近的 Scoped，必须恰好一个。Error 由 Root 的故障协议调用，不作为 Node target，其他 effect 的 Input 不能指向 Error。
 
@@ -412,14 +412,14 @@ Input 表达操作的前提关系，业务值来源单独由 demands 表达；Co
 
 #### Root 的统一入口包装
 
-生成入口统一包装原协议：withErrorPath 记录失败路径上的 scope，handleFailure 接入 Failure 捕获与 Error 处置，atomicHandle／atomicScope 与 openScope／closeScope 包装原子句柄和 scope 生命周期，Receive 为 Stream 的 rawemit 安装本会话的 parser，callContext／readContext 包装 Context 的生产、挂接注入与读取。业务不写 handler／super 前缀。
+生成入口统一包装原协议：withErrorPath 记录失败路径上的 scope，handleFailure 接入 Failure 捕获与 Error 处置，atomicHandle／atomicScope 与 openScope／closeScope 包装原子句柄和 scope 生命周期，Receive 为 Stream 的 rawemit 安装本会话的 parser，callContext／readContext 包装 Context 的生产与读取。业务不写 handler／super 前缀。
 
-入口按标签已知的闭包由 gen 直接写在包装上，运行时不按名字查表：atomicHandle／atomicScope 带上挂在本句柄下的 parser（普通挂接与持续挂接两组），openScope 带上本 scope 的 close，开启成功时登记为自动收尾。
+入口按标签已知的闭包由 gen 直接写在包装上，运行时不按名字查表：atomicHandle／atomicScope 带上挂在本句柄下的持续 parser（普通 Context 只经 requests 生产，不在句柄上注入），openScope 带上本 scope 的 close，开启成功时登记为自动收尾。
 
 ```haskell
 runLocateFile =
   SDK.handleFailure
-  . SDK.atomicHandle "runLocateFile" [("FileLocation", () <$ getFileName)] []
+  . SDK.atomicHandle "runLocateFile" []
   . SDK.enterHandler "LocateFile" $
     call @"LocateFile" @"locateFile" Effects.locateFile
 ```
@@ -488,7 +488,7 @@ hangingTree = hanging [middleware [node "TraceOutput"] [reportBranch]]
 <a id="context"></a>
 ### 4.3 Context、驱动与读取
 
-手写 input 只允许 Root 或非 Context、非 Error 的 effect；Context 经 demands 接入。生产者自身仍可有 Input、消费其他 Context，但不能作为 AST node 的末端。沿 Input 与 requests 收集 scope；读取不执行 getT，还没有值时等待发布。input 指向 Excu、Scoped 或 Stream 的 Context 挂在该句柄下，由句柄入口注入解析其输出。
+手写 input 只允许 Root 或非 Context、非 Error 的 effect；Context 经 demands 接入。生产者自身仍可有 Input、消费其他 Context，但不能作为 AST node 的末端。沿 Input 与 requests 收集 scope；读取不执行 getT，还没有值时等待发布。input 指向 Excu、Scoped 或 Pure 的普通 Context 只在被 requests（或被 alternative 选择读取）时执行，parser 的 rawinput 沿 Input 启动所挂句柄；input 指向 Stream 的持续 Context 由会话驱动。见[普通资产只经 requests 生产](#request-production)。
 
 生产方与消费方分别描述，Context effect 自身也可以消费别的 Context：
 
@@ -563,13 +563,13 @@ Gen.Composition 统一计算唯一来源、访问结果、绑定的读取路由�
 
 对于已到达的普通读取，gen 还拒绝所有已分析路径都没有合法供值或捕获的结构；这项最低限度的检查见[静态无来源诊断](EFFECT_GRAPH.md#missing-source)。有合法生产路径、但本次条件或解析没有发布时，仍使用下述运行时缺值协议。
 
-值来自 `requests`、alternative 的选择读取、挂接注入与会话生产；读取本身不生产。任意位置实际发布的普通资产都可供同一次运行读取。诊断、cleanup、close 和 scope 资源 Context 不等待；生命周期中的生产只更新本地快照。
+值来自 `requests`、alternative 的选择读取与会话生产；读取本身不生产。任意位置实际发布的普通资产都可供同一次运行读取。诊断、cleanup、close 和 scope 资源 Context 不等待；生命周期中的生产只更新本地快照。
 
 刷新失败不覆盖共享旧值，错误原样传播，已完成操作不回滚。current capture 固定已读取值；资源绑定沿原 owner 定位，scope 快照中的普通辅助值不能覆盖运行级最新发布。
 
 读取权限在生成期确定：gencode 拒绝 handler 读取未声明的表示类型，只为声明了 requires／streams 的 effect 生成读取实例，运行时不按当前消费者查声明表。SDK 不预初始化 Context，未声明的上游不执行。
 
-AST 组织链的启动次序。Crawler 中 parallel 先抓取并注入解析两页，chain 再打印；共用的打印 handler 按各自 refined asset 读取摘要，不重复抓取。普通读取也可在独立并行分支等待生产。
+AST 组织链的启动次序。Crawler 中两个打印各自 requests 本页摘要，gen 把抓取链展开为各自的前驱，chain 依次执行；共用的打印 handler 按各自 refined asset 读取摘要。普通读取也可在独立并行分支等待另一分支的 requests。
 
 业务注册用 `Asset @T "资产名"` 将表示类型细化为契约。`T` 可以是 `String`、`[String]` 或本程序 `Types.hs` 定义的类型。对业务类型，`TypeRef` 同时保存类型名、定义模块和编译单元。gen 由此能接受重导出的原类型，也能指出另一个模块定义的同名类型。`Output` 单独识别并在作为资产时拒绝。字段和派生实例遵循[资产固定形式](ASSETS.md#fixed-form)。
 
@@ -579,13 +579,45 @@ AST 组织链的启动次序。Crawler 中 parallel 先抓取并注入解析两�
 
 同一消费者对同一资产的同一访问方式只能声明一次。`requires "T"` 授予 `require`；`streams "T"` 同时授予 `require` 与 `stream`，两种读取都使用本次视图；requests "T" 只驱动，不授予读取权限；持续资产经会话发布与交付，不能 requests。Scoped 至多 requests 一个资源 Context。声明检查由生成器执行。
 
-#### 原子输出挂接与失败隔离
+<a id="request-production"></a>
+#### 普通资产只经 requests 生产
 
-Excu.handler／Scoped.open 成功后，SDK 以根调用身份执行挂接 Context 的 getT；parser 的 rawinput 由本次输出回答（中间可以经过一串 Pure，见 [Pure](#pure)），不重复执行句柄。挂在 Stream 下的 parser 沿用同一写法：会话每取得一份原始输入调用一次 parser，rawinput 由这份输入回答（见第 7 章）。普通 Context 的注入失败留在注入内部，不进入原链也不触发 Error；资产没有发布，之后读取它的位置按上述等待规则处理：仍可能发布则等待，已确定耗尽则报缺值。
+**状态：已实现（2026-11-21）。** 此前句柄成功后会顺带执行挂在它下面的普通 Context 并发布资产（原子输出挂接），消费方只 `requires` 也能读到；这条来源已取消。
 
-显式 `requests` 驱动挂接的 Context 时，parser 的 `rawinput` 可以启动所挂句柄。`alternative` 则先运行共同 Excu，判定 parser 的 `rawinput` 重放这次输出。复用 open、重复 close、诊断与自动收尾沿用既有注入限制，close 没有挂接点。scope 的资源 Context 不能挂在请求它的 Scoped 下。[选择与交接](#alternative-selection)
+一条消费链是一份剧本：`requests "T"` 是请求方的前驱，gen 在编译期找到 T 唯一的生产链（T 的 Context 沿 Input 经一串 Pure 到句柄，句柄再带上自己的 Input 与驱动），把它展开进请求方的入口，在方法体之前执行。生成的入口直接调用这条链，运行时不按资产名寻找生产方。每个请求方每次执行各自走一遍生产链（同一次调用内到达同一 effect 只执行一次，见下文的消费链）；成功的值经回调写入 T 的当前值。`requires "T"` 只被动读取这个当前值，不生产，也不触发生产。
 
-这是普通 Context 的基线；持续 Context 的 parser 故障不在注入内隔离，包括 ReuseOutput 沿用消费原子输出的解析，均进入现有 Stream 失败与监督协议，见 [Stream 第 9 节](STREAM_LIFELONG.md#failures)。
+<a id="consumer-chain"></a>
+**消费链与生产分支（2026-11-22）。** 资产的生产链分两部分：从生产 T 的 Context 沿 Input 跳过 Pure，遇到的第一个 Excu 或 Scoped 是 T 的**锚点**；锚点以下的 Pure 与 Context 是**生产分支**。gen 把锚点作为前驱注入请求方，和声明的 Input 一起构成请求方的消费链；生产分支读锚点的同一次输出，n 份资产挂在同一个锚点下时共用这一次执行。只有 Context 的生产链（Input 是 Root）没有锚点，持续资产由会话交付，也没有锚点。
+
+请求方 E 声明的 Input `I` 与注入的锚点 `H` 合并时：`H` 就是 `I`、或 `H` 在 `I` 的上游，`H` 不另列；`I` 在 `H` 的上游时，`I` 经 `H` 到达 `E`，不另列；多个锚点之间同理。剩下的父节点互不在对方上游，没有先后依赖，执行顺序只取声明顺序（Input 在前，requests 按书写顺序），不表示谁是谁的上游；有 scope 关系的两项必然一个在另一个上游，不会落到这里，ScopeTree 仍只由静态的 Input 与 requests 关系得出。入口在 handler 之前依次执行：主线各项，每项之后紧跟锚点在它之内的生产分支，最后是没有锚点的分支与持续资产的取得。Scoped 的开启输入（资源与参数）排在最前，因为 open 期间其他 IO 会先固定开启输入；锚点带上它所生产的 Context，它的 IO 按开启输入的生产对待。数据约束优先：某一项执行中读取的资产由本入口的另一分支生产时，那条分支先执行；约束成环或请求方经自己的 requests 到达自己时，生成失败。
+
+同一次调用中，同一 effect 只执行一次：Excu、Scoped.open 与 Pure 的入口由 `runOnce` 包装，再次到达时返回本次输出，不重复执行它和它的前驱；Context 已在本次发布时，再次请求返回本次捕获的发布。rawinput 因此读到锚点的同一次输出。记录随每次调用开始而清空，诊断与收尾各用自己的记录；不同调用（AST 上的不同挂载、lifelong 的每次交付、会话的每个步骤）各自执行。一次调用中同一个 Scoped 只开一个实例；要两个实例，注册两个 Scoped effect 复用同一 handler。
+
+```haskell
+-- Crawler/Effects.hs 节选：打印前先抓取并解析本页
+EffectSpec { name = "PrintPage", typing = Excu { handler = Just "printSummary" }, input = "Root"
+           , demands = [requests "StartPageSummary", requires "StartPageSummary"] }
+
+-- Generated/Handlers.hs：锚点 FetchPage 注入为前驱，生产分支 getStartPageSummary 的 rawinput
+-- 经 runKeepPageBody 读到 runFetchPage 本次的输出，不再抓取
+runPrintPage = ⟨入口包装⟩ $
+  SDK.producingFor [SDK.Slot 4 "ExtractPage"] runFetchPage >> getStartPageSummary
+    >> call @"PrintPage" @"printSummary" Effects.printSummary
+```
+
+运行时不再寻找生产方。interpreter 启动时把 Prototype 一次性编成按身份寻址的索引（`Framework.Prototype.Index`：按 NodeId 取链、驱动标记、开启计划，按读取点取静态来源，按来源取会话路由），节点调度、缺值等待与 scope 回收都从索引取 gen 写下的事实，不在运行中线性扫描原型或重新推导来源。
+
+资产按 gen 分配的 effect 编号存取，不按名字匹配。编号是 effect 在 `protoEffects` 中的位置（`Framework.Prototype.Slot`）；生成入口直接写出编号字面量，例如 `SDK.readContext (SDK.Slot 4 "ExtractPage")`，名字只留作诊断与展示。运行级最新值、按 Origin 的伴随发布、调用捕获、固定交付、会话登记、执行帧捕获scope 的开启参数与资源绑定，以及 scope 自身（open／close、依赖、归属与收尾身份用 Scoped effect 的编号），都以编号为键；ScopeTree 的祖先闭包也在建索引时算好；原型里以名字记录的读取点、会话路由、开启计划与单元读取，在建索引时一次换算成编号。`Failure` 与 Error 回调登记是展示记录，仍写名字。一个编号恰对应一个 effect；同一 effect 在剧本中出现的多个执行位置由坐标与 Origin 区分，不进入编号。
+
+执行位置按坐标寻址（`Framework.Prototype.Coordinate`）。原型以路径（NodeId）记录 AST 挂载、选择、会话步骤与 lifelong 单元；建索引时把这些路径补全前缀后按字典序排开，即位置树的先序遍历，坐标就是先序序号，并记下子树最后一个位置的序号。执行帧的进度、Origin、读取捕获、会话边界与开启计划都以坐标为键，“某位置在这棵子树里”（跳过未进入的分支、撤下发布位置、清除上一轮的伴随输出）是一次区间比较，不再比较路径前缀。坐标到 effect 是唯一的；effect 到坐标是一对多，这份关系由 gen 写进读取点的供值位置与会话挂载，运行时只查表，不从坐标反推 effect。诊断仍显示原路径。
+
+因此被 `requires` 的普通资产必须有某个 effect `requests` 它，否则 gencode 以 `Asset never requested` 报错。alternative 的判定资产例外：选择读取（chooseCase）先运行一次共同句柄，再把输出依次交给各判定 parser，第一个解析成功的候选执行，候选只 requires 自己的判定资产。
+
+持续资产（`stream = True`）同样按剧本取得，但生产在会话里进行，不展开进请求方入口。`requests "T"` 在入口的方法体之前启动或加入 T 的会话：此前已结束的 lifelong 会话优先，否则是 gen 为 T 安排的 interpreter 托管会话；取当前一条，固定为本次调用的交付，本次的 `requires "T"` 读它。已有固定交付（lifelong 单元领取的交付，或本次此前的取得）时不再取得。`requires "T"` 只读已有会话，从不启动会话；没有可读会话时按缺值报出。因此被 `requires` 的持续资产也必须有 effect `requests` 它，或被某个 lifelong 末端 `streams`，否则同样报 `Asset never requested`。此前 lifelong 边界的查找顺序由 gen 写进索引（最近结束的在前），运行时只按序查登记表。
+
+句柄单独挂在 AST 上执行时，不再解析挂在它下面的普通 Context；需要它的输出时，由消费方 requests 对应资产。requests 驱动的 parser 失败沿请求方传播，不在注入内隔离。复用 open、重复 close、诊断与自动收尾沿用既有限制，close 没有挂接点。scope 的资源 Context 不能挂在请求它的 Scoped 下。[选择与交接](#alternative-selection)
+
+挂在 Stream 下的 parser 由会话驱动：会话每取得一份原始输入调用一次 parser，rawinput 由这份输入回答（见第 7 章）。持续 Context 的 parser 故障不在注入内隔离，包括 ReuseOutput 沿用消费原子输出的解析，均进入现有 Stream 失败与监督协议，见 [Stream 第 9 节](STREAM_LIFELONG.md#failures)。
 
 <a id="pure"></a>
 #### Pure：生产链中的值变换
@@ -663,7 +695,7 @@ gencode 通过统一 Prototype 保存注册、纯方法结构、workflow、链�
 
 Target 保留未执行末端和内部空状态；Node algebra 负责 lower。Context 的实际生产有独立 RequestBoot 活动记录，继承外层 Execution 和 ScopeUser，不新增提前 cleanup 的边界。
 
-本节引用 [EFFECT_GRAPH.md](EFFECT_GRAPH.md) 作为完整结构规范，包含 NodeId／Origin／ActivationId、绑定出身、来源证明、ScopeTree 构树、源码结构提取、缓存与运行校验。这里不再复制这些算法。
+本节引用 [EFFECT_GRAPH.md](EFFECT_GRAPH.md) 作为完整结构规范，包含 NodeId／Origin／ActivationId、绑定出身、来源证明、ScopeTree 构树、源码结构提取、重跑边界与运行校验。这里不再复制这些算法。
 
 <a id="workflow"></a>
 ### 4.5 Workflow branch
@@ -873,7 +905,7 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 
 [gen 是编译器](#compiler)。手写业务只导入 [Framework.SDK](../sdk/Framework/SDK.hs)：注册、handler 能力、故障观察和 AST 组合，定义在 `Framework/Language/`；Types、Effects、AST 不导入 Generated 或 Handlers，handler 的类、Layer 与错误类型由 gen 生成，无须手写。生成代码只导入 [Framework.Generated](../sdk/Framework/Generated.hs)：Prototype 的数据模型、运行协议与装配操作，以及程序命令的适配。Generated.Program 绑定程序元数据后，业务仍写 `interpreter ast effects`。
 
-[Framework.Gen](../sdk/Framework/Gen.hs) 负责文件、缓存和生成流程，[Gen/Main.hs](../sdk/Framework/Gen/Main.hs) 是 `effect-codegen` 的命令行入口。组合含义由 [Gen.Composition](../sdk/Framework/Gen/Composition.hs) 的状态转换统一计算，并调用 Injector 与 Booter 合成装配和驱动计划；前端、类检与文本输出各守边界。任何阶段失败即停止，全部通过后才写回 Generated，未变文件保留时间戳。整个过程不执行 handler 业务：
+[Framework.Gen](../sdk/Framework/Gen.hs) 负责文件与生成流程，[Gen/Main.hs](../sdk/Framework/Gen/Main.hs) 是 `effect-codegen` 的命令行入口。组合含义由 [Gen.Composition](../sdk/Framework/Gen/Composition.hs) 的状态转换统一计算，并调用 Injector 与 Booter 合成装配和驱动计划；前端、类检与文本输出各守边界。任何阶段失败即停止，全部通过后才写回 Generated，未变文件保留时间戳。整个过程不执行 handler 业务：
 
 | 阶段 | 实现位置 | 输入 → 输出与检查 |
 | --- | --- | --- |
@@ -885,7 +917,7 @@ handles 按 Failure 的 detail 分类与 origin 匹配：RaisedBy 按 handler �
 | 读取方法形状 | `Gen.Frontend.Shape` | handler 语法树 → 读取与控制结构；不解释来源或驱动 |
 | 方法、图与来源 | `Gen.Composition` | 组成方法、检查读取、计算 EffectGraph、ScopeTree 与供值／开启计划；完成后调用 Booter 补齐运行所需的静态驱动标记 |
 | 文本输出 | `Gen.Emit.*` | 渲染已确定的契约、入口与 Prototype；保留手写方法体；渲染注册快照不等于重新选择装配 |
-| 类检与目录 | `Gen.Check.Assets` → `Gen.Emit.Assets` | GHC 在内存中检查手写与生成模块，检查顶层约束并提取结构化目录，再将目录渲染为文本 |
+| 类检与目录 | `Gen.Check.Assets`、`Gen.Check.TopLevel` → `Gen.Emit.Assets` | GHC 在内存中检查手写业务模块与本次契约，检查顶层约束并提取结构化目录，再将目录渲染为文本；生成的 Program／Prototype／Handlers 与 Main 留给构建做类型检查 |
 
 Injector 回答一个入口怎样得到能力与前驱装配，Booter 回答计算由什么结构驱动；二者都是编译端计算，不是运行时的新调度器。Composition 协调它们，公共方法身份、挂载及输出连接复用同一份计划。内部阶段可以有数据转换，但不能各自维护一份同义决定。
 
@@ -900,14 +932,13 @@ beginComposition
 prepareComposition（补入 Maybe handler 形状）
   ResolvingBodies → AwaitingGraph PendingComposition
 
-completeComposition（补入可选缓存原型）
+completeComposition
   BuildingStructure → ProvingSources → Checking → Complete
-                                    缓存命中 ──┘
 ```
 
-`Frontend.Source.loadComposition` 在 ghci 中加载声明并调用 `beginComposition`，返回可 Eq／Show／Read 的纯 `Unit`。它保存 `ReadRoute`、`ReaderPlan`、`SelectorPlan`、`SessionEntry`、`Capability` 等接口与装配事实，不包含 GHC AST、类字典或执行函数。首次没有 Handlers 时先交出契约；`prepareComposition` 接收 `Nothing` 表示缺少文件，`Just shapes` 表示已经提取方法体，即使 shapes 为空也不是缺少文件。后者继续进行读取与驱动检查。`completeComposition` 最终交出 `CompositionResult`（Unit 与 Prototype），缓存命中仍经过校验；完整缓存协议只在[图规范的缓存边界](EFFECT_GRAPH.md#cache)维护。
+`Frontend.Source.loadComposition` 在 ghci 中加载声明并调用 `beginComposition`，返回可 Eq／Show／Read 的纯 `Unit`。它保存 `ReadRoute`、`ReaderPlan`、`SelectorPlan`、`SessionEntry`、`Capability` 等接口与装配事实，不包含 GHC AST、类字典或执行函数。首次没有 Handlers 时先交出契约；`prepareComposition` 接收 `Nothing` 表示缺少文件，`Just shapes` 表示已经提取方法体，即使 shapes 为空也不是缺少文件。后者继续进行读取与驱动检查。`completeComposition` 最终交出 `CompositionResult`（Unit 与 Prototype）。构图每次重算，不设结构缓存，见[图规范的重跑边界](EFFECT_GRAPH.md#cache)。
 
-这是按依赖阶段组织的编译状态机。声明合法性、会话连接、接口绑定、图与来源证明各有计算入口；统一的是阶段次序与结果归属，没有将它们变成同一种算法。运行驱动标记由 Booter 在来源证明完成后补全，缓存命中直接校验并读取这些标记，不在运行时推导兜底。`Prototype.Query` 保存机器和原型校验共用的纯关系查询；源码提取、资产类检与文本渲染保持原有边界。各组合从哪里进入计算见[规则定位](COMPOSITION.md#pipeline)。
+这是按依赖阶段组织的编译状态机。声明合法性、会话连接、接口绑定、图与来源证明各有计算入口；统一的是阶段次序与结果归属，没有将它们变成同一种算法。运行驱动标记由 Booter 在来源证明完成后补全，不在运行时推导兜底。`Prototype.Query` 保存机器和原型校验共用的纯关系查询；源码提取、资产类检与文本渲染保持原有边界。各组合从哪里进入计算见[规则定位](COMPOSITION.md#pipeline)。
 
 首次没有 Handlers.hs 时，形状为空，不检查读取与驱动，只生成契约和空的 Handlers 模块；填写 handler 后再次生成并编译 Main，命令与使用顺序见[指南：命令行与执行阶段](GUIDE.md#commands)。业务执行编译 Generated/Handlers：handler 方法体原样复制到按 effect 的类型标签上，后接 gen 生成的入口与路由；不回写手写源码或新增业务类型类。手写实现变更后须重新生成。
 
@@ -928,7 +959,7 @@ gencode 生成 `generatedPrototype :: SDK.Prototype MethodGen`。它合并 effec
 
 运行时先求值并校验原型、注册与源码，再一次 cata 装配当前 AST。RuntimeGraph 复用静态定义并保存活动关系；ScopeTree 单独保持无环。不重跑 handler 建图，也不记录无限方法历史。
 
-结构、来源证明、ScopeTree 算法及缓存细节统一引用 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)。
+结构、来源证明、ScopeTree 算法及重跑边界统一引用 [EFFECT_GRAPH.md](EFFECT_GRAPH.md)。
 
 <a id="sdk-layout"></a>
 ### SDK 的职责与阅读顺序
@@ -956,7 +987,8 @@ sdk/Framework/
     Plan.hs                 编译检查点的纯计划及共享投影
     Names.hs                按已确定角色拼写生成名字
     Check/
-      Assets.hs             GHC 类检、顶层约束、源码资产目录提取
+      Assets.hs             GHC 类检、Types 固定形式、源码资产目录提取
+      TopLevel.hs           业务模块的顶层白名单
     Emit/
       Types.hs              已计算的表示类型与能力约束的 Haskell 渲染
       Effects.hs            Generated/Effects.hs
@@ -1006,7 +1038,7 @@ sdk/Framework/
 | [AGENTS](../AGENTS.md) | 工作约束、任务路由和源码定位 |
 | [GUIDE](GUIDE.md) | 当前代码形态、环境准备、生成／编译／运行／结构查看及开发流程 |
 | 本文 | 设计原则、当前协议和新语义的统一入口 |
-| [EFFECT_GRAPH](EFFECT_GRAPH.md) | Prototype、来源分析、运行图、ScopeTree 和缓存 |
+| [EFFECT_GRAPH](EFFECT_GRAPH.md) | Prototype、来源分析、运行图、ScopeTree 和重跑边界 |
 | [ASSETS](ASSETS.md) | 源码资产集合、顶层白名单和资产目录 |
 | [STREAM_LIFELONG](STREAM_LIFELONG.md) | 第 7 章引用的持续执行完整规范 |
 | [COMPOSITION](COMPOSITION.md) | 组合多态的核心理念、确定性要求、产物和规则定位；业务组合 → gen 事实 → 运行驱动的对照，详细协议引用所属专题 |

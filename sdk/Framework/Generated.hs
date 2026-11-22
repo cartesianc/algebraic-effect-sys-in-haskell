@@ -10,11 +10,11 @@ module Framework.Generated
   , App, TypeRef(..), typeRef, MonadThrow, MonadCatch, MonadMask
   , Target, targetApp, SessionSteps, receiveSteps, deriveSteps
   , failEffect, handleFailure, withErrorPath, withErrorHandlers, ErrorHandler(..)
-  , readContext, readStreamContext, readStreamHistory
-  , callContext, chooseCase, enterHandler
+  , readContext, readStreamContext, readStreamHistory, requestStreamContext
+  , callContext, runOnce, producingFor, chooseCase, enterHandler
   , atomicHandle, atomicScope, emittedInput, emitToParser, endSource, endSubscription
   , openScope, closeScope, withScopeDependencies
-  , ScopeHandler, newScopeHandler
+  , ScopeHandler, newScopeHandler, Slot(..)
   , Root(..), HandlerError(..), superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation
   , Generic, NFData, coerce, interpreter
   ) where
@@ -22,16 +22,17 @@ module Framework.Generated
 import Framework.SDK
 import Framework.Runtime.Protocol
   ( Root(..), HandlerError(..), failEffect, ErrorStore(handleFailure, withErrorPath, withErrorHandlers), ErrorHandler(..)
-  , ContextStore(enterHandler, endSource, endSubscription)
+  , ContextStore(enterHandler, endSource, endSubscription, producingFor)
   , ScopeStore(openScope, closeScope, withScopeDependencies) )
 import Framework.Runtime.Context
-  ( readContext, readStreamContext, readStreamHistory, callContext
+  ( readContext, readStreamContext, readStreamHistory, requestStreamContext, callContext, runOnce
   , chooseCase, atomicHandle, atomicScope )
 import Framework.Language.Registration (TypeRef(..), typeRef)
 import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, deriveSteps)
 import Framework.Runtime.App
   ( emittedInput, emitToParser, superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation )
 import Framework.Runtime.Scope (ScopeHandler, newScopeHandler)
+import Framework.Prototype.Slot (Slot(..))
 import Framework.Program (initializePrototype, runProgram)
 import Framework.Prototype
 import Framework.Prototype.Structure
@@ -97,11 +98,11 @@ verifySource namespace path expected = do
 
 staleGenerated :: String -> String -> IO value
 staleGenerated namespace reason = ioError (userError
-  (reason ++ "; run from the repository root: cabal run effect-codegen -- workflow " ++ namespace))
+  (reason ++ "; run from the repository root: cabal run effect-codegen -- compiler " ++ namespace))
 
 -- 仓库的生成命令适配；执行核心不启动编译器，也不依赖 GHC 源码解析 API。
 generate :: String -> [FilePath] -> IO ()
-generate namespace handlerFiles = callProcess "cabal" (["run", "effect-codegen", "--"] ++ options ++ ["workflow", namespace])
+generate namespace handlerFiles = callProcess "cabal" (["run", "effect-codegen", "--"] ++ options ++ ["compiler", namespace])
   where
     -- The generated source check names the actual file below the namespace's module root.
     options = case handlerFiles of

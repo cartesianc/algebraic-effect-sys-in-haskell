@@ -11,7 +11,8 @@ import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Framework.Gen.Plan (Unit)
-import Framework.Gen.Frontend.Ghc (modulePath, sourceDirectory, withSourceTargets)
+import Framework.Gen.Check.TopLevel (checkTopLevel)
+import Framework.Gen.Frontend.Ghc (libraryDirectory, modulePath, sourceDirectory, withSourceTargets)
 import Framework.Language.AST (WorkflowF)
 import Framework.Recursion (Fix)
 import GHC (GhcPs, GhcRn, LoadHowMuch(..), SuccessFlag(..), getModSummary, getModuleInfo, getSessionDynFlags,
@@ -102,6 +103,7 @@ data HandlerSource = HandlerSource
   , handlerScopeNames :: Set.Set String
   , handlerImplicitPrelude :: Bool
   , handlerRebindable :: Bool
+  , handlerFailures :: [String]  -- 手写 Handlers 的顶层白名单失败；与资产检查一起报告
   }
 
 -- 首次生成时还没有 Handlers.hs：返回 Nothing，只生成契约。
@@ -140,6 +142,7 @@ loadHandlers namespace contracts = do
                     | name <- visible ++ maybe [] modInfoExports types]
                 , handlerImplicitPrelude = enabled "ImplicitPrelude"
                 , handlerRebindable = enabled "RebindableSyntax"
+                , handlerFailures = checkTopLevel namespace checked
                 })
 
 -- Name 的定义位置和变量的使用位置不同。用同一次 parse/rename 的 token 范围对齐，
@@ -174,7 +177,7 @@ readSource inputPath = withFile inputPath ReadMode $ \handle -> do
 parseSourceFile :: FilePath -> IO (String, HsModule GhcPs)
 parseSourceFile inputPath = do
   source <- readSource inputPath
-  library <- takeWhile (`notElem` "\r\n") <$> readProcess "ghc" ["--print-libdir"] ""
+  library <- libraryDirectory
   runGhc (Just library) $ do
     initial <- getSessionDynFlags
     let buffer = stringToStringBuffer source

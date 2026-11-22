@@ -1,6 +1,6 @@
 -- 编译器 IO 驱动：Source/Shape 提供结构，Composition 统一计算，Emit 渲染，Assets 类检。
 -- 流水线说明 v3（2026-11-17）：使用 Gen.Composition 的统一状态转换；本文件负责 IO。
-module Framework.Gen (compileWorkflow, inspectConsole, inspectWorkflow) where
+module Framework.Gen (compileNamespace, inspectConsole, inspectWorkflow) where
 
 import Control.Exception (evaluate)
 import Framework.Gen.Check.Assets (checkAssets)
@@ -14,9 +14,10 @@ import Framework.Gen.Emit.Program (renderProgram)
 import Framework.Gen.Emit.Prototype (renderPrototype, renderPrototypeModule)
 import Framework.Gen.Emit.Workflow (renderWorkflowReport)
 import Framework.Gen.Names (handlerClass, nameHandlers)
+import Framework.Gen.Frontend.Effects (assetSpellings, specFromJson, syntacticRegistrations)
 import Framework.Gen.Frontend.Hanging (Outline(..), loadOutline)
 import Framework.Gen.Frontend.Shape (shapeHandlers)
-import Framework.Gen.Frontend.Source (HandlerSource, loadComposition, loadHandlers, loadWorkflowTree, namespaceDirectory, handlerText, handlerScopeNames)
+import Framework.Gen.Frontend.Source (HandlerSource, loadComposition, loadHandlers, loadWorkflowTree, namespaceDirectory, handlerFailures, handlerScopeNames)
 import Data.List (nub)
 import Framework.Language.AST (WorkflowF)
 import Framework.Recursion (Fix)
@@ -24,30 +25,18 @@ import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Exit (die)
 import System.FilePath ((</>))
 import System.IO (IOMode(ReadMode, WriteMode), hGetContents, hPutStr, hSetEncoding, stdout, utf8, withFile)
-import System.IO.Error (tryIOError)
-import Text.Read (readMaybe)
 
 -- 编译一个命名空间的 workflow 程序；程序只经 AST 启动，入口是 AST 中各 node 选中的末端。
-compileWorkflow :: String -> IO ()
-compileWorkflow namespace = do
+compileNamespace :: String -> IO ()
+compileNamespace namespace = do
   directory <- namespaceDirectory namespace
   let generated = directory </> "Generated"
-      cachePath = generated </> ".scope-cache"
   (prepared, source, contracts) <- prepareNamespace namespace
   let Prepared outline tree rows pending = prepared
-  dependencies <- mapM readUtf8 structureSources
-  let cacheKey = show (compositionKey pending, dependencies)
-  cached <- tryIOError (readExisting cachePath)
-  let previous = either (const Nothing) (>>= readMaybe) cached
-  (result, structure, reused) <- case previous of
-    Just (key, value, rendered) | key == cacheKey -> do
-      completed <- either die pure (completeComposition pending (Just value))
-      pure (completed, rendered, True)
-    _ -> do
-      completed <- either die pure (completeComposition pending Nothing)
-      pure (completed, renderPrototype (compositionPrototype completed), False)
+  -- 构图本身只需数毫秒，不设结构缓存：读取并比较缓存比重算更慢。
+  result <- either die pure (completeComposition pending)
   let unit = compositionUnit result
-      prototype = compositionPrototype result
+      structure = renderPrototype (compositionPrototype result)
       names = nameHandlers (maybe mempty handlerScopeNames source) (allMethods unit ++ historyEntries unit)
   handlers <- either (ioError . userError) pure (renderHandlers names unit source)
   -- 输出只读取机器完成态的接口事实。
@@ -55,12 +44,11 @@ compileWorkflow namespace = do
       workflow = renderWorkflowReport namespace tree rows (outlineTargets outline) (outlineSites outline)
         (outlineSources outline)
       prototypeModule = renderPrototypeModule namespace structure
-  _ <- evaluate (length structure)
-  -- 类型检查、顶层白名单与资产目录；通过后才更新生成区，未变文件保留时间戳
-  assets <- checkAssets namespace
-    [("Effects", contracts), ("Prototype", prototypeModule), ("Program", program), ("Handlers", handlers)]
+  -- 业务模块与契约的类型检查、顶层白名单与资产目录；通过后才更新生成区，未变文件保留时间戳。
+  -- 生成的 Program／Prototype／Handlers 与 Main 是普通 Haskell，由构建做类型检查，这里不重复。
+  assets <- checkAssets namespace contracts
     (nub (map assetRepresentation (unitAssets unit)))
-    (map assetContract (unitAssets unit)) (fmap handlerText source)
+    (map assetContract (unitAssets unit)) (maybe [] handlerFailures source)
   createDirectoryIfMissing True generated
   changed <- sequence
     [ writeIfChanged (generated </> "Effects.hs") contracts
@@ -70,9 +58,7 @@ compileWorkflow namespace = do
     , writeIfChanged (generated </> "Assets.hs") (renderAssets namespace assets)
     , writeIfChanged (generated </> "Workflow.json") (workflow ++ "\n")
     ]
-  _ <- writeIfChanged cachePath (show (cacheKey, prototype, structure))
-  putStrLn ("Generated " ++ generated ++ " (" ++ show (length (filter id changed))
-    ++ " files updated; structure " ++ (if reused then "reused" else "rebuilt") ++ ")")
+  putStrLn ("Generated " ++ generated ++ " (" ++ show (length (filter id changed)) ++ " files updated)")
 
 -- 生成与 console 共用的前半段：同一组合机器在声明进程中走到接口检查点，再读取 Handlers。
 -- 首次无 Handlers 也能生成同步契约。
@@ -80,8 +66,19 @@ data Prepared = Prepared Outline (Fix WorkflowF) [([String], Int)] PendingCompos
 
 prepareNamespace :: String -> IO (Prepared, Maybe HandlerSource, String)
 prepareNamespace namespace = do
-  outline <- loadOutline namespace
-  (interface, tree, rows) <- loadComposition namespace (outlineHasHanging outline) (outlineTargets outline)
+  -- 固定形式的注册、AST 与 Hanging 按语法读出，组合在本进程执行；只有写法超出固定形式时才起 ghci 求值。
+  registrations <- syntacticRegistrations namespace
+  outline <- loadOutline namespace (assetSpellings <$> registrations)
+  let syntactic = do
+        rows' <- registrations
+        specifications <- mapM (specFromJson (outlineTypes outline)) rows'
+        (tree', hanging') <- outlineTree outline
+        pure (specifications, tree', hanging')
+  (interface, tree, rows) <- case syntactic of
+    Just (specifications, tree', hanging') ->
+      either die (\plan -> pure (plan, tree', hanging'))
+        (beginCompositionRows namespace specifications tree' hanging' (outlineTargets outline))
+    Nothing -> loadComposition namespace (outlineHasHanging outline) (outlineTargets outline)
   let contracts = renderEffects interface
       handlersInScope = [(handlerClass handler', handler') | handler' <- unitHandlers interface]
   source <- loadHandlers namespace contracts
@@ -93,7 +90,7 @@ prepareNamespace namespace = do
 inspectConsole :: String -> IO ()
 inspectConsole namespace = do
   (Prepared _ _ _ pending, source, _) <- prepareNamespace namespace
-  result <- either die pure (completeComposition pending Nothing)
+  result <- either die pure (completeComposition pending)
   writeConsole result source
 
 -- AST 的独立分析：只加载 AST、Workflow 与可选的 Hanging，不读注册与 handler，不写生成区。
@@ -101,32 +98,11 @@ inspectConsole namespace = do
 -- Hanging 挂载、结构诊断和源码文件指纹。结构诊断不影响退出码；不能加载这些模块时照常以 GHC 诊断失败。
 inspectWorkflow :: String -> IO ()
 inspectWorkflow namespace = do
-  outline <- loadOutline namespace
-  (tree, rows) <- loadWorkflowTree namespace (outlineHasHanging outline)
+  outline <- loadOutline namespace Nothing
+  (tree, rows) <- maybe (loadWorkflowTree namespace (outlineHasHanging outline)) pure (outlineTree outline)
   hSetEncoding stdout utf8
   putStrLn (renderWorkflowReport namespace tree rows (outlineTargets outline) (outlineSites outline)
     (outlineSources outline))
-
--- 构图缓存连同算法及渲染器源码精确比较，避免 SDK 改动后复用旧结构；声明与 Handlers 快照仍每次读取。
-structureSources :: [FilePath]
-structureSources =
-  [ "sdk/Framework/Prototype.hs"
-  , "sdk/Framework/Prototype/Types.hs"
-  , "sdk/Framework/Prototype/Graph.hs"
-  , "sdk/Framework/Prototype/Query.hs"
-  , "sdk/Framework/Prototype/Validate.hs"
-  , "sdk/Framework/Gen/Composition.hs"
-  , "sdk/Framework/Gen/Names.hs"
-  , "sdk/Framework/Gen/Plan.hs"
-  , "sdk/Framework/Gen/Injector.hs"
-  , "sdk/Framework/Gen/Booter.hs"
-  , "sdk/Framework/Gen/Workflow.hs"
-  , "sdk/Framework/Gen/Emit/Prototype.hs"
-  , "sdk/Framework/Gen/Emit/Types.hs"
-  , "sdk/Framework/Language/Registration.hs"
-  , "sdk/Framework/Language/AST.hs"
-  , "sdk/Framework/Recursion.hs"
-  ]
 
 readUtf8 :: FilePath -> IO String
 readUtf8 path = withFile path ReadMode $ \handle -> do

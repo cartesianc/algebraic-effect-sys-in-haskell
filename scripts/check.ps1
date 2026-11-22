@@ -48,7 +48,7 @@ $namespaces = Get-ChildItem -Path demo -Directory |
   Where-Object { Test-Path (Join-Path $_.FullName 'Generated') } |
   ForEach-Object { $_.Name }
 foreach ($namespace in $namespaces) {
-  $output = & cabal run -v0 effect-codegen -- workflow $namespace 2>&1 | Out-String
+  $output = & cabal run -v0 effect-codegen -- compiler $namespace 2>&1 | Out-String
   if ($LASTEXITCODE -ne 0) {
     $failures.Add("生成 $namespace")
     Write-Host "  $namespace 生成失败" -ForegroundColor Red

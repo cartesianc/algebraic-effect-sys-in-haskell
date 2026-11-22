@@ -3,7 +3,7 @@ module Framework.Gen.Main (main) where
 
 import Control.Exception (catch)
 import Data.Char (isAlphaNum, isUpper)
-import Framework.Gen (compileWorkflow, inspectConsole, inspectWorkflow)
+import Framework.Gen (compileNamespace, inspectConsole, inspectWorkflow)
 import Framework.Gen.Frontend.Effects (readEffect, readEffects, registrationSlot)
 import System.Directory (withCurrentDirectory)
 import System.Environment (getArgs, getExecutablePath, lookupEnv, setEnv)
@@ -29,10 +29,10 @@ main = do
       hSetEncoding stdout utf8
       reportRejection (readEffects namespace)
     ["registration-slot", namespace] | validNamespace namespace -> reportRejection (registrationSlot namespace)
-    _ -> workflow arguments
+    _ -> ghcCommand arguments
 
-workflow :: [String] -> IO ()
-workflow arguments = do
+ghcCommand :: [String] -> IO ()
+ghcCommand arguments = do
   -- GHC API 也需要 Cabal 的依赖可见性；复用项目 package environment，
   -- 不硬编码业务库白名单或本机 package-db 路径。
   packageEnvironment <- lookupEnv "GHC_ENVIRONMENT"
@@ -42,12 +42,12 @@ workflow arguments = do
       rawSystem "cabal" (["exec", "--", executable] ++ arguments) >>= exitWith
     Just _ -> pure ()
   case arguments of
-    ["workflow", namespace] | validNamespace namespace -> reportRejection (compileWorkflow namespace)
+    ["compiler", namespace] | validNamespace namespace -> reportRejection (compileNamespace namespace)
     ["ast", namespace] | validNamespace namespace -> reportRejection (inspectWorkflow namespace)
     ["console", namespace] | validNamespace namespace -> hSetEncoding stdout utf8 >> reportRejection (inspectConsole namespace)
     ["console", namespace, "--source-root", root] | validNamespace namespace ->
       hSetEncoding stdout utf8 >> withCurrentDirectory root (reportRejection (inspectConsole namespace))
-    _ -> die ("Usage: effect-codegen [--source-dir DIR] workflow Namespace | ast Namespace | console Namespace [--source-root DIR]"
+    _ -> die ("Usage: effect-codegen [--source-dir DIR] compiler Namespace | ast Namespace | console Namespace [--source-root DIR]"
       ++ " | read-effect | read-effects Namespace | registration-slot Namespace")
 
 -- 生成器拒绝输入时以 userError 退出：只打印一行原因，GHC 诊断已在上方给出；其他异常照常抛出。

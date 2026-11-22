@@ -169,112 +169,119 @@ instance SDK.EndsStream (Wrap effect method) where
 
 openSensorLink :: Effects.App [String]
 openSensorLink =
-  SDK.withErrorPath ["SensorLink"]
+  SDK.runOnce (SDK.Slot 0 "SensorLink")
+  . SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.atomicScope "openSensorLink" [] []
-  . SDK.openScope "SensorLink" Effects.ScopeBindingError (Just (() <$ closeSensorLink))
-  . SDK.enterHandler "SensorLink" $
+  . SDK.atomicScope "openSensorLink" []
+  . SDK.openScope (SDK.Slot 0 "SensorLink") Effects.ScopeBindingError (Just (() <$ closeSensorLink))
+  . SDK.enterHandler (SDK.Slot 0 "SensorLink") $
     call @"SensorLink" @"connectSensor" Effects.connectSensor
 
 closeSensorLink :: Effects.App [String]
 closeSensorLink =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeSensorLink" [] []
-  . SDK.closeScope "SensorLink" Effects.ScopeBindingError
-  . SDK.enterHandler "SensorLink" $
+  . SDK.atomicScope "closeSensorLink" []
+  . SDK.closeScope (SDK.Slot 0 "SensorLink") Effects.ScopeBindingError
+  . SDK.enterHandler (SDK.Slot 0 "SensorLink") $
     callClose @"SensorLink" @"disconnectSensor" Effects.disconnectSensor
 
 nextTemperatureFeed :: Effects.App ()
 nextTemperatureFeed =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["SensorLink"]
-  . SDK.enterHandler "TemperatureFeed" $
+  . SDK.withScopeDependencies [(SDK.Slot 0 "SensorLink")]
+  . SDK.enterHandler (SDK.Slot 1 "TemperatureFeed") $
     openSensorLink >> call @"TemperatureFeed" @"nextReading" Effects.nextReading
 
 getTemperatureSample :: Effects.App Effects.TemperatureSample
 getTemperatureSample =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["SensorLink"]
-  . SDK.callContext "TemperatureParser"
-      (\value bindings -> bindings { Effects.boundTemperatureParser = Just value }) $
+  . SDK.withScopeDependencies [(SDK.Slot 0 "SensorLink")]
+  . SDK.callContext (SDK.Slot 2 "TemperatureParser")
+      (\value bindings -> bindings { Effects.boundTemperatureParser = Just value })
+      Effects.boundTemperatureParser $
     Effects.TemperatureSample <$> call @"TemperatureParser" @"parseTemperature" Effects.parseTemperature
 
 streamTemperatureSample :: Effects.App Effects.TemperatureSample
 streamTemperatureSample =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure $
-    SDK.readStreamContext "TemperatureParser" Effects.ContextBindingError Effects.boundTemperatureParser
+    SDK.readStreamContext (SDK.Slot 2 "TemperatureParser") Effects.ContextBindingError Effects.boundTemperatureParser
 
 historyTemperatureSample :: Effects.App (SDK.Flow Effects.TemperatureSample)
 historyTemperatureSample =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure $
-    SDK.readStreamHistory "TemperatureParser" Effects.ContextBindingError Effects.boundTemperatureParser
+    SDK.readStreamHistory (SDK.Slot 2 "TemperatureParser") Effects.ContextBindingError Effects.boundTemperatureParser
 
 nextHeartbeatClock :: Effects.App ()
 nextHeartbeatClock =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["SensorLink"]
-  . SDK.enterHandler "HeartbeatClock" $
+  . SDK.withScopeDependencies [(SDK.Slot 0 "SensorLink")]
+  . SDK.enterHandler (SDK.Slot 3 "HeartbeatClock") $
     openSensorLink >> call @"HeartbeatClock" @"nextBeat" Effects.nextBeat
 
 getBeat :: Effects.App Effects.Beat
 getBeat =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.withScopeDependencies ["SensorLink"]
-  . SDK.callContext "Heartbeat"
-      (\value bindings -> bindings { Effects.boundHeartbeat = Just value }) $
+  . SDK.withScopeDependencies [(SDK.Slot 0 "SensorLink")]
+  . SDK.callContext (SDK.Slot 4 "Heartbeat")
+      (\value bindings -> bindings { Effects.boundHeartbeat = Just value })
+      Effects.boundHeartbeat $
     Effects.Beat <$> call @"Heartbeat" @"parseBeat" Effects.parseBeat
 
 streamBeat :: Effects.App Effects.Beat
 streamBeat =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure $
-    SDK.readStreamContext "Heartbeat" Effects.ContextBindingError Effects.boundHeartbeat
+    SDK.readStreamContext (SDK.Slot 4 "Heartbeat") Effects.ContextBindingError Effects.boundHeartbeat
 
 historyBeat :: Effects.App (SDK.Flow Effects.Beat)
 historyBeat =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure $
-    SDK.readStreamHistory "Heartbeat" Effects.ContextBindingError Effects.boundHeartbeat
+    SDK.readStreamHistory (SDK.Slot 4 "Heartbeat") Effects.ContextBindingError Effects.boundHeartbeat
 
 runAnnounce :: Effects.App [String]
 runAnnounce =
-  SDK.handleFailure
-  . SDK.atomicHandle "runAnnounce" [] []
-  . SDK.enterHandler "Announce" $
+  SDK.runOnce (SDK.Slot 5 "Announce")
+  . SDK.handleFailure
+  . SDK.atomicHandle "runAnnounce" []
+  . SDK.enterHandler (SDK.Slot 5 "Announce") $
     call @"Announce" @"announce" Effects.announce
 
 runShowTemperature :: Effects.App [String]
 runShowTemperature =
-  SDK.handleFailure
-  . SDK.atomicHandle "runShowTemperature" [] []
-  . SDK.enterHandler "ShowTemperature" $
+  SDK.runOnce (SDK.Slot 6 "ShowTemperature")
+  . SDK.handleFailure
+  . SDK.atomicHandle "runShowTemperature" []
+  . SDK.enterHandler (SDK.Slot 6 "ShowTemperature") $
     call @"ShowTemperature" @"showTemperature" Effects.showTemperature
 
 runCheckTrend :: Effects.App [String]
 runCheckTrend =
-  SDK.handleFailure
-  . SDK.atomicHandle "runCheckTrend" [] []
-  . SDK.enterHandler "CheckTrend" $
+  SDK.runOnce (SDK.Slot 7 "CheckTrend")
+  . SDK.handleFailure
+  . SDK.atomicHandle "runCheckTrend" []
+  . SDK.enterHandler (SDK.Slot 7 "CheckTrend") $
     call @"CheckTrend" @"checkTrend" Effects.checkTrend
 
 runReportHeartbeat :: Effects.App [String]
 runReportHeartbeat =
-  SDK.handleFailure
-  . SDK.atomicHandle "runReportHeartbeat" [] []
-  . SDK.enterHandler "ReportHeartbeat" $
+  SDK.runOnce (SDK.Slot 8 "ReportHeartbeat")
+  . SDK.handleFailure
+  . SDK.atomicHandle "runReportHeartbeat" []
+  . SDK.enterHandler (SDK.Slot 8 "ReportHeartbeat") $
     call @"ReportHeartbeat" @"reportHeartbeat" Effects.reportHeartbeat
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ SDK.newScopeHandler "SensorLink" [] Nothing
+  [ SDK.newScopeHandler (SDK.Slot 0 "SensorLink") [] Nothing
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。

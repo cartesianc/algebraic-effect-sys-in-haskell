@@ -12,29 +12,30 @@ import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, withMVar)
 import Control.Exception (uninterruptibleMask_)
 import Control.Monad (forM_, when)
 import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
-import Data.List (isPrefixOf, nub, nubBy)
-import Framework.Prototype (NodeId)
+import Data.List (nub, nubBy)
+import Framework.Prototype.Coordinate (Coord, within)
 import Framework.Runtime.Identity (ActivationId)
+import Framework.Prototype.Slot (Slot)
 
 data NodeProgress = Pending | Running | Completed | Skipped
   deriving (Eq, Show)
 
--- 身份记录，不保存值、资源引用或历史。frameDelivered 的 NodeId 是普通伴随资产的
--- 发布位置；frameCaptures 的 NodeId 是固定该视图的读取位置，两张表不混用。
-type DeliveryIdentity = (NodeId, String, ActivationId)
+-- 身份记录，不保存值、资源引用或历史。frameDelivered 的 Coord 是普通伴随资产的
+-- 发布位置；frameCaptures 的 Coord 是固定该视图的读取位置，两张表不混用。
+type DeliveryIdentity = (Coord, Slot, ActivationId)
 
 data ExecutionFrame = ExecutionFrame
   { frameParent :: Maybe ExecutionFrame
   , frameDepth :: Int
   -- 轮帧的所属 lifelong 挂载；退休后仍可定位合法外部后继，不把实例提升到根帧。
-  , frameBoundary :: Maybe NodeId
+  , frameBoundary :: Maybe Coord
   , frameCoordinator :: MVar ()
-  , frameProgress :: IORef [(NodeId, NodeProgress)]
+  , frameProgress :: IORef [(Coord, NodeProgress)]
   , frameDelivered :: IORef [DeliveryIdentity]
   , frameChildren :: IORef [ExecutionFrame]
   -- v1（2026-11-17）：本轮会话的已选/下一条身份查询；不领取、不启动来源。
   -- 查询只读领取槽与会话状态，不能获取帧协调锁或运行 handler。
-  , frameSessionInputs :: IORef (String -> ActivationId -> IO (Maybe Bool))
+  , frameSessionInputs :: IORef (Slot -> ActivationId -> IO (Maybe Bool))
   -- 普通读取、持续读取与 alternative 交接已固定的值；只保留身份，不保留历史。
   , frameCaptures :: IORef [DeliveryIdentity]
   -- 根帧和子帧共用一个变化信号；普通发布与节点退休都叫醒缺值读取。
@@ -44,15 +45,15 @@ data ExecutionFrame = ExecutionFrame
 instance Eq ExecutionFrame where
   left == right = frameProgress left == frameProgress right
 
-newExecutionFrame :: MVar () -> Maybe ExecutionFrame -> Maybe NodeId -> [NodeId] -> IO ExecutionFrame
+newExecutionFrame :: MVar () -> Maybe ExecutionFrame -> Maybe Coord -> [Coord] -> IO ExecutionFrame
 newExecutionFrame coordinator parent boundary nodes =
   -- 一般子帧随后安装交付查询；准备期间只对持续参数保守持有。
   newPreparedFrame coordinator parent boundary nodes []
     (\_ _ -> pure (case parent of Nothing -> Nothing; Just _ -> Just True))
 
 -- 初始化捕获和查询后才发布到父帧，避免并行回收观察到不完整的会话预约。
-newPreparedFrame :: MVar () -> Maybe ExecutionFrame -> Maybe NodeId -> [NodeId] -> [DeliveryIdentity]
-                 -> (String -> ActivationId -> IO (Maybe Bool)) -> IO ExecutionFrame
+newPreparedFrame :: MVar () -> Maybe ExecutionFrame -> Maybe Coord -> [Coord] -> [DeliveryIdentity]
+                 -> (Slot -> ActivationId -> IO (Maybe Bool)) -> IO ExecutionFrame
 newPreparedFrame coordinator parent boundary nodes delivered query = uninterruptibleMask_ $ do
   changed <- maybe (newEmptyMVar >>= newIORef) (pure . frameChanged) parent
   frame <- ExecutionFrame parent (maybe 0 ((+ 1) . frameDepth) parent) boundary coordinator
@@ -62,14 +63,14 @@ newPreparedFrame coordinator parent boundary nodes delivered query = uninterrupt
     forM_ parent $ \ancestor -> modifyIORef' (frameChildren ancestor) (frame :)
   pure frame
 
-newChildFrame :: ExecutionFrame -> NodeId -> [NodeId] -> IO ExecutionFrame
+newChildFrame :: ExecutionFrame -> Coord -> [Coord] -> IO ExecutionFrame
 newChildFrame parent boundary = newExecutionFrame (frameCoordinator parent) (Just parent) (Just boundary)
 
 -- 会话待用帧 v1（2026-11-18）：保存 gen 已给出的生产挂载，覆盖步骤之间的复用。
 -- 它只预约未来使用，不作为发布的归属帧；interpreter 托管会话没有 AST 边界。
 -- 生产停止后仍按既有排空规则保留预约，直到会话退役才摘除。
-newSessionFrame :: ExecutionFrame -> Maybe NodeId -> [NodeId] -> [DeliveryIdentity]
-                -> (String -> ActivationId -> IO (Maybe Bool)) -> IO ExecutionFrame
+newSessionFrame :: ExecutionFrame -> Maybe Coord -> [Coord] -> [DeliveryIdentity]
+                -> (Slot -> ActivationId -> IO (Maybe Bool)) -> IO ExecutionFrame
 newSessionFrame parent = newPreparedFrame (frameCoordinator parent) (Just parent)
 
 -- 执行帧与 scope 归属共用的内存协调锁。Graph 的发布/保留交接也在这里串行化，
@@ -79,15 +80,15 @@ withFrameLock frame action = uninterruptibleMask_ $
   withMVar (frameCoordinator frame) (const action)
 
 -- 只读，不再获取协调锁；scope 的可达性检查在锁内调用。
-frameNodes :: ExecutionFrame -> IO [(NodeId, NodeProgress)]
+frameNodes :: ExecutionFrame -> IO [(Coord, NodeProgress)]
 frameNodes = readIORef . frameProgress
 
-framePendingNodes :: ExecutionFrame -> IO [NodeId]
+framePendingNodes :: ExecutionFrame -> IO [Coord]
 framePendingNodes frame = map fst . filter (pending . snd) <$> frameNodes frame
 
 -- 等待读取从实际子帧向外查找，先命中本轮节点；根帧的 lifelong 常驻预约不能覆盖它。
 -- 未知位置保持 Nothing，调用方不能把它当作已经完成。
-frameNodeProgress :: ExecutionFrame -> NodeId -> IO (Maybe NodeProgress)
+frameNodeProgress :: ExecutionFrame -> Coord -> IO (Maybe NodeProgress)
 frameNodeProgress frame node = uninterruptibleMask_ $
   withMVar (frameCoordinator frame) $ \_ -> lookupIn frame
   where
@@ -110,7 +111,7 @@ notifyFrame frame = uninterruptibleMask_ $ do
 
 -- 根帧的常驻位置描述未来轮次；活动子帧另带本轮已经固定的交付身份。
 -- 与 frameNodes 一样只读，调用者在 scope 协调锁内取得一致视图。
-framePendingViews :: ExecutionFrame -> IO [(ExecutionFrame, [NodeId], [DeliveryIdentity])]
+framePendingViews :: ExecutionFrame -> IO [(ExecutionFrame, [Coord], [DeliveryIdentity])]
 framePendingViews frame = do
   nodes <- framePendingNodes frame
   delivered <- readIORef (frameDelivered frame)
@@ -119,10 +120,10 @@ framePendingViews frame = do
   pure ((frame, nodes, delivered) : descendants)
 
 -- 安装发生在本轮启动前；查询在 scope 协调锁内执行，结束时清掉闭包。
-installSessionInputs :: ExecutionFrame -> (String -> ActivationId -> IO (Maybe Bool)) -> IO ()
+installSessionInputs :: ExecutionFrame -> (Slot -> ActivationId -> IO (Maybe Bool)) -> IO ()
 installSessionInputs frame = writeIORef (frameSessionInputs frame)
 
-pendingSessionInput :: ExecutionFrame -> String -> ActivationId -> IO (Maybe Bool)
+pendingSessionInput :: ExecutionFrame -> Slot -> ActivationId -> IO (Maybe Bool)
 pendingSessionInput frame source production = do
   query <- readIORef (frameSessionInputs frame)
   query source production
@@ -130,12 +131,12 @@ pendingSessionInput frame source production = do
 capturedFrameInputs :: ExecutionFrame -> IO [DeliveryIdentity]
 capturedFrameInputs = readIORef . frameCaptures
 
-captureFrameInput :: ExecutionFrame -> NodeId -> String -> ActivationId -> IO ()
+captureFrameInput :: ExecutionFrame -> Coord -> Slot -> ActivationId -> IO ()
 captureFrameInput frame node source production = withFrameLock frame $
   captureFrameInputLocked frame node source production
 
 -- 普通共享值的选择与捕获在同一协调锁内提交，避免覆盖发布后的回收抢先关闭参数实例。
-captureFrameInputLocked :: ExecutionFrame -> NodeId -> String -> ActivationId -> IO ()
+captureFrameInputLocked :: ExecutionFrame -> Coord -> Slot -> ActivationId -> IO ()
 captureFrameInputLocked frame node source production = do
   current <- readIORef (frameCaptures frame)
   let updated = (node, source, production) : filter (\(at, context, _) -> at /= node || context /= source) current
@@ -144,7 +145,7 @@ captureFrameInputLocked frame node source production = do
 
 -- 一个静态会话挂载会重复调用；新根调用安装自己的捕获，不能沿用上一步身份。
 -- 调用者已经持有协调锁。
-resetFrameInputsLocked :: ExecutionFrame -> NodeId -> IO ()
+resetFrameInputsLocked :: ExecutionFrame -> Coord -> IO ()
 resetFrameInputsLocked frame node = do
   current <- readIORef (frameCaptures frame)
   let kept = filter (\(at, _, _) -> at /= node) current
@@ -170,7 +171,7 @@ owningFrame root = foldl deeper root
           | frameDepth candidate > frameDepth selected = candidate
           | otherwise = selected
 
-updateFrame :: ExecutionFrame -> (NodeId -> NodeProgress -> NodeProgress) -> IO [NodeId]
+updateFrame :: ExecutionFrame -> (Coord -> NodeProgress -> NodeProgress) -> IO [Coord]
 updateFrame frame advance = uninterruptibleMask_ $
   withMVar (frameCoordinator frame) $ \_ -> do
     previous <- frameNodes frame
@@ -181,23 +182,23 @@ updateFrame frame advance = uninterruptibleMask_ $
     when (not (null retired)) (notifyFrame frame)
     pure retired
 
-startFrameNode :: ExecutionFrame -> NodeId -> IO ()
+startFrameNode :: ExecutionFrame -> Coord -> IO ()
 startFrameNode frame selected = do
   _ <- updateFrame frame $ \node progress ->
     if node == selected && progress == Pending then Running else progress
   pure ()
 
-completeFrameNode :: ExecutionFrame -> NodeId -> IO [NodeId]
+completeFrameNode :: ExecutionFrame -> Coord -> IO [Coord]
 completeFrameNode frame selected = updateFrame frame $ \node progress ->
   if node == selected && pending progress then Completed else progress
 
 -- 分支退出前已经等待其受控子任务；只撤销尚未进入的节点，不碰其他正在执行的分支。
-skipFrameSubtree :: ExecutionFrame -> NodeId -> IO [NodeId]
+skipFrameSubtree :: ExecutionFrame -> Coord -> IO [Coord]
 skipFrameSubtree frame prefix = updateFrame frame $ \node progress ->
-  if prefix `isPrefixOf` node && progress == Pending then Skipped else progress
+  if node `within` prefix && progress == Pending then Skipped else progress
 
 -- 调用方先等受控任务退出。帧结束释放进度与交付身份，并从父帧摘除，不累计历史帧。
-finishExecutionFrame :: ExecutionFrame -> IO [NodeId]
+finishExecutionFrame :: ExecutionFrame -> IO [Coord]
 finishExecutionFrame frame = uninterruptibleMask_ $
   withMVar (frameCoordinator frame) $ \_ -> do
     previous <- frameNodes frame

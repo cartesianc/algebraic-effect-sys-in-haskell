@@ -26,12 +26,8 @@ newtype OpenedFiles = OpenedFiles FileHandles
 deriving instance Eq FileHandles => Eq OpenedFiles
 deriving instance Show FileHandles => Show OpenedFiles
 
-newtype InspectedFiles = InspectedFiles FileHandles
-deriving instance Eq FileHandles => Eq InspectedFiles
-deriving instance Show FileHandles => Show InspectedFiles
-
 -- effect 方法的定义身份；仅生成区使用，图中不以字符串匹配方法。
-data MethodGen = GetFileNamesGen | ReadFileNamesGen | GetOpenedFilesGen | ReadOpenedFilesGen | OpenFileSessionGen | CloseFileSessionGen | RunHoldFilesGen | RunInspectFilesGen | RunReleaseFilesGen | GetInspectedFilesGen | ReadInspectedFilesGen | RunFinishInspectionGen
+data MethodGen = GetFileNamesGen | ReadFileNamesGen | GetOpenedFilesGen | ReadOpenedFilesGen | OpenFileSessionGen | CloseFileSessionGen | RunHoldFilesGen | RunInspectFilesGen | RunReleaseFilesGen | RunFinishInspectionGen
   deriving (Eq, Ord, Show, Read, SDK.Generic)
 instance SDK.NFData MethodGen
 
@@ -95,18 +91,8 @@ newtype InspectFilesError = InspectFilesError String
   deriving (Eq, Show, Read)
 instance SDK.HandlerError InspectFilesError Errors where raised (InspectFilesError description) = (InspectFilesFailure, description)
 
--- handler snapshotFiles：绑定到 InspectionSnapshot。
-type SnapshotFilesLayer m = (SDK.Reads FileHandles m, SDK.Raw m, SDK.Raises SnapshotFilesError m, MonadIO m)
-class SnapshotFilesHandler m where
-  snapshotFiles :: m FileHandles
-
--- 失败属于 handler：发生位置由 SDK 记录，Error 按 RaisedBy "snapshotFiles" 匹配。
-newtype SnapshotFilesError = SnapshotFilesError String
-  deriving (Eq, Show, Read)
-instance SDK.HandlerError SnapshotFilesError Errors where raised (SnapshotFilesError description) = (SnapshotFilesFailure, description)
-
 -- handler finishInspection：绑定到 FinishInspection。
-type FinishInspectionLayer m = (SDK.Reads FileHandles m, SDK.RawOutputs m, SDK.Raises FinishInspectionError m, MonadIO m)
+type FinishInspectionLayer m = (SDK.Reads [[Char]] m, SDK.RawOutputs m, SDK.Raises FinishInspectionError m, MonadIO m)
 class FinishInspectionHandler m where
   finishInspection :: m [String]
 
@@ -116,16 +102,15 @@ newtype FinishInspectionError = FinishInspectionError String
 instance SDK.HandlerError FinishInspectionError Errors where raised (FinishInspectionError description) = (FinishInspectionFailure, description)
 
 -- 统一失败协议的分类标签：每个 handler 一个；消息与发生位置由 SDK.Failure 保存。
-data Errors = ListFilesFailure | AcquireFilesFailure | OpenFilesFailure | CloseFilesFailure | HoldFilesFailure | InspectFilesFailure | SnapshotFilesFailure | FinishInspectionFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
+data Errors = ListFilesFailure | AcquireFilesFailure | OpenFilesFailure | CloseFilesFailure | HoldFilesFailure | InspectFilesFailure | FinishInspectionFailure | ContextBindingError SDK.ContextFault | ScopeBindingError SDK.ScopeFault
   deriving (Eq, Show)
 
 -- SDK 内部存储：Nothing 仅表示本次运行尚未建立绑定，不是业务缺值。
 data ContextValues = ContextValues
   { boundFileLocations :: Maybe FileNames
   , boundFileResources :: Maybe OpenedFiles
-  , boundInspectionSnapshot :: Maybe InspectedFiles
   }
 
 emptyContexts :: ContextValues
-emptyContexts = ContextValues Nothing Nothing Nothing
+emptyContexts = ContextValues Nothing Nothing
 

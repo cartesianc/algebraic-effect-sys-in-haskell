@@ -1,16 +1,10 @@
 module Crawler.AST (ast) where
 
-import Framework.SDK (AST, chain)
-import Crawler.Workflow.ParsePages (parsePages)
+import Framework.SDK (AST)
 import Crawler.Workflow.PrintPages (printPages)
 
--- 顶层只组合 branch；进入各模块查看其 node，Context 仍由 effect 注册连接。
--- 并行抓取（挂接的 Context 同时解析出页面摘要）全部成功后顺序打印；打印读取摘要，不再抓取。
--- 每条使用闭包结束时自动释放空闲 scope，不另设收尾 branch。
+-- 顶层只组合 branch；进入模块查看其 node。
+-- 每个打印 requests 自己页面的摘要：gen 把抓取链（会话、抓取、去空白、解析）展开为它的前驱，
+-- 所以打印前先抓取并解析本页，不另挂抓取节点。每条使用闭包结束时自动释放空闲 scope。
 ast :: AST
-ast = chain
-  [ parsePages
-  , printPages
-  ]
-
-
+ast = printPages

@@ -27,11 +27,12 @@ effects =
   , excu "MarkReply" "markRead" "Root" []
   , excu "ReadReport" "readText" "Root" [requires "ReportPath"]
   , excu "ReadReply" "readText" "MarkReply" [requires "ReplyPath"]
-    -- 同一个解析器，挂在不同的句柄下，用 rawinput 读取句柄本次的输出
+    -- 同一个解析器，挂在不同的句柄下，用 rawinput 读取句柄本次的输出；只在被 requests 时执行
   , context "ReportCounter" (Asset @LineCount "ReportStats") "countLines" "ReadReport" []
   , context "ReplyCounter" (Asset @LineCount "ReplyStats") "countLines" "ReadReply" []
-  , excu "ShowReport" "showCount" "Root" [requires "ReportStats"]
-  , excu "ShowReply" "showCount" "Root" [requires "ReplyStats"]
+    -- 打印 requests 行数：gen 把读取链（ReadReport 或 MarkReply → ReadReply）展开为它的前驱
+  , excu "ShowReport" "showCount" "Root" [requests "ReportStats", requires "ReportStats"]
+  , excu "ShowReply" "showCount" "Root" [requests "ReplyStats", requires "ReplyStats"]
     -- 同一次读取的输出挂两个 Context，只有一个解析成功；alternative 按候选 requires 的那一个选择
   , excu "InspectReport" "inspectFile" "Root" [requires "ReportPath"]
   , context "ReportBlank" (Asset @EmptyReport "ReportEmpty") "parseBlankReport" "InspectReport" []

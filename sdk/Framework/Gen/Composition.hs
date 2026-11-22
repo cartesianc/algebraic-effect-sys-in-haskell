@@ -14,7 +14,7 @@
 -- 工作表/递归栈是同一计算中的局部证据，不能当作另一套装配结论或运行状态。
 -- 统一入口不降低路径分析的最坏复杂度；保留先投影再组合、缺值路径与分支相关性。
 module Framework.Gen.Composition
-  ( beginComposition, prepareComposition, completeComposition, compositionKey
+  ( beginComposition, beginCompositionRows, prepareComposition, completeComposition
   , PendingComposition, CompositionResult(..)
   ) where
 
@@ -77,6 +77,7 @@ advanceComposition state = case state of
     diagnostic (checkMiddleware effects marks)
     pure (Numbered namespace (PrototypePlan specifications effects workflow marks))
   Numbered namespace plan -> do
+    diagnostic (checkRequested (plannedEffects plan) (plannedWorkflow plan))
     assembly <- diagnostic (assembleProgram plan)
     unit <- bindProgram namespace plan (declareEffects (plannedRegistrations plan)) assembly
       (controlReads (plannedEffects plan) (plannedWorkflow plan))
@@ -114,8 +115,12 @@ settleComposition state = case state of
 -- 声明加载进程返回同一机器的接口检查点。Unit 只含纯 ADT，可 Show/Read；没有 GHC AST 或类字典。
 -- tree 与 targets 是源码上的原样结构和挂载路径；Gen.Workflow 先给出规范形式与迁移后的挂载。
 beginComposition :: String -> [EffectSpec] -> Fix WorkflowF -> HangingTree -> [[(String, [NodeId])]] -> Either String Unit
-beginComposition namespace specifications tree mounts targets = do
-  marks <- hangingMarks (hangingRows mounts) targets
+beginComposition namespace specifications tree mounts = beginCompositionRows namespace specifications tree (hangingRows mounts)
+
+-- 组合只用到 Hanging 各行的 hook 与目标数；语法读取 Hanging 时直接给出这些行。
+beginCompositionRows :: String -> [EffectSpec] -> Fix WorkflowF -> [([String], Int)] -> [[(String, [NodeId])]] -> Either String Unit
+beginCompositionRows namespace specifications tree rows targets = do
+  marks <- hangingMarks rows targets
   (normalized, moved) <- either (Left . show) Right (prepareWorkflow tree marks)
   state <- settleComposition (Declared namespace specifications normalized moved)
   case state of
@@ -129,14 +134,9 @@ prepareComposition unit shapes = do
     AwaitingGraph pending -> pure pending
     _ -> Left "Composition did not reach the graph checkpoint"
 
-compositionKey :: PendingComposition -> String
-compositionKey (PendingComposition unit checked methods histories) = show (unitPlan unit, unitAssembly unit, checked, methods, histories)
-
-completeComposition :: PendingComposition -> Maybe (Prototype String) -> Either String CompositionResult
-completeComposition pending@(PendingComposition unit checked _ _) cached = do
-  state <- settleComposition (case cached of
-    Just prototype -> Checking unit checked prototype
-    Nothing -> BuildingStructure pending)
+completeComposition :: PendingComposition -> Either String CompositionResult
+completeComposition pending = do
+  state <- settleComposition (BuildingStructure pending)
   case state of
     Complete result -> pure result
     _ -> Left "Composition did not complete"
@@ -161,7 +161,9 @@ buildEffectProtos specifications = do
       resolvedOf selected = maybe [] id (lookup selected table)
       providers mode specification = nub
         [demandProvider demand | demand <- resolvedOf (name specification), demandAccess demand == mode]
-      requested = providers RequestAccess
+      -- 持续资产的 requests 启动或加入它的会话，生产链在会话里执行，不是请求方的前驱。
+      continuousNames = [name specification | specification <- specifications, continuousContext specification]
+      requested specification = filter (`notElem` continuousNames) (providers RequestAccess specification)
       required = providers RequireAccess
       requestSource = listToMaybe . requested
       operations specification = nub (input specification : requested specification)
@@ -411,8 +413,6 @@ buildEffectProtos specifications = do
               ++ "; a contract is the asset name declared by its producer Context")
             _ -> Left ("Several Context effects produce contract " ++ contract demand)
           case (access demand, typing provider) of
-            (RequestAccess, _) | continuousContext provider -> Left ("Contract " ++ contract demand
-              ++ " is a continuous asset produced by its session, so " ++ name consumer ++ " cannot request it")
             (RequireAccess, Context { require = False }) -> Left ("Contract " ++ contract demand
               ++ " is not cached (require = False), so " ++ name consumer ++ " cannot require it")
             (StreamAccess, _) | not (continuousContext provider) -> Left ("Contract " ++ contract demand
@@ -735,6 +735,28 @@ withProducerReferences connections definitions =
       | connection <- connections, outputAnchor connection == methodIdentity definition]) }
   | definition <- definitions]
 
+-- 普通资产只由 requests 生产：requests 是前驱，在请求方入口执行该资产的整条生产链，
+-- 回调更新资产的当前值；requires 只被动读取这个值。因此被 requires 的普通资产必须有某个
+-- effect requests 它。alternative 的判定资产由选择读取（chooseCase）产生，不在此列；
+-- 持续资产由会话驱动，另按持续协议检查。
+checkRequested :: [EffectProto String] -> WorkflowTree -> Either (PrototypeError String) ()
+checkRequested effects workflow = valid (null missing)
+  ("Asset never requested: " ++ intercalate "; " missing
+    ++ ". Assets are produced only by requests (a continuous asset also by a lifelong that streams it);"
+    ++ " add requests \"<asset>\" to the reader or to an effect on its Input chain")
+  where
+    requested = [demandContract demand | effect <- effects, demand <- effectDemands effect
+      , demandAccess demand == RequestAccess]
+    -- 持续资产由 lifelong 的订阅驱动；有限读取只读已有会话，不启动它。
+    streamed = [demandContract demand | effect <- effects, demand <- effectDemands effect
+      , demandAccess demand == StreamAccess]
+    deciding = [contract | AlternativeAt _ choice _ <- allWorkflow workflow, (_, caseName) <- alternativeCases choice
+      , effect <- effects, effectName effect == caseName, Just contract <- [effectProduces effect]]
+    missing = nub [contract ++ " (required by " ++ effectName effect ++ ")"
+      | effect <- effects, demand <- effectDemands effect, demandAccess demand == RequireAccess
+      , let contract = demandContract demand
+      , contract `notElem` requested, contract `notElem` streamed, contract `notElem` deciding]
+
 -- 首次尚无 Handlers 时仅生成契约；有源码快照后必须另外执行这个驱动检查。
 checkDriven :: Assembly String -> Prototype String -> Either (PrototypeError String) ()
 checkDriven assembly prototype = valid (null undriven)
@@ -742,7 +764,11 @@ checkDriven assembly prototype = valid (null undriven)
     ++ "; no terminal reaches its production or the handle it hangs below")
   where
     reached = reachableMethods (withProducerReferences (assemblyOutputs assembly) (protoMethods prototype))
-      (map chainEntry (protoChains prototype))
+      (map chainEntry (protoChains prototype) ++ deciding)
+    -- alternative 的选择读取（chooseCase）自己运行各判定 parser，不经句柄注入。
+    deciding = [parser | AlternativeAt _ choice _ <- allWorkflow (protoWorkflow prototype)
+      , (_, caseName) <- alternativeCases choice, effect <- protoEffects prototype, effectName effect == caseName
+      , Just parser <- [lookup ContextRequest (effectMethods effect)]]
     undriven = [methodIdentity definition | definition <- protoMethods prototype
       , methodRole definition == ContextRequest, methodIdentity definition `notElem` reached]
 
@@ -1364,19 +1390,15 @@ resolveSources checked connections definitions defaultReaders prototype = do
       pure [AssetExit True observed]
     inject :: AssetCall -> String -> [AssetExit] -> AssetAnalysis [AssetExit]
     inject call anchor exits = do
-      let anchored = [(outputProducer connection, outputParser connection, outputRole connection)
+      -- 只有持续 Context 挂在句柄输出上，且只在原型指定的发布位置沿用本次输出；解析失败沿会话失败协议传播。
+      let anchored = [(outputProducer connection, outputParser connection)
             | connection <- connections, outputAnchor connection == anchor
-            , outputRole connection == ContextRequest || outputRole connection == ContextStream
-                && reusedHere call (outputProducer connection)]
-          producing = [entry | entry@(_, _, role) <- anchored
-            , maybe True (`notElem` [owner | (owner, _, selected) <- anchored, selected == role]) (assetCaller call)]
+            , reusedHere call (outputProducer connection)]
+          producing = [entry | entry <- anchored
+            , maybe True (`notElem` map fst anchored) (assetCaller call)]
       successes (\state -> do
-        let injectOne (_, produced, role) before = do
-              results <- method (call { assetCaller = Nothing
-                , assetReplays = anchor : assetReplays call }) produced before
-              -- 普通注入保留原吞错协议；持续解析失败沿既有会话失败协议传播。
-              pure (if role == ContextStream then results
-                else nub [AssetExit True after | AssetExit _ after <- results])
+        let injectOne (_, produced) before = method (call { assetCaller = Nothing
+              , assetReplays = anchor : assetReplays call }) produced before
         sequential injectOne producing [AssetExit True state]) exits
     reusedHere call producer = or
       [ effectProduces effect == Just (sessionAsset session) && assetRoot call `elem` nodes

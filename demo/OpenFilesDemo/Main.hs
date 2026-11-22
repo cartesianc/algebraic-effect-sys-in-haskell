@@ -1,4 +1,4 @@
--- 生成：cabal run effect-codegen -- workflow OpenFilesDemo
+-- 生成：cabal run effect-codegen -- compiler OpenFilesDemo
 -- 运行：cabal run open-files-demo
 module OpenFilesDemo.Main (main) where
 

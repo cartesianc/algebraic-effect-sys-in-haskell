@@ -273,7 +273,7 @@ lifelong 写入统一 Prototype，运行装配、来源分析与 `--structure` �
     -- Receive：Stream 注册名；Derive：驱动资产；ReuseOutput：本 lifelong 的原子输出发布位置
 
 - 会话挂载 NodeId 为 lifelong 路径加 `[-1, 会话序号, 步骤]`：步骤 0 是 Stream 单步、步骤 1 是 parser；Derive 只有步骤 0（parser）。挂载以 `SessionChain` 角色进入 `protoChains`，参与构图与 ScopeTree。ReuseOutput 的 `sessionMounts = []`，沿用所记录 AST 位置的 `NodeChain`，不为复用输出虚构一个独立执行。
-- `protoSessions` 保存独立 Receive／Derive 的 interpreter 托管计划，挂载为 `[-2, 序号, 步骤]`。首次有限持续需求启动对应上游，读取者不因此订阅；备用计划本身不等于已启动的供值。ReuseOutput 仍只连接具体 lifelong 的 AST 位置。
+- `protoSessions` 保存独立 Receive／Derive 的 interpreter 托管计划，挂载为 `[-2, 序号, 步骤]`。首次 `requests` 启动对应上游，读取者不因此订阅；备用计划本身不等于已启动的供值。ReuseOutput 仍只连接具体 lifelong 的 AST 位置。
 - ReuseOutput 的位置来自同一 lifelong 的 original Input 链。即使没有订阅者、只供后继 `requires`，AST 挂接的持续副产物也纳入会话集合。`Gen.Composition` 在生成期检查供值位置的唯一性以及订阅、顺序前驱、选择读取组成的启动图；运行时直接执行已确定的计划。
 - 来源分析仍按消费单元裁剪生产步骤的成功出口并保留固定伴随捕获；普通供值另外通过运行级固定点传播，允许独立分支共享。同次交付中的已有捕获优先于普通最新值，缺失辅助值时不补产。普通读取不再按生产挂载与读取位置的先后过滤；算法只在[图规范](EFFECT_GRAPH.md#missing-source)维护。
 - 分析裁剪：以 `lifelongUnits` 确定单元，不穿透单元内的 chain、alternative 或 parallel。每个生产挂载保留本单元可能读取的契约及生产链自身的读取依赖，成功出口再按单元相关契约投影、去重，然后逐步组合 Receive 的步骤和各会话状态。仍分析全部会话，避免遗漏其他会话造成的来源冲突；不把成功出口取并集。生产链的 read／drive 事实独立累计。
@@ -418,11 +418,12 @@ Stream handler 的阻塞／等待决定节奏，SDK 不加间隔；立即返回�
 
 lifelong 外的普通驱动按原有 origin 发布，不因类型相同就广播给任何会话。
 
+<a id="finite-read"></a>
 ### 8.3 lifelong 外的有限读取
 
 普通 `requires "T"` 只执行一次消费，handler 按表示类型取得固定值。它既可以直接读取持续资产，也可以出现在一条普通 Context 生产链中：该链捕获 T 后完成一次原子操作和解析，发布自己的结果，不继承 T 的重复驱动。
 
-gen 为独立 Receive／Derive 生产关系生成 interpreter 托管计划。首次有限需求没有现成视图或合法先前 lifelong 会话时，runtime 按计划建立所需上游，再启动派生生产。A 消费 B 并持续发布，C 只读取 A：B 的增量驱动 A，C 获得一次值后继续自己的 workflow。SDK 不需要知道 A 做的是记录保存、统计还是其他计算。
+gen 为独立 Receive／Derive 生产关系生成 interpreter 托管计划。会话只由 `requests "T"` 启动：入口在方法体之前查找本次的固定交付，没有时先找合法先前 lifelong 会话，再找已启动的托管会话，都没有才按计划建立所需上游并启动派生生产，取当前一条固定给本次调用。`requires "T"` 只读已有会话，不启动；没有可读会话时报告 `ContextNotInitialized`。A 消费 B 并持续发布，C 只读取 A：B 的增量驱动 A，C 获得一次值后继续自己的 workflow。SDK 不需要知道 A 做的是记录保存、统计还是其他计算。
 
 - **固定取值**：本次已有捕获时复用；否则至少等待一次发布，捕获读取时可取得的最新值。之后后台更新不修改这个捕获。
 - **派生起点**：首次登记 Derive 上游游标时，已有发布从当时最新一条开始，没有发布则等首条；之后按序处理新交付。它不承诺追溯登记前的所有发布。
@@ -432,7 +433,7 @@ gen 为独立 Receive／Derive 生产关系生成 interpreter 托管计划。首
 - **不补跑 AST**：ReuseOutput 的位置只在所属 lifelong 实际执行时供值。有限读取建立的是已生成的独立生产计划，不执行或借用未来的 AST 挂载。
 - **收尾限制**：诊断、自动收尾与 close 期间不启动新会话。
 
-这项组合只把生产计划与读取方的启动关系分开；不放开对持续资产的 `requests`，也不把普通链的 `streams` 自动解释成有限读取。
+这项组合把生产计划与读取方的启动关系分开：启动只来自 `requests` 或 lifelong 的订阅；普通链的 `streams` 不会被解释成有限读取。
 
 <a id="execution-boundaries"></a>
 ### 8.4 共同执行结构与模块边界

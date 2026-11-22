@@ -11,7 +11,7 @@ import qualified FacadeProbe.Generated.Handlers as Handlers
 
 
 -- 仅汇总所选末端的成功结果，不保存共享绑定或增加完成包装。
-data Results = WriteReportResult () | WriteReplyResult () | ReadReportResult () | ReadReplyResult () | ShowReportResult () | ShowReplyResult () | OnBlankResult () | OnFilledResult () | ShowAResult () | ShowBResult ()
+data Results = WriteReportResult () | WriteReplyResult () | ShowReportResult () | ShowReplyResult () | OnBlankResult () | OnFilledResult () | ShowAResult () | ShowBResult ()
   deriving Show
 
 -- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
@@ -27,8 +27,6 @@ compiledEntries = do
   pure
     ( [ target "WriteReport" (WriteReportResult () <$ Handlers.runWriteReport)
       , target "WriteReply" (WriteReplyResult () <$ Handlers.runWriteReply)
-      , target "ReadReport" (ReadReportResult () <$ Handlers.runReadReport)
-      , target "ReadReply" (ReadReplyResult () <$ Handlers.runReadReply)
       , target "ShowReport" (ShowReportResult () <$ Handlers.runShowReport)
       , target "ShowReply" (ShowReplyResult () <$ Handlers.runShowReply)
       , target "OnBlank" (OnBlankResult () <$ Handlers.runOnBlank)
@@ -36,7 +34,7 @@ compiledEntries = do
       , target "ShowA" (ShowAResult () <$ Handlers.runShowA)
       , target "ShowB" (ShowBResult () <$ Handlers.runShowB)
       ]
-    , [ target "InspectReport" (SDK.chooseCase "runInspectReport" ContextBindingError (Handlers.runInspectReport) [("ReportBlank", () <$ Handlers.getReportEmpty), ("ReportFilled", () <$ Handlers.getReportText)])
+    , [ target "InspectReport" (SDK.chooseCase "runInspectReport" ContextBindingError (Handlers.runInspectReport) [((SDK.Slot 18 "ReportBlank"), () <$ Handlers.getReportEmpty), ((SDK.Slot 19 "ReportFilled"), () <$ Handlers.getReportText)])
       ]
     , [ ("ParserA", SDK.receiveSteps (target "FeedA" (Handlers.nextFeedA)) (target "ParserA" (() <$ Handlers.getLevelA)))
       , ("ParserB", SDK.receiveSteps (target "FeedB" (Handlers.nextFeedB)) (target "ParserB" (() <$ Handlers.getLevelB)))

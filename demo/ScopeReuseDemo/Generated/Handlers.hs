@@ -191,90 +191,98 @@ instance SDK.RawOutputs (Wrap effect method)
 getFilePaths :: Effects.App Effects.FilePaths
 getFilePaths =
   SDK.handleFailure
-  . SDK.callContext "FileLocations"
-      (\value bindings -> bindings { Effects.boundFileLocations = Just value }) $
+  . SDK.callContext (SDK.Slot 0 "FileLocations")
+      (\value bindings -> bindings { Effects.boundFileLocations = Just value })
+      Effects.boundFileLocations $
     Effects.FilePaths <$> call @"FileLocations" @"sharedPaths" Effects.sharedPaths
 
 readFilePaths :: Effects.App Effects.FilePaths
 readFilePaths =
   SDK.handleFailure $
-    SDK.readContext "FileLocations" Effects.ContextBindingError Effects.boundFileLocations
+    SDK.readContext (SDK.Slot 0 "FileLocations") Effects.ContextBindingError Effects.boundFileLocations
 
 runPrepareProbe :: Effects.App [String]
 runPrepareProbe =
-  SDK.handleFailure
-  . SDK.atomicHandle "runPrepareProbe" [] []
-  . SDK.enterHandler "PrepareProbe" $
+  SDK.runOnce (SDK.Slot 1 "PrepareProbe")
+  . SDK.handleFailure
+  . SDK.atomicHandle "runPrepareProbe" []
+  . SDK.enterHandler (SDK.Slot 1 "PrepareProbe") $
     getFilePaths >> call @"PrepareProbe" @"prepareProbe" Effects.prepareProbe
 
 getOpenedFile :: Effects.App Effects.OpenedFile
 getOpenedFile =
   SDK.handleFailure
-  . SDK.callContext "FileResource"
-      (\value bindings -> bindings { Effects.boundFileResource = Just value }) $
+  . SDK.callContext (SDK.Slot 2 "FileResource")
+      (\value bindings -> bindings { Effects.boundFileResource = Just value })
+      Effects.boundFileResource $
     Effects.OpenedFile <$> call @"FileResource" @"acquireFile" Effects.acquireFile
 
 readOpenedFile :: Effects.App Effects.OpenedFile
 readOpenedFile =
   SDK.handleFailure $
-    SDK.readContext "FileResource" Effects.ContextBindingError Effects.boundFileResource
+    SDK.readContext (SDK.Slot 2 "FileResource") Effects.ContextBindingError Effects.boundFileResource
 
 openSharedFileScope :: Effects.App [String]
 openSharedFileScope =
-  SDK.withErrorPath ["SharedFileScope"]
+  SDK.runOnce (SDK.Slot 3 "SharedFileScope")
+  . SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicScope "openSharedFileScope" [] []
-  . SDK.openScope "SharedFileScope" Effects.ScopeBindingError (Just (() <$ closeSharedFileScope))
-  . SDK.enterHandler "SharedFileScope" $
+  . SDK.atomicScope "openSharedFileScope" []
+  . SDK.openScope (SDK.Slot 3 "SharedFileScope") Effects.ScopeBindingError (Just (() <$ closeSharedFileScope))
+  . SDK.enterHandler (SDK.Slot 3 "SharedFileScope") $
     getOpenedFile >> call @"SharedFileScope" @"openSharedFile" Effects.openSharedFile
 
 closeSharedFileScope :: Effects.App [String]
 closeSharedFileScope =
   SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeSharedFileScope" [] []
-  . SDK.closeScope "SharedFileScope" Effects.ScopeBindingError
-  . SDK.enterHandler "SharedFileScope" $
+  . SDK.atomicScope "closeSharedFileScope" []
+  . SDK.closeScope (SDK.Slot 3 "SharedFileScope") Effects.ScopeBindingError
+  . SDK.enterHandler (SDK.Slot 3 "SharedFileScope") $
     callClose @"SharedFileScope" @"closeSharedFile" Effects.closeSharedFile
 
 runWriteFirst :: Effects.App [String]
 runWriteFirst =
-  SDK.withErrorPath ["SharedFileScope"]
+  SDK.runOnce (SDK.Slot 4 "WriteFirst")
+  . SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runWriteFirst" [] []
-  . SDK.withScopeDependencies ["SharedFileScope"]
-  . SDK.enterHandler "WriteFirst" $
+  . SDK.atomicHandle "runWriteFirst" []
+  . SDK.withScopeDependencies [(SDK.Slot 3 "SharedFileScope")]
+  . SDK.enterHandler (SDK.Slot 4 "WriteFirst") $
     openSharedFileScope >> call @"WriteFirst" @"writeFirst" Effects.writeFirst
 
 runWriteSecond :: Effects.App [String]
 runWriteSecond =
-  SDK.withErrorPath ["SharedFileScope"]
+  SDK.runOnce (SDK.Slot 5 "WriteSecond")
+  . SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runWriteSecond" [] []
-  . SDK.withScopeDependencies ["SharedFileScope"]
-  . SDK.enterHandler "WriteSecond" $
+  . SDK.atomicHandle "runWriteSecond" []
+  . SDK.withScopeDependencies [(SDK.Slot 3 "SharedFileScope")]
+  . SDK.enterHandler (SDK.Slot 5 "WriteSecond") $
     openSharedFileScope >> call @"WriteSecond" @"writeSecond" Effects.writeSecond
 
 runWriteThird :: Effects.App [String]
 runWriteThird =
-  SDK.withErrorPath ["SharedFileScope"]
+  SDK.runOnce (SDK.Slot 6 "WriteThird")
+  . SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runWriteThird" [] []
-  . SDK.withScopeDependencies ["SharedFileScope"]
-  . SDK.enterHandler "WriteThird" $
+  . SDK.atomicHandle "runWriteThird" []
+  . SDK.withScopeDependencies [(SDK.Slot 3 "SharedFileScope")]
+  . SDK.enterHandler (SDK.Slot 6 "WriteThird") $
     openSharedFileScope >> call @"WriteThird" @"writeThird" Effects.writeThird
 
 runVerifyReuse :: Effects.App [String]
 runVerifyReuse =
-  SDK.handleFailure
-  . SDK.atomicHandle "runVerifyReuse" [] []
-  . SDK.enterHandler "VerifyReuse" $
+  SDK.runOnce (SDK.Slot 7 "VerifyReuse")
+  . SDK.handleFailure
+  . SDK.atomicHandle "runVerifyReuse" []
+  . SDK.enterHandler (SDK.Slot 7 "VerifyReuse") $
     getFilePaths >> call @"VerifyReuse" @"verifyReuse" Effects.verifyReuse
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。
 newScopeHandlers :: IO [SDK.ScopeHandler Effects.ContextValues Effects.Errors]
 newScopeHandlers = sequence
-  [ SDK.newScopeHandler "SharedFileScope" ["FileLocations"] (Just "FileResource")
+  [ SDK.newScopeHandler (SDK.Slot 3 "SharedFileScope") [(SDK.Slot 0 "FileLocations")] (Just (SDK.Slot 2 "FileResource"))
   ]
 
 -- Error 回调登记：按 handles 匹配故障的 handler 与协议分类；关联 scope 由 Input 链推导。

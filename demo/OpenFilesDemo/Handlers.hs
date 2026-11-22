@@ -60,10 +60,6 @@ instance CloseFilesLayer m => CloseFilesHandler m where
     liftIO (putStrLn ("[close] released " ++ show (length paths) ++ " files"))
     rawoutput []
 
--- 挂在 ReleaseFiles 下，记下本链持有的文件；值只经资产流动，关闭后的检查读取这份快照，不再 require 已关闭的资源。
-instance SnapshotFilesLayer m => SnapshotFilesHandler m where
-  snapshotFiles = require @FileHandles
-
 -- HoldFiles 与 ReleaseFiles 共用：Input 已开启文件，本链只持有它们，链退出后 SDK 自动关闭。
 instance HoldFilesLayer m => HoldFilesHandler m where
   holdFiles = rawoutput []
@@ -92,10 +88,11 @@ instance InspectFilesLayer m => InspectFilesHandler m where
     -- 链退出后自动关闭；后续 Node 不继承这份活资源。
     rawoutput []
 
--- 前一个 node 的链已经退出，SDK 已关闭它持有的文件；这里只检查快照中各文件的开启标记。
+-- 前一个 node 的链已经退出，SDK 已关闭它持有的文件；这里重新列出文件名，只检查各文件的开启标记，
+-- 不 require 已关闭的资源。
 instance FinishInspectionLayer m => FinishInspectionHandler m where
   finishInspection = do
-    FileHandles paths <- require @FileHandles
+    paths <- require @[String]
     outcome <- liftIO (tryIOError (length <$> filterM (doesFileExist . (++ ".open")) paths))
     stillOpen <- either (raise . FinishInspectionError . displayException) pure outcome
     unless (length paths == 10 && stillOpen == 0) $
