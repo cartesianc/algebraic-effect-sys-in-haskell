@@ -1,6 +1,6 @@
 -- 编译器 IO 驱动：Source/Shape 提供结构，Composition 统一计算，Emit 渲染，Assets 类检。
 -- 流水线说明 v3（2026-11-17）：使用 Gen.Composition 的统一状态转换；本文件负责 IO。
-module Framework.Gen (compileWorkflow, inspectConsole, inspectWorkflow) where
+module Framework.Gen (compileNamespace, inspectConsole, inspectWorkflow) where
 
 import Control.Exception (evaluate)
 import Framework.Gen.Check.Assets (checkAssets)
@@ -27,8 +27,8 @@ import System.FilePath ((</>))
 import System.IO (IOMode(ReadMode, WriteMode), hGetContents, hPutStr, hSetEncoding, stdout, utf8, withFile)
 
 -- 编译一个命名空间的 workflow 程序；程序只经 AST 启动，入口是 AST 中各 node 选中的末端。
-compileWorkflow :: String -> IO ()
-compileWorkflow namespace = do
+compileNamespace :: String -> IO ()
+compileNamespace namespace = do
   let generated = namespaceDirectory namespace </> "Generated"
   (prepared, source, contracts) <- prepareNamespace namespace
   let Prepared outline tree rows pending = prepared

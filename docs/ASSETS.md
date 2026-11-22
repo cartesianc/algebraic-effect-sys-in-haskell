@@ -72,7 +72,7 @@ handler 只按表示类型读取（`require @PageURL`），由 gen 按“表示�
 使用现有命令，例如：
 
 ```text
-cabal run effect-codegen -- workflow Crawler
+cabal run effect-codegen -- compiler Crawler
 ```
 
 生成器先从声明形成候选契约和纯结构，再用 GHC 的无代码生成模式取得手写源码的名称解析结果。本次契约（候选 `Generated/Effects.hs`）和读取的 Handlers 快照以内存 target 供分析使用；检查成功后才写回生成区。生成的 Program、Prototype 与 Handlers 副本以及手写 Main 是普通 Haskell，gencode 不再对它们做类型检查，类型错误由随后的构建报告。它不会调用 handler 或运行业务 IO。首次没有 Handlers 时，只分析可用声明与契约，仍可先生成接口；实现后再次生成才检查完整业务源码。

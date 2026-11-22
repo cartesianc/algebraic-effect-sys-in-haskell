@@ -141,7 +141,7 @@ instance FrameworkRuntime.Raw (Wrap "ReportCounter") where
 在仓库根目录执行，不进入 Cabal 构建：
 
 ```bash
-cabal run effect-codegen -- workflow FacadeProbe
+cabal run effect-codegen -- compiler FacadeProbe
 ```
 
 ```bash

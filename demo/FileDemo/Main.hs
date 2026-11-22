@@ -1,4 +1,4 @@
--- 生成：cabal run effect-codegen -- workflow FileDemo
+-- 生成：cabal run effect-codegen -- compiler FileDemo
 -- 运行：cabal run file-demo
 module FileDemo.Main (main) where
 

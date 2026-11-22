@@ -98,8 +98,8 @@ verifySource namespace path expected = do
 
 staleGenerated :: String -> String -> IO value
 staleGenerated namespace reason = ioError (userError
-  (reason ++ "; run from the repository root: cabal run effect-codegen -- workflow " ++ namespace))
+  (reason ++ "; run from the repository root: cabal run effect-codegen -- compiler " ++ namespace))
 
 -- 仓库的生成命令适配；执行核心不启动编译器，也不依赖 GHC 源码解析 API。
 generate :: String -> IO ()
-generate namespace = callProcess "cabal" ["run", "effect-codegen", "--", "workflow", namespace]
+generate namespace = callProcess "cabal" ["run", "effect-codegen", "--", "compiler", namespace]

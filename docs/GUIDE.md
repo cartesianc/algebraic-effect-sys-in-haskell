@@ -201,7 +201,7 @@ main = interpreter ast effects
 
 | 目的 | 命令 | 结果 | 执行 handler 业务 |
 | --- | --- | --- | --- |
-| gencode：生成或更新源码 | `cabal run effect-codegen -- workflow FileDemo` | 更新 `demo/FileDemo/Generated/` | 否 |
+| gencode：生成或更新源码 | `cabal run effect-codegen -- compiler FileDemo` | 更新 `demo/FileDemo/Generated/` | 否 |
 | 只分析 AST | `cabal run effect-codegen -- ast FileDemo` | 打印 workflow 的 JSON 结构，不写文件 | 否 |
 | 编译 | `cabal build all` | 编译生成器及所有示例 | 否 |
 | runtime：运行 workflow | `cabal run file-demo` | 启动 AST，执行 IO、诊断与资源收尾，打印结果 | 是 |
@@ -215,7 +215,7 @@ main = interpreter ast effects
 独立生成器只需要加载声明、AST 与手写源码，**不依赖当前业务 Main 能否编译**。因此首次建立程序、Generated 缺失、注册或类型接口变化时，使用：
 
 ```sh
-cabal run effect-codegen -- workflow FileDemo
+cabal run effect-codegen -- compiler FileDemo
 ```
 
 生成器把契约接口写入 `Generated/Effects.hs`，带协议包装的执行副本写入 `Generated/Handlers.hs`，静态原型写入 `Generated/Prototype.hs`，业务入口与目标装配写入 `Generated/Program.hs`。`Generated/Assets.hs` 是资产目录，`Generated/Workflow.json` 是本次生成所用 AST 的 JSON 快照（格式见[只分析 AST](#ast-command)）。第一次还没有手写 `Handlers.hs` 时，先生成接口与空实现模块，再填写 instance 并生成执行副本。
@@ -289,7 +289,7 @@ cabal run file-demo -- --structure
 修改 FileDemo 后的一组常用命令如下；结构查看按需执行，最后一行才会运行文件读写业务：
 
 ```sh
-cabal run effect-codegen -- workflow FileDemo
+cabal run effect-codegen -- compiler FileDemo
 cabal run file-demo -- --structure
 cabal run file-demo
 ```
@@ -319,7 +319,7 @@ cabal run file-demo
 
 1. 在 `Types.hs` 写表示类型。
 2. 在 `Effects.hs` 注册 effect，在 `AST.hs`／`Workflow/` 编排末端。
-3. 生成接口：`cabal run effect-codegen -- workflow 程序名`。
+3. 生成接口：`cabal run effect-codegen -- compiler 程序名`。
 4. 按 `Generated/Effects.hs` 中的接口写 `Handlers.hs`。
 5. 再生成一次，运行。
 
@@ -1099,7 +1099,7 @@ snapshotAst = chain [node "Announce", node "Report"]
 ### 运行与查看
 
 ```sh
-cabal run effect-codegen -- workflow StreamDemo
+cabal run effect-codegen -- compiler StreamDemo
 cabal run stream-demo -- --structure
 cabal run stream-demo
 ```
@@ -1275,7 +1275,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 ### 新建一个程序
 
 1. **手写声明**：在 `demo/MyDemo/` 下写 `Types.hs`、`Effects.hs`、`AST.hs` 和 `Workflow/*.hs`。它们不能导入 `Generated` 或 `Handlers`。
-2. **生成接口**：运行 `cabal run effect-codegen -- workflow MyDemo`。此时还没有 `Handlers.hs`，生成器会先产出可编译的空实现模块。
+2. **生成接口**：运行 `cabal run effect-codegen -- compiler MyDemo`。此时还没有 `Handlers.hs`，生成器会先产出可编译的空实现模块。
 3. **写实现**：根据 `Generated/Effects.hs` 中的 handler 类与 Layer 编写 `Handlers.hs`，再生成一次，并写 `Main.hs`。
 4. **加入构建**：参考 [cabal 文件](../algebraic-effect-sys-in-haskell.cabal) 中的 `file-demo` 增加一个 executable。
 

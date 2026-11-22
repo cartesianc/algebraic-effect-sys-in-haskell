@@ -1,4 +1,4 @@
--- 生成：cabal run effect-codegen -- workflow ScopeReuseDemo
+-- 生成：cabal run effect-codegen -- compiler ScopeReuseDemo
 -- 运行：cabal run scope-reuse-demo
 module ScopeReuseDemo.Main (main) where
 

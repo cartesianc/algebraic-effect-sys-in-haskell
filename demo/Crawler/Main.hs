@@ -1,5 +1,5 @@
 -- 运行：cabal run crawler-demo
--- 首次生成接口：cabal run effect-codegen -- workflow Crawler
+-- 首次生成接口：cabal run effect-codegen -- compiler Crawler
 module Crawler.Main (main) where
 
 import Crawler.AST (ast)
