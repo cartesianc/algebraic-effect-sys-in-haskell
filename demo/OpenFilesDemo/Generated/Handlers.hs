@@ -185,7 +185,7 @@ openFileSession =
   SDK.runOnce (SDK.Slot 2 "FileSession")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "openFileSession" []
+  . SDK.atomicScope "openFileSession" [] []
   . SDK.openScope (SDK.Slot 2 "FileSession") Effects.ScopeBindingError (Just (() <$ closeFileSession))
   . SDK.enterHandler (SDK.Slot 2 "FileSession") $
     getOpenedFiles >> call @"FileSession" @"openFiles" Effects.openFiles
@@ -194,7 +194,7 @@ closeFileSession :: Effects.App [String]
 closeFileSession =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeFileSession" []
+  . SDK.atomicScope "closeFileSession" [] []
   . SDK.closeScope (SDK.Slot 2 "FileSession") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 2 "FileSession") $
     callClose @"FileSession" @"closeFiles" Effects.closeFiles
@@ -204,7 +204,7 @@ runHoldFiles =
   SDK.runOnce (SDK.Slot 3 "HoldFiles")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runHoldFiles" []
+  . SDK.atomicHandle "runHoldFiles" [] []
   . SDK.withScopeDependencies [(SDK.Slot 2 "FileSession")]
   . SDK.enterHandler (SDK.Slot 3 "HoldFiles") $
     getFileNames >> openFileSession >> call @"HoldFiles" @"holdFiles" Effects.holdFiles
@@ -214,7 +214,7 @@ runInspectFiles =
   SDK.runOnce (SDK.Slot 4 "InspectFiles")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runInspectFiles" []
+  . SDK.atomicHandle "runInspectFiles" [] []
   . SDK.withScopeDependencies [(SDK.Slot 2 "FileSession")]
   . SDK.enterHandler (SDK.Slot 4 "InspectFiles") $
     runHoldFiles >> call @"InspectFiles" @"inspectFiles" Effects.inspectFiles
@@ -224,7 +224,7 @@ runReleaseFiles =
   SDK.runOnce (SDK.Slot 5 "ReleaseFiles")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runReleaseFiles" []
+  . SDK.atomicHandle "runReleaseFiles" [] []
   . SDK.withScopeDependencies [(SDK.Slot 2 "FileSession")]
   . SDK.enterHandler (SDK.Slot 5 "ReleaseFiles") $
     runHoldFiles >> call @"ReleaseFiles" @"holdFiles" Effects.holdFiles
@@ -233,7 +233,7 @@ runFinishInspection :: Effects.App [String]
 runFinishInspection =
   SDK.runOnce (SDK.Slot 6 "FinishInspection")
   . SDK.handleFailure
-  . SDK.atomicHandle "runFinishInspection" []
+  . SDK.atomicHandle "runFinishInspection" [] []
   . SDK.enterHandler (SDK.Slot 6 "FinishInspection") $
     getFileNames >> call @"FinishInspection" @"finishInspection" Effects.finishInspection
 

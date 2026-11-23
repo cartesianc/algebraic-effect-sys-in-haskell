@@ -84,7 +84,7 @@ newtype DropBlankBodiesError = DropBlankBodiesError String
 instance SDK.HandlerError DropBlankBodiesError Errors where raised (DropBlankBodiesError description) = (DropBlankBodiesFailure, description)
 
 -- handler extractSummary：绑定到 ExtractPage、ExtractLinkedPage。
-type ExtractSummaryLayer m = (SDK.Reads PageURL m, SDK.Raw m, SDK.Raises ExtractSummaryError m, MonadIO m)
+type ExtractSummaryLayer m = (SDK.Raw m, SDK.Raises ExtractSummaryError m, MonadIO m)
 class ExtractSummaryHandler m where
   extractSummary :: m PageSummary
 

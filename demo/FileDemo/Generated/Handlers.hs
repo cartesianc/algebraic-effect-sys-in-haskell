@@ -207,7 +207,7 @@ runLocateFile :: Effects.App [String]
 runLocateFile =
   SDK.runOnce (SDK.Slot 0 "LocateFile")
   . SDK.handleFailure
-  . SDK.atomicHandle "runLocateFile" []
+  . SDK.atomicHandle "runLocateFile" [((SDK.Slot 2 "FileLocation"), () <$ getFileName)] []
   . SDK.enterHandler (SDK.Slot 0 "LocateFile") $
     call @"LocateFile" @"locateFile" Effects.locateFile
 
@@ -248,7 +248,7 @@ openFileSession =
   SDK.runOnce (SDK.Slot 4 "FileSession")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "openFileSession" []
+  . SDK.atomicScope "openFileSession" [] []
   . SDK.openScope (SDK.Slot 4 "FileSession") Effects.ScopeBindingError (Just (() <$ closeFileSession))
   . SDK.enterHandler (SDK.Slot 4 "FileSession") $
     getOpenedFile >> call @"FileSession" @"openSession" Effects.openSession
@@ -257,7 +257,7 @@ closeFileSession :: Effects.App [String]
 closeFileSession =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeFileSession" []
+  . SDK.atomicScope "closeFileSession" [] []
   . SDK.closeScope (SDK.Slot 4 "FileSession") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 4 "FileSession") $
     callClose @"FileSession" @"closeSession" Effects.closeSession
@@ -283,7 +283,7 @@ runReadFile =
   SDK.runOnce (SDK.Slot 6 "ReadFile")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runReadFile" []
+  . SDK.atomicHandle "runReadFile" [] []
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 6 "ReadFile") $
     openFileSession >> call @"ReadFile" @"readFileContent" Effects.readFileContent
@@ -325,7 +325,7 @@ runWriteFirstLine =
   SDK.runOnce (SDK.Slot 9 "WriteFirstLine")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runWriteFirstLine" []
+  . SDK.atomicHandle "runWriteFirstLine" [] []
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 9 "WriteFirstLine") $
     openFileSession >> call @"WriteFirstLine" @"writeFirstLine" Effects.writeFirstLine
@@ -335,7 +335,7 @@ runAppendLine =
   SDK.runOnce (SDK.Slot 10 "AppendLine")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runAppendLine" []
+  . SDK.atomicHandle "runAppendLine" [] []
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 10 "AppendLine") $
     openFileSession >> call @"AppendLine" @"appendLine" Effects.appendLine

@@ -508,12 +508,17 @@ generatedPrototype =
             RunReadReportGen
             RunReadReportGen
             SDK.HandlerMethod
-            (SDK.Call ReadReportPathGen)
+            (SDK.Sequence [SDK.Call ReadReportPathGen, SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]])
         , SDK.MethodDefinition
             RunReadReplyGen
             RunReadReplyGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call RunMarkReplyGen, SDK.Call ReadReplyPathGen])
+            (
+              SDK.Sequence
+                [ SDK.Sequence [SDK.Call RunMarkReplyGen, SDK.Call ReadReplyPathGen]
+                , SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]
+                ]
+            )
         , SDK.MethodDefinition
             GetReportStatsGen
             GetReportStatsGen
@@ -963,13 +968,13 @@ generatedPrototype =
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "ReadReport"
             , SDK.definitionEntry = RunReadReportGen
-            , SDK.definitionReaches = [RunReadReportGen, ReadReportPathGen]
+            , SDK.definitionReaches = [RunReadReportGen, ReadReportPathGen, GetReportStatsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "ReadReply"
             , SDK.definitionEntry = RunReadReplyGen
-            , SDK.definitionReaches = [RunReadReplyGen, RunMarkReplyGen, ReadReplyPathGen]
+            , SDK.definitionReaches = [RunReadReplyGen, RunMarkReplyGen, ReadReplyPathGen, GetReplyStatsGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -1172,7 +1177,7 @@ generatedPrototype =
                   RunReadReportGen
                   RunReadReportGen
                   SDK.HandlerMethod
-                  (SDK.Call ReadReportPathGen)
+                  (SDK.Sequence [SDK.Call ReadReportPathGen, SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]])
               , SDK.MethodDefinition
                   GetReportStatsGen
                   GetReportStatsGen
@@ -1188,7 +1193,12 @@ generatedPrototype =
                   RunReadReplyGen
                   RunReadReplyGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call RunMarkReplyGen, SDK.Call ReadReplyPathGen])
+                  (
+                    SDK.Sequence
+                      [ SDK.Sequence [SDK.Call RunMarkReplyGen, SDK.Call ReadReplyPathGen]
+                      , SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]
+                      ]
+                  )
               , SDK.MethodDefinition RunMarkReplyGen RunMarkReplyGen SDK.HandlerMethod SDK.Empty
               , SDK.MethodDefinition GetReplyStatsGen GetReplyStatsGen SDK.ContextRequest (SDK.Call RunReadReplyGen)
               , SDK.MethodDefinition ReadReplyStatsGen GetReplyStatsGen SDK.ContextRequire SDK.Empty

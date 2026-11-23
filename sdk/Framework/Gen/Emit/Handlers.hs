@@ -13,6 +13,7 @@ import Framework.Gen.Emit.Types (renderValueType)
 import Framework.Gen.Names (HandlerNames, entryName, helperName, handlerFailure)
 import Framework.Gen.Frontend.Source (HandlerSource(..), sourceOffset)
 import Framework.Language.Registration
+import Framework.Prototype.Graph (MethodRole(..))
 import qualified Framework.Prototype as Prototype
 import GHC (GhcPs, moduleNameString)
 import GHC.Fingerprint (fingerprintString)
@@ -303,12 +304,14 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         scopeWrapper binding operation cleanup =
           [ "FrameworkRuntime.atomicScope " ++ show (bindingMethod binding) ++ anchoredOf binding
           , "FrameworkRuntime." ++ operation ++ slot selectedName ++ " FrameworkGenerated.ScopeBindingError" ++ cleanup ] ++ entered
-    -- 挂在原子句柄下的持续 parser：句柄成功交出时按本次执行位置筛选后注入，失败按持续协议传播。
-    -- 普通 Context 不注入，只经 requests 或选择读取生产。
-    anchoredOf binding = " [" ++ intercalate ", "
-      [ "(" ++ slot (outputProducer connection) ++ ", () <$ " ++ call (outputParser connection) ++ ")"
-      | connection <- assemblyOutputs (unitAssembly unit)
-      , outputAnchor connection == bindingMethod binding ] ++ "]"
+    -- 挂在原子句柄下的 parser：句柄成功交出时，普通生产分支（输出联立）每次都注入，
+    -- 持续分支按本次执行位置筛选后注入；两者的失败都沿原链传播。
+    anchoredOf binding = " " ++ connectionsOf ContextRequest ++ " " ++ connectionsOf ContextStream
+      where
+        connectionsOf role = "[" ++ intercalate ", "
+          [ "(" ++ slot (outputProducer connection) ++ ", () <$ " ++ call (outputParser connection) ++ ")"
+          | connection <- assemblyOutputs (unitAssembly unit)
+          , outputRole connection == role, outputAnchor connection == bindingMethod binding ] ++ "]"
     -- 自动收尾：open 带上本 scope 的 close，在同一 Middleware 列表下执行。
     cleanupOf selectedName = case [closing | plan <- unitScopes unit, scopeEffect plan == selectedName, Just closing <- [scopeCleanup plan]] of
       closing : _ -> "(Just (() <$ " ++ call closing ++ "))"

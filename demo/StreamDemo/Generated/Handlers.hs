@@ -172,7 +172,7 @@ openSensorLink =
   SDK.runOnce (SDK.Slot 0 "SensorLink")
   . SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.atomicScope "openSensorLink" []
+  . SDK.atomicScope "openSensorLink" [] []
   . SDK.openScope (SDK.Slot 0 "SensorLink") Effects.ScopeBindingError (Just (() <$ closeSensorLink))
   . SDK.enterHandler (SDK.Slot 0 "SensorLink") $
     call @"SensorLink" @"connectSensor" Effects.connectSensor
@@ -181,7 +181,7 @@ closeSensorLink :: Effects.App [String]
 closeSensorLink =
   SDK.withErrorPath ["SensorLink"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeSensorLink" []
+  . SDK.atomicScope "closeSensorLink" [] []
   . SDK.closeScope (SDK.Slot 0 "SensorLink") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 0 "SensorLink") $
     callClose @"SensorLink" @"disconnectSensor" Effects.disconnectSensor
@@ -250,7 +250,7 @@ runAnnounce :: Effects.App [String]
 runAnnounce =
   SDK.runOnce (SDK.Slot 5 "Announce")
   . SDK.handleFailure
-  . SDK.atomicHandle "runAnnounce" []
+  . SDK.atomicHandle "runAnnounce" [] []
   . SDK.enterHandler (SDK.Slot 5 "Announce") $
     call @"Announce" @"announce" Effects.announce
 
@@ -258,7 +258,7 @@ runShowTemperature :: Effects.App [String]
 runShowTemperature =
   SDK.runOnce (SDK.Slot 6 "ShowTemperature")
   . SDK.handleFailure
-  . SDK.atomicHandle "runShowTemperature" []
+  . SDK.atomicHandle "runShowTemperature" [] []
   . SDK.enterHandler (SDK.Slot 6 "ShowTemperature") $
     call @"ShowTemperature" @"showTemperature" Effects.showTemperature
 
@@ -266,7 +266,7 @@ runCheckTrend :: Effects.App [String]
 runCheckTrend =
   SDK.runOnce (SDK.Slot 7 "CheckTrend")
   . SDK.handleFailure
-  . SDK.atomicHandle "runCheckTrend" []
+  . SDK.atomicHandle "runCheckTrend" [] []
   . SDK.enterHandler (SDK.Slot 7 "CheckTrend") $
     call @"CheckTrend" @"checkTrend" Effects.checkTrend
 
@@ -274,7 +274,7 @@ runReportHeartbeat :: Effects.App [String]
 runReportHeartbeat =
   SDK.runOnce (SDK.Slot 8 "ReportHeartbeat")
   . SDK.handleFailure
-  . SDK.atomicHandle "runReportHeartbeat" []
+  . SDK.atomicHandle "runReportHeartbeat" [] []
   . SDK.enterHandler (SDK.Slot 8 "ReportHeartbeat") $
     call @"ReportHeartbeat" @"reportHeartbeat" Effects.reportHeartbeat
 

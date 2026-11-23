@@ -12,6 +12,7 @@ module Framework.Gen.Plan
 import Data.Char (isSpace, isUpper)
 import Data.List (nub)
 import Framework.Language.Registration hiding (effectKind)
+import Framework.Prototype.Graph (MethodRole)
 import Framework.Prototype.Types
 import qualified Framework.Prototype as Prototype
 
@@ -105,12 +106,14 @@ data EntryMount method = EntryMount
   , mountMethod :: method
   } deriving (Eq, Show, Read)
 
--- 同次输出的连接：anchor → 持续 parser。普通 Context 只经 requests 生产，没有这种连接；
--- 持续解析失败按会话失败协议传播。每次注入只能回放当前 anchor，不能借此跳过其他前驱。
+-- 同次输出的连接：anchor → parser。role 为 ContextRequest 是普通生产分支（输出联立：锚点每次执行都解析
+-- 并写入最新值），ContextStream 是持续分支（只在原型指定的发布位置交给会话）。解析失败都沿原链传播。
+-- 每次注入只能回放当前 anchor，不能借此跳过其他前驱。
 data OutputConnection method = OutputConnection
   { outputAnchor :: method
   , outputParser :: method
   , outputProducer :: String
+  , outputRole :: MethodRole
   } deriving (Eq, Show, Read)
 
 data Assembly method = Assembly

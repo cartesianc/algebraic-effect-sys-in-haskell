@@ -68,6 +68,10 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 持续注入与选择判定期间，挂接 Context 对该句柄的调用由本次 RawOutput 回答，不重复执行。
   replayedOutput :: String -> m (Maybe RawOutput)
   replayedOutput _ = pure Nothing
+  -- 输出联立：以根调用身份把同次输出交给挂接的普通 Context，发布到最新值。
+  -- 解析失败不吞掉，沿原链传播（Error effect 完成前即停止程序）；诊断与收尾期间不注入。
+  injectOutput :: String -> RawOutput -> m () -> m ()
+  injectOutput _ _ _ = pure ()
   -- 同次输出交接给持续 parser，失败按持续执行协议传播，不吞掉。
   injectStreamOutput :: String -> RawOutput -> m () -> m ()
   injectStreamOutput _ _ = id

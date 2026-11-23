@@ -221,7 +221,11 @@ generatedPrototype =
             }
         ]
     , SDK.protoMethods =
-        [ SDK.MethodDefinition RunLocateFileGen RunLocateFileGen SDK.HandlerMethod SDK.Empty
+        [ SDK.MethodDefinition
+            RunLocateFileGen
+            RunLocateFileGen
+            SDK.HandlerMethod
+            (SDK.Sequence [SDK.Empty, SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]])
         , SDK.MethodDefinition
             RunValidateFileNameGen
             RunValidateFileNameGen
@@ -354,13 +358,13 @@ generatedPrototype =
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "LocateFile"
             , SDK.definitionEntry = RunLocateFileGen
-            , SDK.definitionReaches = [RunLocateFileGen]
+            , SDK.definitionReaches = [RunLocateFileGen, GetFileNameGen, RunValidateFileNameGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.OriginChain
             , SDK.definitionEffect = "ValidateFileName"
             , SDK.definitionEntry = RunValidateFileNameGen
-            , SDK.definitionReaches = [RunValidateFileNameGen, RunLocateFileGen]
+            , SDK.definitionReaches = [RunValidateFileNameGen, RunLocateFileGen, GetFileNameGen]
             }
         , SDK.ChainDefinition
             { SDK.definitionKind = SDK.ContextChain
@@ -505,7 +509,11 @@ generatedPrototype =
                   GetOpenedFileGen
                   SDK.ContextRequest
                   (SDK.Sequence [SDK.Call RunLocateFileGen, SDK.Call GetFileNameGen, SDK.Call ReadFileNameGen])
-              , SDK.MethodDefinition RunLocateFileGen RunLocateFileGen SDK.HandlerMethod SDK.Empty
+              , SDK.MethodDefinition
+                  RunLocateFileGen
+                  RunLocateFileGen
+                  SDK.HandlerMethod
+                  (SDK.Sequence [SDK.Empty, SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]])
               , SDK.MethodDefinition
                   GetFileNameGen
                   GetFileNameGen

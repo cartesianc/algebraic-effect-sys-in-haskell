@@ -1,7 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 -- 驱动合成 v1（2026-11-18）：从 Composition 的已解析事实构造挂载与会话，
 -- 之后补全运行所需静态标记；不执行 handler，不读取业务源码。
-module Framework.Gen.Booter (numberWorkflow, checkMiddleware, assembleProgram, completeDriving, entryPlans, controlReads) where
+module Framework.Gen.Booter (numberWorkflow, checkMiddleware, assembleProgram, completeDriving, entryPlans, controlReads, decidingAssets, linkedAssets) where
 import Control.Monad (forM_, unless)
 import Data.Maybe (listToMaybe)
 import Data.Graph (SCC(..), stronglyConnComp)
@@ -253,15 +253,17 @@ assembleProgram plan = do
       valid (length steps == length (sessionMounts described)) ("Session steps differ for " ++ sessionAsset described)
       pure [EntryMount mount SessionChain (sessionAsset described) target method
         | (mount, (target, method)) <- zip (sessionMounts described) steps]
-    -- 普通资产只经 requests 生产，句柄执行后不再注入挂在它下面的普通 Context；
-    -- 只有持续 Context 仍挂在句柄输出上。同一 anchor 内按注册顺序。
+    -- 输出联立：锚点每次执行，挂在它下面的生产分支都读这次输出。普通分支只在资产有人读取时挂接，
+    -- alternative 的判定资产由选择读取生产，不挂接；持续分支只在原型指定的发布位置生效。
+    -- 同一 anchor 内先普通 Context，再持续 Context，各自按注册顺序。
     outputs =
-      [ OutputConnection anchorMethod parser (effectName producer)
+      [ OutputConnection anchorMethod parser (effectName producer) role
       | anchor <- effects, (anchorRole, anchorMethod) <- effectMethods anchor
       , anchorRole `elem` [HandlerMethod, ScopeOpen]
-      , producer <- effects
+      , role <- [ContextRequest, ContextStream], producer <- effects
       , effectAnchor producer == Just (effectName anchor)
-      , Just parser <- [lookup ContextStream (effectMethods producer)] ]
+      , role == ContextStream || maybe False (`elem` linkedAssets effects workflow) (effectProduces producer)
+      , Just parser <- [lookup role (effectMethods producer)] ]
 
 
 -- 标注只能列出已注册的 Middleware；一处标注的 hook 是集合，不能为空或重复。
@@ -394,3 +396,17 @@ entryPlans hooksAtMount effects workflow assembly =
     , let cases = nub [map snd (alternativeCases choice) | AlternativeAt _ choice _ <- allWorkflow workflow
             , alternativeSource choice == source] ]
   , sessionEntries hooksAtMount effects assembly )
+
+-- alternative 的判定资产：由选择读取（chooseCase）依次解析共同句柄的输出产生，不经句柄注入。
+decidingAssets :: [EffectProto method] -> WorkflowTree -> [String]
+decidingAssets effects workflow = nub
+  [contractType | AlternativeAt _ choice _ <- allWorkflow workflow, (_, caseName) <- alternativeCases choice
+  , effect <- effects, effectName effect == caseName, Just contractType <- [effectProduces effect]]
+
+-- 输出联立的普通资产：挂在锚点下、有人读取、且不是判定资产。锚点每次执行都解析并写入最新值。
+linkedAssets :: [EffectProto method] -> WorkflowTree -> [String]
+linkedAssets effects workflow = nub
+  [contractType | producer <- effects, Just _ <- [effectAnchor producer], not (effectContinuous producer)
+  , Just contractType <- [effectProduces producer]
+  , contractType `elem` [demandContract demand | effect <- effects, demand <- effectDemands effect]
+  , contractType `notElem` decidingAssets effects workflow]

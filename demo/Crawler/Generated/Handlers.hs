@@ -74,23 +74,26 @@ instance FetchPageLayer m => FetchPageHandler m where
     case outcome of
       Left problem -> raise (FetchPageError (url ++ ": " ++ displayException problem))
       Right (ExitFailure _, _, message) -> raise (FetchPageError (url ++ ": " ++ message))
-      Right (ExitSuccess, html, _) -> rawoutput [html]
+      -- 交出地址与正文：挂在下面的解析读同一次输出，不另外读取地址资产。
+      Right (ExitSuccess, html, _) -> rawoutput [url, html]
 
--- Pure，两个抓取链共用：rawinput 是本次抓取交出的 list，只留下有内容的正文；没有 IO，也不读资产。
+-- Pure，两个抓取链共用：rawinput 是本次抓取交出的地址与正文，保留地址，只留下有内容的正文；没有 IO，也不读资产。
 instance DropBlankBodiesLayer m => DropBlankBodiesHandler m where
   dropBlankBodies = do
-    bodies <- rawinput
-    rawoutput (filter (not . all isSpace) bodies)
+    fetched <- rawinput
+    rawoutput (case fetched of
+      url : bodies -> url : filter (not . all isSpace) bodies
+      [] -> [])
 
--- 挂在 Pure 下，两个解析共用：rawinput 是去掉空白后的 list（一页正文）。AST 执行抓取时由 SDK 注入，
+-- 挂在 Pure 下，两个解析共用：rawinput 是地址加去掉空白后的正文。抓取句柄在任何位置执行，SDK 都把
 -- 本次输出经 Pure 交到这里，不重新抓取；被 requests 驱动时，rawinput 经 Pure 执行抓取句柄，启动整条链。
 instance ExtractSummaryLayer m => ExtractSummaryHandler m where
   extractSummary = do
     fetched <- rawinput
-    PageURL url <- require @PageURL
-    html <- case fetched of
-      [page] -> pure page
-      _ -> raise (ExtractSummaryError (url ++ ": fetch returned no page body"))
+    (url, html) <- case fetched of
+      [address, page] -> pure (address, page)
+      address : _ -> raise (ExtractSummaryError (address ++ ": fetch returned no page body"))
+      [] -> raise (ExtractSummaryError "fetch returned nothing")
     let tags = canonicalizeTags (parseTags html)
         titleTags = takeWhile (not . isTagCloseName "title")
                   (drop 1 (dropWhile (not . isTagOpenName "title") tags))
@@ -139,7 +142,7 @@ instance CloseSessionLayer m => CloseSessionHandler m where
 
 -- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。
 handlerSourceFingerprint :: Maybe String
-handlerSourceFingerprint = Just "a548361ce474143faa352d3619e7e18f"
+handlerSourceFingerprint = Just "868e5dfbc025a829bd0eca9f2e278291"
 
 -- 以下由 gen 生成。每个 effect 一个类型标签：handler 在标签下执行，
 -- 读取、rawinput 与错误按标签在编译期解析到这个 effect 的来源，不改写 handler 方法体。
@@ -172,9 +175,6 @@ instance SDK.Reads PageURL (Wrap "FetchPage" method) where
 instance SDK.Reads SessionInfo (Wrap "FetchPage" method) where
   require = Wrap (SDK.coerce <$> readCrawlSessionInfo)
 
-instance SDK.Reads PageURL (Wrap "ExtractPage" method) where
-  require = Wrap (SDK.coerce <$> readStartURL)
-
 instance SDK.Reads PageSummary (Wrap "PrintPage" method) where
   require = Wrap (SDK.coerce <$> readStartPageSummary)
 
@@ -183,9 +183,6 @@ instance SDK.Reads PageURL (Wrap "FetchLinkedPage" method) where
 
 instance SDK.Reads SessionInfo (Wrap "FetchLinkedPage" method) where
   require = Wrap (SDK.coerce <$> readCrawlSessionInfo)
-
-instance SDK.Reads PageURL (Wrap "ExtractLinkedPage" method) where
-  require = Wrap (SDK.coerce <$> readLinkedURL)
 
 instance SDK.Reads PageSummary (Wrap "PrintLinkedPage" method) where
   require = Wrap (SDK.coerce <$> readLinkedPageSummary)
@@ -238,7 +235,7 @@ runFetchPage =
   SDK.runOnce (SDK.Slot 2 "FetchPage")
   . SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runFetchPage" []
+  . SDK.atomicHandle "runFetchPage" [((SDK.Slot 4 "ExtractPage"), () <$ getStartPageSummary)] []
   . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.enterHandler (SDK.Slot 2 "FetchPage") $
     openCrawlSession >> getStartURL >> call @"FetchPage" @"fetchPage" Effects.fetchPage
@@ -272,7 +269,7 @@ runPrintPage =
   SDK.runOnce (SDK.Slot 5 "PrintPage")
   . SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runPrintPage" []
+  . SDK.atomicHandle "runPrintPage" [] []
   . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.enterHandler (SDK.Slot 5 "PrintPage") $
     SDK.producingFor [(SDK.Slot 4 "ExtractPage")] (runFetchPage) >> getStartPageSummary >> call @"PrintPage" @"printSummary" Effects.printSummary
@@ -282,7 +279,7 @@ runFetchLinkedPage =
   SDK.runOnce (SDK.Slot 6 "FetchLinkedPage")
   . SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runFetchLinkedPage" []
+  . SDK.atomicHandle "runFetchLinkedPage" [((SDK.Slot 8 "ExtractLinkedPage"), () <$ getLinkedPageSummary)] []
   . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.enterHandler (SDK.Slot 6 "FetchLinkedPage") $
     openCrawlSession >> getLinkedURL >> call @"FetchLinkedPage" @"fetchPage" Effects.fetchPage
@@ -316,7 +313,7 @@ runPrintLinkedPage =
   SDK.runOnce (SDK.Slot 9 "PrintLinkedPage")
   . SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runPrintLinkedPage" []
+  . SDK.atomicHandle "runPrintLinkedPage" [] []
   . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.enterHandler (SDK.Slot 9 "PrintLinkedPage") $
     SDK.producingFor [(SDK.Slot 8 "ExtractLinkedPage")] (runFetchLinkedPage) >> getLinkedPageSummary >> call @"PrintLinkedPage" @"printSummary" Effects.printSummary
@@ -339,7 +336,7 @@ openCrawlSession =
   SDK.runOnce (SDK.Slot 11 "CrawlSession")
   . SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "openCrawlSession" []
+  . SDK.atomicScope "openCrawlSession" [] []
   . SDK.openScope (SDK.Slot 11 "CrawlSession") Effects.ScopeBindingError (Just (() <$ closeCrawlSession))
   . SDK.enterHandler (SDK.Slot 11 "CrawlSession") $
     getCrawlSessionInfo >> call @"CrawlSession" @"openSession" Effects.openSession
@@ -348,7 +345,7 @@ closeCrawlSession :: Effects.App [String]
 closeCrawlSession =
   SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeCrawlSession" []
+  . SDK.atomicScope "closeCrawlSession" [] []
   . SDK.closeScope (SDK.Slot 11 "CrawlSession") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 11 "CrawlSession") $
     callClose @"CrawlSession" @"closeSession" Effects.closeSession

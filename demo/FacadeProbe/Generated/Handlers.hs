@@ -351,7 +351,7 @@ openReportScope =
   SDK.runOnce (SDK.Slot 6 "ReportScope")
   . SDK.withErrorPath ["ReportScope"]
   . SDK.handleFailure
-  . SDK.atomicScope "openReportScope" []
+  . SDK.atomicScope "openReportScope" [] []
   . SDK.openScope (SDK.Slot 6 "ReportScope") Effects.ScopeBindingError (Just (() <$ closeReportScope))
   . SDK.enterHandler (SDK.Slot 6 "ReportScope") $
     getOpenedReport >> call @"ReportScope" @"openTextFile" Effects.openTextFile
@@ -360,7 +360,7 @@ closeReportScope :: Effects.App [String]
 closeReportScope =
   SDK.withErrorPath ["ReportScope"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeReportScope" []
+  . SDK.atomicScope "closeReportScope" [] []
   . SDK.closeScope (SDK.Slot 6 "ReportScope") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 6 "ReportScope") $
     callClose @"ReportScope" @"closeTextFile" Effects.closeTextFile
@@ -370,7 +370,7 @@ openReplyScope =
   SDK.runOnce (SDK.Slot 7 "ReplyScope")
   . SDK.withErrorPath ["ReplyScope"]
   . SDK.handleFailure
-  . SDK.atomicScope "openReplyScope" []
+  . SDK.atomicScope "openReplyScope" [] []
   . SDK.openScope (SDK.Slot 7 "ReplyScope") Effects.ScopeBindingError (Just (() <$ closeReplyScope))
   . SDK.enterHandler (SDK.Slot 7 "ReplyScope") $
     getOpenedReply >> call @"ReplyScope" @"openTextFile" Effects.openTextFile
@@ -379,7 +379,7 @@ closeReplyScope :: Effects.App [String]
 closeReplyScope =
   SDK.withErrorPath ["ReplyScope"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeReplyScope" []
+  . SDK.atomicScope "closeReplyScope" [] []
   . SDK.closeScope (SDK.Slot 7 "ReplyScope") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 7 "ReplyScope") $
     callClose @"ReplyScope" @"closeTextFile" Effects.closeTextFile
@@ -389,7 +389,7 @@ runWriteReport =
   SDK.runOnce (SDK.Slot 8 "WriteReport")
   . SDK.withErrorPath ["ReportScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runWriteReport" []
+  . SDK.atomicHandle "runWriteReport" [] []
   . SDK.withScopeDependencies [(SDK.Slot 6 "ReportScope")]
   . SDK.enterHandler (SDK.Slot 8 "WriteReport") $
     openReportScope >> getReportBody >> call @"WriteReport" @"writeText" Effects.writeText
@@ -399,7 +399,7 @@ runWriteReply =
   SDK.runOnce (SDK.Slot 9 "WriteReply")
   . SDK.withErrorPath ["ReplyScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runWriteReply" []
+  . SDK.atomicHandle "runWriteReply" [] []
   . SDK.withScopeDependencies [(SDK.Slot 7 "ReplyScope")]
   . SDK.enterHandler (SDK.Slot 9 "WriteReply") $
     openReplyScope >> getReplyBody >> call @"WriteReply" @"writeText" Effects.writeText
@@ -408,7 +408,7 @@ runMarkReply :: Effects.App [String]
 runMarkReply =
   SDK.runOnce (SDK.Slot 10 "MarkReply")
   . SDK.handleFailure
-  . SDK.atomicHandle "runMarkReply" []
+  . SDK.atomicHandle "runMarkReply" [] []
   . SDK.enterHandler (SDK.Slot 10 "MarkReply") $
     call @"MarkReply" @"markRead" Effects.markRead
 
@@ -416,7 +416,7 @@ runReadReport :: Effects.App [String]
 runReadReport =
   SDK.runOnce (SDK.Slot 11 "ReadReport")
   . SDK.handleFailure
-  . SDK.atomicHandle "runReadReport" []
+  . SDK.atomicHandle "runReadReport" [((SDK.Slot 13 "ReportCounter"), () <$ getReportStats)] []
   . SDK.enterHandler (SDK.Slot 11 "ReadReport") $
     call @"ReadReport" @"readText" Effects.readText
 
@@ -424,7 +424,7 @@ runReadReply :: Effects.App [String]
 runReadReply =
   SDK.runOnce (SDK.Slot 12 "ReadReply")
   . SDK.handleFailure
-  . SDK.atomicHandle "runReadReply" []
+  . SDK.atomicHandle "runReadReply" [((SDK.Slot 14 "ReplyCounter"), () <$ getReplyStats)] []
   . SDK.enterHandler (SDK.Slot 12 "ReadReply") $
     runMarkReply >> call @"ReadReply" @"readText" Effects.readText
 
@@ -458,7 +458,7 @@ runShowReport :: Effects.App [String]
 runShowReport =
   SDK.runOnce (SDK.Slot 15 "ShowReport")
   . SDK.handleFailure
-  . SDK.atomicHandle "runShowReport" []
+  . SDK.atomicHandle "runShowReport" [] []
   . SDK.enterHandler (SDK.Slot 15 "ShowReport") $
     SDK.producingFor [(SDK.Slot 13 "ReportCounter")] (runReadReport) >> getReportStats >> call @"ShowReport" @"showCount" Effects.showCount
 
@@ -466,7 +466,7 @@ runShowReply :: Effects.App [String]
 runShowReply =
   SDK.runOnce (SDK.Slot 16 "ShowReply")
   . SDK.handleFailure
-  . SDK.atomicHandle "runShowReply" []
+  . SDK.atomicHandle "runShowReply" [] []
   . SDK.enterHandler (SDK.Slot 16 "ShowReply") $
     SDK.producingFor [(SDK.Slot 14 "ReplyCounter")] (runReadReply) >> getReplyStats >> call @"ShowReply" @"showCount" Effects.showCount
 
@@ -474,7 +474,7 @@ runInspectReport :: Effects.App [String]
 runInspectReport =
   SDK.runOnce (SDK.Slot 17 "InspectReport")
   . SDK.handleFailure
-  . SDK.atomicHandle "runInspectReport" []
+  . SDK.atomicHandle "runInspectReport" [] []
   . SDK.enterHandler (SDK.Slot 17 "InspectReport") $
     call @"InspectReport" @"inspectFile" Effects.inspectFile
 
@@ -508,7 +508,7 @@ runOnBlank :: Effects.App [String]
 runOnBlank =
   SDK.runOnce (SDK.Slot 20 "OnBlank")
   . SDK.handleFailure
-  . SDK.atomicHandle "runOnBlank" []
+  . SDK.atomicHandle "runOnBlank" [] []
   . SDK.enterHandler (SDK.Slot 20 "OnBlank") $
     call @"OnBlank" @"describeBlank" Effects.describeBlank
 
@@ -516,7 +516,7 @@ runOnFilled :: Effects.App [String]
 runOnFilled =
   SDK.runOnce (SDK.Slot 21 "OnFilled")
   . SDK.handleFailure
-  . SDK.atomicHandle "runOnFilled" []
+  . SDK.atomicHandle "runOnFilled" [] []
   . SDK.enterHandler (SDK.Slot 21 "OnFilled") $
     call @"OnFilled" @"describeFilled" Effects.describeFilled
 
@@ -572,7 +572,7 @@ runShowA :: Effects.App [String]
 runShowA =
   SDK.runOnce (SDK.Slot 26 "ShowA")
   . SDK.handleFailure
-  . SDK.atomicHandle "runShowA" []
+  . SDK.atomicHandle "runShowA" [] []
   . SDK.enterHandler (SDK.Slot 26 "ShowA") $
     call @"ShowA" @"showLevel" Effects.showLevel
 
@@ -580,7 +580,7 @@ runShowB :: Effects.App [String]
 runShowB =
   SDK.runOnce (SDK.Slot 27 "ShowB")
   . SDK.handleFailure
-  . SDK.atomicHandle "runShowB" []
+  . SDK.atomicHandle "runShowB" [] []
   . SDK.enterHandler (SDK.Slot 27 "ShowB") $
     call @"ShowB" @"showLevel" Effects.showLevel
 

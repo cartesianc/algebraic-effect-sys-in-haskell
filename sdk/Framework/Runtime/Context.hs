@@ -184,19 +184,19 @@ readStreamHistory contextName wrap select = do
 -- Excu 的生成入口：每次调用都执行。
 atomicHandle
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> [(Slot, m ())] -> m [String] -> m [String]
-atomicHandle method continuous = atomicScope method continuous . fmap Just
+  => String -> [(Slot, m ())] -> [(Slot, m ())] -> m [String] -> m [String]
+atomicHandle method anchored continuous = atomicScope method anchored continuous . fmap Just
 
 -- 原子句柄（Excu、Scoped.open／close）的统一出口。handler 交出的 list 与是否成功组成 RawOutput。
--- 普通 Context 只经 requests 或选择读取拉取句柄，不在这里注入；只有挂在句柄下的持续 Context
--- 在本次执行位置是原型指定的发布位置时取得这份输出，失败按持续执行协议传播。没有这样的挂接时直接丢弃。
--- 以它为 Input 的入口不读取这份输出。
+-- 输出联立：挂在句柄下（可经一串 Pure）的普通 Context 每次都解析这份输出并发布到最新值；
+-- 挂在句柄下的持续 Context 在本次执行位置是原型指定的发布位置时取得这份输出。没有挂接时直接丢弃。
+-- 两种注入的解析失败都沿原链传播。以它为 Input 的入口不读取这份输出。
 -- 外层 Nothing 表示 handler 没有执行（复用的 scope 实例、重复 close），此时没有新的输出。
--- continuous 由 gen 写在入口上，各为 (持续 Context 名, 生产入口)。
+-- anchored 与 continuous 由 gen 写在入口上，各为 (Context 编号, 生产入口)。
 atomicScope
   :: (ContextStore environment m, MonadError (Failure cause) m)
-  => String -> [(Slot, m ())] -> m (Maybe [String]) -> m [String]
-atomicScope method continuous body = do
+  => String -> [(Slot, m ())] -> [(Slot, m ())] -> m (Maybe [String]) -> m [String]
+atomicScope method anchored continuous body = do
   replayed <- replayedOutput method
   case replayed of
     -- 注入中的 parser（或它上方的 Pure）经 rawinput 调用挂接的句柄：回答本次输出，不重复执行。
@@ -210,9 +210,11 @@ atomicScope method continuous body = do
         Left problem -> deliver consumer (RawOutput False [message problem]) >> throwError problem
   where
     -- 失败的输出不交给 Context，原失败照常沿原链传播。
-    -- 持续 Context 自己拉取该句柄时由它自己的入口发布，不再注入；
+    -- Context 自己拉取该句柄时由它自己的入口发布，不再注入它；同一句柄下的其他普通分支照常解析。
     -- 中间的 Pure 入口不改变调用者，所以经一串 Pure 拉取时仍认得出是这个 Context。
     deliver consumer raw = when (succeeded raw) $ do
+      forM_ [entry | entry@(owner, _) <- anchored, consumer /= Just owner] $ \(_, produce) ->
+        injectOutput method raw produce
       active <- activeStreamContexts continuous
       when (maybe True (`notElem` map fst active) consumer) $
         forM_ active $ \(_, produce) -> injectStreamOutput method raw produce

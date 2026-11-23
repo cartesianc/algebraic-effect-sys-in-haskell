@@ -18,7 +18,7 @@ module Framework.Gen.Composition
   , PendingComposition, CompositionResult(..)
   ) where
 
-import Control.Monad (foldM, unless, when)
+import Control.Monad (foldM, forM_, unless, when)
 import Control.Monad.State.Strict (StateT, evalStateT, execStateT, gets, lift, modify')
 import Data.Char (isAlphaNum, isLower, isSpace, isUpper)
 import Data.Graph (SCC(..), stronglyConnComp)
@@ -304,6 +304,13 @@ buildEffectProtos specifications = do
               , anchor <- specifications, name anchor == anchorName
               , Scoped {} <- [typing anchor], requestSource anchor == Just (name specification)])
               ("Context " ++ name specification ++ " cannot hang below the scope that requests it as its resource")
+            -- 挂在锚点下的 Context 是生产分支：锚点每次执行都会用这次输出解析它，它只是纯内部函数，
+            -- 所需的值由锚点放进原始输出，不再另外声明 demands。
+            forM_ (anchorOf [] (input specification)) $ \anchorName ->
+              valid (null (demands specification))
+                ("Context " ++ name specification ++ " hangs below " ++ anchorName
+                  ++ " and parses each of its outputs with rawinput; it declares no demands"
+                  ++ " (let " ++ anchorName ++ " put the values it needs into its rawoutput)")
           -- Pure 只在生产链中：用 rawinput 读取直接上游的输出，再交给下游 Pure 或 Context。
           Pure method -> do
             valid (method /= Nothing) ("Pure needs a handler: " ++ name specification)
@@ -735,14 +742,16 @@ withProducerReferences connections definitions =
       | connection <- connections, outputAnchor connection == methodIdentity definition]) }
   | definition <- definitions]
 
--- 普通资产只由 requests 生产：requests 是前驱，在请求方入口执行该资产的整条生产链，
--- 回调更新资产的当前值；requires 只被动读取这个值。因此被 requires 的普通资产必须有某个
--- effect requests 它。alternative 的判定资产由选择读取（chooseCase）产生，不在此列；
+-- 普通资产有两种生产：requests 是前驱，在请求方入口执行该资产的整条生产链；
+-- 挂在锚点下的资产还经输出联立生产，锚点在任何位置执行都解析并写入当前值。requires 只被动读取当前值，
+-- 因此被 requires 的普通资产必须有某个 effect requests 它，或挂在锚点下（锚点是否由 workflow 执行
+-- 由之后的驱动检查确认）。alternative 的判定资产由选择读取（chooseCase）产生，不在此列；
 -- 持续资产由会话驱动，另按持续协议检查。
 checkRequested :: [EffectProto String] -> WorkflowTree -> Either (PrototypeError String) ()
 checkRequested effects workflow = valid (null missing)
   ("Asset never requested: " ++ intercalate "; " missing
-    ++ ". Assets are produced only by requests (a continuous asset also by a lifelong that streams it);"
+    ++ ". Assets are produced by requests, by the output of the handle they hang below"
+    ++ " (a continuous asset also by a lifelong that streams it);"
     ++ " add requests \"<asset>\" to the reader or to an effect on its Input chain")
   where
     requested = [demandContract demand | effect <- effects, demand <- effectDemands effect
@@ -750,12 +759,10 @@ checkRequested effects workflow = valid (null missing)
     -- 持续资产由 lifelong 的订阅驱动；有限读取只读已有会话，不启动它。
     streamed = [demandContract demand | effect <- effects, demand <- effectDemands effect
       , demandAccess demand == StreamAccess]
-    deciding = [contract | AlternativeAt _ choice _ <- allWorkflow workflow, (_, caseName) <- alternativeCases choice
-      , effect <- effects, effectName effect == caseName, Just contract <- [effectProduces effect]]
+    produced = requested ++ streamed ++ decidingAssets effects workflow ++ linkedAssets effects workflow
     missing = nub [contract ++ " (required by " ++ effectName effect ++ ")"
       | effect <- effects, demand <- effectDemands effect, demandAccess demand == RequireAccess
-      , let contract = demandContract demand
-      , contract `notElem` requested, contract `notElem` streamed, contract `notElem` deciding]
+      , let contract = demandContract demand, contract `notElem` produced]
 
 -- 首次尚无 Handlers 时仅生成契约；有源码快照后必须另外执行这个驱动检查。
 checkDriven :: Assembly String -> Prototype String -> Either (PrototypeError String) ()
@@ -1390,14 +1397,18 @@ resolveSources checked connections definitions defaultReaders prototype = do
       pure [AssetExit True observed]
     inject :: AssetCall -> String -> [AssetExit] -> AssetAnalysis [AssetExit]
     inject call anchor exits = do
-      -- 只有持续 Context 挂在句柄输出上，且只在原型指定的发布位置沿用本次输出；解析失败沿会话失败协议传播。
-      let anchored = [(outputProducer connection, outputParser connection)
+      -- 普通生产分支（输出联立）每次都读本次输出；持续 Context 只在原型指定的发布位置沿用本次输出。
+      -- 解析失败都沿原链传播。
+      -- 经 requests 拉取句柄的 Context 由自己的入口发布，不再注入；同一锚点下的其他普通分支照常读这次输出。
+      let anchored = [(outputProducer connection, outputParser connection, outputRole connection)
             | connection <- connections, outputAnchor connection == anchor
-            , reusedHere call (outputProducer connection)]
-          producing = [entry | entry <- anchored
-            , maybe True (`notElem` map fst anchored) (assetCaller call)]
+            , outputRole connection == ContextRequest || reusedHere call (outputProducer connection)]
+          continuous = [owner | (owner, _, ContextStream) <- anchored]
+          producing = [entry | entry@(owner, _, role) <- anchored
+            , if role == ContextRequest then assetCaller call /= Just owner
+              else maybe True (`notElem` continuous) (assetCaller call)]
       successes (\state -> do
-        let injectOne (_, produced) before = method (call { assetCaller = Nothing
+        let injectOne (_, produced, _) before = method (call { assetCaller = Nothing
               , assetReplays = anchor : assetReplays call }) produced before
         sequential injectOne producing [AssetExit True state]) exits
     reusedHere call producer = or

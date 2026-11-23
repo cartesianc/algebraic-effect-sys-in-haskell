@@ -45,7 +45,7 @@ effects =
       { name = "ExtractPage"
       , typing = Context { asset = Asset @PageSummary "StartPageSummary", parser = Just "extractSummary", require = True, stream = False }
       , input = "KeepPageBody"
-      , demands = [requires "StartURL"]
+      , demands = []
       }
   , EffectSpec
       { name = "PrintPage"
@@ -69,7 +69,7 @@ effects =
       { name = "ExtractLinkedPage"
       , typing = Context { asset = Asset @PageSummary "LinkedPageSummary", parser = Just "extractSummary", require = True, stream = False }
       , input = "KeepLinkedPageBody"
-      , demands = [requires "LinkedURL"]
+      , demands = []
       }
   , EffectSpec
       { name = "PrintLinkedPage"

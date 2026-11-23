@@ -63,23 +63,26 @@ instance FetchPageLayer m => FetchPageHandler m where
     case outcome of
       Left problem -> raise (FetchPageError (url ++ ": " ++ displayException problem))
       Right (ExitFailure _, _, message) -> raise (FetchPageError (url ++ ": " ++ message))
-      Right (ExitSuccess, html, _) -> rawoutput [html]
+      -- 交出地址与正文：挂在下面的解析读同一次输出，不另外读取地址资产。
+      Right (ExitSuccess, html, _) -> rawoutput [url, html]
 
--- Pure，两个抓取链共用：rawinput 是本次抓取交出的 list，只留下有内容的正文；没有 IO，也不读资产。
+-- Pure，两个抓取链共用：rawinput 是本次抓取交出的地址与正文，保留地址，只留下有内容的正文；没有 IO，也不读资产。
 instance DropBlankBodiesLayer m => DropBlankBodiesHandler m where
   dropBlankBodies = do
-    bodies <- rawinput
-    rawoutput (filter (not . all isSpace) bodies)
+    fetched <- rawinput
+    rawoutput (case fetched of
+      url : bodies -> url : filter (not . all isSpace) bodies
+      [] -> [])
 
--- 挂在 Pure 下，两个解析共用：rawinput 是去掉空白后的 list（一页正文）。AST 执行抓取时由 SDK 注入，
+-- 挂在 Pure 下，两个解析共用：rawinput 是地址加去掉空白后的正文。抓取句柄在任何位置执行，SDK 都把
 -- 本次输出经 Pure 交到这里，不重新抓取；被 requests 驱动时，rawinput 经 Pure 执行抓取句柄，启动整条链。
 instance ExtractSummaryLayer m => ExtractSummaryHandler m where
   extractSummary = do
     fetched <- rawinput
-    PageURL url <- require @PageURL
-    html <- case fetched of
-      [page] -> pure page
-      _ -> raise (ExtractSummaryError (url ++ ": fetch returned no page body"))
+    (url, html) <- case fetched of
+      [address, page] -> pure (address, page)
+      address : _ -> raise (ExtractSummaryError (address ++ ": fetch returned no page body"))
+      [] -> raise (ExtractSummaryError "fetch returned nothing")
     let tags = canonicalizeTags (parseTags html)
         titleTags = takeWhile (not . isTagCloseName "title")
                   (drop 1 (dropWhile (not . isTagOpenName "title") tags))
