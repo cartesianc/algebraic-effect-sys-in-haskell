@@ -24,8 +24,8 @@
 - 每个 refined asset 对应固定表示 ADT 和唯一 Context 来源；同一资产可声明多种合法访问方式，一个消费者可依赖多个资产。读取按“表示类型 + effect”路由到唯一资产，一个 effect 内表示类型不重复，见[资产来源与访问约束](docs/CORE_DESIGN.md#demand-contract)；不新增位置参数或提前取值。
 - Error 只指向 scope：`RaisedBy` 写 handler 名，必须关联恰好一个 scope；resolve 暂不操作 scope（Error 驱动链待定）。
 - Context 通过 demands 接入。区分 original chain、Context chain、静态 NodeId、运行 Origin／ActivationId 与 Binding ownership。
-- 持续执行由首次需求建立运行，之后按增量驱动。持续资产的生产计划与读取方的重复启动分别由组合关系确定；普通 `requires` 捕获一次值，不继承上游订阅。handler 按声明表示类型读取：`require` 只读本次增量；以 `streams` 读取持续资产的 handler 可用 `stream @T` 读取 x:xs（本次交付及同一会话中更早的交付），会话是否保留历史由 gen 从方法体静态得出，见 [按 x:xs 读取](docs/STREAM_LIFELONG.md#flow)。lifelong 内的原子操作可通过挂接的持续 Context 发布资产；gen 将输出连接绑定到实际 AST 挂载，同次输出不再另起派生操作。Stream 来源仍不进入原始消费链。普通资产按运行共享最新发布，调用捕获优先；持续交付不隐式覆盖捕获；详见 Stream 规范。
-- 取值的固定捕获、共享供值、缺值等待（require 不生产）、资源认领和 scope 回收保证（按实际参数生产身份区分[单例与多例](docs/CORE_DESIGN.md#scope-identity)，结合当前使用与执行帧的待用关系[按可达性回收](docs/CORE_DESIGN.md#scope-gc)）不能在重构中弱化。持续资产的最新值也沿用原 Binding 的生产身份与执行帧作为开启参数；待交付与固定捕获按既有 Binding ownership 保留资源；任意业务 ADT 内嵌资源的自动追踪不属于当前[资产契约](docs/STREAM_LIFELONG.md#binding-retention)，不列为待办。完整规则按下表阅读，不在本文件复制协议。
+- 框架组合的是类方法，不是函数：gen 把 AST、lifelong 与输出联立翻译成组合好的[执行闭包](docs/NEXT_STAGES.md#closure-model)，运行时只执行闭包，不另行调度。`lifelong` 只是给 gen 的标记：其中的单元是驱动资产每次发布后在发布者调用栈里同步执行的回调，没有会话、队列或等待；一个 lifelong 至多一个 Stream 来源，多个独立来源写成 `parallel` 的多个 lifelong。lifelong 之外 `requests` 持续资产时，来源同步运行到结束，读取方取整段静态历史；lifelong 内订阅持续资产写 `streams`，不能 `requests` stream = True 的资产。普通 `requires` 捕获一次值，不继承上游订阅。handler 按声明表示类型读取：`require` 只读本次交付；`stream @T` 读取 x:xs（本次交付及更早的交付），是否保留历史由 gen 从方法体静态得出，见 [按 x:xs 读取](docs/STREAM_LIFELONG.md#flow)。lifelong 内的原子操作可通过挂接的持续 Context 发布资产，输出联立是句柄成功后执行的闭包分支。Stream 来源仍不进入原始消费链。普通资产按运行共享最新发布，调用捕获优先；详见 Stream 规范。
+- 取值的固定捕获、共享供值、缺值即报错（require 不生产也不等待，来源存在由 gen 检查）、资源认领和 scope 回收保证（按实际参数生产身份区分[单例与多例](docs/CORE_DESIGN.md#scope-identity)，结合当前使用与执行帧的待用关系[按可达性回收](docs/CORE_DESIGN.md#scope-gc)）不能在重构中弱化。持续资产的最新值也沿用原 Binding 的生产身份与执行帧作为开启参数；待交付与固定捕获按既有 Binding ownership 保留资源；任意业务 ADT 内嵌资源的自动追踪不属于当前[资产契约](docs/STREAM_LIFELONG.md#binding-retention)，不列为待办。完整规则按下表阅读，不在本文件复制协议。
 - gen 是这个 EDSL 的编译器。SDK 分为源语言（`Framework/Language/`）、gen（`Framework/Gen/`）、编译产物（`Framework/Prototype/`、Generated）与运行时（`Framework/Runtime/`）四层，依赖只从上往下：gen 不导入运行时，运行时不导入 gen。能在生成期判定的组合、读取路由与合法性问题由 gen 报错，不留给运行时；新增检查放进流水线的对应阶段，见 [gen 是编译器](docs/CORE_DESIGN.md#compiler)与[编译流水线](docs/CORE_DESIGN.md#generation)。
 - 组合产生的特设多态是框架的语义核心：声明元素由静态组合关系取得解释，handler 保持原子实现。新增规则先明确结构前提、解释与拒绝条件，再进入 `Gen.Composition` 的统一计算；Emit 和 runtime 执行已确定的类型能力、路由与装配事实，不另行推断。统一入口与事实产物已经存在，内部仍按依赖分阶段计算；不把这描述成通用规则求解器。原则见[主设计](docs/CORE_DESIGN.md#composition-polymorphism)与[组合推导](docs/COMPOSITION.md#why)。
 - Prototype 是纯结构，RuntimeGraph 保存活动关系，ScopeTree 独立且无环。生成、执行、展示共享同一静态模型。
@@ -61,7 +61,7 @@
 | 运行时：协议、Context 与绑定 | [Protocol](sdk/Framework/Runtime/Protocol.hs)、[Context](sdk/Framework/Runtime/Context.hs)、[Binding](sdk/Framework/Runtime/Binding.hs) |
 | 运行时：实际执行、运行身份与图 | [App](sdk/Framework/Runtime/App.hs)、[Identity](sdk/Framework/Runtime/Identity.hs)、[Graph](sdk/Framework/Runtime/Graph.hs) |
 | 运行时：scope 与已知资源保留 | [Scope](sdk/Framework/Runtime/Scope.hs)、[Retention](sdk/Framework/Runtime/Retention.hs) |
-| 运行时：执行 algebra、执行帧、会话与单元调度 | [Execution](sdk/Framework/Runtime/Execution.hs)、[Frame](sdk/Framework/Runtime/Frame.hs)、[Runtime.hs](sdk/Framework/Runtime.hs)、[Session](sdk/Framework/Runtime/Session.hs) |
+| 运行时：执行 gen 给出的闭包、执行帧、发布后的回调与来源驱动 | [Execution](sdk/Framework/Runtime/Execution.hs)、[Frame](sdk/Framework/Runtime/Frame.hs)、[Runtime.hs](sdk/Framework/Runtime.hs)、[Delivery](sdk/Framework/Runtime/Delivery.hs)、[Graph](sdk/Framework/Runtime/Graph.hs) |
 
 完整目录与阅读路线见[主设计：SDK 分工](docs/CORE_DESIGN.md#sdk-layout)。
 

@@ -37,7 +37,7 @@ handler 描述一次原子操作；业务含义由它绑定的 effect、Input、
 
 - **代码能够表达关系。** 注册和 workflow 是有限、明确的结构，读者、HLS、生成器和 agent 面对同一份原生 Haskell。关系应能沿源码追溯，见[代码即文档](CORE_DESIGN.md#code-as-documentation)。
 - **编译器能够计算关系。** gen 把结构作为数据进行分析，形成类型约束、精细化 DI、来源证明和图；不要求原子方法理解整个调度器。
-- **运行时能够执行关系。** interpreter 消费已经确定的结构，管理实际值、执行进度、会话与资源；业务 IO 的结果不由编译器猜测。
+- **运行时能够执行关系。** interpreter 执行 gen 编好的闭包，管理实际值、执行进度与资源；业务 IO 的结果不由编译器猜测。
 
 从业务一侧看，这三件事构成一门领域语言的前端与所有业务共用的后端，见[业务即 DSL](CORE_DESIGN.md#business-as-dsl)；与经典 algebraic effect 在解释机制上的异同见[主设计 3.12](CORE_DESIGN.md#algebraic-effects)。
 
@@ -85,15 +85,15 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 
 **解释只有一个权威来源。** Composition 调用 Injector 合成单入口的能力与装配，调用 Booter 合成挂载及驱动标记；Emit 和 runtime 消费这些结果。这里的“合成解释”对应框架对原子操作的回应与驱动，不新增业务 XxxHandler 类。多个合法运行路径或等价实现不构成歧义；只有既有协议无法确定解释且没有合法的运行选择规则时才拒绝。
 
-**当前统一到这里：** 类型能力、读取与包装、scope/Error 回调、会话入口和单元／来源关联已有明确计算归属。内部仍使用不同阶段算法，不是通用规则求解器；物理分模块不产生新的解释权威。阶段状态、两个检查点和装配流程只在[主设计的编译流水线](CORE_DESIGN.md#generation)维护，缓存协议只在[图规范](EFFECT_GRAPH.md#cache)维护。
+**当前统一到这里：** 类型能力、读取与包装、scope/Error 回调、lifelong 回调表和来源关联已有明确计算归属。内部仍使用不同阶段算法，不是通用规则求解器；物理分模块不产生新的解释权威。阶段状态、两个检查点和装配流程只在[主设计的编译流水线](CORE_DESIGN.md#generation)维护，缓存协议只在[图规范](EFFECT_GRAPH.md#cache)维护。
 
 | 组合问题 | 计算入口或关系查询 | 结果交给谁 |
 | --- | --- | --- |
-| 哪份资产、哪种访问合法 | `buildEffectProtos`（内部解析 demands） | effect 原型、后续会话与读取计算 |
-| workflow 怎样挂载并驱动，是否复用已有输出 | `Booter.numberWorkflow`、`Booter.planSessions`；共享查询 `bootPlan`／`finiteSessions` | 挂载、会话与 `OutputConnection` |
-| handler 获得什么签名和入口 | `Composition.declareEffects` → `Injector.bindProgram`，声明先确定角色，装配再确定能力与路由 | `ReadRoute`、`Capability`、`EntryOperation`、选择器与会话入口；Emit 不再自行选取 |
+| 哪份资产、哪种访问合法 | `buildEffectProtos`（内部解析 demands） | effect 原型、后续持续连接与读取计算 |
+| workflow 怎样挂载并驱动，是否复用已有输出 | `Booter.numberWorkflow`、`Booter.planSessions`、`Booter.checkReactions`；共享查询 `bootPlan`／`finiteSessions` | 挂载、持续资产的生产方式与 `OutputConnection`；拒绝多来源 lifelong、多资产驱动的单元与回调环 |
+| handler 获得什么签名和入口 | `Composition.declareEffects` → `Injector.bindProgram`，声明先确定角色，装配再确定能力与路由 | `ReadRoute`、`Capability`、`EntryOperation`、选择器与静态历史请求；Emit 不再自行选取 |
 | 调用结构怎样进入图与 ScopeTree | `composeMethods`、`buildStructure` | 方法图、链事实、无环 ScopeTree |
-| 单元、会话、捕获与本轮进展关联 | `Booter.completeDriving` | Prototype 的驱动标记；runtime 查询动态进度 |
+| 执行闭包与回调表 | `Gen.Emit.Program`（读 Booter 的 lifelong 计划） | `compiledProgram`：workflow 闭包、回调表、静态运行；runtime 只执行它 |
 | 一个读取能用哪些生产，何时拒绝 | `resolveSources` | 来源证明、`protoSources`、scope 开启计划与静态诊断 |
 
 阶段专用助手放在所属解释入口内；模块按前端、解释、装配合成、驱动合成、数据与输出分工。跨阶段传递事实，不让下游读取原注册再决定一次；具体目录与接口检查点见主设计。
@@ -121,7 +121,7 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 - 新增一种由组合推导的行为时，先在所属专题写完整规则，再在这里加一行，并链接过去。
 - 每条规则先说明结构前提、解释与拒绝条件；本文维护组合原则、产物和规则定位，详细协议归所属专题，阶段状态与验证结果归 [Next stages](NEXT_STAGES.md)。
 - 实现前先列明需要的静态事实与动态状态。已有 Prototype 事实足以表达时直接复用，不为统一入口再造一份计划；确需新增组合解释时，先扩展 `Gen.Composition` 对应计算及其事实产物，Emit 与 runtime 只消费该结果。
-- runtime 依据已有许可关系匹配实际 `ActivationId`、执行帧、使用者与终态，不根据资产内容或 IO 形式重判业务类别。新增资源行为须说明使用了哪些开启计划、来源、会话挂载和 ScopeTree 事实，以及在哪个运行事件撤销使用；不能把生命周期协调写成第二套结构推导。
+- runtime 依据已有许可关系匹配实际 `ActivationId`、执行帧、使用者与终态，不根据资产内容或 IO 形式重判业务类别。新增资源行为须说明使用了哪些开启计划、来源、生产挂载和 ScopeTree 事实，以及在哪个运行事件撤销使用；不能把生命周期协调写成第二套结构推导。
 - 未实现的行为只出现在各节的“尚未覆盖”中，不写成当前能力。
 
 <a id="context"></a>
@@ -149,14 +149,14 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 
 | 行为 | 组合 | 推导 | 驱动 | 规范 |
 | --- | --- | --- | --- | --- |
-| 读取持续资产本次及更早的交付 | `streams "T"`，方法体 `stream @T` | 被历史读取的契约；生产它的 Context 原型标 `effectHistory`，Layer 带 `Streams T` | 会话从开头保留全部交付；读到 `x :> xs`，与 `require @T` 同一固定视图，遍历尾部无需等待未来发布 | [按 x:xs 读取](STREAM_LIFELONG.md#flow) |
-| 读取已有的值，不生产 | `requires "T"`，方法体 `require @T` | 读取权限与读取路由；读取点的来源（`protoSources`） | 读 requests 回调写入的当前值；先用本次捕获，没有值时等待，不补跑生产 | [Context](CORE_DESIGN.md#context) |
+| 读取持续资产本次及更早的交付 | `streams "T"`，方法体 `stream @T` | 被历史读取的契约；生产它的 Context 原型标 `effectHistory`，Layer 带 `Streams T` | 历史从本次来源运行的第一条发布算起；读到 `x :> xs`，与 `require @T` 同一固定视图 | [按 x:xs 读取](STREAM_LIFELONG.md#flow) |
+| 读取已有的值，不生产 | `requires "T"`，方法体 `require @T` | 读取权限与读取路由；gen 只检查 T 有来源 | 先用本次捕获，再读运行级最新值；没有值时立即报 `ContextNotInitialized`，不等待、不补跑生产 | [Context](CORE_DESIGN.md#context) |
 | 静态证明普通读取无来源 | 已到达的读取在所有已分析路径均无合法供值或捕获 | gen 在来源证明阶段拒绝，并定位读取点 | 不把结构错误交给运行时缺值处理 | [静态无来源诊断](EFFECT_GRAPH.md#missing-source) |
 | 按类型读取，读到哪份由注册决定 | 同一表示类型细化成多份资产；handler 只写 `require @T` | 每个 effect 按“表示类型 + effect”生成读取实例 | 同一个 handler 绑到不同 effect，各自读到 demands 里那份资产 | [Context](CORE_DESIGN.md#context) |
-| 读到哪一次发布 | 无需新写法；refined asset 决定唯一生产链 | 共享供值固定点与生产机会，持续资产另走会话 | 普通读取先用调用捕获，再取运行级最新 Binding；缺值等发布，不按 AST 位置过滤 | [图与来源](EFFECT_GRAPH.md#missing-source) |
-| 等不到值时结束等待 | 无需写法 | 来源候选与执行帧的节点进度 | 候选都已退休仍无值时报 `ContextNotInitialized`；资源 Context 与诊断、收尾、close 期间不等待 | [可见范围与等待](CORE_DESIGN.md#await-visibility) |
+| 读到哪一次发布 | 无需新写法；refined asset 决定唯一生产链 | 来源检查 | 普通读取先用调用捕获，再取运行级最新 Binding；不按 AST 位置过滤 | [图与来源](EFFECT_GRAPH.md#missing-source) |
+| 读不到值 | 无需写法 | — | 立即报 `ContextNotInitialized`；读取从不等待，由 workflow 的顺序保证值已发布 | [共享发布与固定捕获](CORE_DESIGN.md#await-visibility) |
 | 声明的读取都有用处 | 无需写法 | 读取依据：方法体的读取或控制流的读取 | 声明了却没有任何依据的读取，生成期报错 | [资产来源与访问约束](CORE_DESIGN.md#demand-contract) |
-| 按同一次输出选择分支 | 各候选以 `requires` 读取同一 Excu 下不同判定 Context 的资产 | Booter 确定共同 Excu 和候选次序，Composition 按判定路径证明供值 | 重放同次输出，首个解析成功者启动。全部拒绝时，按候选顺序检查已有绑定及等待后的发布 | [选择与交接](CORE_DESIGN.md#alternative-selection) |
+| 按同一次输出选择分支 | 各候选以 `requires` 读取同一 Excu 下不同判定 Context 的资产 | Booter 确定共同 Excu 和候选次序 | 同次输出依次交给判定 parser，首个解析成功者启动。全部拒绝时，按候选顺序检查已有绑定，没有就报缺值 | [选择与交接](CORE_DESIGN.md#alternative-selection) |
 
 <a id="scope"></a>
 ## 5. 资源（scope）
@@ -168,14 +168,14 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | 在需要的链上开启 | Scoped 放在链的 Input 上 | 入口的前驱步骤 | 进入入口时先开启；已开启的实例复用，跳过 open 的方法体 | [入口装配](CORE_DESIGN.md#calls) |
 | 注册级单例 | Scoped 的资源 Context 没有开启参数 | scope 开启计划，类别为注册级单例 | 同一注册共享实例，归根帧 | [单例与多例](CORE_DESIGN.md#scope-identity) |
 | 按一次生产共享 | 开启参数只经 `requires` 引用已有的生产 | 各参数可能的生产节点（`protoScopeOpenings`） | 读到同一次生产的开启共享同一实例，保留原归属帧 | 同上 |
-| 持续最新值作开启参数 | 资源 parser 声明 `requires` 并读 `require @T` | `FromSession` 开启计划 | 固定交付末条沿用原生产身份与帧，按交付／游标与后继读取位置判断待用 | [开启计划](EFFECT_GRAPH.md#scope-opening-retention) |
+| 持续最新值作开启参数 | 资源 parser 声明 `requires` 并读 `require @T` | `FromSession` 开启计划 | 固定交付沿用原生产身份与帧，按本次交付与后继读取位置判断待用 | [开启计划](EFFECT_GRAPH.md#scope-opening-retention) |
 | 每次新开（多例） | 当前执行用 `requests` 新生产了开启参数 | 同上 | 新的参数生产确定新实例；本次生产的后继仍共享它 | 同上 |
 | 实例属于哪一层 | 无需写法 | 参数生产所在的执行帧 | 取参数中最内层的帧，无参数取根帧；lifelong 本轮生产参数的实例归本轮 | 同上、[按可达性回收](CORE_DESIGN.md#scope-gc) |
 | 一份资源只有一个关闭者 | Scoped `requests` 资源 Context | open 认领资源绑定 | 首次 open 认领为 owner，所有副本看到同一归属；其他实例认领报 `ScopeContextMismatch` | [scope](CORE_DESIGN.md#scope) |
 | 只在已开启的链里读资源 | handler `require` 资源 | 资源读取点与所属 scope 的开启位置 | 资源在本链的 scope 开启前被读取，生成期拒绝；运行时不扫描其他活实例来补 | [Scope 开启计划](EFFECT_GRAPH.md#scope-opening-retention) |
 | 不再使用时关闭 | 无需写法；close 写在 Scoped 上，可为 `Nothing` | 执行帧的待用关系、开启计划 | 没有当前使用者、匹配的待用或已有 ownership 保留，也没有保留它的子 scope 时同步关闭；`Nothing` 时只移出运行表 | [按可达性回收](CORE_DESIGN.md#scope-gc) |
 | 关闭顺序 | 无需写法 | ScopeTree：静态路径上的共同必经前序，加上 Input／requests 链与资源来源给出的注册前提 | 子先父后；实例只保留同一受控链实际使用的父实例 | [图与来源](EFFECT_GRAPH.md) |
-| 持续执行中复用与回收实例 | 来源的 Input 上游放 Scoped，开启参数按既有 demands 取得 | `SessionProto` 的挂载、`ScopeOpening` 的参数来源、`Source` 读取许可与 `ScopeTree` | 每步撤销实际使用；会话待用帧按实际参数身份保留后续所需实例，新 request 不直接关闭旧实例 | [Stream 资源边界](STREAM_LIFELONG.md#binding-retention)、[事实分工](EFFECT_GRAPH.md#scope-opening-retention) |
+| 持续执行中复用与回收实例 | 来源的 Input 上游放 Scoped，开启参数按既有 demands 取得 | `SessionProto` 的挂载、`ScopeOpening` 的参数来源、`Source` 读取许可与 `ScopeTree` | 每步撤销实际使用；生产挂载按实际参数身份保留后续所需实例，新 request 不直接关闭旧实例 | [Stream 资源边界](STREAM_LIFELONG.md#binding-retention)、[事实分工](EFFECT_GRAPH.md#scope-opening-retention) |
 | 故障归到资源 | Error 的 `handles`；关联 scope 不写 | 沿 Input／requests 找最近的 Scoped，必须恰好一个 | 在同一棵 ScopeTree 的祖先路径上依次检测、处置 | [Error](CORE_DESIGN.md#error) |
 
 <a id="scope-missing"></a>
@@ -200,47 +200,46 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 
 | 行为 | 组合 | 推导 | 驱动 | 规范 | 或可类比为 |
 | --- | --- | --- | --- | --- | --- |
-| 持续来源，取不到下一份输入时结束 | Stream effect，加挂在它下面、`stream = True` 的 Context；来源没有下一份输入时 handler 调用 `streamEnd` | `BootPlan` 为 Receive；Stream handler 的 Layer 带 `Emits` 和 `StreamEnds` | 每次 rawemit 驱动 parser 发布一条，来源正常返回后继续下一步；`streamEnd` 使会话封口 | [4](STREAM_LIFELONG.md#bootplan)、[9.4](STREAM_LIFELONG.md#end) | `repeatEffectOption` |
-| 首次需要时才开始生产 | 无需写法 | 会话描述 | 进入 lifelong 时启动本边界的会话；lifelong 外第一次 `requests` 时启动托管会话 | [7](STREAM_LIFELONG.md#sessions)、[8.3](STREAM_LIFELONG.md#production) | 流的惰性 |
-| 只在值变化时更新（behavior） | Stream effect，加挂在它下面、`stream = False` 的 Context | 原型标 `effectSampled`；会话仍是 Receive，步骤登记为 `behaviorSteps` | 第一次 `requests` 启动生产；与上一条相等的值不追加交付 | [4.1](STREAM_LIFELONG.md#drives) | `changes`、`distinctUntilChanged` |
-| 普通资产的每次发布成为一条交付（event） | lifelong target `requests` 一份普通资产 | `BootPlan` 为 Listen | 会话建立后，该资产每次发布追加一条交付，不回放此前的发布，没有生产任务 | [4.1](STREAM_LIFELONG.md#drives) | 事件总线订阅 |
-| 结束后保留整段（history） | lifelong 外 `requests` 并 `streams` 一份 `stream = True` 的资产 | interpreter 托管会话 | 结束后不 GC 历史，之后的 `stream @T` 仍读整段 | [4.1](STREAM_LIFELONG.md#drives)、[8.3](STREAM_LIFELONG.md#finite-read) | `replay` |
-| 由上游每条交付驱动产出一条 | Context `stream = True`，Input 链上有 `streams "U"`，本 lifelong 没有它的发布位置 | `BootPlan` 为 Derive | 领取一条 U 的交付 → 执行被驱动的 Input 链 → parser 发布一条；可以逐级串联 | [4.2](STREAM_LIFELONG.md#derive)、[8.1](STREAM_LIFELONG.md#production) | `mapEffect` |
-| 消费步骤的输出成为新的持续资产，不重跑该步骤 | Context 挂在 lifelong 节点的原子句柄下 | `BootPlan` 为 `ReuseOutput [发布节点]` | 节点执行后由挂接 parser 发布，不另开任务；发布节点都结束或所在单元结束后封口 | [4.2](STREAM_LIFELONG.md#derive) | `mapEffect` 的结果再被共享 |
-| 每步生产带上同一步的辅助产物 | 生产链上的其他 Context 照常发布 | 独立生产任务的伴随发布 | 每条交付附带同一步发布的普通资产，消费方读到的是同一步的产物 | [7](STREAM_LIFELONG.md#sessions) | — |
-| 资源随生产存续 | 来源的 Input 上游放 Scoped（如 StreamDemo 的 `SensorLink`） | scope 开启计划、会话挂载 | 按[第 5 节](#scope)的同一实例待用规则保持跨步骤复用；退役撤销会话预约 | [9.3](STREAM_LIFELONG.md#binding-retention) | `acquireRelease` |
-| lifelong 的独立来源没有消费方时停止生产 | 无需写法 | lifelong 边界内 Receive／Derive 的读取方登记 | 读取方全部离开时会话退役：停止生产任务 → 封口 → 回收只在会话中开启的 scope；上游同属该边界且无人读取时一并退役。interpreter 托管会话在运行退出时停止，ReuseOutput 按发布位置封口 | [9.5](STREAM_LIFELONG.md#consumer-end) | 按引用计数共享的流 |
-| 生产失败 | 无需写法 | — | 会话失败并通知运行监督；含 lifelong 的程序暂按临时规则终止整次运行 | [9.1](STREAM_LIFELONG.md#failures) | — |
+| 持续来源，取不到下一份输入时结束 | Stream effect，加挂在它下面、`stream = True` 的 Context；来源没有下一份输入时 handler 调用 `streamEnd` | `BootPlan` 为 Receive；Stream handler 的 Layer 带 `Emits` 和 `StreamEnds` | lifelong 的位置同步运行来源：每次 rawemit 执行 parser 发布并同步回调，来源正常返回后再调用一次；`streamEnd` 使位置返回 | [4](STREAM_LIFELONG.md#bootplan)、[9.4](STREAM_LIFELONG.md#end) | `repeatEffectOption` |
+| 到位置时才开始生产 | 无需写法 | workflow 闭包中的 `Drive` 与静态运行 | 执行到 lifelong 的位置时运行来源；lifelong 外第一次 `requests` 时同步运行到结束 | [6.2](STREAM_LIFELONG.md#scheduling)、[8.2](STREAM_LIFELONG.md#finite-read) | 流的惰性 |
+| 只在值变化时更新（behavior） | Stream effect，加挂在它下面、`stream = False` 的 Context | 原型标 `effectSampled`；生成的 `StreamSource` 带比较函数 | 与上一次回调的值相等时不回调 | [4.1](STREAM_LIFELONG.md#drives) | `changes`、`distinctUntilChanged` |
+| 普通资产的每次发布回调一次（event） | lifelong target `requests` 一份普通资产 | 回调表中整次运行有效的一条 | 该资产每次发布都同步回调订阅单元，不回放此前的发布；不需要 `parallel` | [4.1](STREAM_LIFELONG.md#drives) | 事件总线订阅 |
+| 结束后保留整段（history） | lifelong 外 `requests` 并 `streams` 一份 `stream = True` 的资产 | `compiledStatic` 中的根来源 | 第一次 `requests` 同步运行到 `streamEnd`，历史保留到运行结束，之后的 `stream @T` 读整段 | [4.1](STREAM_LIFELONG.md#drives)、[8.2](STREAM_LIFELONG.md#finite-read) | `replay` |
+| 由上游每条交付驱动产出一条 | Context `stream = True`，Input 链上有 `streams "U"`，本 lifelong 没有它的发布位置 | `BootPlan` 为 Derive；回调表中 `U → RunDerive` | U 每次发布后执行被驱动的 Input 链 → parser 发布一条 → 同步回调；可以逐级串联 | [4.2](STREAM_LIFELONG.md#derive)、[8.1](STREAM_LIFELONG.md#production) | `mapEffect` |
+| 消费步骤的输出成为新的持续资产，不重跑该步骤 | Context 挂在 lifelong 节点的原子句柄下 | `BootPlan` 为 `ReuseOutput [发布节点]`；入口的 `atomicScope` 分支 | 句柄成功后执行挂接 parser 发布，同步回调订阅方 | [4.2](STREAM_LIFELONG.md#derive) | `mapEffect` 的结果再被共享 |
+| 每步生产带上同一步的辅助产物 | 生产链上的其他 Context 照常发布 | 发布者已捕获的普通资产 | 回调时随交付一起交给订阅方，消费方读到的是同一步的产物 | [6.3](STREAM_LIFELONG.md#scheduling) | — |
+| 资源随生产存续 | 来源的 Input 上游放 Scoped（如 StreamDemo 的 `SensorLink`） | scope 开启计划、生产挂载 | 按[第 5 节](#scope)的同一实例待用规则保持跨步骤复用；来源结束后按可达性回收 | [9.3](STREAM_LIFELONG.md#binding-retention) | `acquireRelease` |
+| 订阅方都结束时停止来源 | 无需写法 | 来源驱动的单元 | 单元全部 `endStream` 后，来源在下一次 `rawemit` 之前停止，位置返回 | [9.5](STREAM_LIFELONG.md#consumer-end) | `takeUntil` |
+| 生产失败 | 无需写法 | — | 失败沿发布者的调用栈返回并通知运行监督；含 lifelong 的程序暂按临时规则终止整次运行 | [9.1](STREAM_LIFELONG.md#failures) | — |
 
 <a id="stream-consume"></a>
 ### 6.2 消费
 
 | 行为 | 组合 | 推导 | 驱动 | 规范 | 或可类比为 |
 | --- | --- | --- | --- | --- | --- |
-| 每条交付执行一次消费 | lifelong 中以 `streams` 订阅持续资产（socket），或以 `requests` 订阅 behavior、普通资产（event）的节点 | `lifelongUnits`、`lifelongSubscriptions` | 单元逐条领取，每条一个 frame，同一单元的调用不重叠，交付逐轮固定；behavior 只领最新一条；event 订阅方已有交付时不再执行该资产的生产链 | [6](STREAM_LIFELONG.md#scheduling)、[4.1](STREAM_LIFELONG.md#drives) | `runForEach` |
-| 多个消费单元并发推进 | `lifelong [...]` 的各直接子项 | 单元划分 | 各单元并发推进、互不等待 | [6.1](STREAM_LIFELONG.md#scheduling) | 多播后分别运行 |
-| 一份资产有多个消费方 | 多个单元或派生会话 `streams` 同一资产 | 同一边界中一份资产一个会话；读取方登记 | 每个读取方独立游标；保留未领取交付及最新值，目前没有背压 | [7](STREAM_LIFELONG.md#sessions)、[7.1](STREAM_LIFELONG.md#retention) | `broadcast`、`share` |
-| 派生持续资产被普通链读取一次 | A 的 Input 链订阅 B；C 或普通 Context 链 `requires` A | A 的独立 Derive 计划、普通读取路由与托管上游关系 | 首次需求建立 A/B；A 随 B 继续发布，C 取得一次固定 T 后继续，不继承订阅 | [8.3](STREAM_LIFELONG.md#production) | 持续来源的一次采样 |
-| 只读当作不变的值 | 单元内 `requires "T"` | 该读取方只读最新一条 | 不订阅；本轮第一次读取时领取一条交付，同一轮共享；本单元发布的资产则读已有的一条 | [6.3](STREAM_LIFELONG.md#scheduling)、[9.5](STREAM_LIFELONG.md#consumer-end) | — |
-| 按每条交付选择分支 | lifelong 内的 alternative，共同 Excu 由本单元的交付驱动 | `AlternativeProto` | 每次执行时选择读取执行该 Excu 一次，按判定结果只启动一个候选 | [6.3](STREAM_LIFELONG.md#scheduling) | 在逐条处理里做 `Match` |
-| 同一单元里既发布又读取 | 单元中已先行或必经并行的节点发布，其他位置直接或经 Derive 订阅该产物 | 发布位置、单一派生上游与实际轮帧 | 等本轮发布和派生处理稳定；仍无新交付才跳过本轮，封口排空后其订阅结束 | [9.5](STREAM_LIFELONG.md#consumer-end) | — |
-| 消费方不再消费 | 订阅方的 handler 按条件调用 `endStream` | 自己声明 `streams` 的 Excu，或 lifelong 内以 `requests` 订阅的 Excu target，其 Layer 带 `EndsStream` | 节点之后各轮跳过；按读取方计数逐层离开（节点 → 单元 → 会话） | [9.5](STREAM_LIFELONG.md#consumer-end) | `take`、`takeWhile` |
-| 结束向下游传播并排空 | 无需写法 | — | 封口后读取方领完积压才结束；单元在所需来源排空或节点都结束订阅时结束；全部单元结束后 lifelong 返回 | [9.4](STREAM_LIFELONG.md#end) | 流的完成 |
-| 结束后或在外部读最新的值 | lifelong 的后继或 lifelong 外写 `requires "T"` | 静态来源表；后继读取的来源保留 | 后继读每个来源最新一次发布；lifelong 外由托管会话交付，至少等到一条 | [9.4](STREAM_LIFELONG.md#end)、[8.3](STREAM_LIFELONG.md#production) | `runLast` |
+| 每条交付执行一次消费 | lifelong 中以 `streams` 订阅持续资产（socket），或以 `requests` 订阅 behavior、普通资产（event）的节点 | `lifelongUnits`、`lifelongSubscriptions`；回调表 | 每次发布同步回调一次单元，每次一个 frame，交付固定；回调里 `requests` 交付资产的生产链被跳过 | [6](STREAM_LIFELONG.md#scheduling)、[4.1](STREAM_LIFELONG.md#drives) | `runForEach` |
+| 同一份资产驱动多个单元 | `lifelong [...]` 的各直接子项 | 单元划分 | 按声明顺序依次回调；独立来源的并发须写成 `parallel` 的多个 lifelong | [6.1](STREAM_LIFELONG.md#scheduling) | 多播 |
+| 一份资产有多个消费方 | 多个单元或派生 `streams` 同一资产 | 回调表中同一资产的多条 | 每次发布依次执行全部有效回调；回调返回前来源不发布下一条，没有积压 | [7](STREAM_LIFELONG.md#sessions)、[7.1](STREAM_LIFELONG.md#retention) | `broadcast` |
+| 派生持续资产被普通链读取一次 | A 的 Input 链订阅 B；C 在 lifelong 外 `requests` 并 `requires` A | `compiledStatic` 中 B 的根来源，派生回调以静态运行的标识生效 | 第一次 `requests` 同步运行 B 到结束，A 随之派生；C 读 A 的最后一条 | [8.2](STREAM_LIFELONG.md#finite-read) | 持续来源跑完后取值 |
+| 只读当作不变的值 | 单元内 `requires "T"` | 读取路由 | 不订阅；先用回调交付的捕获，再读运行级最新值 | [6.3](STREAM_LIFELONG.md#scheduling) | — |
+| 按每条交付选择分支 | lifelong 内的 alternative，共同 Excu 由本单元的交付驱动 | `AlternativeProto` | 每次回调时选择读取执行该 Excu 一次，按判定结果只启动一个候选 | [6.3](STREAM_LIFELONG.md#scheduling) | 在逐条处理里做 `Match` |
+| 回调又发布自己订阅的资产 | 单元的执行（含 `requests` 闭包、输出联立、派生）会再次发布它订阅的资产 | `Booter.checkReactions` 的回调图 | gen 拒绝：回调会无限递归 | [4.1](STREAM_LIFELONG.md#drives) | — |
+| 消费方不再消费 | 订阅方的 handler 按条件调用 `endStream` | 自己声明 `streams` 的 Excu，或 lifelong 内以 `requests` 订阅的 Excu target，其 Layer 带 `EndsStream` | 节点之后不再执行；单元节点全部结束时不再回调 | [9.5](STREAM_LIFELONG.md#consumer-end) | `take`、`takeWhile` |
+| 来源结束 | 无需写法 | — | 每条发布都已在 rawemit 中同步处理完，`streamEnd` 后 lifelong 的位置直接返回 | [9.4](STREAM_LIFELONG.md#end) | 流的完成 |
+| 结束后或在外部读最新的值 | lifelong 的后继或 lifelong 外写 `requires "T"` | 读取路由 | 读运行级最新值；lifelong 外 `requests` 持续资产时先同步运行到结束 | [9.4](STREAM_LIFELONG.md#end)、[8.2](STREAM_LIFELONG.md#finite-read) | `runLast` |
 
-类比在许多地方并不成立，例如：资产是有唯一来源、按名字细化的业务值；消费按单元逐条推进，同一单元不并发处理多条；保留未领取交付但没有容量背压；`require` 读的是当作不变的值，不是订阅；含 lifelong 的程序中任何失败暂按临时规则终止整次运行。会话内的计数、窗口等跨条逻辑用 `stream @T` 读取 x:xs，流结束后的保存尚未设计。
+类比在许多地方并不成立，例如：资产是有唯一来源、按名字细化的业务值；消费是发布者调用栈里的同步回调，回调返回前来源不发布下一条；`require` 读的是当作不变的值，不是订阅；含 lifelong 的程序中任何失败暂按临时规则终止整次运行。跨条的计数、窗口等逻辑用 `stream @T` 读取 x:xs，流结束后的保存尚未设计。
 
 <a id="stream-drive"></a>
 ### 6.3 运行时据哪些事实选择驱动
 
 | 事实 | 运行时的分支 | 位置 |
 | --- | --- | --- |
-| `sessionPlan` | Receive 和 Derive 启动生产任务并按步骤循环；ReuseOutput 与 Listen 不启动任务，只登记交付状态；Listen 会话由普通资产的发布追加交付 | `Runtime.sessionLauncher`、`Graph.publishAsset` |
-| `effectSampled`、会话边界 | behavior 的读取方只领最新一条；interpreter 托管会话结束后保留历史 | `Session.takeDeliveryOnWith`、`Session.release` |
-| 读取关系（单元内的订阅、普通读取点或选择读取） | 登记读取方游标，按未领取位置保留交付；普通有限读取只捕获当前值 | `Execution` 的 `access`、`Session.release` |
-| 发布节点（`ReuseOutput` 的节点表） | 发布位置按节点计，节点结束或单元结束时撤下，全部撤下才封口 | `Execution` 的 `withdraw` |
-| 发布节点所在的单元与派生上游 | 本单元直接或间接发布的来源，等节点退休和派生处理追平后才判断本轮无交付；外部来源继续等待后续增量 | `DeliveryFrame.frameLocal`、`frameStable`、`Session.sessionCaughtUp` |
-| 节点的订阅是否结束 | 已结束的节点跳过；单元不再有活读取位置时离开会话；lifelong 独立会话的读取方计数归零时退役 | `Execution.repeatUnit`、`Session.departSession` |
+| 生成的 `Drive` | 有来源时同步运行它直到结束或订阅单元全部 `endStream`，再放掉历史；没有来源时立即返回 | `Execution.execute`、`runSource` |
+| 生成的回调表（`Reaction` 的作用范围） | event 整次运行有效；其余回调只在所属 lifelong 或静态运行的来源运行期间有效 | `Execution.reactTo`、`Graph.react` |
+| `StreamSource` 的比较函数（behavior） | 与上一次回调的值相等时不回调 | `Execution.reactTo` |
+| `compiledStatic` | lifelong 外第一次 `requests` 同步运行根来源，同一根来源只运行一次 | `Execution.staticRun` |
+| 节点的订阅是否结束 | 已结束的节点不再执行；单元节点全部结束时不再回调 | `Execution.respond` |
 
 <a id="stream-missing"></a>
 ### 6.4 尚未覆盖
@@ -280,7 +279,7 @@ Middleware 是由 Root 级入口驱动的 Excu：注册给出 handler 与拦截�
 | --- | --- | --- | --- | --- |
 | 观察具名分支中的原子操作 | `Hanging.hs` 将 Middleware 挂到具名 AST；注册以 `intercept` 声明类别 | 按定义身份定位全部使用位置；Booter 求覆盖列表，Injector.Super 与捕获点的类别取交集 | `hook` 的通配模式只处理送达的通知；业务树的顺序与单元划分保持原义 | [Middleware](CORE_DESIGN.md#middleware) |
 | 只捕获某几类 effect | `intercept = [ExcuKind, ...]`，或 `allEffects` | Injector 为绑定选定捕获类别；`Injector.Super` 为每个 (列表, 类别) 选定 Middleware；gen 把每次原子调用交给相应标签的 Root.super | 匹配的调用在进入以及显式执行 rawinput、rawoutput、rawemit、raise 时同步通知；直接实例执行原 action | 同上 |
-| 同一 handler 在不同子树表现不同 | 一处挂载在标注内，另一处不在 | 每个挂载的 Middleware 列表（`drivingHooks`），按位置前缀取覆盖它的标注之并，会话步骤同样；入口对列表多态，挂载登记时在类型上给出列表，调用点经入口约束 `Captured hooks` 取得该列表在本类别上的选择 | 按静态登记名选取已编译的 Target；未覆盖的挂载以空列表登记 | 同上 |
+| 同一 handler 在不同子树表现不同 | 一处挂载在标注内，另一处不在 | 每个挂载的 Middleware 列表（`drivingHooks`），按位置前缀取覆盖它的标注之并，生产步骤同样；入口对列表多态，挂载登记时在类型上给出列表，调用点经入口约束 `Captured hooks` 取得该列表在本类别上的选择 | 按静态登记名选取已编译的 Target；未覆盖的挂载以空列表登记 | 同上 |
 | 读取本次操作 | `op <- hook` | 只为 Middleware 的标签生成 `Hooks` 实例 | `op` 是触发该次调用的操作 | 同上 |
 | Middleware 与被捕获的链不成环 | 无需写法 | 任何 effect 的 Input 都不能指向 Middleware；Middleware 没有 demands；Middleware 在自己的标签下执行，那里的调用点不调用 `notify` | Middleware 自己不再被捕获 | 同上 |
 

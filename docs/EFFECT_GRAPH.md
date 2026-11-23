@@ -1,6 +1,6 @@
 # 静态 Prototype、运行图与 ScopeTree
 
-本文是[主设计第 5 章](CORE_DESIGN.md)引用的详细规范，负责 Prototype、来源分析、RuntimeGraph、ScopeTree 与重跑边界。范围为 Stage 1/2 的协议；Stream／lifelong 在原型中的表示（`LifelongAt`、会话挂载、`protoSessions`、`FromSession`）见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static)，运行接入见[第 7 节](STREAM_LIFELONG.md#sessions)。
+本文是[主设计第 5 章](CORE_DESIGN.md)引用的详细规范，负责 Prototype、来源分析、RuntimeGraph、ScopeTree 与重跑边界。范围为 Stage 1/2 的协议；Stream／lifelong 在原型中的表示（`LifelongAt`、生产挂载、`protoSessions`、`FromSession`）见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static)，运行接入见[第 7 节](STREAM_LIFELONG.md#sessions)。执行由 gen 写在 `Generated/Program.hs` 的闭包与回调表完成（[闭包模型](NEXT_STAGES.md#closure-model)），运行时不遍历 Prototype 编排。
 
 
 业务入口仍为 `main = interpreter ast effects`，手写 handler 仍使用原生 Haskell 的 `instance`、`do`、模式匹配和读取（`require @T`、`rawinput`）。gen 的组合状态机（[Framework.Gen.Composition](../sdk/Framework/Gen/Composition.hs)）统一计算注册、方法、workflow、链定义与挂载、effect graph 和 ScopeTree，输出唯一的 `generatedPrototype :: SDK.Prototype MethodGen` 显式 ADT 常量；数据模型在 `Framework.Prototype`。运行时校验并直接使用这份原型，不预执行 Context 或资源 IO。
@@ -17,31 +17,27 @@
 | --- | --- | --- |
 | 注册与方法 | `protoEffects`、`protoMethods` | 集中保存能力、取值路由、挂接和显式方法结构 |
 | 链定义 | `protoChainDefinitions` | 用 `OriginChain` 与 `ContextChain` 区分原始操作链和 Context 生产／读取链；按入口方法识别 |
-| AST 挂载 | `protoWorkflow`、`protoChains` | 每个 node、alternative 选择读取和会话生产步骤各一条挂载记录（`NodeChain`／`SelectorChain`／`SessionChain`），按 `NodeId` 识别 |
-| 持续执行 | `protoWorkflow` 中的 `LifelongAt`、`protoSessions` | lifelong 的单元、订阅与会话；interpreter 托管的会话；见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static) |
-| scope 开启计划 | `protoScopeOpenings` | 每个开启位置的参数生产节点／会话来源及可能类别；不代替实际绑定 |
+| AST 挂载 | `protoWorkflow`、`protoChains` | 每个 node、alternative 选择读取和持续资产的生产步骤各一条挂载记录（`NodeChain`／`SelectorChain`／`SessionChain`），按 `NodeId` 识别 |
+| 持续执行 | `protoWorkflow` 中的 `LifelongAt`、`protoSessions` | lifelong 的单元、订阅与持续资产的生产方式；lifelong 外静态运行的生产计划；见 [Stream 第 5.3 节](STREAM_LIFELONG.md#static) |
+| scope 开启计划 | `protoScopeOpenings` | 每个开启位置的参数生产节点／持续来源及可能类别；不代替实际绑定 |
 | 运行实例 | 活动 chain、Context 生产身份、执行帧、scope 实例与入口使用登记 | 运行图共享静态原型，根据实际调用更新；不反向修改定义 |
 
-`NodeId = [Int]` 是当前原型快照内 AST [规范形式](CORE_DESIGN.md#workflow-normal-form)的下标路径：根为 `[]`，普通子项从零编号；alternative 的选择读取链使用该分支路径加 `[-1]`；lifelong 的会话步骤使用 lifelong 路径加 `[-1, 会话序号, 步骤]`，interpreter 托管的会话步骤使用 `[-2, 会话序号, 步骤]`。同一个 origin 末端挂载两次会有两个 `NodeId`，共享方法定义。Context 链经 demand 或挂接进入，定义本身没有虚构的 AST 位置。编辑 AST 后重新生成编号；这些路径不充当跨快照稳定 key 或运行调用序号。
+`NodeId = [Int]` 是当前原型快照内 AST [规范形式](CORE_DESIGN.md#workflow-normal-form)的下标路径：根为 `[]`，普通子项从零编号；alternative 的选择读取链使用该分支路径加 `[-1]`；lifelong 的生产步骤使用 lifelong 路径加 `[-1, 序号, 步骤]`，lifelong 外静态运行的生产步骤使用 `[-2, 序号, 步骤]`。同一个 origin 末端挂载两次会有两个 `NodeId`，共享方法定义。Context 链经 demand 或挂接进入，定义本身没有虚构的 AST 位置。编辑 AST 后重新生成编号；这些路径不充当跨快照稳定 key 或运行调用序号。
 
-链事实和标准查询由 `Framework.Prototype` 统一提供：`Prototype.Types` 保存纯模型，`Prototype.Graph` 保存方法图与 ScopeTree 的数据，`Prototype.Query` 提供只读查询，`Prototype.Validate` 校验自洽并核对 AST 快照。构建算法由 `Gen.Composition` 统一持有：从声明和方法形状逐步推导装配、图与来源，不让不同输出模块另行解释同一组合。内部状态与最终 Prototype 均不复制业务注册；gen 的输出阶段读取已确定事实生成接口与包装，Execution 读取挂载关系装配闭包，运行图共享这份原型并保存活动实例关系。运行图不累计完整方法调用历史。Stage 2 由 `chainDrives`、`chainReads` 和 `protoSources` 保存可能生产、缺值读取与供值机会；runtime 读取共享最新值，保留固定捕获。清理与 Error 边界保留。SDK 当前采用 Haskell ADT，不增加 JSON 或外部 LSP 协议。
+链事实和标准查询由 `Framework.Prototype` 统一提供：`Prototype.Types` 保存纯模型，`Prototype.Graph` 保存方法图与 ScopeTree 的数据，`Prototype.Query` 提供只读查询，`Prototype.Validate` 校验自洽并核对 AST 快照。构建算法由 `Gen.Composition` 统一持有：从声明和方法形状逐步推导装配、图与来源，不让不同输出模块另行解释同一组合。内部状态与最终 Prototype 均不复制业务注册；gen 的输出阶段读取已确定事实生成接口与包装，Execution 执行 gen 写好的闭包，运行图共享这份原型并保存活动实例关系。运行图不累计完整方法调用历史。`chainDrives`、`chainReads` 和 `protoSources` 保存可能生产与读取来源，供 scope 开启计划与 `--structure` 使用；runtime 读取共享最新值，保留固定捕获，缺值立即报错。清理与 Error 边界保留。SDK 当前采用 Haskell ADT，不增加 JSON 或外部 LSP 协议。
 
 <a id="driving-plan"></a>
 ## 编译驱动标记
 
-`Gen.Booter.completeDriving` 在来源证明之后补齐 `protoDriving`，Emit 输出显式 ADT。它复用原有 NodeId、方法身份、SessionProto 与 ScopeTree，不另建运行图，也不推断业务值。
+`Gen.Booter.completeDriving` 在来源检查之后补齐 `protoDriving`，Emit 输出显式 ADT。它复用原有 NodeId、方法身份、SessionProto 与 ScopeTree，不另建运行图，也不推断业务值。
 
-| 编译事实 | runtime 的使用 |
+[闭包模型](NEXT_STAGES.md#closure-model)之后，执行控制由 gen 写成 `compiledProgram`（workflow 闭包、回调表、静态运行），runtime 不再读取 `protoDriving` 来调度节点、领取交付或判断等待。这些标记仍在 Prototype 中，供 `--structure` 展示与校验；只服务于旧调度的字段（如 blocked publishers、单元的本地来源）留待清理。
+
+| 仍由 runtime 使用的编译事实 | 用途 |
 | --- | --- |
-| NodeDrive：节点成员、订阅来源、lifelong 边界、alternative 捕获祖先与先前会话边界 | 直接定位读取和捕获；仍按实际结束位置、当前捕获与已登记会话决定本次操作 |
-| NodeDrive 的 blocked publishers | 在已知供值候选中排除不能与当前等待同时推进的位置；仍检查实际帧进度，不限制普通最新值的共享 |
-| UnitDrive：轮帧位置、读取义务、直接／间接本地来源 | 建立同一轮执行帧，判断实际活读取方；PublishedAt 等待位置退休，DerivedFrom 等待上游和派生步骤稳定 |
-| SessionDrive：边界、Context 来源、资产及唯一派生上游 | 引用已有 SessionProto；不复制其 Receive／Derive／ReuseOutput 生产计划 |
-| 根帧位置、输出发布位置与 Context 生产方法身份 | 装配入口、连接同次输出、登记 RequestBoot；不新增第三种 Boot |
-
-标记由编译器一次生成，加载时校验覆盖和引用；缺失标记是过期／失配产物，不在 runtime 重算结构补救。`--structure` 展示单元和节点标记。当前采用列表查询，不宣称已优化到常数查找；元数据增加，但没有扩大来源分析的路径枚举。
-
-runtime 仍用前缀匹配检查实际已结束位置、撤下发布者、清除 Origin 及跳过帧内待用节点。这些是在静态结构上更新动态状态，不是另一套驱动推导。会话退役、并发监督、锁与 scope close 的次序保持原协议。
+| 节点表与坐标（`Prototype.Index`） | 建立执行帧、撤销未进入的子树 |
+| `protoScopeOpenings`、ScopeTree | scope 待用查询与回收 |
+| 效果编号（`Slot`）与链定义 | 发布、读取与入口装配 |
 
 ## 运行图与链启动
 
@@ -56,24 +52,20 @@ data Execution
   | CleanupExecution Origin String Int
 ```
 
-`Origin` 区分一次根入口执行（AST 入口或会话生产步骤），`ActivationId` 区分运行图中的一次活动 chain，也作为该次 Context 成功生产的身份保存在 Binding。`RequestBoot` 的字符串是现有 Context effect 注册名；`CleanupExecution` 保存原业务 origin、scope 注册名及现有实例编号，不新增业务 key。Context 的嵌套生产有新的 activation，但普通生产沿用外层业务 origin。
+`Origin` 区分一次根入口执行（AST 入口、回调或来源的生产步骤），`ActivationId` 区分运行图中的一次活动 chain，也作为该次 Context 成功生产的身份保存在 Binding。`RequestBoot` 的字符串是现有 Context effect 注册名；`CleanupExecution` 保存原业务 origin、scope 注册名及现有实例编号，不新增业务 key。Context 的嵌套生产有新的 activation，但普通生产沿用外层业务 origin。
 
-`RuntimeGraph` 用存在类型保存实际 `Prototype MethodGen` 和链定义，不转成字符串图。普通资产的 `runtimeLatest` 与步骤输出索引共享 Binding；发布与帧退休共用变化通知。活动记录仍保存父 activation、Boot、Execution、实际执行帧、当前绑定与 ScopeUser，和实际执行共享引用。资源、会话与普通发布分别执行已有协议。
+`RuntimeGraph` 用存在类型保存实际 `Prototype MethodGen` 和链定义，不转成字符串图。普通资产的 `runtimeLatest` 与步骤输出索引共享 Binding；发布与帧退休共用变化通知。活动记录仍保存父 activation、Boot、Execution、实际执行帧、当前绑定与 ScopeUser，和实际执行共享引用。资源与普通发布分别执行已有协议。
 
 有限 workflow 使用以下两种启动边界：
 
 1. **AST 启动**：Node 或 alternative 的选择读取启动选定入口，建立本次 origin 及入口使用登记。
 2. **Context 启动**：实际生产（`requests` 驱动的 getT）建立 ctx chain 记录，包住生产、成功发布和返回。嵌套 ctx 启动继承外层 origin 和入口使用登记；返回只结束本次生产记录，不撤销整个入口对 scope 的使用。读取不生产，也没有新 activation；alternative 的判定 Context、持续 Context 的挂接注入实际生产时经过同一启动边界。
 
-Stage 3 复用这两个 Boot 构造：Receive／Derive 的每个独立生产步骤以 `TargetedBoot` 启动对应的 `SessionChain` 挂载，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。独立会话每次生产使用新的 ScopeUser，其中 Receive 的来源与逐条 parser 各自持有本次使用；跨步骤的待用由会话执行帧保持。lifelong 的消费 target 同样每次建立新的入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
+Stage 3 复用这两个 Boot 构造：Receive 的来源与 Derive 的步骤在各自的生产挂载上执行，分配新的 Origin；其中实际发生的 Context 生产仍登记 `RequestBoot`。Receive 的来源与逐条 parser 各自持有本次使用。lifelong 的单元每次回调建立新的子执行帧与入口使用登记，详见 [Stream 运行协议](STREAM_LIFELONG.md#production)。
 
-本轮 ReuseOutput 连接沿用已有 AST 执行：`SessionProto.sessionPlan` 保存 `ReuseOutput [NodeId]`，指向同一 lifelong 内的具体原子输出发布位置，`sessionMounts` 为空。gen 沿 target 自身与 original Input 链定位挂接句柄；所有这些持续副产物都进入会话集合，包括仅供后继读取的产物。gen 仍保留 original chain 与 Context chain 的独立定义；执行时挂接 parser 用同次原子输出，不另建根调用或生产 worker。parser 的 `RequestBoot` 继承原节点的 Origin、执行帧和 ScopeUser。其交付只含持续资产，原 AST 调用的普通产物写入运行级最新值，不作为该交付的固定伴随值。多个发布位置只允许同单元、两两 alternative 互斥；不按调度选取，不合并同名 handler 的独立调用。组合机器以订阅、chain 前置和持续 alternative 选择读取建立启动依赖，拒绝有环组合。完整规则见 [Stream 第 4.2 节](STREAM_LIFELONG.md#derive)，实现状态见 [Next stages](NEXT_STAGES.md#stage-6-reuse)。
+ReuseOutput 连接沿用已有 AST 执行：`SessionProto.sessionPlan` 保存 `ReuseOutput [NodeId]`，指向同一 lifelong 内的具体原子输出发布位置，`sessionMounts` 为空。gen 沿 target 自身与 original Input 链定位挂接句柄，入口里的 `atomicScope` 在句柄成功后执行挂接 parser，用同次原子输出，不另建根调用。parser 的 `RequestBoot` 继承原节点的 Origin、执行帧和 ScopeUser。发布后同步回调订阅方。完整规则见 [Stream 第 4.2 节](STREAM_LIFELONG.md#derive)。
 
-启动图之外还检查同单元的路径覆盖：直接订阅或经独立 Derive 间接依赖自身输出时，每条到达订阅的 workflow 路径都须先经过发布位置，或同轮有并行且必经的发布路径；alternative 取各候选的必经交集。跨单元可以条件发布，无须每轮都产出。ReuseOutput parser 及其 requests 路径只允许读取原操作的驱动持续资产，避免挂接过程中再等待其他持续来源；普通资产读取仍按原来源协议检查。
-
-Booter 把根为本单元 ReuseOutput 的直接及单上游 Derive 来源写成静态标记，运行时将标记关联到实际轮帧。全部发布位置已完成或跳过、且派生成功步骤已追平上游累计发布数时，才能确认本轮不会再有交付；领取游标不证明处理完成。未知位置继续等待，其他单元及 Receive 来源不使用本轮耗尽判断。会话提交和节点退休共用通知，判断后再次读取会话，避免漏掉刚完成的发布。
-
-Scoped.open 可能复用实例而不交出新的原子输出，因此它的 AST 位置不能单独证明本轮必有发布。同单元直接或经 Derive 等待这种 ReuseOutput 时，gen 当前保守拒绝；跨单元等待与独立 Derive 仍保留。精确证明某次开启必为 fresh 后放行尚未实现。
+gen 另在“资产 → 回调可能发布的资产”图上查环（`Booter.checkReactions`），拒绝会无限递归的订阅组合，取代原先的启动依赖、同单元路径覆盖与 Scoped.open 的保守拒绝。
 
 这里的“入口使用登记”是原有有限使用闭包的资源含义：一次 AST 入口内，实际 open／require 选中的 scope 计入同一份使用。`ScopeUser` 保留原有 `Unique` 协调身份，并新增 `scopeUserExecution`；同一入口的 ctx chain 使用同一个 `ScopeUser`。`scopeUsers` 同时携带使用者身份与 `Execution`，不以 AST 位置替代并发使用协调。
 
@@ -81,7 +73,7 @@ Context 的生产记录在生产、发布及返回结束后通过 `finally` 删�
 
 `Binding.bindingOrigin :: Execution` 保存不变的执行出身，`bindingProduction :: Maybe ActivationId` 保存成功生产身份，`bindingFrame :: ExecutionFrame` 保存归属帧。生产失败不替换旧绑定，无资源 scope 的内部占位绑定没有生产身份。`bindingOwnership` 是该次生产独有的共享 `IORef`，保存可选 owner 与待认领使用者。当前捕获、权威表、scope 快照和 Handoff 保留同一绑定；认领不改变值、生产身份、帧、origin 或 publication，scope 复用也不重新发布。
 
-`Framework.Runtime.Frame` 保存有限运行根帧、lifelong 每轮子帧及独立生产会话的待用帧。实际执行按节点记录待执行、执行中、完成和跳过；会话帧保留后续生产挂载的待用预约到生产任务退出，不充当业务调用的执行结果。节点完成晚于诊断与受控结果消费；chain 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本轮已领取的普通伴随资产的 `(生产节点, Context 来源, ActivationId)`，只保存生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。Runtime 中领取会话交付的 `DeliveryFrame` 仍管理视图领取，和这份执行进度分开。Frame 的根与子帧共享发布通知，`frameSignal` 取得当前信号，`notifyFrame` 在普通发布、会话状态提交或节点退休后唤醒等待者；Graph 的 `publicationSignal` 转发到同一通知。普通最新值在运行级共享；保守等待结束复用这些进度事实，不要求另建按帧资产表。
+`Framework.Runtime.Frame` 保存有限运行根帧与 lifelong 每次回调的子帧。实际执行按节点记录待执行、执行中、完成和跳过。节点完成晚于诊断与受控结果消费；chain 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本次回调交付的资产的生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。帧不再承担发布通知：读取不等待，没有需要唤醒的等待者。普通最新值在运行级共享，不另建按帧资产表。
 
 Scope 实例保存实际参数生产身份与归属帧，Graph 把待用查询装入 ScopeHandler。查询与节点进度、关闭预约共用 scope 协调锁：实例既无实际使用者，也不再被帧内待用节点或子 scope 保留时，Scope 同步清理。完整运行规则见[主设计](CORE_DESIGN.md#scope-gc)。
 
@@ -93,38 +85,38 @@ ScopeTree 仍是独立的静态构树结果，保留路径分析、注册前提�
 
 refined asset 固定唯一 Context 和表示 ADT；该生产链可以由多个位置驱动。每次成功生产保留独立的 `ActivationId` 与 Binding，普通资产的运行级最新值按 Context 覆盖，已捕获 Binding 不随覆盖变化。AST 顺序控制启动，执行帧记录进度，二者不作为普通值的读取权限。
 
-来源计算位于 `Gen.Composition.resolveSources`，输入是装配后的有限方法结构、workflow 和输出连接。它区分显式 requests、选择读取、普通 Context 的输出联立、持续 Context 的挂接注入与会话步骤（[requests 与输出联立](CORE_DESIGN.md#request-production)），读取本身不生产。`chainDrives`、`chainReads` 与 scope 开启计划来自同一次计算：
+来源计算位于 `Gen.Composition.resolveSources`，输入是装配后的有限方法结构、workflow 和输出连接。它区分显式 requests、选择读取、普通 Context 的输出联立、持续 Context 的挂接注入与生产步骤（[requests 与输出联立](CORE_DESIGN.md#request-production)），读取本身不生产。`chainDrives`、`chainReads` 与 scope 开启计划来自同一次计算：
 
 ```haskell
 data Source = FromOwnChain | FromChains [NodeId] | FromSession
 ```
 
-`FromChains` 保存可能供值的位置，用于缺值耗尽和参数出身证明，不要求位置先于读取、不按此列表过滤普通最新值。`FromOwnChain` 表示没有已知生产候选，允许本次调用捕获；不是隐式生产。`FromSession` 保持持续资产的会话协议，包括固定交付与有限读取；后继在多个互不先后的 lifelong 会话之间的歧义仍由原有检查拒绝。
+`FromChains` 保存可能供值的位置，用于参数出身证明，不要求位置先于读取、不按此列表过滤普通最新值。`FromOwnChain` 表示没有已知生产候选，允许本次调用捕获；不是隐式生产。`FromSession` 表示持续资产，在 lifelong 内按回调交付，lifelong 外按静态运行读取。
 
 <a id="missing-source"></a>
-### 静态供值固定点与最低限度拒绝
+### 来源检查
 
-来源算法 v5（2026-11-18）先从空供值集推演 workflow。一次结构分析已经能够到达的发布位置形成有限的 `(NodeId, asset)` 事实；将这些事实作为普通共享供值重新分析，直到不再增加。`require` 无捕获也无供值时停止该成功路径，不自行启动生产。并行兄弟、其他已能启动的消费单元或生产步骤可以提供事实，不按 AST 可见性筛掉。
+用户确认（2026-11-24）：gen 只检查资产有没有来源，不检查读取时是否可达。被 `require` 的资产须满足其一：
 
-这能接受 `parallel [readX, produceX]`，也能逐步解开独立分支的依赖。只有 `chain [readX, produceX]`、没有其他 X 的生产时，后继不能启动，因此没有初始供值，gen 拒绝。互等且没有启动种子的分支同理。诊断指出读取资产、target 与 NodeId，要求提供可启动的生产路径，而非把“已经注册生产者”当作充分条件。
+- 有 effect `requests` 它；
+- 挂在某个锚点的 rawoutput 下（输出联立），锚点执行时发布；
+- 是持续资产（来源由 lifelong 或 lifelong 外的静态运行提供）。
 
-例如，`FileDemo` 的 `alternative` 只尝试 `BlankText` 和 `FilledText`。假设再给 `ReadFile` 挂一个普通 `AuditParser` 并在后继读取 `AuditText`，选择读取不会发布它；读取方须 `requests "AuditText"`，由自己的前驱执行 `ReadFile` 与 `AuditParser`。判定资产的等待来源也取自同一发布固定点，排除本次选择位置。
+都不满足时报 `Asset never requested`。先前的供值固定点（从空供值集推演 workflow、拒绝 `chain [readX, produceX]` 与互等）已经删除：读取不等待，执行到读取时没有值就立即报 `ContextNotInitialized`，由业务调整 workflow 的顺序。
 
-备用 interpreter 会话先不加入供值。只有结构推演到达有限持续读取，才分析它及其 Derive 上游；实际 lifelong 的会话在该边界能启动时分析。固定点收敛后，备用挂载仍单独生成结构和 scope 计划，但不反过来冒充实际运行的供值入口。
+例如，`FileDemo` 的 `alternative` 只尝试 `BlankText` 和 `FilledText`。假设再给 `ReadFile` 挂一个普通 `AuditParser` 并在后继读取 `AuditText`，选择读取不会发布它；后继执行到读取时没有值就报缺值。要稳定取得它，读取方写 `requests "AuditText"`，由自己的前驱执行 `ReadFile` 与 `AuditParser`。
 
-这是对有限形状的保守推演：不执行业务 IO，不证明条件可达、解析必成功或所有等待终止。它允许分支和多轮可能发布的过近似；同一读取点只要存在可能供值就不因其他缺值路径拒绝。资源读取和诊断、close 的局部规则单独检查；备用 SessionChain 的空环境也不用于证明业务必缺值。无需 `SiteRef`、方法体插桩或新的 facade 声明。
-
-路径上的捕获、scope 参数与资源开启仍保留；普通读取有多个可能生产时按候选分别分析，不以多个发布位置或读取时序差异作为装配歧义；确定性约束的是[Context 来源与装配规则](CORE_DESIGN.md#composition-polymorphism)。每个出口先裁剪到本链和后续读取相关的资产，再组合、去重。固定点最多增加有限的挂载与资产对，但每轮路径状态仍可能指数增长，不能将其宣称为线性算法。
+路径上的捕获、scope 参数与资源开启仍由同一次结构分析保留，供 scope 开启计划使用；普通读取有多个可能生产时不以多个发布位置或读取时序差异作为装配歧义；确定性约束的是[Context 来源与装配规则](CORE_DESIGN.md#composition-polymorphism)。
 
 ### 运行级最新值与 scope 待用
 
-`RuntimeGraph.runtimeLatest` 每个普通 Context 保留一份最新 Binding；选择与写入在现有协调锁内完成。实际写入顺序决定最新值，Origin 序号只表示出身。`runtimeAssets` 和 `runtimeOrigins` 保留当前步骤输出索引，供 Receive／Derive 构造伴随交付；替换 Origin 或开始新一轮仅清理该索引，不清除共享最新值，不另外保存全量普通历史。
+`RuntimeGraph.runtimeLatest` 每个普通 Context 保留一份最新 Binding；选择与写入在现有协调锁内完成。实际写入顺序决定最新值，Origin 序号只表示出身。`runtimeAssets` 和 `runtimeOrigins` 保留当前步骤输出索引；替换 Origin 仅清理该索引，不清除共享最新值。持续资产另有 `runtimeHistory`，只为 gen 标记了 `effectHistory` 的资产追加。
 
-调用捕获优先；尚未捕获时读取共享值，并在同一协调锁内登记执行帧的捕获身份。生产身份、值与 owner 均沿用原 Binding。scope 待用从全部活动帧、实际根调用及常驻预约查询，先匹配本次捕获、alternative 交接或固定伴随发布，再匹配共享当前参数。确定需要本次新生产而尚未捕获的开启不保留旧参数实例；实例仍须同时满足无实际使用、无待用、无活子实例和无 Binding 保留义务，才由既有 GC close。
+调用捕获优先；尚未捕获时读取共享值，并在同一协调锁内登记执行帧的捕获身份。生产身份、值与 owner 均沿用原 Binding。scope 待用从全部活动帧、实际根调用及常驻预约查询，先匹配本次捕获、alternative 交接或回调交付，再匹配共享当前参数。确定需要本次新生产而尚未捕获的开启不保留旧参数实例；实例仍须同时满足无实际使用、无待用、无活子实例和无 Binding 保留义务，才由既有 GC close。
 
-缺值时，Context 在读取前取得共享变化信号。`contextMayPublish` 查询生成候选和根帧下全部待用位置；已退休、同一顺序调用内阻塞之后的生产，以及等待当前调用完成的有限后继，不构成继续等待的理由。会话与持续机会证据不足时保守等待。耗尽后再次读取，仍无值才报 `ContextNotInitialized`，避免发布与退休之间丢值。普通发布与节点退休都会通知等待者。
+缺值时读取立即报 `ContextNotInitialized`，不等待发布，也不查询将来可能的生产位置（[闭包模型](NEXT_STAGES.md#closure-1)）。
 
-资源不通过共享最新值查找，仍要求本链开启其所属 Scoped；旧资源 Binding 保持原 owner，不会自动换实例。诊断、cleanup 与 close 不等待新业务发布。持续资产与已捕获伴随值仍遵循[会话协议](STREAM_LIFELONG.md#sessions)。
+资源不通过共享最新值查找，仍要求本链开启其所属 Scoped；旧资源 Binding 保持原 owner，不会自动换实例。诊断、cleanup 与 close 不读新业务发布。持续资产的交付与历史遵循 [Stream 第 7 节](STREAM_LIFELONG.md#sessions)。
 
 <a id="lifecycle-reads"></a>
 ### close 方法的资源读取
@@ -142,8 +134,8 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 | 故障 | gen 已处理的结构条件 | 留在 runtime 的条件与理由 |
 | --- | --- | --- |
-| `ContextNotInitialized` | [无来源诊断](#missing-source)覆盖的普通读取完全没有合法供值；资源读取缺少本链所属 scope；持续启动关系不合法 | 合法生产失败、零发布结束、条件路径未发布；会话／收尾局部快照缺值。已经生产的 Binding 因交接丢失属于 SDK 漏洞 |
-| `AmbiguousContextBinding` | 普通资产改用共享最新值，不再以多次生产为歧义；持续后继的会话边界歧义仍由 gen 拒绝 | 当前普通读取路径不再产生此故障构造 |
+| `ContextNotInitialized` | [来源检查](#missing-source)覆盖的读取完全没有来源；资源读取缺少本链所属 scope | 读取时尚未发布（读取不等待）、合法生产失败、零发布结束、条件路径未发布；收尾局部快照缺值。已经生产的 Binding 因交接丢失属于 SDK 漏洞 |
+| `AmbiguousContextBinding` | 普通资产改用共享最新值，不再以多次生产为歧义；持续资产按运行级最新值读取 | 当前普通读取路径不再产生此故障构造 |
 | `ScopeNotOpen` | 自动 close 只为已取得实例登记，不提供业务直接驱动 close 的方法组合 | 关闭一个未开启实例；正常自动路径出现时检查 SDK 登记与状态不变量 |
 | `ScopeIsClosed` | 资源业务读取要求本链开启所属 scope | 已捕获 Binding 的具体 owner 已关闭；实际存续与实例身份只能运行时检查，资源逃逸的扩展保证仍待设计 |
 | `ScopeReentry` | Input／方法图的递归和 scope 依赖环拒绝；handler 直接调用其他 handler 被拒绝 | 同一实例处于 opening／closing 等不允许重入的状态；保留生命周期锁内的状态防线 |
@@ -177,30 +169,30 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 `protoScopeOpenings` 的候选覆盖各条合法路径，不要求每个位置固定一种类别，也不保存另一套分支相关性。每条读取路径继续满足已有的捕获与来源规则，候选不是任选来源的许可。`--structure` 展示候选出处和可能类别；Prototype 校验引用及字段自洽，运行时不重做来源证明。资源在本链对应 scope 开启前被读取时，生成期拒绝；业务读取不再扫描全部活实例来补资源。
 
-运行时的实例身份是 Scoped 注册加各参数的实际 ActivationId。未开始的开启若确定会生产新参数，不保留旧实例；已捕获或通过 require 读取共享参数的开启按具体身份匹配。伴随交付保持固定，后台最新值不覆盖它。业务数据内嵌的其他资源不因此加入保活根。
+运行时的实例身份是 Scoped 注册加各参数的实际 ActivationId。未开始的开启若确定会生产新参数，不保留旧实例；已捕获或通过 require 读取共享参数的开启按具体身份匹配。回调交付保持固定，之后的最新值不覆盖它。业务数据内嵌的其他资源不因此加入保活根。
 
-轮帧记录所属 lifelong 的 NodeId，供持续协议定位。普通参数的待用则查询全部活动帧及常驻预约，固定捕获优先，其次按共享最新 Binding 匹配生产身份；不再使用按位置的 `runtimeRetained` 或 Origin 序号选择值。`resetOrigins` 只清理步骤输出索引，普通最新值保持。跨帧共享不提升实例归属；最新值替换与捕获身份登记在 scope 协调锁内完成。
+回调帧记录所属 lifelong 的 NodeId，供持续协议定位。普通参数的待用则查询全部活动帧及常驻预约，固定捕获优先，其次按共享最新 Binding 匹配生产身份；不再使用按位置的 `runtimeRetained` 或 Origin 序号选择值。`resetOrigins` 只清理步骤输出索引，普通最新值保持。跨帧共享不提升实例归属；最新值替换与捕获身份登记在 scope 协调锁内完成。
 
 参数本身属于其他 scope 的资源时，按原生产身份找到 owner 快照，再核对同一待用入口的上游开启计划；复用资源没有重新发布，不能假设它来自当前节点。这沿用普通资产与持续资产最新值的参数身份，不自动建立业务资产内嵌资源的持有关系。ScopeTree 保持独立且无环。
 
 **持续参数（2026-11-17）。** 资源 parser 以现有 `requires "T"` 声明读取持续资产，方法体仍写 `require @T`。读取登记本次固定 Binding 的生产身份及原生产帧；后台更新不改写它，相等值的两次生产仍是不同身份。T 若包含业务保存的记录或资源引用，SDK 不把整个值展开成额外的资源保活根。
 
-持续参数的待用匹配分两步：活动轮内先用本次调用或 alternative 交接的捕获，再用单元的固定交付；尚未领取时只预览该单元游标的下一条，既不推进也不生产。同单元本地来源的只读回退仍按会话现有最新值规则。领取正在交接时保守保留；跨单元广播按各自的实际游标比较生产身份。根帧对未来轮次的预约不保留旧交付实例；有限后继与真实读取共用“最近许可的先前 lifelong 会话，否则 interpreter 会话”的路由，只匹配所选最新值。
+持续参数的待用匹配：回调内先用本次调用或 alternative 交接的捕获，再用回调的固定交付。不预览、不生产下一条；回调返回前来源不会发布下一条。
 
-执行帧只记录身份和只读查询，不另建历史或值表；轮结束时撤销查询和捕获。查询在 scope 协调锁内读取已登记会话的只读目录快照，不等待会话装配锁，也不因目录忙而保留所有实例。新会话在 worker 启动前进入快照，停止时与目录一起撤下；快照不改变业务会话的唯一登记与停止协议。会话状态锁内不执行 handler、也不反向获取 scope 协调锁。实例仍使用原 Binding 的生产帧，跨单元或后继共享不提升归属。
+执行帧只记录身份和只读查询，不另建值表；回调结束时撤销查询和捕获。实例仍使用原 Binding 的生产帧，跨单元或后继共享不提升归属。
 
 **持续资源协调所复用的组合事实。** 静态计划与运行状态按下面的边界配合，runtime 不从 IO 识别轮询、event 或 socket。
 
 | 已编译事实 | 决定的结构关系 | runtime 补充的实际信息 |
 | --- | --- | --- |
-| `SessionProto`／`BootPlan` | 哪些位置独立生产、由哪个上游驱动，或复用已有输出 | 活动会话、生产步骤、订阅与结束状态 |
+| `SessionProto`／`BootPlan`，生成的回调表 | 哪些位置独立生产、由哪个上游驱动，或复用已有输出 | 正在运行的来源、已结束的订阅、behavior 上一次的值 |
 | `ScopeOpening` | 每个生产／消费挂载可能开启的 scope 及参数候选 | 参数 Binding 的生产身份、原执行帧和实际实例 |
-| `Source` | 普通生产机会或持续会话读取计划 | 普通读取捕获优先、否则共享最新值；持续读取沿所选交付 |
+| `Source` | 普通生产机会或持续资产的读取 | 普通读取捕获优先、否则共享最新值；持续读取沿所选交付 |
 | `ScopeTree` | scope 注册间的无环父子候选 | 同一受控执行实际使用的父子实例、使用是否耗尽及关闭预约 |
 
-**会话待用（2026-11-18）。** 独立 Receive／Derive 会话复用生成的 `sessionMounts` 建立待用帧；回收候选纳入实际活动的 SessionChain 预约，即使参数最初来自已经结束的轮帧，仍可按许可来源找到使用它的生产位置。匹配继续使用同一开启计划及实际捕获，不重建另一套资源图。会话启动时固定的捕获先按生产身份匹配，再考虑未捕获参数的实际发布；不能用后台最新值覆盖固定捕获。Derive 查询本步固定身份和上游游标下一条；领取选择与固定身份更新共用协调锁，更新完成后才推进游标，不把整个阻塞等待期解释为所有旧实例都待用。业务调用的 ScopeUser 在本步结束时撤销；预约只保留仍与后续使用匹配的实例，因此新参数的产生既不直接关闭旧实例，也不让所有旧实例随会话永久累积。预约在任务退出时摘除，资源 close 条件仍见[主设计](CORE_DESIGN.md#scope-gc)。
+**生产挂载的待用。** Receive／Derive 的生产挂载在执行帧里登记为位置；`Drive` 结束时撤销来源驱动的单元在根帧中的未来位置，再触发回收。业务调用的 ScopeUser 在本步结束时撤销；新参数的产生不直接关闭旧实例。资源 close 条件见[主设计](CORE_DESIGN.md#scope-gc)。
 
-节点退休后检查该节点能开启的 scope 及 ScopeTree 祖先。已知资源 Binding 的保留撤销还会按实际 owner 触发同一回收器，覆盖调用 Input 链外的交接；保留范围见[Stream 资源边界](STREAM_LIFELONG.md#binding-retention)。后继的值保留继续读取 protoSources 和执行帧进度，并与实际读取共用 publicationAt／会话选择，不能把目录中存在某值当成合法读取依据。Binding 的资源标志来自注册已指定的资源 Context，不分析业务字段。close 的 `raise` 与普通 IO 异常都记录并汇总，不改节点结果、不重试；只有取消向外传播。没有 close 的实例不可达后只移出表。运行结束先让受控任务退出、撤销根帧待用关系，再按相同条件清理剩余实例。
+节点退休后检查该节点能开启的 scope 及 ScopeTree 祖先。已知资源 Binding 的保留撤销还会按实际 owner 触发同一回收器，覆盖调用 Input 链外的交接；保留范围见[Stream 资源边界](STREAM_LIFELONG.md#binding-retention)。后继的值保留继续读取 protoSources 和执行帧进度，并与实际读取共用同一读取路由，不能把目录中存在某值当成合法读取依据。Binding 的资源标志来自注册已指定的资源 Context，不分析业务字段。close 的 `raise` 与普通 IO 异常都记录并汇总，不改节点结果、不重试；只有取消向外传播。没有 close 的实例不可达后只移出表。运行结束先让受控任务退出、撤销根帧待用关系，再按相同条件清理剩余实例。
 
 ## 生成方法身份与纯结构副本
 
@@ -222,8 +214,8 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 生成阶段按[主设计的编译流水线](CORE_DESIGN.md#generation)推进；本节只解释图与来源的产物关系，阶段状态和检查点不在这里另行定义。`Gen.Composition` 内部步骤可以使用 `Prototype.Query` 的共享纯关系查询：
 
-1. **声明与挂载。** 解析注册、资产与 Input。AST 已用 `node` 指定末端，给每次挂载编号；检查 alternative 的共同 Excu 与判定 Context，定下持续会话与输出复用位置。末端不是从全图寻找的叶子。
-2. **接口与方法组成。** 计算挂载、选择器、会话步骤、输出连接、有序 requests／Input、rawinput 来源和读取路由，并据此形成 handler 类型能力。前端用本次契约对手写 Handlers 做 GHC 名称解析与类型检查。`Gen.Frontend.Shape` 按原始语法提取控制流，按每个变量使用位置的 GHC `Name` 识别 SDK 的 `require` 和 `rawinput`。例如，`Payload{..} -> rawoutput [rawinput]` 中的 `rawinput` 是局部字段值；同一模块经重导出调用 SDK 的 `rawinput`，仍产生挂接输入的读取形状。机器再把形状代换成对应 effect 方法的结构，每个绑定保留各自的入口与路由。
+1. **声明与挂载。** 解析注册、资产与 Input。AST 已用 `node` 指定末端，给每次挂载编号；检查 alternative 的共同 Excu 与判定 Context，定下持续资产的生产方式与输出复用位置。末端不是从全图寻找的叶子。
+2. **接口与方法组成。** 计算挂载、选择器、生产步骤、输出连接、有序 requests／Input、rawinput 来源和读取路由，并据此形成 handler 类型能力。前端用本次契约对手写 Handlers 做 GHC 名称解析与类型检查。`Gen.Frontend.Shape` 按原始语法提取控制流，按每个变量使用位置的 GHC `Name` 识别 SDK 的 `require` 和 `rawinput`。例如，`Payload{..} -> rawoutput [rawinput]` 中的 `rawinput` 是局部字段值；同一模块经重导出调用 SDK 的 `rawinput`，仍产生挂接输入的读取形状。机器再把形状代换成对应 effect 方法的结构，每个绑定保留各自的入口与路由。
 3. **方法图。** 从同一装配结果建立挂接注入的分析副本，只消去对同次原子输出的再次索取。方法索引与活动栈检查引用，完成态摘要缓存 scope 路径与图。辅助／主 algebra 共用归约结果，不按调用次数复制展开树。
 4. **ScopeTree。** 从方法图的路径求共同必经前序，补入注册前提并检查环。先有方法图及路径，再有 ScopeTree；实例共享与关闭仍由运行时的生产身份、实际使用和待用关系决定。
 5. **来源、驱动标记与完成校验。** 结合方法结构、链挂载和 workflow 形成读取来源与 scope 开启计划，保留相关路径差异并裁剪无关状态。Booter 补齐单元与来源的运行关联；原型自洽和 Context 驱动检查完成后，结果才交给输出阶段。
@@ -239,7 +231,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 | 方法目录、链定义共享 | 同一静态注册／方法身份 | 每个 AST 挂载仍有自己的 NodeId，每次调用仍执行 |
 | 原子输出的挂接解析 | parser 正在接收这次调用的原始输出 | 解析不重新执行句柄；另一次独立驱动仍可执行句柄 |
 | 持续资产的 ReuseOutput | 同一 lifelong 内已挂载的原子输出位置；多个位置须属于同一单元且互斥 | 保留原 AST 调用，不为订阅再启动派生生产 |
-| alternative 的交接 | 共同 Excu 的同次输出按顺序只交给候选判定 parser。首个成功者发布；全失败时读取已有绑定或等待其他可供值的挂载 | 只启动选中候选并交接捕获；同一 Excu 上的其他普通 parser 须有独立的生产路径才能供值 |
+| alternative 的交接 | 共同 Excu 的同次输出按顺序只交给候选判定 parser。首个成功者发布；全失败时读取已有绑定，没有就报缺值 | 只启动选中候选并交接捕获；同一 Excu 上的其他普通 parser 须有独立的生产路径才能供值 |
 | scope 实例共享 | 同一 Scoped 注册及相同参数生产身份，实例仍可用 | 由运行协议复用实例，ScopeTree 提供依赖与清理顺序 |
 | 同一次调用内的重复到达 | 同一调用中已执行过的 Excu、Scoped.open、Pure 与已发布的 Context | 返回本次输出或捕获，不再执行；静态方法图仍按每处调用分别组合 |
 
