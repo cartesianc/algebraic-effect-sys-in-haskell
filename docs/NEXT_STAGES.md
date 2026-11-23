@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | <a id="urgent-flow"></a>U1 持续读取 | 注册仍写 `Asset @Line "TextLine"`。消费方声明 `streams "TextLine"` 后，`require @Line` 读本条，`stream @Line` 读本条及更早发布的固定前缀。gen 根据方法体对历史的实际读取标记来源。 | [读取与保留](STREAM_LIFELONG.md#flow) · [LinesDemo](../demo/LinesDemo/Handlers.hs) |
 | <a id="urgent-assets"></a>U4 资产表示 | `Types.hs` 定义由字符串构成的单构造器类型。gen 核对注册使用的定义模块和编译单元；重导出的同一类型有效，其他模块的同名类型不能替代它。 | [固定形式](ASSETS.md#fixed-form) · [FileDemo](../demo/FileDemo/Types.hs) |
-| <a id="urgent-race"></a>U5 同一输出选分支 | `alternative` 按候选顺序让判定 parser 尝试同一次 Excu 输出。若全部拒绝，选择读取检查已有绑定，没有就立即报缺值，不等待（[闭包模型](#closure-1)）。 | [选择与交接](CORE_DESIGN.md#alternative-selection) · [来源证明](EFFECT_GRAPH.md#missing-source) |
+| <a id="urgent-race"></a>U5 同一输出选分支 | `alternative` 按候选顺序让判定 parser 尝试同一次 Excu 输出。若全部拒绝，选择读取检查已有绑定；没有时按 [C1](#closure-1) 等待别的分支发布，否则报缺值。 | [选择与交接](CORE_DESIGN.md#alternative-selection) · [来源证明](EFFECT_GRAPH.md#missing-source) |
 
 **从旧版迁移。** 旧版将多个状态写成一个和类型，再用分支契约投影给候选。现在给同一份原始输出挂多个 Context，每个 parser 构造自己的单构造器资产，候选用 `requires` 写出所需资产。旧的 `SumTypes`、`BranchContract` 和 `projectContext` 已移除。[FileDemo 的完整写法](GUIDE.md#workflow)
 
@@ -74,9 +74,9 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 
 | 阶段 | 语义 |
 | --- | --- |
-| <a id="closure-1"></a>C1 读取不等待 | `requires` 只读本次调用的固定捕获或运行级最新值，读不到立即报 `ContextNotInitialized`。gen 只做来源检查：资产有 effect `requests`，或挂在锚点的 rawoutput 下（输出联立），或是持续资产；不检查可达性。alternative 的判定全部拒绝时同样立即报缺值。删除共享供值等待、耗尽证明和来源固定点的拒绝。 |
+| <a id="closure-1"></a>C1 取值 · 未就绪时等待 | `require @T` 读本次调用的固定捕获或运行级最新值；有值就继续。没有值、但别的 `parallel` 分支仍可能发布时，只挂起这一次调用，发布后从读取点继续一次；没有这样的分支（或分支都已退出）时报 `ContextNotInitialized`。各分支可能发布的资产由 gen 写在 `Concurrent` 闭包上，运行时不做来源推导。gen 只做来源检查：资产有 effect `requests`，或挂在锚点的 rawoutput 下（输出联立），或是持续资产；不检查可达性。alternative 的判定全部拒绝时按同一规则等待。删除耗尽证明和来源固定点的拒绝。（2026-11-24 修订：初版误作“缺值立即失败”，见 [require 的等待](#closure-await)。） |
 | <a id="closure-2"></a>C2 发布即回调 | 资产每次发布后，gen 写好的订阅回调在发布方的调用栈里同步执行，按 lifelong 单元的声明顺序。socket：Stream 每次 `rawemit` → parser 发布 → 回调订阅单元；派生：上游发布 → 派生 parser 链发布 → 回调；复用输出：锚点执行 → 挂接的持续 parser 发布 → 回调；event：锚点的输出联立发布 → 回调；behavior：parser 发布的值与上一次相等时不回调。一次回调是单元的一次执行（新的执行帧），本次发布作为固定捕获交给单元，`stream @T` 读到本条为止的历史。没有会话、交付队列、游标和消费线程。 |
-| <a id="closure-3"></a>C3 lifelong 是标记 | gen 按 lifelong 生成回调表。执行到 lifelong 的位置时只做一件事：有 Stream 来源时同步运行它，来源 `streamEnd` 或订阅方全部 `endStream` 后返回；没有 Stream 来源（只有 event 订阅）时什么也不做。一个 lifelong 至多一个 Stream 来源：参照 Effect-TS 的并发须显式，多个独立来源写 `parallel [lifelong [...], lifelong [...]]`。单元内的 target 由同一份资产驱动。event 回调在整次运行中有效，直到订阅方 `endStream`；socket、behavior 与派生回调只在所属 lifelong 的来源运行期间有效。 |
+| <a id="closure-3"></a>C3 lifelong 是标记 | gen 按 lifelong 生成回调表。执行到 lifelong 的位置时只做一件事：有 Stream 来源时同步运行它，来源 `streamEnd` 或订阅方全部 `endStream` 后返回；没有 Stream 来源（只有 event 订阅）时什么也不做。一个 lifelong 至多一个 Stream 来源：参照 Effect-TS 的并发须显式，多个独立来源写 `parallel [lifelong [...], lifelong [...]]`。单元内的 target 由同一份资产驱动。event 回调在整次运行中有效，直到订阅方 `endStream`；socket、behavior 与派生回调只回应所属 lifelong 作用范围里的发布。 |
 | <a id="closure-4"></a>C4 lifelong 外的持续资产 | `requests` 不再取持续资产的“当前一条”。lifelong 外 `requests` 一份持续资产就是要一份静态历史：第一次 `requests` 在当前位置同步运行来源（及派生链）直到 `streamEnd`，之后 `requires` 读最后一条，`streams` 读整段；同一次运行只跑一次，历史保留到运行结束。lifelong 内不能 `requests` `stream = True` 的资产，订阅它要写 `streams`。behavior 只在 lifelong 内回调；lifelong 外同样跑到结束后读最新值。 |
 | <a id="closure-5"></a>C5 回调环 | 订阅回调经自身的执行（target、Input 链、`requests` 的传递闭包、输出联立、持续挂接、派生）可能再次发布它订阅的资产时，回调会无限递归。gen 在“资产 → 回调可能发布的资产”图上查环并拒绝，取代原 event 自激检查和同单元的路径覆盖规则。 |
 | <a id="closure-6"></a>C6 IR 即闭包 | gen 在 `Generated/Program.hs` 写出组合好的 workflow 闭包（顺序、并行、选择、来源运行）和回调表；interpreter 只核对 AST 与原型一致，然后执行它，不在运行期遍历 Prototype 编排，也不按坐标查询来源计划。输出联立由 gen 生成的调用序列完成，不在运行时改写调用者状态。 |
@@ -85,7 +85,7 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 
 - **Gen**：Composition 删除来源固定点的拒绝（`checkReadSupply`、`successorRead`），只保留来源检查。Booter 删除 Listen 与等待相关的启动、覆盖检查，按 lifelong 计算单元的驱动资产，拒绝一个单元由多份资产驱动、一个 lifelong 有多个 Stream 来源、lifelong 内 `requests` stream = True 的资产，并在编号后用 `checkReactions` 查回调环。回调交付的资产不计入回调自身 `requests` 的传递闭包，因为那里读的是交付。
 - **Emit**：`Generated/Program.hs` 写出 `compiledProgram`，包括 `compiledWorkflow`（`Step`／`Serial`／`Concurrent`／`Choose`／`Drive`）、`compiledReactions`（资产 → 单元或派生步骤，作用范围为整次运行或某个 lifelong）和 `compiledStatic`（lifelong 外的根来源）。behavior 的比较函数在生成代码里写成表示类型的相等。`Generated/Handlers.hs` 的输出联立写成 `atomicHandle`／`atomicScope` 的闭包分支；`requests` 的生产链包在 `unlessPerformed` 里，回调里交付的资产已记为发布，生产链不再执行。
-- **Runtime**：Session 换成 [Delivery](../sdk/Framework/Runtime/Delivery.hs)，只剩交付视图与两个结束信号。`publishBinding` 在发布者调用栈里同步调用 `Graph.react`。Execution 的 `runCompiled` 只执行闭包：`Drive` 同步运行来源到结束或订阅方全部 `endStream`，再丢弃该 lifelong 的历史；静态运行按根来源记忆，历史保留到运行结束。`readContext`、`chooseCase` 与持续读取都不等待。删除的有会话队列、消费线程、`awaitContext`、`contextMayPublish`、发布信号、`unlessDelivered` 与输出回放。
+- **Runtime**：Session 换成 [Delivery](../sdk/Framework/Runtime/Delivery.hs)，只剩交付视图与两个结束信号。`publishBinding` 在发布者调用栈里同步调用 `Graph.react`。Execution 的 `runCompiled` 只执行闭包：`Drive` 同步运行来源到结束或订阅方全部 `endStream`，再丢弃该 lifelong 的历史；静态运行按根来源记忆，历史保留到运行结束。`readContext`、`chooseCase` 与持续读取按 C1 等待。删除的有会话队列、消费线程、`contextMayPublish`、`unlessDelivered` 与输出回放。
 - **Demo**：StreamDemo 与 FacadeProbe 的多来源 lifelong 改为 `parallel` 的多个 lifelong。
 
 **验证（2026-11-24，仓库外的探针与本地回归，记录不进仓库）。**
@@ -95,12 +95,33 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 - 静态历史：lifelong 外 SampleLevel 读到 3；ReadAll 与 ReadAgain 都读到整段 `["c","b","a"]`，来源只运行一次。
 - `scripts/check.ps1`：file、open-files、scope-reuse、scope-instances、lines、stream 通过。crawler 需要网络，本次未覆盖。lines 的输出显示同步回调：每行打印后立即打印累计。
 
+<a id="closure-await"></a>
+**require 的等待与两项修正（2026-11-24 修订）。** 合并前评估指出三处问题，设计者确认 `require` 的契约是“取值 · 未就绪时等待”。
+
+- **等待**：gen 用 `Booter.publishedWithin` 为 `parallel` 的每个分支计算它执行期间可能发布的资产（节点与选择读取的执行、`requests` 闭包、输出联立、lifelong 的持续资产，再沿回调表取传递闭包），写成 `Concurrent [(slots, closure)]`。运行时在分支开始前登记、退出时撤销，每次执行带着自己所在的分支（`Place`）。`require`、`stream @T` 与 alternative 全部拒绝后的读取缺值时，先取变化信号再查值：仍有别的分支可能发布就挂起，发布或分支退出后重查；没有就报缺值。读取方自己所在的分支不计入，`chain [read, produce]` 不会自等。诊断、收尾、close 与资源读取不等待。回调继承发布方的分支。
+- **历史按作用范围分开**：历史按（资产，作用范围）保存，每个 lifelong 与每个静态运行各一份；来源开始与 `Drive` 结束时放掉自己的一份。
+- **behavior 的比较按作用范围分开**：上一次回调的值按（资产，作用范围）保存，每次来源运行重新开始。回调只回应自己作用范围里的发布。
+
+验证（仓库外探针）：
+
+| 用例 | 结果 |
+| --- | --- |
+| `parallel [Reader, Publisher]`，读取先于发布（Provider 在 `getLine` 等 1.5 秒后的输入） | `reader entered`，随后 `resumed: ready`，`Succ` |
+| `chain [Publisher, Reader]` | 直接读到值，`Succ` |
+| `chain [Reader, Publisher]` | 没有别的分支可能发布，立即 `Failed`（`ContextNotInitialized`），不挂起 |
+| 同一来源 4 行：静态读取 → lifelong 累计 → 再静态读取 | `4`、`1/2/3/4`、`4` |
+| 两个先后的 lifelong 订阅同一 behavior 来源，各发布 `10, 10` | 各回调一次 |
+| event／behavior／静态历史探针 | 与上面的验证一致，触发次数不变 |
+
 **未覆盖与已知边界。**
 
+- 各分支可能发布的资产按注册保守计算；多算只会让读取方等到该分支退出后再报缺值。
+- “查到缺值”与“开始等待”之间的发布由先取信号再查值保证，没有单独构造这个时序的探针。
+- 生产者失败时整次运行终止，等待者随之取消；分支被取消时同样唤醒并重查。
 - 回调环检查按注册保守计算，不区分两个回调是否同时有效，也不证明条件分支。
 - lifelong 外的静态运行与 lifelong 内的同一来源是两次独立运行。
 - event 回调的有效期是整次运行，直到订阅方 `endStream`。
-- socket 历史在 `Drive` 结束时丢弃。
+- lifelong 的历史在 `Drive` 结束时丢弃，最新值保留。
 - parser 失败沿发布者调用栈传播，结束整次运行。
 
 <a id="code-shape"></a>
@@ -138,7 +159,7 @@ LSP 面向开发者手写的 `Types.hs`、`Effects.hs`、`Handlers.hs`、`AST.hs
 <a id="current-limits"></a>
 ## 使用 prebeta 时应知道的边界
 
-- 含 `lifelong` 的程序仍按整次运行传播失败。`require` 读不到值时立即报错；gen 只检查来源存在，不证明执行到读取时一定已有值。[失败协议](STREAM_LIFELONG.md#failures) · [来源检查](EFFECT_GRAPH.md#missing-source)
+- 含 `lifelong` 的程序仍按整次运行传播失败。`require` 缺值时只等别的 `parallel` 分支；gen 只检查来源存在，不证明执行到读取时一定已有值。[失败协议](STREAM_LIFELONG.md#failures) · [来源检查](EFFECT_GRAPH.md#missing-source)
 - 待交付值和固定捕获按 Binding 已有的 ownership 保留资源。ScopeTree 对 Input 的依赖采取保守判断，长期存活的子实例可能连带保留先前共同使用的父实例。[资产保活](STREAM_LIFELONG.md#binding-retention) · [父引用边界](EFFECT_GRAPH.md#scope-parent-retention)
 - 来源状态和 scope 路径仍可能随组合数量指数增长。现有示例覆盖常用路径，长期堆占用、高负载和跨平台取消的验证范围有限。[图与来源](EFFECT_GRAPH.md) · [会话保留成本](STREAM_LIFELONG.md#retention-cost)
 

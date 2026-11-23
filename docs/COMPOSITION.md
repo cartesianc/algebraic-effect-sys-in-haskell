@@ -150,13 +150,13 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 | 行为 | 组合 | 推导 | 驱动 | 规范 |
 | --- | --- | --- | --- | --- |
 | 读取持续资产本次及更早的交付 | `streams "T"`，方法体 `stream @T` | 被历史读取的契约；生产它的 Context 原型标 `effectHistory`，Layer 带 `Streams T` | 历史从本次来源运行的第一条发布算起；读到 `x :> xs`，与 `require @T` 同一固定视图 | [按 x:xs 读取](STREAM_LIFELONG.md#flow) |
-| 读取已有的值，不生产 | `requires "T"`，方法体 `require @T` | 读取权限与读取路由；gen 只检查 T 有来源 | 先用本次捕获，再读运行级最新值；没有值时立即报 `ContextNotInitialized`，不等待、不补跑生产 | [Context](CORE_DESIGN.md#context) |
+| 读取已有的值，不生产 | `requires "T"`，方法体 `require @T` | 读取权限与读取路由；gen 只检查 T 有来源 | 先用本次捕获，再读运行级最新值；没有值时只等别的 parallel 分支发布，否则报 `ContextNotInitialized`；不补跑生产 | [Context](CORE_DESIGN.md#context) |
 | 静态证明普通读取无来源 | 已到达的读取在所有已分析路径均无合法供值或捕获 | gen 在来源证明阶段拒绝，并定位读取点 | 不把结构错误交给运行时缺值处理 | [静态无来源诊断](EFFECT_GRAPH.md#missing-source) |
 | 按类型读取，读到哪份由注册决定 | 同一表示类型细化成多份资产；handler 只写 `require @T` | 每个 effect 按“表示类型 + effect”生成读取实例 | 同一个 handler 绑到不同 effect，各自读到 demands 里那份资产 | [Context](CORE_DESIGN.md#context) |
 | 读到哪一次发布 | 无需新写法；refined asset 决定唯一生产链 | 来源检查 | 普通读取先用调用捕获，再取运行级最新 Binding；不按 AST 位置过滤 | [图与来源](EFFECT_GRAPH.md#missing-source) |
-| 读不到值 | 无需写法 | — | 立即报 `ContextNotInitialized`；读取从不等待，由 workflow 的顺序保证值已发布 | [共享发布与固定捕获](CORE_DESIGN.md#await-visibility) |
+| 读不到值时等待 | 无需写法；把生产放在并行分支里 | gen 为 `parallel` 的每个分支写明它可能发布的资产 | 别的分支仍可能发布就挂起这次调用，发布后从读取点继续；分支都退出仍无值报 `ContextNotInitialized`；资源、诊断、收尾、close 不等待 | [共享发布与固定捕获](CORE_DESIGN.md#await-visibility) |
 | 声明的读取都有用处 | 无需写法 | 读取依据：方法体的读取或控制流的读取 | 声明了却没有任何依据的读取，生成期报错 | [资产来源与访问约束](CORE_DESIGN.md#demand-contract) |
-| 按同一次输出选择分支 | 各候选以 `requires` 读取同一 Excu 下不同判定 Context 的资产 | Booter 确定共同 Excu 和候选次序 | 同次输出依次交给判定 parser，首个解析成功者启动。全部拒绝时，按候选顺序检查已有绑定，没有就报缺值 | [选择与交接](CORE_DESIGN.md#alternative-selection) |
+| 按同一次输出选择分支 | 各候选以 `requires` 读取同一 Excu 下不同判定 Context 的资产 | Booter 确定共同 Excu 和候选次序 | 同次输出依次交给判定 parser，首个解析成功者启动。全部拒绝时，按候选顺序检查已有绑定，没有时按同一规则等待或报缺值 | [选择与交接](CORE_DESIGN.md#alternative-selection) |
 
 <a id="scope"></a>
 ## 5. 资源（scope）
@@ -236,10 +236,11 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | 事实 | 运行时的分支 | 位置 |
 | --- | --- | --- |
 | 生成的 `Drive` | 有来源时同步运行它直到结束或订阅单元全部 `endStream`，再放掉历史；没有来源时立即返回 | `Execution.execute`、`runSource` |
-| 生成的回调表（`Reaction` 的作用范围） | event 整次运行有效；其余回调只在所属 lifelong 或静态运行的来源运行期间有效 | `Execution.reactTo`、`Graph.react` |
-| `StreamSource` 的比较函数（behavior） | 与上一次回调的值相等时不回调 | `Execution.reactTo` |
+| 生成的回调表（`Reaction` 的作用范围） | event 整次运行有效；其余回调只回应所属 lifelong 或静态运行作用范围里的发布 | `Execution.reactTo`、`Graph.react` |
+| `StreamSource` 的比较函数（behavior） | 与同一作用范围里上一次回调的值相等时不回调；每次来源运行重新开始 | `Execution.reactTo` |
 | `compiledStatic` | lifelong 外第一次 `requests` 同步运行根来源，同一根来源只运行一次 | `Execution.staticRun` |
 | 节点的订阅是否结束 | 已结束的节点不再执行；单元节点全部结束时不再回调 | `Execution.respond` |
+| `Concurrent` 分支可能发布的资产 | 分支运行期间登记；别的分支里的 require 缺值时据此等待 | `Execution.execute`、`Graph.awaitPublication` |
 
 <a id="stream-missing"></a>
 ### 6.4 尚未覆盖

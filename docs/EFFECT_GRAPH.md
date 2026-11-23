@@ -24,7 +24,7 @@
 
 `NodeId = [Int]` 是当前原型快照内 AST [规范形式](CORE_DESIGN.md#workflow-normal-form)的下标路径：根为 `[]`，普通子项从零编号；alternative 的选择读取链使用该分支路径加 `[-1]`；lifelong 的生产步骤使用 lifelong 路径加 `[-1, 序号, 步骤]`，lifelong 外静态运行的生产步骤使用 `[-2, 序号, 步骤]`。同一个 origin 末端挂载两次会有两个 `NodeId`，共享方法定义。Context 链经 demand 或挂接进入，定义本身没有虚构的 AST 位置。编辑 AST 后重新生成编号；这些路径不充当跨快照稳定 key 或运行调用序号。
 
-链事实和标准查询由 `Framework.Prototype` 统一提供：`Prototype.Types` 保存纯模型，`Prototype.Graph` 保存方法图与 ScopeTree 的数据，`Prototype.Query` 提供只读查询，`Prototype.Validate` 校验自洽并核对 AST 快照。构建算法由 `Gen.Composition` 统一持有：从声明和方法形状逐步推导装配、图与来源，不让不同输出模块另行解释同一组合。内部状态与最终 Prototype 均不复制业务注册；gen 的输出阶段读取已确定事实生成接口与包装，Execution 执行 gen 写好的闭包，运行图共享这份原型并保存活动实例关系。运行图不累计完整方法调用历史。`chainDrives`、`chainReads` 和 `protoSources` 保存可能生产与读取来源，供 scope 开启计划与 `--structure` 使用；runtime 读取共享最新值，保留固定捕获，缺值立即报错。清理与 Error 边界保留。SDK 当前采用 Haskell ADT，不增加 JSON 或外部 LSP 协议。
+链事实和标准查询由 `Framework.Prototype` 统一提供：`Prototype.Types` 保存纯模型，`Prototype.Graph` 保存方法图与 ScopeTree 的数据，`Prototype.Query` 提供只读查询，`Prototype.Validate` 校验自洽并核对 AST 快照。构建算法由 `Gen.Composition` 统一持有：从声明和方法形状逐步推导装配、图与来源，不让不同输出模块另行解释同一组合。内部状态与最终 Prototype 均不复制业务注册；gen 的输出阶段读取已确定事实生成接口与包装，Execution 执行 gen 写好的闭包，运行图共享这份原型并保存活动实例关系。运行图不累计完整方法调用历史。`chainDrives`、`chainReads` 和 `protoSources` 保存可能生产与读取来源，供 scope 开启计划与 `--structure` 使用；runtime 读取共享最新值，保留固定捕获，缺值时只等 gen 写明可能发布它的别的 parallel 分支。清理与 Error 边界保留。SDK 当前采用 Haskell ADT，不增加 JSON 或外部 LSP 协议。
 
 <a id="driving-plan"></a>
 ## 编译驱动标记
@@ -73,7 +73,7 @@ Context 的生产记录在生产、发布及返回结束后通过 `finally` 删�
 
 `Binding.bindingOrigin :: Execution` 保存不变的执行出身，`bindingProduction :: Maybe ActivationId` 保存成功生产身份，`bindingFrame :: ExecutionFrame` 保存归属帧。生产失败不替换旧绑定，无资源 scope 的内部占位绑定没有生产身份。`bindingOwnership` 是该次生产独有的共享 `IORef`，保存可选 owner 与待认领使用者。当前捕获、权威表、scope 快照和 Handoff 保留同一绑定；认领不改变值、生产身份、帧、origin 或 publication，scope 复用也不重新发布。
 
-`Framework.Runtime.Frame` 保存有限运行根帧与 lifelong 每次回调的子帧。实际执行按节点记录待执行、执行中、完成和跳过。节点完成晚于诊断与受控结果消费；chain 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本次回调交付的资产的生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。帧不再承担发布通知：读取不等待，没有需要唤醒的等待者。普通最新值在运行级共享，不另建按帧资产表。
+`Framework.Runtime.Frame` 保存有限运行根帧与 lifelong 每次回调的子帧。实际执行按节点记录待执行、执行中、完成和跳过。节点完成晚于诊断与受控结果消费；chain 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本次回调交付的资产的生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。发布通知由 RuntimeGraph 的变化信号承担：发布与 parallel 分支退出都会换新信号，等待的 require 醒来后重查。普通最新值在运行级共享，不另建按帧资产表。
 
 Scope 实例保存实际参数生产身份与归属帧，Graph 把待用查询装入 ScopeHandler。查询与节点进度、关闭预约共用 scope 协调锁：实例既无实际使用者，也不再被帧内待用节点或子 scope 保留时，Scope 同步清理。完整运行规则见[主设计](CORE_DESIGN.md#scope-gc)。
 
@@ -102,7 +102,7 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 - 挂在某个锚点的 rawoutput 下（输出联立），锚点执行时发布；
 - 是持续资产（来源由 lifelong 或 lifelong 外的静态运行提供）。
 
-都不满足时报 `Asset never requested`。先前的供值固定点（从空供值集推演 workflow、拒绝 `chain [readX, produceX]` 与互等）已经删除：读取不等待，执行到读取时没有值就立即报 `ContextNotInitialized`，由业务调整 workflow 的顺序。
+都不满足时报 `Asset never requested`。先前的供值固定点（从空供值集推演 workflow、拒绝 `chain [readX, produceX]` 与互等）已经删除。是否等待在运行时决定：gen 为 `parallel` 的每个分支写明它可能发布的资产（`Booter.publishedWithin`），读取缺值时只等这些别的分支；读取方自己所在的分支不计入，所以 `chain [readX, produceX]` 立即报 `ContextNotInitialized`，`parallel [readX, produceX]` 等到发布后继续。
 
 例如，`FileDemo` 的 `alternative` 只尝试 `BlankText` 和 `FilledText`。假设再给 `ReadFile` 挂一个普通 `AuditParser` 并在后继读取 `AuditText`，选择读取不会发布它；后继执行到读取时没有值就报缺值。要稳定取得它，读取方写 `requests "AuditText"`，由自己的前驱执行 `ReadFile` 与 `AuditParser`。
 
@@ -110,11 +110,11 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 ### 运行级最新值与 scope 待用
 
-`RuntimeGraph.runtimeLatest` 每个普通 Context 保留一份最新 Binding；选择与写入在现有协调锁内完成。实际写入顺序决定最新值，Origin 序号只表示出身。`runtimeAssets` 和 `runtimeOrigins` 保留当前步骤输出索引；替换 Origin 仅清理该索引，不清除共享最新值。持续资产另有 `runtimeHistory`，只为 gen 标记了 `effectHistory` 的资产追加。
+`RuntimeGraph.runtimeLatest` 每个普通 Context 保留一份最新 Binding；选择与写入在现有协调锁内完成。实际写入顺序决定最新值，Origin 序号只表示出身。`runtimeAssets` 和 `runtimeOrigins` 保留当前步骤输出索引；替换 Origin 仅清理该索引，不清除共享最新值。持续资产另有 `runtimeHistory`，只为 gen 标记了 `effectHistory` 的资产按（资产，作用范围）追加：每个 lifelong 与每个静态运行各一份。
 
 调用捕获优先；尚未捕获时读取共享值，并在同一协调锁内登记执行帧的捕获身份。生产身份、值与 owner 均沿用原 Binding。scope 待用从全部活动帧、实际根调用及常驻预约查询，先匹配本次捕获、alternative 交接或回调交付，再匹配共享当前参数。确定需要本次新生产而尚未捕获的开启不保留旧参数实例；实例仍须同时满足无实际使用、无待用、无活子实例和无 Binding 保留义务，才由既有 GC close。
 
-缺值时读取立即报 `ContextNotInitialized`，不等待发布，也不查询将来可能的生产位置（[闭包模型](NEXT_STAGES.md#closure-1)）。
+缺值时读取先取变化信号再查值；别的 parallel 分支仍可能发布时挂起，发布或分支退出后重查，否则报 `ContextNotInitialized`（[C1](NEXT_STAGES.md#closure-1)）。不查询执行帧里将来的生产位置。
 
 资源不通过共享最新值查找，仍要求本链开启其所属 Scoped；旧资源 Binding 保持原 owner，不会自动换实例。诊断、cleanup 与 close 不读新业务发布。持续资产的交付与历史遵循 [Stream 第 7 节](STREAM_LIFELONG.md#sessions)。
 
@@ -134,7 +134,7 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 | 故障 | gen 已处理的结构条件 | 留在 runtime 的条件与理由 |
 | --- | --- | --- |
-| `ContextNotInitialized` | [来源检查](#missing-source)覆盖的读取完全没有来源；资源读取缺少本链所属 scope | 读取时尚未发布（读取不等待）、合法生产失败、零发布结束、条件路径未发布；收尾局部快照缺值。已经生产的 Binding 因交接丢失属于 SDK 漏洞 |
+| `ContextNotInitialized` | [来源检查](#missing-source)覆盖的读取完全没有来源；资源读取缺少本链所属 scope | 读取时尚未发布且没有别的分支仍可能发布、合法生产失败、零发布结束、条件路径未发布；收尾局部快照缺值。已经生产的 Binding 因交接丢失属于 SDK 漏洞 |
 | `AmbiguousContextBinding` | 普通资产改用共享最新值，不再以多次生产为歧义；持续资产按运行级最新值读取 | 当前普通读取路径不再产生此故障构造 |
 | `ScopeNotOpen` | 自动 close 只为已取得实例登记，不提供业务直接驱动 close 的方法组合 | 关闭一个未开启实例；正常自动路径出现时检查 SDK 登记与状态不变量 |
 | `ScopeIsClosed` | 资源业务读取要求本链开启所属 scope | 已捕获 Binding 的具体 owner 已关闭；实际存续与实例身份只能运行时检查，资源逃逸的扩展保证仍待设计 |

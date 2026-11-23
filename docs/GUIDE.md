@@ -544,7 +544,7 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 | 枚举 | handler 中 | 含义 |
 | --- | --- | --- |
 | `requests "T"` | 不写 | 驱动：入口在 Input 之前重新生产一次 `T`，结果保存为当前绑定。单独的 `requests` 不带来读取权限 |
-| `requires "T"` | `x <- require @表示类型` | 读取已有的值，不在入口驱动，也不在读取处生产；缺值时立即报缺值，不等待 |
+| `requires "T"` | `x <- require @表示类型` | 读取已有的值，不在入口驱动，也不在读取处生产；缺值时只等别的 parallel 分支发布 |
 | `streams "T"` | `require @表示类型` 或 `stream @表示类型` | 由 T 的交付驱动；前者取本条，后者取截至本条的固定前缀。[持续资产与 lifelong](#stream) |
 
 - **驱动与读取分开写**：既要刷新又要读取的资产写两项，例如 Crawler 的 `[requests "StartURL", requires "StartURL"]`。入口顺序是驱动 → Input → handler，因此 `requests` 驱动的值在前驱和 handler 中都已就绪。
@@ -636,7 +636,7 @@ Context 的读取方法（如 `readT`、`streamT`、`historyT`）和全部入口
 
 | 写法 | 作用 |
 | --- | --- |
-| `x <- require @T`（普通资产） | 读取绑定的 effect 所声明、表示类型为 `T` 的资产；缺值时立即报缺值，不等待、不生产 |
+| `x <- require @T`（普通资产） | 读取绑定的 effect 所声明、表示类型为 `T` 的资产；缺值时只等别的 parallel 分支发布，不生产 |
 | `value <- require @T`（持续资产） | 声明 `streams` 时读取本次交付，普通 `requires` 读取本次捕获的值 |
 | `seen <- stream @T` | 须声明 `streams`。返回 `Flow T`，头是本条，尾是更早的发布，最新在前 |
 | `output <- rawinput` | 挂接的 parser 或 Pure 读取直接 Input 本次交出的 `[String]`，句柄不再执行一遍；挂在 Stream 下时是来源本次 `rawemit` 的那份原始输入（单元素 list） |
@@ -746,7 +746,7 @@ ast = operateFile
 
 - **只选原始句柄**：选中的 effect 必须是 Excu 或 Scoped，不能是 Pure、Context、Stream、Error 或 Middleware。
 - **运行即执行入口**：入口先按 `requests` 驱动资产，再执行 Input 链上的前驱，最后执行绑定的 handler（Scoped 末端执行 `open`）。Input 链不需要在 AST 里重写。
-- **node 结果不隐式传值**：值经 Context 发布。普通 `require` 先用本次捕获，否则读同一 refined asset 的共享最新值；尚未发布时立即报缺值，不等待其他分支。
+- **node 结果不隐式传值**：值经 Context 发布。普通 `require` 先用本次捕获，否则读同一 refined asset 的共享最新值；尚未发布、而别的 parallel 分支仍可能发布时挂起这次调用，发布后从读取点继续。
 
 ### branch 的四种类型
 
@@ -782,7 +782,7 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 
 - **只列候选，不写条件**：选哪一个由 effect 的差异决定，AST 不暴露业务状态。当前实现 option：各候选的分叉点是**同一个 Excu 的输出**。
 - **候选怎么对应**：同一个 Excu 下挂几个 Context，各自只在自己的情况下解析成功（不成立时 `raise`）。每个候选（末端及其 Input 链上游）在 `demands` 里 `requires` 恰好一份由这个 Excu 的输出直接或经 Pure 解析出的非持续资产，各候选的资产互不相同。FileDemo 中 `ReadFile` 下挂 `BlankText`（产出 `FileBlank`）和 `FilledText`（产出 `FileWritten`），`WriteFirstLine` 依赖 `FileBlank`，`AppendLine` 依赖 `FileWritten`。
-- **运行时**：按候选顺序尝试同一份输出，首个成功的 parser 发布并启动对应分支。全部拒绝时，SDK 按同一顺序检查已有绑定，两个值都可读时选排在前面的候选；都缺值时立即报 `ContextNotInitialized`，不等待。[选择与交接](CORE_DESIGN.md#alternative-selection)
+- **运行时**：按候选顺序尝试同一份输出，首个成功的 parser 发布并启动对应分支。全部拒绝时，SDK 按同一顺序检查已有绑定，两个值都可读时选排在前面的候选；都缺值时按 require 的规则等待别的分支，否则报 `ContextNotInitialized`。[选择与交接](CORE_DESIGN.md#alternative-selection)
 - **同一个 Excu 上的多个 alternative** 必须按同样的顺序判定同样的 Context；分叉来自不同上游的 race 尚未实现，gen 拒绝。
 - **候选是 node，至少两个**：一个候选就是一条 original chain，候选之前要执行的步骤写在注册的 Input 链上，不写成 branch。`alternative [chain [node "A"], node "B"]` 按规范形式化简后合法。只有一个候选时没有可选择的分支，gen 拒绝；只想在解析出的资产上执行一个分支，给它声明 `requests`。
 
@@ -1097,7 +1097,7 @@ snapshotAst = chain [node "Announce", node "Report"]
       rawoutput []
   ```
 
-  普通 `require` 不要求本次回调重新发布：已有固定捕获就读捕获，否则读取共享最新值，即使该值来自上一次回调；尚无值时立即报缺值（[共享发布与固定捕获](CORE_DESIGN.md#await-visibility)）。
+  普通 `require` 不要求本次回调重新发布：已有固定捕获就读捕获，否则读取共享最新值，即使该值来自上一次回调；尚无值时按缺值等待规则处理（[共享发布与固定捕获](CORE_DESIGN.md#await-visibility)）。
 - **结束后的资源**：来源结束、lifelong 返回时，只在来源中开启的 scope 交给现有回收器；仍有合法待用的实例保留。LinesDemo 因而在 `Report` 之前打印 `[close]`。已知 ownership 的保留范围见[资源契约](STREAM_LIFELONG.md#binding-retention)。
 - **取消与失败**：不结束的来源可由 Ctrl-C 取消，SDK 停止受控工作、等待收尾并回收资源。含 lifelong 的程序发生失败时仍终止整次运行；局部失败另行设计，详见[故障与取消协议](STREAM_LIFELONG.md#failures)。
 - **lifelong 外读取**：`requires` 只读一次当前值；`requests` 一份持续资产时同步运行它的根来源到结束，历史保留到运行结束，同一来源只运行一次。零发布时报缺值。见[lifelong 外的读取](STREAM_LIFELONG.md#finite-read)。
@@ -1133,11 +1133,11 @@ reading #2: 24.0 C
 ### 驱动与读取：`requests` 与 `require`
 
 - **`requests` 驱动**：入口在 Input 之前执行资产的 `getT`，每次重新生产，成功后以当前入口的 origin 保存并替换该 origin 的绑定；生产失败时不覆盖旧值，原失败继续传播。
-- **`require` 读取**：handler 的 `require @T` 按 effect 路由到 refined asset。先读调用捕获，否则读运行级最新 Binding，缺值立即报错；读取不生产，也不等待。读到后固定，其他调用的新发布不覆盖它。
+- **`require` 读取**：handler 的 `require @T` 按 effect 路由到 refined asset。先读调用捕获，否则读运行级最新 Binding，缺值时只等别的 parallel 分支发布；读取不生产。读到后固定，其他调用的新发布不覆盖它。
 - **值从哪里来**：`requests` 驱动、alternative 的选择读取、锚点的输出联立，以及 Stream 来源。被 `requires` 的资产必须有来源（有 effect `requests` 它、挂在锚点下，或是持续资产），否则生成时报 `Asset never requested`；例如 FileDemo 的 `FileResource` 写了 `[requests "FileName", requires "FileName"]`，取得文件前先驱动文件名的生产链（`LocateFile` → `ValidateFileName` → `FileLocation`），`acquireFile` 再读取它。
 - **跨 node 保存**：同一运行每个普通 Context 保存一份最新发布，不按 AST 位置过滤。并发更新按成功提交的先后覆盖，已有捕获保持原生产身份；资源 Context 仍沿本链 open 和 owner 定位。
 - **确定性保证什么**：refined asset 的 Context 来源与装配规则静态确定。同一来源并发更新时，首次读取可捕获不同次发布；SDK 按上述最新值协议处理，详见[确定性的边界](CORE_DESIGN.md#composition-polymorphism)。
-- **gen 只查来源，不查可达**：资产有来源就通过，不证明执行到读取时已有值。`chain [readX, produceX]` 能生成，运行到 readX 时报 `ContextNotInitialized`；把生产放在读取之前，或在读取方写 `requests`。见[来源检查](EFFECT_GRAPH.md#missing-source)。
+- **取值 · 未就绪时等待**：`parallel [readX, produceX]` 中 readX 先到时挂起，produceX 发布后从读取点继续。gen 只查来源、不查可达：`chain [readX, produceX]` 也能生成，但读取方不等自己所在的分支，运行到 readX 时报 `ContextNotInitialized`；把生产放在读取之前，或在读取方写 `requests`。见[来源检查](EFFECT_GRAPH.md#missing-source)。
 - **部分路径已取值合法**：已捕获路径直接用原 Binding，其他路径可读共享最新值。gen 不证明解析必成功或任意 IO 可终止，合法结构仍可能在业务运行时缺值。
 
 <a id="runtime-anchored"></a>
@@ -1201,7 +1201,7 @@ SDK 不主动检查健康，不自动恢复或重开失效实例。资源共享�
 
 | 故障 | 什么时候报 | 怎么改 |
 | --- | --- | --- |
-| `ContextNotInitialized` | 读取时没有本次捕获也没有已发布的值（读取从不等待）；Error 诊断、自动收尾与 close 期间缺值；资源 Context 没有本链已开启实例的绑定；来源没有发布就已经 `streamEnd` | 在读取之前的链上用 `requests` 驱动它，或调整 workflow 让生产先于读取，并检查生产失败；资源只在 scope 内读取（Input 链上有对应的 Scoped） |
+| `ContextNotInitialized` | 读取时没有本次捕获也没有已发布的值，且没有别的 parallel 分支仍可能发布；Error 诊断、自动收尾与 close 期间缺值；资源 Context 没有本链已开启实例的绑定；来源没有发布就已经 `streamEnd` | 在读取之前的链上用 `requests` 驱动它，或调整 workflow 让生产先于读取，并检查生产失败；资源只在 scope 内读取（Input 链上有对应的 Scoped） |
 | `AmbiguousContextBinding` | 当前普通共享读取不再产生这个故障 | 多次生产同一 refined asset 按最新值读取，固定捕获不变 |
 
 **资源故障（`ScopeFault`）**

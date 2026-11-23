@@ -28,7 +28,7 @@ AST branch 继续规定何时、按何种顺序、选择哪些入口以及是否
 | Stream effect | 第六种 typing；绑定的 handler 通过 `rawemit :: String -> m ()` 逐条提供原始输入，只由 lifelong 的 `Drive` 或 lifelong 外的静态运行调用；来源没有下一份输入时以 `streamEnd` 结束（[9.4](#end)） |
 | parser | Context 绑定的 handler：用 `rawinput` 读取 Stream 本次取得的输入或原子句柄本次交出的输出，返回表示类型的值 |
 | Context.stream | `True` 声明持续资产，它的 Input 链被持续驱动（挂在 Stream 下，或链上有 `streams` demand），且须同时 `require = True`；挂在 Stream 下而声明 `False` 的是 behavior（[第 4.1 节](#drives)） |
-| Context.require | `True` 缓存最新值；读取已有绑定或交付视图，不生产，不等待；缺值立即报 `ContextNotInitialized`（[Context](CORE_DESIGN.md#context)） |
+| Context.require | `True` 缓存最新值；读取已有绑定或交付视图，不生产；缺值时只等别的 parallel 分支发布，否则报 `ContextNotInitialized`（[Context](CORE_DESIGN.md#context)） |
 | 持续资产 | `stream = True` 的资产；每次发布保持声明的表示类型，读取是否带来重复执行由组合关系决定 |
 | `streams "T"` | 声明以资产 T 的新交付驱动，同时取得读取权限；不是调用 parser 的语法。声明它的 effect 在 lifelong 挂载的消费链上，或在另一份持续资产的生产链上 |
 | lifelong | 交给 gen 的标记：其单元是驱动资产每次发布后同步执行的回调；驱动方式由组合决定（socket、behavior、event），lifelong 之外的持续资产读取是 history |
@@ -147,7 +147,7 @@ lifelong 是交给 gen 的标记，不是运行中的服务（用户确认，202
 
 event 没有 BootPlan：lifelong 内的 target 以 `requests` 订阅普通资产时，回调表里一条 `T → RunUnit`，T 不论从哪里发布都回调。behavior 是 Receive，比较函数写在生成的 `StreamSource` 里。
 
-**统一驱动规则：发布即回调。** 资产每发布一次，`Graph.react` 在发布者的调用栈里依次执行回调表中对这份资产仍然有效的回调，全部返回后发布者才继续。来源的下一次 `rawemit`、锚点之后的 workflow 后继，都要等本次回调完成。运行时不判断值将来会不会来，读取不等待。
+**统一驱动规则：发布即回调。** 资产每发布一次，`Graph.react` 在发布者的调用栈里依次执行回调表中对这份资产仍然有效的回调，全部返回后发布者才继续。来源的下一次 `rawemit`、锚点之后的 workflow 后继，都要等本次回调完成。运行时不判断值将来会不会来；`require` 缺值时只等 gen 写明可能发布它的别的 `parallel` 分支（[C1](NEXT_STAGES.md#closure-1)）。
 
 不成立的组合在生成期按 3.2 的匹配表报错，不在运行中猜测或退化为轮询。
 
@@ -215,7 +215,7 @@ instance WatchLayer m => WatchHandler m where
 - **event 的回调读交付。** 回调把交付的资产记为本次执行已发布，target 入口里这份资产的 `requests` 生产链（锚点与 parser）由 `unlessPerformed` 跳过，`requires` 读交付本身；挂在 lifelong 之外时照常生产。
 - **回调环。** 回调的执行（target、Input 链、`requests` 的传递闭包、输出联立、派生）可能再次发布它订阅的资产时，回调会无限递归。gen 在“资产 → 回调可能发布的资产”图上查环并拒绝；回调交付的资产不计入回调自身 `requests` 的闭包。检查按注册保守计算，不区分条件分支。
 - **event 的有效期。** event 回调整次运行有效，直到订阅方 `endStream`。没有来源要运行，`Drive` 位置什么也不做，lifelong 不阻塞后继。
-- **behavior 的去重** 比较本次与上一次回调的值（资产类型固定 `deriving (Eq, Show)`），相等时不回调。
+- **behavior 的去重** 比较本次与同一作用范围（这个 lifelong 或静态运行）里上一次回调的值（资产类型固定 `deriving (Eq, Show)`），相等时不回调；每次来源运行重新开始，另一个 lifelong 订阅同一来源时首值照常回调。
 - **history 的保留** 只针对 lifelong 之外的静态运行。lifelong 内的 socket 在 `Drive` 结束时放掉历史，最新值保留给后继。
 - 节奏只由 Stream handler 的阻塞或等待决定，SDK 不加间隔。回调返回前来源不会产生下一条，慢回调就是慢来源，没有积压。
 - 外部 push callback 不能直接注册给 SDK，需要先转换成可阻塞读取的队列，再作为单步来源；通用回调适配本版延期（见第 11 节）。
@@ -302,7 +302,7 @@ instance WatchLayer m => WatchHandler m where
 6. Stream、Context 不作为 target，Stream 也不能进入 original chain。
 7. lifelong 不嵌套；lifelong 内不能有空分支。
 
-这些检查不证明任意原子 IO 能够返回。gen 不再做读取可达性证明：`require` 只要求资产有来源（被 `requests`、挂在锚点下或是持续资产），运行时读不到值立即报 `ContextNotInitialized`。
+这些检查不证明任意原子 IO 能够返回。gen 不再做读取可达性证明：`require` 只要求资产有来源（被 `requests`、挂在锚点下或是持续资产），运行时读不到值时只等别的 parallel 分支发布，否则报 `ContextNotInitialized`。
 
 ### 5.3 原型中的表示
 
@@ -342,7 +342,7 @@ lifelong 的每个直接子项形成一个单元，单元是它的驱动资产�
 | 有 Stream 来源（socket、behavior、派生、复用输出） | 同步运行来源：来源方法正常返回就再调用一次，直到 `streamEnd`，或它驱动的单元全部 `endStream`；然后放掉本 lifelong 持续资产的历史，返回 Succ |
 | 只有 event 订阅 | 立即返回；回调已登记，整次运行有效 |
 
-来源运行期间，本 lifelong 的 socket、behavior 与派生回调有效；`Drive` 返回后失效。永不结束的来源使 `Drive` 不返回，后继不执行，与 StreamDemo 一样由业务负责。
+本 lifelong 的 socket、behavior 与派生回调只回应本 lifelong 作用范围里的发布（来源运行期间及其回调中）；`Drive` 返回后不再有这样的发布。永不结束的来源使 `Drive` 不返回，后继不执行，与 StreamDemo 一样由业务负责。
 
 ### 6.3 一次回调
 
@@ -376,7 +376,7 @@ lifelong 的每个直接子项形成一个单元，单元是它的驱动资产�
 ### 7.1 保留多少发布
 
 - 每份资产保留运行级最新值。
-- 只有 gen 标记了 `effectHistory`（方法体里有 `stream @T`）的持续资产保留历史；socket 的历史在 `Drive` 结束时放掉，静态运行的历史保留到运行结束。
+- 只有 gen 标记了 `effectHistory`（方法体里有 `stream @T`）的持续资产保留历史，按（资产，作用范围）分开：每个 lifelong 与每个静态运行各一份，互不混入。lifelong 的历史在来源开始与 `Drive` 结束时放掉，静态运行的历史保留到运行结束。
 - 没有交付队列，也没有积压：回调返回前来源不会发布下一条。
 - 调用已经取得的视图仍然有效。资源待用与 scope 开启按本次 Binding 的生产身份判断。向前遍历历史只读过去的业务值，不会为旧交付重新登记 scope 使用。
 
@@ -409,7 +409,7 @@ Receive 在交出原始输入时，也把同一步来源执行已捕获的资源
 <a id="finite-read"></a>
 ### 8.2 lifelong 外的读取
 
-普通 `requires "T"` 只读一次：本次调用已捕获的值，或运行级最新值；都没有时立即报 `ContextNotInitialized`，不等待。
+普通 `requires "T"` 只读一次：本次调用已捕获的值，或运行级最新值；都没有时，只在别的 `parallel` 分支仍可能发布时挂起这次调用，发布后从读取点继续；没有这样的分支就立即报 `ContextNotInitialized`。
 
 lifelong 外 `requests` 一份持续资产（history、behavior 采样）就是要一份静态历史：第一次 `requests` 在当前位置同步运行根来源（及派生链）直到 `streamEnd`；之后 `requires` 读最后一条，`streams` 的 `stream @T` 读整段。同一根来源在一次运行中只运行一次，并发的请求方等这一次运行结束；历史保留到运行结束。没有边读边执行。
 
@@ -525,7 +525,7 @@ LinesDemo 读完四行后 `streamEnd`。每行的打印、统计与累计显示�
 
 `streamEnd` 不是失败：不进入 Error 诊断，不通知运行监督，也不被方法体内的 `catchError` 接住。已经完成的 IO 和此前的发布不回滚。
 
-**lifelong 之后的读取。** `require` 读运行级最新值，像 State monad 的 state：每次发布覆盖为最新，读取取当前值（同一次调用内第一次读取后固定）。lifelong 的持续资产在 `Drive` 结束时放掉历史，最新一条保留给后继；一条都没有发布时按缺值报 `ContextNotInitialized`，不等待。
+**lifelong 之后的读取。** `require` 读运行级最新值，像 State monad 的 state：每次发布覆盖为最新，读取取当前值（同一次调用内第一次读取后固定）。lifelong 的持续资产在 `Drive` 结束时放掉历史，最新一条保留给后继；一条都没有发布时按缺值规则处理。
 
 **资源。** 只在来源中开启的 scope（例如 StreamDemo 的 `SensorLink`、LinesDemo 的输入文件）在来源结束、生产挂载的位置撤销后，按可达性回收；后继还会以同样参数开启的实例保留。单元在回调中开启的 scope 随回调的执行帧回收。
 

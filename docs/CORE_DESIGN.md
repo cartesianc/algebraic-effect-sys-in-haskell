@@ -13,8 +13,8 @@
 | 范围 | 状态 | 详细规范 |
 | --- | --- | --- |
 | Pure、Excu、Scoped、Error、Context；有限 workflow | 当前已实现；原子句柄与 Pure 交出 `[String]`，Pure 是生产链中的值变换（2026-11-12）；Error 的驱动链仍待设计 | [运行语义](CORE_DESIGN.md#runtime) |
-| 统一 Prototype、运行图与静态来源 | Stage 1/2 已实现；缺值不再等待（[闭包模型](NEXT_STAGES.md#closure-model)） | [图与来源](EFFECT_GRAPH.md) |
-| 普通 require 共享供值 | 运行级最新值与固定捕获已实现；缺值立即报错，gen 只做来源检查 | [共享发布与固定捕获](#await-visibility) |
+| 统一 Prototype、运行图与静态来源 | Stage 1/2 已实现；缺值等待改由 gen 写明的并行分支决定（[闭包模型](NEXT_STAGES.md#closure-1)） | [图与来源](EFFECT_GRAPH.md) |
+| 普通 require 共享供值 | 运行级最新值与固定捕获已实现；缺值只等别的 parallel 分支，gen 只做来源检查 | [共享发布与固定捕获](#await-visibility) |
 | scope 的单例与多例：`requires` 引用已有的一次生产、`requests` 发起新的生产，由此决定实例的共享与清理；按可达性回收、运行结束关闭、close 可选 | 已实现（2026-11-13） | [单例与多例](#scope-identity)、[按可达性回收](#scope-gc) |
 | 资产表示、目录与业务模块顶层约束 | 已实现。注册校验表示类型的定义身份，跨模块重导出沿用原类型身份 | [固定形式](ASSETS.md#fixed-form) |
 | Stream、持续交付与 lifelong | 已实现。本条读取和历史读取共享一次固定交付，lifelong 的失败仍按整次运行传播 | [持续读取](STREAM_LIFELONG.md#contracts) |
@@ -230,7 +230,7 @@ prebeta 以现行协议作为 LSP 的实现依据。后续专题与当前保证�
 
 依赖只从上往下：源语言不导入其他层；gen 导入源语言与 Prototype 的数据模型，不导入运行时；运行时导入源语言与 Prototype，不导入 gen。demo 的可执行程序不链接 `Framework.Gen.*`，`effect-codegen` 不链接 `Framework.Runtime.*`。Generated/Assets.hs 是审查用的资产目录，不进入运行导入链。
 
-能在生成期判定的组合、读取路由与合法性问题，都由 gen 报错。启动时核对注册快照、Handlers 指纹与 AST 层级，并校验 Prototype 自洽。读取按生成的路由取值，缺值立即报错，不等待；读取权限与来源存在在生成期确定。
+能在生成期判定的组合、读取路由与合法性问题，都由 gen 报错。启动时核对注册快照、Handlers 指纹与 AST 层级，并校验 Prototype 自洽。读取按生成的路由取值，缺值时只等 gen 写明可能发布它的别的 parallel 分支；读取权限与来源存在在生成期确定。
 
 `Gen.Composition` 统一编译入口、阶段转换与装配事实：声明、资产来源、workflow 挂载、持续连接、handler 类型能力、入口装配、方法图和来源检查按依赖顺序计算。各阶段仍使用专门算法，没有通用的规则匹配或固定点求解器。输出阶段读取结果生成类型约束、精细化 DI 与 Prototype，不重新选择组合解释。内部装配记录只在 gen 存在；方法摘要缓存只保存纯结构，不包含业务值或活实例，运行时仍逐挂载、逐调用执行。
 
@@ -295,7 +295,7 @@ gen 分开处理结构共享、同次输出复用与 scope 实例共享。相同
 | Excu | handler | m [String] | run名字 | 交出的 list 只交给挂接的 Context（可经 Pure）；入口装配驱动与前驱并承接失败 |
 | Scoped | open、close | 均为 m [String] | open名字、close名字 | 开启参数按生产身份共享；无当前使用、待用节点及子 scope 保留时回收，close 可选 |
 | Error | detect、resolve | 均为 m () | detect名字、resolve名字 | 只处理关联 scope 的失败；沿 ScopeTree 祖先顺序检测，Succ 后调用可选 resolve，保存原始与次生失败 |
-| Context | parser | m 表示类型 | getT；`require = True` 时 readT，`stream = True` 时为 streamT | getT 执行前驱与 parser 并包装发布；读取先用 state，无值时立即报缺值，不生产；失败保留该来源旧值；持续资产见第 7 章 |
+| Context | parser | m 表示类型 | getT；`require = True` 时 readT，`stream = True` 时为 streamT | getT 执行前驱与 parser 并包装发布；读取先用 state，无值时只等别的 parallel 分支发布，不生产；失败保留该来源旧值；持续资产见第 7 章 |
 | Stream | handler | m () | next名字 | 只由 lifelong 的位置或静态运行调用；不作为 AST target |
 | Middleware | handler（必填）；`intercept :: [EffectKind]` | m [String]，Layer 是 Hooks、Raises、MonadIO | hook名字 | 驱动方式特殊的 Excu：`input = "None"`，没有 demands；只在 Root 级调用点上执行，不作为 AST target，见 [Middleware](#middleware) |
 
@@ -488,7 +488,7 @@ hangingTree = hanging [middleware [node "TraceOutput"] [reportBranch]]
 <a id="context"></a>
 ### 4.3 Context、驱动与读取
 
-手写 input 只允许 Root 或非 Context、非 Error 的 effect；Context 经 demands 接入。生产者自身仍可有 Input、消费其他 Context，但不能作为 AST node 的末端。沿 Input 与 requests 收集 scope；读取不执行 getT，还没有值时立即报缺值。input 指向 Excu、Scoped 或 Pure 的普通 Context 是生产分支，不声明 demands：被 requests（或被 alternative 选择读取）时，parser 的 rawinput 沿 Input 启动所挂句柄；所挂句柄在别处执行时，经输出联立解析这次输出。input 指向 Stream 的 Context 由来源的 `rawemit` 驱动。见[普通资产的生产：requests 与输出联立](#request-production)。
+手写 input 只允许 Root 或非 Context、非 Error 的 effect；Context 经 demands 接入。生产者自身仍可有 Input、消费其他 Context，但不能作为 AST node 的末端。沿 Input 与 requests 收集 scope；读取不执行 getT，还没有值时按缺值等待规则处理。input 指向 Excu、Scoped 或 Pure 的普通 Context 是生产分支，不声明 demands：被 requests（或被 alternative 选择读取）时，parser 的 rawinput 沿 Input 启动所挂句柄；所挂句柄在别处执行时，经输出联立解析这次输出。input 指向 Stream 的 Context 由来源的 `rawemit` 驱动。见[普通资产的生产：requests 与输出联立](#request-production)。
 
 生产方与消费方分别描述，Context effect 自身也可以消费别的 Context：
 
@@ -553,23 +553,23 @@ handler 直接在 `<-` 左侧匹配表示类型的构造器，或先具名绑定
 
 当前返回形态统一由资产声明确定：普通资产与持续资产都返回表示类型。`streams` 还把声明它的位置接到持续驱动，`requires` 只取固定值；读取类型相同不合并驱动关系。业务表示可以是记录、累计统计或其他 ADT，SDK 不根据其内容附加历史语义，详见[持续资产读取](STREAM_LIFELONG.md#contracts)。
 
-Gen.Composition 统一计算唯一来源、访问结果、绑定的读取路由与读取依据；Prototype 保存运行所需的解析事实；运行时继续执行已确定的捕获、共享供值与 ownership 协议，缺值立即报错。结构检查不移动取值、不提前求值、不合并重复驱动，也不证明所有路径、字段使用、case 穷尽或业务计算正确。
+Gen.Composition 统一计算唯一来源、访问结果、绑定的读取路由与读取依据；Prototype 保存运行所需的解析事实；运行时继续执行已确定的捕获、共享供值、缺值等待与 ownership 协议。结构检查不移动取值、不提前求值、不合并重复驱动，也不证明所有路径、字段使用、case 穷尽或业务计算正确。
 
 手写 Handlers 保持原生语法，运行仍编译 Generated/Handlers 的副本，修改实现后须重新生成。
 
 #### 驱动与读取的运行协议
 
-驱动（requests）每次重新生产，成功后把新 Binding 写入本次捕获和运行级最新值。普通读取先用本次捕获，再读共享最新值；都没有时立即报 `ContextNotInitialized`。完整规则见[共享发布与固定捕获](#await-visibility)。
+驱动（requests）每次重新生产，成功后把新 Binding 写入本次捕获和运行级最新值。普通读取先用本次捕获，再读共享最新值；都没有时，只在别的 `parallel` 分支仍可能发布时挂起这次调用，发布后从读取点继续；没有这样的分支就立即报 `ContextNotInitialized`。完整规则见[共享发布与固定捕获](#await-visibility)。
 
 对于已到达的普通读取，gen 还拒绝所有已分析路径都没有合法供值或捕获的结构；这项最低限度的检查见[静态无来源诊断](EFFECT_GRAPH.md#missing-source)。有合法生产路径、但本次条件或解析没有发布时，仍使用下述运行时缺值协议。
 
-值来自 `requests`、输出联立、alternative 的选择读取与来源的发布；读取本身不生产，也不等待。任意位置实际发布的普通资产都可供同一次运行读取。诊断、cleanup、close 和 scope 资源 Context 同样不等待；生命周期中的生产只更新本地快照。
+值来自 `requests`、输出联立、alternative 的选择读取与来源的发布；读取本身不生产。任意位置实际发布的普通资产都可供同一次运行读取。诊断、cleanup、close 和 scope 资源 Context 同样不等待；生命周期中的生产只更新本地快照。
 
 刷新失败不覆盖共享旧值，错误原样传播，已完成操作不回滚。current capture 固定已读取值；资源绑定沿原 owner 定位，scope 快照中的普通辅助值不能覆盖运行级最新发布。
 
 读取权限在生成期确定：gencode 拒绝 handler 读取未声明的表示类型，只为声明了 requires／streams 的 effect 生成读取实例，运行时不按当前消费者查声明表。SDK 不预初始化 Context，未声明的上游不执行。
 
-AST 组织链的启动次序。Crawler 中两个打印各自 requests 本页摘要，gen 把抓取链展开为各自的前驱，chain 依次执行；共用的打印 handler 按各自 refined asset 读取摘要。读取不等待另一分支的 requests：并行分支之间要读的值，须在读取时已经发布。
+AST 组织链的启动次序。Crawler 中两个打印各自 requests 本页摘要，gen 把抓取链展开为各自的前驱，chain 依次执行；共用的打印 handler 按各自 refined asset 读取摘要。读取可以等待另一并行分支的 requests 发布；同一条 chain 里先读后产不会等待自己。
 
 业务注册用 `Asset @T "资产名"` 将表示类型细化为契约。`T` 可以是 `String`、`[String]` 或本程序 `Types.hs` 定义的类型。对业务类型，`TypeRef` 同时保存类型名、定义模块和编译单元。gen 由此能接受重导出的原类型，也能指出另一个模块定义的同名类型。`Output` 单独识别并在作为资产时拒绝。字段和派生实例遵循[资产固定形式](ASSETS.md#fixed-form)。
 
@@ -693,8 +693,8 @@ instance ParseFileNameLayer m => ParseFileNameHandler m where
 **状态：已实现（2026-11-18），本轮验证见 [Next stages](NEXT_STAGES.md#stage-2-await)。** 普通资产在同一次 interpreter 运行中共享最新发布；AST 位置与执行帧不再过滤普通供值。一个 refined asset 仍对应唯一 Context 和表示 ADT，`requests` 每次生产，`require` 只读取、不生产。声明与 handler 写法不变。
 
 - **读取顺序**：先用本次调用已经捕获的 Binding；没有捕获时，读取该 Context 的运行级最新发布，读到后固定为本次捕获。多个位置可以生产同一资产，最新指最后一次成功提交的发布，不按 Origin 编号排序。发布与读取并发时，捕获的具体生产可以受调度影响，即使生产者自身按顺序发布也一样；这是读取最新值的正常行为，资产来源与装配规则仍唯一，不因此拒绝合法的普通共享供值。
-- **缺值即报错**（[闭包模型](NEXT_STAGES.md#closure-1)，2026-11-24）：没有捕获也没有发布时，立即报 `ContextNotInitialized`，不挂起。注册了生产方不等于它已经启动，`require` 不隐式调用它。
-- **gen 只查来源**：被 `require` 的资产须有来源：有 effect `requests` 它、挂在锚点下（输出联立），或是持续资产。不检查读取时是否可达。细节见[来源检查](EFFECT_GRAPH.md#missing-source)。
+- **取值 · 未就绪时等待**（[C1](NEXT_STAGES.md#closure-1)，2026-11-24 修订）：没有捕获也没有发布时，若别的 `parallel` 分支仍可能发布（gen 写在 `Concurrent` 闭包上），只挂起这一次调用，发布后从读取点继续；没有这样的分支、或它们都已退出时报 `ContextNotInitialized`。读取方自己所在的分支不计入。注册了生产方不等于它已经启动，`require` 不隐式调用它。
+- **gen 只查来源**：等待只发生在运行时，gen 不证明可达。被 `require` 的资产须有来源：有 effect `requests` 它、挂在锚点下（输出联立），或是持续资产。不检查读取时是否可达。细节见[来源检查](EFFECT_GRAPH.md#missing-source)。
 - **执行帧**：保留节点进度、具体生产身份、固定捕获身份和 scope 待用关系。lifelong 每次回调有新的调用捕获和交付视图，但共享普通资产不会因此清空。已发布的普通值也可供另一单元或后继读取。
 - **生命周期边界**：资源 Context 仍只沿本链 open 与 owner 协议读取；诊断、cleanup、close 不读新业务发布。持续资产在回调里按固定交付读取；回调带来的发布者捕获优先于共享最新值。
 
@@ -776,7 +776,7 @@ operateFile = alternative [node "WriteFirstLine", node "AppendLine"]
 AST 只列候选，不写条件。gencode 将共同 Excu、选择读取路径和候选 NodeId 到判定 Context 的对应保存为 WorkflowTree 的 AlternativeProto（`alternativeSource`、`alternativeSelector`、`alternativeCases`）。
 
 1. **取得同一份输入。** 选择入口运行共同 Excu 一次，把原始输出按 AST 候选顺序交给各判定 Context。parser 可以经 Pure 读取这份输出。首个解析成功者发布资产，SDK 随即启动对应候选。判定 parser 的 `raise` 表示放弃本次尝试；共同 Excu 自身的失败仍沿原链传播。
-2. **全部拒绝时读取已有绑定。** SDK 按声明顺序检查各判定资产，多个已有值同时可读时取排在前面的。全部缺值时立即以首个判定 Context 报 `ContextNotInitialized`，不等待。可观察到哪些值可以受调度影响。
+2. **全部拒绝时读取已有绑定。** SDK 按声明顺序检查各判定资产，多个已有值同时可读时取排在前面的。全部缺值时按同一等待规则：别的分支仍可能发布其中之一就等待并重查，否则以首个判定 Context 报 `ContextNotInitialized`。可观察到哪些值可以受调度影响。
 3. **交接选中路径。** 选择阶段捕获的无 owner 绑定经 Handoff 交给选中候选，其 Input 与显式 `requests` 照常执行。共同 Excu 上的其他普通 parser 在此选择位置没有发布机会；独立执行同一 Excu 时，普通挂接才可在那个位置供值。[生成期来源证明](EFFECT_GRAPH.md#missing-source)
 
 选择读取有独立入口使用登记，以共同 Excu 的名字登记末端，NodeId 为 alternative 路径加 [-1]，参与构图与 ScopeTree。validatePrototype 核对共同 Excu、判定 Context 互不相同且与候选的 requires 一致；执行 fold 与 --structure 使用同一原型匹配当前 AST，不一致时在业务前拒绝。
