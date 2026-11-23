@@ -445,8 +445,9 @@ typing = Context { asset = Asset @PageURL "StartURL", parser = Just "startURL", 
 - **`asset = Asset @表示类型 "资产名"`**：把表示类型细化为资产，生成器产出 `newtype StartURL = StartURL PageURL`；表示类型怎么写见[资产书写](#types)。
 - **`parser`**（必填）：产出表示类型值的 handler，签名 `m 表示类型`，直接返回 `pure (PageURL ...)`，不包资产构造器。gen 生成 `getStartURL`：执行 Input 前驱和 parser，再包成资产发布。parser 是细化 parser：挂在句柄或 Pure 下时，它把 `rawinput` 读到的 list 解析成表示类型，作用类似 tokenize；值的变换交给 Pure。
 - **`require`**：对普通 Context，`True` 开放 `requires` 和生成的读取方法（例如 `readStartURL`），`False` 关闭这条读取路径。显式 `requests` 的成功生产仍走发布协议。
-- **`stream`**：`True` 声明持续资产，读取方法是 `streamStartURL`。当且仅当它的 Input 链被持续驱动时声明（挂在 Stream 下，或链上有 `streams` demand），且必须同时 `require = True`。资产值的表示仍由业务声明，见[持续资产与 lifelong](#stream)。
-- **不能作为 AST 末端**：普通 Context 只在被 `requests` 驱动或被 alternative 的选择读取驱动时产出，它挂接的句柄单独执行时不产出；持续 Context 由会话驱动；被读取时不产出。
+- **`stream`**：`True` 声明持续资产，读取方法是 `streamStartURL`。它的 Input 链被持续驱动（挂在 Stream 下，或链上有 `streams` demand），且必须同时 `require = True`。挂在 Stream 下而声明 `False` 的是 behavior：相等的值只发布一次。资产值的表示仍由业务声明，见[持续资产与 lifelong](#stream)。
+- **挂在句柄下不声明 demands**：Input 是 Excu、Scoped 或 Pure 的 Context 是生产分支，只用 `rawinput` 解析上层交出的 list；需要的值由句柄放进 `rawoutput`。
+- **不能作为 AST 末端**：普通 Context 在被 `requests` 驱动、被 alternative 的选择读取驱动，或它挂接的句柄在任何位置执行（输出联立，资产有人读取时）时产出；持续 Context 由会话驱动；被读取时不产出。[输出联立](CORE_DESIGN.md#output-links)
 - **命名**：资产名决定资产类型和入口方法名，要按业务含义起名（`StartURL`，而不是 `LoadStartURL`），不能与 effect 名、生成区固定名或 `Types.hs` 中的类型重名。
 
 #### `Pure`
@@ -526,7 +527,7 @@ input = "FileSession"
 - **含义**：前驱。gen 在这个 effect 的入口中先执行 `input` 指向的 effect（连同它自己的前驱），再执行绑定的 handler；方法体不调用上游，也不捕获前驱的失败。前驱失败后的改道用 AST 的 `alternative`。
 - **已开启的 scope 不重开**：前驱是 Scoped 时，同一条链里已开启的实例直接复用，不再执行 `open`。
 - **挂接**：Context 的 `input` 指向 Excu、Scoped 或 Stream 时，它就挂在这个句柄下，parser 用 `rawinput` 读取句柄入口（`handler`／`open`）本次交出的 list；`close` 没有挂接点。挂接的 Context 不把句柄当作前驱重跑：被 `requests` 时，parser 的 `rawinput` 启动这个句柄。例如 [FacadeProbe](../demo/FacadeProbe/Effects.hs) 的 `ReportCounter` 挂在 `ReadReport` 下，`ShowReport` requests 它的行数时先读取文本，再解析成行数。
-- **经 Pure 挂接**：Context 或 Pure 的 `input` 指向 Pure 时，`rawinput` 读的是这个 Pure 变换后的 list；整串 Pure 的挂接点是最上面的句柄。例如 [Crawler](../demo/Crawler/Effects.hs) 的 `FetchPage` → `KeepPageBody`（Pure，去掉空白正文）→ `ExtractPage`（Context，解析成摘要）：`PrintPage` requests 摘要时依次执行抓取、Pure 与解析；[FileDemo](../demo/FileDemo/Effects.hs) 的 `LocateFile` → `ValidateFileName`（Pure）→ `FileLocation`（Context）同样由 `requests` 驱动。
+- **经 Pure 挂接**：Context 或 Pure 的 `input` 指向 Pure 时，`rawinput` 读的是这个 Pure 变换后的 list；整串 Pure 的挂接点是最上面的句柄。例如 [Crawler](../demo/Crawler/Effects.hs) 的 `FetchPage` → `KeepPageBody`（Pure，去掉空白正文）→ `ExtractPage`（Context，解析成摘要）：`PrintPage` requests 摘要时依次执行抓取、Pure 与解析；抓取句柄在别处执行时，摘要也经输出联立更新；[FileDemo](../demo/FileDemo/Effects.hs) 的 `LocateFile` → `ValidateFileName`（Pure）→ `FileLocation`（Context）同样由 `requests` 驱动。
 - **限制**：
   - input 链不能成环；
   - 链上的 Scoped 必须声明 `open`；`close` 可为 `Nothing`，此时实例不可达后只移出运行表；
@@ -550,7 +551,7 @@ demands = [requests "StartURL", requires "CrawlSessionInfo"]
 - **来源自动确定**：每个资产恰好由一个 Context 声明，生成器按资产名自动接上，不用指名生产方。
 - **读取按表示类型路由**：handler 的 `require @T` 由 gen 按“表示类型 + effect”路由到这个 effect 声明的那份细化资产；一个 effect 的 demands 里同一表示类型只能出现一次。同一种数据有不同含义时，声明成不同的资产，例如 Crawler 的 `StartURL` 和 `LinkedURL`，再由各自的 effect 选择。
 - **同一资产可以声明多种合法访问方式**：同一资产的同一种方式只能声明一次。
-- **限制**：Scoped 至多 `requests` 一个资源 Context；`requires` 需要生产方 `require = True`；对持续资产 `requests` 启动或加入它的会话并取当前一条，不执行生产链；`streams` 只能由 Excu、Scoped 声明，只能订阅持续资产的基础资产（`stream = True`）。
+- **限制**：Scoped 至多 `requests` 一个资源 Context；`requires` 需要生产方 `require = True`；对持续资产与 behavior `requests` 启动或加入它的会话并取当前一条，不执行生产链；`streams` 只能由 Excu、Scoped 声明，只能订阅 `stream = True` 的持续资产；挂在句柄下的 Context 与 Pure 不声明 demands。lifelong 内的 `requests` 是订阅（behavior、event），见[驱动方式](#stream)。
 - **同一资产只有一个 Context 来源**：访问方式不改变资产的 ADT 或生产方；不限制一个消费者只能声明一个资产。
 - **声明须有读取依据**：每个 `requires`／`streams` 的资产须在绑定的 handler 中读取，或参与现有 alternative 选择／streams 交付。
 - **声明即权限**：handler 读取了 effect 没有声明的表示类型，生成器报错；读取实例只为声明了 `requires`／`streams` 的 effect 生成，运行时不再查声明表。
@@ -648,16 +649,16 @@ Context 的读取方法（如 `readT`、`streamT`、`historyT`）和全部入口
 - **失败属于 handler**：错误类型由 handler 名决定，不随绑定改变；失败发生在哪个 effect 由 SDK 记录为 `origin`，Error 用 `RaisedBy "handler名"` 匹配。
 - **刷新写在注册里**：方法体没有 `request`；需要重新生产的资产在注册里写 `requests`，由入口在 handler 之前驱动。
 
-例如 [Crawler](../demo/Crawler/Handlers.hs) 中挂在抓取句柄下、由两个 Context 共用的 parser：
+例如 [Crawler](../demo/Crawler/Handlers.hs) 中挂在抓取句柄下、由两个 Context 共用的 parser。生产分支不声明 demands，抓取句柄 `fetchPage` 交出 `[url, html]`，地址随同一次输出到达：
 
 ```haskell
 instance ExtractSummaryLayer m => ExtractSummaryHandler m where
   extractSummary = do
-    fetched <- rawinput                       -- 挂接句柄本次交出的 list：一页正文
-    PageURL url <- require @PageURL      -- StartURL 或 LinkedURL，由绑定的 effect 决定
-    html <- case fetched of
-      [page] -> pure page
-      _ -> raise (ExtractSummaryError (url ++ ": fetch returned no page body"))
+    fetched <- rawinput                       -- 挂接句柄本次交出的 list：地址与一页正文
+    (url, html) <- case fetched of
+      [address, page] -> pure (address, page)
+      address : _ -> raise (ExtractSummaryError (address ++ ": fetch returned no page body"))
+      [] -> raise (ExtractSummaryError "fetch returned nothing")
     ...                                  -- 解析标题、段落和链接
     pure (PageSummary url title content links)
 ```
@@ -902,7 +903,7 @@ EffectSpec
 
 持续交付来自持续的驱动。上面是来源单步：会话反复调用来源，其每次 rawemit 立即驱动挂接的 parser。由另一份持续资产驱动时，可以独立派生，也可以直接解析 lifelong 消费节点本次操作的输出，见下面的“由持续资产驱动的持续资产”。声明规则：
 
-- **`stream = True` 当且仅当 Context 的 Input 链被持续驱动**：直接 Input 是 Stream，或链上有 `streams` demand；必须同时 `require = True`。被驱动的链不能声明成普通资产，没有驱动的链也不能声明成持续资产。
+- **`stream` 与 Input 链一致**：链上有 `streams` demand 时须 `stream = True`；直接 Input 是 Stream 时，`True` 是逐条交付的持续资产，`False` 是 behavior；没有驱动的链不能声明 `stream = True`。两者都须 `require = True`。
 - **一个 Stream 恰好有一个 Context 以它为 `input`**，作为它的 parser。
 - **持续资产经会话发布与交付**：消费方 `requests` 它时启动或加入会话、取当前一条，`requires` 只读已有会话；已有消费操作的输出可交给挂接 Context 发布，不必另开生产任务。
 - **订阅**：消费方写 `streams "T"`，表示由 T 的新交付驱动，同时取得读取权限；handler 用 `require @表示类型` 取得本次交付，用 `stream @表示类型` 取得 x:xs（本次交付及同一会话中更早的交付，最新在前）。
@@ -910,15 +911,16 @@ EffectSpec
 
 ### 驱动方式
 
-持续数据通常以 socket（外部持续送来）、behavior（值一直存在，随时采样）或 event（离散发生）三种方式到来。它们在 SDK 中如何区分尚未确定，目前都写成 Stream 加 parser，节奏由 Stream handler 自己的阻塞或等待决定：
+驱动方式不另写标签，由 Stream effect、资产的 `stream` 与 lifelong 的组合决定：
 
-| 驱动关系 | 例子 | 现在怎么写 |
+| 组合 | 驱动方式 | 消费方写法 |
 | --- | --- | --- |
-| socket | 连接、消息队列、传感器 | 用 scope 保持连接，每次收帧后 `rawemit` |
-| behavior | 时钟、心跳、状态轮询 | Stream handler 先等待采样间隔，再取当前值（StreamDemo 的温度与心跳都采用这一写法） |
-| event | 事件队列、由回调转成的阻塞等待 | Stream handler 阻塞读取下一个事件 |
+| Stream 下 `stream = True`，消费方在 lifelong 内 | socket：每次 `rawemit` 唤起一次，不去重 | `streams "T"` |
+| Stream 下 `stream = True`，消费方在 lifelong 外 | history：`requests` 启动会话，结束后历史仍保留 | `requests "T"`，加 `streams "T"` 读 `stream @T` |
+| Stream 下 `stream = False` | behavior：第一次 `requests` 启动；值变化才唤起（lifelong 内），否则采样最新值 | `requests "T"` 加 `requires "T"` |
+| 普通资产，消费方在 lifelong 内 | event：资产每次发布（包括锚点的输出联立）唤起一次 | `requests "T"` 加 `requires "T"` |
 
-外部回调不能直接注册给 SDK，需要先转换成可阻塞读取的队列。详细规则见 [Stream 规范 4.1 节](STREAM_LIFELONG.md#drives)。
+StreamDemo 的温度与心跳按 socket 写：Stream handler 先等待采样间隔，再取当前值并 `rawemit`，消费方逐条处理并读历史。节奏由 Stream handler 自己的阻塞或等待决定。外部回调不能直接注册给 SDK，需要先转换成可阻塞读取的队列。写法示例与详细规则见 [Stream 规范 4.1 节](STREAM_LIFELONG.md#drives)。
 
 ### handler：定时采样与逐条交付
 
@@ -1141,9 +1143,10 @@ reading #2: 24.0 C
 
 ### 挂在句柄下的 Context
 
-- **requests 是前驱**：`requests "T"` 让 gen 把 T 的整条生产链（Context 沿 Input 经 Pure 到句柄，句柄再带上自己的前驱）展开进请求方的入口，在方法体之前执行。每个请求方每次执行各走一遍；成功的值写入 T 的当前值，`requires "T"` 读这个值。句柄单独在操作链里执行时，不运行挂在它下面的普通 parser。持续 Context 的输出复用走 Stream 失败协议，见[持续资产与 lifelong](#stream)。
-- **显式驱动与选择读取**：`requests` 启动 parser 后，`rawinput` 可以驱动所挂句柄。`alternative` 已经执行了共同 Excu，只让候选的判定 parser 重读同一份输出。仅挂在该 Excu 上的其他普通 parser 要由另一次合法生产驱动。
-- **中间有一串 Pure 时**：挂接点是最上面的句柄，句柄的输出依次经过每个 Pure 再交给 parser。`requests` 经 Pure 执行句柄入口，选择判定则经 Pure 变换已取得的输出。Pure 的 `raise` 按解析失败处理：`requests` 驱动时向请求方传播，选择判定时只表示这一支没有值，持续 Context 的输出复用走 Stream 失败协议。
+- **requests 是前驱**：`requests "T"` 让 gen 把 T 的整条生产链（Context 沿 Input 经 Pure 到句柄，句柄再带上自己的前驱）展开进请求方的入口，在方法体之前执行。每个请求方每次执行各走一遍；成功的值写入 T 的当前值，`requires "T"` 读这个值。持续 Context 的输出复用走 Stream 失败协议，见[持续资产与 lifelong](#stream)。
+- **输出联立**：句柄在任何位置执行（AST 上单独挂载、作为别人的 Input、被另一份资产的 `requests` 拉取），挂在它下面、有人读取的普通 parser 都解析这次输出并更新当前值，不需要另写 `requests`。解析失败沿执行句柄的链传播。alternative 的判定资产除外。[输出联立](CORE_DESIGN.md#output-links)
+- **显式驱动与选择读取**：`requests` 启动 parser 后，`rawinput` 可以驱动所挂句柄。`alternative` 已经执行了共同 Excu，只让候选的判定 parser 重读同一份输出；挂在该 Excu 上、不是判定资产的普通 parser 经输出联立解析同一次输出。
+- **中间有一串 Pure 时**：挂接点是最上面的句柄，句柄的输出依次经过每个 Pure 再交给 parser。`requests` 经 Pure 执行句柄入口，选择判定则经 Pure 变换已取得的输出。Pure 的 `raise` 按解析失败处理：`requests` 驱动与输出联立时沿原链传播，选择判定时只表示这一支没有值，持续 Context 的输出复用走 Stream 失败协议。
 
 所以 Crawler 先并行抓取，打印时直接 `require` 解析好的摘要，不再重新抓取。
 
@@ -1266,7 +1269,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | `Asset never requested`：某个普通资产被 `requires`，但没有任何 effect `requests` 它 | 给读取方或它 Input 链上的 effect 加上 `requests "资产名"`；alternative 的判定资产与被 `streams` 的持续资产不受此限。持续资产只 `requires` 时同样需要 `requests` 来启动会话 |
 | 已到达的普通读取没有可启动的供值或捕获 | 在等待前或独立分支驱动生产；require 不自行生产。详见供值固定点与等待规则 |
 | 持续后继有多个互不先后的已结束 lifelong 会话 | 明确会话的先后或细化资产；普通资产多处发布使用共享最新值，不适用此歧义规则 |
-| 持续资产的声明不成立：Context 的 `stream` 与 Input 链是否持续驱动不一致，或 `stream = True` 却没有 `require = True`；Stream 下不是恰好一个 Context，或 parser 以外的 effect 以 Stream 为 `input`；`streams` 订阅了普通资产，或由 Excu、Scoped 以外的 effect 声明 | 按[持续资产的声明规则](#stream)修正 |
+| 持续资产的声明不成立：Context 的 `stream` 与 Input 链是否持续驱动不一致，或 `stream = True`（以及挂在 Stream 下的 behavior）却没有 `require = True`；挂在句柄下的 Context 声明了 demands；Stream 下不是恰好一个 Context，或 parser 以外的 effect 以 Stream 为 `input`；`streams` 订阅了普通资产，或由 Excu、Scoped 以外的 effect 声明 | 按[持续资产的声明规则](#stream)修正 |
 | `streams` 写在 lifelong 外的末端上；lifelong 嵌套或含空分支；lifelong 里的末端没有恰好订阅一个持续资产，或另外读取了别的持续资产 | 按 [lifelong 的规则](#stream)调整注册或 AST |
 | lifelong 中持续资产的生产链读取驱动资产以外的持续资产，或输出复用的位置产生启动环 | 一条链只由一份持续资产驱动；保证负责发布的位置可以先执行，不先等待它自己将来才会产生的交付 |
 | 同一持续资产的 AST 输出发布位置存在歧义 | 在同一个 lifelong 内保持静态可确定的发布关系，不依赖并行完成顺序；重复使用 handler 不会自动合并独立执行 |

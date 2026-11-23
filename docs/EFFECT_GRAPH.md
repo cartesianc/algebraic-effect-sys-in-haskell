@@ -93,7 +93,7 @@ ScopeTree 仍是独立的静态构树结果，保留路径分析、注册前提�
 
 refined asset 固定唯一 Context 和表示 ADT；该生产链可以由多个位置驱动。每次成功生产保留独立的 `ActivationId` 与 Binding，普通资产的运行级最新值按 Context 覆盖，已捕获 Binding 不随覆盖变化。AST 顺序控制启动，执行帧记录进度，二者不作为普通值的读取权限。
 
-来源计算位于 `Gen.Composition.resolveSources`，输入是装配后的有限方法结构、workflow 和输出连接。它区分显式 requests、选择读取、持续 Context 的挂接注入与会话步骤；普通 Context 只经 requests 或选择读取生产（[普通资产只经 requests 生产](CORE_DESIGN.md#request-production)），读取本身不生产。`chainDrives`、`chainReads` 与 scope 开启计划来自同一次计算：
+来源计算位于 `Gen.Composition.resolveSources`，输入是装配后的有限方法结构、workflow 和输出连接。它区分显式 requests、选择读取、普通 Context 的输出联立、持续 Context 的挂接注入与会话步骤（[requests 与输出联立](CORE_DESIGN.md#request-production)），读取本身不生产。`chainDrives`、`chainReads` 与 scope 开启计划来自同一次计算：
 
 ```haskell
 data Source = FromOwnChain | FromChains [NodeId] | FromSession
@@ -210,7 +210,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 生成器通过 GHC 解析器查看手写 handler 方法体中的读取：`require @T` 与 `stream @T` 均按表示类型路由。`stream @T` 还提供历史读取事实，组合阶段据此标记对应 Context 的 `effectHistory`。`rawinput` 在方法形状中记为挂接输入。再按每个绑定把表示类型代换成该 effect 声明的细化资产的读取方法、把 rawinput 代换成直接 Input 的入口，并在前面接上驱动（requests 的 getT）与 Input 前驱，组成 effect 方法的纯结构副本。表示类型按规范化的类型原文比较（例如 `String` 与 `[Char]` 视为同一类型）。副本剥离业务值、模式匹配所得数据、纯计算结果和实际 IO，只保留读取与入口引用及其结构关系。调用顺序、分支和重复读取不能被简单的名称集合代替；静态分支保留可能路径，不执行条件表达式来选择业务分支。驱动还是读取由注册决定，不能仅按方法名判断是否重新生产。
 
-结构副本描述带包装的句柄：原子句柄（Excu.handler、Scoped.open）的生成入口在方法体返回后注入挂在它下面（可经一串 Pure）的持续 Context（普通 Context 不注入，只经 requests 生产），构图时该句柄的定义因此在方法体之后接一个可选分支，内容是这些 Context 的方法结构，其中对句柄的 rawinput 记为空（注入期间由本次输出回答，不再执行句柄），中间的 Pure 入口就地展开，同样回答到句柄为止。注入路径由此进入 effect graph 与 ScopeTree，不形成环；挂接的 Context 经 Pure 以外的方法又回到该句柄时生成器报错。Pure 的入口在来源分析和运行时都不改变调用者，句柄据此认出经 Pure 拉取它的 Context，不重复注入。
+结构副本描述带包装的句柄：原子句柄（Excu.handler、Scoped.open）的生成入口在方法体返回后注入挂在它下面（可经一串 Pure）、有人读取的普通 Context（输出联立）与持续 Context，构图时该句柄的定义因此在方法体之后接一个可选分支，内容是这些 Context 的方法结构，其中对句柄的 rawinput 记为空（注入期间由本次输出回答，不再执行句柄），中间的 Pure 入口就地展开，同样回答到句柄为止。注入路径由此进入 effect graph 与 ScopeTree，不形成环；挂接的 Context 经 Pure 以外的方法又回到该句柄时生成器报错。Pure 的入口在来源分析和运行时都不改变调用者，句柄据此认出经 Pure 拉取它的 Context，不重复注入。
 
 业务执行副本把方法体原样复制到按 effect 的类型标签 `Wrap "名字"` 上，另生成入口、按标签的路由与包装，不改写业务表达式。新的边界是读取 handler 的读取结构并按绑定生成独立结构，不解释任意业务值语义，不要求用户补写 layer 或另一份调用声明。结构提取也不证明任意 Haskell 函数的行为、动态调用次数或物理资源依赖。
 
@@ -260,7 +260,7 @@ Assembly 是组合机器内部的装配结果，不是第二份业务注册或 R
 | `EntryMount` | 组合机器的 ChainProto、Emit.Program 的入口登记 | NodeId、入口角色、结构末端、运行诊断标签、方法身份；相同方法的多个挂载仍独立 |
 | `EntryStep` | 组合机器的方法组成、Emit.Handlers | 有序 RequestStep／InputStep；两处都使用 bindingBefore，不重新推导或去重 |
 | `RawSource` | 结构中的 rawinput 引用、生成的 Raw 实例 | 直接 Input 的结构引用。Stream parser 的生成实例读本次 emit 的固定输入 [text]，静态来源仍指向该 Stream |
-| `OutputConnection` | 组合机器的注入结构、驱动与来源证明；Emit 的注入表 | 当前 anchor → 持续 parser；普通 Context 不再有注入连接 |
+| `OutputConnection` | 组合机器的注入结构、驱动与来源证明；Emit 的注入表 | 当前 anchor → parser；`outputRole` 为 `ContextRequest` 是输出联立（每次执行都注入），`ContextStream` 是持续注入（只在原型指定的发布位置） |
 | `BootPlan.ReuseOutput` | 组合结果、Prototype 与现有 runtime | 机器确定的具体 AST 输出位置，不新增独立生产步骤 |
 
 完整方法结构仍保留顺序、分支和每次调用；最终方法目录共享定义，方法摘要在 gen 内共享。alternative 仍按契约选择并交接捕获，没有把公共前段提升到候选之外。runtime 只取得本次输出、Binding 与活 scope 实例，不重新寻找共线或尾部。scope 仍按参数生产身份匹配，本次不增加 Eq 约束或同值复用。

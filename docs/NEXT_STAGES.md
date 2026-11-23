@@ -19,7 +19,7 @@
 **已有验证记录（2026-11-21）。** U4 重新生成了八个命名空间并通过构建。同名 `FileHandle` 来自另一模块时 gen 拒绝，重导出原类型时生成结果相同。FileDemo 的空文件与非空文件分别命中对应候选。选择入口的等待探针覆盖了其他位置稍后发布，以及该位置结束后仍无值两种结果。
 
 <a id="urgent-history"></a>
-**U2 结束后的完整历史保存暂缓。** 当前会话在来源停止且所有读取方离开后释放历史前缀，正常结束后的合法后继仍可用 `requires` 读最后一条。若以后需要独立保存整段数据，还须决定保存者的启动时机、归属会话和读取方式。[会话保留规则](STREAM_LIFELONG.md#retention)
+**U2 结束后的完整历史保存：由 history 组合给出（2026-11-24）。** lifelong 之外以 `requests` 启动的 interpreter 托管会话结束后不放掉历史，之后的 `stream @T` 仍读到整段；lifelong 内的 socket 会话仍在来源停止且读取方离开后释放历史前缀，后继用 `requires` 读最后一条。[驱动方式的组合](STREAM_LIFELONG.md#drives) · [会话保留规则](STREAM_LIFELONG.md#retention)
 
 <a id="urgent-backpressure"></a>
 **U3 背压暂缓。** `x :> xs` 的尾部是已经发布的过去。消费方遍历它时，上游可以继续生产；队列容量和按需求暂停生产仍在[背压专题](#backpressure)讨论。
@@ -33,7 +33,7 @@
 
 | 阶段 | 已实现 | 规范 |
 | --- | --- | --- |
-| <a id="request-phase-1"></a>R1 requests 前驱 | gen 把被请求资产唯一的生产链展开进请求方入口；每个请求方每次执行各走一遍，成功值写入该资产的当前值。`requires` 只读这个值，被读取的普通资产必须有 effect `requests` 它（`Asset never requested`）。句柄单独执行不再注入挂在它下面的普通 Context。alternative 候选只 `requires` 自己的判定资产。 | [普通资产只经 requests 生产](CORE_DESIGN.md#request-production) · [Crawler](../demo/Crawler/Effects.hs) |
+| <a id="request-phase-1"></a>R1 requests 前驱 | gen 把被请求资产唯一的生产链展开进请求方入口；每个请求方每次执行各走一遍，成功值写入该资产的当前值。`requires` 只读这个值，被读取的普通资产必须有 effect `requests` 它（`Asset never requested`）。句柄单独执行不再注入挂在它下面的普通 Context（2026-11-24 由 [O1 输出联立](#output-link-1)恢复为 gen 期闭包）。alternative 候选只 `requires` 自己的判定资产。 | [requests 与输出联立](CORE_DESIGN.md#request-production) · [Crawler](../demo/Crawler/Effects.hs) |
 | <a id="request-phase-2"></a>R2 运行时按身份寻址 | interpreter 启动时一次建索引。资产与 scope 按 gen 分配的 effect 编号存取，生成入口直接写出编号；执行位置按先序坐标寻址，子树判断是一次区间比较。普通 Context 的注入代码与 gen 中对应的分析分支已删除。 | [运行索引](CORE_DESIGN.md#request-production) |
 
 <a id="request-phase-3"></a>
@@ -52,6 +52,20 @@
 - Error 回调登记与 `Failure` 记录，属于诊断展示。
 
 requests 展开的前驱作为请求方入口里的静态代码执行，运行时没有它们各自的坐标。
+
+<a id="output-links"></a>
+## 输出联立与持续执行的组合多态
+
+**状态：已实现（2026-11-24），分支 `feat/output-injection-and-stream-modes`。** 用户确认以下语义，两部分在同一分支完成。
+
+| 阶段 | 语义 | 工作计划 |
+| --- | --- | --- |
+| <a id="output-link-1"></a>O1 原子输出联立 | 锚点（Excu／Scoped.open）在任何位置执行，挂在它下面的生产分支（一串 Pure 与 Context）都读这次输出，成功值写入运行级最新值表；不只在 `requests` 时更新。生产分支是纯内部函数：Pure 与挂在锚点下的 Context 不能声明 demands。只给有人读取的分支挂闭包；alternative 的判定资产不注入，仍由选择读取生产。注入中的解析失败一律 raise，沿原链传播并停止程序（Error effect 完成前的处理）。被 `requires` 的普通资产有 requests，或锚点由 workflow 执行并注入时都合法。 | Composition：声明检查（分支无 demands）、`checkRequested` 放宽、来源分析恢复普通注入；Booter：`OutputConnection` 恢复普通角色并按读取筛选；Emit：入口包装带上普通分支；Runtime：`atomicScope` 注入普通分支，失败不吞；Crawler 由锚点把 URL 放进原始输出。 |
+| <a id="output-link-2"></a>O2 持续执行的组合多态 | 由 Stream effect（S）、stream 资产（A）与 lifelong（L）的组合决定：S+A+L 是 socket（每次 `rawemit` 唤起，不去重，结束时 GC 历史）；S+A 不在 lifelong 是 history（`requests` 启动，结束后保留整段历史）；S 而资产非 stream 是 behavior（第一次 request 启动生产，值按相等去重；lifelong 内值变化才唤起，lifelong 外只采样最新值）；没有 S 与 A 而在 lifelong 内 `requests` 普通资产是 event（O1 的每次发布唤起，不回放订阅前的发布，照常写最新值表）；没有 S 而资产是 stream 仍非法。lifelong 内 `requests` 是订阅，`requires` 是采样；event 位置已有交付时不再执行生产链；订阅单元自己执行该资产锚点时 gen 拒绝。 | Composition：按 S/A/L 判定并放开 lifelong 内的 requests 端点；Booter：event 会话计划与自激检查、behavior 会话计划；Runtime：event 会话接收注入发布、behavior 会话去重并只交付最新值、history 会话结束后不 GC；文档：STREAM_LIFELONG、CORE_DESIGN、COMPOSITION、GUIDE。 |
+
+**验证（2026-11-24）。** `scripts/check.ps1` 重新生成八个命名空间并编译运行全部 demo：O1 之后只有 Crawler（地址随抓取输出交给 parser）与挂接入口的生成结果变化，O2 之后现有 demo 的生成结果不变，七个 demo 均通过（crawler 需要网络）。在仓库外用 `--source-dir` 生成并运行了一个覆盖四种组合的探针：event 订阅方在每次锚点执行后被唤起一次、未重跑生产链并以 `endStream` 结束；只 `requires`、不 `requests` 的读取方读到联立发布的最新值；behavior 来源依次发出 `1 1 2 2 2 3 3` 时订阅方只被 `1 2 3` 唤起，lifelong 外采样到最新值；history 在来源结束后的第二个读取方仍读到整段。
+
+**未覆盖。** event 订阅方不调用 `endStream` 而锚点不再执行时 lifelong 一直等待，按约定由业务负责；event 自激的拒绝只检查订阅 lifelong 内的 target、Input 链与直接 `requests`，不追踪更深的 requests 传递闭包；behavior 去重只比较相邻两次发布；联立中的解析失败暂按停止程序处理，待 Error effect 设计后细化。
 
 <a id="code-shape"></a>
 ## LSP 从哪份代码开始
@@ -104,7 +118,8 @@ Stage 1–7 在各自已确认的范围内完成。生成、编译和现有 demo
 | <a id="stage-3"></a><a id="stage-6"></a><a id="stage-6-reuse"></a>持续驱动、结束与同次输出复用 | [执行边界](STREAM_LIFELONG.md#execution-boundaries) · [消费结束](STREAM_LIFELONG.md#consumer-end) · [派生与复用](STREAM_LIFELONG.md#derive) |
 | <a id="stage-5"></a><a id="stage-7"></a><a id="scope-gc"></a>持续资产保活与 scope 回收 | [资源交接](STREAM_LIFELONG.md#binding-retention) · [可达性回收](CORE_DESIGN.md#scope-gc) |
 | <a id="pure-pipeline"></a><a id="version-boundaries"></a>原子输入输出与 gen 分工 | [Pure 与原子输出](CORE_DESIGN.md#pure) · [编译器与 runtime](CORE_DESIGN.md#compiler) |
-| requests 前驱与运行时编号、坐标 | [普通资产只经 requests 生产](CORE_DESIGN.md#request-production) · [剧本化阶段](#request-chains) |
+| requests 前驱与运行时编号、坐标 | [requests 与输出联立](CORE_DESIGN.md#request-production) · [剧本化阶段](#request-chains) |
+| 输出联立与 socket／history／behavior／event | [输出联立](CORE_DESIGN.md#output-links) · [驱动方式的组合](STREAM_LIFELONG.md#drives) · [阶段](#output-links) |
 | 消费链与生产分支 | [锚点注入与一次执行](CORE_DESIGN.md#consumer-chain) |
 | gencode 的读取与重跑 | [只分析 AST](GUIDE.md#ast-command) · [重跑边界与接口缓存](EFFECT_GRAPH.md#cache) |
 

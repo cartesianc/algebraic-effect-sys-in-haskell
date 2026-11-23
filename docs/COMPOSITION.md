@@ -136,8 +136,9 @@ SDK 没有逐一提供 `map`、`filter`、`take`、`share`、`acquireRelease` �
 | --- | --- | --- | --- | --- |
 | 资产有唯一的生产方 | Context 以 `asset = Asset @T "名字"` 声明；消费方只写资产名 | 按资产名解析出唯一生产方，多个生产方即报错 | 不按距离或拓扑替用户选来源 | [Context](CORE_DESIGN.md#context)、[资产来源与访问约束](CORE_DESIGN.md#demand-contract) |
 | 驱动一次新的生产 | 消费方 `requests "T"` | 入口的驱动步骤，排在前驱与方法体之前 | 每次进入入口都重新执行 T 的生产链并发布；不合并重复驱动 | [入口装配](CORE_DESIGN.md#calls) |
-| 原子操作的输出解析成资产 | Context 的 Input 是 Excu、Scoped 或 Pure，parser 用 `rawinput`；消费方 `requests` 它的资产 | 锚点（生产链上的 Excu／Scoped）注入为请求方的前驱，Context 与 Pure 是从锚点分出的生产分支，读锚点的同一次输出 | 每个请求方各执行一次生产链，同一次调用内同一 effect 只执行一次，失败沿请求方传播；句柄单独执行时不解析挂在下面的普通 Context | [普通资产只经 requests 生产](CORE_DESIGN.md#request-production) |
-| 被读取的普通资产必须有人请求 | 消费方 `requires "T"` | 检查某个 effect `requests "T"`；alternative 的判定资产与被 `streams` 的持续资产除外 | 没有请求方时 gencode 报 `Asset never requested` | [普通资产只经 requests 生产](CORE_DESIGN.md#request-production) |
+| 原子操作的输出解析成资产 | Context 的 Input 是 Excu、Scoped 或 Pure，parser 用 `rawinput`；消费方 `requests` 它的资产 | 锚点（生产链上的 Excu／Scoped）注入为请求方的前驱，Context 与 Pure 是从锚点分出的生产分支，读锚点的同一次输出 | 每个请求方各执行一次生产链，同一次调用内同一 effect 只执行一次，失败沿请求方传播 | [requests 与输出联立](CORE_DESIGN.md#request-production) |
+| 锚点在任何位置执行都更新挂在下面的资产 | 挂在锚点下的 Context（及中间的 Pure）不声明 demands；资产有人读取 | `OutputConnection` 的普通角色（`ContextRequest`），gen 写在锚点入口包装上；alternative 的判定资产不联立 | 锚点成功返回后解析同一次输出并写入运行级最新值，`requires` 不 `requests` 也读到；解析失败沿原链传播 | [输出联立](CORE_DESIGN.md#output-links) |
+| 被读取的普通资产必须有来源 | 消费方 `requires "T"` | 检查某个 effect `requests "T"`，或 T 挂在锚点下（输出联立）；alternative 的判定资产与被 `streams` 的持续资产除外 | 都没有时 gencode 报 `Asset never requested` | [requests 与输出联立](CORE_DESIGN.md#request-production) |
 | 输出的纯变换 | Input 链上串 Pure | Pure 链，挂接点是最上面的原子句柄 | 句柄输出经 Pure 依次变换后交给 parser；Pure 不改变调用者身份，不会重复注入 | [Pure](CORE_DESIGN.md#pure) |
 | 操作按顺序组合 | `input = "前驱"` | 入口的前驱步骤 | 在方法体之前执行前驱；不传值，前驱失败原样传播 | [句柄与值](CORE_DESIGN.md#handles-and-values) |
 | 每个生产方法都有人驱动 | 无需写法 | 从各 AST 末端和选择读取求可达集合 | 生产方法无法从任何入口到达时，生成期报错 | [图与来源](EFFECT_GRAPH.md) |
@@ -200,7 +201,10 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 | 行为 | 组合 | 推导 | 驱动 | 规范 | 或可类比为 |
 | --- | --- | --- | --- | --- | --- |
 | 持续来源，取不到下一份输入时结束 | Stream effect，加挂在它下面、`stream = True` 的 Context；来源没有下一份输入时 handler 调用 `streamEnd` | `BootPlan` 为 Receive；Stream handler 的 Layer 带 `Emits` 和 `StreamEnds` | 每次 rawemit 驱动 parser 发布一条，来源正常返回后继续下一步；`streamEnd` 使会话封口 | [4](STREAM_LIFELONG.md#bootplan)、[9.4](STREAM_LIFELONG.md#end) | `repeatEffectOption` |
-| 首次需要时才开始生产 | 无需写法 | 会话描述 | 进入 lifelong 时启动本边界的会话；lifelong 外第一次 `require` 时启动托管会话 | [7](STREAM_LIFELONG.md#sessions)、[8.3](STREAM_LIFELONG.md#production) | 流的惰性 |
+| 首次需要时才开始生产 | 无需写法 | 会话描述 | 进入 lifelong 时启动本边界的会话；lifelong 外第一次 `requests` 时启动托管会话 | [7](STREAM_LIFELONG.md#sessions)、[8.3](STREAM_LIFELONG.md#production) | 流的惰性 |
+| 只在值变化时更新（behavior） | Stream effect，加挂在它下面、`stream = False` 的 Context | 原型标 `effectSampled`；会话仍是 Receive，步骤登记为 `behaviorSteps` | 第一次 `requests` 启动生产；与上一条相等的值不追加交付 | [4.1](STREAM_LIFELONG.md#drives) | `changes`、`distinctUntilChanged` |
+| 普通资产的每次发布成为一条交付（event） | lifelong target `requests` 一份普通资产 | `BootPlan` 为 Listen | 会话建立后，该资产每次发布追加一条交付，不回放此前的发布，没有生产任务 | [4.1](STREAM_LIFELONG.md#drives) | 事件总线订阅 |
+| 结束后保留整段（history） | lifelong 外 `requests` 并 `streams` 一份 `stream = True` 的资产 | interpreter 托管会话 | 结束后不 GC 历史，之后的 `stream @T` 仍读整段 | [4.1](STREAM_LIFELONG.md#drives)、[8.3](STREAM_LIFELONG.md#finite-read) | `replay` |
 | 由上游每条交付驱动产出一条 | Context `stream = True`，Input 链上有 `streams "U"`，本 lifelong 没有它的发布位置 | `BootPlan` 为 Derive | 领取一条 U 的交付 → 执行被驱动的 Input 链 → parser 发布一条；可以逐级串联 | [4.2](STREAM_LIFELONG.md#derive)、[8.1](STREAM_LIFELONG.md#production) | `mapEffect` |
 | 消费步骤的输出成为新的持续资产，不重跑该步骤 | Context 挂在 lifelong 节点的原子句柄下 | `BootPlan` 为 `ReuseOutput [发布节点]` | 节点执行后由挂接 parser 发布，不另开任务；发布节点都结束或所在单元结束后封口 | [4.2](STREAM_LIFELONG.md#derive) | `mapEffect` 的结果再被共享 |
 | 每步生产带上同一步的辅助产物 | 生产链上的其他 Context 照常发布 | 独立生产任务的伴随发布 | 每条交付附带同一步发布的普通资产，消费方读到的是同一步的产物 | [7](STREAM_LIFELONG.md#sessions) | — |
@@ -213,14 +217,14 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 
 | 行为 | 组合 | 推导 | 驱动 | 规范 | 或可类比为 |
 | --- | --- | --- | --- | --- | --- |
-| 每条交付执行一次消费 | lifelong 中以 `streams` 订阅该资产的节点 | `lifelongUnits`、`lifelongSubscriptions` | 单元逐条领取，每条一个 frame，同一单元的调用不重叠，交付逐轮固定，普通资产仍可读取共享最新值 | [6](STREAM_LIFELONG.md#scheduling) | `runForEach` |
+| 每条交付执行一次消费 | lifelong 中以 `streams` 订阅持续资产（socket），或以 `requests` 订阅 behavior、普通资产（event）的节点 | `lifelongUnits`、`lifelongSubscriptions` | 单元逐条领取，每条一个 frame，同一单元的调用不重叠，交付逐轮固定；behavior 只领最新一条；event 订阅方已有交付时不再执行该资产的生产链 | [6](STREAM_LIFELONG.md#scheduling)、[4.1](STREAM_LIFELONG.md#drives) | `runForEach` |
 | 多个消费单元并发推进 | `lifelong [...]` 的各直接子项 | 单元划分 | 各单元并发推进、互不等待 | [6.1](STREAM_LIFELONG.md#scheduling) | 多播后分别运行 |
 | 一份资产有多个消费方 | 多个单元或派生会话 `streams` 同一资产 | 同一边界中一份资产一个会话；读取方登记 | 每个读取方独立游标；保留未领取交付及最新值，目前没有背压 | [7](STREAM_LIFELONG.md#sessions)、[7.1](STREAM_LIFELONG.md#retention) | `broadcast`、`share` |
 | 派生持续资产被普通链读取一次 | A 的 Input 链订阅 B；C 或普通 Context 链 `requires` A | A 的独立 Derive 计划、普通读取路由与托管上游关系 | 首次需求建立 A/B；A 随 B 继续发布，C 取得一次固定 T 后继续，不继承订阅 | [8.3](STREAM_LIFELONG.md#production) | 持续来源的一次采样 |
 | 只读当作不变的值 | 单元内 `requires "T"` | 该读取方只读最新一条 | 不订阅；本轮第一次读取时领取一条交付，同一轮共享；本单元发布的资产则读已有的一条 | [6.3](STREAM_LIFELONG.md#scheduling)、[9.5](STREAM_LIFELONG.md#consumer-end) | — |
 | 按每条交付选择分支 | lifelong 内的 alternative，共同 Excu 由本单元的交付驱动 | `AlternativeProto` | 每次执行时选择读取执行该 Excu 一次，按判定结果只启动一个候选 | [6.3](STREAM_LIFELONG.md#scheduling) | 在逐条处理里做 `Match` |
 | 同一单元里既发布又读取 | 单元中已先行或必经并行的节点发布，其他位置直接或经 Derive 订阅该产物 | 发布位置、单一派生上游与实际轮帧 | 等本轮发布和派生处理稳定；仍无新交付才跳过本轮，封口排空后其订阅结束 | [9.5](STREAM_LIFELONG.md#consumer-end) | — |
-| 消费方不再消费 | 订阅方的 handler 按条件调用 `endStream` | 自己声明 `streams` 的 Excu，其 Layer 带 `EndsStream` | 节点之后各轮跳过；按读取方计数逐层离开（节点 → 单元 → 会话） | [9.5](STREAM_LIFELONG.md#consumer-end) | `take`、`takeWhile` |
+| 消费方不再消费 | 订阅方的 handler 按条件调用 `endStream` | 自己声明 `streams` 的 Excu，或 lifelong 内以 `requests` 订阅的 Excu target，其 Layer 带 `EndsStream` | 节点之后各轮跳过；按读取方计数逐层离开（节点 → 单元 → 会话） | [9.5](STREAM_LIFELONG.md#consumer-end) | `take`、`takeWhile` |
 | 结束向下游传播并排空 | 无需写法 | — | 封口后读取方领完积压才结束；单元在所需来源排空或节点都结束订阅时结束；全部单元结束后 lifelong 返回 | [9.4](STREAM_LIFELONG.md#end) | 流的完成 |
 | 结束后或在外部读最新的值 | lifelong 的后继或 lifelong 外写 `requires "T"` | 静态来源表；后继读取的来源保留 | 后继读每个来源最新一次发布；lifelong 外由托管会话交付，至少等到一条 | [9.4](STREAM_LIFELONG.md#end)、[8.3](STREAM_LIFELONG.md#production) | `runLast` |
 
@@ -231,7 +235,8 @@ scope 同样没有 key、寿命或 cleanup 策略的写法。何时开启、与�
 
 | 事实 | 运行时的分支 | 位置 |
 | --- | --- | --- |
-| `sessionPlan` | Receive 和 Derive 启动生产任务并按步骤循环；ReuseOutput 不启动任务，只登记交付状态 | `Runtime.sessionLauncher` |
+| `sessionPlan` | Receive 和 Derive 启动生产任务并按步骤循环；ReuseOutput 与 Listen 不启动任务，只登记交付状态；Listen 会话由普通资产的发布追加交付 | `Runtime.sessionLauncher`、`Graph.publishAsset` |
+| `effectSampled`、会话边界 | behavior 的读取方只领最新一条；interpreter 托管会话结束后保留历史 | `Session.takeDeliveryOnWith`、`Session.release` |
 | 读取关系（单元内的订阅、普通读取点或选择读取） | 登记读取方游标，按未领取位置保留交付；普通有限读取只捕获当前值 | `Execution` 的 `access`、`Session.release` |
 | 发布节点（`ReuseOutput` 的节点表） | 发布位置按节点计，节点结束或单元结束时撤下，全部撤下才封口 | `Execution` 的 `withdraw` |
 | 发布节点所在的单元与派生上游 | 本单元直接或间接发布的来源，等节点退休和派生处理追平后才判断本轮无交付；外部来源继续等待后续增量 | `DeliveryFrame.frameLocal`、`frameStable`、`Session.sessionCaughtUp` |
@@ -261,7 +266,7 @@ Layer 是方法体可用能力的边界，同样不由业务填写，而是从�
 | `Raises` | 每个 handler 的本地错误，由输出时补入 |
 | `Hooks`（`hook :: m Operation`） | 只有 Middleware |
 | `StreamEnds`（`streamEnd`） | 绑定成 Stream 的 handler |
-| `EndsStream`（`endStream`） | 自己声明了 `streams` 的 Excu；同链的前驱与 lifelong 里不订阅的普通节点不给 |
+| `EndsStream`（`endStream`） | 自己声明了 `streams` 的 Excu，以及 lifelong 内以 `requests` 订阅 behavior／event 的 Excu target；同链的前驱不给 |
 | `MonadIO` | Pure 以外 |
 
 同一个 handler 绑定到多个 effect 时，各绑定推出的 Layer 必须一致。因此能力只按 handler 自己的类别和读取推出，不按它所处的控制流推出：普通原子操作放进 lifelong 不会多出能力，也就能在有限链与持续链之间复用。
