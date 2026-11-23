@@ -4,7 +4,7 @@
 
 开发者编写的是有固定结构的 Haskell 程序。SDK 的生成器是这门嵌入式语言的编译器：它从声明和 handler 的读取中提取组合关系，在生成期检查并定下链的组合与数据来源，输出可阅读的契约与执行代码，再由 interpreter 装配和运行。
 
-**项目已进入 prebeta。** 业务作者编写的注册、handler 和 workflow，以及它们现有的执行语义，已经可以作为开发 LSP 的基线。[阶段计划](docs/NEXT_STAGES.md#stages)
+**项目已进入 prebeta。** [阶段计划](docs/NEXT_STAGES.md#stages)
 
 ## 能用它做什么
 
@@ -41,6 +41,13 @@ main = interpreter ast effects
 | [Workflow／AST](docs/GUIDE.md#workflow) | 选择完整操作链的末端，规定这些链何时、以什么方式启动。 |
 
 Effect 声明操作与依赖关系，handler 实现具体行为，asset 连接生产与消费，workflow 组织执行。[使用指南](docs/GUIDE.md#code-shape)用同一个文件操作例子展开这些组件，展示它们分别写在哪个文件、怎样连接成一个程序。
+
+## 框架已实现 LSP 解析
+
+aged donkey 工作台可以从同一命名空间的两个视角阅读业务。**业务编辑**从手写声明画出 Effect 的前驱、资产依赖和绑定的 Handler，并从 `AST.hs` 及其引用的模块展示 Workflow。**业务分析**直接读取 SDK 生成的 `Generated/Prototype.hs`，可以沿资产回看生产路径，也可以在 `Generated/Workflow.json` 对应的工作流上查看插件挂载的位置。
+
+- **LSP 后端**负责读取项目、解析声明与生成产物，并通过 FastAPI 提供图数据。手写源码页还可按需连接 Haskell Language Server，查看类型、诊断和定义。[后端仓库与启动说明](https://github.com/cartesianc/algebraic-effect-sys-server)
+- **Web 工作台**提供业务编辑和业务分析画布。启动后端和前端后，在侧栏导入已有项目并选择命名空间即可查看。[前端仓库与使用说明](https://github.com/cartesianc/algebraic-effect-sys-web-app)
 
 ## 从哪里开始
 
