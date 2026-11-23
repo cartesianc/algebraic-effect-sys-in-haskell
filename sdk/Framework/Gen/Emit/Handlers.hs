@@ -264,27 +264,15 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
       where
         -- 步骤按 Injector 排定的顺序执行。锚点带上它为本入口生产的 Context：
         -- 在 Scoped 的 open 中，锚点的 IO 属于这些开启输入的生产，不提前固定开启输入。
+        -- 订阅回调把交付的资产记为本次已发布：入口里对它的 requests 跳过生产链，直接读这条交付。
         entryStep (SessionRequestStep producer) = sessionRequest producer
-        entryStep (RequestStep method) = case [producer | producer <- events, requestOf producer == Just method] of
-          [] -> call method
-          producers -> subscribed producers (call method)
+        entryStep (RequestStep method) = call method
         entryStep (InputStep method) = call method
         entryStep (AnchorStep method []) = call method
-        entryStep (AnchorStep method produced) = (if all (`elem` events) produced then subscribed produced else id)
-          ("FrameworkRuntime.producingFor [" ++ intercalate ", " (map slot produced) ++ "] (" ++ call method ++ ")")
-        -- event：本 effect 在某个 lifelong 内以 requests 订阅这些普通资产。那里本次调用已固定了一条交付，
-        -- 不再执行生产链（否则锚点的输出会再唤起自己）；挂在 lifelong 之外时照常生产。
-        events = nub [ Prototype.effectName producer
-          | (_, described) <- Prototype.workflowLifelongs (Prototype.plannedWorkflow (unitPlan unit))
-          , (node, asset) <- Prototype.lifelongSubscriptions described
-          , Just (Prototype.NodeAt _ terminal) <- [Prototype.lookupWorkflow (Prototype.plannedWorkflow (unitPlan unit)) node]
-          , terminal == selectedName
-          , producer <- effectPrototypes unit, Prototype.effectProduces producer == Just asset
-          , not (Prototype.effectContinuous producer) ]
-        requestOf producer = lookup ContextRequest (Prototype.effectMethods (protoOf unit producer))
-        subscribed producers action = "FrameworkRuntime.unlessDelivered [" ++ intercalate ", " (map slot producers)
-          ++ "] (" ++ action ++ ")"
-        -- 持续资产的 requests：启动或加入会话，取当前一条，本次调用的 requires 读它。
+        entryStep (AnchorStep method produced) = "FrameworkRuntime.unlessPerformed [" ++ slots ++ "] (FrameworkRuntime.producingFor ["
+          ++ slots ++ "] (" ++ call method ++ "))"
+          where slots = intercalate ", " (map slot produced)
+        -- 持续资产的 requests：回调已交付时读交付；lifelong 之外同步运行来源到结束，固定整段历史。
         sessionRequest producer = "FrameworkRuntime.requestStreamContext " ++ slot producer
           ++ " FrameworkGenerated.ContextBindingError FrameworkGenerated.bound" ++ producer
         -- close 的调用点用 callClose：是否 close 由绑定的操作在生成期确定。
@@ -303,7 +291,7 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         wrapper binding = case bindingOperation binding of
           OpenResource -> once binding ++ rootWrapper selectedName ++ scopeWrapper binding "openScope " (" " ++ cleanupOf selectedName)
           AtomicOperation -> once binding ++ rootWrapper selectedName
-            ++ (("FrameworkRuntime.atomicHandle " ++ show (bindingMethod binding) ++ anchoredOf binding) : entered)
+            ++ (("FrameworkRuntime.atomicHandle " ++ slot selectedName ++ anchoredOf binding) : entered)
           PureOperation -> once binding ++ rootWrapper selectedName ++ scoped
           operation -> rootWrapper selectedName ++ case operation of
             -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
@@ -316,16 +304,13 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
             MiddlewareOperation -> entered
             _ -> entered
         scopeWrapper binding operation cleanup =
-          [ "FrameworkRuntime.atomicScope " ++ show (bindingMethod binding) ++ anchoredOf binding
+          [ "FrameworkRuntime.atomicScope " ++ slot selectedName ++ anchoredOf binding
           , "FrameworkRuntime." ++ operation ++ slot selectedName ++ " FrameworkGenerated.ScopeBindingError" ++ cleanup ] ++ entered
-    -- 挂在原子句柄下的 parser：句柄成功交出时，普通生产分支（输出联立）每次都注入，
-    -- 持续分支按本次执行位置筛选后注入；两者的失败都沿原链传播。
-    anchoredOf binding = " " ++ connectionsOf ContextRequest ++ " " ++ connectionsOf ContextStream
-      where
-        connectionsOf role = "[" ++ intercalate ", "
-          [ "(" ++ slot (outputProducer connection) ++ ", () <$ " ++ call (outputParser connection) ++ ")"
-          | connection <- assemblyOutputs (unitAssembly unit)
-          , outputRole connection == role, outputAnchor connection == bindingMethod binding ] ++ "]"
+    -- 输出联立的执行闭包：句柄成功交出后依次执行挂在它下面的生产分支（先普通、再持续），失败沿原链传播。
+    anchoredOf binding = " [" ++ intercalate ", "
+      [ "(" ++ slot (outputProducer connection) ++ ", () <$ " ++ call (outputParser connection) ++ ")"
+      | role <- [ContextRequest, ContextStream], connection <- assemblyOutputs (unitAssembly unit)
+      , outputRole connection == role, outputAnchor connection == bindingMethod binding ] ++ "]"
     -- 自动收尾：open 带上本 scope 的 close，在同一 Middleware 列表下执行。
     cleanupOf selectedName = case [closing | plan <- unitScopes unit, scopeEffect plan == selectedName, Just closing <- [scopeCleanup plan]] of
       closing : _ -> "(Just (() <$ " ++ call closing ++ "))"

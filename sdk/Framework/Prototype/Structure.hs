@@ -37,11 +37,11 @@ renderStructure prototype workflowAST = do
           ++ ["  at " ++ show node ++ " " ++ unwords hooks | (node, hooks) <- drivingMiddleware (protoDriving prototype)]
           ++ ["  launch " ++ show node ++ " " ++ unwords hooks | (node, hooks) <- drivingHooks (protoDriving prototype)]
         | not (null (drivingMiddleware (protoDriving prototype)))]
-      ++ ["", "Interpreter sessions (booted by a finite require of a Receive asset; kept until exit)"]
+      ++ ["", "Static runs (a requests outside lifelong runs the root source to its end; history kept until exit)"]
       ++ ["  session " ++ sessionAsset session ++ " " ++ describePlan (sessionPlan session)
            ++ " mounts " ++ show (sessionMounts session)
          | session <- protoSessions prototype]
-      ++ ["", "Compiled driving markers"]
+      ++ ["", "Compiled driving markers (shown for reference; execution follows Generated/Program.hs)"]
       ++ ["  unit " ++ show (driveUnit unit) ++ " frame " ++ show (driveFrameNodes unit)
            ++ " readers " ++ show (driveReaders unit) ++ " local " ++ show (driveLocalSources unit)
          | unit <- drivingUnits (protoDriving prototype)]
@@ -131,4 +131,3 @@ renderStructure prototype workflowAST = do
     describePlan (Receive source) = "Receive from " ++ source
     describePlan (Derive upstream) = "Derive from " ++ upstream
     describePlan (ReuseOutput nodes) = "ReuseOutput at " ++ show nodes ++ " (no separate producer)"
-    describePlan Listen = "Listen (event: every publication after the boundary starts)"

@@ -9,5 +9,5 @@ ast = chain
   [ parallel [node "WriteReport", node "WriteReply"]
   , chain [node "ShowReport", node "ShowReply"]
   , alternative [node "OnBlank", node "OnFilled"]
-  , lifelong [node "ShowA", node "ShowB"], FacadeProbe.Workflow.Abc.abc
+  , parallel [lifelong [node "ShowA"], lifelong [node "ShowB"]], FacadeProbe.Workflow.Abc.abc
   ]

@@ -1,34 +1,35 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE ViewPatterns #-}
 
--- 只读 Prototype 的运行实例：活动 chain、Origin 资产表、scope 引用和发布信号。
--- 同时持有唯一的会话登记表；登记／停止的原子边界在这里，生产线程由 Runtime 启动。
--- 生命周期：Execution 创建并安装树关系；App 更新调用与发布；Execution 退出时
--- 关闭会话登记并等待任务，再退休根帧；Program 只报告清理中记录的问题。
--- 运行不解释图边；业务仍由已经装配的闭包执行。
+-- 只读 Prototype 的运行实例：活动 chain、Origin 资产表、运行级最新值与持续资产的历史、scope 引用。
+-- 发布后的订阅回调与 lifelong 外的静态运行由 Execution 按生成的回调表安装；这里只保存入口，不调度。
+-- 生命周期：Execution 创建并安装树关系；App 更新调用与发布；Execution 退出时退休根帧；
+-- Program 只报告清理中记录的问题。运行不解释图边；业务仍由已经装配的闭包执行。
 module Framework.Runtime.Graph
-  ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..)
+  ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..), Reaction
   , newRuntimeGraph, configureRuntimeScopes, collectRuntimeScopes, finishRuntime, newOrigin
   , beginActivation, endActivation, withRuntimeRetention, collectRetainedScopes
-  , publishAsset, publicationSignal, readPublishedAsset, contextMayPublish, resetOrigins
-  , installSessionLauncher, obtainSession, readerSession, stopSessions, currentPublications, reusesOutputAt, sessionListens
+  , publishAsset, readPublishedAsset, resetOrigins
+  , readHistory, dropHistory, installReactions, react, installStatic, runStatic
   ) where
 
-import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
-import Control.Exception (SomeAsyncException, SomeException, evaluate, finally, fromException, mask, onException, throwIO, try, uninterruptibleMask_)
-import Control.Monad (forM, forM_, unless, void)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
+import Control.Exception (SomeAsyncException, evaluate, finally, fromException, mask, throwIO, uninterruptibleMask_)
+import Control.Monad (forM, forM_, when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 import Data.List (nub)
-import Data.Maybe (fromMaybe, isJust, listToMaybe)
+import Data.Maybe (isJust)
+import Data.Sequence ((|>))
+import qualified Data.Sequence as Seq
+import Framework.Language.Handler (Failure)
 import Framework.Runtime.Protocol (ContextFault(..))
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame
 import Framework.Runtime.Binding (Binding(..), readBindingOwner)
 import Framework.Runtime.Retention
-import Framework.Runtime.Session (Session, SessionKey, View, lastBinding, newSession, stopSession, currentView, appendDelivery
-  , attachReader, leaveSession, feedSession, breakSession, upstreamOf, awaitUpstream, pendingBindings)
+import Framework.Runtime.Delivery (View)
 import Framework.Runtime.Scope
   ( Scopes, ScopeBinding, ScopeBindings, ScopeUser(..), ScopeHandler(..), ScopeInstance(..), ScopeRecord(..), ScopeInput(..)
   , configureScopeRelations, cleanupAvailable, saveCleanupFailures )
@@ -76,18 +77,20 @@ data RuntimeGraph environment cause = RuntimeGraph
   , runtimeActivations :: MVar [(ActivationId, Activation environment cause)]
   , runtimeOriginSequence :: IORef Integer
   , runtimeActivationSequence :: IORef Integer
-  -- 生产会话按（lifelong 边界，资产）共享；生产任务由运行层安装的启动函数创建。
-  -- Nothing：运行正在结束，会话已经全部交给停止，不再创建新会话。
-  , runtimeSessions :: MVar (Maybe [(SessionKey, Session environment cause)])
-  -- 目录的只读投影；在 scope/frame 协调锁内先登记，再启动 worker。
-  -- GC 已持有协调锁，直接读此表，不反向等待会话装配锁。
-  , runtimeSessionSnapshot :: IORef [(SessionKey, Session environment cause)]
-  , runtimeLauncher :: IORef (Session environment cause -> IO ())
-  -- 普通资产 v1（2026-11-18）：每个 Context 一份运行级最新发布；帧不是可见性边界。
-  -- Origin 表只保存当前步骤的伴随输出；切轮不撤销这份共享值，不累积历史。
-  -- 按 Context 编号寻址，不按名字匹配。
+  -- 每个 Context 一份运行级最新发布（持续资产也写这里）；帧不是可见性边界。按 Context 编号寻址。
   , runtimeLatest :: IORef (IntMap.IntMap (ScopeBinding environment cause))
+  -- 有 handler 以 stream @T 读取 x:xs 的持续资产（原型 effectHistory）：从首条起的全部发布。
+  -- socket 的 lifelong 来源结束时放掉（end GC）；lifelong 外的静态运行保留到运行结束。
+  , runtimeHistory :: IORef (IntMap.IntMap (View environment cause))
+  -- 发布即回调：生成的回调表由 Execution 安装。参数是发布的资产、这次 Binding 与发布方调用已捕获的普通绑定。
+  , runtimeReactions :: IORef (Reaction environment cause)
+  -- lifelong 外 requests 一份持续资产：同步运行它的来源直到 streamEnd，同一次运行只跑一次。
+  , runtimeStatic :: IORef (Slot -> IO (Maybe (Failure cause)))
   }
+
+-- 一次发布之后要执行的回调；Just 是回调中的失败，沿发布方的调用传播。
+type Reaction environment cause =
+  Slot -> ScopeBinding environment cause -> ScopeBindings environment cause -> IO (Maybe (Failure cause))
 
 newRuntimeGraph
   :: (Eq method, Show method)
@@ -96,13 +99,13 @@ newRuntimeGraph index scopes = do
   coordinator <- case scopes of
     first : _ -> readIORef (scopeCoordinator first)
     [] -> newMVar ()
-  frame <- newExecutionFrame coordinator Nothing Nothing
-    (rootNodesOf index)
+  frame <- newExecutionFrame coordinator Nothing (rootNodesOf index) []
   retentions <- newRetentions coordinator
   RuntimeGraph (PrototypeReference index) scopes frame retentions
     <$> newIORef Map.empty <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
-    <*> newMVar (Just []) <*> newIORef [] <*> newIORef (const (ioError (userError "No session launcher is installed")))
-    <*> newIORef IntMap.empty
+    <*> newIORef IntMap.empty <*> newIORef IntMap.empty
+    <*> newIORef (\_ _ _ -> pure Nothing)
+    <*> newIORef (\source -> ioError (userError ("No static run is installed for " ++ slotName source)))
 
 -- ScopeTree 的独立构建与校验仍在 Prototype；这里只把同一树的关系装入现有控制对象。
 configureRuntimeScopes :: RuntimeGraph environment cause -> IO ()
@@ -114,43 +117,23 @@ configureRuntimeScopes graph = case runtimePrototype graph of
         held <- retainedInstance graph slot
         if held then pure True else reachableInstance graph slot
 
--- Binding 保留 v2（2026-11-18）：实际交付/捕获、未领取队列、仍合法可读的最新值。
+-- Binding 保留：实际交付/捕获，以及将来的读取位置仍合法可读的最新值。
 -- 仅检查共享 ownership，既不解释业务字段，也不把持有关系加入 ScopeTree。
--- 调用方已经持有 scope/frame 协调锁；从已登记快照查询，不因其他会话正在装配而保留全部实例。
+-- 调用方已经持有 scope/frame 协调锁。
 retainedInstance :: RuntimeGraph environment cause -> ScopeInstance environment cause -> IO Bool
 retainedInstance graph slot = case runtimePrototype graph of
   PrototypeReference index -> do
     active <- retainedBindings (runtimeRetentions graph)
     held <- ownsAny active
     if held then pure True else do
-      sessions <- readIORef (runtimeSessionSnapshot graph)
-      queued <- concat <$> mapM (pendingBindings . snd) sessions
-      inQueue <- ownsAny queued
-      if inQueue then pure True else do
         frames <- framePendingViews (runtimeRootFrame graph)
         assets <- readIORef (runtimeLatest graph)
-        let selected frame point source plan = case plan of
-              SessionSourced
-                -- 根帧的 lifelong 预约代表未来轮次，不能拿最新一条代替尚未领取的交付。
-                | frameParent frame == Nothing
-                , isJust (nodeBoundary (driveAt index point)) -> pure []
-                | otherwise -> do
-                    let session = case frameBoundary frame >>= \boundary -> lookup (Just boundary, source) sessions of
-                          Just local -> Just local
-                          Nothing -> sessionForReader index sessions point source
-                    case session of
-                      Nothing -> pure []
-                      Just found -> do
-                        value <- currentView found
-                        case value >>= lastBinding of
-                          Nothing -> pure []
-                          Just bound -> do
-                            pending <- maybe (pure Nothing) (pendingSessionInput frame source) (bindingProduction bound)
-                            pure [bound | pending /= Just False]
-              OwnChainAt -> pure [value | Just value <- [IntMap.lookup (slotNumber source) assets]]
-              ChainsAt _ -> pure [value | Just value <- [IntMap.lookup (slotNumber source) assets]]
-        future <- concat <$> sequence [selected frame node source plan
-          | (frame, pending, _) <- frames, node <- pending, (source, plan) <- sourcesAt index node]
+        -- 将来的读取位置读运行级最新值；lifelong 单元的未来回调读将来的交付，不能拿最新一条代替。
+        let selected point source plan = case plan of
+              SessionSourced | isJust (nodeBoundary (driveAt index point)) -> []
+              _ -> [value | Just value <- [IntMap.lookup (slotNumber source) assets]]
+            future = concat [selected node source plan
+              | (_, pending, _) <- frames, node <- pending, (source, plan) <- sourcesAt index node]
         ownsAny future
   where
     ownsAny values = or <$> mapM (fmap (maybe False ((== scopeRecord slot) . scopeRecord . snd)) . readBindingOwner) values
@@ -180,23 +163,19 @@ collectNamedScopes graph selected = case runtimePrototype graph of
     let relevant = scopeClosureOf index selected
     collectScopes graph (filter ((`elem` relevant) . scopeSlot) (runtimeScopes graph))
 
--- 待用查询 v5（2026-11-18）：普通参数先固定捕获、再共享最新值；持续参数沿固定视图/游标匹配。
--- 查询在 scope 协调锁内，不领取、不生产；会话沿只读目录快照定位。
--- 装配先在同一协调锁内写入快照，业务启动在锁外；会话状态锁内不反向取得帧锁。
+-- 待用查询：普通参数先固定捕获、再共享最新值；持续参数先本次交付、再最新值。
+-- 查询在 scope 协调锁内，不生产。
 reachableInstance :: RuntimeGraph environment cause -> ScopeInstance environment cause -> IO Bool
 reachableInstance graph slot = case runtimePrototype graph of
   PrototypeReference index -> do
     -- 普通参数的使用者可位于任意活动帧；仍按具体 Binding 的生产身份匹配。
     -- 根帧的常驻预约与实际轮帧共用这些开启计划，不提升实例的归属帧。
     reservations <- framePendingViews (runtimeRootFrame graph)
-    -- 活动 SessionChain 的业务出身仍是根帧，预约帧只表示未来步骤。
     -- 同一锁内纳入正在执行的根调用及其捕获，覆盖“已读参数、尚未认领实例”的交接。
     active <- readMVar (runtimeActivations graph)
     let pendingFrames = reservations ++ [(activationFrame call, [node], [])
           | (_, call) <- active, TargetedBoot node <- [activationBoot call]]
     assets <- readIORef (runtimeLatest graph)
-    let producerMount node = either (const False) ((== SessionChain) . chainRole) (chainAt index node)
-    sessions <- readIORef (runtimeSessionSnapshot graph)
     instances <- concat <$> mapM (readMVar . scopeInstances) (runtimeScopes graph)
     snapshots <- forM instances $ \instance' -> do
       values <- scopeBindings <$> readIORef (scopeRecord instance')
@@ -233,6 +212,8 @@ reachableInstance graph slot = case runtimePrototype graph of
                   -- 必定以新参数开启而尚未捕获的调用，不会复用上一轮的旧参数实例。
                   [] | indexedOpeningKinds opening == [ExecutionMultiple] -> False
                      | otherwise -> maybe False ((== Just production) . bindingProduction) (IntMap.lookup (slotNumber source) assets)
+        -- 持续参数：本次回调已固定的交付优先；lifelong 单元的未来回调读将来的交付，不保留旧实例；
+        -- 其余位置读运行级最新值。
         matchesSession frame opening source production = do
           captured <- capturedFrameInputs frame
           let reader = indexedOpeningNode opening
@@ -240,25 +221,10 @@ reachableInstance graph slot = case runtimePrototype graph of
               selectors = nodeCaptures (driveAt index reader)
               selected = [value | at <- reader : selectors
                 , (node, context, value) <- captured, node == at, context == source]
-          case selected of
-            value : _ -> pure (value == production)
-            [] -> do
-              pending <- pendingSessionInput frame source production
-              case pending of
-                Just result -> pure result
-                Nothing
-                  -- 根帧里的未来轮次不是旧交付的读取方；实际活动轮帧有自己的游标。
-                  | not (producerMount (indexedOpeningNode opening))
-                  , isJust (nodeBoundary (driveAt index reader)) -> pure False
-                  -- 会话步骤的普通 requires 沿 App 的有限读取路由，不冒充本单元订阅。
-                  -- 启动捕获和 Derive 固定交付已由上面的 pending 查询优先处理。
-                  | otherwise -> case sessionForReader index sessions reader source of
-                      Nothing -> pure False
-                      Just session -> do
-                        view <- currentView session
-                        pure $ case view >>= lastBinding >>= bindingProduction of
-                          Just current -> current == production
-                          Nothing -> False
+          pure $ case selected of
+            value : _ -> value == production
+            [] | isJust (nodeBoundary (driveAt index reader)) -> False
+               | otherwise -> maybe False ((== Just production) . bindingProduction) (IntMap.lookup (slotNumber source) assets)
     or <$> mapM (\(frame, opening, delivered) -> matches slot frame delivered opening) candidates
 
 -- 节点退休后只检查其开启位置及 ScopeTree 祖先。预约在进度写入的锁外进行，
@@ -368,7 +334,7 @@ resolveDefinition (PrototypeReference (indexed -> (index, prototype))) boot = do
     [definition] -> Right (ChainReference definition)
     _ -> Left "Runtime activation has no unique static chain definition"
 
--- 先写资产表再换信号：等待者醒来重新读取时一定能看到这次发布。
+-- 写入最新值表（持续资产另追加历史）；回调由 App 在发布之后调用 react，不在这里执行。
 publishAsset :: RuntimeGraph environment cause -> Origin -> Slot
              -> ScopeBinding environment cause -> IO ()
 publishAsset graph origin source value = mask $ \restore -> do
@@ -383,45 +349,21 @@ publishAsset graph origin source value = mask $ \restore -> do
         in (updated, isJust old)
       forM_ (bindingProduction value) $ \production ->
         captureFrameInputLocked (bindingFrame value) (originNode origin) source production
+      when (keepsHistory graph source) $
+        atomicModifyIORef' (runtimeHistory graph) $ \histories ->
+          (IntMap.insertWith (\_ earlier -> earlier |> value) (slotNumber source) (Seq.singleton value) histories, ())
       pure existed
-    notifyFrame (runtimeRootFrame graph)
     pure (previous, replaced)
-  -- event：订阅这份普通资产的 lifelong 会话各追加一条交付；会话建立前的发布不回放。
-  unless (bindingResource value) $ do
-    registered <- readIORef (runtimeSessionSnapshot graph)
-    forM_ [session | (key@(_, selected), session) <- registered, selected == source
-          , sessionListens (runtimePrototype graph) key] $ \session ->
-      appendDelivery session [] value
   restore $ do
     collectRetainedScopes graph released
     if replacedParameter then collectParameterScopes graph source else pure ()
 
--- 读取之前取得的信号；普通发布和执行帧退休都会填满它。
-publicationSignal :: RuntimeGraph environment cause -> IO (MVar ())
-publicationSignal = frameSignal . runtimeRootFrame
-
--- 耗尽证明 v2（2026-11-18）：候选是 gen 给出的可启动供值位置，不是 AST 可见前驱。
--- 当前顺序调用不能在阻塞期间继续生产；其他位置从根帧的全部活动/待用帧查询。
--- 静态后继也在等当前节点时不提供进展；lifelong 的未来轮次保守保留。
--- 会话位置的启动/耗尽仍交给会话协议，本项不声称完整等待环检测。
-contextMayPublish :: RuntimeGraph environment cause -> ExecutionFrame -> Origin -> Slot -> IO Bool
-contextMayPublish graph _ origin source = case runtimePrototype graph of
-  PrototypeReference index -> withFrameLock (runtimeRootFrame graph) $ do
-    pendingFrames <- framePendingViews (runtimeRootFrame graph)
-    let reader = originNode origin
-        excluded = nodeBlockedPublishers (driveAt index reader)
-        canPublish node = case chainAt index node of
-          Right chain | chainRole chain == SessionChain -> True
-          Right _ -> any (\(_, pending, _) -> node `elem` pending) pendingFrames
-            && node `notElem` excluded
-          Left _ -> True
-    pure $ case sourcePlan (runtimePrototype graph) reader source of
-      OwnChainAt -> False
-      ChainsAt nodes -> any canPublish nodes
-      SessionSourced -> True
+keepsHistory :: RuntimeGraph environment cause -> Slot -> Bool
+keepsHistory graph source = case runtimePrototype graph of
+  PrototypeReference index -> historyOf index source
 
 -- 选中共享最新值与登记本次捕获身份在同一短临界区完成；普通业务 IO 不在锁内。
--- 没有值只返回 Nothing，Context 继续等待通知。资源不从这张表取得。
+-- 没有值返回 Nothing，读取方立即按缺值处理。资源不从这张表取得。
 readPublishedAsset :: RuntimeGraph environment cause -> ExecutionFrame -> Origin -> Slot
                    -> IO (Either ContextFault (Maybe (ScopeBinding environment cause)))
 readPublishedAsset graph frame origin source = withFrameLock (runtimeRootFrame graph) $ do
@@ -430,144 +372,32 @@ readPublishedAsset graph frame origin source = withFrameLock (runtimeRootFrame g
     captureFrameInputLocked frame (originNode origin) source production
   pure (Right value)
 
-sourcePlan :: PrototypeReference -> Coord -> Slot -> SourceAt
-sourcePlan (PrototypeReference index) = sourcePlanAt index
+-- 持续资产到目前为止的全部发布，最新在后；没有历史标记时只有最新一条。
+readHistory :: RuntimeGraph environment cause -> Slot -> IO (Maybe (View environment cause))
+readHistory graph source = do
+  kept <- IntMap.lookup (slotNumber source) <$> readIORef (runtimeHistory graph)
+  case kept of
+    Just history | not (Seq.null history) -> pure (Just history)
+    _ -> fmap Seq.singleton . IntMap.lookup (slotNumber source) <$> readIORef (runtimeLatest graph)
 
--- 会话登记与停止 ---------------------------------------------------------------
+-- socket 的来源运行结束：放掉这些资产的历史，最新值保留给后继的 require。
+dropHistory :: RuntimeGraph environment cause -> [Slot] -> IO ()
+dropHistory graph sources = atomicModifyIORef' (runtimeHistory graph) $ \histories ->
+  (foldr (IntMap.delete . slotNumber) histories sources, ())
 
--- 运行层装配后安装：为新会话启动生产任务并登记到会话中。
-installSessionLauncher :: RuntimeGraph environment cause -> (Session environment cause -> IO ()) -> IO ()
-installSessionLauncher graph = writeIORef (runtimeLauncher graph)
+installReactions :: RuntimeGraph environment cause -> Reaction environment cause -> IO ()
+installReactions graph = writeIORef (runtimeReactions graph)
 
--- 会话装配协议 v3（2026-11-18）：统一登记下执行 gen 的连接计划。
--- lifelong 的连接仍由边界统一登记；有限需求只建立所需 Receive/Derive 上游闭包。
--- 先建会话、接游标，再提交 GC 快照并启动新任务，最后提交对外目录。上游不能在游标接入之前丢掉首条交付。
--- 目录锁与取消保护覆盖整个提交；启动失败也提交会话，再在锁外封口并停止任务，避免回滚留下孤儿线程。
--- 读取者只等待一次当前绑定；下面的派生任务持续运行，不把读取者改造成 lifelong。
-obtainSession :: RuntimeGraph environment cause -> SessionKey -> ScopeBindings environment cause
-              -> [(Slot, View environment cause)] -> IO (Session environment cause)
-obtainSession graph key bindings views = uninterruptibleMask_ $ do
-  (session, created, problem) <- modifyMVar (runtimeSessions graph) $ \registry -> case registry of
-    Nothing -> ioError (userError ("Sessions have stopped; the session for " ++ slotName (snd key)
-      ++ " is not started while the run is ending"))
-    Just sessions -> case lookup key sessions of
-      Just session -> pure (registry, (session, [], Nothing))
-      Nothing -> do
-        added <- newIORef []
-        attached <- newIORef []
-        let assemble known selected = case lookup selected known of
-              Just existing -> pure (known, existing)
-              Nothing -> do
-                upstream <- either (ioError . userError) pure (sessionUpstreamSource (runtimePrototype graph) selected)
-                (prepared, parent) <- case upstream of
-                  Nothing -> pure (known, Nothing)
-                  Just source -> do
-                    (updated, previous) <- assemble known (Nothing, source)
-                    pure (updated, Just previous)
-                fresh <- newSession (notifyFrame (runtimeRootFrame graph)) (collectRetainedScopes graph)
-                  (sessionHistory (runtimePrototype graph) (snd selected))
-                  (sessionSampled (runtimePrototype graph) (snd selected)) selected
-                  (if selected == key then bindings else []) (if selected == key then views else [])
-                forM_ parent $ \previous -> do
-                  cursor <- attachReader previous
-                  modifyIORef attached ((previous, cursor) :)
-                  feedSession fresh previous cursor
-                modifyIORef added (fresh :)
-                pure ((selected, fresh) : prepared, fresh)
-            detach = readIORef attached >>= mapM_ (\(parent, cursor) -> void (leaveSession parent cursor))
-        (updated, selected) <- assemble sessions key `onException` detach
-        created <- readIORef added
-        -- GC 先能看到全部新会话，worker 才能发布。快照只由目录写者维护；
-        -- 写入与关闭预约串行，读取快照不需要目录锁，也没有未知即全部保留的分支。
-        withFrameLock (runtimeRootFrame graph) $ do
-          length updated `seq` writeIORef (runtimeSessionSnapshot graph) updated
-        launch <- readIORef (runtimeLauncher graph)
-        outcome <- trySessionLaunch (mapM_ launch (reverse created))
-        -- 封口可能触发 scope 回收；放到目录提交之后，异常不能回滚已经启动的会话。
-        pure (Just updated, (selected, created, outcome))
-  case problem of
-    Nothing -> pure session
-    Just exception -> do
-      -- 每个动作都完成尝试：封口/撤销可能触发 close，某次收尾的异常不能阻止
-      -- 其余任务停止，也不能让未启动的派生任务遗留上游游标。取消仍向外传播。
-      sealed <- mapM (trySessionLaunch . (\fresh -> breakSession fresh (Left exception))) created
-      stopped <- mapM (trySessionLaunch . stopSession) created
-      detached <- forM created $ \fresh -> trySessionLaunch $ do
-        upstream <- upstreamOf fresh
-        case upstream of
-          Nothing -> pure ()
-          Just _ -> do
-            (parent, cursor) <- awaitUpstream fresh
-            void (leaveSession parent cursor)
-      case [cancelled | Just cancelled <- sealed ++ stopped ++ detached
-             , isJust (fromException cancelled :: Maybe SomeAsyncException)] of
-        cancelled : _ -> throwIO cancelled
-        [] -> throwIO exception
-  where
-    modifyIORef reference update = atomicModifyIORef' reference (\current -> (update current, ()))
-    trySessionLaunch action = either Just (const Nothing) <$> (try action :: IO (Either SomeException ()))
+-- 发布之后执行生成的回调；在发布方的调用栈里同步运行。
+react :: RuntimeGraph environment cause -> Reaction environment cause
+react graph source value captured = do
+  reaction <- readIORef (runtimeReactions graph)
+  reaction source value captured
 
--- 只投影已生成计划的上游引用，不从 handler、资产内容或运行时状态推断生产方式。
--- 有限会话的依赖图已经过 gen 校验；有边界的会话由 Execution 一次连接全部读取方。
--- 会话以生产方 effect 命名；原型标了 effectHistory 的持续资产从开头保留全部发布，供 stream @T 读取 x:xs。
-sessionHistory :: PrototypeReference -> Slot -> Bool
-sessionHistory (PrototypeReference index) = historyOf index
+installStatic :: RuntimeGraph environment cause -> (Slot -> IO (Maybe (Failure cause))) -> IO ()
+installStatic graph = writeIORef (runtimeStatic graph)
 
--- behavior 的会话：读取方只领取最新一条。
-sessionSampled :: PrototypeReference -> Slot -> Bool
-sessionSampled (PrototypeReference index) = sampledOf index
-
--- event 的会话：没有生产任务，只接收这份普通资产此后的发布。
-sessionListens :: PrototypeReference -> SessionKey -> Bool
-sessionListens (PrototypeReference index) (boundary, source) = listensAt index boundary source
-
-sessionUpstreamSource :: PrototypeReference -> SessionKey -> Either String (Maybe Slot)
-sessionUpstreamSource _ (Just _, _) = Right Nothing
-sessionUpstreamSource (PrototypeReference index) (Nothing, source) = case sessionUpstreamOf index Nothing source of
-  Just upstream -> Right upstream
-  Nothing -> Left ("No interpreter session driver for " ++ slotName source ++ "; regenerate the program")
-
--- 有限读取的会话：此前已结束的 lifelong 优先，其次是已经启动的 interpreter 托管会话。查询从不创建会话。
--- lifelong 之后读取时取已经结束、且在 AST 中先于读取位置的 lifelong 的会话，不另行启动来源；
--- 生成期保证这样的 lifelong 彼此先后，索引把它们按先序坐标从后往前排好，第一个登记过的即最近结束的。
-readerSession :: RuntimeGraph environment cause -> Coord -> Slot -> IO (Maybe (Session environment cause))
-readerSession graph reader source = case runtimePrototype graph of
-  PrototypeReference index -> do
-    registry <- readMVar (runtimeSessions graph)
-    pure (sessionForReader index (fromMaybe [] registry) reader source)
-
--- 实际读取与 scope 待用共用同一个会话选择：最近合法的已结束边界优先；
--- 没有此前边界时才考虑 interpreter 托管会话。查询从不创建会话。
-priorSession :: PrototypeIndex method -> [(SessionKey, Session environment cause)] -> Coord -> Slot
-             -> Maybe (Session environment cause)
-priorSession index registry reader source = listToMaybe
-  [session | boundary <- nodePriorBoundaries (driveAt index reader), Just session <- [lookup (Just boundary, source) registry]]
-
-sessionForReader :: PrototypeIndex method -> [(SessionKey, Session environment cause)] -> Coord -> Slot
-                 -> Maybe (Session environment cause)
-sessionForReader index registry reader source = case priorSession index registry reader source of
-  Just session -> Just session
-  Nothing -> lookup (Nothing, source) registry
-
--- interpreter 退出前关闭登记并取消全部生产任务，等待步骤内的受控收尾完成。
--- 关闭与取出在同一临界区，此后尚未停止的会话不能再创建依赖会话；后创建的排在前面，依赖方先停止。
-stopSessions :: RuntimeGraph environment cause -> IO ()
-stopSessions graph = uninterruptibleMask_ $ do
-  sessions <- modifyMVar (runtimeSessions graph) $ \registry -> do
-    -- 退出放弃未领取义务；执行中的捕获仍由 Retention/ScopeUser 保护，任务随后全部停止。
-    withFrameLock (runtimeRootFrame graph) (writeIORef (runtimeSessionSnapshot graph) [])
-    pure (Nothing, fromMaybe [] registry)
-  mapM_ (stopSession . snd) sessions
-
--- 这些挂载当前一次执行已经发布的普通资产；会话在交付时把它们存为伴随发布。
-currentPublications :: RuntimeGraph environment cause -> [Coord] -> IO (ScopeBindings environment cause)
-currentPublications graph nodes = withFrameLock (runtimeRootFrame graph) $ do
-  origins <- readIORef (runtimeOrigins graph)
-  assets <- readIORef (runtimeAssets graph)
-  let current = [origin | node <- nodes, Just origin <- [lookup node origins]]
-  pure [(source, value) | ((origin, source), value) <- Map.toList assets, origin `elem` current]
-
--- 同一 effect 的其他挂载不因此成为这份会话的发布者。会话接线已经由 gen 固定到 NodeId。
-reusesOutputAt :: RuntimeGraph environment cause -> Coord -> Slot -> Bool
-reusesOutputAt graph node source = case runtimePrototype graph of
-  PrototypeReference index -> outputSiteAt index node source
+runStatic :: RuntimeGraph environment cause -> Slot -> IO (Maybe (Failure cause))
+runStatic graph source = do
+  run <- readIORef (runtimeStatic graph)
+  run source

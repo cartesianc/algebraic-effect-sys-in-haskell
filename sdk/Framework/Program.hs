@@ -4,10 +4,10 @@
 module Framework.Program (initializePrototype, runProgram) where
 
 import Framework.Language.Handler (Output)
-import Framework.Runtime (Target, SessionSteps, cleanupTargets)
+import Framework.Runtime (Compiled, cleanupTargets)
 import Framework.Prototype (Prototype, validatePrototype)
 import Framework.Language.AST (AST)
-import Framework.Runtime.Execution (runStructuredAST)
+import Framework.Runtime.Execution (runCompiled, compiledTargets)
 import Control.DeepSeq (NFData, force)
 import Control.Exception (SomeAsyncException, SomeException, evaluate, fromException, mask, throwIO, try)
 import Control.Monad (unless)
@@ -28,14 +28,15 @@ initializePrototype generated = do
 runProgram
   :: (Show cause, Show value, Show method, Ord method, NFData method)
   => Prototype method
-  -> IO ([Target environment cause value], [Target environment cause String], [(String, SessionSteps environment cause)])
+  -> IO (Compiled environment cause value)
   -> AST -> IO (Output cause [value], String)
-runProgram generated createEntries tree = do
+runProgram generated createCompiled tree = do
   prototype <- initializePrototype generated
-  (entries, selectors, sessions) <- createEntries
+  compiled <- createCompiled
+  let (entries, _, _) = compiledTargets compiled
   mask $ \restore -> do
     completed <- tryAny $ restore $ do
-      output <- runStructuredAST prototype tree entries selectors sessions
+      output <- runCompiled prototype tree compiled
       -- Node 已在撤销使用前消费自己的结果；这里保留并强制汇总文本，
       -- 正常打印直接复用，不能在资源释放后重新调用业务值的 Show。
       let rendered = show output

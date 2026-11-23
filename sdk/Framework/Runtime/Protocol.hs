@@ -8,7 +8,6 @@
 module Framework.Runtime.Protocol
   ( Root(..), HandlerError(..), failEffect, ErrorHandler(..), ErrorStore(..), runErrorHandler
   , ContextStore(..), ContextFault(..), ScopeStore(..), ScopeFault(..), ScopeInput(..)
-  , RawOutput(..)
   ) where
 
 import Control.Monad.Except (MonadError, catchError, throwError)
@@ -46,18 +45,8 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 读取或驱动取得某个 Context 后报告来源名；正在 open 时，载体据此记录开启参数的生产身份。
   recordContextInput :: Slot -> m ()
   recordContextInput _ = pure ()
-  -- require 不生产：读取之前先取等待动作，读不到值时执行它。
-  -- True 表示发布或执行进度已变化，需要重读；False 表示已证明生产机会耗尽，
-  -- 调用方最后重读一次绑定，仍缺值才报错，避免漏掉退出前的成功发布。
-  -- 返回 Nothing 表示当前不等待（诊断、收尾，或该来源是 scope 资源），缺值按 ContextNotInitialized 报出。
-  awaitContext :: Slot -> m (Maybe (m Bool))
-  awaitContext _ = pure Nothing
-  -- 持续 Context 沿用原始链这次输出。gen 把挂在句柄下的持续 parser 写在入口上，
-  -- 只有本次执行位置是原型指定的发布位置时才取得它们；普通注入和持续注入分别保持各自的失败协议。
-  activeStreamContexts :: [(Slot, m ())] -> m [(Slot, m ())]
-  activeStreamContexts _ = pure []
   -- 同一次调用中每个 effect 只执行一次：Excu、Scoped.open 与 Pure 的本次输出，Context 是否已在本次发布。
-  -- 记录随调用开始而清空；诊断与收尾各有自己的记录。
+  -- 记录随调用开始而清空（订阅回调预先记入交付的资产）；诊断与收尾各有自己的记录。
   recallOutput :: Slot -> m (Maybe [String])
   recallOutput _ = pure Nothing
   rememberOutput :: Slot -> [String] -> m ()
@@ -65,52 +54,28 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 锚点为这些 Context 生产：在 Scoped 的 open 中，它的 IO 属于开启输入的生产，与在 Context 里拉取时相同。
   producingFor :: [Slot] -> m value -> m value
   producingFor _ = id
-  -- 持续注入与选择判定期间，挂接 Context 对该句柄的调用由本次 RawOutput 回答，不重复执行。
-  replayedOutput :: String -> m (Maybe RawOutput)
-  replayedOutput _ = pure Nothing
-  -- 本次调用是否已经固定了这份资产的交付（lifelong 单元领取的 event 交付等）。
-  deliveredHere :: Slot -> m Bool
-  deliveredHere _ = pure False
-  -- 输出联立：以根调用身份把同次输出交给挂接的普通 Context，发布到最新值。
-  -- 解析失败不吞掉，沿原链传播（Error effect 完成前即停止程序）；诊断与收尾期间不注入。
-  injectOutput :: String -> RawOutput -> m () -> m ()
-  injectOutput _ _ _ = pure ()
-  -- 同次输出交接给持续 parser，失败按持续执行协议传播，不吞掉。
-  injectStreamOutput :: String -> RawOutput -> m () -> m ()
-  injectStreamOutput _ _ = id
-  -- alternative 判定：以根调用身份把同次输出交给一个候选的 Context；失败照常返回给调用方，
+  -- 输出联立的分支是否执行：诊断与收尾期间不执行。
+  linkingAllowed :: m Bool
+  linkingAllowed = pure True
+  -- alternative 判定：以根调用身份执行一个候选的 Context；失败照常返回给调用方，
   -- 由选择逻辑记为放弃，不触发 Error 处置，也不进入原链。
-  attemptOutput :: String -> RawOutput -> m () -> m ()
-  attemptOutput _ _ = id
-  -- 持续资产仍返回声明的表示类型：从本次固定交付或已经捕获的绑定投影。
+  attemptOutput :: m () -> m ()
+  attemptOutput = id
+  -- 持续资产仍返回声明的表示类型：本次回调的交付优先，否则读运行级最新值。从不等待或启动来源。
   readContextValue :: Slot -> (environment -> Maybe value) -> m (Maybe value)
   readContextValue _ _ = pure Nothing
-  -- 没有固定交付时，从已有会话取得一次当前值：先找此前已结束的 lifelong，再找已经启动的托管会话。
-  -- require 是被动读取，从不启动会话；Nothing 表示没有可读的会话（或诊断、收尾期间）。会话失败时传播它的原失败。
-  awaitContextValue :: Slot -> (environment -> Maybe value) -> m (Maybe value)
-  awaitContextValue _ _ = pure Nothing
-  -- requests 一份持续资产：没有固定交付时启动或加入它的会话，取当前一条作为本次调用的固定交付。
-  -- 此前已结束的 lifelong 会话优先，否则是编译器为该资产安排的 interpreter 托管会话。
+  -- lifelong 之外 requests 一份持续资产：本次没有交付时同步运行它的来源直到结束（同一次运行只运行一次），
+  -- 把整段历史固定给本次调用。Nothing 表示来源结束时一条都没有发布。
   requestContextValue :: Slot -> (environment -> Maybe value) -> m (Maybe value)
   requestContextValue _ _ = pure Nothing
-  -- stream @T：与上面两者取同一个固定视图，返回本次值及同会话更早的发布，最新在前。
+  -- stream @T：与上面取同一个视图，返回本次值及更早的发布，最新在前。
   readContextHistory :: Slot -> (environment -> Maybe value) -> m (Maybe [value])
   readContextHistory _ _ = pure Nothing
-  awaitContextHistory :: Slot -> (environment -> Maybe value) -> m (Maybe [value])
-  awaitContextHistory _ _ = pure Nothing
-  -- Stream handler 的 streamEnd：退出本次生产步骤，由生产任务接住并正常结束会话。
+  -- Stream handler 的 streamEnd：退出来源方法，由来源运行器接住并正常返回。
   -- 不是 Failure，不经过 Error 诊断，也不被方法体内的 catchError 接住。
   endSource :: m value
-  -- 消费方的 endStream：放弃本次调用，由调用所在的单元调度（lifelong 节点）或 Derive 生产任务接住，
-  -- 结束这一处订阅。同样不是 Failure。
+  -- 订阅方的 endStream：放弃本次调用，由回调接住，这个节点（或派生）之后不再被回调。同样不是 Failure。
   endSubscription :: m value
-
--- 原子句柄（Excu.handler、Scoped.open／close）的统一输出：是否成功，附带方法体交出的 list。
--- 只在 SDK 内部交给挂在该句柄下（可经一串 Pure）的 Context；没有挂接时被丢弃，注册与 handler 签名都看不到它。
-data RawOutput = RawOutput
-  { succeeded :: Bool
-  , info :: [String]
-  } deriving (Eq, Show)
 
 data ContextFault = ContextNotInitialized
   | AmbiguousContextBinding String

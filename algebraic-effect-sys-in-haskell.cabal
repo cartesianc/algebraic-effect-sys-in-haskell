@@ -49,7 +49,7 @@ common runtime-program
       Framework.Runtime.Frame
       Framework.Runtime.Identity
       Framework.Runtime.Graph
-      Framework.Runtime.Session
+      Framework.Runtime.Delivery
       Framework.Runtime.Execution
   ghc-options: -threaded
   build-depends:

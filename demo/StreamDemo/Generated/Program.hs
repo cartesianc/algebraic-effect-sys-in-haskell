@@ -1,7 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 
--- 自动生成；只登记末端入口，原型在 Generated/Prototype.hs，执行由 SDK 的 interpreter 完成。
-module StreamDemo.Generated.Program (Results(..), compiledEntries, interpreter, generatedPrototype) where
+-- 自动生成；组合好的执行闭包，原型在 Generated/Prototype.hs，执行由 SDK 的 interpreter 完成。
+module StreamDemo.Generated.Program (Results(..), compiledProgram, interpreter, generatedPrototype) where
 
 import Framework.Generated (EffectSpec(..), EffectTyping(..), Asset(..), Handles(..), Demand(..), Access(..), TypeRef(..))
 import qualified Framework.Generated as SDK
@@ -14,28 +14,38 @@ import qualified StreamDemo.Generated.Handlers as Handlers
 data Results = AnnounceResult () | ShowTemperatureResult () | CheckTrendResult () | ReportHeartbeatResult ()
   deriving Show
 
--- 末端共享生成的 scope 句柄；只创建空状态，Node algebra 才 lower。
--- 第二个列表是各 alternative 的选择末端：执行共同的 Excu，返回第一个判定成功的 Context 名。
--- 第三个列表是各持续资产的生产步骤：会话按需启动，Receive 在每次 rawemit 时调用 parser，Derive 每领取一条上游交付调用一次。
-compiledEntries :: IO ([SDK.Target ContextValues Errors Results], [SDK.Target ContextValues Errors String]
-                     , [(String, SDK.SessionSteps ContextValues Errors)])
-compiledEntries = do
+-- 末端共享生成的 scope 句柄；只创建空状态。
+-- compiledWorkflow：AST 的执行闭包（Serial 顺序、Concurrent 并行、Choose 选择、Drive 是 lifelong 的位置）。
+-- compiledReactions：资产每次发布后同步执行的回调（lifelong 的单元与派生步骤）；Nothing 作用范围是 event。
+-- compiledStatic：lifelong 之外 requests 持续资产时，同步运行到结束的根来源。
+compiledProgram :: IO (SDK.Compiled ContextValues Errors Results)
+compiledProgram = do
   scopes <- Handlers.newScopeHandlers
   let target :: Show value => String -> App value -> SDK.Target ContextValues Errors value
       target label action = SDK.targetApp label emptyContexts scopes
         (SDK.withErrorHandlers Handlers.errorHandlers action)
-  pure
-    ( [ target "Announce" (AnnounceResult () <$ Handlers.runAnnounce)
-      , target "ShowTemperature" (ShowTemperatureResult () <$ Handlers.runShowTemperature)
-      , target "CheckTrend" (CheckTrendResult () <$ Handlers.runCheckTrend)
-      , target "ReportHeartbeat" (ReportHeartbeatResult () <$ Handlers.runReportHeartbeat)
-      ]
-    , []
-    , [ ("TemperatureParser", SDK.receiveSteps (target "TemperatureFeed" (Handlers.nextTemperatureFeed)) (target "TemperatureParser" (() <$ Handlers.getTemperatureSample)))
-      , ("Heartbeat", SDK.receiveSteps (target "HeartbeatClock" (Handlers.nextHeartbeatClock)) (target "Heartbeat" (() <$ Handlers.getBeat)))
-      ]
-    )
+  pure SDK.Compiled
+    { SDK.compiledWorkflow =
+        SDK.Serial [] 
+          [ SDK.Step [0] (target "Announce" (AnnounceResult () <$ Handlers.runAnnounce))
+          , SDK.Concurrent [1] 
+          [ SDK.Drive [1,0] (Just (SDK.StreamSource (SDK.Slot 2 "TemperatureParser") ([1,0,-1,0,0], target "TemperatureFeed" (Handlers.nextTemperatureFeed)) ([1,0,-1,0,1], target "TemperatureParser" (() <$ Handlers.getTemperatureSample)) Nothing))
+          , SDK.Drive [1,1] (Just (SDK.StreamSource (SDK.Slot 4 "Heartbeat") ([1,1,-1,0,0], target "HeartbeatClock" (Handlers.nextHeartbeatClock)) ([1,1,-1,0,1], target "Heartbeat" (() <$ Handlers.getBeat)) Nothing))
+          ]
+          ]
+    , SDK.compiledReactions = 
+        [ SDK.Reaction (SDK.Slot 2 "TemperatureParser") (Just [1,0]) (SDK.RunUnit [1,0,0] (SDK.Serial [1,0,0] 
+              [ SDK.Step [1,0,0,0] (target "ShowTemperature" (ShowTemperatureResult () <$ Handlers.runShowTemperature))
+              , SDK.Step [1,0,0,1] (target "CheckTrend" (CheckTrendResult () <$ Handlers.runCheckTrend))
+              ]))
+        , SDK.Reaction (SDK.Slot 4 "Heartbeat") (Just [1,1]) (SDK.RunUnit [1,1,0] (SDK.Step [1,1,0] (target "ReportHeartbeat" (ReportHeartbeatResult () <$ Handlers.runReportHeartbeat))))
+        ]
+    , SDK.compiledStatic = 
+        [ ((SDK.Slot 2 "TemperatureParser"), [-2,0], SDK.StreamSource (SDK.Slot 2 "TemperatureParser") ([-2,0,0], target "TemperatureFeed" (Handlers.nextTemperatureFeed)) ([-2,0,1], target "TemperatureParser" (() <$ Handlers.getTemperatureSample)) Nothing)
+        , ((SDK.Slot 4 "Heartbeat"), [-2,1], SDK.StreamSource (SDK.Slot 4 "Heartbeat") ([-2,1,0], target "HeartbeatClock" (Handlers.nextHeartbeatClock)) ([-2,1,1], target "Heartbeat" (() <$ Handlers.getBeat)) Nothing)
+        ]
+    }
 
 -- SDK 装配入口，不需要用户提供节点执行器或重复选择 handler。
 interpreter :: SDK.AST -> [EffectSpec] -> IO ()
-interpreter = SDK.interpreter "StreamDemo" [("demo/StreamDemo/Handlers.hs", Handlers.handlerSourceFingerprint), ("demo/StreamDemo/Hanging.hs",Nothing)] generatedPrototype compiledEntries
+interpreter = SDK.interpreter "StreamDemo" [("demo/StreamDemo/Handlers.hs", Handlers.handlerSourceFingerprint), ("demo/StreamDemo/Hanging.hs",Nothing)] generatedPrototype compiledProgram

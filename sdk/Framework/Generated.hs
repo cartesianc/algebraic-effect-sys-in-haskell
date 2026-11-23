@@ -8,10 +8,10 @@ module Framework.Generated
   , module Framework.Prototype
   , module Framework.Prototype.Structure
   , App, TypeRef(..), typeRef, MonadThrow, MonadCatch, MonadMask
-  , Target, targetApp, SessionSteps, receiveSteps, behaviorSteps, deriveSteps
+  , Target, targetApp, Compiled(..), Closure(..), StreamSource(..), Reaction(..), Response(..)
   , failEffect, handleFailure, withErrorPath, withErrorHandlers, ErrorHandler(..)
-  , readContext, readStreamContext, readStreamHistory, requestStreamContext, unlessDelivered
-  , callContext, runOnce, producingFor, chooseCase, enterHandler
+  , readContext, readStreamContext, readStreamHistory, requestStreamContext
+  , callContext, runOnce, unlessPerformed, producingFor, chooseCase, enterHandler
   , atomicHandle, atomicScope, emittedInput, emitToParser, endSource, endSubscription
   , openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, Slot(..)
@@ -25,10 +25,10 @@ import Framework.Runtime.Protocol
   , ContextStore(enterHandler, endSource, endSubscription, producingFor)
   , ScopeStore(openScope, closeScope, withScopeDependencies) )
 import Framework.Runtime.Context
-  ( readContext, readStreamContext, readStreamHistory, requestStreamContext, unlessDelivered, callContext, runOnce
+  ( readContext, readStreamContext, readStreamHistory, requestStreamContext, callContext, runOnce, unlessPerformed
   , chooseCase, atomicHandle, atomicScope )
 import Framework.Language.Registration (TypeRef(..), typeRef)
-import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, behaviorSteps, deriveSteps)
+import Framework.Runtime (App, Target, targetApp, Compiled(..), Closure(..), StreamSource(..), Reaction(..), Response(..))
 import Framework.Runtime.App
   ( emittedInput, emitToParser, superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation )
 import Framework.Runtime.Scope (ScopeHandler, newScopeHandler)
@@ -55,9 +55,9 @@ import System.Process (callProcess)
 interpreter
   :: (Show cause, Show value, Show method, Ord method, NFData method)
   => String -> [(FilePath, Maybe String)] -> Prototype method
-  -> IO ([Target environment cause value], [Target environment cause String], [(String, SessionSteps environment cause)])
+  -> IO (Compiled environment cause value)
   -> AST -> [EffectSpec] -> IO ()
-interpreter namespace sources prototype createEntries tree specifications = do
+interpreter namespace sources prototype createCompiled tree specifications = do
   hSetEncoding stdout utf8
   streaming <- lookupEnv "EFFECT_CONSOLE_STREAM"
   case streaming of
@@ -67,7 +67,7 @@ interpreter namespace sources prototype createEntries tree specifications = do
   case arguments of
     [] -> do
       verifyInputs
-      (_, rendered) <- runProgram prototype createEntries tree
+      (_, rendered) <- runProgram prototype createCompiled tree
       putStrLn rendered
     ["--generate"] -> generate namespace [file | (file, _) <- sources, takeFileName file == "Handlers.hs"]
     ["--structure"] -> do

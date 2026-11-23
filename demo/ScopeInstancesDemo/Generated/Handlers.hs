@@ -204,7 +204,7 @@ runPrepareFiles :: Effects.App [String]
 runPrepareFiles =
   SDK.runOnce (SDK.Slot 0 "PrepareFiles")
   . SDK.handleFailure
-  . SDK.atomicHandle "runPrepareFiles" [] []
+  . SDK.atomicHandle (SDK.Slot 0 "PrepareFiles") []
   . SDK.enterHandler (SDK.Slot 0 "PrepareFiles") $
     call @"PrepareFiles" @"prepareFiles" Effects.prepareFiles
 
@@ -239,7 +239,7 @@ openFileSession =
   SDK.runOnce (SDK.Slot 3 "FileSession")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "openFileSession" [] []
+  . SDK.atomicScope (SDK.Slot 3 "FileSession") []
   . SDK.openScope (SDK.Slot 3 "FileSession") Effects.ScopeBindingError (Just (() <$ closeFileSession))
   . SDK.enterHandler (SDK.Slot 3 "FileSession") $
     getOpenedFile >> call @"FileSession" @"openSelectedFile" Effects.openSelectedFile
@@ -248,7 +248,7 @@ closeFileSession :: Effects.App [String]
 closeFileSession =
   SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeFileSession" [] []
+  . SDK.atomicScope (SDK.Slot 3 "FileSession") []
   . SDK.closeScope (SDK.Slot 3 "FileSession") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 3 "FileSession") $
     callClose @"FileSession" @"closeSelectedFile" Effects.closeSelectedFile
@@ -258,7 +258,7 @@ runUseFirst =
   SDK.runOnce (SDK.Slot 4 "UseFirst")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runUseFirst" [] []
+  . SDK.atomicHandle (SDK.Slot 4 "UseFirst") []
   . SDK.withScopeDependencies [(SDK.Slot 3 "FileSession")]
   . SDK.enterHandler (SDK.Slot 4 "UseFirst") $
     getFileName >> openFileSession >> call @"UseFirst" @"checkSelection" Effects.checkSelection
@@ -267,7 +267,7 @@ runSelectSecond :: Effects.App [String]
 runSelectSecond =
   SDK.runOnce (SDK.Slot 5 "SelectSecond")
   . SDK.handleFailure
-  . SDK.atomicHandle "runSelectSecond" [] []
+  . SDK.atomicHandle (SDK.Slot 5 "SelectSecond") []
   . SDK.enterHandler (SDK.Slot 5 "SelectSecond") $
     call @"SelectSecond" @"selectSecond" Effects.selectSecond
 
@@ -276,7 +276,7 @@ runUseSecond =
   SDK.runOnce (SDK.Slot 6 "UseSecond")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runUseSecond" [] []
+  . SDK.atomicHandle (SDK.Slot 6 "UseSecond") []
   . SDK.withScopeDependencies [(SDK.Slot 3 "FileSession")]
   . SDK.enterHandler (SDK.Slot 6 "UseSecond") $
     getFileName >> openFileSession >> call @"UseSecond" @"checkSelection" Effects.checkSelection
@@ -285,7 +285,7 @@ runSelectFirst :: Effects.App [String]
 runSelectFirst =
   SDK.runOnce (SDK.Slot 7 "SelectFirst")
   . SDK.handleFailure
-  . SDK.atomicHandle "runSelectFirst" [] []
+  . SDK.atomicHandle (SDK.Slot 7 "SelectFirst") []
   . SDK.enterHandler (SDK.Slot 7 "SelectFirst") $
     call @"SelectFirst" @"selectFirst" Effects.selectFirst
 
@@ -294,7 +294,7 @@ runReopenFirst =
   SDK.runOnce (SDK.Slot 8 "ReopenFirst")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runReopenFirst" [] []
+  . SDK.atomicHandle (SDK.Slot 8 "ReopenFirst") []
   . SDK.withScopeDependencies [(SDK.Slot 3 "FileSession")]
   . SDK.enterHandler (SDK.Slot 8 "ReopenFirst") $
     getFileName >> openFileSession >> call @"ReopenFirst" @"checkSelection" Effects.checkSelection
@@ -303,7 +303,7 @@ runCheckJournal :: Effects.App [String]
 runCheckJournal =
   SDK.runOnce (SDK.Slot 9 "CheckJournal")
   . SDK.handleFailure
-  . SDK.atomicHandle "runCheckJournal" [] []
+  . SDK.atomicHandle (SDK.Slot 9 "CheckJournal") []
   . SDK.enterHandler (SDK.Slot 9 "CheckJournal") $
     call @"CheckJournal" @"checkJournal" Effects.checkJournal
 

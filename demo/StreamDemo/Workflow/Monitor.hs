@@ -1,12 +1,12 @@
 module StreamDemo.Workflow.Monitor (monitor) where
 
-import Framework.SDK (AST, chain, lifelong, node)
+import Framework.SDK (AST, chain, lifelong, node, parallel)
 
--- lifelong 的直接子项各是一个独立推进的单元：
--- 读数单元每收到一条新读数执行一次 ShowTemperature → CheckTrend（两者共享这次交付），
--- 心跳单元每收到一次心跳执行一次。两个单元互不等待；lifelong 没有正常结束。
+-- 读数与心跳是两个独立来源，各写一个 lifelong，并发须用 parallel 显式写出。
+-- 读数每发布一条执行一次 ShowTemperature → CheckTrend（两者读同一次交付），心跳每发布一次执行一次 ReportHeartbeat。
+-- 两个来源都不结束，monitor 没有正常结束。
 monitor :: AST
-monitor = lifelong
-  [ chain [node "ShowTemperature", node "CheckTrend"]
-  , chain [node "ReportHeartbeat"]
+monitor = parallel
+  [ lifelong [chain [node "ShowTemperature", node "CheckTrend"]]
+  , lifelong [chain [node "ReportHeartbeat"]]
   ]

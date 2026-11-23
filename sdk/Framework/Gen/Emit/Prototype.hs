@@ -236,7 +236,6 @@ renderBootPlan :: P.BootPlan -> String
 renderBootPlan (P.Receive source) = constructor "Receive" [showArg source]
 renderBootPlan (P.Derive upstream) = constructor "Derive" [showArg upstream]
 renderBootPlan (P.ReuseOutput nodes) = constructor "ReuseOutput" [showArg nodes]
-renderBootPlan P.Listen = constructor "Listen" []
 
 renderChain :: P.ChainProto String -> String
 renderChain chain = record "ChainProto"

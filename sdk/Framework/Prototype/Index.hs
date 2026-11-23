@@ -8,7 +8,7 @@ module Framework.Prototype.Index
   , DriveAt(..), UnitAt(..), SourceAt(..), ReaderAt(..), LocalSlot(..), IndexedOpening(..), SessionAt(..)
   , slotOf, coordAt, rootCoord
   , chainAt, driveAt, unitAt, rootNodesOf, sessionRouteOf, sessionUpstreamOf, sessionAt
-  , sourcePlanAt, sourcesAt, hooksLabel, openingsAt, historyOf, sampledOf, listensAt, requestEntryOf
+  , sourcePlanAt, sourcesAt, hooksLabel, openingsAt, historyOf, sampledOf, requestEntryOf
   , parameterScopesOf, scopeClosureOf, isResourceSlot, outputSiteAt
   ) where
 
@@ -265,8 +265,6 @@ sampledOf :: PrototypeIndex method -> Slot -> Bool
 sampledOf index context = IntSet.member (slotNumber context) (indexSampled index)
 
 -- event：该边界的会话只接收这份普通资产此后的发布，没有生产任务。
-listensAt :: PrototypeIndex method -> Maybe Coord -> Slot -> Bool
-listensAt index boundary context = maybe False ((== Listen) . sessionPlan . sessionAtProto) (sessionAt index boundary context)
 
 -- RequestBoot 的生产入口。
 requestEntryOf :: PrototypeIndex method -> Slot -> Maybe method

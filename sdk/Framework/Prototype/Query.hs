@@ -99,21 +99,17 @@ drivingAssets effects producer = nub
   [ demandContract demand | effect <- effects, effectName effect `elem` effectInputChain producer
   , demand <- effectDemands effect, demandAccess demand == StreamAccess ]
 
--- 注册给出的独立生产方式：Input 链被另一份持续资产驱动时是 Derive，否则直接 input 是 Stream。
--- 普通资产没有独立生产，订阅它的会话是 event（Listen），只接收此后的发布。
+-- 持续资产注册给出的独立生产方式：Input 链被另一份持续资产驱动时是 Derive，否则直接 input 是 Stream。
 -- 某个 lifelong 已挂载生产操作时，gen 会把该边界的计划改为 ReuseOutput；此查询不重新规划。
 bootPlan :: [EffectProto method] -> EffectProto method -> BootPlan
-bootPlan effects producer
-  | not (effectContinuous producer) = Listen
-  | otherwise = case drivingAssets effects producer of
-      upstream : _ -> Derive upstream
-      [] -> Receive (effectInput producer)
+bootPlan effects producer = case drivingAssets effects producer of
+  upstream : _ -> Derive upstream
+  [] -> Receive (effectInput producer)
 
 sessionSteps :: BootPlan -> Int
 sessionSteps (Receive _) = 2
 sessionSteps (Derive _) = 1
 sessionSteps (ReuseOutput _) = 0
-sessionSteps Listen = 0
 
 -- 一个 lifelong 需要的会话：被订阅的资产，以及驱动它们的上游资产，上游排在前面。
 -- 注册校验已经拒绝派生关系成环；seen 只防止不一致的原型使遍历不终止。

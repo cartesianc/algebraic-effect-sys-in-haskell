@@ -178,33 +178,46 @@ generatedPrototype =
         SDK.ChainAt
           []
           [ SDK.NodeAt [0] "Announce"
-          , SDK.LifelongAt
+          , SDK.ParallelAt
               [1]
-              (
-                SDK.LifelongProto
-                  { SDK.lifelongUnits = [[1,0],[1,1]]
-                  , SDK.lifelongSubscriptions =
-                      [([1,0,0],"TemperatureSample"),([1,0,1],"TemperatureSample"),([1,1],"Beat")]
-                  , SDK.lifelongSessions =
-                      [ SDK.SessionProto
-                          { SDK.sessionAsset = "TemperatureSample"
-                          , SDK.sessionPlan = SDK.Receive "TemperatureFeed"
-                          , SDK.sessionMounts = [[1,-1,0,0],[1,-1,0,1]]
-                          }
-                      , SDK.SessionProto
-                          { SDK.sessionAsset = "Beat"
-                          , SDK.sessionPlan = SDK.Receive "HeartbeatClock"
-                          , SDK.sessionMounts = [[1,-1,1,0],[1,-1,1,1]]
-                          }
-                      ]
-                  }
-              )
-              [ SDK.ChainAt
+              [ SDK.LifelongAt
                   [1,0]
-                  [ SDK.NodeAt [1,0,0] "ShowTemperature"
-                  , SDK.NodeAt [1,0,1] "CheckTrend"
+                  (
+                    SDK.LifelongProto
+                      { SDK.lifelongUnits = [[1,0,0]]
+                      , SDK.lifelongSubscriptions = [([1,0,0,0],"TemperatureSample"),([1,0,0,1],"TemperatureSample")]
+                      , SDK.lifelongSessions =
+                          [ SDK.SessionProto
+                              { SDK.sessionAsset = "TemperatureSample"
+                              , SDK.sessionPlan = SDK.Receive "TemperatureFeed"
+                              , SDK.sessionMounts = [[1,0,-1,0,0],[1,0,-1,0,1]]
+                              }
+                          ]
+                      }
+                  )
+                  [ SDK.ChainAt
+                      [1,0,0]
+                      [ SDK.NodeAt [1,0,0,0] "ShowTemperature"
+                      , SDK.NodeAt [1,0,0,1] "CheckTrend"
+                      ]
                   ]
-              , SDK.NodeAt [1,1] "ReportHeartbeat"
+              , SDK.LifelongAt
+                  [1,1]
+                  (
+                    SDK.LifelongProto
+                      { SDK.lifelongUnits = [[1,1,0]]
+                      , SDK.lifelongSubscriptions = [([1,1,0],"Beat")]
+                      , SDK.lifelongSessions =
+                          [ SDK.SessionProto
+                              { SDK.sessionAsset = "Beat"
+                              , SDK.sessionPlan = SDK.Receive "HeartbeatClock"
+                              , SDK.sessionMounts = [[1,1,-1,0,0],[1,1,-1,0,1]]
+                              }
+                          ]
+                      }
+                  )
+                  [ SDK.NodeAt [1,1,0] "ReportHeartbeat"
+                  ]
               ]
           ]
     , SDK.protoSessions =
@@ -231,7 +244,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,0,0]
+            { SDK.chainNode = [1,0,0,0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ShowTemperature"
             , SDK.chainEntry = RunShowTemperatureGen
@@ -241,7 +254,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,0,1]
+            { SDK.chainNode = [1,0,0,1]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "CheckTrend"
             , SDK.chainEntry = RunCheckTrendGen
@@ -251,7 +264,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,1]
+            { SDK.chainNode = [1,1,0]
             , SDK.chainRole = SDK.NodeChain
             , SDK.chainTerminal = "ReportHeartbeat"
             , SDK.chainEntry = RunReportHeartbeatGen
@@ -261,7 +274,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,-1,0,0]
+            { SDK.chainNode = [1,0,-1,0,0]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "TemperatureSample"
             , SDK.chainEntry = NextTemperatureFeedGen
@@ -271,7 +284,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[OpenSensorLinkGen]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,-1,0,1]
+            { SDK.chainNode = [1,0,-1,0,1]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "TemperatureSample"
             , SDK.chainEntry = GetTemperatureSampleGen
@@ -281,7 +294,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[OpenSensorLinkGen]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,-1,1,0]
+            { SDK.chainNode = [1,1,-1,0,0]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "Beat"
             , SDK.chainEntry = NextHeartbeatClockGen
@@ -291,7 +304,7 @@ generatedPrototype =
             , SDK.chainScopePaths = [[OpenSensorLinkGen]]
             }
         , SDK.ChainProto
-            { SDK.chainNode = [1,-1,1,1]
+            { SDK.chainNode = [1,1,-1,0,1]
             , SDK.chainRole = SDK.SessionChain
             , SDK.chainTerminal = "Beat"
             , SDK.chainEntry = GetBeatGen
@@ -525,25 +538,25 @@ generatedPrototype =
             , SDK.openingKinds = [SDK.RegistrationSingleton]
             }
         , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [1,-1,1,1]
+            { SDK.openingNode = [1,1,-1,0,1]
             , SDK.openingScope = "SensorLink"
             , SDK.openingSources = []
             , SDK.openingKinds = [SDK.RegistrationSingleton]
             }
         , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [1,-1,1,0]
+            { SDK.openingNode = [1,1,-1,0,0]
             , SDK.openingScope = "SensorLink"
             , SDK.openingSources = []
             , SDK.openingKinds = [SDK.RegistrationSingleton]
             }
         , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [1,-1,0,1]
+            { SDK.openingNode = [1,0,-1,0,1]
             , SDK.openingScope = "SensorLink"
             , SDK.openingSources = []
             , SDK.openingKinds = [SDK.RegistrationSingleton]
             }
         , SDK.ScopeOpeningPlan
-            { SDK.openingNode = [1,-1,0,0]
+            { SDK.openingNode = [1,0,-1,0,0]
             , SDK.openingScope = "SensorLink"
             , SDK.openingSources = []
             , SDK.openingKinds = [SDK.RegistrationSingleton]
@@ -552,17 +565,19 @@ generatedPrototype =
     , SDK.protoDriving =
         SDK.DrivingPlan
           { SDK.drivingNodes =
-              [ SDK.NodeDrive [] [[0],[1,0,0],[1,0,1],[1,1]] [] Nothing [] [] []
+              [ SDK.NodeDrive [] [[0],[1,0,0,0],[1,0,0,1],[1,1,0]] [] Nothing [] [] []
               , SDK.NodeDrive [0] [[0]] [] Nothing [] [] []
-              , SDK.NodeDrive [1] [[1,0,0],[1,0,1],[1,1]] [] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,0] [[1,0,0],[1,0,1]] [] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,0,0] [[1,0,0]] ["TemperatureParser"] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,0,1] [[1,0,1]] ["TemperatureParser"] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,1] [[1,1]] ["Heartbeat"] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,-1,0,0] [] [] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,-1,0,1] [] [] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,-1,1,0] [] [] (Just [1]) [] [] []
-              , SDK.NodeDrive [1,-1,1,1] [] [] (Just [1]) [] [] []
+              , SDK.NodeDrive [1] [[1,0,0,0],[1,0,0,1],[1,1,0]] [] Nothing [] [] []
+              , SDK.NodeDrive [1,0] [[1,0,0,0],[1,0,0,1]] [] (Just [1,0]) [] [] []
+              , SDK.NodeDrive [1,0,0] [[1,0,0,0],[1,0,0,1]] [] (Just [1,0]) [] [] []
+              , SDK.NodeDrive [1,0,0,0] [[1,0,0,0]] ["TemperatureParser"] (Just [1,0]) [] [] []
+              , SDK.NodeDrive [1,0,0,1] [[1,0,0,1]] ["TemperatureParser"] (Just [1,0]) [] [] []
+              , SDK.NodeDrive [1,1] [[1,1,0]] [] (Just [1,1]) [] [] []
+              , SDK.NodeDrive [1,1,0] [[1,1,0]] ["Heartbeat"] (Just [1,1]) [] [] []
+              , SDK.NodeDrive [1,0,-1,0,0] [] [] (Just [1,0]) [] [] []
+              , SDK.NodeDrive [1,0,-1,0,1] [] [] (Just [1,0]) [] [] []
+              , SDK.NodeDrive [1,1,-1,0,0] [] [] (Just [1,1]) [] [] []
+              , SDK.NodeDrive [1,1,-1,0,1] [] [] (Just [1,1]) [] [] []
               , SDK.NodeDrive [-2,0,0] [] [] Nothing [] [] []
               , SDK.NodeDrive [-2,0,1] [] [] Nothing [] [] []
               , SDK.NodeDrive [-2,1,0] [] [] Nothing [] [] []
@@ -570,19 +585,19 @@ generatedPrototype =
               ]
           , SDK.drivingUnits =
               [ SDK.UnitDrive
-                  [1,0]
-                  [[1,0,0],[1,0,1]]
-                  [("TemperatureParser", [SDK.ReadAt [1,0,0], SDK.ReadAt [1,0,1]]), ("Heartbeat", [])]
+                  [1,0,0]
+                  [[1,0,0,0],[1,0,0,1]]
+                  [("TemperatureParser", [SDK.ReadAt [1,0,0,0], SDK.ReadAt [1,0,0,1]])]
                   []
-              , SDK.UnitDrive [1,1] [[1,1]] [("TemperatureParser", []), ("Heartbeat", [SDK.ReadAt [1,1]])] []
+              , SDK.UnitDrive [1,1,0] [[1,1,0]] [("Heartbeat", [SDK.ReadAt [1,1,0]])] []
               ]
           , SDK.drivingSessions =
               [ SDK.SessionDrive Nothing "TemperatureParser" "TemperatureSample" Nothing
               , SDK.SessionDrive Nothing "Heartbeat" "Beat" Nothing
-              , SDK.SessionDrive (Just [1]) "TemperatureParser" "TemperatureSample" Nothing
-              , SDK.SessionDrive (Just [1]) "Heartbeat" "Beat" Nothing
+              , SDK.SessionDrive (Just [1,0]) "TemperatureParser" "TemperatureSample" Nothing
+              , SDK.SessionDrive (Just [1,1]) "Heartbeat" "Beat" Nothing
               ]
-          , SDK.drivingRootNodes = [[0],[1,0,0],[1,0,1],[1,1]]
+          , SDK.drivingRootNodes = [[0],[1,0,0,0],[1,0,0,1],[1,1,0]]
           , SDK.drivingOutputSites = []
           , SDK.drivingRequests =
               [("TemperatureParser", GetTemperatureSampleGen), ("Heartbeat", GetBeatGen)]

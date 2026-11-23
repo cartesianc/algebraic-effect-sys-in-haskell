@@ -205,7 +205,7 @@ runPrepareProbe :: Effects.App [String]
 runPrepareProbe =
   SDK.runOnce (SDK.Slot 1 "PrepareProbe")
   . SDK.handleFailure
-  . SDK.atomicHandle "runPrepareProbe" [] []
+  . SDK.atomicHandle (SDK.Slot 1 "PrepareProbe") []
   . SDK.enterHandler (SDK.Slot 1 "PrepareProbe") $
     getFilePaths >> call @"PrepareProbe" @"prepareProbe" Effects.prepareProbe
 
@@ -227,7 +227,7 @@ openSharedFileScope =
   SDK.runOnce (SDK.Slot 3 "SharedFileScope")
   . SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicScope "openSharedFileScope" [] []
+  . SDK.atomicScope (SDK.Slot 3 "SharedFileScope") []
   . SDK.openScope (SDK.Slot 3 "SharedFileScope") Effects.ScopeBindingError (Just (() <$ closeSharedFileScope))
   . SDK.enterHandler (SDK.Slot 3 "SharedFileScope") $
     getOpenedFile >> call @"SharedFileScope" @"openSharedFile" Effects.openSharedFile
@@ -236,7 +236,7 @@ closeSharedFileScope :: Effects.App [String]
 closeSharedFileScope =
   SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicScope "closeSharedFileScope" [] []
+  . SDK.atomicScope (SDK.Slot 3 "SharedFileScope") []
   . SDK.closeScope (SDK.Slot 3 "SharedFileScope") Effects.ScopeBindingError
   . SDK.enterHandler (SDK.Slot 3 "SharedFileScope") $
     callClose @"SharedFileScope" @"closeSharedFile" Effects.closeSharedFile
@@ -246,7 +246,7 @@ runWriteFirst =
   SDK.runOnce (SDK.Slot 4 "WriteFirst")
   . SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runWriteFirst" [] []
+  . SDK.atomicHandle (SDK.Slot 4 "WriteFirst") []
   . SDK.withScopeDependencies [(SDK.Slot 3 "SharedFileScope")]
   . SDK.enterHandler (SDK.Slot 4 "WriteFirst") $
     openSharedFileScope >> call @"WriteFirst" @"writeFirst" Effects.writeFirst
@@ -256,7 +256,7 @@ runWriteSecond =
   SDK.runOnce (SDK.Slot 5 "WriteSecond")
   . SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runWriteSecond" [] []
+  . SDK.atomicHandle (SDK.Slot 5 "WriteSecond") []
   . SDK.withScopeDependencies [(SDK.Slot 3 "SharedFileScope")]
   . SDK.enterHandler (SDK.Slot 5 "WriteSecond") $
     openSharedFileScope >> call @"WriteSecond" @"writeSecond" Effects.writeSecond
@@ -266,7 +266,7 @@ runWriteThird =
   SDK.runOnce (SDK.Slot 6 "WriteThird")
   . SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle "runWriteThird" [] []
+  . SDK.atomicHandle (SDK.Slot 6 "WriteThird") []
   . SDK.withScopeDependencies [(SDK.Slot 3 "SharedFileScope")]
   . SDK.enterHandler (SDK.Slot 6 "WriteThird") $
     openSharedFileScope >> call @"WriteThird" @"writeThird" Effects.writeThird
@@ -275,7 +275,7 @@ runVerifyReuse :: Effects.App [String]
 runVerifyReuse =
   SDK.runOnce (SDK.Slot 7 "VerifyReuse")
   . SDK.handleFailure
-  . SDK.atomicHandle "runVerifyReuse" [] []
+  . SDK.atomicHandle (SDK.Slot 7 "VerifyReuse") []
   . SDK.enterHandler (SDK.Slot 7 "VerifyReuse") $
     getFilePaths >> call @"VerifyReuse" @"verifyReuse" Effects.verifyReuse
 

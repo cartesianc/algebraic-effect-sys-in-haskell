@@ -17,8 +17,12 @@ import Framework.Prototype.Validate (valid, unique)
 import Framework.Recursion (Fix, cata)
 
 -- 输入是已通过 Gen.Workflow 结构检查的规范形式；这里只做要读注册的检查。
+-- 编号之后在回调图上查环：订阅回调经自身执行再次发布所订阅的资产时会无限递归。
 numberWorkflow :: [EffectProto String] -> Fix WorkflowF -> Either (PrototypeError String) WorkflowTree
-numberWorkflow effects tree = cata number tree [] False
+numberWorkflow effects tree = do
+  numbered <- cata number tree [] False
+  checkReactions effects numbered
+  pure numbered
   where
     -- inside：是否位于 lifelong 内。持续订阅只能挂在 lifelong 内。
     number (Node selected) path inside = do
@@ -36,13 +40,23 @@ numberWorkflow effects tree = cata number tree [] False
       pure (NodeAt path selected)
     number (Chain children) path inside = ChainAt path <$> descend path inside children
     number (Parallel children) path inside = ParallelAt path <$> descend path inside children
+    -- lifelong 是给 gen 的标记：每个直接子项是一个单元，单元是它的驱动资产每次发布后执行一次的回调；
+    -- 子项里的 parallel 只在一次回调之内并发。单元里的 target 由同一份资产驱动。
+    -- 一个 lifelong 至多一个 Stream 来源；多个独立来源须显式写成 parallel 的多个 lifelong（并发须显式）。
     number (Lifelong children) path _ = do
       parts <- descend path True children
-      -- 每个直接子项是一个单元；子项里的 parallel 只在一轮之内并发。
       let units = map workflowNode parts
       subscriptions <- mapM subscription [(node', selected) | part <- parts, NodeAt node' selected <- allWorkflow part]
-      -- 先沿用本边界已经挂载的操作输出，再为其余订阅建立独立生产；副产物也登记为会话资产。
+      forM_ units $ \unit -> case nub [asset | (node', asset) <- subscriptions, unit `isPrefixOf` node'] of
+        several@(_ : _ : _) -> Left (InvalidLifelong unit ("Unit is driven by several assets " ++ intercalate ", " several
+          ++ "; a unit runs once per publication of one asset, so put targets driven by different assets in different units"))
+        _ -> pure ()
+      -- 先沿用本边界已经挂载的操作输出，再为其余订阅建立独立生产；副产物也登记为持续资产。
       sessions <- planSessions effects path parts subscriptions
+      case [sessionAsset session | session <- sessions, Receive _ <- [sessionPlan session]] of
+        several@(_ : _ : _) -> Left (InvalidLifelong path ("Lifelong is driven by several Stream sources ("
+          ++ intercalate ", " several ++ "); write one lifelong per source and run them in parallel"))
+        _ -> pure ()
       pure (LifelongAt path (LifelongProto units subscriptions sessions) parts)
     -- option v1（2026-11-21）：分叉点是同一个 Excu 的输出。每个候选恰好 requires 一份由它的输出解析出的
     -- 资产，判定这些资产的 Context 互不相同；选择时按候选的声明顺序取第一个解析成功的。
@@ -71,6 +85,8 @@ numberWorkflow effects tree = cata number tree [] False
     -- requests 一份普通资产是 event。lifelong 内的 requires 只采样，不驱动。
     -- 链内不再读取其他持续资产的快照，否则执行结果取决于读取时刻（多个来源的触发组合另行设计）。
     subscription (node', selected) = case drivers selected of
+      _ | (asset : _) <- requestedStreams selected -> Left (InvalidLifelong node' ("Node " ++ selected ++ " requests the stream asset "
+          ++ asset ++ " inside lifelong; requests takes a static history outside lifelong, subscribe with streams here"))
       [contractType] -> do
         let others = [other | other <- continuousReads effects selected, other /= contractType]
         unless (null others) $ Left (InvalidLifelong node' ("Node " ++ selected ++ " is driven by " ++ contractType
@@ -84,7 +100,11 @@ numberWorkflow effects tree = cata number tree [] False
     drivers selected = nub (streamedAssets effects selected ++ case findEffectProto effects selected of
       Right effect -> [asset | asset <- requestedBy effect, asset `notElem` continuousOnly]
       Left _ -> [])
-    -- 持续资产（stream = True）的 requests 只取当前一条，不是订阅；behavior 与普通资产的 requests 是订阅。
+    -- lifelong 内不能 requests stream = True 的资产：requests 是 lifelong 之外的静态历史，这里订阅要写 streams。
+    requestedStreams selected = case findEffectProto effects selected of
+      Right effect -> [asset | asset <- requestedBy effect, asset `elem` continuousOnly]
+      Left _ -> []
+    -- behavior 与普通资产的 requests 是订阅。
     continuousOnly = [asset | producer <- effects, effectContinuous producer, not (effectSampled producer)
       , Just asset <- [effectProduces producer]]
     -- target 自己声明的 requests；Scoped 请求的资源 Context 是开启输入，不是订阅。
@@ -117,116 +137,63 @@ numberWorkflow effects tree = cata number tree [] False
 -- 连续副产物即使只有后继 requires，也有交付状态，不能因没有订阅而丢掉发布。
 planSessions :: [EffectProto method] -> NodeId -> [WorkflowTree] -> [(NodeId, String)]
                    -> Either (PrototypeError method) [SessionProto]
-planSessions effects boundary children subscriptions = do
-  sessions <- mapM plan (zip [0 ..] assets)
-  checkStartup sessions
-  checkCoverage sessions
-  pure sessions
+planSessions effects boundary children subscriptions = mapM plan (zip [0 ..] assets)
   where
-    units = map workflowNode children
-    workflow = LifelongAt boundary (LifelongProto units subscriptions []) children
     mounted = [(node', effect) | NodeAt node' selected <- concatMap allWorkflow children
       , effect <- effects, effectName effect == selected]
     -- 匹配 original chain 的 target/Input，不扫描它请求的独立 Context 链。
     positions producer = [node' | Just anchor <- [effectAnchor producer], (node', target) <- mounted
       , anchor `elem` (effectName target : effectInputChain target)]
+    continuous = [contractType | producer <- effects, effectContinuous producer, Just contractType <- [effectProduces producer]]
     outputs = [contractType | producer <- effects, effectContinuous producer
       , Just contractType <- [effectProduces producer], not (null (positions producer))]
-    assets = sessionAssets effects (nub (map snd subscriptions ++ outputs))
-    unitOf node' = [unit | unit <- units, unit `isPrefixOf` node']
+    -- event 订阅的普通资产没有生产方式：回调接在它的锚点后面，不进入这里。
+    assets = sessionAssets effects (nub ([asset | (_, asset) <- subscriptions, asset `elem` continuous] ++ outputs))
     plan (index, contractType) = do
       producer <- case [effect | effect <- effects, effectProduces effect == Just contractType] of
         [effect] -> pure effect
         _ -> Left (UnknownPrototypeTarget contractType)
       let nodes = positions producer
-      -- event 的发布来自本 lifelong 之外：订阅单元自己执行这份资产的锚点（作为 target、Input，
-      -- 或为其他 requests 拉取它）时，每次执行都会唤起自己。
-      unless (effectContinuous producer) $ do
-        let anchor = effectAnchor producer
-            pulling = [node' | (node', target) <- mounted, demand <- effectDemands target
-              , demandAccess demand == RequestAccess, (node', demandContract demand) `notElem` subscriptions
-              , other <- effects, effectProduces other == Just (demandContract demand)
-              , anchor /= Nothing, effectAnchor other == anchor]
-        unless (null (nodes ++ pulling)) $ Left (InvalidLifelong boundary ("Event subscription to " ++ contractType
-          ++ ": its anchor " ++ maybe "" id anchor ++ " runs inside this lifelong at " ++ show (nub (nodes ++ pulling))
-          ++ ", so each unit would wake itself; run that anchor outside the lifelong"))
-      -- p 个位置要做 p*(p-1)/2 次同单元/互斥检查；exclusive 自身还遍历 workflow。
-      -- 并行或顺序中都可能发生的两次输出不能靠“谁先生产”合并成同一个来源。
-      unless (and [unitOf left == unitOf right && exclusive workflow left right
-          | (offset, left) <- zip [0 :: Int ..] nodes, right <- drop (offset + 1) nodes]) $
-        Left (InvalidLifelong boundary ("Continuous asset " ++ contractType
-          ++ " has several AST output positions " ++ show nodes
-          ++ "; use one position, mutually exclusive positions in one unit, or refine the asset"))
-      let selected = if null nodes then bootPlan effects producer else ReuseOutput nodes
+          selected = if null nodes then bootPlan effects producer else ReuseOutput nodes
       pure (SessionProto contractType selected
         [boundary ++ [-1, index, step] | step <- [0 .. sessionSteps selected - 1]])
-    -- 订阅边之外，还要计入 workflow 的启动前置。否则 chain [读 A, 产 A]
-    -- 虽然注册关系无环，第一条增量仍只能由正在等待它的后继产生。
-    -- 保守地纳入所有候选前驱：不依赖运行时恰好选中某个分支才具有进展。
-    -- SCC 只检测这份启动依赖图；发现环就拒绝，不删边来强行安排运行。
-    -- 纯 SCC 阶段与图规模相关，构边前的 precedes/selectors 查询和后面的覆盖遍历另计。
-    checkStartup sessions = case [cycle' | CyclicSCC cycle' <- stronglyConnComp graph] of
-      [] -> pure ()
-      cycle' : _ -> Left (InvalidLifelong boundary ("Continuous startup cycle: "
-        ++ intercalate " -> " (map describe cycle')
-        ++ "; a producer cannot wait for a target that needs its own publication"))
+
+-- 回调图：资产 → 它的回调执行时可能发布的资产。订阅单元执行它的 target（连同 Input 链与 requests 的传递闭包），
+-- 其中的锚点经输出联立发布挂在下面的资产；派生资产由上游的发布驱动。图上有环时回调会无限递归，拒绝。
+-- 按注册保守计算：不区分回调是否同时有效，也不证明条件分支。
+checkReactions :: [EffectProto method] -> WorkflowTree -> Either (PrototypeError method) ()
+checkReactions effects tree = case [cycle' | CyclicSCC cycle' <- stronglyConnComp graph] of
+  [] -> pure ()
+  cycle' : _ -> Left (InvalidLifelong (locate cycle') ("Subscription cycle " ++ intercalate " -> " (cycle' ++ take 1 cycle')
+    ++ ": a callback publishes the asset it is subscribed to again, so it would run forever;"
+    ++ " run the publishing anchor outside the subscribing lifelong"))
+  where
+    subscriptions = [(node', asset) | (_, described) <- workflowLifelongs tree, (node', asset) <- lifelongSubscriptions described]
+    graph = [(asset, asset, nub (published asset)) | asset <- nub (map snd subscriptions ++ produced)]
+    produced = [asset | effect <- effects, Just asset <- [effectProduces effect]]
+    published asset = concat [publishedBy asset selected | (node', subscribed) <- subscriptions, subscribed == asset
+        , Just (NodeAt _ selected) <- [lookupWorkflow tree node']]
+      ++ [derived | producer <- effects, effectContinuous producer, asset `elem` drivingAssets effects producer
+         , Just derived <- [effectProduces producer]]
+    -- 一次回调里 selected 可能执行的 effect：自身与 Input 链，以及 requests 拉取的生产链（传递闭包）。
+    -- 回调交付的资产在本次执行里已记为发布，对它的 requests 直接读交付，不执行它的生产链。
+    publishedBy delivered selected = nub ([demandContract demand | effect <- executed, demand <- effectDemands effect
+        , demandAccess demand == RequestAccess, demandContract demand /= delivered]
+      ++ [asset | producer <- effects, Just anchor <- [effectAnchor producer], anchor `elem` map effectName executed
+         , Just asset <- [effectProduces producer]])
       where
-        graph = [(key, key, dependencies) | (key, dependencies) <- edges]
-        edges = [(Left node', nub (Right asset : previous node'))
-          | (node', asset) <- subscriptions]
-          ++ [(Right (sessionAsset session), case sessionPlan session of
-              Receive _ -> []
-              Listen -> []
-              Derive upstream -> [Right upstream]
-              ReuseOutput nodes -> map Left nodes) | session <- sessions]
-        previous node' = [Left before | (before, _) <- mounted, precedes workflow before node']
-        describe (Left node') = "target " ++ show node'
-        describe (Right asset) = "asset " ++ asset
-    -- 同一单元只有完成本轮后才能进入下一轮。每条能到达订阅的路径都必须
-    -- 已经生产，或同时启动了一条必经的生产路径，不能等本单元的下一轮来补值。
-    -- 其他单元独立推进，允许等待其未来发布；这里不证明原子 IO 的进展。
-    checkCoverage sessions = mapM_ check
-      [(node', asset, output, nodes, unit) | (node', asset) <- subscriptions
-      , (output, nodes@(source : _)) <- outputOf [] asset
-      , unit <- unitOf node', unit `elem` unitOf source]
-      where
-        outputOf seen asset
-          | asset `elem` seen = []
-          | otherwise = concat [case sessionPlan session of
-              ReuseOutput nodes -> [(sessionAsset session, nodes)]
-              Derive upstream -> outputOf (asset : seen) upstream
-              Receive _ -> []
-              Listen -> []
-            | session <- sessions, sessionAsset session == asset]
-        check (node', asset, output, nodes, unit) = do
-          -- open 复用已有实例时不执行原子方法，也没有新输出。经过该位置不能
-          -- 证明本轮有交付；独立单元可以等待以后真正开启产生的输出或正常结束。
-          unless (null [() | producer <- effects, effectProduces producer == Just output
-              , Just anchorName <- [effectAnchor producer], anchor <- effects
-              , effectName anchor == anchorName, effectKind anchor == ScopedKind]) $
-            Left (InvalidLifelong node' ("Subscription to " ++ asset
-              ++ " waits for a Scoped output within the same unit; reusing an open scope produces no new output"))
-          case lookupWorkflow workflow unit of
-            Just tree -> unless (covered nodes node' False tree) $
-              Left (InvalidLifelong node' ("Subscription to " ++ asset
-                ++ " has a workflow path without an output from " ++ show nodes
-                ++ " in the same unit; that unit cannot reach its next execution while waiting"))
-            Nothing -> Left (InvalidLifelong unit "Missing unit for an output subscription")
-        covered sources target available tree = case tree of
-          NodeAt node' _ -> node' /= target || available
-          ChainAt _ parts -> sequenceCovered parts available
-          ParallelAt _ parts -> and
-            [covered sources target (available || any (produces sources) others) child
-            | child <- parts, let others = filter ((/= workflowNode child) . workflowNode) parts]
-          _ -> all (covered sources target available) (workflowChildren tree)
-          where
-            sequenceCovered [] _ = True
-            sequenceCovered (child : rest) ready = covered sources target ready child
-              && sequenceCovered rest (ready || produces sources child)
-        produces sources tree = case tree of
-          NodeAt node' _ -> node' `elem` sources
-          AlternativeAt _ _ parts -> not (null parts) && all (produces sources) parts
-          _ -> any (produces sources) (workflowChildren tree)
+        executed = closure [] [selected]
+        closure seen [] = [effect | effect <- effects, effectName effect `elem` seen]
+        closure seen (name : rest)
+          | name `elem` seen = closure seen rest
+          | otherwise = closure (name : seen) (rest ++ chainOf name ++ requested name)
+        requested name = [effectName producer | effect <- effects, effectName effect == name, demand <- effectDemands effect
+          , demandAccess demand == RequestAccess, demandContract demand /= delivered
+          , producer <- effects, effectProduces producer == Just (demandContract demand)]
+    chainOf name = concat [effectInputChain effect | effect <- effects, effectName effect == name]
+    locate cycle' = case [node' | (node', asset) <- subscriptions, asset `elem` cycle'] of
+      node' : _ -> node'
+      [] -> []
 
 -- ========================================================================
 -- 入口与输出连接事实
@@ -278,8 +245,6 @@ assembleProgram plan = do
         Derive _ -> (: []) <$> entry producer ContextStream
         -- 沿用 AST 输出，不另建生产步骤；位置证据已经在 planSessions 的 BootPlan 中检查。
         ReuseOutput _ -> pure []
-        -- event 只接收发布，没有生产步骤。
-        Listen -> pure []
       valid (length steps == length (sessionMounts described)) ("Session steps differ for " ++ sessionAsset described)
       pure [EntryMount mount SessionChain (sessionAsset described) target method
         | (mount, (target, method)) <- zip (sessionMounts described) steps]
@@ -363,7 +328,6 @@ completeDriving prototype = prototype { protoDriving = DrivingPlan nodes units s
       ReuseOutput publishers -> PublishedAt publishers
       Derive upstream -> DerivedFrom (provider upstream)
       Receive _ -> error "A Receive source cannot be local to a consumer unit"
-      Listen -> error "An event source cannot be local to a consumer unit"
     outputs = [(node, provider (sessionAsset session)) | (Just _, session) <- descriptions
       , ReuseOutput publishers <- [sessionPlan session], node <- publishers]
 

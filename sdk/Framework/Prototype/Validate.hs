@@ -277,12 +277,12 @@ validatePrototype prototype = do
               outputs = [asset | producer <- effects, effectContinuous producer
                 , Just asset <- [effectProduces producer], not (null (positions producer))]
               sessions = lifelongSessions described
-              unitOf node' = [unit | unit <- lifelongUnits described, unit `isPrefixOf` node']
+          let continuous = [asset | producer <- effects, effectContinuous producer, Just asset <- [effectProduces producer]]
           valid (map sessionAsset sessions
-              == sessionAssets effects (nub (map snd (lifelongSubscriptions described) ++ outputs)))
+              == sessionAssets effects (nub ([asset | (_, asset) <- lifelongSubscriptions described, asset `elem` continuous] ++ outputs)))
             "Lifelong sessions differ from subscriptions, attached outputs and upstream assets"
           mapM_ (\(index, session) -> do
-            producer <- case [effect | effect <- effects, effectContinuous effect || sessionPlan session == Listen
+            producer <- case [effect | effect <- effects, effectContinuous effect
                 , effectProduces effect == Just (sessionAsset session)] of
               [effect] -> pure effect
               _ -> Left (InvalidPrototype "Session asset has no continuous producer")
@@ -290,15 +290,12 @@ validatePrototype prototype = do
               ReuseOutput nodes -> do
                 valid (not (null nodes) && nodes == positions producer)
                   "Reused output positions differ from the mounted atomic handles"
-                valid (and [unitOf left == unitOf right && exclusive selected left right
-                    | (offset, left) <- zip [0 :: Int ..] nodes, right <- drop (offset + 1) nodes])
-                  "Reused output positions must be mutually exclusive within one unit"
               other -> valid (null (positions producer) && other == bootPlan effects producer)
                 "Independent production duplicates an AST output or differs from the registration"
             valid (sessionMounts session == [identifier ++ [-1, index, step]
                 | step <- [0 .. sessionSteps (sessionPlan session) - 1]])
               "Lifelong session mounts have invalid NodeIds") (zip [0 ..] sessions)
-          -- 订阅普通资产是 event：它的会话只接收发布（Listen）。
+          -- 订阅普通资产是 event：没有会话，回调接在它的锚点后面。
           valid (and [ any (\effect -> effectProduces effect == Just contractType) effects
             | (_, contractType) <- lifelongSubscriptions described ]) "Lifelong subscribes to an asset without a producer"
         _ -> pure ()
@@ -342,7 +339,6 @@ validatePrototype prototype = do
                     , (StreamHandler, method) <- effectMethods effect]
                   Derive _ -> []
                   ReuseOutput _ -> []
-                  Listen -> []
                 expected = maybe streamEntries (\role -> [method | (role', method) <- effectMethods producer, role' == role]) expectedRole
             valid (sessionAsset session == chainTerminal chain && expected == [chainEntry chain])
               "Session chain differs from its boot plan"

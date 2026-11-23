@@ -1091,8 +1091,6 @@ resolveSources checked connections definitions defaultReaders prototype = do
         { chainDrives = sort (nub [contractType | (node', contractType) <- assetDrives facts ++ assetAvailable facts, node' == chainNode chain])
         , chainReads = sort (nub [readContract point | (point, _) <- reads, readNode point == chainNode chain])
         }
-  when checked (mapM_ checkReadSupply (assetReadSupply facts))
-  mapM_ successorRead reads
   pure prototype { protoChains = map annotate (protoChains prototype), protoSources = reads
     , protoScopeOpenings = assetScopeOpenings facts }
   where
@@ -1129,27 +1127,6 @@ resolveSources checked connections definitions defaultReaders prototype = do
       unless (null newly) $ do
         mapM_ (\mount -> root mount [] [] []) (concatMap sessionMounts newly)
         activateSessions (map sessionAsset newly ++ started)
-    checkReadSupply (_, True) = pure ()
-    checkReadSupply (point, False) = do
-      chain <- lookupChain prototype (readNode point)
-      Left (InvalidPrototype ("Asset " ++ readContract point ++ " read in chain targeting "
-        ++ chainTerminal chain ++ " at " ++ show (readNode point)
-        ++ " has no reachable publication or capture; declared production is absent or waits on this read"
-        ++ "; start a production path before the wait or in an independent branch"))
-    -- lifelong 之后读取持续资产：读已经结束的那个 lifelong 会话的最新一条，不另行启动来源。
-    -- 先后排列的多个 lifelong 有同一会话时读最近结束的那个；互不先后（例如并行）时“最近”取决于调度，拒绝。
-    successorRead (point, FromSession) =
-      let ended = [boundary | (boundary, described) <- lifelongs
-            , precedes (protoWorkflow prototype) boundary (readNode point)
-            , readContract point `elem` map sessionAsset (lifelongSessions described)]
-          unordered = [(left, right) | left <- ended, right <- ended, left < right
-            , not (precedes (protoWorkflow prototype) left right || precedes (protoWorkflow prototype) right left)]
-      in case unordered of
-        (left, right) : _ -> Left (InvalidLifelong (readNode point) ("Asset " ++ readContract point
-          ++ " is streamed by the lifelongs at " ++ show left ++ " and " ++ show right
-          ++ ", which are not ordered; which one ended last depends on scheduling. Order them, or refine the contract"))
-        [] -> pure ()
-    successorRead _ = pure ()
     resources = [source | effect <- effects, Just source <- [effectResource effect]]
     resourceContracts = [contractType | effect <- effects, effectName effect `elem` resources
       , Just contractType <- [effectProduces effect]]

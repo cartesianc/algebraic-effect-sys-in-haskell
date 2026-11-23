@@ -24,12 +24,12 @@ import Framework.Runtime.Scope
 import Framework.Runtime.Graph
 import Framework.Runtime.Identity
 import Framework.Runtime.Frame (ExecutionFrame, owningFrame, captureFrameInput)
-import Framework.Runtime.Session (Stopped(..), SourceEnded(..), SubscriptionEnded(..), DeliveryDrained(..), View, lastBinding, awaitView)
+import Framework.Runtime.Delivery (SourceEnded(..), SubscriptionEnded(..), View, lastBinding)
 import Framework.Prototype.Coordinate (Coord)
 import Framework.Prototype.Slot (Slot(..))
 import Control.Concurrent.MVar (readMVar, withMVar, takeMVar, tryTakeMVar, putMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, evaluate, fromException, mask, mask_, throwIO, try, finally)
-import Control.Monad (filterM, forM, forM_, when)
+import Control.Monad (filterM, forM, forM_, void, when)
 import Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask)
 import Control.Monad.Except (ExceptT(..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO(..))
@@ -69,29 +69,21 @@ data Environment env cause = Environment
   , execution :: Execution
   , currentFrame :: ExecutionFrame
   , bindingRetention :: Retention env cause
-  -- 注入期间各原子句柄的本次输出。
-  , replays :: [(String, RawOutput)]
   -- 本次调用中已执行的 effect 及其输出（按 effect 编号）；同一 effect 再次到达时直接返回。
   , performed :: IORef (IntMap.IntMap [String])
-  -- 持续资产在本次调用的固定交付：lifelong 交付或此前的会话读取；其他调用之后的发布不改写它。
+  -- 持续资产在本次调用的固定视图：订阅回调的交付或静态读取取得的整段；其他调用之后的发布不改写它。
   , views :: IORef [(Slot, View env cause)]
   -- Receive 来源取得同步交付函数，parser 只取得本条原始输入。
   , streamPort :: StreamPort env cause
-  -- 这些来源的发布进入会话队列，而不是按 Origin 的业务资产表：
-  -- 会话步骤的本资产，以及原始链沿用本次输出的持续 parser 产物。
-  , sessionSinks :: [(Slot, Bound env cause -> IO ())]
-  -- lifelong 单元执行中：本次 frame 对会话资产的领取（同一 frame 只领取一次，各调用共享）。
-  , frameDeliver :: Slot -> Maybe (IO (Either (Stopped cause) (View env cause)))
   }
 
--- 一次末端调用的起点：交接的绑定与视图；会话步骤另带原始输入，lifelong 单元另带本次 frame。
--- 会话步骤共用会话的使用登记：生产资源跨步骤保持，停止会话时才撤销这份使用。
+-- 一次末端调用的起点：交接的绑定与视图；来源步骤另带原始输入。
+-- 订阅回调把交付的资产记入 launchPerformed：入口里对它的 requests 直接读这条交付，不再生产。
 data Launch env cause = Launch
   { launchBindings :: ScopeBindings env cause
   , launchViews :: [(Slot, View env cause)]
   , launchPort :: StreamPort env cause
-  , launchSinks :: [(Slot, Bound env cause -> IO ())]
-  , launchDeliver :: Slot -> Maybe (IO (Either (Stopped cause) (View env cause)))
+  , launchPerformed :: [Slot]
   , launchUser :: Maybe (ScopeUser env cause)
   , launchFrame :: ExecutionFrame
   , launchRetention :: Retention env cause
@@ -196,9 +188,10 @@ observeBindingOwner environment source value
       rememberUnownedBinding (consumer environment) value
   | otherwise = readBindingOwner value
 
--- 发布：普通业务更新运行级最新值并保留实际 Origin；诊断与自动收尾只更新隔离快照。
+-- 发布：普通业务更新运行级最新值（持续资产另追加历史）并保留实际 Origin，然后同步执行生成的订阅回调；
+-- 诊断与自动收尾只更新隔离快照，不回调。回调失败返回给发布方，沿它的原链传播。
 -- 资源绑定仍归具体 scope 实例；捕获、复用和认领归属不向业务资产表重新发布旧值。
-publishBinding :: Environment env cause -> Slot -> Bound env cause -> IO ()
+publishBinding :: Environment env cause -> Slot -> Bound env cause -> IO (Maybe (Failure cause))
 publishBinding environment source value = do
   owner <- observeBindingOwner environment source value
   captureBinding environment source value
@@ -206,13 +199,14 @@ publishBinding environment source value = do
     BusinessExecution origin
       | isNothing owner, isNothing (originalFailure environment)
       , not (cleaningScopes environment) -> do
-          -- 本次已有该资产的视图时，显式 request 的新发布接在本次视图末尾，不改写其他调用的交付。
+          -- 本次已有该资产的视图时，新发布接在本次视图末尾，不改写其他调用的交付。
           atomicModifyIORef' (views environment) $ \current ->
             ([(name, if name == source then view |> value else view) | (name, view) <- current], ())
-          case lookup source (sessionSinks environment) of
-            Just deliver -> deliver value
-            Nothing -> publishAsset (runtimeGraph environment) origin source value
-    _ -> pure ()
+          publishAsset (runtimeGraph environment) origin source value
+          -- 伴随交付：发布方本次调用已捕获的普通绑定随交付交给订阅方。
+          captured <- readIORef (bindings environment) >>= filterM (fmap isNothing . readBindingOwner . snd)
+          react (runtimeGraph environment) source value [entry | entry@(name, _) <- captured, name /= source]
+    _ -> pure Nothing
 
 -- 已合法捕获的绑定保持快照。资源只能来自本链 open 的捕获；不从仍活着的其他实例猜测。
 -- scope 保存的无 owner 辅助值不能盖过运行级最新发布。
@@ -349,7 +343,7 @@ ensureOpen environment attempt = do
                             value <- newBinding (emptyValues environment) (execution environment)
                               Nothing (scopeFrame slot) True (Just (name, slot))
                             saveBinding slot source value
-                            publishBinding environment source value
+                            void (publishBinding environment source value)
                           pure (Right ())
           acquire
 
@@ -479,7 +473,8 @@ instance ContextStore env (App env cause) where
     value <- rawIO (newBinding values (execution environment)
       (activeActivation environment) (maybe (currentFrame environment) (scopeFrame . snd) owner)
       (any ((== Just source) . scopeContextSource) (scopes environment)) owner)
-    rawIO (publishBinding environment source value)
+    reacted <- rawIO (publishBinding environment source value)
+    maybe (pure ()) throwError reacted
     case openings environment of
       attempt : _ -> do
         rawIO (atomicModifyIORef' (produced attempt) (\values -> (bind source value values, ())))
@@ -497,50 +492,14 @@ instance ContextStore env (App env cause) where
   enterHandler name (AppRun action) = AppRun (local (\env -> env { caller = Just name }) action)
   enterContext name (AppRun action) = AppRun $ local
     (\env -> env { caller = Just name, contexts = name : contexts env }) action
-  -- 诊断、收尾与 scope 资源不等待：资源只能经 open 取得，诊断与收尾期间没有新的业务发布。
-  -- 其余缺值读取在读之前取得共享信号；发布与节点退休都会唤醒。
-  -- 只用已知来源和本次执行帧证明耗尽，证据不足时保留等待，不隐式驱动生产。
-  awaitContext source = AppRun $ do
+  linkingAllowed = AppRun $ do
     environment <- ask
-    let resource = any ((== Just source) . scopeContextSource) (scopes environment)
-        allowed = not resource && not (isJust (originalFailure environment))
-          && not (cleaningScopes environment) && null (closings environment)
-    if not allowed then pure Nothing else do
-      signal <- liftIO (publicationSignal (runtimeGraph environment))
-      pure (Just (rawIO $ do
-        possible <- contextMayPublish (runtimeGraph environment) (currentFrame environment)
-          (executionOrigin (execution environment)) source
-        if possible then readMVar signal >> pure True else pure False))
-  activeStreamContexts entries = AppRun $ do
-    environment <- ask
-    let node = originNode (executionOrigin (execution environment))
-    pure [entry | entry@(source, _) <- entries
-      , source `elem` map fst (sessionSinks environment)
-      , reusesOutputAt (runtimeGraph environment) node source]
-  replayedOutput method = AppRun (asks (lookup method . replays))
-  deliveredHere source = do
-    environment <- AppRun ask
-    rawIO (elem source . map fst <$> readIORef (views environment))
-  -- 输出联立：以根调用身份解析同次输出并发布；诊断与收尾期间不注入。失败不吞掉，沿原链传播。
-  injectOutput method raw (AppRun action) = AppRun $ do
-    environment <- ask
-    when (isNothing (originalFailure environment) && not (cleaningScopes environment)) $
-      local (\inside -> inside { caller = Nothing, errorHandlers = [], replays = (method, raw) : replays inside }) action
-  attemptOutput method raw (AppRun action) = AppRun $ local (\inside -> inside
-    { caller = Nothing, errorHandlers = [], replays = (method, raw) : replays inside }) action
-  -- 仍在原始操作的执行帧与资源使用登记内解析；只覆盖 rawinput，不另外 lower 一次生产链。
-  -- 持续 parser 的失败保留原来的诊断和监督路径，不能套用普通挂接的吞错规则。
-  injectStreamOutput method raw (AppRun action) = AppRun $ do
-    environment <- ask
-    let allowed = not (isJust (originalFailure environment)) && not (cleaningScopes environment)
-    when allowed $ local (\inside -> inside
-      { caller = Nothing, replays = (method, raw) : replays inside }) action
-  -- 值与 x:xs 读取同一个固定视图，只差投影：valueOf 取最后一条，historyOf 取整段。
-  readContextValue source select = readContextWith source (valueOf source select)
-  awaitContextValue source select = awaitContextWith False source (valueOf source select)
-  requestContextValue source select = awaitContextWith True source (valueOf source select)
-  readContextHistory source select = readContextWith source (historyOf source select)
-  awaitContextHistory source select = awaitContextWith False source (historyOf source select)
+    pure (isNothing (originalFailure environment) && not (cleaningScopes environment))
+  attemptOutput (AppRun action) = AppRun $ local (\inside -> inside { caller = Nothing, errorHandlers = [] }) action
+  -- 值与 x:xs 读取同一个视图，只差投影：valueOf 取最后一条，historyOf 取整段。
+  readContextValue source select = readContextWith False source (valueOf source select)
+  requestContextValue source select = readContextWith True source (valueOf source select)
+  readContextHistory source select = readContextWith False source (historyOf source select)
   endSource = rawIO (throwIO SourceEnded)
   endSubscription = rawIO (throwIO SubscriptionEnded)
   recordContextInput source = do
@@ -671,7 +630,7 @@ runDiagnostic environment problem selected callback = do
         isolated <- newIORef IntMap.empty
         let inside = environment
               { bindings = values, caller = Nothing, contexts = [], openings = [], closings = []
-              , originalFailure = Just problem, diagnosticOwner = owner, replays = [], performed = isolated }
+              , originalFailure = Just problem, diagnosticOwner = owner, performed = isolated }
             AppRun action = runErrorHandler selected callback
         result <- runExceptT (runReaderT action inside)
         -- runErrorHandler 接回 detect/resolve 的 Failure；不捕获取消等原生 IO 异常。
@@ -683,40 +642,27 @@ runDiagnostic environment problem selected callback = do
     Nothing -> execute
     Just slot -> withMVar (scopeRecoveryGate slot) (const execute)
 
--- 本次已有视图时直接读取；lifelong 单元中尚未领取的会话资产在第一次读取时领取本次 frame 的交付。
--- 这时才发现来源已结束并排空：本次调用无法继续，以内部信号交回单元调度，由它正常结束单元。
--- 本单元发布、一条都还没有发布过的会话（Undriven）：没有可读的值，按缺值处理（awaitContextWith 不另找来源）。
-readContextWith :: Slot -> (View env cause -> Maybe value) -> App env cause (Maybe value)
-readContextWith source project = do
+-- 本次已有视图（订阅回调的交付或此前的静态读取）时直接读取；否则读运行级的历史或最新值。
+-- starting 只由 lifelong 之外的 requests 给出：同步运行该资产的来源直到结束（同一次运行只运行一次），
+-- 再读整段历史。诊断、收尾与 close 期间只读已有视图。读到的视图固定为本次调用的视图。
+readContextWith :: Bool -> Slot -> (View env cause -> Maybe value) -> App env cause (Maybe value)
+readContextWith starting source project = do
   environment <- AppRun ask
   captured <- rawIO (lookup source <$> readIORef (views environment))
   case captured of
     Just view -> rememberView environment source view >> pure (project view)
-    Nothing | deliveryAllowed environment, Just deliver <- frameDeliver environment source -> do
-      delivered <- rawIO deliver
-      case delivered of
-        Left Undriven -> pure Nothing
-        _ -> captureDelivery environment source project (pure delivered)
-          >>= maybe (rawIO (throwIO DeliveryDrained)) (pure . Just)
-    Nothing -> pure Nothing
-
--- 诊断、收尾与 close 期间不读取会话；读到的绑定捕获为本次视图。
--- 会话已结束时仍可读最后一次发布，不重新启动来源；零发布结束按缺值报出。
--- 合法的先前 lifelong 会话优先，其次是已经启动的 interpreter 托管会话。
--- starting 只由 requests 给出：没有可读会话时启动编译器为该资产安排的托管会话；require 不启动。
-awaitContextWith :: Bool -> Slot -> (View env cause -> Maybe value) -> App env cause (Maybe value)
-awaitContextWith starting source project = do
-  environment <- AppRun ask
-  if not (deliveryAllowed environment) || isJust (frameDeliver environment source) then pure Nothing else do
-    let graph = runtimeGraph environment
-    existing <- rawIO (readerSession graph (originNode (executionOrigin (execution environment))) source)
-    session <- case existing of
-      Just found -> pure (Just found)
-      Nothing | starting -> Just <$> rawIO (obtainSession graph (Nothing, source) [] [])
-              | otherwise -> pure Nothing
-    case session of
-      Nothing -> pure Nothing
-      Just found -> captureDelivery environment source project (rawIO (awaitView found (bindingRetention environment)))
+    Nothing | not (deliveryAllowed environment) -> pure Nothing
+    Nothing -> do
+      let graph = runtimeGraph environment
+      when starting $ rawIO (runStatic graph source) >>= maybe (pure ()) throwError
+      found <- rawIO (readHistory graph source)
+      case found of
+        Nothing -> pure Nothing
+        Just view -> do
+          rememberView environment source view
+          rawIO $ atomicModifyIORef' (views environment) $ \current ->
+            ((source, view) : filter ((/= source) . fst) current, ())
+          pure (project view)
 
 -- stream @T 的投影：视图整段，本次值在前，其后是同会话更早的发布。
 historyOf :: Slot -> (env -> Maybe value) -> View env cause -> Maybe [value]
@@ -741,23 +687,6 @@ rememberView environment source view = when (deliveryAllowed environment) $
   forM_ (lastBinding view >>= bindingProduction) $ \production ->
     rawIO (captureFrameInput (currentFrame environment)
       (originNode (executionOrigin (execution environment))) source production)
-
--- 会话失败时传播它的原失败或原生异常；取得的视图捕获为本次视图，之后的发布不改写它。
--- Nothing：来源已正常结束且没有可交付的视图，由调用方按各自的协议处理。
-captureDelivery :: Environment env cause -> Slot -> (View env cause -> Maybe value)
-                -> App env cause (Either (Stopped cause) (View env cause)) -> App env cause (Maybe value)
-captureDelivery environment source project deliver = do
-  delivered <- deliver
-  case delivered of
-    Left (Broke (Left exception)) -> rawIO (throwIO exception)
-    Left (Broke (Right problem)) -> throwError problem
-    Left Drained -> pure Nothing
-    Left Undriven -> pure Nothing
-    Right view -> do
-      rememberView environment source view
-      rawIO $ atomicModifyIORef' (views environment) $ \current ->
-        ((source, view) : filter ((/= source) . fst) current, ())
-      pure (project view)
 
 -- 此证据只描述这次失败所涉及的实例，不参与开启参数的生产身份匹配。
 scopeFailureTarget :: Slot -> Maybe (ScopeInstance env cause) -> Failure cause -> Failure cause
@@ -793,7 +722,7 @@ captureScopeCleanup openingEnvironment attempt slot =
                     { bindings = values, caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
                     , errorPath = []
                     , originalFailure = Nothing, diagnosticOwner = Nothing, cleaningScopes = True
-                    , replays = [], performed = closing
+                    , performed = closing
                     , consumer = cleanupUser, cleanupPermit = Just (permit, slot)
                     , activeActivation = Nothing, execution = cleanupExecution
                     , cleanupBusy = Just (fault name (wrapFault attempt) ScopeInUse) }
@@ -952,7 +881,7 @@ liftHookApp action = HookApp (ReaderT (const action))
 runHookApp :: Operation -> HookApp env cause value -> App env cause value
 runHookApp event (HookApp action) = case runReaderT action event of
   AppRun inner -> AppRun $ local (\environment -> environment
-    { caller = Nothing, contexts = [], openings = [], closings = [], replays = [] }) inner
+    { caller = Nothing, contexts = [], openings = [], closings = [] }) inner
 
 -- ReaderT 在每次派发时绑定该操作；同一次 middleware 调用可重复读取。
 currentOperation :: HookApp env cause Operation
@@ -984,7 +913,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
       handlers = runtimeScopes graph
   user <- maybe (newScopeUser handlers currentExecution) pure (launchUser launch)
   activation <- beginActivation graph Nothing (launchFrame launch) currentExecution (TargetedBoot node) values user
-  performedHere <- newIORef IntMap.empty
+  performedHere <- newIORef (IntMap.fromList [(slotNumber delivered, []) | delivered <- launchPerformed launch])
   let environment = Environment
         { emptyValues = initial, bindings = values, scopes = handlers
         , caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
@@ -993,9 +922,8 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
         , activeActivation = Just (activationId activation), execution = currentExecution
         , currentFrame = launchFrame launch, bindingRetention = launchRetention launch
-        , replays = [], performed = performedHere
-        , views = delivered, streamPort = launchPort launch, sessionSinks = launchSinks launch
-        , frameDeliver = launchDeliver launch }
+        , performed = performedHere
+        , views = delivered, streamPort = launchPort launch }
   (do
       completed <- try $ restore $ do
         outcome <- runExceptT (runReaderT action environment)
