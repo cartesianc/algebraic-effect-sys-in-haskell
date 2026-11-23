@@ -6,6 +6,7 @@
 module Framework.Gen.Emit.Program (renderProgram) where
 
 import Data.List (intercalate, nub)
+import Framework.Gen.Booter (publishedWithin)
 import Framework.Gen.Names (HandlerNames, entryName, helperName)
 import Framework.Gen.Plan
 import Framework.Prototype (ChainRole(..), variantLabel)
@@ -73,7 +74,11 @@ renderProgram directory names hangingSources unit = unlines (programHeader ++ as
     closure tree = case tree of
       P.NodeAt path terminal -> "SDK.Step " ++ show path ++ " (" ++ nodeTarget path terminal ++ ")"
       P.ChainAt path parts -> "SDK.Serial " ++ show path ++ " " ++ nested (map closure parts)
-      P.ParallelAt path parts -> "SDK.Concurrent " ++ show path ++ " " ++ nested (map closure parts)
+      -- 每个分支带上它执行期间可能发布的资产：其他分支里的 require 缺值时，只在仍可能有发布时等待。
+      P.ParallelAt path parts -> "SDK.Concurrent " ++ show path ++ " " ++ nested
+        [ "([" ++ intercalate ", " [slotLiteral "SDK." unit producer | asset <- publishedWithin effects workflow part
+            , producer <- providerOf asset] ++ "], " ++ closure part ++ ")"
+        | part <- parts ]
       P.AlternativeAt path choice parts -> "SDK.Choose " ++ show path ++ " " ++ show (P.alternativeSelector choice)
         ++ " (" ++ selectorTarget choice ++ ") " ++ nested
           [ "(" ++ show context ++ ", " ++ show (P.workflowNode part) ++ ", " ++ closure part ++ ")"

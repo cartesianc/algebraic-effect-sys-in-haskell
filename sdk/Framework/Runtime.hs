@@ -11,7 +11,7 @@ module Framework.Runtime
 
 import Framework.Language.Handler (Failure)
 import Framework.Runtime.App (App, Launch(..), StreamPort(..), runAppWith)
-import Framework.Runtime.Graph (RuntimeGraph, runtimeScopes)
+import Framework.Runtime.Graph (RuntimeGraph, Place, runtimeScopes)
 import Framework.Runtime.Identity (Origin(..), executionOrigin)
 import Framework.Runtime.Frame (ExecutionFrame, captureFrameDeliveries)
 import Framework.Runtime.Binding (Binding(..), readBindingOwner)
@@ -51,10 +51,10 @@ noHandoff = Handoff [] []
 -- 末端的一次调用。performed 是订阅回调交付的资产：入口里对它的 requests 直接读这条交付。
 -- 交付及其伴随绑定作为本次执行帧的已固定输入登记，scope 回收据此保留它们开启的实例。
 -- 受控结果消费在撤销入口使用登记前完成，惰性读取不会落在自动 close 之后。
-lowerTarget :: RuntimeGraph environment cause -> Retention environment cause -> Coord -> ExecutionFrame
+lowerTarget :: RuntimeGraph environment cause -> Retention environment cause -> Coord -> ExecutionFrame -> Place
             -> Handoff environment cause -> [Slot] -> Target environment cause value
             -> IO (Either (Failure cause) value, Handoff environment cause)
-lowerTarget graph retention location executionFrame (Handoff given views) performed target = do
+lowerTarget graph retention location executionFrame at (Handoff given views) performed target = do
   keepBindings retention (map snd given ++ mapMaybe (lastBinding . snd) views)
   captureFrameDeliveries executionFrame
     [(originNode (executionOrigin (bindingOrigin value)), source, production)
@@ -62,7 +62,7 @@ lowerTarget graph retention location executionFrame (Handoff given views) perfor
       , source `notElem` [resource | family <- runtimeScopes graph, Just resource <- [scopeContextSource family]]]
   let launch = Launch
         { launchBindings = given, launchViews = views, launchPort = NoStreamPort, launchPerformed = performed
-        , launchUser = Nothing, launchFrame = executionFrame, launchRetention = retention }
+        , launchUser = Nothing, launchFrame = executionFrame, launchRetention = retention, launchPlace = at }
   (outcome, captured, delivered) <- lowerWith graph location launch target
   -- 普通跨入口交接不传资源；同一来源步骤的内部交接在来源运行器中处理。
   handoffBindings <- filterM (fmap isNothing . readBindingOwner . snd) captured
@@ -96,12 +96,14 @@ data Compiled environment cause value = Compiled
 
 -- workflow 的执行闭包，按 AST 的规范形式逐层写出；NodeId 是该层的挂载位置。
 -- Step：执行一个挂载的末端。Choose：执行选择读取，再执行判定出的候选。
+-- Concurrent：各分支并发执行；每个分支带着 gen 写明的、它执行期间可能发布的资产（含回调与派生接着发布的），
+-- 其他分支里的 require 缺值时据此决定是否等待。
 -- Drive：lifelong 的位置。有 Stream 来源时同步运行它，来源结束或订阅全部 endStream 后返回；
 -- 没有来源（只有 event 订阅）时什么也不做，回调已经在回调表里。
 data Closure environment cause value
   = Step NodeId (Target environment cause value)
   | Serial NodeId [Closure environment cause value]
-  | Concurrent NodeId [Closure environment cause value]
+  | Concurrent NodeId [([Slot], Closure environment cause value)]
   | Choose NodeId NodeId (Target environment cause String) [(String, NodeId, Closure environment cause value)]
   | Drive NodeId (Maybe (StreamSource environment cause))
 
@@ -115,7 +117,7 @@ data StreamSource environment cause = StreamSource
   }
 
 -- 资产每次发布后执行的回调。reactionScope：Nothing 是 event，整次运行有效；
--- Just 是所属 lifelong（或静态运行）的标识，只在它的来源运行期间有效。
+-- Just 是所属 lifelong（或静态运行）的标识，只回应这个作用范围里的发布（来源运行期间及其回调中）。
 data Reaction environment cause value = Reaction
   { reactionAsset :: Slot
   , reactionScope :: Maybe NodeId

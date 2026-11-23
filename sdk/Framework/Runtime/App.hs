@@ -69,6 +69,8 @@ data Environment env cause = Environment
   , execution :: Execution
   , currentFrame :: ExecutionFrame
   , bindingRetention :: Retention env cause
+  -- 本次执行所在的 parallel 分支与持续资产的作用范围：发布按它记历史并交给回调，require 缺值时不等自己所在的分支。
+  , place :: Place
   -- 本次调用中已执行的 effect 及其输出（按 effect 编号）；同一 effect 再次到达时直接返回。
   , performed :: IORef (IntMap.IntMap [String])
   -- 持续资产在本次调用的固定视图：订阅回调的交付或静态读取取得的整段；其他调用之后的发布不改写它。
@@ -87,6 +89,7 @@ data Launch env cause = Launch
   , launchUser :: Maybe (ScopeUser env cause)
   , launchFrame :: ExecutionFrame
   , launchRetention :: Retention env cause
+  , launchPlace :: Place
   }
 
 -- Receive 的两个静态挂载各有一端。交付同步调用独立的 parser activation，并传播它的原失败。
@@ -202,10 +205,10 @@ publishBinding environment source value = do
           -- 本次已有该资产的视图时，新发布接在本次视图末尾，不改写其他调用的交付。
           atomicModifyIORef' (views environment) $ \current ->
             ([(name, if name == source then view |> value else view) | (name, view) <- current], ())
-          publishAsset (runtimeGraph environment) origin source value
+          publishAsset (runtimeGraph environment) (placeScope (place environment)) origin source value
           -- 伴随交付：发布方本次调用已捕获的普通绑定随交付交给订阅方。
           captured <- readIORef (bindings environment) >>= filterM (fmap isNothing . readBindingOwner . snd)
-          react (runtimeGraph environment) source value [entry | entry@(name, _) <- captured, name /= source]
+          react (runtimeGraph environment) (place environment) source value [entry | entry@(name, _) <- captured, name /= source]
     _ -> pure Nothing
 
 -- 已合法捕获的绑定保持快照。资源只能来自本链 open 的捕获；不从仍活着的其他实例猜测。
@@ -496,6 +499,11 @@ instance ContextStore env (App env cause) where
     environment <- ask
     pure (isNothing (originalFailure environment) && not (cleaningScopes environment))
   attemptOutput (AppRun action) = AppRun $ local (\inside -> inside { caller = Nothing, errorHandlers = [] }) action
+  awaitContext sources = do
+    environment <- AppRun ask
+    let resource source = any ((== source) . resourceSource) (scopes environment)
+    if not (deliveryAllowed environment) || any resource sources then pure Nothing
+      else fmap rawIO <$> rawIO (awaitPublication (runtimeGraph environment) (place environment) sources)
   -- 值与 x:xs 读取同一个视图，只差投影：valueOf 取最后一条，historyOf 取整段。
   readContextValue source select = readContextWith False source (valueOf source select)
   requestContextValue source select = readContextWith True source (valueOf source select)
@@ -654,8 +662,11 @@ readContextWith starting source project = do
     Nothing | not (deliveryAllowed environment) -> pure Nothing
     Nothing -> do
       let graph = runtimeGraph environment
-      when starting $ rawIO (runStatic graph source) >>= maybe (pure ()) throwError
-      found <- rawIO (readHistory graph source)
+      -- 静态运行的历史按它自己的作用范围保存；其余读取按本次位置的作用范围（回调里是所属 lifelong）。
+      scope <- if starting
+        then rawIO (runStatic graph (place environment) source) >>= either throwError (pure . Just)
+        else pure (placeScope (place environment))
+      found <- rawIO (readHistory graph scope source)
       case found of
         Nothing -> pure Nothing
         Just view -> do
@@ -922,6 +933,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
         , activeActivation = Just (activationId activation), execution = currentExecution
         , currentFrame = launchFrame launch, bindingRetention = launchRetention launch
+        , place = launchPlace launch
         , performed = performedHere
         , views = delivered, streamPort = launchPort launch }
   (do

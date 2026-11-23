@@ -29,8 +29,8 @@ compiledProgram = do
         SDK.Serial [] 
           [ SDK.Step [0] (target "Announce" (AnnounceResult () <$ Handlers.runAnnounce))
           , SDK.Concurrent [1] 
-          [ SDK.Drive [1,0] (Just (SDK.StreamSource (SDK.Slot 2 "TemperatureParser") ([1,0,-1,0,0], target "TemperatureFeed" (Handlers.nextTemperatureFeed)) ([1,0,-1,0,1], target "TemperatureParser" (() <$ Handlers.getTemperatureSample)) Nothing))
-          , SDK.Drive [1,1] (Just (SDK.StreamSource (SDK.Slot 4 "Heartbeat") ([1,1,-1,0,0], target "HeartbeatClock" (Handlers.nextHeartbeatClock)) ([1,1,-1,0,1], target "Heartbeat" (() <$ Handlers.getBeat)) Nothing))
+          [ ([(SDK.Slot 2 "TemperatureParser")], SDK.Drive [1,0] (Just (SDK.StreamSource (SDK.Slot 2 "TemperatureParser") ([1,0,-1,0,0], target "TemperatureFeed" (Handlers.nextTemperatureFeed)) ([1,0,-1,0,1], target "TemperatureParser" (() <$ Handlers.getTemperatureSample)) Nothing)))
+          , ([(SDK.Slot 4 "Heartbeat")], SDK.Drive [1,1] (Just (SDK.StreamSource (SDK.Slot 4 "Heartbeat") ([1,1,-1,0,0], target "HeartbeatClock" (Handlers.nextHeartbeatClock)) ([1,1,-1,0,1], target "Heartbeat" (() <$ Handlers.getBeat)) Nothing)))
           ]
           ]
     , SDK.compiledReactions = 

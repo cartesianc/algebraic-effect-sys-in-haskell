@@ -1,7 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 -- 驱动合成 v1（2026-11-18）：从 Composition 的已解析事实构造挂载与会话，
 -- 之后补全运行所需静态标记；不执行 handler，不读取业务源码。
-module Framework.Gen.Booter (numberWorkflow, checkMiddleware, assembleProgram, completeDriving, entryPlans, controlReads, decidingAssets, linkedAssets) where
+module Framework.Gen.Booter (numberWorkflow, checkMiddleware, assembleProgram, completeDriving, entryPlans, controlReads, decidingAssets, linkedAssets, publishedWithin) where
 import Control.Monad (forM_, unless)
 import Data.Maybe (listToMaybe)
 import Data.Graph (SCC(..), stronglyConnComp)
@@ -168,32 +168,60 @@ checkReactions effects tree = case [cycle' | CyclicSCC cycle' <- stronglyConnCom
     ++ ": a callback publishes the asset it is subscribed to again, so it would run forever;"
     ++ " run the publishing anchor outside the subscribing lifelong"))
   where
-    subscriptions = [(node', asset) | (_, described) <- workflowLifelongs tree, (node', asset) <- lifelongSubscriptions described]
-    graph = [(asset, asset, nub (published asset)) | asset <- nub (map snd subscriptions ++ produced)]
-    produced = [asset | effect <- effects, Just asset <- [effectProduces effect]]
-    published asset = concat [publishedBy asset selected | (node', subscribed) <- subscriptions, subscribed == asset
-        , Just (NodeAt _ selected) <- [lookupWorkflow tree node']]
-      ++ [derived | producer <- effects, effectContinuous producer, asset `elem` drivingAssets effects producer
-         , Just derived <- [effectProduces producer]]
-    -- 一次回调里 selected 可能执行的 effect：自身与 Input 链，以及 requests 拉取的生产链（传递闭包）。
-    -- 回调交付的资产在本次执行里已记为发布，对它的 requests 直接读交付，不执行它的生产链。
-    publishedBy delivered selected = nub ([demandContract demand | effect <- executed, demand <- effectDemands effect
-        , demandAccess demand == RequestAccess, demandContract demand /= delivered]
-      ++ [asset | producer <- effects, Just anchor <- [effectAnchor producer], anchor `elem` map effectName executed
-         , Just asset <- [effectProduces producer]])
-      where
-        executed = closure [] [selected]
-        closure seen [] = [effect | effect <- effects, effectName effect `elem` seen]
-        closure seen (name : rest)
-          | name `elem` seen = closure seen rest
-          | otherwise = closure (name : seen) (rest ++ chainOf name ++ requested name)
-        requested name = [effectName producer | effect <- effects, effectName effect == name, demand <- effectDemands effect
-          , demandAccess demand == RequestAccess, demandContract demand /= delivered
-          , producer <- effects, effectProduces producer == Just (demandContract demand)]
-    chainOf name = concat [effectInputChain effect | effect <- effects, effectName effect == name]
-    locate cycle' = case [node' | (node', asset) <- subscriptions, asset `elem` cycle'] of
+    graph = [(asset, asset, reactionPublishes effects tree asset)
+      | asset <- nub (map snd (subscriptionsOf tree) ++ [asset | effect <- effects, Just asset <- [effectProduces effect]])]
+    locate cycle' = case [node' | (node', asset) <- subscriptionsOf tree, asset `elem` cycle'] of
       node' : _ -> node'
       [] -> []
+
+subscriptionsOf :: WorkflowTree -> [(NodeId, String)]
+subscriptionsOf tree = [(node', asset) | (_, described) <- workflowLifelongs tree, (node', asset) <- lifelongSubscriptions described]
+
+-- 资产发布之后，回调表接着可能发布的资产：订阅它的单元执行一次可能发布的，以及由它驱动的派生资产。
+reactionPublishes :: [EffectProto method] -> WorkflowTree -> String -> [String]
+reactionPublishes effects tree asset = nub $
+  concat [executionPublishes effects (Just asset) selected | (node', subscribed) <- subscriptionsOf tree, subscribed == asset
+    , Just (NodeAt _ selected) <- [lookupWorkflow tree node']]
+  ++ [derived | producer <- effects, effectContinuous producer, asset `elem` drivingAssets effects producer
+     , Just derived <- [effectProduces producer]]
+
+-- 一次执行 selected 可能发布的资产：自身与 Input 链，以及 requests 拉取的生产链（传递闭包）里的 requests 产物
+-- 与锚点经输出联立发布的资产。回调交付的资产（delivered）在本次执行里已记为发布，对它的 requests 直接读交付，
+-- 不执行它的生产链。
+executionPublishes :: [EffectProto method] -> Maybe String -> String -> [String]
+executionPublishes effects delivered selected = nub
+  ([demandContract demand | effect <- executed, demand <- effectDemands effect
+     , demandAccess demand == RequestAccess, Just (demandContract demand) /= delivered]
+   ++ [asset | producer <- effects, Just anchor <- [effectAnchor producer], anchor `elem` map effectName executed
+      , Just asset <- [effectProduces producer]])
+  where
+    executed = closure [] [selected]
+    closure seen [] = [effect | effect <- effects, effectName effect `elem` seen]
+    closure seen (name : rest)
+      | name `elem` seen = closure seen rest
+      | otherwise = closure (name : seen) (rest ++ chainOf name ++ requested name)
+    chainOf name = concat [effectInputChain effect | effect <- effects, effectName effect == name]
+    requested name = [effectName producer | effect <- effects, effectName effect == name, demand <- effectDemands effect
+      , demandAccess demand == RequestAccess, Just (demandContract demand) /= delivered
+      , producer <- effects, effectProduces producer == Just (demandContract demand)]
+
+-- 一棵 workflow 子树执行期间可能发布的资产（gen 写在 parallel 的每个分支上，供其他分支的 require 判断是否等待）：
+-- 子树里的节点与选择读取执行一次可能发布的，子树里 lifelong 的持续资产，再沿回调表取传递闭包。
+-- 按注册保守计算：不区分条件分支是否执行，多算只会让读取方多等到该分支退出。
+publishedWithin :: [EffectProto method] -> WorkflowTree -> WorkflowTree -> [String]
+publishedWithin effects tree subtree = grow [] direct
+  where
+    direct = nub $
+      concat [executionPublishes effects Nothing selected | NodeAt _ selected <- allWorkflow subtree]
+      ++ concat [executionPublishes effects Nothing (alternativeSource choice)
+                   ++ [asset | (_, judge) <- alternativeCases choice, effect <- effects, effectName effect == judge
+                      , Just asset <- [effectProduces effect]]
+                | AlternativeAt _ choice _ <- allWorkflow subtree]
+      ++ [sessionAsset session | (_, described) <- workflowLifelongs subtree, session <- lifelongSessions described]
+    grow seen [] = reverse seen
+    grow seen (asset : rest)
+      | asset `elem` seen = grow seen rest
+      | otherwise = grow (asset : seen) (rest ++ reactionPublishes effects tree asset)
 
 -- ========================================================================
 -- 入口与输出连接事实

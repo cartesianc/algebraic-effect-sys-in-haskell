@@ -6,14 +6,15 @@
 -- 生命周期：Execution 创建并安装树关系；App 更新调用与发布；Execution 退出时退休根帧；
 -- Program 只报告清理中记录的问题。运行不解释图边；业务仍由已经装配的闭包执行。
 module Framework.Runtime.Graph
-  ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..), Reaction
+  ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..), Reaction, Place(..), rootPlace
   , newRuntimeGraph, configureRuntimeScopes, collectRuntimeScopes, finishRuntime, newOrigin
   , beginActivation, endActivation, withRuntimeRetention, collectRetainedScopes
   , publishAsset, readPublishedAsset, resetOrigins
   , readHistory, dropHistory, installReactions, react, installStatic, runStatic
+  , openBranches, closeBranches, awaitPublication
   ) where
 
-import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newEmptyMVar, newMVar, readMVar, tryPutMVar)
 import Control.Exception (SomeAsyncException, evaluate, finally, fromException, mask, throwIO, uninterruptibleMask_)
 import Control.Monad (forM, forM_, when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
@@ -79,18 +80,30 @@ data RuntimeGraph environment cause = RuntimeGraph
   , runtimeActivationSequence :: IORef Integer
   -- 每个 Context 一份运行级最新发布（持续资产也写这里）；帧不是可见性边界。按 Context 编号寻址。
   , runtimeLatest :: IORef (IntMap.IntMap (ScopeBinding environment cause))
-  -- 有 handler 以 stream @T 读取 x:xs 的持续资产（原型 effectHistory）：从首条起的全部发布。
-  -- socket 的 lifelong 来源结束时放掉（end GC）；lifelong 外的静态运行保留到运行结束。
-  , runtimeHistory :: IORef (IntMap.IntMap (View environment cause))
-  -- 发布即回调：生成的回调表由 Execution 安装。参数是发布的资产、这次 Binding 与发布方调用已捕获的普通绑定。
+  -- 有 handler 以 stream @T 读取 x:xs 的持续资产（原型 effectHistory）：按（资产，作用范围）保存从首条起的全部发布。
+  -- 每个 lifelong 与每个静态运行各有一份，互不混入；lifelong 的来源开始与结束时放掉自己的一份，静态运行保留到运行结束。
+  , runtimeHistory :: IORef (Map.Map (Int, Maybe NodeId) (View environment cause))
+  -- 发布即回调：生成的回调表由 Execution 安装。参数是发布方的位置、发布的资产、这次 Binding 与发布方调用已捕获的普通绑定。
   , runtimeReactions :: IORef (Reaction environment cause)
-  -- lifelong 外 requests 一份持续资产：同步运行它的来源直到 streamEnd，同一次运行只跑一次。
-  , runtimeStatic :: IORef (Slot -> IO (Maybe (Failure cause)))
+  -- lifelong 外 requests 一份持续资产：同步运行它的来源直到 streamEnd，同一次运行只跑一次；返回这次静态运行的作用范围。
+  , runtimeStatic :: IORef (Place -> Slot -> IO (Either (Failure cause) NodeId))
+  -- 发布与并发分支退出共用的变化信号：等待中的 require 取得当前信号后再查值，变化时信号被填满并换新。
+  , runtimeChanged :: IORef (MVar ())
+  -- 正在运行的 parallel 分支 → gen 写明它可能发布的资产。require 缺值时只在别的分支仍可能发布时等待。
+  , runtimeBranches :: IORef (IntMap.IntMap [Slot])
+  , runtimeBranchSequence :: IORef Int
   }
 
 -- 一次发布之后要执行的回调；Just 是回调中的失败，沿发布方的调用传播。
 type Reaction environment cause =
-  Slot -> ScopeBinding environment cause -> ScopeBindings environment cause -> IO (Maybe (Failure cause))
+  Place -> Slot -> ScopeBinding environment cause -> ScopeBindings environment cause -> IO (Maybe (Failure cause))
+
+-- 一次执行所在的位置：它所在的 parallel 分支（从内到外），以及持续资产的作用范围（lifelong 的路径或静态运行的标识）。
+-- 读取等待时不等自己所在的分支；历史与 behavior 的比较按作用范围分开。回调继承发布方的位置。
+data Place = Place { placeBranches :: [Int], placeScope :: Maybe NodeId }
+
+rootPlace :: Place
+rootPlace = Place [] Nothing
 
 newRuntimeGraph
   :: (Eq method, Show method)
@@ -103,9 +116,10 @@ newRuntimeGraph index scopes = do
   retentions <- newRetentions coordinator
   RuntimeGraph (PrototypeReference index) scopes frame retentions
     <$> newIORef Map.empty <*> newIORef [] <*> newMVar [] <*> newIORef 0 <*> newIORef 0
-    <*> newIORef IntMap.empty <*> newIORef IntMap.empty
-    <*> newIORef (\_ _ _ -> pure Nothing)
-    <*> newIORef (\source -> ioError (userError ("No static run is installed for " ++ slotName source)))
+    <*> newIORef IntMap.empty <*> newIORef Map.empty
+    <*> newIORef (\_ _ _ _ -> pure Nothing)
+    <*> newIORef (\_ source -> ioError (userError ("No static run is installed for " ++ slotName source)))
+    <*> (newEmptyMVar >>= newIORef) <*> newIORef IntMap.empty <*> newIORef 0
 
 -- ScopeTree 的独立构建与校验仍在 Prototype；这里只把同一树的关系装入现有控制对象。
 configureRuntimeScopes :: RuntimeGraph environment cause -> IO ()
@@ -335,9 +349,9 @@ resolveDefinition (PrototypeReference (indexed -> (index, prototype))) boot = do
     _ -> Left "Runtime activation has no unique static chain definition"
 
 -- 写入最新值表（持续资产另追加历史）；回调由 App 在发布之后调用 react，不在这里执行。
-publishAsset :: RuntimeGraph environment cause -> Origin -> Slot
+publishAsset :: RuntimeGraph environment cause -> Maybe NodeId -> Origin -> Slot
              -> ScopeBinding environment cause -> IO ()
-publishAsset graph origin source value = mask $ \restore -> do
+publishAsset graph scope origin source value = mask $ \restore -> do
   (released, replacedParameter) <- withFrameLock (runtimeRootFrame graph) $ do
     previous <- atomicModifyIORef' (runtimeAssets graph) $ \assets ->
       let (old, updated) = Map.insertLookupWithKey (\_ new _ -> new) (origin, source) value assets
@@ -351,9 +365,10 @@ publishAsset graph origin source value = mask $ \restore -> do
         captureFrameInputLocked (bindingFrame value) (originNode origin) source production
       when (keepsHistory graph source) $
         atomicModifyIORef' (runtimeHistory graph) $ \histories ->
-          (IntMap.insertWith (\_ earlier -> earlier |> value) (slotNumber source) (Seq.singleton value) histories, ())
+          (Map.insertWith (\_ earlier -> earlier |> value) (slotNumber source, scope) (Seq.singleton value) histories, ())
       pure existed
     pure (previous, replaced)
+  notifyChange graph
   restore $ do
     collectRetainedScopes graph released
     if replacedParameter then collectParameterScopes graph source else pure ()
@@ -372,32 +387,62 @@ readPublishedAsset graph frame origin source = withFrameLock (runtimeRootFrame g
     captureFrameInputLocked frame (originNode origin) source production
   pure (Right value)
 
--- 持续资产到目前为止的全部发布，最新在后；没有历史标记时只有最新一条。
-readHistory :: RuntimeGraph environment cause -> Slot -> IO (Maybe (View environment cause))
-readHistory graph source = do
-  kept <- IntMap.lookup (slotNumber source) <$> readIORef (runtimeHistory graph)
+-- 持续资产在这个作用范围里到目前为止的全部发布，最新在后；没有历史时只有运行级最新一条。
+readHistory :: RuntimeGraph environment cause -> Maybe NodeId -> Slot -> IO (Maybe (View environment cause))
+readHistory graph scope source = do
+  kept <- Map.lookup (slotNumber source, scope) <$> readIORef (runtimeHistory graph)
   case kept of
     Just history | not (Seq.null history) -> pure (Just history)
     _ -> fmap Seq.singleton . IntMap.lookup (slotNumber source) <$> readIORef (runtimeLatest graph)
 
--- socket 的来源运行结束：放掉这些资产的历史，最新值保留给后继的 require。
-dropHistory :: RuntimeGraph environment cause -> [Slot] -> IO ()
-dropHistory graph sources = atomicModifyIORef' (runtimeHistory graph) $ \histories ->
-  (foldr (IntMap.delete . slotNumber) histories sources, ())
+-- lifelong 的来源开始或结束：放掉这个作用范围里这些资产的历史，最新值保留给后继的 require。
+dropHistory :: RuntimeGraph environment cause -> NodeId -> [Slot] -> IO ()
+dropHistory graph scope sources = atomicModifyIORef' (runtimeHistory graph) $ \histories ->
+  (foldr (\source -> Map.delete (slotNumber source, Just scope)) histories sources, ())
+
+-- 变化信号：发布或分支退出后填满当前信号并换一个新的，等待者醒来后重查。
+notifyChange :: RuntimeGraph environment cause -> IO ()
+notifyChange graph = do
+  fresh <- newEmptyMVar
+  previous <- atomicModifyIORef' (runtimeChanged graph) (\current -> (fresh, current))
+  _ <- tryPutMVar previous ()
+  pure ()
+
+-- 一个 parallel 的各分支开始前一次登记全部分支（各自可能发布的资产），避免先开始的分支看不到后开始的兄弟。
+openBranches :: RuntimeGraph environment cause -> [[Slot]] -> IO [Int]
+openBranches graph publishes = do
+  first <- atomicModifyIORef' (runtimeBranchSequence graph) (\next -> (next + length publishes, next))
+  let identities = zip [first ..] publishes
+  atomicModifyIORef' (runtimeBranches graph) (\live -> (foldr (uncurry IntMap.insert) live identities, ()))
+  pure (map fst identities)
+
+closeBranches :: RuntimeGraph environment cause -> [Int] -> IO ()
+closeBranches graph identities = do
+  atomicModifyIORef' (runtimeBranches graph) (\live -> (foldr IntMap.delete live identities, ()))
+  notifyChange graph
+
+-- require 缺值时的等待动作：本次位置之外仍有运行中的分支可能发布这些资产时，返回一个阻塞到下一次变化的动作；
+-- 没有这样的分支就返回 Nothing，读取方立即按缺值处理。信号在查值之前取得，查值与开始等待之间的发布不会漏掉。
+awaitPublication :: RuntimeGraph environment cause -> Place -> [Slot] -> IO (Maybe (IO ()))
+awaitPublication graph place sources = do
+  signal <- readIORef (runtimeChanged graph)
+  live <- readIORef (runtimeBranches graph)
+  let others = [publishes | (identity, publishes) <- IntMap.toList live, identity `notElem` placeBranches place]
+  pure (if any (any (`elem` sources)) others then Just (readMVar signal) else Nothing)
 
 installReactions :: RuntimeGraph environment cause -> Reaction environment cause -> IO ()
 installReactions graph = writeIORef (runtimeReactions graph)
 
 -- 发布之后执行生成的回调；在发布方的调用栈里同步运行。
 react :: RuntimeGraph environment cause -> Reaction environment cause
-react graph source value captured = do
+react graph place source value captured = do
   reaction <- readIORef (runtimeReactions graph)
-  reaction source value captured
+  reaction place source value captured
 
-installStatic :: RuntimeGraph environment cause -> (Slot -> IO (Maybe (Failure cause))) -> IO ()
+installStatic :: RuntimeGraph environment cause -> (Place -> Slot -> IO (Either (Failure cause) NodeId)) -> IO ()
 installStatic graph = writeIORef (runtimeStatic graph)
 
-runStatic :: RuntimeGraph environment cause -> Slot -> IO (Maybe (Failure cause))
-runStatic graph source = do
+runStatic :: RuntimeGraph environment cause -> Place -> Slot -> IO (Either (Failure cause) NodeId)
+runStatic graph place source = do
   run <- readIORef (runtimeStatic graph)
-  run source
+  run place source

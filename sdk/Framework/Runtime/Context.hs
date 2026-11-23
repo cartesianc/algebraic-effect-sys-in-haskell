@@ -1,7 +1,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 
--- Context 的读取与成功发布；存储由运行载体提供。读取从不等待：值要么已在本次调用的捕获或运行级最新值里，
--- 要么立即按缺值报错。哪些资产有来源由 gen 在生成期检查。
+-- Context 的读取与成功发布；存储由运行载体提供。require 是“取值 · 未就绪时等待”：值在本次调用的捕获或运行级
+-- 最新值里就继续；还没有、但别的 parallel 分支仍可能发布时，只挂起这一次调用，发布后从读取点继续；
+-- 没有这样的分支时立即按缺值报错。哪些资产有来源由 gen 在生成期检查，各分支可能发布什么由 gen 写在闭包上。
 module Framework.Runtime.Context
   ( ContextFault(..), readContext, callContext, runOnce, unlessPerformed
   , chooseCase, atomicHandle, atomicScope, readStreamContext, readStreamHistory, requestStreamContext
@@ -14,19 +15,31 @@ import Control.Monad (forM_, when)
 import Control.Monad.Except (MonadError, catchError)
 import Framework.Prototype.Slot (Slot(..))
 
--- require 是一次读取：本次调用已捕获的值优先，其次是运行级最新值；都没有时立即报 ContextNotInitialized。
--- 读取本身不生产，也不等待别处的发布。
+-- require：本次调用已捕获的值优先，其次是运行级最新值；都没有时按 awaiting 等待或立即报 ContextNotInitialized。
+-- 读取本身不生产。
 readContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
   => Slot -> (ContextFault -> cause) -> (environment -> Maybe value) -> m value
 readContext contextName wrap select = do
-  resolved <- readContextBinding contextName select
-  bound <- either (\problem -> failEffect (slotName contextName) (wrap problem) (show problem)) pure resolved
+  bound <- awaiting [contextName] $ do
+    resolved <- readContextBinding contextName select
+    either (\problem -> failEffect (slotName contextName) (wrap problem) (show problem)) pure resolved
   case bound of
     Just value -> do
       recordContextInput contextName
       pure value
     Nothing -> failEffect (slotName contextName) (wrap ContextNotInitialized) (show ContextNotInitialized)
+
+-- 缺值时的等待：先取得等待动作（变化信号），再查值；有值就返回，没有值且别的分支仍可能发布时
+-- 阻塞到下一次发布或分支退出，再从头查一次；没有这样的分支时返回 Nothing。只挂起这一次调用。
+awaiting :: ContextStore environment m => [Slot] -> m (Maybe value) -> m (Maybe value)
+awaiting sources look = do
+  pending <- awaitContext sources
+  found <- look
+  case (found, pending) of
+    (Just value, _) -> pure (Just value)
+    (Nothing, Just block) -> block >> awaiting sources look
+    (Nothing, Nothing) -> pure Nothing
 
 -- 同一个成功值先交给绑定回调再返回；生产失败不会触发回调或再次执行生产。
 requestContext
@@ -82,8 +95,8 @@ runOnce selected body = do
 
 -- alternative 的选择读取（option）：执行一次共同的 Excu，按候选的声明顺序把同一份输出交给各自的判定 Context；
 -- 第一个解析成功的候选胜出，它的发布被本次调用捕获，交给选中的候选。判定 parser 的 raise 只表示这一支没有值，
--- 不是失败。执行 Excu 时以首个判定 Context 为调用者。全部拒绝时检查已有绑定（此前的发布），
--- 仍没有就立即按缺值报 ContextNotInitialized，不等待。
+-- 不是失败。执行 Excu 时以首个判定 Context 为调用者。全部拒绝时按声明顺序检查已有绑定（此前的发布），
+-- 都没有而别的分支仍可能发布其中之一时等待，否则按缺值报 ContextNotInitialized。
 chooseCase
   :: (ContextStore environment m, MonadError (Failure cause) m)
   => String -> (ContextFault -> cause) -> m [String] -> [(Slot, m ())] -> m String
@@ -93,7 +106,7 @@ chooseCase _ wrap upstream cases = do
   where
     safeHead (first : _) = Just first
     safeHead [] = Nothing
-    attempt [] = firstBound cases >>= maybe notInitialized (pure . slotName)
+    attempt [] = awaiting (map fst cases) (firstBound cases) >>= maybe notInitialized (pure . slotName)
     attempt ((name, produce) : rest) = do
       outcome <- (True <$ attemptOutput produce) `catchError` (\_ -> pure False)
       if outcome then pure (slotName name) else attempt rest
@@ -109,12 +122,12 @@ chooseCase _ wrap upstream cases = do
       [] -> error "SDK: an alternative without candidates; regenerate the program"
 
 -- streamT 的生成入口：本次回调交付的值；没有交付时读运行级最新值（例如 lifelong 之后的后继）。
--- 都没有时立即报缺值；不等待、不启动来源。
+-- 都没有时与 require 一样：别的分支仍可能发布就等待，否则报缺值。不启动来源。
 readStreamContext
   :: (ContextStore environment m, MonadError (Failure cause) m)
   => Slot -> (ContextFault -> cause) -> (environment -> Maybe value) -> m value
 readStreamContext contextName wrap select = do
-  captured <- readContextValue contextName select
+  captured <- awaiting [contextName] (readContextValue contextName select)
   value <- maybe (failEffect (slotName contextName) (wrap ContextNotInitialized)
     (slotName contextName ++ ": nothing delivered or published yet")) pure captured
   recordContextInput contextName
@@ -138,7 +151,7 @@ readStreamHistory
   :: (ContextStore environment m, MonadError (Failure cause) m)
   => Slot -> (ContextFault -> cause) -> (environment -> Maybe value) -> m (Flow value)
 readStreamHistory contextName wrap select = do
-  captured <- readContextHistory contextName select
+  captured <- awaiting [contextName] (readContextHistory contextName select)
   values <- maybe (failEffect (slotName contextName) (wrap ContextNotInitialized)
     (slotName contextName ++ ": nothing delivered or published yet")) pure captured
   recordContextInput contextName

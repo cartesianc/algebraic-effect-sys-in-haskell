@@ -28,8 +28,8 @@ compiledProgram = do
     { SDK.compiledWorkflow =
         SDK.Serial [] 
           [ SDK.Concurrent [0] 
-          [ SDK.Step [0,0] (target "WriteReport" (WriteReportResult () <$ Handlers.runWriteReport))
-          , SDK.Step [0,1] (target "WriteReply" (WriteReplyResult () <$ Handlers.runWriteReply))
+          [ ([(SDK.Slot 0 "ReportLocation"), (SDK.Slot 4 "ReportFile"), (SDK.Slot 2 "ReportDraft")], SDK.Step [0,0] (target "WriteReport" (WriteReportResult () <$ Handlers.runWriteReport)))
+          , ([(SDK.Slot 1 "ReplyLocation"), (SDK.Slot 5 "ReplyFile"), (SDK.Slot 3 "ReplyDraft")], SDK.Step [0,1] (target "WriteReply" (WriteReplyResult () <$ Handlers.runWriteReply)))
           ]
           , SDK.Step [1] (target "ShowReport" (ShowReportResult () <$ Handlers.runShowReport))
           , SDK.Step [2] (target "ShowReply" (ShowReplyResult () <$ Handlers.runShowReply))
@@ -38,8 +38,8 @@ compiledProgram = do
           , ("ReportFilled", [3,1], SDK.Step [3,1] (target "OnFilled" (OnFilledResult () <$ Handlers.runOnFilled)))
           ]
           , SDK.Concurrent [4] 
-          [ SDK.Drive [4,0] (Just (SDK.StreamSource (SDK.Slot 24 "ParserA") ([4,0,-1,0,0], target "FeedA" (Handlers.nextFeedA)) ([4,0,-1,0,1], target "ParserA" (() <$ Handlers.getLevelA)) Nothing))
-          , SDK.Drive [4,1] (Just (SDK.StreamSource (SDK.Slot 25 "ParserB") ([4,1,-1,0,0], target "FeedB" (Handlers.nextFeedB)) ([4,1,-1,0,1], target "ParserB" (() <$ Handlers.getLevelB)) Nothing))
+          [ ([(SDK.Slot 24 "ParserA")], SDK.Drive [4,0] (Just (SDK.StreamSource (SDK.Slot 24 "ParserA") ([4,0,-1,0,0], target "FeedA" (Handlers.nextFeedA)) ([4,0,-1,0,1], target "ParserA" (() <$ Handlers.getLevelA)) Nothing)))
+          , ([(SDK.Slot 25 "ParserB")], SDK.Drive [4,1] (Just (SDK.StreamSource (SDK.Slot 25 "ParserB") ([4,1,-1,0,0], target "FeedB" (Handlers.nextFeedB)) ([4,1,-1,0,1], target "ParserB" (() <$ Handlers.getLevelB)) Nothing)))
           ]
           , SDK.Step [5] (target "ReplyScope" (ReplyScopeResult () <$ Handlers.openReplyScope))
           ]

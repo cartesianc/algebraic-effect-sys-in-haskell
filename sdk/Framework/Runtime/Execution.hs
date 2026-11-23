@@ -14,7 +14,8 @@ import Framework.Runtime.App (Launch(..), StreamPort(..))
 import Framework.Runtime.Graph
   ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, runtimeRootFrame, runtimeScopes, newOrigin
   , resetOrigins, collectRuntimeScopes, finishRuntime, withRuntimeRetention
-  , readHistory, dropHistory, installReactions, installStatic )
+  , readHistory, dropHistory, installReactions, installStatic
+  , Place(..), rootPlace, openBranches, closeBranches )
 import Framework.Runtime.Frame
 import Framework.Runtime.Delivery (SourceEnded(..), SubscriptionEnded(..))
 import Framework.Runtime.Binding (Binding(..), readBindingOwner)
@@ -36,11 +37,13 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import qualified Data.Sequence as Seq
 
--- 执行期环境：本次执行所在的帧、运行监督，以及订阅回调交付的资产（入口里对它的 requests 直接读交付）。
+-- 执行期环境：本次执行所在的帧、运行监督、订阅回调交付的资产（入口里对它的 requests 直接读交付），
+-- 以及所在的位置（parallel 分支与持续资产的作用范围）。
 data Run environment cause = Run
   { runFrame :: ExecutionFrame
   , runFatal :: Either SomeException (Failure cause) -> IO ()
   , runPerformed :: [Slot]
+  , runPlace :: Place
   }
 
 type Execution' environment cause value =
@@ -129,7 +132,7 @@ compiledFlows compiled = concatMap layers (compiledWorkflow compiled : [flow | R
   where
     layers flow = flow : case flow of
       Serial _ parts -> concatMap layers parts
-      Concurrent _ parts -> concatMap layers parts
+      Concurrent _ parts -> concatMap (layers . snd) parts
       Choose _ _ _ candidates -> concat [layers candidate | (_, _, candidate) <- candidates]
       _ -> []
 
@@ -148,13 +151,12 @@ runCompiled prototype tree compiled = do
   store <- newRuntimeGraph index (scopeHandlers entries ++ scopeHandlers selectors ++ scopeHandlers steps)
   configureRuntimeScopes store
   ended <- newIORef []
-  active <- newIORef []
   delivered <- newIORef Map.empty
   statics <- newMVar Map.empty
   settled <- newEmptyMVar
   let settle = void . tryPutMVar settled
-      machine = Machine index store compiled ended active delivered
-      root = Run (runtimeRootFrame store) (settle . Left) []
+      machine = Machine index store compiled ended delivered
+      root = Run (runtimeRootFrame store) (settle . Left) [] rootPlace
   installReactions store (reactTo machine root)
   installStatic store (staticRun machine root statics)
   retireAfter (do
@@ -171,14 +173,13 @@ runCompiled prototype tree compiled = do
       _ <- finishExecutionFrame (runtimeRootFrame store)
       finishRuntime store)
 
--- 一次运行的执行状态：哪些节点已 endStream、哪些 lifelong（或静态运行）的来源正在运行、behavior 上一次回调的值。
+-- 一次运行的执行状态：哪些节点已 endStream，以及 behavior 在各作用范围里上一次回调的值。
 data Machine method environment cause value = Machine
   { machineIndex :: PrototypeIndex method
   , machineGraph :: RuntimeGraph environment cause
   , machineCompiled :: Compiled environment cause value
   , machineEnded :: IORef [Coord]
-  , machineActive :: IORef [NodeId]
-  , machineDelivered :: IORef (Map.Map Int environment)
+  , machineDelivered :: IORef (Map.Map (Int, Maybe NodeId) environment)
   }
 
 -- workflow 闭包的一层：执行这一层，退出时撤销本子树尚未进入的节点。
@@ -189,7 +190,7 @@ execute machine flow run handoff = case flow of
     endedNow <- readIORef (machineEnded machine)
     if location `elem` endedNow then pure (Right []) else withFrameNode graph run location $
       withRuntimeRetention graph $ \retention -> do
-        outcome <- try (lowerTarget graph retention location (runFrame run) handoff (runPerformed run) target)
+        outcome <- try (lowerTarget graph retention location (runFrame run) (runPlace run) handoff (runPerformed run) target)
         case outcome of
           Right (result, _) -> pure ((: []) <$> result)
           -- endStream：本次调用放弃，这个节点之后不再被回调；同一次回调中其余位置照常执行。
@@ -200,8 +201,14 @@ execute machine flow run handoff = case flow of
                 atomicModifyIORef' (machineEnded machine) (\current -> (location : current, ()))
                 pure (Right [])
   Serial path parts -> managed path $ concat <$> sequence [execute machine part run handoff | part <- parts]
+  -- 各分支开始前一次登记全部分支可能发布的资产；分支退出（含失败与取消）时撤销登记并唤醒等待的 require。
   Concurrent path parts -> managed path $ ExceptT $ do
-    outcomes <- runParalleled [runExceptT (execute machine part run handoff) | part <- parts]
+    identities <- openBranches graph (map fst parts)
+    let within identity = run { runPlace = (runPlace run) { placeBranches = identity : placeBranches (runPlace run) } }
+    outcomes <- runParalleled
+      [ runExceptT (execute machine part (within identity) handoff) `finally` closeBranches graph [identity]
+      | (identity, (_, part)) <- zip identities parts ]
+      `finally` closeBranches graph identities
     pure (concat <$> sequence outcomes)
   Choose path selectorPath selector candidates -> managed path $ ExceptT $ withRuntimeRetention graph $ \retention -> do
     let location = coordAt index path
@@ -211,7 +218,7 @@ execute machine flow run handoff = case flow of
     -- 候选中的节点都已结束订阅时，选择读取不再执行，整个 alternative 跳过。
     if not (null members) && all (`elem` endedNow) members then pure (Right []) else do
       chosen <- withFrameNode graph run selectorAt $
-        lowerTarget graph retention selectorAt (runFrame run) handoff (runPerformed run) selector
+        lowerTarget graph retention selectorAt (runFrame run) (runPlace run) handoff (runPerformed run) selector
       case chosen of
         (Left problem, _) -> pure (Left problem)
         (Right constructor, captured) -> case [(node, candidate) | (name, node, candidate) <- candidates, name == constructor] of
@@ -227,7 +234,7 @@ execute machine flow run handoff = case flow of
   Drive path source -> ExceptT $ supervised run $ do
     outcome <- maybe (pure Nothing) (\selected -> runSource machine run path selected handoff) source
     forM_ source $ \_ -> do
-      dropHistory graph (driveAssets machine path)
+      dropHistory graph path (driveAssets machine path)
       retired <- concat <$> mapM (skipFrameSubtree (runFrame run) . coordAt index) (socketUnits machine path)
       collectRuntimeScopes graph retired
     pure (maybe (Right []) Left outcome)
@@ -259,22 +266,24 @@ socketUnits machine path =
   [unit | Reaction _ (Just scope) (RunUnit unit _) <- compiledReactions (machineCompiled machine), scope == path]
 
 -- 回调表的入口：一次发布之后，依次执行对这份资产有效的回调；第一个失败返回给发布方。
--- event 回调整次运行有效；其余回调只在所属 lifelong（或静态运行）的来源运行期间有效。
--- behavior 的资产与上一次回调的值相等时不回调。
+-- event 回调整次运行有效；其余回调只回应自己作用范围（所属 lifelong 或静态运行）里的发布。
+-- behavior 的资产与同一作用范围里上一次回调的值相等时不回调。回调继承发布方的位置。
 reactTo :: Machine method environment cause value -> Run environment cause
-        -> Slot -> ScopeBinding environment cause -> ScopeBindings environment cause -> IO (Maybe (Failure cause))
-reactTo machine run source value captured = do
-  activeNow <- readIORef (machineActive machine)
-  let selected = [response | Reaction asset scope response <- compiledReactions (machineCompiled machine)
-        , asset == source, maybe True (`elem` activeNow) scope]
+        -> Place -> Slot -> ScopeBinding environment cause -> ScopeBindings environment cause -> IO (Maybe (Failure cause))
+reactTo machine run at source value captured = do
+  let scope = placeScope at
+      selected = [response | Reaction asset reactionScope response <- compiledReactions (machineCompiled machine)
+        , asset == source, maybe True ((== scope) . Just) reactionScope]
+      key = (slotNumber source, scope)
   if null selected then pure Nothing else do
     changed <- case sameOf machine source of
       Nothing -> pure True
       Just same -> atomicModifyIORef' (machineDelivered machine) $ \earlier ->
-        case Map.lookup (slotNumber source) earlier of
+        case Map.lookup key earlier of
           Just previous | same previous (bindingValues value) -> (earlier, False)
-          _ -> (Map.insert (slotNumber source) (bindingValues value) earlier, True)
-    if not changed then pure Nothing else firstFailure [respond machine run source value captured response | response <- selected]
+          _ -> (Map.insert key (bindingValues value) earlier, True)
+    if not changed then pure Nothing
+      else firstFailure [respond machine run { runPlace = at } source value captured response | response <- selected]
   where
     firstFailure [] = pure Nothing
     firstFailure (action : rest) = action >>= maybe (firstFailure rest) (pure . Just)
@@ -300,8 +309,11 @@ respond machine run source value captured response = case response of
       handoff <- delivery
       outcome <- withRuntimeRetention graph $ \_ -> mask $ \restore -> do
         frame <- newChildFrame (runtimeRootFrame graph) (unitFrameNodes (unitAt index unit)) []
+        -- 单元在所属 lifelong 的作用范围里执行：它经输出联立发布的持续资产与派生按这个 lifelong 记历史、回调。
+        let inside = run { runFrame = frame, runPerformed = [source]
+              , runPlace = (runPlace run) { placeScope = Just (take (length path - 1) path) } }
         retireAfter
-          (restore (runExceptT (execute machine flow run { runFrame = frame, runPerformed = [source] } handoff))) $ \_ -> do
+          (restore (runExceptT (execute machine flow inside handoff))) $ \_ -> do
             retired <- finishExecutionFrame frame
             restore (collectRuntimeScopes graph retired)
       pure (either Just (const Nothing) outcome)
@@ -311,7 +323,7 @@ respond machine run source value captured response = case response of
     if mount `elem` endedNow then pure Nothing else do
       handoff <- delivery
       outcome <- try (withRuntimeRetention graph $ \retention ->
-        lowerTarget graph retention mount (runtimeRootFrame graph) handoff [] parser)
+        lowerTarget graph retention mount (runtimeRootFrame graph) (runPlace run) handoff [] parser)
       collectRuntimeScopes graph [mount]
       case outcome of
         Left SubscriptionEnded -> do
@@ -322,7 +334,7 @@ respond machine run source value captured response = case response of
     index = machineIndex machine
     graph = machineGraph machine
     delivery = do
-      view <- if effectContinuous (effectAt source) then readHistory graph source else pure Nothing
+      view <- if effectContinuous (effectAt source) then readHistory graph (placeScope (runPlace run)) source else pure Nothing
       pure (Handoff ((source, value) : captured) [(source, maybe (Seq.singleton value) id view) | effectContinuous (effectAt source)])
     effectAt selected = protoEffects (indexedPrototype index) !! slotNumber selected
 
@@ -332,10 +344,13 @@ respond machine run source value captured response = case response of
 -- 返回 Just 是来源或回调的失败。
 runSource :: Machine method environment cause value -> Run environment cause -> NodeId -> StreamSource environment cause
           -> Handoff environment cause -> IO (Maybe (Failure cause))
-runSource machine _ scope source (Handoff given views) = do
-  atomicModifyIORef' (machineActive machine) (\current -> (scope : current, ()))
-  loop `finally` atomicModifyIORef' (machineActive machine) (\current -> (filter (/= scope) current, ()))
+runSource machine run scope source (Handoff given views) = do
+  -- 每次运行从空的历史与 behavior 比较开始：同一 lifelong 再次执行或另一处订阅同一来源时不沿用上一次的状态。
+  dropHistory graph scope (driveAssets machine scope)
+  atomicModifyIORef' (machineDelivered machine) (\earlier -> (Map.filterWithKey (\(_, at) _ -> at /= Just scope) earlier, ()))
+  loop
   where
+    at = (runPlace run) { placeScope = Just scope }
     index = machineIndex machine
     graph = machineGraph machine
     (streamPath, stream) = sourceStream source
@@ -351,14 +366,15 @@ runSource machine _ scope source (Handoff given views) = do
               let launch = Launch
                     { launchBindings = resources ++ [entry | entry@(name, _) <- given, name `notElem` map fst resources]
                     , launchViews = views, launchPort = ParserInput text, launchPerformed = []
-                    , launchUser = Just parserOwner, launchFrame = runtimeRootFrame graph, launchRetention = parserRetention }
+                    , launchUser = Just parserOwner, launchFrame = runtimeRootFrame graph, launchRetention = parserRetention
+                    , launchPlace = at }
               (outcome, _, _) <- lowerWith graph parserMount launch parser
               -- 订阅单元全部 endStream：下一次 rawemit 之前结束来源。
               finished <- subscribersEnded
               when (finished && either (const False) (const True) outcome) (throwIO SourceEnded)
               pure outcome
         (outcome, _, _) <- lowerWith graph streamMount (Launch given views (SourcePort deliver) [] (Just owner)
-          (runtimeRootFrame graph) retention) stream
+          (runtimeRootFrame graph) retention at) stream
         pure outcome
       case taken of
         Left SourceEnded -> pure Nothing
@@ -380,8 +396,8 @@ runSource machine _ scope source (Handoff given views) = do
 -- lifelong 之外 requests 一份持续资产：同步运行它的根来源直到结束（派生链的回调以静态运行的标识生效），
 -- 同一个根来源在一次运行中只运行一次；并发的请求方等这一次运行结束。历史保留到运行结束。
 staticRun :: Machine method environment cause value -> Run environment cause
-          -> MVar (Map.Map NodeId (MVar (Maybe (Failure cause)))) -> Slot -> IO (Maybe (Failure cause))
-staticRun machine run statics source = case [(scope, selected) | (asset, scope, selected) <- compiledStatic (machineCompiled machine), asset == source] of
+          -> MVar (Map.Map NodeId (MVar (Maybe (Failure cause)))) -> Place -> Slot -> IO (Either (Failure cause) NodeId)
+staticRun machine run statics at source = case [(scope, selected) | (asset, scope, selected) <- compiledStatic (machineCompiled machine), asset == source] of
   (scope, selected) : _ -> do
     -- 同一根来源只运行一次：它的派生资产在同一次运行里一并发布。
     (done, fresh) <- modifyMVar statics $ \started -> case Map.lookup scope started of
@@ -391,8 +407,8 @@ staticRun machine run statics source = case [(scope, selected) | (asset, scope, 
         pure (Map.insert scope done started, (done, True))
     -- 运行抛出原生异常时也填入结果，等待的请求方不会悬挂；异常照常传播给发起者。
     when fresh $ do
-      outcome <- try (runSource machine run scope selected noHandoff)
+      outcome <- try (runSource machine run { runPlace = at } scope selected noHandoff)
       putMVar done (either (const Nothing) id outcome)
       either (\(exception :: SomeException) -> throwIO exception) (const (pure ())) outcome
-    readMVar done
+    maybe (Right scope) Left <$> readMVar done
   [] -> ioError (userError ("No static run for " ++ slotName source ++ "; regenerate with the SDK effect-codegen command"))

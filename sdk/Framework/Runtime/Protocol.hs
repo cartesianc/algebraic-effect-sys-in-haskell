@@ -61,7 +61,12 @@ class Monad m => ContextStore environment m | m -> environment where
   -- 由选择逻辑记为放弃，不触发 Error 处置，也不进入原链。
   attemptOutput :: m () -> m ()
   attemptOutput = id
-  -- 持续资产仍返回声明的表示类型：本次回调的交付优先，否则读运行级最新值。从不等待或启动来源。
+  -- require 缺值时的等待：本次位置之外仍有运行中的 parallel 分支可能发布这些资产时，返回阻塞到下一次变化的动作；
+  -- 否则 Nothing（读取方立即按缺值处理）。须在查值之前取得，查值与开始等待之间的发布才不会漏掉。
+  -- 诊断、收尾、close 与资源读取不等待。
+  awaitContext :: [Slot] -> m (Maybe (m ()))
+  awaitContext _ = pure Nothing
+  -- 持续资产仍返回声明的表示类型：本次回调的交付优先，否则读运行级最新值。不启动来源。
   readContextValue :: Slot -> (environment -> Maybe value) -> m (Maybe value)
   readContextValue _ _ = pure Nothing
   -- lifelong 之外 requests 一份持续资产：本次没有交付时同步运行它的来源直到结束（同一次运行只运行一次），

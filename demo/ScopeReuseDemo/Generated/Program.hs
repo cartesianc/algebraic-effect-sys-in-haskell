@@ -29,9 +29,9 @@ compiledProgram = do
         SDK.Serial [] 
           [ SDK.Step [0] (target "PrepareProbe" (PrepareProbeResult () <$ Handlers.runPrepareProbe))
           , SDK.Concurrent [1] 
-          [ SDK.Step [1,0] (target "WriteFirst" (WriteFirstResult () <$ Handlers.runWriteFirst))
-          , SDK.Step [1,1] (target "WriteSecond" (WriteSecondResult () <$ Handlers.runWriteSecond))
-          , SDK.Step [1,2] (target "WriteThird" (WriteThirdResult () <$ Handlers.runWriteThird))
+          [ ([(SDK.Slot 2 "FileResource")], SDK.Step [1,0] (target "WriteFirst" (WriteFirstResult () <$ Handlers.runWriteFirst)))
+          , ([(SDK.Slot 2 "FileResource")], SDK.Step [1,1] (target "WriteSecond" (WriteSecondResult () <$ Handlers.runWriteSecond)))
+          , ([(SDK.Slot 2 "FileResource")], SDK.Step [1,2] (target "WriteThird" (WriteThirdResult () <$ Handlers.runWriteThird)))
           ]
           , SDK.Step [2] (target "VerifyReuse" (VerifyReuseResult () <$ Handlers.runVerifyReuse))
           ]
