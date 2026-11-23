@@ -175,6 +175,7 @@ renderEffect effect = update
     , changed P.effectContextDependencies "effectContextDependencies" show
     , changed P.effectContinuous "effectContinuous" show
     , changed P.effectHistory "effectHistory" show
+    , changed P.effectSampled "effectSampled" show
     ])
   where
     -- 与 SDK 的 effectProto 默认值相同的字段不写。
@@ -235,6 +236,7 @@ renderBootPlan :: P.BootPlan -> String
 renderBootPlan (P.Receive source) = constructor "Receive" [showArg source]
 renderBootPlan (P.Derive upstream) = constructor "Derive" [showArg upstream]
 renderBootPlan (P.ReuseOutput nodes) = constructor "ReuseOutput" [showArg nodes]
+renderBootPlan P.Listen = constructor "Listen" []
 
 renderChain :: P.ChainProto String -> String
 renderChain chain = record "ChainProto"

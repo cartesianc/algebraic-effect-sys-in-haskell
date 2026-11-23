@@ -10,14 +10,14 @@ module Framework.Runtime
   ( App, Target, targetApp
   , targetName, lowerTarget, Handoff, noHandoff, scopeHandlers, cleanupTargets
   , DeliveryFrame, LocalSlot(..), newDeliveryFrame, frameDelivery, framePublishes, haltFrame, frameStopping, frameAdmits, boundarySession
-  , SessionSteps, receiveSteps, deriveSteps, sessionLauncher
+  , SessionSteps, receiveSteps, behaviorSteps, deriveSteps, sessionLauncher
   ) where
 
 import Framework.Language.Handler (Failure)
 import Framework.Runtime.App (App, Launch(..), StreamPort(..), runAppWith)
 import Framework.Runtime.Graph
   ( RuntimeGraph, PrototypeReference(..), runtimePrototype, runtimeScopes, runtimeRootFrame, newOrigin, obtainSession
-  , currentPublications, collectRuntimeScopes, withRuntimeRetention )
+  , currentPublications, collectRuntimeScopes, withRuntimeRetention, sessionListens )
 import Framework.Runtime.Identity (ActivationId, Execution(..), Origin(..), executionOrigin)
 import Framework.Runtime.Frame (ExecutionFrame, NodeProgress(..), captureFrameDeliveries, frameNodeProgress, frameSignal, installSessionInputs
   , newSessionFrame, finishExecutionFrame, withFrameLock)
@@ -223,6 +223,10 @@ lowerTarget graph retention location executionFrame frame (Handoff given views) 
   let merged = [(source, view) | (source, (view, _)) <- taken]
         ++ [entry | entry@(source, _) <- views, source `notElem` map fst taken]
       companions = [entry | (_, (_, published)) <- taken, entry@(source, _) <- published, source `notElem` map fst given]
+        -- event：领取的这条普通资产发布作为本次调用的捕获，requires 读它，不读之后被覆盖的最新值。
+        ++ [ (source, value) | Just current <- [frame], (source, (view, _)) <- taken, source `notElem` map fst given
+           , Just (session, _) <- [lookup source (frameSessions current)]
+           , sessionListens (runtimePrototype graph) (sessionKey session), Just value <- [lastBinding view] ]
       sinks = [(source, appendDelivery session []) | Just current <- [frame], (source, (session, _)) <- frameSessions current]
       launch = Launch
         { launchBindings = given ++ companions, launchViews = merged, launchPort = NoStreamPort
@@ -263,14 +267,20 @@ cleanupTargets = cleanupScopes . scopeHandlers
 -- ReuseOutput 已属于原消费轮次，不建立第二份循环、ScopeUser 或会话待用帧。
 
 -- 生成区按资产登记的生产步骤。parser 的入口发布一次资产；会话不再次发布返回值。
--- ReceiveSteps：Stream 每次 rawemit 都在返回前驱动一次 parser。
+-- ReceiveSteps：Stream 每次 rawemit 都在返回前驱动一次 parser。可选的比较给出 behavior：
+-- parser 发布的值与上一条相等时不追加交付。
 -- DeriveSteps：领取一条上游持续资产的交付后执行 parser，它沿 Input 链执行被驱动的句柄。
 data SessionSteps environment cause
-  = ReceiveSteps (Target environment cause ()) (Target environment cause ())
+  = ReceiveSteps (Target environment cause ()) (Target environment cause ()) (Maybe (environment -> environment -> Bool))
   | DeriveSteps (Target environment cause ())
 
 receiveSteps :: Target environment cause () -> Target environment cause () -> SessionSteps environment cause
-receiveSteps = ReceiveSteps
+receiveSteps stream parser = ReceiveSteps stream parser Nothing
+
+-- behavior 的会话步骤：比较两次发布的值，相等时只保留先前那一条。
+behaviorSteps :: Target environment cause () -> Target environment cause () -> (environment -> environment -> Bool)
+              -> SessionSteps environment cause
+behaviorSteps stream parser same = ReceiveSteps stream parser (Just same)
 
 deriveSteps :: Target environment cause () -> SessionSteps environment cause
 deriveSteps = DeriveSteps
@@ -292,6 +302,8 @@ sessionLauncher :: forall environment cause. RuntimeGraph environment cause -> [
 sessionLauncher graph steps onBroken session
   -- 已挂载的原始链提供输出：只登记会话的交付状态，不创建第二个驱动或资源使用者。
   | Just (Just _) <- sessionAtReuses <$> description = pure ()
+  -- event 只接收普通资产的发布（Graph.publishAsset），没有生产任务。
+  | sessionListens (runtimePrototype graph) (sessionKey session) = pure ()
   | otherwise = launch
   where
     launch = uninterruptibleMask_ $ do
@@ -358,13 +370,13 @@ sessionLauncher graph steps onBroken session
       first : _ -> referenceLabel (runtimePrototype graph) first (slotName source)
       [] -> slotName source) mounts
     produce execution future selected upcoming = case (lookup label steps, mounts) of
-      (Just (ReceiveSteps stream parser), Just [streamMount, parserMount]) -> loop $ withStep execution $ \owner retention -> do
+      (Just (ReceiveSteps stream parser same), Just [streamMount, parserMount]) -> loop $ withStep execution $ \owner retention -> do
         -- 来源拥有本次调用的资源。每条 emit 在独立的 parser 调用与保留范围中发布，
         -- parser 完成后立即释放该次使用；长时间未返回的来源不会积累历次 parser 的捕获。
         let deliver text captured = withStep execution $ \parserOwner parserRetention -> do
               inheritScopeUse owner parserOwner
               resources <- filterM (fmap isJust . readBindingOwner . snd) captured
-              let parseStep = (step parserOwner parserRetention (ParserInput text) sink)
+              let parseStep = (step parserOwner parserRetention (ParserInput text) (maybe sink distinct same))
                     { launchBindings = resources ++ [entry | entry@(name, _) <- sessionBindings session
                       , name `notElem` map fst resources] }
               first <$> lowerWith graph parserMount parseStep parser
@@ -410,6 +422,14 @@ sessionLauncher graph steps onBroken session
     sink = [(source, \value -> do
       companions <- currentPublications graph (maybe [] id mounts)
       appendDelivery session companions value)]
+    -- behavior：与上一条发布的值相等时不追加，读取方不因此被唤起。
+    distinct same = [(source, \value -> do
+      previous <- currentView session
+      case previous >>= lastBinding of
+        Just earlier | same (bindingValues earlier) (bindingValues value) -> pure ()
+        _ -> do
+          companions <- currentPublications graph (maybe [] id mounts)
+          appendDelivery session companions value)]
     -- 每步实际使用 v1（2026-11-18）：Receive 的来源与逐条 parser 分别持有活跃使用，Derive
     -- 每条交付使用一次；诊断与解析完成后撤销，再由现有 GC 核对长期预约及其他使用者。
     -- 新参数只产生新实例；另一订阅/调用仍持有的旧实例不因本步骤结束而关闭。

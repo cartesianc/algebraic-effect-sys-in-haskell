@@ -282,7 +282,7 @@ validatePrototype prototype = do
               == sessionAssets effects (nub (map snd (lifelongSubscriptions described) ++ outputs)))
             "Lifelong sessions differ from subscriptions, attached outputs and upstream assets"
           mapM_ (\(index, session) -> do
-            producer <- case [effect | effect <- effects, effectContinuous effect
+            producer <- case [effect | effect <- effects, effectContinuous effect || sessionPlan session == Listen
                 , effectProduces effect == Just (sessionAsset session)] of
               [effect] -> pure effect
               _ -> Left (InvalidPrototype "Session asset has no continuous producer")
@@ -298,8 +298,9 @@ validatePrototype prototype = do
             valid (sessionMounts session == [identifier ++ [-1, index, step]
                 | step <- [0 .. sessionSteps (sessionPlan session) - 1]])
               "Lifelong session mounts have invalid NodeIds") (zip [0 ..] sessions)
-          valid (and [ any (\effect -> effectContinuous effect && effectProduces effect == Just contractType) effects
-            | (_, contractType) <- lifelongSubscriptions described ]) "Lifelong subscribes to a non-continuous asset"
+          -- 订阅普通资产是 event：它的会话只接收发布（Listen）。
+          valid (and [ any (\effect -> effectProduces effect == Just contractType) effects
+            | (_, contractType) <- lifelongSubscriptions described ]) "Lifelong subscribes to an asset without a producer"
         _ -> pure ()
       sequence_ [checkWorkflow (expected ++ [index]) child | (index, child) <- zip [0 ..] (workflowChildren selected)]
     validateChain chain = do
@@ -341,6 +342,7 @@ validatePrototype prototype = do
                     , (StreamHandler, method) <- effectMethods effect]
                   Derive _ -> []
                   ReuseOutput _ -> []
+                  Listen -> []
                 expected = maybe streamEntries (\role -> [method | (role', method) <- effectMethods producer, role' == role]) expectedRole
             valid (sessionAsset session == chainTerminal chain && expected == [chainEntry chain])
               "Session chain differs from its boot plan"

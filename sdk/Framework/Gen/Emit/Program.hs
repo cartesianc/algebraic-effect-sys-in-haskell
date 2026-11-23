@@ -8,6 +8,7 @@ import Data.List (intercalate)
 import Framework.Gen.Names (HandlerNames, entryName, helperName)
 import Framework.Gen.Plan
 import Framework.Prototype (ChainRole(..), variantLabel)
+import qualified Framework.Prototype as P
 
 renderProgram :: FilePath -> HandlerNames -> [(FilePath, Maybe String)] -> Unit -> String
 renderProgram directory names hangingSources unit = unlines (programHeader ++ astInterpreter)
@@ -76,7 +77,13 @@ renderProgram directory names hangingSources unit = unlines (programHeader ++ as
     -- Derive：领取一条上游交付后只执行 parser，它沿 Input 链执行被驱动的句柄并发布。
     -- 会话按所在位置的 Middleware 集合登记；同一会话的各步骤位置被同一组标注覆盖。
     sessionSteps = map renderSession (unitSessionEntries unit)
+    -- behavior（挂在 Stream 下、stream = False）：相等的值只发布一次，比较本次与上一条发布的值。
     renderSession entry = case entry of
+      ReceiveEntry producer source parser
+        | P.effectSampled (protoOf unit producer) -> let hooks = mountHooks unit (mountNode source) in
+            "(" ++ show (variantLabel producer hooks) ++ ", SDK.behaviorSteps ("
+            ++ action hooks source "" ++ ") (" ++ action hooks parser "() <$ " ++ ") (\\earlier later -> bound"
+            ++ producer ++ " earlier == bound" ++ producer ++ " later))"
       ReceiveEntry producer source parser -> let hooks = mountHooks unit (mountNode source) in
         "(" ++ show (variantLabel producer hooks) ++ ", SDK.receiveSteps ("
         ++ action hooks source "" ++ ") (" ++ action hooks parser "() <$ " ++ "))"

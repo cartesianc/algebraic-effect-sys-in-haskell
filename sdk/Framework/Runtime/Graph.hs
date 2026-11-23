@@ -11,12 +11,12 @@ module Framework.Runtime.Graph
   , newRuntimeGraph, configureRuntimeScopes, collectRuntimeScopes, finishRuntime, newOrigin
   , beginActivation, endActivation, withRuntimeRetention, collectRetainedScopes
   , publishAsset, publicationSignal, readPublishedAsset, contextMayPublish, resetOrigins
-  , installSessionLauncher, obtainSession, readerSession, stopSessions, currentPublications, reusesOutputAt
+  , installSessionLauncher, obtainSession, readerSession, stopSessions, currentPublications, reusesOutputAt, sessionListens
   ) where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
 import Control.Exception (SomeAsyncException, SomeException, evaluate, finally, fromException, mask, onException, throwIO, try, uninterruptibleMask_)
-import Control.Monad (forM, forM_, void)
+import Control.Monad (forM, forM_, unless, void)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
@@ -27,7 +27,7 @@ import Framework.Runtime.Identity
 import Framework.Runtime.Frame
 import Framework.Runtime.Binding (Binding(..), readBindingOwner)
 import Framework.Runtime.Retention
-import Framework.Runtime.Session (Session, SessionKey, View, lastBinding, newSession, stopSession, currentView
+import Framework.Runtime.Session (Session, SessionKey, View, lastBinding, newSession, stopSession, currentView, appendDelivery
   , attachReader, leaveSession, feedSession, breakSession, upstreamOf, awaitUpstream, pendingBindings)
 import Framework.Runtime.Scope
   ( Scopes, ScopeBinding, ScopeBindings, ScopeUser(..), ScopeHandler(..), ScopeInstance(..), ScopeRecord(..), ScopeInput(..)
@@ -386,6 +386,12 @@ publishAsset graph origin source value = mask $ \restore -> do
       pure existed
     notifyFrame (runtimeRootFrame graph)
     pure (previous, replaced)
+  -- event：订阅这份普通资产的 lifelong 会话各追加一条交付；会话建立前的发布不回放。
+  unless (bindingResource value) $ do
+    registered <- readIORef (runtimeSessionSnapshot graph)
+    forM_ [session | (key@(_, selected), session) <- registered, selected == source
+          , sessionListens (runtimePrototype graph) key] $ \session ->
+      appendDelivery session [] value
   restore $ do
     collectRetainedScopes graph released
     if replacedParameter then collectParameterScopes graph source else pure ()
@@ -459,7 +465,8 @@ obtainSession graph key bindings views = uninterruptibleMask_ $ do
                     (updated, previous) <- assemble known (Nothing, source)
                     pure (updated, Just previous)
                 fresh <- newSession (notifyFrame (runtimeRootFrame graph)) (collectRetainedScopes graph)
-                  (sessionHistory (runtimePrototype graph) (snd selected)) selected
+                  (sessionHistory (runtimePrototype graph) (snd selected))
+                  (sessionSampled (runtimePrototype graph) (snd selected)) selected
                   (if selected == key then bindings else []) (if selected == key then views else [])
                 forM_ parent $ \previous -> do
                   cursor <- attachReader previous
@@ -505,6 +512,14 @@ obtainSession graph key bindings views = uninterruptibleMask_ $ do
 -- 会话以生产方 effect 命名；原型标了 effectHistory 的持续资产从开头保留全部发布，供 stream @T 读取 x:xs。
 sessionHistory :: PrototypeReference -> Slot -> Bool
 sessionHistory (PrototypeReference index) = historyOf index
+
+-- behavior 的会话：读取方只领取最新一条。
+sessionSampled :: PrototypeReference -> Slot -> Bool
+sessionSampled (PrototypeReference index) = sampledOf index
+
+-- event 的会话：没有生产任务，只接收这份普通资产此后的发布。
+sessionListens :: PrototypeReference -> SessionKey -> Bool
+sessionListens (PrototypeReference index) (boundary, source) = listensAt index boundary source
 
 sessionUpstreamSource :: PrototypeReference -> SessionKey -> Either String (Maybe Slot)
 sessionUpstreamSource _ (Just _, _) = Right Nothing

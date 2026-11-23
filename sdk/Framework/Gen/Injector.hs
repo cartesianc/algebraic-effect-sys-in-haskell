@@ -318,10 +318,17 @@ bindProgram namespace prepared declarations assembly controlled = do
     -- streams 只出现在被驱动的位置（lifelong 节点的订阅、持续 Context 被驱动的 Input 链），
     -- 运行时按当前调用的位置确定订阅，不需要业务说明结束哪一份资产。
     -- 只给 Excu：Scoped.open 被打断会使实例失效，Pure 是值变换，Stream 用 streamEnd。
-    -- 代价：每个 effect 查一次自己的 demand。
+    -- behavior 与 event 以 requests 订阅：同一个 requests 在 lifelong 之外只是一次生产，
+    -- 所以这两种订阅方按它在 lifelong 内被订阅驱动的挂载给出 endStream。
+    -- 代价：每个 effect 查一次自己的 demand 与 lifelong 订阅表。
     consumesStream :: Unit -> EffectDeclaration -> Bool
     consumesStream unit specification = kindOf specification == ExcuKind
-      && or [Prototype.demandAccess demand == StreamAccess | demand <- Prototype.effectDemands (protoOf unit (declarationName specification))]
+      && (or [Prototype.demandAccess demand == StreamAccess | demand <- Prototype.effectDemands (protoOf unit (declarationName specification))]
+        || declarationName specification `elem` subscribers)
+      where
+        tree = plannedWorkflow (unitPlan unit)
+        subscribers = [ terminal | (_, described) <- workflowLifelongs tree, (node, _) <- lifelongSubscriptions described
+          , Just (NodeAt _ terminal) <- [lookupWorkflow tree node] ]
     -- 本 effect 以 streams 读取该契约：Layer 才带 Streams。
     streamsContract :: Unit -> String -> String -> Bool
     streamsContract unit selectedName contractType = or

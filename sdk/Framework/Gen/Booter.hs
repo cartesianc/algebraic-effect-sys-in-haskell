@@ -27,9 +27,12 @@ numberWorkflow effects tree = cata number tree [] False
         ("AST terminal must be an Excu or Scoped handle: " ++ selected
           ++ " (Pure, Context, Stream and Error run only inside their chains; Middleware is mounted with middleware)")
       _ <- ordinaryEntry effect
-      let subscribed = streamedAssets effects selected
-      unless (inside || null subscribed) $ Left (InvalidLifelong path ("Node " ++ selected
-        ++ " subscribes to " ++ intercalate ", " subscribed ++ " with streams; mount it inside lifelong"))
+      -- lifelong 之外的 streams 是 history：同一 effect requests 它启动或加入 interpreter 托管的会话，
+      -- stream @T 读整段已发布的历史；没有 requests 时没有会话可读。
+      let unstarted = [asset | asset <- streamedAssets effects selected, asset `notElem` requestedBy effect]
+      unless (inside || null unstarted) $ Left (InvalidLifelong path ("Node " ++ selected
+        ++ " subscribes to " ++ intercalate ", " unstarted ++ " with streams outside lifelong;"
+        ++ " mount it inside lifelong, or also requests it to read its history"))
       pure (NodeAt path selected)
     number (Chain children) path inside = ChainAt path <$> descend path inside children
     number (Parallel children) path inside = ParallelAt path <$> descend path inside children
@@ -63,18 +66,30 @@ numberWorkflow effects tree = cata number tree [] False
         (zip (map workflowNode parts) cases)) parts)
     descend path inside children = sequence [child (path ++ [index]) inside | (index, child) <- zip [0 ..] children]
     invalid path reason = Left (InvalidAlternative path reason)
-    -- 一个挂载的 target 恰好由一份持续资产驱动；链内不再读取其他持续资产的快照，
-    -- 否则执行结果取决于读取时刻（多个来源的触发组合另行设计）。
-    subscription (node', selected) = case streamedAssets effects selected of
+    -- 一个挂载的 target 恰好由一份资产驱动，驱动方式由组合决定：
+    -- streams 一份持续资产是 socket；requests 一份 behavior（挂在 Stream 下、stream = False）是 behavior；
+    -- requests 一份普通资产是 event。lifelong 内的 requires 只采样，不驱动。
+    -- 链内不再读取其他持续资产的快照，否则执行结果取决于读取时刻（多个来源的触发组合另行设计）。
+    subscription (node', selected) = case drivers selected of
       [contractType] -> do
         let others = [other | other <- continuousReads effects selected, other /= contractType]
         unless (null others) $ Left (InvalidLifelong node' ("Node " ++ selected ++ " is driven by " ++ contractType
           ++ " and also reads continuous assets " ++ intercalate ", " others ++ "; read only its driving asset"))
         pure (node', contractType)
       [] -> Left (InvalidLifelong node' ("Node " ++ selected
-        ++ " inside lifelong must subscribe to exactly one continuous asset with streams"))
-      several -> Left (InvalidLifelong node' ("Node " ++ selected ++ " subscribes to several continuous assets "
+        ++ " inside lifelong must be driven by exactly one asset: streams a continuous asset (socket),"
+        ++ " or requests a behavior or an ordinary asset (event)"))
+      several -> Left (InvalidLifelong node' ("Node " ++ selected ++ " is driven by several assets "
         ++ intercalate ", " several ++ "; one lifelong target is driven by one asset"))
+    drivers selected = nub (streamedAssets effects selected ++ case findEffectProto effects selected of
+      Right effect -> [asset | asset <- requestedBy effect, asset `notElem` continuousOnly]
+      Left _ -> [])
+    -- 持续资产（stream = True）的 requests 只取当前一条，不是订阅；behavior 与普通资产的 requests 是订阅。
+    continuousOnly = [asset | producer <- effects, effectContinuous producer, not (effectSampled producer)
+      , Just asset <- [effectProduces producer]]
+    -- target 自己声明的 requests；Scoped 请求的资源 Context 是开启输入，不是订阅。
+    requestedBy effect = [demandContract demand | demand <- effectDemands effect, demandAccess demand == RequestAccess
+      , Just (demandProvider demand) /= effectResource effect]
     -- 挂载解释的私有查询；仅用于当前编号与订阅检查。
     -- 一条 original chain 由末端及其 Input 祖先组成；只看这些 effect 自己声明的 streams，
     -- 不汇总 Context 生产链内部的依赖。
@@ -124,6 +139,17 @@ planSessions effects boundary children subscriptions = do
         [effect] -> pure effect
         _ -> Left (UnknownPrototypeTarget contractType)
       let nodes = positions producer
+      -- event 的发布来自本 lifelong 之外：订阅单元自己执行这份资产的锚点（作为 target、Input，
+      -- 或为其他 requests 拉取它）时，每次执行都会唤起自己。
+      unless (effectContinuous producer) $ do
+        let anchor = effectAnchor producer
+            pulling = [node' | (node', target) <- mounted, demand <- effectDemands target
+              , demandAccess demand == RequestAccess, (node', demandContract demand) `notElem` subscriptions
+              , other <- effects, effectProduces other == Just (demandContract demand)
+              , anchor /= Nothing, effectAnchor other == anchor]
+        unless (null (nodes ++ pulling)) $ Left (InvalidLifelong boundary ("Event subscription to " ++ contractType
+          ++ ": its anchor " ++ maybe "" id anchor ++ " runs inside this lifelong at " ++ show (nub (nodes ++ pulling))
+          ++ ", so each unit would wake itself; run that anchor outside the lifelong"))
       -- p 个位置要做 p*(p-1)/2 次同单元/互斥检查；exclusive 自身还遍历 workflow。
       -- 并行或顺序中都可能发生的两次输出不能靠“谁先生产”合并成同一个来源。
       unless (and [unitOf left == unitOf right && exclusive workflow left right
@@ -150,6 +176,7 @@ planSessions effects boundary children subscriptions = do
           | (node', asset) <- subscriptions]
           ++ [(Right (sessionAsset session), case sessionPlan session of
               Receive _ -> []
+              Listen -> []
               Derive upstream -> [Right upstream]
               ReuseOutput nodes -> map Left nodes) | session <- sessions]
         previous node' = [Left before | (before, _) <- mounted, precedes workflow before node']
@@ -169,6 +196,7 @@ planSessions effects boundary children subscriptions = do
               ReuseOutput nodes -> [(sessionAsset session, nodes)]
               Derive upstream -> outputOf (asset : seen) upstream
               Receive _ -> []
+              Listen -> []
             | session <- sessions, sessionAsset session == asset]
         check (node', asset, output, nodes, unit) = do
           -- open 复用已有实例时不执行原子方法，也没有新输出。经过该位置不能
@@ -250,6 +278,8 @@ assembleProgram plan = do
         Derive _ -> (: []) <$> entry producer ContextStream
         -- 沿用 AST 输出，不另建生产步骤；位置证据已经在 planSessions 的 BootPlan 中检查。
         ReuseOutput _ -> pure []
+        -- event 只接收发布，没有生产步骤。
+        Listen -> pure []
       valid (length steps == length (sessionMounts described)) ("Session steps differ for " ++ sessionAsset described)
       pure [EntryMount mount SessionChain (sessionAsset described) target method
         | (mount, (target, method)) <- zip (sessionMounts described) steps]
@@ -333,6 +363,7 @@ completeDriving prototype = prototype { protoDriving = DrivingPlan nodes units s
       ReuseOutput publishers -> PublishedAt publishers
       Derive upstream -> DerivedFrom (provider upstream)
       Receive _ -> error "A Receive source cannot be local to a consumer unit"
+      Listen -> error "An event source cannot be local to a consumer unit"
     outputs = [(node, provider (sessionAsset session)) | (Just _, session) <- descriptions
       , ReuseOutput publishers <- [sessionPlan session], node <- publishers]
 

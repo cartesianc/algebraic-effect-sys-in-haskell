@@ -8,9 +8,9 @@ module Framework.Generated
   , module Framework.Prototype
   , module Framework.Prototype.Structure
   , App, TypeRef(..), typeRef, MonadThrow, MonadCatch, MonadMask
-  , Target, targetApp, SessionSteps, receiveSteps, deriveSteps
+  , Target, targetApp, SessionSteps, receiveSteps, behaviorSteps, deriveSteps
   , failEffect, handleFailure, withErrorPath, withErrorHandlers, ErrorHandler(..)
-  , readContext, readStreamContext, readStreamHistory, requestStreamContext
+  , readContext, readStreamContext, readStreamHistory, requestStreamContext, unlessDelivered
   , callContext, runOnce, producingFor, chooseCase, enterHandler
   , atomicHandle, atomicScope, emittedInput, emitToParser, endSource, endSubscription
   , openScope, closeScope, withScopeDependencies
@@ -25,10 +25,10 @@ import Framework.Runtime.Protocol
   , ContextStore(enterHandler, endSource, endSubscription, producingFor)
   , ScopeStore(openScope, closeScope, withScopeDependencies) )
 import Framework.Runtime.Context
-  ( readContext, readStreamContext, readStreamHistory, requestStreamContext, callContext, runOnce
+  ( readContext, readStreamContext, readStreamHistory, requestStreamContext, unlessDelivered, callContext, runOnce
   , chooseCase, atomicHandle, atomicScope )
 import Framework.Language.Registration (TypeRef(..), typeRef)
-import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, deriveSteps)
+import Framework.Runtime (App, Target, targetApp, SessionSteps, receiveSteps, behaviorSteps, deriveSteps)
 import Framework.Runtime.App
   ( emittedInput, emitToParser, superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation )
 import Framework.Runtime.Scope (ScopeHandler, newScopeHandler)

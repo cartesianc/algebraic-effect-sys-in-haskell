@@ -131,3 +131,4 @@ renderStructure prototype workflowAST = do
     describePlan (Receive source) = "Receive from " ++ source
     describePlan (Derive upstream) = "Derive from " ++ upstream
     describePlan (ReuseOutput nodes) = "ReuseOutput at " ++ show nodes ++ " (no separate producer)"
+    describePlan Listen = "Listen (event: every publication after the boundary starts)"

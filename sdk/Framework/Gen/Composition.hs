@@ -237,6 +237,7 @@ buildEffectProtos specifications = do
         , effectResource = case typing specification of Scoped {} -> requestSource specification; _ -> Nothing
         , effectContextDependencies = contextDependencies
         , effectContinuous = continuousContext specification
+        , effectSampled = sampledContext specification
         -- 由方法体形状在建图后标记（markHistories）；声明阶段一律不保留历史。
         , effectHistory = False
         }
@@ -275,9 +276,11 @@ buildEffectProtos specifications = do
           Scoped {} -> do
             valid (length (requested specification) <= 1) ("Scoped requests at most one resource Context: " ++ name specification)
           Context { asset = declared, parser = parsing, require = requiring, stream = streaming } -> do
-            -- stream 与 Input 链必须一致：链被持续驱动时，每次驱动产出一个新值，结果就是一份持续资产。
+            -- stream 与 Input 链必须一致：链被持续驱动时，每次驱动产出一个新值。
             -- 驱动有两种：直接 input 是 Stream（自己驱动），或 Input 链上有 streams demand（由那份持续资产的交付驱动）。
-            -- 被驱动的链不能产出普通资产，普通链也不能声明成持续资产；持续资产也缓存最新值。
+            -- 挂在 Stream 下时 stream 选择组合：True 是 socket（每次 rawemit 都是一条交付），
+            -- False 是 behavior（相等的值只发布一次，读取方取最新值）。Input 链上有 streams 的链只能是持续资产，
+            -- 普通链也不能声明成持续资产；持续资产与 behavior 都缓存最新值。
             valid (parsing /= Nothing) ("Context needs a parser handler: " ++ name specification)
             let below = belowStream specifications specification
                 driving = nub [contract demand | ancestor <- specifications
@@ -288,13 +291,14 @@ buildEffectProtos specifications = do
               ++ intercalate ", " driving)
             valid (length driving <= 1) ("Context " ++ name specification ++ " is driven by several continuous assets "
               ++ intercalate ", " driving ++ "; one production chain is driven by one asset")
-            valid (streaming == (below || not (null driving)))
+            valid (below || streaming == not (null driving))
               (if streaming then "Context " ++ name specification ++ " declares stream = True but nothing drives it continuously;"
                  ++ " hang it below a Stream, or below an effect that subscribes with streams"
-               else if below then "Context " ++ name specification ++ " hangs below a Stream and needs stream = True"
                else "Context " ++ name specification ++ " is driven by continuous asset " ++ intercalate ", " driving
                  ++ " (streams on its Input chain) and produces one value per delivery; declare stream = True")
-            valid (not streaming || requiring) ("Context " ++ name specification ++ " declares stream = True and needs require = True")
+            valid (not (streaming || below) || requiring) ("Context " ++ name specification
+              ++ (if streaming then " declares stream = True" else " hangs below a Stream (a behavior)")
+              ++ " and needs require = True")
             valid (validContractName (contractOf declared))
               ("Asset name must be a type name such as StartURL: " ++ contractOf declared ++ " in " ++ name specification)
             case representation declared of
@@ -378,11 +382,21 @@ buildEffectProtos specifications = do
       Context {} -> not (null [() | source <- specifications, name source == input specification, Stream {} <- [typing source]])
       _ -> False
 
-    -- 持续资产：stream = True，按组合计划持续发布，可以被 streams 订阅。
+    -- 由会话生产的资产：stream = True 的持续资产，以及挂在 Stream 下、stream = False 的 behavior。
     -- 挂在 Stream 下的由会话单步驱动；Input 链上有 streams 的由上游交付驱动，已挂载的操作沿用本次输出。
     continuousContext :: EffectSpec -> Bool
-    continuousContext specification = case typing specification of
+    continuousContext specification = streamContext specification || sampledContext specification
+
+    -- 可以被 streams 订阅的持续资产：stream = True。
+    streamContext :: EffectSpec -> Bool
+    streamContext specification = case typing specification of
       Context { stream = streaming } -> streaming
+      _ -> False
+
+    -- behavior：挂在 Stream 下而声明 stream = False。
+    sampledContext :: EffectSpec -> Bool
+    sampledContext specification = case typing specification of
+      Context { stream = False } -> belowStream specifications specification
       _ -> False
 
     -- 先校验整个注册集合，包括当前没有消费者的资产；不按访问模式挑选生产方。
@@ -422,9 +436,10 @@ buildEffectProtos specifications = do
           case (access demand, typing provider) of
             (RequireAccess, Context { require = False }) -> Left ("Contract " ++ contract demand
               ++ " is not cached (require = False), so " ++ name consumer ++ " cannot require it")
-            (StreamAccess, _) | not (continuousContext provider) -> Left ("Contract " ++ contract demand
+            (StreamAccess, _) | not (streamContext provider) -> Left ("Contract " ++ contract demand
               ++ " is not a continuous asset (its Context declares stream = False), so "
-              ++ name consumer ++ " cannot subscribe to it")
+              ++ name consumer ++ " cannot subscribe to it with streams"
+              ++ (if sampledContext provider then "; it is a behavior: requests it to start and subscribe, requires to read" else ""))
             _ -> pure ()
           pure (ResolvedDemand (access demand) (contract demand) (name provider))
 

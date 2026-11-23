@@ -88,7 +88,11 @@ data SessionState environment cause = SessionState
   -- 有 handler 以 stream @T 读取 x:xs 时（原型 effectHistory）从会话开头保留全部发布，不受游标裁剪；
   -- 交付与有限读取的视图是到该条为止的整段，最后一条是本次值。否则为 Nothing，视图只有一条。
   -- 来源停止且读取方全部离开时由 release 放掉（end GC）；从不停止的来源会一直保留到运行结束。
+  -- interpreter 托管的会话是 history：没有 lifelong 读取方，结束后也不放掉，之后的 stream @T 仍读整段。
   , stateHistory :: Maybe (Seq (ScopeBinding environment cause))
+  , stateCollectsHistory :: Bool
+  -- behavior：读取方每次只领取最新一条，跳过其间被覆盖的发布。
+  , stateLatestOnly :: Bool
   }
 
 -- 生产任务的停止状态，与 stateStopped 的“发布已结束”分开。
@@ -122,13 +126,14 @@ data Session environment cause = Session
   , sessionCollect :: [ScopeBinding environment cause] -> IO ()
   }
 
-newSession :: IO () -> ([ScopeBinding environment cause] -> IO ()) -> Bool -> SessionKey -> ScopeBindings environment cause
+newSession :: IO () -> ([ScopeBinding environment cause] -> IO ()) -> Bool -> Bool -> SessionKey -> ScopeBindings environment cause
            -> [(Slot, View environment cause)] -> IO (Session environment cause)
-newSession notify collect history key bindings views = do
+newSession notify collect history latest key bindings views = do
   signal <- newEmptyMVar
   let readers = maybe (Just []) (const Nothing) (fst key)
       kept = if history then Just Seq.empty else Nothing
-  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Seq.empty 0 Nothing signal readers kept) <*> newMVar NoWorker
+  Session key bindings views <$> newMVar (SessionState 0 Seq.empty Seq.empty 0 Seq.empty 0 Nothing signal readers kept
+      (isJust (fst key)) latest) <*> newMVar NoWorker
     <*> newEmptyMVar <*> newMVar (Unretired (pure ())) <*> pure notify <*> pure collect
 
 -- 两次相等的值仍是两条发布；会话已经结束或失败时不再接受新条目。
@@ -210,7 +215,7 @@ release state = case stateReaders state of
         -- end GC：来源已停止且读取方全部离开，不会再有交付领取，x:xs 的历史随之放掉；
         -- 会话仍留在登记表中供 lifelong 之后的有限读取，读到的是上面保留的最新一条。
         history
-          | isJust (stateStopped state) && null readers = Nothing
+          | stateCollectsHistory state && isJust (stateStopped state) && null readers = Nothing
           | otherwise = stateHistory state
     kept `seq` cleared `seq` entries `seq` emptied `seq` resources `seq` history `seq` pure
       (state { stateBase = kept, stateEntries = entries, stateCompanions = emptied
@@ -440,18 +445,20 @@ takeDeliveryOnWith signal session (Reading position) retention interrupted selec
   delivered <- readIORef position
   outcome <- awaitStateOnWith signal session retention interrupted
     (\state -> let offset = delivered - stateBase state
+                   -- behavior 只交付最新一条：游标跳过其间已被覆盖的发布。
+                   chosen = if stateLatestOnly state then Seq.length (stateEntries state) - 1 else offset
       in if Seq.length (stateEntries state) > offset
-        then Just (deliveredView state offset, Seq.index (stateCompanions state) offset)
+        then Just ((deliveredView state chosen, Seq.index (stateCompanions state) chosen), stateBase state + chosen + 1)
         else Nothing)
-    (\(view, companions) -> latestBindings view ++ map snd companions)
-    selected
+    (\((view, companions), _) -> latestBindings view ++ map snd companions)
+    (selected . fst)
   case outcome of
     -- 视图与伴随发布先求值，不让这次交付挂住整份会话状态；游标前进后放掉不再需要的部分。
-    Right (view, companions) -> view `seq` companions `seq` do
-      atomicModifyIORef' position (\current -> (current + 1, ()))
+    Right ((view, companions), next) -> view `seq` companions `seq` do
+      atomicModifyIORef' position (\current -> (max next (current + 1), ()))
       modifySession session (\state -> pure (state, ()))
     Left _ -> pure ()
-  pure outcome
+  pure (fst <$> outcome)
 
 -- 本次交付的视图（offset 相对 stateBase）：保留历史时带上它之前的同会话发布。
 deliveredView :: SessionState environment cause -> Int -> View environment cause

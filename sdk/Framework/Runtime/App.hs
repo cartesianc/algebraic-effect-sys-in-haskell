@@ -518,6 +518,9 @@ instance ContextStore env (App env cause) where
       , source `elem` map fst (sessionSinks environment)
       , reusesOutputAt (runtimeGraph environment) node source]
   replayedOutput method = AppRun (asks (lookup method . replays))
+  deliveredHere source = do
+    environment <- AppRun ask
+    rawIO (elem source . map fst <$> readIORef (views environment))
   -- 输出联立：以根调用身份解析同次输出并发布；诊断与收尾期间不注入。失败不吞掉，沿原链传播。
   injectOutput method raw (AppRun action) = AppRun $ do
     environment <- ask

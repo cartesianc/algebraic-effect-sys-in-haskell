@@ -75,6 +75,9 @@ data EffectProto method = EffectProto
   , effectContinuous :: Bool
   -- 持续资产有 handler 以 stream @T 读取 x:xs：会话从开头保留全部交付。由方法体形状决定，声明不写。
   , effectHistory :: Bool
+  -- behavior：Context 挂在 Stream 下而声明 stream = False。会话照常由 Stream 驱动（effectContinuous），
+  -- 相等的值只发布一次，读取方只取最新一条；由 requests 启动与订阅，不能被 streams 订阅。
+  , effectSampled :: Bool
   } deriving (Eq, Show, Read, Functor, Generic, NFData)
 
 -- 只有名字、类别与 Input 的 effect 原型：其余列表为空、Maybe 为 Nothing、非持续。
@@ -85,7 +88,7 @@ effectProto name kind input = EffectProto
   , effectMethods = [], effectDemands = [], effectProduces = Nothing
   , effectAnchor = Nothing, effectScopes = [], effectErrorScope = Nothing, effectInputChain = []
   , effectScopeParents = [], effectOpeningInputs = [], effectNearestScopes = [], effectResource = Nothing
-  , effectContextDependencies = [], effectContinuous = False, effectHistory = False
+  , effectContextDependencies = [], effectContinuous = False, effectHistory = False, effectSampled = False
   }
 
 data WorkflowTree
@@ -123,7 +126,9 @@ data SessionProto = SessionProto
 -- Receive：直接 input 是 Stream，记它的注册名；两步挂载依次为 Stream 单步与 parser。
 -- Derive：Input 链上有 streams demand，记驱动它的持续资产；上游每交付一条，一步挂载（parser 及其 Input 链）执行一次。
 -- ReuseOutput：原子句柄已由这些 AST 入口执行；parser 沿用本次输出，只登记交付会话，不另建执行挂载。
-data BootPlan = Receive String | Derive String | ReuseOutput [NodeId]
+-- Listen：event。普通资产没有独立生产；会话建立后，它在本次运行中的每次发布（requests、输出联立等）
+-- 都追加一条交付，不回放此前的发布。
+data BootPlan = Receive String | Derive String | ReuseOutput [NodeId] | Listen
   deriving (Eq, Show, Read, Generic, NFData)
 
 data ChainRole = NodeChain | SelectorChain | SessionChain

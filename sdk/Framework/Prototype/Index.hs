@@ -8,7 +8,7 @@ module Framework.Prototype.Index
   , DriveAt(..), UnitAt(..), SourceAt(..), ReaderAt(..), LocalSlot(..), IndexedOpening(..), SessionAt(..)
   , slotOf, coordAt, rootCoord
   , chainAt, driveAt, unitAt, rootNodesOf, sessionRouteOf, sessionUpstreamOf, sessionAt
-  , sourcePlanAt, sourcesAt, hooksLabel, openingsAt, historyOf, requestEntryOf
+  , sourcePlanAt, sourcesAt, hooksLabel, openingsAt, historyOf, sampledOf, listensAt, requestEntryOf
   , parameterScopesOf, scopeClosureOf, isResourceSlot, outputSiteAt
   ) where
 
@@ -83,6 +83,7 @@ data PrototypeIndex method = PrototypeIndex
   , indexHooks :: Map.Map Coord [String]
   , indexOpenings :: Map.Map Coord [IndexedOpening]
   , indexHistories :: IntSet.IntSet
+  , indexSampled :: IntSet.IntSet
   , indexRequests :: Map.Map Slot method
   , indexParameterScopes :: Map.Map Slot [Slot]
   -- Scoped 编号 → 它与 ScopeTree 上全部祖先；回收按它展开，运行中不再沿关系表求闭包。
@@ -118,6 +119,8 @@ indexPrototype prototype = PrototypeIndex
       [(at (openingNode opening), [indexedOpening opening]) | opening <- protoScopeOpenings prototype]
   , indexHistories = IntSet.fromList
       [slotNumber (named (effectName effect)) | effect <- protoEffects prototype, effectHistory effect]
+  , indexSampled = IntSet.fromList
+      [slotNumber (named (effectName effect)) | effect <- protoEffects prototype, effectSampled effect]
   , indexRequests = Map.fromListWith (\_ first -> first)
       [(named name, method) | (name, method) <- drivingRequests driving]
   , indexParameterScopes = Map.fromListWith (flip (++))
@@ -256,6 +259,14 @@ openingsAt index node = Map.findWithDefault [] node (indexOpenings index)
 -- 持续资产是否从开头保留全部交付（stream @T 读取 x:xs）。
 historyOf :: PrototypeIndex method -> Slot -> Bool
 historyOf index context = IntSet.member (slotNumber context) (indexHistories index)
+
+-- behavior：相等的值只发布一次，读取方只领取最新一条。
+sampledOf :: PrototypeIndex method -> Slot -> Bool
+sampledOf index context = IntSet.member (slotNumber context) (indexSampled index)
+
+-- event：该边界的会话只接收这份普通资产此后的发布，没有生产任务。
+listensAt :: PrototypeIndex method -> Maybe Coord -> Slot -> Bool
+listensAt index boundary context = maybe False ((== Listen) . sessionPlan . sessionAtProto) (sessionAt index boundary context)
 
 -- RequestBoot 的生产入口。
 requestEntryOf :: PrototypeIndex method -> Slot -> Maybe method

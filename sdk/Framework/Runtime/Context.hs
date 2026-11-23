@@ -4,6 +4,7 @@
 module Framework.Runtime.Context
   ( ContextFault(..), readContext, callContext, runOnce
   , chooseCase, atomicHandle, atomicScope, readStreamContext, readStreamHistory, requestStreamContext
+  , unlessDelivered
   ) where
 
 import Framework.Runtime.Protocol
@@ -180,6 +181,13 @@ readStreamHistory contextName wrap select = do
           ++ " or the stream ended without publishing)")) pure delivered
   recordContextInput contextName
   pure (foldr (:>) Done values)
+
+-- event 订阅方的 requests：所在 lifelong 单元已为本次调用固定了这些资产的一条交付时，不再执行
+-- 生产链（锚点的输出会再次发布并唤起自己）；挂在 lifelong 之外、没有固定交付时照常生产。
+unlessDelivered :: ContextStore environment m => [Slot] -> m value -> m ()
+unlessDelivered sources produce = do
+  delivered <- and <$> mapM deliveredHere sources
+  if delivered then pure () else () <$ produce
 
 -- Excu 的生成入口：每次调用都执行。
 atomicHandle
