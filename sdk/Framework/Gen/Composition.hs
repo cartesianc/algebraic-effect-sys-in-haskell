@@ -494,9 +494,7 @@ composeMethods :: Bool -> [EffectProto String] -> [Binding] -> [(String, [String
                -> Either String [(String, MethodShape String)]
 composeMethods checkReads effects bindings required handlerShapes = do
   composed <- mapM compose bindings
-  when checkReads $ do
-    mapM_ checkCloseResourceRead composed
-    mapM_ (checkUsed composed) required
+  when checkReads $ mapM_ (checkUsed composed) required
   pure [(bindingMethod binding, shape) | (binding, shape, _) <- composed]
   where
     compose binding = do
@@ -542,24 +540,6 @@ composeMethods checkReads effects bindings required handlerShapes = do
       | effect <- effects, effectName effect == bindingEffect binding, demand <- effectDemands effect ]
     describe [] = "no readable asset"
     describe routes = intercalate ", " [representation' ++ " (" ++ contractType ++ ")" | (representation', (contractType, _)) <- routes]
-    -- close 读取检查 v1（2026-11-17）：有资源的 close 自身须读取资源以定位实例。
-    -- open 的 requests 已生产并认领资源，方法体可以为空；不能套用 close 的读取前提。
-    -- 只看本方法按当前绑定路由出的读取；另一方法或 gen 装配的 requests 不代替它。
-    -- 不枚举分支：这里只证明整个方法完全没有该读取，不能证明每条路径或 IO 前已读取。
-    -- checked 为 False 的首次契约生成跳过；正常生成在图缓存查询前每次检查。
-    checkCloseResourceRead (binding, _, used)
-      | bindingOperation binding == CloseResource = mapM_ check
-          [(effectName producer, contractType, [contractType])
-            | scope <- effects, effectName scope == bindingEffect binding
-            , producer <- effects, effectResource scope == Just (effectName producer)
-            , Just contractType <- [effectProduces producer]]
-      | otherwise = pure ()
-      where
-        check (source, contractType, readable) = unless (any (`elem` used) readable) $
-          Left ("Scoped " ++ bindingEffect binding ++ " close handler " ++ bindingHandler binding
-            ++ " does not read its resource " ++ contractType ++ " (Context " ++ source ++ ")"
-            ++ "; declare requires " ++ show contractType ++ " and read its representation with require in this method"
-            ++ "; reading it in another lifecycle method does not satisfy this contract")
     checkUsed composed (effect, contracts) = do
       let used = nub (concat [read' | (binding, _, read') <- composed, bindingEffect binding == effect])
           missing = filter (`notElem` used) contracts

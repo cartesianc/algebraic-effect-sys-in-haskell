@@ -137,6 +137,18 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 - lifelong 的历史在 `Drive` 结束时丢弃，最新值保留。
 - parser 失败沿发布者调用栈传播，结束整次运行。
 
+<a id="compiler-runtime-review"></a>
+**编译器与运行时审查的修正（2026-11-24）。** 审查对照同一业务源码的 Handler、Prototype、Program 与实际执行，指出 gen 的认识与实际执行之间的三处缝隙。
+
+- **实现身份**：gen 曾按方法名取第一个同名实现，未挂载的具体实例（例如 `CountTextHandler IO`）写在泛型 Handler 之前时，gen 分析的不是 GHC 执行的那份，`TextLine` 因此漏掉历史保留。现在每个 handler 类只接受一份 `instance XxxLayer m => XxxHandler m`，具体类型上的实例在生成前按源码位置拒绝。
+- **方法图的引用类别**：`Call` 带 `CallKind`（`Invoke`、`Deliver`、`ReadOutput`、`ReadCurrent`、`ReadHistory`），保留 gen 已经区分过的调用方向与读取方式；`Prototype.Query.callbackEdges` 列出发布后的回调及触发方式；`--structure` 标出两者。见[图与生成](EFFECT_GRAPH.md)。
+- **运行时的静态查找**：回调表、比较器、作用范围的单元与成员、lifelong 的会话资产与静态运行在运行开始时按键排一次，链定义在建索引时确定；发布、交付、激活与静态请求不再遍历整张表。
+- **close 的实例定位**：close 由运行时在实例不可达时调用，现在对所有 scope 都在执行方法体之前定位实例并取得关闭锁；close 不必读取资源，gen 不再检查这项读取，只在部分分支读取或读取前先做 IO 也不会在运行期报 `ScopeContextMissing`。
+
+验证（仓库外探针与 `scripts/check.ps1`）：未挂载的 `CountTextHandler IO` 写在泛型 Handler 之前或之后都在生成前报出位置；LinesDemo 的 Prototype 标出 `GetTextLineGen → NextLineFeedGen (deliver)`、`RunPrintLineGen → StreamTextLineGen (current)`、`RunTextCounterGen → StreamTextLineGen (history)`；FileDemo 的 close 不读资源、读取前先做 IO 都返回 `Succ` 且关闭次数与原示例相同；本页 require 等待与静态读取的全部探针结果不变。
+
+未改：Scope 故障路径的排序（只在失败时执行，且同层顺序有约定）与可达性查询（静态部分已来自 `PrototypeIndex`，其余依赖现场快照）；启动校验保留，用于发现过期的生成产物。
+
 <a id="code-shape"></a>
 ## LSP 从哪份代码开始
 

@@ -535,7 +535,7 @@ newtype LinkedPageSummary = LinkedPageSummary PageSummary
 **每个 refined asset 固定一个表示 ADT 和唯一 Context 来源。** 这一点对普通和持续资产相同，也检查当前没有消费者的声明。requests、requires、streams 是同一资产的访问方式；同一消费者可以为同一资产声明多种合法方式，也可以依赖多个不同资产。访问方式和不同运行时 publication 不创建新的静态来源身份。
 
 ```haskell
--- 同一个资源资产：开启前驱动生产，open／close 读取
+-- 同一个资源资产：开启前驱动生产；open／close 需要资源内容时读取
 -- Effects.hs 节选
 demands = [requests "OpenedFile", requires "OpenedFile"]
 
@@ -831,9 +831,9 @@ Scoped 的 `requests` 资源 demand 指向资源 Context；资源 parser 声明�
 
 共享实例的并发 open 在等待 opening 前先登记使用。有效实例复用时跳过资源获取及剩余 open 方法体；不同参数生产的实例独立。开启失败／中断后实例失效，不自动恢复或重开；普通下游失败不自动使 scope 失效。资源 producer 返回到发布采用 masked 交接，open 失败／中断时已发布的资源仍纳入清理，未发布的部分获取由原子 IO 负责。
 
-有资源 Context 的 Scoped，生成入口在 open 方法体前按 requests 生产并认领资源，open 方法体无需为认领再读一次。close 须自行读取该资源以定位实例；gen 按 close 的方法绑定检查，open 或其他方法的读取不能代替它。检查范围与运行时故障的判定归属见[生命周期读取与协议边界](EFFECT_GRAPH.md#lifecycle-reads)。
+有资源 Context 的 Scoped，生成入口在 open 方法体前按 requests 生产并认领资源，open 方法体无需为认领再读一次。close 由运行时在实例不可达时调用，运行时按本实例冻结的资源绑定定位实例，close 方法体同样不必读取资源；需要资源内容（例如路径）时再 `require`。判定归属见[生命周期读取与协议边界](EFFECT_GRAPH.md#lifecycle-reads)。
 
-close 使用冻结的本实例绑定。其 handler 先读取资源，SDK 据 owner 定位实例并取得生命周期锁，再执行释放 IO；不会预生产 Context、改选其他实例或把旧绑定转给新实例。关闭预约期间不接纳新的使用者，重复成功 close 跳过。关闭只应发生在不可达的实例上；`ScopeInUse` 保留为 SDK 内部不变量故障，不能作为业务关闭控制流。
+close 使用冻结的本实例绑定。运行时在执行 close 方法体之前按资源绑定的 owner 定位实例并取得生命周期锁，方法体里的释放 IO 因此总在锁内，无论它在读取资源之前还是之后；方法体读取资源时得到同一个实例。不会预生产 Context、改选其他实例或把旧绑定转给新实例。关闭预约期间不接纳新的使用者，重复成功 close 跳过。关闭只应发生在不可达的实例上；`ScopeInUse` 保留为 SDK 内部不变量故障，不能作为业务关闭控制流。
 
 #### 细化契约与节点身份
 

@@ -119,13 +119,11 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 资源不通过共享最新值查找，仍要求本链开启其所属 Scoped；旧资源 Binding 保持原 owner，不会自动换实例。诊断、cleanup 与 close 不读新业务发布。持续资产的交付与历史遵循 [Stream 第 7 节](STREAM_LIFELONG.md#sessions)。
 
 <a id="lifecycle-reads"></a>
-### close 方法的资源读取
+### open／close 方法的资源读取
 
-`composeMethods` 按每个绑定检查有资源 Context 的 Scoped：已声明的 close 方法体必须包含该资源的读取。检查使用 `resolve` 已完成的表示类型到细化资产路由；另一生命周期方法的读取、入口自动装配的 requests、其他资产的读取都不能代替本方法的读取。同一个 handler 绑定到多个 effect 时，分别按各自资源检查。诊断包含 Scoped、close 角色、handler、资源资产及 Context 来源。
+open 与 close 都由运行时定位实例，方法体不必读取资源。open 的资源由生成入口按 requests 生产并认领，例如 FileDemo 的 `openSession = rawoutput []`。close 由运行时在实例不可达时调用：`runClose` 在执行方法体之前，按本实例冻结的资源绑定的 owner 定位实例、预约关闭并取得生命周期锁（2026-11-24 起，有资源 Context 与无资源 Context 的 scope 相同）。方法体需要资源内容时 `require`，读到的是同一个实例（`beginClose` 对同一实例幂等）；只在部分分支读取、读取前先做 IO 都不影响定位。
 
-这落实的是 close 的实例定位契约。open 的资源已由生成入口按 requests 生产并认领，open 方法体可以不读取资源，例如 FileDemo 的 `openSession = rawoutput []`；close 则依赖读取来定位实例和取得关闭锁。无资源 Context 的 scope、未声明的 close 不需要这项读取。首次缺少 Handlers 的契约生成暂不检查；已有方法体时每次在图缓存查询之前检查。
-
-检查只拒绝整个方法都没有该资源读取的情况，不枚举运行条件，不把“出现过 require”当成“所有成功路径都读过”或“读取先于 IO”的证明。Shape 当前擦除普通 IO、业务条件和没有读取的退出表达式；条件路径绕过读取、读取前执行 IO、实际归属缺失或错配继续由 runtime 防守。不为了消除运行时故障而拒绝整个条件分支或引入新的方法体位置标记。
+因此 gen 不再检查 close 是否读取资源；Scoped 声明的资源 `requires` 记为运行时已经使用的读取（`Booter.controlReads`），方法体不读也不算“声明了却从未读取”。冻结快照里缺资源绑定或 owner 时，运行时报 `ScopeContextMissing`，这属于 SDK 交接漏洞，不是业务写法问题。
 
 <a id="protocol-faults"></a>
 ### 协议故障的判定归属
@@ -140,7 +138,7 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 | `ScopeIsClosed` | 资源业务读取要求本链开启所属 scope | 已捕获 Binding 的具体 owner 已关闭；实际存续与实例身份只能运行时检查，资源逃逸的扩展保证仍待设计 |
 | `ScopeReentry` | Input／方法图的递归和 scope 依赖环拒绝；handler 直接调用其他 handler 被拒绝 | 同一实例处于 opening／closing 等不允许重入的状态；保留生命周期锁内的状态防线 |
 | `ScopeInterrupted` | 无法从结构预知取消或原生 IO 异常 | 开启／关闭中断后记录具体实例失效及原因 |
-| `ScopeContextMissing` | [逐方法资源读取](#lifecycle-reads)拒绝有资源的 close 完全未读自己的资源 | 实际路径未读取就做关闭 IO、冻结快照缺资源／owner；open 返回后资源绑定未保存也须防守。合法交接丢失属于 SDK 漏洞 |
+| `ScopeContextMissing` | 无（open／close 都由运行时定位实例，见[生命周期读取](#lifecycle-reads)） | 冻结快照缺资源／owner；open 返回后资源绑定未保存也须防守。合法交接丢失属于 SDK 漏洞 |
 | `ScopeContextMismatch` | 资源读取的本链所属 scope 与路由合法性 | 同一 Binding 被另一 scope 或不同参数实例认领、close 读到错误 owner；实际生产身份与认领不能由类型名代替 |
 | `ScopeInputsMissing` | 检查声明来源、读取路由与声明的读取依据；原型保存所需开启参数 | 在需要选实例／执行资源 IO 时参数尚未观察齐备，或 Binding 没有生产身份；现有 Shape 不保留完整 IO 位置，开启计划本身不是齐备证明 |
 | `ScopeInputAfterOpen` | 注册驱动与读取顺序进入方法结构，但本轮没有据此新增拒绝 | 已选实例后观察到另一份参数生产；当前抽象未表达实例选定时点与每次请求的动态身份，重复 require 同一绑定不能误报 |

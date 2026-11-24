@@ -812,12 +812,13 @@ runClose name wrap (AppRun action) = AppRun $ do
     handler <- getScope (scopes environment) name
     attempt <- Closing handler wrap <$> newIORef Nothing <*> newUnique <*> newIORef Nothing
     let inside = environment { closings = attempt : closings environment }
+        -- close 由运行时在实例不可达时调用：先按本实例冻结的资源绑定定位实例并取得生命周期锁，
+        -- 再执行方法体。方法体不必读取资源；读取时得到同一个实例（beginClose 对同一实例幂等）。
         execute = do
-          when (scopeContextSource handler == Nothing) $ do
-            resolved <- liftIO (resolveBinding inside (resourceSource handler))
-            case resolved of
-              Right (Just value) -> liftIO (beginClose inside attempt value) >>= either throwError pure
-              _ -> throwError (missingClose attempt)
+          resolved <- liftIO (resolveBinding inside (resourceSource handler))
+          case resolved of
+            Right (Just value) -> liftIO (beginClose inside attempt value) >>= either throwError pure
+            _ -> throwError (missingClose attempt)
           value <- runReaderT action inside
           active <- liftIO (readIORef (closeHolding attempt))
           case active of Nothing -> throwError (missingClose attempt); Just _ -> pure value

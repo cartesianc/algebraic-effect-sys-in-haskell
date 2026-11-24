@@ -392,9 +392,13 @@ sessionEntries hooksAtMount effects assembly = nubBy sameEntry
 
 -- workflow 控制流已经使用的读取：lifelong 订阅的 streams，以及 alternative 判定候选所依据的资产。
 -- 输入链上的声明参与选择／交付，因此这些 demand 不要求 handler 方法体再读一次。
+-- Scoped 的资源 Context 由运行时用来认领开启的实例、定位要关闭的实例，open／close 方法体都不必读。
 controlReads :: [Prototype.EffectProto method] -> Prototype.WorkflowTree -> [(String, String)]
-controlReads effects tree = nub (walk tree ++ driven)
+controlReads effects tree = nub (walk tree ++ driven ++ resources)
   where
+    resources = [ (Prototype.effectName scope, contractType) | scope <- effects
+      , Just source <- [Prototype.effectResource scope], producer <- effects, Prototype.effectName producer == source
+      , Just contractType <- [Prototype.effectProduces producer] ]
     -- 持续资产生产链上的 streams 由上游交付驱动这条链，同样已被控制流使用。
     driven = [ (Prototype.effectName effect, demandContract demand) | producer <- effects, Prototype.effectContinuous producer
       , effect <- effects, Prototype.effectName effect `elem` Prototype.effectInputChain producer
