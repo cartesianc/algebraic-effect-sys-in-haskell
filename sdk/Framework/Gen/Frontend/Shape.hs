@@ -4,8 +4,10 @@ module Framework.Gen.Frontend.Shape (shapeHandlers, analyzeModule) where
 
 import Control.Monad (unless, when)
 import Data.Data (Data, cast, gmapQ)
-import Data.List (nub)
+import Data.Char (isLower)
+import Data.List (nub, (\\))
 import Data.Maybe (isJust)
+import GHC.Data.FastString (unpackFS)
 import Framework.Gen.Frontend.Source (HandlerSource(..), NameUses, nameAtUse)
 import Framework.Prototype.Graph (MethodShape(..))
 import GHC (GhcPs)
@@ -13,7 +15,7 @@ import GHC.Hs
 import GHC.Types.Name.Occurrence (occNameString)
 import GHC.Types.Name (nameModule_maybe, nameOccName)
 import GHC.Types.Name.Reader (RdrName(..), rdrNameOcc)
-import GHC.Types.SrcLoc (GenLocated(..), unLoc)
+import GHC.Types.SrcLoc (GenLocated(..), SrcSpan(..), srcSpanFile, srcSpanStartCol, srcSpanStartLine, unLoc)
 import GHC.Unit.Module (moduleName, moduleNameString)
 import GHC.Utils.Outputable (ppr, showSDocUnsafe)
 
@@ -37,27 +39,52 @@ shapeHandlers namespace handlers source = do
 
 -- 每个 handler 方法体得到一份结构：require @T 记为 @T，stream @T 记为 ~T，rawinput 记为 %raw。
 -- handler 不能调用其他 handler：组合只经注册的 Input、demands 与 AST。
+-- 实现身份：handler 只写作 instance XxxLayer m => XxxHandler m，每个 handler 类恰好一份。生成入口在
+-- gen 的 wrapper 类型上调用方法，GHC 选中的只能是这份泛型实现；具体类型上的实例（例如 XxxHandler IO）
+-- 不会被入口选中，却会让 gen 分析到另一份方法体，因此在生成前拒绝，并给出源码位置。
 analyzeModule
   :: String -> [(String, String)] -> NameUses -> Bool -> HsModule GhcPs
   -> Either String [(String, MethodShape String)]
 analyzeModule namespace handlers resolved implicitPrelude parsed = do
   unless (length (nub (map snd handlers)) == length handlers) $
     Left "Structure analysis needs distinct handler names"
-  concat <$> mapM instanceShapes (hsmodDecls parsed)
+  located <- concat <$> mapM instanceShapes (hsmodDecls parsed)
+  let owners = map fst located
+  case owners \\ nub owners of
+    owner : _ -> Left ("Handler class " ++ owner ++ " has more than one instance ("
+      ++ unwords [at | (other, (at, _)) <- located, other == owner]
+      ++ "); write exactly one `instance " ++ layerOf owner ++ " m => " ++ owner ++ " m`")
+    [] -> pure (concatMap (snd . snd) located)
   where
     environment = Environment (namespace ++ ".Generated.Effects") handlers
       (map unLoc (hsmodImports parsed)) resolved implicitPrelude Nothing
-    instanceShapes (L _ (InstD _ (ClsInstD _ declaration))) =
-      case classIdentifier (sig_body (unLoc (cid_poly_ty declaration))) of
+    instanceShapes declared@(L _ (InstD _ (ClsInstD _ declaration))) =
+      case classIdentifier headType of
         Just identifier
           | let owner = identifierName identifier
           , owner `elem` map fst handlers ->
-              if imported environment [contractsModule environment] Nothing identifier
-                then concat <$> mapM (methodShape owner) (cid_binds declaration)
-                else Left ("Cannot resolve handler class " ++ owner
+              if not (imported environment [contractsModule environment] Nothing identifier)
+                then Left ("Cannot resolve handler class " ++ owner
                   ++ "; import " ++ contractsModule environment ++ " directly for structure analysis")
+              else case classArguments headType of
+                [argument] | typeVariable argument -> do
+                  shapes <- concat <$> mapM (methodShape owner) (cid_binds declaration)
+                  pure [(owner, (location declared, shapes))]
+                arguments -> Left (location declared ++ ": instance " ++ owner ++ " "
+                  ++ unwords (map (showSDocUnsafe . ppr) arguments)
+                  ++ " is not a handler implementation; the generated entries never select it, but structure analysis"
+                  ++ " would read its body. Write the handler once as `instance " ++ layerOf owner ++ " m => "
+                  ++ owner ++ " m`")
         _ -> pure []
+      where headType = sig_body (unLoc (cid_poly_ty declaration))
     instanceShapes _ = pure []
+    layerOf owner = take (length owner - length "Handler") owner ++ "Layer"
+    location declared = case getLocA declared of
+      RealSrcSpan span' _ -> map slash (unpackFS (srcSpanFile span'))
+        ++ ":" ++ show (srcSpanStartLine span') ++ ":" ++ show (srcSpanStartCol span')
+      _ -> "Handlers.hs"
+    slash '\\' = '/'
+    slash character = character
     methodShape owner (L _ FunBind {fun_id = identifier, fun_matches = matches})
       | (owner, method) `elem` handlers = do
           result <- prefixError method (shapeMatches environment {ownerClass = Just owner} matches)
@@ -67,6 +94,23 @@ analyzeModule namespace handlers resolved implicitPrelude parsed = do
 
 prefixError :: String -> Either String value -> Either String value
 prefixError location = either (Left . (("Cannot analyze " ++ location ++ ": ") ++)) Right
+
+-- 实例头的类型实参，按书写顺序。
+classArguments :: LHsType GhcPs -> [LHsType GhcPs]
+classArguments located = case unLoc located of
+  HsQualTy {hst_body = body} -> classArguments body
+  HsForAllTy {hst_body = body} -> classArguments body
+  HsParTy _ body -> classArguments body
+  HsAppTy _ function argument -> classArguments function ++ [argument]
+  _ -> []
+
+typeVariable :: LHsType GhcPs -> Bool
+typeVariable located = case unLoc located of
+  HsParTy _ body -> typeVariable body
+  HsTyVar _ _ identifier -> case occNameString (rdrNameOcc (unLoc identifier)) of
+    first : _ -> isLower first || first == '_'
+    [] -> False
+  _ -> False
 
 classIdentifier :: LHsType GhcPs -> Maybe RdrName
 classIdentifier located = case unLoc located of

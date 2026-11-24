@@ -93,7 +93,7 @@ instance WriteFirstLineLayer m => WriteFirstLineHandler m where
     rawoutput []
 ```
 
-`XxxLayer m => XxxHandler m` 由 handler 名生成，Layer 是方法体可用能力的边界：按表示类型的读取 `Reads T`、挂接 parser 与 Pure 的 `rawinput`、本 handler 的 `raise`、Stream handler 的 `streamEnd`、以 `streams` 订阅的 Excu 的 `endStream` 和 `MonadIO`。方法体里没有上游、scope 或资产名：`FileSession` 由 gen 在方法体之前开启；`require @FileHandle` 读的是 `OpenedFile`，这由绑定它的 effect 的 demands 决定。同一个 handler 可以注册到多个 effect，各自读到不同的资产。IO 和解析写在 handler 方法体内。
+`XxxLayer m => XxxHandler m` 由 handler 名生成，Layer 是方法体可用能力的边界：按表示类型的读取 `Reads T`、挂接 parser 与 Pure 的 `rawinput`、本 handler 的 `raise`、Stream handler 的 `streamEnd`、以 `streams` 订阅的 Excu 的 `endStream` 和 `MonadIO`。方法体里没有上游、scope 或资产名：`FileSession` 由 gen 在方法体之前开启；`require @FileHandle` 读的是 `OpenedFile`，这由绑定它的 effect 的 demands 决定。同一个 handler 可以注册到多个 effect，各自读到不同的资产。IO 和解析写在 handler 方法体内。每个 handler 类恰好写一份 `instance XxxLayer m => XxxHandler m`：生成入口在 gen 的 wrapper 类型上调用方法，GHC 只会选中这份泛型实现。具体类型上的实例（例如 `instance CountTextHandler IO`）不会被入口选中，却会让结构分析读到另一份方法体，进而改变历史保留等生成结果，所以 gen 拒绝它并给出源码位置。
 
 [完整 Handlers.hs](../demo/FileDemo/Handlers.hs) · [handler、读取与错误写法](#handlers)
 
