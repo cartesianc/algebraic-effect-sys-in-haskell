@@ -499,11 +499,14 @@ instance ContextStore env (App env cause) where
     environment <- ask
     pure (isNothing (originalFailure environment) && not (cleaningScopes environment))
   attemptOutput (AppRun action) = AppRun $ local (\inside -> inside { caller = Nothing, errorHandlers = [] }) action
-  awaitContext sources = do
+  contextTicket = do
+    environment <- AppRun ask
+    rawIO (publicationTicket (runtimeGraph environment))
+  awaitContext sources ticket = do
     environment <- AppRun ask
     let resource source = any ((== source) . resourceSource) (scopes environment)
-    if not (deliveryAllowed environment) || any resource sources then pure Nothing
-      else fmap rawIO <$> rawIO (awaitPublication (runtimeGraph environment) (place environment) sources)
+    if not (deliveryAllowed environment) || any resource sources then pure False
+      else rawIO (awaitPublication (runtimeGraph environment) (place environment) sources ticket)
   -- 值与 x:xs 读取同一个视图，只差投影：valueOf 取最后一条，historyOf 取整段。
   readContextValue source select = readContextWith False source (valueOf source select)
   requestContextValue source select = readContextWith True source (valueOf source select)
@@ -666,7 +669,7 @@ readContextWith starting source project = do
       scope <- if starting
         then rawIO (runStatic graph (place environment) source) >>= either throwError (pure . Just)
         else pure (placeScope (place environment))
-      found <- rawIO (readHistory graph scope source)
+      found <- rawIO (readHistory graph starting scope source)
       case found of
         Nothing -> pure Nothing
         Just view -> do

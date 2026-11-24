@@ -98,8 +98,9 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 <a id="closure-await"></a>
 **require 的等待与两项修正（2026-11-24 修订）。** 合并前评估指出三处问题，设计者确认 `require` 的契约是“取值 · 未就绪时等待”。
 
-- **等待**：gen 用 `Booter.publishedWithin` 为 `parallel` 的每个分支计算它执行期间可能发布的资产（节点与选择读取的执行、`requests` 闭包、输出联立、lifelong 的持续资产，再沿回调表取传递闭包），写成 `Concurrent [(slots, closure)]`。运行时在分支开始前登记、退出时撤销，每次执行带着自己所在的分支（`Place`）。`require`、`stream @T` 与 alternative 全部拒绝后的读取缺值时，先取变化信号再查值：仍有别的分支可能发布就挂起，发布或分支退出后重查；没有就报缺值。读取方自己所在的分支不计入，`chain [read, produce]` 不会自等。诊断、收尾、close 与资源读取不等待。回调继承发布方的分支。
-- **历史按作用范围分开**：历史按（资产，作用范围）保存，每个 lifelong 与每个静态运行各一份；来源开始与 `Drive` 结束时放掉自己的一份。
+- **等待**：gen 用 `Booter.publishedWithin` 为 `parallel` 的每个分支计算它执行期间可能发布的资产（节点与选择读取的执行、`requests` 闭包、输出联立、lifelong 的持续资产及其来源与 parser 入口执行时可能发布的资产，例如 Stream 来源 `requests` 的普通资产；再沿回调表取传递闭包），写成 `Concurrent [(slots, closure)]`。运行时在分支开始前登记、退出时撤销，每次执行带着自己所在的分支（`Place`）。`require`、`stream @T` 与 alternative 全部拒绝后的读取缺值时，先取发布编号再查值：编号已变就重查；仍有别的分支可能发布就挂起，发布或分支退出后重查；没有就报缺值。读取方自己所在的分支不计入，`chain [read, produce]` 不会自等。诊断、收尾、close 与资源读取不等待。回调继承发布方的分支。
+- **互相等待按缺值处理**：运行时记录执行中的线程数（根线程与 parallel 的各分支，不含等待子分支的父线程）和其中正在等待 require 的线程数，两者用 STM 维护。所有执行中的线程都在等待时，没有线程还能发布，最后一个开始等待的读取方报 `ContextNotInitialized`；它所在的分支退出后，其余等待者重查，没有可能的发布者时同样报缺值。两个分支都先读后产同一份资产时，因此以 `ContextNotInitialized` 结束，而不是被 GHC 报 `BlockedIndefinitelyOnMVar`。
+- **作用范围的读取分开**：每个 lifelong 与每个静态运行各自保存持续资产的发布：`stream @T` 读取的保存整段，其余只保存本作用范围的最后一条。来源开始与 `Drive` 结束时放掉自己的一份。静态运行的读取只读本作用范围：一条都没有发布就是缺值，不拿 lifelong 或别的运行的值顶替。普通 `requires` 仍读本次捕获或运行级最新值。
 - **behavior 的比较按作用范围分开**：上一次回调的值按（资产，作用范围）保存，每次来源运行重新开始。回调只回应自己作用范围里的发布。
 
 验证（仓库外探针）：
@@ -110,13 +111,20 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 | `chain [Publisher, Reader]` | 直接读到值，`Succ` |
 | `chain [Reader, Publisher]` | 没有别的分支可能发布，立即 `Failed`（`ContextNotInitialized`），不挂起 |
 | 同一来源 4 行：静态读取 → lifelong 累计 → 再静态读取 | `4`、`1/2/3/4`、`4` |
+| `parallel [chain [Reader], lifelong [Sink]]`，Sink 的 Stream 来源 `requests "Value"`，Provider 在 `getLine` 等 1.5 秒后的输入 | 生成的分支槽含 `Provider`；`reader entered`、`sink: tick`、`resumed: ready`，`Succ` |
+| `chain [lifelong [Sink], chain [Reader]]` | `sink: tick`、`reader entered`、`resumed: ready`，`Succ` |
+| `ShowA → lifelong [ShowB] → ShowA`，只读末值，静态运行产出 10，lifelong 产出 20 | `A 10`、`B 20`、`A 10` |
+| lifelong 发布一行后，`Report` 以 `requests` + `streams` 启动的静态来源直接 `streamEnd` | `Failed`（`ContextNotInitialized`） |
+| `parallel [chain [ReaderOne, MakerOne], chain [ReaderTwo, MakerTwo]]`，两侧都先读后产 | 连续 5 次都 `Failed`（`ContextNotInitialized`），不挂起 |
 | 两个先后的 lifelong 订阅同一 behavior 来源，各发布 `10, 10` | 各回调一次 |
 | event／behavior／静态历史探针 | 与上面的验证一致，触发次数不变 |
 
 **未覆盖与已知边界。**
 
 - 各分支可能发布的资产按注册保守计算；多算只会让读取方等到该分支退出后再报缺值。
-- “查到缺值”与“开始等待”之间的发布由先取信号再查值保证，没有单独构造这个时序的探针。
+- “查到缺值”与“开始等待”之间的发布由先取编号再查值保证，没有单独构造这个时序的探针。
+- 互相等待只在所有执行中的线程都在等待时判定；还有线程在执行（哪怕不会发布这份资产）时，等待者继续等，直到该线程退出或所有线程都在等待。等待静态运行结束的请求方计为执行中，判定偏保守，不会误报。
+- gen 不分析分支内部读取与生产的先后；两侧都先读后产时按缺值失败，而不是推断出某种执行顺序。
 - 生产者失败时整次运行终止，等待者随之取消；分支被取消时同样唤醒并重查。
 - 回调环检查按注册保守计算，不区分两个回调是否同时有效，也不证明条件分支。
 - lifelong 外的静态运行与 lifelong 内的同一来源是两次独立运行。

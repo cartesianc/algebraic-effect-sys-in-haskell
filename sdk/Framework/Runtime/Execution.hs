@@ -15,7 +15,7 @@ import Framework.Runtime.Graph
   ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, runtimeRootFrame, runtimeScopes, newOrigin
   , resetOrigins, collectRuntimeScopes, finishRuntime, withRuntimeRetention
   , readHistory, dropHistory, installReactions, installStatic
-  , Place(..), rootPlace, openBranches, closeBranches )
+  , Place(..), rootPlace, openBranches, leaveBranch, rejoinBranches )
 import Framework.Runtime.Frame
 import Framework.Runtime.Delivery (SourceEnded(..), SubscriptionEnded(..))
 import Framework.Runtime.Binding (Binding(..), readBindingOwner)
@@ -206,9 +206,9 @@ execute machine flow run handoff = case flow of
     identities <- openBranches graph (map fst parts)
     let within identity = run { runPlace = (runPlace run) { placeBranches = identity : placeBranches (runPlace run) } }
     outcomes <- runParalleled
-      [ runExceptT (execute machine part (within identity) handoff) `finally` closeBranches graph [identity]
+      [ runExceptT (execute machine part (within identity) handoff) `finally` leaveBranch graph identity
       | (identity, (_, part)) <- zip identities parts ]
-      `finally` closeBranches graph identities
+      `finally` rejoinBranches graph identities
     pure (concat <$> sequence outcomes)
   Choose path selectorPath selector candidates -> managed path $ ExceptT $ withRuntimeRetention graph $ \retention -> do
     let location = coordAt index path
@@ -334,7 +334,7 @@ respond machine run source value captured response = case response of
     index = machineIndex machine
     graph = machineGraph machine
     delivery = do
-      view <- if effectContinuous (effectAt source) then readHistory graph (placeScope (runPlace run)) source else pure Nothing
+      view <- if effectContinuous (effectAt source) then readHistory graph False (placeScope (runPlace run)) source else pure Nothing
       pure (Handoff ((source, value) : captured) [(source, maybe (Seq.singleton value) id view) | effectContinuous (effectAt source)])
     effectAt selected = protoEffects (indexedPrototype index) !! slotNumber selected
 

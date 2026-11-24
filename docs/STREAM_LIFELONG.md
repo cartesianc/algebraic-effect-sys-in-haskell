@@ -414,7 +414,8 @@ Receive 在交出原始输入时，也把同一步来源执行已捕获的资源
 lifelong 外 `requests` 一份持续资产（history、behavior 采样）就是要一份静态历史：第一次 `requests` 在当前位置同步运行根来源（及派生链）直到 `streamEnd`；之后 `requires` 读最后一条，`streams` 的 `stream @T` 读整段。同一根来源在一次运行中只运行一次，并发的请求方等这一次运行结束；历史保留到运行结束。没有边读边执行。
 
 - 已经运行过的 lifelong 留下的最新值，按普通读取规则可读；静态运行与 lifelong 内的同一来源是两次独立运行。
-- 一条都没有发布就结束时，读取报 `ContextNotInitialized`。
+- 静态读取只读这次静态运行自己的发布：`requires` 读它的最后一条，即使之后有 lifelong 发布了新值；`stream @T` 读它的整段。
+- 一条都没有发布就结束时，读取报 `ContextNotInitialized`，不拿之前 lifelong 的值顶替。
 - 收尾、诊断与 close 期间不启动静态运行。
 
 <a id="execution-boundaries"></a>

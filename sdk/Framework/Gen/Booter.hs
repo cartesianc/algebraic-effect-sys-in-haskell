@@ -206,7 +206,8 @@ executionPublishes effects delivered selected = nub
       , producer <- effects, effectProduces producer == Just (demandContract demand)]
 
 -- 一棵 workflow 子树执行期间可能发布的资产（gen 写在 parallel 的每个分支上，供其他分支的 require 判断是否等待）：
--- 子树里的节点与选择读取执行一次可能发布的，子树里 lifelong 的持续资产，再沿回调表取传递闭包。
+-- 子树里的节点与选择读取执行一次可能发布的；子树里 lifelong 的持续资产，以及它的来源与 parser 入口执行时
+-- 可能发布的（例如 Stream 来源 requests 的普通资产）；再沿回调表取传递闭包。
 -- 按注册保守计算：不区分条件分支是否执行，多算只会让读取方多等到该分支退出。
 publishedWithin :: [EffectProto method] -> WorkflowTree -> WorkflowTree -> [String]
 publishedWithin effects tree subtree = grow [] direct
@@ -217,7 +218,9 @@ publishedWithin effects tree subtree = grow [] direct
                    ++ [asset | (_, judge) <- alternativeCases choice, effect <- effects, effectName effect == judge
                       , Just asset <- [effectProduces effect]]
                 | AlternativeAt _ choice _ <- allWorkflow subtree]
-      ++ [sessionAsset session | (_, described) <- workflowLifelongs subtree, session <- lifelongSessions described]
+      ++ concat [sessionAsset session : concat [executionPublishes effects Nothing (effectName producer)
+                   | producer <- effects, effectProduces producer == Just (sessionAsset session)]
+                | (_, described) <- workflowLifelongs subtree, session <- lifelongSessions described]
     grow seen [] = reverse seen
     grow seen (asset : rest)
       | asset `elem` seen = grow seen rest

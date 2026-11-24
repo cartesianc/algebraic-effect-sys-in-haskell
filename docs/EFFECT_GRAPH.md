@@ -73,7 +73,7 @@ Context 的生产记录在生产、发布及返回结束后通过 `finally` 删�
 
 `Binding.bindingOrigin :: Execution` 保存不变的执行出身，`bindingProduction :: Maybe ActivationId` 保存成功生产身份，`bindingFrame :: ExecutionFrame` 保存归属帧。生产失败不替换旧绑定，无资源 scope 的内部占位绑定没有生产身份。`bindingOwnership` 是该次生产独有的共享 `IORef`，保存可选 owner 与待认领使用者。当前捕获、权威表、scope 快照和 Handoff 保留同一绑定；认领不改变值、生产身份、帧、origin 或 publication，scope 复用也不重新发布。
 
-`Framework.Runtime.Frame` 保存有限运行根帧与 lifelong 每次回调的子帧。实际执行按节点记录待执行、执行中、完成和跳过。节点完成晚于诊断与受控结果消费；chain 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本次回调交付的资产的生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。发布通知由 RuntimeGraph 的变化信号承担：发布与 parallel 分支退出都会换新信号，等待的 require 醒来后重查。普通最新值在运行级共享，不另建按帧资产表。
+`Framework.Runtime.Frame` 保存有限运行根帧与 lifelong 每次回调的子帧。实际执行按节点记录待执行、执行中、完成和跳过。节点完成晚于诊断与受控结果消费；chain 短路、alternative 未选候选与取消撤销对应待用关系。ExecutionFrame 另保存本次回调交付的资产的生产身份，不复制值或资源表。父帧登记活动子帧；查询根实例的待用关系时同时检查子帧内的待用节点及其固定交付身份。帧结束清空进度、交付身份和子帧登记，并从父帧摘除，不累计历史帧或 activation。发布通知由 RuntimeGraph 的发布编号（STM）承担：发布与 parallel 分支退出都会加一，等待的 require 醒来后重查；所有执行中的线程都在等待时按缺值报错。普通最新值在运行级共享，不另建按帧资产表。
 
 Scope 实例保存实际参数生产身份与归属帧，Graph 把待用查询装入 ScopeHandler。查询与节点进度、关闭预约共用 scope 协调锁：实例既无实际使用者，也不再被帧内待用节点或子 scope 保留时，Scope 同步清理。完整运行规则见[主设计](CORE_DESIGN.md#scope-gc)。
 
@@ -114,7 +114,7 @@ data Source = FromOwnChain | FromChains [NodeId] | FromSession
 
 调用捕获优先；尚未捕获时读取共享值，并在同一协调锁内登记执行帧的捕获身份。生产身份、值与 owner 均沿用原 Binding。scope 待用从全部活动帧、实际根调用及常驻预约查询，先匹配本次捕获、alternative 交接或回调交付，再匹配共享当前参数。确定需要本次新生产而尚未捕获的开启不保留旧参数实例；实例仍须同时满足无实际使用、无待用、无活子实例和无 Binding 保留义务，才由既有 GC close。
 
-缺值时读取先取变化信号再查值；别的 parallel 分支仍可能发布时挂起，发布或分支退出后重查，否则报 `ContextNotInitialized`（[C1](NEXT_STAGES.md#closure-1)）。不查询执行帧里将来的生产位置。
+缺值时读取先取发布编号再查值；别的 parallel 分支仍可能发布、且不是所有执行中的线程都在等待时挂起，发布或分支退出后重查，否则报 `ContextNotInitialized`（[C1](NEXT_STAGES.md#closure-1)）。不查询执行帧里将来的生产位置。
 
 资源不通过共享最新值查找，仍要求本链开启其所属 Scoped；旧资源 Binding 保持原 owner，不会自动换实例。诊断、cleanup 与 close 不读新业务发布。持续资产的交付与历史遵循 [Stream 第 7 节](STREAM_LIFELONG.md#sessions)。
 
