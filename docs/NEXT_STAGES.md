@@ -157,7 +157,9 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 
 验证（仓库外探针，记录不进仓库）：demo 中 file、lines、open-files、scope-instances、scope-reuse 返回 `Succ`，输出与之前一致；stream 是无限运行，单元为 Tracked，未单独运行。event、behavior、历史、静态读取与 require 等待探针的输出与修改前的构建逐字节相同，只有 `parallel [Reader, lifelong [Sink]]` 中两个分支首行的先后变了，属于合法的调度交错。新探针与 `cf3d870` 的构建逐字节相同：单元发布 Scoped 开启参数时它和开启 scope 的单元都判为 Tracked，每次交付各开一个实例；Untracked 单元中途 `endStream` 后其余单元照常、中途 `raise` 时整次运行以该失败结束。16 路基准挂 middleware 计数时，每个 Operation 的次数与之前相同。
 
-未覆盖：性能对照待同机的另一组长期基准结束后再测，结果补在这里；event 单元与订阅源头在 Scoped 下的单元（LinesDemo、StreamDemo）照旧登记。
+性能（10 万条，`-O1 -threaded`，`-N1`，与 `cf3d870` 交错各 5 轮取中位数；同机另有一组长期基准在跑）：单订阅方 0.625 → 0.464 秒，4 路 1.865 → 1.203 秒，16 路 7.658 → 4.533 秒，每次交付 4.79 → 2.83 µs，累计分配 39.4 → 26.3 GB；结果全部正确。剩余开销在 App 入口与 handler 执行层，见 [Next stages 的后续步骤](#untracked-next)。
+
+<a id="untracked-next"></a>未覆盖：结果求值仍经过 `show`，`ContextStore` 的多态函数未特化；event 单元与订阅源头在 Scoped 下的单元（LinesDemo、StreamDemo）照旧登记。
 
 <a id="code-shape"></a>
 ## LSP 从哪份代码开始
