@@ -31,7 +31,7 @@
 
 `Gen.Booter.completeDriving` 在来源检查之后补齐 `protoDriving`，Emit 输出显式 ADT。它复用原有 NodeId、方法身份、SessionProto 与 ScopeTree，不另建运行图，也不推断业务值。
 
-[闭包模型](NEXT_STAGES.md#closure-model)之后，执行控制由 gen 写成 `compiledProgram`（workflow 闭包、回调表、静态运行），runtime 不再读取 `protoDriving` 来调度节点、领取交付或判断等待。这些标记仍在 Prototype 中，供 `--structure` 展示与校验；只服务于旧调度的字段（如 blocked publishers、单元的本地来源）留待清理。
+[闭包模型](NEXT_STAGES.md#closure-model)之后，执行控制由 gen 写成 `compiledProgram`（workflow 闭包、回调表、静态运行），runtime 不再读取 `protoDriving` 来调度节点、领取交付或判断等待。这些标记仍在 Prototype 中，供 `--structure` 展示与校验；只服务于旧调度的字段（如 blocked publishers、单元的本地来源）留待清理。运行开始时把生成的回调表、来源比较器、作用范围的单元与成员、lifelong 的会话资产和静态运行按查找键排一次（`Execution.compiledTables`），链挂载与 request 入口对应的静态链定义在建 `PrototypeIndex` 时确定；发布、交付、激活与静态请求的路径只按键取，不再遍历整张表。内容与顺序都来自 gen 的产物，运行时不增删、不重新判断。仍须每次判断的是发布所在的作用范围、behavior 当前值与上一次是否相等、订阅是否已结束、本次的 ActivationId 与绑定。
 
 | 仍由 runtime 使用的编译事实 | 用途 |
 | --- | --- |

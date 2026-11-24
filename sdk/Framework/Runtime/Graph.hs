@@ -46,10 +46,6 @@ import Framework.Prototype.Structure (scopeRelations)
 data PrototypeReference = forall method. (Eq method, Show method) =>
   PrototypeReference (PrototypeIndex method)
 
--- 同时取得索引与原型；按身份的查询走索引，其余字段仍读原型。
-indexed :: PrototypeIndex method -> (PrototypeIndex method, Prototype method)
-indexed index = (index, indexedPrototype index)
-
 data ChainReference = forall method. Show method =>
   ChainReference (ChainDefinition method)
 
@@ -348,15 +344,18 @@ endActivation graph identifier = uninterruptibleMask_ $
     pure remaining
 
 resolveDefinition :: PrototypeReference -> Boot -> Either String ChainReference
-resolveDefinition (PrototypeReference (indexed -> (index, prototype))) boot = do
-  entry <- case boot of
-    TargetedBoot node -> either (Left . show) (Right . chainEntry) (chainAt index node)
-    -- 解析器与 request 一样发布一次资产；同一 Context 至多有其中一种生产入口。
-    RequestBoot source -> maybe (Left ("Runtime request has no Context production entry: " ++ slotName source)) Right
+resolveDefinition (PrototypeReference index) boot = case boot of
+  TargetedBoot node -> do
+    _ <- either (Left . show) Right (chainAt index node)
+    unique (definitionAt index node)
+  -- 解析器与 request 一样发布一次资产；同一 Context 至多有其中一种生产入口。
+  RequestBoot source -> do
+    _ <- maybe (Left ("Runtime request has no Context production entry: " ++ slotName source)) Right
       (requestEntryOf index source)
-  case [definition | definition <- protoChainDefinitions prototype, definitionEntry definition == entry] of
-    [definition] -> Right (ChainReference definition)
-    _ -> Left "Runtime activation has no unique static chain definition"
+    unique (requestDefinitionOf index source)
+  where
+    -- 入口与链定义的唯一对应在建索引时确定；这里只取。
+    unique = maybe (Left "Runtime activation has no unique static chain definition") (Right . ChainReference)
 
 -- 写入最新值表（持续资产另追加历史）；回调由 App 在发布之后调用 react，不在这里执行。
 publishAsset :: RuntimeGraph environment cause -> Maybe NodeId -> Origin -> Slot

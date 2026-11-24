@@ -34,6 +34,7 @@ import Control.Exception
 import Control.Monad (filterM, forM, forM_, void, when)
 import Control.Monad.Except (ExceptT(..), runExceptT)
 import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef)
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import qualified Data.Sequence as Seq
@@ -156,7 +157,7 @@ runCompiled prototype tree compiled = do
   statics <- newMVar Map.empty
   settled <- newEmptyMVar
   let settle = void . tryPutMVar settled
-      machine = Machine index store compiled ended delivered
+      machine = Machine index store (compiledTables index compiled) ended delivered
       root = Run (runtimeRootFrame store) (settle . Left) [] rootPlace
   installReactions store (reactTo machine root)
   installStatic store (staticRun machine root statics)
@@ -178,10 +179,49 @@ runCompiled prototype tree compiled = do
 data Machine method environment cause value = Machine
   { machineIndex :: PrototypeIndex method
   , machineGraph :: RuntimeGraph environment cause
-  , machineCompiled :: Compiled environment cause value
+  , machineTables :: Tables environment cause value
   , machineEnded :: IORef [Coord]
   , machineDelivered :: IORef (Map.Map (Int, Maybe NodeId) environment)
   }
+
+-- gen 写出的回调表、来源与静态运行按查找键排好，启动时建一次；发布、交付与激活的热路径只按键取，
+-- 不再遍历整张表。内容与顺序都来自生成的程序，运行时不增删、不重新判断。
+data Tables environment cause value = Tables
+  -- 资产 → 回调（作用范围，回应），保持生成的顺序。
+  { tableReactions :: IntMap.IntMap [(Maybe NodeId, Response environment cause value)]
+  -- behavior 资产 → 比较器（写在它的来源上）。
+  , tableSame :: IntMap.IntMap (environment -> environment -> Bool)
+  -- 作用范围（lifelong 路径或静态运行标识）→ 由来源驱动的单元，以及这些单元的成员节点。
+  , tableUnits :: Map.Map NodeId [NodeId]
+  , tableMembers :: Map.Map NodeId [Coord]
+  -- lifelong 路径 → 它的会话资产（来源开始与结束时放掉这些资产在该作用范围里的历史）。
+  , tableDriveAssets :: Map.Map NodeId [Slot]
+  -- 被 requests 的持续资产 → 静态运行的标识与根来源。
+  , tableStatic :: IntMap.IntMap (NodeId, StreamSource environment cause)
+  }
+
+compiledTables :: PrototypeIndex method -> Compiled environment cause value -> Tables environment cause value
+compiledTables index compiled = Tables
+  { tableReactions = IntMap.fromListWith (flip (++))
+      [(slotNumber asset, [(scope, response)]) | Reaction asset scope response <- compiledReactions compiled]
+  , tableSame = IntMap.fromListWith keepFirst
+      [(slotNumber (sourceAsset source), same) | source <- compiledSources compiled, Just same <- [sourceSame source]]
+  , tableUnits = units
+  , tableMembers = Map.map (\owned -> concat [nodeMembers (driveAt index (coordAt index unit)) | unit <- owned]) units
+  , tableDriveAssets = Map.fromList
+      [ (path, [slotOf index (provider (sessionAsset session)) | session <- lifelongSessions description])
+      | (path, description) <- workflowLifelongs (protoWorkflow prototype) ]
+  , tableStatic = IntMap.fromListWith keepFirst
+      [(slotNumber asset, (scope, selected)) | (asset, scope, selected) <- compiledStatic compiled]
+  }
+  where
+    prototype = indexedPrototype index
+    units = Map.fromListWith (flip (++))
+      [(scope, [unit]) | Reaction _ (Just scope) (RunUnit unit _) <- compiledReactions compiled]
+    keepFirst _ earlier = earlier
+    provider asset = case [effectName effect | effect <- protoEffects prototype, effectProduces effect == Just asset] of
+      name : _ -> name
+      [] -> asset
 
 -- workflow 闭包的一层：执行这一层，退出时撤销本子树尚未进入的节点。
 execute :: Machine method environment cause value -> Closure environment cause value -> Execution' environment cause value
@@ -250,21 +290,11 @@ execute machine flow run handoff = case flow of
 
 -- lifelong 的持续资产（来源、派生与复用输出）；来源结束时放掉它们的历史。
 driveAssets :: Machine method environment cause value -> NodeId -> [Slot]
-driveAssets machine path = case lookupWorkflow (protoWorkflow prototype) path of
-  Just (LifelongAt _ description _) ->
-    [slotOf index (provider (sessionAsset session)) | session <- lifelongSessions description]
-  _ -> []
-  where
-    index = machineIndex machine
-    prototype = indexedPrototype index
-    provider asset = case [effectName effect | effect <- protoEffects prototype, effectProduces effect == Just asset] of
-      name : _ -> name
-      [] -> asset
+driveAssets machine path = Map.findWithDefault [] path (tableDriveAssets (machineTables machine))
 
 -- 由来源驱动（订阅持续资产）的单元；只有 event 订阅的单元不在其中。
 socketUnits :: Machine method environment cause value -> NodeId -> [NodeId]
-socketUnits machine path =
-  [unit | Reaction _ (Just scope) (RunUnit unit _) <- compiledReactions (machineCompiled machine), scope == path]
+socketUnits machine path = Map.findWithDefault [] path (tableUnits (machineTables machine))
 
 -- 回调表的入口：一次发布之后，依次执行对这份资产有效的回调；第一个失败返回给发布方。
 -- event 回调整次运行有效；其余回调只回应自己作用范围（所属 lifelong 或静态运行）里的发布。
@@ -273,8 +303,8 @@ reactTo :: Machine method environment cause value -> Run environment cause
         -> Place -> Slot -> ScopeBinding environment cause -> ScopeBindings environment cause -> IO (Maybe (Failure cause))
 reactTo machine run at source value captured = do
   let scope = placeScope at
-      selected = [response | Reaction asset reactionScope response <- compiledReactions (machineCompiled machine)
-        , asset == source, maybe True ((== scope) . Just) reactionScope]
+      selected = [response | (reactionScope, response) <- IntMap.findWithDefault [] (slotNumber source) (tableReactions (machineTables machine))
+        , maybe True ((== scope) . Just) reactionScope]
       key = (slotNumber source, scope)
   if null selected then pure Nothing else do
     changed <- case sameOf machine source of
@@ -291,10 +321,7 @@ reactTo machine run at source value captured = do
 
 -- behavior 资产的比较：它的来源在生成的 Drive 或静态运行里写着。
 sameOf :: Machine method environment cause value -> Slot -> Maybe (environment -> environment -> Bool)
-sameOf machine source = case [same | selected <- compiledSources (machineCompiled machine)
-    , sourceAsset selected == source, Just same <- [sourceSame selected]] of
-  same : _ -> Just same
-  [] -> Nothing
+sameOf machine source = IntMap.lookup (slotNumber source) (tableSame (machineTables machine))
 
 -- 一次回调。Unit：单元在新的执行帧里执行一次，交付作为固定捕获交给它（持续资产另带到这一条为止的历史）；
 -- 单元的节点都已 endStream 时不再执行。RunDerive：在派生挂载执行派生资产的 parser；被驱动链 endStream 后不再执行。
@@ -390,16 +417,17 @@ runSource machine run scope source (Handoff given views) = do
         collectRuntimeScopes graph [streamMount, parserMount])
     subscribersEnded = do
       endedNow <- readIORef (machineEnded machine)
-      let units = [coordAt index unit | Reaction _ (Just selected) (RunUnit unit _) <- compiledReactions (machineCompiled machine), selected == scope]
-          members = concat [nodeMembers (driveAt index unit) | unit <- units]
+      let tables = machineTables machine
+          units = Map.findWithDefault [] scope (tableUnits tables)
+          members = Map.findWithDefault [] scope (tableMembers tables)
       pure (not (null units) && all (`elem` endedNow) members)
 
 -- lifelong 之外 requests 一份持续资产：同步运行它的根来源直到结束（派生链的回调以静态运行的标识生效），
 -- 同一个根来源在一次运行中只运行一次；并发的请求方等这一次运行结束。历史保留到运行结束。
 staticRun :: Machine method environment cause value -> Run environment cause
           -> MVar (Map.Map NodeId (StaticRun cause)) -> Place -> Slot -> IO (Either (Failure cause) NodeId)
-staticRun machine run statics at source = case [(scope, selected) | (asset, scope, selected) <- compiledStatic (machineCompiled machine), asset == source] of
-  (scope, selected) : _ -> do
+staticRun machine run statics at source = case IntMap.lookup (slotNumber source) (tableStatic (machineTables machine)) of
+  Just (scope, selected) -> do
     -- 同一根来源只运行一次：它的派生资产在同一次运行里一并发布。
     (done, fresh) <- modifyMVar statics $ \started -> case Map.lookup scope started of
       Just done -> pure (started, (done, False))
@@ -414,6 +442,6 @@ staticRun machine run statics at source = case [(scope, selected) | (asset, scop
         either (\(exception :: SomeException) -> throwIO exception) pure outcome
       else awaitStatic graph done
     pure (maybe (Right scope) Left outcome)
-  [] -> ioError (userError ("No static run for " ++ slotName source ++ "; regenerate with the SDK effect-codegen command"))
+  Nothing -> ioError (userError ("No static run for " ++ slotName source ++ "; regenerate with the SDK effect-codegen command"))
   where
     graph = machineGraph machine

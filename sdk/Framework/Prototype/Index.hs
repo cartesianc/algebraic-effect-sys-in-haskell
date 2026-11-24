@@ -9,7 +9,7 @@ module Framework.Prototype.Index
   , slotOf, coordAt, rootCoord
   , chainAt, driveAt, unitAt, rootNodesOf, sessionRouteOf, sessionUpstreamOf, sessionAt
   , sourcePlanAt, sourcesAt, hooksLabel, openingsAt, historyOf, sampledOf, requestEntryOf
-  , parameterScopesOf, scopeClosureOf, isResourceSlot, outputSiteAt
+  , parameterScopesOf, scopeClosureOf, isResourceSlot, outputSiteAt, definitionAt, requestDefinitionOf
   ) where
 
 import qualified Data.IntSet as IntSet
@@ -85,6 +85,10 @@ data PrototypeIndex method = PrototypeIndex
   , indexHistories :: IntSet.IntSet
   , indexSampled :: IntSet.IntSet
   , indexRequests :: Map.Map Slot method
+  -- 链挂载坐标／Context 编号 → 它入口唯一对应的静态链定义；不唯一的不登记（激活时按失配报错）。
+  -- 激活一条链时直接取，不再按入口扫描全部链定义。
+  , indexChainDefinitions :: Map.Map Coord (ChainDefinition method)
+  , indexRequestDefinitions :: Map.Map Slot (ChainDefinition method)
   , indexParameterScopes :: Map.Map Slot [Slot]
   -- Scoped 编号 → 它与 ScopeTree 上全部祖先；回收按它展开，运行中不再沿关系表求闭包。
   , indexScopeClosures :: Map.Map Slot [Slot]
@@ -123,6 +127,11 @@ indexPrototype prototype = PrototypeIndex
       [slotNumber (named (effectName effect)) | effect <- protoEffects prototype, effectSampled effect]
   , indexRequests = Map.fromListWith (\_ first -> first)
       [(named name, method) | (name, method) <- drivingRequests driving]
+  , indexChainDefinitions = Map.fromList
+      [(at (chainNode chain), definition) | chain <- protoChains prototype, Just definition <- [uniqueDefinition (chainEntry chain)]]
+  , indexRequestDefinitions = Map.fromList
+      [ (named name, definition) | (name, method) <- drivingRequests driving
+      , Just definition <- [uniqueDefinition method] ]
   , indexParameterScopes = Map.fromListWith (flip (++))
       [ (named name, [named (openingScope opening)]) | opening <- protoScopeOpenings prototype
       , (name, _) <- openingSources opening ]
@@ -134,6 +143,9 @@ indexPrototype prototype = PrototypeIndex
   }
   where
     driving = protoDriving prototype
+    uniqueDefinition entry = case [definition | definition <- protoChainDefinitions prototype, definitionEntry definition == entry] of
+      [definition] -> Just definition
+      _ -> Nothing
     keyed key items = Map.fromListWith (\_ first -> first) [(key item, item) | item <- items]
     -- gen 的编号规则：effect 在 protoEffects 中的位置。生成代码中的 Slot 字面量出自同一规则。
     slots = Map.fromListWith (\_ first -> first)
@@ -267,6 +279,12 @@ sampledOf index context = IntSet.member (slotNumber context) (indexSampled index
 -- event：该边界的会话只接收这份普通资产此后的发布，没有生产任务。
 
 -- RequestBoot 的生产入口。
+definitionAt :: PrototypeIndex method -> Coord -> Maybe (ChainDefinition method)
+definitionAt index node = Map.lookup node (indexChainDefinitions index)
+
+requestDefinitionOf :: PrototypeIndex method -> Slot -> Maybe (ChainDefinition method)
+requestDefinitionOf index context = Map.lookup context (indexRequestDefinitions index)
+
 requestEntryOf :: PrototypeIndex method -> Slot -> Maybe method
 requestEntryOf index context = Map.lookup context (indexRequests index)
 
