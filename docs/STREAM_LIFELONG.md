@@ -586,4 +586,4 @@ ScopeTree 独立构建并保持无环；订阅与回调关系不作为 scope 父
 
 本仓库按约定只做普通编译、生成结果审阅和示例观察，不新增测试框架、负例或穷举门槛。现有验证的边界见 [Next stages](NEXT_STAGES.md#current-limits)，逐次观察记录保留在 Git 历史。LSP 仓库的外部穷举模型尚未扩展到 Stream／lifelong。
 
-当前缺口统一记录在 [Next stages 的限制与开放专题](NEXT_STAGES.md#current-limits)。持续值参数、既有 ownership 的交接与生产挂载的待用回收已接通；保留范围以[资产契约](#binding-retention)为界。容量背压与嵌套 workflow 分列为后续专题。已有单步来源的写法见[第 4.1 节](#drives)，不据此宣称已提供通用外部回调适配。
+当前缺口统一记录在 [Next stages 的限制与开放专题](NEXT_STAGES.md#current-limits)。持续值参数、既有 ownership 的交接与生产挂载的待用回收已接通；保留范围以[资产契约](#binding-retention)为界。持续交付的背压已由同步回调解决：回调返回前来源不会产生下一条，没有积压的交付队列；`parallel` 的多个 lifelong 之间的限速与公平性和嵌套 workflow 分列为后续专题。已有单步来源的写法见[第 4.1 节](#drives)，不据此宣称已提供通用外部回调适配。

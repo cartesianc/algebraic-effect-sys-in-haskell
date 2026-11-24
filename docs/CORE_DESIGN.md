@@ -22,7 +22,7 @@
 | 原子 handler 复用、前驱与驱动装配、按标签路由 | 已实现（Stage 2，2026-11-08）；本文第 4 章即当前协议 | [Next stages](NEXT_STAGES.md#stage-2) |
 | gen 作为编译器：SDK 分为源语言、gen、编译产物、运行时四层，生成按阶段执行 | 已实现（2026-11-08） | [gen 是编译器](#compiler)、[编译流水线](#generation)、[SDK 分工](#sdk-layout) |
 | 持续执行与资源收尾 | 闭包模型：发布即同步回调，两侧结束、后继读取、历史保留及持续值参数已实现；固定捕获按已有 Binding ownership 保活 | [阶段状态](NEXT_STAGES.md#stages)、[当前限制](NEXT_STAGES.md#current-limits) |
-| 持续交付的背压、嵌套 lifelong | 两项分别设计 | [后续专题](NEXT_STAGES.md#deferred) |
+| parallel lifelong 之间的限速与公平性、嵌套 lifelong | 两项分别设计；持续交付的背压已由同步回调解决 | [后续专题](NEXT_STAGES.md#deferred) |
 | Middleware 按具名分支挂载，由 Root 的 `super` 及显式操作通知 handler | 已支持 Excu、Scoped、Pure 和 Stream | [Middleware](#middleware) |
 
 实现状态说明代码已接入的范围，不代表全部并发交错或资源逃逸已获证明。已交付能力见[规范索引](NEXT_STAGES.md#baseline)，验证范围见[已知边界](NEXT_STAGES.md#current-limits)。
