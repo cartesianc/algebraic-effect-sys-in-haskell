@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
@@ -283,7 +284,6 @@ runReadFile =
   SDK.runOnce (SDK.Slot 6 "ReadFile")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 6 "ReadFile") []
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 6 "ReadFile") $
     openFileSession >> call @"ReadFile" @"readFileContent" Effects.readFileContent
@@ -325,7 +325,6 @@ runWriteFirstLine =
   SDK.runOnce (SDK.Slot 9 "WriteFirstLine")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 9 "WriteFirstLine") []
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 9 "WriteFirstLine") $
     openFileSession >> call @"WriteFirstLine" @"writeFirstLine" Effects.writeFirstLine
@@ -335,7 +334,6 @@ runAppendLine =
   SDK.runOnce (SDK.Slot 10 "AppendLine")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 10 "AppendLine") []
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 10 "AppendLine") $
     openFileSession >> call @"AppendLine" @"appendLine" Effects.appendLine

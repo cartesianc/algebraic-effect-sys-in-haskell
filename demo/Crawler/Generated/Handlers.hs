@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
@@ -269,7 +270,6 @@ runPrintPage =
   SDK.runOnce (SDK.Slot 5 "PrintPage")
   . SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 5 "PrintPage") []
   . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.enterHandler (SDK.Slot 5 "PrintPage") $
     SDK.unlessPerformed [(SDK.Slot 4 "ExtractPage")] (SDK.producingFor [(SDK.Slot 4 "ExtractPage")] (runFetchPage)) >> getStartPageSummary >> call @"PrintPage" @"printSummary" Effects.printSummary
@@ -313,7 +313,6 @@ runPrintLinkedPage =
   SDK.runOnce (SDK.Slot 9 "PrintLinkedPage")
   . SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 9 "PrintLinkedPage") []
   . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.enterHandler (SDK.Slot 9 "PrintLinkedPage") $
     SDK.unlessPerformed [(SDK.Slot 8 "ExtractLinkedPage")] (SDK.producingFor [(SDK.Slot 8 "ExtractLinkedPage")] (runFetchLinkedPage)) >> getLinkedPageSummary >> call @"PrintLinkedPage" @"printSummary" Effects.printSummary

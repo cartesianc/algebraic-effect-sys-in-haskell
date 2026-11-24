@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- 一次有限执行的节点进度与已固定的输入身份；scope 在同一协调锁内只读这些事实，判断实例的待用。
 -- 本模块不依赖 Scope 或 Graph。帧只服务资源回收，不是等待或调度的依据。
 module Framework.Runtime.Frame

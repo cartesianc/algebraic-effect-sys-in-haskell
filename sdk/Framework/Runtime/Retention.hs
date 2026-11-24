@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- 已交付的 Binding 在受控使用期间的保留根；不解释业务 ADT，也不修改 ownership。

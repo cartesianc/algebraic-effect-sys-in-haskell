@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- 持续资产的交付视图与两个结束信号。没有会话、队列或游标：
 -- 发布在发布方的调用栈里同步回调订阅方，视图只是回调时交给订阅方的那一段历史。
 module Framework.Runtime.Delivery

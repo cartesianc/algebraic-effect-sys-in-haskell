@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- Context 的一次成功绑定：值快照与执行出身不变，全部引用共享首次认领的资源归属。
 -- 每次生产分配自己的归属单元，替换来源绑定不会改写旧绑定的值或关闭责任。
 module Framework.Runtime.Binding

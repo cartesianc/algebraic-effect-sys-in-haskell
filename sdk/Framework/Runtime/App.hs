@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -77,6 +78,8 @@ data Environment env cause = Environment
   , views :: IORef [(Slot, View env cause)]
   -- Receive 来源取得同步交付函数，parser 只取得本条原始输入。
   , streamPort :: StreamPort env cause
+  -- Untracked：本次执行不为 scope 回收登记，读取不把捕获写进执行帧（见 Graph.Tracking）。
+  , frameTracking :: Tracking
   }
 
 -- 一次末端调用的起点：交接的绑定与视图；来源步骤另带原始输入。
@@ -224,7 +227,8 @@ resolveBinding environment source = do
     Nothing | cleaningScopes environment
       || any ((== source) . resourceSource) (scopes environment) -> pure (Right Nothing)
     Nothing -> do
-      asset <- readPublishedAsset (runtimeGraph environment) (currentFrame environment) (executionOrigin (execution environment)) source
+      asset <- readPublishedAsset (runtimeGraph environment) (frameTracking environment) (currentFrame environment)
+        (executionOrigin (execution environment)) source
       case asset of
         Left problem -> pure (Left problem)
         Right Nothing -> pure (Right Nothing)
@@ -699,7 +703,7 @@ deliveryAllowed environment = isNothing (originalFailure environment) && not (cl
 
 -- 固定交付沿用 Binding 的生产身份；资产自身若含资源容器，不在此推断容器内所有资源的存续。
 rememberView :: Environment env cause -> Slot -> View env cause -> App env cause ()
-rememberView environment source view = when (deliveryAllowed environment) $
+rememberView environment source view = when (deliveryAllowed environment && frameTracking environment == Tracked) $
   forM_ (lastBinding view >>= bindingProduction) $ \production ->
     rawIO (captureFrameInput (currentFrame environment)
       (originNode (executionOrigin (execution environment))) source production)
@@ -924,28 +928,25 @@ runAppWith consume graph node launch initial action = do
 runAppIn :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause -> Coord -> IORef (ScopeBindings env cause)
          -> IORef [(Slot, View env cause)] -> Launch env cause -> env -> App env cause value
          -> IO (Either (Failure cause) value)
+-- Untracked（gen 判定与 scope 回收无关）：只发放 Origin 序号，共用运行图里从不登记实例的使用者，
+-- 不登记活动、不交接保留根，也就没有要配对撤销的登记，不需要屏蔽取消；结果照常在返回前完整求值。
+runAppIn consume graph node values delivered launch initial (AppRun action)
+  | launchTracking launch == Untracked = do
+      origin <- freshOrigin graph node
+      performedHere <- newIORef (performedBy launch)
+      let user = fromMaybe (runtimeDetachedUser graph) (launchUser launch)
+          environment = callEnvironment graph values delivered launch initial user (BusinessExecution origin) Nothing performedHere
+      outcome <- runExceptT (runReaderT action environment)
+      consume outcome
+      pure outcome
 runAppIn consume graph node values delivered launch initial (AppRun action) = mask $ \restore -> do
-  let tracked = launchTracking launch == Tracked
-  origin <- if tracked then newOrigin graph node else freshOrigin graph node
+  origin <- newOrigin graph node
   let currentExecution = BusinessExecution origin
-      handlers = runtimeScopes graph
-  user <- maybe (newScopeUser handlers currentExecution) pure (launchUser launch)
-  -- 活动目录与调用捕获只供 scope 的可达性判断；不登记时本次发布也不带生产身份（没有开启计划读它）。
-  activation <- if tracked
-    then Just <$> beginActivation graph Nothing (launchFrame launch) currentExecution (TargetedBoot node) values user
-    else pure Nothing
-  performedHere <- newIORef (IntMap.fromList [(slotNumber delivered, []) | delivered <- launchPerformed launch])
-  let environment = Environment
-        { emptyValues = initial, bindings = values, scopes = handlers
-        , caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
-        , errorHandlers = [], errorPath = [], originalFailure = Nothing, diagnosticOwner = Nothing
-        , cleaningScopes = False, consumer = user
-        , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
-        , activeActivation = activationId <$> activation, execution = currentExecution
-        , currentFrame = launchFrame launch, bindingRetention = launchRetention launch
-        , place = launchPlace launch
-        , performed = performedHere
-        , views = delivered, streamPort = launchPort launch }
+  user <- maybe (newScopeUser (runtimeScopes graph) currentExecution) pure (launchUser launch)
+  activation <- beginActivation graph Nothing (launchFrame launch) currentExecution (TargetedBoot node) values user
+  performedHere <- newIORef (performedBy launch)
+  let environment = callEnvironment graph values delivered launch initial user currentExecution
+        (Just (activationId activation)) performedHere
   (do
       completed <- try $ restore $ do
         outcome <- runExceptT (runReaderT action environment)
@@ -964,4 +965,24 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
       case completed of
         Left (exception :: SomeException) -> throwIO exception
         Right outcome -> pure outcome)
-    `finally` mapM_ (endActivation graph . activationId) activation
+    `finally` endActivation graph (activationId activation)
+
+-- 订阅回调交付的资产预先记为本次已执行：入口里对它的 requests 读这条交付。
+performedBy :: Launch env cause -> IntMap.IntMap [String]
+performedBy launch = IntMap.fromList [(slotNumber delivered, []) | delivered <- launchPerformed launch]
+
+-- 一次根调用的初始环境；诊断、收尾与嵌套 request 在它的基础上局部修改。
+callEnvironment :: RuntimeGraph env cause -> IORef (ScopeBindings env cause) -> IORef [(Slot, View env cause)]
+                -> Launch env cause -> env -> ScopeUser env cause -> Execution -> Maybe ActivationId
+                -> IORef (IntMap.IntMap [String]) -> Environment env cause
+callEnvironment graph values delivered launch initial user currentExecution activation performedHere = Environment
+  { emptyValues = initial, bindings = values, scopes = runtimeScopes graph
+  , caller = Nothing, dependencies = [], contexts = [], openings = [], closings = []
+  , errorHandlers = [], errorPath = [], originalFailure = Nothing, diagnosticOwner = Nothing
+  , cleaningScopes = False, consumer = user
+  , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
+  , activeActivation = activation, execution = currentExecution
+  , currentFrame = launchFrame launch, bindingRetention = launchRetention launch
+  , place = launchPlace launch
+  , performed = performedHere
+  , views = delivered, streamPort = launchPort launch, frameTracking = launchTracking launch }

@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 {-# LANGUAGE FlexibleContexts #-}
 
 -- Context 的读取与成功发布；存储由运行载体提供。require 是“取值 · 未就绪时等待”：值在本次调用的捕获或运行级

@@ -147,7 +147,7 @@ lifelong 是交给 gen 的标记，不是运行中的服务（用户确认，202
 
 event 没有 BootPlan：lifelong 内的 target 以 `requests` 订阅普通资产时，回调表里一条 `T → RunUnit`，T 不论从哪里发布都回调。behavior 是 Receive，比较函数写在生成的 `StreamSource` 里。
 
-**统一驱动规则：发布即回调。** 资产每发布一次，`Graph.react` 在发布者的调用栈里依次执行回调表中对这份资产仍然有效的回调，全部返回后发布者才继续。来源的下一次 `rawemit`、锚点之后的 workflow 后继，都要等本次回调完成。运行时不判断值将来会不会来；`require` 缺值时只等 gen 写明可能发布它的别的 `parallel` 分支（[C1](NEXT_STAGES.md#closure-1)）。
+**统一驱动规则：发布即回调。** 资产每发布一次，`Graph.react` 在发布者的调用栈里依次执行回调表中对这份资产仍然有效的回调，全部返回后发布者才继续。来源的下一次 `rawemit`、锚点之后的 workflow 后继，都要等本次回调完成。同一次发布交给各回调的是同一份交付（资产、发布方的伴随捕获与本作用范围到这一条为止的视图），只组装一次：回调不能再发布它订阅的资产（[C5](NEXT_STAGES.md#closure-5)），视图在回调之间不变。运行时不判断值将来会不会来；`require` 缺值时只等 gen 写明可能发布它的别的 `parallel` 分支（[C1](NEXT_STAGES.md#closure-1)）。
 
 不成立的组合在生成期按 3.2 的匹配表报错，不在运行中猜测或退化为轮询。
 

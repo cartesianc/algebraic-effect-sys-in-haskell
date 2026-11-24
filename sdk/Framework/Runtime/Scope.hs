@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- Scope 的状态、使用登记与关闭预约；不执行业务 open／close 的方法体。
 -- ScopeHandler 属于一份注册，持有运行实例表；ScopeInstance 属于一次资源获取；
 -- ScopeUser 属于一个受控入口或生产步骤，记录它实际使用的实例；会话待用由执行帧表达。

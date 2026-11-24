@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
@@ -204,7 +205,6 @@ runHoldFiles =
   SDK.runOnce (SDK.Slot 3 "HoldFiles")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 3 "HoldFiles") []
   . SDK.withScopeDependencies [(SDK.Slot 2 "FileSession")]
   . SDK.enterHandler (SDK.Slot 3 "HoldFiles") $
     getFileNames >> openFileSession >> call @"HoldFiles" @"holdFiles" Effects.holdFiles
@@ -214,7 +214,6 @@ runInspectFiles =
   SDK.runOnce (SDK.Slot 4 "InspectFiles")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 4 "InspectFiles") []
   . SDK.withScopeDependencies [(SDK.Slot 2 "FileSession")]
   . SDK.enterHandler (SDK.Slot 4 "InspectFiles") $
     runHoldFiles >> call @"InspectFiles" @"inspectFiles" Effects.inspectFiles
@@ -224,7 +223,6 @@ runReleaseFiles =
   SDK.runOnce (SDK.Slot 5 "ReleaseFiles")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 5 "ReleaseFiles") []
   . SDK.withScopeDependencies [(SDK.Slot 2 "FileSession")]
   . SDK.enterHandler (SDK.Slot 5 "ReleaseFiles") $
     runHoldFiles >> call @"ReleaseFiles" @"holdFiles" Effects.holdFiles
@@ -233,7 +231,6 @@ runFinishInspection :: Effects.App [String]
 runFinishInspection =
   SDK.runOnce (SDK.Slot 6 "FinishInspection")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 6 "FinishInspection") []
   . SDK.enterHandler (SDK.Slot 6 "FinishInspection") $
     getFileNames >> call @"FinishInspection" @"finishInspection" Effects.finishInspection
 

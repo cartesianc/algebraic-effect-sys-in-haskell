@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 
 -- 自动生成；组合好的执行闭包，原型在 Generated/Prototype.hs，执行由 SDK 的 interpreter 完成。
@@ -12,7 +14,9 @@ import qualified Crawler.Generated.Handlers as Handlers
 
 -- 仅汇总所选末端的成功结果，不保存共享绑定或增加完成包装。
 data Results = PrintPageResult () | PrintLinkedPageResult ()
-  deriving Show
+  deriving (Show, SDK.Generic)
+
+instance SDK.NFData Results
 
 -- 末端共享生成的 scope 句柄；只创建空状态。
 -- compiledWorkflow：AST 的执行闭包（Serial 顺序、Concurrent 并行、Choose 选择、Drive 是 lifelong 的位置）。
@@ -22,7 +26,7 @@ data Results = PrintPageResult () | PrintLinkedPageResult ()
 compiledProgram :: IO (SDK.Compiled ContextValues Errors Results)
 compiledProgram = do
   scopes <- Handlers.newScopeHandlers
-  let target :: Show value => String -> App value -> SDK.Target ContextValues Errors value
+  let target :: (Show value, SDK.NFData value) => String -> App value -> SDK.Target ContextValues Errors value
       target label action = SDK.targetApp label emptyContexts scopes
         (SDK.withErrorHandlers Handlers.errorHandlers action)
   pure SDK.Compiled

@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
@@ -205,7 +206,6 @@ runPrepareProbe :: Effects.App [String]
 runPrepareProbe =
   SDK.runOnce (SDK.Slot 1 "PrepareProbe")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 1 "PrepareProbe") []
   . SDK.enterHandler (SDK.Slot 1 "PrepareProbe") $
     getFilePaths >> call @"PrepareProbe" @"prepareProbe" Effects.prepareProbe
 
@@ -246,7 +246,6 @@ runWriteFirst =
   SDK.runOnce (SDK.Slot 4 "WriteFirst")
   . SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 4 "WriteFirst") []
   . SDK.withScopeDependencies [(SDK.Slot 3 "SharedFileScope")]
   . SDK.enterHandler (SDK.Slot 4 "WriteFirst") $
     openSharedFileScope >> call @"WriteFirst" @"writeFirst" Effects.writeFirst
@@ -256,7 +255,6 @@ runWriteSecond =
   SDK.runOnce (SDK.Slot 5 "WriteSecond")
   . SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 5 "WriteSecond") []
   . SDK.withScopeDependencies [(SDK.Slot 3 "SharedFileScope")]
   . SDK.enterHandler (SDK.Slot 5 "WriteSecond") $
     openSharedFileScope >> call @"WriteSecond" @"writeSecond" Effects.writeSecond
@@ -266,7 +264,6 @@ runWriteThird =
   SDK.runOnce (SDK.Slot 6 "WriteThird")
   . SDK.withErrorPath ["SharedFileScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 6 "WriteThird") []
   . SDK.withScopeDependencies [(SDK.Slot 3 "SharedFileScope")]
   . SDK.enterHandler (SDK.Slot 6 "WriteThird") $
     openSharedFileScope >> call @"WriteThird" @"writeThird" Effects.writeThird
@@ -275,7 +272,6 @@ runVerifyReuse :: Effects.App [String]
 runVerifyReuse =
   SDK.runOnce (SDK.Slot 7 "VerifyReuse")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 7 "VerifyReuse") []
   . SDK.enterHandler (SDK.Slot 7 "VerifyReuse") $
     getFilePaths >> call @"VerifyReuse" @"verifyReuse" Effects.verifyReuse
 

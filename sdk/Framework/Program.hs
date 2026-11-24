@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- 已生成程序的执行边界：强制并校验 Prototype，执行 workflow，最后收尾资源。
 -- 不读取命令行、源码文件或项目目录；这些适配属于 Framework.Generated。
 -- Execution 先停止受管理任务并撤销执行帧，再沿统一可达性规则回收；这里报告关闭故障。

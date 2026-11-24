@@ -9,6 +9,7 @@ import Data.List (intercalate, nub)
 import Framework.Gen.Booter (publishedWithin)
 import Framework.Gen.Names (HandlerNames, entryName, helperName)
 import Framework.Gen.Plan
+import Framework.Gen.Emit.Types (specialisation)
 import Framework.Prototype (ChainRole(..), variantLabel)
 import qualified Framework.Prototype as P
 
@@ -23,7 +24,7 @@ renderProgram directory names hangingSources untracked unit = unlines (programHe
     workflow = P.plannedWorkflow (unitPlan unit)
     mounts = assemblyMounts (unitAssembly unit)
     programHeader =
-      [ "{-# LANGUAGE DuplicateRecordFields #-}" ]
+      [ specialisation, "{-# LANGUAGE DeriveGeneric #-}", "{-# LANGUAGE DuplicateRecordFields #-}" ]
       ++ (if hooked then ["{-# LANGUAGE DataKinds #-}", "{-# LANGUAGE TypeApplications #-}"] else [])
       ++
       [ ""
@@ -41,7 +42,9 @@ renderProgram directory names hangingSources untracked unit = unlines (programHe
       [ ""
       , "-- 仅汇总所选末端的成功结果，不保存共享绑定或增加完成包装。"
       , "data Results = " ++ intercalate " | " [terminal ++ "Result ()" | terminal <- selected]
-      , "  deriving Show"
+      , "  deriving (Show, SDK.Generic)"
+      , ""
+      , "instance SDK.NFData Results"
       , ""
       , "-- 末端共享生成的 scope 句柄；只创建空状态。"
       , "-- compiledWorkflow：AST 的执行闭包（Serial 顺序、Concurrent 并行、Choose 选择、Drive 是 lifelong 的位置）。"
@@ -51,7 +54,7 @@ renderProgram directory names hangingSources untracked unit = unlines (programHe
       , "compiledProgram :: IO (SDK.Compiled ContextValues Errors Results)"
       , "compiledProgram = do"
       , "  scopes <- " ++ helper "newScopeHandlers"
-      , "  let target :: Show value => String -> App value -> SDK.Target ContextValues Errors value"
+      , "  let target :: (Show value, SDK.NFData value) => String -> App value -> SDK.Target ContextValues Errors value"
       , "      target label action = SDK.targetApp label emptyContexts scopes"
       , "        (SDK.withErrorHandlers " ++ helper "errorHandlers" ++ " action)"
       , "  pure SDK.Compiled"

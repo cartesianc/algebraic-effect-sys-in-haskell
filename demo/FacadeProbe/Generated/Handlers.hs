@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
@@ -389,7 +390,6 @@ runWriteReport =
   SDK.runOnce (SDK.Slot 8 "WriteReport")
   . SDK.withErrorPath ["ReportScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 8 "WriteReport") []
   . SDK.withScopeDependencies [(SDK.Slot 6 "ReportScope")]
   . SDK.enterHandler (SDK.Slot 8 "WriteReport") $
     openReportScope >> getReportBody >> call @"WriteReport" @"writeText" Effects.writeText
@@ -399,7 +399,6 @@ runWriteReply =
   SDK.runOnce (SDK.Slot 9 "WriteReply")
   . SDK.withErrorPath ["ReplyScope"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 9 "WriteReply") []
   . SDK.withScopeDependencies [(SDK.Slot 7 "ReplyScope")]
   . SDK.enterHandler (SDK.Slot 9 "WriteReply") $
     openReplyScope >> getReplyBody >> call @"WriteReply" @"writeText" Effects.writeText
@@ -408,7 +407,6 @@ runMarkReply :: Effects.App [String]
 runMarkReply =
   SDK.runOnce (SDK.Slot 10 "MarkReply")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 10 "MarkReply") []
   . SDK.enterHandler (SDK.Slot 10 "MarkReply") $
     call @"MarkReply" @"markRead" Effects.markRead
 
@@ -458,7 +456,6 @@ runShowReport :: Effects.App [String]
 runShowReport =
   SDK.runOnce (SDK.Slot 15 "ShowReport")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 15 "ShowReport") []
   . SDK.enterHandler (SDK.Slot 15 "ShowReport") $
     SDK.unlessPerformed [(SDK.Slot 13 "ReportCounter")] (SDK.producingFor [(SDK.Slot 13 "ReportCounter")] (runReadReport)) >> getReportStats >> call @"ShowReport" @"showCount" Effects.showCount
 
@@ -466,7 +463,6 @@ runShowReply :: Effects.App [String]
 runShowReply =
   SDK.runOnce (SDK.Slot 16 "ShowReply")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 16 "ShowReply") []
   . SDK.enterHandler (SDK.Slot 16 "ShowReply") $
     SDK.unlessPerformed [(SDK.Slot 14 "ReplyCounter")] (SDK.producingFor [(SDK.Slot 14 "ReplyCounter")] (runReadReply)) >> getReplyStats >> call @"ShowReply" @"showCount" Effects.showCount
 
@@ -474,7 +470,6 @@ runInspectReport :: Effects.App [String]
 runInspectReport =
   SDK.runOnce (SDK.Slot 17 "InspectReport")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 17 "InspectReport") []
   . SDK.enterHandler (SDK.Slot 17 "InspectReport") $
     call @"InspectReport" @"inspectFile" Effects.inspectFile
 
@@ -508,7 +503,6 @@ runOnBlank :: Effects.App [String]
 runOnBlank =
   SDK.runOnce (SDK.Slot 20 "OnBlank")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 20 "OnBlank") []
   . SDK.enterHandler (SDK.Slot 20 "OnBlank") $
     call @"OnBlank" @"describeBlank" Effects.describeBlank
 
@@ -516,7 +510,6 @@ runOnFilled :: Effects.App [String]
 runOnFilled =
   SDK.runOnce (SDK.Slot 21 "OnFilled")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 21 "OnFilled") []
   . SDK.enterHandler (SDK.Slot 21 "OnFilled") $
     call @"OnFilled" @"describeFilled" Effects.describeFilled
 
@@ -572,7 +565,6 @@ runShowA :: Effects.App [String]
 runShowA =
   SDK.runOnce (SDK.Slot 26 "ShowA")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 26 "ShowA") []
   . SDK.enterHandler (SDK.Slot 26 "ShowA") $
     call @"ShowA" @"showLevel" Effects.showLevel
 
@@ -580,7 +572,6 @@ runShowB :: Effects.App [String]
 runShowB =
   SDK.runOnce (SDK.Slot 27 "ShowB")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 27 "ShowB") []
   . SDK.enterHandler (SDK.Slot 27 "ShowB") $
     call @"ShowB" @"showLevel" Effects.showLevel
 

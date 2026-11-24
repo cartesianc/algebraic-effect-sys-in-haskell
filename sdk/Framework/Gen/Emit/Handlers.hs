@@ -9,7 +9,7 @@ import Data.Char (isAlphaNum, isSpace)
 import Data.List (intercalate, isPrefixOf, nub, sortOn, stripPrefix)
 import Data.Maybe (fromMaybe)
 import Framework.Gen.Plan
-import Framework.Gen.Emit.Types (renderValueType)
+import Framework.Gen.Emit.Types (renderValueType, specialisation)
 import Framework.Gen.Names (HandlerNames, entryName, helperName, handlerFailure)
 import Framework.Gen.Frontend.Source (HandlerSource(..), sourceOffset)
 import Framework.Language.Registration
@@ -37,7 +37,7 @@ renderHandlers names unit loaded = do
   generated <- case loaded of
     Nothing -> pure ("module " ++ generatedName ++ " (" ++ fingerprint ++ ") where\n")
     Just source -> copyModule qualifiers (unitNamespace unit) generatedName extraExports (handlerText source) (handlerModule source)
-  pure ("-- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。\n"
+  pure (specialisation ++ "\n-- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。\n"
         ++ concat ["{-# LANGUAGE " ++ extension ++ " #-}\n" | extension <- extensions, extension `notElem` supplied]
         ++ generated
         ++ "\n-- 记录本编译副本实际使用的手写源码；启动前检查，避免执行过期方法体。\n"
@@ -290,8 +290,11 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         once binding = ["FrameworkRuntime.runOnce " ++ slot selectedName | bindingResult binding == NativeType "[String]"]
         wrapper binding = case bindingOperation binding of
           OpenResource -> once binding ++ rootWrapper selectedName ++ scopeWrapper binding "openScope " (" " ++ cleanupOf selectedName)
-          AtomicOperation -> once binding ++ rootWrapper selectedName
-            ++ (("FrameworkRuntime.atomicHandle " ++ slot selectedName ++ anchoredOf binding) : entered)
+          -- 没有输出联立分支时，句柄的输出只由 runOnce 记录：atomicHandle 在交出前的那次记录没有读者。
+          AtomicOperation
+            | null (anchoredBranches binding) && not (null (once binding)) -> once binding ++ rootWrapper selectedName ++ entered
+            | otherwise -> once binding ++ rootWrapper selectedName
+                ++ (("FrameworkRuntime.atomicHandle " ++ slot selectedName ++ anchoredOf binding) : entered)
           PureOperation -> once binding ++ rootWrapper selectedName ++ scoped
           operation -> rootWrapper selectedName ++ case operation of
             -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
@@ -309,8 +312,10 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     -- 输出联立的执行闭包：句柄成功交出后依次执行挂在它下面的生产分支（先普通、再持续），失败沿原链传播。
     anchoredOf binding = " [" ++ intercalate ", "
       [ "(" ++ slot (outputProducer connection) ++ ", () <$ " ++ call (outputParser connection) ++ ")"
-      | role <- [ContextRequest, ContextStream], connection <- assemblyOutputs (unitAssembly unit)
-      , outputRole connection == role, outputAnchor connection == bindingMethod binding ] ++ "]"
+      | connection <- anchoredBranches binding ] ++ "]"
+    anchoredBranches binding =
+      [ connection | role <- [ContextRequest, ContextStream], connection <- assemblyOutputs (unitAssembly unit)
+      , outputRole connection == role, outputAnchor connection == bindingMethod binding ]
     -- 自动收尾：open 带上本 scope 的 close，在同一 Middleware 列表下执行。
     cleanupOf selectedName = case [closing | plan <- unitScopes unit, scopeEffect plan == selectedName, Just closing <- [scopeCleanup plan]] of
       closing : _ -> "(Just (() <$ " ++ call closing ++ "))"

@@ -7,7 +7,7 @@ module Framework.Gen.Emit.Effects (renderEffects) where
 import Data.Char (toUpper)
 import Data.List (intercalate)
 import Framework.Gen.Plan
-import Framework.Gen.Emit.Types (renderValueType, renderCapability)
+import Framework.Gen.Emit.Types (renderValueType, renderCapability, specialisation)
 import Framework.Gen.Names (handlerClass, handlerError, handlerFailure, handlerLayer)
 
 renderEffects :: Unit -> String
@@ -15,7 +15,8 @@ renderEffects unit = unlines (contractHeader ++ runtimeAliases ++ generatedContr
     ++ concatMap handlerContract (unitSignatures unit) ++ errorDeclaration ++ contextDeclarations)
   where
     contractHeader =
-      [ "{-# LANGUAGE ConstraintKinds #-}"
+      [ specialisation
+      , "{-# LANGUAGE ConstraintKinds #-}"
       , "{-# LANGUAGE DeriveGeneric #-}"
       , "{-# LANGUAGE FlexibleContexts #-}"
       , "{-# LANGUAGE FlexibleInstances #-}"

@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
@@ -204,7 +205,6 @@ runPrepareFiles :: Effects.App [String]
 runPrepareFiles =
   SDK.runOnce (SDK.Slot 0 "PrepareFiles")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 0 "PrepareFiles") []
   . SDK.enterHandler (SDK.Slot 0 "PrepareFiles") $
     call @"PrepareFiles" @"prepareFiles" Effects.prepareFiles
 
@@ -258,7 +258,6 @@ runUseFirst =
   SDK.runOnce (SDK.Slot 4 "UseFirst")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 4 "UseFirst") []
   . SDK.withScopeDependencies [(SDK.Slot 3 "FileSession")]
   . SDK.enterHandler (SDK.Slot 4 "UseFirst") $
     getFileName >> openFileSession >> call @"UseFirst" @"checkSelection" Effects.checkSelection
@@ -267,7 +266,6 @@ runSelectSecond :: Effects.App [String]
 runSelectSecond =
   SDK.runOnce (SDK.Slot 5 "SelectSecond")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 5 "SelectSecond") []
   . SDK.enterHandler (SDK.Slot 5 "SelectSecond") $
     call @"SelectSecond" @"selectSecond" Effects.selectSecond
 
@@ -276,7 +274,6 @@ runUseSecond =
   SDK.runOnce (SDK.Slot 6 "UseSecond")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 6 "UseSecond") []
   . SDK.withScopeDependencies [(SDK.Slot 3 "FileSession")]
   . SDK.enterHandler (SDK.Slot 6 "UseSecond") $
     getFileName >> openFileSession >> call @"UseSecond" @"checkSelection" Effects.checkSelection
@@ -285,7 +282,6 @@ runSelectFirst :: Effects.App [String]
 runSelectFirst =
   SDK.runOnce (SDK.Slot 7 "SelectFirst")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 7 "SelectFirst") []
   . SDK.enterHandler (SDK.Slot 7 "SelectFirst") $
     call @"SelectFirst" @"selectFirst" Effects.selectFirst
 
@@ -294,7 +290,6 @@ runReopenFirst =
   SDK.runOnce (SDK.Slot 8 "ReopenFirst")
   . SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 8 "ReopenFirst") []
   . SDK.withScopeDependencies [(SDK.Slot 3 "FileSession")]
   . SDK.enterHandler (SDK.Slot 8 "ReopenFirst") $
     getFileName >> openFileSession >> call @"ReopenFirst" @"checkSelection" Effects.checkSelection
@@ -303,7 +298,6 @@ runCheckJournal :: Effects.App [String]
 runCheckJournal =
   SDK.runOnce (SDK.Slot 9 "CheckJournal")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 9 "CheckJournal") []
   . SDK.enterHandler (SDK.Slot 9 "CheckJournal") $
     call @"CheckJournal" @"checkJournal" Effects.checkJournal
 

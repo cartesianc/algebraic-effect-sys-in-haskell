@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- 一次运行中的入口身份和执行来源；与 scope 实例的关闭归属分开。
 module Framework.Runtime.Identity
   ( Origin(..), ActivationId(..), Boot(..), Execution(..), executionOrigin

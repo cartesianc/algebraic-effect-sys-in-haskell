@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 {-# LANGUAGE GADTs #-}
 
 -- 生成的执行闭包与末端句柄。gen 在 Generated/Program.hs 写出组合好的 workflow（顺序、并行、选择、来源运行）、
@@ -5,7 +6,7 @@
 -- Target 只保存末端句柄与共享 scope；Handoff 交接捕获值与持续资产的视图。
 module Framework.Runtime
   ( App, Target, targetApp
-  , targetName, lowerTarget, lowerWith, Handoff(..), noHandoff, scopeHandlers, cleanupTargets
+  , targetName, lowerTarget, lowerWith, Handoff(..), noHandoff, handoffWithoutResources, scopeHandlers, cleanupTargets
   , Compiled(..), Closure(..), StreamSource(..), Reaction(..), Response(..), Tracking(..)
   ) where
 
@@ -21,6 +22,7 @@ import Framework.Runtime.Scope
 import Framework.Prototype.Coordinate (Coord)
 import Framework.Prototype.Slot (Slot(..))
 import Framework.Prototype.Types (NodeId)
+import Control.DeepSeq (NFData, rnf)
 import Control.Exception (SomeException, evaluate)
 import Control.Monad (filterM, when)
 import Data.List (nubBy)
@@ -30,15 +32,15 @@ import Data.Maybe (isNothing, mapMaybe)
 
 -- 一个生成程序的 Node 共用同一存储契约。
 data Target environment cause value where
-  AppTarget :: (Show cause, Show value) => String -> environment -> Scopes environment cause -> App environment cause value
-            -> Target environment cause value
+  AppTarget :: (Show cause, Show value, NFData value) => String -> environment -> Scopes environment cause
+            -> App environment cause value -> Target environment cause value
 
 targetName :: Target environment cause value -> String
 targetName (AppTarget selected _ _ _) = selected
 
 -- 生成区只登记句柄，不组合上游操作。
-targetApp :: (Show cause, Show value) => String -> environment -> Scopes environment cause -> App environment cause value
-          -> Target environment cause value
+targetApp :: (Show cause, Show value, NFData value) => String -> environment -> Scopes environment cause
+          -> App environment cause value -> Target environment cause value
 targetApp = AppTarget
 
 -- 交给下一段调用的已捕获绑定（只含无 scope 归属的资产）与持续资产的视图；内容不对外公开。
@@ -48,10 +50,17 @@ data Handoff environment cause = Handoff (ScopeBindings environment cause) [(Slo
 noHandoff :: Handoff environment cause
 noHandoff = Handoff [] []
 
+-- 普通跨入口交接不传资源；同一来源步骤的内部交接在来源运行器中处理。
+-- 只有 alternative 把选择读取的捕获交给候选，由它在调用返回后立即过滤。
+handoffWithoutResources :: Handoff environment cause -> IO (Handoff environment cause)
+handoffWithoutResources (Handoff captured delivered) =
+  (`Handoff` delivered) <$> filterM (fmap isNothing . readBindingOwner . snd) captured
+
 -- 末端的一次调用。performed 是订阅回调交付的资产：入口里对它的 requests 直接读这条交付。
 -- 交付及其伴随绑定作为本次执行帧的已固定输入登记，scope 回收据此保留它们开启的实例；
 -- Untracked 的执行没有自己的帧，不登记。
 -- 受控结果消费在撤销入口使用登记前完成，惰性读取不会落在自动 close 之后。
+-- 返回的交接是调用结束时的完整捕获，交给下一段调用前用 handoffWithoutResources 过滤。
 lowerTarget :: RuntimeGraph environment cause -> Tracking -> Retention environment cause -> Coord -> ExecutionFrame -> Place
             -> Handoff environment cause -> [Slot] -> Target environment cause value
             -> IO (Either (Failure cause) value, Handoff environment cause)
@@ -66,14 +75,16 @@ lowerTarget graph tracking retention location executionFrame at (Handoff given v
         , launchUser = Nothing, launchFrame = executionFrame, launchRetention = retention, launchPlace = at
         , launchTracking = tracking }
   (outcome, captured, delivered) <- lowerWith graph location launch target
-  -- 普通跨入口交接不传资源；同一来源步骤的内部交接在来源运行器中处理。
-  handoffBindings <- filterM (fmap isNothing . readBindingOwner . snd) captured
-  pure (outcome, Handoff handoffBindings delivered)
+  pure (outcome, Handoff captured delivered)
 
 lowerWith :: RuntimeGraph environment cause -> Coord -> Launch environment cause -> Target environment cause value
           -> IO (Either (Failure cause) value, ScopeBindings environment cause, [(Slot, View environment cause)])
+-- 结果在撤销使用登记前完整求值：成功值用 NFData，失败仍完整展开一次（失败少见，原因类型只要求 Show）。
 lowerWith graph location launch (AppTarget _ environment _ action) =
-  runAppWith (\value -> evaluate (foldr seq () (show value))) graph location launch environment action
+  runAppWith consume graph location launch environment action
+  where
+    consume (Right value) = evaluate (rnf value)
+    consume (Left problem) = evaluate (foldr seq () (show problem))
 
 -- 各末端通常捕获同批 scope；按控制对象身份去重，不按业务名称合并独立批次。
 scopeHandlers :: [Target environment cause value] -> Scopes environment cause

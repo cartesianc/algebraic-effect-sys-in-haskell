@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 
 -- 手写业务的公共入口（源语言）：注册声明、handler 能力（require、stream、rawinput、rawoutput、rawemit、raise、streamEnd、endStream）、故障读取与 workflow 组合。

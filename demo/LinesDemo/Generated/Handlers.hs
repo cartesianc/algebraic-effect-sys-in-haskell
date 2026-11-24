@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
@@ -259,7 +260,6 @@ runAnnounce :: forall hooks. Captured hooks => Effects.App [String]
 runAnnounce =
   SDK.runOnce (SDK.Slot 0 "Announce")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 0 "Announce") []
   . SDK.enterHandler (SDK.Slot 0 "Announce") $
     call @hooks @"Announce" @"announce" Effects.announce
 
@@ -329,7 +329,6 @@ runPrintLine :: forall hooks. Captured hooks => Effects.App [String]
 runPrintLine =
   SDK.runOnce (SDK.Slot 6 "PrintLine")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 6 "PrintLine") []
   . SDK.enterHandler (SDK.Slot 6 "PrintLine") $
     call @hooks @"PrintLine" @"printLine" Effects.printLine
 
@@ -363,7 +362,6 @@ runShowTotal :: forall hooks. Captured hooks => Effects.App [String]
 runShowTotal =
   SDK.runOnce (SDK.Slot 9 "ShowTotal")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 9 "ShowTotal") []
   . SDK.enterHandler (SDK.Slot 9 "ShowTotal") $
     call @hooks @"ShowTotal" @"showTotal" Effects.showTotal
 
@@ -371,7 +369,6 @@ runReport :: forall hooks. Captured hooks => Effects.App [String]
 runReport =
   SDK.runOnce (SDK.Slot 10 "Report")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 10 "Report") []
   . SDK.enterHandler (SDK.Slot 10 "Report") $
     call @hooks @"Report" @"report" Effects.report
 

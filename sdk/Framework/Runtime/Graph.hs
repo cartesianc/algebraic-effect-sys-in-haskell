@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE ViewPatterns #-}
 
@@ -36,7 +37,7 @@ import Framework.Runtime.Retention
 import Framework.Runtime.Delivery (View)
 import Framework.Runtime.Scope
   ( Scopes, ScopeBinding, ScopeBindings, ScopeUser(..), ScopeHandler(..), ScopeInstance(..), ScopeRecord(..), ScopeInput(..)
-  , configureScopeRelations, cleanupAvailable, saveCleanupFailures )
+  , configureScopeRelations, cleanupAvailable, saveCleanupFailures, newScopeUser )
 import Framework.Prototype
 import Framework.Prototype.Index
 import Framework.Prototype.Coordinate (Coord, within)
@@ -99,6 +100,8 @@ data RuntimeGraph environment cause = RuntimeGraph
   -- 挂起数达到执行数说明没有线程还能发布：等待者放弃，按缺值报错，不留下永远阻塞的调用。
   , runtimeWaiting :: TVar Int
   , runtimeStaticWaiting :: TVar Int
+  -- Untracked 执行共用的 scope 使用者：这些执行不开启、不认领实例，它始终为空，不需要撤销。
+  , runtimeDetachedUser :: ScopeUser environment cause
   }
 
 -- 一次发布之后要执行的回调；Just 是回调中的失败，沿发布方的调用传播。
@@ -133,6 +136,7 @@ newRuntimeGraph index scopes = do
     <*> newIORef (\_ _ _ _ -> pure Nothing)
     <*> newIORef (\_ source -> ioError (userError ("No static run is installed for " ++ slotName source)))
     <*> newTVarIO 0 <*> newTVarIO IntMap.empty <*> newIORef 0 <*> newTVarIO 1 <*> newTVarIO 0 <*> newTVarIO 0
+    <*> newScopeUser scopes (BusinessExecution (Origin (rootCoord index) (-1)))
 
 -- ScopeTree 的独立构建与校验仍在 Prototype；这里只把同一树的关系装入现有控制对象。
 configureRuntimeScopes :: RuntimeGraph environment cause -> IO ()
@@ -404,9 +408,12 @@ keepsHistory graph source = case runtimePrototype graph of
 
 -- 选中共享最新值与登记本次捕获身份在同一短临界区完成；普通业务 IO 不在锁内。
 -- 没有值返回 Nothing，读取方立即按缺值处理。资源不从这张表取得。
-readPublishedAsset :: RuntimeGraph environment cause -> ExecutionFrame -> Origin -> Slot
+readPublishedAsset :: RuntimeGraph environment cause -> Tracking -> ExecutionFrame -> Origin -> Slot
                    -> IO (Either ContextFault (Maybe (ScopeBinding environment cause)))
-readPublishedAsset graph frame origin source = withFrameLock (runtimeRootFrame graph) $ do
+-- Untracked 的读取不登记捕获，只取最新值。
+readPublishedAsset graph Untracked _ _ source =
+  Right . IntMap.lookup (slotNumber source) <$> readIORef (runtimeLatest graph)
+readPublishedAsset graph Tracked frame origin source = withFrameLock (runtimeRootFrame graph) $ do
   value <- IntMap.lookup (slotNumber source) <$> readIORef (runtimeLatest graph)
   forM_ (value >>= bindingProduction) $ \production ->
     captureFrameInputLocked frame (originNode origin) source production

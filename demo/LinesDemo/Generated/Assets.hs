@@ -6,23 +6,23 @@ import Framework.Prototype.Catalog (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "OpenedInput", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 21, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "OpenedInput", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 22, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "OpenedInput", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 21, assetColumn = 23}
+          [ AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "OpenedInput", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 22, assetColumn = 23}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "RunningTotal", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "RunningTotal", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 30, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "RunningTotal", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 29, assetColumn = 24}
+          [ AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "RunningTotal", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 30, assetColumn = 24}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "TextLine", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 25, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "TextLine", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 26, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "TextLine", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 25, assetColumn = 20}
+          [ AssetSymbol {assetModule = "LinesDemo.Generated.Effects", assetName = "TextLine", assetFile = "demo/LinesDemo/Generated/Effects.hs", assetLine = 26, assetColumn = 20}
           ]
       , assetFields = []
       }

@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 -- 自动生成的编译副本；请修改上级 Handlers.hs 后重新生成。
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
@@ -250,7 +251,6 @@ runAnnounce :: Effects.App [String]
 runAnnounce =
   SDK.runOnce (SDK.Slot 5 "Announce")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 5 "Announce") []
   . SDK.enterHandler (SDK.Slot 5 "Announce") $
     call @"Announce" @"announce" Effects.announce
 
@@ -258,7 +258,6 @@ runShowTemperature :: Effects.App [String]
 runShowTemperature =
   SDK.runOnce (SDK.Slot 6 "ShowTemperature")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 6 "ShowTemperature") []
   . SDK.enterHandler (SDK.Slot 6 "ShowTemperature") $
     call @"ShowTemperature" @"showTemperature" Effects.showTemperature
 
@@ -266,7 +265,6 @@ runCheckTrend :: Effects.App [String]
 runCheckTrend =
   SDK.runOnce (SDK.Slot 7 "CheckTrend")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 7 "CheckTrend") []
   . SDK.enterHandler (SDK.Slot 7 "CheckTrend") $
     call @"CheckTrend" @"checkTrend" Effects.checkTrend
 
@@ -274,7 +272,6 @@ runReportHeartbeat :: Effects.App [String]
 runReportHeartbeat =
   SDK.runOnce (SDK.Slot 8 "ReportHeartbeat")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 8 "ReportHeartbeat") []
   . SDK.enterHandler (SDK.Slot 8 "ReportHeartbeat") $
     call @"ReportHeartbeat" @"reportHeartbeat" Effects.reportHeartbeat
 

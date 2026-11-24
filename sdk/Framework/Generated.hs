@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 
 -- 生成代码专用入口。业务声明、Handlers 和 Workflow 只需 Framework.SDK。

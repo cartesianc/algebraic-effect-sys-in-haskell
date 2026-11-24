@@ -6,86 +6,86 @@ import Framework.Prototype.Catalog (Asset(..), AssetSymbol(..))
 generatedAssets :: [Asset]
 generatedAssets =
   [ Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelA", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 61, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelA", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 62, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelA", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 61, assetColumn = 18}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelA", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 62, assetColumn = 18}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelB", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 65, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelB", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 66, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelB", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 65, assetColumn = 18}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "LevelB", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 66, assetColumn = 18}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "OpenedReply", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 41, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "OpenedReply", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 42, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "OpenedReply", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 41, assetColumn = 23}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "OpenedReply", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 42, assetColumn = 23}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "OpenedReport", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 37, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "OpenedReport", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 38, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "OpenedReport", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 37, assetColumn = 24}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "OpenedReport", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 38, assetColumn = 24}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReplyBody", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 33, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReplyBody", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 34, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReplyBody", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 33, assetColumn = 21}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReplyBody", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 34, assetColumn = 21}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReplyPath", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 25, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReplyPath", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 26, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReplyPath", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 25, assetColumn = 21}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReplyPath", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 26, assetColumn = 21}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReplyStats", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 49, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReplyStats", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 50, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReplyStats", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 49, assetColumn = 22}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReplyStats", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 50, assetColumn = 22}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportBody", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 29, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportBody", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 30, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportBody", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 29, assetColumn = 22}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportBody", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 30, assetColumn = 22}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportEmpty", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 53, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportEmpty", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 54, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportEmpty", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 53, assetColumn = 23}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportEmpty", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 54, assetColumn = 23}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportPath", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 21, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportPath", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 22, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportPath", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 21, assetColumn = 22}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportPath", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 22, assetColumn = 22}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportStats", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 45, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportStats", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 46, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportStats", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 45, assetColumn = 23}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportStats", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 46, assetColumn = 23}
           ]
       , assetFields = []
       }
   , Asset
-      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportText", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 57, assetColumn = 1}
+      { assetType = AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportText", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 58, assetColumn = 1}
       , assetConstructors =
-          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportText", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 57, assetColumn = 22}
+          [ AssetSymbol {assetModule = "FacadeProbe.Generated.Effects", assetName = "ReportText", assetFile = "demo/FacadeProbe/Generated/Effects.hs", assetLine = 58, assetColumn = 22}
           ]
       , assetFields = []
       }

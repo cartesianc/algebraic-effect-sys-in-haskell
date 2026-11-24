@@ -79,7 +79,7 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 | <a id="closure-3"></a>C3 lifelong 是标记 | gen 按 lifelong 生成回调表。执行到 lifelong 的位置时只做一件事：有 Stream 来源时同步运行它，来源 `streamEnd` 或订阅方全部 `endStream` 后返回；没有 Stream 来源（只有 event 订阅）时什么也不做。一个 lifelong 至多一个 Stream 来源：参照 Effect-TS 的并发须显式，多个独立来源写 `parallel [lifelong [...], lifelong [...]]`。单元内的 target 由同一份资产驱动。event 回调在整次运行中有效，直到订阅方 `endStream`；socket、behavior 与派生回调只回应所属 lifelong 作用范围里的发布。 |
 | <a id="closure-4"></a>C4 lifelong 外的持续资产 | `requests` 不再取持续资产的“当前一条”。lifelong 外 `requests` 一份持续资产就是要一份静态历史：第一次 `requests` 在当前位置同步运行来源（及派生链）直到 `streamEnd`，之后 `requires` 读最后一条，`streams` 读整段；同一次运行只跑一次，历史保留到运行结束。lifelong 内不能 `requests` `stream = True` 的资产，订阅它要写 `streams`。behavior 只在 lifelong 内回调；lifelong 外同样跑到结束后读最新值。 |
 | <a id="closure-5"></a>C5 回调环 | 订阅回调经自身的执行（target、Input 链、`requests` 的传递闭包、输出联立、持续挂接、派生）可能再次发布它订阅的资产时，回调会无限递归。gen 在“资产 → 回调可能发布的资产”图上查环并拒绝，取代原 event 自激检查和同单元的路径覆盖规则。 |
-| <a id="closure-6"></a>C6 IR 即闭包 | gen 在 `Generated/Program.hs` 写出组合好的 workflow 闭包（顺序、并行、选择、来源运行）和回调表；interpreter 只核对 AST 与原型一致，然后执行它，不在运行期遍历 Prototype 编排，也不按坐标查询来源计划。输出联立由 gen 生成的调用序列完成，不在运行时改写调用者状态。 |
+| <a id="closure-6"></a>C6 IR 即闭包 | gen 在 `Generated/Program.hs` 写出组合好的 workflow 闭包（顺序、并行、选择、来源运行）和回调表；interpreter 只核对 AST 与原型一致，在运行开始时把这些闭包数据编成执行函数一次，然后执行它，不在运行期遍历 Prototype 编排，也不按坐标查询来源计划（见[每次调用的执行路径](#call-path)）。输出联立由 gen 生成的调用序列完成，不在运行时改写调用者状态。 |
 
 **实现。**
 
@@ -157,9 +157,30 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 
 验证（仓库外探针，记录不进仓库）：demo 中 file、lines、open-files、scope-instances、scope-reuse 返回 `Succ`，输出与之前一致；stream 是无限运行，单元为 Tracked，未单独运行。event、behavior、历史、静态读取与 require 等待探针的输出与修改前的构建逐字节相同，只有 `parallel [Reader, lifelong [Sink]]` 中两个分支首行的先后变了，属于合法的调度交错。新探针与 `cf3d870` 的构建逐字节相同：单元发布 Scoped 开启参数时它和开启 scope 的单元都判为 Tracked，每次交付各开一个实例；Untracked 单元中途 `endStream` 后其余单元照常、中途 `raise` 时整次运行以该失败结束。16 路基准挂 middleware 计数时，每个 Operation 的次数与之前相同。
 
-性能（10 万条，`-O1 -threaded`，`-N1`，与 `cf3d870` 交错各 5 轮取中位数；同机另有一组长期基准在跑）：单订阅方 0.625 → 0.464 秒，4 路 1.865 → 1.203 秒，16 路 7.658 → 4.533 秒，每次交付 4.79 → 2.83 µs，累计分配 39.4 → 26.3 GB；结果全部正确。剩余开销在 App 入口与 handler 执行层，见 [Next stages 的后续步骤](#untracked-next)。
+性能（10 万条，`-O1 -threaded`，`-N1`，与 `cf3d870` 交错各 5 轮取中位数）：16 路 7.658 → 4.533 秒，每次交付 4.79 → 2.83 µs，累计分配 39.4 → 26.3 GB；其后对调用路径的精简见[每次调用的执行路径](#call-path)。
 
-<a id="untracked-next"></a>未覆盖：结果求值仍经过 `show`，`ContextStore` 的多态函数未特化；event 单元与订阅源头在 Scoped 下的单元（LinesDemo、StreamDemo）照旧登记。
+<a id="call-path"></a>
+**每次调用的执行路径（2026-11-25）。** 不登记之后，剩余开销在每次 handler 调用固定要走的路径上。下面五项都不改声明、AST、handler 写法与 Prototype，只改 gen 输出与运行时执行已定事实的方式。
+
+- **特化**：SDK 的运行模块与 gen 写出的 Generated 模块（Effects、Handlers 副本、Program）带 `-fexpose-all-unfoldings -fspecialise-aggressively`。生成代码只在具体的 `App` 上调用多态的 handler 与 SDK 函数，GHC 据此特化，消掉类型类字典调用并内联 monad 栈。手写业务模块不需要这条选项，Handlers 的编译副本已带上。
+- **调用入口**：Untracked 的调用共用运行图里一个从不登记实例的 scope 使用者，不建立、撤销；不屏蔽取消、不交接保留根（没有要配对撤销的登记）；读取不把捕获写进执行帧，最新值直接读运行级表。根调用的初始环境由 `callEnvironment` 统一构造。
+- **入口包装与结果求值**：没有输出联立分支的原子句柄不再包 `atomicHandle`，它在交出前的那次输出记录没有读者，输出仍由 `runOnce` 记录。结果在撤销使用登记前完整求值，成功值改用 `NFData`（生成的 `Results` 派生），失败仍完整展开；不再把每个结果渲染成字符串。
+- **监督与交付**：Untracked 的回调在入口处整体受监督一次，不逐层包装；同一次发布的交付视图对它的所有回调只组装一次（回调不能再发布它订阅的资产，视图在回调之间不变）。选择读取的捕获只在 alternative 交给候选时过滤资源，普通 Step 不再过滤。
+- **闭包编成函数**：运行开始时把 Generated/Program.hs 的闭包数据（workflow 与回调表）各编成执行函数一次（`Execution.stage`、`respond`）：坐标、成员、帧节点、作用范围与候选位置在函数之外算好，每次执行只做本次的工作。生成的 Program 仍是可读的闭包数据，没有改成生成 Haskell 函数：编成函数连同上一项的入口精简，16 路只从 2.02 秒降到 1.91 秒，闭包遍历不是主要开销，改写生成形式换不来与静态结构相称的收益。成功值的求值不给业务类型增加约束：gen 交给 target 的总是 `Results` 或 `()`，handler 的返回值先以 `<$` 替换。
+
+性能（10 万条，`-O1 -threaded`，`-N1`，与 `cf3d870` 交错各 5 轮取中位数；同机另有一组长期基准在跑；每轮核对全部订阅方的条数与校验和）：
+
+| 负载 | `cf3d870` | 不登记（`122f0e3`） | 本节之后 |
+| --- | --- | --- | --- |
+| 单订阅方 | 0.631 s | 0.465 s | 0.296 s |
+| 4 路 | 1.855 s | 1.199 s | 0.605 s |
+| 16 路 | 7.637 s（4.77 µs／交付，24.6 KB） | 4.503 s | 1.905 s（1.19 µs／交付，8.3 KB） |
+
+16 路剩下的 1.19 µs 里约 0.53 µs 是基准 handler 自己的 `read`（标准库的通用语法解析，原生 Haskell 用它时同样耗时）；框架约 0.66 µs，主要在调用入口、读取路径与 handler 的 monad 层。
+
+验证（仓库外，记录不进仓库）：file、lines、open-files、scope-instances、scope-reuse 五个 demo 与 `cf3d870` 的构建从同一初始状态运行，输出逐字节相同；event、behavior、历史、静态读取、require 等待与三个回收无关探针的输出与修改前相同（ModeProbe 的计数器跨运行累计，结构相同）；16 路基准挂 middleware 计数，100 条与 10 万条的每种 Operation 次数相同。
+
+未覆盖：event 单元与订阅源头在 Scoped 下的单元（LinesDemo、StreamDemo）照旧登记，走原来的调用路径；Tracked 路径的调用入口未精简；stream-demo 是无限运行，未单独运行。
 
 <a id="code-shape"></a>
 ## LSP 从哪份代码开始
