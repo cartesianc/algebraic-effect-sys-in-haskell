@@ -224,7 +224,14 @@ publishedWithin effects tree subtree = grow [] direct
     grow seen [] = reverse seen
     grow seen (asset : rest)
       | asset `elem` seen = grow seen rest
-      | otherwise = grow (asset : seen) (rest ++ reactionPublishes effects tree asset)
+      | otherwise = grow (asset : seen) (rest ++ reactionPublishes effects tree asset ++ drivenFrom asset)
+    -- 持续资产的生产总是从根来源开始（静态运行与 lifelong 都是）：驱动它的上游资产，以及各自的来源与 parser
+    -- 入口执行时可能发布的。例如 requests 派生资产 RunningTotal 的静态运行会发布根资产 TextLine。
+    drivenFrom asset = concat
+      [ upstream : concat [executionPublishes effects Nothing (effectName source)
+          | source <- effects, effectProduces source == Just upstream]
+      | producer <- effects, effectContinuous producer, effectProduces producer == Just asset
+      , upstream <- sessionAssets effects [asset], upstream /= asset ]
 
 -- ========================================================================
 -- 入口与输出连接事实

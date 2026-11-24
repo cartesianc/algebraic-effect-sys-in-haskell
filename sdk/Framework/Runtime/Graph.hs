@@ -12,17 +12,18 @@ module Framework.Runtime.Graph
   , publishAsset, readPublishedAsset, resetOrigins
   , readHistory, dropHistory, installReactions, react, installStatic, runStatic
   , openBranches, leaveBranch, rejoinBranches, publicationTicket, awaitPublication
+  , StaticRun, newStaticRun, finishStatic, awaitStatic
   ) where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (TVar, atomically, check, modifyTVar', newTVarIO, readTVar, readTVarIO, writeTVar)
-import Control.Exception (SomeAsyncException, evaluate, finally, fromException, mask, throwIO, uninterruptibleMask_)
+import Control.Concurrent.STM (STM, TVar, atomically, check, modifyTVar', newTVarIO, readTVar, readTVarIO, retry, writeTVar)
+import Control.Exception (SomeAsyncException, evaluate, finally, fromException, mask, onException, throwIO, uninterruptibleMask_)
 import Control.Monad (forM, forM_, when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 import Data.List (nub)
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, isNothing)
 import Data.Sequence ((|>))
 import qualified Data.Sequence as Seq
 import Framework.Language.Handler (Failure)
@@ -89,15 +90,18 @@ data RuntimeGraph environment cause = RuntimeGraph
   , runtimeReactions :: IORef (Reaction environment cause)
   -- lifelong 外 requests 一份持续资产：同步运行它的来源直到 streamEnd，同一次运行只跑一次；返回这次静态运行的作用范围。
   , runtimeStatic :: IORef (Place -> Slot -> IO (Either (Failure cause) NodeId))
-  -- 发布与 parallel 分支退出时加一：require 在查值前取得这个编号，编号变了就重查，查值与开始等待之间的发布不会漏掉。
+  -- 发布与 parallel 分支的变化（开始、退出、汇合）时加一：require 在查值前取得这个编号，编号变了就重查，
+  -- 查值与开始等待之间的发布不会漏掉。
   , runtimeVersion :: TVar Int
   -- 正在运行的 parallel 分支 → gen 写明它可能发布的资产。require 缺值时只在别的分支仍可能发布时等待。
   , runtimeBranches :: TVar (IntMap.IntMap [Slot])
   , runtimeBranchSequence :: IORef Int
-  -- 正在执行的线程数（根线程与 parallel 的各分支，不含等待子分支的父线程）与其中正在等待 require 的线程数。
-  -- 两者相等说明没有线程还能发布：等待者放弃，按缺值报错，不留下永远阻塞的调用。
+  -- 正在执行的线程数：根线程与 parallel 的各分支，不含等待子分支的父线程；最后一个子分支退出时把名额直接交还父线程。
   , runtimeRunning :: TVar Int
+  -- 其中挂起的线程：等待 require 的（每次编号变化都同时放行并清零，放行后尚未重查的不再计入）与等待别人的静态运行结束的。
+  -- 挂起数达到执行数说明没有线程还能发布：等待者放弃，按缺值报错，不留下永远阻塞的调用。
   , runtimeWaiting :: TVar Int
+  , runtimeStaticWaiting :: TVar Int
   }
 
 -- 一次发布之后要执行的回调；Just 是回调中的失败，沿发布方的调用传播。
@@ -125,7 +129,7 @@ newRuntimeGraph index scopes = do
     <*> newIORef IntMap.empty <*> newIORef Map.empty
     <*> newIORef (\_ _ _ _ -> pure Nothing)
     <*> newIORef (\_ source -> ioError (userError ("No static run is installed for " ++ slotName source)))
-    <*> newTVarIO 0 <*> newTVarIO IntMap.empty <*> newIORef 0 <*> newTVarIO 1 <*> newTVarIO 0
+    <*> newTVarIO 0 <*> newTVarIO IntMap.empty <*> newIORef 0 <*> newTVarIO 1 <*> newTVarIO 0 <*> newTVarIO 0
 
 -- ScopeTree 的独立构建与校验仍在 Prototype；这里只把同一树的关系装入现有控制对象。
 configureRuntimeScopes :: RuntimeGraph environment cause -> IO ()
@@ -412,7 +416,13 @@ dropHistory graph scope sources = atomicModifyIORef' (runtimeHistory graph) $ \h
   (foldr (\source -> Map.delete (slotNumber source, Just scope)) histories sources, ())
 
 notifyChange :: RuntimeGraph environment cause -> IO ()
-notifyChange graph = atomically (modifyTVar' (runtimeVersion graph) (+ 1))
+notifyChange graph = atomically (changed graph)
+
+-- 编号加一并放行所有等待 require 的线程：它们都会重查，在同一事务里清零，放行后尚未调度的线程不被当成仍在等待。
+changed :: RuntimeGraph environment cause -> STM ()
+changed graph = do
+  modifyTVar' (runtimeVersion graph) (+ 1)
+  writeTVar (runtimeWaiting graph) 0
 
 -- 一个 parallel 的各分支开始前一次登记全部分支（各自可能发布的资产），避免先开始的分支看不到后开始的兄弟。
 -- 父线程转为等待子分支：执行中的线程数加上分支数再减去父线程自己。
@@ -420,24 +430,32 @@ openBranches :: RuntimeGraph environment cause -> [[Slot]] -> IO [Int]
 openBranches graph publishes = do
   first <- atomicModifyIORef' (runtimeBranchSequence graph) (\next -> (next + length publishes, next))
   let identities = zip [first ..] publishes
-  atomically $ do
+  when (not (null publishes)) $ atomically $ do
     modifyTVar' (runtimeBranches graph) (\live -> foldr (uncurry IntMap.insert) live identities)
     modifyTVar' (runtimeRunning graph) (+ (length publishes - 1))
+    changed graph
   pure (map fst identities)
 
--- 一个分支退出（含失败与取消）：撤销它的登记，执行中的线程少一个；等待的 require 重查。
-leaveBranch :: RuntimeGraph environment cause -> Int -> IO ()
-leaveBranch graph identity = atomically $ do
-  modifyTVar' (runtimeBranches graph) (IntMap.delete identity)
-  modifyTVar' (runtimeRunning graph) (subtract 1)
-  modifyTVar' (runtimeVersion graph) (+ 1)
+-- 一个分支退出（含失败与取消）：撤销它的登记；还有兄弟分支在执行时执行数少一个，它是最后一个时
+-- 名额直接交还父线程（父线程接着执行汇合后的步骤，中间没有执行数偏少的时刻）。等待的 require 重查。
+leaveBranch :: RuntimeGraph environment cause -> [Int] -> Int -> IO ()
+leaveBranch graph siblings identity = atomically $ do
+  live <- readTVar (runtimeBranches graph)
+  when (IntMap.member identity live) $ do
+    writeTVar (runtimeBranches graph) (IntMap.delete identity live)
+    when (any (\other -> other /= identity && IntMap.member other live) siblings) $
+      modifyTVar' (runtimeRunning graph) (subtract 1)
+    changed graph
 
--- 全部分支退出后父线程继续执行；仍在登记表中的分支（没来得及开始就被取消的）一并撤销。
+-- 父线程不再等待子分支：仍在登记表中的分支（没来得及退出就被取消的）一并撤销，名额交还父线程。
 rejoinBranches :: RuntimeGraph environment cause -> [Int] -> IO ()
 rejoinBranches graph identities = atomically $ do
-  modifyTVar' (runtimeBranches graph) (\live -> foldr IntMap.delete live identities)
-  modifyTVar' (runtimeRunning graph) (+ 1)
-  modifyTVar' (runtimeVersion graph) (+ 1)
+  live <- readTVar (runtimeBranches graph)
+  let remaining = filter (`IntMap.member` live) identities
+  when (not (null remaining)) $ do
+    writeTVar (runtimeBranches graph) (foldr IntMap.delete live remaining)
+    modifyTVar' (runtimeRunning graph) (+ (1 - length remaining))
+    changed graph
 
 -- require 查值之前取得的编号。
 publicationTicket :: RuntimeGraph environment cause -> IO Int
@@ -451,27 +469,65 @@ awaitPublication graph place sources ticket = do
   decision <- atomically $ do
     version <- readTVar (runtimeVersion graph)
     possible <- publishable
-    waiting <- readTVar (runtimeWaiting graph)
+    waiting <- suspended
     running <- readTVar (runtimeRunning graph)
     if version /= ticket then pure (Just True)
       else if not possible || waiting + 1 >= running then pure (Just False)
-      else Nothing <$ writeTVar (runtimeWaiting graph) (waiting + 1)
+      else Nothing <$ modifyTVar' (runtimeWaiting graph) (+ 1)
   case decision of
     Just answer -> pure answer
     Nothing -> do
       atomically (do
           version <- readTVar (runtimeVersion graph)
           possible <- publishable
-          waiting <- readTVar (runtimeWaiting graph)
+          waiting <- suspended
           running <- readTVar (runtimeRunning graph)
           check (version /= ticket || not possible || waiting >= running))
-        `finally` atomically (modifyTVar' (runtimeWaiting graph) (subtract 1))
+        `finally` withdraw
       pure True
   where
+    suspended = (+) <$> readTVar (runtimeWaiting graph) <*> readTVar (runtimeStaticWaiting graph)
+    -- 编号变化时已经清零放行；只有因放弃或取消醒来（编号未变）时自己退出计数。
+    withdraw = atomically $ do
+      version <- readTVar (runtimeVersion graph)
+      when (version == ticket) (modifyTVar' (runtimeWaiting graph) (subtract 1))
     publishable = do
       live <- readTVar (runtimeBranches graph)
       pure (or [any (`elem` sources) publishes | (identity, publishes) <- IntMap.toList live
         , identity `notElem` placeBranches place])
+
+-- 一次共享的静态运行：结果，以及等它结束的调用数（计入挂起数，运行结束时在同一事务里放行）。
+data StaticRun cause = StaticRun (TVar (Maybe (Maybe (Failure cause)))) (TVar Int)
+
+newStaticRun :: IO (StaticRun cause)
+newStaticRun = StaticRun <$> newTVarIO Nothing <*> newTVarIO 0
+
+-- 运行方填入结果（Nothing 表示成功），放行全部等待者。
+finishStatic :: RuntimeGraph environment cause -> StaticRun cause -> Maybe (Failure cause) -> IO ()
+finishStatic graph (StaticRun result waiters) outcome = atomically $ do
+  writeTVar result (Just outcome)
+  count <- readTVar waiters
+  writeTVar waiters 0
+  modifyTVar' (runtimeStaticWaiting graph) (subtract count)
+  changed graph
+
+-- 别的调用正在运行同一来源：等它结束。等待期间计为挂起，所有线程都挂起时其中等待 require 的一方会按缺值放弃，
+-- 运行方因此失败并填入结果，这里不会永远阻塞。
+awaitStatic :: RuntimeGraph environment cause -> StaticRun cause -> IO (Maybe (Failure cause))
+awaitStatic graph (StaticRun result waiters) = do
+  ready <- atomically $ readTVar result >>= \found -> case found of
+    Just outcome -> pure (Just outcome)
+    Nothing -> do
+      modifyTVar' waiters (+ 1)
+      modifyTVar' (runtimeStaticWaiting graph) (+ 1)
+      pure Nothing
+  case ready of
+    Just outcome -> pure outcome
+    Nothing -> atomically (readTVar result >>= maybe retry pure) `onException` atomically (do
+      found <- readTVar result
+      when (isNothing found) $ do
+        modifyTVar' waiters (subtract 1)
+        modifyTVar' (runtimeStaticWaiting graph) (subtract 1))
 
 installReactions :: RuntimeGraph environment cause -> Reaction environment cause -> IO ()
 installReactions graph = writeIORef (runtimeReactions graph)

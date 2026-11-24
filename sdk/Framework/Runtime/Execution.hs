@@ -15,7 +15,8 @@ import Framework.Runtime.Graph
   ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, runtimeRootFrame, runtimeScopes, newOrigin
   , resetOrigins, collectRuntimeScopes, finishRuntime, withRuntimeRetention
   , readHistory, dropHistory, installReactions, installStatic
-  , Place(..), rootPlace, openBranches, leaveBranch, rejoinBranches )
+  , Place(..), rootPlace, openBranches, leaveBranch, rejoinBranches
+  , StaticRun, newStaticRun, finishStatic, awaitStatic )
 import Framework.Runtime.Frame
 import Framework.Runtime.Delivery (SourceEnded(..), SubscriptionEnded(..))
 import Framework.Runtime.Binding (Binding(..), readBindingOwner)
@@ -206,7 +207,7 @@ execute machine flow run handoff = case flow of
     identities <- openBranches graph (map fst parts)
     let within identity = run { runPlace = (runPlace run) { placeBranches = identity : placeBranches (runPlace run) } }
     outcomes <- runParalleled
-      [ runExceptT (execute machine part (within identity) handoff) `finally` leaveBranch graph identity
+      [ runExceptT (execute machine part (within identity) handoff) `finally` leaveBranch graph identities identity
       | (identity, (_, part)) <- zip identities parts ]
       `finally` rejoinBranches graph identities
     pure (concat <$> sequence outcomes)
@@ -396,19 +397,23 @@ runSource machine run scope source (Handoff given views) = do
 -- lifelong 之外 requests 一份持续资产：同步运行它的根来源直到结束（派生链的回调以静态运行的标识生效），
 -- 同一个根来源在一次运行中只运行一次；并发的请求方等这一次运行结束。历史保留到运行结束。
 staticRun :: Machine method environment cause value -> Run environment cause
-          -> MVar (Map.Map NodeId (MVar (Maybe (Failure cause)))) -> Place -> Slot -> IO (Either (Failure cause) NodeId)
+          -> MVar (Map.Map NodeId (StaticRun cause)) -> Place -> Slot -> IO (Either (Failure cause) NodeId)
 staticRun machine run statics at source = case [(scope, selected) | (asset, scope, selected) <- compiledStatic (machineCompiled machine), asset == source] of
   (scope, selected) : _ -> do
     -- 同一根来源只运行一次：它的派生资产在同一次运行里一并发布。
     (done, fresh) <- modifyMVar statics $ \started -> case Map.lookup scope started of
       Just done -> pure (started, (done, False))
       Nothing -> do
-        done <- newEmptyMVar
+        done <- newStaticRun
         pure (Map.insert scope done started, (done, True))
     -- 运行抛出原生异常时也填入结果，等待的请求方不会悬挂；异常照常传播给发起者。
-    when fresh $ do
-      outcome <- try (runSource machine run { runPlace = at } scope selected noHandoff)
-      putMVar done (either (const Nothing) id outcome)
-      either (\(exception :: SomeException) -> throwIO exception) (const (pure ())) outcome
-    maybe (Right scope) Left <$> readMVar done
+    outcome <- if fresh
+      then do
+        outcome <- try (runSource machine run { runPlace = at } scope selected noHandoff)
+        finishStatic graph done (either (const Nothing) id outcome)
+        either (\(exception :: SomeException) -> throwIO exception) pure outcome
+      else awaitStatic graph done
+    pure (maybe (Right scope) Left outcome)
   [] -> ioError (userError ("No static run for " ++ slotName source ++ "; regenerate with the SDK effect-codegen command"))
+  where
+    graph = machineGraph machine
