@@ -8,7 +8,7 @@ module Framework.Generated
   , module Framework.Prototype
   , module Framework.Prototype.Structure
   , App, TypeRef(..), typeRef, MonadThrow, MonadCatch, MonadMask
-  , Target, targetApp, Compiled(..), Closure(..), StreamSource(..), Reaction(..), Response(..)
+  , Target, targetApp, Compiled(..), Closure(..), StreamSource(..), Reaction(..), Response(..), Tracking(..)
   , failEffect, handleFailure, withErrorPath, withErrorHandlers, ErrorHandler(..)
   , readContext, readStreamContext, readStreamHistory, requestStreamContext
   , callContext, runOnce, unlessPerformed, producingFor, chooseCase, enterHandler
@@ -28,7 +28,7 @@ import Framework.Runtime.Context
   ( readContext, readStreamContext, readStreamHistory, requestStreamContext, callContext, runOnce, unlessPerformed
   , chooseCase, atomicHandle, atomicScope )
 import Framework.Language.Registration (TypeRef(..), typeRef)
-import Framework.Runtime (App, Target, targetApp, Compiled(..), Closure(..), StreamSource(..), Reaction(..), Response(..))
+import Framework.Runtime (App, Target, targetApp, Compiled(..), Closure(..), StreamSource(..), Reaction(..), Response(..), Tracking(..))
 import Framework.Runtime.App
   ( emittedInput, emitToParser, superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation )
 import Framework.Runtime.Scope (ScopeHandler, newScopeHandler)

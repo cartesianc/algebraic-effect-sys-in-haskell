@@ -40,7 +40,7 @@ compileNamespace namespace = do
       names = nameHandlers (maybe mempty handlerScopeNames source) (allMethods unit ++ historyEntries unit)
   handlers <- either (ioError . userError) pure (renderHandlers names unit source)
   -- 输出只读取机器完成态的接口事实。
-  let program = renderProgram directory names (outlineChecks outline) unit
+  let program = renderProgram directory names (outlineChecks outline) (compositionUntracked result) unit
       workflow = renderWorkflowReport namespace tree rows (outlineTargets outline) (outlineSites outline)
         (outlineSources outline)
       prototypeModule = renderPrototypeModule namespace structure

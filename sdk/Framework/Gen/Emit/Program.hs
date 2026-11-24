@@ -12,8 +12,8 @@ import Framework.Gen.Plan
 import Framework.Prototype (ChainRole(..), variantLabel)
 import qualified Framework.Prototype as P
 
-renderProgram :: FilePath -> HandlerNames -> [(FilePath, Maybe String)] -> Unit -> String
-renderProgram directory names hangingSources unit = unlines (programHeader ++ astInterpreter)
+renderProgram :: FilePath -> HandlerNames -> [(FilePath, Maybe String)] -> [P.NodeId] -> Unit -> String
+renderProgram directory names hangingSources untracked unit = unlines (programHeader ++ astInterpreter)
   where
     namespace = unitNamespace unit
     helper name = "Handlers." ++ helperName names name
@@ -46,6 +46,7 @@ renderProgram directory names hangingSources unit = unlines (programHeader ++ as
       , "-- 末端共享生成的 scope 句柄；只创建空状态。"
       , "-- compiledWorkflow：AST 的执行闭包（Serial 顺序、Concurrent 并行、Choose 选择、Drive 是 lifelong 的位置）。"
       , "-- compiledReactions：资产每次发布后同步执行的回调（lifelong 的单元与派生步骤）；Nothing 作用范围是 event。"
+      , "-- Untracked 的单元与 scope 回收无关，执行时不建执行帧、不登记保留根与执行身份。"
       , "-- compiledStatic：lifelong 之外 requests 持续资产时，同步运行到结束的根来源。"
       , "compiledProgram :: IO (SDK.Compiled ContextValues Errors Results)"
       , "compiledProgram = do"
@@ -94,7 +95,8 @@ renderProgram directory names hangingSources unit = unlines (programHeader ++ as
     -- 普通资产（event）的回调整次运行有效。派生资产的步骤是上游的回调。
     reactions = filter (not . null) $
       [ "SDK.Reaction " ++ slotLiteral "SDK." unit producer ++ " " ++ scopeOf path producer
-          ++ " (SDK.RunUnit " ++ show (P.workflowNode part) ++ " (" ++ indented "  " (closure part) ++ "))"
+          ++ " (SDK.RunUnit " ++ show (P.workflowNode part) ++ " " ++ tracking (P.workflowNode part)
+          ++ " (" ++ indented "  " (closure part) ++ "))"
       | (path, described) <- P.workflowLifelongs workflow
       , Just (P.LifelongAt _ _ parts) <- [P.lookupWorkflow workflow path]
       , part <- parts
@@ -104,6 +106,7 @@ renderProgram directory names hangingSources unit = unlines (programHeader ++ as
       ++ [ derive (Just path) session | (path, described) <- P.workflowLifelongs workflow
          , session <- P.lifelongSessions described ]
       ++ [ derive (Just (staticScope session)) session | session <- finite ]
+    tracking node = if node `elem` untracked then "SDK.Untracked" else "SDK.Tracked"
     scopeOf path producer
       | P.effectContinuous (protoOf unit producer) = "(Just " ++ show path ++ ")"
       | otherwise = "Nothing"

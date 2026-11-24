@@ -5,7 +5,7 @@
 -- 队列与后继的待用由 Graph 查询；这里仅登记执行中的交付、固定捕获和显式交接。
 -- scope 的冻结快照不登记为根，避免实例通过自己的 cleanup 永久保留自己。
 module Framework.Runtime.Retention
-  ( Retentions, Retention, newRetentions, withRetention, keepBindings, keepBindingsLocked
+  ( Retentions, Retention, newRetentions, withRetention, keepBindings, keepBindingsLocked, detachedRetention
   , withRetentionLock, retainedBindings, clearRetentions
   ) where
 
@@ -32,8 +32,16 @@ withRetentionLock (Retention (Retentions coordinator _) _) action =
 retainedBindings :: Retentions environment cause -> IO [ScopeBinding environment cause]
 retainedBindings (Retentions _ entries) = concatMap snd <$> readIORef entries
 
+-- 没有资源时不进入协调锁：普通值本来就不登记。
 keepBindings :: Retention environment cause -> [ScopeBinding environment cause] -> IO ()
-keepBindings retention values = withRetentionLock retention (keepBindingsLocked retention values)
+keepBindings retention values
+  | any bindingResource values = withRetentionLock retention (keepBindingsLocked retention values)
+  | otherwise = pure ()
+
+-- 不登记的执行（Untracked）用的保留根：它从未登记，交给它的资源会按“越过执行边界”报错，
+-- 说明 gen 的回收无关判定与实际交付不符，而不是悄悄不保留。普通值照常是空操作。
+detachedRetention :: Retentions environment cause -> IO (Retention environment cause)
+detachedRetention registry = Retention registry <$> newUnique
 
 -- 普通资产不会获得 scope ownership，不进入保留表；尚未认领的资源保留共享单元。
 -- 调用者已经持有协调锁；用于“选中最新 Binding + 捕获”的同一临界区。

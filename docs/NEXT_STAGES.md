@@ -75,7 +75,7 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 | 阶段 | 语义 |
 | --- | --- |
 | <a id="closure-1"></a>C1 取值 · 未就绪时等待 | `require @T` 读本次调用的固定捕获或运行级最新值；有值就继续。没有值、但别的 `parallel` 分支仍可能发布时，只挂起这一次调用，发布后从读取点继续一次；没有这样的分支（或分支都已退出）时报 `ContextNotInitialized`。各分支可能发布的资产由 gen 写在 `Concurrent` 闭包上，运行时不做来源推导。gen 只做来源检查：资产有 effect `requests`，或挂在锚点的 rawoutput 下（输出联立），或是持续资产；不检查可达性。alternative 的判定全部拒绝时按同一规则等待。删除耗尽证明和来源固定点的拒绝。（2026-11-24 修订：初版误作“缺值立即失败”，见 [require 的等待](#closure-await)。） |
-| <a id="closure-2"></a>C2 发布即回调 | 资产每次发布后，gen 写好的订阅回调在发布方的调用栈里同步执行，按 lifelong 单元的声明顺序。socket：Stream 每次 `rawemit` → parser 发布 → 回调订阅单元；派生：上游发布 → 派生 parser 链发布 → 回调；复用输出：锚点执行 → 挂接的持续 parser 发布 → 回调；event：锚点的输出联立发布 → 回调；behavior：parser 发布的值与上一次相等时不回调。一次回调是单元的一次执行（新的执行帧），本次发布作为固定捕获交给单元，`stream @T` 读到本条为止的历史。没有会话、交付队列、游标和消费线程。 |
+| <a id="closure-2"></a>C2 发布即回调 | 资产每次发布后，gen 写好的订阅回调在发布方的调用栈里同步执行，按 lifelong 单元的声明顺序。socket：Stream 每次 `rawemit` → parser 发布 → 回调订阅单元；派生：上游发布 → 派生 parser 链发布 → 回调；复用输出：锚点执行 → 挂接的持续 parser 发布 → 回调；event：锚点的输出联立发布 → 回调；behavior：parser 发布的值与上一次相等时不回调。一次回调是单元的一次执行（登记的单元有新的执行帧，见[回收无关的单元](#untracked-units)），本次发布作为固定捕获交给单元，`stream @T` 读到本条为止的历史。没有会话、交付队列、游标和消费线程。 |
 | <a id="closure-3"></a>C3 lifelong 是标记 | gen 按 lifelong 生成回调表。执行到 lifelong 的位置时只做一件事：有 Stream 来源时同步运行它，来源 `streamEnd` 或订阅方全部 `endStream` 后返回；没有 Stream 来源（只有 event 订阅）时什么也不做。一个 lifelong 至多一个 Stream 来源：参照 Effect-TS 的并发须显式，多个独立来源写 `parallel [lifelong [...], lifelong [...]]`。单元内的 target 由同一份资产驱动。event 回调在整次运行中有效，直到订阅方 `endStream`；socket、behavior 与派生回调只回应所属 lifelong 作用范围里的发布。 |
 | <a id="closure-4"></a>C4 lifelong 外的持续资产 | `requests` 不再取持续资产的“当前一条”。lifelong 外 `requests` 一份持续资产就是要一份静态历史：第一次 `requests` 在当前位置同步运行来源（及派生链）直到 `streamEnd`，之后 `requires` 读最后一条，`streams` 读整段；同一次运行只跑一次，历史保留到运行结束。lifelong 内不能 `requests` `stream = True` 的资产，订阅它要写 `streams`。behavior 只在 lifelong 内回调；lifelong 外同样跑到结束后读最新值。 |
 | <a id="closure-5"></a>C5 回调环 | 订阅回调经自身的执行（target、Input 链、`requests` 的传递闭包、输出联立、持续挂接、派生）可能再次发布它订阅的资产时，回调会无限递归。gen 在“资产 → 回调可能发布的资产”图上查环并拒绝，取代原 event 自激检查和同单元的路径覆盖规则。 |
@@ -148,6 +148,16 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 验证（仓库外探针与 `scripts/check.ps1`）：未挂载的 `CountTextHandler IO` 写在泛型 Handler 之前或之后都在生成前报出位置；LinesDemo 的 Prototype 标出 `GetTextLineGen → NextLineFeedGen (deliver)`、`RunPrintLineGen → StreamTextLineGen (current)`、`RunTextCounterGen → StreamTextLineGen (history)`；FileDemo 的 close 不读资源、读取前先做 IO 都返回 `Succ` 且关闭次数与原示例相同；本页 require 等待与静态读取的全部探针结果不变。
 
 未改：Scope 故障路径的排序（只在失败时执行，且同层顺序有约定）与可达性查询（静态部分已来自 `PrototypeIndex`，其余依赖现场快照）；启动校验保留，用于发现过期的生成产物。
+
+<a id="untracked-units"></a>
+**回收无关的单元不登记（2026-11-24）。** 16 个订阅方的扇出基准中，每次交付约 4.9 µs，其中约 3.6 µs 落在一个订阅方退出到下一个进入之间；那段时间做的帧、保留根、Origin 索引、活动目录与 scope 使用登记只有可达性回收会读，而该负载没有 scope 也没有资源。现在由 gen 判定哪些 lifelong 单元与回收无关，运行时对它们跳过这些登记，语义不变。判定条件与保留的语义见 [Stream：回收无关的单元](STREAM_LIFELONG.md#untracked)。
+
+- **Gen**：`Booter.untrackedUnits` 读完成的 Prototype（经 `PrototypeIndex` 的开启、来源、资源与开启参数表），Composition 在校验后算出，Emit 在回调表写 `RunUnit 路径 Tracked|Untracked 闭包`。
+- **Runtime**：`Graph.Tracking`；Execution 的 Untracked 回调不建帧、不重置 Origin、不登记保留根，`Step`、`Choose` 与子树退出不改帧进度；`runAppIn` 只发放 Origin 序号，不登记活动目录。另外两处对所有执行都成立的精简：`keepBindings` 没有资源时不进协调锁；按 Origin 的索引只收资源（它本来只用于交出要回收的资源）。
+
+验证（仓库外探针，记录不进仓库）：demo 中 file、lines、open-files、scope-instances、scope-reuse 返回 `Succ`，输出与之前一致；stream 是无限运行，单元为 Tracked，未单独运行。event、behavior、历史、静态读取与 require 等待探针的输出与修改前的构建逐字节相同，只有 `parallel [Reader, lifelong [Sink]]` 中两个分支首行的先后变了，属于合法的调度交错。新探针与 `cf3d870` 的构建逐字节相同：单元发布 Scoped 开启参数时它和开启 scope 的单元都判为 Tracked，每次交付各开一个实例；Untracked 单元中途 `endStream` 后其余单元照常、中途 `raise` 时整次运行以该失败结束。16 路基准挂 middleware 计数时，每个 Operation 的次数与之前相同。
+
+未覆盖：性能对照待同机的另一组长期基准结束后再测，结果补在这里；event 单元与订阅源头在 Scoped 下的单元（LinesDemo、StreamDemo）照旧登记。
 
 <a id="code-shape"></a>
 ## LSP 从哪份代码开始

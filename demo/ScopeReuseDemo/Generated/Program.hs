@@ -17,6 +17,7 @@ data Results = PrepareProbeResult () | WriteFirstResult () | WriteSecondResult (
 -- 末端共享生成的 scope 句柄；只创建空状态。
 -- compiledWorkflow：AST 的执行闭包（Serial 顺序、Concurrent 并行、Choose 选择、Drive 是 lifelong 的位置）。
 -- compiledReactions：资产每次发布后同步执行的回调（lifelong 的单元与派生步骤）；Nothing 作用范围是 event。
+-- Untracked 的单元与 scope 回收无关，执行时不建执行帧、不登记保留根与执行身份。
 -- compiledStatic：lifelong 之外 requests 持续资产时，同步运行到结束的根来源。
 compiledProgram :: IO (SDK.Compiled ContextValues Errors Results)
 compiledProgram = do

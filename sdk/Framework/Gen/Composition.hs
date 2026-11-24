@@ -63,6 +63,8 @@ data PendingComposition = PendingComposition Unit Bool [(String, MethodShape Str
 data CompositionResult = CompositionResult
   { compositionUnit :: Unit
   , compositionPrototype :: Prototype String
+  -- 回收无关的 lifelong 单元（Booter.untrackedUnits），Emit 把它写在回调表的 RunUnit 上。
+  , compositionUntracked :: [NodeId]
   }
 
 -- 唯一状态转换入口。缓存只替换 BuildingStructure/ProvingSources；验证和驱动检查不会跳过。
@@ -98,7 +100,7 @@ advanceComposition state = case state of
   Checking unit checked prototype -> do
     diagnostic (validatePrototype prototype)
     when checked (diagnostic (checkDriven (unitAssembly unit) prototype))
-    pure (Complete (CompositionResult unit prototype))
+    pure (Complete (CompositionResult unit prototype (untrackedUnits prototype)))
   -- 检查点等待前端补入形状/缓存，不隐式重复计算，也不靠空列表猜测首次生成。
   AwaitingBodies _ -> pure state
   AwaitingGraph _ -> pure state

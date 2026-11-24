@@ -90,6 +90,8 @@ data Launch env cause = Launch
   , launchFrame :: ExecutionFrame
   , launchRetention :: Retention env cause
   , launchPlace :: Place
+  -- Untracked：gen 已证明这次执行与 scope 回收无关，不登记 Origin 与活动目录（见 Graph.Tracking）。
+  , launchTracking :: Tracking
   }
 
 -- Receive 的两个静态挂载各有一端。交付同步调用独立的 parser activation，并传播它的原失败。
@@ -923,11 +925,15 @@ runAppIn :: (Either (Failure cause) value -> IO ()) -> RuntimeGraph env cause ->
          -> IORef [(Slot, View env cause)] -> Launch env cause -> env -> App env cause value
          -> IO (Either (Failure cause) value)
 runAppIn consume graph node values delivered launch initial (AppRun action) = mask $ \restore -> do
-  origin <- newOrigin graph node
+  let tracked = launchTracking launch == Tracked
+  origin <- if tracked then newOrigin graph node else freshOrigin graph node
   let currentExecution = BusinessExecution origin
       handlers = runtimeScopes graph
   user <- maybe (newScopeUser handlers currentExecution) pure (launchUser launch)
-  activation <- beginActivation graph Nothing (launchFrame launch) currentExecution (TargetedBoot node) values user
+  -- 活动目录与调用捕获只供 scope 的可达性判断；不登记时本次发布也不带生产身份（没有开启计划读它）。
+  activation <- if tracked
+    then Just <$> beginActivation graph Nothing (launchFrame launch) currentExecution (TargetedBoot node) values user
+    else pure Nothing
   performedHere <- newIORef (IntMap.fromList [(slotNumber delivered, []) | delivered <- launchPerformed launch])
   let environment = Environment
         { emptyValues = initial, bindings = values, scopes = handlers
@@ -935,7 +941,7 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
         , errorHandlers = [], errorPath = [], originalFailure = Nothing, diagnosticOwner = Nothing
         , cleaningScopes = False, consumer = user
         , cleanupPermit = Nothing, cleanupBusy = Nothing, runtimeGraph = graph
-        , activeActivation = Just (activationId activation), execution = currentExecution
+        , activeActivation = activationId <$> activation, execution = currentExecution
         , currentFrame = launchFrame launch, bindingRetention = launchRetention launch
         , place = launchPlace launch
         , performed = performedHere
@@ -958,4 +964,4 @@ runAppIn consume graph node values delivered launch initial (AppRun action) = ma
       case completed of
         Left (exception :: SomeException) -> throwIO exception
         Right outcome -> pure outcome)
-    `finally` endActivation graph (activationId activation)
+    `finally` mapM_ (endActivation graph . activationId) activation

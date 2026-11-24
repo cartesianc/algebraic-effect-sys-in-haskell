@@ -1,7 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 -- 驱动合成 v1（2026-11-18）：从 Composition 的已解析事实构造挂载与会话，
 -- 之后补全运行所需静态标记；不执行 handler，不读取业务源码。
-module Framework.Gen.Booter (numberWorkflow, checkMiddleware, assembleProgram, completeDriving, entryPlans, controlReads, decidingAssets, linkedAssets, publishedWithin) where
+module Framework.Gen.Booter (numberWorkflow, checkMiddleware, assembleProgram, completeDriving, entryPlans, controlReads, decidingAssets, linkedAssets, publishedWithin, untrackedUnits) where
 import Control.Monad (forM_, unless)
 import Data.Maybe (listToMaybe)
 import Data.Graph (SCC(..), stronglyConnComp)
@@ -12,6 +12,7 @@ import Framework.Language.Registration (EffectKind(..), Access(..))
 import Framework.Prototype.Graph
 import Framework.Prototype.Query
 import qualified Framework.Prototype as Prototype
+import Framework.Prototype.Index (indexPrototype, coordAt, slotOf, openingsAt, sourcesAt, isResourceSlot, parameterScopesOf)
 import Framework.Prototype.Types
 import Framework.Prototype.Validate (valid, unique)
 import Framework.Recursion (Fix, cata)
@@ -232,6 +233,40 @@ publishedWithin effects tree subtree = grow [] direct
           | source <- effects, effectProduces source == Just upstream]
       | producer <- effects, effectContinuous producer, effectProduces producer == Just asset
       , upstream <- sessionAssets effects [asset], upstream /= asset ]
+
+-- 回收无关的 lifelong 单元（运行时写作 Untracked）：执行帧、节点进度、保留根、Origin 索引与活动目录
+-- 只服务 scope 回收，这些单元的执行不需要它们。判定只读完成的 Prototype 里运行时回收读取的同一批事实，
+-- 一个单元同时满足下面几条才算：
+-- 1. 单元子树里的位置（含选择读取）与所在 lifelong 的会话挂载上都没有 scope 开启，也不读资源；
+--    会话挂载是来源、parser 与派生步骤，它们的捕获会随交付交给单元。
+-- 2. 单元执行期间可能发布的资产（含回调与派生接着发布的）都不是资源，也不是任何 scope 的开启参数，
+--    因此这些发布不需要生产身份。
+-- 3. 单元订阅的是持续资产（由所在 lifelong 的会话驱动）。event 单元的发布方可在任何位置，不在此列。
+-- 不满足的单元照旧登记，行为与之前相同。
+untrackedUnits :: Prototype String -> [NodeId]
+untrackedUnits prototype =
+  [ workflowNode part
+  | (path, described) <- workflowLifelongs workflow
+  , Just (LifelongAt _ _ parts) <- [lookupWorkflow workflow path]
+  , let mounts = concatMap sessionMounts (lifelongSessions described)
+  , all quiet mounts
+  , part <- parts
+  , let subscribed = nub [asset | (node, asset) <- lifelongSubscriptions described, workflowNode part `isPrefixOf` node]
+  , not (null subscribed), all continuous subscribed
+  , all quiet (positions part)
+  , all plain (publishedWithin effects workflow part) ]
+  where
+    index = indexPrototype prototype
+    effects = protoEffects prototype
+    workflow = protoWorkflow prototype
+    positions part = [workflowNode subtree | subtree <- allWorkflow part]
+      ++ [alternativeSelector choice | AlternativeAt _ choice _ <- allWorkflow part]
+    quiet path = let node = coordAt index path in
+      null (openingsAt index node) && not (any (isResourceSlot index . fst) (sourcesAt index node))
+    producers asset = [effect | effect <- effects, effectProduces effect == Just asset]
+    continuous asset = not (null (producers asset)) && all effectContinuous (producers asset)
+    plain asset = and [ not (isResourceSlot index context) && null (parameterScopesOf index context)
+                      | effect <- producers asset, let context = slotOf index (effectName effect) ]
 
 -- ========================================================================
 -- 入口与输出连接事实

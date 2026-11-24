@@ -151,6 +151,15 @@ event 没有 BootPlan：lifelong 内的 target 以 `requests` 订阅普通资产
 
 不成立的组合在生成期按 3.2 的匹配表报错，不在运行中猜测或退化为轮询。
 
+<a id="untracked"></a>
+**回收无关的单元（2026-11-24）。** 一次回调为 scope 回收所做的登记（单元的执行帧与节点进度、保留根、按 Origin 的资源索引、活动目录与调用捕获）只有可达性回收会读。gen 在 `Booter.untrackedUnits` 中判定一个单元与回收无关，回调表写作 `RunUnit 路径 Untracked 闭包`，其余写 `Tracked`。判定读取完成的 Prototype 中回收所用的同一批事实，以下几条同时成立：
+
+- 单元子树里的位置（含选择读取）与所在 lifelong 的会话挂载（来源、parser、派生步骤）上都没有 scope 开启，也不读资源。会话挂载的捕获会随交付交给单元，所以一并检查。
+- 单元执行期间可能发布的资产（`publishedWithin`，含回调与派生接着发布的）都不是资源，也不是任何 scope 的开启参数。这些发布因此不需要生产身份。
+- 单元订阅的是持续资产。event 单元的发布方可在任何位置，照旧登记。
+
+Untracked 的回调不建子帧，不改外层帧的进度（根帧里单元的位置仍是将来的回调），不重置 Origin，不登记保留根、活动目录与调用捕获，本次发布不带生产身份。endStream、失败与取消的传播、监督、Error 诊断、behavior 比较、缺值等待所需的分支位置、交付视图与历史读取、middleware 都照常。交给它的保留根从未登记：普通值本来不登记，若交来资源则报错，说明判定与实际交付不符。例如 lifelong 单元以输出联立发布 `PickedName`，后者是 Scoped 的开启参数，这个单元与开启 scope 的单元都写 `Tracked`，每次交付仍各自开启、使用并关闭一个实例。
+
 <a id="drives"></a>
 ### 4.1 驱动方式的组合：socket、history、behavior、event
 

@@ -19,6 +19,7 @@ data Results = AnnounceResult () | PrintLineResult () | TextCounterResult () | S
 -- 末端共享生成的 scope 句柄；只创建空状态。
 -- compiledWorkflow：AST 的执行闭包（Serial 顺序、Concurrent 并行、Choose 选择、Drive 是 lifelong 的位置）。
 -- compiledReactions：资产每次发布后同步执行的回调（lifelong 的单元与派生步骤）；Nothing 作用范围是 event。
+-- Untracked 的单元与 scope 回收无关，执行时不建执行帧、不登记保留根与执行身份。
 -- compiledStatic：lifelong 之外 requests 持续资产时，同步运行到结束的根来源。
 compiledProgram :: IO (SDK.Compiled ContextValues Errors Results)
 compiledProgram = do
@@ -34,11 +35,11 @@ compiledProgram = do
           , SDK.Step [2] (target "Report" (ReportResult () <$ Handlers.runReport @'[]))
           ]
     , SDK.compiledReactions = 
-        [ SDK.Reaction (SDK.Slot 5 "LineParser") (Just [1]) (SDK.RunUnit [1,0] (SDK.Serial [1,0] 
+        [ SDK.Reaction (SDK.Slot 5 "LineParser") (Just [1]) (SDK.RunUnit [1,0] SDK.Tracked (SDK.Serial [1,0] 
               [ SDK.Step [1,0,0] (target "PrintLine@TraceLine" (PrintLineResult () <$ Handlers.runPrintLine @'["TraceLine"]))
               , SDK.Step [1,0,1] (target "TextCounter@TraceLine" (TextCounterResult () <$ Handlers.runTextCounter @'["TraceLine"]))
               ]))
-        , SDK.Reaction (SDK.Slot 8 "CountParser") (Just [1]) (SDK.RunUnit [1,1] (SDK.Step [1,1] (target "ShowTotal@TraceLine" (ShowTotalResult () <$ Handlers.runShowTotal @'["TraceLine"]))))
+        , SDK.Reaction (SDK.Slot 8 "CountParser") (Just [1]) (SDK.RunUnit [1,1] SDK.Tracked (SDK.Step [1,1] (target "ShowTotal@TraceLine" (ShowTotalResult () <$ Handlers.runShowTotal @'["TraceLine"]))))
         , SDK.Reaction (SDK.Slot 5 "LineParser") (Just [-2,0]) (SDK.RunDerive [-2,1,0] (target "CountParser" (() <$ Handlers.getRunningTotal @'[])))
         ]
     , SDK.compiledStatic = 

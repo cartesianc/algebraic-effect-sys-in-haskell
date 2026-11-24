@@ -876,7 +876,7 @@ EffectSpec { name = "WriteFirst", typing = Excu { .. }, input = "SharedFileScope
 **状态：已实现（2026-11-13）。** SDK 同时观察当前使用者与剩余程序：仍可能触达的实例保留，不可达时同步回收。handler 只实现怎样关闭，AST、Input 与 demands 提供何时不再使用的依据。
 
 - **当前使用**：每次 AST 入口完整 chain 建立一份 `ScopeUser`，open／require 选中的实例加入其中，等待 opening 也计入。同一入口内的 Context 生产继承该登记。业务、Error 诊断和受控结果消费全部结束后才撤销。每次 rawemit 的 parser 继承来源已使用的实例，并在该条解析结束后撤销自己的登记，Derive 每次处理独立登记；会话跨步骤复用由待用帧保持，不累积实际使用。
-- **待用关系**：gen 在 `protoScopeOpenings` 中记录每个开启位置各参数可能的生产节点或持续来源，包括本节点和 alternative 交接的捕获。执行帧保存待执行、执行中、完成和跳过的节点。有限运行使用根帧，lifelong 的每次回调使用子帧；节点完成、chain 短路及 alternative 排除候选都会撤销相应待用关系，更新幂等。
+- **待用关系**：gen 在 `protoScopeOpenings` 中记录每个开启位置各参数可能的生产节点或持续来源，包括本节点和 alternative 交接的捕获。执行帧保存待执行、执行中、完成和跳过的节点。有限运行使用根帧，lifelong 的每次回调使用子帧，gen 判定与回收无关的单元除外（不建帧、不登记，见[回收无关的单元](STREAM_LIFELONG.md#untracked)）；节点完成、chain 短路及 alternative 排除候选都会撤销相应待用关系，更新幂等。
 - **实际匹配**：运行时比较参数 Binding 的生产身份，不把 NodeId 当实例身份。根帧下所有待用帧参与查询，固定捕获和伴随交付优先，未捕获的普通参数使用共享最新值；确定重新生产参数的未开始开启不保留旧实例。最新值被覆盖也会重新检查依赖该参数的 scope。执行帧不复制值表，跨帧读取不改变 Binding 的归属帧；完整规则见[Scope 开启计划与待用查询](EFFECT_GRAPH.md#scope-opening-retention)。
 - **值保留**：待交付、已捕获和合法后继可读的 Binding，按已有 ownership 参与回收判断；领取先登记执行持有，再撤销队列持有。资源范围与撤销边界见[Stream 资源边界](STREAM_LIFELONG.md#binding-retention)。
 - **依赖与执行**：没有当前使用者、没有匹配的待用节点或值保留、没有仍保留它的子 scope 时执行 close。ScopeTree 提供父子候选，运行时由同一受控链实际使用的实例补齐子实例的 `scopeParents`；子实例只保留这些具体父实例，不保留同注册的全部实例。关闭遵守子先父后，在触发不可达的线程中同步完成后才继续后继，不另设清理线程。仅保存普通资产快照不自动延长生产资源的存续；仍需实际使用或匹配的后继待用依据。

@@ -9,11 +9,11 @@ module Framework.Runtime.Execution (runCompiled, compiledTargets) where
 import Framework.Language.Handler (Failure, Output(..))
 import Framework.Runtime
   ( Target, Handoff(..), noHandoff, lowerTarget, lowerWith, scopeHandlers
-  , Compiled(..), Closure(..), StreamSource(..), Reaction(..), Response(..) )
+  , Compiled(..), Closure(..), StreamSource(..), Reaction(..), Response(..), Tracking(..) )
 import Framework.Runtime.App (Launch(..), StreamPort(..))
 import Framework.Runtime.Graph
   ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, runtimeRootFrame, runtimeScopes, newOrigin
-  , resetOrigins, collectRuntimeScopes, finishRuntime, withRuntimeRetention
+  , resetOrigins, collectRuntimeScopes, finishRuntime, withRuntimeRetention, runtimeRetentions
   , readHistory, dropHistory, installReactions, installStatic
   , Place(..), rootPlace, openBranches, leaveBranch, rejoinBranches
   , StaticRun, newStaticRun, finishStatic, awaitStatic )
@@ -22,6 +22,7 @@ import Framework.Runtime.Delivery (SourceEnded(..), SubscriptionEnded(..))
 import Framework.Runtime.Binding (Binding(..), readBindingOwner)
 import Framework.Runtime.Identity (Execution(..))
 import Framework.Runtime.Scope (ScopeBinding, ScopeBindings, newScopeUser, inheritScopeUse, detachScopeUser)
+import Framework.Runtime.Retention (Retention, detachedRetention)
 import Framework.Prototype
 import Framework.Prototype.Index
 import Framework.Prototype.Coordinate (Coord)
@@ -40,12 +41,14 @@ import Data.Maybe (isJust)
 import qualified Data.Sequence as Seq
 
 -- 执行期环境：本次执行所在的帧、运行监督、订阅回调交付的资产（入口里对它的 requests 直接读交付），
--- 以及所在的位置（parallel 分支与持续资产的作用范围）。
+-- 以及所在的位置（parallel 分支与持续资产的作用范围）。runTracking 是 Untracked 时（gen 判定回收无关的单元），
+-- 这次执行不建帧、不改帧进度、不登记保留根与执行身份；runFrame 仍是外层帧，只作为发布的所在帧传下去。
 data Run environment cause = Run
   { runFrame :: ExecutionFrame
   , runFatal :: Either SomeException (Failure cause) -> IO ()
   , runPerformed :: [Slot]
   , runPlace :: Place
+  , runTracking :: Tracking
   }
 
 type Execution' environment cause value =
@@ -130,7 +133,7 @@ compiledTargets compiled =
 
 -- workflow 与各单元回调里的全部闭包层。
 compiledFlows :: Compiled environment cause value -> [Closure environment cause value]
-compiledFlows compiled = concatMap layers (compiledWorkflow compiled : [flow | Reaction _ _ (RunUnit _ flow) <- compiledReactions compiled])
+compiledFlows compiled = concatMap layers (compiledWorkflow compiled : [flow | Reaction _ _ (RunUnit _ _ flow) <- compiledReactions compiled])
   where
     layers flow = flow : case flow of
       Serial _ parts -> concatMap layers parts
@@ -154,11 +157,12 @@ runCompiled prototype tree compiled = do
   configureRuntimeScopes store
   ended <- newIORef []
   delivered <- newIORef Map.empty
+  detached <- detachedRetention (runtimeRetentions store)
   statics <- newMVar Map.empty
   settled <- newEmptyMVar
   let settle = void . tryPutMVar settled
-      machine = Machine index store (compiledTables index compiled) ended delivered
-      root = Run (runtimeRootFrame store) (settle . Left) [] rootPlace
+      machine = Machine index store (compiledTables index compiled) ended delivered detached
+      root = Run (runtimeRootFrame store) (settle . Left) [] rootPlace Tracked
   installReactions store (reactTo machine root)
   installStatic store (staticRun machine root statics)
   retireAfter (do
@@ -182,6 +186,8 @@ data Machine method environment cause value = Machine
   , machineTables :: Tables environment cause value
   , machineEnded :: IORef [Coord]
   , machineDelivered :: IORef (Map.Map (Int, Maybe NodeId) environment)
+  -- Untracked 执行的保留根：从未登记，普通值是空操作，交来资源则报错（gen 的判定与交付不符）。
+  , machineDetached :: Retention environment cause
   }
 
 -- gen 写出的回调表、来源与静态运行按查找键排好，启动时建一次；发布、交付与激活的热路径只按键取，
@@ -217,7 +223,7 @@ compiledTables index compiled = Tables
   where
     prototype = indexedPrototype index
     units = Map.fromListWith (flip (++))
-      [(scope, [unit]) | Reaction _ (Just scope) (RunUnit unit _) <- compiledReactions compiled]
+      [(scope, [unit]) | Reaction _ (Just scope) (RunUnit unit _ _) <- compiledReactions compiled]
     keepFirst _ earlier = earlier
     provider asset = case [effectName effect | effect <- protoEffects prototype, effectProduces effect == Just asset] of
       name : _ -> name
@@ -229,9 +235,10 @@ execute machine flow run handoff = case flow of
   Step path target -> managed path $ ExceptT $ do
     let location = coordAt index path
     endedNow <- readIORef (machineEnded machine)
-    if location `elem` endedNow then pure (Right []) else withFrameNode graph run location $
-      withRuntimeRetention graph $ \retention -> do
-        outcome <- try (lowerTarget graph retention location (runFrame run) (runPlace run) handoff (runPerformed run) target)
+    if location `elem` endedNow then pure (Right []) else tracked (withFrameNode graph run location) $
+      retained $ \retention -> do
+        outcome <- try (lowerTarget graph (runTracking run) retention location (runFrame run) (runPlace run) handoff
+          (runPerformed run) target)
         case outcome of
           Right (result, _) -> pure ((: []) <$> result)
           -- endStream：本次调用放弃，这个节点之后不再被回调；同一次回调中其余位置照常执行。
@@ -251,22 +258,23 @@ execute machine flow run handoff = case flow of
       | (identity, (_, part)) <- zip identities parts ]
       `finally` rejoinBranches graph identities
     pure (concat <$> sequence outcomes)
-  Choose path selectorPath selector candidates -> managed path $ ExceptT $ withRuntimeRetention graph $ \retention -> do
+  Choose path selectorPath selector candidates -> managed path $ ExceptT $ retained $ \retention -> do
     let location = coordAt index path
         selectorAt = coordAt index selectorPath
         members = nodeMembers (driveAt index location)
     endedNow <- readIORef (machineEnded machine)
     -- 候选中的节点都已结束订阅时，选择读取不再执行，整个 alternative 跳过。
     if not (null members) && all (`elem` endedNow) members then pure (Right []) else do
-      chosen <- withFrameNode graph run selectorAt $
-        lowerTarget graph retention selectorAt (runFrame run) (runPlace run) handoff (runPerformed run) selector
+      chosen <- tracked (withFrameNode graph run selectorAt) $
+        lowerTarget graph (runTracking run) retention selectorAt (runFrame run) (runPlace run) handoff (runPerformed run) selector
       case chosen of
         (Left problem, _) -> pure (Left problem)
         (Right constructor, captured) -> case [(node, candidate) | (name, node, candidate) <- candidates, name == constructor] of
           (selectedNode, candidate) : _ -> do
-            retired <- concat <$> mapM (skipFrameSubtree (runFrame run) . coordAt index)
-              [node | (_, node, _) <- candidates, node /= selectedNode]
-            collectRuntimeScopes graph retired
+            tracked id $ do
+              retired <- concat <$> mapM (skipFrameSubtree (runFrame run) . coordAt index)
+                [node | (_, node, _) <- candidates, node /= selectedNode]
+              collectRuntimeScopes graph retired
             runExceptT (execute machine candidate run captured)
           [] -> ioError (userError ("No alternative candidate for the Context " ++ constructor
             ++ "; regenerate with the SDK effect-codegen command"))
@@ -283,10 +291,20 @@ execute machine flow run handoff = case flow of
     index = machineIndex machine
     graph = machineGraph machine
     -- 每棵子树退出都撤销未进入的后继；parallel 的退出发生在等待所有子任务之后。
-    managed path inner = ExceptT $ supervised run $
-      retireAfter (runExceptT inner) $ \restore -> do
+    -- Untracked 的执行没有自己的帧：外层帧（根帧）里这些位置是单元将来的回调，不能被它改动。
+    managed path inner = ExceptT $ supervised run $ case runTracking run of
+      Untracked -> runExceptT inner
+      Tracked -> retireAfter (runExceptT inner) $ \restore -> do
         retired <- skipFrameSubtree (runFrame run) (coordAt index path)
         restore (collectRuntimeScopes graph retired)
+    -- 只在登记的执行里改帧进度、建保留根；Untracked 用从未登记的保留根。
+    tracked :: (IO result -> IO result) -> IO result -> IO result
+    tracked frameWork action = case runTracking run of
+      Tracked -> frameWork action
+      Untracked -> action
+    retained action = case runTracking run of
+      Tracked -> withRuntimeRetention graph action
+      Untracked -> action (machineDetached machine)
 
 -- lifelong 的持续资产（来源、派生与复用输出）；来源结束时放掉它们的历史。
 driveAssets :: Machine method environment cause value -> NodeId -> [Slot]
@@ -328,7 +346,17 @@ sameOf machine source = IntMap.lookup (slotNumber source) (tableSame (machineTab
 respond :: Machine method environment cause value -> Run environment cause -> Slot -> ScopeBinding environment cause
         -> ScopeBindings environment cause -> Response environment cause value -> IO (Maybe (Failure cause))
 respond machine run source value captured response = case response of
-  RunUnit path flow -> do
+  -- 回收无关的单元：不建帧、不重置 Origin、不登记保留根，交付与失败照常。
+  RunUnit path Untracked flow -> do
+    let unit = coordAt index path
+        members = nodeMembers (driveAt index unit)
+    endedNow <- readIORef (machineEnded machine)
+    if not (null members) && all (`elem` endedNow) members then pure Nothing else do
+      handoff <- delivery
+      let inside = run { runPerformed = [source], runTracking = Untracked
+            , runPlace = (runPlace run) { placeScope = Just (take (length path - 1) path) } }
+      either Just (const Nothing) <$> runExceptT (execute machine flow inside handoff)
+  RunUnit path Tracked flow -> do
     let unit = coordAt index path
         members = nodeMembers (driveAt index unit)
     endedNow <- readIORef (machineEnded machine)
@@ -338,7 +366,7 @@ respond machine run source value captured response = case response of
       outcome <- withRuntimeRetention graph $ \_ -> mask $ \restore -> do
         frame <- newChildFrame (runtimeRootFrame graph) (unitFrameNodes (unitAt index unit)) []
         -- 单元在所属 lifelong 的作用范围里执行：它经输出联立发布的持续资产与派生按这个 lifelong 记历史、回调。
-        let inside = run { runFrame = frame, runPerformed = [source]
+        let inside = run { runFrame = frame, runPerformed = [source], runTracking = Tracked
               , runPlace = (runPlace run) { placeScope = Just (take (length path - 1) path) } }
         retireAfter
           (restore (runExceptT (execute machine flow inside handoff))) $ \_ -> do
@@ -351,7 +379,7 @@ respond machine run source value captured response = case response of
     if mount `elem` endedNow then pure Nothing else do
       handoff <- delivery
       outcome <- try (withRuntimeRetention graph $ \retention ->
-        lowerTarget graph retention mount (runtimeRootFrame graph) (runPlace run) handoff [] parser)
+        lowerTarget graph Tracked retention mount (runtimeRootFrame graph) (runPlace run) handoff [] parser)
       collectRuntimeScopes graph [mount]
       case outcome of
         Left SubscriptionEnded -> do
@@ -395,14 +423,14 @@ runSource machine run scope source (Handoff given views) = do
                     { launchBindings = resources ++ [entry | entry@(name, _) <- given, name `notElem` map fst resources]
                     , launchViews = views, launchPort = ParserInput text, launchPerformed = []
                     , launchUser = Just parserOwner, launchFrame = runtimeRootFrame graph, launchRetention = parserRetention
-                    , launchPlace = at }
+                    , launchPlace = at, launchTracking = Tracked }
               (outcome, _, _) <- lowerWith graph parserMount launch parser
               -- 订阅单元全部 endStream：下一次 rawemit 之前结束来源。
               finished <- subscribersEnded
               when (finished && either (const False) (const True) outcome) (throwIO SourceEnded)
               pure outcome
         (outcome, _, _) <- lowerWith graph streamMount (Launch given views (SourcePort deliver) [] (Just owner)
-          (runtimeRootFrame graph) retention at) stream
+          (runtimeRootFrame graph) retention at Tracked) stream
         pure outcome
       case taken of
         Left SourceEnded -> pure Nothing

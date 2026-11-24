@@ -7,7 +7,8 @@
 -- Program 只报告清理中记录的问题。运行不解释图边；业务仍由已经装配的闭包执行。
 module Framework.Runtime.Graph
   ( RuntimeGraph(..), PrototypeReference(..), ChainReference(..), Activation(..), Reaction, Place(..), rootPlace
-  , newRuntimeGraph, configureRuntimeScopes, collectRuntimeScopes, finishRuntime, newOrigin
+  , Tracking(..)
+  , newRuntimeGraph, configureRuntimeScopes, collectRuntimeScopes, finishRuntime, newOrigin, freshOrigin
   , beginActivation, endActivation, withRuntimeRetention, collectRetainedScopes
   , publishAsset, readPublishedAsset, resetOrigins
   , readHistory, dropHistory, installReactions, react, installStatic, runStatic
@@ -68,8 +69,8 @@ data RuntimeGraph environment cause = RuntimeGraph
   , runtimeScopes :: Scopes environment cause
   , runtimeRootFrame :: ExecutionFrame
   , runtimeRetentions :: Retentions environment cause
-  -- 发布时无归属的资产按 Origin 分组；后续认领保留同一引用，读取再检查共享 owner。
-  -- 这份按 Origin 的索引服务同一步的交付；普通读取使用下面的 runtimeLatest。
+  -- 发布时无归属的资源按 Origin 分组；后续认领保留同一引用。同一挂载的下一步替换 Origin 时，
+  -- 从这里交出上一步的资源去回收。普通值不进入这份索引，读取都使用下面的 runtimeLatest。
   , runtimeAssets :: IORef (Map.Map (Origin, Slot) (ScopeBinding environment cause))
   -- 有限 AST 每个挂载只启动一次；完成后只保留身份，供后继读取，不保留其 activation。
   , runtimeOrigins :: IORef [(Coord, Origin)]
@@ -110,6 +111,12 @@ data Place = Place { placeBranches :: [Int], placeScope :: Maybe NodeId }
 
 rootPlace :: Place
 rootPlace = Place [] Nothing
+
+-- 一次执行是否为 scope 回收登记：执行帧、节点进度、保留根、Origin 索引与活动目录只服务回收。
+-- gen 证明一个 lifelong 单元与回收无关（节点上没有 scope 开启、不读资源，它及其来源发布的资产
+-- 都不是资源或开启参数）时写 Untracked，它的执行不登记这些，其余语义照常。
+data Tracking = Tracked | Untracked
+  deriving (Eq, Show)
 
 newRuntimeGraph
   :: (Eq method, Show method)
@@ -291,6 +298,10 @@ newOrigin graph node = mask $ \restore -> do
   restore (collectRetainedScopes graph released)
   pure origin
 
+-- 不登记的执行身份（Untracked）：序号照发，不进入 Origin 表，也就没有要替换的上一步。
+freshOrigin :: RuntimeGraph environment cause -> Coord -> IO Origin
+freshOrigin graph node = Origin node <$> nextSequence (runtimeOriginSequence graph)
+
 -- 清除上一步的伴随输出索引，避免交付误用旧步骤；共享最新值和已捕获 Binding 不动。
 resetOrigins :: RuntimeGraph environment cause -> Coord -> IO ()
 resetOrigins graph prefix = mask $ \restore -> do
@@ -362,9 +373,11 @@ publishAsset :: RuntimeGraph environment cause -> Maybe NodeId -> Origin -> Slot
              -> ScopeBinding environment cause -> IO ()
 publishAsset graph scope origin source value = mask $ \restore -> do
   (released, replacedParameter) <- withFrameLock (runtimeRootFrame graph) $ do
-    previous <- atomicModifyIORef' (runtimeAssets graph) $ \assets ->
-      let (old, updated) = Map.insertLookupWithKey (\_ new _ -> new) (origin, source) value assets
-      in (updated, [replaced | Just replaced <- [old], bindingResource replaced])
+    -- 这份索引只用来在步骤替换时交出要释放的资源，普通值不进入。
+    previous <- if not (bindingResource value) then pure [] else
+      atomicModifyIORef' (runtimeAssets graph) $ \assets ->
+        let (old, updated) = Map.insertLookupWithKey (\_ new _ -> new) (origin, source) value assets
+        in (updated, [replaced | Just replaced <- [old], bindingResource replaced])
     -- 资源仍只沿 owner 协议读取；普通值共享同一份 Binding，不重发生产身份。
     replaced <- if bindingResource value then pure False else do
       existed <- atomicModifyIORef' (runtimeLatest graph) $ \assets ->

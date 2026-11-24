@@ -6,12 +6,12 @@
 module Framework.Runtime
   ( App, Target, targetApp
   , targetName, lowerTarget, lowerWith, Handoff(..), noHandoff, scopeHandlers, cleanupTargets
-  , Compiled(..), Closure(..), StreamSource(..), Reaction(..), Response(..)
+  , Compiled(..), Closure(..), StreamSource(..), Reaction(..), Response(..), Tracking(..)
   ) where
 
 import Framework.Language.Handler (Failure)
 import Framework.Runtime.App (App, Launch(..), StreamPort(..), runAppWith)
-import Framework.Runtime.Graph (RuntimeGraph, Place, runtimeScopes)
+import Framework.Runtime.Graph (RuntimeGraph, Place, Tracking(..), runtimeScopes)
 import Framework.Runtime.Identity (Origin(..), executionOrigin)
 import Framework.Runtime.Frame (ExecutionFrame, captureFrameDeliveries)
 import Framework.Runtime.Binding (Binding(..), readBindingOwner)
@@ -22,7 +22,7 @@ import Framework.Prototype.Coordinate (Coord)
 import Framework.Prototype.Slot (Slot(..))
 import Framework.Prototype.Types (NodeId)
 import Control.Exception (SomeException, evaluate)
-import Control.Monad (filterM)
+import Control.Monad (filterM, when)
 import Data.List (nubBy)
 import Data.Maybe (isNothing, mapMaybe)
 
@@ -49,20 +49,22 @@ noHandoff :: Handoff environment cause
 noHandoff = Handoff [] []
 
 -- 末端的一次调用。performed 是订阅回调交付的资产：入口里对它的 requests 直接读这条交付。
--- 交付及其伴随绑定作为本次执行帧的已固定输入登记，scope 回收据此保留它们开启的实例。
+-- 交付及其伴随绑定作为本次执行帧的已固定输入登记，scope 回收据此保留它们开启的实例；
+-- Untracked 的执行没有自己的帧，不登记。
 -- 受控结果消费在撤销入口使用登记前完成，惰性读取不会落在自动 close 之后。
-lowerTarget :: RuntimeGraph environment cause -> Retention environment cause -> Coord -> ExecutionFrame -> Place
+lowerTarget :: RuntimeGraph environment cause -> Tracking -> Retention environment cause -> Coord -> ExecutionFrame -> Place
             -> Handoff environment cause -> [Slot] -> Target environment cause value
             -> IO (Either (Failure cause) value, Handoff environment cause)
-lowerTarget graph retention location executionFrame at (Handoff given views) performed target = do
+lowerTarget graph tracking retention location executionFrame at (Handoff given views) performed target = do
   keepBindings retention (map snd given ++ mapMaybe (lastBinding . snd) views)
-  captureFrameDeliveries executionFrame
+  when (tracking == Tracked) $ captureFrameDeliveries executionFrame
     [(originNode (executionOrigin (bindingOrigin value)), source, production)
       | (source, value) <- given, source `elem` performed, Just production <- [bindingProduction value]
       , source `notElem` [resource | family <- runtimeScopes graph, Just resource <- [scopeContextSource family]]]
   let launch = Launch
         { launchBindings = given, launchViews = views, launchPort = NoStreamPort, launchPerformed = performed
-        , launchUser = Nothing, launchFrame = executionFrame, launchRetention = retention, launchPlace = at }
+        , launchUser = Nothing, launchFrame = executionFrame, launchRetention = retention, launchPlace = at
+        , launchTracking = tracking }
   (outcome, captured, delivered) <- lowerWith graph location launch target
   -- 普通跨入口交接不传资源；同一来源步骤的内部交接在来源运行器中处理。
   handoffBindings <- filterM (fmap isNothing . readBindingOwner . snd) captured
@@ -124,8 +126,9 @@ data Reaction environment cause value = Reaction
   , reactionResponse :: Response environment cause value
   }
 
--- Unit：lifelong 的一个单元执行一次，交付的资产固定给它。
+-- Unit：lifelong 的一个单元执行一次，交付的资产固定给它。Tracking 是 gen 的回收无关判定：
+-- Untracked 的单元不建执行帧、不登记保留根与执行身份，endStream、失败与等待照常。
 -- RunDerive：在派生挂载执行派生资产的 parser，它沿 Input 链执行被驱动的句柄并发布。
 data Response environment cause value
-  = RunUnit NodeId (Closure environment cause value)
+  = RunUnit NodeId Tracking (Closure environment cause value)
   | RunDerive NodeId (Target environment cause ())
