@@ -502,29 +502,31 @@ composeMethods checkReads effects bindings required handlerShapes = do
     compose binding = do
       let body = maybe Empty id (lookup (bindingHandler binding) handlerShapes)
       (mapped, contracts) <- resolve binding body
-      pure (binding, sequenceShape (map Call (bindingCalls binding) ++ [mapped]), contracts)
+      pure (binding, sequenceShape (map (Call Invoke) (bindingCalls binding) ++ [mapped]), contracts)
     resolve binding shape = case shape of
       Empty -> pure (Empty, [])
-      Call ('@' : typeText) -> case lookup (normalizeType typeText) (bindingRoutes binding) of
-        Just (contractType, reader) -> pure (Call reader, [contractType])
+      Call _ ('@' : typeText) -> case lookup (normalizeType typeText) (bindingRoutes binding) of
+        Just (contractType, reader) -> pure (Call ReadCurrent reader, [contractType])
         Nothing -> Left ("Handler " ++ bindingHandler binding ++ " reads " ++ typeText ++ " in " ++ bindingEffect binding
           ++ ", whose demands give " ++ describe (bindingRoutes binding)
           ++ "; declare requires/streams for an asset of that representation")
-      -- stream @T：同一路由的 x:xs 读取，方法图上仍是对读取方法的调用；只允许 streams 读取的持续资产。
-      Call ('~' : typeText) -> case lookup (normalizeType typeText) (bindingRoutes binding) of
+      -- stream @T：同一路由的 x:xs 读取，方法图上是对读取方法的 ReadHistory 引用；只允许 streams 读取的持续资产。
+      Call _ ('~' : typeText) -> case lookup (normalizeType typeText) (bindingRoutes binding) of
         Just (contractType, reader)
-          | streamed binding contractType -> pure (Call reader, [contractType])
+          | streamed binding contractType -> pure (Call ReadHistory reader, [contractType])
           | otherwise -> Left ("Handler " ++ bindingHandler binding ++ " reads " ++ typeText ++ " with stream in "
               ++ bindingEffect binding ++ ", but " ++ contractType ++ " is not a continuous asset read with streams"
               ++ "; use require for a single value, or declare streams " ++ show contractType)
         Nothing -> Left ("Handler " ++ bindingHandler binding ++ " streams " ++ typeText ++ " in " ++ bindingEffect binding
           ++ ", whose demands give " ++ describe (bindingRoutes binding)
           ++ "; declare streams for a continuous asset of that representation")
-      Call "%raw" -> case bindingRaw binding of
-        Just source -> pure (Call (rawMethod source), [])
+      -- rawinput：挂在 Stream 下是来源交进来的这一条（Deliver），挂在原子句柄下是句柄本次的输出（ReadOutput）。
+      Call _ "%raw" -> case bindingRaw binding of
+        Just source@(RawStream _) -> pure (Call Deliver (rawMethod source), [])
+        Just source -> pure (Call ReadOutput (rawMethod source), [])
         Nothing -> Left ("Handler " ++ bindingHandler binding ++ " uses rawinput in " ++ bindingEffect binding
           ++ "; rawinput requires an attached Context parser or a Pure with a valid input")
-      Call other -> pure (Call other, [])
+      Call kind other -> pure (Call kind other, [])
       Sequence children -> combine Sequence children
       Choice children -> combine Choice children
       Recover body recovery -> do
@@ -582,7 +584,7 @@ streamHistories bindings handlerShapes = nub
   , Just (contractType, _) <- [lookup (normalizeType typeText) (bindingRoutes binding)] ]
   where
     streamed shape = case shape of
-      Call ('~' : typeText) -> [typeText]
+      Call _ ('~' : typeText) -> [typeText]
       Sequence children -> concatMap streamed children
       Choice children -> concatMap streamed children
       Recover body recovery -> streamed body ++ streamed recovery
@@ -619,7 +621,7 @@ buildStructure plan assembly shapes = do
       sessions = [mount | mount <- mounts, mountNode mount `elem` concatMap sessionMounts lifelongSessionsOf]
       entries = nub (map mountMethod mounts)
       logical = withProducerReferences connections definitions
-  graph <- either (Left . InvalidEffectGraph) Right (buildEffectGraph definitions (Choice (map Call entries)))
+  graph <- either (Left . InvalidEffectGraph) Right (buildEffectGraph definitions (Choice (map (Call Invoke) entries)))
   names <- mapM scopeName orderedScopes
   declared <- mapM (scopeDeclaration names) orderedScopes
   scopes <- either (Left . InvalidEffectGraph) Right (completeScopeTree declared (buildScopeTree graph))
@@ -742,7 +744,7 @@ buildStructure plan assembly shapes = do
       where
         pureMethods = [method | effect <- effects, effectKind effect == PureKind, (_, method) <- effectMethods effect]
         replay seen shape = case shape of
-          Call method
+          Call _ method
             | method == anchor -> Empty
             | method `elem` pureMethods, method `notElem` seen -> replay (method : seen) (bodyOf method)
           Sequence children -> Sequence (map (replay seen) children)
@@ -753,7 +755,7 @@ buildStructure plan assembly shapes = do
 -- 构图与最终驱动校验共用的纯引用投影；不决定实际生产时机。
 withProducerReferences :: Eq method => [OutputConnection method] -> [MethodDefinition method] -> [MethodDefinition method]
 withProducerReferences connections definitions =
-  [definition { methodBody = Sequence (methodBody definition : [Call (outputParser connection)
+  [definition { methodBody = Sequence (methodBody definition : [Call Invoke (outputParser connection)
       | connection <- connections, outputAnchor connection == methodIdentity definition]) }
   | definition <- definitions]
 
@@ -839,7 +841,7 @@ buildEffectGraph definitions shape = do
       -> GraphAnalysis method (Summary method)
     analyzeShape definitions active shape = case shape of
       Empty -> pure (summarize EmptyLayer)
-      Call selected
+      Call _ selected
         | Set.member selected active -> lift (Left (RecursiveMethod selected))
         | otherwise -> do
             cached <- gets (Map.lookup selected)
@@ -1317,7 +1319,7 @@ resolveSources checked connections definitions defaultReaders prototype = do
       ++ [AssetExit False after | AssetExit True after <- exits]
     shape :: AssetCall -> MethodShape String -> AssetState -> AssetAnalysis [AssetExit]
     shape _ Empty state = pure [AssetExit True state, AssetExit False state]
-    shape call (Call selected) state = method call selected state
+    shape call (Call _ selected) state = method call selected state
     shape call (Sequence parts) state = sequential (shape call) parts [AssetExit True state]
     shape call (Choice parts) state = case parts of
       [] -> pure [AssetExit True state]

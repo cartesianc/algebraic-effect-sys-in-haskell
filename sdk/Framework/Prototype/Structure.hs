@@ -78,7 +78,9 @@ renderStructure prototype workflowAST = do
       ++ ["  " ++ show (methodIdentity method) ++ " [" ++ show (methodRole method)
            ++ ", effect=" ++ show (methodEffect method) ++ "]"
          | method <- protoMethods prototype]
-      ++ ["", "Effect references"] ++ map edge (graphReferences graph)
+      ++ ["", "Effect references (invoke: enters and returns; deliver: the source enters this parser at rawemit;"
+         , "  output: rawinput reads the handle's output; current: require; history: stream x:xs)"]
+      ++ map edge (graphReferences graph)
       ++ ["", "Scope layers"]
       ++ ["  " ++ show index ++ ": " ++ intercalate ", " (map show layer)
          | (index, layer) <- zip [0 :: Int ..] (scopeLayers tree)]
@@ -98,6 +100,20 @@ renderStructure prototype workflowAST = do
       direct : _ -> nub (direct ++ concatMap ancestors direct)
       [] -> []
     edge (before, after) = "  " ++ show before ++ " -> " ++ show after
+      ++ case nub [kind | definition <- protoMethods prototype, methodIdentity definition == before
+                        , (kind, called) <- kindedCalls (methodBody definition), called == after] of
+           [] -> ""
+           kinds -> " (" ++ intercalate ", " (map describeKind kinds) ++ ")"
+    kindedCalls Empty = []
+    kindedCalls (Call kind called) = [(kind, called)]
+    kindedCalls (Sequence children) = concatMap kindedCalls children
+    kindedCalls (Choice children) = concatMap kindedCalls children
+    kindedCalls (Recover body recovery) = kindedCalls body ++ kindedCalls recovery
+    describeKind Invoke = "invoke"
+    describeKind Deliver = "deliver"
+    describeKind ReadOutput = "output"
+    describeKind ReadCurrent = "current"
+    describeKind ReadHistory = "history"
     sourceDescription FromOwnChain = "capture / no known publication"
     sourceDescription FromSession = "session delivery / retained publication"
     sourceDescription (FromChains nodes) = "publication opportunities " ++ intercalate ", " (map describeNode nodes)
@@ -125,9 +141,12 @@ renderStructure prototype workflowAST = do
             : [inner ++ "session " ++ sessionAsset session ++ " " ++ describePlan (sessionPlan session)
                 ++ " mounts " ++ show (sessionMounts session)
               | session <- lifelongSessions description]
-            ++ [inner ++ "subscribes " ++ show target ++ " <- " ++ asset
+            ++ [inner ++ "subscribes " ++ show target ++ " <- " ++ asset ++ " (" ++ describeTrigger (callbackTrigger prototype asset) ++ ")"
                | (target, asset) <- lifelongSubscriptions description]
             ++ concatMap (renderWorkflow (depth + 1)) children
+    describeTrigger EveryPublish = "every publish"
+    describeTrigger OnChange = "on change"
+    describeTrigger OnEvent = "event"
     describePlan (Receive source) = "Receive from " ++ source
     describePlan (Derive upstream) = "Derive from " ++ upstream
     describePlan (ReuseOutput nodes) = "ReuseOutput at " ++ show nodes ++ " (no separate producer)"

@@ -9,7 +9,7 @@ import Data.List (nub, (\\))
 import Data.Maybe (isJust)
 import GHC.Data.FastString (unpackFS)
 import Framework.Gen.Frontend.Source (HandlerSource(..), NameUses, nameAtUse)
-import Framework.Prototype.Graph (MethodShape(..))
+import Framework.Prototype.Graph (CallKind(..), MethodShape(..))
 import GHC (GhcPs)
 import GHC.Hs
 import GHC.Types.Name.Occurrence (occNameString)
@@ -139,7 +139,8 @@ methodReference environment identifier = do
 
 -- require @T 记为按表示类型的读取，stream @T 记为同一资产的 x:xs 读取；类型原文由 gen 规范化后与绑定的路由比较。
 demandCall :: String -> LHsWcType GhcPs -> Either String (MethodShape String)
-demandCall marker argument = pure (Call (marker ++ showSDocUnsafe (ppr (hswc_body argument))))
+demandCall marker argument = pure (Call kind (marker ++ showSDocUnsafe (ppr (hswc_body argument))))
+  where kind = if marker == "~" then ReadHistory else ReadCurrent
 
 -- handler 之间不直接调用：被调用的 handler 不经 effect 入口，Input、驱动和错误位置都会丢失。
 directCall :: Environment -> String -> Either String (MethodShape String)
@@ -148,7 +149,7 @@ directCall environment reference = case reference of
   "@stream" -> Left "stream needs an explicit representation type, e.g. stream @Line"
   '!' : method -> Left ("handler " ++ maybe "" (++ " ") (ownerClass environment) ++ "calls handler " ++ method
     ++ " directly; compose handlers through effect registrations (Input, demands) and the AST")
-  _ -> pure (Call reference)
+  _ -> pure (Call Invoke reference)
 
 imported :: Environment -> [String] -> Maybe String -> RdrName -> Bool
 imported environment modules owner identifier = case identifier of

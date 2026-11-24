@@ -174,28 +174,32 @@ generatedPrototype =
         [ SDK.MethodDefinition RunPrepareFilesGen RunPrepareFilesGen SDK.HandlerMethod SDK.Empty
         , SDK.MethodDefinition GetFileNameGen GetFileNameGen SDK.ContextRequest SDK.Empty
         , SDK.MethodDefinition ReadFileNameGen GetFileNameGen SDK.ContextRequire SDK.Empty
-        , SDK.MethodDefinition GetOpenedFileGen GetOpenedFileGen SDK.ContextRequest (SDK.Call ReadFileNameGen)
+        , SDK.MethodDefinition
+            GetOpenedFileGen
+            GetOpenedFileGen
+            SDK.ContextRequest
+            (SDK.Call SDK.ReadCurrent ReadFileNameGen)
         , SDK.MethodDefinition ReadOpenedFileGen GetOpenedFileGen SDK.ContextRequire SDK.Empty
         , SDK.MethodDefinition
             OpenFileSessionGen
             OpenFileSessionGen
             SDK.ScopeOpen
-            (SDK.Sequence [SDK.Call GetOpenedFileGen, SDK.Call ReadOpenedFileGen])
+            (SDK.Sequence [SDK.Call SDK.Invoke GetOpenedFileGen, SDK.Call SDK.ReadCurrent ReadOpenedFileGen])
         , SDK.MethodDefinition
             CloseFileSessionGen
             OpenFileSessionGen
             SDK.ScopeClose
-            (SDK.Call ReadOpenedFileGen)
+            (SDK.Call SDK.ReadCurrent ReadOpenedFileGen)
         , SDK.MethodDefinition
             RunUseFirstGen
             RunUseFirstGen
             SDK.HandlerMethod
             (
               SDK.Sequence
-                [ SDK.Call GetFileNameGen
-                , SDK.Call OpenFileSessionGen
-                , SDK.Call ReadFileNameGen
-                , SDK.Call ReadOpenedFileGen
+                [ SDK.Call SDK.Invoke GetFileNameGen
+                , SDK.Call SDK.Invoke OpenFileSessionGen
+                , SDK.Call SDK.ReadCurrent ReadFileNameGen
+                , SDK.Call SDK.ReadCurrent ReadOpenedFileGen
                 ]
             )
         , SDK.MethodDefinition RunSelectSecondGen RunSelectSecondGen SDK.HandlerMethod SDK.Empty
@@ -205,10 +209,10 @@ generatedPrototype =
             SDK.HandlerMethod
             (
               SDK.Sequence
-                [ SDK.Call GetFileNameGen
-                , SDK.Call OpenFileSessionGen
-                , SDK.Call ReadFileNameGen
-                , SDK.Call ReadOpenedFileGen
+                [ SDK.Call SDK.Invoke GetFileNameGen
+                , SDK.Call SDK.Invoke OpenFileSessionGen
+                , SDK.Call SDK.ReadCurrent ReadFileNameGen
+                , SDK.Call SDK.ReadCurrent ReadOpenedFileGen
                 ]
             )
         , SDK.MethodDefinition RunSelectFirstGen RunSelectFirstGen SDK.HandlerMethod SDK.Empty
@@ -218,10 +222,10 @@ generatedPrototype =
             SDK.HandlerMethod
             (
               SDK.Sequence
-                [ SDK.Call GetFileNameGen
-                , SDK.Call OpenFileSessionGen
-                , SDK.Call ReadFileNameGen
-                , SDK.Call ReadOpenedFileGen
+                [ SDK.Call SDK.Invoke GetFileNameGen
+                , SDK.Call SDK.Invoke OpenFileSessionGen
+                , SDK.Call SDK.ReadCurrent ReadFileNameGen
+                , SDK.Call SDK.ReadCurrent ReadOpenedFileGen
                 ]
             )
         , SDK.MethodDefinition RunCheckJournalGen RunCheckJournalGen SDK.HandlerMethod SDK.Empty
@@ -437,10 +441,10 @@ generatedPrototype =
                   SDK.HandlerMethod
                   (
                     SDK.Sequence
-                      [ SDK.Call GetFileNameGen
-                      , SDK.Call OpenFileSessionGen
-                      , SDK.Call ReadFileNameGen
-                      , SDK.Call ReadOpenedFileGen
+                      [ SDK.Call SDK.Invoke GetFileNameGen
+                      , SDK.Call SDK.Invoke OpenFileSessionGen
+                      , SDK.Call SDK.ReadCurrent ReadFileNameGen
+                      , SDK.Call SDK.ReadCurrent ReadOpenedFileGen
                       ]
                   )
               , SDK.MethodDefinition GetFileNameGen GetFileNameGen SDK.ContextRequest SDK.Empty
@@ -448,8 +452,12 @@ generatedPrototype =
                   OpenFileSessionGen
                   OpenFileSessionGen
                   SDK.ScopeOpen
-                  (SDK.Sequence [SDK.Call GetOpenedFileGen, SDK.Call ReadOpenedFileGen])
-              , SDK.MethodDefinition GetOpenedFileGen GetOpenedFileGen SDK.ContextRequest (SDK.Call ReadFileNameGen)
+                  (SDK.Sequence [SDK.Call SDK.Invoke GetOpenedFileGen, SDK.Call SDK.ReadCurrent ReadOpenedFileGen])
+              , SDK.MethodDefinition
+                  GetOpenedFileGen
+                  GetOpenedFileGen
+                  SDK.ContextRequest
+                  (SDK.Call SDK.ReadCurrent ReadFileNameGen)
               , SDK.MethodDefinition ReadFileNameGen GetFileNameGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition ReadOpenedFileGen GetOpenedFileGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition RunSelectSecondGen RunSelectSecondGen SDK.HandlerMethod SDK.Empty
@@ -459,10 +467,10 @@ generatedPrototype =
                   SDK.HandlerMethod
                   (
                     SDK.Sequence
-                      [ SDK.Call GetFileNameGen
-                      , SDK.Call OpenFileSessionGen
-                      , SDK.Call ReadFileNameGen
-                      , SDK.Call ReadOpenedFileGen
+                      [ SDK.Call SDK.Invoke GetFileNameGen
+                      , SDK.Call SDK.Invoke OpenFileSessionGen
+                      , SDK.Call SDK.ReadCurrent ReadFileNameGen
+                      , SDK.Call SDK.ReadCurrent ReadOpenedFileGen
                       ]
                   )
               , SDK.MethodDefinition RunSelectFirstGen RunSelectFirstGen SDK.HandlerMethod SDK.Empty
@@ -472,10 +480,10 @@ generatedPrototype =
                   SDK.HandlerMethod
                   (
                     SDK.Sequence
-                      [ SDK.Call GetFileNameGen
-                      , SDK.Call OpenFileSessionGen
-                      , SDK.Call ReadFileNameGen
-                      , SDK.Call ReadOpenedFileGen
+                      [ SDK.Call SDK.Invoke GetFileNameGen
+                      , SDK.Call SDK.Invoke OpenFileSessionGen
+                      , SDK.Call SDK.ReadCurrent ReadFileNameGen
+                      , SDK.Call SDK.ReadCurrent ReadOpenedFileGen
                       ]
                   )
               , SDK.MethodDefinition RunCheckJournalGen RunCheckJournalGen SDK.HandlerMethod SDK.Empty

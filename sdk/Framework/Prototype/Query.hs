@@ -6,7 +6,7 @@ module Framework.Prototype.Query
   , allWorkflow, lookupChain, lookupWorkflow, precedes, exclusive
   , driveSet, readPoints, scopeOpeningsAt, drivingAssets, bootPlan, sessionSteps, sessionAssets
   , finiteSessions, candidateCases, findEffectProto, ordinaryEntry, calledMethods, reachableMethods
-  , hooksAt, variantLabel, entryLabel
+  , hooksAt, variantLabel, entryLabel, CallbackTrigger(..), callbackTrigger, callbackEdges
   ) where
 
 import Data.List (intercalate, isPrefixOf, nub)
@@ -165,9 +165,29 @@ ordinaryEntry effect = case [method | (role, method) <- effectMethods effect, ro
   method : _ -> pure method
   [] -> Left (InvalidPrototype ("Effect has no callable entry (no handler or open handler): " ++ effectName effect))
 
+-- 发布之后同步执行的回调：方法体之外的第三种关系（方法体里的是调用与读取）。触发方式由资产的注册决定：
+-- 持续资产每次发布都回调；behavior（Stream 下 stream = False）与同一作用范围上一次回调的值相等时不回调；
+-- 普通资产是 event，每次发布都回调。回调里如何读这份交付，看订阅单元方法体里的 ReadCurrent／ReadHistory。
+data CallbackTrigger = EveryPublish | OnChange | OnEvent
+  deriving (Eq, Show)
+
+callbackTrigger :: Prototype method -> String -> CallbackTrigger
+callbackTrigger prototype asset = case [effect | effect <- protoEffects prototype, effectProduces effect == Just asset] of
+  effect : _
+    | effectSampled effect -> OnChange
+    | effectContinuous effect -> EveryPublish
+  _ -> OnEvent
+
+-- （所在 lifelong，资产，订阅的单元或节点，触发方式），按 workflow 与订阅的声明顺序。
+callbackEdges :: Prototype method -> [(NodeId, String, NodeId, CallbackTrigger)]
+callbackEdges prototype =
+  [ (boundary, asset, target, callbackTrigger prototype asset)
+  | (boundary, described) <- workflowLifelongs (protoWorkflow prototype)
+  , (target, asset) <- lifelongSubscriptions described ]
+
 calledMethods :: MethodShape method -> [method]
 calledMethods Empty = []
-calledMethods (Call method) = [method]
+calledMethods (Call _ method) = [method]
 calledMethods (Sequence children) = concatMap calledMethods children
 calledMethods (Choice children) = concatMap calledMethods children
 calledMethods (Recover body recovery) = calledMethods body ++ calledMethods recovery

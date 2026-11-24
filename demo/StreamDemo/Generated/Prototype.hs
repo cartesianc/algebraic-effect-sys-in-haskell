@@ -143,36 +143,45 @@ generatedPrototype =
             NextTemperatureFeedGen
             NextTemperatureFeedGen
             SDK.StreamHandler
-            (SDK.Call OpenSensorLinkGen)
+            (SDK.Call SDK.Invoke OpenSensorLinkGen)
         , SDK.MethodDefinition
             GetTemperatureSampleGen
             GetTemperatureSampleGen
             SDK.ContextStream
-            (SDK.Call NextTemperatureFeedGen)
+            (SDK.Call SDK.Deliver NextTemperatureFeedGen)
         , SDK.MethodDefinition StreamTemperatureSampleGen GetTemperatureSampleGen SDK.ContextRequire SDK.Empty
         , SDK.MethodDefinition
             NextHeartbeatClockGen
             NextHeartbeatClockGen
             SDK.StreamHandler
-            (SDK.Call OpenSensorLinkGen)
-        , SDK.MethodDefinition GetBeatGen GetBeatGen SDK.ContextStream (SDK.Call NextHeartbeatClockGen)
+            (SDK.Call SDK.Invoke OpenSensorLinkGen)
+        , SDK.MethodDefinition
+            GetBeatGen
+            GetBeatGen
+            SDK.ContextStream
+            (SDK.Call SDK.Deliver NextHeartbeatClockGen)
         , SDK.MethodDefinition StreamBeatGen GetBeatGen SDK.ContextRequire SDK.Empty
         , SDK.MethodDefinition RunAnnounceGen RunAnnounceGen SDK.HandlerMethod SDK.Empty
         , SDK.MethodDefinition
             RunShowTemperatureGen
             RunShowTemperatureGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call StreamTemperatureSampleGen, SDK.Call StreamTemperatureSampleGen])
+            (
+              SDK.Sequence
+                [ SDK.Call SDK.ReadCurrent StreamTemperatureSampleGen
+                , SDK.Call SDK.ReadHistory StreamTemperatureSampleGen
+                ]
+            )
         , SDK.MethodDefinition
             RunCheckTrendGen
             RunCheckTrendGen
             SDK.HandlerMethod
-            (SDK.Call StreamTemperatureSampleGen)
+            (SDK.Call SDK.ReadHistory StreamTemperatureSampleGen)
         , SDK.MethodDefinition
             RunReportHeartbeatGen
             RunReportHeartbeatGen
             SDK.HandlerMethod
-            (SDK.Call StreamBeatGen)
+            (SDK.Call SDK.ReadHistory StreamBeatGen)
         ]
     , SDK.protoWorkflow =
         SDK.ChainAt
@@ -430,36 +439,45 @@ generatedPrototype =
                   RunShowTemperatureGen
                   RunShowTemperatureGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call StreamTemperatureSampleGen, SDK.Call StreamTemperatureSampleGen])
+                  (
+                    SDK.Sequence
+                      [ SDK.Call SDK.ReadCurrent StreamTemperatureSampleGen
+                      , SDK.Call SDK.ReadHistory StreamTemperatureSampleGen
+                      ]
+                  )
               , SDK.MethodDefinition StreamTemperatureSampleGen GetTemperatureSampleGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition
                   RunCheckTrendGen
                   RunCheckTrendGen
                   SDK.HandlerMethod
-                  (SDK.Call StreamTemperatureSampleGen)
+                  (SDK.Call SDK.ReadHistory StreamTemperatureSampleGen)
               , SDK.MethodDefinition
                   RunReportHeartbeatGen
                   RunReportHeartbeatGen
                   SDK.HandlerMethod
-                  (SDK.Call StreamBeatGen)
+                  (SDK.Call SDK.ReadHistory StreamBeatGen)
               , SDK.MethodDefinition StreamBeatGen GetBeatGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition
                   NextTemperatureFeedGen
                   NextTemperatureFeedGen
                   SDK.StreamHandler
-                  (SDK.Call OpenSensorLinkGen)
+                  (SDK.Call SDK.Invoke OpenSensorLinkGen)
               , SDK.MethodDefinition OpenSensorLinkGen OpenSensorLinkGen SDK.ScopeOpen SDK.Empty
               , SDK.MethodDefinition
                   GetTemperatureSampleGen
                   GetTemperatureSampleGen
                   SDK.ContextStream
-                  (SDK.Call NextTemperatureFeedGen)
+                  (SDK.Call SDK.Deliver NextTemperatureFeedGen)
               , SDK.MethodDefinition
                   NextHeartbeatClockGen
                   NextHeartbeatClockGen
                   SDK.StreamHandler
-                  (SDK.Call OpenSensorLinkGen)
-              , SDK.MethodDefinition GetBeatGen GetBeatGen SDK.ContextStream (SDK.Call NextHeartbeatClockGen)
+                  (SDK.Call SDK.Invoke OpenSensorLinkGen)
+              , SDK.MethodDefinition
+                  GetBeatGen
+                  GetBeatGen
+                  SDK.ContextStream
+                  (SDK.Call SDK.Deliver NextHeartbeatClockGen)
               ]
           , SDK.graphRoots =
               [ RunAnnounceGen

@@ -276,7 +276,7 @@ cabal run file-demo -- --structure
 | `Workflow` | branch、末端与 AST 位置 NodeId |
 | `Chain definitions`／`Chain mounts` | original／Context 链定义、挂载位置、可达方法、可能生产和读取 |
 | `Asset sources` | 缺少捕获绑定时，各读取点许可的资产来源 |
-| `Effect methods`／`Effect references` | 方法身份、角色、所属 effect 与引用边 |
+| `Effect methods`／`Effect references` | 方法身份、角色、所属 effect 与引用边；每条边标出引用方式：`invoke` 进入并返回，`deliver` 是来源在 `rawemit` 处进入 parser（边写在 parser 上、指向来源，执行方向相反），`output` 是 `rawinput` 读原子句柄本次的输出，`current` 是 `require`，`history` 是 `stream` 的 x:xs。lifelong 的 `subscribes` 行标出回调的触发方式：`every publish`、`on change`（behavior）或 `event` |
 | `Scope layers`／`Scope parents`／后续顺序证据 | scope 的层级、共享父节点、入口路径和顺序推导依据 |
 
 这是静态结构视图，不是实时 RuntimeGraph 或业务执行日志。该模式不创建运行 scope 句柄、不执行 handler，也不更新 Generated；源码过期时先重新生成。字段与推导规则见 [EffectGraph](EFFECT_GRAPH.md#查看初始化结果)。

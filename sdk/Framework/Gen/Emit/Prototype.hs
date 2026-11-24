@@ -193,7 +193,7 @@ renderMethod definition = constructor "MethodDefinition"
 
 renderShape :: G.MethodShape String -> String
 renderShape G.Empty = "SDK.Empty"
-renderShape (G.Call method) = constructor "Call" [genName method]
+renderShape (G.Call kind method) = constructor "Call" ["SDK." ++ show kind, genName method]
 renderShape (G.Sequence children) = constructor "Sequence" [list renderShape children]
 renderShape (G.Choice children) = constructor "Choice" [list renderShape children]
 renderShape (G.Recover body recovery) = constructor "Recover" [shapeArgument body, shapeArgument recovery]

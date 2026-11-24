@@ -5,7 +5,7 @@
 -- 静态方法引用与 scope 开启顺序的纯数据，是 Prototype 的一部分；不保存执行闭包或活资源。
 -- 构图算法在 Framework.Gen.Composition。
 module Framework.Prototype.Graph
-  ( MethodRole(..), MethodShape(..), MethodDefinition(..)
+  ( MethodRole(..), CallKind(..), MethodShape(..), MethodDefinition(..)
   , GraphError(..), EffectGraph(..), ScopeNode(..), ScopeTree(..)
   ) where
 
@@ -29,9 +29,25 @@ data MethodRole
   | MiddlewareHook
   deriving (Eq, Ord, Show, Read, Generic, NFData)
 
+-- 方法体中一次引用的语义。分析（引用图、资产流、scope 推断）对各类一视同仁；类别只保留 gen 已经区分过的信息，
+-- 让产物能回答“以什么方式依赖”，而不只是“依赖谁”。
+data CallKind
+  -- 常规调用：Input 前驱、requests 的生产链、输出联立后执行的 parser、链入口。调用方进入被调用方，返回后继续。
+  = Invoke
+  -- 本次交付：Stream 来源在 rawemit 处进入 parser，parser 的 rawinput 读这次交进来的输入。
+  -- 引用写在 parser 上、指向来源，但执行方向相反：来源调用 parser，parser 不再执行来源。
+  | Deliver
+  -- rawinput 读挂接的原子句柄本次交出的输出（同一次调用里已执行，不再执行）。
+  | ReadOutput
+  -- require @T：读本次捕获或可用的值，未就绪时等待；不驱动生产。
+  | ReadCurrent
+  -- stream @T：读截至本次交付的历史 x:xs。
+  | ReadHistory
+  deriving (Eq, Ord, Show, Read, Generic, NFData)
+
 data MethodShape method
   = Empty
-  | Call method
+  | Call CallKind method
   | Sequence [MethodShape method]
   | Choice [MethodShape method]
   | Recover (MethodShape method) (MethodShape method)

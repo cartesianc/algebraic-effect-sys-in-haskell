@@ -216,7 +216,7 @@ data ScopeKind = RegistrationSingleton | ProductionSingleton | ExecutionMultiple
 
 1. **声明与挂载。** 解析注册、资产与 Input。AST 已用 `node` 指定末端，给每次挂载编号；检查 alternative 的共同 Excu 与判定 Context，定下持续资产的生产方式与输出复用位置。末端不是从全图寻找的叶子。
 2. **接口与方法组成。** 计算挂载、选择器、生产步骤、输出连接、有序 requests／Input、rawinput 来源和读取路由，并据此形成 handler 类型能力。前端用本次契约对手写 Handlers 做 GHC 名称解析与类型检查。`Gen.Frontend.Shape` 按原始语法提取控制流，按每个变量使用位置的 GHC `Name` 识别 SDK 的 `require` 和 `rawinput`。例如，`Payload{..} -> rawoutput [rawinput]` 中的 `rawinput` 是局部字段值；同一模块经重导出调用 SDK 的 `rawinput`，仍产生挂接输入的读取形状。机器再把形状代换成对应 effect 方法的结构，每个绑定保留各自的入口与路由。
-3. **方法图。** 从同一装配结果建立挂接注入的分析副本，只消去对同次原子输出的再次索取。方法索引与活动栈检查引用，完成态摘要缓存 scope 路径与图。辅助／主 algebra 共用归约结果，不按调用次数复制展开树。
+3. **方法图。** 方法体里的每个引用带类别（`CallKind`）：`Invoke` 常规调用，`Deliver` 是 Stream 来源在 `rawemit` 处进入 parser（引用写在 parser 上、指向来源，执行方向相反，parser 不再执行来源），`ReadOutput` 是 `rawinput` 读原子句柄本次的输出，`ReadCurrent` 是 `require @T`，`ReadHistory` 是 `stream @T`。类别在形状分析里就已确定，投影到读取方法时保留下来；引用图、资产流与 scope 推断对各类一视同仁，类别只用于回答“以什么方式依赖”。发布后的回调不在方法体里，由 lifelong 的订阅表达，`Prototype.Query.callbackEdges` 按资产注册给出触发方式（每次发布、behavior 变化时、event）。活动目录服务于绑定与资源管理，不是调用栈；同步的“来源 → parser → 订阅单元”跨越多个 Target，调用视图应从带类别的引用与回调导出，`parallel` 的分支各有自己的执行路径。从同一装配结果建立挂接注入的分析副本，只消去对同次原子输出的再次索取。方法索引与活动栈检查引用，完成态摘要缓存 scope 路径与图。辅助／主 algebra 共用归约结果，不按调用次数复制展开树。
 4. **ScopeTree。** 从方法图的路径求共同必经前序，补入注册前提并检查环。先有方法图及路径，再有 ScopeTree；实例共享与关闭仍由运行时的生产身份、实际使用和待用关系决定。
 5. **来源、驱动标记与完成校验。** 结合方法结构、链挂载和 workflow 形成读取来源与 scope 开启计划，保留相关路径差异并裁剪无关状态。Booter 补齐单元与来源的运行关联；原型自洽和 Context 驱动检查完成后，结果才交给输出阶段。
 6. **输出与类检。** Emit 读取结果，生成普通 Haskell 的契约、入口和 `generatedPrototype`。GHC 在内存中检查业务模块与本次契约、顶层白名单和源码资产，再写回 Generated；`Generated/Assets.hs` 是独立资产目录。生成的 Program、Prototype 与 Handlers 副本只是普通 Haskell，它们的类型检查交给构建，gencode 不重复。

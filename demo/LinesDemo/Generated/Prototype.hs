@@ -175,38 +175,53 @@ generatedPrototype =
             OpenInputSessionGen
             OpenInputSessionGen
             SDK.ScopeOpen
-            (SDK.Sequence [SDK.Call GetOpenedInputGen, SDK.Call ReadOpenedInputGen])
+            (SDK.Sequence [SDK.Call SDK.Invoke GetOpenedInputGen, SDK.Call SDK.ReadCurrent ReadOpenedInputGen])
         , SDK.MethodDefinition
             CloseInputSessionGen
             OpenInputSessionGen
             SDK.ScopeClose
-            (SDK.Call ReadOpenedInputGen)
+            (SDK.Call SDK.ReadCurrent ReadOpenedInputGen)
         , SDK.MethodDefinition
             NextLineFeedGen
             NextLineFeedGen
             SDK.StreamHandler
-            (SDK.Sequence [SDK.Call OpenInputSessionGen, SDK.Call ReadOpenedInputGen])
+            (SDK.Sequence [SDK.Call SDK.Invoke OpenInputSessionGen, SDK.Call SDK.ReadCurrent ReadOpenedInputGen])
         , SDK.MethodDefinition HookTraceLineGen HookTraceLineGen SDK.MiddlewareHook SDK.Empty
-        , SDK.MethodDefinition GetTextLineGen GetTextLineGen SDK.ContextStream (SDK.Call NextLineFeedGen)
+        , SDK.MethodDefinition
+            GetTextLineGen
+            GetTextLineGen
+            SDK.ContextStream
+            (SDK.Call SDK.Deliver NextLineFeedGen)
         , SDK.MethodDefinition StreamTextLineGen GetTextLineGen SDK.ContextRequire SDK.Empty
-        , SDK.MethodDefinition RunPrintLineGen RunPrintLineGen SDK.HandlerMethod (SDK.Call StreamTextLineGen)
+        , SDK.MethodDefinition
+            RunPrintLineGen
+            RunPrintLineGen
+            SDK.HandlerMethod
+            (SDK.Call SDK.ReadCurrent StreamTextLineGen)
         , SDK.MethodDefinition
             RunTextCounterGen
             RunTextCounterGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call StreamTextLineGen, SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]])
+            (
+              SDK.Sequence
+                [SDK.Call SDK.ReadHistory StreamTextLineGen, SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]]
+            )
         , SDK.MethodDefinition
             GetRunningTotalGen
             GetRunningTotalGen
             SDK.ContextStream
-            (SDK.Call RunTextCounterGen)
+            (SDK.Call SDK.ReadOutput RunTextCounterGen)
         , SDK.MethodDefinition StreamRunningTotalGen GetRunningTotalGen SDK.ContextRequire SDK.Empty
         , SDK.MethodDefinition
             RunShowTotalGen
             RunShowTotalGen
             SDK.HandlerMethod
-            (SDK.Call StreamRunningTotalGen)
-        , SDK.MethodDefinition RunReportGen RunReportGen SDK.HandlerMethod (SDK.Call StreamRunningTotalGen)
+            (SDK.Call SDK.ReadCurrent StreamRunningTotalGen)
+        , SDK.MethodDefinition
+            RunReportGen
+            RunReportGen
+            SDK.HandlerMethod
+            (SDK.Call SDK.ReadCurrent StreamRunningTotalGen)
         ]
     , SDK.protoWorkflow =
         SDK.ChainAt
@@ -443,38 +458,53 @@ generatedPrototype =
         SDK.EffectGraph
           { SDK.graphMethods =
               [ SDK.MethodDefinition RunAnnounceGen RunAnnounceGen SDK.HandlerMethod SDK.Empty
-              , SDK.MethodDefinition RunPrintLineGen RunPrintLineGen SDK.HandlerMethod (SDK.Call StreamTextLineGen)
+              , SDK.MethodDefinition
+                  RunPrintLineGen
+                  RunPrintLineGen
+                  SDK.HandlerMethod
+                  (SDK.Call SDK.ReadCurrent StreamTextLineGen)
               , SDK.MethodDefinition StreamTextLineGen GetTextLineGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition
                   RunTextCounterGen
                   RunTextCounterGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call StreamTextLineGen, SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]])
+                  (
+                    SDK.Sequence
+                      [SDK.Call SDK.ReadHistory StreamTextLineGen, SDK.Choice [SDK.Empty, SDK.Sequence [SDK.Empty]]]
+                  )
               , SDK.MethodDefinition
                   RunShowTotalGen
                   RunShowTotalGen
                   SDK.HandlerMethod
-                  (SDK.Call StreamRunningTotalGen)
+                  (SDK.Call SDK.ReadCurrent StreamRunningTotalGen)
               , SDK.MethodDefinition StreamRunningTotalGen GetRunningTotalGen SDK.ContextRequire SDK.Empty
-              , SDK.MethodDefinition RunReportGen RunReportGen SDK.HandlerMethod (SDK.Call StreamRunningTotalGen)
+              , SDK.MethodDefinition
+                  RunReportGen
+                  RunReportGen
+                  SDK.HandlerMethod
+                  (SDK.Call SDK.ReadCurrent StreamRunningTotalGen)
               , SDK.MethodDefinition
                   NextLineFeedGen
                   NextLineFeedGen
                   SDK.StreamHandler
-                  (SDK.Sequence [SDK.Call OpenInputSessionGen, SDK.Call ReadOpenedInputGen])
+                  (SDK.Sequence [SDK.Call SDK.Invoke OpenInputSessionGen, SDK.Call SDK.ReadCurrent ReadOpenedInputGen])
               , SDK.MethodDefinition
                   OpenInputSessionGen
                   OpenInputSessionGen
                   SDK.ScopeOpen
-                  (SDK.Sequence [SDK.Call GetOpenedInputGen, SDK.Call ReadOpenedInputGen])
+                  (SDK.Sequence [SDK.Call SDK.Invoke GetOpenedInputGen, SDK.Call SDK.ReadCurrent ReadOpenedInputGen])
               , SDK.MethodDefinition GetOpenedInputGen GetOpenedInputGen SDK.ContextRequest SDK.Empty
               , SDK.MethodDefinition ReadOpenedInputGen GetOpenedInputGen SDK.ContextRequire SDK.Empty
-              , SDK.MethodDefinition GetTextLineGen GetTextLineGen SDK.ContextStream (SDK.Call NextLineFeedGen)
+              , SDK.MethodDefinition
+                  GetTextLineGen
+                  GetTextLineGen
+                  SDK.ContextStream
+                  (SDK.Call SDK.Deliver NextLineFeedGen)
               , SDK.MethodDefinition
                   GetRunningTotalGen
                   GetRunningTotalGen
                   SDK.ContextStream
-                  (SDK.Call RunTextCounterGen)
+                  (SDK.Call SDK.ReadOutput RunTextCounterGen)
               ]
           , SDK.graphRoots =
               [ RunAnnounceGen

@@ -131,38 +131,38 @@ generatedPrototype =
             GetOpenedFilesGen
             GetOpenedFilesGen
             SDK.ContextRequest
-            (SDK.Call ReadFileNamesGen)
+            (SDK.Call SDK.ReadCurrent ReadFileNamesGen)
         , SDK.MethodDefinition ReadOpenedFilesGen GetOpenedFilesGen SDK.ContextRequire SDK.Empty
         , SDK.MethodDefinition
             OpenFileSessionGen
             OpenFileSessionGen
             SDK.ScopeOpen
-            (SDK.Sequence [SDK.Call GetOpenedFilesGen, SDK.Call ReadOpenedFilesGen])
+            (SDK.Sequence [SDK.Call SDK.Invoke GetOpenedFilesGen, SDK.Call SDK.ReadCurrent ReadOpenedFilesGen])
         , SDK.MethodDefinition
             CloseFileSessionGen
             OpenFileSessionGen
             SDK.ScopeClose
-            (SDK.Call ReadOpenedFilesGen)
+            (SDK.Call SDK.ReadCurrent ReadOpenedFilesGen)
         , SDK.MethodDefinition
             RunHoldFilesGen
             RunHoldFilesGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call GetFileNamesGen, SDK.Call OpenFileSessionGen])
+            (SDK.Sequence [SDK.Call SDK.Invoke GetFileNamesGen, SDK.Call SDK.Invoke OpenFileSessionGen])
         , SDK.MethodDefinition
             RunInspectFilesGen
             RunInspectFilesGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call RunHoldFilesGen, SDK.Call ReadOpenedFilesGen])
+            (SDK.Sequence [SDK.Call SDK.Invoke RunHoldFilesGen, SDK.Call SDK.ReadCurrent ReadOpenedFilesGen])
         , SDK.MethodDefinition
             RunReleaseFilesGen
             RunReleaseFilesGen
             SDK.HandlerMethod
-            (SDK.Call RunHoldFilesGen)
+            (SDK.Call SDK.Invoke RunHoldFilesGen)
         , SDK.MethodDefinition
             RunFinishInspectionGen
             RunFinishInspectionGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call GetFileNamesGen, SDK.Call ReadFileNamesGen])
+            (SDK.Sequence [SDK.Call SDK.Invoke GetFileNamesGen, SDK.Call SDK.ReadCurrent ReadFileNamesGen])
         ]
     , SDK.protoWorkflow =
         SDK.ChainAt
@@ -325,35 +325,35 @@ generatedPrototype =
                   RunHoldFilesGen
                   RunHoldFilesGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call GetFileNamesGen, SDK.Call OpenFileSessionGen])
+                  (SDK.Sequence [SDK.Call SDK.Invoke GetFileNamesGen, SDK.Call SDK.Invoke OpenFileSessionGen])
               , SDK.MethodDefinition GetFileNamesGen GetFileNamesGen SDK.ContextRequest SDK.Empty
               , SDK.MethodDefinition
                   OpenFileSessionGen
                   OpenFileSessionGen
                   SDK.ScopeOpen
-                  (SDK.Sequence [SDK.Call GetOpenedFilesGen, SDK.Call ReadOpenedFilesGen])
+                  (SDK.Sequence [SDK.Call SDK.Invoke GetOpenedFilesGen, SDK.Call SDK.ReadCurrent ReadOpenedFilesGen])
               , SDK.MethodDefinition
                   GetOpenedFilesGen
                   GetOpenedFilesGen
                   SDK.ContextRequest
-                  (SDK.Call ReadFileNamesGen)
+                  (SDK.Call SDK.ReadCurrent ReadFileNamesGen)
               , SDK.MethodDefinition ReadFileNamesGen GetFileNamesGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition ReadOpenedFilesGen GetOpenedFilesGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition
                   RunInspectFilesGen
                   RunInspectFilesGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call RunHoldFilesGen, SDK.Call ReadOpenedFilesGen])
+                  (SDK.Sequence [SDK.Call SDK.Invoke RunHoldFilesGen, SDK.Call SDK.ReadCurrent ReadOpenedFilesGen])
               , SDK.MethodDefinition
                   RunReleaseFilesGen
                   RunReleaseFilesGen
                   SDK.HandlerMethod
-                  (SDK.Call RunHoldFilesGen)
+                  (SDK.Call SDK.Invoke RunHoldFilesGen)
               , SDK.MethodDefinition
                   RunFinishInspectionGen
                   RunFinishInspectionGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call GetFileNamesGen, SDK.Call ReadFileNamesGen])
+                  (SDK.Sequence [SDK.Call SDK.Invoke GetFileNamesGen, SDK.Call SDK.ReadCurrent ReadFileNamesGen])
               ]
           , SDK.graphRoots =
               [RunHoldFilesGen, RunInspectFilesGen, RunReleaseFilesGen, RunFinishInspectionGen]

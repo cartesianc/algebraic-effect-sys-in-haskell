@@ -152,43 +152,52 @@ generatedPrototype =
             RunPrepareProbeGen
             RunPrepareProbeGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call GetFilePathsGen, SDK.Call ReadFilePathsGen])
+            (SDK.Sequence [SDK.Call SDK.Invoke GetFilePathsGen, SDK.Call SDK.ReadCurrent ReadFilePathsGen])
         , SDK.MethodDefinition
             GetOpenedFileGen
             GetOpenedFileGen
             SDK.ContextRequest
-            (SDK.Call ReadFilePathsGen)
+            (SDK.Call SDK.ReadCurrent ReadFilePathsGen)
         , SDK.MethodDefinition ReadOpenedFileGen GetOpenedFileGen SDK.ContextRequire SDK.Empty
         , SDK.MethodDefinition
             OpenSharedFileScopeGen
             OpenSharedFileScopeGen
             SDK.ScopeOpen
-            (SDK.Sequence [SDK.Call GetOpenedFileGen, SDK.Call ReadOpenedFileGen])
+            (SDK.Sequence [SDK.Call SDK.Invoke GetOpenedFileGen, SDK.Call SDK.ReadCurrent ReadOpenedFileGen])
         , SDK.MethodDefinition
             CloseSharedFileScopeGen
             OpenSharedFileScopeGen
             SDK.ScopeClose
-            (SDK.Call ReadOpenedFileGen)
+            (SDK.Call SDK.ReadCurrent ReadOpenedFileGen)
         , SDK.MethodDefinition
             RunWriteFirstGen
             RunWriteFirstGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call OpenSharedFileScopeGen, SDK.Call ReadOpenedFileGen])
+            (
+              SDK.Sequence
+                [SDK.Call SDK.Invoke OpenSharedFileScopeGen, SDK.Call SDK.ReadCurrent ReadOpenedFileGen]
+            )
         , SDK.MethodDefinition
             RunWriteSecondGen
             RunWriteSecondGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call OpenSharedFileScopeGen, SDK.Call ReadOpenedFileGen])
+            (
+              SDK.Sequence
+                [SDK.Call SDK.Invoke OpenSharedFileScopeGen, SDK.Call SDK.ReadCurrent ReadOpenedFileGen]
+            )
         , SDK.MethodDefinition
             RunWriteThirdGen
             RunWriteThirdGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call OpenSharedFileScopeGen, SDK.Call ReadOpenedFileGen])
+            (
+              SDK.Sequence
+                [SDK.Call SDK.Invoke OpenSharedFileScopeGen, SDK.Call SDK.ReadCurrent ReadOpenedFileGen]
+            )
         , SDK.MethodDefinition
             RunVerifyReuseGen
             RunVerifyReuseGen
             SDK.HandlerMethod
-            (SDK.Sequence [SDK.Call GetFilePathsGen, SDK.Call ReadFilePathsGen])
+            (SDK.Sequence [SDK.Call SDK.Invoke GetFilePathsGen, SDK.Call SDK.ReadCurrent ReadFilePathsGen])
         ]
     , SDK.protoWorkflow =
         SDK.ChainAt
@@ -331,40 +340,49 @@ generatedPrototype =
                   RunPrepareProbeGen
                   RunPrepareProbeGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call GetFilePathsGen, SDK.Call ReadFilePathsGen])
+                  (SDK.Sequence [SDK.Call SDK.Invoke GetFilePathsGen, SDK.Call SDK.ReadCurrent ReadFilePathsGen])
               , SDK.MethodDefinition GetFilePathsGen GetFilePathsGen SDK.ContextRequest SDK.Empty
               , SDK.MethodDefinition ReadFilePathsGen GetFilePathsGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition
                   RunWriteFirstGen
                   RunWriteFirstGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call OpenSharedFileScopeGen, SDK.Call ReadOpenedFileGen])
+                  (
+                    SDK.Sequence
+                      [SDK.Call SDK.Invoke OpenSharedFileScopeGen, SDK.Call SDK.ReadCurrent ReadOpenedFileGen]
+                  )
               , SDK.MethodDefinition
                   OpenSharedFileScopeGen
                   OpenSharedFileScopeGen
                   SDK.ScopeOpen
-                  (SDK.Sequence [SDK.Call GetOpenedFileGen, SDK.Call ReadOpenedFileGen])
+                  (SDK.Sequence [SDK.Call SDK.Invoke GetOpenedFileGen, SDK.Call SDK.ReadCurrent ReadOpenedFileGen])
               , SDK.MethodDefinition
                   GetOpenedFileGen
                   GetOpenedFileGen
                   SDK.ContextRequest
-                  (SDK.Call ReadFilePathsGen)
+                  (SDK.Call SDK.ReadCurrent ReadFilePathsGen)
               , SDK.MethodDefinition ReadOpenedFileGen GetOpenedFileGen SDK.ContextRequire SDK.Empty
               , SDK.MethodDefinition
                   RunWriteSecondGen
                   RunWriteSecondGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call OpenSharedFileScopeGen, SDK.Call ReadOpenedFileGen])
+                  (
+                    SDK.Sequence
+                      [SDK.Call SDK.Invoke OpenSharedFileScopeGen, SDK.Call SDK.ReadCurrent ReadOpenedFileGen]
+                  )
               , SDK.MethodDefinition
                   RunWriteThirdGen
                   RunWriteThirdGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call OpenSharedFileScopeGen, SDK.Call ReadOpenedFileGen])
+                  (
+                    SDK.Sequence
+                      [SDK.Call SDK.Invoke OpenSharedFileScopeGen, SDK.Call SDK.ReadCurrent ReadOpenedFileGen]
+                  )
               , SDK.MethodDefinition
                   RunVerifyReuseGen
                   RunVerifyReuseGen
                   SDK.HandlerMethod
-                  (SDK.Sequence [SDK.Call GetFilePathsGen, SDK.Call ReadFilePathsGen])
+                  (SDK.Sequence [SDK.Call SDK.Invoke GetFilePathsGen, SDK.Call SDK.ReadCurrent ReadFilePathsGen])
               ]
           , SDK.graphRoots =
               [RunPrepareProbeGen, RunWriteFirstGen, RunWriteSecondGen, RunWriteThirdGen, RunVerifyReuseGen]
