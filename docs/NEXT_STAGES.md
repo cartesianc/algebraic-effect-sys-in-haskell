@@ -196,7 +196,20 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 
 验证（仓库外，记录不进仓库）：8 个 demo 重新生成，`cabal build all` 通过。file、lines、open-files、scope-instances、scope-reuse 与 FacadeProbe 六个 demo，以及 event、behavior、历史、静态读取、require 等待、回收无关单元等 13 个探针，与 `fe17e7a` 的构建从同一初始输入运行：生成日志、输出与写出的文件逐字节相同，只有两处例外：读 stdin 的三个探针在输入结束时两边抛出同样的异常，回溯里的源码路径不同；FacadeProbe 带 `parallel`，`fe17e7a` 自己连跑 6 次就有 6 种输出顺序，新的输出也落在这些顺序之中。
 
-未覆盖：stream-demo 与 crawler-demo 未运行；Stream 来源与它的 parser 每一步仍走登记路径（建 Origin 索引、scope 使用者、保留根，退出时扫描回收），是否由 gen 判定后不登记尚待决定。
+未覆盖：stream-demo 与 crawler-demo 未运行。
+
+<a id="untracked-sources"></a>
+**回收无关的来源（2026-11-27）。** 上面几项之后，单订阅方每条数据仍有约 0.7 µs 花在来源与 parser 的登记上：建 Origin 索引、建立并撤销 scope 使用者、保留根与活动登记，步骤结束扫描一次回收。gen 现在按 lifelong 判定来源是否与回收无关，判定条件与运行语义见 [Stream：回收无关的来源](STREAM_LIFELONG.md#untracked-source)。
+
+- **Gen**：`Booter.untrackedSources` 读完成的 Prototype，Composition 在校验后与 `untrackedUnits` 一起算出，Emit 在 `StreamSource` 末尾写 `Tracked|Untracked`；静态运行的来源写 `Tracked`。
+- **Runtime**：`StreamSource` 增加 `sourceTracking`；`runSource` 对 Untracked 的来源用运行图里从不登记的使用者与保留根，只发放 Origin 序号，不继承 scope 使用、不扫描回收，parser 的调用以 Untracked 执行。
+- **LSP**：server 的 `analysis/program.py` 读 `StreamSource` 时接受旧的 4 个参数与带标记的 5 个参数，标记只能是 `Tracked` 或 `Untracked`。旧 SDK 生成的程序照常读取；旧版 LSP 读新 SDK 生成的程序会报形状不符，两边一起升级。
+
+性能（同上的负载与方法，与上一项交错各 5 轮取中位数）：单订阅方 0.280 → 0.211 秒，4 路 0.357 → 0.275 秒，16 路 0.657 → 0.571 秒。与 `fe17e7a` 相比，16 路 0.919 → 0.571 秒。在仓库外把来源路径直接改成不登记作为上限，测得 0.207／0.275／0.573 秒，实际实现与它持平。
+
+验证（仓库外，记录不进仓库）：重新生成后只有 FacadeProbe 的两个 lifelong 来源判为 `Untracked`，LinesDemo、StreamDemo 照旧 `Tracked`；13 个探针中有 6 个的来源判为 `Untracked`（HistProbe、SrcChain、SrcPar、StaticZero、UnitEnd、UnitRaise）。前一项的 6 个 demo 与 13 个探针再次与 `fe17e7a` 的构建比较，结果与前一项相同，另外只有 ScopeReuseDemo 并行写入的 `shared.txt` 行序不同：`fe17e7a` 自己连跑 10 次有 3 种行序，属于合法的调度交错。LSP 用 `read_prototype` 读 `fe17e7a` 与新生成的 8 个 demo，资产关系、消费链与资产来源逐项相同。
+
+未覆盖：静态运行的来源照旧登记；只有 lifelong 唯一的 Receive 会话、单元全部 Untracked 时才判为回收无关，带派生步骤的 lifelong 照旧登记。
 
 <a id="asset-base-fields"></a>
 **资产的基础字段（U5，2026-11-26）。** 字段只能是 `String` 时，数值以文本保存，每个读取方都要知道文本格式并各自解析。16 路基准每条数据解析 16 次，`read` 占墙钟时间的 54%。现在字段可以是 `Int`、`Integer`、`Double`、`Bool`：parser 解析一次，读取方直接读值。表示类型仍是一阶、单态、有限的积。文件形式仍由 gen 在语法树上检查；构造器个数、字段类型、严格标记与递归改由 GHC 求解 `Framework.Language.AssetForm` 的封闭类型族（DataKinds），不再按源码拼写比对，同时补上了原检查漏掉的自身引用与互相引用。StreamDemo 的 `Temperature` 改为 `Double`，`CheckTrend` 不再 `read`。规则见[资产固定形式](ASSETS.md#fixed-form)。

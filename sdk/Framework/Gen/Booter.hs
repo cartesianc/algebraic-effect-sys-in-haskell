@@ -1,7 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 -- 驱动合成 v1（2026-11-18）：从 Composition 的已解析事实构造挂载与会话，
 -- 之后补全运行所需静态标记；不执行 handler，不读取业务源码。
-module Framework.Gen.Booter (numberWorkflow, checkMiddleware, assembleProgram, completeDriving, entryPlans, controlReads, decidingAssets, linkedAssets, publishedWithin, untrackedUnits) where
+module Framework.Gen.Booter (numberWorkflow, checkMiddleware, assembleProgram, completeDriving, entryPlans, controlReads, decidingAssets, linkedAssets, publishedWithin, untrackedUnits, untrackedSources) where
 import Control.Monad (forM_, unless)
 import Data.Maybe (listToMaybe)
 import Data.Graph (SCC(..), stronglyConnComp)
@@ -267,6 +267,33 @@ untrackedUnits prototype =
     continuous asset = not (null (producers asset)) && all effectContinuous (producers asset)
     plain asset = and [ not (isResourceSlot index context) && null (parameterScopesOf index context)
                       | effect <- producers asset, let context = slotOf index (effectName effect) ]
+
+-- 回收无关的 Stream 来源（运行时写作 Untracked）：来源与它每次 parser 的 Origin 索引、scope 使用者、保留根、
+-- 活动登记与步骤结束时的回收扫描同样只服务 scope 回收。按 lifelong 判定，以下几条同时成立：
+-- 1. 这个 lifelong 只有一个生产会话，由 Stream 来源直接驱动（Receive），没有派生或复用输出的会话。
+-- 2. 会话挂载（来源与 parser）上没有 scope 开启，也不读资源。
+-- 3. parser 发布的资产不是资源，也不是任何 scope 的开启参数，因此这些发布不需要生产身份。
+-- 4. lifelong 的单元全部回收无关（untrackedUnits）：交付由它们读取，它们的帧不记交付的生产身份。
+-- lifelong 之外的静态运行与不满足的来源照旧登记。
+untrackedSources :: Prototype String -> [NodeId]
+untrackedSources prototype =
+  [ path
+  | (path, described) <- workflowLifelongs workflow
+  , [session] <- [lifelongSessions described]
+  , Receive _ <- [sessionPlan session]
+  , all quiet (sessionMounts session)
+  , plain (sessionAsset session)
+  , Just (LifelongAt _ _ parts) <- [lookupWorkflow workflow path]
+  , not (null parts), all ((`elem` units) . workflowNode) parts ]
+  where
+    index = indexPrototype prototype
+    effects = protoEffects prototype
+    workflow = protoWorkflow prototype
+    units = untrackedUnits prototype
+    quiet path = let node = coordAt index path in
+      null (openingsAt index node) && not (any (isResourceSlot index . fst) (sourcesAt index node))
+    plain asset = and [ not (isResourceSlot index context) && null (parameterScopesOf index context)
+                      | effect <- effects, effectProduces effect == Just asset, let context = slotOf index (effectName effect) ]
 
 -- ========================================================================
 -- 入口与输出连接事实

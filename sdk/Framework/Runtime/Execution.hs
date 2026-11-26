@@ -13,7 +13,8 @@ import Framework.Runtime
   , Compiled(..), Closure(..), StreamSource(..), Reaction(..), Response(..), Tracking(..) )
 import Framework.Runtime.App (Launch(..), StreamPort(..))
 import Framework.Runtime.Graph
-  ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, runtimeRootFrame, runtimeScopes, newOrigin
+  ( RuntimeGraph, newRuntimeGraph, configureRuntimeScopes, runtimeRootFrame, runtimeScopes, newOrigin, freshOrigin
+  , runtimeDetachedUser
   , resetOrigins, collectRuntimeScopes, finishRuntime, withRuntimeRetention, runtimeRetentions
   , readHistory, dropHistory, installReactions, installStatic
   , Place(..), rootPlace, openBranches, leaveBranch, rejoinBranches
@@ -442,6 +443,8 @@ deliveryOf machine at source value captured = do
 -- 运行一个 Stream 来源直到它 streamEnd，或它在这个作用范围里的订阅单元全部 endStream。
 -- 来源方法正常返回就再调用一次（下一步）；每次 rawemit 在来源的调用栈里执行一次 parser，parser 的发布同步回调。
 -- 来源与每次 parser 各自登记实际使用；parser 继承来源本次已捕获的资源，原生产身份与关闭责任不变。
+-- Untracked 的来源（gen 判定与回收无关）：两者共用运行图里从不登记实例的使用者与从不登记的保留根，
+-- 只发放 Origin 序号，步骤结束不扫描回收；parser 的调用同样不登记。
 -- 返回 Just 是来源或回调的失败。
 runSource :: Machine method environment cause value -> Run environment cause -> NodeId -> StreamSource environment cause
           -> Handoff environment cause -> IO (Maybe (Failure cause))
@@ -458,24 +461,27 @@ runSource machine run scope source (Handoff given views) = do
     (parserPath, parser) = sourceParser source
     streamMount = coordAt index streamPath
     parserMount = coordAt index parserPath
+    tracking = sourceTracking source
     loop = do
-      execution <- BusinessExecution <$> newOrigin graph streamMount
+      execution <- BusinessExecution <$> case tracking of
+        Tracked -> newOrigin graph streamMount
+        Untracked -> freshOrigin graph streamMount
       taken <- try $ withStep execution $ \owner retention -> do
         let deliver text captured = withStep execution $ \parserOwner parserRetention -> do
-              inheritScopeUse owner parserOwner
+              when (tracking == Tracked) (inheritScopeUse owner parserOwner)
               resources <- filterM (fmap isJust . readBindingOwner . snd) captured
               let launch = Launch
                     { launchBindings = resources ++ [entry | entry@(name, _) <- given, name `notElem` map fst resources]
                     , launchViews = views, launchPort = ParserInput text, launchPerformed = []
                     , launchUser = Just parserOwner, launchFrame = runtimeRootFrame graph, launchRetention = parserRetention
-                    , launchPlace = at, launchTracking = Tracked }
+                    , launchPlace = at, launchTracking = tracking }
               (outcome, _, _) <- lowerWith graph parserMount launch parser
               -- 订阅单元全部 endStream：下一次 rawemit 之前结束来源。
               finished <- subscribersEnded
               when (finished && either (const False) (const True) outcome) (throwIO SourceEnded)
               pure outcome
         (outcome, _, _) <- lowerWith graph streamMount (Launch given views (SourcePort deliver) [] (Just owner)
-          (runtimeRootFrame graph) retention at Tracked) stream
+          (runtimeRootFrame graph) retention at tracking) stream
         pure outcome
       case taken of
         Left SourceEnded -> pure Nothing
@@ -483,6 +489,7 @@ runSource machine run scope source (Handoff given views) = do
         Right (Right ()) -> do
           finished <- subscribersEnded
           if finished then pure Nothing else loop
+    withStep _ action | tracking == Untracked = action (runtimeDetachedUser graph) (machineDetached machine)
     withStep execution action = mask $ \restore -> do
       owner <- newScopeUser (runtimeScopes graph) execution
       restore (withRuntimeRetention graph (action owner)) `finally` (do

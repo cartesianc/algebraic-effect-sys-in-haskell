@@ -22,7 +22,7 @@ instance SDK.NFData Results where
 -- 末端共享生成的 scope 句柄；只创建空状态。
 -- compiledWorkflow：AST 的执行闭包（Serial 顺序、Concurrent 并行、Choose 选择、Drive 是 lifelong 的位置）。
 -- compiledReactions：资产每次发布后同步执行的回调（lifelong 的单元与派生步骤）；Nothing 作用范围是 event。
--- Untracked 的单元与 scope 回收无关，执行时不建执行帧、不登记保留根与执行身份。
+-- Untracked 的单元与 scope 回收无关，执行时不建执行帧、不登记保留根与执行身份；Untracked 的来源与它的 parser 同样不登记。
 -- compiledStatic：lifelong 之外 requests 持续资产时，同步运行到结束的根来源。
 compiledProgram :: IO (SDK.Compiled ContextValues Errors Results)
 compiledProgram = do
@@ -35,8 +35,8 @@ compiledProgram = do
         SDK.Serial [] 
           [ SDK.Step [0] (target "Announce" (AnnounceResult () <$ Handlers.runAnnounce))
           , SDK.Concurrent [1] 
-          [ ([(SDK.Slot 2 "TemperatureParser")], SDK.Drive [1,0] (Just (SDK.StreamSource (SDK.Slot 2 "TemperatureParser") ([1,0,-1,0,0], target "TemperatureFeed" (Handlers.nextTemperatureFeed)) ([1,0,-1,0,1], target "TemperatureParser" (() <$ Handlers.getTemperatureSample)) Nothing)))
-          , ([(SDK.Slot 4 "Heartbeat")], SDK.Drive [1,1] (Just (SDK.StreamSource (SDK.Slot 4 "Heartbeat") ([1,1,-1,0,0], target "HeartbeatClock" (Handlers.nextHeartbeatClock)) ([1,1,-1,0,1], target "Heartbeat" (() <$ Handlers.getBeat)) Nothing)))
+          [ ([(SDK.Slot 2 "TemperatureParser")], SDK.Drive [1,0] (Just (SDK.StreamSource (SDK.Slot 2 "TemperatureParser") ([1,0,-1,0,0], target "TemperatureFeed" (Handlers.nextTemperatureFeed)) ([1,0,-1,0,1], target "TemperatureParser" (() <$ Handlers.getTemperatureSample)) Nothing SDK.Tracked)))
+          , ([(SDK.Slot 4 "Heartbeat")], SDK.Drive [1,1] (Just (SDK.StreamSource (SDK.Slot 4 "Heartbeat") ([1,1,-1,0,0], target "HeartbeatClock" (Handlers.nextHeartbeatClock)) ([1,1,-1,0,1], target "Heartbeat" (() <$ Handlers.getBeat)) Nothing SDK.Tracked)))
           ]
           ]
     , SDK.compiledReactions = 
@@ -47,8 +47,8 @@ compiledProgram = do
         , SDK.Reaction (SDK.Slot 4 "Heartbeat") (Just [1,1]) (SDK.RunUnit [1,1,0] SDK.Tracked (SDK.Step [1,1,0] (target "ReportHeartbeat" (ReportHeartbeatResult () <$ Handlers.runReportHeartbeat))))
         ]
     , SDK.compiledStatic = 
-        [ ((SDK.Slot 2 "TemperatureParser"), [-2,0], SDK.StreamSource (SDK.Slot 2 "TemperatureParser") ([-2,0,0], target "TemperatureFeed" (Handlers.nextTemperatureFeed)) ([-2,0,1], target "TemperatureParser" (() <$ Handlers.getTemperatureSample)) Nothing)
-        , ((SDK.Slot 4 "Heartbeat"), [-2,1], SDK.StreamSource (SDK.Slot 4 "Heartbeat") ([-2,1,0], target "HeartbeatClock" (Handlers.nextHeartbeatClock)) ([-2,1,1], target "Heartbeat" (() <$ Handlers.getBeat)) Nothing)
+        [ ((SDK.Slot 2 "TemperatureParser"), [-2,0], SDK.StreamSource (SDK.Slot 2 "TemperatureParser") ([-2,0,0], target "TemperatureFeed" (Handlers.nextTemperatureFeed)) ([-2,0,1], target "TemperatureParser" (() <$ Handlers.getTemperatureSample)) Nothing SDK.Tracked)
+        , ((SDK.Slot 4 "Heartbeat"), [-2,1], SDK.StreamSource (SDK.Slot 4 "Heartbeat") ([-2,1,0], target "HeartbeatClock" (Handlers.nextHeartbeatClock)) ([-2,1,1], target "Heartbeat" (() <$ Handlers.getBeat)) Nothing SDK.Tracked)
         ]
     }
 

@@ -124,11 +124,14 @@ data Closure environment cause value
 
 -- Stream 来源：Stream 方法与 parser 各有一个挂载。每次 rawemit 在来源的调用栈里执行一次 parser，
 -- parser 的发布再同步回调订阅方。sourceSame 是 behavior 的比较：与上一次回调的值相等时不回调。
+-- sourceTracking 是 gen 的回收无关判定：Untracked 的来源与它的每次 parser 不登记 Origin 索引、scope 使用者、
+-- 保留根与活动，步骤结束不扫描回收，发布不带生产身份。
 data StreamSource environment cause = StreamSource
   { sourceAsset :: Slot
   , sourceStream :: (NodeId, Target environment cause ())
   , sourceParser :: (NodeId, Target environment cause ())
   , sourceSame :: Maybe (environment -> environment -> Bool)
+  , sourceTracking :: Tracking
   }
 
 -- 资产每次发布后执行的回调。reactionScope：Nothing 是 event，整次运行有效；

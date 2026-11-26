@@ -22,7 +22,7 @@ instance SDK.NFData Results where
 -- 末端共享生成的 scope 句柄；只创建空状态。
 -- compiledWorkflow：AST 的执行闭包（Serial 顺序、Concurrent 并行、Choose 选择、Drive 是 lifelong 的位置）。
 -- compiledReactions：资产每次发布后同步执行的回调（lifelong 的单元与派生步骤）；Nothing 作用范围是 event。
--- Untracked 的单元与 scope 回收无关，执行时不建执行帧、不登记保留根与执行身份。
+-- Untracked 的单元与 scope 回收无关，执行时不建执行帧、不登记保留根与执行身份；Untracked 的来源与它的 parser 同样不登记。
 -- compiledStatic：lifelong 之外 requests 持续资产时，同步运行到结束的根来源。
 compiledProgram :: IO (SDK.Compiled ContextValues Errors Results)
 compiledProgram = do
@@ -44,8 +44,8 @@ compiledProgram = do
           , ("ReportFilled", [3,1], SDK.Step [3,1] (target "OnFilled" (OnFilledResult () <$ Handlers.runOnFilled)))
           ]
           , SDK.Concurrent [4] 
-          [ ([(SDK.Slot 24 "ParserA")], SDK.Drive [4,0] (Just (SDK.StreamSource (SDK.Slot 24 "ParserA") ([4,0,-1,0,0], target "FeedA" (Handlers.nextFeedA)) ([4,0,-1,0,1], target "ParserA" (() <$ Handlers.getLevelA)) Nothing)))
-          , ([(SDK.Slot 25 "ParserB")], SDK.Drive [4,1] (Just (SDK.StreamSource (SDK.Slot 25 "ParserB") ([4,1,-1,0,0], target "FeedB" (Handlers.nextFeedB)) ([4,1,-1,0,1], target "ParserB" (() <$ Handlers.getLevelB)) Nothing)))
+          [ ([(SDK.Slot 24 "ParserA")], SDK.Drive [4,0] (Just (SDK.StreamSource (SDK.Slot 24 "ParserA") ([4,0,-1,0,0], target "FeedA" (Handlers.nextFeedA)) ([4,0,-1,0,1], target "ParserA" (() <$ Handlers.getLevelA)) Nothing SDK.Untracked)))
+          , ([(SDK.Slot 25 "ParserB")], SDK.Drive [4,1] (Just (SDK.StreamSource (SDK.Slot 25 "ParserB") ([4,1,-1,0,0], target "FeedB" (Handlers.nextFeedB)) ([4,1,-1,0,1], target "ParserB" (() <$ Handlers.getLevelB)) Nothing SDK.Untracked)))
           ]
           , SDK.Step [5] (target "ReplyScope" (ReplyScopeResult () <$ Handlers.openReplyScope))
           ]
@@ -54,8 +54,8 @@ compiledProgram = do
         , SDK.Reaction (SDK.Slot 25 "ParserB") (Just [4,1]) (SDK.RunUnit [4,1,0] SDK.Untracked (SDK.Step [4,1,0] (target "ShowB" (ShowBResult () <$ Handlers.runShowB))))
         ]
     , SDK.compiledStatic = 
-        [ ((SDK.Slot 24 "ParserA"), [-2,0], SDK.StreamSource (SDK.Slot 24 "ParserA") ([-2,0,0], target "FeedA" (Handlers.nextFeedA)) ([-2,0,1], target "ParserA" (() <$ Handlers.getLevelA)) Nothing)
-        , ((SDK.Slot 25 "ParserB"), [-2,1], SDK.StreamSource (SDK.Slot 25 "ParserB") ([-2,1,0], target "FeedB" (Handlers.nextFeedB)) ([-2,1,1], target "ParserB" (() <$ Handlers.getLevelB)) Nothing)
+        [ ((SDK.Slot 24 "ParserA"), [-2,0], SDK.StreamSource (SDK.Slot 24 "ParserA") ([-2,0,0], target "FeedA" (Handlers.nextFeedA)) ([-2,0,1], target "ParserA" (() <$ Handlers.getLevelA)) Nothing SDK.Tracked)
+        , ((SDK.Slot 25 "ParserB"), [-2,1], SDK.StreamSource (SDK.Slot 25 "ParserB") ([-2,1,0], target "FeedB" (Handlers.nextFeedB)) ([-2,1,1], target "ParserB" (() <$ Handlers.getLevelB)) Nothing SDK.Tracked)
         ]
     }
 

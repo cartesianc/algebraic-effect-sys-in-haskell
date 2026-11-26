@@ -13,8 +13,8 @@ import Framework.Gen.Emit.Types (specialisation)
 import Framework.Prototype (ChainRole(..), variantLabel)
 import qualified Framework.Prototype as P
 
-renderProgram :: FilePath -> HandlerNames -> [(FilePath, Maybe String)] -> [P.NodeId] -> Unit -> String
-renderProgram directory names hangingSources untracked unit = unlines (programHeader ++ astInterpreter)
+renderProgram :: FilePath -> HandlerNames -> [(FilePath, Maybe String)] -> [P.NodeId] -> [P.NodeId] -> Unit -> String
+renderProgram directory names hangingSources untracked untrackedSources unit = unlines (programHeader ++ astInterpreter)
   where
     namespace = unitNamespace unit
     helper name = "Handlers." ++ helperName names name
@@ -51,7 +51,7 @@ renderProgram directory names hangingSources untracked unit = unlines (programHe
       , "-- 末端共享生成的 scope 句柄；只创建空状态。"
       , "-- compiledWorkflow：AST 的执行闭包（Serial 顺序、Concurrent 并行、Choose 选择、Drive 是 lifelong 的位置）。"
       , "-- compiledReactions：资产每次发布后同步执行的回调（lifelong 的单元与派生步骤）；Nothing 作用范围是 event。"
-      , "-- Untracked 的单元与 scope 回收无关，执行时不建执行帧、不登记保留根与执行身份。"
+      , "-- Untracked 的单元与 scope 回收无关，执行时不建执行帧、不登记保留根与执行身份；Untracked 的来源与它的 parser 同样不登记。"
       , "-- compiledStatic：lifelong 之外 requests 持续资产时，同步运行到结束的根来源。"
       , "compiledProgram :: IO (SDK.Compiled ContextValues Errors Results)"
       , "compiledProgram = do"
@@ -91,7 +91,7 @@ renderProgram directory names hangingSources untracked unit = unlines (programHe
           | part <- parts, Just context <- [lookup (P.workflowNode part) (P.alternativeCases choice)] ]
       P.LifelongAt path described _ -> "SDK.Drive " ++ show path ++ " " ++ case
           [session | session <- P.lifelongSessions described, P.Receive _ <- [P.sessionPlan session]] of
-        session : _ -> "(Just (" ++ source session ++ "))"
+        session : _ -> "(Just (" ++ source (sourceTracking path) session ++ "))"
         [] -> "Nothing"
     nested [] = "[]"
     nested items = "\n  [ " ++ intercalate "\n  , " items ++ "\n  ]"
@@ -125,7 +125,7 @@ renderProgram directory names hangingSources untracked unit = unlines (programHe
     -- lifelong 之外 requests 的持续资产：沿派生关系找到根来源，以根来源的挂载为静态运行的标识。
     finite = assemblyFiniteSessions (unitAssembly unit)
     statics =
-      [ "(" ++ slotLiteral "SDK." unit producer ++ ", " ++ show (staticScope session) ++ ", " ++ source root ++ ")"
+      [ "(" ++ slotLiteral "SDK." unit producer ++ ", " ++ show (staticScope session) ++ ", " ++ source "SDK.Tracked" root ++ ")"
       | session <- finite, producer <- providerOf (P.sessionAsset session), Just root <- [rootOf session] ]
     rootOf session = case P.sessionPlan session of
       P.Receive _ -> Just session
@@ -139,7 +139,9 @@ renderProgram directory names hangingSources untracked unit = unlines (programHe
       [] -> fallback
 
     -- Receive 的来源：Stream 方法与 parser 各一个挂载；behavior（stream = False）比较两次回调的值。
-    source session = case P.sessionMounts session of
+    -- 来源的回收无关判定按 lifelong 路径给出；静态运行的来源照旧登记。
+    sourceTracking path = if path `elem` untrackedSources then "SDK.Untracked" else "SDK.Tracked"
+    source tracked session = case P.sessionMounts session of
       [streamMount, parserMount] -> concat
         [ "SDK.StreamSource " ++ slotLiteral "SDK." unit producer
           ++ " (" ++ show streamMount ++ ", " ++ mounted streamMount "" ++ ")"
@@ -147,6 +149,7 @@ renderProgram directory names hangingSources untracked unit = unlines (programHe
           ++ (if P.effectSampled (protoOf unit producer)
                 then " (Just (\\earlier later -> bound" ++ producer ++ " earlier == bound" ++ producer ++ " later))"
                 else " Nothing")
+          ++ " " ++ tracked
         | producer <- take 1 (providerOf (P.sessionAsset session)) ]
       _ -> error ("Receive session without its two mounts: " ++ P.sessionAsset session)
 

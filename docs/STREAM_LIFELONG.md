@@ -160,6 +160,16 @@ event 没有 BootPlan：lifelong 内的 target 以 `requests` 订阅普通资产
 
 Untracked 的回调不建子帧，不改外层帧的进度（根帧里单元的位置仍是将来的回调），不重置 Origin，不登记保留根、活动目录与调用捕获，本次发布不带生产身份。endStream、失败与取消的传播、监督、Error 诊断、behavior 比较、缺值等待所需的分支位置、交付视图与历史读取、middleware 都照常。交给它的保留根从未登记：普通值本来不登记，若交来资源则报错，说明判定与实际交付不符。例如 lifelong 单元以输出联立发布 `PickedName`，后者是 Scoped 的开启参数，这个单元与开启 scope 的单元都写 `Tracked`，每次交付仍各自开启、使用并关闭一个实例。
 
+<a id="untracked-source"></a>
+**回收无关的来源（2026-11-27）。** Stream 来源每一步与它每次 parser 的登记（按 Origin 的资源索引、scope 使用者、保留根、活动目录，以及步骤结束时对来源与 parser 挂载的回收扫描）同样只服务 scope 回收。gen 在 `Booter.untrackedSources` 中按 lifelong 判定，生成的 `StreamSource` 末尾写 `Untracked` 或 `Tracked`。以下几条同时成立时写 `Untracked`：
+
+- 这个 lifelong 只有一个生产会话，由 Stream 来源直接驱动（Receive），没有派生或复用输出的会话。
+- 来源与 parser 的挂载上没有 scope 开启，也不读资源。
+- parser 发布的资产不是资源，也不是任何 scope 的开启参数。
+- lifelong 的单元全部是 Untracked 的回收无关单元：交付由它们读取，它们不建帧，也不记交付的生产身份。
+
+Untracked 的来源与 parser 共用运行图里从不登记实例的使用者和从不登记的保留根，只发放 Origin 序号，步骤结束不扫描回收，parser 的发布不带生产身份。来源的逐步执行、rawemit 驱动 parser、streamEnd、订阅全部 endStream 时结束来源、失败与取消的传播、behavior 比较、历史与交付都照常。判定与实际不符时不会悄悄出错：交来资源时，从不登记的保留根报错；资产其实是开启参数时，开启因缺少生产身份报 `ScopeInputsMissing`。lifelong 之外的静态运行（`compiledStatic`）照旧登记。例如 FacadeProbe 的 `lifelong [node "ShowA"]` 与 `lifelong [node "ShowB"]` 的来源写 `Untracked`；LinesDemo 与 StreamDemo 的来源在 Scoped 之下，写 `Tracked`。
+
 <a id="drives"></a>
 ### 4.1 驱动方式的组合：socket、history、behavior、event
 
