@@ -164,7 +164,7 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 
 - **特化**：SDK 的运行模块与 gen 写出的 Generated 模块（Effects、Handlers 副本、Program）带 `-fexpose-all-unfoldings -fspecialise-aggressively`。生成代码只在具体的 `App` 上调用多态的 handler 与 SDK 函数，GHC 据此特化，消掉类型类字典调用并内联 monad 栈。手写业务模块不需要这条选项，Handlers 的编译副本已带上。
 - **调用入口**：Untracked 的调用共用运行图里一个从不登记实例的 scope 使用者，不建立、撤销；不屏蔽取消、不交接保留根（没有要配对撤销的登记）；读取不把捕获写进执行帧，最新值直接读运行级表。根调用的初始环境由 `callEnvironment` 统一构造。
-- **入口包装与结果求值**：没有输出联立分支的原子句柄不再包 `atomicHandle`，它在交出前的那次输出记录没有读者，输出仍由 `runOnce` 记录。结果在撤销使用登记前完整求值，成功值改用 `NFData`（生成的 `Results` 派生），失败仍完整展开；不再把每个结果渲染成字符串。
+- **入口包装与结果求值**：没有输出联立分支的原子句柄不再包 `atomicHandle`，它在交出前的那次输出记录没有读者，输出仍由 `runOnce` 记录（2026-11-27 起只在入口会被再次到达时记录，见[调用路径的冗余记录](#call-path-redundancy)）。结果在撤销使用登记前完整求值，成功值改用 `NFData`（生成的 `Results` 派生；2026-11-27 起 gen 直接写出 `rnf`），失败仍完整展开；不再把每个结果渲染成字符串。
 - **监督与交付**：Untracked 的回调在入口处整体受监督一次，不逐层包装；同一次发布的交付视图对它的所有回调只组装一次（回调不能再发布它订阅的资产，视图在回调之间不变）。选择读取的捕获只在 alternative 交给候选时过滤资源，普通 Step 不再过滤。
 - **闭包编成函数**：运行开始时把 Generated/Program.hs 的闭包数据（workflow 与回调表）各编成执行函数一次（`Execution.stage`、`respond`）：坐标、成员、帧节点、作用范围与候选位置在函数之外算好，每次执行只做本次的工作。生成的 Program 仍是可读的闭包数据，没有改成生成 Haskell 函数：编成函数连同上一项的入口精简，16 路只从 2.02 秒降到 1.91 秒，闭包遍历不是主要开销，改写生成形式换不来与静态结构相称的收益。成功值的求值不给业务类型增加约束：gen 交给 target 的总是 `Results` 或 `()`，handler 的返回值先以 `<$` 替换。
 
@@ -181,6 +181,22 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 验证（仓库外，记录不进仓库）：file、lines、open-files、scope-instances、scope-reuse 五个 demo 与 `cf3d870` 的构建从同一初始状态运行，输出逐字节相同；event、behavior、历史、静态读取、require 等待与三个回收无关探针的输出与修改前相同（ModeProbe 的计数器跨运行累计，结构相同）；16 路基准挂 middleware 计数，100 条与 10 万条的每种 Operation 次数相同。
 
 未覆盖：event 单元与订阅源头在 Scoped 下的单元（LinesDemo、StreamDemo）照旧登记，走原来的调用路径；Tracked 路径的调用入口未精简；stream-demo 是无限运行，未单独运行。
+
+<a id="call-path-redundancy"></a>
+**调用路径的冗余记录（2026-11-27）。** ticky 统计显示 16 路基准每次回调分配约 3.1 KB，其中大半是没有读者的记录与环境复制。下面几项都不改声明、AST、handler 写法、Prototype 与 Program 的闭包形状，只去掉生成期已能判定无用的包装和运行时的冗余分配：
+
+- **`runOnce` 只包在会被再次到达的入口上**：同一次调用里 Excu 与 Pure 的入口只有被别的入口调用时才会再次到达（前驱或锚点、rawinput 读回、输出联立的锚点、选择读取共同执行的句柄）。只从根进入的入口不包 `runOnce`，也不记录输出；没有输出联立分支的句柄因此不再有任何输出记录。Scoped.open 照旧包。
+- **`enterHandler` 只写在方法体会调用别的入口时**：调用者只由 atomicScope 读取，用来跳过调用者自己的生产分支；方法体没有前驱、锚点、生产分支，rawinput 也不读回上游时，其中不会执行 atomicScope。Excu 与 Stream 来源的入口据此省掉一次 25 个字段的环境复制。
+- **`Results` 的 `rnf` 由 gen 写出**：每个构造器只带 `()`，求值到构造器即完整求值，不再经 `Generic` 的通用实现。
+- **运行时**：没有 Error 回调时 `withErrorHandlers` 不复制环境；`require` 先查值，缺值时才取发布编号再查一次并等待，编号仍先于等待前的那次查值取得，不会漏掉唤醒；一次发布的回调直接按表执行，不先构建动作列表；交接里没有资源时不拼出待保留的列表；Environment、Launch 与 Run 的字段改为严格。
+
+另外试过按单元是否登记在启动时分别编出 Step（Untracked 的 Step 不经 `managed`、`tracked`、`retained` 的逐次判断）：分配少了 0.33 GB，时间没有变化，没有保留。
+
+性能（10 万条，`-O1 -threaded`，`-N1`，与 `fe17e7a` 交错各 5 轮取中位数；负载是 parser 解析一次的 `Sample Int`，每轮核对全部订阅方的条数与校验和）：单订阅方 0.295 → 0.279 秒，4 路 0.406 → 0.356 秒，16 路 0.919 → 0.671 秒；16 路累计分配 6.53 → 4.56 GB。
+
+验证（仓库外，记录不进仓库）：8 个 demo 重新生成，`cabal build all` 通过。file、lines、open-files、scope-instances、scope-reuse 与 FacadeProbe 六个 demo，以及 event、behavior、历史、静态读取、require 等待、回收无关单元等 13 个探针，与 `fe17e7a` 的构建从同一初始输入运行：生成日志、输出与写出的文件逐字节相同，只有两处例外：读 stdin 的三个探针在输入结束时两边抛出同样的异常，回溯里的源码路径不同；FacadeProbe 带 `parallel`，`fe17e7a` 自己连跑 6 次就有 6 种输出顺序，新的输出也落在这些顺序之中。
+
+未覆盖：stream-demo 与 crawler-demo 未运行；Stream 来源与它的 parser 每一步仍走登记路径（建 Origin 索引、scope 使用者、保留根，退出时扫描回收），是否由 gen 判定后不登记尚待决定。
 
 <a id="asset-base-fields"></a>
 **资产的基础字段（U5，2026-11-26）。** 字段只能是 `String` 时，数值以文本保存，每个读取方都要知道文本格式并各自解析。16 路基准每条数据解析 16 次，`read` 占墙钟时间的 54%。现在字段可以是 `Int`、`Integer`、`Double`、`Bool`：parser 解析一次，读取方直接读值。表示类型仍是一阶、单态、有限的积。文件形式仍由 gen 在语法树上检查；构造器个数、字段类型、严格标记与递归改由 GHC 求解 `Framework.Language.AssetForm` 的封闭类型族（DataKinds），不再按源码拼写比对，同时补上了原检查漏掉的自身引用与互相引用。StreamDemo 的 `Temperature` 改为 `Double`，`CheckTrend` 不再 `read`。规则见[资产固定形式](ASSETS.md#fixed-form)。

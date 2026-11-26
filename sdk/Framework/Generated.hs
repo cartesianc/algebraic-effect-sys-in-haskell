@@ -17,7 +17,7 @@ module Framework.Generated
   , openScope, closeScope, withScopeDependencies
   , ScopeHandler, newScopeHandler, Slot(..)
   , Root(..), HandlerError(..), superWith, superClosing, HookApp, runHookApp, liftHookApp, currentOperation
-  , Generic, NFData, coerce, interpreter
+  , Generic, NFData(..), coerce, interpreter
   ) where
 
 import Framework.SDK
@@ -37,7 +37,7 @@ import Framework.Prototype.Slot (Slot(..))
 import Framework.Program (initializePrototype, runProgram)
 import Framework.Prototype
 import Framework.Prototype.Structure
-import Control.DeepSeq (NFData)
+import Control.DeepSeq (NFData(..))
 import Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask)
 import Control.Exception (evaluate)
 -- 生成的读取入口用它把资产的名义类型解成表示类型。

@@ -285,21 +285,31 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
         scoped = ["FrameworkRuntime.withScopeDependencies [" ++ intercalate ", " (map slot scopes) ++ "]" | not (null scopes)]
           where scopes = Prototype.effectScopes (protoOf unit selectedName)
         entered = scoped ++ ["FrameworkRuntime.enterHandler " ++ slot selectedName]
+        -- 调用者只由 atomicScope 读取，用来跳过调用者自己的生产分支；入口的方法体不调用别的入口（没有前驱、
+        -- 锚点、生产分支，rawinput 也不读回上游）时，其中不会执行 atomicScope，不必改写调用者。
+        enteredBy binding
+          | null (bindingCalls binding) && not (rawCall binding) = scoped
+          | otherwise = entered
+        rawCall binding = case bindingRaw binding of
+          Just (RawList _) -> True
+          _ -> False
         -- 同一次调用中再次到达时返回本次输出，不重复执行：Excu、Scoped.open 与 Pure 的 list，见 runOnce；
-        -- Context 的发布由 callContext 按本次捕获返回。
+        -- Context 的发布由 callContext 按本次捕获返回。Excu 与 Pure 只有被别的入口调用（前驱、锚点、
+        -- 生产分支或选择读取）时才可能在同一次调用里再次到达；没有调用者的入口只从根进入一次，不记录。
         once binding = ["FrameworkRuntime.runOnce " ++ slot selectedName | bindingResult binding == NativeType "[String]"]
+        reachedAgain binding = [line | bindingMethod binding `elem` reentered, line <- once binding]
         wrapper binding = case bindingOperation binding of
           OpenResource -> once binding ++ rootWrapper selectedName ++ scopeWrapper binding "openScope " (" " ++ cleanupOf selectedName)
           -- 没有输出联立分支时，句柄的输出只由 runOnce 记录：atomicHandle 在交出前的那次记录没有读者。
           AtomicOperation
-            | null (anchoredBranches binding) && not (null (once binding)) -> once binding ++ rootWrapper selectedName ++ entered
+            | null (anchoredBranches binding) -> reachedAgain binding ++ rootWrapper selectedName ++ enteredBy binding
             | otherwise -> once binding ++ rootWrapper selectedName
-                ++ (("FrameworkRuntime.atomicHandle " ++ slot selectedName ++ anchoredOf binding) : entered)
-          PureOperation -> once binding ++ rootWrapper selectedName ++ scoped
+                ++ (("FrameworkRuntime.atomicHandle " ++ slot selectedName ++ anchoredOf binding) : enteredBy binding)
+          PureOperation -> reachedAgain binding ++ rootWrapper selectedName ++ scoped
           operation -> rootWrapper selectedName ++ case operation of
             -- 先进入本 scope，再检查其上游；失效后的 close 仍可读取自己的 Context 以收尾。
             CloseResource -> scopeWrapper binding "closeScope " ""
-            SourceStep -> entered
+            SourceStep -> enteredBy binding
             PublishAsset _ -> scoped ++ ["FrameworkRuntime.callContext " ++ slot selectedName
               ++ "\n      (\\value bindings -> bindings { FrameworkGenerated.bound" ++ selectedName ++ " = Just value })"
               ++ "\n      FrameworkGenerated.bound" ++ selectedName]
@@ -316,6 +326,10 @@ support names unit = unlines (supportHeader ++ captureClasses ++ rootInstances +
     anchoredBranches binding =
       [ connection | role <- [ContextRequest, ContextStream], connection <- assemblyOutputs (unitAssembly unit)
       , outputRole connection == role, outputAnchor connection == bindingMethod binding ]
+    -- 会被别的入口调用的入口：其他入口的前驱与锚点、rawinput 读回的上游、输出联立的锚点，以及选择读取共同执行的 Excu。
+    reentered = concatMap bindingCalls (unitBindings unit)
+      ++ [method | binding <- unitBindings unit, Just (RawList method) <- [bindingRaw binding]]
+      ++ map outputAnchor (assemblyOutputs (unitAssembly unit)) ++ map selectorEntry (unitSelectors unit)
     -- 自动收尾：open 带上本 scope 的 close，在同一 Middleware 列表下执行。
     cleanupOf selectedName = case [closing | plan <- unitScopes unit, scopeEffect plan == selectedName, Just closing <- [scopeCleanup plan]] of
       closing : _ -> "(Just (() <$ " ++ call closing ++ "))"

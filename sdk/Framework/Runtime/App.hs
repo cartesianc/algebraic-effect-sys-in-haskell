@@ -49,52 +49,52 @@ import Data.Unique (Unique, newUnique)
 type Bound env cause = ScopeBinding env cause
 
 data Environment env cause = Environment
-  { emptyValues :: env
-  , bindings :: IORef (ScopeBindings env cause)
-  , scopes :: Scopes env cause
-  , caller :: Maybe Slot
-  , dependencies :: [Slot]
-  , contexts :: [Slot]
-  , openings :: [Opening env cause]
-  , closings :: [Closing env cause]
-  , errorHandlers :: [(Maybe String, ErrorHandler cause (App env cause))]
-  , errorPath :: [String]
-  , originalFailure :: Maybe (Failure cause)
-  , diagnosticOwner :: Maybe (ScopeInstance env cause)
-  , cleaningScopes :: Bool
-  , consumer :: ScopeUser env cause
-  , cleanupPermit :: Maybe (Unique, ScopeInstance env cause)
-  , cleanupBusy :: Maybe (Failure cause)
-  , runtimeGraph :: RuntimeGraph env cause
-  , activeActivation :: Maybe ActivationId
-  , execution :: Execution
-  , currentFrame :: ExecutionFrame
-  , bindingRetention :: Retention env cause
+  { emptyValues :: !env
+  , bindings :: !(IORef (ScopeBindings env cause))
+  , scopes :: !(Scopes env cause)
+  , caller :: !(Maybe Slot)
+  , dependencies :: ![Slot]
+  , contexts :: ![Slot]
+  , openings :: ![Opening env cause]
+  , closings :: ![Closing env cause]
+  , errorHandlers :: ![(Maybe String, ErrorHandler cause (App env cause))]
+  , errorPath :: ![String]
+  , originalFailure :: !(Maybe (Failure cause))
+  , diagnosticOwner :: !(Maybe (ScopeInstance env cause))
+  , cleaningScopes :: !Bool
+  , consumer :: !(ScopeUser env cause)
+  , cleanupPermit :: !(Maybe (Unique, ScopeInstance env cause))
+  , cleanupBusy :: !(Maybe (Failure cause))
+  , runtimeGraph :: !(RuntimeGraph env cause)
+  , activeActivation :: !(Maybe ActivationId)
+  , execution :: !Execution
+  , currentFrame :: !ExecutionFrame
+  , bindingRetention :: !(Retention env cause)
   -- 本次执行所在的 parallel 分支与持续资产的作用范围：发布按它记历史并交给回调，require 缺值时不等自己所在的分支。
-  , place :: Place
+  , place :: !Place
   -- 本次调用中已执行的 effect 及其输出（按 effect 编号）；同一 effect 再次到达时直接返回。
-  , performed :: IORef (IntMap.IntMap [String])
+  , performed :: !(IORef (IntMap.IntMap [String]))
   -- 持续资产在本次调用的固定视图：订阅回调的交付或静态读取取得的整段；其他调用之后的发布不改写它。
-  , views :: IORef [(Slot, View env cause)]
+  , views :: !(IORef [(Slot, View env cause)])
   -- Receive 来源取得同步交付函数，parser 只取得本条原始输入。
-  , streamPort :: StreamPort env cause
+  , streamPort :: !(StreamPort env cause)
   -- Untracked：本次执行不为 scope 回收登记，读取不把捕获写进执行帧（见 Graph.Tracking）。
-  , frameTracking :: Tracking
+  , frameTracking :: !Tracking
   }
 
 -- 一次末端调用的起点：交接的绑定与视图；来源步骤另带原始输入。
 -- 订阅回调把交付的资产记入 launchPerformed：入口里对它的 requests 直接读这条交付，不再生产。
 data Launch env cause = Launch
-  { launchBindings :: ScopeBindings env cause
-  , launchViews :: [(Slot, View env cause)]
-  , launchPort :: StreamPort env cause
-  , launchPerformed :: [Slot]
-  , launchUser :: Maybe (ScopeUser env cause)
-  , launchFrame :: ExecutionFrame
-  , launchRetention :: Retention env cause
-  , launchPlace :: Place
+  { launchBindings :: !(ScopeBindings env cause)
+  , launchViews :: ![(Slot, View env cause)]
+  , launchPort :: !(StreamPort env cause)
+  , launchPerformed :: ![Slot]
+  , launchUser :: !(Maybe (ScopeUser env cause))
+  , launchFrame :: !ExecutionFrame
+  , launchRetention :: !(Retention env cause)
+  , launchPlace :: !Place
   -- Untracked：gen 已证明这次执行与 scope 回收无关，不登记 Origin 与活动目录（见 Graph.Tracking）。
-  , launchTracking :: Tracking
+  , launchTracking :: !Tracking
   }
 
 -- Receive 的两个静态挂载各有一端。交付同步调用独立的 parser activation，并传播它的原失败。
@@ -569,8 +569,11 @@ instance ScopeStore cause (App env cause) where
       _ -> throwError problem
 
 instance ErrorStore cause (App env cause) where
-  withErrorHandlers handlers (AppRun action) = AppRun $ local
-    (\environment -> environment { errorHandlers = handlers }) action
+  -- 没有 Error 回调的程序在每个末端都装入空表；环境里本来就是空表时不复制环境。
+  withErrorHandlers handlers (AppRun action) = AppRun $ do
+    current <- asks errorHandlers
+    if null handlers && null current then action
+      else local (\environment -> environment { errorHandlers = handlers }) action
   withErrorPath path (AppRun action) = AppRun $ local
     (\environment -> environment { errorPath = nub (path ++ errorPath environment) }) action
   caughtFailure = AppRun (asks originalFailure)

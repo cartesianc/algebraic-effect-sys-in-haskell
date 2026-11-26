@@ -31,17 +31,20 @@ readContext contextName wrap select = do
       pure value
     Nothing -> failEffect (slotName contextName) (wrap ContextNotInitialized) (show ContextNotInitialized)
 
--- 缺值时的等待：先取得编号，再查值；有值就返回，没有值且别的分支仍可能发布时挂起到下一次发布或分支退出，
--- 再从头查一次；没有这样的分支、或所有线程都在等待时返回 Nothing。只挂起这一次调用。
+-- 缺值时的等待：有值就返回。缺值时先取得编号，再查一次值；仍没有值且别的分支仍可能发布时挂起到下一次发布
+-- 或分支退出，再从头查；没有这样的分支、或所有线程都在等待时返回 Nothing。只挂起这一次调用。
+-- 编号先于等待前的那次查值取得，两次之间的发布会改变编号，等待立即醒来，不会漏掉。
 awaiting :: ContextStore environment m => [Slot] -> m (Maybe value) -> m (Maybe value)
-awaiting sources look = do
-  ticket <- contextTicket
-  found <- look
-  case found of
-    Just value -> pure (Just value)
-    Nothing -> do
-      again <- awaitContext sources ticket
-      if again then awaiting sources look else pure Nothing
+awaiting sources look = look >>= maybe waiting (pure . Just)
+  where
+    waiting = do
+      ticket <- contextTicket
+      found <- look
+      case found of
+        Just value -> pure (Just value)
+        Nothing -> do
+          again <- awaitContext sources ticket
+          if again then waiting else pure Nothing
 
 -- 同一个成功值先交给绑定回调再返回；生产失败不会触发回调或再次执行生产。
 requestContext

@@ -258,9 +258,7 @@ instance SDK.EndsStream (Wrap hooks effect method) where
 
 runAnnounce :: forall hooks. Captured hooks => Effects.App [String]
 runAnnounce =
-  SDK.runOnce (SDK.Slot 0 "Announce")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 0 "Announce") $
+  SDK.handleFailure $
     call @hooks @"Announce" @"announce" Effects.announce
 
 getOpenedInput :: forall hooks. Captured hooks => Effects.App Effects.OpenedInput
@@ -327,17 +325,14 @@ historyTextLine =
 
 runPrintLine :: forall hooks. Captured hooks => Effects.App [String]
 runPrintLine =
-  SDK.runOnce (SDK.Slot 6 "PrintLine")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 6 "PrintLine") $
+  SDK.handleFailure $
     call @hooks @"PrintLine" @"printLine" Effects.printLine
 
 runTextCounter :: forall hooks. Captured hooks => Effects.App [String]
 runTextCounter =
   SDK.runOnce (SDK.Slot 7 "TextCounter")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 7 "TextCounter") [((SDK.Slot 8 "CountParser"), () <$ getRunningTotal @hooks)]
-  . SDK.enterHandler (SDK.Slot 7 "TextCounter") $
+  . SDK.atomicHandle (SDK.Slot 7 "TextCounter") [((SDK.Slot 8 "CountParser"), () <$ getRunningTotal @hooks)] $
     call @hooks @"TextCounter" @"countText" Effects.countText
 
 getRunningTotal :: forall hooks. Captured hooks => Effects.App Effects.RunningTotal
@@ -360,16 +355,12 @@ historyRunningTotal =
 
 runShowTotal :: forall hooks. Captured hooks => Effects.App [String]
 runShowTotal =
-  SDK.runOnce (SDK.Slot 9 "ShowTotal")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 9 "ShowTotal") $
+  SDK.handleFailure $
     call @hooks @"ShowTotal" @"showTotal" Effects.showTotal
 
 runReport :: forall hooks. Captured hooks => Effects.App [String]
 runReport =
-  SDK.runOnce (SDK.Slot 10 "Report")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 10 "Report") $
+  SDK.handleFailure $
     call @hooks @"Report" @"report" Effects.report
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

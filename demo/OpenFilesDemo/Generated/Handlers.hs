@@ -211,8 +211,7 @@ runHoldFiles =
 
 runInspectFiles :: Effects.App [String]
 runInspectFiles =
-  SDK.runOnce (SDK.Slot 4 "InspectFiles")
-  . SDK.withErrorPath ["FileSession"]
+  SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 2 "FileSession")]
   . SDK.enterHandler (SDK.Slot 4 "InspectFiles") $
@@ -220,8 +219,7 @@ runInspectFiles =
 
 runReleaseFiles :: Effects.App [String]
 runReleaseFiles =
-  SDK.runOnce (SDK.Slot 5 "ReleaseFiles")
-  . SDK.withErrorPath ["FileSession"]
+  SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 2 "FileSession")]
   . SDK.enterHandler (SDK.Slot 5 "ReleaseFiles") $
@@ -229,8 +227,7 @@ runReleaseFiles =
 
 runFinishInspection :: Effects.App [String]
 runFinishInspection =
-  SDK.runOnce (SDK.Slot 6 "FinishInspection")
-  . SDK.handleFailure
+  SDK.handleFailure
   . SDK.enterHandler (SDK.Slot 6 "FinishInspection") $
     getFileNames >> call @"FinishInspection" @"finishInspection" Effects.finishInspection
 

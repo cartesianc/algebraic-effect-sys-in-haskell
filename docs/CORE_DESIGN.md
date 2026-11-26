@@ -418,11 +418,13 @@ Input 表达操作的前提关系，业务值来源单独由 demands 表达；Co
 
 ```haskell
 runLocateFile =
-  SDK.handleFailure
-  . SDK.atomicHandle "runLocateFile" []
-  . SDK.enterHandler "LocateFile" $
+  SDK.runOnce (SDK.Slot 0 "LocateFile")
+  . SDK.handleFailure
+  . SDK.atomicHandle (SDK.Slot 0 "LocateFile") [((SDK.Slot 2 "FileLocation"), () <$ getFileName)] $
     call @"LocateFile" @"locateFile" Effects.locateFile
 ```
+
+`enterHandler` 把本 effect 记为调用者，只有 atomicScope 读它，用来跳过调用者自己的生产分支；方法体不调用别的入口（没有前驱、锚点、生产分支，rawinput 也不读回上游）时其中不会执行 atomicScope，Excu 与 Stream 来源的入口不写它。`runOnce` 见[消费链](#consumer-chain)。
 
 生成区以 `SDK.` 限定 `Framework.Generated`、以 `Effects.` 限定生成的契约模块；手写 Handlers.hs 已用其中某个限定名时，该模块退回 `FrameworkRuntime.`／`FrameworkGenerated.`。生成入口逐行列出包装顺序。`withErrorPath` 和 `withScopeDependencies` 只在该入口有对应的 scope 要加入时出现。持续挂接在本次执行是否生效由运行位置与会话决定。`compiledEntries` 的局部 `target` 为各末端安装同一组程序级 Error 回调。
 
@@ -604,7 +606,7 @@ AST 组织链的启动次序。Crawler 中两个打印各自 requests 本页摘�
 
 请求方 E 声明的 Input `I` 与注入的锚点 `H` 合并时：`H` 就是 `I`、或 `H` 在 `I` 的上游，`H` 不另列；`I` 在 `H` 的上游时，`I` 经 `H` 到达 `E`，不另列；多个锚点之间同理。剩下的父节点互不在对方上游，没有先后依赖，执行顺序只取声明顺序（Input 在前，requests 按书写顺序），不表示谁是谁的上游；有 scope 关系的两项必然一个在另一个上游，不会落到这里，ScopeTree 仍只由静态的 Input 与 requests 关系得出。入口在 handler 之前依次执行：主线各项，每项之后紧跟锚点在它之内的生产分支，最后是没有锚点的分支与持续资产的取得。Scoped 的开启输入（资源与参数）排在最前，因为 open 期间其他 IO 会先固定开启输入；锚点带上它所生产的 Context，它的 IO 按开启输入的生产对待。数据约束优先：某一项执行中读取的资产由本入口的另一分支生产时，那条分支先执行；约束成环或请求方经自己的 requests 到达自己时，生成失败。
 
-同一次调用中，同一 effect 只执行一次：Excu、Scoped.open 与 Pure 的入口由 `runOnce` 包装，再次到达时返回本次输出，不重复执行它和它的前驱；Context 已在本次发布时，再次请求返回本次捕获的发布。rawinput 因此读到锚点的同一次输出。记录随每次调用开始而清空，诊断与收尾各用自己的记录；不同调用（AST 上的不同挂载、lifelong 的每次交付、会话的每个步骤）各自执行。一次调用中同一个 Scoped 只开一个实例；要两个实例，注册两个 Scoped effect 复用同一 handler。
+同一次调用中，同一 effect 只执行一次：Excu、Scoped.open 与 Pure 的入口由 `runOnce` 包装，再次到达时返回本次输出，不重复执行它和它的前驱（Excu 与 Pure 只有被别的入口调用时才会再次到达：作为前驱或锚点、被 rawinput 读回、带输出联立分支或是选择读取共同执行的句柄；只从根进入的入口一次调用里只执行一次，gen 不包 `runOnce`）；Context 已在本次发布时，再次请求返回本次捕获的发布。rawinput 因此读到锚点的同一次输出。记录随每次调用开始而清空，诊断与收尾各用自己的记录；不同调用（AST 上的不同挂载、lifelong 的每次交付、会话的每个步骤）各自执行。一次调用中同一个 Scoped 只开一个实例；要两个实例，注册两个 Scoped effect 复用同一 handler。
 
 ```haskell
 -- Crawler/Effects.hs 节选：打印前先抓取并解析本页

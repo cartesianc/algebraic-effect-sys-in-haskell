@@ -1,5 +1,4 @@
 {-# OPTIONS_GHC -fexpose-all-unfoldings -fspecialise-aggressively #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 
 -- 自动生成；组合好的执行闭包，原型在 Generated/Prototype.hs，执行由 SDK 的 interpreter 完成。
@@ -14,9 +13,11 @@ import qualified StreamDemo.Generated.Handlers as Handlers
 
 -- 仅汇总所选末端的成功结果，不保存共享绑定或增加完成包装。
 data Results = AnnounceResult () | ShowTemperatureResult () | CheckTrendResult () | ReportHeartbeatResult ()
-  deriving (Show, SDK.Generic)
+  deriving (Show)
 
-instance SDK.NFData Results
+-- 每个构造器只带 ()：求值到构造器即完整求值。
+instance SDK.NFData Results where
+  rnf result = result `seq` ()
 
 -- 末端共享生成的 scope 句柄；只创建空状态。
 -- compiledWorkflow：AST 的执行闭包（Serial 顺序、Concurrent 并行、Choose 选择、Drive 是 lifelong 的位置）。

@@ -203,9 +203,7 @@ instance SDK.RawOutputs (Wrap effect method)
 
 runPrepareFiles :: Effects.App [String]
 runPrepareFiles =
-  SDK.runOnce (SDK.Slot 0 "PrepareFiles")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 0 "PrepareFiles") $
+  SDK.handleFailure $
     call @"PrepareFiles" @"prepareFiles" Effects.prepareFiles
 
 getFileName :: Effects.App Effects.FileName
@@ -255,8 +253,7 @@ closeFileSession =
 
 runUseFirst :: Effects.App [String]
 runUseFirst =
-  SDK.runOnce (SDK.Slot 4 "UseFirst")
-  . SDK.withErrorPath ["FileSession"]
+  SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 3 "FileSession")]
   . SDK.enterHandler (SDK.Slot 4 "UseFirst") $
@@ -264,15 +261,12 @@ runUseFirst =
 
 runSelectSecond :: Effects.App [String]
 runSelectSecond =
-  SDK.runOnce (SDK.Slot 5 "SelectSecond")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 5 "SelectSecond") $
+  SDK.handleFailure $
     call @"SelectSecond" @"selectSecond" Effects.selectSecond
 
 runUseSecond :: Effects.App [String]
 runUseSecond =
-  SDK.runOnce (SDK.Slot 6 "UseSecond")
-  . SDK.withErrorPath ["FileSession"]
+  SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 3 "FileSession")]
   . SDK.enterHandler (SDK.Slot 6 "UseSecond") $
@@ -280,15 +274,12 @@ runUseSecond =
 
 runSelectFirst :: Effects.App [String]
 runSelectFirst =
-  SDK.runOnce (SDK.Slot 7 "SelectFirst")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 7 "SelectFirst") $
+  SDK.handleFailure $
     call @"SelectFirst" @"selectFirst" Effects.selectFirst
 
 runReopenFirst :: Effects.App [String]
 runReopenFirst =
-  SDK.runOnce (SDK.Slot 8 "ReopenFirst")
-  . SDK.withErrorPath ["FileSession"]
+  SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 3 "FileSession")]
   . SDK.enterHandler (SDK.Slot 8 "ReopenFirst") $
@@ -296,9 +287,7 @@ runReopenFirst =
 
 runCheckJournal :: Effects.App [String]
 runCheckJournal =
-  SDK.runOnce (SDK.Slot 9 "CheckJournal")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 9 "CheckJournal") $
+  SDK.handleFailure $
     call @"CheckJournal" @"checkJournal" Effects.checkJournal
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

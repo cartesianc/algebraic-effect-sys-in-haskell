@@ -46,11 +46,11 @@ import qualified Data.Sequence as Seq
 -- 以及所在的位置（parallel 分支与持续资产的作用范围）。runTracking 是 Untracked 时（gen 判定回收无关的单元），
 -- 这次执行不建帧、不改帧进度、不登记保留根与执行身份；runFrame 仍是外层帧，只作为发布的所在帧传下去。
 data Run environment cause = Run
-  { runFrame :: ExecutionFrame
-  , runFatal :: Either SomeException (Failure cause) -> IO ()
-  , runPerformed :: [Slot]
-  , runPlace :: Place
-  , runTracking :: Tracking
+  { runFrame :: !ExecutionFrame
+  , runFatal :: !(Either SomeException (Failure cause) -> IO ())
+  , runPerformed :: ![Slot]
+  , runPlace :: !Place
+  , runTracking :: !Tracking
   }
 
 type Execution' environment cause value =
@@ -352,10 +352,10 @@ reactTo :: Machine method environment cause value -> Run environment cause
         -> Place -> Slot -> ScopeBinding environment cause -> ScopeBindings environment cause -> IO (Maybe (Failure cause))
 reactTo machine run at source value captured = do
   let scope = placeScope at
-      selected = [response | (reactionScope, response) <- IntMap.findWithDefault [] (slotNumber source) (machineReactions machine)
-        , maybe True ((== scope) . Just) reactionScope]
+      reactions = IntMap.findWithDefault [] (slotNumber source) (machineReactions machine)
+      applies (reactionScope, _) = maybe True ((== scope) . Just) reactionScope
       key = (slotNumber source, scope)
-  if null selected then pure Nothing else do
+  if not (any applies reactions) then pure Nothing else do
     changed <- case sameOf machine source of
       Nothing -> pure True
       Just same -> atomicModifyIORef' (machineDelivered machine) $ \earlier ->
@@ -366,10 +366,12 @@ reactTo machine run at source value captured = do
       else do
         -- 同一次发布对所有回调是同一份交付：回调不能再发布它订阅的资产（gen 的回调环检查），视图在回调之间不变。
         handoff <- deliveryOf machine at source value captured
-        firstFailure [response run { runPlace = at } source handoff | response <- selected]
-  where
-    firstFailure [] = pure Nothing
-    firstFailure (action : rest) = action >>= maybe (firstFailure rest) (pure . Just)
+        let here = run { runPlace = at }
+            firstFailure [] = pure Nothing
+            firstFailure (reaction@(_, response) : rest)
+              | applies reaction = response here source handoff >>= maybe (firstFailure rest) (pure . Just)
+              | otherwise = firstFailure rest
+        firstFailure reactions
 
 -- behavior 资产的比较：它的来源在生成的 Drive 或静态运行里写着。
 sameOf :: Machine method environment cause value -> Slot -> Maybe (environment -> environment -> Bool)

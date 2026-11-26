@@ -267,8 +267,7 @@ readStartPageSummary =
 
 runPrintPage :: Effects.App [String]
 runPrintPage =
-  SDK.runOnce (SDK.Slot 5 "PrintPage")
-  . SDK.withErrorPath ["CrawlSession"]
+  SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.enterHandler (SDK.Slot 5 "PrintPage") $
@@ -310,8 +309,7 @@ readLinkedPageSummary =
 
 runPrintLinkedPage :: Effects.App [String]
 runPrintLinkedPage =
-  SDK.runOnce (SDK.Slot 9 "PrintLinkedPage")
-  . SDK.withErrorPath ["CrawlSession"]
+  SDK.withErrorPath ["CrawlSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 11 "CrawlSession")]
   . SDK.enterHandler (SDK.Slot 9 "PrintLinkedPage") $

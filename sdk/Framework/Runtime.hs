@@ -65,7 +65,9 @@ lowerTarget :: RuntimeGraph environment cause -> Tracking -> Retention environme
             -> Handoff environment cause -> [Slot] -> Target environment cause value
             -> IO (Either (Failure cause) value, Handoff environment cause)
 lowerTarget graph tracking retention location executionFrame at (Handoff given views) performed target = do
-  keepBindings retention (map snd given ++ mapMaybe (lastBinding . snd) views)
+  -- 交接通常只有普通值：先判断有没有资源，没有就不拼出待保留的列表。
+  when (any (bindingResource . snd) given || any (maybe False bindingResource . lastBinding . snd) views) $
+    keepBindings retention (map snd given ++ mapMaybe (lastBinding . snd) views)
   when (tracking == Tracked) $ captureFrameDeliveries executionFrame
     [(originNode (executionOrigin (bindingOrigin value)), source, production)
       | (source, value) <- given, source `elem` performed, Just production <- [bindingProduction value]

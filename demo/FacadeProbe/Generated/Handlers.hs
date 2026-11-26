@@ -387,8 +387,7 @@ closeReplyScope =
 
 runWriteReport :: Effects.App [String]
 runWriteReport =
-  SDK.runOnce (SDK.Slot 8 "WriteReport")
-  . SDK.withErrorPath ["ReportScope"]
+  SDK.withErrorPath ["ReportScope"]
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 6 "ReportScope")]
   . SDK.enterHandler (SDK.Slot 8 "WriteReport") $
@@ -396,8 +395,7 @@ runWriteReport =
 
 runWriteReply :: Effects.App [String]
 runWriteReply =
-  SDK.runOnce (SDK.Slot 9 "WriteReply")
-  . SDK.withErrorPath ["ReplyScope"]
+  SDK.withErrorPath ["ReplyScope"]
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 7 "ReplyScope")]
   . SDK.enterHandler (SDK.Slot 9 "WriteReply") $
@@ -406,16 +404,14 @@ runWriteReply =
 runMarkReply :: Effects.App [String]
 runMarkReply =
   SDK.runOnce (SDK.Slot 10 "MarkReply")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 10 "MarkReply") $
+  . SDK.handleFailure $
     call @"MarkReply" @"markRead" Effects.markRead
 
 runReadReport :: Effects.App [String]
 runReadReport =
   SDK.runOnce (SDK.Slot 11 "ReadReport")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 11 "ReadReport") [((SDK.Slot 13 "ReportCounter"), () <$ getReportStats)]
-  . SDK.enterHandler (SDK.Slot 11 "ReadReport") $
+  . SDK.atomicHandle (SDK.Slot 11 "ReadReport") [((SDK.Slot 13 "ReportCounter"), () <$ getReportStats)] $
     call @"ReadReport" @"readText" Effects.readText
 
 runReadReply :: Effects.App [String]
@@ -454,23 +450,20 @@ readReplyStats =
 
 runShowReport :: Effects.App [String]
 runShowReport =
-  SDK.runOnce (SDK.Slot 15 "ShowReport")
-  . SDK.handleFailure
+  SDK.handleFailure
   . SDK.enterHandler (SDK.Slot 15 "ShowReport") $
     SDK.unlessPerformed [(SDK.Slot 13 "ReportCounter")] (SDK.producingFor [(SDK.Slot 13 "ReportCounter")] (runReadReport)) >> getReportStats >> call @"ShowReport" @"showCount" Effects.showCount
 
 runShowReply :: Effects.App [String]
 runShowReply =
-  SDK.runOnce (SDK.Slot 16 "ShowReply")
-  . SDK.handleFailure
+  SDK.handleFailure
   . SDK.enterHandler (SDK.Slot 16 "ShowReply") $
     SDK.unlessPerformed [(SDK.Slot 14 "ReplyCounter")] (SDK.producingFor [(SDK.Slot 14 "ReplyCounter")] (runReadReply)) >> getReplyStats >> call @"ShowReply" @"showCount" Effects.showCount
 
 runInspectReport :: Effects.App [String]
 runInspectReport =
   SDK.runOnce (SDK.Slot 17 "InspectReport")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 17 "InspectReport") $
+  . SDK.handleFailure $
     call @"InspectReport" @"inspectFile" Effects.inspectFile
 
 getReportEmpty :: Effects.App Effects.ReportEmpty
@@ -501,28 +494,22 @@ readReportText =
 
 runOnBlank :: Effects.App [String]
 runOnBlank =
-  SDK.runOnce (SDK.Slot 20 "OnBlank")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 20 "OnBlank") $
+  SDK.handleFailure $
     call @"OnBlank" @"describeBlank" Effects.describeBlank
 
 runOnFilled :: Effects.App [String]
 runOnFilled =
-  SDK.runOnce (SDK.Slot 21 "OnFilled")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 21 "OnFilled") $
+  SDK.handleFailure $
     call @"OnFilled" @"describeFilled" Effects.describeFilled
 
 nextFeedA :: Effects.App ()
 nextFeedA =
-  SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 22 "FeedA") $
+  SDK.handleFailure $
     call @"FeedA" @"nextA" Effects.nextA
 
 nextFeedB :: Effects.App ()
 nextFeedB =
-  SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 23 "FeedB") $
+  SDK.handleFailure $
     call @"FeedB" @"nextB" Effects.nextB
 
 getLevelA :: Effects.App Effects.LevelA
@@ -563,16 +550,12 @@ historyLevelB =
 
 runShowA :: Effects.App [String]
 runShowA =
-  SDK.runOnce (SDK.Slot 26 "ShowA")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 26 "ShowA") $
+  SDK.handleFailure $
     call @"ShowA" @"showLevel" Effects.showLevel
 
 runShowB :: Effects.App [String]
 runShowB =
-  SDK.runOnce (SDK.Slot 27 "ShowB")
-  . SDK.handleFailure
-  . SDK.enterHandler (SDK.Slot 27 "ShowB") $
+  SDK.handleFailure $
     call @"ShowB" @"showLevel" Effects.showLevel
 
 -- SDK 内部：scope 按上游到下游登记，退出时逆序收尾；创建不执行业务方法。

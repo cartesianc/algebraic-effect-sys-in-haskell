@@ -208,8 +208,7 @@ runLocateFile :: Effects.App [String]
 runLocateFile =
   SDK.runOnce (SDK.Slot 0 "LocateFile")
   . SDK.handleFailure
-  . SDK.atomicHandle (SDK.Slot 0 "LocateFile") [((SDK.Slot 2 "FileLocation"), () <$ getFileName)]
-  . SDK.enterHandler (SDK.Slot 0 "LocateFile") $
+  . SDK.atomicHandle (SDK.Slot 0 "LocateFile") [((SDK.Slot 2 "FileLocation"), () <$ getFileName)] $
     call @"LocateFile" @"locateFile" Effects.locateFile
 
 runValidateFileName :: Effects.App [String]
@@ -322,8 +321,7 @@ readFileWritten =
 
 runWriteFirstLine :: Effects.App [String]
 runWriteFirstLine =
-  SDK.runOnce (SDK.Slot 9 "WriteFirstLine")
-  . SDK.withErrorPath ["FileSession"]
+  SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 9 "WriteFirstLine") $
@@ -331,8 +329,7 @@ runWriteFirstLine =
 
 runAppendLine :: Effects.App [String]
 runAppendLine =
-  SDK.runOnce (SDK.Slot 10 "AppendLine")
-  . SDK.withErrorPath ["FileSession"]
+  SDK.withErrorPath ["FileSession"]
   . SDK.handleFailure
   . SDK.withScopeDependencies [(SDK.Slot 4 "FileSession")]
   . SDK.enterHandler (SDK.Slot 10 "AppendLine") $
