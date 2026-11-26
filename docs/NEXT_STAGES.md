@@ -211,6 +211,11 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 
 未覆盖：静态运行的来源照旧登记；只有 lifelong 唯一的 Receive 会话、单元全部 Untracked 时才判为回收无关，带派生步骤的 lifelong 照旧登记。
 
+<a id="static-run-outcome"></a>
+**静态运行的共享结论（2026-11-27）。** 两个请求方同时 `requests` 同一个静态来源时，第一个运行来源，第二个等它结束。此前运行方遇到原生异常时向共享结果写入代表成功的 `Nothing`，再只向自己重抛：等待方被告知来源成功完成，并把失败前发布的部分历史当作完整历史读取。现在共享结果保存运行方的完整结论（成功、结构化 Failure、原生异常或取消），等待方得到同一结论，原生异常原样重抛；运行方在 `mask` 下执行到填入结果，取消落在两步之间时等待方也不会悬挂。只改 `Runtime.Graph` 的 `StaticRun` 与 `Runtime.Execution` 的 `staticRun`，生成产物不变。规则见 [Stream：失败与取消](STREAM_LIFELONG.md#failures)。
+
+验证（仓库外，记录不进仓库）：探针 `parallel [node "ShowA", node "ShowB"]`，两者都在 lifelong 外 `requests` 同一个来源，来源发布一条后抛出 IO 异常。`a204035` 的构建连跑 3 次，每次都有一方读到部分历史并执行（输出 `A one` 或 `B one`）；修复后连跑 3 次两方都不执行，插桩显示等待方得到 `Left user error (source-probe-io-failed)`。`cabal build all` 通过；前两项的 6 个 demo 与 13 个探针再次与 `fe17e7a` 的构建比较，输出与写出的文件只差回溯与临时目录里的路径。
+
 <a id="asset-base-fields"></a>
 **资产的基础字段（U5，2026-11-26）。** 字段只能是 `String` 时，数值以文本保存，每个读取方都要知道文本格式并各自解析。16 路基准每条数据解析 16 次，`read` 占墙钟时间的 54%。现在字段可以是 `Int`、`Integer`、`Double`、`Bool`：parser 解析一次，读取方直接读值。表示类型仍是一阶、单态、有限的积。文件形式仍由 gen 在语法树上检查；构造器个数、字段类型、严格标记与递归改由 GHC 求解 `Framework.Language.AssetForm` 的封闭类型族（DataKinds），不再按源码拼写比对，同时补上了原检查漏掉的自身引用与互相引用。StreamDemo 的 `Temperature` 改为 `Double`，`CheckTrend` 不再 `read`。规则见[资产固定形式](ASSETS.md#fixed-form)。
 

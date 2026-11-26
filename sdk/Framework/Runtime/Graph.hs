@@ -19,7 +19,7 @@ module Framework.Runtime.Graph
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (STM, TVar, atomically, check, modifyTVar', newTVarIO, readTVar, readTVarIO, retry, writeTVar)
-import Control.Exception (SomeAsyncException, evaluate, finally, fromException, mask, onException, throwIO, uninterruptibleMask_)
+import Control.Exception (SomeAsyncException, SomeException, evaluate, finally, fromException, mask, onException, throwIO, uninterruptibleMask_)
 import Control.Monad (forM, forM_, when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IntMap
@@ -516,13 +516,15 @@ awaitPublication graph place sources ticket = do
         , identity `notElem` placeBranches place])
 
 -- 一次共享的静态运行：结果，以及等它结束的调用数（计入挂起数，运行结束时在同一事务里放行）。
-data StaticRun cause = StaticRun (TVar (Maybe (Maybe (Failure cause)))) (TVar Int)
+-- 结果是运行方得到的完整结论：成功（Right Nothing）、SDK 失败（Right Just）或原生异常（Left），
+-- 每个请求方都得到同一结论；中途失败的来源只发布了部分历史，不能被等待方当作完整历史读取。
+data StaticRun cause = StaticRun (TVar (Maybe (Either SomeException (Maybe (Failure cause))))) (TVar Int)
 
 newStaticRun :: IO (StaticRun cause)
 newStaticRun = StaticRun <$> newTVarIO Nothing <*> newTVarIO 0
 
--- 运行方填入结果（Nothing 表示成功），放行全部等待者。
-finishStatic :: RuntimeGraph environment cause -> StaticRun cause -> Maybe (Failure cause) -> IO ()
+-- 运行方填入结果，放行全部等待者。
+finishStatic :: RuntimeGraph environment cause -> StaticRun cause -> Either SomeException (Maybe (Failure cause)) -> IO ()
 finishStatic graph (StaticRun result waiters) outcome = atomically $ do
   writeTVar result (Just outcome)
   count <- readTVar waiters
@@ -531,7 +533,7 @@ finishStatic graph (StaticRun result waiters) outcome = atomically $ do
   changed graph
 
 -- 别的调用正在运行同一来源：等它结束。等待期间计为挂起，所有线程都挂起时其中等待 require 的一方会按缺值放弃，
--- 运行方因此失败并填入结果，这里不会永远阻塞。
+-- 运行方因此失败并填入结果，这里不会永远阻塞。运行方抛出的原生异常在这里原样重抛。
 awaitStatic :: RuntimeGraph environment cause -> StaticRun cause -> IO (Maybe (Failure cause))
 awaitStatic graph (StaticRun result waiters) = do
   ready <- atomically $ readTVar result >>= \found -> case found of
@@ -540,13 +542,14 @@ awaitStatic graph (StaticRun result waiters) = do
       modifyTVar' waiters (+ 1)
       modifyTVar' (runtimeStaticWaiting graph) (+ 1)
       pure Nothing
-  case ready of
+  outcome <- case ready of
     Just outcome -> pure outcome
     Nothing -> atomically (readTVar result >>= maybe retry pure) `onException` atomically (do
       found <- readTVar result
       when (isNothing found) $ do
         modifyTVar' waiters (subtract 1)
         modifyTVar' (runtimeStaticWaiting graph) (subtract 1))
+  either throwIO pure outcome
 
 installReactions :: RuntimeGraph environment cause -> Reaction environment cause -> IO ()
 installReactions graph = writeIORef (runtimeReactions graph)

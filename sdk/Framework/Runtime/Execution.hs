@@ -514,11 +514,12 @@ staticRun machine run statics at source = case IntMap.lookup (slotNumber source)
       Nothing -> do
         done <- newStaticRun
         pure (Map.insert scope done started, (done, True))
-    -- 运行抛出原生异常时也填入结果，等待的请求方不会悬挂；异常照常传播给发起者。
+    -- 结果原样填入，包括原生异常与取消：等待的请求方不会悬挂，也与发起者得到同一结论。
+    -- mask 保证取消落在 try 与填入之间时结果仍被填入。
     outcome <- if fresh
-      then do
-        outcome <- try (runSource machine run { runPlace = at } scope selected noHandoff)
-        finishStatic graph done (either (const Nothing) id outcome)
+      then mask $ \restore -> do
+        outcome <- try (restore (runSource machine run { runPlace = at } scope selected noHandoff))
+        finishStatic graph done outcome
         either (\(exception :: SomeException) -> throwIO exception) pure outcome
       else awaitStatic graph done
     pure (maybe (Right scope) Left outcome)
