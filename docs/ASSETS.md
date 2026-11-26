@@ -2,7 +2,7 @@
 
 本文是[主设计](CORE_DESIGN.md)引用的源码约束规范。业务写法先读[指南](GUIDE.md)；本页负责资产集合、业务模块的顶层白名单和资产目录，不描述运行时 scope 归属。
 
-更新：2026-11-21（U4：Types.hs 的固定形式，资产只由 String 构造）。2026-11-08（Stage 2：顶层白名单取代普通函数的资产检查、构造器归属与接收形态检查）。
+更新：2026-11-26（U5：字段放开 Int、Integer、Double、Bool，表示类型不递归；字段语义由 GHC 在类型层求解）。2026-11-21（U4：Types.hs 的固定形式，资产只由 String 构造）。2026-11-08（Stage 2：顶层白名单取代普通函数的资产检查、构造器归属与接收形态检查）。
 
 生成器只检查源码里显式写出的定义；不判断运行时值流向，也不记录 Context 来源或资源关闭归属。
 
@@ -16,22 +16,28 @@
 
 <a id="fixed-form"></a>
 
-## 固定形式：资产只由 String 构造
+## 固定形式：资产是一阶、单态、有限的积
 
-一切资产本质上都是不同形式的字符串。`Types.hs` 只写单构造器的表示类型，gen 在生成期检查，不符合即报错并给出位置：
+原始边界只有文本：`rawinput`、`rawoutput` 与 `rawemit` 都是 `String`／`[String]`。Context 的 parser 是文本变成业务值的唯一位置，它把一份原始输入细化为表示类型的值；字段可以是解析后的基础值，消费方读到的就是这个值，不再各自解析。`Types.hs` 只写单构造器的表示类型，gen 在生成期分两层检查，不符合即报错：
 
-| 规则 | 拒绝的写法 |
-| --- | --- |
-| 只有 `data`／`newtype` 声明，每个类型恰好一个构造器（前缀或记录写法） | 和类型、`type` 同义词、instance、类声明、GADT 语法、中缀构造器 |
-| 至少一个字段；字段类型只写 `String`、`[String]` 或本模块的另一个类型 | `Int`、`Double`、`Handle`、`FilePath`、`Maybe String`、严格标记 `!String` |
-| 没有类型参数、存在量与上下文 | `data Box a = Box a` |
-| 固定 `deriving (Eq, Show)` | 缺少 deriving、`deriving (Show, Read, Generic)`、独立 deriving |
-| 没有 import；导出列表省略，或以 `T(..)` 列出全部类型 | `import System.IO (Handle)`、只导出类型不导出构造器 |
-| `Asset @T` 的 `T` 是 `String`、`[String]` 或 `Types.hs` 中的类型 | `Asset @Int "Beat"`、`Asset @[FileHandle] "Files"` |
+| 规则 | 拒绝的写法 | 检查方 |
+| --- | --- | --- |
+| 只有 `data`／`newtype` 声明，前缀或记录构造器 | `type` 同义词、instance、类声明、GADT 语法、中缀构造器 | gen（语法树） |
+| 没有类型参数、存在量与上下文 | `data Box a = Box a` | gen（语法树） |
+| 固定 `deriving (Eq, Show)` | 缺少 deriving、`deriving (Show, Read, Generic)`、独立 deriving | gen（语法树） |
+| 没有 import；导出列表省略，或以 `T(..)` 列出全部类型 | `import System.IO (Handle)`、只导出类型不导出构造器 | gen（语法树） |
+| 恰好一个构造器，至少一个字段，字段没有严格标记 | 和类型、无字段构造器、`!String` | GHC（类型层） |
+| 字段是基础字段 `String`、`[String]`、`Int`、`Integer`、`Double`、`Bool`，或本模块的另一个表示类型 | `Maybe String`、`[Int]`、`Handle`、函数 | GHC（类型层） |
+| 沿字段的引用不回到已经经过的类型 | `newtype Loop = Loop Loop`、`A` 与 `B` 互相引用 | GHC（类型层） |
+| `Asset @T` 的 `T` 是 `String`、`[String]` 或 `Types.hs` 中的类型 | `Asset @Int "Beat"`、`Asset @[FileHandle] "Files"` | gen（`Typeable`） |
 
-gen 按注册中 `Typeable` 的定义模块和编译单元核对 `Asset @T`。同一个本地类型可通过限定导入或重导出注册；其他模块即使也定义了同名、同字段的类型，仍会在生成期报错。`FilePath` 与 `String` 在类型身份上无法区分，所以注册里写 `Asset @FilePath` 仍按 `String` 接受；`Types.hs` 的字段按源码文本检查，必须写成 `String`。
+文件形式是 LSP 按源码读取声明的约定，所以在语法树上检查并给出源码位置。类型的语义交给 GHC：语法检查通过后，gen 在内存模块里为 `Types.hs` 的每个类型派生 `Generic`，断言 [`Framework.Language.AssetForm`](../sdk/Framework/Language/AssetForm.hs) 的 `AssetForm`。这是一组 DataKinds 上的封闭类型族，沿 `Rep` 检查构造器、字段与严格标记，并沿字段路径检查递归；违反时 GHC 报告其中的 `TypeError`，指出类型与字段，例如 `Loop -> Mutual -> Loop refer back to themselves through their fields`。字段类型按 GHC 的类型身份判断，`FilePath` 展开为 `String` 后被接受。
 
-**为什么这样约束。** 资产是在 effect 之间传递、被保存为历史、在受控调用间共享的数据。`Eq` 和 `Show` 供业务比较和显示，scope 实例复用按参数的生产身份判断。只由字符串构造，资产就总能比较、显示、记录，不会把活对象（句柄、连接、函数）带进 Binding、历史或快照。几种结果的区分交给 effect：一个 Excu 的输出挂几个 Context，各自只在自己的情况下解析成功，`alternative` 按哪个成功选择候选（[主设计：alternative](CORE_DESIGN.md#workflow)），不需要和类型。
+gen 按注册中 `Typeable` 的定义模块和编译单元核对 `Asset @T`。同一个本地类型可通过限定导入或重导出注册；其他模块即使也定义了同名、同字段的类型，仍会在生成期报错。`FilePath` 与 `String` 在类型身份上无法区分，所以注册里写 `Asset @FilePath` 仍按 `String` 接受。
+
+**为什么这样约束。** 资产是在 effect 之间传递、被保存为历史、在受控调用间共享的数据。`Eq` 和 `Show` 供业务比较和显示，scope 实例复用按参数的生产身份判断。字段只是文本与少数一阶基础值，资产就总能比较、显示、记录，不会把活对象（句柄、连接、函数）带进 Binding、历史或快照。没有类型参数，`require @T` 才能在生成期路由到唯一的细化资产；没有递归，值总是有限的，比较、显示与求值都会结束。
+
+**格式知识只在 parser 里。** 字段只能是 `String` 时，数值以文本保存，每个读取方都要知道生产方的文本格式并各自解析：一次发布有 k 个回调就解析 k 次，格式错误也在各读取方以 `error` 暴露。字段带基础类型后，parser 解析一次并在格式不对时 `raise`，读取方只依赖“这是一个数”。需要原文的读取方由 parser 同时保留文本字段，例如 `Sample { sampleText :: String, sampleValue :: Int }`。基础值改变 behavior 的比较：`"07"` 与 `"7"` 是不同的文本，却是相等的 `Int`。几种结果的区分交给 effect：一个 Excu 的输出挂几个 Context，各自只在自己的情况下解析成功，`alternative` 按哪个成功选择候选（[主设计：alternative](CORE_DESIGN.md#workflow)），不需要和类型。
 
 **原生对象由获取它的 handler 管理。** `FileHandle String` 可以描述一个文件路径。读写操作按该路径打开文件，并用 `bracket` 或自带关闭逻辑的 IO 函数管理实际句柄。SDK 另外跟踪注册指定的资源 Binding 和 scope 实例。比如 `OpenFilesDemo` 在获取成功后由 scope 的 close 删除 `.open` 标记，获取中途失败则由本次获取清理已经创建的标记。[获取与关闭示例](GUIDE.md#runtime-behavior)
 

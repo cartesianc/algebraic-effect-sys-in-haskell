@@ -95,6 +95,28 @@ checkAssets namespace effects roots contracts earlier = do
           ++ concatMap (checkFixedForm roots) typesModule
     unless (null failures) $
       liftIO (ioError (userError (intercalate "\n" failures)))
+    -- 类型层的固定形式：文件形式通过后才为本地类型派生 Generic，由 GHC 求解 AssetForm（Framework.Language.AssetForm）。
+    let representations = [occNameString (nameOccName (tyConName constructor)) | checkedModule <- typesModule
+          , ATyCon constructor <- modInfoTyThings (tm_checked_module_info checkedModule), isAlgTyCon constructor]
+        formModule = namespace ++ ".Generated.AssetForm"
+        local name = "Representation." ++ name
+        formSource = unlines $
+          [ "{-# LANGUAGE DataKinds, DeriveGeneric, StandaloneDeriving, TypeApplications #-}"
+          , "{-# OPTIONS_GHC -Wno-orphans #-}"
+          , "module " ++ formModule ++ " where"
+          , "import GHC.Generics (Generic)"
+          , "import Framework.Language.AssetForm (assetForm)"
+          , "import qualified " ++ namespace ++ ".Types as Representation" ]
+          ++ ["deriving instance Generic " ++ local name | name <- representations]
+          ++ [ "type Representations = '[" ++ intercalate ", " (map local representations) ++ "]"
+             , "assetForms :: [()]"
+             , "assetForms = [" ++ intercalate ", " ["assetForm @Representations @" ++ local name | name <- representations] ++ "]" ]
+    unless (null representations) $ do
+      addTarget (memoryTarget formModule formSource)
+      formResult <- load LoadAllTargets
+      case formResult of
+        Failed -> liftIO (ioError (userError "Representation types in Types.hs break the asset form; fix the type errors above"))
+        Succeeded -> pure ()
     pure (sortOn assetType (map describeAsset assets))
 
 sourceFiles :: FilePath -> IO [FilePath]
@@ -144,15 +166,16 @@ describeName name = AssetSymbol
     slash '\\' = '/'
     slash character = character
 
--- 资产固定形式 v1（2026-11-21）：资产都是由 String 构造的值，LSP 据此把 before-gen 的声明唯一地转换成 DTO。
--- Types.hs 只写单构造器的 data／newtype：至少一个字段，字段类型只能是 String、[String] 或本模块的另一个表示类型，
--- 固定 deriving (Eq, Show)；没有 import、instance、类型同义词、类型参数、GADT 语法、严格标记和中缀构造器，
--- 导出全部类型及构造器。资产的表示类型（Asset @T）只能是 String、[String] 或本模块的类型。
+-- 资产固定形式 v2（2026-11-26）：资产是一阶、单态、有限的积，LSP 据此把 before-gen 的声明唯一地转换成 DTO。
+-- 这里在语法树上检查文件形式：Types.hs 只写 data／newtype 的前缀或记录构造器，固定 deriving (Eq, Show)；
+-- 没有 import、instance、类型同义词、类型参数、存在量、GADT 语法和中缀构造器，导出全部类型及构造器。
+-- 构造器个数、字段类型、严格标记与递归是类型的语义，由 GHC 求解 Framework.Language.AssetForm（见 checkAssets）。
+-- 资产的表示类型（Asset @T）只能是 String、[String] 或本模块的类型。
 -- 文件句柄等原生对象只在 handler 自己的执行中持有，不进入资产。
 -- 资产的表示类型来自注册的 Typeable：FilePath 等 String 的同义词与 String 无法区分，这里按 String 接受。
 checkFixedForm :: [R.TypeRef] -> TypecheckedModule -> [String]
 checkFixedForm roots checked =
-  [ at (getLocA located) ++ "Types.hs must not import modules; asset fields are String, [String] or types of this module"
+  [ at (getLocA located) ++ "Types.hs must not import modules; asset fields are base fields or types of this module"
   | located <- hsmodImports parsed ]
   ++ exportFailures
   ++ concatMap declaration (hsmodDecls parsed)
@@ -184,8 +207,6 @@ checkFixedForm roots checked =
             derived = [compact (showSDocUnsafe (ppr clause)) | clause <- dd_derivs definition]
         in [ at (locA location) ++ typeName ++ " has type parameters; asset types have none"
            | not (null (hsq_explicit variables)) ]
-           ++ [ at (locA location) ++ typeName ++ " must have exactly one constructor; alternatives are decided by effects, not by sum types"
-              | length constructors /= 1 ]
            ++ concatMap (constructorFailures typeName) constructors
            ++ [ at (locA location) ++ typeName ++ " must derive exactly (Eq, Show)"
               | derived `notElem` [["deriving(Eq,Show)"], ["deriving(Show,Eq)"]] ]
@@ -196,17 +217,8 @@ checkFixedForm roots checked =
       ConDeclH98 { con_args = arguments, con_ex_tvs = existentials, con_mb_cxt = context } ->
         [ at (locA location) ++ typeName ++ " uses existential variables or a context" | not (null existentials) || isJust context ]
         ++ case arguments of
-          PrefixCon _ fields -> fieldFailures [hsScaledThing field | field <- fields]
-          RecCon (L _ fields) -> fieldFailures [cd_fld_type field | L _ field <- fields]
           InfixCon _ _ -> [at (locA location) ++ typeName ++ " uses an infix constructor; write it in prefix form"]
+          _ -> []
       _ -> [at (locA location) ++ typeName ++ " uses GADT syntax; write a single prefix or record constructor"]
-      where
-        fieldFailures :: [LHsType GhcPs] -> [String]
-        fieldFailures [] = [at (locA location) ++ typeName ++ " has no field; an asset is built from String values"]
-        fieldFailures fields =
-          [ at (getLocA field) ++ typeName ++ " has field type " ++ text
-              ++ "; fields are String, [String] or a type of this module, without strictness marks"
-          | field <- fields, let text = compact (showSDocUnsafe (ppr field))
-          , text `notElem` ("String" : "[String]" : localNames) ]
     compact = filter (/= ' ')
     at location = showSDocUnsafe (ppr location) ++ ": "

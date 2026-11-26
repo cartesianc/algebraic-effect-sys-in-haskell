@@ -182,6 +182,11 @@ requests 展开的前驱作为请求方入口里的静态代码执行，运行�
 
 未覆盖：event 单元与订阅源头在 Scoped 下的单元（LinesDemo、StreamDemo）照旧登记，走原来的调用路径；Tracked 路径的调用入口未精简；stream-demo 是无限运行，未单独运行。
 
+<a id="asset-base-fields"></a>
+**资产的基础字段（U5，2026-11-26）。** 字段只能是 `String` 时，数值以文本保存，每个读取方都要知道文本格式并各自解析。16 路基准每条数据解析 16 次，`read` 占墙钟时间的 54%。现在字段可以是 `Int`、`Integer`、`Double`、`Bool`：parser 解析一次，读取方直接读值。表示类型仍是一阶、单态、有限的积。文件形式仍由 gen 在语法树上检查；构造器个数、字段类型、严格标记与递归改由 GHC 求解 `Framework.Language.AssetForm` 的封闭类型族（DataKinds），不再按源码拼写比对，同时补上了原检查漏掉的自身引用与互相引用。StreamDemo 的 `Temperature` 改为 `Double`，`CheckTrend` 不再 `read`。规则见[资产固定形式](ASSETS.md#fixed-form)。
+
+LSP 待跟进：server 的类型候选与新表示类型的字段校验（`codegen/authoring.py`）、handler 提示词中的能力推断与 parser 写法（`agent/prompt.py`），以及 webapp 两个对话框的类型选项和 parser 草稿（`authoring-dialog.tsx`、`registration-dialog.tsx`）仍只认 `String`／`[String]`。
+
 <a id="code-shape"></a>
 ## LSP 从哪份代码开始
 

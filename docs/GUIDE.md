@@ -33,7 +33,7 @@ newtype WrittenText = WrittenText String
   deriving (Eq, Show)
 ```
 
-资产都由 `String` 构造：读到的文件内容要么为空，要么是非空的全文，两种结果各用一个表示类型说明数据长什么样。负责资产生产与解析的 effect 称为 **Context**：它把表示类型细化为具名资产，由绑定的 parser handler 产生值，消费方按资产名声明读取。下面通过 `BlankText` 的注册和 handler 展示这层关系。
+资产由文本和少数基础值构造：读到的文件内容要么为空，要么是非空的全文，两种结果各用一个表示类型说明数据长什么样。负责资产生产与解析的 effect 称为 **Context**：它把表示类型细化为具名资产，由绑定的 parser handler 产生值，消费方按资产名声明读取。下面通过 `BlankText` 的注册和 handler 展示这层关系。
 
 [完整 Types.hs](../demo/FileDemo/Types.hs) · [资产定义与使用规则](#types)
 
@@ -329,7 +329,7 @@ cabal run file-demo
 
 ## 一、资产书写（`Types.hs`）
 
-资产都是不同形式的字符串：每个表示类型只有一个构造器，字段只由 `String` 构造。FileDemo 的资产写成这样：
+资产是一阶、单态、有限的积：每个表示类型只有一个构造器，字段是文本、少数基础值或本模块的另一个表示类型。FileDemo 的资产写成这样：
 
 ```haskell
 newtype FileHandle = FileHandle String
@@ -353,7 +353,7 @@ newtype SharedFile = SharedFile SharedPaths                      -- 字段是本
 ```
 
 - **单构造器**：每个类型恰好一个构造器（前缀或记录写法），至少一个字段；没有类型参数、GADT 语法、中缀构造器和严格标记。没有和类型：几种结果由几个 Context 分别解析，`alternative` 按 effect 选择，见[workflow 书写](#workflow)。
-- **字段只由 `String` 构造**：字段类型写作 `String`、`[String]` 或本模块的另一个表示类型。数字、时间等值保存原文本，读取方在 handler 中自己解析，例如 `read value :: Double`；`FilePath` 等同义词在字段里也写成 `String`。
+- **字段是基础字段或本模块类型**：基础字段是 `String`、`[String]`、`Int`、`Integer`、`Double`、`Bool`。数值由 parser 解析一次存进字段，读取方直接用，例如 StreamDemo 的 `newtype Temperature = Temperature Double`；只比较、显示或转发的值保留文本。`Maybe`、列表的其他元素类型、句柄和函数都不是字段，沿字段的引用也不能回到已经经过的类型。构造器个数、字段类型、严格标记和递归由 GHC 在类型层检查，见[资产固定形式](ASSETS.md#fixed-form)。
 - **没有原生对象**：文件句柄、连接等 OS 资源不进入资产。资源资产只记路径等字符串；handler 在自己的执行中按路径打开并关闭句柄。
 - **固定 deriving**：每个类型写 `deriving (Eq, Show)`，不写其他 deriving、instance 或类型同义词。
 - **不导入任何模块**：`Types.hs` 没有 import（自然也不导入 `Generated` 或 `Handlers`）。导出列表要么省略，要么以 `T(..)` 列出全部类型。
@@ -937,25 +937,25 @@ instance ParseTemperatureLayer m => ParseTemperatureHandler m where
   parseTemperature = do
     reading <- concat <$> rawinput
     case reads reading :: [(Double, String)] of
-      [(_, "")] -> pure (Temperature reading)
+      [(value, "")] -> pure (Temperature value)
       _ -> raise (ParseTemperatureError ("unreadable sensor output: " ++ reading))
 
 instance ShowTemperatureLayer m => ShowTemperatureHandler m where
   showTemperature = do
     Temperature value <- require @Temperature
     seen <- stream @Temperature
-    liftIO (printf "reading #%d: %s C\n" (length seen) value)
+    liftIO (printf "reading #%d: %.1f C\n" (length seen) value)
     rawoutput []
 
 instance CheckTrendLayer m => CheckTrendHandler m where
   checkTrend = do
     seen <- stream @Temperature
-    let recent = take 5 [read value :: Double | Temperature value <- toList seen]
+    let recent = take 5 [value | Temperature value <- toList seen]
     ...
 ```
 
 - **Stream handler** 在下一次采样前用 `rawemit` 交出当前读数；节奏由方法体自己的阻塞或等待决定，SDK 不加间隔。来源没有下一份输入时用 `streamEnd` 退出；StreamDemo 的两个来源不会结束。
-- **parser** 用 `rawinput` 读取来源本次 `rawemit` 的原始输入，不再执行 Stream handler，只解析这一条。
+- **parser** 用 `rawinput` 读取来源本次 `rawemit` 的原始输入，不再执行 Stream handler，只解析这一条：读数解析成 `Double` 存进 `Temperature`，格式不对时 `raise`。两个消费方读到的已经是数值，不再解析。
 - **消费方** 用 `require @Temperature` 读本次读数，用 `stream @Temperature` 读 `x :> xs`：编号是它的长度，窗口是它的前五条。`xs` 都已发布，读取不等待、不驱动来源；有 `stream @T` 读取的资产，从本次来源运行的第一条起保留全部发布，见[按 x:xs 读取](STREAM_LIFELONG.md#flow)。
 
 [完整 Effects.hs](../demo/StreamDemo/Effects.hs) · [Types.hs](../demo/StreamDemo/Types.hs)
@@ -1263,7 +1263,7 @@ open 方法体自己 `raise` 时，实例同样失效；尚保留的同生产实
 | 业务模块顶层定义了普通函数、类、foreign 声明或 rewrite rule | 值操作移进 handler 方法体；`Effects.hs` 的辅助写进 `effects` 的 `where` |
 | `input` 指向 Context 或 Error；Error 的 `handles` 为空、关联不到恰好一个 scope，或与同一 scope 下的另一个 Error 处理同一种失败；`RaisedBy` 写的不是已注册的 handler 名 | Context 经 demands 接入；Error 的 Input 链上要有 Scoped；同一 scope 下每种失败只由一个 Error 处理；`RaisedBy` 写 handler 名 |
 | `alternative` 的候选没有都 `requires` 由同一个 Excu 的输出解析出的资产（分叉来自不同上游的 race 尚未实现），共同的 Excu 不止一个，某个候选依赖了它的多份资产，或两个候选依赖同一份；同一个 Excu 上的多个 alternative 判定不同的 Context | 在同一个 Excu 下为每种情况挂一个 Context，每个候选 `requires` 恰好其中一份，互不相同；同一个 Excu 上的 alternative 使用同样的候选与顺序 |
-| `Types.hs` 不是固定形式：和类型、非 `String` 字段、缺少或多余的 deriving、import、instance、类型同义词等；`Asset @T` 的 `T` 不是 `String`、`[String]` 或 `Types.hs` 中的类型 | 按[资产书写](#types)改成单构造器、`String` 字段、`deriving (Eq, Show)`；数字保存文本，句柄留在 handler 执行中 |
+| `Types.hs` 不是固定形式：和类型、基础字段以外的字段、递归、缺少或多余的 deriving、import、instance、类型同义词等；`Asset @T` 的 `T` 不是 `String`、`[String]` 或 `Types.hs` 中的类型 | 按[资产书写](#types)改成单构造器、基础字段或本模块类型、`deriving (Eq, Show)`；句柄留在 handler 执行中。类型层的违反由 GHC 报告 `AssetForm` 的 `TypeError` |
 | AST 的 node 选中了 Pure、Context、Error 或 Stream；别的方法直接调用到 Stream 的 handler | node 只挂 Excu 或 Scoped；Pure 与 Context 在生产链中由挂接、驱动、合法读取或生产会话带起；Stream 只由生产会话和挂在它下面的 parser 调用，Error 由失败协议调用 |
 | 挂接的 Context 经别的方法、而不是直接或经 Pure 用 `rawinput` 到达它挂接的句柄 | parser 用 `rawinput` 读取挂接句柄，中间只经过 Pure |
 | 某个 Context 从 AST 出发永远到不了：没有 `requests` 驱动或选择读取，也没有 lifelong 的来源带起它（只被 `requires` 读取、或只挂在被执行的句柄下都不算） | 在读取它的链上写 `requests` 驱动它，或把带起它的消费链加进 AST，或删掉这个 Context |
